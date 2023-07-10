@@ -110,7 +110,7 @@ else()
 endif()
 
 knowhere_file_glob(GLOB_RECURSE KNOWHERE_GPU_SRCS src/index/gpu/flat_gpu/*.cc
-                     src/index/gpu/ivf_gpu/*.cc src/index/cagra/*.cu)
+                     src/index/gpu/ivf_gpu/*.cc)
 list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_GPU_SRCS})
 
 if(NOT WITH_RAFT)

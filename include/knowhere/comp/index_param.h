@@ -75,6 +75,10 @@ constexpr const char* M = "m";          // PQ param for IVFPQ
 constexpr const char* SSIZE = "ssize";
 constexpr const char* REORDER_K = "reorder_k";
 
+// CAGRA Params
+constexpr const char* INTERMEDIATE_GRAPH_DEGREE = "intermediate_graph_degree";
+constexpr const char* GRAPH_DEGREE = "graph_degree";
+constexpr const char* ITOPK_SIZE = "itopk_size";
 // HNSW Params
 constexpr const char* EFCONSTRUCTION = "efConstruction";
 constexpr const char* HNSW_M = "M";

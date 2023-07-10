@@ -21,6 +21,7 @@ class CagraConfig : public BaseConfig {
  public:
     CFG_INT intermediate_graph_degree;
     CFG_INT graph_degree;
+    CFG_INT itopk_size;
     CFG_LIST gpu_ids;
     CFG_INT max_queries;
     KNOHWERE_DECLARE_CONFIG(CagraConfig) {
@@ -32,6 +33,11 @@ class CagraConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(graph_degree)
             .set_default(64)
             .description("degree of output graph.")
+            .for_search()
+            .set_range(1, 65536);
+        KNOWHERE_CONFIG_DECLARE_FIELD(itopk_size)
+            .set_default(64)
+            .description("number of intermediate search results retained during the search.")
             .for_search()
             .set_range(1, 65536);
         KNOWHERE_CONFIG_DECLARE_FIELD(gpu_ids)
