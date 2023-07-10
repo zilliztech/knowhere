@@ -23,7 +23,8 @@
 #include <limits>
 #include <memory>
 #include <optional>
-#include <raft/neighbors/specializations.cuh>
+#include <raft/neighbors/ivf_flat.cuh>
+#include <raft/neighbors/ivf_pq.cuh>
 
 #include "common/raft/raft_utils.h"
 #include "common/raft_metric.h"

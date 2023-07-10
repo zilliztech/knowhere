@@ -81,6 +81,10 @@ constexpr const char* SSIZE = "ssize";
 constexpr const char* REORDER_K = "reorder_k";
 constexpr const char* WITH_RAW_DATA = "with_raw_data";
 
+// CAGRA Params
+constexpr const char* INTERMEDIATE_GRAPH_DEGREE = "intermediate_graph_degree";
+constexpr const char* GRAPH_DEGREE = "graph_degree";
+constexpr const char* ITOPK_SIZE = "itopk_size";
 // HNSW Params
 constexpr const char* EFCONSTRUCTION = "efConstruction";
 constexpr const char* HNSW_M = "M";

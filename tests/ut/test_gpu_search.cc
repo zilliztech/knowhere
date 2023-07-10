@@ -59,6 +59,14 @@ TEST_CASE("Test All GPU Index", "[search]") {
         return json;
     };
 
+    auto cagra_gen = [&base_gen]() {
+        knowhere::Json json = base_gen();
+        json[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE] = 128;
+        json[knowhere::indexparam::GRAPH_DEGREE] = 64;
+        json[knowhere::indexparam::ITOPK_SIZE] = 128;
+        return json;
+    };
+
     SECTION("Test Gpu Index Search") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
@@ -70,6 +78,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
             // make_tuple(knowhere::IndexEnum::INDEX_FAISS_GPU_IVFSQ8, ivfsq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFFLAT, ivfflat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFPQ, ivfpq_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_RAFT_CAGRA, cagra_gen),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
@@ -141,6 +150,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
             // make_tuple(knowhere::IndexEnum::INDEX_FAISS_GPU_IVFSQ8, ivfsq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFFLAT, ivfflat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFPQ, ivfpq_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_RAFT_CAGRA, cagra_gen),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
@@ -173,6 +183,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
             // make_tuple(knowhere::IndexEnum::INDEX_FAISS_GPU_IVFSQ8, ivfsq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFFLAT, ivfflat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFPQ, ivfpq_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_RAFT_CAGRA, cagra_gen),
         }));
 
         auto idx = knowhere::IndexFactory::Instance().Create(name, version);

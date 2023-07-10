@@ -26,7 +26,7 @@ rapids_cpm_init()
 set(CMAKE_CUDA_FLAGS
     "${CMAKE_CUDA_FLAGS} --expt-extended-lambda --expt-relaxed-constexpr")
 
-set(RAPIDS_VERSION 23.04)
+set(RAPIDS_VERSION 23.06)
 set(RAFT_VERSION "${RAPIDS_VERSION}")
 set(RAFT_FORK "rapidsai")
 set(RAFT_PINNED_TAG "branch-${RAPIDS_VERSION}")
