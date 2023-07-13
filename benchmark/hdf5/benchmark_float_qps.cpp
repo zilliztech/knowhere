@@ -325,7 +325,7 @@ TEST_F(Benchmark_float_qps, TEST_CAGRA) {
     for (auto gd : GRAPH_DEGREE_) {
         conf[knowhere::indexparam::GRAPH_DEGREE] = gd;
         for (auto igd : INTERMEDIATE_GRAPH_DEGREE_) {
-            if (igd <= gd) continue;
+            if (igd < gd) continue;
             conf[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE] = igd;
             std::string index_file_name = get_index_name({igd, gd});
             create_index(index_file_name, conf);
