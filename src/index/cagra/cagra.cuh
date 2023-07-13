@@ -99,8 +99,8 @@ class CagraIndexNode : public IndexNode {
         auto cagra_cfg = static_cast<const CagraConfig&>(cfg);
         auto rows = dataset.GetRows();
         auto dim = dataset.GetDim();
-        if (cagra_cfg.k.value() >= cagra_cfg.itopk_size.value()) {
-            LOG_KNOWHERE_WARNING_ << "topk should be smaller than itopk_size parameter" << std::endl;
+        if (cagra_cfg.k.value() > cagra_cfg.itopk_size.value()) {
+            LOG_KNOWHERE_WARNING_ << "topk must be smaller than itopk_size parameter" << std::endl;
             return Status::raft_inner_error;
         }
         auto* data = reinterpret_cast<float const*>(dataset.GetTensor());
