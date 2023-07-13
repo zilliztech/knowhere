@@ -25,6 +25,11 @@ class CagraConfig : public BaseConfig {
     CFG_LIST gpu_ids;
     CFG_INT max_queries;
     KNOHWERE_DECLARE_CONFIG(CagraConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(k)
+            .set_default(10)
+            .description("search for top k similar vector.")
+            .set_range(1, 1024)
+            .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(intermediate_graph_degree)
             .set_default(128)
             .description("degree of input graph for pruning.")
@@ -33,7 +38,7 @@ class CagraConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(graph_degree)
             .set_default(64)
             .description("degree of output graph.")
-            .for_search()
+            .for_train()
             .set_range(1, 65536);
         KNOWHERE_CONFIG_DECLARE_FIELD(itopk_size)
             .set_default(64)

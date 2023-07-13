@@ -57,6 +57,10 @@ class CagraIndexNode : public IndexNode {
             LOG_KNOWHERE_WARNING_ << "only support L2Expanded metric type";
             return Status::invalid_metric_type;
         }
+        if (cagra_cfg.intermediate_graph_degree.value() < cagra_cfg.graph_degree.value()) {
+            LOG_KNOWHERE_WARNING_ << "Intermediate graph degree must be bigger than graph degree" << std::endl;
+            return Status::raft_inner_error;
+        }
         try {
             devs_.insert(devs_.begin(), cagra_cfg.gpu_ids.value().begin(), cagra_cfg.gpu_ids.value().end());
             auto scoped_device = raft_utils::device_setter{*cagra_cfg.gpu_ids.value().begin()};
@@ -193,6 +197,7 @@ class CagraIndexNode : public IndexNode {
         is.read((char*)(&this->devs_[0]), sizeof(this->devs_[0]));
         auto scoped_device = raft_utils::device_setter{devs_[0]};
 
+        raft_utils::init_gpu_resources();
         auto& res = raft_utils::get_raft_resources();
 
         auto index_ = raft::neighbors::experimental::cagra::deserialize<float, idx_type>(res, is);
@@ -204,6 +209,8 @@ class CagraIndexNode : public IndexNode {
 
     Status
     DeserializeFromFile(const std::string& filename, const Config& config) override {
+        LOG_KNOWHERE_ERROR_ << "CAGRA doesn't support Deserialization from file.";
+        return Status::not_implemented;
     }
 
     std::unique_ptr<BaseConfig>

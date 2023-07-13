@@ -15,11 +15,8 @@
 
 add_definitions(-DKNOWHERE_WITH_RAFT)
 include(cmake/utils/fetch_rapids.cmake)
-include(rapids-cmake)
-include(rapids-cpm)
-include(rapids-cuda)
-include(rapids-export)
-include(rapids-find)
+include(rapids-cpm)  # Dependency tracking
+include(rapids-cuda) # Common CMake CUDA logic
 
 rapids_cpm_init()
 
