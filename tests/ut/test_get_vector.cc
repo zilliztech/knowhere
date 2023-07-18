@@ -131,6 +131,12 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
         return json;
     };
 
+    auto scann_gen = [&ivfflat_gen]() {
+        knowhere::Json json = ivfflat_gen();
+        json[knowhere::indexparam::REORDER_K] = 10;
+        return json;
+    };
+
     auto flat_gen = base_gen;
 
     auto load_raw_data = [](knowhere::Index<knowhere::IndexNode>& index, const knowhere::DataSet& dataset,
@@ -157,6 +163,7 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, base_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFPQ, base_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create(name);

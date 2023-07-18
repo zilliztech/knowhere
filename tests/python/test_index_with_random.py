@@ -32,6 +32,19 @@ test_data = [
             "ssize": 48
         },
     ),
+    (
+        "SCANN",
+        {
+            "dim": 256,
+            "k": 15,
+            "metric_type": "L2",
+            "m": 128,
+            "nbits": 4,
+            "nlist": 1024,
+            "nprobe": 1024,
+            "reorder_k": 1500,
+        },
+    ),
     # (
     #     "IVFSQ",
     #     {

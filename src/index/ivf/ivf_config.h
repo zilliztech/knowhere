@@ -57,6 +57,32 @@ class IvfPqConfig : public IvfConfig {
     }
 };
 
+class ScannConfig : public IvfFlatConfig {
+ public:
+    CFG_INT reorder_k;
+    KNOHWERE_DECLARE_CONFIG(ScannConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(reorder_k)
+            .description("reorder k used for refining")
+            .allow_empty_without_default()
+            .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
+            .for_search();
+    }
+
+    inline Status
+    CheckAndAdjustForSearch(std::string* err_msg) override {
+        if (!reorder_k.has_value()) {
+            reorder_k = k.value();
+        } else if (reorder_k.value() < k.value()) {
+            *err_msg = "reorder_k(" + std::to_string(reorder_k.value()) + ") should be larger than k(" +
+                       std::to_string(k.value()) + ")";
+            LOG_KNOWHERE_ERROR_ << *err_msg;
+            return Status::out_of_range_in_json;
+        }
+
+        return Status::success;
+    }
+};
+
 class IvfSqConfig : public IvfConfig {};
 
 class IvfBinConfig : public IvfConfig {};
