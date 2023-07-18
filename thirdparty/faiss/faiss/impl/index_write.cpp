@@ -733,6 +733,10 @@ void write_index(const Index* idx, IOWriter* f) {
         WRITE1(ivpq->M2);
         WRITE1(ivpq->implem);
         WRITE1(ivpq->qbs2);
+        WRITE1(ivpq->is_cosine_);
+        if (ivpq->is_cosine_) {
+            WRITEVECTOR(ivpq->norms);
+        }
         write_ProductQuantizer(&ivpq->pq, f);
         write_InvertedLists(ivpq->invlists, f);
     } else {

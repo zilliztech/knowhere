@@ -53,6 +53,7 @@ set(FAISS_SRC
   IndexReplicas.cpp
   IndexSQHybrid.cpp
   IndexScalarQuantizer.cpp
+  IndexScaNN.cpp
   IndexShards.cpp
   MatrixStats.cpp
   MetaIndexes.cpp
@@ -145,6 +146,7 @@ set(FAISS_HEADERS
   IndexAdditiveQuantizer.h
   IndexSQHybrid.h
   IndexScalarQuantizer.h
+  IndexScaNN.h
   IndexShards.h
   MatrixStats.h
   MetaIndexes.h

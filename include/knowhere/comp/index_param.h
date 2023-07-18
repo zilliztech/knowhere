@@ -28,6 +28,7 @@ constexpr const char* INDEX_FAISS_IDMAP = "FLAT";
 constexpr const char* INDEX_FAISS_IVFFLAT = "IVF_FLAT";
 constexpr const char* INDEX_FAISS_IVFFLAT_CC = "IVF_FLAT_CC";
 constexpr const char* INDEX_FAISS_IVFPQ = "IVF_PQ";
+constexpr const char* INDEX_FAISS_SCANN = "SCANN";
 constexpr const char* INDEX_FAISS_IVFSQ8 = "IVF_SQ8";
 
 constexpr const char* INDEX_FAISS_GPU_IDMAP = "GPU_FAISS_FLAT";
@@ -72,6 +73,8 @@ constexpr const char* NLIST = "nlist";
 constexpr const char* NBITS = "nbits";  // PQ/SQ
 constexpr const char* M = "m";          // PQ param for IVFPQ
 constexpr const char* SSIZE = "ssize";
+constexpr const char* REORDER_K = "reorder_k";
+
 // HNSW Params
 constexpr const char* EFCONSTRUCTION = "efConstruction";
 constexpr const char* HNSW_M = "M";

@@ -95,7 +95,27 @@ void accumulate_q_4step(
     constexpr int SQ = Q1 + Q2 + Q3 + Q4;
 
     for (int64_t j0 = 0; j0 < ntotal2; j0 += 32) {
-        FixedStorageHandler<SQ, 2> res2;
+        res.set_block_origin(0, j0);
+
+        // skip computing distances if all vectors inside a block are filtered out
+        bool skip_flag = false;
+        if (!res.bitset.empty()) {  // we have filter here
+            skip_flag = true;
+            for (int64_t jj = 0; jj < std::min(size_t(32), ntotal2 - j0);
+                 jj++) {
+                auto real_idx = res.adjust_id(0, jj);
+                if (!res.bitset.test(real_idx)) {  // id is not filtered out, can not skip computing
+                    skip_flag = false;
+                    break;
+                }
+            }
+        }
+        if (skip_flag) {
+            codes += 32 * nsq / 2;
+            continue;
+        }
+
+        FixedStorageHandler<SQ, 2> res2;        
         const uint8_t* LUT = LUT0;
         kernel_accumulate_block<Q1>(nsq, codes, LUT, res2);
         LUT += Q1 * nsq * 16;
@@ -113,7 +133,6 @@ void accumulate_q_4step(
             res2.set_block_origin(Q1 + Q2 + Q3, 0);
             kernel_accumulate_block<Q4>(nsq, codes, LUT, res2);
         }
-        res.set_block_origin(0, j0);
         res2.to_other_handler(res);
         codes += 32 * nsq / 2;
     }
@@ -249,25 +268,41 @@ using Csi = CMax<uint16_t, int>;
 INSTANTIATE_ACCUMULATE_Q(SingleResultHandler<Csi>)
 INSTANTIATE_ACCUMULATE_Q(HeapHandler<Csi>)
 INSTANTIATE_ACCUMULATE_Q(ReservoirHandler<Csi>)
+
+using CRSci = CMax<float, int>;
+INSTANTIATE_ACCUMULATE_Q(RangeSearchResultHandler<CRSci>)
+
 using Csi2 = CMin<uint16_t, int>;
 INSTANTIATE_ACCUMULATE_Q(SingleResultHandler<Csi2>)
 INSTANTIATE_ACCUMULATE_Q(HeapHandler<Csi2>)
 INSTANTIATE_ACCUMULATE_Q(ReservoirHandler<Csi2>)
 
+using CRSci2 = CMin<float, int>;
+INSTANTIATE_ACCUMULATE_Q(RangeSearchResultHandler<CRSci2>)
+
 using Cfl = CMax<uint16_t, int64_t>;
 using HHCsl = HeapHandler<Cfl, true>;
 using RHCsl = ReservoirHandler<Cfl, true>;
 using SHCsl = SingleResultHandler<Cfl, true>;
+
+using CRSfl = CMax<float, int64_t>;
+using RSHCsl = RangeSearchResultHandler<CRSfl, true>;
 INSTANTIATE_ACCUMULATE_Q(HHCsl)
 INSTANTIATE_ACCUMULATE_Q(RHCsl)
 INSTANTIATE_ACCUMULATE_Q(SHCsl)
+INSTANTIATE_ACCUMULATE_Q(RSHCsl)
+
 using Cfl2 = CMin<uint16_t, int64_t>;
 using HHCsl2 = HeapHandler<Cfl2, true>;
 using RHCsl2 = ReservoirHandler<Cfl2, true>;
 using SHCsl2 = SingleResultHandler<Cfl2, true>;
+
+using CRSfl2 = CMin<float, int64_t>;
+using RSHCsl2 = RangeSearchResultHandler<CRSfl2, true>;
 INSTANTIATE_ACCUMULATE_Q(HHCsl2)
 INSTANTIATE_ACCUMULATE_Q(RHCsl2)
 INSTANTIATE_ACCUMULATE_Q(SHCsl2)
+INSTANTIATE_ACCUMULATE_Q(RSHCsl2)
 
 /***************************************************************
  * Packing functions

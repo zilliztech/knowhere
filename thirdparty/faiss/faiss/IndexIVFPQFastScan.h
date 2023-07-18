@@ -55,12 +55,25 @@ struct IndexIVFPQFastScan : IndexIVF {
     int qbs = 0;
     size_t qbs2 = 0;
 
+    bool is_cosine_ = false;
+    std::vector<float> norms;
+
     IndexIVFPQFastScan(
             Index* quantizer,
             size_t d,
             size_t nlist,
             size_t M,
             size_t nbits_per_idx,
+            MetricType metric = METRIC_L2,
+            int bbs = 32);
+
+    IndexIVFPQFastScan(
+            Index* quantizer,
+            size_t d,
+            size_t nlist,
+            size_t M,
+            size_t nbits_per_idx,
+            bool is_cosine,
             MetricType metric = METRIC_L2,
             int bbs = 32);
 
@@ -74,6 +87,12 @@ struct IndexIVFPQFastScan : IndexIVF {
 
     void train_residual(idx_t n, const float* x) override;
 
+    void train(idx_t n, const float* x) override;
+
+    void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
+
+    void add_with_ids_impl(idx_t n, const float* x, const idx_t* xids);
+
     /// build precomputed table, possibly updating use_precomputed_table
     void precompute_table();
 
@@ -86,8 +105,6 @@ struct IndexIVFPQFastScan : IndexIVF {
             uint8_t* codes,
             bool include_listno = false) const override;
 
-    void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
-
     void search(
             idx_t n,
             const float* x,
@@ -95,6 +112,23 @@ struct IndexIVFPQFastScan : IndexIVF {
             float* distances,
             idx_t* labels,
             const BitsetView bitset = nullptr) const override;
+
+    void search_thread_safe(
+            idx_t n,
+            const float* x,
+            idx_t k,
+            float* distances,
+            idx_t* labels,
+            const size_t nprobe,
+            const BitsetView bitset = nullptr) const;
+
+    void range_search_thread_safe(
+            idx_t n,
+            const float* x,
+            float radius,
+            RangeSearchResult* result,
+            const size_t nprobe,
+            const BitsetView bitset = nullptr) const;
 
     // prepare look-up tables
 
@@ -123,7 +157,18 @@ struct IndexIVFPQFastScan : IndexIVF {
             const float* x,
             idx_t k,
             float* distances,
-            idx_t* labels) const;
+            idx_t* labels,
+            const IVFSearchParameters* params = nullptr,
+            const BitsetView bitset = nullptr) const;
+
+    template <bool is_max>
+    void range_search_dispatch_implem(
+            idx_t n,
+            const float* x,
+            float radius,
+            RangeSearchResult* result,
+            const IVFSearchParameters* params = nullptr,
+            const BitsetView bitset = nullptr) const;
 
     template <class C>
     void search_implem_1(
@@ -131,7 +176,9 @@ struct IndexIVFPQFastScan : IndexIVF {
             const float* x,
             idx_t k,
             float* distances,
-            idx_t* labels) const;
+            idx_t* labels,
+            idx_t nprobe,
+            const BitsetView bitset = nullptr) const;
 
     template <class C>
     void search_implem_2(
@@ -139,7 +186,9 @@ struct IndexIVFPQFastScan : IndexIVF {
             const float* x,
             idx_t k,
             float* distances,
-            idx_t* labels) const;
+            idx_t* labels,
+            idx_t nprobe,
+            const BitsetView bitset = nullptr) const;
 
     // implem 10 and 12 are not multithreaded internally, so
     // export search stats
@@ -152,7 +201,9 @@ struct IndexIVFPQFastScan : IndexIVF {
             idx_t* labels,
             int impl,
             size_t* ndis_out,
-            size_t* nlist_out) const;
+            size_t* nlist_out,
+            idx_t nprobe,
+            const BitsetView bitset = nullptr) const;
 
     template <class C>
     void search_implem_12(
@@ -163,7 +214,20 @@ struct IndexIVFPQFastScan : IndexIVF {
             idx_t* labels,
             int impl,
             size_t* ndis_out,
-            size_t* nlist_out) const;
+            size_t* nlist_out,
+            idx_t nprobe,
+            const BitsetView bitset = nullptr) const;
+
+    template <class C>
+    void range_search_implem_12(
+            idx_t n,
+            const float* x,
+            float radius,
+            RangeSearchResult* result,
+            size_t* ndis_out,
+            size_t* nlist_out,
+            idx_t nprobe,
+            const BitsetView bitset = nullptr) const;
 };
 
 struct IVFFastScanStats {
@@ -186,7 +250,5 @@ struct IVFFastScanStats {
         memset(this, 0, sizeof(*this));
     }
 };
-
-FAISS_API extern IVFFastScanStats IVFFastScan_stats;
 
 } // namespace faiss

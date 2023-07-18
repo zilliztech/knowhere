@@ -47,7 +47,8 @@ static const std::unordered_set<std::string> ext_legal_json_keys = {"metric_type
                                                                     "num_threads",
                                                                     "round_decimal",
                                                                     "offset",
-                                                                    "for_tuning"};
+                                                                    "for_tuning",
+                                                                    "reorder_k"};
 
 Status
 Config::FormatAndCheck(const Config& cfg, Json& json, std::string* const err_msg) {

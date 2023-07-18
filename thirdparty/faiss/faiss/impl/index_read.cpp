@@ -929,6 +929,10 @@ Index* read_index(IOReader* f, int io_flags) {
         READ1(ivpq->M2);
         READ1(ivpq->implem);
         READ1(ivpq->qbs2);
+        READ1(ivpq->is_cosine_);
+        if (ivpq->is_cosine_) {
+            READVECTOR(ivpq->norms);
+        }
         read_ProductQuantizer(&ivpq->pq, f);
         read_InvertedLists(ivpq, f, io_flags);
         ivpq->precompute_table();

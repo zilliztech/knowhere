@@ -43,7 +43,7 @@ test_data = [
             "dim": 128,
             "k": 100,
             "metric_type": "L2",
-            "n_list": 1024,
+            "nlist": 1024,
             "nprobe": 128,
         },
     ),
@@ -53,7 +53,7 @@ test_data = [
             "dim": 128,
             "k": 100,
             "metric_type": "L2",
-            "n_list": 1024,
+            "nlist": 1024,
             "nprobe": 128,
             "ssize": 48
         },
@@ -64,7 +64,7 @@ test_data = [
             "dim": 128,
             "k": 100,
             "metric_type": "L2",
-            "n_list": 1024,
+            "nlist": 1024,
             "nprobe": 128,
         },
     ),
@@ -74,12 +74,25 @@ test_data = [
             "dim": 128,
             "k": 100,
             "metric_type": "L2",
-            "n_list": 1024,
+            "nlist": 1024,
             "nprobe": 128,
             "m": 4,
             "nbits": 8,
         },
     ),
+    (
+        "SCANN",
+        {
+            "dim": 128,
+            "k": 100,
+            "metric_type": "L2",
+            "nlist": 1024,
+            "nprobe": 128,
+            "m": 64,
+            "nbits": 4,
+            "reorder_k": 1000,
+        }
+    )
     (
         "HNSW",
         {
@@ -95,7 +108,7 @@ test_data = [
 
 
 @pytest.mark.parametrize("name,config", test_data)
-def test_index_with_sift(recall, error, name, config):
+def test_index_with_sift(recall, name, config):
     download_sift()
     xb = fvecs_read("/tmp/sift/sift_base.fvecs")
     xq = fvecs_read("/tmp/sift/sift_query.fvecs")

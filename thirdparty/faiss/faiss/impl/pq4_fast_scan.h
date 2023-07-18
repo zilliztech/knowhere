@@ -9,7 +9,8 @@
 
 #include <cstdint>
 #include <cstdlib>
-
+#include <knowhere/bitsetview.h>
+using knowhere::BitsetView;
 /** PQ4 SIMD packing and accumulation functions
  *
  * The basic kernel accumulates nq query vectors with bbs = nb * 2 * 16 vectors
