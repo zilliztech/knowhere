@@ -79,7 +79,6 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         auto igd = conf[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE].get<int32_t>();
         auto gd = conf[knowhere::indexparam::GRAPH_DEGREE].get<int32_t>();
 
-
         auto find_smallest_itopk = [&](float expected_recall) -> int32_t {
             conf[knowhere::meta::TOPK] = topk_;
             auto ds_ptr = knowhere::GenDataSet(nq_, dim_, xq_);
@@ -113,7 +112,8 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
             conf[knowhere::meta::TOPK] = topk_;
 
             printf("\n[%0.3f s] %s | %s | intermediate_graph_degree=%d, graph_degree=%d, itopk=%d, k=%d, R@=%.4f\n",
-                   get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(), igd, gd, itopk, topk_, expected_recall);
+                   get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(), igd, gd, itopk, topk_,
+                   expected_recall);
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
                 CALC_TIME_SPAN(task(conf, thread_num, nq_));
