@@ -73,7 +73,8 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         }
     }
 
-    void test_cagra(const knowhere::Json& cfg) {
+    void
+    test_cagra(const knowhere::Json& cfg) {
         auto conf = cfg;
         auto igd = conf[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE].get<int32_t>();
         auto gd = conf[knowhere::indexparam::GRAPH_DEGREE].get<int32_t>();
@@ -111,8 +112,8 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
             conf[knowhere::indexparam::ITOPK_SIZE] = itopk;
             conf[knowhere::meta::TOPK] = topk_;
 
-            printf("\n[%0.3f s] %s | %s | intermediate_graph_degree=%d, graph_degree=%d, k=%d, R@=%.4f\n", get_time_diff(),
-                   ann_test_name_.c_str(), index_type_.c_str(), igd, gd, topk_, expected_recall);
+            printf("\n[%0.3f s] %s | %s | intermediate_graph_degree=%d, graph_degree=%d, itopk=%d, k=%d, R@=%.4f\n",
+                   get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(), igd, gd, itopk, topk_, expected_recall);
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
                 CALC_TIME_SPAN(task(conf, thread_num, nq_));
@@ -325,7 +326,8 @@ TEST_F(Benchmark_float_qps, TEST_CAGRA) {
     for (auto gd : GRAPH_DEGREE_) {
         conf[knowhere::indexparam::GRAPH_DEGREE] = gd;
         for (auto igd : INTERMEDIATE_GRAPH_DEGREE_) {
-            if (igd < gd) continue;
+            if (igd < gd)
+                continue;
             conf[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE] = igd;
             std::string index_file_name = get_index_name({igd, gd});
             create_index(index_file_name, conf);
