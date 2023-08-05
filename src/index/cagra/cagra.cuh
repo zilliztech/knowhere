@@ -9,6 +9,48 @@
 
 namespace knowhere {
 
+namespace cagra_search_algo {
+auto static constexpr const SINGLE_CTA = "SINGLE_CTA";
+auto static constexpr const MULTI_CTA = "MULTI_CTA";
+auto static constexpr const MULTI_KERNEL = "MULTI_KERNEL";
+auto static constexpr const AUTO = "AUTO";
+}  // namespace cagra_search_algo
+
+namespace cagra_hash_mode {
+auto static constexpr const HASH = "HASH";
+auto static constexpr const SMALL = "SMALL";
+auto static constexpr const AUTO = "AUTO";
+}  // namespace cagra_hash_mode
+
+inline expected<raft::neighbors::experimental::cagra::search_algo>
+str_to_search_algo(std::string const& str) {
+    static const std::unordered_map<std::string, raft::neighbors::experimental::cagra::search_algo> name_map = {
+        {cagra_search_algo::SINGLE_CTA, raft::neighbors::experimental::cagra::search_algo::SINGLE_CTA},
+        {cagra_search_algo::MULTI_CTA, raft::neighbors::experimental::cagra::search_algo::MULTI_CTA},
+        {cagra_search_algo::MULTI_KERNEL, raft::neighbors::experimental::cagra::search_algo::MULTI_KERNEL},
+        {cagra_search_algo::AUTO, raft::neighbors::experimental::cagra::search_algo::AUTO},
+    };
+
+    auto it = name_map.find(str);
+    if (it == name_map.end())
+        return Status::invalid_args;
+    return it->second;
+}
+
+inline expected<raft::neighbors::experimental::cagra::hash_mode>
+str_to_hashmap_mode(std::string const& str) {
+    static const std::unordered_map<std::string, raft::neighbors::experimental::cagra::hash_mode> name_map = {
+        {cagra_hash_mode::SMALL, raft::neighbors::experimental::cagra::hash_mode::SMALL},
+        {cagra_hash_mode::HASH, raft::neighbors::experimental::cagra::hash_mode::HASH},
+        {cagra_hash_mode::AUTO, raft::neighbors::experimental::cagra::hash_mode::AUTO},
+    };
+
+    auto it = name_map.find(str);
+    if (it == name_map.end())
+        return Status::invalid_args;
+    return it->second;
+}
+
 namespace detail {
 struct device_setter {
     device_setter(int new_device)
@@ -117,7 +159,16 @@ class CagraIndexNode : public IndexNode {
             auto search_params = raft::neighbors::experimental::cagra::search_params{};
             search_params.max_queries = cagra_cfg.max_queries.value();
             search_params.itopk_size = cagra_cfg.itopk_size.value();
-
+            search_params.team_size = cagra_cfg.team_size.value();
+            search_params.algo = str_to_search_algo(cagra_cfg.algo.value()).value();
+            search_params.num_parents = cagra_cfg.search_width.value();
+            search_params.min_iterations = cagra_cfg.min_iterations.value();
+            search_params.max_iterations = cagra_cfg.max_iterations.value();
+            search_params.load_bit_length = cagra_cfg.load_bit_length.value();
+            search_params.thread_block_size = cagra_cfg.thread_block_size.value();
+            search_params.hashmap_mode = str_to_hashmap_mode(cagra_cfg.hashmap_mode.value()).value();
+            search_params.hashmap_min_bitlen = cagra_cfg.hashmap_min_bitlen.value();
+            search_params.hashmap_max_fill_rate = cagra_cfg.hashmap_max_fill_rate.value();
             auto ids_dev = raft::make_device_matrix<idx_type, idx_type>(res, rows, cagra_cfg.k.value());
             auto dis_dev = raft::make_device_matrix<float, idx_type>(res, rows, cagra_cfg.k.value());
             raft::neighbors::experimental::cagra::search(res, search_params, *gpu_index_,

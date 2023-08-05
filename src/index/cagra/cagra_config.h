@@ -24,6 +24,17 @@ class CagraConfig : public BaseConfig {
     CFG_INT itopk_size;
     CFG_LIST gpu_ids;
     CFG_INT max_queries;
+    CFG_STRING algo;
+    CFG_INT team_size;
+    CFG_INT search_width;
+    CFG_INT min_iterations;
+    CFG_INT max_iterations;
+    CFG_INT load_bit_length;
+    CFG_INT thread_block_size;
+    CFG_STRING hashmap_mode;
+    CFG_INT hashmap_min_bitlen;
+    CFG_FLOAT hashmap_max_fill_rate;
+
     KNOHWERE_DECLARE_CONFIG(CagraConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(k)
             .set_default(10)
@@ -52,6 +63,50 @@ class CagraConfig : public BaseConfig {
             })
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(max_queries).description("query batch size.").set_default(1).for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(algo)
+            .set_default("AUTO")
+            .description("Which search implementation to use.")
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(search_width)
+            .description("Number of graph nodes to select as the starting point in each search iteration.")
+            .set_default(1)
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(min_iterations)
+            .description("Lower limit of search iterations.")
+            .set_default(0)
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(max_iterations)
+            .description("Upper limit of search iterations. Auto select when 0.")
+            .set_default(0)
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(team_size)
+            .description("Number of threads used to calculate a single distance. 4, 8, 16, or 32.")
+            .set_default(0)
+            .set_range(0, 32)
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(load_bit_length)
+            .description("Bit length for reading the dataset vectors. 0, 64 or 128. Auto selection when 0.")
+            .set_default(0)
+            .set_range(0, 28)
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(thread_block_size)
+            .description("Thread block size. 0, 64, 128, 256, 512, 1024. Auto selection when 0.")
+            .set_default(0)
+            .set_range(0, 1024)
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(hashmap_mode)
+            .description("Hashmap type. Auto selection when AUTO.")
+            .set_default("AUTO")
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(hashmap_min_bitlen)
+            .description("Lower limit of hashmap bit length. More than 8..")
+            .set_default(0)
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(hashmap_max_fill_rate)
+            .description("Upper limit of hashmap fill rate. More than 0.1, less than 0.9.")
+            .set_default(0.5)
+            .set_range(0.1, 0.9)
+            .for_search();
     }
 };
 
