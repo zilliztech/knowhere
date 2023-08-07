@@ -32,12 +32,6 @@ class BruteForceConfig : public BaseConfig {};
 expected<DataSetPtr>
 BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                    const BitsetView& bitset) {
-    std::string metric_str = config[meta::METRIC_TYPE].get<std::string>();
-    bool is_cosine = IsMetricType(metric_str, metric::COSINE);
-    if (is_cosine) {
-        Normalize(*base_dataset);
-    }
-
     auto xb = base_dataset->GetTensor();
     auto nb = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
@@ -48,7 +42,8 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     BruteForceConfig cfg;
     RETURN_IF_ERROR(Config::Load(cfg, config, knowhere::SEARCH));
 
-    ASSIGN_OR_RETURN(faiss::MetricType, faiss_metric_type, Str2FaissMetricType(cfg.metric_type.value()));
+    std::string metric_str = cfg.metric_type.value();
+    ASSIGN_OR_RETURN(faiss::MetricType, faiss_metric_type, Str2FaissMetricType(metric_str));
 
     int topk = cfg.k.value();
     auto labels = new int64_t[nq * topk];
@@ -71,11 +66,13 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
                 }
                 case faiss::METRIC_INNER_PRODUCT: {
                     auto cur_query = (float*)xq + dim * index;
-                    if (is_cosine) {
-                        NormalizeVec(cur_query, dim);
-                    }
                     faiss::float_minheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
-                    faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, &buf, bitset);
+                    if (IsMetricType(metric_str, metric::COSINE)) {
+                        NormalizeVec(cur_query, dim);
+                        faiss::knn_cosine(cur_query, (const float*)xb, dim, 1, nb, &buf, bitset);
+                    } else {
+                        faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, &buf, bitset);
+                    }
                     break;
                 }
                 case faiss::METRIC_Jaccard: {
@@ -122,12 +119,6 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
 Status
 BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids, float* dis,
                           const Json& config, const BitsetView& bitset) {
-    std::string metric_str = config[meta::METRIC_TYPE].get<std::string>();
-    bool is_cosine = IsMetricType(metric_str, metric::COSINE);
-    if (is_cosine) {
-        Normalize(*base_dataset);
-    }
-
     auto xb = base_dataset->GetTensor();
     auto nb = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
@@ -138,17 +129,12 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     BruteForceConfig cfg;
     RETURN_IF_ERROR(Config::Load(cfg, config, knowhere::SEARCH));
 
-    auto metric_type = Str2FaissMetricType(cfg.metric_type.value());
-    if (!metric_type.has_value()) {
-        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
-        return Status::invalid_metric_type;
-    }
+    std::string metric_str = cfg.metric_type.value();
+    ASSIGN_OR_RETURN(faiss::MetricType, faiss_metric_type, Str2FaissMetricType(cfg.metric_type.value()));
 
     int topk = cfg.k.value();
     auto labels = ids;
     auto distances = dis;
-
-    auto faiss_metric_type = metric_type.value();
 
     auto pool = ThreadPool::GetGlobalThreadPool();
     std::vector<folly::Future<Status>> futs;
@@ -167,11 +153,13 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                 }
                 case faiss::METRIC_INNER_PRODUCT: {
                     auto cur_query = (float*)xq + dim * index;
-                    if (is_cosine) {
-                        NormalizeVec(cur_query, dim);
-                    }
                     faiss::float_minheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
-                    faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, &buf, bitset);
+                    if (IsMetricType(metric_str, metric::COSINE)) {
+                        NormalizeVec(cur_query, dim);
+                        faiss::knn_cosine(cur_query, (const float*)xb, dim, 1, nb, &buf, bitset);
+                    } else {
+                        faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, &buf, bitset);
+                    }
                     break;
                 }
                 case faiss::METRIC_Jaccard: {
@@ -220,12 +208,6 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
 expected<DataSetPtr>
 BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                         const BitsetView& bitset) {
-    std::string metric_str = config[meta::METRIC_TYPE].get<std::string>();
-    bool is_cosine = IsMetricType(metric_str, metric::COSINE);
-    if (is_cosine) {
-        Normalize(*base_dataset);
-    }
-
     auto xb = base_dataset->GetTensor();
     auto nb = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
@@ -236,11 +218,13 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     BruteForceConfig cfg;
     RETURN_IF_ERROR(Config::Load(cfg, config, knowhere::RANGE_SEARCH));
 
+    std::string metric_str = cfg.metric_type.value();
+    ASSIGN_OR_RETURN(faiss::MetricType, faiss_metric_type, Str2FaissMetricType(metric_str));
+
     auto radius = cfg.radius.value();
     bool is_ip = false;
     float range_filter = cfg.range_filter.value();
 
-    ASSIGN_OR_RETURN(faiss::MetricType, faiss_metric_type, Str2FaissMetricType(cfg.metric_type.value()));
     auto pool = ThreadPool::GetGlobalThreadPool();
 
     std::vector<std::vector<int64_t>> result_id_array(nq);
@@ -262,10 +246,13 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                 case faiss::METRIC_INNER_PRODUCT: {
                     is_ip = true;
                     auto cur_query = (float*)xq + dim * index;
-                    if (is_cosine) {
+                    if (IsMetricType(metric_str, metric::COSINE)) {
                         NormalizeVec(cur_query, dim);
+                        faiss::range_search_cosine(cur_query, (const float*)xb, dim, 1, nb, radius, &res, bitset);
+                    } else {
+                        faiss::range_search_inner_product(cur_query, (const float*)xb, dim, 1, nb, radius, &res,
+                                                          bitset);
                     }
-                    faiss::range_search_inner_product(cur_query, (const float*)xb, dim, 1, nb, radius, &res, bitset);
                     break;
                 }
                 case faiss::METRIC_Jaccard: {

@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include "simd/hook.h"
 
 #include <omp.h>
 
@@ -284,6 +285,44 @@ void exhaustive_L2sqr_seq(
     }
 }
 
+namespace {
+float fvec_cosine(const float* x, const float* y, size_t d) {
+    return fvec_inner_product(x, y, d) / sqrtf(fvec_norm_L2sqr(y, d));
+}
+} // namespace
+
+template <class ResultHandler>
+void exhaustive_cosine_seq(
+        const float* x,
+        const float* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        ResultHandler& res,
+        const BitsetView bitset) {
+    using SingleResultHandler = typename ResultHandler::SingleResultHandler;
+    int nt = std::min(int(nx), omp_get_max_threads());
+
+#pragma omp parallel num_threads(nt)
+    {
+        SingleResultHandler resi(res);
+#pragma omp for
+        for (int64_t i = 0; i < nx; i++) {
+            const float* x_i = x + i * d;
+            const float* y_j = y;
+            resi.begin(i);
+            for (size_t j = 0; j < ny; j++) {
+                if (bitset.empty() || !bitset.test(j)) {
+                    float disij = fvec_cosine(x_i, y_j, d);
+                    resi.add_result(disij, j);
+                }
+                y_j += d;
+            }
+            resi.end();
+        }
+    }
+}
+
 /** Find the nearest neighbors for nx queries in a set of ny vectors */
 template <class ResultHandler>
 void exhaustive_inner_product_blas(
@@ -415,6 +454,76 @@ void exhaustive_L2sqr_blas(
                     if (dis < 0)
                         dis = 0;
 
+                    *ip_line = dis;
+                    ip_line++;
+                }
+            }
+            res.add_results(j0, j1, ip_block.get(), bitset);
+        }
+        res.end_multiple();
+        InterruptCallback::check();
+    }
+}
+
+template <class ResultHandler>
+void exhaustive_cosine_blas(
+        const float* x,
+        const float* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        ResultHandler& res,
+        const BitsetView bitset = nullptr) {
+    // BLAS does not like empty matrices
+    if (nx == 0 || ny == 0)
+        return;
+
+    /* block sizes */
+    const size_t bs_x = distance_compute_blas_query_bs;
+    const size_t bs_y = distance_compute_blas_database_bs;
+    // const size_t bs_x = 16, bs_y = 16;
+    std::unique_ptr<float[]> ip_block(new float[bs_x * bs_y]);
+    std::unique_ptr<float[]> y_norms(new float[nx]);
+    std::unique_ptr<float[]> del2;
+
+    fvec_norms_L2(y_norms.get(), x, d, nx);
+
+    for (size_t i0 = 0; i0 < nx; i0 += bs_x) {
+        size_t i1 = i0 + bs_x;
+        if (i1 > nx)
+            i1 = nx;
+
+        res.begin_multiple(i0, i1);
+
+        for (size_t j0 = 0; j0 < ny; j0 += bs_y) {
+            size_t j1 = j0 + bs_y;
+            if (j1 > ny)
+                j1 = ny;
+            /* compute the actual dot products */
+            {
+                float one = 1, zero = 0;
+                FINTEGER nyi = j1 - j0, nxi = i1 - i0, di = d;
+                sgemm_("Transpose",
+                       "Not transpose",
+                       &nyi,
+                       &nxi,
+                       &di,
+                       &one,
+                       y + j0 * d,
+                       &di,
+                       x + i0 * d,
+                       &di,
+                       &zero,
+                       ip_block.get(),
+                       &nyi);
+            }
+#pragma omp parallel for
+            for (int64_t i = i0; i < i1; i++) {
+                float* ip_line = ip_block.get() + (i - i0) * (j1 - j0);
+
+                for (size_t j = j0; j < j1; j++) {
+                    float ip = *ip_line;
+                    float dis = ip / y_norms[j];
                     *ip_line = dis;
                     ip_line++;
                 }
@@ -577,6 +686,34 @@ void knn_L2sqr(
     }
 }
 
+void knn_cosine(
+        const float* x,
+        const float* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float_minheap_array_t* ha,
+        const BitsetView bitset) {
+    if (ha->k < distance_compute_min_k_reservoir) {
+        HeapResultHandler<CMin<float, int64_t>> res(
+                ha->nh, ha->val, ha->ids, ha->k);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_L2sqr_IP_seq(x, y, d, nx, ny, res, fvec_cosine, bitset);
+        } else {
+            exhaustive_cosine_blas(x, y, d, nx, ny, res, bitset);
+        }
+    } else {
+        ReservoirResultHandler<CMin<float, int64_t>> res(
+                ha->nh, ha->val, ha->ids, ha->k);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_L2sqr_IP_seq(
+                    x, y, d, nx, ny, res, fvec_inner_product, bitset);
+        } else {
+            exhaustive_cosine_blas(x, y, d, nx, ny, res, bitset);
+        }
+    }
+}
+
 struct NopDistanceCorrection {
     float operator()(float dis, size_t /*qno*/, size_t /*bno*/) const {
         return dis;
@@ -637,6 +774,23 @@ void range_search_inner_product(
         exhaustive_inner_product_seq(x, y, d, nx, ny, resh, bitset);
     } else {
         exhaustive_inner_product_blas(x, y, d, nx, ny, resh, bitset);
+    }
+}
+
+void range_search_cosine(
+        const float* x,
+        const float* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float radius,
+        RangeSearchResult* res,
+        const BitsetView bitset) {
+    RangeSearchResultHandler<CMin<float, int64_t>> resh(res, radius);
+    if (nx < distance_compute_blas_threshold) {
+        exhaustive_cosine_seq(x, y, d, nx, ny, resh, bitset);
+    } else {
+        exhaustive_cosine_blas(x, y, d, nx, ny, resh, bitset);
     }
 }
 
