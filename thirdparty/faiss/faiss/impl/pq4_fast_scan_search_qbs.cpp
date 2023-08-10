@@ -101,7 +101,7 @@ void accumulate_q_4step(
         bool skip_flag = false;
         if (!res.bitset.empty()) {  // we have filter here
             skip_flag = true;
-            for (int64_t jj = 0; jj < std::min(size_t(32), ntotal2 - j0);
+            for (int64_t jj = 0; jj < std::min<int64_t>(32, ntotal2 - j0);
                  jj++) {
                 auto real_idx = res.adjust_id(0, jj);
                 if (!res.bitset.test(real_idx)) {  // id is not filtered out, can not skip computing
