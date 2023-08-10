@@ -78,6 +78,8 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         auto conf = cfg;
         auto igd = conf[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE].get<int32_t>();
         auto gd = conf[knowhere::indexparam::GRAPH_DEGREE].get<int32_t>();
+        auto max_iterations = conf[knowhere::indexparam::MAX_ITERATIONS].get<int32_t>();
+        auto search_width = conf[knowhere::indexparam::SEARCH_WIDTH].get<int32_t>();
 
         auto find_smallest_itopk = [&](float expected_recall) -> int32_t {
             conf[knowhere::meta::TOPK] = topk_;
@@ -91,8 +93,10 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
 
                 auto result = index_.Search(*ds_ptr, conf, nullptr);
                 recall = CalcRecall(result.value()->GetIds(), nq_, topk_);
-                printf("[%0.3f s] iterate CAGRA param for recall %.4f: gd=%d, igd=%d, itopk=%4d, k=%d, R@=%.4f\n",
-                       get_time_diff(), expected_recall, gd, igd, itopk, topk_, recall);
+                printf(
+                    "[%0.3f s] iterate CAGRA param for recall %.4f: gd=%d, igd=%d, itopk=%d, k=%d, max_it=%d, sw=%d, "
+                    "R@=%.4f\n",
+                    get_time_diff(), expected_recall, gd, igd, itopk, topk_, max_iterations, search_width, recall);
                 std::fflush(stdout);
                 if (std::abs(recall - expected_recall) <= 0.0001) {
                     return itopk;
@@ -111,9 +115,11 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
             conf[knowhere::indexparam::ITOPK_SIZE] = itopk;
             conf[knowhere::meta::TOPK] = topk_;
 
-            printf("\n[%0.3f s] %s | %s | intermediate_graph_degree=%d, graph_degree=%d, itopk=%d, k=%d, R@=%.4f\n",
-                   get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(), igd, gd, itopk, topk_,
-                   expected_recall);
+            printf(
+                "\n[%0.3f s] %s | %s | intermediate_graph_degree=%d, graph_degree=%d, itopk=%d, k=%d, max_it=%d, "
+                "sw=%d, R@=%.4f\n",
+                get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(), igd, gd, itopk, topk_, max_iterations,
+                search_width, expected_recall);
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
                 CALC_TIME_SPAN(task(conf, thread_num, nq_));
@@ -247,6 +253,9 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
     // CAGRA index params
     const std::vector<int32_t> GRAPH_DEGREE_ = {16, 32, 64};
     const std::vector<int32_t> INTERMEDIATE_GRAPH_DEGREE_ = {16, 32, 64, 128};
+    // CAGRA search params
+    const std::vector<int32_t> CAGRA_SEARCH_WIDTH_ = {1, 2, 4};
+    const std::vector<int32_t> CAGRA_MAX_ITERATIONS_ = {0, 16, 32, 64};
 };
 
 TEST_F(Benchmark_float_qps, TEST_IVF_FLAT) {
@@ -331,7 +340,13 @@ TEST_F(Benchmark_float_qps, TEST_CAGRA) {
             conf[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE] = igd;
             std::string index_file_name = get_index_name({igd, gd});
             create_index(index_file_name, conf);
-            test_cagra(conf);
+            for (auto max_iterations : CAGRA_MAX_ITERATIONS_) {
+                for (auto search_width : CAGRA_SEARCH_WIDTH_) {
+                    conf[knowhere::indexparam::MAX_ITERATIONS] = max_iterations;
+                    conf[knowhere::indexparam::SEARCH_WIDTH] = search_width;
+                    test_cagra(conf);
+                }
+            }
         }
     }
 }

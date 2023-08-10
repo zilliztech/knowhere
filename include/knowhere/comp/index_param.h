@@ -79,6 +79,17 @@ constexpr const char* REORDER_K = "reorder_k";
 constexpr const char* INTERMEDIATE_GRAPH_DEGREE = "intermediate_graph_degree";
 constexpr const char* GRAPH_DEGREE = "graph_degree";
 constexpr const char* ITOPK_SIZE = "itopk_size";
+constexpr const char* MAX_QUERIES = "max_queries";
+constexpr const char* ALGO = "algo";
+constexpr const char* TEAM_SIZE = "team_size";
+constexpr const char* SEARCH_WIDTH = "search_width";
+constexpr const char* MIN_ITERATIONS = "min_iterations";
+constexpr const char* MAX_ITERATIONS = "max_iterations";
+constexpr const char* THREAD_BLOCK_SIZE = "thread_block_size";
+constexpr const char* HASHMAP_MODE = "hashmap_mode";
+constexpr const char* HASHMAP_MIN_BITLEN = "hashmap_min_bitlen";
+constexpr const char* HASHMAP_MAX_FILL_RATE = "hashmap_max_fill_rate";
+
 // HNSW Params
 constexpr const char* EFCONSTRUCTION = "efConstruction";
 constexpr const char* HNSW_M = "M";

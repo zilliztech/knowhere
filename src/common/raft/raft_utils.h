@@ -156,7 +156,8 @@ get_raft_resources(int device_id = get_current_device()) {
     if (iter == all_resources.end()) {
         auto scoped_device = device_setter{device_id};
         all_resources[device_id] = std::make_unique<raft::device_resources>(
-            get_gpu_resources().get_stream_view(), nullptr, rmm::mr::get_current_device_resource());
+            get_gpu_resources().get_stream_view(), nullptr,
+            std::shared_ptr<rmm::mr::device_memory_resource>(rmm::mr::get_current_device_resource()));
     }
     return *all_resources[device_id];
 }

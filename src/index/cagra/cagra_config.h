@@ -29,7 +29,6 @@ class CagraConfig : public BaseConfig {
     CFG_INT search_width;
     CFG_INT min_iterations;
     CFG_INT max_iterations;
-    CFG_INT load_bit_length;
     CFG_INT thread_block_size;
     CFG_STRING hashmap_mode;
     CFG_INT hashmap_min_bitlen;
@@ -83,11 +82,6 @@ class CagraConfig : public BaseConfig {
             .description("Number of threads used to calculate a single distance. 4, 8, 16, or 32.")
             .set_default(0)
             .set_range(0, 32)
-            .for_search();
-        KNOWHERE_CONFIG_DECLARE_FIELD(load_bit_length)
-            .description("Bit length for reading the dataset vectors. 0, 64 or 128. Auto selection when 0.")
-            .set_default(0)
-            .set_range(0, 28)
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(thread_block_size)
             .description("Thread block size. 0, 64, 128, 256, 512, 1024. Auto selection when 0.")
