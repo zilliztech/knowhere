@@ -31,7 +31,8 @@ TEST_CASE("Knowhere global config", "[init]") {
     knowhere::KnowhereConfig::SetClusteringType(knowhere::KnowhereConfig::ClusteringType::K_MEANS);
 
 #ifdef KNOWHERE_WITH_DISKANN
-    knowhere::KnowhereConfig::SetAioContextPool(128, 2048);
+    REQUIRE_FALSE(knowhere::KnowhereConfig::SetAioContextPool(0));
+    REQUIRE(knowhere::KnowhereConfig::SetAioContextPool(16));
 #endif
 
 #ifdef KNOWHERE_WITH_RAFT
