@@ -12,25 +12,13 @@
 #ifndef INDEX_H
 #define INDEX_H
 
+#include "knowhere/binaryset.h"
 #include "knowhere/config.h"
+#include "knowhere/dataset.h"
+#include "knowhere/expected.h"
 #include "knowhere/index_node.h"
-#include "knowhere/log.h"
-
-#ifdef NOT_COMPILE_FOR_SWIG
-#include "knowhere/prometheus_client.h"
-#endif
 
 namespace knowhere {
-
-inline Status
-LoadConfig(BaseConfig* cfg, const Json& json, knowhere::PARAM_TYPE param_type, const std::string& method,
-           std::string* const msg = nullptr) {
-    Json json_(json);
-    auto res = Config::FormatAndCheck(*cfg, json_, msg);
-    LOG_KNOWHERE_DEBUG_ << method << " config dump: " << json_.dump();
-    RETURN_IF_ERROR(res);
-    return Config::Load(*cfg, json_, param_type, msg);
-}
 
 template <typename T1>
 class Index {
@@ -128,143 +116,49 @@ class Index {
     }
 
     Status
-    Build(const DataSet& dataset, const Json& json) {
-        auto cfg = this->node->CreateConfig();
-        RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
-        RETURN_IF_ERROR(cfg->CheckAndAdjustForBuild());
-
-#ifdef NOT_COMPILE_FOR_SWIG
-        knowhere_build_count.Increment();
-#endif
-        return this->node->Build(dataset, *cfg);
-    }
+    Build(const DataSet& dataset, const Json& json);
 
     Status
-    Train(const DataSet& dataset, const Json& json) {
-        auto cfg = this->node->CreateConfig();
-        RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Train"));
-        return this->node->Train(dataset, *cfg);
-    }
+    Train(const DataSet& dataset, const Json& json);
 
     Status
-    Add(const DataSet& dataset, const Json& json) {
-        auto cfg = this->node->CreateConfig();
-        RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Add"));
-        return this->node->Add(dataset, *cfg);
-    }
+    Add(const DataSet& dataset, const Json& json);
 
     expected<DataSetPtr>
-    Search(const DataSet& dataset, const Json& json, const BitsetView& bitset) const {
-        auto cfg = this->node->CreateConfig();
-        std::string msg;
-        const Status load_status = LoadConfig(cfg.get(), json, knowhere::SEARCH, "Search", &msg);
-        if (load_status != Status::success) {
-            expected<DataSetPtr> ret(load_status);
-            ret << msg;
-            return ret;
-        }
-        const Status search_status = cfg->CheckAndAdjustForSearch(&msg);
-        if (search_status != Status::success) {
-            expected<DataSetPtr> ret(search_status);
-            ret << msg;
-            return ret;
-        }
-
-#ifdef NOT_COMPILE_FOR_SWIG
-        knowhere_search_count.Increment();
-#endif
-        return this->node->Search(dataset, *cfg, bitset);
-    }
+    Search(const DataSet& dataset, const Json& json, const BitsetView& bitset) const;
 
     expected<DataSetPtr>
-    RangeSearch(const DataSet& dataset, const Json& json, const BitsetView& bitset) const {
-        auto cfg = this->node->CreateConfig();
-        RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::RANGE_SEARCH, "RangeSearch"));
-        RETURN_IF_ERROR(cfg->CheckAndAdjustForRangeSearch());
-
-#ifdef NOT_COMPILE_FOR_SWIG
-        knowhere_range_search_count.Increment();
-#endif
-        return this->node->RangeSearch(dataset, *cfg, bitset);
-    }
+    RangeSearch(const DataSet& dataset, const Json& json, const BitsetView& bitset) const;
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSet& dataset) const {
-        return this->node->GetVectorByIds(dataset);
-    }
+    GetVectorByIds(const DataSet& dataset) const;
 
     bool
-    HasRawData(const std::string& metric_type) const {
-        return this->node->HasRawData(metric_type);
-    }
+    HasRawData(const std::string& metric_type) const;
 
     expected<DataSetPtr>
-    GetIndexMeta(const Json& json) const {
-        auto cfg = this->node->CreateConfig();
-        RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::FEDER, "GetIndexMeta"));
-        return this->node->GetIndexMeta(*cfg);
-    }
+    GetIndexMeta(const Json& json) const;
 
     Status
-    Serialize(BinarySet& binset) const {
-        return this->node->Serialize(binset);
-    }
+    Serialize(BinarySet& binset) const;
 
     Status
-    Deserialize(const BinarySet& binset, const Json& json = {}) {
-        Json json_(json);
-        auto cfg = this->node->CreateConfig();
-        {
-            auto res = Config::FormatAndCheck(*cfg, json_);
-            LOG_KNOWHERE_DEBUG_ << "Deserialize config dump: " << json_.dump();
-            if (res != Status::success) {
-                return res;
-            }
-        }
-        auto res = Config::Load(*cfg, json_, knowhere::DESERIALIZE);
-        if (res != Status::success) {
-            return res;
-        }
-        return this->node->Deserialize(binset, *cfg);
-    }
+    Deserialize(const BinarySet& binset, const Json& json = {});
 
     Status
-    DeserializeFromFile(const std::string& filename, const Json& json = {}) {
-        Json json_(json);
-        auto cfg = this->node->CreateConfig();
-        {
-            auto res = Config::FormatAndCheck(*cfg, json_);
-            LOG_KNOWHERE_DEBUG_ << "DeserializeFromFile config dump: " << json_.dump();
-            if (res != Status::success) {
-                return res;
-            }
-        }
-        auto res = Config::Load(*cfg, json_, knowhere::DESERIALIZE_FROM_FILE);
-        if (res != Status::success) {
-            return res;
-        }
-        return this->node->DeserializeFromFile(filename, *cfg);
-    }
+    DeserializeFromFile(const std::string& filename, const Json& json = {});
 
     int64_t
-    Dim() const {
-        return this->node->Dim();
-    }
+    Dim() const;
 
     int64_t
-    Size() const {
-        return this->node->Size();
-    }
+    Size() const;
 
     int64_t
-    Count() const {
-        return this->node->Count();
-    }
+    Count() const;
 
     std::string
-    Type() {
-        return this->node->Type();
-    }
+    Type() const;
 
     ~Index() {
         if (node == nullptr)
