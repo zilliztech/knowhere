@@ -22,13 +22,13 @@ auto static constexpr const SMALL = "SMALL";
 auto static constexpr const AUTO = "AUTO";
 }  // namespace cagra_hash_mode
 
-inline expected<raft::neighbors::experimental::cagra::search_algo>
+inline expected<raft::neighbors::cagra::search_algo>
 str_to_search_algo(std::string const& str) {
-    static const std::unordered_map<std::string, raft::neighbors::experimental::cagra::search_algo> name_map = {
-        {cagra_search_algo::SINGLE_CTA, raft::neighbors::experimental::cagra::search_algo::SINGLE_CTA},
-        {cagra_search_algo::MULTI_CTA, raft::neighbors::experimental::cagra::search_algo::MULTI_CTA},
-        {cagra_search_algo::MULTI_KERNEL, raft::neighbors::experimental::cagra::search_algo::MULTI_KERNEL},
-        {cagra_search_algo::AUTO, raft::neighbors::experimental::cagra::search_algo::AUTO},
+    static const std::unordered_map<std::string, raft::neighbors::cagra::search_algo> name_map = {
+        {cagra_search_algo::SINGLE_CTA, raft::neighbors::cagra::search_algo::SINGLE_CTA},
+        {cagra_search_algo::MULTI_CTA, raft::neighbors::cagra::search_algo::MULTI_CTA},
+        {cagra_search_algo::MULTI_KERNEL, raft::neighbors::cagra::search_algo::MULTI_KERNEL},
+        {cagra_search_algo::AUTO, raft::neighbors::cagra::search_algo::AUTO},
     };
 
     auto it = name_map.find(str);
@@ -37,12 +37,12 @@ str_to_search_algo(std::string const& str) {
     return it->second;
 }
 
-inline expected<raft::neighbors::experimental::cagra::hash_mode>
+inline expected<raft::neighbors::cagra::hash_mode>
 str_to_hashmap_mode(std::string const& str) {
-    static const std::unordered_map<std::string, raft::neighbors::experimental::cagra::hash_mode> name_map = {
-        {cagra_hash_mode::SMALL, raft::neighbors::experimental::cagra::hash_mode::SMALL},
-        {cagra_hash_mode::HASH, raft::neighbors::experimental::cagra::hash_mode::HASH},
-        {cagra_hash_mode::AUTO, raft::neighbors::experimental::cagra::hash_mode::AUTO},
+    static const std::unordered_map<std::string, raft::neighbors::cagra::hash_mode> name_map = {
+        {cagra_hash_mode::SMALL, raft::neighbors::cagra::hash_mode::SMALL},
+        {cagra_hash_mode::HASH, raft::neighbors::cagra::hash_mode::HASH},
+        {cagra_hash_mode::AUTO, raft::neighbors::cagra::hash_mode::AUTO},
     };
 
     auto it = name_map.find(str);
@@ -73,7 +73,7 @@ struct device_setter {
 
 class CagraIndexNode : public IndexNode {
     using idx_type = std::int64_t;
-    using cagra_index = raft::neighbors::experimental::cagra::index<float, idx_type>;
+    using cagra_index = raft::neighbors::cagra::index<float, idx_type>;
 
  public:
     CagraIndexNode(const Object& object) : devs_{}, gpu_index_{} {
@@ -108,7 +108,7 @@ class CagraIndexNode : public IndexNode {
             auto scoped_device = raft_utils::device_setter{*cagra_cfg.gpu_ids.value().begin()};
             raft_utils::init_gpu_resources();
 
-            auto build_params = raft::neighbors::experimental::cagra::index_params{};
+            auto build_params = raft::neighbors::cagra::index_params{};
             build_params.intermediate_graph_degree = cagra_cfg.intermediate_graph_degree.value();
             build_params.graph_degree = cagra_cfg.graph_degree.value();
             build_params.metric = metric.value();
@@ -119,8 +119,8 @@ class CagraIndexNode : public IndexNode {
             auto data_gpu = raft::make_device_matrix<float, idx_type>(res, rows, dim);
             RAFT_CUDA_TRY(cudaMemcpyAsync(data_gpu.data_handle(), data, data_gpu.size() * sizeof(float),
                                           cudaMemcpyDefault, res.get_stream().value()));
-            gpu_index_ = raft::neighbors::experimental::cagra::build<float, idx_type>(
-                res, build_params, raft::make_const_mdspan(data_gpu.view()));
+            gpu_index_ = raft::neighbors::cagra::build<float, idx_type>(res, build_params,
+                                                                        raft::make_const_mdspan(data_gpu.view()));
             this->dim_ = dim;
             this->counts_ = rows;
             res.sync_stream();
@@ -156,24 +156,22 @@ class CagraIndexNode : public IndexNode {
             auto data_gpu = raft::make_device_matrix<float, idx_type>(res, rows, dim);
             raft::copy(data_gpu.data_handle(), data, data_gpu.size(), res.get_stream());
 
-            auto search_params = raft::neighbors::experimental::cagra::search_params{};
+            auto search_params = raft::neighbors::cagra::search_params{};
             search_params.max_queries = cagra_cfg.max_queries.value();
             search_params.itopk_size = cagra_cfg.itopk_size.value();
             search_params.team_size = cagra_cfg.team_size.value();
             search_params.algo = str_to_search_algo(cagra_cfg.algo.value()).value();
-            search_params.num_parents = cagra_cfg.search_width.value();
+            search_params.search_width = cagra_cfg.search_width.value();
             search_params.min_iterations = cagra_cfg.min_iterations.value();
             search_params.max_iterations = cagra_cfg.max_iterations.value();
-            search_params.load_bit_length = cagra_cfg.load_bit_length.value();
             search_params.thread_block_size = cagra_cfg.thread_block_size.value();
             search_params.hashmap_mode = str_to_hashmap_mode(cagra_cfg.hashmap_mode.value()).value();
             search_params.hashmap_min_bitlen = cagra_cfg.hashmap_min_bitlen.value();
             search_params.hashmap_max_fill_rate = cagra_cfg.hashmap_max_fill_rate.value();
             auto ids_dev = raft::make_device_matrix<idx_type, idx_type>(res, rows, cagra_cfg.k.value());
             auto dis_dev = raft::make_device_matrix<float, idx_type>(res, rows, cagra_cfg.k.value());
-            raft::neighbors::experimental::cagra::search(res, search_params, *gpu_index_,
-                                                         raft::make_const_mdspan(data_gpu.view()), ids_dev.view(),
-                                                         dis_dev.view());
+            raft::neighbors::cagra::search(res, search_params, *gpu_index_, raft::make_const_mdspan(data_gpu.view()),
+                                           ids_dev.view(), dis_dev.view());
 
             raft::copy(ids.get(), ids_dev.data_handle(), output_size, res.get_stream());
             raft::copy(dis.get(), dis_dev.data_handle(), output_size, res.get_stream());
@@ -221,7 +219,7 @@ class CagraIndexNode : public IndexNode {
         auto scoped_device = raft_utils::device_setter{devs_[0]};
         auto& res = raft_utils::get_raft_resources();
 
-        raft::neighbors::experimental::cagra::serialize<float, idx_type>(res, os, *gpu_index_);
+        raft::neighbors::cagra::serialize<float, idx_type>(res, os, *gpu_index_);
 
         os.flush();
         std::shared_ptr<uint8_t[]> index_binary(new (std::nothrow) uint8_t[buf.str().size()]);
@@ -251,7 +249,7 @@ class CagraIndexNode : public IndexNode {
         raft_utils::init_gpu_resources();
         auto& res = raft_utils::get_raft_resources();
 
-        auto index_ = raft::neighbors::experimental::cagra::deserialize<float, idx_type>(res, is);
+        auto index_ = raft::neighbors::cagra::deserialize<float, idx_type>(res, is);
         is.sync();
         gpu_index_ = cagra_index(std::move(index_));
 
