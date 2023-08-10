@@ -36,6 +36,7 @@ typedef int FileHandle;
 #include "diskann/index.h"
 
 namespace diskann {
+  constexpr size_t   MAX_N_SECTOR_READS = 256;
   const size_t   MAX_PQ_TRAINING_SET_SIZE = 256000;
   const size_t   MAX_SAMPLE_POINTS_FOR_WARMUP = 100000;
   const double   PQ_TRAINING_SET_FRACTION = 0.1;

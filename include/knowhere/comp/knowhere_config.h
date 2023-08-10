@@ -15,6 +15,10 @@
 #include <string>
 #include <vector>
 
+#ifdef KNOWHERE_WITH_DISKANN
+#include "diskann/aio_context_pool.h"
+#endif
+
 namespace knowhere {
 
 class KnowhereConfig {
@@ -71,15 +75,14 @@ class KnowhereConfig {
     SetClusteringType(const ClusteringType clustering_type);
 
     /**
-     * The numebr of maximum parallel disk reads per thread. It should be set linearly proportional to `beam_width`.
-     * Suggested ratio of this and `beam_width` is 2:1.
-     * On Linux, the default limit of `aio-max-nr` is 65536, so the product of `num_threads` and `aio_maxnr` should
-     * not exceed this value.
-     * You can type `sudo sysctl -a | grep fs.aio-max-nr` on your terminal to see what is your default limit.
-     * If you want to raise the default limit, you can type `sudo sysctl -w fs.aio-max-nr=X` on your terminal.
+     * The numebr of maximum parallel disk reads per thread.
+     * On Linux, the default limit of `aio-max-nr` is 65536, so the product of `num_threads` and `max_events` (default
+     * 128) should not exceed this value. You can type `sudo sysctl -a | grep fs.aio-max-nr` on your terminal to see
+     * what is your default limit. If you want to raise the default limit, you can type `sudo sysctl -w fs.aio-max-nr=X`
+     * on your terminal. This function returns true if validation passes. Otherwise, it returns false.
      */
-    static void
-    SetAioContextPool(size_t num_ctx, size_t max_events);
+    static bool
+    SetAioContextPool(size_t num_ctx);
 
     /**
      * init GPU Resource

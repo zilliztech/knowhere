@@ -8,14 +8,12 @@
 #include <condition_variable>
 #include "utils.h"
 #include "concurrent_queue.h"
+#include "aux_utils.h"
+#include "diskann/ann_exception.h"
 
-namespace {
-  constexpr size_t default_max_nr = 65536;
-  constexpr size_t default_max_events = 256; // sync this with diskann MAX_N_SECTOR_READS
-  const size_t     default_pool_size =
-      std::min(size_t(std::thread::hardware_concurrency() * 10),
-               default_max_nr / default_max_events);
-}  // namespace
+constexpr size_t default_max_nr = 65536;
+constexpr size_t default_max_events = diskann::MAX_N_SECTOR_READS / 2;
+constexpr size_t default_pool_size = default_max_nr / default_max_events;
 
 class AioContextPool {
  public:
@@ -53,22 +51,27 @@ class AioContextPool {
     return ret;
   }
 
-  static void InitGlobalAioPool(size_t num_ctx, size_t max_events) {
+  static bool InitGlobalAioPool(size_t num_ctx, size_t max_events) {
     if (num_ctx <= 0) {
       LOG(ERROR) << "num_ctx should be bigger than 0";
-      return;
+      return false;
+    }
+    if (max_events > default_max_events) {
+      LOG(ERROR) << "max_events " << max_events << " should not be larger than " << default_max_events;
+      return false;
     }
     if (global_aio_pool_size == 0) {
       std::scoped_lock lk(global_aio_pool_mut);
       if (global_aio_pool_size == 0) {
         global_aio_pool_size = num_ctx;
         global_aio_max_events = max_events;
-        return;
+        return true;
       }
     }
     LOG(WARNING)
         << "Global AioContextPool has already been inialized with context num: "
         << global_aio_pool_size;
+        return true;
   }
 
   static std::shared_ptr<AioContextPool> GetGlobalAioPool() {

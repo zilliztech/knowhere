@@ -1548,7 +1548,9 @@ namespace diskann {
       data = this->thread_data.pop();
     }
 
-    const size_t batch_size = std::min(MAX_N_SECTOR_READS / 2UL, sectors_to_visit.size());
+    const size_t batch_size =
+        std::min(AioContextPool::GetGlobalAioPool()->max_events_per_ctx(),
+                 std::min(MAX_N_SECTOR_READS / 2UL, sectors_to_visit.size()));
     const size_t half_buf_idx = MAX_N_SECTOR_READS / 2 * read_len_for_node;
     char *sector_scratch = data.scratch.sector_scratch;
     std::vector<AlignedRead> frontier_read_reqs;

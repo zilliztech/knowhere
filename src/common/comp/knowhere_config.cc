@@ -26,9 +26,6 @@
 #ifdef KNOWHERE_WITH_RAFT
 #include "common/raft/raft_utils.h"
 #endif
-#ifdef KNOWHERE_WITH_DISKANN
-#include "diskann/aio_context_pool.h"
-#endif
 
 namespace knowhere {
 
@@ -127,11 +124,12 @@ KnowhereConfig::SetClusteringType(const ClusteringType clustering_type) {
     }
 }
 
-void
-KnowhereConfig::SetAioContextPool(size_t num_ctx, size_t max_events) {
+bool
+KnowhereConfig::SetAioContextPool(size_t num_ctx) {
 #ifdef KNOWHERE_WITH_DISKANN
-    AioContextPool::InitGlobalAioPool(num_ctx, max_events);
+    return AioContextPool::InitGlobalAioPool(num_ctx, default_max_events);
 #endif
+    return true;
 }
 
 void
