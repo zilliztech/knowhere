@@ -41,6 +41,7 @@ typedef unsigned int tableint;
 typedef unsigned int linklistsizeint;
 constexpr float kHnswSearchKnnBFThreshold = 0.93f;
 constexpr float kHnswSearchRangeBFThreshold = 0.97f;
+constexpr float kAlpha = 0.15f;
 
 enum Metric {
     L2 = 0,
@@ -330,6 +331,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
 
         visited[ep_id] = true;
+        float accumulative_alpha = 0.0f;
         while (retset.has_next()) {
             auto [u, d, s] = retset.pop();
             tableint* list = (tableint*)get_linklist0(u);
@@ -355,15 +357,21 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     continue;
                 }
                 visited[v] = true;
+                int status = Neighbor::kValid;
+                if (has_deletions && bitset.test((int64_t)v)) {
+                    status = Neighbor::kInvalid;
+
+                    accumulative_alpha += kAlpha;
+                    if (accumulative_alpha < 1.0f) {
+                        continue;
+                    }
+                    accumulative_alpha -= 1.0f;
+                }
                 dist_t dist = calcDistance(data_point, v);
                 if (feder_result != nullptr) {
                     feder_result->visit_info_.AddVisitRecord(0, u, v, dist);
                     feder_result->id_set_.insert(u);
                     feder_result->id_set_.insert(v);
-                }
-                int status = Neighbor::kValid;
-                if (has_deletions && bitset.test((int64_t)v)) {
-                    status = Neighbor::kInvalid;
                 }
 
                 Neighbor nn(v, dist, status);
