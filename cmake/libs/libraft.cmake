@@ -13,8 +13,21 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
+set(RAPIDS_VERSION 23.08)
+set(RAFT_VERSION "${RAPIDS_VERSION}")
+set(RAFT_FORK "rapidsai")
+set(RAFT_PINNED_TAG "branch-${RAPIDS_VERSION}")
+
 add_definitions(-DKNOWHERE_WITH_RAFT)
-include(cmake/utils/fetch_rapids.cmake)
+
+if(NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/RAPIDS.cmake)
+  file(
+    DOWNLOAD
+    https://raw.githubusercontent.com/rapidsai/rapids-cmake/branch-${RAPIDS_VERSION}/RAPIDS.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/RAPIDS.cmake)
+endif()
+include(${CMAKE_CURRENT_BINARY_DIR}/RAPIDS.cmake)
+
 include(rapids-cpm)  # Dependency tracking
 include(rapids-cuda) # Common CMake CUDA logic
 
@@ -22,11 +35,6 @@ rapids_cpm_init()
 
 set(CMAKE_CUDA_FLAGS
     "${CMAKE_CUDA_FLAGS} --expt-extended-lambda --expt-relaxed-constexpr")
-
-set(RAPIDS_VERSION 23.08)
-set(RAFT_VERSION "${RAPIDS_VERSION}")
-set(RAFT_FORK "rapidsai")
-set(RAFT_PINNED_TAG "branch-${RAPIDS_VERSION}")
 
 function(find_and_configure_raft)
   set(oneValueArgs VERSION FORK PINNED_TAG)
