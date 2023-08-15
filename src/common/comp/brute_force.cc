@@ -44,6 +44,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
 
     std::string metric_str = cfg.metric_type.value();
     ASSIGN_OR_RETURN(faiss::MetricType, faiss_metric_type, Str2FaissMetricType(metric_str));
+    bool is_cosine = IsMetricType(metric_str, metric::COSINE);
 
     int topk = cfg.k.value();
     auto labels = new int64_t[nq * topk];
@@ -65,11 +66,11 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
                     break;
                 }
                 case faiss::METRIC_INNER_PRODUCT: {
-                    auto cur_query = (float*)xq + dim * index;
+                    auto cur_query = (const float*)xq + dim * index;
                     faiss::float_minheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
-                    if (IsMetricType(metric_str, metric::COSINE)) {
-                        NormalizeVec(cur_query, dim);
-                        faiss::knn_cosine(cur_query, (const float*)xb, dim, 1, nb, &buf, bitset);
+                    if (is_cosine) {
+                        auto copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
+                        faiss::knn_cosine(copied_query.get(), (const float*)xb, dim, 1, nb, &buf, bitset);
                     } else {
                         faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, &buf, bitset);
                     }
@@ -131,6 +132,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
 
     std::string metric_str = cfg.metric_type.value();
     ASSIGN_OR_RETURN(faiss::MetricType, faiss_metric_type, Str2FaissMetricType(cfg.metric_type.value()));
+    bool is_cosine = IsMetricType(metric_str, metric::COSINE);
 
     int topk = cfg.k.value();
     auto labels = ids;
@@ -152,11 +154,11 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                     break;
                 }
                 case faiss::METRIC_INNER_PRODUCT: {
-                    auto cur_query = (float*)xq + dim * index;
+                    auto cur_query = (const float*)xq + dim * index;
                     faiss::float_minheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
-                    if (IsMetricType(metric_str, metric::COSINE)) {
-                        NormalizeVec(cur_query, dim);
-                        faiss::knn_cosine(cur_query, (const float*)xb, dim, 1, nb, &buf, bitset);
+                    if (is_cosine) {
+                        auto copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
+                        faiss::knn_cosine(copied_query.get(), (const float*)xb, dim, 1, nb, &buf, bitset);
                     } else {
                         faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, &buf, bitset);
                     }
@@ -220,6 +222,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
 
     std::string metric_str = cfg.metric_type.value();
     ASSIGN_OR_RETURN(faiss::MetricType, faiss_metric_type, Str2FaissMetricType(metric_str));
+    bool is_cosine = IsMetricType(metric_str, metric::COSINE);
 
     auto radius = cfg.radius.value();
     bool is_ip = false;
@@ -245,10 +248,11 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                 }
                 case faiss::METRIC_INNER_PRODUCT: {
                     is_ip = true;
-                    auto cur_query = (float*)xq + dim * index;
-                    if (IsMetricType(metric_str, metric::COSINE)) {
-                        NormalizeVec(cur_query, dim);
-                        faiss::range_search_cosine(cur_query, (const float*)xb, dim, 1, nb, radius, &res, bitset);
+                    auto cur_query = (const float*)xq + dim * index;
+                    if (is_cosine) {
+                        auto copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
+                        faiss::range_search_cosine(copied_query.get(), (const float*)xb, dim, 1, nb, radius, &res,
+                                                   bitset);
                     } else {
                         faiss::range_search_inner_product(cur_query, (const float*)xb, dim, 1, nb, radius, &res,
                                                           bitset);

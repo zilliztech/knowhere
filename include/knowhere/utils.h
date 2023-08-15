@@ -35,6 +35,9 @@ NormalizeVecs(float* x, size_t rows, int32_t dim);
 extern void
 Normalize(const DataSet& dataset);
 
+std::unique_ptr<float[]>
+CopyAndNormalizeFloatVec(const float* x, int32_t dim);
+
 constexpr inline uint64_t seed = 0xc70f6907UL;
 
 inline uint64_t

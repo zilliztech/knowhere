@@ -126,7 +126,7 @@ class HnswIndexNode : public IndexNode {
         for (int i = 0; i < nq; ++i) {
             futs.emplace_back(pool_->push([&, idx = i]() {
                 auto single_query = (const char*)xq + idx * index_->data_size_;
-                auto rst = index_->searchKnn((void*)single_query, k, bitset, &param, feder_result);
+                auto rst = index_->searchKnn(single_query, k, bitset, &param, feder_result);
                 size_t rst_size = rst.size();
                 auto p_single_dis = p_dist + idx * k;
                 auto p_single_id = p_id + idx * k;
@@ -200,7 +200,7 @@ class HnswIndexNode : public IndexNode {
         for (int64_t i = 0; i < nq; ++i) {
             futs.emplace_back(pool_->push([&, idx = i]() {
                 auto single_query = (const char*)xq + idx * index_->data_size_;
-                auto rst = index_->searchRange((void*)single_query, radius_for_calc, bitset, &param, feder_result);
+                auto rst = index_->searchRange(single_query, radius_for_calc, bitset, &param, feder_result);
                 auto elem_cnt = rst.size();
                 result_dist_array[idx].resize(elem_cnt);
                 result_id_array[idx].resize(elem_cnt);

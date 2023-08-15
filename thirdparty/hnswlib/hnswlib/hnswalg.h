@@ -1136,7 +1136,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     };
 
     std::vector<std::pair<dist_t, labeltype>>
-    searchKnnBF(void* query_data, size_t k, const knowhere::BitsetView bitset) const {
+    searchKnnBF(const void* query_data, size_t k, const knowhere::BitsetView bitset) const {
         knowhere::ResultMaxHeap<dist_t, labeltype> max_heap(k);
         for (labeltype id = 0; id < cur_element_count; ++id) {
             if (!bitset.test(id)) {
@@ -1154,14 +1154,18 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
     std::vector<std::pair<dist_t, labeltype>>
-    searchKnn(void* query_data, size_t k, const knowhere::BitsetView bitset, const SearchParam* param = nullptr,
+    searchKnn(const void* query_data, size_t k, const knowhere::BitsetView bitset, const SearchParam* param = nullptr,
               const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
         if (cur_element_count == 0)
             return {};
 
+        size_t dim = *(size_t*)dist_func_param_;
+
         // do normalize for COSINE metric type
+        std::unique_ptr<float[]> query_data_norm;
         if (metric_type_ == Metric::COSINE) {
-            knowhere::NormalizeVec((float*)query_data, *((size_t*)dist_func_param_));
+            query_data_norm = knowhere::CopyAndNormalizeFloatVec((const float*)query_data, dim);
+            query_data = query_data_norm.get();
         }
 
         // do bruteforce search when delete rate high
@@ -1177,9 +1181,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         tableint currObj = enterpoint_node_;
         uint64_t vec_hash;
         if (metric_type_ == Metric::HAMMING || metric_type_ == Metric::JACCARD) {
-            vec_hash = knowhere::hash_binary_vec((const uint8_t*)query_data, *(size_t*)dist_func_param_);
+            vec_hash = knowhere::hash_binary_vec((const uint8_t*)query_data, dim);
         } else {
-            vec_hash = knowhere::hash_vec((const float*)query_data, *(size_t*)dist_func_param_);
+            vec_hash = knowhere::hash_vec((const float*)query_data, dim);
         }
         // for tuning, do not use cache
         if (param->for_tuning || !lru_cache.try_get(vec_hash, currObj)) {
@@ -1244,7 +1248,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     };
 
     std::vector<std::pair<dist_t, labeltype>>
-    searchRangeBF(void* query_data, float radius, const knowhere::BitsetView bitset) const {
+    searchRangeBF(const void* query_data, float radius, const knowhere::BitsetView bitset) const {
         std::vector<std::pair<dist_t, labeltype>> result;
         for (labeltype id = 0; id < cur_element_count; ++id) {
             if (!bitset.test(id)) {
@@ -1258,15 +1262,20 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
     std::vector<std::pair<dist_t, labeltype>>
-    searchRange(void* query_data, float radius, const knowhere::BitsetView bitset, const SearchParam* param = nullptr,
+    searchRange(const void* query_data, float radius, const knowhere::BitsetView bitset,
+                const SearchParam* param = nullptr,
                 const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
         if (cur_element_count == 0) {
             return {};
         }
 
+        size_t dim = *((size_t*)dist_func_param_);
+
         // do normalize for COSINE metric type
+        std::unique_ptr<float[]> query_data_norm;
         if (metric_type_ == Metric::COSINE) {
-            knowhere::NormalizeVec((float*)query_data, *((size_t*)dist_func_param_));
+            query_data_norm = knowhere::CopyAndNormalizeFloatVec((const float*)query_data, dim);
+            query_data = query_data_norm.get();
         }
 
         // do bruteforce range search when delete rate high
@@ -1282,9 +1291,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         tableint currObj = enterpoint_node_;
         uint64_t vec_hash;
         if (metric_type_ == Metric::HAMMING || metric_type_ == Metric::JACCARD) {
-            vec_hash = knowhere::hash_binary_vec((const uint8_t*)query_data, *(size_t*)dist_func_param_);
+            vec_hash = knowhere::hash_binary_vec((const uint8_t*)query_data, dim);
         } else {
-            vec_hash = knowhere::hash_vec((const float*)query_data, *(size_t*)dist_func_param_);
+            vec_hash = knowhere::hash_vec((const float*)query_data, dim);
         }
         // for tuning, do not use cache
         if (param->for_tuning || !lru_cache.try_get(vec_hash, currObj)) {
