@@ -11,6 +11,7 @@
 
 #include "knowhere/utils.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 
@@ -55,6 +56,14 @@ Normalize(const DataSet& dataset) {
     for (int32_t i = 0; i < rows; i++) {
         NormalizeVec(data + i * dim, dim);
     }
+}
+
+std::unique_ptr<float[]>
+CopyAndNormalizeFloatVec(const float* x, int32_t dim) {
+    auto x_norm = std::make_unique<float[]>(dim);
+    std::copy_n(x, dim, x_norm.get());
+    NormalizeVec(x_norm.get(), dim);
+    return x_norm;
 }
 
 }  // namespace knowhere

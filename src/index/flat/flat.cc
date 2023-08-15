@@ -72,11 +72,7 @@ class FlatIndexNode : public IndexNode {
 
         DataSetPtr results = std::make_shared<DataSet>();
         const FlatConfig& f_cfg = static_cast<const FlatConfig&>(cfg);
-
-        // do normalize for COSINE metric type
-        if (IsMetricType(f_cfg.metric_type.value(), knowhere::metric::COSINE)) {
-            Normalize(dataset);
-        }
+        bool is_cosine = IsMetricType(f_cfg.metric_type.value(), knowhere::metric::COSINE);
 
         auto k = f_cfg.k.value();
         auto nq = dataset.GetRows();
@@ -97,7 +93,13 @@ class FlatIndexNode : public IndexNode {
                     auto cur_ids = ids + k * index;
                     auto cur_dis = distances + k * index;
                     if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
-                        index_->search(1, (const float*)x + index * dim, k, cur_dis, cur_ids, bitset);
+                        auto cur_query = (const float*)x + dim * index;
+                        std::unique_ptr<float[]> copied_query = nullptr;
+                        if (is_cosine) {
+                            copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
+                            cur_query = copied_query.get();
+                        }
+                        index_->search(1, cur_query, k, cur_dis, cur_ids, bitset);
                     }
                     if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
                         auto cur_i_dis = reinterpret_cast<int32_t*>(cur_dis);
@@ -131,11 +133,7 @@ class FlatIndexNode : public IndexNode {
         }
 
         const FlatConfig& f_cfg = static_cast<const FlatConfig&>(cfg);
-
-        // do normalize for COSINE metric type
-        if (IsMetricType(f_cfg.metric_type.value(), knowhere::metric::COSINE)) {
-            Normalize(dataset);
-        }
+        bool is_cosine = IsMetricType(f_cfg.metric_type.value(), knowhere::metric::COSINE);
 
         auto nq = dataset.GetRows();
         auto xq = dataset.GetTensor();
@@ -162,7 +160,13 @@ class FlatIndexNode : public IndexNode {
                     ThreadPool::ScopedOmpSetter setter(1);
                     faiss::RangeSearchResult res(1);
                     if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
-                        index_->range_search(1, (const float*)xq + index * dim, radius, &res, bitset);
+                        auto cur_query = (const float*)xq + dim * index;
+                        std::unique_ptr<float[]> copied_query = nullptr;
+                        if (is_cosine) {
+                            copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
+                            cur_query = copied_query.get();
+                        }
+                        index_->range_search(1, cur_query, radius, &res, bitset);
                     }
                     if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
                         index_->range_search(1, (const uint8_t*)xq + index * dim / 8, radius, &res, bitset);
