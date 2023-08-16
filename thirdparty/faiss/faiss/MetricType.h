@@ -20,20 +20,20 @@ namespace faiss {
 enum MetricType {
     METRIC_INNER_PRODUCT = 0, ///< maximum inner product search
     METRIC_L2 = 1,            ///< squared L2 search
-    METRIC_L1,                ///< L1 (aka cityblock)
-    METRIC_Linf,              ///< infinity distance
-    METRIC_Lp,                ///< L_p distance, p is given by a faiss::Index
+    METRIC_L1 = 2,            ///< L1 (aka cityblock)
+    METRIC_Linf = 3,          ///< infinity distance
+    METRIC_Lp = 4,            ///< L_p distance, p is given by a faiss::Index
                               /// metric_arg
 
-    METRIC_Jaccard,
-    METRIC_Hamming,
-    METRIC_Substructure,       ///< Tversky case alpha = 0, beta = 1
-    METRIC_Superstructure,     ///< Tversky case alpha = 1, beta = 0
+    METRIC_Jaccard = 5,
+    METRIC_Hamming = 7,
+    METRIC_Substructure = 8,   ///< Tversky case alpha = 0, beta = 1
+    METRIC_Superstructure = 9, ///< Tversky case alpha = 1, beta = 0
 
     /// some additional metrics defined in scipy.spatial.distance
     METRIC_Canberra = 20,
-    METRIC_BrayCurtis,
-    METRIC_JensenShannon,
+    METRIC_BrayCurtis = 21,
+    METRIC_JensenShannon = 22,
 };
 
 } // namespace faiss
