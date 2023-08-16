@@ -78,6 +78,7 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
 
 #ifdef NOT_COMPILE_FOR_SWIG
     knowhere_search_count.Increment();
+    knowhere_search_topk.Observe(cfg->k.value());
 #endif
     return this->node->Search(dataset, *cfg, bitset);
 }
