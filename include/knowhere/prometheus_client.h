@@ -77,5 +77,6 @@ extern const std::unique_ptr<PrometheusClient> prometheusClient;
 DECLARE_PROMETHEUS_COUNTER(knowhere_build_count);
 DECLARE_PROMETHEUS_COUNTER(knowhere_search_count);
 DECLARE_PROMETHEUS_COUNTER(knowhere_range_search_count);
+DECLARE_PROMETHEUS_HISTOGRAM(knowhere_search_topk);
 
 }  // namespace knowhere
