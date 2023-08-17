@@ -643,7 +643,7 @@ namespace diskann {
       return;
     }
 
-    auto thread_pool = knowhere::ThreadPool::GetGlobalThreadPool();
+    auto thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
 
     auto points_num = graph.size();
     if (num_nodes_to_cache >= points_num) {
@@ -815,7 +815,7 @@ namespace diskann {
     uint32_t best_bw = start_bw;
     bool     stop_flag = false;
 
-    auto thread_pool = knowhere::ThreadPool::GetGlobalThreadPool();
+    auto thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
 
     while (!stop_flag) {
       std::vector<int64_t> tuning_sample_result_ids_64(tuning_sample_num, 0);

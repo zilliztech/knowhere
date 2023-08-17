@@ -33,7 +33,7 @@ namespace knowhere {
 class HnswIndexNode : public IndexNode {
  public:
     HnswIndexNode(const Object& object) : index_(nullptr) {
-        pool_ = ThreadPool::GetGlobalThreadPool();
+        search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
     }
 
     Status
@@ -124,7 +124,7 @@ class HnswIndexNode : public IndexNode {
         std::vector<folly::Future<folly::Unit>> futs;
         futs.reserve(nq);
         for (int i = 0; i < nq; ++i) {
-            futs.emplace_back(pool_->push([&, idx = i]() {
+            futs.emplace_back(search_pool_->push([&, idx = i]() {
                 auto single_query = (const char*)xq + idx * index_->data_size_;
                 auto rst = index_->searchKnn(single_query, k, bitset, &param, feder_result);
                 size_t rst_size = rst.size();
@@ -198,7 +198,7 @@ class HnswIndexNode : public IndexNode {
         std::vector<folly::Future<folly::Unit>> futs;
         futs.reserve(nq);
         for (int64_t i = 0; i < nq; ++i) {
-            futs.emplace_back(pool_->push([&, idx = i]() {
+            futs.emplace_back(search_pool_->push([&, idx = i]() {
                 auto single_query = (const char*)xq + idx * index_->data_size_;
                 auto rst = index_->searchRange(single_query, radius_for_calc, bitset, &param, feder_result);
                 auto elem_cnt = rst.size();
@@ -440,7 +440,7 @@ class HnswIndexNode : public IndexNode {
 
  private:
     hnswlib::HierarchicalNSW<float>* index_;
-    std::shared_ptr<ThreadPool> pool_;
+    std::shared_ptr<ThreadPool> search_pool_;
 };
 
 KNOWHERE_REGISTER_GLOBAL(HNSW, [](const Object& object) { return Index<HnswIndexNode>::Create(object); });

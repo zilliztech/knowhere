@@ -46,12 +46,13 @@ namespace {
       // initialize `cbs` using `cb` array
       //
 
-      for (uint64_t i = 0; i < n_ops; i++) {
+      for (auto i = 0; i < n_ops; i++) {
         cbs[i] = cb.data() + i;
       }
 
       int64_t ret;
-      int64_t num_submitted = 0, submit_retry = 0;
+      int64_t num_submitted = 0;
+      uint64_t submit_retry = 0;
       while (num_submitted < n_ops) {
         while ((ret = io_submit(ctx, n_ops - num_submitted,
                                 cbs.data() + num_submitted)) < 0) {
@@ -79,7 +80,8 @@ namespace {
         }
       }
 
-      int64_t num_read = 0, read_retry = 0;
+      int64_t num_read = 0;
+      uint64_t read_retry = 0;
       while (num_read < n_ops) {
         while ((ret = io_getevents(ctx, n_ops - num_read, n_ops - num_read,
                                    evts.data() + num_read, nullptr)) < 0) {
@@ -186,7 +188,7 @@ void LinuxAlignedFileReader::submit_req(io_context_t             &ctx,
 
   std::vector<iocb_t *>    cbs(n_ops, nullptr);
   std::vector<struct iocb> cb(n_ops);
-  for (int64_t j = 0; j < n_ops; j++) {
+  for (size_t j = 0; j < n_ops; j++) {
     io_prep_pread(cb.data() + j, fd, read_reqs[j].buf, read_reqs[j].len,
                   read_reqs[j].offset);
   }
@@ -195,7 +197,7 @@ void LinuxAlignedFileReader::submit_req(io_context_t             &ctx,
   }
 
   int64_t ret;
-  int64_t num_submitted = 0, submit_retry = 0;
+  uint64_t num_submitted = 0, submit_retry = 0;
   while (num_submitted < n_ops) {
     while ((ret = io_submit(ctx, n_ops - num_submitted,
                             cbs.data() + num_submitted)) < 0) {
@@ -233,7 +235,7 @@ void LinuxAlignedFileReader::get_submitted_req(io_context_t &ctx, size_t n_ops) 
   }
 
   int64_t ret;
-  int64_t                 num_read = 0, read_retry = 0;
+  uint64_t                 num_read = 0, read_retry = 0;
   std::vector<io_event_t> evts(n_ops);
   while (num_read < n_ops) {
     while ((ret = io_getevents(ctx, n_ops - num_read, n_ops - num_read,

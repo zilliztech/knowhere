@@ -50,7 +50,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     auto labels = new int64_t[nq * topk];
     auto distances = new float[nq * topk];
 
-    auto pool = ThreadPool::GetGlobalThreadPool();
+    auto pool = ThreadPool::GetGlobalSearchThreadPool();
     std::vector<folly::Future<Status>> futs;
     futs.reserve(nq);
     for (int i = 0; i < nq; ++i) {
@@ -138,7 +138,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     auto labels = ids;
     auto distances = dis;
 
-    auto pool = ThreadPool::GetGlobalThreadPool();
+    auto pool = ThreadPool::GetGlobalSearchThreadPool();
     std::vector<folly::Future<Status>> futs;
     futs.reserve(nq);
     for (int i = 0; i < nq; ++i) {
@@ -228,7 +228,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     bool is_ip = false;
     float range_filter = cfg.range_filter.value();
 
-    auto pool = ThreadPool::GetGlobalThreadPool();
+    auto pool = ThreadPool::GetGlobalSearchThreadPool();
 
     std::vector<std::vector<int64_t>> result_id_array(nq);
     std::vector<std::vector<float>> result_dist_array(nq);

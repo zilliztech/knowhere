@@ -6,7 +6,7 @@ namespace diskann {
                      float* read_buf, _u64 npts, _u64 ndims) {
     readr.read((char*) read_buf, npts * ndims * sizeof(float));
     _u32 ndims_u32 = (_u32) ndims;
-    auto thread_pool = knowhere::ThreadPool::GetGlobalThreadPool();
+    auto thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
     std::vector<folly::Future<folly::Unit>> futures;
     futures.reserve(npts);
     for (_s64 i = 0; i < (_s64) npts; i++) {
