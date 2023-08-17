@@ -29,7 +29,7 @@ class FlatIndexNode : public IndexNode {
     FlatIndexNode(const Object&) : index_(nullptr) {
         static_assert(std::is_same<T, faiss::IndexFlat>::value || std::is_same<T, faiss::IndexBinaryFlat>::value,
                       "not support");
-        pool_ = ThreadPool::GetGlobalThreadPool();
+        search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
     }
 
     Status
@@ -92,7 +92,7 @@ class FlatIndexNode : public IndexNode {
             std::vector<folly::Future<folly::Unit>> futs;
             futs.reserve(nq);
             for (int i = 0; i < nq; ++i) {
-                futs.emplace_back(pool_->push([&, index = i] {
+                futs.emplace_back(search_pool_->push([&, index = i] {
                     ThreadPool::ScopedOmpSetter setter(1);
                     auto cur_ids = ids + k * index;
                     auto cur_dis = distances + k * index;
@@ -158,7 +158,7 @@ class FlatIndexNode : public IndexNode {
             std::vector<folly::Future<folly::Unit>> futs;
             futs.reserve(nq);
             for (int i = 0; i < nq; ++i) {
-                futs.emplace_back(pool_->push([&, index = i] {
+                futs.emplace_back(search_pool_->push([&, index = i] {
                     ThreadPool::ScopedOmpSetter setter(1);
                     faiss::RangeSearchResult res(1);
                     if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
@@ -344,7 +344,7 @@ class FlatIndexNode : public IndexNode {
 
  private:
     std::unique_ptr<T> index_;
-    std::shared_ptr<ThreadPool> pool_;
+    std::shared_ptr<ThreadPool> search_pool_;
 };
 
 KNOWHERE_REGISTER_GLOBAL(FLAT,

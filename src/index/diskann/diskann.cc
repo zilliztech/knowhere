@@ -163,7 +163,7 @@ class DiskANNIndexNode : public IndexNode {
     std::unique_ptr<diskann::PQFlashIndex<T>> pq_flash_index_;
     std::atomic_int64_t dim_;
     std::atomic_int64_t count_;
-    std::shared_ptr<ThreadPool> pool_;
+    std::shared_ptr<ThreadPool> search_pool_;
 };
 
 }  // namespace knowhere
@@ -372,7 +372,7 @@ DiskANNIndexNode<T>::Deserialize(const BinarySet& binset, const Config& cfg) {
     }
 
     // set thread pool
-    pool_ = ThreadPool::GetGlobalThreadPool();
+    search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
 
     // load diskann pq code and meta info
     std::shared_ptr<AlignedFileReader> reader = nullptr;
@@ -381,7 +381,7 @@ DiskANNIndexNode<T>::Deserialize(const BinarySet& binset, const Config& cfg) {
 
     pq_flash_index_ = std::make_unique<diskann::PQFlashIndex<T>>(reader, diskann_metric);
     auto disk_ann_call = [&]() {
-        int res = pq_flash_index_->load(pool_->size(), index_prefix_.c_str());
+        int res = pq_flash_index_->load(search_pool_->size(), index_prefix_.c_str());
         if (res != 0) {
             throw diskann::ANNException("pq_flash_index_->load returned non-zero value: " + std::to_string(res), -1);
         }
@@ -472,7 +472,7 @@ DiskANNIndexNode<T>::Deserialize(const BinarySet& binset, const Config& cfg) {
         std::vector<folly::Future<folly::Unit>> futures;
         futures.reserve(warmup_num);
         for (_s64 i = 0; i < (int64_t)warmup_num; ++i) {
-            futures.emplace_back(pool_->push([&, index = i]() {
+            futures.emplace_back(search_pool_->push([&, index = i]() {
                 pq_flash_index_->cached_beam_search(warmup + (index * warmup_aligned_dim), 1, warmup_L,
                                                     warmup_result_ids_64.data() + (index * 1),
                                                     warmup_result_dists.data() + (index * 1), 4);
@@ -542,7 +542,7 @@ DiskANNIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const Bit
     std::vector<folly::Future<folly::Unit>> futures;
     futures.reserve(nq);
     for (int64_t row = 0; row < nq; ++row) {
-        futures.emplace_back(pool_->push([&, index = row]() {
+        futures.emplace_back(search_pool_->push([&, index = row]() {
             pq_flash_index_->cached_beam_search(xq + (index * dim), k, lsearch, p_id + (index * k),
                                                 p_dist + (index * k), beamwidth, false, nullptr, feder_result, bitset,
                                                 filter_ratio, for_tuning);
@@ -612,7 +612,7 @@ DiskANNIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, cons
     futures.reserve(nq);
     bool all_searches_are_good = true;
     for (int64_t row = 0; row < nq; ++row) {
-        futures.emplace_back(pool_->push([&, index = row]() {
+        futures.emplace_back(search_pool_->push([&, index = row]() {
             std::vector<int64_t> indices;
             std::vector<float> distances;
             pq_flash_index_->range_search(xq + (index * dim), radius, min_k, max_k, result_id_array[index],

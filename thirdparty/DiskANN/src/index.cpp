@@ -217,11 +217,11 @@ namespace diskann {
     _indexingMaxC = indexParams.Get<uint32_t>("C");
     _indexingAlpha = indexParams.Get<float>("alpha");
 
-    _thread_pool = knowhere::ThreadPool::GetGlobalThreadPool();
-    auto     num_threads = _thread_pool->size();
+    _build_thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
+    _search_thread_pool = knowhere::ThreadPool::GetGlobalSearchThreadPool();
     uint32_t search_l = searchParams.Get<uint32_t>("L");
 
-    initialize_query_scratch(num_threads, search_l, _indexingQueueSize,
+    initialize_query_scratch(_search_thread_pool->size(), search_l, _indexingQueueSize,
                              _indexingRange, dim);
   }
 
@@ -271,7 +271,8 @@ namespace diskann {
 
     _ep = (unsigned) _max_points;
 
-    _thread_pool = knowhere::ThreadPool::GetGlobalThreadPool();
+    _build_thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
+    _search_thread_pool = knowhere::ThreadPool::GetGlobalSearchThreadPool();
 
     //_final_graph.reserve(_max_points + _num_frozen_pts);
     _final_graph.resize(_max_points + _num_frozen_pts);
@@ -877,12 +878,12 @@ namespace diskann {
     float *distances = new float[_nd]();
     auto   l2_distance_fun = get_distance_function<float>(diskann::Metric::L2);
 
-    auto                                    num_threads = _thread_pool->size();
+    auto                                    num_threads = _build_thread_pool->size();
     std::vector<folly::Future<folly::Unit>> futures;
     futures.reserve(num_threads);
     auto future_task_size = DIV_ROUND_UP(_nd, num_threads);
     for (_s64 i = 0; i < (_s64) _nd; i += future_task_size) {
-      futures.emplace_back(_thread_pool->push(
+      futures.emplace_back(_build_thread_pool->push(
           [&, beg_id = i, end_id = std::min(_nd, i + future_task_size)]() {
             for (auto node_id = beg_id; node_id < (_s64) end_id; node_id++) {
               // extract point and distance reference
@@ -1422,7 +1423,7 @@ namespace diskann {
 
     _saturate_graph = parameters.Get<bool>("saturate_graph");
 
-    auto                                    num_threads = _thread_pool->size();
+    auto                                    num_threads = _build_thread_pool->size();
     std::vector<folly::Future<folly::Unit>> futures;
 
     _indexingQueueSize = parameters.Get<unsigned>("L");  // Search list size
@@ -1528,7 +1529,7 @@ namespace diskann {
         futures.clear();
         for (_s64 node_ctr = (_s64) start_id; node_ctr < (_s64) end_id;
              ++node_ctr) {
-          futures.emplace_back(_thread_pool->push([&, node_id = node_ctr]() {
+          futures.emplace_back(_build_thread_pool->push([&, node_id = node_ctr]() {
             auto                     node = visit_order[node_id];
             size_t                   node_offset = node_id - start_id;
             tsl::robin_set<unsigned> visited;
@@ -1570,7 +1571,7 @@ namespace diskann {
         futures.clear();
         for (_s64 node_ctr = (_s64) start_id; node_ctr < (_s64) end_id;
              node_ctr += batch_size) {
-          futures.emplace_back(_thread_pool->push(
+          futures.emplace_back(_build_thread_pool->push(
               [&, batch_begin_id = node_ctr,
                batch_end_id = std::min(end_id, node_ctr + batch_size)]() {
                 for (auto id = batch_begin_id; id < (_s64) batch_end_id; id++) {
@@ -1592,7 +1593,7 @@ namespace diskann {
         futures.clear();
         for (_s64 node_ctr = start_id; node_ctr < (_s64) end_id;
              node_ctr += batch_size) {
-          futures.emplace_back(_thread_pool->push(
+          futures.emplace_back(_build_thread_pool->push(
               [&, batch_begin_id = node_ctr,
                batch_end_id = std::min(end_id, node_ctr + batch_size)]() {
                 for (auto id = batch_begin_id; id < (_s64) batch_end_id; id++) {
@@ -1616,7 +1617,7 @@ namespace diskann {
              node_ctr++) {
           auto cur_node = visit_order[node_ctr];
           if (need_to_sync[cur_node] != 0) {
-            futures.emplace_back(_thread_pool->push([&, node_id = cur_node]() {
+            futures.emplace_back(_build_thread_pool->push([&, node_id = cur_node]() {
               need_to_sync[node_id] = 0;
               inter_count++;
               tsl::robin_set<unsigned> dummy_visited(0);
@@ -1690,7 +1691,7 @@ namespace diskann {
          node_ctr++) {
       auto cur_node = visit_order[node_ctr];
       if (_final_graph[cur_node].size() > _indexingRange) {
-        futures.emplace_back(_thread_pool->push([&, node_id = cur_node]() {
+        futures.emplace_back(_build_thread_pool->push([&, node_id = cur_node]() {
           tsl::robin_set<unsigned> dummy_visited(0);
           std::vector<Neighbor>    dummy_pool(0);
           std::vector<unsigned>    new_out_neighbors;
@@ -1734,7 +1735,7 @@ namespace diskann {
          cur_node++) {
       if ((size_t) cur_node < _nd || (size_t) cur_node == _max_points) {
         if (_final_graph[cur_node].size() > range) {
-          futures.emplace_back(_thread_pool->push([&, node_id = cur_node]() {
+          futures.emplace_back(_build_thread_pool->push([&, node_id = cur_node]() {
             tsl::robin_set<unsigned> dummy_visited(0);
             std::vector<Neighbor>    dummy_pool(0);
             std::vector<unsigned>    new_out_neighbors;
@@ -2415,7 +2416,7 @@ namespace diskann {
     std::vector<folly::Future<folly::Unit>> futures;
     futures.reserve(total_blocks);
     for (_s64 block_i = 0; block_i < total_blocks; ++block_i) {
-      futures.emplace_back(_thread_pool->push([&, block = block_i]() {
+      futures.emplace_back(_build_thread_pool->push([&, block = block_i]() {
         tsl::robin_set<unsigned> candidate_set;
         std::vector<Neighbor>    expanded_nghrs;
         std::vector<Neighbor>    result;

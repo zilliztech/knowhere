@@ -421,6 +421,7 @@ namespace diskann {
     size_t _data_len;
     size_t _neighbor_len;
 
-    std::shared_ptr<knowhere::ThreadPool> _thread_pool;
+    std::shared_ptr<knowhere::ThreadPool> _build_thread_pool;
+    std::shared_ptr<knowhere::ThreadPool> _search_thread_pool;
   };
 }  // namespace diskann

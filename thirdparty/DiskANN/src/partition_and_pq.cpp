@@ -309,7 +309,7 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
 
   full_pivot_data.reset(new float[num_centers * dim]);
 
-  auto thread_pool = knowhere::ThreadPool::GetGlobalThreadPool();
+  auto thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
   std::vector<folly::Future<folly::Unit>> futures;
   futures.reserve(num_pq_chunks);
   for (size_t i = 0; i < num_pq_chunks; i++) {
@@ -486,7 +486,7 @@ int generate_pq_data_from_pivots(const std::string data_file,
       std::make_unique<float[]>(block_size * dim);
 
   size_t num_blocks = DIV_ROUND_UP(num_points, block_size);
-  auto   thread_pool = knowhere::ThreadPool::GetGlobalThreadPool();
+  auto   thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
   std::vector<folly::Future<folly::Unit>> futures;
   futures.reserve(num_pq_chunks);
 

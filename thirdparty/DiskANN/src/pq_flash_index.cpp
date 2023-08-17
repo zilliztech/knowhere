@@ -290,7 +290,7 @@ namespace diskann {
     std::vector<int64_t> tmp_result_ids_64(sample_num, 0);
     std::vector<float>   tmp_result_dists(sample_num, 0);
 
-    auto thread_pool = knowhere::ThreadPool::GetGlobalThreadPool();
+    auto thread_pool = knowhere::ThreadPool::GetGlobalSearchThreadPool();
     std::vector<folly::Future<folly::Unit>> futures;
     futures.reserve(sample_num);
     for (_s64 i = 0; i < (int64_t) sample_num; i++) {

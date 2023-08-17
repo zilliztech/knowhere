@@ -49,7 +49,7 @@ class IvfIndexNode : public IndexNode {
                           std::is_same<T, faiss::IndexIVFScalarQuantizer>::value ||
                           std::is_same<T, faiss::IndexBinaryIVF>::value || std::is_same<T, faiss::IndexScaNN>::value,
                       "not support");
-        pool_ = ThreadPool::GetGlobalThreadPool();
+        search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
     }
     Status
     Train(const DataSet& dataset, const Config& cfg) override;
@@ -196,7 +196,7 @@ class IvfIndexNode : public IndexNode {
 
  private:
     std::unique_ptr<T> index_;
-    std::shared_ptr<ThreadPool> pool_;
+    std::shared_ptr<ThreadPool> search_pool_;
 };
 
 }  // namespace knowhere
@@ -411,7 +411,7 @@ IvfIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const BitsetV
         std::vector<folly::Future<folly::Unit>> futs;
         futs.reserve(rows);
         for (int i = 0; i < rows; ++i) {
-            futs.emplace_back(pool_->push([&, index = i] {
+            futs.emplace_back(search_pool_->push([&, index = i] {
                 ThreadPool::ScopedOmpSetter setter(1);
                 auto offset = k * index;
                 if constexpr (std::is_same<T, faiss::IndexBinaryIVF>::value) {
@@ -491,7 +491,7 @@ IvfIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, const Bi
         std::vector<folly::Future<folly::Unit>> futs;
         futs.reserve(nq);
         for (int i = 0; i < nq; ++i) {
-            futs.emplace_back(pool_->push([&, index = i] {
+            futs.emplace_back(search_pool_->push([&, index = i] {
                 ThreadPool::ScopedOmpSetter setter(1);
                 faiss::RangeSearchResult res(1);
                 if constexpr (std::is_same<T, faiss::IndexBinaryIVF>::value) {
