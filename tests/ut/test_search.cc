@@ -121,8 +121,14 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         auto results = idx.Search(*query_ds, json, nullptr);
         REQUIRE(results.has_value());
         float recall = GetKNNRecall(*gt.value(), *results.value());
-        if (name != "IVF_PQ") {
+        if (name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ) {
             REQUIRE(recall > kKnnRecallThreshold);
+        }
+
+        if (metric == knowhere::metric::COSINE) {
+            if (name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ8 && name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ) {
+                REQUIRE(CheckDistanceInScope(*results.value(), topk, -1.00001, 1.00001));
+            }
         }
     }
 
@@ -152,9 +158,15 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         REQUIRE(results.has_value());
         auto ids = results.value()->GetIds();
         auto lims = results.value()->GetLims();
-        if (name != "IVF_PQ" && name != "SCANN") {
+        if (name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ && name != knowhere::IndexEnum::INDEX_FAISS_SCANN) {
             for (int i = 0; i < nq; ++i) {
                 CHECK(ids[lims[i]] == i);
+            }
+        }
+
+        if (metric == knowhere::metric::COSINE) {
+            if (name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ8 && name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ) {
+                REQUIRE(CheckDistanceInScope(*results.value(), -1.00001, 1.00001));
             }
         }
     }

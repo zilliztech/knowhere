@@ -78,7 +78,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
                     auto cur_query = (const float*)xq + dim * index;
                     faiss::float_minheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
                     if (is_cosine) {
-                        auto copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
+                        auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         faiss::knn_cosine(copied_query.get(), (const float*)xb, dim, 1, nb, &buf, bitset);
                     } else {
                         faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, &buf, bitset);
@@ -172,7 +172,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                     auto cur_query = (const float*)xq + dim * index;
                     faiss::float_minheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
                     if (is_cosine) {
-                        auto copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
+                        auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         faiss::knn_cosine(copied_query.get(), (const float*)xb, dim, 1, nb, &buf, bitset);
                     } else {
                         faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, &buf, bitset);
@@ -273,7 +273,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                     is_ip = true;
                     auto cur_query = (const float*)xq + dim * index;
                     if (is_cosine) {
-                        auto copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
+                        auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         faiss::range_search_cosine(copied_query.get(), (const float*)xb, dim, 1, nb, radius, &res,
                                                    bitset);
                     } else {

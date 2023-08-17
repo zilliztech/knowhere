@@ -96,7 +96,7 @@ class FlatIndexNode : public IndexNode {
                         auto cur_query = (const float*)x + dim * index;
                         std::unique_ptr<float[]> copied_query = nullptr;
                         if (is_cosine) {
-                            copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
+                            copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                             cur_query = copied_query.get();
                         }
                         index_->search(1, cur_query, k, cur_dis, cur_ids, bitset);
@@ -163,7 +163,7 @@ class FlatIndexNode : public IndexNode {
                         auto cur_query = (const float*)xq + dim * index;
                         std::unique_ptr<float[]> copied_query = nullptr;
                         if (is_cosine) {
-                            copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
+                            copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                             cur_query = copied_query.get();
                         }
                         index_->range_search(1, cur_query, radius, &res, bitset);

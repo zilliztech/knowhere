@@ -220,18 +220,24 @@ size_t InvertedLists::compute_ntotal() const {
  * ArrayInvertedLists implementation
  ******************************************/
 
-ArrayInvertedLists::ArrayInvertedLists(size_t nlist, size_t code_size)
-        : InvertedLists(nlist, code_size) {
+ArrayInvertedLists::ArrayInvertedLists(
+        size_t nlist,
+        size_t code_size,
+        bool with_norm)
+        : with_norm(with_norm), InvertedLists(nlist, code_size) {
     ids.resize(nlist);
     codes.resize(nlist);
+    if (with_norm) {
+        code_norms.resize(nlist);
+    }
 }
 
 size_t ArrayInvertedLists::add_entries(
         size_t list_no,
         size_t n_entry,
         const idx_t* ids_in,
-        const uint8_t* code,
-        const float* code_norm) {
+        const uint8_t* code_in,
+        const float* code_norms_in) {
     if (n_entry == 0)
         return 0;
     assert(list_no < nlist);
@@ -239,7 +245,11 @@ size_t ArrayInvertedLists::add_entries(
     ids[list_no].resize(o + n_entry);
     memcpy(&ids[list_no][o], ids_in, sizeof(ids_in[0]) * n_entry);
     codes[list_no].resize((o + n_entry) * code_size);
-    memcpy(&codes[list_no][o * code_size], code, code_size * n_entry);
+    memcpy(&codes[list_no][o * code_size], code_in, code_size * n_entry);
+    if (with_norm) {
+        code_norms[list_no].resize(o + n_entry);
+        memcpy(&code_norms[list_no][o], code_norms_in, sizeof(float) * n_entry);
+    }
     return o;
 }
 
@@ -280,6 +290,23 @@ void ArrayInvertedLists::restore_codes(
         }
     }
     assert(total * code_size == raw_size);
+}
+
+const float* ArrayInvertedLists::get_code_norms(
+        size_t list_no,
+        size_t offset) const {
+    if (with_norm) {
+        assert(list_no < nlist);
+        return code_norms[list_no].data();
+    } else {
+        return nullptr;
+    }
+}
+
+void ArrayInvertedLists::release_code_norms(
+        size_t list_no,
+        const float* codes) const {
+    InvertedLists::release_code_norms(list_no, codes);
 }
 
 void ArrayInvertedLists::update_entries(
