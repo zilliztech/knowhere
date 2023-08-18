@@ -45,15 +45,7 @@ template <typename T>
 class expected {
  public:
     template <typename... Args>
-    expected(Args&&... args) : val(std::make_optional<T>(std::forward<Args>(args)...)) {
-    }
-
-    expected(const Status& err) : err(err) {
-        assert(err != Status::success);
-    }
-
-    expected(Status&& err) : err(err) {
-        assert(err != Status::success);
+    expected(Args&&... args) : val(std::make_optional<T>(std::forward<Args>(args)...)), err(Status::success) {
     }
 
     expected(const expected<T>&) = default;
@@ -73,8 +65,7 @@ class expected {
 
     Status
     error() const {
-        assert(val.has_value() == false);
-        return err.value();
+        return err;
     }
 
     const T&
@@ -100,9 +91,27 @@ class expected {
         return *this;
     }
 
+    static expected<T>
+    OK() {
+        return expected(Status::success);
+    }
+
+    static expected<T>
+    Err(const Status err, std::string msg) {
+        return expected(err, std::move(msg));
+    }
+
  private:
+    // keep these private to avoid creating directly
+    expected(const Status err) : err(err) {
+    }
+
+    expected(const Status err, std::string msg) : err(err), msg(std::move(msg)) {
+        assert(err != Status::success);
+    }
+
     std::optional<T> val = std::nullopt;
-    std::optional<Status> err = std::nullopt;
+    Status err;
     std::string msg;
 };
 
@@ -117,48 +126,13 @@ class expected {
     } while (0)
 
 template <typename T>
-Status
+expected<T>
 DoAssignOrReturn(T& lhs, const expected<T>& exp) {
     if (exp.has_value()) {
         lhs = exp.value();
-        return Status::success;
     }
-    return exp.error();
+    return exp;
 }
-
-#define STATUS_INTERNAL_CONCAT_NAME_INNER(x, y) x##y
-#define STATUS_INTERNAL_CONCAT_NAME(x, y) STATUS_INTERNAL_CONCAT_NAME_INNER(x, y)
-
-#define STATUS_INTERNAL_DEPAREN(X) STATUS_INTERNAL_ESC(STATUS_INTERNAL_ISH X)
-#define STATUS_INTERNAL_ISH(...) STATUS_INTERNAL_ISH __VA_ARGS__
-#define STATUS_INTERNAL_ESC(...) STATUS_INTERNAL_ESC_(__VA_ARGS__)
-#define STATUS_INTERNAL_ESC_(...) STATUS_INTERNAL_VAN_STATUS_INTERNAL_##__VA_ARGS__
-#define STATUS_INTERNAL_VAN_STATUS_INTERNAL_STATUS_INTERNAL_ISH
-
-#define STATUS_INTERNAL_ASSIGN_OR_RETURN_IMPL(status, lhs, rexpr) \
-    Status status = knowhere::DoAssignOrReturn(lhs, rexpr);       \
-    if (status != Status::success) {                              \
-        return status;                                            \
-    }
-
-// Evaluates an expression that returns an `expected`. If the expected has a value, assigns
-// the value to var. Otherwise returns the error from the current function.
-//
-// Example: ASSIGN_OR_RETURN(int, i, MaybeInt());
-//
-// If the type parameter has comma not wrapped by paired parenthesis/double quotes, wrap
-// the comma in parenthesis properly.
-//
-// Examples:
-//    ASSIGN_OR_RETURN(std::pair<int, int>, pair, MaybePair());  // Not OK
-//    ASSIGN_OR_RETURN((std::pair<int, int>), pair, MaybePair());  // OK
-//    ASSIGN_OR_RETURN(std::function<void(int, int)>), fn, MaybeFunction());  // OK
-//
-// Note that this macro expands into multiple statements and thus cannot be used in a single statement
-// such as the body of an if statement without {}.
-#define ASSIGN_OR_RETURN(type, var, rexpr) \
-    STATUS_INTERNAL_DEPAREN(type) var;     \
-    STATUS_INTERNAL_ASSIGN_OR_RETURN_IMPL(STATUS_INTERNAL_CONCAT_NAME(_excepted_, __COUNTER__), var, rexpr)
 
 }  // namespace knowhere
 

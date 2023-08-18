@@ -17,6 +17,7 @@
 #include <unordered_map>
 
 #include "faiss/MetricType.h"
+#include "fmt/format.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/expected.h"
 
@@ -36,8 +37,10 @@ Str2FaissMetricType(std::string metric) {
 
     std::transform(metric.begin(), metric.end(), metric.begin(), toupper);
     auto it = metric_map.find(metric);
-    if (it == metric_map.end())
-        return Status::invalid_metric_type;
+    if (it == metric_map.end()) {
+        return expected<faiss::MetricType>::Err(Status::invalid_metric_type,
+                                                fmt::format("unsupported metric type {}", metric));
+    }
     return it->second;
 }
 
