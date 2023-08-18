@@ -157,14 +157,10 @@ struct IndexIVF : Index, Level1Quantizer {
 
     /// Calls add_with_ids with NULL ids
     void add(idx_t n, const float* x) override;
-
-    /// Calls add_with_ids_without_codes
     void add_without_codes(idx_t n, const float* x) override;
 
     /// default implementation that calls encode_vectors
     void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
-
-    /// Implementation for adding without original vector data
     void add_with_ids_without_codes(idx_t n, const float* x, const idx_t* xids)
             override;
 
@@ -179,6 +175,12 @@ struct IndexIVF : Index, Level1Quantizer {
             idx_t n,
             const float* x,
             const float* x_norms,
+            const idx_t* xids,
+            const idx_t* precomputed_idx);
+
+    virtual void add_core_without_codes(
+            idx_t n,
+            const float* x,
             const idx_t* xids,
             const idx_t* precomputed_idx);
 
