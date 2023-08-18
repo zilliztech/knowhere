@@ -21,6 +21,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "fmt/format.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/expected.h"
 #include "raft/distance/distance_types.hpp"
@@ -39,7 +40,8 @@ Str2RaftMetricType(std::string metric) {
     std::transform(metric.begin(), metric.end(), metric.begin(), toupper);
     auto it = metric_map.find(metric);
     if (it == metric_map.end())
-        return Status::invalid_metric_type;
+        return expected<raft::distance::DistanceType>::Err(Status::invalid_metric_type,
+                                                           fmt::format("unsupported metric type: {}", metric));
     return it->second;
 }
 

@@ -47,7 +47,7 @@ class GpuFlatIndexNode : public IndexNode {
             // need not copy index from CPU to GPU for IDMAP
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
-            return Status::faiss_inner_error;
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
         return Status::success;
     }
@@ -56,7 +56,7 @@ class GpuFlatIndexNode : public IndexNode {
     Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "index not empty, deleted old index.";
-            return Status::empty_index;
+            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
         const FlatConfig& f_cfg = static_cast<const FlatConfig&>(cfg);
@@ -75,7 +75,7 @@ class GpuFlatIndexNode : public IndexNode {
             std::unique_ptr<int64_t[]> auto_delete_ids(ids);
             std::unique_ptr<float[]> auto_delete_dis(dis);
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
-            return Status::faiss_inner_error;
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
         return GenResultDataSet(nq, f_cfg.k, ids, dis);
@@ -101,7 +101,7 @@ class GpuFlatIndexNode : public IndexNode {
             return GenResultDataSet(xq);
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
-            return Status::faiss_inner_error;
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
     }
 
@@ -114,7 +114,7 @@ class GpuFlatIndexNode : public IndexNode {
     Serialize(BinarySet& binset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "serilalization on empty index.";
-            return Status::empty_index;
+            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
         try {
             MemoryIOWriter writer;
@@ -124,7 +124,7 @@ class GpuFlatIndexNode : public IndexNode {
             binset.Append(Type(), data, writer.rp);
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
-            return Status::faiss_inner_error;
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
         return Status::success;
     }
@@ -149,7 +149,7 @@ class GpuFlatIndexNode : public IndexNode {
             res_ = gpu_res;
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
-            return Status::faiss_inner_error;
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
         return Status::success;

@@ -101,7 +101,7 @@ class GpuIvfIndexNode : public IndexNode {
             res_ = gpu_res;
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
-            return Status::faiss_inner_error;
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
         index_ = std::move(index);
         return Status::success;
@@ -111,11 +111,11 @@ class GpuIvfIndexNode : public IndexNode {
     Add(const DataSet& dataset, const Config& cfg) override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not add data to empty GpuIvfIndex.";
-            return Status::empty_index;
+            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
         if (!index_->is_trained) {
             LOG_KNOWHERE_ERROR_ << "Can not add data to not trained GpuIvfIndex.";
-            return Status::index_not_trained;
+            expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
         }
         auto rows = dataset.GetRows();
         auto tensor = dataset.GetTensor();
@@ -124,7 +124,7 @@ class GpuIvfIndexNode : public IndexNode {
             index_->add(rows, (const float*)tensor);
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
-            return Status::faiss_inner_error;
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
         return Status::success;
     }
@@ -152,7 +152,7 @@ class GpuIvfIndexNode : public IndexNode {
             std::unique_ptr<float> auto_delete_dis(dis);
             std::unique_ptr<int64_t> auto_delete_ids(ids);
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
-            return Status::faiss_inner_error;
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
         return GenResultDataSet(rows, ivf_gpu_cfg.k, ids, dis);
@@ -177,11 +177,11 @@ class GpuIvfIndexNode : public IndexNode {
     Serialize(BinarySet& binset) const override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not serialize empty GpuIvfIndex.";
-            return Status::empty_index;
+            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
         if (!index_->is_trained) {
             LOG_KNOWHERE_ERROR_ << "Can not serialize not trained GpuIvfIndex.";
-            return Status::index_not_trained;
+            expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
         }
 
         try {
@@ -195,7 +195,7 @@ class GpuIvfIndexNode : public IndexNode {
             binset.Append(Type(), data, writer.rp);
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
-            return Status::faiss_inner_error;
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
         return Status::success;
@@ -221,7 +221,7 @@ class GpuIvfIndexNode : public IndexNode {
             res_ = gpu_res;
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
-            return Status::faiss_inner_error;
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
         return Status::success;
     }

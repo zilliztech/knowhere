@@ -11,6 +11,8 @@
 
 #include "knowhere/index.h"
 
+#include "knowhere/dataset.h"
+#include "knowhere/expected.h"
 #include "knowhere/log.h"
 
 #ifdef NOT_COMPILE_FOR_SWIG
@@ -65,15 +67,11 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
     std::string msg;
     const Status load_status = LoadConfig(cfg.get(), json, knowhere::SEARCH, "Search", &msg);
     if (load_status != Status::success) {
-        expected<DataSetPtr> ret(load_status);
-        ret << msg;
-        return ret;
+        return expected<DataSetPtr>::Err(load_status, msg);
     }
     const Status search_status = cfg->CheckAndAdjustForSearch(&msg);
     if (search_status != Status::success) {
-        expected<DataSetPtr> ret(search_status);
-        ret << msg;
-        return ret;
+        return expected<DataSetPtr>::Err(search_status, msg);
     }
 
 #ifdef NOT_COMPILE_FOR_SWIG
@@ -87,8 +85,15 @@ template <typename T>
 inline expected<DataSetPtr>
 Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView& bitset) const {
     auto cfg = this->node->CreateConfig();
-    RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::RANGE_SEARCH, "RangeSearch"));
-    RETURN_IF_ERROR(cfg->CheckAndAdjustForRangeSearch());
+    std::string msg;
+    auto status = LoadConfig(cfg.get(), json, knowhere::RANGE_SEARCH, "RangeSearch", &msg);
+    if (status != Status::success) {
+        return expected<DataSetPtr>::Err(status, std::move(msg));
+    }
+    status = cfg->CheckAndAdjustForRangeSearch();
+    if (status != Status::success) {
+        return expected<DataSetPtr>::Err(status, "invalid params for range search");
+    }
 
 #ifdef NOT_COMPILE_FOR_SWIG
     knowhere_range_search_count.Increment();
@@ -112,7 +117,11 @@ template <typename T>
 inline expected<DataSetPtr>
 Index<T>::GetIndexMeta(const Json& json) const {
     auto cfg = this->node->CreateConfig();
-    RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::FEDER, "GetIndexMeta"));
+    std::string msg;
+    auto status = LoadConfig(cfg.get(), json, knowhere::FEDER, "GetIndexMeta", &msg);
+    if (status != Status::success) {
+        return expected<DataSetPtr>::Err(status, msg);
+    }
     return this->node->GetIndexMeta(*cfg);
 }
 

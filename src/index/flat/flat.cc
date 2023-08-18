@@ -67,7 +67,7 @@ class FlatIndexNode : public IndexNode {
     Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "search on empty index";
-            return Status::empty_index;
+            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
         DataSetPtr results = std::make_shared<DataSet>();
@@ -119,7 +119,7 @@ class FlatIndexNode : public IndexNode {
             std::unique_ptr<int64_t[]> auto_delete_ids(ids);
             std::unique_ptr<float[]> auto_delete_dis(distances);
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
-            return Status::faiss_inner_error;
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
         return GenResultDataSet(nq, k, ids, distances);
@@ -129,7 +129,7 @@ class FlatIndexNode : public IndexNode {
     RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "range search on empty index";
-            return Status::empty_index;
+            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
         const FlatConfig& f_cfg = static_cast<const FlatConfig&>(cfg);
@@ -192,7 +192,7 @@ class FlatIndexNode : public IndexNode {
                                  lims);
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
-            return Status::faiss_inner_error;
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
         return GenResultDataSet(nq, ids, distances, lims);
@@ -214,7 +214,7 @@ class FlatIndexNode : public IndexNode {
             } catch (const std::exception& e) {
                 std::unique_ptr<float[]> auto_del(data);
                 LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
-                return Status::faiss_inner_error;
+                return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
             }
         }
         if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
@@ -228,7 +228,7 @@ class FlatIndexNode : public IndexNode {
             } catch (const std::exception& e) {
                 std::unique_ptr<uint8_t[]> auto_del(data);
                 LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
-                return Status::faiss_inner_error;
+                return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
             }
         }
     }
@@ -245,14 +245,14 @@ class FlatIndexNode : public IndexNode {
 
     expected<DataSetPtr>
     GetIndexMeta(const Config& cfg) const override {
-        return Status::not_implemented;
+        return expected<DataSetPtr>::Err(Status::not_implemented, "GetIndexMeta not implemented");
     }
 
     Status
     Serialize(BinarySet& binset) const override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not serialize empty index.";
-            return Status::empty_index;
+            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
         try {
             MemoryIOWriter writer;

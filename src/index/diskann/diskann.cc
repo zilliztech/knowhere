@@ -16,9 +16,11 @@
 #include "common/range_util.h"
 #include "diskann/aux_utils.h"
 #include "diskann/pq_flash_index.h"
+#include "fmt/core.h"
 #include "index/diskann/diskann_config.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/thread_pool.h"
+#include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #ifndef _WINDOWS
 #include "diskann/linux_aligned_file_reader.h"
@@ -131,7 +133,7 @@ class DiskANNIndexNode : public IndexNode {
 
     std::string
     Type() const override {
-        return std::string(knowhere::IndexEnum::INDEX_DISKANN);
+        return knowhere::IndexEnum::INDEX_DISKANN;
     }
 
  private:
@@ -502,18 +504,21 @@ expected<DataSetPtr>
 DiskANNIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
     if (!is_prepared_.load() || !pq_flash_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
-        return Status::empty_index;
+        return expected<DataSetPtr>::Err(Status::empty_index, "DiskANN not loaded");
     }
 
     auto search_conf = static_cast<const DiskANNConfig&>(cfg);
     if (!CheckMetric(search_conf.metric_type.value())) {
-        return Status::invalid_metric_type;
+        return expected<DataSetPtr>::Err(Status::invalid_metric_type, "unsupported metric type");
     }
     auto max_search_list_size = std::max(kSearchListSizeMaxValue, search_conf.k.value() * 10);
     if (search_conf.search_list_size.value() > max_search_list_size ||
         search_conf.search_list_size.value() < search_conf.k.value()) {
-        LOG_KNOWHERE_ERROR_ << "search_list_size should be in range: [topk, max(200, topk * 10)]";
-        return Status::out_of_range_in_json;
+        auto msg = fmt::format(
+            "search_list_size should be in range: [topk, max(200, topk * 10)], topk = {}, search_list_size = {}",
+            search_conf.k.value(), search_conf.search_list_size.value());
+        LOG_KNOWHERE_ERROR_ << msg;
+        return expected<DataSetPtr>::Err(Status::out_of_range_in_json, msg);
     }
     auto k = static_cast<uint64_t>(search_conf.k.value());
     auto lsearch = static_cast<uint64_t>(search_conf.search_list_size.value());
@@ -528,7 +533,7 @@ DiskANNIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const Bit
     feder::diskann::FederResultUniq feder_result;
     if (search_conf.trace_visit.value()) {
         if (nq != 1) {
-            return Status::invalid_args;
+            return expected<DataSetPtr>::Err(Status::invalid_args, "nq must be 1");
         }
         feder_result = std::make_unique<feder::diskann::FederResult>();
         feder_result->visit_info_.SetQueryConfig(search_conf.k.value(), search_conf.beamwidth.value(),
@@ -555,7 +560,7 @@ DiskANNIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const Bit
     }
 
     if (!all_searches_are_good) {
-        return Status::diskann_inner_error;
+        return expected<DataSetPtr>::Err(Status::diskann_inner_error, "some search failed");
     }
 
     auto res = GenResultDataSet(nq, k, p_id, p_dist);
@@ -576,16 +581,17 @@ expected<DataSetPtr>
 DiskANNIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
     if (!is_prepared_.load() || !pq_flash_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
-        return Status::empty_index;
+        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
 
     auto search_conf = static_cast<const DiskANNConfig&>(cfg);
     if (!CheckMetric(search_conf.metric_type.value())) {
-        return Status::invalid_metric_type;
+        return expected<DataSetPtr>::Err(Status::invalid_metric_type,
+                                         fmt::format("unknown metric type: {}", search_conf.metric_type.value()));
     }
     if (search_conf.min_k.value() > search_conf.max_k.value()) {
         LOG_KNOWHERE_ERROR_ << "min_k should be smaller than max_k";
-        return Status::out_of_range_in_json;
+        return expected<DataSetPtr>::Err(Status::out_of_range_in_json, "min_k should be smaller than max_k");
     }
     auto beamwidth = static_cast<uint64_t>(search_conf.beamwidth.value());
     auto min_k = static_cast<uint64_t>(search_conf.min_k.value());
@@ -630,7 +636,7 @@ DiskANNIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, cons
         }
     }
     if (!all_searches_are_good) {
-        return Status::diskann_inner_error;
+        return expected<DataSetPtr>::Err(Status::diskann_inner_error, "some search failed");
     }
 
     GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, search_conf.range_filter.value(),
@@ -648,7 +654,7 @@ expected<DataSetPtr>
 DiskANNIndexNode<T>::GetVectorByIds(const DataSet& dataset) const {
     if (!is_prepared_.load() || !pq_flash_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
-        return Status::empty_index;
+        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
 
     auto dim = Dim();
@@ -657,12 +663,12 @@ DiskANNIndexNode<T>::GetVectorByIds(const DataSet& dataset) const {
     float* data = new float[dim * rows];
     if (data == nullptr) {
         LOG_KNOWHERE_ERROR_ << "Failed to allocate memory for data.";
-        return Status::malloc_error;
+        return expected<DataSetPtr>::Err(Status::malloc_error, "failed to allocate memory for data");
     }
 
     if (TryDiskANNCall([&]() { pq_flash_index_->get_vector_by_ids(ids, rows, data); }) != Status::success) {
         delete[] data;
-        return Status::diskann_inner_error;
+        return expected<DataSetPtr>::Err(Status::diskann_inner_error, "failed to get vector");
     };
 
     return GenResultDataSet(rows, dim, data);
