@@ -28,6 +28,13 @@ struct IndexIVFFlat : IndexIVF {
             size_t nlist_,
             MetricType = METRIC_L2);
 
+    void arrange_codes(idx_t n, const float* x);
+
+    void add_with_ids_without_codes(
+            idx_t n,
+            const float* x,
+            const idx_t* xids) override;
+
     void add_core(
             idx_t n,
             const float* x,
@@ -35,9 +42,11 @@ struct IndexIVFFlat : IndexIVF {
             const idx_t* xids,
             const idx_t* precomputed_idx) override;
 
-    /// implemented for all IndexIVF* classes
-    void add_with_ids_without_codes(idx_t n, const float* x, const idx_t* xids)
-            override;
+    void add_core_without_codes(
+            idx_t n,
+            const float* x,
+            const idx_t* xids,
+            const idx_t* precomputed_idx) override;
 
     void encode_vectors(
             idx_t n,
@@ -48,6 +57,10 @@ struct IndexIVFFlat : IndexIVF {
 
     InvertedListScanner* get_InvertedListScanner(
             bool store_pairs) const override;
+
+    void to_readonly_without_codes() override;
+
+    void reconstruct_without_codes(idx_t key, float* recons) const override;
 
     void reconstruct_from_offset(int64_t list_no, int64_t offset, float* recons)
             const override;

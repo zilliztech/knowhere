@@ -125,7 +125,7 @@ size_t InvertedLists::add_entry(
 size_t InvertedLists::add_entry_without_codes(
         size_t list_no,
         idx_t theid) {
-    return add_entries_without_codes (list_no, 1, &theid);
+    return add_entries_without_codes(list_no, 1, &theid);
 }
 
 size_t InvertedLists::add_entries_without_codes(

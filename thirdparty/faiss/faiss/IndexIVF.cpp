@@ -224,9 +224,7 @@ void IndexIVF::add_with_ids_without_codes(
         idx_t n,
         const float* x,
         const idx_t* xids) {
-    // will be overridden
-    FAISS_THROW_MSG(
-            "add_with_ids_without_codes not implemented for this type of index");
+    FAISS_THROW_MSG("add_with_ids_without_codes not implemented");
 }
 
 void IndexIVF::add_sa_codes(idx_t n, const uint8_t* codes, const idx_t* xids) {
@@ -317,6 +315,14 @@ void IndexIVF::add_core(
     ntotal += n;
 }
 
+void IndexIVF::add_core_without_codes(
+        idx_t n,
+        const float* x,
+        const idx_t* xids,
+        const idx_t* coarse_idx) {
+    FAISS_THROW_MSG("add_core_without_codes not implemented");
+}
+
 void IndexIVF::to_readonly() {
     if (is_readonly())
         return;
@@ -327,12 +333,7 @@ void IndexIVF::to_readonly() {
 }
 
 void IndexIVF::to_readonly_without_codes() {
-    if (is_readonly())
-        return;
-    auto readonly_lists = this->invlists->to_readonly_without_codes();
-    if (!readonly_lists)
-        return;
-    this->replace_invlists(readonly_lists, true);
+    FAISS_THROW_MSG("to_readonly_without_codes not implemented");
 }
 
 bool IndexIVF::is_readonly() const {
@@ -909,8 +910,7 @@ void IndexIVF::reconstruct(idx_t key, float* recons) const {
 }
 
 void IndexIVF::reconstruct_without_codes(idx_t key, float* recons) const {
-    idx_t lo = direct_map.get(key);
-    reconstruct_from_offset_without_codes(lo_listno(lo), lo_offset(lo), recons);
+    FAISS_THROW_MSG("reconstruct_without_codes not implemented");
 }
 
 void IndexIVF::reconstruct_n(idx_t i0, idx_t ni, float* recons) const {

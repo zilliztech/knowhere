@@ -349,24 +349,6 @@ IvfIndexNode<T>::Add(const DataSet& dataset, const Config& cfg) {
     try {
         if constexpr (std::is_same<T, faiss::IndexIVFFlat>::value) {
             index_->add_without_codes(rows, (const float*)data);
-            auto raw_data = dataset.GetTensor();
-            auto invlists = index_->invlists;
-            auto d = index_->d;
-            size_t nb = dataset.GetRows();
-            index_->prefix_sum.resize(invlists->nlist);
-            size_t curr_index = 0;
-
-            auto ails = dynamic_cast<faiss::ArrayInvertedLists*>(invlists);
-            index_->arranged_codes.resize(d * nb * sizeof(float));
-            for (size_t i = 0; i < invlists->nlist; i++) {
-                auto list_size = ails->ids[i].size();
-                for (size_t j = 0; j < list_size; j++) {
-                    memcpy(index_->arranged_codes.data() + d * (curr_index + j) * sizeof(float),
-                           (uint8_t*)raw_data + d * ails->ids[i][j] * sizeof(float), d * sizeof(float));
-                }
-                index_->prefix_sum[i] = curr_index;
-                curr_index += list_size;
-            }
         } else if constexpr (std::is_same<faiss::IndexBinaryIVF, T>::value) {
             index_->add(rows, (const uint8_t*)data);
         } else {
@@ -780,23 +762,8 @@ IvfIndexNode<faiss::IndexIVFFlat>::Deserialize(const BinarySet& binset, const Co
             LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
             return Status::invalid_binary_set;
         }
-        auto invlists = index_->invlists;
-        auto d = index_->d;
-        size_t nb = binary->size / invlists->code_size;
-        index_->prefix_sum.resize(invlists->nlist);
-        size_t curr_index = 0;
-
-        auto ails = dynamic_cast<faiss::ArrayInvertedLists*>(invlists);
-        index_->arranged_codes.resize(d * nb * sizeof(float));
-        for (size_t i = 0; i < invlists->nlist; i++) {
-            auto list_size = ails->ids[i].size();
-            for (size_t j = 0; j < list_size; j++) {
-                memcpy(index_->arranged_codes.data() + d * (curr_index + j) * sizeof(float),
-                       binary->data.get() + d * ails->ids[i][j] * sizeof(float), d * sizeof(float));
-            }
-            index_->prefix_sum[i] = curr_index;
-            curr_index += list_size;
-        }
+        size_t nb = binary->size / index_->invlists->code_size;
+        index_->arrange_codes(nb, (const float*)(binary->data.get()));
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
         return Status::faiss_inner_error;
