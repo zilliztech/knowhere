@@ -34,11 +34,13 @@ class ThreadPool {
             sched_param sch_params;
             int policy = SCHED_FIFO;
             sch_params.sched_priority = sched_get_priority_min(policy);
-            if (pthread_setschedparam(thread.native_handle(), policy, &sch_params)) {
-                LOG_KNOWHERE_ERROR_ << "Failed to set Thread scheduling : " << std::strerror(errno) << std::endl;
+            int en = pthread_setschedparam(thread.native_handle(), policy, &sch_params);
+            if (en) {
+                LOG_KNOWHERE_ERROR_ << "Failed to set Thread scheduling : " << std::strerror(en) << std::endl;
             } else {
-                LOG_KNOWHERE_DEBUG_ << "LowPriorityThreadFactory, priority: " << sch_params.sched_priority << " max is "
-                                    << sched_get_priority_max(policy) << " thread " << thread.get_id() << std::endl;
+                LOG_KNOWHERE_DEBUG_ << "LowPriorityThreadFactory set thread priority to min: "
+                                    << sch_params.sched_priority << ", max is " << sched_get_priority_max(policy)
+                                    << " thread " << thread.get_id() << std::endl;
             }
             return thread;
         }
