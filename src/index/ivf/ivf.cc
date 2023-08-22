@@ -762,6 +762,10 @@ Status
 IvfIndexNode<faiss::IndexIVFFlat>::Deserialize(const BinarySet& binset, const Config& config) {
     std::vector<std::string> names = {"IVF",  // compatible with knowhere-1.x
                                       Type()};
+
+    auto cfg = static_cast<const knowhere::BaseConfig&>(config);
+    bool is_cosine = IsMetricType(cfg.metric_type.value(), knowhere::metric::COSINE);
+
     auto binary = binset.GetByNames(names);
     if (binary == nullptr) {
         LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
@@ -780,9 +784,16 @@ IvfIndexNode<faiss::IndexIVFFlat>::Deserialize(const BinarySet& binset, const Co
             LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
             return Status::invalid_binary_set;
         }
+
         auto invlists = index_->invlists;
         auto d = index_->d;
         size_t nb = binary->size / invlists->code_size;
+
+        // do normalize for COSINE metric type
+        if (is_cosine) {
+            NormalizeVecs((float*)binary->data.get(), nb, d);
+        }
+
         index_->prefix_sum.resize(invlists->nlist);
         size_t curr_index = 0;
 
