@@ -35,7 +35,8 @@ if [[ "${MACHINE}" == "Linux" ]]; then
         # for Ubuntu 18.04
         release_num=$(lsb_release -r --short)
         ubuntu_alias="bionic"
-        sudo apt install -y g++ gcc make ccache python3 python3-pip gfortran libcurl4-openssl-dev libaio-dev lcov
+        sudo apt install -y g++ gcc make ccache python3 python3-pip gfortran libcurl4-openssl-dev libaio-dev \
+             libdouble-conversion-dev libevent-dev libgflags-dev lcov
         if [ "$release_num" == "20.04" ];then
             sudo apt install -y python3-setuptools swig
             ubuntu_alias="focal"
