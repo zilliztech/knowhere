@@ -199,6 +199,10 @@ class IvfIndexNode : public IndexNode {
  private:
     std::unique_ptr<T> index_;
     std::shared_ptr<ThreadPool> search_pool_;
+
+    // temporary solution to fix IVF_FLAT cosine
+    mutable bool normalized_ = false;
+    mutable std::mutex normalize_mtx_;
 };
 
 }  // namespace knowhere
@@ -249,6 +253,7 @@ IvfIndexNode<T>::Train(const DataSet& dataset, const Config& cfg) {
     if (IsMetricType(base_cfg.metric_type.value(), knowhere::metric::COSINE)) {
         if constexpr (!(std::is_same_v<faiss::IndexIVFFlatCC, T>)&&!(std::is_same_v<faiss::IndexScaNN, T>)) {
             Normalize(dataset);
+            normalized_ = true;
         }
     }
 
@@ -426,6 +431,17 @@ IvfIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const BitsetV
                     if (is_cosine) {
                         copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
                         cur_query = copied_query.get();
+
+                        // temporary solution to fix IVF_FLAT cosine
+                        if (!normalized_) {
+                            std::lock_guard<std::mutex> lock(normalize_mtx_);
+                            if (!normalized_) {
+                                faiss::IndexIVFFlat* ivf_index = static_cast<faiss::IndexIVFFlat*>(index_.get());
+                                size_t nb = ivf_index->arranged_codes.size() / ivf_index->code_size;
+                                NormalizeVecs((float*)(ivf_index->arranged_codes.data()), nb, dim);
+                                normalized_ = true;
+                            }
+                        }
                     }
                     index_->search_without_codes_thread_safe(1, cur_query, k, distances + offset, ids + offset, nprobe,
                                                              0, bitset);
@@ -510,6 +526,17 @@ IvfIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, const Bi
                     if (is_cosine) {
                         copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
                         cur_query = copied_query.get();
+
+                        // temporary solution to fix IVF_FLAT cosine
+                        if (!normalized_) {
+                            std::lock_guard<std::mutex> lock(normalize_mtx_);
+                            if (!normalized_) {
+                                faiss::IndexIVFFlat* ivf_index = static_cast<faiss::IndexIVFFlat*>(index_.get());
+                                size_t nb = ivf_index->arranged_codes.size() / ivf_index->code_size;
+                                NormalizeVecs((float*)(ivf_index->arranged_codes.data()), nb, dim);
+                                normalized_ = true;
+                            }
+                        }
                     }
                     index_->range_search_without_codes_thread_safe(1, cur_query, radius, &res, index_->nlist, 0,
                                                                    bitset);
