@@ -85,20 +85,6 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         return json;
     };
 
-    auto load_raw_data = [](knowhere::Index<knowhere::IndexNode>& index, const knowhere::DataSet& dataset,
-                            const knowhere::Json& conf) {
-        auto rows = dataset.GetRows();
-        auto dim = dataset.GetDim();
-        auto p_data = dataset.GetTensor();
-        knowhere::BinarySet bs;
-        REQUIRE(index.Serialize(bs) == knowhere::Status::success);
-        knowhere::BinaryPtr bptr = std::make_shared<knowhere::Binary>();
-        bptr->data = std::shared_ptr<uint8_t[]>((uint8_t*)p_data, [&](uint8_t*) {});
-        bptr->size = dim * rows * sizeof(float);
-        bs.Append("RAW_DATA", bptr);
-        REQUIRE(index.Deserialize(bs) == knowhere::Status::success);
-    };
-
     const auto train_ds = GenDataSet(nb, dim);
     const auto query_ds = GenDataSet(nq, dim);
 
@@ -127,9 +113,11 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         REQUIRE(idx.Build(*train_ds, json) == knowhere::Status::success);
         REQUIRE(idx.Size() > 0);
         REQUIRE(idx.Count() == nb);
-        if (name == knowhere::IndexEnum::INDEX_FAISS_IVFFLAT) {
-            load_raw_data(idx, *train_ds, json);
-        }
+
+        knowhere::BinarySet bs;
+        REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
+        REQUIRE(idx.Deserialize(bs) == knowhere::Status::success);
+
         auto results = idx.Search(*query_ds, json, nullptr);
         REQUIRE(results.has_value());
         float recall = GetKNNRecall(*gt.value(), *results.value());
@@ -155,9 +143,11 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         knowhere::Json json = knowhere::Json::parse(cfg_json);
         REQUIRE(idx.Type() == name);
         REQUIRE(idx.Build(*train_ds, json) == knowhere::Status::success);
-        if (name == knowhere::IndexEnum::INDEX_FAISS_IVFFLAT) {
-            load_raw_data(idx, *train_ds, json);
-        }
+
+        knowhere::BinarySet bs;
+        REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
+        REQUIRE(idx.Deserialize(bs) == knowhere::Status::success);
+
         auto results = idx.RangeSearch(*query_ds, json, nullptr);
         REQUIRE(results.has_value());
         auto ids = results.value()->GetIds();
@@ -222,9 +212,6 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
 
         auto idx_ = knowhere::IndexFactory::Instance().Create(name);
         idx_.Deserialize(bs);
-        if (name == knowhere::IndexEnum::INDEX_FAISS_IVFFLAT) {
-            load_raw_data(idx_, *train_ds, json);
-        }
         auto results = idx_.Search(*query_ds, json, nullptr);
         REQUIRE(results.has_value());
     }

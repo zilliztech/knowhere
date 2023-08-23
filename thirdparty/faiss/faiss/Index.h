@@ -93,13 +93,6 @@ struct Index {
      */
     virtual void add(idx_t n, const float* x) = 0;
 
-    /** Same as add, but only add ids, not codes
-     *
-     * @param n      nb of training vectors
-     * @param x      training vecors, size n * d
-     */
-    virtual void add_without_codes(idx_t n, const float* x);
-
     /** Same as add, but stores xids instead of sequential ids.
      *
      * The default implementation fails with an assertion, as it is
@@ -108,15 +101,6 @@ struct Index {
      * @param xids if non-null, ids to store for the vectors (size n)
      */
     virtual void add_with_ids(idx_t n, const float* x, const idx_t* xids);
-
-    /** Same as add_with_ids, but only add ids, not codes
-     *
-     * @param xids if non-null, ids to store for the vectors (size n)
-     */
-    virtual void add_with_ids_without_codes(
-            idx_t n,
-            const float* x,
-            const idx_t* xids);
 
     /** query n vectors of dimension d to the index.
      *
@@ -180,8 +164,6 @@ struct Index {
      * @param recons      reconstucted vector (size d)
      */
     virtual void reconstruct(idx_t key, float* recons) const;
-
-    virtual void reconstruct_without_codes(idx_t key, float* recons) const;
 
     /** Reconstruct vectors i0 to i0 + ni - 1
      *

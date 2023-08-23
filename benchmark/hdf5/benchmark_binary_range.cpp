@@ -112,7 +112,7 @@ class Benchmark_binary_range : public Benchmark_knowhere, public ::testing::Test
         load_hdf5_data_range<true>();
 #endif
 
-        assert(metric_str_ == METRIC_HAM_STR || metric_str_ == METRIC_JAC_STR || metric_str_ == METRIC_TAN_STR);
+        assert(metric_str_ == METRIC_HAM_STR || metric_str_ == METRIC_JAC_STR);
         metric_type_ = (metric_str_ == METRIC_HAM_STR) ? knowhere::metric::HAMMING : knowhere::metric::JACCARD;
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
         cfg_[knowhere::meta::RADIUS] = *gt_radius_;

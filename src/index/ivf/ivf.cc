@@ -131,7 +131,7 @@ class IvfIndexNode : public IndexNode {
             auto nb = index_->invlists->compute_ntotal();
             auto nlist = index_->nlist;
             auto code_size = index_->code_size;
-            return (nb * code_size + nb * sizeof(int64_t) + nlist * code_size);
+            return ((nb + nlist) * (code_size + sizeof(int64_t)));
         }
         if constexpr (std::is_same<T, faiss::IndexIVFFlatCC>::value) {
             auto nb = index_->invlists->compute_ntotal();
@@ -352,14 +352,11 @@ IvfIndexNode<T>::Add(const DataSet& dataset, const Config& cfg) {
         setter = std::make_unique<ThreadPool::ScopedOmpSetter>(base_cfg.num_build_thread.value());
     }
     try {
-        if constexpr (std::is_same<T, faiss::IndexIVFFlat>::value) {
-            index_->add_without_codes(rows, (const float*)data);
-        } else if constexpr (std::is_same<faiss::IndexBinaryIVF, T>::value) {
+        if constexpr (std::is_same<faiss::IndexBinaryIVF, T>::value) {
             index_->add(rows, (const uint8_t*)data);
         } else {
             index_->add(rows, (const float*)data);
         }
-
     } catch (std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
         return Status::faiss_inner_error;
@@ -419,14 +416,16 @@ IvfIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const BitsetV
                             std::lock_guard<std::mutex> lock(normalize_mtx_);
                             if (!normalized_) {
                                 faiss::IndexIVFFlat* ivf_index = static_cast<faiss::IndexIVFFlat*>(index_.get());
-                                size_t nb = ivf_index->arranged_codes.size() / ivf_index->code_size;
-                                NormalizeVecs((float*)(ivf_index->arranged_codes.data()), nb, dim);
+                                auto nlist = ivf_index->invlists->nlist;
+                                for (size_t i = 0; i < nlist; i++) {
+                                    auto list_size = ivf_index->invlists->list_size(i);
+                                    NormalizeVecs((float*)(ivf_index->invlists->get_codes(i)), list_size, dim);
+                                }
                                 normalized_ = true;
                             }
                         }
                     }
-                    index_->search_without_codes_thread_safe(1, cur_query, k, distances + offset, ids + offset, nprobe,
-                                                             0, bitset);
+                    index_->search_thread_safe(1, cur_query, k, distances + offset, ids + offset, nprobe, 0, bitset);
                 } else if constexpr (std::is_same<T, faiss::IndexScaNN>::value) {
                     auto cur_query = (const float*)data + index * dim;
                     const ScannConfig& scann_cfg = static_cast<const ScannConfig&>(cfg);
@@ -514,14 +513,16 @@ IvfIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, const Bi
                             std::lock_guard<std::mutex> lock(normalize_mtx_);
                             if (!normalized_) {
                                 faiss::IndexIVFFlat* ivf_index = static_cast<faiss::IndexIVFFlat*>(index_.get());
-                                size_t nb = ivf_index->arranged_codes.size() / ivf_index->code_size;
-                                NormalizeVecs((float*)(ivf_index->arranged_codes.data()), nb, dim);
+                                auto nlist = ivf_index->invlists->nlist;
+                                for (size_t i = 0; i < nlist; i++) {
+                                    auto list_size = ivf_index->invlists->list_size(i);
+                                    NormalizeVecs((float*)(ivf_index->invlists->get_codes(i)), list_size, dim);
+                                }
                                 normalized_ = true;
                             }
                         }
                     }
-                    index_->range_search_without_codes_thread_safe(1, cur_query, radius, &res, index_->nlist, 0,
-                                                                   bitset);
+                    index_->range_search_thread_safe(1, cur_query, radius, &res, index_->nlist, 0, bitset);
                 } else if constexpr (std::is_same<T, faiss::IndexScaNN>::value) {
                     auto cur_query = (const float*)xq + index * dim;
                     if (is_cosine) {
@@ -592,27 +593,7 @@ IvfIndexNode<T>::GetVectorByIds(const DataSet& dataset) const {
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
-    } else if constexpr (std::is_same<T, faiss::IndexIVFFlat>::value) {
-        auto dim = Dim();
-        auto rows = dataset.GetRows();
-        auto ids = dataset.GetIds();
-
-        float* data = nullptr;
-        try {
-            data = new float[dim * rows];
-            index_->make_direct_map(true);
-            for (int64_t i = 0; i < rows; i++) {
-                int64_t id = ids[i];
-                assert(id >= 0 && id < index_->ntotal);
-                index_->reconstruct_without_codes(id, data + i * dim);
-            }
-            return GenResultDataSet(rows, dim, data);
-        } catch (const std::exception& e) {
-            std::unique_ptr<float[]> auto_del(data);
-            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
-            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
-        }
-    } else if constexpr (std::is_same<T, faiss::IndexIVFFlatCC>::value) {
+    } else if constexpr (std::is_same<T, faiss::IndexIVFFlat>::value || std::is_same<T, faiss::IndexIVFFlatCC>::value) {
         auto dim = Dim();
         auto rows = dataset.GetRows();
         auto ids = dataset.GetIds();
@@ -675,7 +656,7 @@ IvfIndexNode<faiss::IndexIVFFlat>::GetIndexMeta(const Config& config) const {
     std::unordered_set<int64_t> id_set;
 
     for (int32_t i = 0; i < nlist; i++) {
-        // copy from IndexIVF::search_preassigned_without_codes
+        // copy from IndexIVF::search_preassigned
         std::unique_ptr<faiss::InvertedLists::ScopedIds> sids =
             std::make_unique<faiss::InvertedLists::ScopedIds>(index_->invlists, i);
 
@@ -702,8 +683,6 @@ IvfIndexNode<T>::Serialize(BinarySet& binset) const {
         MemoryIOWriter writer;
         if constexpr (std::is_same<T, faiss::IndexBinaryIVF>::value) {
             faiss::write_index_binary(index_.get(), &writer);
-        } else if constexpr (std::is_same<T, faiss::IndexIVFFlat>::value) {
-            faiss::write_index_nm(index_.get(), &writer);
         } else {
             faiss::write_index(index_.get(), &writer);
         }
@@ -730,7 +709,16 @@ IvfIndexNode<T>::Deserialize(const BinarySet& binset, const Config& config) {
 
     MemoryIOReader reader(binary->data.get(), binary->size);
     try {
-        if constexpr (std::is_same<T, faiss::IndexBinaryIVF>::value) {
+        if constexpr (std::is_same<T, faiss::IndexIVFFlat>::value) {
+            auto raw_binary = binset.GetByName("RAW_DATA");
+            if (raw_binary != nullptr) {
+                ConvertIVFFlatIfNeeded(binset, raw_binary->data.get(), raw_binary->size);
+                // after conversion, binary size and data will be updated
+                reader.data_ = binary->data.get();
+                reader.total_ = binary->size;
+            }
+            index_.reset(static_cast<faiss::IndexIVFFlat*>(faiss::read_index(&reader)));
+        } else if constexpr (std::is_same<T, faiss::IndexBinaryIVF>::value) {
             index_.reset(static_cast<T*>(faiss::read_index_binary(&reader)));
         } else {
             index_.reset(static_cast<T*>(faiss::read_index(&reader)));
@@ -757,36 +745,6 @@ IvfIndexNode<T>::DeserializeFromFile(const std::string& filename, const Config& 
         } else {
             index_.reset(static_cast<T*>(faiss::read_index(filename.data(), io_flags)));
         }
-    } catch (const std::exception& e) {
-        LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
-        return Status::faiss_inner_error;
-    }
-    return Status::success;
-}
-
-template <>
-Status
-IvfIndexNode<faiss::IndexIVFFlat>::Deserialize(const BinarySet& binset, const Config& config) {
-    std::vector<std::string> names = {"IVF",  // compatible with knowhere-1.x
-                                      Type()};
-    auto binary = binset.GetByNames(names);
-    if (binary == nullptr) {
-        LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
-        return Status::invalid_binary_set;
-    }
-
-    MemoryIOReader reader(binary->data.get(), binary->size);
-    try {
-        index_.reset(static_cast<faiss::IndexIVFFlat*>(faiss::read_index_nm(&reader)));
-
-        // Construct arranged data from original data
-        auto binary = binset.GetByName("RAW_DATA");
-        if (binary == nullptr) {
-            LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
-            return Status::invalid_binary_set;
-        }
-        size_t nb = binary->size / index_->invlists->code_size;
-        index_->arrange_codes(nb, (const float*)(binary->data.get()));
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
         return Status::faiss_inner_error;

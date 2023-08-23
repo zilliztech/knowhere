@@ -100,29 +100,9 @@ Index* ToCPUCloner::clone_Index(const Index* index) {
     }
 }
 
-Index* ToCPUCloner::clone_Index_Without_Codes(const Index* index) {
-    if (auto ifl = dynamic_cast<const GpuIndexIVFFlat*>(index)) {
-        IndexIVFFlat* res = new IndexIVFFlat();
-        ifl->copyToWithoutCodes(res);
-        return res;
-    } else if(
-            auto ifl = dynamic_cast<const GpuIndexIVFScalarQuantizer*>(index)) {
-        IndexIVFScalarQuantizer* res = new IndexIVFScalarQuantizer();
-        ifl->copyToWithoutCodes(res);
-        return res;
-    } else {
-        return Cloner::clone_Index(index);
-    }
-}
-
 faiss::Index* index_gpu_to_cpu(const faiss::Index* gpu_index) {
     ToCPUCloner cl;
     return cl.clone_Index(gpu_index);
-}
-
-faiss::Index* index_gpu_to_cpu_without_codes(const faiss::Index* gpu_index) {
-    ToCPUCloner cl;
-    return cl.clone_Index_Without_Codes(gpu_index);
 }
 
 /**********************************************************
@@ -233,55 +213,6 @@ Index* ToGpuCloner::clone_Index(const Index* index) {
     }
 }
 
-Index* ToGpuCloner::clone_Index_Without_Codes(
-        const Index* index,
-        const uint8_t *arranged_data) {
-    if (auto ifl = dynamic_cast<const faiss::IndexIVFFlat*>(index)) {
-        GpuIndexIVFFlatConfig config;
-        config.device = device;
-        config.indicesOptions = indicesOptions;
-        config.flatConfig.useFloat16 = useFloat16CoarseQuantizer;
-        config.flatConfig.storeTransposed = storeTransposed;
-
-        GpuIndexIVFFlat* res = new GpuIndexIVFFlat(
-                provider,
-                ifl->d,
-                ifl->nlist,
-                ifl->metric_type,
-                config);
-        if (reserveVecs > 0 && ifl->ntotal == 0) {
-            res->reserveMemory(reserveVecs);
-        }
-
-        res->copyFromWithoutCodes(ifl, arranged_data);
-        return res;
-    } else if (auto ifl =
-                   dynamic_cast<const faiss::IndexIVFScalarQuantizer*>(index)) {
-        GpuIndexIVFScalarQuantizerConfig config;
-        config.device = device;
-        config.indicesOptions = indicesOptions;
-        config.flatConfig.useFloat16 = useFloat16CoarseQuantizer;
-        config.flatConfig.storeTransposed = storeTransposed;
-
-        GpuIndexIVFScalarQuantizer *res = new GpuIndexIVFScalarQuantizer(
-                provider,
-                ifl->d,
-                ifl->nlist,
-                ifl->sq.qtype,
-                ifl->metric_type,
-                ifl->by_residual,
-                config);
-        if (reserveVecs > 0 && ifl->ntotal == 0) {
-            res->reserveMemory(reserveVecs);
-        }
-
-        res->copyFromWithoutCodes(ifl, arranged_data);
-        return res;
-    }
-
-    return Cloner::clone_Index(index);
-}
-
 faiss::Index* index_cpu_to_gpu(
         GpuResourcesProvider* provider,
         int device,
@@ -290,17 +221,6 @@ faiss::Index* index_cpu_to_gpu(
     GpuClonerOptions defaults;
     ToGpuCloner cl(provider, device, options ? *options : defaults);
     return cl.clone_Index(index);
-}
-
-faiss::Index* index_cpu_to_gpu_without_codes(
-        GpuResourcesProvider* provider,
-        int device,
-        const faiss::Index* index,
-        const uint8_t* arranged_data,
-        const GpuClonerOptions* options) {
-    GpuClonerOptions defaults;
-    ToGpuCloner cl(provider, device, options ? *options : defaults);
-    return cl.clone_Index_Without_Codes(index, arranged_data);
 }
 
 /**********************************************************

@@ -293,17 +293,10 @@ static void read_InvertedLists(IndexIVF* ivf, IOReader* f, int io_flags) {
     ivf->own_invlists = true;
 }
 
-InvertedLists *read_InvertedLists_nm (IOReader *f, int io_flags) {
+InvertedLists *read_InvertedLists_nm(IOReader *f, int io_flags) {
     uint32_t h;
     READ1 (h);
-    if (h == fourcc ("il00")) {
-        fprintf(stderr, "read_InvertedLists:"
-                " WARN! inverted lists not stored with IVF object\n");
-        return nullptr;
-    } else if (h == fourcc ("iloa") && !(io_flags & IO_FLAG_MMAP)) {
-        // not going to happen
-        return nullptr;
-    } else if (h == fourcc ("ilar") && !(io_flags & IO_FLAG_MMAP)) {
+    if (h == fourcc("ilar") && !(io_flags & IO_FLAG_MMAP)) {
         auto ails = new ArrayInvertedLists(0, 0);
         READ1(ails->nlist);
         READ1(ails->code_size);
@@ -359,19 +352,15 @@ InvertedLists *read_InvertedLists_nm (IOReader *f, int io_flags) {
         // resume normal reading of file
         fseek (fdesc, o, SEEK_SET);
         return ails;
-    } else if (h == fourcc("ilod")) {
-        // not going to happen
-        return nullptr;
     } else {
         FAISS_THROW_MSG("read_InvertedLists: unsupported invlist type");
     }
 }
 
-static void read_InvertedLists_nm (
-        IndexIVF *ivf, IOReader *f, int io_flags) {
+static void read_InvertedLists_nm(IndexIVF *ivf, IOReader *f, int io_flags) {
     InvertedLists *ils = read_InvertedLists_nm (f, io_flags);
     FAISS_THROW_IF_NOT(!ils || (ils->nlist == ivf->nlist &&
-                                 ils->code_size == ivf->code_size));
+                                ils->code_size == ivf->code_size));
     ivf->invlists = ils;
     ivf->own_invlists = true;
 }
@@ -967,32 +956,12 @@ Index *read_index_nm(IOReader *f, int io_flags) {
         IndexIVFFlat * ivfl = new IndexIVFFlat ();
         read_ivf_header (ivfl, f);
         ivfl->code_size = ivfl->d * sizeof(float);
-        read_InvertedLists_nm (ivfl, f, io_flags);
+        read_InvertedLists_nm(ivfl, f, io_flags);
         idx = ivfl;
-    } else if(h == fourcc("IwSq")) {
-        IndexIVFScalarQuantizer * ivsc = new IndexIVFScalarQuantizer();
-        read_ivf_header(ivsc, f);
-        read_ScalarQuantizer(&ivsc->sq, f);
-        READ1(ivsc->code_size);
-        READ1(ivsc->by_residual);
-        read_InvertedLists_nm (ivsc, f, io_flags);
-        idx = ivsc;
     } else {
         FAISS_THROW_FMT("Index type 0x%08x not supported\n", h);
         idx = nullptr;
     }
-    return idx;
-}
-
-
-Index *read_index_nm(FILE * f, int io_flags) {
-    FileIOReader reader(f);
-    return read_index_nm(&reader, io_flags);
-}
-
-Index *read_index_nm(const char *fname, int io_flags) {
-    FileIOReader reader(fname);
-    Index *idx = read_index_nm(&reader, io_flags);
     return idx;
 }
 

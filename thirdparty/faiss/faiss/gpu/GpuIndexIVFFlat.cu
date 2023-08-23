@@ -103,49 +103,6 @@ void GpuIndexIVFFlat::copyFrom(const faiss::IndexIVFFlat* index) {
     }
 }
 
-void GpuIndexIVFFlat::copyFromWithoutCodes(
-        const faiss::IndexIVFFlat* index,
-        const uint8_t* arranged_data) {
-    DeviceScope scope(config_.device);
-
-    GpuIndexIVF::copyFrom(index);
-
-    // Clear out our old data
-    index_.reset();
-
-    // The other index might not be trained
-    if (!index->is_trained) {
-        FAISS_ASSERT(!is_trained);
-        return;
-    }
-
-    // Otherwise, we can populate ourselves from the other index
-    FAISS_ASSERT(is_trained);
-
-    // Copy our lists as well
-    index_.reset(new IVFFlat(resources_.get(),
-                             quantizer->getGpuData(),
-                             index->metric_type,
-                             index->metric_arg,
-                             false, // no residual
-                             nullptr, // no scalar quantizer
-                             ivfFlatConfig_.interleavedLayout,
-                             ivfFlatConfig_.indicesOptions,
-                             config_.memorySpace));
-    InvertedLists *ivf = index->invlists;
-
-    if (ReadOnlyArrayInvertedLists* rol =
-                dynamic_cast<ReadOnlyArrayInvertedLists*>(ivf)) {
-        index_->copyCodeVectorsFromCpu(
-                (const float*)arranged_data,
-                (const long*)(rol->pin_readonly_ids->data),
-                rol->readonly_length);
-    } else {
-        // should not happen
-        FAISS_ASSERT(false);
-    }
-}
-
 void GpuIndexIVFFlat::copyTo(faiss::IndexIVFFlat* index) const {
     DeviceScope scope(config_.device);
 
@@ -164,34 +121,6 @@ void GpuIndexIVFFlat::copyTo(faiss::IndexIVFFlat* index) const {
     if (index_) {
         // Copy IVF lists
         index_->copyInvertedListsTo(ivf);
-    }
-}
-
-void GpuIndexIVFFlat::copyToWithoutCodes(faiss::IndexIVFFlat* index) const {
-    DeviceScope scope(config_.device);
-
-    // We must have the indices in order to copy to ourselves
-    FAISS_THROW_IF_NOT_MSG(
-            ivfFlatConfig_.indicesOptions != INDICES_IVF,
-            "Cannot copy to CPU as GPU index doesn't retain "
-            "indices (INDICES_IVF)");
-
-    GpuIndexIVF::copyTo(index);
-    index->code_size = this->d * sizeof(float);
-
-    InvertedLists *ivf = new ArrayInvertedLists(nlist, index->code_size);
-    index->replace_invlists(ivf, true);
-
-    // Copy the inverted lists
-    if (index_) {
-        for (int i = 0; i < nlist; ++i) {
-            auto listIndices = index_->getListIndices(i);
-
-            ivf->add_entries_without_codes(
-                    i,
-                    listIndices.size(),
-                    listIndices.data());
-        }
     }
 }
 
