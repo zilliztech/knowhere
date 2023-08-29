@@ -78,5 +78,6 @@ DECLARE_PROMETHEUS_COUNTER(knowhere_build_count);
 DECLARE_PROMETHEUS_COUNTER(knowhere_search_count);
 DECLARE_PROMETHEUS_COUNTER(knowhere_range_search_count);
 DECLARE_PROMETHEUS_HISTOGRAM(knowhere_search_topk);
-
+DECLARE_PROMETHEUS_HISTOGRAM(knowhere_search_latency);
+DECLARE_PROMETHEUS_HISTOGRAM(knowhere_range_search_latency);
 }  // namespace knowhere
