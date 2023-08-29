@@ -89,7 +89,6 @@ class KnowhereConan(ConanFile):
         self.requires("zlib/1.2.12")
         self.requires("double-conversion/3.2.1")
         self.requires("xz_utils/5.2.5")
-        self.requires("libunwind/1.5.0")
         self.requires("fmt/9.1.0")
         self.requires("folly/2023.07.12@milvus/dev")
         if self.options.with_ut:
