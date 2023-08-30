@@ -53,13 +53,13 @@ inline auto raft_mutex = std::mutex{};
 struct gpu_resources {
     gpu_resources(std::optional<std::size_t> streams_per_device = std::nullopt)
         : streams_per_device_{streams_per_device.value_or([]() {
-              auto result = std::size_t{1};
+              auto result = std::size_t{16};
               if (auto* env_str = std::getenv("KNOWHERE_STREAMS_PER_GPU")) {
                   auto str_stream = std::stringstream{env_str};
                   str_stream >> result;
                   if (str_stream.fail() || result == std::size_t{0}) {
                       LOG_KNOWHERE_WARNING_ << "KNOWHERE_STREAMS_PER_GPU env variable should be a positive integer";
-                      result = std::size_t{1};
+                      result = std::size_t{16};
                   } else {
                       LOG_KNOWHERE_INFO_ << "streams per gpu set to " << result;
                   }
