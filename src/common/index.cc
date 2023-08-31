@@ -11,6 +11,7 @@
 
 #include "knowhere/index.h"
 
+#include "knowhere/comp/time_recorder.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/log.h"
@@ -75,10 +76,17 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
     }
 
 #ifdef NOT_COMPILE_FOR_SWIG
+    TimeRecorder rc("Search");
+    auto res = this->node->Search(dataset, *cfg, bitset);
+    auto span = rc.ElapseFromBegin("done");
+    span *= 0.001;  // convert to ms
+    knowhere_search_latency.Observe(span);
     knowhere_search_count.Increment();
     knowhere_search_topk.Observe(cfg->k.value());
+#else
+    auto res = this->node->Search(dataset, *cfg, bitset);
 #endif
-    return this->node->Search(dataset, *cfg, bitset);
+    return res;
 }
 
 template <typename T>
@@ -96,9 +104,16 @@ Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView
     }
 
 #ifdef NOT_COMPILE_FOR_SWIG
+    TimeRecorder rc("Range Search");
+    auto res = this->node->RangeSearch(dataset, *cfg, bitset);
+    auto span = rc.ElapseFromBegin("done");
+    span *= 0.001;  // convert to ms
+    knowhere_range_search_latency.Observe(span);
     knowhere_range_search_count.Increment();
+#else
+    auto res = this->node->RangeSearch(dataset, *cfg, bitset);
 #endif
-    return this->node->RangeSearch(dataset, *cfg, bitset);
+    return res;
 }
 
 template <typename T>
