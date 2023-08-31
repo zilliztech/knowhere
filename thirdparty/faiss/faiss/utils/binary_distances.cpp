@@ -304,7 +304,7 @@ void binary_knn_mc(
             switch (ncodes) {
 #define binary_knn_mc_Substructure(ncodes)                           \
     case ncodes:                                                     \
-        binary_knn_mc<faiss::StructureComputer##ncodes<true>>(       \
+        binary_knn_mc<faiss::StructureComputer##ncodes<false>>(      \
                 ncodes, a, b, na, nb, k, distances, labels, bitset); \
         break;
                 binary_knn_mc_Substructure(8);
@@ -316,7 +316,7 @@ void binary_knn_mc(
                 binary_knn_mc_Substructure(512);
 #undef binary_knn_mc_Substructure
                 default:
-                    binary_knn_mc<faiss::StructureComputerDefault<true>>(
+                    binary_knn_mc<faiss::StructureComputerDefault<false>>(
                             ncodes, a, b, na, nb, k, distances, labels, bitset);
                     break;
             }
@@ -326,7 +326,7 @@ void binary_knn_mc(
             switch (ncodes) {
 #define binary_knn_mc_Superstructure(ncodes)                         \
     case ncodes:                                                     \
-        binary_knn_mc<faiss::StructureComputer##ncodes<false>>(      \
+        binary_knn_mc<faiss::StructureComputer##ncodes<true>>(       \
                 ncodes, a, b, na, nb, k, distances, labels, bitset); \
         break;
                 binary_knn_mc_Superstructure(8);
@@ -338,7 +338,7 @@ void binary_knn_mc(
                 binary_knn_mc_Superstructure(512);
 #undef binary_knn_mc_Superstructure
                 default:
-                    binary_knn_mc<faiss::StructureComputerDefault<false>>(
+                    binary_knn_mc<faiss::StructureComputerDefault<true>>(
                             ncodes, a, b, na, nb, k, distances, labels, bitset);
                     break;
             }
