@@ -429,9 +429,9 @@ TEST_CASE("Test Mem Index With Binary Vector", "[bool metrics]") {
             for (int64_t j = 0; j < topk; j++) {
                 const uint8_t* res_vector = (const uint8_t*)gv_res.value()->GetTensor() + j * code_size;
                 if (metric == knowhere::metric::SUPERSTRUCTURE) {
-                    REQUIRE(faiss::is_subset(query_vector, res_vector, code_size));
-                } else {
                     REQUIRE(faiss::is_subset(res_vector, query_vector, code_size));
+                } else {
+                    REQUIRE(faiss::is_subset(query_vector, res_vector, code_size));
                 }
             }
         }
