@@ -248,7 +248,7 @@ void IndexIVFPQFastScan::add_with_ids_impl(
                        size_t(i0),
                        size_t(i1));
             }
-            add_with_ids(i1 - i0, x + i0 * d, xids ? xids + i0 : nullptr);
+            add_with_ids_impl(i1 - i0, x + i0 * d, xids ? xids + i0 : nullptr);
         }
         return;
     }
