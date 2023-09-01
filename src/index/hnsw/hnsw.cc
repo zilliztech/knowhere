@@ -306,8 +306,8 @@ class HnswIndexNode : public IndexNode {
         try {
             MemoryIOWriter writer;
             index_->saveIndex(writer);
-            std::shared_ptr<uint8_t[]> data(writer.data_);
-            binset.Append(Type(), data, writer.rp);
+            std::shared_ptr<uint8_t[]> data(writer.data());
+            binset.Append(Type(), data, writer.tellg());
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
             return Status::hnsw_inner_error;
@@ -327,9 +327,7 @@ class HnswIndexNode : public IndexNode {
                 return Status::invalid_binary_set;
             }
 
-            MemoryIOReader reader;
-            reader.total = binary->size;
-            reader.data_ = binary->data.get();
+            MemoryIOReader reader(binary->data.get(), binary->size);
 
             hnswlib::SpaceInterface<float>* space = nullptr;
             index_ = new (std::nothrow) hnswlib::HierarchicalNSW<float>(space);

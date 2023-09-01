@@ -21,7 +21,7 @@
 #include "faiss/IndexScalarQuantizer.h"
 #include "faiss/index_io.h"
 #include "index/ivf/ivf_config.h"
-#include "io/FaissIO.h"
+#include "io/memory_io.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
@@ -707,8 +707,8 @@ IvfIndexNode<T>::Serialize(BinarySet& binset) const {
         } else {
             faiss::write_index(index_.get(), &writer);
         }
-        std::shared_ptr<uint8_t[]> data(writer.data_);
-        binset.Append(Type(), data, writer.rp);
+        std::shared_ptr<uint8_t[]> data(writer.data());
+        binset.Append(Type(), data, writer.tellg());
         return Status::success;
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
@@ -728,9 +728,7 @@ IvfIndexNode<T>::Deserialize(const BinarySet& binset, const Config& config) {
         return Status::invalid_binary_set;
     }
 
-    MemoryIOReader reader;
-    reader.total = binary->size;
-    reader.data_ = binary->data.get();
+    MemoryIOReader reader(binary->data.get(), binary->size);
     try {
         if constexpr (std::is_same<T, faiss::IndexBinaryIVF>::value) {
             index_.reset(static_cast<T*>(faiss::read_index_binary(&reader)));
@@ -777,9 +775,7 @@ IvfIndexNode<faiss::IndexIVFFlat>::Deserialize(const BinarySet& binset, const Co
         return Status::invalid_binary_set;
     }
 
-    MemoryIOReader reader;
-    reader.total = binary->size;
-    reader.data_ = binary->data.get();
+    MemoryIOReader reader(binary->data.get(), binary->size);
     try {
         index_.reset(static_cast<faiss::IndexIVFFlat*>(faiss::read_index_nm(&reader)));
 

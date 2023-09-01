@@ -36,7 +36,6 @@ static const char* METRIC_IP_STR = "angular";
 static const char* METRIC_L2_STR = "euclidean";
 static const char* METRIC_HAM_STR = "hamming";
 static const char* METRIC_JAC_STR = "jaccard";
-static const char* METRIC_TAN_STR = "tanimoto";
 
 /************************************************************************************
  * https://github.com/erikbern/ann-benchmarks

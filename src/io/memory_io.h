@@ -73,8 +73,8 @@ getSwappedBytes(char C) {
 
 struct MemoryIOWriter : public faiss::IOWriter {
     uint8_t* data_ = nullptr;
-    size_t total = 0;
-    size_t rp = 0;
+    size_t total_ = 0;
+    size_t rp_ = 0;
 
     size_t
     operator()(const void* ptr, size_t size, size_t nitems) override;
@@ -90,12 +90,25 @@ struct MemoryIOWriter : public faiss::IOWriter {
 #endif
         return operator()((const void*)ptr, size, nitems);
     }
+
+    uint8_t*
+    data() const {
+        return data_;
+    }
+
+    size_t
+    tellg() const {
+        return rp_;
+    }
 };
 
 struct MemoryIOReader : public faiss::IOReader {
     uint8_t* data_;
-    size_t rp = 0;
-    size_t total = 0;
+    size_t rp_ = 0;
+    size_t total_ = 0;
+
+    MemoryIOReader(uint8_t* data, size_t size) : data_(data), rp_(0), total_(size) {
+    }
 
     size_t
     operator()(void* ptr, size_t size, size_t nitems) override;
@@ -111,6 +124,21 @@ struct MemoryIOReader : public faiss::IOReader {
 #endif
 
         return res;
+    }
+
+    uint8_t*
+    data() const {
+        return data_;
+    }
+
+    size_t
+    tellg() const {
+        return rp_;
+    }
+
+    void
+    reset() {
+        rp_ = 0;
     }
 };
 

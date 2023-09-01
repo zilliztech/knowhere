@@ -7,7 +7,7 @@
 #include <stdexcept>
 
 #include "common/lru_cache.h"
-#include "io/fileIO.h"
+#include "io/file_io.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/utils.h"
 #pragma GCC diagnostic push
@@ -25,7 +25,7 @@
 #include <unordered_set>
 
 #include "hnswlib.h"
-#include "io/FaissIO.h"
+#include "io/memory_io.h"
 #include "knowhere/config.h"
 #include "knowhere/heap.h"
 #include "neighbor.h"
