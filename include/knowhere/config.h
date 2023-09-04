@@ -432,7 +432,7 @@ class Config {
 
                     return Status::type_conflict_in_json;
                 }
-                *ptr->val = CFG_LIST();
+                *ptr->val = CFG_LIST::value_type();
                 for (auto&& i : json[it.first]) {
                     ptr->val->value().push_back(i);
                 }
