@@ -707,7 +707,7 @@ void knn_cosine(
                 ha->nh, ha->val, ha->ids, ha->k);
         if (nx < distance_compute_blas_threshold) {
             exhaustive_L2sqr_IP_seq(
-                    x, y, d, nx, ny, res, fvec_inner_product, bitset);
+                    x, y, d, nx, ny, res, fvec_cosine, bitset);
         } else {
             exhaustive_cosine_blas(x, y, d, nx, ny, res, bitset);
         }
