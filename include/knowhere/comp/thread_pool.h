@@ -12,7 +12,6 @@
 #pragma once
 
 #include <omp.h>
-#include <pthread.h>
 
 #include <memory>
 #include <utility>
@@ -24,36 +23,13 @@
 namespace knowhere {
 
 class ThreadPool {
- private:
-    class LowPriorityThreadFactory : public folly::NamedThreadFactory {
-     public:
-        using folly::NamedThreadFactory::NamedThreadFactory;
-        std::thread
-        newThread(folly::Func&& func) override {
-            auto thread = folly::NamedThreadFactory::newThread(std::move(func));
-            sched_param sch_params;
-            int policy = SCHED_FIFO;
-            sch_params.sched_priority = sched_get_priority_min(policy);
-            int en = pthread_setschedparam(thread.native_handle(), policy, &sch_params);
-            if (en) {
-                LOG_KNOWHERE_ERROR_ << "Failed to set Thread scheduling : " << std::strerror(en) << std::endl;
-            } else {
-                LOG_KNOWHERE_DEBUG_ << "LowPriorityThreadFactory set thread priority to min: "
-                                    << sch_params.sched_priority << ", max is " << sched_get_priority_max(policy)
-                                    << " thread " << thread.get_id() << std::endl;
-            }
-            return thread;
-        }
-    };
-
  public:
     explicit ThreadPool(uint32_t num_threads)
         : pool_(folly::CPUThreadPoolExecutor(
               num_threads,
               std::make_unique<
                   folly::LifoSemMPMCQueue<folly::CPUThreadPoolExecutor::CPUTask, folly::QueueBehaviorIfFull::BLOCK>>(
-                  num_threads * kTaskQueueFactor),
-              std::make_shared<LowPriorityThreadFactory>("LowPrioKWPool"))) {
+                  num_threads * kTaskQueueFactor))) {
     }
 
     ThreadPool(const ThreadPool&) = delete;
