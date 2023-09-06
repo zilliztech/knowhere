@@ -656,7 +656,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         auto input = knowhere::FileReader(location);
         map_size_ = input.size();
-        map_ = static_cast<char*>(mmap(nullptr, map_size_, PROT_READ, MAP_SHARED, input.descriptor(), 0));
+        map_ = static_cast<char*>(mmap(nullptr, map_size_, PROT_READ, MAP_SHARED | MAP_POPULATE, input.descriptor(), 0));
+        madvise(map_, map_size_, MADV_RANDOM);
 
         size_t dim;
         readBinaryPOD(input, metric_type_);
