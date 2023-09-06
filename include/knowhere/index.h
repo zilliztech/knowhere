@@ -93,6 +93,11 @@ class Index {
         return *this;
     }
 
+    bool
+    operator==(T1* ptr) const {
+        return node == ptr;
+    }
+
     template <typename T2>
     Index<T1>&
     operator=(Index<T2>&& idx) {

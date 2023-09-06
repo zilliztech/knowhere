@@ -16,7 +16,9 @@ namespace knowhere {
 Index<IndexNode>
 IndexFactory::Create(const std::string& name, const Object& object) {
     auto& func_mapping_ = MapInstance();
-    assert(func_mapping_.find(name) != func_mapping_.end());
+    if (func_mapping_.find(name) == func_mapping_.end()) {
+        return Index<IndexNode>();
+    }
     LOG_KNOWHERE_INFO_ << "create knowhere index " << name;
     return func_mapping_[name](object);
 }
