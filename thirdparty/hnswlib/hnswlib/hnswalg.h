@@ -1161,40 +1161,18 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return result;
     }
 
-    std::vector<std::pair<dist_t, labeltype>>
-    searchKnn(const void* query_data, size_t k, const knowhere::BitsetView bitset, const SearchParam* param = nullptr,
-              const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
-        if (cur_element_count == 0)
-            return {};
-
-        size_t dim = *(size_t*)dist_func_param_;
-
-        // do normalize for COSINE metric type
-        std::unique_ptr<float[]> query_data_norm;
-        if (metric_type_ == Metric::COSINE) {
-            query_data_norm = knowhere::CopyAndNormalizeVecs((const float*)query_data, 1, dim);
-            query_data = query_data_norm.get();
-        }
-
-        // do bruteforce search when delete rate high
-        if (!bitset.empty()) {
-            const auto bs_cnt = bitset.count();
-            if (bs_cnt == cur_element_count)
-                return {};
-            if (bs_cnt >= (cur_element_count * kHnswSearchKnnBFThreshold)) {
-                return searchKnnBF(query_data, k, bitset);
-            }
-        }
-
+    std::pair<tableint, int64_t>
+    searchTopLayers(const void* query_data, const SearchParam* param = nullptr,
+                    const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
         tableint currObj = enterpoint_node_;
         uint64_t vec_hash;
         if (metric_type_ == Metric::HAMMING || metric_type_ == Metric::JACCARD) {
-            vec_hash = knowhere::hash_binary_vec((const uint8_t*)query_data, dim);
+            vec_hash = knowhere::hash_binary_vec((const uint8_t*)query_data, *(size_t*)dist_func_param_);
         } else {
-            vec_hash = knowhere::hash_vec((const float*)query_data, dim);
+            vec_hash = knowhere::hash_vec((const float*)query_data, *(size_t*)dist_func_param_);
         }
         // for tuning, do not use cache
-        if (param->for_tuning || !lru_cache.try_get(vec_hash, currObj)) {
+        if ((param && param->for_tuning) || !lru_cache.try_get(vec_hash, currObj)) {
             dist_t curdist = calcDistance(query_data, enterpoint_node_);
 
             for (int level = maxlevel_; level > 0; level--) {
@@ -1236,6 +1214,33 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 }
             }
         }
+        return {currObj, vec_hash};
+    }
+
+    std::vector<std::pair<dist_t, labeltype>>
+    searchKnn(const void* query_data, size_t k, const knowhere::BitsetView bitset, const SearchParam* param = nullptr,
+              const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
+        if (cur_element_count == 0)
+            return {};
+
+        // do normalize for COSINE metric type
+        std::unique_ptr<float[]> query_data_norm;
+        if (metric_type_ == Metric::COSINE) {
+            query_data_norm = knowhere::CopyAndNormalizeVecs((const float*)query_data, 1, *(size_t*)dist_func_param_);
+            query_data = query_data_norm.get();
+        }
+
+        // do bruteforce search when delete rate high
+        if (!bitset.empty()) {
+            const auto bs_cnt = bitset.count();
+            if (bs_cnt == cur_element_count)
+                return {};
+            if (bs_cnt >= (cur_element_count * kHnswSearchKnnBFThreshold)) {
+                return searchKnnBF(query_data, k, bitset);
+            }
+        }
+
+        auto [currObj, vec_hash] = searchTopLayers(query_data, param, feder_result);
         std::vector<std::pair<dist_t, tableint>> top_candidates;
         size_t ef = param ? param->ef_ : this->ef_;
         if (!bitset.empty()) {
@@ -1277,12 +1282,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             return {};
         }
 
-        size_t dim = *((size_t*)dist_func_param_);
-
         // do normalize for COSINE metric type
         std::unique_ptr<float[]> query_data_norm;
         if (metric_type_ == Metric::COSINE) {
-            query_data_norm = knowhere::CopyAndNormalizeVecs((const float*)query_data, 1, dim);
+            query_data_norm = knowhere::CopyAndNormalizeVecs((const float*)query_data, 1, *(size_t*)dist_func_param_);
             query_data = query_data_norm.get();
         }
 
@@ -1296,52 +1299,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             }
         }
 
-        tableint currObj = enterpoint_node_;
-        uint64_t vec_hash;
-        if (metric_type_ == Metric::HAMMING || metric_type_ == Metric::JACCARD) {
-            vec_hash = knowhere::hash_binary_vec((const uint8_t*)query_data, dim);
-        } else {
-            vec_hash = knowhere::hash_vec((const float*)query_data, dim);
-        }
-        // for tuning, do not use cache
-        if (param->for_tuning || !lru_cache.try_get(vec_hash, currObj)) {
-            dist_t curdist = calcDistance(query_data, enterpoint_node_);
-
-            for (int level = maxlevel_; level > 0; level--) {
-                bool changed = true;
-                if (feder_result != nullptr) {
-                    feder_result->visit_info_.AddLevelVisitRecord(level);
-                }
-                while (changed) {
-                    changed = false;
-                    unsigned int* data;
-
-                    data = (unsigned int*)get_linklist(currObj, level);
-                    int size = getListCount(data);
-                    metric_hops++;
-                    metric_distance_computations += size;
-
-                    tableint* datal = (tableint*)(data + 1);
-                    for (int i = 0; i < size; i++) {
-                        tableint cand = datal[i];
-                        if (cand < 0 || cand > max_elements_)
-                            throw std::runtime_error("cand error");
-                        dist_t d = calcDistance(query_data, cand);
-                        if (feder_result != nullptr) {
-                            feder_result->visit_info_.AddVisitRecord(level, currObj, cand, d);
-                            feder_result->id_set_.insert(currObj);
-                            feder_result->id_set_.insert(cand);
-                        }
-                        if (d < curdist) {
-                            curdist = d;
-                            currObj = cand;
-                            changed = true;
-                        }
-                    }
-                }
-            }
-        }
-
+        auto [currObj, vec_hash] = searchTopLayers(query_data, param, feder_result);
         std::vector<std::pair<dist_t, tableint>> top_candidates;
         size_t ef = param ? param->ef_ : this->ef_;
         if (!bitset.empty()) {
