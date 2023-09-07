@@ -331,6 +331,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
 
         visited[ep_id] = true;
+        // when searching on graph with filter, we want to keep some filtered nodes in the search path to not destroy
+        // the connectivity of the graph; but we do not want to keep all of them as they won't be candidates. Thus we
+        // include only a subset of filtered nodes(controlled by kAlpha) in the seaerh path.
         float accumulative_alpha = 0.0f;
         while (retset.has_next()) {
             auto [u, d, s] = retset.pop();
