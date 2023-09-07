@@ -15,6 +15,7 @@
 
 #include <vector>
 
+#include "knowhere/binaryset.h"
 #include "knowhere/dataset.h"
 
 namespace knowhere {
@@ -64,5 +65,8 @@ inline T
 round_down(const T value, const T align) {
     return value / align * align;
 }
+
+void
+ConvertIVFFlatIfNeeded(const BinarySet& binset, const uint8_t* raw_data, const size_t raw_size);
 
 }  // namespace knowhere

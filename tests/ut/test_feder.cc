@@ -167,22 +167,6 @@ TEST_CASE("Test Feder", "[feder]") {
         return json;
     };
 
-    auto load_raw_data = [](knowhere::Index<knowhere::IndexNode>& index, const knowhere::DataSet& dataset,
-                            const knowhere::Json& conf) {
-        auto rows = dataset.GetRows();
-        auto dim = dataset.GetDim();
-        auto p_data = dataset.GetTensor();
-        knowhere::BinarySet bs;
-        auto res = index.Serialize(bs);
-        REQUIRE(res == knowhere::Status::success);
-        knowhere::BinaryPtr bptr = std::make_shared<knowhere::Binary>();
-        bptr->data = std::shared_ptr<uint8_t[]>((uint8_t*)p_data, [&](uint8_t*) {});
-        bptr->size = dim * rows * sizeof(float);
-        bs.Append("RAW_DATA", bptr);
-        res = index.Deserialize(bs);
-        REQUIRE(res == knowhere::Status::success);
-    };
-
     const auto train_ds = GenDataSet(nb, dim, seed);
     const auto query_ds = GenDataSet(nq, dim, seed);
 
@@ -221,8 +205,6 @@ TEST_CASE("Test Feder", "[feder]") {
         auto json = ivfflat_gen();
         auto res = idx.Build(*train_ds, json);
         REQUIRE(res == knowhere::Status::success);
-
-        load_raw_data(idx, *train_ds, json);
 
         auto res1 = idx.GetIndexMeta(json);
         REQUIRE(res1.has_value());

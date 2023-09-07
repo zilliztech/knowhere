@@ -57,23 +57,8 @@ Level1Quantizer::Level1Quantizer()
           clustering_index(nullptr) {}
 
 Level1Quantizer::~Level1Quantizer() {
-    if (own_fields) {
-        if (quantizer == quantizer_bak) {
-            if (quantizer != nullptr) {
-                delete quantizer;
-            }
-        } else {
-            if (quantizer != nullptr) {
-                delete quantizer;
-            }
-
-            if (quantizer_bak != nullptr) {
-                delete quantizer_bak;
-            }
-        }
-        quantizer = nullptr;
-        quantizer_bak = nullptr;
-    }
+    if (own_fields)
+        delete quantizer;
 }
 
 void Level1Quantizer::train_q1(
@@ -210,21 +195,10 @@ void IndexIVF::add(idx_t n, const float* x) {
     add_with_ids(n, x, nullptr);
 }
 
-void IndexIVF::add_without_codes(idx_t n, const float* x) {
-    add_with_ids_without_codes(n, x, nullptr);
-}
-
 void IndexIVF::add_with_ids(idx_t n, const float* x, const idx_t* xids) {
     std::unique_ptr<idx_t[]> coarse_idx(new idx_t[n]);
     quantizer->assign(n, x, coarse_idx.get());
     add_core(n, x, nullptr, xids, coarse_idx.get());
-}
-
-void IndexIVF::add_with_ids_without_codes(
-        idx_t n,
-        const float* x,
-        const idx_t* xids) {
-    FAISS_THROW_MSG("add_with_ids_without_codes not implemented");
 }
 
 void IndexIVF::add_sa_codes(idx_t n, const uint8_t* codes, const idx_t* xids) {
@@ -315,14 +289,6 @@ void IndexIVF::add_core(
     ntotal += n;
 }
 
-void IndexIVF::add_core_without_codes(
-        idx_t n,
-        const float* x,
-        const idx_t* xids,
-        const idx_t* coarse_idx) {
-    FAISS_THROW_MSG("add_core_without_codes not implemented");
-}
-
 void IndexIVF::to_readonly() {
     if (is_readonly())
         return;
@@ -332,22 +298,8 @@ void IndexIVF::to_readonly() {
     this->replace_invlists(readonly_lists, true);
 }
 
-void IndexIVF::to_readonly_without_codes() {
-    FAISS_THROW_MSG("to_readonly_without_codes not implemented");
-}
-
 bool IndexIVF::is_readonly() const {
     return this->invlists->is_readonly();
-}
-
-void IndexIVF::backup_quantizer() {
-    this->quantizer_bak = quantizer;
-}
-
-void IndexIVF::restore_quantizer() {
-    if (this->quantizer_bak != nullptr) {
-        quantizer = this->quantizer_bak;
-    }
 }
 
 void IndexIVF::make_direct_map(bool b) {
@@ -822,7 +774,10 @@ void IndexIVF::range_search_preassigned(
 
         // prepare the list scanning function
 
-        auto scan_list_func = [&](size_t i, size_t ik, RangeQueryResult& qres) {
+        auto scan_list_func = [&](size_t i,
+                                  size_t ik,
+                                  RangeQueryResult& qres,
+                                  const BitsetView bitset) {
             idx_t key = keys[i * nprobe + ik]; /* select the list  */
             if (key < 0)
                 return;
@@ -875,7 +830,7 @@ void IndexIVF::range_search_preassigned(
             size_t prev_nres = qres.nres;
 
             for (size_t ik = 0; ik < nprobe; ik++) {
-                scan_list_func(i, ik, qres);
+                scan_list_func(i, ik, qres, bitset);
                 if (qres.nres == prev_nres) break;
                 prev_nres = qres.nres;
             }
@@ -907,10 +862,6 @@ InvertedListScanner* IndexIVF::get_InvertedListScanner(
 void IndexIVF::reconstruct(idx_t key, float* recons) const {
     idx_t lo = direct_map.get(key);
     reconstruct_from_offset(lo_listno(lo), lo_offset(lo), recons);
-}
-
-void IndexIVF::reconstruct_without_codes(idx_t key, float* recons) const {
-    FAISS_THROW_MSG("reconstruct_without_codes not implemented");
 }
 
 void IndexIVF::reconstruct_n(idx_t i0, idx_t ni, float* recons) const {
@@ -1005,18 +956,9 @@ void IndexIVF::reconstruct_from_offset(
     FAISS_THROW_MSG("reconstruct_from_offset not implemented");
 }
 
-void IndexIVF::reconstruct_from_offset_without_codes(
-        int64_t /*list_no*/,
-        int64_t /*offset*/,
-        float* /*recons*/) const {
-    FAISS_THROW_MSG("reconstruct_from_offset_without_codes not implemented");
-}
-
 void IndexIVF::reset() {
     direct_map.clear();
     invlists->reset();
-    arranged_codes.clear();
-    prefix_sum.clear();
     ntotal = 0;
 }
 

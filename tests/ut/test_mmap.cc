@@ -105,11 +105,6 @@ TEST_CASE("Search mmap", "[float metrics]") {
         auto data = bs.GetByName(index.Type());
 
         WriteDataToDisk(path.string(), reinterpret_cast<const char*>(data->data.get()), data->size);
-
-        // knowhere::BinaryPtr bptr = std::make_shared<knowhere::Binary>();
-        // bptr->data = std::shared_ptr<uint8_t[]>((uint8_t*)p_data, [&](uint8_t*) {});
-        // bptr->size = dim * rows * sizeof(float);
-        // bs.Append("RAW_DATA", bptr);
         REQUIRE(index.DeserializeFromFile(path, conf) == knowhere::Status::success);
     };
 
@@ -262,11 +257,6 @@ TEST_CASE("Search binary mmap", "[float metrics]") {
         auto data = bs.GetByName(index.Type());
 
         WriteDataToDisk(path.string(), reinterpret_cast<const char*>(data->data.get()), data->size);
-
-        // knowhere::BinaryPtr bptr = std::make_shared<knowhere::Binary>();
-        // bptr->data = std::shared_ptr<uint8_t[]>((uint8_t*)p_data, [&](uint8_t*) {});
-        // bptr->size = dim * rows * sizeof(float);
-        // bs.Append("RAW_DATA", bptr);
         REQUIRE(index.DeserializeFromFile(path, conf) == knowhere::Status::success);
     };
 
@@ -373,11 +363,6 @@ TEST_CASE("Search binary mmap", "[bool metrics]") {
         auto data = bs.GetByName(index.Type());
 
         WriteDataToDisk(path.string(), reinterpret_cast<const char*>(data->data.get()), data->size);
-
-        // knowhere::BinaryPtr bptr = std::make_shared<knowhere::Binary>();
-        // bptr->data = std::shared_ptr<uint8_t[]>((uint8_t*)p_data, [&](uint8_t*) {});
-        // bptr->size = dim * rows * sizeof(float);
-        // bs.Append("RAW_DATA", bptr);
         REQUIRE(index.DeserializeFromFile(path, conf) == knowhere::Status::success);
     };
 

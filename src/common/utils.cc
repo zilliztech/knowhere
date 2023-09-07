@@ -15,6 +15,10 @@
 #include <cmath>
 #include <cstdint>
 
+#include "faiss/IndexIVFFlat.h"
+#include "faiss/impl/FaissException.h"
+#include "faiss/index_io.h"
+#include "io/memory_io.h"
 #include "knowhere/log.h"
 #include "simd/hook.h"
 
@@ -64,6 +68,42 @@ CopyAndNormalizeFloatVec(const float* x, int32_t dim) {
     std::copy_n(x, dim, x_norm.get());
     NormalizeVec(x_norm.get(), dim);
     return x_norm;
+}
+
+void
+ConvertIVFFlatIfNeeded(const BinarySet& binset, const uint8_t* raw_data, const size_t raw_size) {
+    std::vector<std::string> names = {"IVF",  // compatible with knowhere-1.x
+                                      knowhere::IndexEnum::INDEX_FAISS_IVFFLAT};
+    auto binary = binset.GetByNames(names);
+    if (binary == nullptr) {
+        return;
+    }
+
+    MemoryIOReader reader(binary->data.get(), binary->size);
+
+    // there are 2 possibilities for the input index binary:
+    //  1. native IVF_FLAT, do nothing
+    //  2. IVF_FLAT_NM, convert to native IVF_FLAT
+    try {
+        // try to parse as native format, if it's actually _NM format,
+        // faiss will raise a "read error" exception for IVF_FLAT_NM format
+        faiss::read_index(&reader);
+    } catch (faiss::FaissException& e) {
+        reader.reset();
+
+        // convert IVF_FLAT_NM to native IVF_FLAT
+        auto* index = static_cast<faiss::IndexIVFFlat*>(faiss::read_index_nm(&reader));
+        index->restore_codes(raw_data, raw_size);
+
+        // over-write IVF_FLAT_NM binary with native IVF_FLAT binary
+        MemoryIOWriter writer;
+        faiss::write_index(index, &writer);
+        std::shared_ptr<uint8_t[]> data(writer.data());
+        binary->data = data;
+        binary->size = writer.tellg();
+
+        LOG_KNOWHERE_INFO_ << "Convert IVF_FLAT_NM to native IVF_FLAT";
+    }
 }
 
 }  // namespace knowhere

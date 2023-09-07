@@ -153,16 +153,6 @@ struct InvertedLists {
             const uint8_t* code,
             const float* code_norm = nullptr) = 0;
 
-    /// add one entry to an inverted list without codes
-    virtual size_t add_entry_without_codes(
-            size_t list_no,
-            idx_t theid);
-
-    virtual size_t add_entries_without_codes(
-            size_t list_no,
-            size_t n_entry,
-            const idx_t* ids);
-
     virtual void update_entry(
             size_t list_no,
             size_t offset,
@@ -181,8 +171,6 @@ struct InvertedLists {
     virtual void reset();
 
     virtual InvertedLists* to_readonly();
-
-    virtual InvertedLists* to_readonly_without_codes();
 
     virtual bool is_readonly() const;
 
@@ -308,17 +296,14 @@ struct ArrayInvertedLists : InvertedLists {
     const uint8_t* get_codes(size_t list_no) const override;
     const idx_t* get_ids(size_t list_no) const override;
 
+    void restore_codes(const uint8_t* raw_data, const size_t raw_size);
+
     size_t add_entries(
             size_t list_no,
             size_t n_entry,
             const idx_t* ids,
             const uint8_t* code,
             const float* code_norm = nullptr) override;
-
-    size_t add_entries_without_codes (
-            size_t list_no,
-            size_t n_entry,
-            const idx_t* ids) override;
 
     void update_entries(
             size_t list_no,
@@ -330,8 +315,6 @@ struct ArrayInvertedLists : InvertedLists {
     void resize(size_t list_no, size_t new_size) override;
 
     InvertedLists* to_readonly() override;
-
-    InvertedLists* to_readonly_without_codes() override;
 
     ~ArrayInvertedLists() override;
 };
@@ -387,11 +370,6 @@ struct ConcurrentArrayInvertedLists : InvertedLists {
             const uint8_t* code,
             const float* code_norms = nullptr) override;
 
-    size_t add_entries_without_codes (
-            size_t list_no,
-            size_t n_entry,
-            const idx_t* ids) override;
-
     void update_entries(
             size_t list_no,
             size_t offset,
@@ -400,8 +378,6 @@ struct ConcurrentArrayInvertedLists : InvertedLists {
             const uint8_t* code) override;
 
     InvertedLists* to_readonly() override;
-
-    InvertedLists* to_readonly_without_codes() override;
 
     void resize(size_t list_no, size_t new_size) override;
 
@@ -456,11 +432,6 @@ struct ReadOnlyArrayInvertedLists: InvertedLists {
             const uint8_t* code,
             const float* code_norm = nullptr) override;
 
-    size_t add_entries_without_codes(
-            size_t list_no,
-            size_t n_entry,
-            const idx_t* ids) override;
-
     void update_entries(
             size_t list_no,
             size_t offset,
@@ -493,11 +464,6 @@ struct ReadOnlyInvertedLists : InvertedLists {
             const idx_t* ids,
             const uint8_t* code,
             const float* code_norm = nullptr) override;
-
-    size_t add_entries_without_codes(
-            size_t list_no,
-            size_t n_entry,
-            const idx_t* ids) override;
 
     void update_entries(
             size_t list_no,

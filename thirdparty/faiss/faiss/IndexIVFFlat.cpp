@@ -40,31 +40,11 @@ IndexIVFFlat::IndexIVFFlat(
     code_size = sizeof(float) * d;
 }
 
-void IndexIVFFlat::arrange_codes(idx_t n, const float* x) {
+void IndexIVFFlat::restore_codes(
+        const uint8_t* raw_data,
+        const size_t raw_size) {
     auto ails = dynamic_cast<faiss::ArrayInvertedLists*>(invlists);
-    prefix_sum.resize(invlists->nlist + 1);
-    prefix_sum[0] = 0;
-    arranged_codes.resize(d * n * sizeof(float));
-    auto dst = (float*)(arranged_codes.data());
-    for (size_t i = 0; i < invlists->nlist; i++) {
-        auto list_size = ails->ids[i].size();
-        for (size_t j = 0; j < list_size; j++) {
-            const float* src = x + d * ails->ids[i][j];
-            std::copy_n(src, d, dst);
-            dst += d;
-        }
-        prefix_sum[i + 1] = prefix_sum[i] + list_size;
-    }
-}
-
-void IndexIVFFlat::add_with_ids_without_codes(
-        idx_t n,
-        const float* x,
-        const idx_t* xids) {
-    std::unique_ptr<idx_t[]> coarse_idx(new idx_t[n]);
-    quantizer->assign(n, x, coarse_idx.get());
-    add_core_without_codes(n, x, xids, coarse_idx.get());
-    arrange_codes(n, x);
+    ails->restore_codes(raw_data, raw_size);
 }
 
 void IndexIVFFlat::add_core(
@@ -107,42 +87,6 @@ void IndexIVFFlat::add_core(
 
     if (verbose) {
         printf("IndexIVFFlat::add_core: added %" PRId64 " / %" PRId64
-               " vectors\n",
-               n_add,
-               n);
-    }
-    ntotal += n;
-}
-
-void IndexIVFFlat::add_core_without_codes(
-        idx_t n,
-        const float* x,
-        const idx_t* xids,
-        const idx_t* coarse_idx) {
-    FAISS_THROW_IF_NOT(is_trained);
-    FAISS_THROW_IF_NOT(coarse_idx);
-    assert(invlists);
-    direct_map.check_can_add(xids);
-
-    int64_t n_add = 0;
-    DirectMapAdd dm_adder(direct_map, n, xids);
-
-    for (size_t i = 0; i < n; i++) {
-        idx_t id = xids ? xids[i] : ntotal + i;
-        idx_t list_no = coarse_idx[i];
-
-        if (list_no >= 0) {
-            const float* xi = x + i * d;
-            size_t offset = invlists->add_entry_without_codes(list_no, id);
-            dm_adder.add(i, list_no, offset);
-            n_add++;
-        } else {
-            dm_adder.add(i, -1, 0);
-        }
-    }
-
-    if (verbose) {
-        printf("IndexIVFFlat::add_core_without_codes: added %" PRId64 " / %" PRId64
                " vectors\n",
                n_add,
                n);
@@ -283,40 +227,11 @@ InvertedListScanner* IndexIVFFlat::get_InvertedListScanner(
     return nullptr;
 }
 
-void IndexIVFFlat::to_readonly_without_codes() {
-    if (is_readonly())
-        return;
-    auto readonly_lists = this->invlists->to_readonly_without_codes();
-    if (!readonly_lists)
-        return;
-    this->replace_invlists(readonly_lists, true);
-}
-
-void IndexIVFFlat::reconstruct_without_codes(idx_t key, float* recons) const {
-    idx_t lo = direct_map.get(key);
-    reconstruct_from_offset_without_codes(lo_listno(lo), lo_offset(lo), recons);
-}
-
 void IndexIVFFlat::reconstruct_from_offset(
         int64_t list_no,
         int64_t offset,
         float* recons) const {
     memcpy(recons, invlists->get_single_code(list_no, offset), code_size);
-}
-
-void IndexIVFFlat::reconstruct_from_offset_without_codes(
-        int64_t list_no,
-        int64_t offset,
-        float* recons) const {
-    auto idx = prefix_sum[list_no] + offset;
-#ifdef USE_GPU
-    auto rol = dynamic_cast<faiss::ReadOnlyArrayInvertedLists*>(invlists);
-    auto arranged_data =
-            reinterpret_cast<uint8_t*>(rol->pin_readonly_codes->data);
-    memcpy(recons, arranged_data + idx * code_size, code_size);
-#else
-    memcpy(recons, arranged_codes.data() + idx * code_size, code_size);
-#endif
 }
 
 IndexIVFFlatCC::IndexIVFFlatCC(
@@ -328,20 +243,6 @@ IndexIVFFlatCC::IndexIVFFlatCC(
         MetricType metric)
         : is_cosine_(iscosine), IndexIVFFlat(quantizer, d, nlist, metric) {
     replace_invlists(new ConcurrentArrayInvertedLists(nlist, code_size, ssize, iscosine), true);
-}
-
-void IndexIVFFlatCC::add_with_ids_without_codes(
-        idx_t n,
-        const float* x,
-        const idx_t* xids) {
-    FAISS_THROW_MSG("ivfflat_cc index not support add_without_codes operation");
-}
-
-void IndexIVFFlatCC::reconstruct_from_offset_without_codes(
-        int64_t list_no,
-        int64_t offset,
-        float* recons) const {
-    FAISS_THROW_MSG("ivfflat_cc index not support reconstruct_from_offset_without_codes operation");
 }
 
 void IndexIVFFlatCC::train(idx_t n, const float* x) {

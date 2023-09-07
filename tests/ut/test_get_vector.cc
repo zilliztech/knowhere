@@ -139,22 +139,6 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
 
     auto flat_gen = base_gen;
 
-    auto load_raw_data = [](knowhere::Index<knowhere::IndexNode>& index, const knowhere::DataSet& dataset,
-                            const knowhere::Json& conf) {
-        auto rows = dataset.GetRows();
-        auto dim = dataset.GetDim();
-        auto p_data = dataset.GetTensor();
-        knowhere::BinarySet bs;
-        auto res = index.Serialize(bs);
-        REQUIRE(res == knowhere::Status::success);
-        knowhere::BinaryPtr bptr = std::make_shared<knowhere::Binary>();
-        bptr->data = std::shared_ptr<uint8_t[]>((uint8_t*)p_data, [&](uint8_t*) {});
-        bptr->size = dim * rows * sizeof(float);
-        bs.Append("RAW_DATA", bptr);
-        res = index.Deserialize(bs);
-        REQUIRE(res == knowhere::Status::success);
-    };
-
     SECTION("Test float index") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
@@ -184,9 +168,6 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
 
         auto idx_new = knowhere::IndexFactory::Instance().Create(name);
         idx_new.Deserialize(bs);
-        if (name == knowhere::IndexEnum::INDEX_FAISS_IVFFLAT) {
-            load_raw_data(idx_new, *train_ds, json);
-        }
         auto results = idx_new.GetVectorByIds(*ids_ds);
         REQUIRE(results.has_value());
         auto xb = (float*)train_ds_copy->GetTensor();

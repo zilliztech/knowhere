@@ -51,7 +51,7 @@ class Benchmark_float_range_bitset : public Benchmark_knowhere, public ::testing
         auto conf = cfg;
         auto radius = conf[knowhere::meta::RADIUS].get<float>();
 
-        printf("\n[%0.3f s] %s | %s | radius=.3f\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
+        printf("\n[%0.3f s] %s | %s | radius=%.3f\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
                radius);
         printf("================================================================================\n");
         for (auto per : PERCENTs_) {

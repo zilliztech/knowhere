@@ -24,7 +24,6 @@ class GpuResourcesProvider;
 struct ToCPUCloner : faiss::Cloner {
     void merge_index(Index* dst, Index* src, bool successive_ids);
     Index* clone_Index(const Index* index) override;
-    Index* clone_Index_Without_Codes(const Index* index);
 };
 
 /// Cloner specialized for CPU -> 1 GPU
@@ -38,10 +37,6 @@ struct ToGpuCloner : faiss::Cloner, GpuClonerOptions {
             const GpuClonerOptions& options);
 
     Index* clone_Index(const Index* index) override;
-
-    Index* clone_Index_Without_Codes(
-            const Index* index,
-            const uint8_t* arranged_data);
 };
 
 /// Cloner specialized for CPU -> multiple GPUs
@@ -72,21 +67,12 @@ struct ToGpuClonerMultiple : faiss::Cloner, GpuMultipleClonerOptions {
 /// converts any GPU index inside gpu_index to a CPU index
 faiss::Index* index_gpu_to_cpu(const faiss::Index* gpu_index);
 
-faiss::Index* index_gpu_to_cpu_without_codes(const faiss::Index* gpu_index);
-
 /// converts any CPU index that can be converted to GPU
 faiss::Index* index_cpu_to_gpu(
         GpuResourcesProvider* provider,
         int device,
         const faiss::Index* index,
         const GpuClonerOptions* options = nullptr);
-
-faiss::Index* index_cpu_to_gpu_without_codes(
-       GpuResourcesProvider* provider,
-        int device,
-       const faiss::Index* index,
-       const uint8_t* arranged_data,
-       const GpuClonerOptions* options = nullptr);
 
 faiss::Index* index_cpu_to_gpu_multiple(
         std::vector<GpuResourcesProvider*>& provider,
