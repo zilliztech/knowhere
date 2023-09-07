@@ -15,7 +15,7 @@
 #include "faiss/IndexFlat.h"
 #include "faiss/index_io.h"
 #include "index/flat/flat_config.h"
-#include "io/FaissIO.h"
+#include "io/memory_io.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/factory.h"
 #include "knowhere/log.h"
@@ -262,8 +262,8 @@ class FlatIndexNode : public IndexNode {
             if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
                 faiss::write_index_binary(index_.get(), &writer);
             }
-            std::shared_ptr<uint8_t[]> data(writer.data_);
-            binset.Append(Type(), data, writer.rp);
+            std::shared_ptr<uint8_t[]> data(writer.data());
+            binset.Append(Type(), data, writer.tellg());
             return Status::success;
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
@@ -282,9 +282,7 @@ class FlatIndexNode : public IndexNode {
             return Status::invalid_binary_set;
         }
 
-        MemoryIOReader reader;
-        reader.total = binary->size;
-        reader.data_ = binary->data.get();
+        MemoryIOReader reader(binary->data.get(), binary->size);
         if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
             faiss::Index* index = faiss::read_index(&reader);
             index_.reset(static_cast<T*>(index));

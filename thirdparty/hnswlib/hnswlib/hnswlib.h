@@ -132,7 +132,7 @@ AVX512Capable() {
 #include <queue>
 #include <vector>
 
-#include "io/FaissIO.h"
+#include "io/memory_io.h"
 
 namespace hnswlib {
 typedef int64_t labeltype;

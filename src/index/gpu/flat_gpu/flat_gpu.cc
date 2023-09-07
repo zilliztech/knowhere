@@ -15,7 +15,7 @@
 #include "faiss/index_io.h"
 #include "index/flat_gpu/flat_gpu_config.h"
 #include "index/gpu/gpu_res_mgr.h"
-#include "io/FaissIO.h"
+#include "io/memory_io.h"
 #include "knowhere/factory.h"
 #include "knowhere/log.h"
 
@@ -120,8 +120,8 @@ class GpuFlatIndexNode : public IndexNode {
             MemoryIOWriter writer;
             // Serialize() is called after Add(), at this time index_ is CPU index actually
             faiss::write_index(index_.get(), &writer);
-            std::shared_ptr<uint8_t[]> data(writer.data_);
-            binset.Append(Type(), data, writer.rp);
+            std::shared_ptr<uint8_t[]> data(writer.data());
+            binset.Append(Type(), data, writer.tellg());
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
@@ -136,10 +136,8 @@ class GpuFlatIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
             return Status::invalid_binary_set;
         }
-        MemoryIOReader reader;
+        MemoryIOReader reader(binary->data.get(), binary->size);
         try {
-            reader.total = binary->size;
-            reader.data_ = binary->data.get();
             std::unique_ptr<faiss::Index> index(faiss::read_index(&reader));
 
             auto gpu_res = GPUResMgr::GetInstance().GetRes();
