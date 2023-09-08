@@ -158,6 +158,84 @@ class HnswIndexNode : public IndexNode {
         return res;
     }
 
+ private:
+    class iterator : public IndexNode::iterator {
+     public:
+        iterator(const hnswlib::HierarchicalNSW<float>* index, const char* query, const bool transform,
+                 const BitsetView& bitset, const bool for_tuning = false, const size_t seed_ef = kIteratorSeedEf)
+            : index_(index),
+              transform_(transform),
+              bitset_(bitset),
+              workspace_(index_->getIteratorWorkspace(query, seed_ef, for_tuning)) {
+            UpdateNext();
+        }
+
+        std::pair<int64_t, float>
+        Next() override {
+            auto ret = std::make_pair(next_id_, next_dist_);
+            UpdateNext();
+            return ret;
+        }
+
+        [[nodiscard]] bool
+        HasNext() const override {
+            return has_next_;
+        }
+
+     private:
+        void
+        UpdateNext() {
+            auto next = index_->getIteratorNext(workspace_.get(), bitset_);
+            if (next.has_value()) {
+                auto [dist, id] = next.value();
+                next_dist_ = transform_ ? (-dist) : dist;
+                next_id_ = id;
+                has_next_ = true;
+            } else {
+                has_next_ = false;
+            }
+        }
+        const hnswlib::HierarchicalNSW<float>* index_;
+        const bool transform_;
+        const BitsetView bitset_;
+        std::unique_ptr<hnswlib::IteratorWorkspace> workspace_;
+        bool has_next_;
+        float next_dist_;
+        int64_t next_id_;
+    };
+
+ public:
+    expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
+    AnnIterator(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
+        if (!index_) {
+            LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
+            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+        }
+        auto nq = dataset.GetRows();
+        auto xq = dataset.GetTensor();
+
+        auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
+
+        bool transform =
+            (index_->metric_type_ == hnswlib::Metric::INNER_PRODUCT || index_->metric_type_ == hnswlib::Metric::COSINE);
+        auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
+        std::vector<folly::Future<folly::Unit>> futs;
+        futs.reserve(nq);
+        for (int i = 0; i < nq; ++i) {
+            futs.emplace_back(search_pool_->push([&, i]() {
+                auto single_query = (const char*)xq + i * index_->data_size_;
+                vec[i].reset(new iterator(this->index_, single_query, transform, bitset, hnsw_cfg.for_tuning.value(),
+                                          hnsw_cfg.seed_ef.value()));
+            }));
+        }
+        // wait for initial search(in top layers and search for seed_ef in base layer) to finish
+        for (auto& fut : futs) {
+            fut.wait();
+        }
+
+        return vec;
+    }
+
     expected<DataSetPtr>
     RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {

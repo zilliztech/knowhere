@@ -444,7 +444,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     std::vector<std::pair<dist_t, labeltype>>
     getNeighboursWithinRadius(NeighborSet& top_candidates, const void* data_point,
-                              float radius, const knowhere::BitsetView bitset) const {
+                              float radius, const knowhere::BitsetView& bitset) const {
         std::vector<std::pair<dist_t, labeltype>> result;
         auto& visited = visited_list_pool_->getFreeVisitedList();
 
@@ -1268,6 +1268,67 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         return result;
     };
+
+    std::unique_ptr<IteratorWorkspace>
+    getIteratorWorkspace(const void* query_data, const size_t seed_ef, const bool for_tuning) const {
+        if (metric_type_ == Metric::COSINE) {
+            return std::make_unique<IteratorWorkspace>(
+                query_data, max_elements_, seed_ef, for_tuning,
+                knowhere::CopyAndNormalizeVecs((const float*)query_data, 1, *(size_t*)dist_func_param_));
+        } else {
+            return std::make_unique<IteratorWorkspace>(query_data, max_elements_, seed_ef, for_tuning, nullptr);
+        }
+    }
+
+    std::optional<std::pair<dist_t, labeltype>>
+    getIteratorNext(IteratorWorkspace* workspace, const knowhere::BitsetView& bitset,
+                    const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
+        if (cur_element_count == 0) {
+            return std::nullopt;
+        }
+        auto query_data =
+            (metric_type_ == Metric::COSINE) ? workspace->normalized_query_data.get() : workspace->query_data;
+        if (!workspace->initial_search_done) {
+            tableint currObj = searchTopLayers(query_data, workspace->param.get()).first;
+            NeighborSet retset;
+            if (!bitset.empty()) {
+                retset = searchBaseLayerST<true, true>(currObj, query_data, workspace->seed_ef, workspace->visited, bitset, feder_result,
+                                                       &workspace->to_visit);
+            } else {
+                retset = searchBaseLayerST<false, true>(currObj, query_data, workspace->seed_ef, workspace->visited, bitset, feder_result,
+                                                        &workspace->to_visit);
+            }
+            for (int i = 0; i < retset.size(); i++) {
+                workspace->retset.push(retset[i]);
+            }
+            workspace->initial_search_done = true;
+        }
+        if (!workspace->to_visit.empty()) {
+            auto top = workspace->to_visit.top();
+            workspace->to_visit.pop();
+            auto add_search_candidate = [&](Neighbor n) {
+                workspace->to_visit.push(n);
+                return true;
+            };
+            if (!bitset.empty()) {
+                searchBaseLayerSTNext<decltype(add_search_candidate), true, true>(query_data, top, workspace->visited,
+                                                                                  workspace->accumulative_alpha, bitset,
+                                                                                  add_search_candidate, feder_result);
+            } else {
+                searchBaseLayerSTNext<decltype(add_search_candidate), false, true>(
+                    query_data, top, workspace->visited, workspace->accumulative_alpha, bitset, add_search_candidate,
+                    feder_result);
+            }
+            workspace->retset.push(top);
+        }
+        if (workspace->retset.empty()) {
+            return std::nullopt;
+        }
+
+        auto top = workspace->retset.top();
+        workspace->retset.pop();
+        return std::make_optional(std::make_pair(top.distance, top.id));
+    }
 
     std::vector<std::pair<dist_t, labeltype>>
     searchRangeBF(const void* query_data, float radius, const knowhere::BitsetView bitset) const {

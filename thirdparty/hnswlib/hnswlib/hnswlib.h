@@ -133,6 +133,7 @@ AVX512Capable() {
 #include <vector>
 
 #include "io/memory_io.h"
+#include "neighbor.h"
 
 namespace hnswlib {
 typedef int64_t labeltype;
@@ -195,6 +196,35 @@ struct SearchParam {
     bool for_tuning;
 };
 
+struct IteratorWorkspace {
+    // IteratorWorkspace does not own original query_data, but owns the
+    // normalized_query_data(if any). Thus storing the normalized_query_data
+    // separately in a unique_ptr so it can be freed when finished.
+    IteratorWorkspace(const void* query_data, const size_t num_elements, const size_t seed_ef, const bool for_tuning,
+                      std::unique_ptr<float[]> normalized_query_data)
+        : query_data(query_data),
+          visited(num_elements),
+          seed_ef(seed_ef),
+          param(std::make_unique<SearchParam>()),
+          normalized_query_data(std::move(normalized_query_data)) {
+        param->ef_ = 0;
+        param->for_tuning = for_tuning;
+    }
+    const void* query_data;
+    bool initial_search_done = false;
+    // TODO test for memory usage of this heap and add a metric monitoring it.
+    IteratorMinHeap to_visit;
+    // TODO: since iterators do not occupy a thread during the entire lifecycle of an
+    // iteration request, we cannot use the visited list in the shared visited list pool,
+    // thus creating a new visited list for every new iteration request.
+    std::vector<bool> visited;
+    IteratorMinHeap retset;
+    const size_t seed_ef;
+    float accumulative_alpha = 0.0f;
+    std::unique_ptr<SearchParam> param;
+    std::unique_ptr<float[]> normalized_query_data;
+};
+
 template <typename dist_t>
 class AlgorithmInterface {
  public:
@@ -207,6 +237,13 @@ class AlgorithmInterface {
     virtual std::vector<std::pair<dist_t, labeltype>>
     searchKnn(const void*, size_t, const knowhere::BitsetView, const SearchParam*,
               const knowhere::feder::hnsw::FederResultUniq&) const = 0;
+
+    virtual std::unique_ptr<IteratorWorkspace>
+    getIteratorWorkspace(const void*, const size_t, const bool) const = 0;
+
+    virtual std::optional<std::pair<dist_t, labeltype>>
+    getIteratorNext(IteratorWorkspace*, const knowhere::BitsetView&,
+                    const knowhere::feder::hnsw::FederResultUniq&) const = 0;
 
     virtual std::vector<std::pair<dist_t, labeltype>>
     searchRangeBF(const void*, float, const knowhere::BitsetView) const = 0;

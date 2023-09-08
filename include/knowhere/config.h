@@ -62,6 +62,7 @@ enum PARAM_TYPE {
     FEDER = 1 << 3,
     DESERIALIZE = 1 << 4,
     DESERIALIZE_FROM_FILE = 1 << 5,
+    ITERATOR = 1 << 6,
 };
 
 template <>
@@ -226,6 +227,12 @@ class EntryAccess {
     EntryAccess&
     for_range_search() {
         entry->type |= PARAM_TYPE::RANGE_SEARCH;
+        return *this;
+    }
+
+    EntryAccess&
+    for_iterator() {
+        entry->type |= PARAM_TYPE::ITERATOR;
         return *this;
     }
 
@@ -538,6 +545,11 @@ class BaseConfig : public Config {
 
     virtual Status
     CheckAndAdjustForRangeSearch() {
+        return Status::success;
+    }
+
+    virtual Status
+    CheckAndAdjustForIterator() {
         return Status::success;
     }
 

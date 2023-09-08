@@ -127,6 +127,9 @@ class Index {
     expected<DataSetPtr>
     Search(const DataSet& dataset, const Json& json, const BitsetView& bitset) const;
 
+    expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
+    AnnIterator(const DataSet& dataset, const Json& json, const BitsetView& bitset) const;
+
     expected<DataSetPtr>
     RangeSearch(const DataSet& dataset, const Json& json, const BitsetView& bitset) const;
 
