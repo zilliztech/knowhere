@@ -26,6 +26,7 @@ namespace knowhere {
 
 const float FloatAccuracy = 0.00001;
 
+// normalize one vector and return its norm
 float
 NormalizeVec(float* x, int32_t d) {
     float norm_l2_sqr = faiss::fvec_norm_L2sqr(x, d);
@@ -39,12 +40,12 @@ NormalizeVec(float* x, int32_t d) {
     return 1.0f;
 }
 
+// normalize all vectors and return their norms
 std::vector<float>
 NormalizeVecs(float* x, size_t rows, int32_t dim) {
-    std::vector<float> norms;
-    norms.reserve(rows);
+    std::vector<float> norms(rows);
     for (size_t i = 0; i < rows; i++) {
-        norms.push_back(NormalizeVec(x + i * dim, dim));
+        norms[i] = NormalizeVec(x + i * dim, dim);
     }
     return norms;
 }
@@ -62,12 +63,13 @@ Normalize(const DataSet& dataset) {
     }
 }
 
+// copy and return normalized vectors
 std::unique_ptr<float[]>
-CopyAndNormalizeFloatVec(const float* x, int32_t dim) {
-    auto x_norm = std::make_unique<float[]>(dim);
-    std::copy_n(x, dim, x_norm.get());
-    NormalizeVec(x_norm.get(), dim);
-    return x_norm;
+CopyAndNormalizeVecs(const float* x, size_t rows, int32_t dim) {
+    auto x_normalized = std::make_unique<float[]>(rows * dim);
+    std::copy_n(x, rows * dim, x_normalized.get());
+    NormalizeVecs(x_normalized.get(), rows, dim);
+    return x_normalized;
 }
 
 void

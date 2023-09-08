@@ -66,7 +66,7 @@ class IvfIndexNode : public IndexNode {
     bool
     HasRawData(const std::string& metric_type) const override {
         if constexpr (std::is_same<faiss::IndexIVFFlat, T>::value) {
-            return !IsMetricType(metric_type, metric::COSINE);
+            return true;
         }
         if constexpr (std::is_same<faiss::IndexIVFFlatCC, T>::value) {
             return true;
@@ -199,10 +199,6 @@ class IvfIndexNode : public IndexNode {
  private:
     std::unique_ptr<T> index_;
     std::shared_ptr<ThreadPool> search_pool_;
-
-    // temporary solution to fix IVF_FLAT cosine
-    mutable bool normalized_ = false;
-    mutable std::mutex normalize_mtx_;
 };
 
 }  // namespace knowhere
@@ -249,11 +245,13 @@ IvfIndexNode<T>::Train(const DataSet& dataset, const Config& cfg) {
     if (base_cfg.num_build_thread.has_value()) {
         setter = std::make_unique<ThreadPool::ScopedOmpSetter>(base_cfg.num_build_thread.value());
     }
+
+    bool is_cosine = IsMetricType(base_cfg.metric_type.value(), knowhere::metric::COSINE);
+
     // do normalize for COSINE metric type
-    if (IsMetricType(base_cfg.metric_type.value(), knowhere::metric::COSINE)) {
-        if constexpr (!(std::is_same_v<faiss::IndexIVFFlatCC, T>)&&!(std::is_same_v<faiss::IndexScaNN, T>)) {
+    if constexpr (std::is_same_v<faiss::IndexIVFPQ, T> || std::is_same_v<faiss::IndexIVFScalarQuantizer, T>) {
+        if (is_cosine) {
             Normalize(dataset);
-            normalized_ = true;
         }
     }
 
@@ -275,14 +273,13 @@ IvfIndexNode<T>::Train(const DataSet& dataset, const Config& cfg) {
             const IvfFlatConfig& ivf_flat_cfg = static_cast<const IvfFlatConfig&>(cfg);
             auto nlist = MatchNlist(rows, ivf_flat_cfg.nlist.value());
             qzr = new (std::nothrow) typename QuantizerT<T>::type(dim, metric.value());
-            index = std::make_unique<faiss::IndexIVFFlat>(qzr, dim, nlist, metric.value());
+            index = std::make_unique<faiss::IndexIVFFlat>(qzr, dim, nlist, is_cosine, metric.value());
             index->train(rows, (const float*)data);
         }
         if constexpr (std::is_same<faiss::IndexIVFFlatCC, T>::value) {
             const IvfFlatCcConfig& ivf_flat_cc_cfg = static_cast<const IvfFlatCcConfig&>(cfg);
             auto nlist = MatchNlist(rows, ivf_flat_cc_cfg.nlist.value());
             qzr = new (std::nothrow) typename QuantizerT<T>::type(dim, metric.value());
-            bool is_cosine = base_cfg.metric_type.value() == metric::COSINE;
             index = std::make_unique<faiss::IndexIVFFlatCC>(qzr, dim, nlist, ivf_flat_cc_cfg.ssize.value(), is_cosine,
                                                             metric.value());
             index->train(rows, (const float*)data);
@@ -408,29 +405,15 @@ IvfIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const BitsetV
                 } else if constexpr (std::is_same<T, faiss::IndexIVFFlat>::value) {
                     auto cur_query = (const float*)data + index * dim;
                     if (is_cosine) {
-                        copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
+                        copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         cur_query = copied_query.get();
-
-                        // temporary solution to fix IVF_FLAT cosine
-                        if (!normalized_) {
-                            std::lock_guard<std::mutex> lock(normalize_mtx_);
-                            if (!normalized_) {
-                                faiss::IndexIVFFlat* ivf_index = static_cast<faiss::IndexIVFFlat*>(index_.get());
-                                auto nlist = ivf_index->invlists->nlist;
-                                for (size_t i = 0; i < nlist; i++) {
-                                    auto list_size = ivf_index->invlists->list_size(i);
-                                    NormalizeVecs((float*)(ivf_index->invlists->get_codes(i)), list_size, dim);
-                                }
-                                normalized_ = true;
-                            }
-                        }
                     }
                     index_->search_thread_safe(1, cur_query, k, distances + offset, ids + offset, nprobe, 0, bitset);
                 } else if constexpr (std::is_same<T, faiss::IndexScaNN>::value) {
                     auto cur_query = (const float*)data + index * dim;
                     const ScannConfig& scann_cfg = static_cast<const ScannConfig&>(cfg);
                     if (is_cosine) {
-                        copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
+                        copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         cur_query = copied_query.get();
                     }
                     index_->search_thread_safe(1, cur_query, k, distances + offset, ids + offset, nprobe,
@@ -438,7 +421,7 @@ IvfIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const BitsetV
                 } else {
                     auto cur_query = (const float*)data + index * dim;
                     if (is_cosine) {
-                        copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
+                        copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         cur_query = copied_query.get();
                     }
                     index_->search_thread_safe(1, cur_query, k, distances + offset, ids + offset, nprobe, 0, bitset);
@@ -505,35 +488,21 @@ IvfIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, const Bi
                 } else if constexpr (std::is_same<T, faiss::IndexIVFFlat>::value) {
                     auto cur_query = (const float*)xq + index * dim;
                     if (is_cosine) {
-                        copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
+                        copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         cur_query = copied_query.get();
-
-                        // temporary solution to fix IVF_FLAT cosine
-                        if (!normalized_) {
-                            std::lock_guard<std::mutex> lock(normalize_mtx_);
-                            if (!normalized_) {
-                                faiss::IndexIVFFlat* ivf_index = static_cast<faiss::IndexIVFFlat*>(index_.get());
-                                auto nlist = ivf_index->invlists->nlist;
-                                for (size_t i = 0; i < nlist; i++) {
-                                    auto list_size = ivf_index->invlists->list_size(i);
-                                    NormalizeVecs((float*)(ivf_index->invlists->get_codes(i)), list_size, dim);
-                                }
-                                normalized_ = true;
-                            }
-                        }
                     }
                     index_->range_search_thread_safe(1, cur_query, radius, &res, index_->nlist, 0, bitset);
                 } else if constexpr (std::is_same<T, faiss::IndexScaNN>::value) {
                     auto cur_query = (const float*)xq + index * dim;
                     if (is_cosine) {
-                        copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
+                        copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         cur_query = copied_query.get();
                     }
                     index_->range_search_thread_safe(1, cur_query, radius, &res, bitset);
                 } else {
                     auto cur_query = (const float*)xq + index * dim;
                     if (is_cosine) {
-                        copied_query = CopyAndNormalizeFloatVec(cur_query, dim);
+                        copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         cur_query = copied_query.get();
                     }
                     index_->range_search_thread_safe(1, cur_query, radius, &res, index_->nlist, 0, bitset);

@@ -1168,7 +1168,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // do normalize for COSINE metric type
         std::unique_ptr<float[]> query_data_norm;
         if (metric_type_ == Metric::COSINE) {
-            query_data_norm = knowhere::CopyAndNormalizeFloatVec((const float*)query_data, dim);
+            query_data_norm = knowhere::CopyAndNormalizeVecs((const float*)query_data, 1, dim);
             query_data = query_data_norm.get();
         }
 
@@ -1278,7 +1278,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // do normalize for COSINE metric type
         std::unique_ptr<float[]> query_data_norm;
         if (metric_type_ == Metric::COSINE) {
-            query_data_norm = knowhere::CopyAndNormalizeFloatVec((const float*)query_data, dim);
+            query_data_norm = knowhere::CopyAndNormalizeVecs((const float*)query_data, 1, dim);
             query_data = query_data_norm.get();
         }
 

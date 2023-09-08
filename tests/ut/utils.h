@@ -147,6 +147,42 @@ GetRangeSearchRecall(const knowhere::DataSet& gt, const knowhere::DataSet& resul
     return (1 + precision) * recall / 2;
 }
 
+inline bool
+CheckDistanceInScope(const knowhere::DataSet& result, int topk, float low_bound, float high_bound) {
+    auto ids = result.GetDistance();
+    auto distances = result.GetDistance();
+    auto rows = result.GetRows();
+    for (int i = 0; i < rows; ++i) {
+        for (int j = 0; j < topk; j++) {
+            auto idx = i * topk + j;
+            auto id = ids[idx];
+            auto d = distances[idx];
+            if (id != -1 && !(low_bound < d && d < high_bound)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+inline bool
+CheckDistanceInScope(const knowhere::DataSet& result, float low_bound, float high_bound) {
+    auto ids = result.GetDistance();
+    auto distances = result.GetDistance();
+    auto lims = result.GetLims();
+    auto rows = result.GetRows();
+    for (int i = 0; i < rows; ++i) {
+        for (size_t j = lims[i]; j < lims[i + 1]; j++) {
+            auto id = ids[j];
+            auto d = distances[j];
+            if (id != -1 && !(low_bound < d && d < high_bound)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 // Return a n-bits bitset data with first t bits set to true
 inline std::vector<uint8_t>
 GenerateBitsetWithFirstTbitsSet(size_t n, size_t t) {

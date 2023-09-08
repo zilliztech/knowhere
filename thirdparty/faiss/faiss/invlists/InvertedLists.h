@@ -290,13 +290,19 @@ struct ArrayInvertedLists : InvertedLists {
     std::vector<std::vector<uint8_t>> codes; // binary codes, size nlist
     std::vector<std::vector<idx_t>> ids;     ///< Inverted lists for indexes
 
-    ArrayInvertedLists(size_t nlist, size_t code_size);
+    bool with_norm = false;
+    std::vector<std::vector<float>> code_norms; // code norms
+
+    ArrayInvertedLists(size_t nlist, size_t code_size, bool with_norm = false);
 
     size_t list_size(size_t list_no) const override;
     const uint8_t* get_codes(size_t list_no) const override;
     const idx_t* get_ids(size_t list_no) const override;
 
     void restore_codes(const uint8_t* raw_data, const size_t raw_size);
+
+    const float* get_code_norms(size_t list_no, size_t offset) const override;
+    void release_code_norms(size_t list_no, const float* codes) const override;
 
     size_t add_entries(
             size_t list_no,
@@ -383,8 +389,8 @@ struct ConcurrentArrayInvertedLists : InvertedLists {
 
     ~ConcurrentArrayInvertedLists() override;
 
-    const size_t segment_size;
-    const bool save_norm;
+    size_t segment_size;
+    bool save_norm;
     std::vector<std::atomic<size_t>> list_cur;
     std::vector<std::deque<Segment<uint8_t>>> codes;
     std::vector<std::deque<Segment<idx_t>>> ids;

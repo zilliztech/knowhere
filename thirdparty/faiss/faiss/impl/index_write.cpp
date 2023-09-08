@@ -253,6 +253,98 @@ void write_InvertedLists(const InvertedLists* ils, IOWriter* f) {
                 WRITEANDCHECK(ails->ids[i].data(), n);
             }
         }
+    } else if (const auto & oa =
+            dynamic_cast<const ReadOnlyArrayInvertedLists *>(ils)) {
+        uint32_t h = fourcc("iloa");
+        WRITE1(h);
+        WRITE1(oa->nlist);
+        WRITE1(oa->code_size);
+        WRITEVECTOR(oa->readonly_length);
+#ifdef USE_GPU
+        size_t n = oa->pin_readonly_ids->size() / sizeof(InvertedLists::idx_t);
+        WRITE1(n);
+        WRITEANDCHECK((InvertedLists::idx_t*)oa->pin_readonly_ids->data, n);
+        WRITEANDCHECK((uint8_t*)oa->pin_readonly_codes->data, n * oa->code_size);
+#else
+        size_t n = oa->readonly_ids.size();
+        WRITE1(n);
+        WRITEANDCHECK(oa->readonly_ids.data(), n);
+        WRITEANDCHECK(oa->readonly_codes.data(), n * oa->code_size);
+#endif
+    } else if (const auto & od =
+               dynamic_cast<const OnDiskInvertedLists *>(ils)) {
+        uint32_t h = fourcc ("ilod");
+        WRITE1(h);
+        WRITE1(ils->nlist);
+        WRITE1(ils->code_size);
+        // this is a POD object
+        WRITEVECTOR(od->lists);
+
+        {
+            std::vector<OnDiskInvertedLists::Slot> v(
+                      od->slots.begin(), od->slots.end());
+            WRITEVECTOR(v);
+        }
+        {
+            std::vector<char> x(od->filename.begin(), od->filename.end());
+            WRITEVECTOR(x);
+        }
+        WRITE1(od->totsize);
+    } else {
+        InvertedListsIOHook::lookup_classname(typeid(*ils).name())
+                ->write(ils, f);
+    }
+}
+
+void write_InvertedLists_with_norm(const InvertedLists* ils, IOWriter* f) {
+    if (ils == nullptr) {
+        uint32_t h = fourcc("il00");
+        WRITE1(h);
+    } else if (
+            const auto& ails = dynamic_cast<const ArrayInvertedLists*>(ils)) {
+        uint32_t h = fourcc("ilar");
+        WRITE1(h);
+        WRITE1(ails->nlist);
+        WRITE1(ails->code_size);
+        WRITE1(ails->with_norm);
+        // here we store either as a full or a sparse data buffer
+        size_t n_non0 = 0;
+        for (size_t i = 0; i < ails->nlist; i++) {
+            if (ails->ids[i].size() > 0)
+                n_non0++;
+        }
+        if (n_non0 > ails->nlist / 2) {
+            uint32_t list_type = fourcc("full");
+            WRITE1(list_type);
+            std::vector<size_t> sizes;
+            for (size_t i = 0; i < ails->nlist; i++) {
+                sizes.push_back(ails->ids[i].size());
+            }
+            WRITEVECTOR(sizes);
+        } else {
+            int list_type = fourcc("sprs"); // sparse
+            WRITE1(list_type);
+            std::vector<size_t> sizes;
+            for (size_t i = 0; i < ails->nlist; i++) {
+                size_t n = ails->ids[i].size();
+                if (n > 0) {
+                    sizes.push_back(i);
+                    sizes.push_back(n);
+                }
+            }
+            WRITEVECTOR(sizes);
+        }
+        // make a single contiguous data buffer (useful for mmapping)
+        for (size_t i = 0; i < ails->nlist; i++) {
+            size_t n = ails->ids[i].size();
+            if (n > 0) {
+                WRITEANDCHECK(ails->codes[i].data(), n * ails->code_size);
+                WRITEANDCHECK(ails->ids[i].data(), n);
+                if (ails->with_norm) {
+                    WRITEANDCHECK(ails->code_norms[i].data(), n);
+                }
+            }
+        }
     } else if (const auto & lca =
                        dynamic_cast<const ConcurrentArrayInvertedLists *>(ils)) {
         uint32_t h = fourcc("ilca");
@@ -305,43 +397,6 @@ void write_InvertedLists(const InvertedLists* ils, IOWriter* f) {
                 }
             }
         }
-    } else if (const auto & oa =
-            dynamic_cast<const ReadOnlyArrayInvertedLists *>(ils)) {
-        uint32_t h = fourcc("iloa");
-        WRITE1(h);
-        WRITE1(oa->nlist);
-        WRITE1(oa->code_size);
-        WRITEVECTOR(oa->readonly_length);
-#ifdef USE_GPU
-        size_t n = oa->pin_readonly_ids->size() / sizeof(InvertedLists::idx_t);
-        WRITE1(n);
-        WRITEANDCHECK((InvertedLists::idx_t*)oa->pin_readonly_ids->data, n);
-        WRITEANDCHECK((uint8_t*)oa->pin_readonly_codes->data, n * oa->code_size);
-#else
-        size_t n = oa->readonly_ids.size();
-        WRITE1(n);
-        WRITEANDCHECK(oa->readonly_ids.data(), n);
-        WRITEANDCHECK(oa->readonly_codes.data(), n * oa->code_size);
-#endif
-    } else if (const auto & od =
-               dynamic_cast<const OnDiskInvertedLists *>(ils)) {
-        uint32_t h = fourcc ("ilod");
-        WRITE1(h);
-        WRITE1(ils->nlist);
-        WRITE1(ils->code_size);
-        // this is a POD object
-        WRITEVECTOR(od->lists);
-
-        {
-            std::vector<OnDiskInvertedLists::Slot> v(
-                      od->slots.begin(), od->slots.end());
-            WRITEVECTOR(v);
-        }
-        {
-            std::vector<char> x(od->filename.begin(), od->filename.end());
-            WRITEVECTOR(x);
-        }
-        WRITE1(od->totsize);
     } else {
         InvertedListsIOHook::lookup_classname(typeid(*ils).name())
                 ->write(ils, f);
@@ -532,13 +587,13 @@ void write_index(const Index* idx, IOWriter* f) {
         uint32_t h = fourcc("IwFc");
         WRITE1(h);
         write_ivf_header(ivfl, f);
-        write_InvertedLists(ivfl->invlists, f);
+        write_InvertedLists_with_norm(ivfl->invlists, f);
     } else if (
             const IndexIVFFlat* ivfl = dynamic_cast<const IndexIVFFlat*>(idx)) {
         uint32_t h = fourcc("IwFl");
         WRITE1(h);
         write_ivf_header(ivfl, f);
-        write_InvertedLists(ivfl->invlists, f);
+        write_InvertedLists_with_norm(ivfl->invlists, f);
     } else if (
             const IndexIVFScalarQuantizer* ivsc =
                     dynamic_cast<const IndexIVFScalarQuantizer*>(idx)) {

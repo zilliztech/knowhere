@@ -35,9 +35,11 @@ IndexIVFFlat::IndexIVFFlat(
         Index* quantizer,
         size_t d,
         size_t nlist,
+        bool is_cosine,
         MetricType metric)
-        : IndexIVF(quantizer, d, nlist, sizeof(float) * d, metric) {
+        : is_cosine_(is_cosine), IndexIVF(quantizer, d, nlist, sizeof(float) * d, metric) {
     code_size = sizeof(float) * d;
+    replace_invlists(new ArrayInvertedLists(nlist, code_size, is_cosine), true);
 }
 
 void IndexIVFFlat::restore_codes(
@@ -45,6 +47,32 @@ void IndexIVFFlat::restore_codes(
         const size_t raw_size) {
     auto ails = dynamic_cast<faiss::ArrayInvertedLists*>(invlists);
     ails->restore_codes(raw_data, raw_size);
+}
+
+void IndexIVFFlat::train(idx_t n, const float* x) {
+    if (is_cosine_) {
+        auto x_normalized = knowhere::CopyAndNormalizeVecs(x, n, d);
+        // use normalized data to train codes for cosine
+        IndexIVF::train(n, x_normalized.get());
+    } else {
+        IndexIVF::train(n, x);
+    }
+}
+
+void IndexIVFFlat::add_with_ids(idx_t n, const float* x, const idx_t* xids) {
+    std::unique_ptr<idx_t[]> coarse_idx(new idx_t[n]);
+    if (is_cosine_) {
+        auto x_normalized = std::make_unique<float[]>(n * d);
+        std::memcpy(x_normalized.get(), x, n * d * sizeof(float));
+        auto norms = knowhere::NormalizeVecs(x_normalized.get(), n, d);
+        // use normalized data to calculate coarse id
+        quantizer->assign(n, x_normalized.get(), coarse_idx.get());
+        // add raw data with its norms to inverted list
+        add_core(n, x, norms.data(), xids, coarse_idx.get());
+    } else {
+        quantizer->assign(n, x, coarse_idx.get());
+        add_core(n, x, nullptr, xids, coarse_idx.get());
+    }
 }
 
 void IndexIVFFlat::add_core(
@@ -239,38 +267,10 @@ IndexIVFFlatCC::IndexIVFFlatCC(
         size_t d,
         size_t nlist,
         size_t ssize,
-        bool iscosine,
+        bool is_cosine,
         MetricType metric)
-        : is_cosine_(iscosine), IndexIVFFlat(quantizer, d, nlist, metric) {
-    replace_invlists(new ConcurrentArrayInvertedLists(nlist, code_size, ssize, iscosine), true);
-}
-
-void IndexIVFFlatCC::train(idx_t n, const float* x) {
-    if (is_cosine_) {
-        auto norm_data = std::make_unique<float[]>(n * d);
-        std::memcpy(norm_data.get(), x , n * d * sizeof(float));
-        knowhere::NormalizeVecs(norm_data.get(), n, d);
-        //use normalized data to train codes for cosine
-        IndexIVF::train(n, norm_data.get());
-    } else {
-        IndexIVF::train(n, x);
-    }
-}
-
-void IndexIVFFlatCC::add_with_ids(idx_t n, const float* x, const idx_t* xids) {
-    std::unique_ptr<idx_t[]> coarse_idx(new idx_t[n]);
-    if (is_cosine_) {
-        auto norm_data = std::make_unique<float[]>(n * d);
-        std::memcpy(norm_data.get(), x, n * d * sizeof(float));
-        auto norms = knowhere::NormalizeVecs(norm_data.get(), n, d);
-        //use normalized data to calculate coarse id
-        quantizer->assign(n, norm_data.get(), coarse_idx.get());
-        //add raw data with its norms to inverted list
-        add_core(n, x, norms.data(), xids, coarse_idx.get());
-    } else {
-        quantizer->assign(n, x, coarse_idx.get());
-        add_core(n, x, nullptr, xids, coarse_idx.get());
-    }
+        : IndexIVFFlat(quantizer, d, nlist, is_cosine, metric) {
+    replace_invlists(new ConcurrentArrayInvertedLists(nlist, code_size, ssize, is_cosine), true);
 }
 
 /*****************************************
