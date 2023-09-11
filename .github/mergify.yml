@@ -182,8 +182,6 @@ pull_request_rules:
       - 'status-success=pre-commit'
       - 'status-success=analyzer'
       - "status-success=e2e"
-      - "status-success=e2e-gpu"
-      - "status-success=ut-gpu"
     actions:
       label:
         add:
