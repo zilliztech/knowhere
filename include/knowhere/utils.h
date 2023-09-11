@@ -15,6 +15,7 @@
 
 #include <vector>
 
+#include "knowhere/binaryset.h"
 #include "knowhere/dataset.h"
 
 namespace knowhere {
@@ -34,6 +35,9 @@ NormalizeVecs(float* x, size_t rows, int32_t dim);
 
 extern void
 Normalize(const DataSet& dataset);
+
+extern std::unique_ptr<float[]>
+CopyAndNormalizeVecs(const float* x, size_t rows, int32_t dim);
 
 constexpr inline uint64_t seed = 0xc70f6907UL;
 
@@ -61,5 +65,8 @@ inline T
 round_down(const T value, const T align) {
     return value / align * align;
 }
+
+extern void
+ConvertIVFFlatIfNeeded(const BinarySet& binset, const uint8_t* raw_data, const size_t raw_size);
 
 }  // namespace knowhere

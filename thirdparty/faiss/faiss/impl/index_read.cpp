@@ -213,36 +213,6 @@ InvertedLists* read_InvertedLists(IOReader* f, int io_flags) {
         READANDCHECK(ails->readonly_codes.data(), n * code_size);
 #endif
         return ails;
-    } else if (h == fourcc("ilca")) {
-        size_t nlist, code_size, segment_size;
-        bool save_norm;
-        READ1(nlist);
-        READ1(code_size);
-        READ1(segment_size);
-        READ1(save_norm);
-
-        auto lca = new ConcurrentArrayInvertedLists(nlist, code_size, segment_size, save_norm);
-        std::vector<size_t> sizes(nlist);
-        read_ArrayInvertedLists_sizes(f, sizes);
-        for (size_t i = 0; i < lca->nlist; i++) {
-            lca->resize(i, sizes[i]);
-        }
-        for (size_t i = 0; i < lca->nlist; i++) {
-            size_t n = lca->list_size(i);
-            if (n > 0) {
-                size_t seg_num = lca->get_segment_num(i);
-                for (size_t j = 0; j < seg_num; j++) {
-                    size_t seg_size = lca->get_segment_size(i , j);
-                    size_t seg_off = lca->get_segment_offset(i, j);
-                    READANDCHECK(lca->codes[i][j].data_.data(), seg_size * lca->code_size);
-                    READANDCHECK(lca->ids[i][j].data_.data(), seg_size);
-                    if (save_norm) {
-                        READANDCHECK(lca->code_norms[i][j].data_.data(), seg_size);
-                    }
-                }
-            }
-        }
-        return lca;
     } else if (h == fourcc("ilar") && !(io_flags & IO_FLAG_SKIP_IVF_DATA)) {
         auto ails = new ArrayInvertedLists(0, 0);
         READ1(ails->nlist);
@@ -293,17 +263,10 @@ static void read_InvertedLists(IndexIVF* ivf, IOReader* f, int io_flags) {
     ivf->own_invlists = true;
 }
 
-InvertedLists *read_InvertedLists_nm (IOReader *f, int io_flags) {
+InvertedLists *read_InvertedLists_nm(IOReader *f, int io_flags) {
     uint32_t h;
     READ1 (h);
-    if (h == fourcc ("il00")) {
-        fprintf(stderr, "read_InvertedLists:"
-                " WARN! inverted lists not stored with IVF object\n");
-        return nullptr;
-    } else if (h == fourcc ("iloa") && !(io_flags & IO_FLAG_MMAP)) {
-        // not going to happen
-        return nullptr;
-    } else if (h == fourcc ("ilar") && !(io_flags & IO_FLAG_MMAP)) {
+    if (h == fourcc("ilar") && !(io_flags & IO_FLAG_MMAP)) {
         auto ails = new ArrayInvertedLists(0, 0);
         READ1(ails->nlist);
         READ1(ails->code_size);
@@ -359,19 +322,95 @@ InvertedLists *read_InvertedLists_nm (IOReader *f, int io_flags) {
         // resume normal reading of file
         fseek (fdesc, o, SEEK_SET);
         return ails;
-    } else if (h == fourcc("ilod")) {
-        // not going to happen
-        return nullptr;
     } else {
         FAISS_THROW_MSG("read_InvertedLists: unsupported invlist type");
     }
 }
 
-static void read_InvertedLists_nm (
-        IndexIVF *ivf, IOReader *f, int io_flags) {
+static void read_InvertedLists_nm(IndexIVF *ivf, IOReader *f, int io_flags) {
     InvertedLists *ils = read_InvertedLists_nm (f, io_flags);
     FAISS_THROW_IF_NOT(!ils || (ils->nlist == ivf->nlist &&
-                                 ils->code_size == ivf->code_size));
+                                ils->code_size == ivf->code_size));
+    ivf->invlists = ils;
+    ivf->own_invlists = true;
+}
+
+InvertedLists* read_InvertedLists_with_norm(IOReader* f, int io_flags) {
+    uint32_t h;
+    READ1(h);
+    if (h == fourcc("ilca")) {
+        size_t nlist, code_size, segment_size;
+        bool save_norm;
+        READ1(nlist);
+        READ1(code_size);
+        READ1(segment_size);
+        READ1(save_norm);
+
+        auto lca = new ConcurrentArrayInvertedLists(nlist, code_size, segment_size, save_norm);
+        std::vector<size_t> sizes(nlist);
+        read_ArrayInvertedLists_sizes(f, sizes);
+        for (size_t i = 0; i < lca->nlist; i++) {
+            lca->resize(i, sizes[i]);
+        }
+        for (size_t i = 0; i < lca->nlist; i++) {
+            size_t n = lca->list_size(i);
+            if (n > 0) {
+                size_t seg_num = lca->get_segment_num(i);
+                for (size_t j = 0; j < seg_num; j++) {
+                    size_t seg_size = lca->get_segment_size(i , j);
+                    size_t seg_off = lca->get_segment_offset(i, j);
+                    READANDCHECK(lca->codes[i][j].data_.data(), seg_size * lca->code_size);
+                    READANDCHECK(lca->ids[i][j].data_.data(), seg_size);
+                    if (save_norm) {
+                        READANDCHECK(lca->code_norms[i][j].data_.data(), seg_size);
+                    }
+                }
+            }
+        }
+        return lca;
+    } else if (h == fourcc("ilar") && !(io_flags & IO_FLAG_SKIP_IVF_DATA)) {
+        auto ails = new ArrayInvertedLists(0, 0);
+        READ1(ails->nlist);
+        READ1(ails->code_size);
+        READ1(ails->with_norm);
+        ails->ids.resize(ails->nlist);
+        ails->codes.resize(ails->nlist);
+        if (ails->with_norm) {
+            ails->code_norms.resize(ails->nlist);
+        }
+        std::vector<size_t> sizes(ails->nlist);
+        read_ArrayInvertedLists_sizes(f, sizes);
+        for (size_t i = 0; i < ails->nlist; i++) {
+            ails->ids[i].resize(sizes[i]);
+            ails->codes[i].resize(sizes[i] * ails->code_size);
+            if (ails->with_norm) {
+                ails->code_norms[i].resize(sizes[i]);
+            }
+        }
+        for (size_t i = 0; i < ails->nlist; i++) {
+            size_t n = ails->ids[i].size();
+            if (n > 0) {
+                READANDCHECK(ails->codes[i].data(), n * ails->code_size);
+                READANDCHECK(ails->ids[i].data(), n);
+                if (ails->with_norm) {
+                    READANDCHECK(ails->code_norms[i].data(), n);
+                }
+            }
+        }
+        return ails;
+    } else {
+        return InvertedListsIOHook::lookup(h)->read(f, io_flags);
+    }
+}
+
+static void read_InvertedLists_with_norm(IndexIVF* ivf, IOReader* f, int io_flags) {
+    InvertedLists* ils = read_InvertedLists_with_norm(f, io_flags);
+    if (ils) {
+        FAISS_THROW_IF_NOT(ils->nlist == ivf->nlist);
+        FAISS_THROW_IF_NOT(
+                ils->code_size == InvertedLists::INVALID_CODE_SIZE ||
+                ils->code_size == ivf->code_size);
+    }
     ivf->invlists = ils;
     ivf->own_invlists = true;
 }
@@ -732,13 +771,13 @@ Index* read_index(IOReader* f, int io_flags) {
         IndexIVFFlatCC* ivf_cc = new IndexIVFFlatCC();
         read_ivf_header(ivf_cc, f);
         ivf_cc->code_size = ivf_cc->d * sizeof(float);
-        read_InvertedLists(ivf_cc, f, io_flags);
+        read_InvertedLists_with_norm(ivf_cc, f, io_flags);
         idx = ivf_cc;
     } else if (h == fourcc("IwFl")) {
         IndexIVFFlat* ivfl = new IndexIVFFlat();
         read_ivf_header(ivfl, f);
         ivfl->code_size = ivfl->d * sizeof(float);
-        read_InvertedLists(ivfl, f, io_flags);
+        read_InvertedLists_with_norm(ivfl, f, io_flags);
         idx = ivfl;
     } else if (h == fourcc("IxSQ")) {
         IndexScalarQuantizer* idxs = new IndexScalarQuantizer();
@@ -967,32 +1006,12 @@ Index *read_index_nm(IOReader *f, int io_flags) {
         IndexIVFFlat * ivfl = new IndexIVFFlat ();
         read_ivf_header (ivfl, f);
         ivfl->code_size = ivfl->d * sizeof(float);
-        read_InvertedLists_nm (ivfl, f, io_flags);
+        read_InvertedLists_nm(ivfl, f, io_flags);
         idx = ivfl;
-    } else if(h == fourcc("IwSq")) {
-        IndexIVFScalarQuantizer * ivsc = new IndexIVFScalarQuantizer();
-        read_ivf_header(ivsc, f);
-        read_ScalarQuantizer(&ivsc->sq, f);
-        READ1(ivsc->code_size);
-        READ1(ivsc->by_residual);
-        read_InvertedLists_nm (ivsc, f, io_flags);
-        idx = ivsc;
     } else {
         FAISS_THROW_FMT("Index type 0x%08x not supported\n", h);
         idx = nullptr;
     }
-    return idx;
-}
-
-
-Index *read_index_nm(FILE * f, int io_flags) {
-    FileIOReader reader(f);
-    return read_index_nm(&reader, io_flags);
-}
-
-Index *read_index_nm(const char *fname, int io_flags) {
-    FileIOReader reader(fname);
-    Index *idx = read_index_nm(&reader, io_flags);
     return idx;
 }
 

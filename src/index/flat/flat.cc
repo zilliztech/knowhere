@@ -15,7 +15,7 @@
 #include "faiss/IndexFlat.h"
 #include "faiss/index_io.h"
 #include "index/flat/flat_config.h"
-#include "io/FaissIO.h"
+#include "io/memory_io.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/factory.h"
 #include "knowhere/log.h"
@@ -29,7 +29,7 @@ class FlatIndexNode : public IndexNode {
     FlatIndexNode(const Object&) : index_(nullptr) {
         static_assert(std::is_same<T, faiss::IndexFlat>::value || std::is_same<T, faiss::IndexBinaryFlat>::value,
                       "not support");
-        pool_ = ThreadPool::GetGlobalThreadPool();
+        search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
     }
 
     Status
@@ -67,16 +67,12 @@ class FlatIndexNode : public IndexNode {
     Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "search on empty index";
-            return Status::empty_index;
+            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
         DataSetPtr results = std::make_shared<DataSet>();
         const FlatConfig& f_cfg = static_cast<const FlatConfig&>(cfg);
-
-        // do normalize for COSINE metric type
-        if (IsMetricType(f_cfg.metric_type.value(), knowhere::metric::COSINE)) {
-            Normalize(dataset);
-        }
+        bool is_cosine = IsMetricType(f_cfg.metric_type.value(), knowhere::metric::COSINE);
 
         auto k = f_cfg.k.value();
         auto nq = dataset.GetRows();
@@ -92,12 +88,18 @@ class FlatIndexNode : public IndexNode {
             std::vector<folly::Future<folly::Unit>> futs;
             futs.reserve(nq);
             for (int i = 0; i < nq; ++i) {
-                futs.emplace_back(pool_->push([&, index = i] {
+                futs.emplace_back(search_pool_->push([&, index = i] {
                     ThreadPool::ScopedOmpSetter setter(1);
                     auto cur_ids = ids + k * index;
                     auto cur_dis = distances + k * index;
                     if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
-                        index_->search(1, (const float*)x + index * dim, k, cur_dis, cur_ids, bitset);
+                        auto cur_query = (const float*)x + dim * index;
+                        std::unique_ptr<float[]> copied_query = nullptr;
+                        if (is_cosine) {
+                            copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
+                            cur_query = copied_query.get();
+                        }
+                        index_->search(1, cur_query, k, cur_dis, cur_ids, bitset);
                     }
                     if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
                         auto cur_i_dis = reinterpret_cast<int32_t*>(cur_dis);
@@ -117,7 +119,7 @@ class FlatIndexNode : public IndexNode {
             std::unique_ptr<int64_t[]> auto_delete_ids(ids);
             std::unique_ptr<float[]> auto_delete_dis(distances);
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
-            return Status::faiss_inner_error;
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
         return GenResultDataSet(nq, k, ids, distances);
@@ -127,15 +129,11 @@ class FlatIndexNode : public IndexNode {
     RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "range search on empty index";
-            return Status::empty_index;
+            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
         const FlatConfig& f_cfg = static_cast<const FlatConfig&>(cfg);
-
-        // do normalize for COSINE metric type
-        if (IsMetricType(f_cfg.metric_type.value(), knowhere::metric::COSINE)) {
-            Normalize(dataset);
-        }
+        bool is_cosine = IsMetricType(f_cfg.metric_type.value(), knowhere::metric::COSINE);
 
         auto nq = dataset.GetRows();
         auto xq = dataset.GetTensor();
@@ -158,11 +156,17 @@ class FlatIndexNode : public IndexNode {
             std::vector<folly::Future<folly::Unit>> futs;
             futs.reserve(nq);
             for (int i = 0; i < nq; ++i) {
-                futs.emplace_back(pool_->push([&, index = i] {
+                futs.emplace_back(search_pool_->push([&, index = i] {
                     ThreadPool::ScopedOmpSetter setter(1);
                     faiss::RangeSearchResult res(1);
                     if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
-                        index_->range_search(1, (const float*)xq + index * dim, radius, &res, bitset);
+                        auto cur_query = (const float*)xq + dim * index;
+                        std::unique_ptr<float[]> copied_query = nullptr;
+                        if (is_cosine) {
+                            copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
+                            cur_query = copied_query.get();
+                        }
+                        index_->range_search(1, cur_query, radius, &res, bitset);
                     }
                     if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
                         index_->range_search(1, (const uint8_t*)xq + index * dim / 8, radius, &res, bitset);
@@ -188,7 +192,7 @@ class FlatIndexNode : public IndexNode {
                                  lims);
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
-            return Status::faiss_inner_error;
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
         return GenResultDataSet(nq, ids, distances, lims);
@@ -210,7 +214,7 @@ class FlatIndexNode : public IndexNode {
             } catch (const std::exception& e) {
                 std::unique_ptr<float[]> auto_del(data);
                 LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
-                return Status::faiss_inner_error;
+                return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
             }
         }
         if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
@@ -224,7 +228,7 @@ class FlatIndexNode : public IndexNode {
             } catch (const std::exception& e) {
                 std::unique_ptr<uint8_t[]> auto_del(data);
                 LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
-                return Status::faiss_inner_error;
+                return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
             }
         }
     }
@@ -241,14 +245,14 @@ class FlatIndexNode : public IndexNode {
 
     expected<DataSetPtr>
     GetIndexMeta(const Config& cfg) const override {
-        return Status::not_implemented;
+        return expected<DataSetPtr>::Err(Status::not_implemented, "GetIndexMeta not implemented");
     }
 
     Status
     Serialize(BinarySet& binset) const override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not serialize empty index.";
-            return Status::empty_index;
+            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
         try {
             MemoryIOWriter writer;
@@ -258,8 +262,8 @@ class FlatIndexNode : public IndexNode {
             if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
                 faiss::write_index_binary(index_.get(), &writer);
             }
-            std::shared_ptr<uint8_t[]> data(writer.data_);
-            binset.Append(Type(), data, writer.rp);
+            std::shared_ptr<uint8_t[]> data(writer.data());
+            binset.Append(Type(), data, writer.tellg());
             return Status::success;
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
@@ -278,9 +282,7 @@ class FlatIndexNode : public IndexNode {
             return Status::invalid_binary_set;
         }
 
-        MemoryIOReader reader;
-        reader.total = binary->size;
-        reader.data_ = binary->data.get();
+        MemoryIOReader reader(binary->data.get(), binary->size);
         if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
             faiss::Index* index = faiss::read_index(&reader);
             index_.reset(static_cast<T*>(index));
@@ -344,7 +346,7 @@ class FlatIndexNode : public IndexNode {
 
  private:
     std::unique_ptr<T> index_;
-    std::shared_ptr<ThreadPool> pool_;
+    std::shared_ptr<ThreadPool> search_pool_;
 };
 
 KNOWHERE_REGISTER_GLOBAL(FLAT,

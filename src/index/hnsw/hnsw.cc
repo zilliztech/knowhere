@@ -33,7 +33,7 @@ namespace knowhere {
 class HnswIndexNode : public IndexNode {
  public:
     HnswIndexNode(const Object& object) : index_(nullptr) {
-        pool_ = ThreadPool::GetGlobalThreadPool();
+        search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
     }
 
     Status
@@ -74,7 +74,7 @@ class HnswIndexNode : public IndexNode {
     Add(const DataSet& dataset, const Config& cfg) override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not add data to empty HNSW index.";
-            return Status::empty_index;
+            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
         knowhere::TimeRecorder build_time("Building HNSW cost");
@@ -98,7 +98,7 @@ class HnswIndexNode : public IndexNode {
     Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "search on empty index";
-            return Status::empty_index;
+            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
         auto nq = dataset.GetRows();
         auto xq = dataset.GetTensor();
@@ -109,7 +109,7 @@ class HnswIndexNode : public IndexNode {
         feder::hnsw::FederResultUniq feder_result;
         if (hnsw_cfg.trace_visit.value()) {
             if (nq != 1) {
-                return Status::invalid_args;
+                return expected<DataSetPtr>::Err(Status::invalid_args, "nq must be 1");
             }
             feder_result = std::make_unique<feder::hnsw::FederResult>();
         }
@@ -124,9 +124,9 @@ class HnswIndexNode : public IndexNode {
         std::vector<folly::Future<folly::Unit>> futs;
         futs.reserve(nq);
         for (int i = 0; i < nq; ++i) {
-            futs.emplace_back(pool_->push([&, idx = i]() {
+            futs.emplace_back(search_pool_->push([&, idx = i]() {
                 auto single_query = (const char*)xq + idx * index_->data_size_;
-                auto rst = index_->searchKnn((void*)single_query, k, bitset, &param, feder_result);
+                auto rst = index_->searchKnn(single_query, k, bitset, &param, feder_result);
                 size_t rst_size = rst.size();
                 auto p_single_dis = p_dist + idx * k;
                 auto p_single_id = p_id + idx * k;
@@ -162,7 +162,7 @@ class HnswIndexNode : public IndexNode {
     RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "range search on empty index";
-            return Status::empty_index;
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
         auto nq = dataset.GetRows();
@@ -179,7 +179,7 @@ class HnswIndexNode : public IndexNode {
         feder::hnsw::FederResultUniq feder_result;
         if (hnsw_cfg.trace_visit.value()) {
             if (nq != 1) {
-                return Status::invalid_args;
+                return expected<DataSetPtr>::Err(Status::invalid_args, "nq must be 1");
             }
             feder_result = std::make_unique<feder::hnsw::FederResult>();
         }
@@ -198,9 +198,9 @@ class HnswIndexNode : public IndexNode {
         std::vector<folly::Future<folly::Unit>> futs;
         futs.reserve(nq);
         for (int64_t i = 0; i < nq; ++i) {
-            futs.emplace_back(pool_->push([&, idx = i]() {
+            futs.emplace_back(search_pool_->push([&, idx = i]() {
                 auto single_query = (const char*)xq + idx * index_->data_size_;
-                auto rst = index_->searchRange((void*)single_query, radius_for_calc, bitset, &param, feder_result);
+                auto rst = index_->searchRange(single_query, radius_for_calc, bitset, &param, feder_result);
                 auto elem_cnt = rst.size();
                 result_dist_array[idx].resize(elem_cnt);
                 result_id_array[idx].resize(elem_cnt);
@@ -240,7 +240,7 @@ class HnswIndexNode : public IndexNode {
     expected<DataSetPtr>
     GetVectorByIds(const DataSet& dataset) const override {
         if (!index_) {
-            return Status::empty_index;
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
         auto dim = Dim();
@@ -259,7 +259,7 @@ class HnswIndexNode : public IndexNode {
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
             std::unique_ptr<char> auto_del(data);
-            return Status::hnsw_inner_error;
+            return expected<DataSetPtr>::Err(Status::hnsw_inner_error, e.what());
         }
     }
 
@@ -272,7 +272,7 @@ class HnswIndexNode : public IndexNode {
     GetIndexMeta(const Config& cfg) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "get index meta on empty index";
-            return Status::empty_index;
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
         auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
@@ -306,8 +306,8 @@ class HnswIndexNode : public IndexNode {
         try {
             MemoryIOWriter writer;
             index_->saveIndex(writer);
-            std::shared_ptr<uint8_t[]> data(writer.data_);
-            binset.Append(Type(), data, writer.rp);
+            std::shared_ptr<uint8_t[]> data(writer.data());
+            binset.Append(Type(), data, writer.tellg());
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
             return Status::hnsw_inner_error;
@@ -327,9 +327,7 @@ class HnswIndexNode : public IndexNode {
                 return Status::invalid_binary_set;
             }
 
-            MemoryIOReader reader;
-            reader.total = binary->size;
-            reader.data_ = binary->data.get();
+            MemoryIOReader reader(binary->data.get(), binary->size);
 
             hnswlib::SpaceInterface<float>* space = nullptr;
             index_ = new (std::nothrow) hnswlib::HierarchicalNSW<float>(space);
@@ -440,7 +438,7 @@ class HnswIndexNode : public IndexNode {
 
  private:
     hnswlib::HierarchicalNSW<float>* index_;
-    std::shared_ptr<ThreadPool> pool_;
+    std::shared_ptr<ThreadPool> search_pool_;
 };
 
 KNOWHERE_REGISTER_GLOBAL(HNSW, [](const Object& object) { return Index<HnswIndexNode>::Create(object); });

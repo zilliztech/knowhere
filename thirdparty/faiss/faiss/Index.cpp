@@ -49,18 +49,6 @@ void Index::add_with_ids(
     FAISS_THROW_MSG("add_with_ids not implemented for this type of index");
 }
 
-void Index::add_without_codes(idx_t /*n*/, const float* /*x*/) {
-    FAISS_THROW_MSG("add_without_codes not implemented for this type of index");
-}
-
-void Index::add_with_ids_without_codes(
-        idx_t /*n*/,
-        const float* /*x*/,
-        const idx_t* /*xids*/) {
-    FAISS_THROW_MSG(
-            "add_with_ids_without_codes not implemented for this type of index");
-}
-
 size_t Index::remove_ids(const IDSelector& /*sel*/) {
     FAISS_THROW_MSG("remove_ids not implemented for this type of index");
     return -1;
@@ -68,11 +56,6 @@ size_t Index::remove_ids(const IDSelector& /*sel*/) {
 
 void Index::reconstruct(idx_t, float*) const {
     FAISS_THROW_MSG("reconstruct not implemented for this type of index");
-}
-
-void Index::reconstruct_without_codes(idx_t, float*) const {
-    FAISS_THROW_MSG(
-            "reconstruct_without_codes not implemented for this type of index");
 }
 
 void Index::reconstruct_n(idx_t i0, idx_t ni, float* recons) const {

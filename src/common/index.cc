@@ -11,6 +11,9 @@
 
 #include "knowhere/index.h"
 
+#include "knowhere/comp/time_recorder.h"
+#include "knowhere/dataset.h"
+#include "knowhere/expected.h"
 #include "knowhere/log.h"
 
 #ifdef NOT_COMPILE_FOR_SWIG
@@ -65,34 +68,52 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
     std::string msg;
     const Status load_status = LoadConfig(cfg.get(), json, knowhere::SEARCH, "Search", &msg);
     if (load_status != Status::success) {
-        expected<DataSetPtr> ret(load_status);
-        ret << msg;
-        return ret;
+        return expected<DataSetPtr>::Err(load_status, msg);
     }
     const Status search_status = cfg->CheckAndAdjustForSearch(&msg);
     if (search_status != Status::success) {
-        expected<DataSetPtr> ret(search_status);
-        ret << msg;
-        return ret;
+        return expected<DataSetPtr>::Err(search_status, msg);
     }
 
 #ifdef NOT_COMPILE_FOR_SWIG
+    TimeRecorder rc("Search");
+    auto res = this->node->Search(dataset, *cfg, bitset);
+    auto span = rc.ElapseFromBegin("done");
+    span *= 0.001;  // convert to ms
+    knowhere_search_latency.Observe(span);
     knowhere_search_count.Increment();
+    knowhere_search_topk.Observe(cfg->k.value());
+#else
+    auto res = this->node->Search(dataset, *cfg, bitset);
 #endif
-    return this->node->Search(dataset, *cfg, bitset);
+    return res;
 }
 
 template <typename T>
 inline expected<DataSetPtr>
 Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView& bitset) const {
     auto cfg = this->node->CreateConfig();
-    RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::RANGE_SEARCH, "RangeSearch"));
-    RETURN_IF_ERROR(cfg->CheckAndAdjustForRangeSearch());
+    std::string msg;
+    auto status = LoadConfig(cfg.get(), json, knowhere::RANGE_SEARCH, "RangeSearch", &msg);
+    if (status != Status::success) {
+        return expected<DataSetPtr>::Err(status, std::move(msg));
+    }
+    status = cfg->CheckAndAdjustForRangeSearch();
+    if (status != Status::success) {
+        return expected<DataSetPtr>::Err(status, "invalid params for range search");
+    }
 
 #ifdef NOT_COMPILE_FOR_SWIG
+    TimeRecorder rc("Range Search");
+    auto res = this->node->RangeSearch(dataset, *cfg, bitset);
+    auto span = rc.ElapseFromBegin("done");
+    span *= 0.001;  // convert to ms
+    knowhere_range_search_latency.Observe(span);
     knowhere_range_search_count.Increment();
+#else
+    auto res = this->node->RangeSearch(dataset, *cfg, bitset);
 #endif
-    return this->node->RangeSearch(dataset, *cfg, bitset);
+    return res;
 }
 
 template <typename T>
@@ -111,7 +132,11 @@ template <typename T>
 inline expected<DataSetPtr>
 Index<T>::GetIndexMeta(const Json& json) const {
     auto cfg = this->node->CreateConfig();
-    RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::FEDER, "GetIndexMeta"));
+    std::string msg;
+    auto status = LoadConfig(cfg.get(), json, knowhere::FEDER, "GetIndexMeta", &msg);
+    if (status != Status::success) {
+        return expected<DataSetPtr>::Err(status, msg);
+    }
     return this->node->GetIndexMeta(*cfg);
 }
 

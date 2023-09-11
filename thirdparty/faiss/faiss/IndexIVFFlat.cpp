@@ -11,6 +11,7 @@
 
 #include <omp.h>
 
+#include <algorithm>
 #include <cinttypes>
 #include <cstdio>
 
@@ -34,9 +35,44 @@ IndexIVFFlat::IndexIVFFlat(
         Index* quantizer,
         size_t d,
         size_t nlist,
+        bool is_cosine,
         MetricType metric)
-        : IndexIVF(quantizer, d, nlist, sizeof(float) * d, metric) {
+        : is_cosine_(is_cosine), IndexIVF(quantizer, d, nlist, sizeof(float) * d, metric) {
     code_size = sizeof(float) * d;
+    replace_invlists(new ArrayInvertedLists(nlist, code_size, is_cosine), true);
+}
+
+void IndexIVFFlat::restore_codes(
+        const uint8_t* raw_data,
+        const size_t raw_size) {
+    auto ails = dynamic_cast<faiss::ArrayInvertedLists*>(invlists);
+    ails->restore_codes(raw_data, raw_size);
+}
+
+void IndexIVFFlat::train(idx_t n, const float* x) {
+    if (is_cosine_) {
+        auto x_normalized = knowhere::CopyAndNormalizeVecs(x, n, d);
+        // use normalized data to train codes for cosine
+        IndexIVF::train(n, x_normalized.get());
+    } else {
+        IndexIVF::train(n, x);
+    }
+}
+
+void IndexIVFFlat::add_with_ids(idx_t n, const float* x, const idx_t* xids) {
+    std::unique_ptr<idx_t[]> coarse_idx(new idx_t[n]);
+    if (is_cosine_) {
+        auto x_normalized = std::make_unique<float[]>(n * d);
+        std::memcpy(x_normalized.get(), x, n * d * sizeof(float));
+        auto norms = knowhere::NormalizeVecs(x_normalized.get(), n, d);
+        // use normalized data to calculate coarse id
+        quantizer->assign(n, x_normalized.get(), coarse_idx.get());
+        // add raw data with its norms to inverted list
+        add_core(n, x, norms.data(), xids, coarse_idx.get());
+    } else {
+        quantizer->assign(n, x, coarse_idx.get());
+        add_core(n, x, nullptr, xids, coarse_idx.get());
+    }
 }
 
 void IndexIVFFlat::add_core(
@@ -83,41 +119,6 @@ void IndexIVFFlat::add_core(
                n_add,
                n);
     }
-    ntotal += n;
-}
-
-// Add ids only, vectors not added to Index.
-void IndexIVFFlat::add_with_ids_without_codes(
-        idx_t n,
-        const float* x,
-        const idx_t* xids) {
-    FAISS_THROW_IF_NOT(is_trained);
-    assert(invlists);
-    direct_map.check_can_add(xids);
-    const int64_t* idx;
-    ScopeDeleter<int64_t> del;
-
-    int64_t* idx0 = new int64_t[n];
-    del.set(idx0);
-    quantizer->assign(n, x, idx0);
-    idx = idx0;
-
-    int64_t n_add = 0;
-    for (size_t i = 0; i < n; i++) {
-        idx_t id = xids ? xids[i] : ntotal + i;
-        idx_t list_no = idx[i];
-        size_t offset;
-
-        if (list_no >= 0) {
-            const float* xi = x + i * d;
-            offset = invlists->add_entry_without_codes(list_no, id);
-            n_add++;
-        } else {
-            offset = 0;
-        }
-        direct_map.add_single_id(id, list_no, offset);
-    }
-
     ntotal += n;
 }
 
@@ -261,72 +262,15 @@ void IndexIVFFlat::reconstruct_from_offset(
     memcpy(recons, invlists->get_single_code(list_no, offset), code_size);
 }
 
-void IndexIVFFlat::reconstruct_from_offset_without_codes(
-        int64_t list_no,
-        int64_t offset,
-        float* recons) const {
-    auto idx = prefix_sum[list_no] + offset;
-#ifdef USE_GPU
-    auto rol = dynamic_cast<faiss::ReadOnlyArrayInvertedLists*>(invlists);
-    auto arranged_data =
-            reinterpret_cast<uint8_t*>(rol->pin_readonly_codes->data);
-    memcpy(recons, arranged_data + idx * code_size, code_size);
-#else
-    memcpy(recons, arranged_codes.data() + idx * code_size, code_size);
-#endif
-}
-
 IndexIVFFlatCC::IndexIVFFlatCC(
         Index* quantizer,
         size_t d,
         size_t nlist,
         size_t ssize,
-        bool iscosine,
+        bool is_cosine,
         MetricType metric)
-        : is_cosine_(iscosine), IndexIVFFlat(quantizer, d, nlist, metric) {
-    replace_invlists(new ConcurrentArrayInvertedLists(nlist, code_size, ssize, iscosine), true);
-}
-
-void IndexIVFFlatCC::add_with_ids_without_codes(
-        idx_t n,
-        const float* x,
-        const idx_t* xids) {
-    FAISS_THROW_MSG("ivfflat_cc index not support add_without_codes operation");
-}
-
-void IndexIVFFlatCC::reconstruct_from_offset_without_codes(
-        int64_t list_no,
-        int64_t offset,
-        float* recons) const {
-    FAISS_THROW_MSG("ivfflat_cc index not support reconstruct_from_offset_without_codes operation");
-}
-
-void IndexIVFFlatCC::train(idx_t n, const float* x) {
-    if (is_cosine_) {
-        auto norm_data = std::make_unique<float[]>(n * d);
-        std::memcpy(norm_data.get(), x , n * d * sizeof(float));
-        knowhere::NormalizeVecs(norm_data.get(), n, d);
-        //use normalized data to train codes for cosine
-        IndexIVF::train(n, norm_data.get());
-    } else {
-        IndexIVF::train(n, x);
-    }
-}
-
-void IndexIVFFlatCC::add_with_ids(idx_t n, const float* x, const idx_t* xids) {
-    std::unique_ptr<idx_t[]> coarse_idx(new idx_t[n]);
-    if (is_cosine_) {
-        auto norm_data = std::make_unique<float[]>(n * d);
-        std::memcpy(norm_data.get(), x, n * d * sizeof(float));
-        auto norms = knowhere::NormalizeVecs(norm_data.get(), n, d);
-        //use normalized data to calculate coarse id
-        quantizer->assign(n, norm_data.get(), coarse_idx.get());
-        //add raw data with its norms to inverted list
-        add_core(n, x, norms.data(), xids, coarse_idx.get());
-    } else {
-        quantizer->assign(n, x, coarse_idx.get());
-        add_core(n, x, nullptr, xids, coarse_idx.get());
-    }
+        : IndexIVFFlat(quantizer, d, nlist, is_cosine, metric) {
+    replace_invlists(new ConcurrentArrayInvertedLists(nlist, code_size, ssize, is_cosine), true);
 }
 
 /*****************************************

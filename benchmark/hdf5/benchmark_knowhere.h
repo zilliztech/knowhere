@@ -75,7 +75,7 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
 
         // IVFFLAT_NM should load raw data
         knowhere::BinaryPtr bin = std::make_shared<knowhere::Binary>();
-        bin->data = std::shared_ptr<uint8_t[]>((uint8_t*)xb_, [&](uint8_t*) {});
+        bin->data = std::shared_ptr<uint8_t[]>((uint8_t*)xb_);
         bin->size = dim_ * nb_ * sizeof(float);
         binary_set.Append("RAW_DATA", bin);
 

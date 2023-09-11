@@ -9,7 +9,7 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License
 
-#include "io/FaissIO.h"
+#include "io/memory_io.h"
 
 #include <cstring>
 
@@ -20,28 +20,28 @@ static size_t magic_num = 2;
 
 size_t
 MemoryIOWriter::operator()(const void* ptr, size_t size, size_t nitems) {
-    auto total_need = size * nitems + rp;
+    auto total_need = size * nitems + rp_;
 
     if (!data_) {  // data == nullptr
-        total = total_need * magic_num;
-        rp = size * nitems;
-        data_ = new uint8_t[total];
-        memcpy(data_, ptr, rp);
+        total_ = total_need * magic_num;
+        rp_ = size * nitems;
+        data_ = new uint8_t[total_];
+        memcpy(data_, ptr, rp_);
         return nitems;
     }
 
-    if (total_need > total) {
-        total = total_need * magic_num;
-        auto new_data = new uint8_t[total];
-        memcpy(new_data, data_, rp);
+    if (total_need > total_) {
+        total_ = total_need * magic_num;
+        auto new_data = new uint8_t[total_];
+        memcpy(new_data, data_, rp_);
         delete[] data_;
         data_ = new_data;
 
-        memcpy((data_ + rp), ptr, size * nitems);
-        rp = total_need;
+        memcpy((data_ + rp_), ptr, size * nitems);
+        rp_ = total_need;
     } else {
-        memcpy((data_ + rp), ptr, size * nitems);
-        rp = total_need;
+        memcpy((data_ + rp_), ptr, size * nitems);
+        rp_ = total_need;
     }
 
     return nitems;
@@ -49,15 +49,15 @@ MemoryIOWriter::operator()(const void* ptr, size_t size, size_t nitems) {
 
 size_t
 MemoryIOReader::operator()(void* ptr, size_t size, size_t nitems) {
-    if (rp >= total) {
+    if (rp_ >= total_) {
         return 0;
     }
-    size_t nremain = (total - rp) / size;
+    size_t nremain = (total_ - rp_) / size;
     if (nremain < nitems) {
         nitems = nremain;
     }
-    memcpy(ptr, (data_ + rp), size * nitems);
-    rp += size * nitems;
+    memcpy(ptr, (data_ + rp_), size * nitems);
+    rp_ += size * nitems;
     return nitems;
 }
 

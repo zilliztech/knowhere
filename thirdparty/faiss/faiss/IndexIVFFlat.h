@@ -26,7 +26,14 @@ struct IndexIVFFlat : IndexIVF {
             Index* quantizer,
             size_t d,
             size_t nlist_,
+            bool is_cosine,
             MetricType = METRIC_L2);
+
+    void restore_codes(const uint8_t* raw_data, const size_t raw_size);
+
+    void train(idx_t n, const float* x) override;
+
+    void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
 
     void add_core(
             idx_t n,
@@ -34,10 +41,6 @@ struct IndexIVFFlat : IndexIVF {
             const float* x_norms,
             const idx_t* xids,
             const idx_t* precomputed_idx) override;
-
-    /// implemented for all IndexIVF* classes
-    void add_with_ids_without_codes(idx_t n, const float* x, const idx_t* xids)
-            override;
 
     void encode_vectors(
             idx_t n,
@@ -52,14 +55,12 @@ struct IndexIVFFlat : IndexIVF {
     void reconstruct_from_offset(int64_t list_no, int64_t offset, float* recons)
             const override;
 
-    void reconstruct_from_offset_without_codes(
-            int64_t list_no,
-            int64_t offset,
-            float* recons) const override;
-
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
 
     IndexIVFFlat() {}
+
+   protected:
+    bool is_cosine_ = false;
 };
 
 struct IndexIVFFlatCC : IndexIVFFlat {
@@ -71,24 +72,7 @@ struct IndexIVFFlatCC : IndexIVFFlat {
             bool iscosine,
             MetricType = METRIC_L2);
 
-    /// implemented for all IndexIVF* classes
-    void add_with_ids_without_codes(idx_t n, const float* x, const idx_t* xids)
-            override;
-
-
-    void reconstruct_from_offset_without_codes(
-            int64_t list_no,
-            int64_t offset,
-            float* recons) const override;
-
-    void train(idx_t n, const float* x) override;
-
-    void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
-
     IndexIVFFlatCC() {}
-
-   private:
-    bool is_cosine_;
 };
 
 struct IndexIVFFlatDedup : IndexIVFFlat {
