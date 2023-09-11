@@ -50,7 +50,8 @@ class BitsetView {
 
     bool
     test(int64_t index) const {
-        return bits_[index >> 3] & (0x1 << (index & 0x7));
+        // when index is larger than the max_offset, ignore it
+        return (index >= static_cast<int64_t>(num_bits_)) || (bits_[index >> 3] & (0x1 << (index & 0x7)));
     }
 
     size_t
