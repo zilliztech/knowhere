@@ -83,28 +83,39 @@ ConvertIVFFlatIfNeeded(const BinarySet& binset, const uint8_t* raw_data, const s
 
     MemoryIOReader reader(binary->data.get(), binary->size);
 
-    // there are 2 possibilities for the input index binary:
-    //  1. native IVF_FLAT, do nothing
-    //  2. IVF_FLAT_NM, convert to native IVF_FLAT
     try {
-        // try to parse as native format, if it's actually _NM format,
-        // faiss will raise a "read error" exception for IVF_FLAT_NM format
-        faiss::read_index(&reader);
-    } catch (faiss::FaissException& e) {
-        reader.reset();
+        uint32_t h;
+        reader.read(&h, sizeof(h), 1);
 
-        // convert IVF_FLAT_NM to native IVF_FLAT
-        auto* index = static_cast<faiss::IndexIVFFlat*>(faiss::read_index_nm(&reader));
-        index->restore_codes(raw_data, raw_size);
+        // only read IVF_FLAT index header
+        std::unique_ptr<faiss::IndexIVFFlat> ivfl = std::make_unique<faiss::IndexIVFFlat>(faiss::IndexIVFFlat());
+        faiss::read_ivf_header(ivfl.get(), &reader);
+        ivfl->code_size = ivfl->d * sizeof(float);
 
-        // over-write IVF_FLAT_NM binary with native IVF_FLAT binary
-        MemoryIOWriter writer;
-        faiss::write_index(index, &writer);
-        std::shared_ptr<uint8_t[]> data(writer.data());
-        binary->data = data;
-        binary->size = writer.tellg();
+        auto remains = binary->size - reader.tellg() - sizeof(uint32_t) - sizeof(ivfl->invlists->nlist) -
+                       sizeof(ivfl->invlists->code_size);
+        auto invlist_size = sizeof(uint32_t) + sizeof(size_t) + ivfl->nlist * sizeof(size_t);
+        auto ids_size = ivfl->ntotal * sizeof(faiss::Index::idx_t);
+        // auto codes_size = ivfl->d * ivfl->ntotal * sizeof(float);
 
-        LOG_KNOWHERE_INFO_ << "Convert IVF_FLAT_NM to native IVF_FLAT";
+        // IVF_FLAT_NM format, need convert to new format
+        if (remains == invlist_size + ids_size) {
+            faiss::read_InvertedLists_nm(ivfl.get(), &reader);
+            ivfl->restore_codes(raw_data, raw_size);
+
+            // over-write IVF_FLAT_NM binary with native IVF_FLAT binary
+            MemoryIOWriter writer;
+            faiss::write_index(ivfl.get(), &writer);
+            std::shared_ptr<uint8_t[]> data(writer.data());
+            binary->data = data;
+            binary->size = writer.tellg();
+
+            LOG_KNOWHERE_INFO_ << "Convert IVF_FLAT_NM to native IVF_FLAT, rows " << ivfl->ntotal << ", dim "
+                               << ivfl->d;
+        }
+    } catch (...) {
+        // not IVF_FLAT_NM format, do nothing
+        return;
     }
 }
 
