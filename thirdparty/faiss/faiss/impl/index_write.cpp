@@ -91,6 +91,20 @@ static void write_index_header(const Index* idx, IOWriter* f) {
     }
 }
 
+static void write_scann_header(const IndexRefine* idx, IOWriter* f) {
+    WRITE1(idx->d);
+    WRITE1(idx->ntotal);
+    Index::idx_t dummy = 1 << 20;
+    WRITE1(dummy);
+    dummy = static_cast<Index::idx_t>(idx->with_raw_data);
+    WRITE1(dummy);
+    WRITE1(idx->is_trained);
+    WRITE1(idx->metric_type);
+    if (idx->metric_type > 1) {
+        WRITE1(idx->metric_arg);
+    }
+}
+
 void write_VectorTransform(const VectorTransform* vt, IOWriter* f) {
     if (const LinearTransform* lt = dynamic_cast<const LinearTransform*>(vt)) {
         if (dynamic_cast<const RandomRotationMatrix*>(lt)) {
@@ -668,9 +682,10 @@ void write_index(const Index* idx, IOWriter* f) {
             const IndexRefine* idxrf = dynamic_cast<const IndexRefine*>(idx)) {
         uint32_t h = fourcc("IxRF");
         WRITE1(h);
-        write_index_header(idxrf, f);
+        write_scann_header(idxrf, f);
         write_index(idxrf->base_index, f);
-        write_index(idxrf->refine_index, f);
+        if (idxrf->with_raw_data)
+            write_index(idxrf->refine_index, f);
         WRITE1(idxrf->k_factor);
     } else if (
             const IndexIDMap* idxmap = dynamic_cast<const IndexIDMap*>(idx)) {

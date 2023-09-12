@@ -60,12 +60,17 @@ class IvfPqConfig : public IvfConfig {
 class ScannConfig : public IvfFlatConfig {
  public:
     CFG_INT reorder_k;
+    CFG_BOOL with_raw_data;
     KNOHWERE_DECLARE_CONFIG(ScannConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(reorder_k)
             .description("reorder k used for refining")
             .allow_empty_without_default()
             .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
             .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(with_raw_data)
+            .description("with raw data in index")
+            .set_default(true)
+            .for_train();
     }
 
     inline Status

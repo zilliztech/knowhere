@@ -91,6 +91,7 @@ test_data = [
             "m": 64,
             "nbits": 4,
             "reorder_k": 1000,
+            "with_raw_data": True,
         }
     )
     (

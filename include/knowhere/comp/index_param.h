@@ -74,6 +74,7 @@ constexpr const char* NBITS = "nbits";  // PQ/SQ
 constexpr const char* M = "m";          // PQ param for IVFPQ
 constexpr const char* SSIZE = "ssize";
 constexpr const char* REORDER_K = "reorder_k";
+constexpr const char* WITH_RAW_DATA = "with_raw_data";
 
 // HNSW Params
 constexpr const char* EFCONSTRUCTION = "efConstruction";
