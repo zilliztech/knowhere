@@ -59,6 +59,9 @@ struct Index {
     idx_t ntotal; ///< total nb of indexed vectors
     bool verbose; ///< verbosity level
 
+    /// both IP and COSINE are regarded as INNER_PRODUCT in faiss
+    bool is_cosine;
+
     /// set if the Index does not require training, or if training is
     /// done already
     bool is_trained;

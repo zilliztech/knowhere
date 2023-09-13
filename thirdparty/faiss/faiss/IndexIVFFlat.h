@@ -58,9 +58,6 @@ struct IndexIVFFlat : IndexIVF {
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
 
     IndexIVFFlat() {}
-
-   protected:
-    bool is_cosine_ = false;
 };
 
 struct IndexIVFFlatCC : IndexIVFFlat {

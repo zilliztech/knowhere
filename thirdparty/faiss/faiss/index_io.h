@@ -17,6 +17,8 @@
 #include <typeinfo>
 #include <vector>
 
+#include <faiss/IndexIVF.h>
+
 /** I/O functions can read/write to a filename, a file handle or to an
  * object that abstracts the medium.
  *
@@ -50,6 +52,8 @@ const int IO_FLAG_READ_ONLY = 2;
 const int IO_FLAG_ONDISK_SAME_DIR = 4;
 // don't load IVF data to RAM, only list sizes
 const int IO_FLAG_SKIP_IVF_DATA = 8;
+// load index data with vectors' norms
+const int IO_FLAG_WITH_NORM = 1 << 8;
 // try to memmap data (useful to load an ArrayInvertedLists as an
 // OnDiskInvertedLists)
 const int IO_FLAG_MMAP = IO_FLAG_SKIP_IVF_DATA | 0x646f0000;
@@ -75,8 +79,9 @@ void write_InvertedLists(const InvertedLists* ils, IOWriter* f);
 InvertedLists* read_InvertedLists(IOReader* reader, int io_flags = 0);
 
 // for backward compatibility
-Index* read_index_nm (IOReader* reader, int io_flags = 0);
-InvertedLists* read_InvertedLists_nm(IOReader* reader, int io_flags = 0);
+void read_ivf_header(IndexIVF* ivf, IOReader* f,
+                     std::vector<std::vector<Index::idx_t>>* ids = nullptr);
+void read_InvertedLists_nm(IndexIVF *ivf, IOReader *f, int io_flags = 0);
 } // namespace faiss
 
 #endif
