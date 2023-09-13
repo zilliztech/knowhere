@@ -53,6 +53,7 @@ test_data = [
             "nlist": 1024,
             "nprobe": 1024,
             "reorder_k": 1500,
+            "with_raw_data": True,
         },
     ),
 ]

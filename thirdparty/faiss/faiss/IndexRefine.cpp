@@ -43,20 +43,23 @@ IndexRefine::IndexRefine()
 
 void IndexRefine::train(idx_t n, const float* x) {
     base_index->train(n, x);
-    refine_index->train(n, x);
+    if (refine_index)
+        refine_index->train(n, x);
     is_trained = true;
 }
 
 void IndexRefine::add(idx_t n, const float* x) {
     FAISS_THROW_IF_NOT(is_trained);
     base_index->add(n, x);
-    refine_index->add(n, x);
-    ntotal = refine_index->ntotal;
+    if (refine_index)
+        refine_index->add(n, x);
+    ntotal = base_index->ntotal;
 }
 
 void IndexRefine::reset() {
     base_index->reset();
-    refine_index->reset();
+    if (refine_index)
+        refine_index->reset();
     ntotal = 0;
 }
 
@@ -97,6 +100,9 @@ void IndexRefine::search(
         float* distances,
         idx_t* labels,
         const BitsetView bitset) const {
+    FAISS_THROW_IF_NOT(base_index);
+    FAISS_THROW_IF_NOT(refine_index);
+
     FAISS_THROW_IF_NOT(k > 0);
 
     FAISS_THROW_IF_NOT(is_trained);
@@ -153,14 +159,19 @@ void IndexRefine::search(
 }
 
 void IndexRefine::reconstruct(idx_t key, float* recons) const {
+    FAISS_THROW_IF_NOT(refine_index);
     refine_index->reconstruct(key, recons);
 }
 
 size_t IndexRefine::sa_code_size() const {
+    FAISS_THROW_IF_NOT(base_index);
+    FAISS_THROW_IF_NOT(refine_index);
     return base_index->sa_code_size() + refine_index->sa_code_size();
 }
 
 void IndexRefine::sa_encode(idx_t n, const float* x, uint8_t* bytes) const {
+    FAISS_THROW_IF_NOT(base_index);
+    FAISS_THROW_IF_NOT(refine_index);
     size_t cs1 = base_index->sa_code_size(), cs2 = refine_index->sa_code_size();
     std::unique_ptr<uint8_t[]> tmp1(new uint8_t[n * cs1]);
     base_index->sa_encode(n, x, tmp1.get());
@@ -174,6 +185,8 @@ void IndexRefine::sa_encode(idx_t n, const float* x, uint8_t* bytes) const {
 }
 
 void IndexRefine::sa_decode(idx_t n, const uint8_t* bytes, float* x) const {
+    FAISS_THROW_IF_NOT(base_index);
+    FAISS_THROW_IF_NOT(refine_index);
     size_t cs1 = base_index->sa_code_size(), cs2 = refine_index->sa_code_size();
     std::unique_ptr<uint8_t[]> tmp2(
             new uint8_t[n * refine_index->sa_code_size()]);
@@ -185,9 +198,9 @@ void IndexRefine::sa_decode(idx_t n, const uint8_t* bytes, float* x) const {
 }
 
 IndexRefine::~IndexRefine() {
-    if (own_fields)
+    if (own_fields && base_index)
         delete base_index;
-    if (own_refine_index)
+    if (own_refine_index && refine_index)
         delete refine_index;
 }
 
@@ -209,9 +222,13 @@ IndexRefineFlat::IndexRefineFlat(Index* base_index)
 IndexRefineFlat::IndexRefineFlat(Index* base_index, const float* xb)
         : IndexRefine(base_index, nullptr) {
     is_trained = base_index->is_trained;
-    refine_index = new IndexFlat(base_index->d, base_index->metric_type);
+    if (xb) {
+        refine_index = new IndexFlat(base_index->d, base_index->metric_type);
+        with_raw_data = true;
+    } else {
+        with_raw_data = false;
+    }
     own_refine_index = true;
-    refine_index->add(base_index->ntotal, xb);
 }
 
 IndexRefineFlat::IndexRefineFlat() : IndexRefine() {
@@ -225,6 +242,9 @@ void IndexRefineFlat::search(
         float* distances,
         idx_t* labels,
         const BitsetView bitset) const {
+    FAISS_THROW_IF_NOT(base_index);
+    FAISS_THROW_IF_NOT(refine_index);
+    
     FAISS_THROW_IF_NOT(k > 0);
 
     FAISS_THROW_IF_NOT(is_trained);

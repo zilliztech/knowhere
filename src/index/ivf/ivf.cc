@@ -65,6 +65,9 @@ class IvfIndexNode : public IndexNode {
     GetVectorByIds(const DataSet& dataset) const override;
     bool
     HasRawData(const std::string& metric_type) const override {
+        if (!index_) {
+            return false;
+        }
         if constexpr (std::is_same<faiss::IndexIVFFlat, T>::value) {
             return true;
         }
@@ -75,7 +78,7 @@ class IvfIndexNode : public IndexNode {
             return false;
         }
         if constexpr (std::is_same<faiss::IndexScaNN, T>::value) {
-            return true;
+            return index_->with_raw_data;
         }
         if constexpr (std::is_same<faiss::IndexIVFScalarQuantizer, T>::value) {
             return false;
@@ -300,7 +303,11 @@ IvfIndexNode<T>::Train(const DataSet& dataset, const Config& cfg) {
             base_index =
                 new (std::nothrow) faiss::IndexIVFPQFastScan(qzr, dim, nlist, dim / 2, 4, is_cosine, metric.value());
             base_index->own_fields = true;
-            index = std::make_unique<faiss::IndexScaNN>(base_index, (const float*)data);
+            if (scann_cfg.with_raw_data.value()) {
+                index = std::make_unique<faiss::IndexScaNN>(base_index, (const float*)data);
+            } else {
+                index = std::make_unique<faiss::IndexScaNN>(base_index, nullptr);
+            }
             index->train(rows, (const float*)data);
         }
         if constexpr (std::is_same<faiss::IndexIVFScalarQuantizer, T>::value) {
@@ -583,6 +590,10 @@ IvfIndexNode<T>::GetVectorByIds(const DataSet& dataset) const {
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
     } else if constexpr (std::is_same<T, faiss::IndexScaNN>::value) {
+        // we should never go here since we should call HasRawData() first
+        if (!index_->with_raw_data) {
+            return expected<DataSetPtr>::Err(Status::not_implemented, "GetVectorByIds not implemented");
+        }
         auto dim = Dim();
         auto rows = dataset.GetRows();
         auto ids = dataset.GetIds();

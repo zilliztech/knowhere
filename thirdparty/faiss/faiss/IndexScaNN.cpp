@@ -66,7 +66,7 @@ int64_t IndexScaNN::size() {
     auto centroid_table = pq.M * pq.ksub * pq.dsub * sizeof(float);
     auto precomputed_table = nlist * pq.M * pq.ksub * sizeof(float);
 
-    auto raw_data = index_->ntotal * d * sizeof(float);
+    auto raw_data = (refine_index ? index_->ntotal * d * sizeof(float) : 0);
     return (capacity + centroid_table + precomputed_table + raw_data);
 }
 
@@ -82,6 +82,23 @@ void IndexScaNN::search_thread_safe(
     FAISS_THROW_IF_NOT(k > 0);
 
     FAISS_THROW_IF_NOT(is_trained);
+
+    auto base = dynamic_cast<const IndexIVFPQFastScan*>(base_index);
+    FAISS_THROW_IF_NOT(base);
+
+    // nothing to refine, directly return result
+    if (refine_index == nullptr) {
+        base->search_thread_safe(
+            n,
+            x,
+            k,
+            distances,
+            labels,
+            nprobe,
+            bitset);
+        return;
+    }
+
     idx_t k_base = idx_t(reorder_k);
     FAISS_THROW_IF_NOT(k_base >= k);
     idx_t* base_labels = labels;
@@ -95,9 +112,6 @@ void IndexScaNN::search_thread_safe(
         base_distances = new float[n * k_base];
         del2.set(base_distances);
     }
-
-    auto base = dynamic_cast<const IndexIVFPQFastScan*>(base_index);
-    FAISS_THROW_IF_NOT(base);
 
     base->search_thread_safe(
             n,
@@ -151,6 +165,11 @@ void IndexScaNN::range_search_thread_safe(
     FAISS_THROW_IF_NOT(base);
 
     base->range_search_thread_safe(n, x, radius, result, base->nlist, bitset);
+
+    // nothing to refine, directly return the result
+    if (refine_index == nullptr) {
+        return;
+    }
 
     // compute refined distances
     auto rf = dynamic_cast<const IndexFlat*>(refine_index);
