@@ -22,6 +22,8 @@ struct IndexFlatCodes : Index {
     /// encoded dataset, size ntotal * code_size
     std::vector<uint8_t> codes;
 
+    std::vector<float> code_norms;
+
     IndexFlatCodes();
 
     IndexFlatCodes(size_t code_size, idx_t d, MetricType metric = METRIC_L2);

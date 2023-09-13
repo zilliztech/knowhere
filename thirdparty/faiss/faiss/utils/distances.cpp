@@ -163,16 +163,11 @@ void exhaustive_L2sqr_seq(
     }
 }
 
-namespace {
-float fvec_cosine(const float* x, const float* y, size_t d) {
-    return fvec_inner_product(x, y, d) / sqrtf(fvec_norm_L2sqr(y, d));
-}
-} // namespace
-
 template <class ResultHandler>
 void exhaustive_cosine_seq(
         const float* x,
         const float* y,
+        const float* y_norms,
         size_t d,
         size_t nx,
         size_t ny,
@@ -191,7 +186,10 @@ void exhaustive_cosine_seq(
             resi.begin(i);
             for (size_t j = 0; j < ny; j++) {
                 if (bitset.empty() || !bitset.test(j)) {
-                    float disij = fvec_cosine(x_i, y_j, d);
+                    float norm =
+                        (y_norms != nullptr) ? y_norms[j]
+                                             : sqrtf(fvec_norm_L2sqr(y_j, d));
+                    float disij = fvec_inner_product(x_i, y_j, d) / norm;
                     resi.add_result(disij, j);
                 }
                 y_j += d;
@@ -347,6 +345,7 @@ template <class ResultHandler>
 void exhaustive_cosine_blas(
         const float* x,
         const float* y,
+        const float* y_norms_in,
         size_t d,
         size_t nx,
         size_t ny,
@@ -361,10 +360,12 @@ void exhaustive_cosine_blas(
     const size_t bs_y = distance_compute_blas_database_bs;
     // const size_t bs_x = 16, bs_y = 16;
     std::unique_ptr<float[]> ip_block(new float[bs_x * bs_y]);
-    std::unique_ptr<float[]> y_norms(new float[nx]);
+    std::unique_ptr<float[]> y_norms(new float[ny]);
     std::unique_ptr<float[]> del2;
 
-    fvec_norms_L2(y_norms.get(), x, d, nx);
+    if (y_norms_in == nullptr) {
+        fvec_norms_L2(y_norms.get(), y, d, ny);
+    }
 
     for (size_t i0 = 0; i0 < nx; i0 += bs_x) {
         size_t i1 = i0 + bs_x;
@@ -401,7 +402,8 @@ void exhaustive_cosine_blas(
 
                 for (size_t j = j0; j < j1; j++) {
                     float ip = *ip_line;
-                    float dis = ip / y_norms[j];
+                    float dis = (y_norms_in != nullptr) ? ip / y_norms_in[j]
+                                                        : ip / y_norms[j];
                     *ip_line = dis;
                     ip_line++;
                 }
@@ -565,6 +567,7 @@ void knn_L2sqr(
 void knn_cosine(
         const float* x,
         const float* y,
+        const float* y_norms,
         size_t d,
         size_t nx,
         size_t ny,
@@ -574,17 +577,17 @@ void knn_cosine(
         HeapResultHandler<CMin<float, int64_t>> res(
                 ha->nh, ha->val, ha->ids, ha->k);
         if (nx < distance_compute_blas_threshold) {
-            exhaustive_cosine_seq(x, y, d, nx, ny, res, bitset);
+            exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, res, bitset);
         } else {
-            exhaustive_cosine_blas(x, y, d, nx, ny, res, bitset);
+            exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, res, bitset);
         }
     } else {
         ReservoirResultHandler<CMin<float, int64_t>> res(
                 ha->nh, ha->val, ha->ids, ha->k);
         if (nx < distance_compute_blas_threshold) {
-            exhaustive_cosine_seq(x, y, d, nx, ny, res, bitset);
+            exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, res, bitset);
         } else {
-            exhaustive_cosine_blas(x, y, d, nx, ny, res, bitset);
+            exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, res, bitset);
         }
     }
 }
@@ -655,6 +658,7 @@ void range_search_inner_product(
 void range_search_cosine(
         const float* x,
         const float* y,
+        const float* y_norms,
         size_t d,
         size_t nx,
         size_t ny,
@@ -663,9 +667,9 @@ void range_search_cosine(
         const BitsetView bitset) {
     RangeSearchResultHandler<CMin<float, int64_t>> resh(res, radius);
     if (nx < distance_compute_blas_threshold) {
-        exhaustive_cosine_seq(x, y, d, nx, ny, resh, bitset);
+        exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, resh, bitset);
     } else {
-        exhaustive_cosine_blas(x, y, d, nx, ny, resh, bitset);
+        exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, resh, bitset);
     }
 }
 
