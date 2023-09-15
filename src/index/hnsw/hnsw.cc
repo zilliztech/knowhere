@@ -165,8 +165,7 @@ class HnswIndexNode : public IndexNode {
                  const BitsetView& bitset, const bool for_tuning = false, const size_t seed_ef = kIteratorSeedEf)
             : index_(index),
               transform_(transform),
-              bitset_(bitset),
-              workspace_(index_->getIteratorWorkspace(query, seed_ef, for_tuning)) {
+              workspace_(index_->getIteratorWorkspace(query, seed_ef, for_tuning, bitset)) {
             UpdateNext();
         }
 
@@ -185,7 +184,7 @@ class HnswIndexNode : public IndexNode {
      private:
         void
         UpdateNext() {
-            auto next = index_->getIteratorNext(workspace_.get(), bitset_);
+            auto next = index_->getIteratorNext(workspace_.get());
             if (next.has_value()) {
                 auto [dist, id] = next.value();
                 next_dist_ = transform_ ? (-dist) : dist;
@@ -197,7 +196,6 @@ class HnswIndexNode : public IndexNode {
         }
         const hnswlib::HierarchicalNSW<float>* index_;
         const bool transform_;
-        const BitsetView bitset_;
         std::unique_ptr<hnswlib::IteratorWorkspace> workspace_;
         bool has_next_;
         float next_dist_;
