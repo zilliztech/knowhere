@@ -27,7 +27,8 @@ constexpr float kKnnRecallThreshold = 0.6f;
 constexpr float kBruteForceRecallThreshold = 0.99f;
 
 knowhere::DataSetPtr
-GetKNNResult(const std::vector<std::shared_ptr<knowhere::IndexNode::iterator>>& iterators, int k) {
+GetKNNResult(const std::vector<std::shared_ptr<knowhere::IndexNode::iterator>>& iterators, int k,
+             const knowhere::BitsetView* bitset = nullptr) {
     int nq = iterators.size();
     auto p_id = new int64_t[nq * k];
     auto p_dist = new float[nq * k];
@@ -36,6 +37,8 @@ GetKNNResult(const std::vector<std::shared_ptr<knowhere::IndexNode::iterator>>& 
         for (int j = 0; j < k; ++j) {
             REQUIRE(iter->HasNext());
             auto [id, dist] = iter->Next();
+            // if bitset is provided, verify we don't return filtered out points.
+            REQUIRE((!bitset || !bitset->test(id)));
             p_id[i * k + j] = id;
             p_dist[i * k + j] = dist;
         }
@@ -70,8 +73,10 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         return json;
     };
 
-    const auto train_ds = GenDataSet(nb, dim);
-    const auto query_ds = GenDataSet(nq, dim);
+    auto rand = GENERATE(1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 100, 1000, 10000);
+
+    const auto train_ds = GenDataSet(nb, dim, rand);
+    const auto query_ds = GenDataSet(nq, dim, rand + 777);
 
     const knowhere::Json conf = {
         {knowhere::meta::METRIC_TYPE, metric},
@@ -125,11 +130,43 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
                 // Iterator doesn't have a fallback to bruteforce mechanism at high filter rate.
                 auto its = idx.AnnIterator(*query_ds, json, bitset);
                 REQUIRE(its.has_value());
-                auto results = GetKNNResult(its.value(), topk);
+                auto results = GetKNNResult(its.value(), topk, &bitset);
                 auto gt = knowhere::BruteForce::Search(train_ds, query_ds, json, bitset);
                 float recall = GetKNNRecall(*gt.value(), *results);
                 REQUIRE(recall > kKnnRecallThreshold);
             }
+        }
+    }
+
+    SECTION("Test Search with Bitset using iterator insufficient results") {
+        using std::make_tuple;
+        auto [name, gen, threshold] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>, float>({
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen, hnswlib::kHnswSearchKnnBFThreshold),
+        }));
+        auto idx = knowhere::IndexFactory::Instance().Create(name);
+        auto cfg_json = gen().dump();
+        CAPTURE(name, cfg_json);
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        REQUIRE(idx.Type() == name);
+        REQUIRE(idx.Build(*train_ds, json) == knowhere::Status::success);
+
+        std::vector<std::function<std::vector<uint8_t>(size_t, size_t)>> gen_bitset_funcs = {
+            GenerateBitsetWithFirstTbitsSet, GenerateBitsetWithRandomTbitsSet};
+        // we want topk but after filtering we have only half of topk points.
+        const auto filter_remaining = topk / 2;
+        for (const auto& gen_func : gen_bitset_funcs) {
+            auto bitset_data = gen_func(nb, nb - filter_remaining);
+            knowhere::BitsetView bitset(bitset_data.data(), nb);
+            auto its = idx.AnnIterator(*query_ds, json, bitset);
+            REQUIRE(its.has_value());
+            auto results = GetKNNResult(its.value(), filter_remaining, &bitset);
+            // after get those remaining points, iterator should return false for HasNext.
+            for (const auto& it : its.value()) {
+                REQUIRE(!it->HasNext());
+            }
+            auto gt = knowhere::BruteForce::Search(train_ds, query_ds, json, bitset);
+            float recall = GetKNNRecall(*gt.value(), *results);
+            REQUIRE(recall > kKnnRecallThreshold);
         }
     }
 }

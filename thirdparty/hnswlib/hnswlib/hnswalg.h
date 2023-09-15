@@ -1288,10 +1288,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         auto query_data =
             (metric_type_ == Metric::COSINE) ? workspace->normalized_query_data.get() : workspace->query_data;
+        const bool has_deletions = !bitset.empty();
         if (!workspace->initial_search_done) {
             tableint currObj = searchTopLayers(query_data, workspace->param.get()).first;
             NeighborSet retset;
-            if (!bitset.empty()) {
+            if (has_deletions) {
                 retset = searchBaseLayerST<true, true>(currObj, query_data, workspace->seed_ef, workspace->visited, bitset, feder_result,
                                                        &workspace->to_visit);
             } else {
@@ -1303,14 +1304,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             }
             workspace->initial_search_done = true;
         }
-        if (!workspace->to_visit.empty()) {
+        while (!workspace->to_visit.empty()) {
             auto top = workspace->to_visit.top();
             workspace->to_visit.pop();
             auto add_search_candidate = [&](Neighbor n) {
                 workspace->to_visit.push(n);
                 return true;
             };
-            if (!bitset.empty()) {
+            if (has_deletions) {
                 searchBaseLayerSTNext<decltype(add_search_candidate), true, true>(query_data, top, workspace->visited,
                                                                                   workspace->accumulative_alpha, bitset,
                                                                                   add_search_candidate, feder_result);
@@ -1319,7 +1320,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     query_data, top, workspace->visited, workspace->accumulative_alpha, bitset, add_search_candidate,
                     feder_result);
             }
-            workspace->retset.push(top);
+            if (!has_deletions || !bitset.test((int64_t)top.id)) {
+                workspace->retset.push(top);
+                break;
+            }
         }
         if (workspace->retset.empty()) {
             return std::nullopt;

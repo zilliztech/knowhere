@@ -79,14 +79,6 @@ class HnswConfig : public BaseConfig {
         }
         return Status::success;
     }
-
-    inline Status
-    CheckAndAdjustForIterator() override {
-        if (!seed_ef.has_value()) {
-            seed_ef = kIteratorSeedEf;
-        }
-        return Status::success;
-    }
 };
 
 }  // namespace knowhere
