@@ -40,7 +40,7 @@ class DiskANNIndexNode : public IndexNode {
     static_assert(std::is_same_v<T, float>, "DiskANN only support float");
 
  public:
-    DiskANNIndexNode(const Object& object) : is_prepared_(false), dim_(-1), count_(-1) {
+    DiskANNIndexNode(const std::string& version, const Object& object) : is_prepared_(false), dim_(-1), count_(-1) {
         assert(typeid(object) == typeid(Pack<std::shared_ptr<FileManager>>));
         auto diskann_index_pack = dynamic_cast<const Pack<std::shared_ptr<FileManager>>*>(&object);
         assert(diskann_index_pack != nullptr);
@@ -79,8 +79,8 @@ class DiskANNIndexNode : public IndexNode {
 
     Status
     Serialize(BinarySet& binset) const override {
-        LOG_KNOWHERE_ERROR_ << "DiskANN doesn't support Serialize.";
-        return Status::not_implemented;
+        LOG_KNOWHERE_INFO_ << "DiskANN does nothing for serialize";
+        return Status::success;
     }
 
     Status
@@ -182,7 +182,7 @@ TryDiskANNCall(std::function<void()>&& diskann_call) {
         return Status::success;
     } catch (const diskann::FileException& e) {
         LOG_KNOWHERE_ERROR_ << "DiskANN File Exception: " << e.what();
-        return Status::diskann_file_error;
+        return Status::disk_file_error;
     } catch (const diskann::ANNException& e) {
         LOG_KNOWHERE_ERROR_ << "DiskANN Exception: " << e.what();
         return Status::diskann_inner_error;
@@ -263,13 +263,17 @@ DiskANNIndexNode<T>::Build(const DataSet& dataset, const Config& cfg) {
         LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << build_conf.metric_type.value();
         return Status::invalid_metric_type;
     }
+    if (!(build_conf.index_prefix.has_value() && build_conf.data_path.has_value())) {
+        LOG_KNOWHERE_ERROR_ << "DiskANN file path for build is empty." << std::endl;
+        return Status::invalid_param_in_json;
+    }
     if (AnyIndexFileExist(build_conf.index_prefix.value())) {
         LOG_KNOWHERE_ERROR_ << "This index prefix already has index files." << std::endl;
-        return Status::diskann_file_error;
+        return Status::disk_file_error;
     }
     if (!LoadFile(build_conf.data_path.value())) {
         LOG_KNOWHERE_ERROR_ << "Failed load the raw data before building." << std::endl;
-        return Status::diskann_file_error;
+        return Status::disk_file_error;
     }
     auto& data_path = build_conf.data_path.value();
     index_prefix_ = build_conf.index_prefix.value();
@@ -315,13 +319,13 @@ DiskANNIndexNode<T>::Build(const DataSet& dataset, const Config& cfg) {
     for (auto& filename : GetNecessaryFilenames(index_prefix_, need_norm, true, true)) {
         if (!AddFile(filename)) {
             LOG_KNOWHERE_ERROR_ << "Failed to add file " << filename << ".";
-            return Status::diskann_file_error;
+            return Status::disk_file_error;
         }
     }
     for (auto& filename : GetOptionalFilenames(index_prefix_)) {
         if (file_exists(filename) && !AddFile(filename)) {
             LOG_KNOWHERE_ERROR_ << "Failed to add file " << filename << ".";
-            return Status::diskann_file_error;
+            return Status::disk_file_error;
         }
     }
 
@@ -339,6 +343,10 @@ DiskANNIndexNode<T>::Deserialize(const BinarySet& binset, const Config& cfg) {
     }
     if (is_prepared_.load()) {
         return Status::success;
+    }
+    if (!(prep_conf.index_prefix.has_value())) {
+        LOG_KNOWHERE_ERROR_ << "DiskANN file path for deserialize is empty." << std::endl;
+        return Status::invalid_param_in_json;
     }
     index_prefix_ = prep_conf.index_prefix.value();
     bool is_ip = IsMetricType(prep_conf.metric_type.value(), knowhere::metric::IP);
@@ -359,17 +367,17 @@ DiskANNIndexNode<T>::Deserialize(const BinarySet& binset, const Config& cfg) {
              index_prefix_, need_norm, prep_conf.search_cache_budget_gb.value() > 0 && !prep_conf.use_bfs_cache.value(),
              prep_conf.warm_up.value())) {
         if (!LoadFile(filename)) {
-            return Status::diskann_file_error;
+            return Status::disk_file_error;
         }
     }
     for (auto& filename : GetOptionalFilenames(index_prefix_)) {
         auto is_exist_op = file_manager_->IsExisted(filename);
         if (!is_exist_op.has_value()) {
             LOG_KNOWHERE_ERROR_ << "Failed to check existence of file " << filename << ".";
-            return Status::diskann_file_error;
+            return Status::disk_file_error;
         }
         if (is_exist_op.value() && !LoadFile(filename)) {
-            return Status::diskann_file_error;
+            return Status::disk_file_error;
         }
     }
 
@@ -464,7 +472,7 @@ DiskANNIndexNode<T>::Deserialize(const BinarySet& binset, const Config& cfg) {
                 diskann::load_aligned_bin<T>(warmup_query_file, warmup, warmup_num, warmup_dim, warmup_aligned_dim);
             }) != Status::success) {
             LOG_KNOWHERE_ERROR_ << "Failed to load warmup file for DiskANN.";
-            return Status::diskann_file_error;
+            return Status::disk_file_error;
         }
         std::vector<int64_t> warmup_result_ids_64(warmup_num, 0);
         std::vector<float> warmup_result_dists(warmup_num, 0);
@@ -704,5 +712,7 @@ DiskANNIndexNode<T>::GetCachedNodeNum(const float cache_dram_budget, const uint6
     return num_nodes_to_cache;
 }
 
-KNOWHERE_REGISTER_GLOBAL(DISKANN, [](const Object& object) { return Index<DiskANNIndexNode<float>>::Create(object); });
+KNOWHERE_REGISTER_GLOBAL(DISKANN, [](const std::string& version, const Object& object) {
+    return Index<DiskANNIndexNode<float>>::Create(version, object);
+});
 }  // namespace knowhere

@@ -69,6 +69,7 @@ TEST_CASE("Test PQ Search SIMD", "[pq]") {
     const int64_t k = 5;
 
     auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::COSINE);
+    auto version = GenTestVersionList();
 
     const auto train_ds = GenDataSet(nb, dim);
     const auto query_ds = CopyDataSet(train_ds, nq);
@@ -96,7 +97,7 @@ TEST_CASE("Test PQ Search SIMD", "[pq]") {
             }
         }
 
-        auto idx = knowhere::IndexFactory::Instance().Create(knowhere::IndexEnum::INDEX_FAISS_IVFPQ);
+        auto idx = knowhere::IndexFactory::Instance().Create(knowhere::IndexEnum::INDEX_FAISS_IVFPQ, version);
         REQUIRE(idx.Build(*train_ds, conf) == knowhere::Status::success);
         auto res = idx.Search(*query_ds, conf, nullptr);
         REQUIRE(res.has_value());

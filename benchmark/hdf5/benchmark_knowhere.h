@@ -20,6 +20,7 @@
 #include "knowhere/config.h"
 #include "knowhere/factory.h"
 #include "knowhere/index.h"
+#include "knowhere/version.h"
 
 class Benchmark_knowhere : public Benchmark_hdf5 {
  public:
@@ -93,8 +94,9 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
 
     knowhere::Index<knowhere::IndexNode>
     create_index(const std::string& index_file_name, const knowhere::Json& conf) {
+        auto version = knowhere::Version::GetCurrentVersion().VersionCode();
         printf("[%.3f s] Creating index \"%s\"\n", get_time_diff(), index_type_.c_str());
-        index_ = knowhere::IndexFactory::Instance().Create(index_type_);
+        index_ = knowhere::IndexFactory::Instance().Create(index_type_, version);
 
         try {
             printf("[%.3f s] Reading index file: %s\n", get_time_diff(), index_file_name.c_str());
@@ -112,11 +114,12 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
 
     knowhere::Index<knowhere::IndexNode>
     create_golden_index(const knowhere::Json& conf) {
+        auto version = knowhere::Version::GetCurrentVersion().VersionCode();
         golden_index_type_ = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
 
         std::string golden_index_file_name = ann_test_name_ + "_" + golden_index_type_ + "_GOLDEN" + ".index";
         printf("[%.3f s] Creating golden index \"%s\"\n", get_time_diff(), golden_index_type_.c_str());
-        golden_index_ = knowhere::IndexFactory::Instance().Create(golden_index_type_);
+        golden_index_ = knowhere::IndexFactory::Instance().Create(golden_index_type_, version);
 
         try {
             printf("[%.3f s] Reading golden index file: %s\n", get_time_diff(), golden_index_file_name.c_str());

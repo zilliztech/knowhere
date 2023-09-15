@@ -119,4 +119,9 @@ ConvertIVFFlatIfNeeded(const BinarySet& binset, const uint8_t* raw_data, const s
     }
 }
 
+bool
+UseDiskLoad(const std::string& index_type, const std::string& /*version*/) {
+    return !index_type.compare(IndexEnum::INDEX_DISKANN);
+}
+
 }  // namespace knowhere

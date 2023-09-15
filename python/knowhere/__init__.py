@@ -3,8 +3,8 @@ from .swigknowhere import Status
 from .swigknowhere import GetBinarySet, GetNullDataSet, GetNullBitSetView
 import numpy as np
 
-def CreateIndex(name):
-    return swigknowhere.IndexWrap(name)
+def CreateIndex(name, version):
+    return swigknowhere.IndexWrap(name, version)
 
 
 def CreateBitSet(bits_num):

@@ -107,6 +107,16 @@ class Index {
         return *this;
     }
 
+    T1*
+    Node() {
+        return node;
+    }
+
+    const T1*
+    Node() const {
+        return node;
+    }
+
     template <typename T2>
     Index<T2>
     Cast() {

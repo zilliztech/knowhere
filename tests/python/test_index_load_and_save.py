@@ -16,7 +16,8 @@ test_data = [
 def test_save_and_load(gen_data, faiss_ans, recall, error, name, config):
     # simple load and save not work for ivf nm
     print(name, config)
-    build_idx = knowhere.CreateIndex(name)
+    version = "knowhere-v2.2.0"
+    build_idx = knowhere.CreateIndex(name, version)
     xb, xq = gen_data(10000, 100, 256)
 
     build_idx.Build(
@@ -25,7 +26,7 @@ def test_save_and_load(gen_data, faiss_ans, recall, error, name, config):
     )
     binset = knowhere.GetBinarySet()
     build_idx.Serialize(binset)
-    search_idx = knowhere.CreateIndex(name)
+    search_idx = knowhere.CreateIndex(name, version)
     search_idx.Deserialize(binset)
     ans, _ = search_idx.Search(
         knowhere.ArrayToDataSet(xq),

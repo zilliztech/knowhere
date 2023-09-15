@@ -24,6 +24,7 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
     using Catch::Approx;
 
     auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::COSINE);
+    auto version = GenTestVersionList();
 
     int64_t nb = 10000, nq = 1000;
     int64_t dim = 128;
@@ -140,7 +141,7 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name);
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -182,8 +183,9 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
     SECTION("Test Build & Search Correctness") {
         using std::make_tuple;
 
-        auto ivf_flat = knowhere::IndexFactory::Instance().Create(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT);
-        auto ivf_flat_cc = knowhere::IndexFactory::Instance().Create(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC);
+        auto ivf_flat = knowhere::IndexFactory::Instance().Create(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, version);
+        auto ivf_flat_cc =
+            knowhere::IndexFactory::Instance().Create(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, version);
 
         knowhere::Json ivf_flat_json = knowhere::Json::parse(ivfflat_gen().dump());
         knowhere::Json ivf_flat_cc_json = knowhere::Json::parse(ivfflatcc_gen().dump());
@@ -240,7 +242,7 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name);
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);

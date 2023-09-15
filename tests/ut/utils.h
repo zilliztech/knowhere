@@ -10,7 +10,9 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <algorithm>
+#include <catch2/catch_test_macros.hpp>
 #include <cstdint>
+#include <fstream>
 #include <limits>
 #include <memory>
 #include <queue>
@@ -18,9 +20,11 @@
 #include <set>
 #include <vector>
 
+#include "catch2/generators/catch_generators.hpp"
 #include "common/range_util.h"
 #include "knowhere/binaryset.h"
 #include "knowhere/dataset.h"
+#include "knowhere/version.h"
 
 constexpr int64_t kSeed = 42;
 using IdDisPair = std::pair<int64_t, float>;
@@ -222,4 +226,9 @@ GenerateRandomDistanceIdPair(size_t n) {
         res.emplace_back(distrib(rng), i);
     }
     return res;
+}
+
+inline auto
+GenTestVersionList() {
+    return GENERATE(as<std::string>{}, knowhere::Version::GetCurrentVersion().VersionCode());
 }
