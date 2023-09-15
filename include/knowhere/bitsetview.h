@@ -98,7 +98,7 @@ class BitsetView {
 
  private:
     const uint8_t* bits_ = nullptr;
-    const size_t num_bits_ = 0;
+    size_t num_bits_ = 0;
 };
 }  // namespace knowhere
 
