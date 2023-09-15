@@ -98,128 +98,6 @@ void fvec_renorm_L2(size_t d, size_t nx, float* __restrict x) {
 
 namespace {
 
-int parallel_policy_threshold = 65535;
-
-/* Find the nearest neighbors for nx queries in a set of ny vectors */
-template <class ResultHandler>
-void exhaustive_parallel_on_nx(
-        const float* x,
-        const float* y,
-        size_t d,
-        size_t nx,
-        size_t ny,
-        ResultHandler& res,
-        decltype(fvec_inner_product) dis_compute_func,
-        const BitsetView bitset) {
-    using SingleResultHandler = typename ResultHandler::SingleResultHandler;
-#pragma omp parallel
-    {
-        SingleResultHandler resi(res);
-#pragma omp for
-        for (int64_t i = 0; i < nx; i++) {
-            const float* x_i = x + i * d;
-            const float* y_j = y;
-
-            resi.begin(i);
-            for (size_t j = 0; j < ny; j++) {
-                if (bitset.empty() || !bitset.test(j)) {
-                    float ip = dis_compute_func(x_i, y_j, d);
-                    resi.add_result(ip, j);
-                }
-                y_j += d;
-            }
-            resi.end();
-        }
-    }
-}
-
-template <class ResultHandler>
-void exhaustive_parallel_on_ny(
-        const float* x,
-        const float* y,
-        size_t d,
-        size_t nx,
-        size_t ny,
-        ResultHandler& res,
-        decltype(fvec_inner_product) dis_compute_func,
-        const BitsetView bitset) {
-    using SingleResultHandler = typename ResultHandler::SingleResultHandler;
-    size_t k = res.k;
-    size_t thread_max_num = omp_get_max_threads();
-
-    size_t val = d * sizeof(float) +
-            thread_max_num * k * (sizeof(float) + sizeof(int64_t));
-    size_t block_x = std::min<size_t>(get_l3_size() / val, nx);
-    if (block_x == 0) {
-        block_x = 1;
-    }
-
-    size_t all_heap_size = block_x * k * thread_max_num;
-    ResultHandler* ress = res.clone_n(thread_max_num, block_x);
-
-    for (size_t x_from = 0, x_to; x_from < nx; x_from = x_to) {
-        x_to = std::min(nx, x_from + block_x);
-        size_t size = x_to - x_from;
-        size_t thread_heap_size = size * k;
-
-        // init heap
-        for (int t = 0; t < thread_max_num; t++) {
-            ress[t].begin_multiple(0, block_x);
-        }
-
-#pragma omp parallel for schedule(static)
-        for (size_t j = 0; j < ny; j++) {
-            int t = omp_get_thread_num();
-            if (bitset.empty() || !bitset.test(j)) {
-                const float* y_j = y + j * d;
-                const float* x_i = x + x_from * d;
-                for (size_t i = 0; i < size; i++) {
-                    float ip = dis_compute_func(x_i, y_j, d);
-                    ress[t].add_single_result(i, ip, j);
-                    x_i += d;
-                }
-            }
-        }
-
-        // merge heap
-        // for ReservoirResultHander maybe to_results first and then merge?
-        for (size_t t = 1; t < thread_max_num; t++) {
-            for (size_t i = 0; i < size; ++i) {
-                ress[0].merge(i, ress[t]);
-            }
-        }
-
-        // sort
-        ress[0].end_multiple();
-
-        // copy result
-        res.copy_from(ress[0], x_from, size);
-    }
-    delete[] ress;
-}
-
-/* Find the nearest neighbors for nx queries in a set of ny vectors */
-template <class ResultHandler>
-void exhaustive_L2sqr_IP_seq(
-        const float* x,
-        const float* y,
-        size_t d,
-        size_t nx,
-        size_t ny,
-        ResultHandler& res,
-        decltype(fvec_inner_product) dis_compute_func,
-        const BitsetView bitset) {
-    size_t thread_max_num = omp_get_max_threads();
-    if (ny > parallel_policy_threshold ||
-        (nx < thread_max_num / 2 && ny >= thread_max_num * 32)) {
-        exhaustive_parallel_on_ny(
-                x, y, d, nx, ny, res, dis_compute_func, bitset);
-    } else {
-        exhaustive_parallel_on_nx(
-                x, y, d, nx, ny, res, dis_compute_func, bitset);
-    }
-}
-
 /* Find the nearest neighbors for nx queries in a set of ny vectors */
 template <class ResultHandler>
 void exhaustive_inner_product_seq(
@@ -640,8 +518,7 @@ void knn_inner_product(
         HeapResultHandler<CMin<float, int64_t>> res(
                 ha->nh, ha->val, ha->ids, ha->k);
         if (nx < distance_compute_blas_threshold) {
-            exhaustive_L2sqr_IP_seq(
-                    x, y, d, nx, ny, res, fvec_inner_product, bitset);
+            exhaustive_inner_product_seq(x, y, d, nx, ny, res, bitset);
         } else {
             exhaustive_inner_product_blas(x, y, d, nx, ny, res, bitset);
         }
@@ -649,8 +526,7 @@ void knn_inner_product(
         ReservoirResultHandler<CMin<float, int64_t>> res(
                 ha->nh, ha->val, ha->ids, ha->k);
         if (nx < distance_compute_blas_threshold) {
-            exhaustive_L2sqr_IP_seq(
-                    x, y, d, nx, ny, res, fvec_inner_product, bitset);
+            exhaustive_inner_product_seq(x, y, d, nx, ny, res, bitset);
         } else {
             exhaustive_inner_product_blas(x, y, d, nx, ny, res, bitset);
         }
@@ -671,7 +547,7 @@ void knn_L2sqr(
                 ha->nh, ha->val, ha->ids, ha->k);
 
         if (nx < distance_compute_blas_threshold) {
-            exhaustive_L2sqr_IP_seq(x, y, d, nx, ny, res, fvec_L2sqr, bitset);
+            exhaustive_L2sqr_seq(x, y, d, nx, ny, res, bitset);
         } else {
             exhaustive_L2sqr_blas(x, y, d, nx, ny, res, y_norm2, bitset);
         }
@@ -679,7 +555,7 @@ void knn_L2sqr(
         ReservoirResultHandler<CMax<float, int64_t>> res(
                 ha->nh, ha->val, ha->ids, ha->k);
         if (nx < distance_compute_blas_threshold) {
-            exhaustive_L2sqr_IP_seq(x, y, d, nx, ny, res, fvec_L2sqr, bitset);
+            exhaustive_L2sqr_seq(x, y, d, nx, ny, res, bitset);
         } else {
             exhaustive_L2sqr_blas(x, y, d, nx, ny, res, y_norm2, bitset);
         }
@@ -698,7 +574,7 @@ void knn_cosine(
         HeapResultHandler<CMin<float, int64_t>> res(
                 ha->nh, ha->val, ha->ids, ha->k);
         if (nx < distance_compute_blas_threshold) {
-            exhaustive_L2sqr_IP_seq(x, y, d, nx, ny, res, fvec_cosine, bitset);
+            exhaustive_cosine_seq(x, y, d, nx, ny, res, bitset);
         } else {
             exhaustive_cosine_blas(x, y, d, nx, ny, res, bitset);
         }
@@ -706,8 +582,7 @@ void knn_cosine(
         ReservoirResultHandler<CMin<float, int64_t>> res(
                 ha->nh, ha->val, ha->ids, ha->k);
         if (nx < distance_compute_blas_threshold) {
-            exhaustive_L2sqr_IP_seq(
-                    x, y, d, nx, ny, res, fvec_cosine, bitset);
+            exhaustive_cosine_seq(x, y, d, nx, ny, res, bitset);
         } else {
             exhaustive_cosine_blas(x, y, d, nx, ny, res, bitset);
         }
