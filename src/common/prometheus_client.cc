@@ -27,9 +27,11 @@ const std::unique_ptr<PrometheusClient> prometheusClient = std::make_unique<Prom
  ******************************************************************************/
 DEFINE_PROMETHEUS_COUNTER(knowhere_build_count, "knowhere index build count")
 DEFINE_PROMETHEUS_COUNTER(knowhere_search_count, "knowhere search count")
+DEFINE_PROMETHEUS_COUNTER(knowhere_ann_iterator_count, "knowhere ann iterator count")
 DEFINE_PROMETHEUS_COUNTER(knowhere_range_search_count, "knowhere range search count")
 DEFINE_PROMETHEUS_HISTOGRAM(knowhere_search_topk, "knowhere search topk")
 DEFINE_PROMETHEUS_HISTOGRAM(knowhere_search_latency, "search latency in knowhere (ms)")
+DEFINE_PROMETHEUS_HISTOGRAM(knowhere_ann_iterator_init_latency, "ann iterator init latency in knowhere (ms)")
 DEFINE_PROMETHEUS_HISTOGRAM(knowhere_range_search_latency, "range search latency in knowhere (ms)")
 
 }  // namespace knowhere
