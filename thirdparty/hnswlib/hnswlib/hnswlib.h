@@ -129,6 +129,7 @@ AVX512Capable() {
 
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <queue>
 #include <vector>
 
