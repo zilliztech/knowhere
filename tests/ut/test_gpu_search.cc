@@ -184,7 +184,6 @@ TEST_CASE("Test All GPU Index", "[search]") {
         REQUIRE(res == knowhere::Status::success);
         knowhere::BinarySet bs;
         idx.Serialize(bs);
-
         auto idx_ = knowhere::IndexFactory::Instance().Create(name);
         idx_.Deserialize(bs);
         auto results = idx_.Search(*query_ds, json, nullptr);

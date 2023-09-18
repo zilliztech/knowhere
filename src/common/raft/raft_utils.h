@@ -148,6 +148,21 @@ init_gpu_resources(std::optional<std::size_t> streams_per_device = std::nullopt,
     get_gpu_resources(streams_per_device).init(device_id);
 }
 
+class gpu_device_manager {
+ public:
+    static gpu_device_manager&
+    instance();
+    int
+    random_choose() const;
+    int
+    choose_with_load(size_t load);
+
+ private:
+    gpu_device_manager();
+    std::vector<size_t> memory_load_;
+    mutable std::mutex mtx_;
+};
+
 inline auto&
 get_raft_resources(int device_id = get_current_device()) {
     thread_local auto all_resources = std::map<int, std::unique_ptr<raft::device_resources>>{};
@@ -168,3 +183,12 @@ set_mem_pool_size(size_t init_size, size_t max_size) {
 }
 
 };  // namespace raft_utils
+
+#define RANDOM_CHOOSE_DEVICE_WITH_ASSIGN(x)                             \
+    do {                                                                \
+        x = raft_utils::gpu_device_manager::instance().random_choose(); \
+    } while (0)
+#define MIN_LOAD_CHOOSE_DEVICE_WITH_ASSIGN(x, load)                            \
+    do {                                                                       \
+        x = raft_utils::gpu_device_manager::instance().choose_with_load(load); \
+    } while (0)
