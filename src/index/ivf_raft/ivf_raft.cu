@@ -19,7 +19,7 @@
 #include "knowhere/factory.h"
 #include "knowhere/index_node_thread_pool_wrapper.h"
 
-constexpr uint32_t cuda_concurrent_size = 16;
+constexpr uint32_t cuda_concurrent_size = 32;
 
 namespace knowhere {
 
