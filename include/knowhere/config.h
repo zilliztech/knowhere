@@ -510,7 +510,11 @@ class BaseConfig : public Config {
     CFG_BOOL enable_mmap;
     CFG_BOOL for_tuning;
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(metric_type).set_default("L2").description("metric type").for_train_and_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
+            .set_default("L2")
+            .description("metric type")
+            .for_train_and_search()
+            .for_deserialize();
         KNOWHERE_CONFIG_DECLARE_FIELD(retrieve_friendly)
             .description("whether the index holds raw data for fast retrieval")
             .set_default(false)

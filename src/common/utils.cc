@@ -73,7 +73,8 @@ CopyAndNormalizeVecs(const float* x, size_t rows, int32_t dim) {
 }
 
 void
-ConvertIVFFlatIfNeeded(const BinarySet& binset, const uint8_t* raw_data, const size_t raw_size) {
+ConvertIVFFlatIfNeeded(const BinarySet& binset, const MetricType metric_type, const uint8_t* raw_data,
+                       const size_t raw_size) {
     std::vector<std::string> names = {"IVF",  // compatible with knowhere-1.x
                                       knowhere::IndexEnum::INDEX_FAISS_IVFFLAT};
     auto binary = binset.GetByNames(names);
@@ -91,6 +92,9 @@ ConvertIVFFlatIfNeeded(const BinarySet& binset, const uint8_t* raw_data, const s
         std::unique_ptr<faiss::IndexIVFFlat> ivfl = std::make_unique<faiss::IndexIVFFlat>(faiss::IndexIVFFlat());
         faiss::read_ivf_header(ivfl.get(), &reader);
         ivfl->code_size = ivfl->d * sizeof(float);
+
+        // is_cosine is not defined in IVF_FLAT_NM, so mark it from config
+        ivfl->is_cosine = IsMetricType(metric_type, knowhere::metric::COSINE);
 
         auto remains = binary->size - reader.tellg() - sizeof(uint32_t) - sizeof(ivfl->invlists->nlist) -
                        sizeof(ivfl->invlists->code_size);
