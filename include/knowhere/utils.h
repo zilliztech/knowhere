@@ -13,6 +13,7 @@
 
 #include <strings.h>
 
+#include <algorithm>
 #include <vector>
 
 #include "knowhere/binaryset.h"
@@ -25,6 +26,13 @@ extern const float FloatAccuracy;
 inline bool
 IsMetricType(const std::string& str, const knowhere::MetricType& metric_type) {
     return !strcasecmp(str.data(), metric_type.c_str());
+}
+
+inline bool
+IsFlatIndex(const knowhere::IndexType& index_type) {
+    static std::vector<knowhere::IndexType> flat_index_list = {IndexEnum::INDEX_FAISS_IDMAP,
+                                                               IndexEnum::INDEX_FAISS_GPU_IDMAP};
+    return std::find(flat_index_list.begin(), flat_index_list.end(), index_type) != flat_index_list.end();
 }
 
 extern float
