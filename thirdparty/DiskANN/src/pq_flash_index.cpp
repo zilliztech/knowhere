@@ -1452,7 +1452,7 @@ namespace diskann {
         }
       }
     }
-    if (k_search > 0) {
+    if (k_search > 0 && indices[0] != -1) {
       lru_cache.put(vec_hash, indices[0]);
     }
 
