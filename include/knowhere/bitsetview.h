@@ -13,6 +13,7 @@
 #define BITSET_H
 
 #include <cassert>
+#include <cstdint>
 #include <sstream>
 #include <string>
 
