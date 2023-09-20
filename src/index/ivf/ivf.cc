@@ -276,15 +276,15 @@ IvfIndexNode<T>::Train(const DataSet& dataset, const Config& cfg) {
             const IvfFlatConfig& ivf_flat_cfg = static_cast<const IvfFlatConfig&>(cfg);
             auto nlist = MatchNlist(rows, ivf_flat_cfg.nlist.value());
             qzr = new (std::nothrow) typename QuantizerT<T>::type(dim, metric.value());
-            index = std::make_unique<faiss::IndexIVFFlat>(qzr, dim, nlist, is_cosine, metric.value());
+            index = std::make_unique<faiss::IndexIVFFlat>(qzr, dim, nlist, metric.value(), is_cosine);
             index->train(rows, (const float*)data);
         }
         if constexpr (std::is_same<faiss::IndexIVFFlatCC, T>::value) {
             const IvfFlatCcConfig& ivf_flat_cc_cfg = static_cast<const IvfFlatCcConfig&>(cfg);
             auto nlist = MatchNlist(rows, ivf_flat_cc_cfg.nlist.value());
             qzr = new (std::nothrow) typename QuantizerT<T>::type(dim, metric.value());
-            index = std::make_unique<faiss::IndexIVFFlatCC>(qzr, dim, nlist, ivf_flat_cc_cfg.ssize.value(), is_cosine,
-                                                            metric.value());
+            index = std::make_unique<faiss::IndexIVFFlatCC>(qzr, dim, nlist, ivf_flat_cc_cfg.ssize.value(),
+                                                            metric.value(), is_cosine);
             index->train(rows, (const float*)data);
         }
         if constexpr (std::is_same<faiss::IndexIVFPQ, T>::value) {

@@ -634,6 +634,9 @@ Index* read_index(IOReader* f, int io_flags) {
         read_index_header(idxf, f);
         idxf->code_size = idxf->d * sizeof(float);
         READXBVECTOR(idxf->codes);
+        if (idxf->is_cosine) {
+            READVECTOR(idxf->code_norms);
+        }
         FAISS_THROW_IF_NOT(
                 idxf->codes.size() == idxf->ntotal * idxf->code_size);
         // leak!

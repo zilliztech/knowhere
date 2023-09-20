@@ -35,8 +35,8 @@ IndexIVFFlat::IndexIVFFlat(
         Index* quantizer,
         size_t d,
         size_t nlist,
-        bool is_cosine,
-        MetricType metric)
+        MetricType metric,
+        bool is_cosine)
         : IndexIVF(quantizer, d, nlist, sizeof(float) * d, metric) {
     this->is_cosine = is_cosine;
     code_size = sizeof(float) * d;
@@ -268,9 +268,9 @@ IndexIVFFlatCC::IndexIVFFlatCC(
         size_t d,
         size_t nlist,
         size_t ssize,
-        bool is_cosine,
-        MetricType metric)
-        : IndexIVFFlat(quantizer, d, nlist, is_cosine, metric) {
+        MetricType metric,
+        bool is_cosine)
+        : IndexIVFFlat(quantizer, d, nlist, metric, is_cosine) {
     replace_invlists(new ConcurrentArrayInvertedLists(nlist, code_size, ssize, is_cosine), true);
 }
 

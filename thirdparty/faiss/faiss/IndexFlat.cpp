@@ -18,10 +18,28 @@
 #include <faiss/utils/utils.h>
 #include <cstring>
 
+#include "knowhere/utils.h"
+
 namespace faiss {
 
-IndexFlat::IndexFlat(idx_t d, MetricType metric)
-        : IndexFlatCodes(sizeof(float) * d, d, metric) {}
+IndexFlat::IndexFlat(idx_t d, MetricType metric, bool is_cosine)
+        : IndexFlatCodes(sizeof(float) * d, d, metric) {
+    this->is_cosine = is_cosine;
+}
+
+void IndexFlat::add(idx_t n, const float* x) {
+    FAISS_THROW_IF_NOT(is_trained);
+    codes.resize((ntotal + n) * code_size);
+    sa_encode(n, x, &codes[ntotal * code_size]);
+    if (is_cosine) {
+        auto x_normalized = std::make_unique<float[]>(n * d);
+        std::memcpy(x_normalized.get(), x, n * d * sizeof(float));
+        auto norms = knowhere::NormalizeVecs(x_normalized.get(), n, d);
+        code_norms.resize(ntotal + n);
+        std::memcpy(&code_norms[ntotal], norms.data(), sizeof(float) * n);
+    }
+    ntotal += n;
+}
 
 void IndexFlat::search(
         idx_t n,
@@ -36,7 +54,11 @@ void IndexFlat::search(
 
     if (metric_type == METRIC_INNER_PRODUCT) {
         float_minheap_array_t res = {size_t(n), size_t(k), labels, distances};
-        knn_inner_product(x, get_xb(), d, n, ntotal, &res, bitset);
+        if (is_cosine) {
+            knn_cosine(x, get_xb(), get_norms(), d, n, ntotal, &res, bitset);
+        } else {
+            knn_inner_product(x, get_xb(), d, n, ntotal, &res, bitset);
+        }
     } else if (metric_type == METRIC_L2) {
         float_maxheap_array_t res = {size_t(n), size_t(k), labels, distances};
         knn_L2sqr(x, get_xb(), d, n, ntotal, &res, nullptr, bitset);
@@ -90,8 +112,13 @@ void IndexFlat::range_search(
         const BitsetView bitset) const {
     switch (metric_type) {
         case METRIC_INNER_PRODUCT:
-            range_search_inner_product(
-                    x, get_xb(), d, n, ntotal, radius, result, bitset);
+            if (is_cosine) {
+                range_search_cosine(x, get_xb(), get_norms(), d, n, ntotal,
+                                    radius, result, bitset);
+            } else {
+                range_search_inner_product(
+                        x, get_xb(), d, n, ntotal, radius, result, bitset);
+            }
             break;
         case METRIC_L2:
             range_search_L2sqr(
