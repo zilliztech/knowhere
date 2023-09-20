@@ -45,7 +45,7 @@ struct QuantizerT<faiss::IndexBinaryIVF> {
 template <typename T>
 class IvfIndexNode : public IndexNode {
  public:
-    IvfIndexNode(const Object& object) : index_(nullptr) {
+    IvfIndexNode(const std::string& /*version*/, const Object& object) : index_(nullptr) {
         static_assert(std::is_same<T, faiss::IndexIVFFlat>::value || std::is_same<T, faiss::IndexIVFFlatCC>::value ||
                           std::is_same<T, faiss::IndexIVFPQ>::value ||
                           std::is_same<T, faiss::IndexIVFScalarQuantizer>::value ||
@@ -732,36 +732,41 @@ IvfIndexNode<T>::DeserializeFromFile(const std::string& filename, const Config& 
     return Status::success;
 }
 
-KNOWHERE_REGISTER_GLOBAL(IVFBIN, [](const Object& object) {
-    return Index<IvfIndexNode<faiss::IndexBinaryIVF>>::Create(object);
+KNOWHERE_REGISTER_GLOBAL(IVFBIN, [](const std::string& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexBinaryIVF>>::Create(version, object);
 });
 
-KNOWHERE_REGISTER_GLOBAL(BIN_IVF_FLAT, [](const Object& object) {
-    return Index<IvfIndexNode<faiss::IndexBinaryIVF>>::Create(object);
+KNOWHERE_REGISTER_GLOBAL(BIN_IVF_FLAT, [](const std::string& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexBinaryIVF>>::Create(version, object);
 });
 
-KNOWHERE_REGISTER_GLOBAL(IVFFLAT,
-                         [](const Object& object) { return Index<IvfIndexNode<faiss::IndexIVFFlat>>::Create(object); });
-KNOWHERE_REGISTER_GLOBAL(IVF_FLAT,
-                         [](const Object& object) { return Index<IvfIndexNode<faiss::IndexIVFFlat>>::Create(object); });
-KNOWHERE_REGISTER_GLOBAL(IVFFLATCC, [](const Object& object) {
-    return Index<IvfIndexNode<faiss::IndexIVFFlatCC>>::Create(object);
+KNOWHERE_REGISTER_GLOBAL(IVFFLAT, [](const std::string& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexIVFFlat>>::Create(version, object);
 });
-KNOWHERE_REGISTER_GLOBAL(IVF_FLAT_CC, [](const Object& object) {
-    return Index<IvfIndexNode<faiss::IndexIVFFlatCC>>::Create(object);
+KNOWHERE_REGISTER_GLOBAL(IVF_FLAT, [](const std::string& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexIVFFlat>>::Create(version, object);
 });
-KNOWHERE_REGISTER_GLOBAL(SCANN,
-                         [](const Object& object) { return Index<IvfIndexNode<faiss::IndexScaNN>>::Create(object); });
-KNOWHERE_REGISTER_GLOBAL(IVFPQ,
-                         [](const Object& object) { return Index<IvfIndexNode<faiss::IndexIVFPQ>>::Create(object); });
-KNOWHERE_REGISTER_GLOBAL(IVF_PQ,
-                         [](const Object& object) { return Index<IvfIndexNode<faiss::IndexIVFPQ>>::Create(object); });
+KNOWHERE_REGISTER_GLOBAL(IVFFLATCC, [](const std::string& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexIVFFlatCC>>::Create(version, object);
+});
+KNOWHERE_REGISTER_GLOBAL(IVF_FLAT_CC, [](const std::string& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexIVFFlatCC>>::Create(version, object);
+});
+KNOWHERE_REGISTER_GLOBAL(SCANN, [](const std::string& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexScaNN>>::Create(version, object);
+});
+KNOWHERE_REGISTER_GLOBAL(IVFPQ, [](const std::string& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexIVFPQ>>::Create(version, object);
+});
+KNOWHERE_REGISTER_GLOBAL(IVF_PQ, [](const std::string& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexIVFPQ>>::Create(version, object);
+});
 
-KNOWHERE_REGISTER_GLOBAL(IVFSQ, [](const Object& object) {
-    return Index<IvfIndexNode<faiss::IndexIVFScalarQuantizer>>::Create(object);
+KNOWHERE_REGISTER_GLOBAL(IVFSQ, [](const std::string& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexIVFScalarQuantizer>>::Create(version, object);
 });
-KNOWHERE_REGISTER_GLOBAL(IVF_SQ8, [](const Object& object) {
-    return Index<IvfIndexNode<faiss::IndexIVFScalarQuantizer>>::Create(object);
+KNOWHERE_REGISTER_GLOBAL(IVF_SQ8, [](const std::string& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexIVFScalarQuantizer>>::Create(version, object);
 });
 
 }  // namespace knowhere

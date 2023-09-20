@@ -84,6 +84,12 @@ class KnowhereConfig {
     static bool
     SetAioContextPool(size_t num_ctx);
 
+    static void
+    SetBuildThreadPoolSize(size_t num_threads);
+
+    static void
+    SetSearchThreadPoolSize(size_t num_threads);
+
     /**
      * init GPU Resource
      */

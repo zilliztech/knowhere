@@ -35,6 +35,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
     const int64_t topk = 5;
 
     auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::COSINE);
+    auto version = GenTestVersionList();
 
     auto base_gen = [&]() {
         knowhere::Json json;
@@ -113,7 +114,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name);
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -155,7 +156,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name);
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -191,7 +192,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         auto [name, gen, threshold] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>, float>({
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen, hnswlib::kHnswSearchKnnBFThreshold),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name);
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -230,7 +231,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
         }));
 
-        auto idx = knowhere::IndexFactory::Instance().Create(name);
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -239,14 +240,14 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         knowhere::BinarySet bs;
         idx.Serialize(bs);
 
-        auto idx_ = knowhere::IndexFactory::Instance().Create(name);
+        auto idx_ = knowhere::IndexFactory::Instance().Create(name, version);
         idx_.Deserialize(bs);
         auto results = idx_.Search(*query_ds, json, nullptr);
         REQUIRE(results.has_value());
     }
 
     SECTION("Test IVFPQ with invalid params") {
-        auto idx = knowhere::IndexFactory::Instance().Create(knowhere::IndexEnum::INDEX_FAISS_IVFPQ);
+        auto idx = knowhere::IndexFactory::Instance().Create(knowhere::IndexEnum::INDEX_FAISS_IVFPQ, version);
         uint32_t nb = 1000;
         uint32_t dim = 128;
         auto ivf_pq_gen = [&]() {
@@ -272,6 +273,7 @@ TEST_CASE("Test Mem Index With Binary Vector", "[float metrics]") {
     const int64_t topk = 5;
 
     auto metric = GENERATE(as<std::string>{}, knowhere::metric::HAMMING, knowhere::metric::JACCARD);
+    auto version = GenTestVersionList();
     auto base_gen = [&]() {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
@@ -313,7 +315,7 @@ TEST_CASE("Test Mem Index With Binary Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT, ivfflat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name);
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -333,7 +335,7 @@ TEST_CASE("Test Mem Index With Binary Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IDMAP, flat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT, ivfflat_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name);
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -355,7 +357,7 @@ TEST_CASE("Test Mem Index With Binary Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT, ivfflat_gen),
         }));
 
-        auto idx = knowhere::IndexFactory::Instance().Create(name);
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -364,7 +366,7 @@ TEST_CASE("Test Mem Index With Binary Vector", "[float metrics]") {
         knowhere::BinarySet bs;
         idx.Serialize(bs);
 
-        auto idx_ = knowhere::IndexFactory::Instance().Create(name);
+        auto idx_ = knowhere::IndexFactory::Instance().Create(name, version);
         idx_.Deserialize(bs);
         auto results = idx_.Search(*query_ds, json, nullptr);
         REQUIRE(results.has_value());
@@ -378,6 +380,7 @@ TEST_CASE("Test Mem Index With Binary Vector", "[bool metrics]") {
     const int64_t topk = 5;
 
     auto dim = GENERATE(as<int64_t>{}, 8, 16, 32, 64, 128, 256, 512, 160);
+    auto version = GenTestVersionList();
     auto metric = GENERATE(as<std::string>{}, knowhere::metric::SUPERSTRUCTURE, knowhere::metric::SUBSTRUCTURE);
 
     auto base_gen = [&]() {
@@ -419,7 +422,7 @@ TEST_CASE("Test Mem Index With Binary Vector", "[bool metrics]") {
             std::make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IDMAP, flat_gen),
             std::make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT, ivfflat_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name);
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);

@@ -28,6 +28,8 @@ typedef uint64_t size_t;
 #endif
 #include <knowhere/expected.h>
 #include <knowhere/factory.h>
+#include <knowhere/version.h>
+#include <knowhere/utils.h>
 #include <knowhere/comp/local_file_manager.h>
 using namespace knowhere;
 %}
@@ -108,14 +110,14 @@ public:
 
 class IndexWrap {
  public:
-    IndexWrap(const std::string& name) {
+    IndexWrap(const std::string& name, const std::string& version) {
         GILReleaser rel;
-        if (name == std::string("DISKANN")) {
+        if (knowhere::UseDiskLoad(name, version)) {
             std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
             auto diskann_pack = knowhere::Pack(file_manager);
-            idx = IndexFactory::Instance().Create(name, diskann_pack);
+            idx = IndexFactory::Instance().Create(name, version, diskann_pack);
         } else {
-            idx = IndexFactory::Instance().Create(name);
+            idx = IndexFactory::Instance().Create(name, version);
         }
     }
 

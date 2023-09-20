@@ -23,7 +23,7 @@ namespace knowhere {
 
 class GpuFlatIndexNode : public IndexNode {
  public:
-    GpuFlatIndexNode(const Object& object) : index_(nullptr) {
+    GpuFlatIndexNode(const std::string& version, const Object& object) : index_(nullptr) {
     }
 
     Status
@@ -189,6 +189,8 @@ class GpuFlatIndexNode : public IndexNode {
     std::unique_ptr<faiss::Index> index_;
 };
 
-KNOWHERE_REGISTER_GLOBAL(GPU_FAISS_FLAT, [](const Object& object) { return Index<GpuFlatIndexNode>::Create(object); });
+KNOWHERE_REGISTER_GLOBAL(GPU_FAISS_FLAT, [](const std::string& version, const Object& object) {
+    return Index<GpuFlatIndexNode>::Create(version, object);
+});
 
 }  // namespace knowhere

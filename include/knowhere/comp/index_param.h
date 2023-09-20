@@ -48,6 +48,10 @@ constexpr const char* INDEX_DISKANN = "DISKANN";
 namespace meta {
 constexpr const char* INDEX_TYPE = "index_type";
 constexpr const char* METRIC_TYPE = "metric_type";
+constexpr const char* DATA_PATH = "data_path";
+constexpr const char* INDEX_PREFIX = "index_prefix";
+constexpr const char* INDEX_ENGINE_VERSION = "index_engine_version";
+constexpr const char* RETRIEVE_FRIENDLY = "retrieve_friendly";
 constexpr const char* DIM = "dim";
 constexpr const char* TENSOR = "tensor";
 constexpr const char* ROWS = "rows";
