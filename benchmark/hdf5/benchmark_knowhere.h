@@ -46,7 +46,7 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
     }
 
     void
-    read_index(knowhere::Index<knowhere::IndexNode>& index, const std::string& filename) {
+    read_index(knowhere::Index<knowhere::IndexNode>& index, const std::string& filename, const knowhere::Json& conf) {
         FileIOReader reader(filename);
         int64_t file_size = reader.size();
         if (file_size < 0) {
@@ -80,7 +80,7 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
         bin->size = dim_ * nb_ * sizeof(float);
         binary_set.Append("RAW_DATA", bin);
 
-        index.Deserialize(binary_set);
+        index.Deserialize(binary_set, conf);
     }
 
     std::string
@@ -100,7 +100,7 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
 
         try {
             printf("[%.3f s] Reading index file: %s\n", get_time_diff(), index_file_name.c_str());
-            read_index(index_, index_file_name);
+            read_index(index_, index_file_name, conf);
         } catch (...) {
             printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
             knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nb_, dim_, xb_);
@@ -123,7 +123,7 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
 
         try {
             printf("[%.3f s] Reading golden index file: %s\n", get_time_diff(), golden_index_file_name.c_str());
-            read_index(golden_index_, golden_index_file_name);
+            read_index(golden_index_, golden_index_file_name, conf);
         } catch (...) {
             printf("[%.3f s] Building golden index on %d vectors\n", get_time_diff(), nb_);
             knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nb_, dim_, xb_);

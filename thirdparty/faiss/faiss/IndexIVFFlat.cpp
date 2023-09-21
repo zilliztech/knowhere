@@ -47,7 +47,7 @@ void IndexIVFFlat::restore_codes(
         const uint8_t* raw_data,
         const size_t raw_size) {
     auto ails = dynamic_cast<faiss::ArrayInvertedLists*>(invlists);
-    ails->restore_codes(raw_data, raw_size);
+    ails->restore_codes(raw_data, raw_size, is_cosine);
 }
 
 void IndexIVFFlat::train(idx_t n, const float* x) {
