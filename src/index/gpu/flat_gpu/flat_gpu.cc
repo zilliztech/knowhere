@@ -47,7 +47,7 @@ class GpuFlatIndexNode : public IndexNode {
             // need not copy index from CPU to GPU for IDMAP
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
-            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
+            return Status::faiss_inner_error;
         }
         return Status::success;
     }
@@ -56,7 +56,7 @@ class GpuFlatIndexNode : public IndexNode {
     Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "index not empty, deleted old index.";
-            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
         const FlatConfig& f_cfg = static_cast<const FlatConfig&>(cfg);
@@ -114,7 +114,7 @@ class GpuFlatIndexNode : public IndexNode {
     Serialize(BinarySet& binset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "serilalization on empty index.";
-            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+            return Status::empty_index;
         }
         try {
             MemoryIOWriter writer;
@@ -124,7 +124,7 @@ class GpuFlatIndexNode : public IndexNode {
             binset.Append(Type(), data, writer.tellg());
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
-            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
+            return Status::faiss_inner_error;
         }
         return Status::success;
     }
@@ -147,7 +147,7 @@ class GpuFlatIndexNode : public IndexNode {
             res_ = gpu_res;
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
-            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
+            return Status::faiss_inner_error;
         }
 
         return Status::success;
