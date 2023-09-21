@@ -35,3 +35,5 @@ if(WITH_DISKANN)
 else()
     target_link_libraries(knowhere_tests PRIVATE Catch2::Catch2WithMain knowhere)
 endif()
+
+target_link_libraries(knowhere_tests PRIVATE atomic)
