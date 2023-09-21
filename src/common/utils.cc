@@ -73,16 +73,14 @@ CopyAndNormalizeVecs(const float* x, size_t rows, int32_t dim) {
 }
 
 void
-ConvertIVFFlatIfNeeded(const BinarySet& binset, const MetricType metric_type, const uint8_t* raw_data,
+ConvertIVFFlatIfNeeded(IndexSequence& indexseq, const MetricType metric_type, const uint8_t* raw_data,
                        const size_t raw_size) {
-    std::vector<std::string> names = {"IVF",  // compatible with knowhere-1.x
-                                      knowhere::IndexEnum::INDEX_FAISS_IVFFLAT};
-    auto binary = binset.GetByNames(names);
-    if (binary == nullptr) {
+    if (indexseq.Empty()) {
+        LOG_KNOWHERE_DEBUG_ << "input index_sequence is empty.";
         return;
     }
 
-    MemoryIOReader reader(binary->data.get(), binary->size);
+    MemoryIOReader reader(indexseq.GetSeq(), indexseq.GetSize());
 
     try {
         uint32_t h;
@@ -96,7 +94,7 @@ ConvertIVFFlatIfNeeded(const BinarySet& binset, const MetricType metric_type, co
         // is_cosine is not defined in IVF_FLAT_NM, so mark it from config
         ivfl->is_cosine = IsMetricType(metric_type, knowhere::metric::COSINE);
 
-        auto remains = binary->size - reader.tellg() - sizeof(uint32_t) - sizeof(ivfl->invlists->nlist) -
+        auto remains = indexseq.GetSize() - reader.tellg() - sizeof(uint32_t) - sizeof(ivfl->invlists->nlist) -
                        sizeof(ivfl->invlists->code_size);
         auto invlist_size = sizeof(uint32_t) + sizeof(size_t) + ivfl->nlist * sizeof(size_t);
         auto ids_size = ivfl->ntotal * sizeof(faiss::Index::idx_t);
@@ -110,9 +108,8 @@ ConvertIVFFlatIfNeeded(const BinarySet& binset, const MetricType metric_type, co
             // over-write IVF_FLAT_NM binary with native IVF_FLAT binary
             MemoryIOWriter writer;
             faiss::write_index(ivfl.get(), &writer);
-            std::shared_ptr<uint8_t[]> data(writer.data());
-            binary->data = data;
-            binary->size = writer.tellg();
+            std::unique_ptr<uint8_t[]> data(writer.data());
+            indexseq = IndexSequence(std::move(data), writer.tellg());
 
             LOG_KNOWHERE_INFO_ << "Convert IVF_FLAT_NM to native IVF_FLAT, rows " << ivfl->ntotal << ", dim "
                                << ivfl->d;

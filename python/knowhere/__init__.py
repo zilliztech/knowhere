@@ -1,6 +1,6 @@
 from . import swigknowhere
 from .swigknowhere import Status
-from .swigknowhere import GetBinarySet, GetNullDataSet, GetNullBitSetView
+from .swigknowhere import GetNullDataSet, GetNullBitSetView, GetIndexSequence
 import numpy as np
 
 def CreateIndex(name, version):
@@ -9,7 +9,6 @@ def CreateIndex(name, version):
 
 def CreateBitSet(bits_num):
     return swigknowhere.BitSet(bits_num)
-
 
 def ArrayToDataSet(arr):
     if arr.ndim == 1:
@@ -24,7 +23,6 @@ def ArrayToDataSet(arr):
         ArrayToDataSet only support numpy array dtype float32 and int32.
         """
     )
-
 
 def DataSetToArray(ans):
     dim = swigknowhere.DataSet_Dim(ans)

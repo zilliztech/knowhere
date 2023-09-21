@@ -170,27 +170,8 @@ Index<T>::GetIndexMeta(const Json& json) const {
 
 template <typename T>
 inline Status
-Index<T>::Serialize(BinarySet& binset) const {
-    return this->node->Serialize(binset);
-}
-
-template <typename T>
-inline Status
-Index<T>::Deserialize(const BinarySet& binset, const Json& json) {
-    Json json_(json);
-    auto cfg = this->node->CreateConfig();
-    {
-        auto res = Config::FormatAndCheck(*cfg, json_);
-        LOG_KNOWHERE_DEBUG_ << "Deserialize config dump: " << json_.dump();
-        if (res != Status::success) {
-            return res;
-        }
-    }
-    auto res = Config::Load(*cfg, json_, knowhere::DESERIALIZE);
-    if (res != Status::success) {
-        return res;
-    }
-    return this->node->Deserialize(binset, *cfg);
+Index<T>::Serialize(IndexSequence& index_seq) const {
+    return this->node->Serialize(index_seq);
 }
 
 template <typename T>

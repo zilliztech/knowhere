@@ -18,7 +18,6 @@
 #include "knowhere/file_manager.h"
 
 namespace knowhere {
-
 class Object {
  public:
     Object() = default;

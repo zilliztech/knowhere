@@ -250,7 +250,7 @@ class FlatIndexNode : public IndexNode {
     }
 
     Status
-    Serialize(BinarySet& binset) const override {
+    Serialize(IndexSequence& index_seq) const override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not serialize empty index.";
             expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -263,8 +263,8 @@ class FlatIndexNode : public IndexNode {
             if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
                 faiss::write_index_binary(index_.get(), &writer);
             }
-            std::shared_ptr<uint8_t[]> data(writer.data());
-            binset.Append(Type(), data, writer.tellg());
+            index_seq = IndexSequence(std::unique_ptr<uint8_t[]>(writer.data()), writer.tellg());
+
             return Status::success;
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
@@ -273,17 +273,12 @@ class FlatIndexNode : public IndexNode {
     }
 
     Status
-    Deserialize(const BinarySet& binset, const Config& config) override {
-        std::vector<std::string> names = {"IVF",        // compatible with knowhere-1.x
-                                          "BinaryIVF",  // compatible with knowhere-1.x
-                                          Type()};
-        auto binary = binset.GetByNames(names);
-        if (binary == nullptr) {
-            LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
-            return Status::invalid_binary_set;
+    Deserialize(const IndexSequence& index_seq, const Config& config) override {
+        if (index_seq.Empty()) {
+            LOG_KNOWHERE_ERROR_ << "invalid index sequence.";
+            return Status::invalid_index_sequence;
         }
-
-        MemoryIOReader reader(binary->data.get(), binary->size);
+        MemoryIOReader reader(index_seq.GetSeq(), index_seq.GetSize());
         if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
             faiss::Index* index = faiss::read_index(&reader);
             index_.reset(static_cast<T*>(index));
@@ -293,6 +288,12 @@ class FlatIndexNode : public IndexNode {
             index_.reset(static_cast<T*>(index));
         }
         return Status::success;
+    }
+
+    Status
+    Deserialize(IndexSequence&& index_seq, const Config& config) override {
+        LOG_KNOWHERE_ERROR_ << "Not support Deserialization from BinarySet&& yet.";
+        return Status::not_implemented;
     }
 
     Status

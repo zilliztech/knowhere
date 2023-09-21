@@ -92,9 +92,17 @@ class IvfIndexNode : public IndexNode {
         return expected<DataSetPtr>::Err(Status::not_implemented, "GetIndexMeta not implemented");
     }
     Status
-    Serialize(BinarySet& binset) const override;
+    Serialize(IndexSequence& index_seq) const override;
+
     Status
-    Deserialize(const BinarySet& binset, const Config& config) override;
+    Deserialize(const IndexSequence& index_seq, const Config& config) override;
+
+    Status
+    Deserialize(IndexSequence&& index_seq, const Config& config) override {
+        LOG_KNOWHERE_ERROR_ << "Not support Deserialization from BinarySet&& yet.";
+        return Status::not_implemented;
+    }
+
     Status
     DeserializeFromFile(const std::string& filename, const Config& config) override;
     std::unique_ptr<BaseConfig>
@@ -658,7 +666,7 @@ IvfIndexNode<faiss::IndexIVFFlat>::GetIndexMeta(const Config& config) const {
 
 template <typename T>
 Status
-IvfIndexNode<T>::Serialize(BinarySet& binset) const {
+IvfIndexNode<T>::Serialize(IndexSequence& index_seq) const {
     try {
         MemoryIOWriter writer;
         if constexpr (std::is_same<T, faiss::IndexBinaryIVF>::value) {
@@ -666,8 +674,8 @@ IvfIndexNode<T>::Serialize(BinarySet& binset) const {
         } else {
             faiss::write_index(index_.get(), &writer);
         }
-        std::shared_ptr<uint8_t[]> data(writer.data());
-        binset.Append(Type(), data, writer.tellg());
+        std::unique_ptr<uint8_t[]> data(writer.data());
+        index_seq = IndexSequence(std::move(data), writer.tellg());
         return Status::success;
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
@@ -677,29 +685,14 @@ IvfIndexNode<T>::Serialize(BinarySet& binset) const {
 
 template <typename T>
 Status
-IvfIndexNode<T>::Deserialize(const BinarySet& binset, const Config& config) {
-    std::vector<std::string> names = {"IVF",        // compatible with knowhere-1.x
-                                      "BinaryIVF",  // compatible with knowhere-1.x
-                                      Type()};
-    auto binary = binset.GetByNames(names);
-    if (binary == nullptr) {
-        LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
-        return Status::invalid_binary_set;
+IvfIndexNode<T>::Deserialize(const IndexSequence& index_seq, const Config& config) {
+    if (index_seq.Empty()) {
+        LOG_KNOWHERE_ERROR_ << "invalid index sequence.";
+        return Status::invalid_index_sequence;
     }
-
-    MemoryIOReader reader(binary->data.get(), binary->size);
     try {
-        if constexpr (std::is_same<T, faiss::IndexIVFFlat>::value) {
-            auto raw_binary = binset.GetByName("RAW_DATA");
-            if (raw_binary != nullptr) {
-                const BaseConfig& base_cfg = static_cast<const BaseConfig&>(config);
-                ConvertIVFFlatIfNeeded(binset, base_cfg.metric_type.value(), raw_binary->data.get(), raw_binary->size);
-                // after conversion, binary size and data will be updated
-                reader.data_ = binary->data.get();
-                reader.total_ = binary->size;
-            }
-            index_.reset(static_cast<faiss::IndexIVFFlat*>(faiss::read_index(&reader)));
-        } else if constexpr (std::is_same<T, faiss::IndexBinaryIVF>::value) {
+        MemoryIOReader reader(index_seq.GetSeq(), index_seq.GetSize());
+        if constexpr (std::is_same<T, faiss::IndexBinaryIVF>::value) {
             index_.reset(static_cast<T*>(faiss::read_index_binary(&reader)));
         } else {
             index_.reset(static_cast<T*>(faiss::read_index(&reader)));

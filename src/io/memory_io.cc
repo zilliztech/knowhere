@@ -60,5 +60,4 @@ MemoryIOReader::operator()(void* ptr, size_t size, size_t nitems) {
     rp_ += size * nitems;
     return nitems;
 }
-
 }  // namespace knowhere

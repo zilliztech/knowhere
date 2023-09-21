@@ -13,6 +13,8 @@
 
 #include <faiss/impl/io.h>
 
+#include <memory>
+
 namespace knowhere {
 
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
@@ -139,6 +141,29 @@ struct MemoryIOReader : public faiss::IOReader {
     void
     reset() {
         rp_ = 0;
+    }
+};
+
+struct MemoryPin : public MemoryIOReader {
+    MemoryPin(uint8_t* data, size_t size) : MemoryIOReader(data, size){};
+    template <typename T>
+    size_t
+    pin(T*& ptr, size_t size, size_t nitems = 1) {
+        if (rp_ >= total_) {
+            return 0;
+        }
+        size_t nremain = (total_ - rp_) / size;
+        if (nremain < nitems) {
+            nitems = nremain;
+        }
+        ptr = (T*)(data_ + rp_);
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+        for (size_t i = 0; i < nitems; ++i) {
+            *(ptr + i) = getSwappedBytes(*(ptr + i));
+        }
+#endif
+        rp_ += size * nitems;
+        return nitems;
     }
 };
 

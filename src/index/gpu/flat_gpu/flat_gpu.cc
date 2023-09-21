@@ -111,7 +111,7 @@ class GpuFlatIndexNode : public IndexNode {
     }
 
     Status
-    Serialize(BinarySet& binset) const override {
+    Serialize(IndexSequence& indexseq) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "serilalization on empty index.";
             expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -120,8 +120,8 @@ class GpuFlatIndexNode : public IndexNode {
             MemoryIOWriter writer;
             // Serialize() is called after Add(), at this time index_ is CPU index actually
             faiss::write_index(index_.get(), &writer);
-            std::shared_ptr<uint8_t[]> data(writer.data());
-            binset.Append(Type(), data, writer.tellg());
+            std::unique_ptr<uint8_t[]> data(writer.data());
+            indexseq = IndexSequence(data, writer.tellg());
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
@@ -130,14 +130,13 @@ class GpuFlatIndexNode : public IndexNode {
     }
 
     Status
-    Deserialize(const BinarySet& binset, const Config& config) override {
-        auto binary = binset.GetByName(Type());
-        if (binary == nullptr) {
-            LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
-            return Status::invalid_binary_set;
+    Deserialize(const IndexSequence& indexseq, const Config& config) override {
+        if (indexseq.Empty()) {
+            LOG_KNOWHERE_ERROR_ << "invalid index sequence.";
+            return Status::invalid_index_sequence;
         }
-        MemoryIOReader reader(binary->data.get(), binary->size);
         try {
+            MemoryIOReader reader(indexseq.GetSeq(), indexseq.GetSize());
             std::unique_ptr<faiss::Index> index(faiss::read_index(&reader));
 
             auto gpu_res = GPUResMgr::GetInstance().GetRes();
@@ -151,6 +150,12 @@ class GpuFlatIndexNode : public IndexNode {
         }
 
         return Status::success;
+    }
+
+    Status
+    Deserialize(IndexSequence&& indexseq, const Config& config) override {
+        LOG_KNOWHERE_ERROR_ << "Not support Deserialization from IndexSequence&& yet.";
+        return Status::not_implemented;
     }
 
     Status

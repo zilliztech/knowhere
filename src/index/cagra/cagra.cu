@@ -119,7 +119,7 @@ class CagraIndexNode : public IndexNode {
     }
 
     Status
-    Serialize(BinarySet& binset) const override {
+    Serialize(IndexSequence& indexseq) const override {
         if (!gpu_index_.has_value()) {
             LOG_KNOWHERE_ERROR_ << "Can not serialize empty RaftCagraIndex.";
             return Status::empty_index;
@@ -138,22 +138,21 @@ class CagraIndexNode : public IndexNode {
         raft::neighbors::experimental::cagra::serialize<float, idx_type>(res, os, *gpu_index_);
 
         os.flush();
-        std::shared_ptr<uint8_t[]> index_binary(new (std::nothrow) uint8_t[buf.str().size()]);
+        std::unique_ptr<uint8_t[]> index_binary(new (std::nothrow) uint8_t[buf.str().size()]);
 
         memcpy(index_binary.get(), buf.str().c_str(), buf.str().size());
-        binset.Append(this->Type(), index_binary, buf.str().size());
+        indexseq = IndexSequence(index_binary, buf.str().size());
         return Status::success;
     }
 
     Status
-    Deserialize(const BinarySet& binset, const Config& config) override {
-        std::stringbuf buf;
-        auto binary = binset.GetByName(this->Type());
-        if (binary == nullptr) {
-            LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
-            return Status::invalid_binary_set;
+    Deserialize(const IndexSequence& indexseq, const Config& config) override {
+        if (indexseq.Empty()) {
+            LOG_KNOWHERE_ERROR_ << "invalid index sequence.";
+            return Status::invalid_index_sequence;
         }
-        buf.sputn((char*)binary->data.get(), binary->size);
+        std::stringbuf buf;
+        buf.sputn((char*)indexseq.GetSeq(), indexseq.GetSize());
         std::istream is(&buf);
 
         is.read((char*)(&this->dim_), sizeof(this->dim_));
@@ -169,6 +168,12 @@ class CagraIndexNode : public IndexNode {
         gpu_index_ = cagra_index(std::move(index_));
 
         return Status::success;
+    }
+
+    Status
+    Deserialize(BinarySet&& binset, const Config& config) override {
+        LOG_KNOWHERE_ERROR_ << "Not support Deserialization from BinarySet&& yet.";
+        return Status::not_implemented;
     }
 
     Status

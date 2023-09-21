@@ -467,7 +467,7 @@ class RaftIvfIndexNode : public IndexNode {
     }
 
     Status
-    Serialize(BinarySet& binset) const override {
+    Serialize(IndexSequence& indexseq) const override {
         if (!gpu_index_.has_value()) {
             LOG_KNOWHERE_ERROR_ << "Can not serialize empty RaftIvfIndex.";
             return Status::empty_index;
@@ -494,22 +494,17 @@ class RaftIvfIndexNode : public IndexNode {
         res.sync_stream();
 
         os.flush();
-        std::shared_ptr<uint8_t[]> index_binary(new (std::nothrow) uint8_t[buf.str().size()]);
+        std::unique_ptr<uint8_t[]> index_binary(new (std::nothrow) uint8_t[buf.str().size()]);
 
         memcpy(index_binary.get(), buf.str().c_str(), buf.str().size());
-        binset.Append(this->Type(), index_binary, buf.str().size());
+        indexseq = IndexSequence(index_binary, buf.str().size());
         return Status::success;
     }
 
     Status
-    Deserialize(const BinarySet& binset, const Config& config) override {
+    Deserialize(const IndexSequence& indexseq, const Config& config) override {
         std::stringbuf buf;
-        auto binary = binset.GetByName(this->Type());
-        if (binary == nullptr) {
-            LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
-            return Status::invalid_binary_set;
-        }
-        buf.sputn((char*)binary->data.get(), binary->size);
+        buf.sputn((char*)indexseq.GetSeq(), indexseq.GetSize());
         std::istream is(&buf);
 
         is.read((char*)(&this->dim_), sizeof(this->dim_));
@@ -537,6 +532,12 @@ class RaftIvfIndexNode : public IndexNode {
         }
 
         return Status::success;
+    }
+
+    Status
+    Deserialize(IndexSequence&& indexseq, const Config& config) override {
+        LOG_KNOWHERE_ERROR_ << "RaftIvfIndex doesn't support Deserialization from IndexSequence&&.";
+        return Status::not_implemented;
     }
 
     Status

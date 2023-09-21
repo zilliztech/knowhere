@@ -22,7 +22,6 @@
 
 #include "catch2/generators/catch_generators.hpp"
 #include "common/range_util.h"
-#include "knowhere/binaryset.h"
 #include "knowhere/dataset.h"
 #include "knowhere/version.h"
 

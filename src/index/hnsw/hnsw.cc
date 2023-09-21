@@ -374,7 +374,7 @@ class HnswIndexNode : public IndexNode {
     }
 
     Status
-    Serialize(BinarySet& binset) const override {
+    Serialize(IndexSequence& index_seq) const override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not serialize empty HNSW index.";
             return Status::empty_index;
@@ -382,8 +382,8 @@ class HnswIndexNode : public IndexNode {
         try {
             MemoryIOWriter writer;
             index_->saveIndex(writer);
-            std::shared_ptr<uint8_t[]> data(writer.data());
-            binset.Append(Type(), data, writer.tellg());
+            std::unique_ptr<uint8_t[]> data(writer.data());
+            index_seq = IndexSequence(std::move(data), writer.tellg());
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
             return Status::hnsw_inner_error;
@@ -392,18 +392,40 @@ class HnswIndexNode : public IndexNode {
     }
 
     Status
-    Deserialize(const BinarySet& binset, const Config& config) override {
+    Deserialize(IndexSequence&& index_seq, const Config& config) override {
+        if (index_seq.Empty()) {
+            LOG_KNOWHERE_ERROR_ << "invalid index sequence.";
+            return Status::invalid_index_sequence;
+        }
         if (index_) {
             delete index_;
         }
         try {
-            auto binary = binset.GetByName(Type());
-            if (binary == nullptr) {
-                LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
-                return Status::invalid_binary_set;
-            }
+            hnswlib::SpaceInterface<float>* space = nullptr;
+            index_ = new (std::nothrow) hnswlib::HierarchicalNSW<float>(space);
+            index_->loadIndex(std::move(index_seq));
+            LOG_KNOWHERE_INFO_ << "Loaded HNSW index. #points num:" << index_->max_elements_ << " #M:" << index_->M_
+                               << " #max level:" << index_->maxlevel_
+                               << " #ef_construction:" << index_->ef_construction_
+                               << " #dim:" << *(size_t*)(index_->space_->get_dist_func_param());
+        } catch (std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
+            return Status::hnsw_inner_error;
+        }
+        return Status::success;
+    }
 
-            MemoryIOReader reader(binary->data.get(), binary->size);
+    Status
+    Deserialize(const IndexSequence& index_seq, const Config& config) override {
+        if (index_seq.Empty()) {
+            LOG_KNOWHERE_ERROR_ << "invalid index sequence.";
+            return Status::invalid_index_sequence;
+        }
+        if (index_) {
+            delete index_;
+        }
+        try {
+            MemoryIOReader reader(index_seq.GetSeq(), index_seq.GetSize());
 
             hnswlib::SpaceInterface<float>* space = nullptr;
             index_ = new (std::nothrow) hnswlib::HierarchicalNSW<float>(space);

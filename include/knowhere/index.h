@@ -12,11 +12,11 @@
 #ifndef INDEX_H
 #define INDEX_H
 
-#include "knowhere/binaryset.h"
 #include "knowhere/config.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/index_node.h"
+#include "knowhere/index_sequence.h"
 
 namespace knowhere {
 
@@ -153,10 +153,26 @@ class Index {
     GetIndexMeta(const Json& json) const;
 
     Status
-    Serialize(BinarySet& binset) const;
+    Serialize(IndexSequence&) const;
 
+    template <typename BinT>
     Status
-    Deserialize(const BinarySet& binset, const Json& json = {});
+    Deserialize(BinT&& index_seq, const Json& json = {}) {
+        Json json_(json);
+        auto cfg = this->node->CreateConfig();
+        {
+            auto res = Config::FormatAndCheck(*cfg, json_);
+            LOG_KNOWHERE_DEBUG_ << "Deserialize config dump: " << json_.dump();
+            if (res != Status::success) {
+                return res;
+            }
+        }
+        auto res = Config::Load(*cfg, json_, knowhere::DESERIALIZE);
+        if (res != Status::success) {
+            return res;
+        }
+        return this->node->Deserialize(std::forward<BinT>(index_seq), *cfg);
+    }
 
     Status
     DeserializeFromFile(const std::string& filename, const Json& json = {});

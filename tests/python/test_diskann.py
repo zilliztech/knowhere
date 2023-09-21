@@ -69,7 +69,7 @@ def test_index(gen_data, faiss_ans, recall, error):
         json.dumps(diskann_config["build_config"]),
     )
     assert knowhere.Status(build_status) == knowhere.Status.success
-    diskann.Deserialize(knowhere.GetBinarySet(), json.dumps(diskann_config["deserialize_config"]))
+    diskann.Deserialize(knowhere.GetIndexSequence(), json.dumps(diskann_config["deserialize_config"]))
     ans, _ = diskann.Search(
         knowhere.ArrayToDataSet(xq),
         json.dumps(diskann_config["search_config"]),

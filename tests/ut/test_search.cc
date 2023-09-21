@@ -26,7 +26,6 @@ namespace {
 constexpr float kKnnRecallThreshold = 0.6f;
 constexpr float kBruteForceRecallThreshold = 0.99f;
 }  // namespace
-
 TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
     using Catch::Approx;
 
@@ -123,9 +122,9 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         REQUIRE(idx.Size() > 0);
         REQUIRE(idx.Count() == nb);
 
-        knowhere::BinarySet bs;
-        REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
-        REQUIRE(idx.Deserialize(bs) == knowhere::Status::success);
+        knowhere::IndexSequence is;
+        REQUIRE(idx.Serialize(is) == knowhere::Status::success);
+        REQUIRE(idx.Deserialize(is) == knowhere::Status::success);
 
         auto results = idx.Search(*query_ds, json, nullptr);
         REQUIRE(results.has_value());
@@ -163,9 +162,9 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         REQUIRE(idx.Type() == name);
         REQUIRE(idx.Build(*train_ds, json) == knowhere::Status::success);
 
-        knowhere::BinarySet bs;
-        REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
-        REQUIRE(idx.Deserialize(bs) == knowhere::Status::success);
+        knowhere::IndexSequence is;
+        REQUIRE(idx.Serialize(is) == knowhere::Status::success);
+        REQUIRE(idx.Deserialize(is) == knowhere::Status::success);
 
         auto results = idx.RangeSearch(*query_ds, json, nullptr);
         REQUIRE(results.has_value());
@@ -237,13 +236,37 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         knowhere::Json json = knowhere::Json::parse(cfg_json);
         REQUIRE(idx.Type() == name);
         REQUIRE(idx.Build(*train_ds, json) == knowhere::Status::success);
-        knowhere::BinarySet bs;
-        idx.Serialize(bs);
+        knowhere::IndexSequence is;
+        idx.Serialize(is);
 
         auto idx_ = knowhere::IndexFactory::Instance().Create(name, version);
-        idx_.Deserialize(bs);
+        idx_.Deserialize(is);
         auto results = idx_.Search(*query_ds, json, nullptr);
         REQUIRE(results.has_value());
+    }
+
+    SECTION("Test Serialize/Deserialize with zero copy") {
+        using std::make_tuple;
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
+        }));
+
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
+        auto cfg_json = gen().dump();
+        CAPTURE(name, cfg_json);
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        REQUIRE(idx.Type() == name);
+        REQUIRE(idx.Build(*train_ds, json) == knowhere::Status::success);
+        knowhere::IndexSequence is;
+        REQUIRE(idx.Serialize(is) == knowhere::Status::success);
+        {
+            auto idx_ = knowhere::IndexFactory::Instance().Create(name, version);
+            idx_.Deserialize(std::move(is));
+            auto results = idx_.Search(*query_ds, json, nullptr);
+            REQUIRE(results.has_value());
+            float recall = GetKNNRecall(*gt.value(), *results.value());
+            REQUIRE(recall > kKnnRecallThreshold);
+        }
     }
 
     SECTION("Test IVFPQ with invalid params") {
@@ -363,11 +386,11 @@ TEST_CASE("Test Mem Index With Binary Vector", "[float metrics]") {
         knowhere::Json json = knowhere::Json::parse(cfg_json);
         REQUIRE(idx.Type() == name);
         REQUIRE(idx.Build(*train_ds, json) == knowhere::Status::success);
-        knowhere::BinarySet bs;
-        idx.Serialize(bs);
+        knowhere::IndexSequence is;
+        idx.Serialize(is);
 
         auto idx_ = knowhere::IndexFactory::Instance().Create(name, version);
-        idx_.Deserialize(bs);
+        idx_.Deserialize(is);
         auto results = idx_.Search(*query_ds, json, nullptr);
         REQUIRE(results.has_value());
     }
