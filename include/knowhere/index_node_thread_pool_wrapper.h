@@ -55,13 +55,18 @@ class IndexNodeThreadPoolWrapper : public IndexNode {
     }
 
     Status
-    Serialize(BinarySet& binset) const override {
-        return index_node_->Serialize(binset);
+    Serialize(IndexSequence& index_seq) const override {
+        return index_node_->Serialize(index_seq);
     }
 
     Status
-    Deserialize(const BinarySet& binset, const Config& config) override {
-        return index_node_->Deserialize(binset, config);
+    Deserialize(const IndexSequence& index_seq, const Config& config) override {
+        return index_node_->Deserialize(index_seq, config);
+    }
+
+    Status
+    Deserialize(IndexSequence&& index_seq, const Config& config) override {
+        return index_node_->Deserialize(index_seq, config);
     }
 
     Status

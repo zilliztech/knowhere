@@ -38,7 +38,7 @@ enum class Status {
     invalid_value_in_json = 16,
     arithmetic_overflow = 17,
     raft_inner_error = 18,
-    invalid_binary_set = 19,
+    invalid_index_sequence = 19,
 };
 
 inline std::string
@@ -78,7 +78,7 @@ Status2String(knowhere::Status status) {
             return "arithmetic overflow";
         case knowhere::Status::raft_inner_error:
             return "raft inner error";
-        case knowhere::Status::invalid_binary_set:
+        case knowhere::Status::invalid_index_sequence:
             return "invalid binary set";
         default:
             return "unexpected status";

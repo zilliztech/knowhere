@@ -27,6 +27,7 @@ typedef uint64_t size_t;
 #include <numpy/arrayobject.h>
 #endif
 #include <knowhere/expected.h>
+#include <knowhere/index_sequence.h>
 #include <knowhere/factory.h>
 #include <knowhere/version.h>
 #include <knowhere/utils.h>
@@ -47,14 +48,12 @@ import_array();
 %include <std_pair.i>
 %include <std_map.i>
 %include <std_shared_ptr.i>
+%include <std_unique_ptr.i>
 %include <exception.i>
 %shared_ptr(knowhere::DataSet)
-%shared_ptr(knowhere::BinarySet)
-%template(DataSetPtr) std::shared_ptr<knowhere::DataSet>;
-%template(BinarySetPtr) std::shared_ptr<knowhere::BinarySet>;
 %include <knowhere/expected.h>
 %include <knowhere/dataset.h>
-%include <knowhere/binaryset.h>
+%include <knowhere/index_sequence.h>
 %include <knowhere/bitsetview.h>
 %include <knowhere/expected.h>
 
@@ -185,15 +184,15 @@ class IndexWrap {
     }
 
     knowhere::Status
-    Serialize(knowhere::BinarySetPtr binset) {
+    Serialize(knowhere::IndexSequence& indexseq) {
         GILReleaser rel;
-        return idx.Serialize(*binset);
+        return idx.Serialize(indexseq);
     }
 
     knowhere::Status
-    Deserialize(knowhere::BinarySetPtr binset, const std::string& json) {
+    Deserialize(knowhere::IndexSequence& indexseq, const std::string& json) {
         GILReleaser rel;
-        return idx.Deserialize(*binset, knowhere::Json::parse(json));
+        return idx.Deserialize(indexseq, knowhere::Json::parse(json));
     }
 
     int64_t
@@ -241,6 +240,11 @@ class BitSet {
     int num_bits_ = 0;
 };
 
+knowhere::IndexSequence
+GetIndexSequence() {
+    return knowhere::IndexSequence();
+}
+
 knowhere::BitsetView
 GetNullBitSetView() {
     return nullptr;
@@ -286,10 +290,6 @@ int64_t DataSet_Rows(knowhere::DataSetPtr results){
 
 int64_t DataSet_Dim(knowhere::DataSetPtr results){
     return results->GetDim();
-}
-
-knowhere::BinarySetPtr GetBinarySet() {
-    return std::make_shared<knowhere::BinarySet>();
 }
 
 knowhere::DataSetPtr GetNullDataSet() {

@@ -28,6 +28,7 @@
 #include "io/memory_io.h"
 #include "knowhere/config.h"
 #include "knowhere/heap.h"
+#include "knowhere/index_sequence.h"
 #include "neighbor.h"
 #include "visited_list_pool.h"
 
@@ -141,14 +142,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     ~HierarchicalNSW() {
         if (mmap_enabled_) {
             munmap(map_, map_size_);
-        } else {
+        } else if (index_memory_ == nullptr){
             free(data_level0_memory_);
             if (metric_type_ == Metric::COSINE) {
                 free(data_norm_l2_);
             }
         }
 
-        for (tableint i = 0; i < cur_element_count; i++) {
+        for (tableint i = 0; i < cur_element_count && index_memory_ == nullptr; i++) {
             if (element_levels_[i] > 0)
                 free(linkLists_[i]);
         }
@@ -209,6 +210,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     size_t map_size_;
 
     mutable knowhere::lru_cache<uint64_t, tableint> lru_cache;
+
+    knowhere::IndexSequence index_seq_;
+    uint8_t* index_memory_ = nullptr;
 
     inline char*
     getDataByInternalId(tableint internal_id) const {
@@ -888,6 +892,87 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 if (linkLists_[i] == nullptr)
                     throw std::runtime_error("Not enough memory: loadIndex failed to allocate linklist");
                 input.read(linkLists_[i], linkListSize);
+            }
+        }
+    }
+
+    void
+    loadIndex(knowhere::IndexSequence&& index_seq, size_t max_elements_i = 0) {
+        // linxj: init with metrictype
+        index_seq_ = std::move(index_seq);
+        index_memory_ = index_seq_.GetSeq();
+        knowhere::MemoryPin input(index_memory_, index_seq_.GetSize());
+
+        size_t dim;
+        input.read(&metric_type_, sizeof(metric_type_));
+        input.read(&data_size_, sizeof(data_size_));
+        input.read(&dim, sizeof(dim));
+        if (metric_type_ == Metric::L2) {
+            space_ = new hnswlib::L2Space(dim);
+        } else if (metric_type_ == Metric::INNER_PRODUCT) {
+            space_ = new hnswlib::InnerProductSpace(dim);
+        } else if (metric_type_ == Metric::COSINE) {
+            space_ = new hnswlib::CosineSpace(dim);
+        } else if (metric_type_ == Metric::HAMMING) {
+            space_ = new hnswlib::HammingSpace(dim);
+        } else if (metric_type_ == Metric::JACCARD) {
+            space_ = new hnswlib::JaccardSpace(dim);
+        } else {
+            throw std::runtime_error("Invalid metric type " + std::to_string(metric_type_));
+        }
+        fstdistfunc_ = space_->get_dist_func();
+        dist_func_param_ = space_->get_dist_func_param();
+
+        input.read(&offsetLevel0_, sizeof(offsetLevel0_));
+        input.read(&max_elements_, sizeof(max_elements_));
+        input.read(&cur_element_count, sizeof(cur_element_count));
+
+        size_t max_elements = max_elements_i;
+        if (max_elements < cur_element_count) {
+            max_elements = max_elements_;
+        }
+        max_elements_ = max_elements;
+        input.read(&size_data_per_element_, sizeof(size_data_per_element_));
+        input.read(&label_offset_, sizeof(label_offset_));
+        input.read(&offsetData_, sizeof(offsetData_));
+        input.read(&maxlevel_, sizeof(maxlevel_));
+        input.read(&enterpoint_node_, sizeof(enterpoint_node_));
+
+        input.read(&maxM_, sizeof(maxM_));
+        input.read(&maxM0_, sizeof(maxM0_));
+        input.read(&M_, sizeof(M_));
+        input.read(&mult_, sizeof(mult_));
+        input.read(&ef_construction_, sizeof(ef_construction_));
+
+        input.pin(data_level0_memory_, cur_element_count * size_data_per_element_);
+
+        // for COSINE, need load data_norm_l2_
+        if (metric_type_ == Metric::COSINE) {
+            input.pin(data_norm_l2_, cur_element_count * sizeof(float));
+        }
+
+        size_links_per_element_ = maxM_ * sizeof(tableint) + sizeof(linklistsizeint);
+
+        size_links_level0_ = maxM0_ * sizeof(tableint) + sizeof(linklistsizeint);
+        std::vector<std::mutex>(max_elements).swap(link_list_locks_);
+
+        visited_list_pool_ = new VisitedListPool(max_elements);
+
+        linkLists_ = (char**)malloc(sizeof(void*) * max_elements);  // NOLINT
+        if (linkLists_ == nullptr)
+            throw std::runtime_error("Not enough memory: loadIndex failed to allocate linklists");
+        element_levels_ = std::vector<int>(max_elements);
+        revSize_ = 1.0 / mult_;
+        ef_ = 10;
+        for (size_t i = 0; i < cur_element_count; i++) {
+            unsigned int linkListSize;
+            input.read(&linkListSize, sizeof(linkListSize));
+            if (linkListSize == 0) {
+                element_levels_[i] = 0;
+                linkLists_[i] = nullptr;
+            } else {
+                element_levels_[i] = linkListSize / size_links_per_element_;
+                input.pin(linkLists_[i], linkListSize);
             }
         }
     }

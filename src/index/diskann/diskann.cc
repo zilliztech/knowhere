@@ -78,13 +78,18 @@ class DiskANNIndexNode : public IndexNode {
     GetIndexMeta(const Config& cfg) const override;
 
     Status
-    Serialize(BinarySet& binset) const override {
+    Serialize(IndexSequence& index_seq) const override {
         LOG_KNOWHERE_INFO_ << "DiskANN does nothing for serialize";
         return Status::success;
     }
 
     Status
-    Deserialize(const BinarySet& binset, const Config& cfg) override;
+    Deserialize(const IndexSequence& index_seq, const Config& cfg) override;
+
+    Status
+    Deserialize(IndexSequence&& index_seq, const Config& config) override {
+        return Deserialize(static_cast<const IndexSequence&>(index_seq), config);
+    }
 
     Status
     DeserializeFromFile(const std::string& filename, const Config& config) override {
@@ -335,7 +340,7 @@ DiskANNIndexNode<T>::Build(const DataSet& dataset, const Config& cfg) {
 
 template <typename T>
 Status
-DiskANNIndexNode<T>::Deserialize(const BinarySet& binset, const Config& cfg) {
+DiskANNIndexNode<T>::Deserialize(const IndexSequence& binset, const Config& cfg) {
     std::lock_guard<std::mutex> lock(preparation_lock_);
     auto prep_conf = static_cast<const DiskANNConfig&>(cfg);
     if (!CheckMetric(prep_conf.metric_type.value())) {

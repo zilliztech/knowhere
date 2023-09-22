@@ -24,7 +24,7 @@ def test_save_and_load(gen_data, faiss_ans, recall, error, name, config):
         knowhere.ArrayToDataSet(xb),
         json.dumps(config),
     )
-    binset = knowhere.GetBinarySet()
+    binset = knowhere.GetIndexSequence()
     build_idx.Serialize(binset)
     search_idx = knowhere.CreateIndex(name, version)
     search_idx.Deserialize(binset)

@@ -114,11 +114,11 @@ TEST_CASE("Invalid diskann params test", "[diskann]") {
 
     SECTION("Invalid search params test") {
         knowhere::DataSet* ds_ptr = nullptr;
-        auto binarySet = knowhere::BinarySet();
+        auto index_seq = knowhere::IndexSequence();
         auto diskann = knowhere::IndexFactory::Instance().Create("DISKANN", version, diskann_index_pack);
         diskann.Build(*ds_ptr, test_gen());
-        diskann.Serialize(binarySet);
-        diskann.Deserialize(binarySet, test_gen());
+        diskann.Serialize(index_seq);
+        diskann.Deserialize(index_seq, test_gen());
 
         knowhere::Json test_json;
         auto query_ds = GenDataSet(kNumQueries, kDim, 42);
@@ -243,7 +243,7 @@ TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
         std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
         auto diskann_index_pack = knowhere::Pack(file_manager);
         knowhere::Json deserialize_json = knowhere::Json::parse(deserialize_gen().dump());
-        knowhere::BinarySet binset;
+        knowhere::IndexSequence index_seq;
         // build process
         {
             knowhere::DataSet* ds_ptr = nullptr;
@@ -251,12 +251,12 @@ TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
             auto build_json = build_gen().dump();
             knowhere::Json json = knowhere::Json::parse(build_json);
             diskann.Build(*ds_ptr, json);
-            diskann.Serialize(binset);
+            diskann.Serialize(index_seq);
         }
         {
             // knn search
             auto diskann = knowhere::IndexFactory::Instance().Create("DISKANN", version, diskann_index_pack);
-            diskann.Deserialize(binset, deserialize_json);
+            diskann.Deserialize(index_seq, deserialize_json);
 
             auto knn_search_json = knn_search_gen().dump();
             knowhere::Json knn_json = knowhere::Json::parse(knn_search_json);
@@ -273,7 +273,8 @@ TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
                     fs::remove(cached_nodes_file_path);
                 }
                 auto diskann_tmp = knowhere::IndexFactory::Instance().Create("DISKANN", version, diskann_index_pack);
-                diskann_tmp.Deserialize(binset, deserialize_json);
+                diskann_tmp.Deserialize(index_seq, deserialize_json);
+
                 auto knn_search_json = knn_search_gen().dump();
                 knowhere::Json knn_json = knowhere::Json::parse(knn_search_json);
                 auto res = diskann_tmp.Search(*query_ds, knn_json, nullptr);
@@ -359,8 +360,9 @@ TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {
         auto build_json = build_gen().dump();
         knowhere::Json json = knowhere::Json::parse(build_json);
         diskann.Build(*ds_ptr, json);
-        knowhere::BinarySet binset;
-        diskann.Serialize(binset);
+
+        knowhere::IndexSequence index_seq;
+        diskann.Serialize(index_seq);
         {
             std::vector<double> cache_sizes = {0, 1.0f * sizeof(float) * dim * kNumRows * 0.125 / (1024 * 1024 * 1024)};
             for (const auto cache_size : cache_sizes) {
@@ -372,7 +374,7 @@ TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {
                 };
                 knowhere::Json deserialize_json = knowhere::Json::parse(deserialize_gen().dump());
                 auto index = knowhere::IndexFactory::Instance().Create("DISKANN", version, diskann_index_pack);
-                auto ret = index.Deserialize(binset, deserialize_json);
+                auto ret = index.Deserialize(index_seq, deserialize_json);
                 REQUIRE(ret == knowhere::Status::success);
                 std::vector<double> ids_sizes = {1, kNumRows * 0.2, kNumRows * 0.7, kNumRows};
                 for (const auto ids_size : ids_sizes) {

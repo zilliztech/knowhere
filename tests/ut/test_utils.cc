@@ -23,6 +23,18 @@ namespace {
 const std::vector<size_t> kBitsetSizes{4, 8, 10, 64, 100, 500, 1024};
 }
 
+TEST_CASE("Test Index Sequence.", "[handle different allocator]") {
+    SECTION("use malloc and free") {
+        size_t buf_size = 1000;
+        auto buf = (uint8_t*)malloc(buf_size);
+        auto buf_ptr = std::unique_ptr<uint8_t[], decltype(&std::free)>(buf, &std::free);
+        knowhere::IndexSequence index_seq(std::move(buf_ptr), buf_size);
+        REQUIRE_FALSE(index_seq.Empty());
+        REQUIRE(index_seq.GetSeq() == buf);
+        REQUIRE(index_seq.GetSize() == buf_size);
+    }
+}
+
 TEST_CASE("Test Vector Normalization", "[normalize]") {
     using Catch::Approx;
 

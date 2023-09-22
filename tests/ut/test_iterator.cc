@@ -99,9 +99,9 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         REQUIRE(idx.Size() > 0);
         REQUIRE(idx.Count() == nb);
 
-        knowhere::BinarySet bs;
-        REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
-        REQUIRE(idx.Deserialize(bs) == knowhere::Status::success);
+        knowhere::IndexSequence is;
+        REQUIRE(idx.Serialize(is) == knowhere::Status::success);
+        REQUIRE(idx.Deserialize(is) == knowhere::Status::success);
         auto its = idx.AnnIterator(*query_ds, json, nullptr);
         REQUIRE(its.has_value());
         auto results = GetKNNResult(its.value(), topk);

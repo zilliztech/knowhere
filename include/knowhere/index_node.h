@@ -12,11 +12,11 @@
 #ifndef INDEX_NODE_H
 #define INDEX_NODE_H
 
-#include "knowhere/binaryset.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/config.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
+#include "knowhere/index_sequence.h"
 #include "knowhere/object.h"
 
 namespace knowhere {
@@ -67,10 +67,13 @@ class IndexNode : public Object {
     GetIndexMeta(const Config& cfg) const = 0;
 
     virtual Status
-    Serialize(BinarySet& binset) const = 0;
+    Serialize(IndexSequence& index_seq) const = 0;
 
     virtual Status
-    Deserialize(const BinarySet& binset, const Config& config) = 0;
+    Deserialize(const IndexSequence& index_seq, const Config& config) = 0;
+
+    virtual Status
+    Deserialize(IndexSequence&& index_seq, const Config& config) = 0;
 
     virtual Status
     DeserializeFromFile(const std::string& filename, const Config& config) = 0;

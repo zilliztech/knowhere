@@ -9,9 +9,12 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <bitset>
+
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "io/memory_io.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/factory.h"
@@ -71,11 +74,11 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
             return;
         }
         REQUIRE(res == knowhere::Status::success);
-        knowhere::BinarySet bs;
-        idx.Serialize(bs);
+        knowhere::IndexSequence is;
+        idx.Serialize(is);
 
         auto idx_new = knowhere::IndexFactory::Instance().Create(name, version);
-        idx_new.Deserialize(bs);
+        idx_new.Deserialize(is);
         auto results = idx_new.GetVectorByIds(*ids_ds);
         REQUIRE(results.has_value());
         auto xb = (uint8_t*)train_ds->GetTensor();
@@ -174,11 +177,11 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
             return;
         }
         REQUIRE(res == knowhere::Status::success);
-        knowhere::BinarySet bs;
-        idx.Serialize(bs);
+        knowhere::IndexSequence is;
+        idx.Serialize(is);
 
         auto idx_new = knowhere::IndexFactory::Instance().Create(name, version);
-        idx_new.Deserialize(bs);
+        idx_new.Deserialize(is);
         auto results = idx_new.GetVectorByIds(*ids_ds);
         REQUIRE(results.has_value());
         auto xb = (float*)train_ds_copy->GetTensor();
