@@ -68,7 +68,7 @@ class FlatIndexNode : public IndexNode {
     Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "search on empty index";
-            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
         DataSetPtr results = std::make_shared<DataSet>();
@@ -130,7 +130,7 @@ class FlatIndexNode : public IndexNode {
     RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "range search on empty index";
-            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
         const FlatConfig& f_cfg = static_cast<const FlatConfig&>(cfg);
@@ -253,7 +253,7 @@ class FlatIndexNode : public IndexNode {
     Serialize(BinarySet& binset) const override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not serialize empty index.";
-            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
         try {
             MemoryIOWriter writer;

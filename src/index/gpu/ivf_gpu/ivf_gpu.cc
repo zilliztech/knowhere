@@ -111,11 +111,11 @@ class GpuIvfIndexNode : public IndexNode {
     Add(const DataSet& dataset, const Config& cfg) override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not add data to empty GpuIvfIndex.";
-            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
         if (!index_->is_trained) {
             LOG_KNOWHERE_ERROR_ << "Can not add data to not trained GpuIvfIndex.";
-            expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
+            return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
         }
         auto rows = dataset.GetRows();
         auto tensor = dataset.GetTensor();
@@ -177,11 +177,11 @@ class GpuIvfIndexNode : public IndexNode {
     Serialize(BinarySet& binset) const override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not serialize empty GpuIvfIndex.";
-            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
         if (!index_->is_trained) {
             LOG_KNOWHERE_ERROR_ << "Can not serialize not trained GpuIvfIndex.";
-            expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
+            return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
         }
 
         try {

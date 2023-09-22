@@ -56,7 +56,7 @@ class GpuFlatIndexNode : public IndexNode {
     Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "index not empty, deleted old index.";
-            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
         const FlatConfig& f_cfg = static_cast<const FlatConfig&>(cfg);
@@ -114,7 +114,7 @@ class GpuFlatIndexNode : public IndexNode {
     Serialize(BinarySet& binset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "serilalization on empty index.";
-            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
         try {
             MemoryIOWriter writer;
