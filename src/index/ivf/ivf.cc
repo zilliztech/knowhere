@@ -346,7 +346,7 @@ Status
 IvfIndexNode<T>::Add(const DataSet& dataset, const Config& cfg) {
     if (!this->index_) {
         LOG_KNOWHERE_ERROR_ << "Can not add data to empty IVF index.";
-        expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+        return Status::empty_index;
     }
     auto data = dataset.GetTensor();
     auto rows = dataset.GetRows();
@@ -373,11 +373,11 @@ expected<DataSetPtr>
 IvfIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
     if (!this->index_) {
         LOG_KNOWHERE_WARNING_ << "search on empty index";
-        expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
     if (!this->index_->is_trained) {
         LOG_KNOWHERE_WARNING_ << "index not trained";
-        expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
+        return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
     }
 
     auto dim = dataset.GetDim();
@@ -454,11 +454,11 @@ expected<DataSetPtr>
 IvfIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
     if (!this->index_) {
         LOG_KNOWHERE_WARNING_ << "range search on empty index";
-        expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
     if (!this->index_->is_trained) {
         LOG_KNOWHERE_WARNING_ << "index not trained";
-        expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
+        return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
     }
 
     auto nq = dataset.GetRows();
@@ -544,7 +544,7 @@ template <typename T>
 expected<DataSetPtr>
 IvfIndexNode<T>::GetVectorByIds(const DataSet& dataset) const {
     if (!this->index_) {
-        expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
     if (!this->index_->is_trained) {
         return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
@@ -622,7 +622,7 @@ expected<DataSetPtr>
 IvfIndexNode<faiss::IndexIVFFlat>::GetIndexMeta(const Config& config) const {
     if (!index_) {
         LOG_KNOWHERE_WARNING_ << "get index meta on empty index";
-        expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
 
     auto ivf_index = dynamic_cast<faiss::IndexIVF*>(index_.get());

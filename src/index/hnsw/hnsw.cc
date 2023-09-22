@@ -74,7 +74,7 @@ class HnswIndexNode : public IndexNode {
     Add(const DataSet& dataset, const Config& cfg) override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not add data to empty HNSW index.";
-            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+            return Status::empty_index;
         }
 
         knowhere::TimeRecorder build_time("Building HNSW cost");
@@ -98,7 +98,7 @@ class HnswIndexNode : public IndexNode {
     Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "search on empty index";
-            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
         auto nq = dataset.GetRows();
         auto xq = dataset.GetTensor();
@@ -207,7 +207,8 @@ class HnswIndexNode : public IndexNode {
     AnnIterator(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
-            expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+            return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::empty_index,
+                                                                                    "index not loaded");
         }
         auto nq = dataset.GetRows();
         auto xq = dataset.GetTensor();
