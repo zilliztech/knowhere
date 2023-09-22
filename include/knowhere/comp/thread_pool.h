@@ -104,8 +104,8 @@ class ThreadPool {
     GetGlobalBuildThreadPool() {
         if (global_build_thread_pool_size_ == 0) {
             InitThreadPool(std::thread::hardware_concurrency(), global_build_thread_pool_size_);
-            LOG_KNOWHERE_WARNING_ << "Global Search ThreadPool has not been initialized yet, init it with threads num: "
-                                  << global_search_thread_pool_size_;
+            LOG_KNOWHERE_WARNING_ << "Global Build ThreadPool has not been initialized yet, init it with threads num: "
+                                  << global_build_thread_pool_size_;
         }
         static auto pool = std::make_shared<ThreadPool>(global_build_thread_pool_size_);
         return pool;
