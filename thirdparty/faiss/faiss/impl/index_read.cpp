@@ -551,10 +551,10 @@ static void read_direct_map(DirectMap* dm, IOReader* f) {
     }
 }
 
-void read_ivf_header(
+static void read_ivf_header(
         IndexIVF* ivf,
         IOReader* f,
-        std::vector<std::vector<Index::idx_t>>* ids) {
+        std::vector<std::vector<Index::idx_t>>* ids = nullptr) {
     read_index_header(ivf, f);
     READ1(ivf->nlist);
     READ1(ivf->nprobe);

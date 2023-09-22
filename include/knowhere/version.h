@@ -21,12 +21,12 @@ namespace knowhere {
 namespace {
 static constexpr int32_t default_version = 0;
 static constexpr int32_t minimal_version = 0;
-static constexpr int32_t current_version = 0;
+static constexpr int32_t current_version = 1;
 }  // namespace
 
 class Version {
  public:
-    explicit Version(const IndexVersion& version) : version_(version) {
+    explicit Version(const IndexVersion version) : version_(version) {
     }
 
     // used when version is not set
@@ -59,7 +59,7 @@ class Version {
 
     // the version number
     IndexVersion
-    VersionNumber() {
+    VersionNumber() const {
         return version_;
     }
 

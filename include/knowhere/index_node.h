@@ -18,11 +18,24 @@
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/object.h"
+#include "knowhere/version.h"
 
 namespace knowhere {
 
 class IndexNode : public Object {
  public:
+    IndexNode(const int32_t ver) : versoin_(ver) {
+    }
+
+    IndexNode() : versoin_(Version::GetDefaultVersion()) {
+    }
+
+    IndexNode(const IndexNode& other) : versoin_(other.versoin_) {
+    }
+
+    IndexNode(const IndexNode&& other) : versoin_(other.versoin_) {
+    }
+
     virtual Status
     Build(const DataSet& dataset, const Config& cfg) {
         RETURN_IF_ERROR(Train(dataset, cfg));
@@ -92,6 +105,9 @@ class IndexNode : public Object {
 
     virtual ~IndexNode() {
     }
+
+ protected:
+    Version versoin_;
 };
 
 }  // namespace knowhere

@@ -73,8 +73,7 @@ CopyAndNormalizeVecs(const float* x, size_t rows, int32_t dim) {
 }
 
 void
-ConvertIVFFlatIfNeeded(const BinarySet& binset, const MetricType metric_type, const uint8_t* raw_data,
-                       const size_t raw_size) {
+ConvertIVFFlat(const BinarySet& binset, const MetricType metric_type, const uint8_t* raw_data, const size_t raw_size) {
     std::vector<std::string> names = {"IVF",  // compatible with knowhere-1.x
                                       knowhere::IndexEnum::INDEX_FAISS_IVFFLAT};
     auto binary = binset.GetByNames(names);
@@ -85,38 +84,23 @@ ConvertIVFFlatIfNeeded(const BinarySet& binset, const MetricType metric_type, co
     MemoryIOReader reader(binary->data.get(), binary->size);
 
     try {
-        uint32_t h;
-        reader.read(&h, sizeof(h), 1);
-
         // only read IVF_FLAT index header
-        std::unique_ptr<faiss::IndexIVFFlat> ivfl = std::make_unique<faiss::IndexIVFFlat>(faiss::IndexIVFFlat());
-        faiss::read_ivf_header(ivfl.get(), &reader);
-        ivfl->code_size = ivfl->d * sizeof(float);
+        std::unique_ptr<faiss::IndexIVFFlat> ivfl;
+        ivfl.reset(static_cast<faiss::IndexIVFFlat*>(faiss::read_index_nm(&reader)));
 
         // is_cosine is not defined in IVF_FLAT_NM, so mark it from config
         ivfl->is_cosine = IsMetricType(metric_type, knowhere::metric::COSINE);
 
-        auto remains = binary->size - reader.tellg() - sizeof(uint32_t) - sizeof(ivfl->invlists->nlist) -
-                       sizeof(ivfl->invlists->code_size);
-        auto invlist_size = sizeof(uint32_t) + sizeof(size_t) + ivfl->nlist * sizeof(size_t);
-        auto ids_size = ivfl->ntotal * sizeof(faiss::Index::idx_t);
-        // auto codes_size = ivfl->d * ivfl->ntotal * sizeof(float);
+        ivfl->restore_codes(raw_data, raw_size);
 
-        // IVF_FLAT_NM format, need convert to new format
-        if (remains == invlist_size + ids_size) {
-            faiss::read_InvertedLists_nm(ivfl.get(), &reader);
-            ivfl->restore_codes(raw_data, raw_size);
+        // over-write IVF_FLAT_NM binary with native IVF_FLAT binary
+        MemoryIOWriter writer;
+        faiss::write_index(ivfl.get(), &writer);
+        std::shared_ptr<uint8_t[]> data(writer.data());
+        binary->data = data;
+        binary->size = writer.tellg();
 
-            // over-write IVF_FLAT_NM binary with native IVF_FLAT binary
-            MemoryIOWriter writer;
-            faiss::write_index(ivfl.get(), &writer);
-            std::shared_ptr<uint8_t[]> data(writer.data());
-            binary->data = data;
-            binary->size = writer.tellg();
-
-            LOG_KNOWHERE_INFO_ << "Convert IVF_FLAT_NM to native IVF_FLAT, rows " << ivfl->ntotal << ", dim "
-                               << ivfl->d;
-        }
+        LOG_KNOWHERE_INFO_ << "Convert IVF_FLAT_NM to native IVF_FLAT, rows " << ivfl->ntotal << ", dim " << ivfl->d;
     } catch (...) {
         // not IVF_FLAT_NM format, do nothing
         return;
