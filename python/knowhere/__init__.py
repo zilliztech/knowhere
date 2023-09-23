@@ -6,6 +6,9 @@ import numpy as np
 def CreateIndex(name, version):
     return swigknowhere.IndexWrap(name, version)
 
+def GetCurrentVersion():
+    return swigknowhere.CurrentVersion()
+
 
 def CreateBitSet(bits_num):
     return swigknowhere.BitSet(bits_num)

@@ -84,7 +84,7 @@ test_data = [
 
 @pytest.mark.parametrize("name,config", test_data)
 def test_index(gen_data, faiss_ans, recall, error, name, config):
-    version = "knowhere-v2.2.0"
+    version = knowhere.GetCurrentVersion()
     print(name, config)
     idx = knowhere.CreateIndex(name, version)
     xb, xq = gen_data(10000, 100, 256)

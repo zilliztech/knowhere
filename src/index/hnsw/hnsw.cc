@@ -32,7 +32,7 @@
 namespace knowhere {
 class HnswIndexNode : public IndexNode {
  public:
-    HnswIndexNode(const std::string& /*version*/, const Object& object) : index_(nullptr) {
+    HnswIndexNode(const int32_t& /*version*/, const Object& object) : index_(nullptr) {
         search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
     }
 
@@ -518,7 +518,7 @@ class HnswIndexNode : public IndexNode {
     std::shared_ptr<ThreadPool> search_pool_;
 };
 
-KNOWHERE_REGISTER_GLOBAL(HNSW, [](const std::string& version, const Object& object) {
+KNOWHERE_REGISTER_GLOBAL(HNSW, [](const int32_t& version, const Object& object) {
     return Index<HnswIndexNode>::Create(version, object);
 });
 

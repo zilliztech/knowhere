@@ -16,7 +16,7 @@ test_data = [
 def test_save_and_load(gen_data, faiss_ans, recall, error, name, config):
     # simple load and save not work for ivf nm
     print(name, config)
-    version = "knowhere-v2.2.0"
+    version = knowhere.GetCurrentVersion()
     build_idx = knowhere.CreateIndex(name, version)
     xb, xq = gen_data(10000, 100, 256)
 

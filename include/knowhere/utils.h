@@ -79,6 +79,6 @@ ConvertIVFFlatIfNeeded(const BinarySet& binset, const MetricType metric_type, co
                        const size_t raw_size);
 
 bool
-UseDiskLoad(const std::string& index_type, const std::string& /*version*/);
+UseDiskLoad(const std::string& index_type, const int32_t& /*version*/);
 
 }  // namespace knowhere

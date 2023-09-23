@@ -15,7 +15,7 @@ def fbin_write(x, fname):
     x.tofile(f)
 
 def test_index(gen_data, faiss_ans, recall, error):
-    version = "knowhere-v2.2.0"
+    version = knowhere.GetCurrentVersion()
     index_name = "DISKANN"
     diskann_dir = "diskann_test"
     data_path = os.path.join(diskann_dir, "diskann_data")
