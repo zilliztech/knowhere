@@ -13,7 +13,7 @@ using cagra_index = raft::neighbors::experimental::cagra::index<float, idx_type>
 
 class CagraIndexNode : public IndexNode {
  public:
-    CagraIndexNode(const std::string& /*version*/, const Object& object) : devs_{}, gpu_index_{} {
+    CagraIndexNode(const int32_t& /*version*/, const Object& object) : devs_{}, gpu_index_{} {
     }
 
     Status

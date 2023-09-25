@@ -19,7 +19,7 @@ class KnowhereConan(ConanFile):
     homepage = "https://github.com/milvus-io/knowhere"
     license = "Apache-2.0"
 
-    generators = "pkg_config"
+    generators = {"pkg_config","cmake_find_package"}
 
     settings = "os", "arch", "compiler", "build_type"
     options = {

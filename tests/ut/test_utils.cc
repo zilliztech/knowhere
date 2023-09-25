@@ -111,18 +111,14 @@ TEST_CASE("Test Time Recorder") {
 }
 
 TEST_CASE("Test Version") {
-    REQUIRE(knowhere::Version("knowhere-v1").Valid());
-    REQUIRE(!knowhere::Version("knowhere-V1").Valid());
-    REQUIRE(!knowhere::Version("knowhere-1.2.2").Valid());
-    REQUIRE(!knowhere::Version("knowhere-vx.2.2-hotfix").Valid());
-    REQUIRE(!knowhere::Version("knowhere-v222.22").Valid());
-    REQUIRE(knowhere::Version::VersionSupport(knowhere::Version::GetMinimalSupport()));
+    REQUIRE(knowhere::Version::VersionSupport(knowhere::Version::GetDefaultVersion()));
+    REQUIRE(knowhere::Version::VersionSupport(knowhere::Version::GetMinimalVersion()));
     REQUIRE(knowhere::Version::VersionSupport(knowhere::Version::GetCurrentVersion()));
 }
 
 TEST_CASE("Test DiskLoad") {
     REQUIRE(knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_DISKANN,
-                                  knowhere::Version::GetCurrentVersion().VersionCode()));
-    REQUIRE(
-        !knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_HNSW, knowhere::Version::GetCurrentVersion().VersionCode()));
+                                  knowhere::Version::GetCurrentVersion().VersionNumber()));
+    REQUIRE(!knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_HNSW,
+                                   knowhere::Version::GetCurrentVersion().VersionNumber()));
 }

@@ -40,7 +40,7 @@ class DiskANNIndexNode : public IndexNode {
     static_assert(std::is_same_v<T, float>, "DiskANN only support float");
 
  public:
-    DiskANNIndexNode(const std::string& version, const Object& object) : is_prepared_(false), dim_(-1), count_(-1) {
+    DiskANNIndexNode(const int32_t& version, const Object& object) : is_prepared_(false), dim_(-1), count_(-1) {
         assert(typeid(object) == typeid(Pack<std::shared_ptr<FileManager>>));
         auto diskann_index_pack = dynamic_cast<const Pack<std::shared_ptr<FileManager>>*>(&object);
         assert(diskann_index_pack != nullptr);
@@ -712,7 +712,7 @@ DiskANNIndexNode<T>::GetCachedNodeNum(const float cache_dram_budget, const uint6
     return num_nodes_to_cache;
 }
 
-KNOWHERE_REGISTER_GLOBAL(DISKANN, [](const std::string& version, const Object& object) {
+KNOWHERE_REGISTER_GLOBAL(DISKANN, [](const int32_t& version, const Object& object) {
     return Index<DiskANNIndexNode<float>>::Create(version, object);
 });
 }  // namespace knowhere

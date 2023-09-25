@@ -21,10 +21,13 @@ set(DISKANN_SOURCES
     thirdparty/DiskANN/src/logger.cpp
     thirdparty/DiskANN/src/utils.cpp)
 
+find_package(folly REQUIRED)
+
 add_library(diskann STATIC ${DISKANN_SOURCES})
 target_link_libraries(diskann PUBLIC ${AIO_LIBRARIES}
                                      ${DISKANN_BOOST_PROGRAM_OPTIONS_LIB}
                                      nlohmann_json::nlohmann_json
+                                     Folly::folly
                                      glog::glog)
 if(__X86_64)
   target_compile_options(

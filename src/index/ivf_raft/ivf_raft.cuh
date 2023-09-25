@@ -233,7 +233,7 @@ struct KnowhereConfigType<detail::raft_ivf_pq_index> {
 template <typename T>
 class RaftIvfIndexNode : public IndexNode {
  public:
-    RaftIvfIndexNode(const std::string& /*version*/, const Object& object) : device_id_{-1}, gpu_index_{} {
+    RaftIvfIndexNode(const int32_t& /*version*/, const Object& object) : device_id_{-1}, gpu_index_{} {
     }
 
     Status

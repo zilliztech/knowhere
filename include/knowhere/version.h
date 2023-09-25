@@ -14,49 +14,19 @@
 #include <regex>
 #include <string>
 
+#include "comp/index_param.h"
 #include "log.h"
 
 namespace knowhere {
 namespace {
-static const std::regex version_regex(R"(^knowhere-v(\d+)$)");
-static constexpr const char* default_version = "knowhere-v0";
-static constexpr const char* minimal_vesion = "knowhere-v0";
-static constexpr const char* current_version = "knowhere-v0";
+static constexpr int32_t default_version = 0;
+static constexpr int32_t minimal_version = 0;
+static constexpr int32_t current_version = 0;
 }  // namespace
 
 class Version {
  public:
-    explicit Version(const std::string& version_code_) : version_code(version_code_) {
-        try {
-            std::smatch matches;
-            if (std::regex_match(version_code_, matches, version_regex)) {
-                version_ = std::stoi(matches[1]);
-            } else {
-                LOG_KNOWHERE_ERROR_ << "unexpected version code : " << version_code_;
-            }
-        } catch (std::exception& e) {
-            LOG_KNOWHERE_ERROR_ << "version code " << version_code_ << " parse failed : " << e.what();
-        }
-    }
-
-    bool
-    Valid() {
-        return version_ != unexpected_version_num;
-    };
-
-    const std::string&
-    VersionCode() const {
-        return version_code;
-    }
-
-    static bool
-    VersionCheck(const std::string& version) {
-        try {
-            return std::regex_match(version.c_str(), version_regex);
-        } catch (std::regex_error& e) {
-            LOG_KNOWHERE_ERROR_ << "unexpected index version : " << version;
-        }
-        return false;
+    explicit Version(const IndexVersion& version) : version_(version) {
     }
 
     // used when version is not set
@@ -73,13 +43,24 @@ class Version {
 
     // the minimal version (oldest version support)
     static inline Version
-    GetMinimalSupport() {
-        return Version(minimal_vesion);
+    GetMinimalVersion() {
+        return Version(minimal_version);
     }
 
     static inline bool
     VersionSupport(const Version& version) {
-        return VersionCheck(version.version_code) && GetMinimalSupport() <= version && version <= GetCurrentVersion();
+        return GetMinimalVersion() <= version && version <= GetCurrentVersion();
+    }
+
+    static inline std::pair<Version, Version>
+    GetSupportRange() {
+        return std::make_pair(Version(minimal_version), Version(current_version));
+    }
+
+    // the version number
+    IndexVersion
+    VersionNumber() {
+        return version_;
     }
 
     friend bool
@@ -88,9 +69,7 @@ class Version {
     }
 
  private:
-    static constexpr int32_t unexpected_version_num = -1;
-    const std::string version_code;
-    int32_t version_ = unexpected_version_num;
+    IndexVersion version_ = default_version;
 };
 
 }  // namespace knowhere

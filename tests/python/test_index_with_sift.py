@@ -110,7 +110,7 @@ test_data = [
 
 @pytest.mark.parametrize("name,config", test_data)
 def test_index_with_sift(recall, name, config):
-    version = "knowhere-v2.2.0"
+    version = knowhere.GetCurrentVersion()
     download_sift()
     xb = fvecs_read("/tmp/sift/sift_base.fvecs")
     xq = fvecs_read("/tmp/sift/sift_query.fvecs")

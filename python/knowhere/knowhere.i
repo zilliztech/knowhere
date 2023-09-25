@@ -110,7 +110,7 @@ public:
 
 class IndexWrap {
  public:
-    IndexWrap(const std::string& name, const std::string& version) {
+    IndexWrap(const std::string& name, const int32_t& version) {
         GILReleaser rel;
         if (knowhere::UseDiskLoad(name, version)) {
             std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
@@ -255,6 +255,11 @@ Array2DataSetF(float* xb, int nb, int dim) {
     ds->SetTensor(xb);
     return ds;
 };
+
+int32_t
+CurrentVersion() {
+    return knowhere::Version::GetCurrentVersion().VersionNumber();
+}
 
 knowhere::DataSetPtr
 Array2DataSetI(int *xb, int nb, int dim){

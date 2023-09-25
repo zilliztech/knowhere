@@ -16,6 +16,7 @@
 namespace knowhere {
 
 using IndexType = std::string;
+using IndexVersion = int32_t;
 
 namespace IndexEnum {
 
