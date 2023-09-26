@@ -111,3 +111,22 @@ rm -rf knowhere.egg-info
 rm knowhere/knowhere_wrap.cpp
 rm knowhere/swigknowhere.py
 ```
+
+## Contributing
+
+### Pre-Commit
+
+Before submitting a pull request, please make sure running pre-commit checks locally to ensure the code is ready for review. Use the following command to install pre-commit checks:
+
+```bash
+pip3 install pre-commit
+pre-commit install --hook-type pre-commit --hook-type pre-push
+
+# If clang-format and clang-tidy not already installed:
+# linux
+apt install clang-format clang-tidy
+# mac
+brew install llvm
+ln -s "$(brew --prefix llvm)/bin/clang-format" "/usr/local/bin/clang-format"
+ln -s "$(brew --prefix llvm)/bin/clang-tidy" "/usr/local/bin/clang-tidy"
+```
