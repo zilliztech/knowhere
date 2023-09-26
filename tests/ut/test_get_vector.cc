@@ -27,7 +27,7 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
     const auto metric_type = knowhere::metric::HAMMING;
     auto version = GenTestVersionList();
 
-    auto base_bin_gen = [&]() {
+    auto base_bin_gen = [=]() {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = metric_type;
@@ -35,14 +35,14 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
         return json;
     };
 
-    auto bin_ivfflat_gen = [&base_bin_gen]() {
+    auto bin_ivfflat_gen = [base_bin_gen]() {
         knowhere::Json json = base_bin_gen();
         json[knowhere::indexparam::NLIST] = 16;
         json[knowhere::indexparam::NPROBE] = 4;
         return json;
     };
 
-    auto bin_hnsw_gen = [&base_bin_gen]() {
+    auto bin_hnsw_gen = [base_bin_gen]() {
         knowhere::Json json = base_bin_gen();
         json[knowhere::indexparam::HNSW_M] = 128;
         json[knowhere::indexparam::EFCONSTRUCTION] = 200;
@@ -104,7 +104,7 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
     auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::COSINE);
     auto version = GenTestVersionList();
 
-    auto base_gen = [&]() {
+    auto base_gen = [=]() {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = metric;
@@ -112,7 +112,7 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
         return json;
     };
 
-    auto hnsw_gen = [&base_gen]() {
+    auto hnsw_gen = [base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::HNSW_M] = 128;
         json[knowhere::indexparam::EFCONSTRUCTION] = 200;
@@ -120,20 +120,20 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
         return json;
     };
 
-    auto ivfflat_gen = [&base_gen]() {
+    auto ivfflat_gen = [base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::NLIST] = 16;
         json[knowhere::indexparam::NPROBE] = 4;
         return json;
     };
 
-    auto ivfflatcc_gen = [&ivfflat_gen]() {
+    auto ivfflatcc_gen = [ivfflat_gen]() {
         knowhere::Json json = ivfflat_gen();
         json[knowhere::indexparam::SSIZE] = 48;
         return json;
     };
 
-    auto scann_gen = [&ivfflat_gen]() {
+    auto scann_gen = [ivfflat_gen]() {
         knowhere::Json json = ivfflat_gen();
         json[knowhere::indexparam::REORDER_K] = 10;
         json[knowhere::indexparam::WITH_RAW_DATA] = true;
@@ -141,7 +141,7 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
     };
 
     // without raw data, can not get vector from index
-    auto scann_gen2 = [&scann_gen]() {
+    auto scann_gen2 = [scann_gen]() {
         knowhere::Json json = scann_gen();
         json[knowhere::indexparam::WITH_RAW_DATA] = false;
         return json;
