@@ -45,6 +45,7 @@
 #include <faiss/IndexPreTransform.h>
 #include <faiss/IndexRefine.h>
 #include <faiss/IndexScalarQuantizer.h>
+#include <faiss/IndexScaNN.h>
 #include <faiss/MetaIndexes.h>
 #include <faiss/VectorTransform.h>
 
@@ -876,11 +877,19 @@ Index* read_index(IOReader* f, int io_flags) {
         if (idxrf->with_raw_data) {
             idxrf->refine_index = read_index(f, io_flags);
             if (dynamic_cast<IndexFlat*>(idxrf->refine_index)) {
-                // then make a RefineFlat with it
-                IndexRefine* idxrf_old = idxrf;
-                idxrf = new IndexRefineFlat();
-                *idxrf = *idxrf_old;
-                delete idxrf_old;
+                if (dynamic_cast<IndexIVFPQFastScan*>(idxrf->base_index)) {
+                    // this is IndexScaNN
+                    IndexRefine* idxrf_old = idxrf;
+                    idxrf = new IndexScaNN();
+                    *idxrf = *idxrf_old;
+                    delete idxrf_old;
+                } else {
+                    // then make a RefineFlat with it
+                    IndexRefine* idxrf_old = idxrf;
+                    idxrf = new IndexRefineFlat();
+                    *idxrf = *idxrf_old;
+                    delete idxrf_old;
+                }
             }
         } else {
             idxrf->refine_index = nullptr;
