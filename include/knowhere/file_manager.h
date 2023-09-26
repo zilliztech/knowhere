@@ -61,6 +61,9 @@ class FileManager {
      */
     virtual bool
     RemoveFile(const std::string& filename) noexcept = 0;
+
+    /// @brief A virtual destructor.
+    virtual ~FileManager() = default;
 };
 
 }  // namespace knowhere
