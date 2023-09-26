@@ -26,7 +26,7 @@ namespace knowhere {
 template <typename T>
 class FlatIndexNode : public IndexNode {
  public:
-    FlatIndexNode(const int32_t& version, const Object& object) : index_(nullptr) {
+    FlatIndexNode(const int32_t version, const Object& object) : index_(nullptr) {
         static_assert(std::is_same<T, faiss::IndexFlat>::value || std::is_same<T, faiss::IndexBinaryFlat>::value,
                       "not support");
         search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
@@ -237,7 +237,11 @@ class FlatIndexNode : public IndexNode {
     bool
     HasRawData(const std::string& metric_type) const override {
         if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
-            return true;
+            if (versoin_ <= Version::GetMinimalVersion()) {
+                return !IsMetricType(metric_type, metric::COSINE);
+            } else {
+                return true;
+            }
         }
         if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
             return true;
