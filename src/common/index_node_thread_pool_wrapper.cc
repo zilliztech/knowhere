@@ -20,7 +20,7 @@ namespace {
 
 std::shared_ptr<ThreadPool>
 GlobalThreadPool(size_t pool_size) {
-    static std::shared_ptr<ThreadPool> pool = std::make_shared<ThreadPool>(pool_size);
+    static std::shared_ptr<ThreadPool> pool = std::make_shared<ThreadPool>(pool_size, "Knowhere_Global");
     return pool;
 }
 
