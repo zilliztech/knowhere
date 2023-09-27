@@ -24,12 +24,13 @@ namespace knowhere {
 
 class ThreadPool {
  public:
-    explicit ThreadPool(uint32_t num_threads)
+    explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix)
         : pool_(folly::CPUThreadPoolExecutor(
               num_threads,
               std::make_unique<
                   folly::LifoSemMPMCQueue<folly::CPUThreadPoolExecutor::CPUTask, folly::QueueBehaviorIfFull::BLOCK>>(
-                  num_threads * kTaskQueueFactor))) {
+                  num_threads * kTaskQueueFactor),
+              std::make_shared<folly::NamedThreadFactory>(thread_name_prefix))) {
     }
 
     ThreadPool(const ThreadPool&) = delete;
@@ -107,7 +108,7 @@ class ThreadPool {
             LOG_KNOWHERE_WARNING_ << "Global Build ThreadPool has not been initialized yet, init it with threads num: "
                                   << global_build_thread_pool_size_;
         }
-        static auto pool = std::make_shared<ThreadPool>(global_build_thread_pool_size_);
+        static auto pool = std::make_shared<ThreadPool>(global_build_thread_pool_size_, "Knowhere_Build");
         return pool;
     }
 
@@ -118,7 +119,7 @@ class ThreadPool {
             LOG_KNOWHERE_WARNING_ << "Global Search ThreadPool has not been initialized yet, init it with threads num: "
                                   << global_search_thread_pool_size_;
         }
-        static auto pool = std::make_shared<ThreadPool>(global_search_thread_pool_size_);
+        static auto pool = std::make_shared<ThreadPool>(global_search_thread_pool_size_, "Knowhere_Search");
         return pool;
     }
 
