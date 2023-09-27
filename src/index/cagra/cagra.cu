@@ -26,4 +26,9 @@ KNOWHERE_REGISTER_GLOBAL(GPU_RAFT_CAGRA, [](const int32_t& version, const Object
     return Index<IndexNodeThreadPoolWrapper>::Create(std::make_unique<CagraIndexNode>(version, object),
                                                      cuda_concurrent_size);
 });
+KNOWHERE_REGISTER_GLOBAL(GPU_IVF_FLAT, [](const int32_t& version, const Object& object) {
+    return Index<IndexNodeThreadPoolWrapper>::Create(std::make_unique<CagraIndexNode>(version, object),
+                                                     cuda_concurrent_size);
+});
+
 }  // namespace knowhere
