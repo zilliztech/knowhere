@@ -339,7 +339,7 @@ class RaftIvfIndexNode : public IndexNode {
                 raft::neighbors::ivf_pq::extend<float, std::int64_t>(
                     res, raft::make_const_mdspan(data_gpu.view()),
                     std::make_optional(
-                        raft::make_device_matrix_view<const std::int64_t, std::int64_t>(indices.data(), rows, 1)),
+                        raft::make_device_vector_view<const std::int64_t, std::int64_t>(indices.data(), rows)),
                     gpu_index_.value());
             } else {
                 static_assert(std::is_same_v<detail::raft_ivf_flat_index, T>);

@@ -18,11 +18,12 @@
 #include "knowhere/factory.h"
 #include "knowhere/index_node_thread_pool_wrapper.h"
 
-static constexpr uint32_t cuda_concurrent_size = 16;
+static constexpr uint32_t cuda_concurrent_size = 32;
 
 namespace knowhere {
 
-KNOWHERE_REGISTER_GLOBAL(GPU_RAFT_CAGRA, [](const Object& object) {
-    return Index<IndexNodeThreadPoolWrapper>::Create(std::make_unique<CagraIndexNode>(object), cuda_concurrent_size);
+KNOWHERE_REGISTER_GLOBAL(GPU_RAFT_CAGRA, [](const int32_t& version, const Object& object) {
+    return Index<IndexNodeThreadPoolWrapper>::Create(std::make_unique<CagraIndexNode>(version, object),
+                                                     cuda_concurrent_size);
 });
 }  // namespace knowhere

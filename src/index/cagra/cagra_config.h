@@ -22,7 +22,6 @@ class CagraConfig : public BaseConfig {
     CFG_INT intermediate_graph_degree;
     CFG_INT graph_degree;
     CFG_INT itopk_size;
-    CFG_LIST gpu_ids;
     CFG_INT max_queries;
     CFG_STRING algo;
     CFG_INT team_size;
@@ -55,12 +54,6 @@ class CagraConfig : public BaseConfig {
             .description("number of intermediate search results retained during the search.")
             .for_search()
             .set_range(1, 65536);
-        KNOWHERE_CONFIG_DECLARE_FIELD(gpu_ids)
-            .description("gpu device ids")
-            .set_default({
-                0,
-            })
-            .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(max_queries).description("query batch size.").set_default(1).for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(algo)
             .set_default("AUTO")

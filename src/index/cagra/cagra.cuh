@@ -2,11 +2,11 @@
 #include "common/raft/raft_utils.h"
 #include "common/raft_metric.h"
 #include "knowhere/dataset.h"
+#include "knowhere/expected.h"
 #include "knowhere/index_node.h"
 #include "knowhere/log.h"
 #include "raft/neighbors/cagra.cuh"
 #include "raft/neighbors/cagra_serialize.cuh"
-
 namespace knowhere {
 
 namespace cagra_search_algo {
@@ -33,7 +33,8 @@ str_to_search_algo(std::string const& str) {
 
     auto it = name_map.find(str);
     if (it == name_map.end())
-        return Status::invalid_args;
+        return expected<raft::neighbors::cagra::search_algo>::Err(Status::invalid_args,
+                                                                  fmt::format("invalid search algo: {}", str));
     return it->second;
 }
 
@@ -47,7 +48,8 @@ str_to_hashmap_mode(std::string const& str) {
 
     auto it = name_map.find(str);
     if (it == name_map.end())
-        return Status::invalid_args;
+        return expected<raft::neighbors::cagra::hash_mode>::Err(Status::invalid_args,
+                                                                fmt::format("invalid hash mode: {}", str));
     return it->second;
 }
 
@@ -76,7 +78,7 @@ class CagraIndexNode : public IndexNode {
     using cagra_index = raft::neighbors::cagra::index<float, idx_type>;
 
  public:
-    CagraIndexNode(const Object& object) : devs_{}, gpu_index_{} {
+    CagraIndexNode(const int32_t& /*version*/, const Object& object) : gpu_index_{} {
     }
 
     Status
@@ -85,10 +87,6 @@ class CagraIndexNode : public IndexNode {
         if (gpu_index_) {
             LOG_KNOWHERE_WARNING_ << "index is already trained";
             return Status::index_already_trained;
-        }
-        if (cagra_cfg.gpu_ids.value().size() != 1) {
-            LOG_KNOWHERE_WARNING_ << "Cagra implementation is single-GPU only" << std::endl;
-            return Status::raft_inner_error;
         }
         auto metric = Str2RaftMetricType(cagra_cfg.metric_type.value());
         if (!metric.has_value()) {
@@ -100,12 +98,12 @@ class CagraIndexNode : public IndexNode {
             return Status::invalid_metric_type;
         }
         if (cagra_cfg.intermediate_graph_degree.value() < cagra_cfg.graph_degree.value()) {
-            LOG_KNOWHERE_WARNING_ << "Intermediate graph degree must be bigger than graph degree" << std::endl;
+            LOG_KNOWHERE_WARNING_ << "Intermediate graph degree must be bigger than graph degree";
             return Status::raft_inner_error;
         }
         try {
-            devs_.insert(devs_.begin(), cagra_cfg.gpu_ids.value().begin(), cagra_cfg.gpu_ids.value().end());
-            auto scoped_device = raft_utils::device_setter{*cagra_cfg.gpu_ids.value().begin()};
+            RANDOM_CHOOSE_DEVICE_WITH_ASSIGN(this->device_id_);
+            raft_utils::device_setter with_this_device(this->device_id_);
             raft_utils::init_gpu_resources();
 
             auto build_params = raft::neighbors::cagra::index_params{};
@@ -133,6 +131,7 @@ class CagraIndexNode : public IndexNode {
 
     Status
     Add(const DataSet& dataset, const Config& cfg) override {
+        RAFT_EXPECTS(this->device_id_ != -1, "call data add before index train.");
         return Status::success;
     }
 
@@ -142,15 +141,17 @@ class CagraIndexNode : public IndexNode {
         auto rows = dataset.GetRows();
         auto dim = dataset.GetDim();
         if (cagra_cfg.k.value() > cagra_cfg.itopk_size.value()) {
-            LOG_KNOWHERE_WARNING_ << "topk must be smaller than itopk_size parameter" << std::endl;
-            return Status::raft_inner_error;
+            LOG_KNOWHERE_WARNING_ << "topk must be smaller than itopk_size parameter";
+            return expected<DataSetPtr>::Err(Status::raft_inner_error,
+                                             "topk must be smaller than itopk_size parameter");
         }
         auto* data = reinterpret_cast<float const*>(dataset.GetTensor());
         auto output_size = rows * cagra_cfg.k.value();
         auto ids = std::unique_ptr<idx_type[]>(new idx_type[output_size]);
         auto dis = std::unique_ptr<float[]>(new float[output_size]);
         try {
-            auto scoped_device = raft_utils::device_setter{devs_[0]};
+            RAFT_EXPECTS(this->device_id_ != -1, "device id is -1, when call search");
+            raft_utils::device_setter with_this_device{this->device_id_};
             auto& res = raft_utils::get_raft_resources();
 
             auto data_gpu = raft::make_device_matrix<float, idx_type>(res, rows, dim);
@@ -179,19 +180,19 @@ class CagraIndexNode : public IndexNode {
 
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "RAFT inner error, " << e.what();
-            return Status::raft_inner_error;
+            return expected<DataSetPtr>::Err(Status::raft_inner_error, fmt::format("RAFT inner error, {}", e.what()));
         }
         return GenResultDataSet(rows, cagra_cfg.k.value(), ids.release(), dis.release());
     }
 
     expected<DataSetPtr>
     RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
-        return Status::not_implemented;
+        return expected<DataSetPtr>::Err(Status::not_implemented, "RangeSearch not implemente");
     }
 
     expected<DataSetPtr>
     GetVectorByIds(const DataSet& dataset) const override {
-        return Status::not_implemented;
+        return expected<DataSetPtr>::Err(Status::not_implemented, "GetVectorByIds not implemented");
     }
 
     bool
@@ -201,7 +202,7 @@ class CagraIndexNode : public IndexNode {
 
     expected<DataSetPtr>
     GetIndexMeta(const Config& cfg) const override {
-        return Status::not_implemented;
+        return expected<DataSetPtr>::Err(Status::not_implemented, "GetIndexMeta not implemented");
     }
 
     Status
@@ -210,13 +211,14 @@ class CagraIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "Can not serialize empty RaftCagraIndex.";
             return Status::empty_index;
         }
+        RAFT_EXPECTS(this->device_id_ != -1, "index serialize before trained.");
         std::stringbuf buf;
         std::ostream os(&buf);
         os.write((char*)(&this->dim_), sizeof(this->dim_));
         os.write((char*)(&this->counts_), sizeof(this->counts_));
-        os.write((char*)(&this->devs_[0]), sizeof(this->devs_[0]));
+        os.write((char*)(&this->device_id_), sizeof(this->device_id_));
 
-        auto scoped_device = raft_utils::device_setter{devs_[0]};
+        raft_utils::device_setter with_this_device{this->device_id_};
         auto& res = raft_utils::get_raft_resources();
 
         raft::neighbors::cagra::serialize<float, idx_type>(res, os, *gpu_index_);
@@ -242,11 +244,15 @@ class CagraIndexNode : public IndexNode {
 
         is.read((char*)(&this->dim_), sizeof(this->dim_));
         is.read((char*)(&this->counts_), sizeof(this->counts_));
-        this->devs_.resize(1);
-        is.read((char*)(&this->devs_[0]), sizeof(this->devs_[0]));
-        auto scoped_device = raft_utils::device_setter{devs_[0]};
+        // device_id from binset is useless, will gen device id from global
+        // status
+        is.read((char*)(&this->device_id_), sizeof(this->device_id_));
+        MIN_LOAD_CHOOSE_DEVICE_WITH_ASSIGN(this->device_id_, binary->size);
+
+        raft_utils::device_setter with_this_device{this->device_id_};
 
         raft_utils::init_gpu_resources();
+
         auto& res = raft_utils::get_raft_resources();
 
         auto index_ = raft::neighbors::cagra::deserialize<float, idx_type>(res, is);
@@ -288,7 +294,7 @@ class CagraIndexNode : public IndexNode {
     }
 
  private:
-    std::vector<int32_t> devs_;
+    int device_id_ = -1;
     int64_t dim_ = 0;
     int64_t counts_ = 0;
     std::optional<cagra_index> gpu_index_;
