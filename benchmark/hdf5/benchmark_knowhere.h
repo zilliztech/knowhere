@@ -94,6 +94,15 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
         return ann_test_name_ + "_" + index_type_ + params_str + ".index";
     }
 
+    std::string
+    get_index_name_str(const std::vector<std::string>& params) {
+        std::string params_str = "";
+        for (size_t i = 0; i < params.size(); i++) {
+            params_str += "_" + params[i];
+        }
+        return ann_test_name_ + "_" + index_type_ + params_str + ".index";
+    }
+
     knowhere::Index<knowhere::IndexNode>
     create_index(const std::string& index_file_name, const knowhere::Json& conf) {
         auto version = knowhere::Version::GetCurrentVersion().VersionNumber();

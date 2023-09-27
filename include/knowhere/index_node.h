@@ -24,16 +24,16 @@ namespace knowhere {
 
 class IndexNode : public Object {
  public:
-    IndexNode(const int32_t ver) : versoin_(ver) {
+    IndexNode(const int32_t ver) : version_(ver) {
     }
 
-    IndexNode() : versoin_(Version::GetDefaultVersion()) {
+    IndexNode() : version_(Version::GetDefaultVersion()) {
     }
 
-    IndexNode(const IndexNode& other) : versoin_(other.versoin_) {
+    IndexNode(const IndexNode& other) : version_(other.version_) {
     }
 
-    IndexNode(const IndexNode&& other) : versoin_(other.versoin_) {
+    IndexNode(const IndexNode&& other) : version_(other.version_) {
     }
 
     virtual Status
@@ -107,7 +107,7 @@ class IndexNode : public Object {
     }
 
  protected:
-    Version versoin_;
+    Version version_;
 };
 
 }  // namespace knowhere

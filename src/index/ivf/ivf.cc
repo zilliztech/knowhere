@@ -680,8 +680,8 @@ Status
 IvfIndexNode<faiss::IndexIVFFlat>::Serialize(BinarySet& binset) const {
     try {
         MemoryIOWriter writer;
-        LOG_KNOWHERE_INFO_ << "request version " << versoin_.VersionNumber();
-        if (versoin_ <= Version::GetMinimalVersion()) {
+        LOG_KNOWHERE_INFO_ << "request version " << version_.VersionNumber();
+        if (version_ <= Version::GetMinimalVersion()) {
             faiss::write_index_nm(index_.get(), &writer);
             LOG_KNOWHERE_INFO_ << "write IVF_FLAT_NM, file size " << writer.tellg();
         } else {
@@ -692,7 +692,7 @@ IvfIndexNode<faiss::IndexIVFFlat>::Serialize(BinarySet& binset) const {
         binset.Append(Type(), index_data_ptr, writer.tellg());
 
         // append raw data for backward compatible
-        if (versoin_ <= Version::GetMinimalVersion()) {
+        if (version_ <= Version::GetMinimalVersion()) {
             size_t dim = index_->d;
             size_t rows = index_->ntotal;
             size_t raw_data_size = dim * rows * sizeof(float);
@@ -734,7 +734,7 @@ IvfIndexNode<T>::Deserialize(const BinarySet& binset, const Config& config) {
     MemoryIOReader reader(binary->data.get(), binary->size);
     try {
         if constexpr (std::is_same<T, faiss::IndexIVFFlat>::value) {
-            if (versoin_ <= Version::GetMinimalVersion()) {
+            if (version_ <= Version::GetMinimalVersion()) {
                 auto raw_binary = binset.GetByName("RAW_DATA");
                 const BaseConfig& base_cfg = static_cast<const BaseConfig&>(config);
                 ConvertIVFFlat(binset, base_cfg.metric_type.value(), raw_binary->data.get(), raw_binary->size);
