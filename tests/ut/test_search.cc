@@ -125,7 +125,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
 
         knowhere::BinarySet bs;
         REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
-        REQUIRE(idx.Deserialize(bs) == knowhere::Status::success);
+        REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
 
         auto results = idx.Search(*query_ds, json, nullptr);
         REQUIRE(results.has_value());
@@ -165,7 +165,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
 
         knowhere::BinarySet bs;
         REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
-        REQUIRE(idx.Deserialize(bs) == knowhere::Status::success);
+        REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
 
         auto results = idx.RangeSearch(*query_ds, json, nullptr);
         REQUIRE(results.has_value());
