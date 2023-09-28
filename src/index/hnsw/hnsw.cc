@@ -82,10 +82,16 @@ class HnswIndexNode : public IndexNode {
         auto tensor = dataset.GetTensor();
         auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
         index_->addPoint(tensor, 0);
+        auto build_pool = ThreadPool::GetGlobalBuildThreadPool();
+        std::vector<folly::Future<folly::Unit>> futures;
+        futures.reserve(rows);
 
-#pragma omp parallel for
         for (int i = 1; i < rows; ++i) {
-            index_->addPoint(((const char*)tensor + index_->data_size_ * i), i);
+            futures.emplace_back(build_pool->push(
+                [&, idx = i]() { index_->addPoint(((const char*)tensor + index_->data_size_ * idx), idx); }));
+        }
+        for (auto& future : futures) {
+            future.wait();
         }
         build_time.RecordSection("");
         LOG_KNOWHERE_INFO_ << "HNSW built with #points num:" << index_->max_elements_ << " #M:" << index_->M_
