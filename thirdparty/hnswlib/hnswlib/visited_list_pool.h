@@ -5,6 +5,7 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#include "knowhere/comp/thread_pool.h"
 
 namespace hnswlib {
 
@@ -39,7 +40,8 @@ class VisitedListPool {
 
     int64_t
     size() {
-        return numelements * (sizeof(std::thread::id) + numelements / 8) + sizeof(*this);
+        auto threads_num = knowhere::ThreadPool::GetGlobalSearchThreadPool()->size();
+        return threads_num * (sizeof(std::thread::id) + numelements * sizeof(bool)) + sizeof(*this);
     }
 };
 }  // namespace hnswlib
