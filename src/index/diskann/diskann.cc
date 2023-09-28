@@ -118,8 +118,11 @@ class DiskANNIndexNode : public IndexNode {
 
     int64_t
     Size() const override {
-        LOG_KNOWHERE_ERROR_ << "Size() function has not been implemented yet.";
-        return 0;
+        if (!is_prepared_.load() || !pq_flash_index_) {
+            LOG_KNOWHERE_ERROR_ << "Diskann not loaded.";
+            return 0;
+        }
+        return pq_flash_index_->cal_size();
     }
 
     int64_t

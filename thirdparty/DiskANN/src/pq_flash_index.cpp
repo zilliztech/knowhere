@@ -154,6 +154,22 @@ namespace diskann {
   }
 
   template<typename T>
+  _u64 PQFlashIndex<T>::get_thread_data_size() {
+    _u64 thread_data_size = 0;
+    thread_data_size += ROUND_UP(sizeof(T) * this->aligned_dim, 256);
+    thread_data_size +=
+        ROUND_UP((_u64) MAX_N_SECTOR_READS * read_len_for_node, SECTOR_LEN);
+    thread_data_size +=
+        ROUND_UP((_u64) MAX_GRAPH_DEGREE * (_u64) this->aligned_dim * sizeof(_u8), 256);
+    thread_data_size += ROUND_UP( 256 * (_u64) this->aligned_dim * sizeof(float), 256);
+    thread_data_size += ROUND_UP((_u64) MAX_GRAPH_DEGREE * sizeof(float), 256);
+    thread_data_size += ROUND_UP(this->aligned_dim * sizeof(T), 8 * sizeof(T));
+    thread_data_size +=
+        ROUND_UP(this->aligned_dim * sizeof(float), 8 * sizeof(float));
+    return thread_data_size;
+  }
+
+  template<typename T>
   void PQFlashIndex<T>::destroy_thread_data() {
     LOG_KNOWHERE_DEBUG_ << "Clearing scratch";
     assert(this->thread_data.size() == this->max_nthreads);
@@ -1635,6 +1651,37 @@ namespace diskann {
   template<typename T>
   diskann::Metric PQFlashIndex<T>::get_metric() const noexcept {
     return metric;
+  }
+
+  template<typename T>
+  _u64 PQFlashIndex<T>::cal_size() {
+    _u64 index_mem_size = 0;
+    index_mem_size += sizeof(*this);
+    // thread data size:
+    index_mem_size += (_u64) this->thread_data.size() * get_thread_data_size();
+    // get cache size:
+    auto num_cached_nodes = coord_cache.size();
+    index_mem_size +=
+        ROUND_UP(num_cached_nodes * aligned_dim * sizeof(T), 8 * sizeof(T));
+    index_mem_size += num_cached_nodes * (max_degree + 1) * sizeof(unsigned);
+    index_mem_size += coord_cache.size() * sizeof(std::pair<_u32, T *>);
+    index_mem_size +=
+        nhood_cache.size() * sizeof(std::pair<_u32, std::pair<_u32, _u32 *>>);
+    // get entry points:
+    index_mem_size += ROUND_UP(num_medoids * aligned_dim * sizeof(float), 32);
+    index_mem_size += num_medoids * aligned_dim * sizeof(uint32_t);
+    // get pq data and pq_table:
+    index_mem_size += this->num_points * this->n_chunks * sizeof(uint8_t);
+    index_mem_size += this->pq_table.get_total_dims() * 256 * sizeof(float) * 2;
+    index_mem_size +=
+        this->pq_table.get_total_dims() * (sizeof(uint32_t) + sizeof(float));
+    index_mem_size += (this->pq_table.get_num_chunks() + 1) * sizeof(uint32_t);
+    // base norms:
+    if (this->metric == diskann::Metric::COSINE) {
+      index_mem_size += sizeof(float) * this->num_points;
+    }
+
+    return index_mem_size;
   }
 
 #ifdef EXEC_ENV_OLS
