@@ -739,7 +739,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size_links_per_element_ = maxM_ * sizeof(tableint) + sizeof(linklistsizeint);
 
         size_links_level0_ = maxM0_ * sizeof(tableint) + sizeof(linklistsizeint);
-        std::vector<std::mutex>(max_elements).swap(link_list_locks_);
 
         visited_list_pool_ = new VisitedListPool(max_elements);
 
@@ -866,7 +865,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size_links_per_element_ = maxM_ * sizeof(tableint) + sizeof(linklistsizeint);
 
         size_links_level0_ = maxM0_ * sizeof(tableint) + sizeof(linklistsizeint);
-        std::vector<std::mutex>(max_elements).swap(link_list_locks_);
 
         visited_list_pool_ = new VisitedListPool(max_elements);
 
@@ -1432,7 +1430,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         ret += sizeof(*this);
         ret += sizeof(*space_);
         ret += visited_list_pool_->size();
-        ret += link_list_locks_.size() * sizeof(std::mutex);
         ret += element_levels_.size() * sizeof(int);
         ret += max_elements_ * size_data_per_element_;
         ret += max_elements_ * sizeof(void*);
@@ -1440,6 +1437,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             if (element_levels_[i] > 0) {
                 ret += size_links_per_element_ * element_levels_[i];
             }
+        }
+        if (metric_type_ == Metric::COSINE) {
+                ret += max_elements_ * sizeof(float);
         }
         return ret;
     }
