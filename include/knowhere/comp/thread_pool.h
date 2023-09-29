@@ -12,8 +12,12 @@
 #pragma once
 
 #include <omp.h>
+#include <sys/resource.h>
 
+#include <cerrno>
+#include <cstring>
 #include <memory>
+#include <thread>
 #include <utility>
 
 #include "folly/executors/CPUThreadPoolExecutor.h"
@@ -23,6 +27,35 @@
 namespace knowhere {
 
 class ThreadPool {
+#ifdef __linux__
+ private:
+    class LowPriorityThreadFactory : public folly::NamedThreadFactory {
+     public:
+        using folly::NamedThreadFactory::NamedThreadFactory;
+        std::thread
+        newThread(folly::Func&& func) override {
+            return folly::NamedThreadFactory::newThread([&, func = std::move(func)]() mutable {
+                if (setpriority(PRIO_PROCESS, gettid(), 19) != 0) {
+                    LOG_KNOWHERE_ERROR_ << "Failed to set priority of knowhere thread. Error is: "
+                                        << std::strerror(errno);
+                } else {
+                    LOG_KNOWHERE_INFO_ << "Successfully set priority of knowhere thread.";
+                }
+                func();
+            });
+        }
+    };
+
+ public:
+    explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix)
+        : pool_(folly::CPUThreadPoolExecutor(
+              num_threads,
+              std::make_unique<
+                  folly::LifoSemMPMCQueue<folly::CPUThreadPoolExecutor::CPUTask, folly::QueueBehaviorIfFull::BLOCK>>(
+                  num_threads * kTaskQueueFactor),
+              std::make_shared<LowPriorityThreadFactory>(thread_name_prefix))) {
+    }
+#else
  public:
     explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix)
         : pool_(folly::CPUThreadPoolExecutor(
@@ -32,6 +65,7 @@ class ThreadPool {
                   num_threads * kTaskQueueFactor),
               std::make_shared<folly::NamedThreadFactory>(thread_name_prefix))) {
     }
+#endif
 
     ThreadPool(const ThreadPool&) = delete;
 
