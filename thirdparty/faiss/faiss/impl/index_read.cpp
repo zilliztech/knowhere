@@ -550,6 +550,15 @@ static void read_direct_map(DirectMap* dm, IOReader* f) {
             map[it.first] = it.second;
         }
     }
+    if (dm->type == DirectMap::ConcurrentArray) {
+        std::vector<idx_t> offs;
+        READVECTOR(offs);
+        auto& concurrent_array = dm->concurrentArray;
+        concurrent_array.resize(offs.size());
+        for (idx_t i = 0; i < offs.size(); i++) {
+            concurrent_array[i] = offs[i];
+        }
+    }
 }
 
 static void read_ivf_header(

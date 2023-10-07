@@ -132,9 +132,10 @@ void IndexBinaryIVF::add_core(
     ntotal += n_add;
 }
 
-void IndexBinaryIVF::make_direct_map(bool b) {
+void IndexBinaryIVF::make_direct_map(bool b, DirectMap::Type type) {
     if (b) {
-        direct_map.set_type(DirectMap::Array, invlists, ntotal);
+        assert(type != DirectMap::NoMap);
+        direct_map.set_type(type, invlists, ntotal);
     } else {
         direct_map.set_type(DirectMap::NoMap, invlists, ntotal);
     }

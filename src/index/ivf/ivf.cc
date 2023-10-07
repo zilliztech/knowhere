@@ -278,6 +278,7 @@ IvfIndexNode<T>::Train(const DataSet& dataset, const Config& cfg) {
             qzr = new (std::nothrow) typename QuantizerT<T>::type(dim, metric.value());
             index = std::make_unique<faiss::IndexIVFFlat>(qzr, dim, nlist, metric.value(), is_cosine);
             index->train(rows, (const float*)data);
+            index->make_direct_map(true);
         }
         if constexpr (std::is_same<faiss::IndexIVFFlatCC, T>::value) {
             const IvfFlatCcConfig& ivf_flat_cc_cfg = static_cast<const IvfFlatCcConfig&>(cfg);
@@ -286,6 +287,7 @@ IvfIndexNode<T>::Train(const DataSet& dataset, const Config& cfg) {
             index = std::make_unique<faiss::IndexIVFFlatCC>(qzr, dim, nlist, ivf_flat_cc_cfg.ssize.value(),
                                                             metric.value(), is_cosine);
             index->train(rows, (const float*)data);
+            index->make_direct_map(true, faiss::DirectMap::ConcurrentArray);
         }
         if constexpr (std::is_same<faiss::IndexIVFPQ, T>::value) {
             const IvfPqConfig& ivf_pq_cfg = static_cast<const IvfPqConfig&>(cfg);
@@ -294,6 +296,7 @@ IvfIndexNode<T>::Train(const DataSet& dataset, const Config& cfg) {
             qzr = new (std::nothrow) typename QuantizerT<T>::type(dim, metric.value());
             index = std::make_unique<faiss::IndexIVFPQ>(qzr, dim, nlist, ivf_pq_cfg.m.value(), nbits, metric.value());
             index->train(rows, (const float*)data);
+            index->make_direct_map(true);
         }
         if constexpr (std::is_same<faiss::IndexScaNN, T>::value) {
             const ScannConfig& scann_cfg = static_cast<const ScannConfig&>(cfg);
@@ -317,6 +320,7 @@ IvfIndexNode<T>::Train(const DataSet& dataset, const Config& cfg) {
             index = std::make_unique<faiss::IndexIVFScalarQuantizer>(qzr, dim, nlist, faiss::QuantizerType::QT_8bit,
                                                                      metric.value());
             index->train(rows, (const float*)data);
+            index->make_direct_map(true);
         }
         if constexpr (std::is_same<faiss::IndexBinaryIVF, T>::value) {
             const IvfBinConfig& ivf_bin_cfg = static_cast<const IvfBinConfig&>(cfg);
@@ -324,6 +328,7 @@ IvfIndexNode<T>::Train(const DataSet& dataset, const Config& cfg) {
             qzr = new (std::nothrow) typename QuantizerT<T>::type(dim, metric.value());
             index = std::make_unique<faiss::IndexBinaryIVF>(qzr, dim, nlist, metric.value());
             index->train(rows, (const uint8_t*)data);
+            index->make_direct_map(true);
         }
         index->own_fields = true;
     } catch (std::exception& e) {
@@ -557,7 +562,6 @@ IvfIndexNode<T>::GetVectorByIds(const DataSet& dataset) const {
         uint8_t* data = nullptr;
         try {
             data = new uint8_t[dim * rows / 8];
-            index_->make_direct_map(true);
             for (int64_t i = 0; i < rows; i++) {
                 int64_t id = ids[i];
                 assert(id >= 0 && id < index_->ntotal);
@@ -577,7 +581,6 @@ IvfIndexNode<T>::GetVectorByIds(const DataSet& dataset) const {
         float* data = nullptr;
         try {
             data = new float[dim * rows];
-            index_->make_direct_map(true);
             for (int64_t i = 0; i < rows; i++) {
                 int64_t id = ids[i];
                 assert(id >= 0 && id < index_->ntotal);

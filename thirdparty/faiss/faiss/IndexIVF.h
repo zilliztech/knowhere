@@ -368,7 +368,7 @@ struct IndexIVF : Index, Level1Quantizer {
      * @param new_maintain_direct_map    if true, create a direct map,
      *                                   else clear it
      */
-    void make_direct_map(bool new_maintain_direct_map = true);
+    void make_direct_map(bool new_maintain_direct_map = true, DirectMap::Type type = DirectMap::Type::Array);
 
     void set_direct_map_type(DirectMap::Type type);
 

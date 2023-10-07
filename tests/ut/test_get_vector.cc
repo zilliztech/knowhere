@@ -76,22 +76,33 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
 
         auto idx_new = knowhere::IndexFactory::Instance().Create(name, version);
         idx_new.Deserialize(bs);
-        auto results = idx_new.GetVectorByIds(*ids_ds);
-        REQUIRE(results.has_value());
-        auto xb = (uint8_t*)train_ds->GetTensor();
-        auto res_rows = results.value()->GetRows();
-        auto res_dim = results.value()->GetDim();
-        auto res_data = (uint8_t*)results.value()->GetTensor();
-        REQUIRE(res_rows == nq);
-        REQUIRE(res_dim == dim);
-        const auto data_bytes = dim / 8;
-        for (int i = 0; i < nq; ++i) {
-            auto id = ids_ds->GetIds()[i];
-            for (int j = 0; j < data_bytes; ++j) {
-                REQUIRE(res_data[i * data_bytes + j] == xb[id * data_bytes + j]);
+
+        auto retrieve_task = [&]() {
+            auto results = idx_new.GetVectorByIds(*ids_ds);
+            REQUIRE(results.has_value());
+            auto xb = (uint8_t*)train_ds->GetTensor();
+            auto res_rows = results.value()->GetRows();
+            auto res_dim = results.value()->GetDim();
+            auto res_data = (uint8_t*)results.value()->GetTensor();
+            REQUIRE(res_rows == nq);
+            REQUIRE(res_dim == dim);
+            const auto data_bytes = dim / 8;
+            for (int i = 0; i < nq; ++i) {
+                auto id = ids_ds->GetIds()[i];
+                for (int j = 0; j < data_bytes; ++j) {
+                    REQUIRE(res_data[i * data_bytes + j] == xb[id * data_bytes + j]);
+                }
             }
+        };
+
+        std::vector<std::future<void>> retrieve_task_list;
+        for (int i = 0; i < 20; i++) {
+            retrieve_task_list.push_back(std::async(std::launch::async, [&] { return retrieve_task(); }));
         }
-    }
+        for (auto& task : retrieve_task_list) {
+            task.wait();
+        }
+    };
 }
 
 TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
@@ -179,19 +190,30 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
 
         auto idx_new = knowhere::IndexFactory::Instance().Create(name, version);
         idx_new.Deserialize(bs);
-        auto results = idx_new.GetVectorByIds(*ids_ds);
-        REQUIRE(results.has_value());
-        auto xb = (float*)train_ds_copy->GetTensor();
-        auto res_rows = results.value()->GetRows();
-        auto res_dim = results.value()->GetDim();
-        auto res_data = (float*)results.value()->GetTensor();
-        REQUIRE(res_rows == nq);
-        REQUIRE(res_dim == dim);
-        for (int i = 0; i < nq; ++i) {
-            const auto id = ids_ds->GetIds()[i];
-            for (int j = 0; j < dim; ++j) {
-                REQUIRE(res_data[i * dim + j] == xb[id * dim + j]);
+
+        auto retrieve_task = [&]() {
+            auto results = idx_new.GetVectorByIds(*ids_ds);
+            REQUIRE(results.has_value());
+            auto xb = (float*)train_ds_copy->GetTensor();
+            auto res_rows = results.value()->GetRows();
+            auto res_dim = results.value()->GetDim();
+            auto res_data = (float*)results.value()->GetTensor();
+            REQUIRE(res_rows == nq);
+            REQUIRE(res_dim == dim);
+            for (int i = 0; i < nq; ++i) {
+                const auto id = ids_ds->GetIds()[i];
+                for (int j = 0; j < dim; ++j) {
+                    REQUIRE(res_data[i * dim + j] == xb[id * dim + j]);
+                }
             }
+        };
+
+        std::vector<std::future<void>> retrieve_task_list;
+        for (int i = 0; i < 20; i++) {
+            retrieve_task_list.push_back(std::async(std::launch::async, [&] { return retrieve_task(); }));
+        }
+        for (auto& task : retrieve_task_list) {
+            task.wait();
         }
     }
 }
