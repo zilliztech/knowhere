@@ -24,7 +24,7 @@ void DirectMap::set_type(
         const InvertedLists* invlists,
         size_t ntotal) {
     FAISS_THROW_IF_NOT(
-            new_type == NoMap || new_type == Array || new_type == Hashtable);
+            new_type == NoMap || new_type == Array || new_type == ConcurrentArray || new_type == Hashtable);
 
     if (new_type == type) {
         // nothing to do
@@ -39,6 +39,8 @@ void DirectMap::set_type(
         return;
     } else if (new_type == Array) {
         array.resize(ntotal, -1);
+    } else if (new_type == ConcurrentArray) {
+        concurrentArray.resize(ntotal, -1);
     } else if (new_type == Hashtable) {
         hashtable.reserve(ntotal);
     }
@@ -55,6 +57,13 @@ void DirectMap::set_type(
                             0 <= idlist[ofs] && idlist[ofs] < ntotal,
                             "direct map supported only for seuquential ids");
                     array[idlist[ofs]] = lo_build(key, segment_offset + ofs);
+                }
+            } else if (new_type == ConcurrentArray) {
+                for (long ofs = 0; ofs < segment_size; ofs++) {
+                    FAISS_THROW_IF_NOT_MSG(
+                            0 <= idlist[ofs] && idlist[ofs] < ntotal,
+                            "direct map supported only for seuquential ids");
+                    concurrentArray[idlist[ofs]] = lo_build(key, segment_offset + ofs);
                 }
             } else if (new_type == Hashtable) {
                 for (long ofs = 0; ofs < segment_size; ofs++) {
@@ -74,6 +83,11 @@ DirectMap::idx_t DirectMap::get(idx_t key) const {
     if (type == Array) {
         FAISS_THROW_IF_NOT_MSG(key >= 0 && key < array.size(), "invalid key");
         idx_t lo = array[key];
+        FAISS_THROW_IF_NOT_MSG(lo >= 0, "-1 entry in direct_map");
+        return lo;
+    } else if (type == ConcurrentArray) {
+        FAISS_THROW_IF_NOT_MSG(key >= 0 && key < concurrentArray.size(), "invalid key");
+        idx_t lo = concurrentArray[key];
         FAISS_THROW_IF_NOT_MSG(lo >= 0, "-1 entry in direct_map");
         return lo;
     } else if (type == Hashtable) {
@@ -96,6 +110,13 @@ void DirectMap::add_single_id(idx_t id, idx_t list_no, size_t offset) {
         } else {
             array.push_back(-1);
         }
+    } else if (type == ConcurrentArray) {
+        assert(id == array.size());
+        if (list_no >= 0) {
+            concurrentArray.push_back(lo_build(list_no, offset));
+        } else {
+            concurrentArray.push_back(-1);
+        }
     } else if (type == Hashtable) {
         if (list_no >= 0) {
             hashtable[id] = lo_build(list_no, offset);
@@ -104,7 +125,7 @@ void DirectMap::add_single_id(idx_t id, idx_t list_no, size_t offset) {
 }
 
 void DirectMap::check_can_add(const idx_t* ids) {
-    if (type == Array && ids) {
+    if ((type == Array || type == ConcurrentArray) && ids) {
         FAISS_THROW_MSG("cannot have array direct map and add with ids");
     }
 }
@@ -117,6 +138,10 @@ DirectMapAdd::DirectMapAdd(DirectMap& direct_map, size_t n, const idx_t* xids)
         FAISS_THROW_IF_NOT(xids == nullptr);
         ntotal = direct_map.array.size();
         direct_map.array.resize(ntotal + n, -1);
+    } else if (type == DirectMap::ConcurrentArray) {
+        FAISS_THROW_IF_NOT(xids == nullptr);
+        ntotal = direct_map.concurrentArray.size();
+        direct_map.concurrentArray.resize(ntotal + n , -1);
     } else if (type == DirectMap::Hashtable) {
         // can't parallel update hashtable so use temp array
         all_ofs.resize(n, -1);
@@ -126,6 +151,8 @@ DirectMapAdd::DirectMapAdd(DirectMap& direct_map, size_t n, const idx_t* xids)
 void DirectMapAdd::add(size_t i, idx_t list_no, size_t ofs) {
     if (type == DirectMap::Array) {
         direct_map.array[ntotal + i] = lo_build(list_no, ofs);
+    } else if (type == DirectMap::ConcurrentArray) {
+        direct_map.concurrentArray[ntotal + i] = lo_build(list_no, ofs);
     } else if (type == DirectMap::Hashtable) {
         all_ofs[i] = lo_build(list_no, ofs);
     }

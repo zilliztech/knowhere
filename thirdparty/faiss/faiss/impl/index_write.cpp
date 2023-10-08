@@ -496,6 +496,14 @@ static void write_direct_map(const DirectMap* dm, IOWriter* f) {
         std::copy(map.begin(), map.end(), v.begin());
         WRITEVECTOR(v);
     }
+    if (dm->type == DirectMap::ConcurrentArray) {
+        std::vector<idx_t> offs;
+        offs.resize(dm->concurrentArray.size());
+        for (size_t i = 0; i < dm->concurrentArray.size(); i++) {
+            offs[i] = dm->concurrentArray[i];
+        }
+        WRITEVECTOR(offs);
+    }
 }
 
 static void write_ivf_header(const IndexIVF* ivf, IOWriter* f) {

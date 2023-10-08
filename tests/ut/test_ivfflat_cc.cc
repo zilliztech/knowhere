@@ -254,6 +254,7 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
         auto& build_ds = train_ds;
         std::vector<knowhere::DataSetPtr> search_list;
         std::vector<knowhere::DataSetPtr> range_search_list;
+        std::vector<knowhere::DataSetPtr> retrieve_search_list;
         for (int i = 0; i < search_task_num; i++) {
             search_list.push_back(GenDataSet(nq, dim, seed));
             range_search_list.push_back(GenDataSet(nq, dim, seed));
@@ -263,6 +264,10 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
             std::vector<std::future<knowhere::Status>> add_task_list;
             std::vector<std::future<knowhere::expected<knowhere::DataSetPtr>>> search_task_list;
             std::vector<std::future<knowhere::expected<knowhere::DataSetPtr>>> range_search_task_list;
+            std::vector<std::future<knowhere::expected<knowhere::DataSetPtr>>> retrieve_task_list;
+            for (int j = 0; j < search_task_num; j++) {
+                retrieve_search_list.push_back(GenIdsDataSet(nb * i, nq));
+            }
             for (int j = 0; j < build_task_num; j++) {
                 add_task_list.push_back(
                     std::async(std::launch::async, [&idx, &build_ds, &json] { return idx.Add(*build_ds, json); }));
@@ -277,6 +282,11 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
                 range_search_task_list.push_back(std::async(std::launch::async, [&idx, &range_query_set, &json] {
                     return idx.RangeSearch(*range_query_set, json, nullptr);
                 }));
+            }
+            for (int j = 0; j < search_task_num; j++) {
+                auto& retrieve_ids_set = retrieve_search_list[j];
+                retrieve_task_list.push_back(std::async(
+                    std::launch::async, [&idx, &retrieve_ids_set] { return idx.GetVectorByIds(*retrieve_ids_set); }));
             }
             for (auto& task : add_task_list) {
                 REQUIRE(task.get() == knowhere::Status::success);
@@ -302,6 +312,23 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
                     // duplicate result
                     for (int k = 0; k < i; k++) {
                         CHECK(ids[lims[j] + k] % nb == j);
+                    }
+                }
+            }
+            for (size_t nt = 0; nt < retrieve_task_list.size(); nt++) {
+                auto& task = retrieve_task_list[nt];
+                auto results = task.get();
+                REQUIRE(results.has_value());
+                auto xb = (float*)build_ds->GetTensor();
+                auto res_rows = results.value()->GetRows();
+                auto res_dim = results.value()->GetDim();
+                auto res_data = (float*)results.value()->GetTensor();
+                REQUIRE(res_rows == nq);
+                REQUIRE(res_dim == dim);
+                for (int i = 0; i < nq; ++i) {
+                    const auto id = retrieve_search_list[nt]->GetIds()[i];
+                    for (int j = 0; j < dim; ++j) {
+                        REQUIRE(res_data[i * dim + j] == xb[id * dim + j]);
                     }
                 }
             }
