@@ -237,7 +237,7 @@ class FlatIndexNode : public IndexNode {
     bool
     HasRawData(const std::string& metric_type) const override {
         if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
-            if (versoin_ <= Version::GetMinimalVersion()) {
+            if (version_ <= Version::GetMinimalVersion()) {
                 return !IsMetricType(metric_type, metric::COSINE);
             } else {
                 return true;
