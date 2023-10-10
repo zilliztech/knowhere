@@ -247,6 +247,8 @@ IvfIndexNode<T>::Train(const DataSet& dataset, const Config& cfg) {
     std::unique_ptr<ThreadPool::ScopedOmpSetter> setter;
     if (base_cfg.num_build_thread.has_value()) {
         setter = std::make_unique<ThreadPool::ScopedOmpSetter>(base_cfg.num_build_thread.value());
+    } else {
+        setter = std::make_unique<ThreadPool::ScopedOmpSetter>();
     }
 
     bool is_cosine = IsMetricType(base_cfg.metric_type.value(), knowhere::metric::COSINE);
@@ -356,6 +358,8 @@ IvfIndexNode<T>::Add(const DataSet& dataset, const Config& cfg) {
     std::unique_ptr<ThreadPool::ScopedOmpSetter> setter;
     if (base_cfg.num_build_thread.has_value()) {
         setter = std::make_unique<ThreadPool::ScopedOmpSetter>(base_cfg.num_build_thread.value());
+    } else {
+        setter = std::make_unique<ThreadPool::ScopedOmpSetter>();
     }
     try {
         if constexpr (std::is_same<faiss::IndexBinaryIVF, T>::value) {

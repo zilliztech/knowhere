@@ -161,8 +161,14 @@ class ThreadPool {
         int omp_before;
 
      public:
-        explicit ScopedOmpSetter(int num_threads = 1) : omp_before(omp_get_max_threads()) {
-            omp_set_num_threads(num_threads);
+        explicit ScopedOmpSetter(int num_threads = 0) {
+            if (global_build_thread_pool_size_ == 0) {  // this should not happen in prod
+                omp_before = omp_get_max_threads();
+            } else {
+                omp_before = global_build_thread_pool_size_;
+            }
+
+            omp_set_num_threads(num_threads <= 0 ? omp_before : num_threads);
         }
         ~ScopedOmpSetter() {
             omp_set_num_threads(omp_before);
