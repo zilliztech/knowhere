@@ -31,6 +31,8 @@ typedef uint64_t size_t;
 #include <knowhere/version.h>
 #include <knowhere/utils.h>
 #include <knowhere/comp/local_file_manager.h>
+#include <fstream>
+#include <string>
 using namespace knowhere;
 %}
 
@@ -351,6 +353,56 @@ DumpRangeResultDis(knowhere::DataSetPtr result, float* dis, int len) {
     auto dist_ = result->GetDistance();
     for (int i = 0; i < len; ++i) {
         *(dis + i) = *((float*)(dist_) + i);
+    }
+}
+
+void
+Dump(knowhere::BinarySetPtr binset, const std::string& file_name) {
+    auto binary_set = *binset;
+    auto binary_map = binset -> binary_map_;
+    std::ofstream outfile;
+    outfile.open(file_name, std::ios::out | std::ios::trunc);
+    if (outfile.good()) {
+        for (auto it = binary_map.begin(); it != binary_map.end(); ++it) {
+            // serialization: name_length(size_t); name(char[]); binset_size(size_t); binset(uint8[]);
+            auto name = it->first;
+            uint64_t name_len = name.size();
+            outfile << name_len;
+            outfile << name;
+            auto value = it->second;
+            outfile << value->size;
+            outfile.write(reinterpret_cast<char*>(value->data.get()), value->size);
+        }
+        // end with 0
+        outfile << 0;
+        outfile.flush();
+    }
+}
+
+void
+Load(knowhere::BinarySetPtr binset, const std::string& file_name) {
+    std::ifstream infile;
+    infile.open(file_name, std::ios::in);
+    if (infile.good()) {
+        uint64_t name_len;
+        while (true) {
+            // deserialization: name_length(size_t); name(char[]); binset_size(size_t); binset(uint8[]);
+            infile >> name_len;
+            if (name_len == 0) break;
+
+            auto _name = new char[name_len];
+            infile.read(_name, name_len);
+            std::string name(_name, name_len);
+
+            int64_t size;
+            infile >> size;
+            if (size > 0) {
+                auto data = new uint8_t[size];
+                std::shared_ptr<uint8_t[]> data_ptr(data);
+                infile.read(reinterpret_cast<char*>(data_ptr.get()), size);
+                binset->Append(name, data_ptr, size);
+            }
+        }
     }
 }
 
