@@ -124,6 +124,36 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         }
     }
 
+    void
+    test_faiss(const knowhere::Json& cfg) {
+        auto conf = cfg;
+        const auto factory_string = conf[knowhere::indexparam::FACTORY_STRING].get<std::string>();
+
+        conf[knowhere::meta::TOPK] = topk_;
+        auto ds_ptr = knowhere::GenDataSet(nq_, dim_, xq_);
+
+        auto result = index_.Search(*ds_ptr, conf, nullptr);
+        float recall = CalcRecall(result.value()->GetIds(), nq_, topk_);
+        printf("[%0.3f s] iterate faiss param: factory_string=%s, k=%d, R@=%.4f\n",
+            get_time_diff(), factory_string.c_str(), topk_, recall);
+        std::fflush(stdout);
+
+        for (auto expected_recall : EXPECTED_RECALLs_) {
+            conf[knowhere::meta::TOPK] = topk_;
+
+            printf("\n[%0.3f s] %s | %s | factory_string=%s, k=%d, R@=%.4f\n", get_time_diff(),
+                   ann_test_name_.c_str(), index_type_.c_str(), factory_string.c_str(), topk_, expected_recall);
+            printf("================================================================================\n");
+            for (auto thread_num : THREAD_NUMs_) {
+                CALC_TIME_SPAN(task(conf, thread_num, nq_));
+                printf("  thread_num = %2d, elapse = %6.3fs, VPS = %.3f\n", thread_num, t_diff, nq_ / t_diff);
+                std::fflush(stdout);
+            }
+            printf("================================================================================\n");
+            printf("[%.3f s] Test '%s/%s' done\n\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
+        }
+    }
+
  private:
     void
     task(const knowhere::Json& conf, int32_t worker_num, int32_t nq_total) {
@@ -191,8 +221,18 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
     // HNSW index params
     const std::vector<int32_t> HNSW_Ms_ = {16};
     const std::vector<int32_t> EFCONs_ = {100};
+
+    // SCANN index params
+    const std::vector<int32_t> SCANN_REORDER_K = {256, 512, 768, 1024};
+    const std::vector<bool> SCANN_WITH_RAW_DATA = {true};
+
+    // FAISS index params
+    const std::vector<std::string> FAISS_FACTORY_STRINGS = {
+        "IVF1024,PQ8np"
+    };
 };
 
+/*
 TEST_F(Benchmark_float_qps, TEST_IVF_FLAT) {
 #ifdef KNOWHERE_WITH_GPU
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_GPU_IVFFLAT;
@@ -261,5 +301,18 @@ TEST_F(Benchmark_float_qps, TEST_HNSW) {
             create_index(index_file_name, conf);
             test_hnsw(conf);
         }
+    }
+}
+*/
+
+TEST_F(Benchmark_float_qps, TEST_FAISS) {
+    index_type_ = knowhere::IndexEnum::INDEX_FAISS;
+
+    knowhere::Json conf = cfg_;
+    for (const auto& factory_string : FAISS_FACTORY_STRINGS) {
+        conf[knowhere::indexparam::FACTORY_STRING] = factory_string;
+        std::string index_file_name = get_index_name_str({factory_string});
+        create_index(index_file_name, conf);
+        test_faiss(conf);
     }
 }
