@@ -21,15 +21,6 @@ exclude: '^thirdparty'
 fail_fast: True
 repos:
     # prepare-clang-tidy and clang-tidy run only in local machine, not on CI
-    - repo: local
-      hooks:
-        - id: prepare-clang-tidy
-          name: Prepare clang-tidy
-          entry: bash -c 'scripts/prepare_clang_tidy.sh'
-          language: system
-          types: [shell]
-          always_run: true
-          stages: [commit]
     - repo: https://github.com/pre-commit/pre-commit-hooks
       rev: v4.5.0
       hooks:
@@ -42,6 +33,3 @@ repos:
       hooks:
         - id: clang-format
           args: [-style=file]
-        - id: clang-tidy
-          args: ["-p=build/compile_commands.json"]
-          stages: [commit]
