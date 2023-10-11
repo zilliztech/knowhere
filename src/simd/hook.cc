@@ -39,6 +39,8 @@ bool use_avx2 = true;
 bool use_sse4_2 = true;
 #endif
 
+bool support_pq_fast_scan = true;
+
 decltype(fvec_inner_product) fvec_inner_product = fvec_inner_product_ref;
 decltype(fvec_L2sqr) fvec_L2sqr = fvec_L2sqr_ref;
 decltype(fvec_L1) fvec_L1 = fvec_L1_ref;
@@ -87,6 +89,7 @@ fvec_hook(std::string& simd_type) {
         fvec_madd_and_argmin = fvec_madd_and_argmin_sse;
 
         simd_type = "AVX512";
+        support_pq_fast_scan = true;
     } else if (use_avx2 && cpu_support_avx2()) {
         fvec_inner_product = fvec_inner_product_avx;
         fvec_L2sqr = fvec_L2sqr_avx;
@@ -100,6 +103,7 @@ fvec_hook(std::string& simd_type) {
         fvec_madd_and_argmin = fvec_madd_and_argmin_sse;
 
         simd_type = "AVX2";
+        support_pq_fast_scan = true;
     } else if (use_sse4_2 && cpu_support_sse4_2()) {
         fvec_inner_product = fvec_inner_product_sse;
         fvec_L2sqr = fvec_L2sqr_sse;
@@ -113,6 +117,7 @@ fvec_hook(std::string& simd_type) {
         fvec_madd_and_argmin = fvec_madd_and_argmin_sse;
 
         simd_type = "SSE4_2";
+        support_pq_fast_scan = false;
     } else {
         fvec_inner_product = fvec_inner_product_ref;
         fvec_L2sqr = fvec_L2sqr_ref;
@@ -126,6 +131,7 @@ fvec_hook(std::string& simd_type) {
         fvec_madd_and_argmin = fvec_madd_and_argmin_ref;
 
         simd_type = "GENERIC";
+        support_pq_fast_scan = false;
     }
 #endif
 
@@ -142,6 +148,7 @@ fvec_hook(std::string& simd_type) {
     fvec_madd_and_argmin = fvec_madd_and_argmin_neon;
 
     simd_type = "NEON";
+    support_pq_fast_scan = true;
 
 #endif
 }

@@ -32,6 +32,6 @@ target_link_libraries(diskann PUBLIC ${AIO_LIBRARIES}
 if(__X86_64)
   target_compile_options(
     diskann PRIVATE -fno-builtin-malloc -fno-builtin-calloc
-                    -fno-builtin-realloc -fno-builtin-free -mavx2 -DUSE_AVX2)
+                    -fno-builtin-realloc -fno-builtin-free)
 endif()
 list(APPEND KNOWHERE_LINKER_LIBS diskann)

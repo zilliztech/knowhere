@@ -72,7 +72,7 @@ class HnswConfig : public BaseConfig {
     }
 
     inline Status
-    CheckAndAdjustForRangeSearch() override {
+    CheckAndAdjustForRangeSearch(std::string* err_msg) override {
         if (!ef.has_value()) {
             // if ef is not set by user, set it to default
             ef = kDefaultRangeSearchEf;

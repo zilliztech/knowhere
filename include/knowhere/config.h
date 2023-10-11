@@ -564,7 +564,7 @@ class BaseConfig : public Config {
     }
 
     virtual Status
-    CheckAndAdjustForRangeSearch() {
+    CheckAndAdjustForRangeSearch(std::string* err_msg) {
         return Status::success;
     }
 
