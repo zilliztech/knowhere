@@ -29,19 +29,19 @@ repos:
           language: system
           types: [shell]
           always_run: true
-          stages: [pre-push]
+          stages: [commit]
     - repo: https://github.com/pre-commit/pre-commit-hooks
-      rev: v4.3.0
+      rev: v4.5.0
       hooks:
         - id: check-added-large-files
         - id: check-merge-conflict
         - id: end-of-file-fixer
         - id: trailing-whitespace
     - repo: https://github.com/pocc/pre-commit-hooks
-      rev: master
+      rev: v1.3.5
       hooks:
         - id: clang-format
           args: [-style=file]
         - id: clang-tidy
-          args: ["--config-file=.clang-tidy", "-p=build/compile_commands.json"]
-          stages: [pre-push]
+          args: ["-p=build/compile_commands.json"]
+          stages: [commit]
