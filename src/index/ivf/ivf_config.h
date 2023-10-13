@@ -13,6 +13,7 @@
 #define IVF_CONFIG_H
 
 #include "knowhere/config.h"
+#include "simd/hook.h"
 
 namespace knowhere {
 class IvfConfig : public BaseConfig {
@@ -75,6 +76,11 @@ class ScannConfig : public IvfFlatConfig {
 
     inline Status
     CheckAndAdjustForSearch(std::string* err_msg) override {
+        if (!faiss::support_pq_fast_scan) {
+            *err_msg = "SCANN index is not supported on the current CPU model, avx2 support is needed for x86 arch.";
+            LOG_KNOWHERE_ERROR_ << *err_msg;
+            return Status::invalid_instruction_set;
+        }
         if (!reorder_k.has_value()) {
             reorder_k = k.value();
         } else if (reorder_k.value() < k.value()) {
@@ -84,6 +90,26 @@ class ScannConfig : public IvfFlatConfig {
             return Status::out_of_range_in_json;
         }
 
+        return Status::success;
+    }
+
+    inline Status
+    CheckAndAdjustForRangeSearch(std::string* err_msg) override {
+        if (!faiss::support_pq_fast_scan) {
+            *err_msg = "SCANN index is not supported on the current CPU model, avx2 support is needed for x86 arch.";
+            LOG_KNOWHERE_ERROR_ << *err_msg;
+            return Status::invalid_instruction_set;
+        }
+        return Status::success;
+    }
+
+    inline Status
+    CheckAndAdjustForBuild() override {
+        if (!faiss::support_pq_fast_scan) {
+            LOG_KNOWHERE_ERROR_
+                << "SCANN index is not supported on the current CPU model, avx2 support is needed for x86 arch.";
+            return Status::invalid_instruction_set;
+        }
         return Status::success;
     }
 };

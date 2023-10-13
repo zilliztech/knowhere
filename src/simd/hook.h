@@ -31,6 +31,8 @@ extern bool use_avx2;
 extern bool use_sse4_2;
 #endif
 
+extern bool support_pq_fast_scan;
+
 #if defined(__x86_64__)
 bool
 cpu_support_avx512();

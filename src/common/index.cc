@@ -126,9 +126,9 @@ Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView
     if (status != Status::success) {
         return expected<DataSetPtr>::Err(status, std::move(msg));
     }
-    status = cfg->CheckAndAdjustForRangeSearch();
+    status = cfg->CheckAndAdjustForRangeSearch(&msg);
     if (status != Status::success) {
-        return expected<DataSetPtr>::Err(status, "invalid params for range search");
+        return expected<DataSetPtr>::Err(status, std::move(msg));
     }
 
 #ifdef NOT_COMPILE_FOR_SWIG
