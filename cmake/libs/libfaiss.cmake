@@ -7,9 +7,7 @@ knowhere_file_glob(GLOB FAISS_AVX512_SRCS
                    thirdparty/faiss/faiss/impl/*avx512.cpp)
 
 knowhere_file_glob(GLOB FAISS_AVX2_SRCS
-                   thirdparty/faiss/faiss/impl/*avx.cpp
-                   thirdparty/faiss/faiss/impl/pq4_fast_scan_search_qbs.cpp
-                   thirdparty/faiss/faiss/IndexIVFPQFastScan.cpp)
+                   thirdparty/faiss/faiss/impl/*avx.cpp)
 
 list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX512_SRCS})
 
