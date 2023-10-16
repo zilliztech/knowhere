@@ -441,8 +441,14 @@ IvfIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const BitsetV
                 }
             }));
         }
+        // wait for the completion
         for (auto& fut : futs) {
             fut.wait();
+        }
+        // check for exceptions. value() is {}, so either
+        //   a call does nothing, or it throws an inner exception.
+        for (auto& fut : futs) {
+            fut.result().value();
         }
     } catch (const std::exception& e) {
         delete[] ids;
@@ -534,8 +540,14 @@ IvfIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, const Bi
                 }
             }));
         }
+        // wait for the completion
         for (auto& fut : futs) {
             fut.wait();
+        }
+        // check for exceptions. value() is {}, so either
+        //   a call does nothing, or it throws an inner exception.
+        for (auto& fut : futs) {
+            fut.result().value();
         }
         GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter, distances, ids, lims);
     } catch (const std::exception& e) {
