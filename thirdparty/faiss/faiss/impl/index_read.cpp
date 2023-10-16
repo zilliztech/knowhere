@@ -902,6 +902,13 @@ Index* read_index(IOReader* f, int io_flags) {
             }
         } else {
             idxrf->refine_index = nullptr;
+            if (dynamic_cast<IndexIVFPQFastScan*>(idxrf->base_index)) {
+                // this is IndexScaNN
+                IndexRefine* idxrf_old = idxrf;
+                idxrf = new IndexScaNN();
+                *idxrf = *idxrf_old;
+                delete idxrf_old;
+            }
         }
         READ1(idxrf->k_factor);
         idxrf->own_fields = true;
