@@ -16,6 +16,16 @@ gpu_device_manager::choose_with_load(size_t load) {
     return std::distance(memory_load_.begin(), it);
 }
 
+void
+gpu_device_manager::release_load(int device_id, size_t load) {
+    if (size_t(device_id) < memory_load_.size()) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        memory_load_[device_id] -= load;
+    } else {
+        LOG_KNOWHERE_WARNING_ << "please check device id " << device_id;
+    }
+}
+
 gpu_device_manager::gpu_device_manager() {
     int device_counts;
     try {
