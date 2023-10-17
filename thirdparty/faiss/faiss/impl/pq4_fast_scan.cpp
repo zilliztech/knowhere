@@ -7,13 +7,12 @@
 
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/pq4_fast_scan.h>
-#include <faiss/impl/simd_result_handlers.h>
+#include <cstring>
 
 #include <array>
 
 namespace faiss {
 
-using namespace simd_result_handlers;
 
 /***************************************************************
  * Packing functions for codes

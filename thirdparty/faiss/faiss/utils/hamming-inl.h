@@ -6,7 +6,7 @@
  */
 
 #include <faiss/utils/binary_distances.h>
-#include <faiss/utils/simdlib.h>
+
 namespace faiss {
 
 extern const uint8_t hamdis_tab_ham_bytes[256];

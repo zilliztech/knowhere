@@ -13,8 +13,9 @@
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/utils/AlignedTable.h>
 #include <faiss/utils/ordered_key_value.h>
+#ifdef __AVX2__
 #include <faiss/utils/simdlib.h>
-
+#endif
 #include <faiss/impl/platform_macros.h>
 
 namespace faiss {
@@ -222,6 +223,7 @@ typename C::T partition_fuzzy_median3(
  * SIMD routines when vals is an aligned array of uint16_t
  ******************************************************************/
 
+#ifdef __AVX2__
 namespace simd_partitioning {
 
 void find_minimax(
@@ -737,6 +739,8 @@ uint16_t simd_partition_with_bounds(
 }
 
 } // namespace simd_partitioning
+
+#endif
 
 /******************************************************************
  * Driver routine
