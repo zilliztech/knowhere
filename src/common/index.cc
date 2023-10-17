@@ -40,9 +40,16 @@ Index<T>::Build(const DataSet& dataset, const Json& json) {
     RETURN_IF_ERROR(cfg->CheckAndAdjustForBuild());
 
 #ifdef NOT_COMPILE_FOR_SWIG
+    TimeRecorder rc("Build index", 2);
+    auto res = this->node->Build(dataset, *cfg);
+    auto span = rc.ElapseFromBegin("done");
+    span *= 0.000001;  // convert to s
+    knowhere_build_latency.Observe(span);
     knowhere_build_count.Increment();
+#else
+    auto res = this->node->Build(dataset, *cfg);
 #endif
-    return this->node->Build(dataset, *cfg);
+    return res;
 }
 
 template <typename T>
