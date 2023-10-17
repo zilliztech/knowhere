@@ -66,3 +66,7 @@ wheelhouse/*
 *.bin
 
 CMakeUserPresets.json
+
+# python
+.eggs
+*.egg-info

@@ -3,8 +3,10 @@ from .swigknowhere import Status
 from .swigknowhere import GetBinarySet, GetNullDataSet, GetNullBitSetView
 import numpy as np
 
+
 def CreateIndex(name, version):
     return swigknowhere.IndexWrap(name, version)
+
 
 def GetCurrentVersion():
     return swigknowhere.CurrentVersion()
@@ -12,6 +14,14 @@ def GetCurrentVersion():
 
 def CreateBitSet(bits_num):
     return swigknowhere.BitSet(bits_num)
+
+
+def Load(binset, file_name):
+    return swigknowhere.Load(binset, file_name)
+
+
+def Dump(binset, file_name):
+    return swigknowhere.Dump(binset, file_name)
 
 
 def ArrayToDataSet(arr):
@@ -69,6 +79,7 @@ def RangeSearchDataSetToArray(ans):
         ids_list.append(ids[lims[idx] : lims[idx + 1]])
 
     return dis_list, ids_list
+
 
 def GetVectorDataSetToArray(ans):
     dim = swigknowhere.DataSet_Dim(ans)
