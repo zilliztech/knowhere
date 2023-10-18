@@ -78,7 +78,7 @@ class IvfIndexNode : public IndexNode {
             return false;
         }
         if constexpr (std::is_same<faiss::IndexScaNN, T>::value) {
-            return index_->with_raw_data;
+            return index_->with_raw_data();
         }
         if constexpr (std::is_same<faiss::IndexIVFScalarQuantizer, T>::value) {
             return false;
@@ -607,7 +607,7 @@ IvfIndexNode<T>::GetVectorByIds(const DataSet& dataset) const {
         }
     } else if constexpr (std::is_same<T, faiss::IndexScaNN>::value) {
         // we should never go here since we should call HasRawData() first
-        if (!index_->with_raw_data) {
+        if (!index_->with_raw_data()) {
             return expected<DataSetPtr>::Err(Status::not_implemented, "GetVectorByIds not implemented");
         }
         auto dim = Dim();
