@@ -156,6 +156,8 @@ class gpu_device_manager {
     random_choose() const;
     int
     choose_with_load(size_t load);
+    void
+    release_load(int device_id, size_t load);
 
  private:
     gpu_device_manager();
@@ -191,4 +193,8 @@ set_mem_pool_size(size_t init_size, size_t max_size) {
 #define MIN_LOAD_CHOOSE_DEVICE_WITH_ASSIGN(x, load)                            \
     do {                                                                       \
         x = raft_utils::gpu_device_manager::instance().choose_with_load(load); \
+    } while (0)
+#define RELEASE_DEVICE(x, load)                                           \
+    do {                                                                  \
+        raft_utils::gpu_device_manager::instance().release_load(x, load); \
     } while (0)

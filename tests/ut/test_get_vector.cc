@@ -18,7 +18,6 @@
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/factory.h"
 #include "utils.h"
-
 TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
     using Catch::Approx;
 

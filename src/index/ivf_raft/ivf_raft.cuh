@@ -518,6 +518,7 @@ class RaftIvfIndexNode : public IndexNode {
         // status
         is.read((char*)(&this->device_id_), sizeof(this->device_id_));
         MIN_LOAD_CHOOSE_DEVICE_WITH_ASSIGN(this->device_id_, binary->size);
+        load_ = binary->size;
         raft_utils::device_setter with_this_device{this->device_id_};
 
         raft_utils::init_gpu_resources();
@@ -574,11 +575,17 @@ class RaftIvfIndexNode : public IndexNode {
             return knowhere::IndexEnum::INDEX_RAFT_IVFPQ;
         }
     }
+    virtual ~RaftIvfIndexNode() {
+        if (device_id_ >= 0) {
+            RELEASE_DEVICE(this->device_id_, this->load_);
+        }
+    }
 
  private:
     int device_id_ = -1;
     int64_t dim_ = 0;
     int64_t counts_ = 0;
+    size_t load_ = 0;
     std::optional<T> gpu_index_;
 
     template <typename raft_search_params_t>
