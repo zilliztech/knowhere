@@ -38,6 +38,27 @@ inline typename C::T partition(
     return partition_fuzzy<C>(vals, ids, n, q, q, nullptr);
 }
 
+// avx2 version
+template <class C>
+typename C::T partition_fuzzy_avx2(
+        typename C::T* vals,
+        typename C::TI* ids,
+        size_t n,
+        size_t q_min,
+        size_t q_max,
+        size_t* q_out);
+
+// avx2 version
+/** simplified interface for when the parition is not fuzzy */
+template <class C>
+inline typename C::T partition_avx2(
+        typename C::T* vals,
+        typename C::TI* ids,
+        size_t n,
+        size_t q) {
+    return partition_fuzzy_avx2<C>(vals, ids, n, q, q, nullptr);
+}
+
 /** low level SIMD histogramming functions */
 
 /** 8-bin histogram of (x - min) >> shift
