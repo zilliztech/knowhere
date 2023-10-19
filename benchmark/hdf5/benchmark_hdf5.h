@@ -330,6 +330,20 @@ class Benchmark_hdf5 : public Benchmark_base {
         return data_out;
     }
 
+    void
+    write_hdf5_dataset(hid_t file, const char* dataset_name, hid_t type_id, int32_t rows, int32_t cols,
+                       const void* data) {
+        hsize_t dims[2];
+        dims[0] = rows;
+        dims[1] = cols;
+        auto dataspace = H5Screate_simple(2, dims, NULL);
+        auto dataset = H5Dcreate2(file, dataset_name, type_id, dataspace, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        auto err = H5Dwrite(dataset, type_id, H5S_ALL, H5S_ALL, H5P_DEFAULT, data);
+        assert(err == 0);
+        H5Dclose(dataset);
+        H5Sclose(dataspace);
+    }
+
     // For binary vector, dim should be divided by 32, since we use int32 to store binary vector data */
     template <bool is_binary>
     void
@@ -338,31 +352,18 @@ class Benchmark_hdf5 : public Benchmark_base {
         /* Open the file and the dataset. */
         hid_t file = H5Fcreate(file_name, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
 
-        auto write_hdf5_dataset = [](hid_t file, const char* dataset_name, hid_t type_id, int32_t rows, int32_t cols,
-                                     const void* data) {
-            hsize_t dims[2];
-            dims[0] = rows;
-            dims[1] = cols;
-            auto dataspace = H5Screate_simple(2, dims, NULL);
-            auto dataset = H5Dcreate2(file, dataset_name, type_id, dataspace, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-            auto err = H5Dwrite(dataset, type_id, H5S_ALL, H5S_ALL, H5P_DEFAULT, data);
-            assert(err == 0);
-            H5Dclose(dataset);
-            H5Sclose(dataspace);
-        };
-
         /* write train dataset */
         if (!is_binary) {
             write_hdf5_dataset(file, HDF5_DATASET_TRAIN, H5T_NATIVE_FLOAT, nb, dim, xb);
         } else {
-            write_hdf5_dataset(file, HDF5_DATASET_TRAIN, H5T_NATIVE_INT32, nb, dim, xb);
+            write_hdf5_dataset(file, HDF5_DATASET_TRAIN, H5T_NATIVE_INT32, nb, dim / 32, xb);
         }
 
         /* write test dataset */
         if (!is_binary) {
             write_hdf5_dataset(file, HDF5_DATASET_TEST, H5T_NATIVE_FLOAT, nq, dim, xq);
         } else {
-            write_hdf5_dataset(file, HDF5_DATASET_TEST, H5T_NATIVE_INT32, nq, dim, xq);
+            write_hdf5_dataset(file, HDF5_DATASET_TEST, H5T_NATIVE_INT32, nq, dim / 32, xq);
         }
 
         /* write ground-truth labels dataset */
@@ -388,92 +389,22 @@ class Benchmark_hdf5 : public Benchmark_base {
         /* Open the file and the dataset. */
         hid_t file = H5Fcreate(file_name, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
 
-        auto write_hdf5_dataset = [](hid_t file, const char* dataset_name, hid_t type_id, int32_t rows, int32_t cols,
-                                     const void* data) {
-            hsize_t dims[2];
-            dims[0] = rows;
-            dims[1] = cols;
-            auto dataspace = H5Screate_simple(2, dims, NULL);
-            auto dataset = H5Dcreate2(file, dataset_name, type_id, dataspace, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-            auto err = H5Dwrite(dataset, type_id, H5S_ALL, H5S_ALL, H5P_DEFAULT, data);
-            assert(err == 0);
-            H5Dclose(dataset);
-            H5Sclose(dataspace);
-        };
-
         /* write train dataset */
         if (!is_binary) {
             write_hdf5_dataset(file, HDF5_DATASET_TRAIN, H5T_NATIVE_FLOAT, nb, dim, xb);
         } else {
-            write_hdf5_dataset(file, HDF5_DATASET_TRAIN, H5T_NATIVE_INT32, nb, dim, xb);
+            write_hdf5_dataset(file, HDF5_DATASET_TRAIN, H5T_NATIVE_INT32, nb, dim / 32, xb);
         }
 
         /* write test dataset */
         if (!is_binary) {
             write_hdf5_dataset(file, HDF5_DATASET_TEST, H5T_NATIVE_FLOAT, nq, dim, xq);
         } else {
-            write_hdf5_dataset(file, HDF5_DATASET_TEST, H5T_NATIVE_INT32, nq, dim, xq);
+            write_hdf5_dataset(file, HDF5_DATASET_TEST, H5T_NATIVE_INT32, nq, dim / 32, xq);
         }
 
         /* write ground-truth radius */
         write_hdf5_dataset(file, HDF5_DATASET_RADIUS, H5T_NATIVE_FLOAT, 1, 1, &radius);
-
-        /* write ground-truth lims dataset */
-        write_hdf5_dataset(file, HDF5_DATASET_LIMS, H5T_NATIVE_INT32, 1, nq + 1, g_lims);
-
-        /* write ground-truth labels dataset */
-        write_hdf5_dataset(file, HDF5_DATASET_NEIGHBORS, H5T_NATIVE_INT32, 1, ((int32_t*)g_lims)[nq], g_ids);
-
-        /* write ground-truth distance dataset */
-        write_hdf5_dataset(file, HDF5_DATASET_DISTANCES, H5T_NATIVE_FLOAT, 1, ((int32_t*)g_lims)[nq], g_dist);
-
-        /* Close/release resources. */
-        H5Fclose(file);
-    }
-
-    // For binary vector, dim should be divided by 32, since we use int32 to store binary vector data */
-    // Write HDF5 file with following dataset:
-    //    HDF5_DATASET_RADIUS    - H5T_NATIVE_FLOAT, [1, nq]
-    //    HDF5_DATASET_LIMS      - H5T_NATIVE_INT32, [1, nq+1]
-    //    HDF5_DATASET_NEIGHBORS - H5T_NATIVE_INT32, [1, lims[nq]]
-    //    HDF5_DATASET_DISTANCES - H5T_NATIVE_FLOAT, [1, lims[nq]]
-    template <bool is_binary>
-    void
-    hdf5_write_range(const char* file_name, const int32_t dim, const void* xb, const int32_t nb, const void* xq,
-                     const int32_t nq, const float* g_radius, const void* g_lims, const void* g_ids,
-                     const void* g_dist) {
-        /* Open the file and the dataset. */
-        hid_t file = H5Fcreate(file_name, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
-
-        auto write_hdf5_dataset = [](hid_t file, const char* dataset_name, hid_t type_id, int32_t rows, int32_t cols,
-                                     const void* data) {
-            hsize_t dims[2];
-            dims[0] = rows;
-            dims[1] = cols;
-            auto dataspace = H5Screate_simple(2, dims, NULL);
-            auto dataset = H5Dcreate2(file, dataset_name, type_id, dataspace, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-            auto err = H5Dwrite(dataset, type_id, H5S_ALL, H5S_ALL, H5P_DEFAULT, data);
-            assert(err == 0);
-            H5Dclose(dataset);
-            H5Sclose(dataspace);
-        };
-
-        /* write train dataset */
-        if (!is_binary) {
-            write_hdf5_dataset(file, HDF5_DATASET_TRAIN, H5T_NATIVE_FLOAT, nb, dim, xb);
-        } else {
-            write_hdf5_dataset(file, HDF5_DATASET_TRAIN, H5T_NATIVE_INT32, nb, dim, xb);
-        }
-
-        /* write test dataset */
-        if (!is_binary) {
-            write_hdf5_dataset(file, HDF5_DATASET_TEST, H5T_NATIVE_FLOAT, nq, dim, xq);
-        } else {
-            write_hdf5_dataset(file, HDF5_DATASET_TEST, H5T_NATIVE_INT32, nq, dim, xq);
-        }
-
-        /* write ground-truth radius */
-        write_hdf5_dataset(file, HDF5_DATASET_RADIUS, H5T_NATIVE_FLOAT, 1, nq, g_radius);
 
         /* write ground-truth lims dataset */
         write_hdf5_dataset(file, HDF5_DATASET_LIMS, H5T_NATIVE_INT32, 1, nq + 1, g_lims);

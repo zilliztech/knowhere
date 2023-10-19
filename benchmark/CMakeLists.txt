@@ -37,6 +37,10 @@ macro(benchmark_test target file)
     set(FILE_SRCS ${file})
     add_executable(${target} ${FILE_SRCS})
     target_link_libraries(${target} ${depend_libs} ${unittest_libs})
+
+    # this is needed for clang in Debug compilation mode
+    target_link_libraries(${target} atomic)
+
     install(TARGETS ${target} DESTINATION unittest)
 endmacro()
 
@@ -47,3 +51,5 @@ benchmark_test(benchmark_float_bitset          hdf5/benchmark_float_bitset.cpp)
 benchmark_test(benchmark_float_qps             hdf5/benchmark_float_qps.cpp)
 benchmark_test(benchmark_float_range           hdf5/benchmark_float_range.cpp)
 benchmark_test(benchmark_float_range_bitset    hdf5/benchmark_float_range_bitset.cpp)
+
+benchmark_test(gen_hdf5_file hdf5/gen_hdf5_file.cpp)

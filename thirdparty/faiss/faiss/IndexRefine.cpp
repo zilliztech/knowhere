@@ -12,6 +12,7 @@
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/utils/Heap.h>
 #include <faiss/utils/distances.h>
+#include <faiss/utils/distances_if.h>
 #include <faiss/utils/utils.h>
 
 namespace faiss {
@@ -43,29 +44,26 @@ IndexRefine::IndexRefine()
 
 void IndexRefine::train(idx_t n, const float* x) {
     base_index->train(n, x);
-    if (refine_index)
-        refine_index->train(n, x);
+    refine_index->train(n, x);
     is_trained = true;
 }
 
 void IndexRefine::add(idx_t n, const float* x) {
     FAISS_THROW_IF_NOT(is_trained);
     base_index->add(n, x);
-    if (refine_index)
-        refine_index->add(n, x);
+    refine_index->add(n, x);
     ntotal = base_index->ntotal;
 }
 
 void IndexRefine::reset() {
     base_index->reset();
-    if (refine_index)
-        refine_index->reset();
+    refine_index->reset();
     ntotal = 0;
 }
 
 namespace {
 
-typedef faiss::Index::idx_t idx_t;
+using idx_t = faiss::idx_t;
 
 template <class C>
 static void reorder_2_heaps(
@@ -99,12 +97,14 @@ void IndexRefine::search(
         idx_t k,
         float* distances,
         idx_t* labels,
-        const BitsetView bitset) const {
+        const SearchParameters* params) const {
+    FAISS_THROW_IF_NOT_MSG(
+            !params, "search params not supported for this index");
+
     FAISS_THROW_IF_NOT(base_index);
     FAISS_THROW_IF_NOT(refine_index);
 
     FAISS_THROW_IF_NOT(k > 0);
-
     FAISS_THROW_IF_NOT(is_trained);
     idx_t k_base = idx_t(k * k_factor);
     idx_t* base_labels = labels;
@@ -133,13 +133,33 @@ void IndexRefine::search(
         for (idx_t i = 0; i < n; i++) {
             dc->set_query(x + i * d);
             idx_t ij = i * k_base;
-            for (idx_t j = 0; j < k_base; j++) {
-                idx_t idx = base_labels[ij];
-                if (idx < 0)
-                    break;
-                base_distances[ij] = (*dc)(idx);
-                ij++;
-            }
+
+            // // baseline
+            // for (idx_t j = 0; j < k_base; j++) {
+            //     idx_t idx = base_labels[ij];
+            //     if (idx < 0)
+            //         break;
+            //     base_distances[ij] = (*dc)(idx);
+            //     ij++;
+            // }
+
+            // the lambda that filters acceptable elements.
+            auto filter = [&](const size_t j) -> std::optional<bool> {
+                // stop iterating if idx < 0
+                if (base_labels[j + i * k_base] < 0) {
+                    return std::nullopt;
+                }
+                // go ahead
+                return true;
+            };
+
+            // the lambda that applies a filtered element.
+            auto apply = [&](const float dis, const idx_t j) {
+                base_distances[j + i * k_base] = dis;
+            };
+
+            distance_compute_by_idx_if(
+                    base_labels + i * k_base, k_base, dc.get(), filter, apply);
         }
     }
 
@@ -159,19 +179,14 @@ void IndexRefine::search(
 }
 
 void IndexRefine::reconstruct(idx_t key, float* recons) const {
-    FAISS_THROW_IF_NOT(refine_index);
     refine_index->reconstruct(key, recons);
 }
 
 size_t IndexRefine::sa_code_size() const {
-    FAISS_THROW_IF_NOT(base_index);
-    FAISS_THROW_IF_NOT(refine_index);
     return base_index->sa_code_size() + refine_index->sa_code_size();
 }
 
 void IndexRefine::sa_encode(idx_t n, const float* x, uint8_t* bytes) const {
-    FAISS_THROW_IF_NOT(base_index);
-    FAISS_THROW_IF_NOT(refine_index);
     size_t cs1 = base_index->sa_code_size(), cs2 = refine_index->sa_code_size();
     std::unique_ptr<uint8_t[]> tmp1(new uint8_t[n * cs1]);
     base_index->sa_encode(n, x, tmp1.get());
@@ -185,8 +200,6 @@ void IndexRefine::sa_encode(idx_t n, const float* x, uint8_t* bytes) const {
 }
 
 void IndexRefine::sa_decode(idx_t n, const uint8_t* bytes, float* x) const {
-    FAISS_THROW_IF_NOT(base_index);
-    FAISS_THROW_IF_NOT(refine_index);
     size_t cs1 = base_index->sa_code_size(), cs2 = refine_index->sa_code_size();
     std::unique_ptr<uint8_t[]> tmp2(
             new uint8_t[n * refine_index->sa_code_size()]);
@@ -222,13 +235,9 @@ IndexRefineFlat::IndexRefineFlat(Index* base_index)
 IndexRefineFlat::IndexRefineFlat(Index* base_index, const float* xb)
         : IndexRefine(base_index, nullptr) {
     is_trained = base_index->is_trained;
-    if (xb) {
-        refine_index = new IndexFlat(base_index->d, base_index->metric_type);
-        with_raw_data = true;
-    } else {
-        with_raw_data = false;
-    }
+    refine_index = new IndexFlat(base_index->d, base_index->metric_type);
     own_refine_index = true;
+    refine_index->add(base_index->ntotal, xb);
 }
 
 IndexRefineFlat::IndexRefineFlat() : IndexRefine() {
@@ -241,12 +250,13 @@ void IndexRefineFlat::search(
         idx_t k,
         float* distances,
         idx_t* labels,
-        const BitsetView bitset) const {
+        const SearchParameters* params) const {
+    FAISS_THROW_IF_NOT_MSG(
+            !params, "search params not supported for this index");
     FAISS_THROW_IF_NOT(base_index);
     FAISS_THROW_IF_NOT(refine_index);
-    
-    FAISS_THROW_IF_NOT(k > 0);
 
+    FAISS_THROW_IF_NOT(k > 0);
     FAISS_THROW_IF_NOT(is_trained);
     idx_t k_base = idx_t(k * k_factor);
     idx_t* base_labels = labels;

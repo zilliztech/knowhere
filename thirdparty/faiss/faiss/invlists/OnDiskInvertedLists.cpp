@@ -154,7 +154,7 @@ struct OnDiskInvertedLists::OngoingPrefetch {
             const OnDiskInvertedLists* od = pf->od;
             od->locks->lock_1(list_no);
             size_t n = od->list_size(list_no);
-            const Index::idx_t* idx = od->get_ids(list_no);
+            const idx_t* idx = od->get_ids(list_no);
             const uint8_t* codes = od->get_codes(list_no);
             int cs = 0;
             for (size_t i = 0; i < n; i++) {
@@ -278,13 +278,15 @@ void OnDiskInvertedLists::do_mmap() {
     uint8_t* ptro =
             (uint8_t*)mmap(nullptr, totsize, prot, MAP_SHARED, fileno(f), 0);
 
+    fclose(f);
+
     FAISS_THROW_IF_NOT_FMT(
             ptro != MAP_FAILED,
             "could not mmap %s: %s",
             filename.c_str(),
             strerror(errno));
+    madvise(ptro, totsize, MADV_RANDOM);
     ptr = ptro;
-    fclose(f);
 }
 
 void OnDiskInvertedLists::update_totsize(size_t new_size) {
@@ -388,13 +390,13 @@ const uint8_t* OnDiskInvertedLists::get_codes(size_t list_no) const {
     return ptr + lists[list_no].offset;
 }
 
-const Index::idx_t* OnDiskInvertedLists::get_ids(size_t list_no) const {
+const idx_t* OnDiskInvertedLists::get_ids(size_t list_no) const {
     if (lists[list_no].offset == INVALID_OFFSET) {
         return nullptr;
     }
 
-    return (
-        const idx_t*)(ptr + lists[list_no].offset + code_size * lists[list_no].capacity);
+    return (const idx_t*)(ptr + lists[list_no].offset +
+                          code_size * lists[list_no].capacity);
 }
 
 void OnDiskInvertedLists::update_entries(
@@ -524,7 +526,7 @@ void OnDiskInvertedLists::free_slot(size_t offset, size_t capacity) {
         it++;
     }
 
-    size_t inf = 1ULL << 60;
+    size_t inf = ((size_t)1) << 60;
 
     size_t end_prev = inf;
     if (it != slots.begin()) {
@@ -533,7 +535,7 @@ void OnDiskInvertedLists::free_slot(size_t offset, size_t capacity) {
         end_prev = prev->offset + prev->capacity;
     }
 
-    size_t begin_next = 1LL << 60;
+    size_t begin_next = ((size_t)1) << 60;
     if (it != slots.end()) {
         begin_next = it->offset;
     }
@@ -773,6 +775,7 @@ InvertedLists* OnDiskInvertedListsIOHook::read_ArrayInvertedLists(
                 0);
         FAISS_THROW_IF_NOT_FMT(
                 ails->ptr != MAP_FAILED, "could not mmap: %s", strerror(errno));
+        madvise(ails->ptr, ails->totsize, MADV_RANDOM);
     }
 
     FAISS_THROW_IF_NOT(o <= ails->totsize);
@@ -781,7 +784,7 @@ InvertedLists* OnDiskInvertedListsIOHook::read_ArrayInvertedLists(
         OnDiskInvertedLists::List& l = ails->lists[i];
         l.size = l.capacity = sizes[i];
         l.offset = o;
-        o += l.size * (sizeof(OnDiskInvertedLists::idx_t) + ails->code_size);
+        o += l.size * (sizeof(idx_t) + ails->code_size);
     }
     // resume normal reading of file
     fseek(fdesc, o, SEEK_SET);

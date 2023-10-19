@@ -20,6 +20,7 @@ class IvfConfig : public BaseConfig {
  public:
     CFG_INT nlist;
     CFG_INT nprobe;
+    CFG_BOOL use_elkan;
     KNOHWERE_DECLARE_CONFIG(IvfConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(nlist)
             .set_default(128)
@@ -31,6 +32,10 @@ class IvfConfig : public BaseConfig {
             .description("number of probes at query time.")
             .for_search()
             .set_range(1, 65536);
+        KNOWHERE_CONFIG_DECLARE_FIELD(use_elkan)
+            .set_default(true)
+            .description("whether to use elkan algorithm")
+            .for_train();
     }
 };
 

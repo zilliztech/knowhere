@@ -28,8 +28,6 @@ struct IndexRefine : Index {
     /// the base_index (should be >= 1)
     float k_factor = 1;
 
-    bool with_raw_data;
-
     /// initialize from empty index
     IndexRefine(Index* base_index, Index* refine_index);
 
@@ -47,7 +45,7 @@ struct IndexRefine : Index {
             idx_t k,
             float* distances,
             idx_t* labels,
-            const BitsetView bitset = nullptr) const override;
+            const SearchParameters* params = nullptr) const override;
 
     // reconstruct is routed to the refine_index
     void reconstruct(idx_t key, float* recons) const override;
@@ -80,7 +78,7 @@ struct IndexRefineFlat : IndexRefine {
             idx_t k,
             float* distances,
             idx_t* labels,
-            const BitsetView bitset = nullptr) const override;
+            const SearchParameters* params = nullptr) const override;
 };
 
 } // namespace faiss

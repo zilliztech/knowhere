@@ -1,6 +1,7 @@
 from . import swigknowhere
 from .swigknowhere import Status
 from .swigknowhere import GetBinarySet, GetNullDataSet, GetNullBitSetView
+from .swigknowhere import BruteForceSearch, BruteForceRangeSearch
 import numpy as np
 
 
@@ -87,3 +88,14 @@ def GetVectorDataSetToArray(ans):
     data = np.zeros([rows, dim]).astype(np.float32)
     swigknowhere.DataSetTensor2Array(ans, data)
     return data
+
+
+def GetBinaryVectorDataSetToArray(ans):
+    dim = int(swigknowhere.DataSet_Dim(ans) / 32)
+    rows = swigknowhere.DataSet_Rows(ans)
+    data = np.zeros([rows, dim]).astype(np.int32)
+    swigknowhere.BinaryDataSetTensor2Array(ans, data)
+    return data
+
+def SetSimdType(type):
+    swigknowhere.SetSimdType(type)

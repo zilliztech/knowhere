@@ -10,10 +10,15 @@ knowhere_file_glob(GLOB FAISS_AVX2_SRCS
                    thirdparty/faiss/faiss/impl/*avx.cpp
                    thirdparty/faiss/faiss/impl/pq4_fast_scan_search_1.cpp
                    thirdparty/faiss/faiss/impl/pq4_fast_scan_search_qbs.cpp
+                   thirdparty/faiss/faiss/utils/partitioning_avx2.cpp
                    thirdparty/faiss/faiss/IndexPQFastScan.cpp
                    thirdparty/faiss/faiss/IndexIVFPQFastScan.cpp)
 
 list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX512_SRCS})
+
+# disable RHNSW
+knowhere_file_glob(GLOB FAISS_RHNSW_SRCS thirdparty/faiss/faiss/impl/RHNSW.cpp)
+list(REMOVE_ITEM FAISS_SRCS ${FAISS_RHNSW_SRCS})
 
 if(__X86_64)
   set(UTILS_SRC src/simd/distances_ref.cc src/simd/hook.cc)

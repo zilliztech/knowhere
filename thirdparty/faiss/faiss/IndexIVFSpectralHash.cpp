@@ -9,8 +9,8 @@
 
 #include <faiss/IndexIVFSpectralHash.h>
 
-#include <stdint.h>
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 
 #include <faiss/IndexLSH.h>
@@ -31,22 +31,17 @@ IndexIVFSpectralHash::IndexIVFSpectralHash(
         float period)
         : IndexIVF(quantizer, d, nlist, (nbit + 7) / 8, METRIC_L2),
           nbit(nbit),
-          period(period),
-          threshold_type(Thresh_global) {
+          period(period) {
     RandomRotationMatrix* rr = new RandomRotationMatrix(d, nbit);
     rr->init(1234);
     vt = rr;
-    own_fields = true;
     is_trained = false;
+    by_residual = false;
 }
 
-IndexIVFSpectralHash::IndexIVFSpectralHash()
-        : IndexIVF(),
-          vt(nullptr),
-          own_fields(false),
-          nbit(0),
-          period(0),
-          threshold_type(Thresh_global) {}
+IndexIVFSpectralHash::IndexIVFSpectralHash() : IndexIVF() {
+    by_residual = false;
+}
 
 IndexIVFSpectralHash::~IndexIVFSpectralHash() {
     if (own_fields) {
@@ -67,10 +62,14 @@ float median(size_t n, float* x) {
 
 } // namespace
 
-void IndexIVFSpectralHash::train_residual(idx_t n, const float* x) {
+void IndexIVFSpectralHash::train_encoder(
+        idx_t n,
+        const float* x,
+        const idx_t* assign) {
     if (!vt->is_trained) {
         vt->train(n, x);
     }
+    FAISS_THROW_IF_NOT(!by_residual);
 
     if (threshold_type == Thresh_global) {
         // nothing to do
@@ -167,6 +166,7 @@ void IndexIVFSpectralHash::encode_vectors(
         uint8_t* codes,
         bool include_listnos) const {
     FAISS_THROW_IF_NOT(is_trained);
+    FAISS_THROW_IF_NOT(!by_residual);
     float freq = 2.0 / period;
     size_t coarse_size = include_listnos ? coarse_code_size() : 0;
 
@@ -213,9 +213,7 @@ struct IVFScanner : InvertedListScanner {
     std::vector<uint8_t> qcode;
     HammingComputer hc;
 
-    using idx_t = Index::idx_t;
-
-    IVFScanner(const IndexIVFSpectralHash* index, bool store_pairs)
+    IVFScanner(const IndexIVFSpectralHash* index, bool store_pairs, const IDSelector* sel = nullptr)
             : index(index),
               nbit(index->nbit),
               period(index->period),
@@ -225,6 +223,7 @@ struct IVFScanner : InvertedListScanner {
               qcode(index->code_size),
               hc(qcode.data(), index->code_size) {
         this->store_pairs = store_pairs;
+        this->sel = sel;
         this->code_size = index->code_size;
     }
 
@@ -259,11 +258,10 @@ struct IVFScanner : InvertedListScanner {
             const idx_t* ids,
             float* simi,
             idx_t* idxi,
-            size_t k,
-            const BitsetView bitset) const override {
+            size_t k) const override {
         size_t nup = 0;
         for (size_t j = 0; j < list_size; j++) {
-            if (bitset.empty() || !bitset.test(ids[j])) {
+            if (!sel || sel->is_member(ids[j])) {
                 float dis = hc.compute(codes);
 
                 if (dis < simi[0]) {
@@ -283,10 +281,9 @@ struct IVFScanner : InvertedListScanner {
             const float* code_norms,
             const idx_t* ids,
             float radius,
-            RangeQueryResult& res,
-            const BitsetView bitset) const override {
+            RangeQueryResult& res) const override {
         for (size_t j = 0; j < list_size; j++) {
-            if (bitset.empty() || !bitset.test(ids[j])) {
+            if (!sel || sel->is_member(ids[j])) {
                 float dis = hc.compute(codes);
                 if (dis < radius) {
                     int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
@@ -298,24 +295,23 @@ struct IVFScanner : InvertedListScanner {
     }
 };
 
+struct BuildScanner {
+    using T = InvertedListScanner*;
+
+    template <class HammingComputer>
+    static T f(const IndexIVFSpectralHash* index, bool store_pairs, const IDSelector* sel) {
+        return new IVFScanner<HammingComputer>(index, store_pairs, sel);
+    }
+};
+
 } // anonymous namespace
 
 InvertedListScanner* IndexIVFSpectralHash::get_InvertedListScanner(
-        bool store_pairs) const {
-    switch (code_size) {
-#define HANDLE_CODE_SIZE(cs) \
-    case cs:                 \
-        return new IVFScanner<HammingComputer##cs>(this, store_pairs)
-        HANDLE_CODE_SIZE(4);
-        HANDLE_CODE_SIZE(8);
-        HANDLE_CODE_SIZE(16);
-        HANDLE_CODE_SIZE(20);
-        HANDLE_CODE_SIZE(32);
-        HANDLE_CODE_SIZE(64);
-#undef HANDLE_CODE_SIZE
-        default:
-            return new IVFScanner<HammingComputerDefault>(this, store_pairs);
-    }
+        bool store_pairs,
+        const IDSelector* sel) const {
+    FAISS_THROW_IF_NOT(!sel);
+    BuildScanner bs;
+    return dispatch_HammingComputer(code_size, bs, this, store_pairs, sel);
 }
 
 void IndexIVFSpectralHash::replace_vt(VectorTransform* vt_in, bool own) {

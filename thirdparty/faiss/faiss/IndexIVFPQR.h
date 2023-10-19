@@ -37,7 +37,9 @@ struct IndexIVFPQR : IndexIVFPQ {
     size_t remove_ids(const IDSelector& sel) override;
 
     /// trains the two product quantizers
-    void train_residual(idx_t n, const float* x) override;
+    void train_encoder(idx_t n, const float* x, const idx_t* assign) override;
+
+    idx_t train_encoder_num_vectors() const override;
 
     void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
 
@@ -52,7 +54,7 @@ struct IndexIVFPQR : IndexIVFPQ {
     void reconstruct_from_offset(int64_t list_no, int64_t offset, float* recons)
             const override;
 
-    void merge_from(IndexIVF& other, idx_t add_id) override;
+    void merge_from(Index& otherIndex, idx_t add_id) override;
 
     void search_preassigned(
             idx_t n,
@@ -64,8 +66,7 @@ struct IndexIVFPQR : IndexIVFPQ {
             idx_t* labels,
             bool store_pairs,
             const IVFSearchParameters* params = nullptr,
-            IndexIVFStats* stats = nullptr,
-            const BitsetView bitset = nullptr) const override;
+            IndexIVFStats* stats = nullptr) const override;
 
     IndexIVFPQR();
 };

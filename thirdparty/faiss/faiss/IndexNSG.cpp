@@ -23,39 +23,22 @@
 
 namespace faiss {
 
-using idx_t = Index::idx_t;
 using namespace nsg;
 
 /**************************************************************
  * IndexNSG implementation
  **************************************************************/
 
-IndexNSG::IndexNSG(int d, int R, MetricType metric)
-        : Index(d, metric),
-          nsg(R),
-          own_fields(false),
-          storage(nullptr),
-          is_built(false),
-          GK(64),
-          build_type(0) {
-    nndescent_S = 10;
-    nndescent_R = 100;
+IndexNSG::IndexNSG(int d, int R, MetricType metric) : Index(d, metric), nsg(R) {
     nndescent_L = GK + 50;
-    nndescent_iter = 10;
 }
 
 IndexNSG::IndexNSG(Index* storage, int R)
         : Index(storage->d, storage->metric_type),
           nsg(R),
-          own_fields(false),
           storage(storage),
-          is_built(false),
-          GK(64),
           build_type(1) {
-    nndescent_S = 10;
-    nndescent_R = 100;
     nndescent_L = GK + 50;
-    nndescent_iter = 10;
 }
 
 IndexNSG::~IndexNSG() {
@@ -79,9 +62,9 @@ void IndexNSG::search(
         idx_t k,
         float* distances,
         idx_t* labels,
-        const BitsetView bitset) const
-
-{
+        const SearchParameters* params) const {
+    FAISS_THROW_IF_NOT_MSG(
+            !params, "search params not supported for this index");
     FAISS_THROW_IF_NOT_MSG(
             storage,
             "Please use IndexNSGFlat (or variants) instead of IndexNSG directly");
@@ -113,7 +96,7 @@ void IndexNSG::search(
         InterruptCallback::check();
     }
 
-    if (metric_type == METRIC_INNER_PRODUCT) {
+    if (is_similarity_metric(metric_type)) {
         // we need to revert the negated distances
         for (size_t i = 0; i < k * n; i++) {
             distances[i] = -distances[i];
@@ -166,7 +149,7 @@ void IndexNSG::add(idx_t n, const float* x) {
         FAISS_THROW_IF_NOT(ntotal == n);
 
         knng.resize(ntotal * (GK + 1));
-        storage->assign(ntotal, x, knng.data()/*, GK + 1*/);
+        storage->assign(ntotal, x, knng.data(), GK + 1);
 
         // Remove itself
         // - For metric distance, we just need to remove the first neighbor
@@ -298,5 +281,38 @@ IndexNSGFlat::IndexNSGFlat(int d, int R, MetricType metric)
     own_fields = true;
     is_trained = true;
 }
+
+/**************************************************************
+ * IndexNSGPQ implementation
+ **************************************************************/
+
+IndexNSGPQ::IndexNSGPQ() = default;
+
+IndexNSGPQ::IndexNSGPQ(int d, int pq_m, int M, int pq_nbits)
+        : IndexNSG(new IndexPQ(d, pq_m, pq_nbits), M) {
+    own_fields = true;
+    is_trained = false;
+}
+
+void IndexNSGPQ::train(idx_t n, const float* x) {
+    IndexNSG::train(n, x);
+    (dynamic_cast<IndexPQ*>(storage))->pq.compute_sdc_table();
+}
+
+/**************************************************************
+ * IndexNSGSQ implementation
+ **************************************************************/
+
+IndexNSGSQ::IndexNSGSQ(
+        int d,
+        ScalarQuantizer::QuantizerType qtype,
+        int M,
+        MetricType metric)
+        : IndexNSG(new IndexScalarQuantizer(d, qtype, metric), M) {
+    is_trained = false;
+    own_fields = true;
+}
+
+IndexNSGSQ::IndexNSGSQ() = default;
 
 } // namespace faiss
