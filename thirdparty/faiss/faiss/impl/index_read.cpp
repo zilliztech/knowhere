@@ -83,25 +83,6 @@ static void read_index_header(Index* idx, IOReader* f) {
     idx->verbose = false;
 }
 
-static void read_scann_header(IndexRefine* idx, IOReader* f) {
-    READ1(idx->d);
-    READ1(idx->ntotal);
-    Index::idx_t dummy;
-    READ1(dummy);
-    READ1(dummy);
-    if (dummy == (1 << 20)) {  // for compatibility, old scann binary always contains raw data
-        idx->with_raw_data = true;
-    } else {
-        idx->with_raw_data = (dummy == 1);
-    }
-    READ1(idx->is_trained);
-    READ1(idx->metric_type);
-    if (idx->metric_type > 1) {
-        READ1(idx->metric_arg);
-    }
-    idx->verbose = false;
-}
-
 VectorTransform* read_VectorTransform(IOReader* f) {
     uint32_t h;
     READ1(h);
@@ -879,31 +860,34 @@ Index* read_index(IOReader* f, int io_flags) {
         read_index_header(imiq, f);
         read_ProductQuantizer(&imiq->pq, f);
         idx = imiq;
+    } else if (h == fourcc("IxSC")) {
+        IndexScaNN* idxscann = new IndexScaNN();
+        read_index_header(idxscann, f);
+        idxscann->base_index = read_index(f, io_flags);
+        bool with_raw_data;
+        READ1(with_raw_data);
+        if (with_raw_data) {
+            idxscann->refine_index = read_index(f, io_flags);
+        } else {
+            idxscann->refine_index = nullptr;
+        }
+        READ1(idxscann->k_factor);
+        idxscann->own_fields = true;
+        idxscann->own_refine_index = true;
+        idx = idxscann;
     } else if (h == fourcc("IxRF")) {
         IndexRefine* idxrf = new IndexRefine();
-        read_scann_header(idxrf, f);
+        read_index_header(idxrf, f);
         idxrf->base_index = read_index(f, io_flags);
-        if (idxrf->with_raw_data) {
-            idxrf->refine_index = read_index(f, io_flags);
-            if (dynamic_cast<IndexFlat*>(idxrf->refine_index)) {
-                if (dynamic_cast<IndexIVFPQFastScan*>(idxrf->base_index)) {
-                    // this is IndexScaNN
-                    IndexRefine* idxrf_old = idxrf;
-                    idxrf = new IndexScaNN();
-                    *idxrf = *idxrf_old;
-                    delete idxrf_old;
-                } else {
-                    // then make a RefineFlat with it
-                    IndexRefine* idxrf_old = idxrf;
-                    idxrf = new IndexRefineFlat();
-                    *idxrf = *idxrf_old;
-                    delete idxrf_old;
-                }
-            }
-        } else {
-            idxrf->refine_index = nullptr;
-        }
+        idxrf->refine_index = read_index(f, io_flags);
         READ1(idxrf->k_factor);
+        if (dynamic_cast<IndexFlat*>(idxrf->refine_index)) {
+            // then make a RefineFlat with it
+            IndexRefine* idxrf_old = idxrf;
+            idxrf = new IndexRefineFlat();
+            *idxrf = *idxrf_old;
+            delete idxrf_old;
+        } 
         idxrf->own_fields = true;
         idxrf->own_refine_index = true;
         idx = idxrf;

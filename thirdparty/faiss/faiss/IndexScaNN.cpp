@@ -14,12 +14,49 @@ namespace faiss {
  * IndexScaNN
  ***************************************************/
 
-IndexScaNN::IndexScaNN(Index* base_index) : IndexRefineFlat(base_index) {}
+IndexScaNN::IndexScaNN(Index* base_index)
+        : IndexRefine(
+                  base_index,
+                  new IndexFlat(base_index->d, base_index->metric_type)) {
+    is_trained = base_index->is_trained;
+    own_refine_index = true;
+    FAISS_THROW_IF_NOT_MSG(
+            base_index->ntotal == 0,
+            "base_index should be empty in the beginning");
+}
 
 IndexScaNN::IndexScaNN(Index* base_index, const float* xb)
-        : IndexRefineFlat(base_index, xb) {}
+        : IndexRefine(base_index, nullptr) {
+    is_trained = base_index->is_trained;
+    if (xb) {
+        refine_index = new IndexFlat(base_index->d, base_index->metric_type);
+    }
+    own_refine_index = true;
+}
 
-IndexScaNN::IndexScaNN() : IndexRefineFlat() {}
+IndexScaNN::IndexScaNN() : IndexRefine() {}
+
+void IndexScaNN::train(idx_t n, const float* x) {
+    base_index->train(n, x);
+    if (refine_index)
+        refine_index->train(n, x);
+    is_trained = true;
+}
+
+void IndexScaNN::add(idx_t n, const float* x) {
+    FAISS_THROW_IF_NOT(is_trained);
+    base_index->add(n, x);
+    if (refine_index)
+        refine_index->add(n, x);
+    ntotal = base_index->ntotal;
+}
+
+void IndexScaNN::reset() {
+    base_index->reset();
+    if (refine_index)
+        refine_index->reset();
+    ntotal = 0;
+}
 
 namespace {
 
