@@ -427,7 +427,7 @@ struct ReservoirTopN {
 
     void shrink() {
         uint64_t t0 = get_cy();
-        threshold = partition<C>(vals, ids, i, n);
+        threshold = partition_avx2<C>(vals, ids, i, n);
         i = n;
         cycles += get_cy() - t0;
     }
@@ -435,7 +435,7 @@ struct ReservoirTopN {
     void shrink_fuzzy() {
         uint64_t t0 = get_cy();
         assert(i == capacity);
-        threshold = partition_fuzzy<C>(
+        threshold = partition_fuzzy_avx2<C>(
                 vals, ids, capacity, n, (capacity + n) / 2, &i);
         cycles += get_cy() - t0;
     }
