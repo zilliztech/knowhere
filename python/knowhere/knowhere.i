@@ -69,6 +69,7 @@ import_array();
 %apply (float* INPLACE_ARRAY2, int DIM1, int DIM2){(float *dis,int nq_1,int k_1)}
 %apply (int *INPLACE_ARRAY2, int DIM1, int DIM2){(int *ids,int nq_2,int k_2)}
 %apply (float* INPLACE_ARRAY2, int DIM1, int DIM2){(float *data,int rows,int dim)}
+%apply (int32_t *INPLACE_ARRAY2, int DIM1, int DIM2){(int32_t *data,int rows,int dim)}
 
 %typemap(in, numinputs=0) knowhere::Status& status(knowhere::Status tmp) %{
     $1 = &tmp;
@@ -325,6 +326,17 @@ DataSetTensor2Array(knowhere::DataSetPtr result, float* data, int rows, int dim)
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < dim; ++j) {
             *(data + i * dim + j) = *((float*)(data_) + i * dim + j);
+        }
+    }
+}
+
+void
+BinaryDataSetTensor2Array(knowhere::DataSetPtr result, int32_t* data, int rows, int dim) {
+    GILReleaser rel;
+    auto data_ = result->GetTensor();
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < dim; ++j) {
+            *(data + i * dim + j) = *((int32_t*)(data_) + i * dim + j);
         }
     }
 }
