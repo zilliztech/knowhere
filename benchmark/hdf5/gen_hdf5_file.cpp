@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <random>
 #include <vector>
 
 #include "benchmark_hdf5.h"
