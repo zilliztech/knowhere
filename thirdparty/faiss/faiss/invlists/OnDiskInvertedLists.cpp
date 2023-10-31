@@ -283,6 +283,7 @@ void OnDiskInvertedLists::do_mmap() {
             "could not mmap %s: %s",
             filename.c_str(),
             strerror(errno));
+    madvise(ptro, totsize, MADV_RANDOM);
     ptr = ptro;
     fclose(f);
 }
@@ -393,8 +394,8 @@ const Index::idx_t* OnDiskInvertedLists::get_ids(size_t list_no) const {
         return nullptr;
     }
 
-    return (
-        const idx_t*)(ptr + lists[list_no].offset + code_size * lists[list_no].capacity);
+    return (const idx_t*)(ptr + lists[list_no].offset +
+                          code_size * lists[list_no].capacity);
 }
 
 void OnDiskInvertedLists::update_entries(
@@ -773,6 +774,7 @@ InvertedLists* OnDiskInvertedListsIOHook::read_ArrayInvertedLists(
                 0);
         FAISS_THROW_IF_NOT_FMT(
                 ails->ptr != MAP_FAILED, "could not mmap: %s", strerror(errno));
+        madvise(ails->ptr, ails->totsize, MADV_RANDOM);
     }
 
     FAISS_THROW_IF_NOT(o <= ails->totsize);
