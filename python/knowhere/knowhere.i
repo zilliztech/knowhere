@@ -226,21 +226,21 @@ class IndexWrap {
 class BitSet {
  public:
     BitSet(const int num_bits) : num_bits_(num_bits) {
-        bit_set_.resize(num_bits_ / 8, 0);
+        bitset_.resize((num_bits_ + 7) / 8, 0);
     }
 
     void
     SetBit(const int idx) {
-        bit_set_[idx >> 3] |= 0x1 << (idx & 0x7);
+        bitset_[idx >> 3] |= 0x1 << (idx & 0x7);
     }
 
     knowhere::BitsetView
     GetBitSetView() {
-        return knowhere::BitsetView(bit_set_.data(), num_bits_);
+        return knowhere::BitsetView(bitset_.data(), num_bits_);
     }
 
  private:
-    std::vector<uint8_t> bit_set_;
+    std::vector<uint8_t> bitset_;
     int num_bits_ = 0;
 };
 
