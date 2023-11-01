@@ -356,6 +356,7 @@ InvertedLists *read_InvertedLists_nm(IOReader *f, int io_flags) {
             FAISS_THROW_IF_NOT_FMT(ails->ptr != MAP_FAILED,
                             "could not mmap: %s",
                             strerror(errno));
+            madvise(ails->ptr, ails->totsize, MADV_RANDOM);
         }
 
         for (size_t i = 0; i < ails->nlist; i++) {
