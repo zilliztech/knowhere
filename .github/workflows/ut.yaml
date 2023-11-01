@@ -54,7 +54,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ macos-11, centos7 ]
+        os: [ macos-11 ]
     env:
       INSTALL_OPENBLAS: true
       LD_LIBRARY_PATH: "${LD_LIBRARY_PATH}:/usr/lib"
