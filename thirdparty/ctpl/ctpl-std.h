@@ -29,9 +29,6 @@
 #include <exception>
 #include <future>
 #include <mutex>
-#include <pthread.h>
-#include <cstring>
-#include <iostream>
 #include <queue>
 
 
@@ -234,19 +231,7 @@ namespace ctpl {
                         return;  // if the queue is empty and this->isDone == true or *flag then return
                 }
             };
-            auto* t = new std::thread(f);
-            sched_param sch_params;
-            int policy = SCHED_FIFO;
-            sch_params.sched_priority = sched_get_priority_min(policy);
-            auto handle = t->native_handle();
-            int en = pthread_setschedparam(handle, policy, &sch_params);
-            if (en) {
-                    std::cerr << "Failed to set Thread scheduling: " << std::strerror(en) << std::endl;
-            } else {
-                    std::cout << "set kw thread pool thread priority to min: " << sch_params.sched_priority
-                              << ", max is " << sched_get_priority_max(policy) << " thread " << handle << "\n";
-            }
-            this->threads[i].reset(t);  // compiler may not support std::make_unique()
+            this->threads[i].reset(new std::thread(f)); // compiler may not support std::make_unique()
         }
 
         void init() { this->nWaiting = 0; this->isStop = false; this->isDone = false; }
