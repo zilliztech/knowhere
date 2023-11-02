@@ -176,7 +176,6 @@ class DiskANNIndexNode : public IndexNode {
 namespace knowhere {
 namespace {
 static constexpr float kCacheExpansionRate = 1.2;
-static constexpr int kSearchListSizeMaxValue = 200;
 
 Status
 TryDiskANNCall(std::function<void()>&& diskann_call) {
@@ -521,15 +520,6 @@ DiskANNIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const Bit
     auto search_conf = static_cast<const DiskANNConfig&>(cfg);
     if (!CheckMetric(search_conf.metric_type.value())) {
         return expected<DataSetPtr>::Err(Status::invalid_metric_type, "unsupported metric type");
-    }
-    auto max_search_list_size = std::max(kSearchListSizeMaxValue, search_conf.k.value() * 10);
-    if (search_conf.search_list_size.value() > max_search_list_size ||
-        search_conf.search_list_size.value() < search_conf.k.value()) {
-        auto msg = fmt::format(
-            "search_list_size should be in range: [topk, max(200, topk * 10)], topk = {}, search_list_size = {}",
-            search_conf.k.value(), search_conf.search_list_size.value());
-        LOG_KNOWHERE_ERROR_ << msg;
-        return expected<DataSetPtr>::Err(Status::out_of_range_in_json, msg);
     }
     auto k = static_cast<uint64_t>(search_conf.k.value());
     auto lsearch = static_cast<uint64_t>(search_conf.search_list_size.value());
