@@ -4,6 +4,7 @@ from conan.tools.scm import Version
 from conan.tools import files
 from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeDeps, CMakeToolchain, cmake_layout
+from conan.tools.gnu import PkgConfigDeps
 from conan.errors import ConanInvalidConfiguration
 from conans import tools
 import os
@@ -18,8 +19,6 @@ class KnowhereConan(ConanFile):
     url = "https://github.com/milvus-io/knowhere"
     homepage = "https://github.com/milvus-io/knowhere"
     license = "Apache-2.0"
-
-    generators = {"pkg_config","cmake_find_package"}
 
     settings = "os", "arch", "compiler", "build_type"
     options = {
@@ -157,8 +156,12 @@ class KnowhereConan(ConanFile):
         tc.variables["WITH_BENCHMARK"] = self.options.with_benchmark
         tc.variables["WITH_COVERAGE"] = self.options.with_coverage
         tc.generate()
+
         deps = CMakeDeps(self)
         deps.generate()
+
+        pc = PkgConfigDeps(self)
+        pc.generate()
 
     def build(self):
         # files.apply_conandata_patches(self)
