@@ -32,7 +32,6 @@
 #include <raft/neighbors/cagra_serialize.cuh>
 #include <raft/neighbors/cagra_types.hpp>
 #include "common/raft/proto/raft_index_kind.hpp"
-#include "common/raft/proto/ivf_to_sample_filter.cuh"
 
 namespace raft_proto {
 
@@ -207,9 +206,7 @@ struct raft_index {
           queries,
           neighbors_tmp,
           distances_tmp,
-          ivf_to_sample_filter{
-            underlying_index.inds_ptrs().data_handle(), filter
-          }
+          filter
         );
       }
     } else if constexpr (vector_index_kind == raft_index_kind::ivf_pq) {
@@ -230,9 +227,7 @@ struct raft_index {
           queries,
           neighbors_tmp,
           distances_tmp,
-          ivf_to_sample_filter{
-            underlying_index.inds_ptrs().data_handle(), filter
-          }
+          filter
         );
       }
     } else if constexpr (vector_index_kind == raft_index_kind::cagra) {
