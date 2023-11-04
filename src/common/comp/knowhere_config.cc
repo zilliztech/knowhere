@@ -23,10 +23,10 @@
 #ifdef KNOWHERE_WITH_GPU
 #include "index/gpu/gpu_res_mgr.h"
 #endif
-#include "simd/hook.h"
 #ifdef KNOWHERE_WITH_RAFT
-#include "common/raft/raft_utils.h"
+#include "common/raft/integration/raft_initialization.hpp"
 #endif
+#include "simd/hook.h"
 
 namespace knowhere {
 
@@ -163,7 +163,20 @@ KnowhereConfig::FreeGPUResource() {
 void
 KnowhereConfig::SetRaftMemPool(size_t init_size, size_t max_size) {
 #ifdef KNOWHERE_WITH_RAFT
-    raft_utils::set_mem_pool_size(init_size, max_size);
+  auto config = raft_knowhere::raft_configuration{};
+  config.init_mem_pool_size_mb = init_size;
+  config.max_mem_pool_size_mb = max_size;
+  // This should probably be a separate configuration option, but fine for now
+  config.max_workspace_size_mb = max_size;
+  raft_knowhere::initialize_raft(config);
+#endif
+}
+void
+KnowhereConfig::SetRaftMemPool() {
+  // Overload for default values
+#ifdef KNOWHERE_WITH_RAFT
+  auto config = raft_knowhere::raft_configuration{};
+  raft_knowhere::initialize_raft(config);
 #endif
 }
 

@@ -77,11 +77,10 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
         // IVFFLAT_NM should load raw data
         if (index_type_ == knowhere::IndexEnum::INDEX_FAISS_IVFFLAT && binary_set.GetByName("RAW_DATA") == nullptr) {
             knowhere::BinaryPtr bin = std::make_shared<knowhere::Binary>();
-            bin->data = std::shared_ptr<uint8_t[]>((uint8_t*)xb_);
+            bin->data = std::shared_ptr<uint8_t[]>((uint8_t*)xb_, [](const uint8_t[]) {});
             bin->size = dim_ * nb_ * sizeof(float);
             binary_set.Append("RAW_DATA", bin);
         }
-
         index.Deserialize(binary_set, conf);
     }
 

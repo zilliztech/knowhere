@@ -14,22 +14,15 @@
 # the License.
 
 add_definitions(-DKNOWHERE_WITH_RAFT)
-include(cmake/utils/fetch_rapids.cmake)
-include(rapids-cmake)
-include(rapids-cpm)
-include(rapids-cuda)
-include(rapids-export)
-include(rapids-find)
-
-rapids_cpm_init()
-
-set(CMAKE_CUDA_FLAGS
-    "${CMAKE_CUDA_FLAGS} --expt-extended-lambda --expt-relaxed-constexpr")
-
-set(RAPIDS_VERSION 23.04)
 set(RAFT_VERSION "${RAPIDS_VERSION}")
-set(RAFT_FORK "rapidsai")
-set(RAFT_PINNED_TAG "branch-${RAPIDS_VERSION}")
+set(RAFT_FORK "wphicks")
+set(RAFT_PINNED_TAG "bug-ivf_flat_filter")
+
+
+rapids_find_package(CUDAToolkit REQUIRED
+  BUILD_EXPORT_SET knowhere-exports
+  INSTALL_EXPORT_SET knowhere-exports
+)
 
 function(find_and_configure_raft)
   set(oneValueArgs VERSION FORK PINNED_TAG)
