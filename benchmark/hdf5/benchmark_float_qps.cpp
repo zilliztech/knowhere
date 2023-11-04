@@ -13,7 +13,6 @@
 
 #include <thread>
 #include <vector>
-#include <nvtx3/nvtx3.hpp>
 
 #include "benchmark_knowhere.h"
 #include "knowhere/comp/index_param.h"
@@ -239,12 +238,10 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
  private:
     void
     task(const knowhere::Json& conf, int32_t worker_num, int32_t nq_total) {
-        NVTX3_FUNC_RANGE();
         auto worker = [&](int32_t idx_start, int32_t num) {
             num = std::min(num, nq_total - idx_start);
             for (int32_t i = 0; i < num; i++) {
                 knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(1, dim_, (const float*)xq_ + (idx_start + i) * dim_);
-                auto loop_range = nvtx3::scoped_range{"loop range"};
                 index_.Search(*ds_ptr, conf, nullptr);
             }
         };
@@ -279,7 +276,6 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         cfg_[knowhere::meta::DEVICE_ID] = GPU_DEVICE_ID;
 #endif
 #ifdef KNOWHERE_WITH_RAFT
-        // knowhere::KnowhereConfig::SetRaftMemPool(24576, 36864);
         knowhere::KnowhereConfig::SetRaftMemPool();
 #endif
     }
@@ -334,7 +330,7 @@ TEST_F(Benchmark_float_qps, TEST_IVF_FLAT) {
     }
 }
 
-/* TEST_F(Benchmark_float_qps, TEST_IVF_SQ8) {
+TEST_F(Benchmark_float_qps, TEST_IVF_SQ8) {
 #ifdef KNOWHERE_WITH_GPU
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_GPU_IVFSQ8;
 #else
@@ -348,7 +344,7 @@ TEST_F(Benchmark_float_qps, TEST_IVF_FLAT) {
         create_index(index_file_name, conf);
         test_ivf(conf);
     }
-} */
+}
 
 TEST_F(Benchmark_float_qps, TEST_IVF_PQ) {
 #ifdef KNOWHERE_WITH_GPU
