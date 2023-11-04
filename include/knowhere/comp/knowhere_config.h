@@ -107,6 +107,12 @@ class KnowhereConfig {
     */
     static void
     SetRaftMemPool(size_t init_size, size_t max_size);
+
+    /**
+     * Initialize RAFT with defaults
+     */
+    static void
+    SetRaftMemPool();
 };
 
 }  // namespace knowhere

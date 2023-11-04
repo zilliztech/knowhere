@@ -80,6 +80,35 @@ constexpr const char* M = "m";          // PQ param for IVFPQ
 constexpr const char* SSIZE = "ssize";
 constexpr const char* REORDER_K = "reorder_k";
 constexpr const char* WITH_RAW_DATA = "with_raw_data";
+// RAFT Params
+constexpr const char* REFINE_RATIO = "refine_ratio";
+// RAFT-specific IVF Params
+constexpr const char* KMEANS_N_ITERS = "kmeans_n_iters";
+constexpr const char* KMEANS_TRAINSET_FRACTION = "kmeans_trainset_fraction";
+constexpr const char* ADAPTIVE_CENTERS = "adaptive_centers";  // IVF FLAT
+constexpr const char* CODEBOOK_KIND = "codebook_kind";        // IVF PQ
+constexpr const char* FORCE_RANDOM_ROTATION = "force_random_rotation";        // IVF PQ
+constexpr const char* CONSERVATIVE_MEMORY_ALLOCATION = "conservative_memory_allocation";  // IVF PQ
+constexpr const char* LUT_DTYPE = "lut_dtype";  // IVF PQ
+constexpr const char* INTERNAL_DISTANCE_DTYPE = "internal_distance_dtype"; // IVF PQ
+constexpr const char* PREFERRED_SHMEM_CARVEOUT = "preferred_shmem_carveout"; // IVF PQ
+
+// CAGRA Params
+constexpr const char* INTERMEDIATE_GRAPH_DEGREE = "intermediate_graph_degree";
+constexpr const char* GRAPH_DEGREE = "graph_degree";
+constexpr const char* ITOPK_SIZE = "itopk_size";
+constexpr const char* MAX_QUERIES = "max_queries";
+constexpr const char* BUILD_ALGO = "build_algo";
+constexpr const char* SEARCH_ALGO = "search_algo";
+constexpr const char* TEAM_SIZE = "team_size";
+constexpr const char* SEARCH_WIDTH = "search_width";
+constexpr const char* MIN_ITERATIONS = "min_iterations";
+constexpr const char* MAX_ITERATIONS = "max_iterations";
+constexpr const char* THREAD_BLOCK_SIZE = "thread_block_size";
+constexpr const char* HASHMAP_MODE = "hashmap_mode";
+constexpr const char* HASHMAP_MIN_BITLEN = "hashmap_min_bitlen";
+constexpr const char* HASHMAP_MAX_FILL_RATE = "hashmap_max_fill_rate";
+constexpr const char* NN_DESCENT_NITER = "nn_descent_niter";
 
 // HNSW Params
 constexpr const char* EFCONSTRUCTION = "efConstruction";

@@ -15,31 +15,18 @@
  * limitations under the License.
  */
 
-#include "ivf_raft.cuh"
+#include "gpu_raft.h"
+#include "common/raft/proto/raft_index_kind.hpp"
 #include "knowhere/factory.h"
 #include "knowhere/index_node_thread_pool_wrapper.h"
-
-constexpr uint32_t cuda_concurrent_size = 32;
+#include <vector>
 
 namespace knowhere {
+template struct GpuRaftIndexNode<raft_proto::raft_index_kind::ivf_flat>;
 
 KNOWHERE_REGISTER_GLOBAL(GPU_RAFT_IVF_FLAT, [](const int32_t& version, const Object& object) {
     return Index<IndexNodeThreadPoolWrapper>::Create(
-        std::make_unique<RaftIvfIndexNode<detail::raft_ivf_flat_index>>(version, object), cuda_concurrent_size);
+        std::make_unique<GpuRaftIvfFlatIndexNode>(version, object), cuda_concurrent_size);
 });
 
-KNOWHERE_REGISTER_GLOBAL(GPU_RAFT_IVF_PQ, [](const int32_t& version, const Object& object) {
-    return Index<IndexNodeThreadPoolWrapper>::Create(
-        std::make_unique<RaftIvfIndexNode<detail::raft_ivf_pq_index>>(version, object), cuda_concurrent_size);
-});
-
-KNOWHERE_REGISTER_GLOBAL(GPU_IVF_FLAT, [](const int32_t& version, const Object& object) {
-    return Index<IndexNodeThreadPoolWrapper>::Create(
-        std::make_unique<RaftIvfIndexNode<detail::raft_ivf_flat_index>>(version, object), cuda_concurrent_size);
-});
-
-KNOWHERE_REGISTER_GLOBAL(GPU_IVF_PQ, [](const int32_t& version, const Object& object) {
-    return Index<IndexNodeThreadPoolWrapper>::Create(
-        std::make_unique<RaftIvfIndexNode<detail::raft_ivf_pq_index>>(version, object), cuda_concurrent_size);
-});
 }  // namespace knowhere
