@@ -1332,7 +1332,8 @@ void IndexIVFPQFastScan::range_search_implem_12(
     TIC;
 
     // prepare the result handlers
-    std::unique_ptr<RangeSearchResultHandler<C, true>> handler(new RangeSearchResultHandler<C, true>(result, radius, 0, bitset));
+    float radius_thresh = C::is_max ? radius * 1.2 : radius * 0.6;  // to make range search result more accurate
+    std::unique_ptr<RangeSearchResultHandler<C, true>> handler(new RangeSearchResultHandler<C, true>(result, radius_thresh, 0, bitset));
     handler->normalizers = normalizers.get();
     int qbs2 = this->qbs2 ? this->qbs2 : 11;
 
