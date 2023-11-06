@@ -408,15 +408,8 @@ void IndexPQFastScan::search_implem_12(
         if (!(skip & 8)) {
             handler.to_flat_arrays(distances, labels, normalizers.get());
         }
-
-        FastScan_stats.t0 += handler.times[0];
-        FastScan_stats.t1 += handler.times[1];
-        FastScan_stats.t2 += handler.times[2];
-        FastScan_stats.t3 += handler.times[3];
     }
 }
-
-FastScanStats FastScan_stats;
 
 template <class C>
 void IndexPQFastScan::search_implem_14(

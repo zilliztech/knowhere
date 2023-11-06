@@ -230,25 +230,4 @@ struct IndexIVFPQFastScan : IndexIVF {
             const BitsetView bitset = nullptr) const;
 };
 
-struct IVFFastScanStats {
-    uint64_t times[10];
-    uint64_t t_compute_distance_tables, t_round;
-    uint64_t t_copy_pack, t_scan, t_to_flat;
-    uint64_t reservoir_times[4];
-
-    double Mcy_at(int i) {
-        return times[i] / (1000 * 1000.0);
-    }
-
-    double Mcy_reservoir_at(int i) {
-        return reservoir_times[i] / (1000 * 1000.0);
-    }
-    IVFFastScanStats() {
-        reset();
-    }
-    void reset() {
-        memset(this, 0, sizeof(*this));
-    }
-};
-
 } // namespace faiss

@@ -111,16 +111,4 @@ struct IndexPQFastScan : Index {
             int impl) const;
 };
 
-struct FastScanStats {
-    uint64_t t0, t1, t2, t3;
-    FastScanStats() {
-        reset();
-    }
-    void reset() {
-        memset(this, 0, sizeof(*this));
-    }
-};
-
-FAISS_API extern FastScanStats FastScan_stats;
-
 } // namespace faiss
