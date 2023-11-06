@@ -19,6 +19,7 @@
 #include <faiss/utils/simdlib_avx2.h>
 
 #elif defined(__aarch64__)
+
 #include <faiss/utils/simdlib_neon.h>
 
 #else

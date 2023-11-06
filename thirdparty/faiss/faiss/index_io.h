@@ -52,6 +52,8 @@ const int IO_FLAG_READ_ONLY = 2;
 const int IO_FLAG_ONDISK_SAME_DIR = 4;
 // don't load IVF data to RAM, only list sizes
 const int IO_FLAG_SKIP_IVF_DATA = 8;
+// don't initialize precomputed table after loading
+const int IO_FLAG_SKIP_PRECOMPUTE_TABLE = 16;
 // load index data with vectors' norms
 const int IO_FLAG_WITH_NORM = 1 << 8;
 // try to memmap data (useful to load an ArrayInvertedLists as an
@@ -67,7 +69,10 @@ IndexBinary* read_index_binary(FILE* f, int io_flags = 0);
 IndexBinary* read_index_binary(IOReader* reader, int io_flags = 0);
 
 void write_VectorTransform(const VectorTransform* vt, const char* fname);
+void write_VectorTransform(const VectorTransform* vt, IOWriter* f);
+
 VectorTransform* read_VectorTransform(const char* fname);
+VectorTransform* read_VectorTransform(IOReader* f);
 
 ProductQuantizer* read_ProductQuantizer(const char* fname);
 ProductQuantizer* read_ProductQuantizer(IOReader* reader);

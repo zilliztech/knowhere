@@ -19,9 +19,10 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include <faiss/FaissHook.h>
 #include <faiss/impl/platform_macros.h>
 #include <faiss/utils/distances.h>
+
+#include "simd/hook.h"
 
 namespace faiss {
 
@@ -456,7 +457,7 @@ void ZnSphereCodec::decode(uint64_t code, float* c) const {
     int nnz = 0;
     for (int i = 0; i < dim; i++) {
         if (c[i] != 0) {
-            if (signs & (1UL << nnz)) {
+            if (signs & (uint64_t(1) << nnz)) {
                 c[i] = -c[i];
             }
             nnz++;
@@ -637,7 +638,7 @@ void ZnSphereCodecRec::decode(uint64_t code, float* c) const {
     }
 }
 
-// if not use_rec, instanciate an arbitrary harmless znc_rec
+// if not use_rec, instantiate an arbitrary harmless znc_rec
 ZnSphereCodecAlt::ZnSphereCodecAlt(int dim, int r2)
         : ZnSphereCodec(dim, r2),
           use_rec((dim & (dim - 1)) == 0),

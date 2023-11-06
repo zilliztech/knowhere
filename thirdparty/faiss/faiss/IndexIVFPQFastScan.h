@@ -9,6 +9,7 @@
 
 #include <memory>
 
+#include <faiss/IndexIVFFastScan.h>
 #include <faiss/IndexIVFPQ.h>
 #include <faiss/impl/ProductQuantizer.h>
 #include <faiss/utils/AlignedTable.h>
@@ -31,39 +32,21 @@ namespace faiss {
  * 13: idem, collect results in reservoir
  */
 
-struct IndexIVFPQFastScan : IndexIVF {
-    bool by_residual;    ///< Encode residual or plain vector?
+struct IndexIVFPQFastScan : IndexIVFFastScan {
     ProductQuantizer pq; ///< produces the codes
-
-    // size of the kernel
-    int bbs; // set at build time
-
-    // M rounded up to a multiple of 2
-    size_t M2;
 
     /// precomputed tables management
     int use_precomputed_table = 0;
     /// if use_precompute_table size (nlist, pq.M, pq.ksub)
     AlignedTable<float> precomputed_table;
 
-    // search-time implementation
-    int implem = 0;
-    // skip some parts of the computation (for timing)
-    int skip = 0;
-
-    // batching factors at search time (0 = default)
-    int qbs = 0;
-    size_t qbs2 = 0;
-
-    bool is_cosine_ = false;
-    std::vector<float> norms;
-
+    // todo agzuhva: add back cosine support from knowhere
     IndexIVFPQFastScan(
             Index* quantizer,
             size_t d,
             size_t nlist,
             size_t M,
-            size_t nbits_per_idx,
+            size_t nbits,
             MetricType metric = METRIC_L2,
             int bbs = 32);
 
@@ -72,7 +55,7 @@ struct IndexIVFPQFastScan : IndexIVF {
             size_t d,
             size_t nlist,
             size_t M,
-            size_t nbits_per_idx,
+            size_t nbits,
             bool is_cosine,
             MetricType metric = METRIC_L2,
             int bbs = 32);
@@ -82,16 +65,9 @@ struct IndexIVFPQFastScan : IndexIVF {
     // built from an IndexIVFPQ
     explicit IndexIVFPQFastScan(const IndexIVFPQ& orig, int bbs = 32);
 
-    /// orig's inverted lists (for debugging)
-    InvertedLists* orig_invlists = nullptr;
+    void train_encoder(idx_t n, const float* x, const idx_t* assign) override;
 
-    void train_residual(idx_t n, const float* x) override;
-
-    void train(idx_t n, const float* x) override;
-
-    void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
-
-    void add_with_ids_impl(idx_t n, const float* x, const idx_t* xids);
+    idx_t train_encoder_num_vectors() const override;
 
     /// build precomputed table, possibly updating use_precomputed_table
     void precompute_table();
@@ -105,32 +81,9 @@ struct IndexIVFPQFastScan : IndexIVF {
             uint8_t* codes,
             bool include_listno = false) const override;
 
-    void search(
-            idx_t n,
-            const float* x,
-            idx_t k,
-            float* distances,
-            idx_t* labels,
-            const BitsetView bitset = nullptr) const override;
-
-    void search_thread_safe(
-            idx_t n,
-            const float* x,
-            idx_t k,
-            float* distances,
-            idx_t* labels,
-            const size_t nprobe,
-            const BitsetView bitset = nullptr) const;
-
-    void range_search_thread_safe(
-            idx_t n,
-            const float* x,
-            float radius,
-            RangeSearchResult* result,
-            const size_t nprobe,
-            const BitsetView bitset = nullptr) const;
-
     // prepare look-up tables
+
+    bool lookup_table_is_3d() const override;
 
     void compute_LUT(
             size_t n,
@@ -138,96 +91,9 @@ struct IndexIVFPQFastScan : IndexIVF {
             const idx_t* coarse_ids,
             const float* coarse_dis,
             AlignedTable<float>& dis_tables,
-            AlignedTable<float>& biases) const;
+            AlignedTable<float>& biases) const override;
 
-    void compute_LUT_uint8(
-            size_t n,
-            const float* x,
-            const idx_t* coarse_ids,
-            const float* coarse_dis,
-            AlignedTable<uint8_t>& dis_tables,
-            AlignedTable<uint16_t>& biases,
-            float* normalizers) const;
-
-    // internal search funcs
-
-    template <bool is_max>
-    void search_dispatch_implem(
-            idx_t n,
-            const float* x,
-            idx_t k,
-            float* distances,
-            idx_t* labels,
-            const IVFSearchParameters* params = nullptr,
-            const BitsetView bitset = nullptr) const;
-
-    template <bool is_max>
-    void range_search_dispatch_implem(
-            idx_t n,
-            const float* x,
-            float radius,
-            RangeSearchResult* result,
-            const IVFSearchParameters* params = nullptr,
-            const BitsetView bitset = nullptr) const;
-
-    template <class C>
-    void search_implem_1(
-            idx_t n,
-            const float* x,
-            idx_t k,
-            float* distances,
-            idx_t* labels,
-            idx_t nprobe,
-            const BitsetView bitset = nullptr) const;
-
-    template <class C>
-    void search_implem_2(
-            idx_t n,
-            const float* x,
-            idx_t k,
-            float* distances,
-            idx_t* labels,
-            idx_t nprobe,
-            const BitsetView bitset = nullptr) const;
-
-    // implem 10 and 12 are not multithreaded internally, so
-    // export search stats
-    template <class C>
-    void search_implem_10(
-            idx_t n,
-            const float* x,
-            idx_t k,
-            float* distances,
-            idx_t* labels,
-            int impl,
-            size_t* ndis_out,
-            size_t* nlist_out,
-            idx_t nprobe,
-            const BitsetView bitset = nullptr) const;
-
-    template <class C>
-    void search_implem_12(
-            idx_t n,
-            const float* x,
-            idx_t k,
-            float* distances,
-            idx_t* labels,
-            int impl,
-            size_t* ndis_out,
-            size_t* nlist_out,
-            idx_t nprobe,
-            const BitsetView bitset = nullptr) const;
-
-    template <class C>
-    void range_search_implem_12(
-            idx_t n,
-            const float* x,
-            float radius,
-            RangeSearchResult* result,
-            size_t* ndis_out,
-            size_t* nlist_out,
-            idx_t nprobe,
-            const BitsetView bitset = nullptr) const;
+    void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
 };
 
 } // namespace faiss

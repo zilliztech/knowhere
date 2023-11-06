@@ -57,7 +57,7 @@ const float* IndexLSH::apply_preprocess(idx_t n, const float* x) const {
     }
 
     if (train_thresholds) {
-        if (xt == NULL) {
+        if (xt == nullptr) {
             xt = new float[nbits * n];
             memcpy(xt, x, sizeof(*x) * n * nbits);
         }
@@ -105,9 +105,10 @@ void IndexLSH::search(
         idx_t k,
         float* distances,
         idx_t* labels,
-        const BitsetView bitset) const {
+        const SearchParameters* params) const {
+    // FAISS_THROW_IF_NOT_MSG(
+    //         !params, "search params not supported for this index");
     FAISS_THROW_IF_NOT(k > 0);
-
     FAISS_THROW_IF_NOT(is_trained);
     const float* xt = apply_preprocess(n, x);
     ScopeDeleter<float> del(xt == x ? nullptr : xt);
@@ -122,8 +123,14 @@ void IndexLSH::search(
 
     int_maxheap_array_t res = {size_t(n), size_t(k), labels, idistances};
 
-    binary_knn_hc(faiss::METRIC_Hamming, &res, (const uint8_t*)&qcodes,
-                  codes.data(), ntotal, code_size, bitset);
+    binary_knn_hc(
+        faiss::METRIC_Hamming,
+        &res, 
+        qcodes, 
+        codes.data(), 
+        ntotal, 
+        code_size, 
+        (params == nullptr) ? nullptr : params->sel);
 
     // convert distances to floats
     for (int i = 0; i < k * n; i++)

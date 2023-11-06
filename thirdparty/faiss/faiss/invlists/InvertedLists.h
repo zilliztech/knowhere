@@ -15,12 +15,14 @@
  * the interface.
  */
 
-#include <memory>
-#include <vector>
 #include <atomic>
-#include <set>
+#include <cassert>
 #include <deque>
-#include <faiss/Index.h>
+#include <memory>
+#include <set>
+#include <vector>
+
+#include <faiss/MetricType.h>
 
 namespace faiss {
 
@@ -48,6 +50,13 @@ using PageLockMemoryPtr = std::shared_ptr<PageLockMemory>;
 
 namespace faiss {
 
+struct InvertedListsIterator {
+    virtual ~InvertedListsIterator();
+    virtual bool is_available() const = 0;
+    virtual void next() = 0;
+    virtual std::pair<idx_t, const uint8_t*> get_id_and_codes() = 0;
+};
+
 /** Table of inverted lists
  * multithreading rules:
  * - concurrent read accesses are allowed
@@ -56,12 +65,13 @@ namespace faiss {
  *   are allowed
  */
 struct InvertedLists {
-    typedef Index::idx_t idx_t;
-
     size_t nlist;     ///< number of possible key values
     size_t code_size; ///< code size per vector in bytes
+    bool use_iterator;
 
     InvertedLists(size_t nlist, size_t code_size);
+
+    virtual ~InvertedLists();
 
     /// used for BlockInvertedLists, where the codes are packed into groups
     /// and the individual code size is meaningless
@@ -69,6 +79,9 @@ struct InvertedLists {
 
     /*************************
      *  Read only functions */
+
+    // check if the list is empty
+    bool is_empty(size_t list_no) const;
 
     /// get the size of a list
     virtual size_t list_size(size_t list_no) const = 0;
@@ -81,6 +94,9 @@ struct InvertedLists {
 
     // get the segment minimal number of a list (continuous storage can be regarded as 1-segment storage)
     virtual size_t get_segment_offset(size_t list_no, size_t segment_no) const;
+
+    /// get iterable for lists that use_iterator
+    virtual InvertedListsIterator* get_iterator(size_t list_no) const;
 
     /** get the codes for an inverted list
      * must be released by release_codes
@@ -141,8 +157,8 @@ struct InvertedLists {
 
     /// add one entry to an inverted list
     virtual size_t add_entry(
-            size_t list_no,
-            idx_t theid,
+            size_t list_no, 
+            idx_t theid, 
             const uint8_t* code,
             const float* code_norm = nullptr);
 
@@ -174,10 +190,36 @@ struct InvertedLists {
 
     virtual bool is_readonly() const;
 
+    /*************************
+     * high level functions  */
+
     /// move all entries from oivf (empty on output)
     void merge_from(InvertedLists* oivf, size_t add_id);
 
-    virtual ~InvertedLists();
+    // how to copy a subset of elements from the inverted lists
+    // This depends on two integers, a1 and a2.
+    enum subset_type_t : int {
+        // depends on IDs
+        SUBSET_TYPE_ID_RANGE = 0, // copies ids in [a1, a2)
+        SUBSET_TYPE_ID_MOD = 1,   // copies ids if id % a1 == a2
+        // depends on order within invlists
+        SUBSET_TYPE_ELEMENT_RANGE =
+                2, // copies fractions of invlists so that a1 elements are left
+                   // before and a2 after
+        SUBSET_TYPE_INVLIST_FRACTION =
+                3, // take fraction a2 out of a1 from each invlist, 0 <= a2 < a1
+        // copy only inverted lists a1:a2
+        SUBSET_TYPE_INVLIST = 4
+    };
+
+    /** copy a subset of the entries index to the other index
+     * @return number of entries copied
+     */
+    size_t copy_subset_to(
+            InvertedLists& other,
+            subset_type_t subset_type,
+            idx_t a1,
+            idx_t a2) const;
 
     /*************************
      * statistics            */
@@ -324,6 +366,9 @@ struct ArrayInvertedLists : InvertedLists {
 
     InvertedLists* to_readonly() override;
 
+    /// permute the inverted lists, map maps new_id to old_id
+    void permute_invlists(const idx_t* map);
+
     ~ArrayInvertedLists() override;
 };
 
@@ -334,11 +379,11 @@ struct ConcurrentArrayInvertedLists : InvertedLists {
         Segment(size_t segment_size, size_t code_size) : segment_size_(segment_size), code_size_(code_size) {
             data_.reserve(segment_size_ * code_size_);
         }
-        T& operator[](Index::idx_t idx) {
+        T& operator[](idx_t idx) {
             assert(idx < segment_size_);
             return data_[idx * code_size_];
         }
-        const T& operator[](Index::idx_t idx) const {
+        const T& operator[](idx_t idx) const {
             assert(idx < segment_size_);
             return data_[idx * code_size_];
         }
