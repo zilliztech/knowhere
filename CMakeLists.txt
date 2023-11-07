@@ -30,6 +30,13 @@ knowhere_option(WITH_COVERAGE "Build with coverage" OFF)
 knowhere_option(WITH_CCACHE "Build with ccache" ON)
 knowhere_option(WITH_PROFILER "Build with profiler" OFF)
 
+# this is needed for clang on ubuntu:20.04, otherwise
+#   the linked fails with 'undefined reference' error.
+# fmt v9 was used by the time the error was encountered.
+# clang on ubuntu:22.04 seems to be unaffected.
+# gcc seems to be unaffected.
+add_definitions(-DFMT_HEADER_ONLY)
+
 if(KNOWHERE_VERSION)
   message(STATUS "Building KNOWHERE version: ${KNOWHERE_VERSION}")
   add_definitions(-DKNOWHERE_VERSION=${KNOWHERE_VERSION})
