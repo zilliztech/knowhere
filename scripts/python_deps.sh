@@ -36,7 +36,7 @@ if [[ "${MACHINE}" == "Linux" ]]; then
         # for Ubuntu 18.04
         release_num=$(lsb_release -r --short)
         sudo apt install -y libcurl4-openssl-dev libaio libaio-devel libopenblas-dev
-        pip3 install conan==1.58.0
+        pip3 install conan==1.61.0
     elif [[ -x "$(command -v yum)" ]]; then
         yum install -y sudo
         case $(uname -m) in
@@ -45,10 +45,10 @@ if [[ "${MACHINE}" == "Linux" ]]; then
             x86_64) sudo yum install -y openblas-devel libaio libaio-devel ;;
             arm) ;;
         esac
-        pip3 install conan==1.58.0
+        pip3 install conan==1.61.0
     elif [[ -x "$(command -v apk)" ]]; then
         apk add openblas-dev libaio libaio-dev
-        pip3 install conan==1.58.0
+        pip3 install conan==1.61.0
     fi
 fi
 
@@ -63,7 +63,7 @@ if [[ "${MACHINE}" == "Mac"  ]]; then
     export CMAKE_PREFIX_PATH="/usr/local;${CMAKE_PREFIX_PATH}"
     export CC="$(brew --prefix llvm)/bin/clang"
     export CXX="$(brew --prefix llvm)/bin/clang++"
-    pip3 install conan==1.58.0
+    pip3 install conan==1.61.0
     conan profile new default --detect --force
     conan profile update settings.compiler=clang default
     conan profile update settings.compiler.version=16 default

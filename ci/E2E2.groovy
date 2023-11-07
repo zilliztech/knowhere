@@ -27,7 +27,7 @@ pipeline {
                         version="${env.CHANGE_ID}.${date}.${gitShortCommit}"
                         sh "apt-get update || true"
                         sh "apt-get install libaio-dev libopenblas-dev libcurl4-openssl-dev libdouble-conversion-dev libevent-dev libgflags-dev git -y"
-                        sh "pip3 install conan==1.58.0"
+                        sh "pip3 install conan==1.61.0"
                         sh "conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local"
                         sh "rm -rf /usr/local/lib/cmake/"
                         sh "mkdir build"

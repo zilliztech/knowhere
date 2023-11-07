@@ -29,7 +29,7 @@ Here's a list of verified OS types where Knowhere can successfully build and run
 
 ```bash
 $ sudo apt install build-essential libopenblas-dev libaio-dev python3-dev python3-pip
-$ pip3 install conan==1.59.0 --user
+$ pip3 install conan==1.61.0 --user
 $ export PATH=$PATH:$HOME/.local/bin
 ```
 
