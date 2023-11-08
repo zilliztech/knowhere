@@ -270,6 +270,15 @@ IvfIndexNode<T>::Train(const DataSet& dataset, const Config& cfg) {
     auto dim = dataset.GetDim();
     auto data = dataset.GetTensor();
 
+    // faiss scann needs at least 16 rows since nbits=4
+    constexpr int64_t SCANN_MIN_ROWS = 16;
+    if constexpr (std::is_same<faiss::IndexScaNN, T>::value) {
+        if (rows < SCANN_MIN_ROWS) {
+            LOG_KNOWHERE_ERROR_ << rows << " rows is not enough, scann needs at least 16 rows to build index";
+            return Status::faiss_inner_error;
+        }
+    }
+
     typename QuantizerT<T>::type* qzr = nullptr;
     faiss::IndexIVFPQFastScan* base_index = nullptr;
     std::unique_ptr<T> index;
