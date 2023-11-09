@@ -40,7 +40,7 @@ TEST(MEM_LEAK, ivfflat) {
         double t0 = getmillisecs();
 
         for (int i = 0; i < N2; i++) {
-            std::vector<Index::idx_t> I(10 * bs);
+            std::vector<idx_t> I(10 * bs);
             std::vector<float> D(10 * bs);
 
             tfidf_faiss_index.search(
@@ -61,7 +61,7 @@ TEST(MEM_LEAK, ivfflat) {
             }
         }
         printf("\n");
-
+        
         // TODO: caiyd
         // Memory usage increases after faiss updated, this behavior is as
         // same as faiss-1.7.0 updated. So disable memory usage check.

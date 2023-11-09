@@ -7,11 +7,12 @@
 
 // -*- c++ -*-
 
-#include <faiss/FaissHook.h>
 #include <faiss/IndexLattice.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/utils/distances.h>
 #include <faiss/utils/hamming.h> // for the bitstring routines
+
+#include "simd/hook.h"
 
 namespace faiss {
 
@@ -120,7 +121,12 @@ void IndexLattice::add(idx_t, const float*) {
 }
 
 void IndexLattice::search(
-        idx_t, const float*, idx_t, float*, idx_t*, const BitsetView) const {
+        idx_t,
+        const float*,
+        idx_t,
+        float*,
+        idx_t*,
+        const SearchParameters*) const {
     FAISS_THROW_MSG("not implemented");
 }
 

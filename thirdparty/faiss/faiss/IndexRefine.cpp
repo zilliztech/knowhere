@@ -12,6 +12,7 @@
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/utils/Heap.h>
 #include <faiss/utils/distances.h>
+#include <faiss/utils/distances_if.h>
 #include <faiss/utils/utils.h>
 
 namespace faiss {
@@ -62,7 +63,7 @@ void IndexRefine::reset() {
 
 namespace {
 
-typedef faiss::Index::idx_t idx_t;
+using idx_t = faiss::idx_t;
 
 template <class C>
 static void reorder_2_heaps(
@@ -96,9 +97,14 @@ void IndexRefine::search(
         idx_t k,
         float* distances,
         idx_t* labels,
-        const BitsetView bitset) const {
-    FAISS_THROW_IF_NOT(k > 0);
+        const SearchParameters* params) const {
+    FAISS_THROW_IF_NOT_MSG(
+            !params, "search params not supported for this index");
 
+    FAISS_THROW_IF_NOT(base_index);
+    FAISS_THROW_IF_NOT(refine_index);
+
+    FAISS_THROW_IF_NOT(k > 0);
     FAISS_THROW_IF_NOT(is_trained);
     idx_t k_base = idx_t(k * k_factor);
     idx_t* base_labels = labels;
@@ -127,13 +133,33 @@ void IndexRefine::search(
         for (idx_t i = 0; i < n; i++) {
             dc->set_query(x + i * d);
             idx_t ij = i * k_base;
-            for (idx_t j = 0; j < k_base; j++) {
-                idx_t idx = base_labels[ij];
-                if (idx < 0)
-                    break;
-                base_distances[ij] = (*dc)(idx);
-                ij++;
-            }
+
+            // // baseline
+            // for (idx_t j = 0; j < k_base; j++) {
+            //     idx_t idx = base_labels[ij];
+            //     if (idx < 0)
+            //         break;
+            //     base_distances[ij] = (*dc)(idx);
+            //     ij++;
+            // }
+
+            // the lambda that filters acceptable elements.
+            auto filter = [&](const size_t j) -> std::optional<bool> {
+                // stop iterating if idx < 0
+                if (base_labels[j + i * k_base] < 0) {
+                    return std::nullopt;
+                }
+                // go ahead
+                return true;
+            };
+
+            // the lambda that applies a filtered element.
+            auto apply = [&](const float dis, const idx_t j) {
+                base_distances[j + i * k_base] = dis;
+            };
+
+            distance_compute_by_idx_if(
+                    base_labels + i * k_base, k_base, dc.get(), filter, apply);
         }
     }
 
@@ -208,7 +234,7 @@ IndexRefineFlat::IndexRefineFlat(Index* base_index)
 
 IndexRefineFlat::IndexRefineFlat(Index* base_index, const float* xb)
         : IndexRefine(base_index, nullptr) {
-    is_trained = base_index->is_trained;    
+    is_trained = base_index->is_trained;
     refine_index = new IndexFlat(base_index->d, base_index->metric_type);
     own_refine_index = true;
     refine_index->add(base_index->ntotal, xb);
@@ -224,9 +250,13 @@ void IndexRefineFlat::search(
         idx_t k,
         float* distances,
         idx_t* labels,
-        const BitsetView bitset) const {
-    FAISS_THROW_IF_NOT(k > 0);
+        const SearchParameters* params) const {
+    FAISS_THROW_IF_NOT_MSG(
+            !params, "search params not supported for this index");
+    FAISS_THROW_IF_NOT(base_index);
+    FAISS_THROW_IF_NOT(refine_index);
 
+    FAISS_THROW_IF_NOT(k > 0);
     FAISS_THROW_IF_NOT(is_trained);
     idx_t k_base = idx_t(k * k_factor);
     idx_t* base_labels = labels;

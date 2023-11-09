@@ -33,6 +33,17 @@ fvec_L1_avx(const float* x, const float* y, size_t d);
 float
 fvec_Linf_avx(const float* x, const float* y, size_t d);
 
+void
+fvec_madd_avx(size_t n, const float* a, float bf, const float* b, float* c);
+
+void
+fvec_inner_product_batch_4_avx(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
+                               const size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
+
+void
+fvec_L2sqr_batch_4_avx(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
+                       const size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
+
 }  // namespace faiss
 
 #endif /* DISTANCES_AVX_H */

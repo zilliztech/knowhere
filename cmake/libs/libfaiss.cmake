@@ -16,6 +16,10 @@ knowhere_file_glob(GLOB FAISS_AVX2_SRCS
 
 list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX512_SRCS})
 
+# disable RHNSW
+knowhere_file_glob(GLOB FAISS_RHNSW_SRCS thirdparty/faiss/faiss/impl/RHNSW.cpp)
+list(REMOVE_ITEM FAISS_SRCS ${FAISS_RHNSW_SRCS})
+
 if(__X86_64)
   set(UTILS_SRC src/simd/distances_ref.cc src/simd/hook.cc)
   set(UTILS_SSE_SRC src/simd/distances_sse.cc)

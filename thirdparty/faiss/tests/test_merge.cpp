@@ -26,7 +26,7 @@ namespace {
 struct Tempfilename {
     static pthread_mutex_t mutex;
 
-    std::string filename = "faiss_tmp_XXXXXX";
+    std::string filename = "/tmp/faiss_tmp_XXXXXX";
 
     Tempfilename() {
         pthread_mutex_lock(&mutex);
@@ -48,7 +48,7 @@ struct Tempfilename {
 
 pthread_mutex_t Tempfilename::mutex = PTHREAD_MUTEX_INITIALIZER;
 
-typedef faiss::Index::idx_t idx_t;
+typedef faiss::idx_t idx_t;
 
 // parameters to use for the test
 int d = 64;
@@ -148,7 +148,7 @@ int compare_merged(
 // test on IVFFlat with implicit numbering
 TEST(MERGE, merge_flat_no_ids) {
     faiss::IndexShards index_shards(d);
-    index_shards.own_fields = true;
+    index_shards.own_indices = true;
     for (int i = 0; i < nindex; i++) {
         index_shards.add_shard(
                 new faiss::IndexIVFFlat(&cd.quantizer, d, nlist));
@@ -164,7 +164,7 @@ TEST(MERGE, merge_flat_no_ids) {
 // test on IVFFlat, explicit ids
 TEST(MERGE, merge_flat) {
     faiss::IndexShards index_shards(d, false, false);
-    index_shards.own_fields = true;
+    index_shards.own_indices = true;
 
     for (int i = 0; i < nindex; i++) {
         index_shards.add_shard(
@@ -180,7 +180,7 @@ TEST(MERGE, merge_flat) {
 // test on IVFFlat and a VectorTransform
 TEST(MERGE, merge_flat_vt) {
     faiss::IndexShards index_shards(d, false, false);
-    index_shards.own_fields = true;
+    index_shards.own_indices = true;
 
     // here we have to retrain because of the vectorTransform
     faiss::RandomRotationMatrix rot(d, d);
@@ -211,7 +211,7 @@ TEST(MERGE, merge_flat_vt) {
 // put the merged invfile on disk
 TEST(MERGE, merge_flat_ondisk) {
     faiss::IndexShards index_shards(d, false, false);
-    index_shards.own_fields = true;
+    index_shards.own_indices = true;
     Tempfilename filename;
 
     for (int i = 0; i < nindex; i++) {
@@ -234,7 +234,7 @@ TEST(MERGE, merge_flat_ondisk) {
 // now use ondisk specific merge
 TEST(MERGE, merge_flat_ondisk_2) {
     faiss::IndexShards index_shards(d, false, false);
-    index_shards.own_fields = true;
+    index_shards.own_indices = true;
 
     for (int i = 0; i < nindex; i++) {
         index_shards.add_shard(

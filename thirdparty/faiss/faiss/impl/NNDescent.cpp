@@ -13,6 +13,7 @@
 #include <string>
 
 #include <faiss/impl/AuxIndexStructures.h>
+#include <faiss/impl/DistanceComputer.h>
 
 namespace faiss {
 
@@ -146,14 +147,8 @@ using namespace nndescent;
 
 constexpr int NUM_EVAL_POINTS = 100;
 
-NNDescent::NNDescent(const int d, const int K) : K(K), random_seed(2021), d(d) {
-    ntotal = 0;
-    has_built = false;
-    S = 10;
-    R = 100;
+NNDescent::NNDescent(const int d, const int K) : K(K), d(d) {
     L = K + 50;
-    iter = 10;
-    search_L = 0;
 }
 
 NNDescent::~NNDescent() {}
@@ -310,7 +305,7 @@ void NNDescent::generate_eval_set(
     for (int i = 0; i < c.size(); i++) {
         std::vector<Neighbor> tmp;
         for (int j = 0; j < N; j++) {
-            if (i == j)
+            if (c[i] == j)
                 continue; // skip itself
             float dist = qdis.symmetric_dis(c[i], j);
             tmp.push_back(Neighbor(j, dist, true));
@@ -379,6 +374,10 @@ void NNDescent::init_graph(DistanceComputer& qdis) {
 
 void NNDescent::build(DistanceComputer& qdis, const int n, bool verbose) {
     FAISS_THROW_IF_NOT_MSG(L >= K, "L should be >= K in NNDescent.build");
+    FAISS_THROW_IF_NOT_FMT(
+            n > NUM_EVAL_POINTS,
+            "NNDescent.build cannot build a graph smaller than %d",
+            int(NUM_EVAL_POINTS));
 
     if (verbose) {
         printf("Parameters: K=%d, S=%d, R=%d, L=%d, iter=%d\n",
@@ -408,7 +407,7 @@ void NNDescent::build(DistanceComputer& qdis, const int n, bool verbose) {
     has_built = true;
 
     if (verbose) {
-        printf("Addes %d points into the index\n", ntotal);
+        printf("Added %d points into the index\n", ntotal);
     }
 }
 
@@ -424,7 +423,7 @@ void NNDescent::search(
     // candidate pool, the K best items is the result.
     std::vector<Neighbor> retset(L + 1);
 
-    // Randomly choose L points to intialize the candidate pool
+    // Randomly choose L points to initialize the candidate pool
     std::vector<int> init_ids(L);
     std::mt19937 rng(random_seed);
 

@@ -16,6 +16,7 @@
 #include "faiss/index_io.h"
 #include "index/flat/flat_config.h"
 #include "io/memory_io.h"
+#include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/factory.h"
 #include "knowhere/log.h"
@@ -93,6 +94,10 @@ class FlatIndexNode : public IndexNode {
                     ThreadPool::ScopedOmpSetter setter(1);
                     auto cur_ids = ids + k * index;
                     auto cur_dis = distances + k * index;
+
+                    BitsetViewIDSelector bw_idselector(bitset);
+                    faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+
                     if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
                         auto cur_query = (const float*)x + dim * index;
                         std::unique_ptr<float[]> copied_query = nullptr;
@@ -100,11 +105,20 @@ class FlatIndexNode : public IndexNode {
                             copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                             cur_query = copied_query.get();
                         }
-                        index_->search(1, cur_query, k, cur_dis, cur_ids, bitset);
+
+                        faiss::SearchParameters search_params;
+                        search_params.sel = id_selector;
+
+                        index_->search(1, cur_query, k, cur_dis, cur_ids, &search_params);
                     }
                     if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
                         auto cur_i_dis = reinterpret_cast<int32_t*>(cur_dis);
-                        index_->search(1, (const uint8_t*)x + index * dim / 8, k, cur_i_dis, cur_ids, bitset);
+
+                        faiss::SearchParameters search_params;
+                        search_params.sel = id_selector;
+
+                        index_->search(1, (const uint8_t*)x + index * dim / 8, k, cur_i_dis, cur_ids, &search_params);
+
                         if (index_->metric_type == faiss::METRIC_Hamming) {
                             for (int64_t j = 0; j < k; j++) {
                                 cur_dis[j] = static_cast<float>(cur_i_dis[j]);
@@ -166,6 +180,10 @@ class FlatIndexNode : public IndexNode {
                 futs.emplace_back(search_pool_->push([&, index = i] {
                     ThreadPool::ScopedOmpSetter setter(1);
                     faiss::RangeSearchResult res(1);
+
+                    BitsetViewIDSelector bw_idselector(bitset);
+                    faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+
                     if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
                         auto cur_query = (const float*)xq + dim * index;
                         std::unique_ptr<float[]> copied_query = nullptr;
@@ -173,10 +191,17 @@ class FlatIndexNode : public IndexNode {
                             copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                             cur_query = copied_query.get();
                         }
-                        index_->range_search(1, cur_query, radius, &res, bitset);
+
+                        faiss::SearchParameters search_params;
+                        search_params.sel = id_selector;
+
+                        index_->range_search(1, cur_query, radius, &res, &search_params);
                     }
                     if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
-                        index_->range_search(1, (const uint8_t*)xq + index * dim / 8, radius, &res, bitset);
+                        faiss::SearchParameters search_params;
+                        search_params.sel = id_selector;
+
+                        index_->range_search(1, (const uint8_t*)xq + index * dim / 8, radius, &res, &search_params);
                     }
                     auto elem_cnt = res.lims[1];
                     result_dist_array[index].resize(elem_cnt);

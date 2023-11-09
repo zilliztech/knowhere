@@ -11,6 +11,7 @@
 #include <type_traits>
 
 #include <faiss/FaissHook.h>
+#include <faiss/MetricType.h>
 #include <faiss/utils/distances.h>
 
 namespace faiss {
@@ -19,12 +20,13 @@ template <MetricType mt>
 struct VectorDistance {
     size_t d;
     float metric_arg;
+    static constexpr bool is_similarity = is_similarity_metric(mt);
 
     inline float operator()(const float* x, const float* y) const;
 
     // heap template to use for this type of metric
     using C = typename std::conditional<
-            mt == METRIC_INNER_PRODUCT,
+            is_similarity_metric(mt),
             CMin<float, int64_t>,
             CMax<float, int64_t>>::type;
 };
@@ -120,19 +122,17 @@ template <>
 inline float VectorDistance<METRIC_Jaccard>::operator()(
         const float* x,
         const float* y) const {
+    // todo aguzhva: knowhere implementation is different,
+    //   compare ones
+
+    // WARNING: this distance is defined only for positive input vectors.
+    // Providing vectors with negative values would lead to incorrect results.
     float accu_num = 0, accu_den = 0;
-    const float EPSILON = 0.000001;
     for (size_t i = 0; i < d; i++) {
-        float xi = x[i], yi = y[i];
-        if (fabs (xi - yi) < EPSILON) {
-            accu_num += xi;
-            accu_den += xi;
-        } else {
-            accu_den += xi;
-            accu_den += yi;
-        }
+        accu_num += fmin(x[i], y[i]);
+        accu_den += fmax(x[i], y[i]);
     }
-    return 1 - accu_num / accu_den;
+    return accu_num / accu_den;
 }
 
 } // namespace faiss
