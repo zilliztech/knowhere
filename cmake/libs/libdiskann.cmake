@@ -28,6 +28,7 @@ target_link_libraries(diskann PUBLIC ${AIO_LIBRARIES}
                                      ${DISKANN_BOOST_PROGRAM_OPTIONS_LIB}
                                      nlohmann_json::nlohmann_json
                                      Folly::folly
+                                     fmt::fmt-header-only
                                      glog::glog)
 if(__X86_64)
   target_compile_options(
