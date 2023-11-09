@@ -20,12 +20,12 @@
 #include <thread>
 #include <utility>
 
+#include "cgroup.h"
 #include "folly/executors/CPUThreadPoolExecutor.h"
 #include "folly/futures/Future.h"
 #include "knowhere/log.h"
 
 namespace knowhere {
-
 class ThreadPool {
 #ifdef __linux__
  private:
@@ -138,7 +138,7 @@ class ThreadPool {
     static std::shared_ptr<ThreadPool>
     GetGlobalBuildThreadPool() {
         if (global_build_thread_pool_size_ == 0) {
-            InitThreadPool(std::thread::hardware_concurrency(), global_build_thread_pool_size_);
+            InitThreadPool(CgroupCpuReader::GetCpuNum(), global_build_thread_pool_size_);
             LOG_KNOWHERE_WARNING_ << "Global Build ThreadPool has not been initialized yet, init it with threads num: "
                                   << global_build_thread_pool_size_;
         }
@@ -149,7 +149,7 @@ class ThreadPool {
     static std::shared_ptr<ThreadPool>
     GetGlobalSearchThreadPool() {
         if (global_search_thread_pool_size_ == 0) {
-            InitThreadPool(std::thread::hardware_concurrency(), global_search_thread_pool_size_);
+            InitThreadPool(CgroupCpuReader::GetCpuNum(), global_search_thread_pool_size_);
             LOG_KNOWHERE_WARNING_ << "Global Search ThreadPool has not been initialized yet, init it with threads num: "
                                   << global_search_thread_pool_size_;
         }
@@ -163,7 +163,7 @@ class ThreadPool {
      public:
         explicit ScopedOmpSetter(int num_threads = 0) {
             if (global_build_thread_pool_size_ == 0) {  // this should not happen in prod
-                omp_before = omp_get_max_threads();
+                omp_before = CgroupCpuReader::GetCpuNum();
             } else {
                 omp_before = global_build_thread_pool_size_;
             }
