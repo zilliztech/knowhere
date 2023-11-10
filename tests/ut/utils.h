@@ -232,3 +232,70 @@ inline auto
 GenTestVersionList() {
     return GENERATE(as<int32_t>{}, knowhere::Version::GetCurrentVersion().VersionNumber());
 }
+
+template <typename ValueT = float, typename IndPtrT = int64_t, typename IndicesT = int32_t, typename ShapeT = int64_t>
+inline knowhere::DataSetPtr
+GenSparseDataSet(ShapeT rows, ShapeT cols, float sparsity, int seed = 42) {
+    ShapeT nnz = static_cast<int>(rows * cols * (1.0f - sparsity));
+
+    std::mt19937 rng(seed);
+    auto real_distrib = std::uniform_real_distribution<ValueT>(0, 1);
+    auto int_distrib = std::uniform_int_distribution<int>(0, 100);
+
+    auto row_distrib = std::uniform_int_distribution<ShapeT>(0, rows - 1);
+    auto col_distrib = std::uniform_int_distribution<IndicesT>(0, cols - 1);
+    auto val_gen = [&rng, &real_distrib, &int_distrib]() -> ValueT {
+        if constexpr (std::is_floating_point<ValueT>::value) {
+            return real_distrib(rng);
+        } else {
+            static_assert(std::is_integral<ValueT>::value);
+            return static_cast<ValueT>(int_distrib(rng));
+        }
+    };
+
+    std::vector<std::unordered_map<IndicesT, ValueT>> data(rows);
+
+    for (ShapeT i = 0; i < nnz; ++i) {
+        auto row = row_distrib(rng);
+        while (data[row].size() == cols) {
+            row = row_distrib(rng);
+        }
+        auto col = col_distrib(rng);
+        while (data[row].find(col) != data[row].end()) {
+            col = col_distrib(rng);
+        }
+        auto val = val_gen();
+        data[row][col] = val;
+    }
+
+    int size = 3 * sizeof(ShapeT) + nnz * (sizeof(ValueT) + sizeof(IndicesT)) + (rows + 1) * sizeof(IndPtrT);
+    void* ts = new char[size];
+    memset(ts, 0, size);
+
+    char* p = static_cast<char*>(ts);
+    std::memcpy(p, &rows, sizeof(ShapeT));
+    p += sizeof(ShapeT);
+    std::memcpy(p, &cols, sizeof(ShapeT));
+    p += sizeof(ShapeT);
+    std::memcpy(p, &nnz, sizeof(ShapeT));
+    p += sizeof(ShapeT);
+
+    IndPtrT* indptr = reinterpret_cast<IndPtrT*>(p);
+    p += (rows + 1) * sizeof(IndPtrT);
+    IndicesT* indices = reinterpret_cast<IndicesT*>(p);
+    p += nnz * sizeof(IndicesT);
+    ValueT* data_p = reinterpret_cast<ValueT*>(p);
+
+    for (ShapeT i = 0; i < rows; ++i) {
+        indptr[i + 1] = indptr[i] + static_cast<IndPtrT>(data[i].size());
+        size_t cnt = 0;
+        for (auto [idx, val] : data[i]) {
+            indices[indptr[i] + cnt] = idx;
+            data_p[indptr[i] + cnt] = val;
+            cnt++;
+        }
+    }
+    auto ds = knowhere::GenDataSet(rows, cols, ts);
+    ds->SetIsOwner(true);
+    return ds;
+}

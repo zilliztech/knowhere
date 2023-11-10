@@ -343,4 +343,96 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter, distances, ids, lims);
     return GenResultDataSet(nq, ids, distances, lims);
 }
+
+expected<DataSetPtr>
+BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                         const BitsetView& bitset) {
+    auto base_csr = base_dataset->GetTensor();
+    size_t rows, cols, nnz;
+    const int64_t* indptr;
+    const int32_t* indices;
+    const float* data;
+    sparse::parse_csr_matrix(base_csr, rows, cols, nnz, indptr, indices, data);
+
+    auto xq = query_dataset->GetTensor();
+    auto nq = query_dataset->GetRows();
+
+    BruteForceConfig cfg;
+    std::string msg;
+    auto status = Config::Load(cfg, config, knowhere::SEARCH, &msg);
+    if (status != Status::success) {
+        return expected<DataSetPtr>::Err(status, std::move(msg));
+    }
+
+    std::string metric_str = cfg.metric_type.value();
+    auto result = Str2FaissMetricType(metric_str);
+    if (result.error() != Status::success) {
+        return expected<DataSetPtr>::Err(result.error(), result.what());
+    }
+    if (!IsMetricType(metric_str, metric::IP)) {
+        return expected<DataSetPtr>::Err(Status::invalid_metric_type,
+                                         "Only IP metric type is supported for sparse vector");
+    }
+
+    int topk = cfg.k.value();
+    auto labels = new sparse::label_t[nq * topk];
+    auto distances = new float[nq * topk];
+
+    auto pool = ThreadPool::GetGlobalSearchThreadPool();
+    std::vector<folly::Future<Status>> futs;
+    futs.reserve(nq);
+    for (int i = 0; i < nq; ++i) {
+        futs.emplace_back(pool->push([&, index = i] {
+            ThreadPool::ScopedOmpSetter setter(1);
+            auto cur_labels = labels + topk * index;
+            auto cur_distances = distances + topk * index;
+            std::fill(cur_labels, cur_labels + topk, -1);
+            std::fill(cur_distances, cur_distances + topk, std::numeric_limits<float>::quiet_NaN());
+
+            size_t len;
+            const int32_t* cur_indices;
+            const float* cur_data;
+            sparse::get_row(xq, index, len, cur_indices, cur_data);
+            if (len == 0) {
+                return Status::success;
+            }
+            std::unordered_map<int64_t, float> query;
+            for (size_t j = 0; j < len; ++j) {
+                query[cur_indices[j]] = cur_data[j];
+            }
+            sparse::MinMaxHeap<float> heap(topk);
+            for (size_t j = 0; j < rows; ++j) {
+                if (!bitset.empty() && bitset.test(j)) {
+                    continue;
+                }
+                float dist = 0.0f;
+                for (int64_t k = indptr[j]; k < indptr[j + 1]; ++k) {
+                    auto it = query.find(indices[k]);
+                    if (it != query.end()) {
+                        dist += it->second * data[k];
+                    }
+                }
+                if (dist > 0) {
+                    heap.push(j, -dist);
+                }
+            }
+            int result_size = heap.size();
+            for (int64_t j = result_size - 1; j >= 0; --j) {
+                cur_labels[j] = heap.top().id;
+                cur_distances[j] = -heap.top().distance;
+                heap.pop();
+            }
+            return Status::success;
+        }));
+    }
+    for (auto& fut : futs) {
+        fut.wait();
+        auto ret = fut.result().value();
+        if (ret != Status::success) {
+            return expected<DataSetPtr>::Err(ret, "failed to brute force search");
+        }
+    }
+    return GenResultDataSet(nq, cfg.k.value(), labels, distances);
+}
+
 }  // namespace knowhere
