@@ -163,20 +163,20 @@ KnowhereConfig::FreeGPUResource() {
 void
 KnowhereConfig::SetRaftMemPool(size_t init_size, size_t max_size) {
 #ifdef KNOWHERE_WITH_RAFT
-  auto config = raft_knowhere::raft_configuration{};
-  config.init_mem_pool_size_mb = init_size;
-  config.max_mem_pool_size_mb = max_size;
-  // This should probably be a separate configuration option, but fine for now
-  config.max_workspace_size_mb = max_size;
-  raft_knowhere::initialize_raft(config);
+    auto config = raft_knowhere::raft_configuration{};
+    config.init_mem_pool_size_mb = init_size;
+    config.max_mem_pool_size_mb = max_size;
+    // This should probably be a separate configuration option, but fine for now
+    config.max_workspace_size_mb = max_size;
+    raft_knowhere::initialize_raft(config);
 #endif
 }
 void
 KnowhereConfig::SetRaftMemPool() {
-  // Overload for default values
+    // Overload for default values
 #ifdef KNOWHERE_WITH_RAFT
-  auto config = raft_knowhere::raft_configuration{};
-  raft_knowhere::initialize_raft(config);
+    auto config = raft_knowhere::raft_configuration{};
+    raft_knowhere::initialize_raft(config);
 #endif
 }
 

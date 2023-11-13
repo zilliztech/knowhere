@@ -86,13 +86,13 @@ constexpr const char* REFINE_RATIO = "refine_ratio";
 // RAFT-specific IVF Params
 constexpr const char* KMEANS_N_ITERS = "kmeans_n_iters";
 constexpr const char* KMEANS_TRAINSET_FRACTION = "kmeans_trainset_fraction";
-constexpr const char* ADAPTIVE_CENTERS = "adaptive_centers";  // IVF FLAT
-constexpr const char* CODEBOOK_KIND = "codebook_kind";        // IVF PQ
-constexpr const char* FORCE_RANDOM_ROTATION = "force_random_rotation";        // IVF PQ
+constexpr const char* ADAPTIVE_CENTERS = "adaptive_centers";                              // IVF FLAT
+constexpr const char* CODEBOOK_KIND = "codebook_kind";                                    // IVF PQ
+constexpr const char* FORCE_RANDOM_ROTATION = "force_random_rotation";                    // IVF PQ
 constexpr const char* CONSERVATIVE_MEMORY_ALLOCATION = "conservative_memory_allocation";  // IVF PQ
-constexpr const char* LUT_DTYPE = "lut_dtype";  // IVF PQ
-constexpr const char* INTERNAL_DISTANCE_DTYPE = "internal_distance_dtype"; // IVF PQ
-constexpr const char* PREFERRED_SHMEM_CARVEOUT = "preferred_shmem_carveout"; // IVF PQ
+constexpr const char* LUT_DTYPE = "lut_dtype";                                            // IVF PQ
+constexpr const char* INTERNAL_DISTANCE_DTYPE = "internal_distance_dtype";                // IVF PQ
+constexpr const char* PREFERRED_SHMEM_CARVEOUT = "preferred_shmem_carveout";              // IVF PQ
 
 // CAGRA Params
 constexpr const char* INTERMEDIATE_GRAPH_DEGREE = "intermediate_graph_degree";

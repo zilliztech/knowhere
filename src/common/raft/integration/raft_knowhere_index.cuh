@@ -57,7 +57,7 @@ struct raft_index_type_mapper<true, raft_proto::raft_index_kind::ivf_pq> : std::
   using underlying_index_type = typename type::vector_index_type;
   using index_params_type = typename type::index_params_type;
   using search_params_type = typename type::search_params_type;
-}; 
+};
 template <>
 struct raft_index_type_mapper<true, raft_proto::raft_index_kind::cagra> : std::true_type {
   using data_type = raft_data_t<raft_proto::raft_index_kind::cagra>;
@@ -66,7 +66,7 @@ struct raft_index_type_mapper<true, raft_proto::raft_index_kind::cagra> : std::t
   using underlying_index_type = typename type::vector_index_type;
   using index_params_type = typename type::index_params_type;
   using search_params_type = typename type::search_params_type;
-}; 
+};
 
 } // namespace detail
 
@@ -331,14 +331,14 @@ struct raft_knowhere_index<IndexKind>::impl {
     auto result = std::int64_t{};
     if (is_trained()) {
       result = index_->size();
-    } 
+    }
     return result;
   }
   [[nodiscard]] auto dim() const {
     auto result = std::int64_t{};
     if (is_trained()) {
       result = index_->dim();
-    } 
+    }
     return result;
   }
 
