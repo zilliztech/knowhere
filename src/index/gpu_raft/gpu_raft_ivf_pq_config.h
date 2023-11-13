@@ -17,10 +17,10 @@
 #ifndef GPU_RAFT_IVF_PQ_CONFIG_H
 #define GPU_RAFT_IVF_PQ_CONFIG_H
 
-#include "knowhere/config.h"
-#include "index/ivf/ivf_config.h"
-#include "common/raft/proto/raft_index_kind.hpp"
 #include "common/raft/integration/raft_knowhere_config.hpp"
+#include "common/raft/proto/raft_index_kind.hpp"
+#include "index/ivf/ivf_config.h"
+#include "knowhere/config.h"
 
 namespace knowhere {
 
@@ -46,11 +46,7 @@ struct GpuRaftIvfPqConfig : public IvfPqConfig {
             .description("search for top k similar vector.")
             .set_range(1, 1024)  // Declared in base but limited to 1024
             .for_search();
-        KNOWHERE_CONFIG_DECLARE_FIELD(m)
-            .set_default(8)
-            .description("m")
-            .set_range(0, 65536)
-            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(m).set_default(8).description("m").set_range(0, 65536).for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(nbits)
             .set_default(0)
             .description("nbits")
@@ -93,31 +89,31 @@ struct GpuRaftIvfPqConfig : public IvfPqConfig {
     }
 };
 
-[[nodiscard]] inline auto to_raft_knowhere_config(GpuRaftIvfPqConfig const& cfg) {
-  auto result = raft_knowhere::raft_knowhere_config{raft_proto::raft_index_kind::ivf_pq};
+[[nodiscard]] inline auto
+to_raft_knowhere_config(GpuRaftIvfPqConfig const& cfg) {
+    auto result = raft_knowhere::raft_knowhere_config{raft_proto::raft_index_kind::ivf_pq};
 
-  result.metric_type = cfg.metric_type.value();
-  result.refine_ratio = cfg.refine_ratio.value();
-  result.k = cfg.k.value();
+    result.metric_type = cfg.metric_type.value();
+    result.refine_ratio = cfg.refine_ratio.value();
+    result.k = cfg.k.value();
 
-  result.nlist = cfg.nlist;
-  result.nprobe = cfg.nprobe;
-  result.kmeans_n_iters = cfg.kmeans_n_iters;
-  result.kmeans_trainset_fraction = cfg.kmeans_trainset_fraction;
+    result.nlist = cfg.nlist;
+    result.nprobe = cfg.nprobe;
+    result.kmeans_n_iters = cfg.kmeans_n_iters;
+    result.kmeans_trainset_fraction = cfg.kmeans_trainset_fraction;
 
-  result.m = cfg.m;
-  result.nbits = cfg.nbits;
-  result.codebook_kind = cfg.codebook_kind;
-  result.force_random_rotation = cfg.force_random_rotation;
-  result.conservative_memory_allocation = cfg.conservative_memory_allocation;
-  result.lookup_table_dtype = cfg.lut_dtype;
-  result.internal_distance_dtype = cfg.internal_distance_dtype;
-  result.preferred_shmem_carveout = cfg.preferred_shmem_carveout;
+    result.m = cfg.m;
+    result.nbits = cfg.nbits;
+    result.codebook_kind = cfg.codebook_kind;
+    result.force_random_rotation = cfg.force_random_rotation;
+    result.conservative_memory_allocation = cfg.conservative_memory_allocation;
+    result.lookup_table_dtype = cfg.lut_dtype;
+    result.internal_distance_dtype = cfg.internal_distance_dtype;
+    result.preferred_shmem_carveout = cfg.preferred_shmem_carveout;
 
-  return result;
+    return result;
 }
 
 }  // namespace knowhere
 
 #endif /*GPU_RAFT_IVF_PQ_CONFIG_H*/
-

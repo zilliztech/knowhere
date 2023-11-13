@@ -489,7 +489,7 @@ struct tiered_index {
         dataset_.extent(1)
       );
       raft::copy(
-        res, 
+        res,
         raft::make_device_matrix_view(
           new_dataset.data_handle(),
           size(),

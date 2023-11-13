@@ -17,10 +17,10 @@
 #ifndef GPU_RAFT_IVF_FLAT_CONFIG_H
 #define GPU_RAFT_IVF_FLAT_CONFIG_H
 
-#include "knowhere/config.h"
-#include "index/ivf/ivf_config.h"
-#include "common/raft/proto/raft_index_kind.hpp"
 #include "common/raft/integration/raft_knowhere_config.hpp"
+#include "common/raft/proto/raft_index_kind.hpp"
+#include "index/ivf/ivf_config.h"
+#include "knowhere/config.h"
 
 namespace knowhere {
 
@@ -54,22 +54,22 @@ struct GpuRaftIvfFlatConfig : public IvfFlatConfig {
     }
 };
 
-[[nodiscard]] inline auto to_raft_knowhere_config(GpuRaftIvfFlatConfig const& cfg) {
-  auto result = raft_knowhere::raft_knowhere_config{raft_proto::raft_index_kind::ivf_flat};
+[[nodiscard]] inline auto
+to_raft_knowhere_config(GpuRaftIvfFlatConfig const& cfg) {
+    auto result = raft_knowhere::raft_knowhere_config{raft_proto::raft_index_kind::ivf_flat};
 
-  result.metric_type = cfg.metric_type.value();
-  result.refine_ratio = cfg.refine_ratio.value();
-  result.k = cfg.k.value();
-  result.nlist = cfg.nlist;
-  result.nprobe = cfg.nprobe;
-  result.kmeans_n_iters = cfg.kmeans_n_iters;
-  result.kmeans_trainset_fraction = cfg.kmeans_trainset_fraction;
-  result.adaptive_centers = cfg.adaptive_centers;
+    result.metric_type = cfg.metric_type.value();
+    result.refine_ratio = cfg.refine_ratio.value();
+    result.k = cfg.k.value();
+    result.nlist = cfg.nlist;
+    result.nprobe = cfg.nprobe;
+    result.kmeans_n_iters = cfg.kmeans_n_iters;
+    result.kmeans_trainset_fraction = cfg.kmeans_trainset_fraction;
+    result.adaptive_centers = cfg.adaptive_centers;
 
-  return result;
+    return result;
 }
 
 }  // namespace knowhere
 
 #endif /*GPU_RAFT_IVF_FLAT_CONFIG_H*/
-

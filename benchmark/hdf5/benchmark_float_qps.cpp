@@ -115,8 +115,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
             printf(
                 "\n[%0.3f s] %s | %s | k=%d, "
                 "R@=%.4f\n",
-                get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(), topk_,
-                expected_recall);
+                get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(), topk_, expected_recall);
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
                 CALC_TIME_SPAN(task(conf, thread_num, nq_));

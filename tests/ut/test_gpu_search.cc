@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <string>
+
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
@@ -62,11 +63,11 @@ TEST_CASE("Test All GPU Index", "[search]") {
     };
 
     auto refined_gen = [](auto&& upstream_gen) {
-      return [upstream_gen]() {
-        knowhere::Json json = upstream_gen();
-        json[knowhere::indexparam::REFINE_RATIO] = 1.5;
-        return json;
-      };
+        return [upstream_gen]() {
+            knowhere::Json json = upstream_gen();
+            json[knowhere::indexparam::REFINE_RATIO] = 1.5;
+            return json;
+        };
     };
 
     SECTION("Test Gpu Index Search") {
