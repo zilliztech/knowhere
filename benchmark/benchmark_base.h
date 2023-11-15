@@ -209,6 +209,7 @@ class Benchmark_base {
 
  protected:
     double T0_;
+    std::string metric_type_;
     int32_t dim_;
     void* xb_ = nullptr;
     void* xq_ = nullptr;
