@@ -28,23 +28,29 @@
 
 #include <faiss/Index2Layer.h>
 #include <faiss/IndexAdditiveQuantizer.h>
+#include <faiss/IndexAdditiveQuantizerFastScan.h>
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexHNSW.h>
 #include <faiss/IndexIVF.h>
 #include <faiss/IndexIVFAdditiveQuantizer.h>
+#include <faiss/IndexIVFAdditiveQuantizerFastScan.h>
 #include <faiss/IndexIVFFlat.h>
+#include <faiss/IndexIVFIndependentQuantizer.h>
 #include <faiss/IndexIVFPQ.h>
 #include <faiss/IndexIVFPQFastScan.h>
 #include <faiss/IndexIVFPQR.h>
 #include <faiss/IndexIVFSpectralHash.h>
 #include <faiss/IndexLSH.h>
 #include <faiss/IndexLattice.h>
+#include <faiss/IndexNNDescent.h>
 #include <faiss/IndexNSG.h>
 #include <faiss/IndexPQ.h>
 #include <faiss/IndexPQFastScan.h>
 #include <faiss/IndexPreTransform.h>
 #include <faiss/IndexRefine.h>
+#include <faiss/IndexRowwiseMinMax.h>
 #include <faiss/IndexScalarQuantizer.h>
+#include <faiss/IndexScaNN.h>
 #include <faiss/MetaIndexes.h>
 #include <faiss/VectorTransform.h>
 
@@ -63,9 +69,17 @@ namespace faiss {
 static void read_index_header(Index* idx, IOReader* f) {
     READ1(idx->d);
     READ1(idx->ntotal);
-    Index::idx_t dummy;
+    READ1(idx->is_cosine);
+
+    uint8_t dummy8;
+    READ1(dummy8);
+    READ1(dummy8);
+    READ1(dummy8);
+    uint32_t dummy32;
+    READ1(dummy32);
+    idx_t dummy;
     READ1(dummy);
-    READ1(dummy);
+
     READ1(idx->is_trained);
     READ1(idx->metric_type);
     if (idx->metric_type > 1) {
@@ -202,9 +216,9 @@ InvertedLists* read_InvertedLists(IOReader* f, int io_flags) {
         size_t n;
         READ1(n);
 #ifdef USE_GPU
-        ails->pin_readonly_ids = std::make_shared<PageLockMemory>(n * sizeof(InvertedLists::idx_t));
+        ails->pin_readonly_ids = std::make_shared<PageLockMemory>(n * sizeof(idx_t));
         ails->pin_readonly_codes = std::make_shared<PageLockMemory>(n * code_size * sizeof(uint8_t));
-        READANDCHECK((InvertedLists::idx_t *) ails->pin_readonly_ids->data, n);
+        READANDCHECK((idx_t *) ails->pin_readonly_ids->data, n);
         READANDCHECK((uint8_t *) ails->pin_readonly_codes->data, n * code_size);
 #else
         ails->readonly_ids.resize(n);
@@ -213,27 +227,65 @@ InvertedLists* read_InvertedLists(IOReader* f, int io_flags) {
         READANDCHECK(ails->readonly_codes.data(), n * code_size);
 #endif
         return ails;
+    } else if (h == fourcc("ilca")) {
+        size_t nlist, code_size, segment_size;
+        READ1(nlist);
+        READ1(code_size);
+        READ1(segment_size);
+
+        bool save_norm = io_flags & IO_FLAG_WITH_NORM;
+        auto lca = new ConcurrentArrayInvertedLists(nlist, code_size, segment_size, save_norm);
+        std::vector<size_t> sizes(nlist);
+        read_ArrayInvertedLists_sizes(f, sizes);
+        for (size_t i = 0; i < lca->nlist; i++) {
+            lca->resize(i, sizes[i]);
+        }
+        for (size_t i = 0; i < lca->nlist; i++) {
+            size_t n = lca->list_size(i);
+            if (n > 0) {
+                size_t seg_num = lca->get_segment_num(i);
+                for (size_t j = 0; j < seg_num; j++) {
+                    size_t seg_size = lca->get_segment_size(i , j);
+                    size_t seg_off = lca->get_segment_offset(i, j);
+                    READANDCHECK(lca->codes[i][j].data_.data(), seg_size * lca->code_size);
+                    READANDCHECK(lca->ids[i][j].data_.data(), seg_size);
+                    if (save_norm) {
+                        READANDCHECK(lca->code_norms[i][j].data_.data(), seg_size);
+                    }
+                }
+            }
+        }
+        return lca;
     } else if (h == fourcc("ilar") && !(io_flags & IO_FLAG_SKIP_IVF_DATA)) {
         auto ails = new ArrayInvertedLists(0, 0);
         READ1(ails->nlist);
         READ1(ails->code_size);
+        ails->with_norm = io_flags & IO_FLAG_WITH_NORM;
         ails->ids.resize(ails->nlist);
         ails->codes.resize(ails->nlist);
+        if (ails->with_norm) {
+            ails->code_norms.resize(ails->nlist);
+        }
         std::vector<size_t> sizes(ails->nlist);
         read_ArrayInvertedLists_sizes(f, sizes);
         for (size_t i = 0; i < ails->nlist; i++) {
             ails->ids[i].resize(sizes[i]);
             ails->codes[i].resize(sizes[i] * ails->code_size);
+            if (ails->with_norm) {
+                ails->code_norms[i].resize(sizes[i]);
+            }
         }
         for (size_t i = 0; i < ails->nlist; i++) {
             size_t n = ails->ids[i].size();
             if (n > 0) {
                 READANDCHECK(ails->codes[i].data(), n * ails->code_size);
                 READANDCHECK(ails->ids[i].data(), n);
+                if (ails->with_norm) {
+                    READANDCHECK(ails->code_norms[i].data(), n);
+                }
             }
         }
         return ails;
-
     } else if (h == fourcc("ilar") && (io_flags & IO_FLAG_SKIP_IVF_DATA)) {
         // code is always ilxx where xx is specific to the type of invlists we
         // want so we get the 16 high bits from the io_flag and the 16 low bits
@@ -309,13 +361,14 @@ InvertedLists *read_InvertedLists_nm(IOReader *f, int io_flags) {
             FAISS_THROW_IF_NOT_FMT(ails->ptr != MAP_FAILED,
                             "could not mmap: %s",
                             strerror(errno));
+            madvise(ails->ptr, ails->totsize, MADV_RANDOM);
         }
 
         for (size_t i = 0; i < ails->nlist; i++) {
             OnDiskInvertedLists::List & l = ails->lists[i];
             l.size = l.capacity = sizes[i];
             l.offset = o;
-            o += l.size * (sizeof(OnDiskInvertedLists::idx_t) +
+            o += l.size * (sizeof(idx_t) +
                            ails->code_size);
         }
         FAISS_THROW_IF_NOT(o <= ails->totsize);
@@ -327,90 +380,10 @@ InvertedLists *read_InvertedLists_nm(IOReader *f, int io_flags) {
     }
 }
 
-static void read_InvertedLists_nm(IndexIVF *ivf, IOReader *f, int io_flags) {
+void read_InvertedLists_nm(IndexIVF *ivf, IOReader *f, int io_flags) {
     InvertedLists *ils = read_InvertedLists_nm (f, io_flags);
     FAISS_THROW_IF_NOT(!ils || (ils->nlist == ivf->nlist &&
                                 ils->code_size == ivf->code_size));
-    ivf->invlists = ils;
-    ivf->own_invlists = true;
-}
-
-InvertedLists* read_InvertedLists_with_norm(IOReader* f, int io_flags) {
-    uint32_t h;
-    READ1(h);
-    if (h == fourcc("ilca")) {
-        size_t nlist, code_size, segment_size;
-        bool save_norm;
-        READ1(nlist);
-        READ1(code_size);
-        READ1(segment_size);
-        READ1(save_norm);
-
-        auto lca = new ConcurrentArrayInvertedLists(nlist, code_size, segment_size, save_norm);
-        std::vector<size_t> sizes(nlist);
-        read_ArrayInvertedLists_sizes(f, sizes);
-        for (size_t i = 0; i < lca->nlist; i++) {
-            lca->resize(i, sizes[i]);
-        }
-        for (size_t i = 0; i < lca->nlist; i++) {
-            size_t n = lca->list_size(i);
-            if (n > 0) {
-                size_t seg_num = lca->get_segment_num(i);
-                for (size_t j = 0; j < seg_num; j++) {
-                    size_t seg_size = lca->get_segment_size(i , j);
-                    size_t seg_off = lca->get_segment_offset(i, j);
-                    READANDCHECK(lca->codes[i][j].data_.data(), seg_size * lca->code_size);
-                    READANDCHECK(lca->ids[i][j].data_.data(), seg_size);
-                    if (save_norm) {
-                        READANDCHECK(lca->code_norms[i][j].data_.data(), seg_size);
-                    }
-                }
-            }
-        }
-        return lca;
-    } else if (h == fourcc("ilar") && !(io_flags & IO_FLAG_SKIP_IVF_DATA)) {
-        auto ails = new ArrayInvertedLists(0, 0);
-        READ1(ails->nlist);
-        READ1(ails->code_size);
-        READ1(ails->with_norm);
-        ails->ids.resize(ails->nlist);
-        ails->codes.resize(ails->nlist);
-        if (ails->with_norm) {
-            ails->code_norms.resize(ails->nlist);
-        }
-        std::vector<size_t> sizes(ails->nlist);
-        read_ArrayInvertedLists_sizes(f, sizes);
-        for (size_t i = 0; i < ails->nlist; i++) {
-            ails->ids[i].resize(sizes[i]);
-            ails->codes[i].resize(sizes[i] * ails->code_size);
-            if (ails->with_norm) {
-                ails->code_norms[i].resize(sizes[i]);
-            }
-        }
-        for (size_t i = 0; i < ails->nlist; i++) {
-            size_t n = ails->ids[i].size();
-            if (n > 0) {
-                READANDCHECK(ails->codes[i].data(), n * ails->code_size);
-                READANDCHECK(ails->ids[i].data(), n);
-                if (ails->with_norm) {
-                    READANDCHECK(ails->code_norms[i].data(), n);
-                }
-            }
-        }
-        return ails;
-    } else {
-        return InvertedListsIOHook::lookup(h)->read(f, io_flags);
-    }
-}
-
-static void read_InvertedLists_with_norm(IndexIVF* ivf, IOReader* f, int io_flags) {
-    InvertedLists* ils = read_InvertedLists_with_norm(f, io_flags);
-    if (ils) {
-        FAISS_THROW_IF_NOT(ils->nlist == ivf->nlist);
-        FAISS_THROW_IF_NOT(
-                ils->code_size == InvertedLists::INVALID_CODE_SIZE ||
-                ils->code_size == ivf->code_size);
-    }
     ivf->invlists = ils;
     ivf->own_invlists = true;
 }
@@ -447,17 +420,33 @@ static void read_AdditiveQuantizer(AdditiveQuantizer* aq, IOReader* f) {
     READ1(aq->norm_min);
     READ1(aq->norm_max);
     if (aq->search_type == AdditiveQuantizer::ST_norm_cqint8 ||
-        aq->search_type == AdditiveQuantizer::ST_norm_cqint4) {
+        aq->search_type == AdditiveQuantizer::ST_norm_cqint4 ||
+        aq->search_type == AdditiveQuantizer::ST_norm_lsq2x4 ||
+        aq->search_type == AdditiveQuantizer::ST_norm_rq2x4) {
         READXBVECTOR(aq->qnorm.codes);
+        aq->qnorm.ntotal = aq->qnorm.codes.size() / 4;
+        aq->qnorm.update_permutation();
     }
+
+    if (aq->search_type == AdditiveQuantizer::ST_norm_lsq2x4 ||
+        aq->search_type == AdditiveQuantizer::ST_norm_rq2x4) {
+        READVECTOR(aq->norm_tabs);
+    }
+
     aq->set_derived_values();
 }
 
-static void read_ResidualQuantizer(ResidualQuantizer* rq, IOReader* f) {
+static void read_ResidualQuantizer(
+        ResidualQuantizer* rq,
+        IOReader* f,
+        int io_flags) {
     read_AdditiveQuantizer(rq, f);
     READ1(rq->train_type);
     READ1(rq->max_beam_size);
-    if (!(rq->train_type & ResidualQuantizer::Skip_codebook_tables)) {
+    if ((rq->train_type & ResidualQuantizer::Skip_codebook_tables) ||
+        (io_flags & IO_FLAG_SKIP_PRECOMPUTE_TABLE)) {
+        // don't precompute the tables
+    } else {
         rq->compute_codebook_tables();
     }
 }
@@ -475,6 +464,38 @@ static void read_LocalSearchQuantizer(LocalSearchQuantizer* lsq, IOReader* f) {
     READ1(lsq->random_seed);
     READ1(lsq->nperts);
     READ1(lsq->update_codebooks_with_double);
+}
+
+static void read_ProductAdditiveQuantizer(
+        ProductAdditiveQuantizer* paq,
+        IOReader* f) {
+    read_AdditiveQuantizer(paq, f);
+    READ1(paq->nsplits);
+}
+
+static void read_ProductResidualQuantizer(
+        ProductResidualQuantizer* prq,
+        IOReader* f,
+        int io_flags) {
+    read_ProductAdditiveQuantizer(prq, f);
+
+    for (size_t i = 0; i < prq->nsplits; i++) {
+        auto rq = new ResidualQuantizer();
+        read_ResidualQuantizer(rq, f, io_flags);
+        prq->quantizers.push_back(rq);
+    }
+}
+
+static void read_ProductLocalSearchQuantizer(
+        ProductLocalSearchQuantizer* plsq,
+        IOReader* f) {
+    read_ProductAdditiveQuantizer(plsq, f);
+
+    for (size_t i = 0; i < plsq->nsplits; i++) {
+        auto lsq = new LocalSearchQuantizer();
+        read_LocalSearchQuantizer(lsq, f);
+        plsq->quantizers.push_back(lsq);
+    }
 }
 
 static void read_ScalarQuantizer(ScalarQuantizer* ivsc, IOReader* f) {
@@ -521,6 +542,7 @@ static void read_NSG(NSG* nsg, IOReader* f) {
     graph = std::make_shared<nsg::Graph<int>>(N, R);
     std::fill_n(graph->data, N * R, EMPTY_ID);
 
+    int size = 0;
 
     for (int i = 0; i < N; i++) {
         for (int j = 0; j < R + 1; j++) {
@@ -528,11 +550,27 @@ static void read_NSG(NSG* nsg, IOReader* f) {
             READ1(id);
             if (id != EMPTY_ID) {
                 graph->at(i, j) = id;
+                size += 1;
             } else {
                 break;
             }
         }
     }
+}
+
+static void read_NNDescent(NNDescent* nnd, IOReader* f) {
+    READ1(nnd->ntotal);
+    READ1(nnd->d);
+    READ1(nnd->K);
+    READ1(nnd->S);
+    READ1(nnd->R);
+    READ1(nnd->L);
+    READ1(nnd->iter);
+    READ1(nnd->search_L);
+    READ1(nnd->random_seed);
+    READ1(nnd->has_built);
+
+    READVECTOR(nnd->final_graph);
 }
 
 ProductQuantizer* read_ProductQuantizer(const char* fname) {
@@ -555,7 +593,6 @@ static void read_direct_map(DirectMap* dm, IOReader* f) {
     dm->type = (DirectMap::Type)maintain_direct_map;
     READVECTOR(dm->array);
     if (dm->type == DirectMap::Hashtable) {
-        using idx_t = Index::idx_t;
         std::vector<std::pair<idx_t, idx_t>> v;
         READVECTOR(v);
         std::unordered_map<idx_t, idx_t>& map = dm->hashtable;
@@ -564,12 +601,21 @@ static void read_direct_map(DirectMap* dm, IOReader* f) {
             map[it.first] = it.second;
         }
     }
+    if (dm->type == DirectMap::ConcurrentArray) {
+        std::vector<idx_t> offs;
+        READVECTOR(offs);
+        auto& concurrent_array = dm->concurrentArray;
+        concurrent_array.resize(offs.size());
+        for (idx_t i = 0; i < offs.size(); i++) {
+            concurrent_array[i] = offs[i];
+        }
+    }
 }
 
 static void read_ivf_header(
         IndexIVF* ivf,
         IOReader* f,
-        std::vector<std::vector<Index::idx_t>>* ids = nullptr) {
+        std::vector<std::vector<idx_t>>* ids = nullptr) {
     read_index_header(ivf, f);
     READ1(ivf->nlist);
     READ1(ivf->nprobe);
@@ -586,7 +632,7 @@ static void read_ivf_header(
 // used for legacy formats
 static ArrayInvertedLists* set_array_invlist(
         IndexIVF* ivf,
-        std::vector<std::vector<Index::idx_t>>& ids) {
+        std::vector<std::vector<idx_t>>& ids) {
     ArrayInvertedLists* ail =
             new ArrayInvertedLists(ivf->nlist, ivf->code_size);
     std::swap(ail->ids, ids);
@@ -603,7 +649,7 @@ static IndexIVFPQ* read_ivfpq(IOReader* f, uint32_t h, int io_flags) {
             : nullptr;
     IndexIVFPQ* ivpq = ivfpqr ? ivfpqr : new IndexIVFPQ();
 
-    std::vector<std::vector<Index::idx_t>> ids;
+    std::vector<std::vector<idx_t>> ids;
     read_ivf_header(ivpq, f, legacy ? &ids : nullptr);
     READ1(ivpq->by_residual);
     READ1(ivpq->code_size);
@@ -618,10 +664,14 @@ static IndexIVFPQ* read_ivfpq(IOReader* f, uint32_t h, int io_flags) {
     }
 
     if (ivpq->is_trained) {
-        // precomputed table not stored. It is cheaper to recompute it
+        // precomputed table not stored. It is cheaper to recompute it.
+        // precompute_table() may be disabled with a flag.
         ivpq->use_precomputed_table = 0;
-        if (ivpq->by_residual)
-            ivpq->precompute_table();
+        if (ivpq->by_residual) {
+            if ((io_flags & IO_FLAG_SKIP_PRECOMPUTE_TABLE) == 0) {
+                ivpq->precompute_table();
+            }
+        }
         if (ivfpqr) {
             read_ProductQuantizer(&ivfpqr->refine_pq, f);
             READVECTOR(ivfpqr->refine_codes);
@@ -649,6 +699,9 @@ Index* read_index(IOReader* f, int io_flags) {
         read_index_header(idxf, f);
         idxf->code_size = idxf->d * sizeof(float);
         READXBVECTOR(idxf->codes);
+        if (idxf->is_cosine) {
+            READVECTOR(idxf->code_norms);
+        }
         FAISS_THROW_IF_NOT(
                 idxf->codes.size() == idxf->ntotal * idxf->code_size);
         // leak!
@@ -698,15 +751,18 @@ Index* read_index(IOReader* f, int io_flags) {
             READ1(idxp->encode_signs);
             READ1(idxp->polysemous_ht);
         }
-        // Old versoins of PQ all had metric_type set to INNER_PRODUCT
+        // Old versions of PQ all had metric_type set to INNER_PRODUCT
         // when they were in fact using L2. Therefore, we force metric type
         // to L2 when the old format is detected
         if (h == fourcc("IxPQ") || h == fourcc("IxPo")) {
             idxp->metric_type = METRIC_L2;
         }
+
+        // the following "if" block is Knowhere-specific
         if (h == fourcc("IxPq")) {
             idxp->pq.compute_sdc_table ();
         }
+
         idx = idxp;
     } else if (h == fourcc("IxRQ") || h == fourcc("IxRq")) {
         IndexResidualQuantizer* idxr = new IndexResidualQuantizer();
@@ -714,7 +770,7 @@ Index* read_index(IOReader* f, int io_flags) {
         if (h == fourcc("IxRQ")) {
             read_ResidualQuantizer_old(&idxr->rq, f);
         } else {
-            read_ResidualQuantizer(&idxr->rq, f);
+            read_ResidualQuantizer(&idxr->rq, f, io_flags);
         }
         READ1(idxr->code_size);
         READVECTOR(idxr->codes);
@@ -726,16 +782,134 @@ Index* read_index(IOReader* f, int io_flags) {
         READ1(idxr->code_size);
         READVECTOR(idxr->codes);
         idx = idxr;
+    } else if (h == fourcc("IxPR")) {
+        auto idxpr = new IndexProductResidualQuantizer();
+        read_index_header(idxpr, f);
+        read_ProductResidualQuantizer(&idxpr->prq, f, io_flags);
+        READ1(idxpr->code_size);
+        READVECTOR(idxpr->codes);
+        idx = idxpr;
+    } else if (h == fourcc("IxPL")) {
+        auto idxpl = new IndexProductLocalSearchQuantizer();
+        read_index_header(idxpl, f);
+        read_ProductLocalSearchQuantizer(&idxpl->plsq, f);
+        READ1(idxpl->code_size);
+        READVECTOR(idxpl->codes);
+        idx = idxpl;
     } else if (h == fourcc("ImRQ")) {
         ResidualCoarseQuantizer* idxr = new ResidualCoarseQuantizer();
         read_index_header(idxr, f);
-        read_ResidualQuantizer(&idxr->rq, f);
+        read_ResidualQuantizer(&idxr->rq, f, io_flags);
         READ1(idxr->beam_factor);
+        if (io_flags & IO_FLAG_SKIP_PRECOMPUTE_TABLE) {
+            // then we force the beam factor to -1
+            // which skips the table precomputation.
+            idxr->beam_factor = -1;
+        }
         idxr->set_beam_factor(idxr->beam_factor);
         idx = idxr;
+    } else if (
+            h == fourcc("ILfs") || h == fourcc("IRfs") || h == fourcc("IPRf") ||
+            h == fourcc("IPLf")) {
+        bool is_LSQ = h == fourcc("ILfs");
+        bool is_RQ = h == fourcc("IRfs");
+        bool is_PLSQ = h == fourcc("IPLf");
+
+        IndexAdditiveQuantizerFastScan* idxaqfs;
+        if (is_LSQ) {
+            idxaqfs = new IndexLocalSearchQuantizerFastScan();
+        } else if (is_RQ) {
+            idxaqfs = new IndexResidualQuantizerFastScan();
+        } else if (is_PLSQ) {
+            idxaqfs = new IndexProductLocalSearchQuantizerFastScan();
+        } else {
+            idxaqfs = new IndexProductResidualQuantizerFastScan();
+        }
+        read_index_header(idxaqfs, f);
+
+        if (is_LSQ) {
+            read_LocalSearchQuantizer((LocalSearchQuantizer*)idxaqfs->aq, f);
+        } else if (is_RQ) {
+            read_ResidualQuantizer(
+                    (ResidualQuantizer*)idxaqfs->aq, f, io_flags);
+        } else if (is_PLSQ) {
+            read_ProductLocalSearchQuantizer(
+                    (ProductLocalSearchQuantizer*)idxaqfs->aq, f);
+        } else {
+            read_ProductResidualQuantizer(
+                    (ProductResidualQuantizer*)idxaqfs->aq, f, io_flags);
+        }
+
+        READ1(idxaqfs->implem);
+        READ1(idxaqfs->bbs);
+        READ1(idxaqfs->qbs);
+
+        READ1(idxaqfs->M);
+        READ1(idxaqfs->nbits);
+        READ1(idxaqfs->ksub);
+        READ1(idxaqfs->code_size);
+        READ1(idxaqfs->ntotal2);
+        READ1(idxaqfs->M2);
+
+        READ1(idxaqfs->rescale_norm);
+        READ1(idxaqfs->norm_scale);
+        READ1(idxaqfs->max_train_points);
+
+        READVECTOR(idxaqfs->codes);
+        idx = idxaqfs;
+    } else if (
+            h == fourcc("IVLf") || h == fourcc("IVRf") || h == fourcc("NPLf") ||
+            h == fourcc("NPRf")) {
+        bool is_LSQ = h == fourcc("IVLf");
+        bool is_RQ = h == fourcc("IVRf");
+        bool is_PLSQ = h == fourcc("NPLf");
+
+        IndexIVFAdditiveQuantizerFastScan* ivaqfs;
+        if (is_LSQ) {
+            ivaqfs = new IndexIVFLocalSearchQuantizerFastScan();
+        } else if (is_RQ) {
+            ivaqfs = new IndexIVFResidualQuantizerFastScan();
+        } else if (is_PLSQ) {
+            ivaqfs = new IndexIVFProductLocalSearchQuantizerFastScan();
+        } else {
+            ivaqfs = new IndexIVFProductResidualQuantizerFastScan();
+        }
+        read_ivf_header(ivaqfs, f);
+
+        if (is_LSQ) {
+            read_LocalSearchQuantizer((LocalSearchQuantizer*)ivaqfs->aq, f);
+        } else if (is_RQ) {
+            read_ResidualQuantizer((ResidualQuantizer*)ivaqfs->aq, f, io_flags);
+        } else if (is_PLSQ) {
+            read_ProductLocalSearchQuantizer(
+                    (ProductLocalSearchQuantizer*)ivaqfs->aq, f);
+        } else {
+            read_ProductResidualQuantizer(
+                    (ProductResidualQuantizer*)ivaqfs->aq, f, io_flags);
+        }
+
+        READ1(ivaqfs->by_residual);
+        READ1(ivaqfs->implem);
+        READ1(ivaqfs->bbs);
+        READ1(ivaqfs->qbs);
+
+        READ1(ivaqfs->M);
+        READ1(ivaqfs->nbits);
+        READ1(ivaqfs->ksub);
+        READ1(ivaqfs->code_size);
+        READ1(ivaqfs->qbs2);
+        READ1(ivaqfs->M2);
+
+        READ1(ivaqfs->rescale_norm);
+        READ1(ivaqfs->norm_scale);
+        READ1(ivaqfs->max_train_points);
+
+        read_InvertedLists(ivaqfs, f, io_flags);
+        ivaqfs->init_code_packer();
+        idx = ivaqfs;
     } else if (h == fourcc("IvFl") || h == fourcc("IvFL")) { // legacy
         IndexIVFFlat* ivfl = new IndexIVFFlat();
-        std::vector<std::vector<Index::idx_t>> ids;
+        std::vector<std::vector<idx_t>> ids;
         read_ivf_header(ivfl, f, &ids);
         ivfl->code_size = ivfl->d * sizeof(float);
         ArrayInvertedLists* ail = set_array_invlist(ivfl, ids);
@@ -758,10 +932,10 @@ Index* read_index(IOReader* f, int io_flags) {
         read_ivf_header(ivfl, f);
         ivfl->code_size = ivfl->d * sizeof(float);
         {
-            std::vector<Index::idx_t> tab;
+            std::vector<idx_t> tab;
             READVECTOR(tab);
             for (long i = 0; i < tab.size(); i += 2) {
-                std::pair<Index::idx_t, Index::idx_t> pair(tab[i], tab[i + 1]);
+                std::pair<idx_t, idx_t> pair(tab[i], tab[i + 1]);
                 ivfl->instances.insert(pair);
             }
         }
@@ -771,13 +945,19 @@ Index* read_index(IOReader* f, int io_flags) {
         IndexIVFFlatCC* ivf_cc = new IndexIVFFlatCC();
         read_ivf_header(ivf_cc, f);
         ivf_cc->code_size = ivf_cc->d * sizeof(float);
-        read_InvertedLists_with_norm(ivf_cc, f, io_flags);
+        if (ivf_cc->is_cosine) {
+            io_flags |= IO_FLAG_WITH_NORM;
+        }
+        read_InvertedLists(ivf_cc, f, io_flags);
         idx = ivf_cc;
     } else if (h == fourcc("IwFl")) {
         IndexIVFFlat* ivfl = new IndexIVFFlat();
         read_ivf_header(ivfl, f);
         ivfl->code_size = ivfl->d * sizeof(float);
-        read_InvertedLists_with_norm(ivfl, f, io_flags);
+        if (ivfl->is_cosine) {
+            io_flags |= IO_FLAG_WITH_NORM;
+        }
+        read_InvertedLists(ivfl, f, io_flags);
         idx = ivfl;
     } else if (h == fourcc("IxSQ")) {
         IndexScalarQuantizer* idxs = new IndexScalarQuantizer();
@@ -798,7 +978,7 @@ Index* read_index(IOReader* f, int io_flags) {
         idx = idxl;
     } else if (h == fourcc("IvSQ")) { // legacy
         IndexIVFScalarQuantizer* ivsc = new IndexIVFScalarQuantizer();
-        std::vector<std::vector<Index::idx_t>> ids;
+        std::vector<std::vector<idx_t>> ids;
         read_ivf_header(ivsc, f, &ids);
         read_ScalarQuantizer(&ivsc->sq, f);
         READ1(ivsc->code_size);
@@ -818,20 +998,34 @@ Index* read_index(IOReader* f, int io_flags) {
         }
         read_InvertedLists(ivsc, f, io_flags);
         idx = ivsc;
-    } else if (h == fourcc("IwLS") || h == fourcc("IwRQ")) {
+    } else if (
+            h == fourcc("IwLS") || h == fourcc("IwRQ") || h == fourcc("IwPL") ||
+            h == fourcc("IwPR")) {
         bool is_LSQ = h == fourcc("IwLS");
+        bool is_RQ = h == fourcc("IwRQ");
+        bool is_PLSQ = h == fourcc("IwPL");
         IndexIVFAdditiveQuantizer* iva;
         if (is_LSQ) {
             iva = new IndexIVFLocalSearchQuantizer();
-        } else {
+        } else if (is_RQ) {
             iva = new IndexIVFResidualQuantizer();
+        } else if (is_PLSQ) {
+            iva = new IndexIVFProductLocalSearchQuantizer();
+        } else {
+            iva = new IndexIVFProductResidualQuantizer();
         }
         read_ivf_header(iva, f);
         READ1(iva->code_size);
         if (is_LSQ) {
             read_LocalSearchQuantizer((LocalSearchQuantizer*)iva->aq, f);
+        } else if (is_RQ) {
+            read_ResidualQuantizer((ResidualQuantizer*)iva->aq, f, io_flags);
+        } else if (is_PLSQ) {
+            read_ProductLocalSearchQuantizer(
+                    (ProductLocalSearchQuantizer*)iva->aq, f);
         } else {
-            read_ResidualQuantizer((ResidualQuantizer*)iva->aq, f);
+            read_ProductResidualQuantizer(
+                    (ProductResidualQuantizer*)iva->aq, f, io_flags);
         }
         READ1(iva->by_residual);
         READ1(iva->use_precomputed_table);
@@ -854,7 +1048,22 @@ Index* read_index(IOReader* f, int io_flags) {
             h == fourcc("IvPQ") || h == fourcc("IvQR") || h == fourcc("IwPQ") ||
             h == fourcc("IwQR")) {
         idx = read_ivfpq(f, h, io_flags);
-
+    } else if (h == fourcc("IwIQ")) {
+        auto* indep = new IndexIVFIndependentQuantizer();
+        indep->own_fields = true;
+        read_index_header(indep, f);
+        indep->quantizer = read_index(f, io_flags);
+        bool has_vt;
+        READ1(has_vt);
+        if (has_vt) {
+            indep->vt = read_VectorTransform(f);
+        }
+        indep->index_ivf = dynamic_cast<IndexIVF*>(read_index(f, io_flags));
+        FAISS_THROW_IF_NOT(indep->index_ivf);
+        if (auto index_ivfpq = dynamic_cast<IndexIVFPQ*>(indep->index_ivf)) {
+            READ1(index_ivfpq->use_precomputed_table);
+        }
+        idx = indep;
     } else if (h == fourcc("IxPT")) {
         IndexPreTransform* ixpt = new IndexPreTransform();
         ixpt->own_fields = true;
@@ -875,6 +1084,21 @@ Index* read_index(IOReader* f, int io_flags) {
         read_index_header(imiq, f);
         read_ProductQuantizer(&imiq->pq, f);
         idx = imiq;
+    } else if (h == fourcc("IxSC")) {
+        IndexScaNN* idxscann = new IndexScaNN();
+        read_index_header(idxscann, f);
+        idxscann->base_index = read_index(f, io_flags);
+        bool with_raw_data;
+        READ1(with_raw_data);
+        if (with_raw_data) {
+            idxscann->refine_index = read_index(f, io_flags);
+        } else {
+            idxscann->refine_index = nullptr;
+        }
+        READ1(idxscann->k_factor);
+        idxscann->own_fields = true;
+        idxscann->own_refine_index = true;
+        idx = idxscann;
     } else if (h == fourcc("IxRF")) {
         IndexRefine* idxrf = new IndexRefine();
         read_index_header(idxrf, f);
@@ -887,7 +1111,7 @@ Index* read_index(IOReader* f, int io_flags) {
             idxrf = new IndexRefineFlat();
             *idxrf = *idxrf_old;
             delete idxrf_old;
-        }
+        } 
         idxrf->own_fields = true;
         idxrf->own_refine_index = true;
         idx = idxrf;
@@ -934,8 +1158,15 @@ Index* read_index(IOReader* f, int io_flags) {
             dynamic_cast<IndexPQ*>(idxhnsw->storage)->pq.compute_sdc_table();
         }
         idx = idxhnsw;
-    } else if (h == fourcc("INSf")) {
-        IndexNSG* idxnsg = new IndexNSGFlat();
+    } else if (
+            h == fourcc("INSf") || h == fourcc("INSp") || h == fourcc("INSs")) {
+        IndexNSG* idxnsg;
+        if (h == fourcc("INSf"))
+            idxnsg = new IndexNSGFlat();
+        if (h == fourcc("INSp"))
+            idxnsg = new IndexNSGPQ();
+        if (h == fourcc("INSs"))
+            idxnsg = new IndexNSGSQ();
         read_index_header(idxnsg, f);
         READ1(idxnsg->GK);
         READ1(idxnsg->build_type);
@@ -947,6 +1178,13 @@ Index* read_index(IOReader* f, int io_flags) {
         idxnsg->storage = read_index(f, io_flags);
         idxnsg->own_fields = true;
         idx = idxnsg;
+    } else if (h == fourcc("INNf")) {
+        IndexNNDescent* idxnnd = new IndexNNDescentFlat();
+        read_index_header(idxnnd, f);
+        read_NNDescent(&idxnnd->nndescent, f);
+        idxnnd->storage = read_index(f, io_flags);
+        idxnnd->own_fields = true;
+        idx = idxnnd;
     } else if (h == fourcc("IPfs")) {
         IndexPQFastScan* idxpqfs = new IndexPQFastScan();
         read_index_header(idxpqfs, f);
@@ -957,6 +1195,13 @@ Index* read_index(IOReader* f, int io_flags) {
         READ1(idxpqfs->ntotal2);
         READ1(idxpqfs->M2);
         READVECTOR(idxpqfs->codes);
+
+        const auto& pq = idxpqfs->pq;
+        idxpqfs->M = pq.M;
+        idxpqfs->nbits = pq.nbits;
+        idxpqfs->ksub = (1 << pq.nbits);
+        idxpqfs->code_size = pq.code_size;
+
         idx = idxpqfs;
 
     } else if (h == fourcc("IwPf")) {
@@ -968,14 +1213,38 @@ Index* read_index(IOReader* f, int io_flags) {
         READ1(ivpq->M2);
         READ1(ivpq->implem);
         READ1(ivpq->qbs2);
-        READ1(ivpq->is_cosine_);
-        if (ivpq->is_cosine_) {
+        READ1(ivpq->is_cosine);
+        if (ivpq->is_cosine) {
             READVECTOR(ivpq->norms);
         }
         read_ProductQuantizer(&ivpq->pq, f);
         read_InvertedLists(ivpq, f, io_flags);
         ivpq->precompute_table();
+
+        const auto& pq = ivpq->pq;
+        ivpq->M = pq.M;
+        ivpq->nbits = pq.nbits;
+        ivpq->ksub = (1 << pq.nbits);
+        ivpq->code_size = pq.code_size;
+        ivpq->init_code_packer();
+
         idx = ivpq;
+    } else if (h == fourcc("IRMf")) {
+        IndexRowwiseMinMax* imm = new IndexRowwiseMinMax();
+        read_index_header(imm, f);
+
+        imm->index = read_index(f, io_flags);
+        imm->own_fields = true;
+
+        idx = imm;
+    } else if (h == fourcc("IRMh")) {
+        IndexRowwiseMinMaxFP16* imm = new IndexRowwiseMinMaxFP16();
+        read_index_header(imm, f);
+
+        imm->index = read_index(f, io_flags);
+        imm->own_fields = true;
+
+        idx = imm;
     } else {
         FAISS_THROW_FMT(
                 "Index type 0x%08x (\"%s\") not recognized",
@@ -1046,7 +1315,7 @@ static void read_index_binary_header(IndexBinary* idx, IOReader* f) {
 static void read_binary_ivf_header(
         IndexBinaryIVF* ivf,
         IOReader* f,
-        std::vector<std::vector<Index::idx_t>>* ids = nullptr) {
+        std::vector<std::vector<idx_t>>* ids = nullptr) {
     read_index_binary_header(ivf, f);
     READ1(ivf->nlist);
     READ1(ivf->nprobe);

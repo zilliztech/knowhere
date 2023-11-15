@@ -14,6 +14,12 @@
 
 namespace faiss {
 
+struct SearchParametersPreTransform : SearchParameters {
+    // nothing to add here.
+    // as such, encapsulating the search params is considered optional
+    SearchParameters* index_params = nullptr;
+};
+
 /** Index that applies a LinearTransform transform on vectors before
  *  handing them over to a sub-index */
 struct IndexPreTransform : Index {
@@ -49,7 +55,7 @@ struct IndexPreTransform : Index {
             idx_t k,
             float* distances,
             idx_t* labels,
-            const BitsetView bitset = nullptr) const override;
+            const SearchParameters* params = nullptr) const override;
 
     /* range search, no attempt is done to change the radius */
     void range_search(
@@ -57,7 +63,7 @@ struct IndexPreTransform : Index {
             const float* x,
             float radius,
             RangeSearchResult* result,
-            const BitsetView bitset = nullptr) const override;
+            const SearchParameters* params = nullptr) const override;
 
     void reconstruct(idx_t key, float* recons) const override;
 
@@ -69,7 +75,8 @@ struct IndexPreTransform : Index {
             idx_t k,
             float* distances,
             idx_t* labels,
-            float* recons) const override;
+            float* recons,
+            const SearchParameters* params = nullptr) const override;
 
     /// apply the transforms in the chain. The returned float * may be
     /// equal to x, otherwise it should be deallocated.
@@ -85,6 +92,9 @@ struct IndexPreTransform : Index {
     size_t sa_code_size() const override;
     void sa_encode(idx_t n, const float* x, uint8_t* bytes) const override;
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
+
+    void merge_from(Index& otherIndex, idx_t add_id = 0) override;
+    void check_compatible_for_merge(const Index& otherIndex) const override;
 
     ~IndexPreTransform() override;
 };

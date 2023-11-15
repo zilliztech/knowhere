@@ -40,9 +40,16 @@ Index<T>::Build(const DataSet& dataset, const Json& json) {
     RETURN_IF_ERROR(cfg->CheckAndAdjustForBuild());
 
 #ifdef NOT_COMPILE_FOR_SWIG
+    TimeRecorder rc("Build index", 2);
+    auto res = this->node->Build(dataset, *cfg);
+    auto span = rc.ElapseFromBegin("done");
+    span *= 0.000001;  // convert to s
+    knowhere_build_latency.Observe(span);
     knowhere_build_count.Increment();
+#else
+    auto res = this->node->Build(dataset, *cfg);
 #endif
-    return this->node->Build(dataset, *cfg);
+    return res;
 }
 
 template <typename T>
@@ -90,6 +97,34 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
 }
 
 template <typename T>
+inline expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
+Index<T>::AnnIterator(const DataSet& dataset, const Json& json, const BitsetView& bitset) const {
+    auto cfg = this->node->CreateConfig();
+    std::string msg;
+    Status status = LoadConfig(cfg.get(), json, knowhere::ITERATOR, "Iterator", &msg);
+    if (status != Status::success) {
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(status, msg);
+    }
+    status = cfg->CheckAndAdjustForIterator();
+    if (status != Status::success) {
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(status, "invalid params for iterator");
+    }
+
+#ifdef NOT_COMPILE_FOR_SWIG
+    // note that this time includes only the initial search phase of iterator.
+    TimeRecorder rc("AnnIterator");
+    auto res = this->node->AnnIterator(dataset, *cfg, bitset);
+    auto span = rc.ElapseFromBegin("done");
+    span *= 0.001;  // convert to ms
+    knowhere_search_latency.Observe(span);
+    knowhere_ann_iterator_count.Increment();
+#else
+    auto res = this->node->AnnIterator(dataset, *cfg, bitset);
+#endif
+    return res;
+}
+
+template <typename T>
 inline expected<DataSetPtr>
 Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView& bitset) const {
     auto cfg = this->node->CreateConfig();
@@ -98,9 +133,9 @@ Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView
     if (status != Status::success) {
         return expected<DataSetPtr>::Err(status, std::move(msg));
     }
-    status = cfg->CheckAndAdjustForRangeSearch();
+    status = cfg->CheckAndAdjustForRangeSearch(&msg);
     if (status != Status::success) {
-        return expected<DataSetPtr>::Err(status, "invalid params for range search");
+        return expected<DataSetPtr>::Err(status, std::move(msg));
     }
 
 #ifdef NOT_COMPILE_FOR_SWIG

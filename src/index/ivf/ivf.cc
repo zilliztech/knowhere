@@ -14,6 +14,7 @@
 #include "faiss/IndexBinaryFlat.h"
 #include "faiss/IndexBinaryIVF.h"
 #include "faiss/IndexFlat.h"
+#include "faiss/IndexFlatElkan.h"
 #include "faiss/IndexIVFFlat.h"
 #include "faiss/IndexIVFPQ.h"
 #include "faiss/IndexIVFPQFastScan.h"
@@ -22,6 +23,7 @@
 #include "faiss/index_io.h"
 #include "index/ivf/ivf_config.h"
 #include "io/memory_io.h"
+#include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
@@ -33,19 +35,9 @@
 namespace knowhere {
 
 template <typename T>
-struct QuantizerT {
-    typedef faiss::IndexFlat type;
-};
-
-template <>
-struct QuantizerT<faiss::IndexBinaryIVF> {
-    using type = faiss::IndexBinaryFlat;
-};
-
-template <typename T>
 class IvfIndexNode : public IndexNode {
  public:
-    IvfIndexNode(const Object& object) : index_(nullptr) {
+    IvfIndexNode(const int32_t version, const Object& object) : IndexNode(version), index_(nullptr) {
         static_assert(std::is_same<T, faiss::IndexIVFFlat>::value || std::is_same<T, faiss::IndexIVFFlatCC>::value ||
                           std::is_same<T, faiss::IndexIVFPQ>::value ||
                           std::is_same<T, faiss::IndexIVFScalarQuantizer>::value ||
@@ -65,6 +57,9 @@ class IvfIndexNode : public IndexNode {
     GetVectorByIds(const DataSet& dataset) const override;
     bool
     HasRawData(const std::string& metric_type) const override {
+        if (!index_) {
+            return false;
+        }
         if constexpr (std::is_same<faiss::IndexIVFFlat, T>::value) {
             return true;
         }
@@ -75,7 +70,7 @@ class IvfIndexNode : public IndexNode {
             return false;
         }
         if constexpr (std::is_same<faiss::IndexScaNN, T>::value) {
-            return true;
+            return index_->with_raw_data();
         }
         if constexpr (std::is_same<faiss::IndexIVFScalarQuantizer, T>::value) {
             return false;
@@ -237,6 +232,17 @@ MatchNbits(int64_t size, int64_t nbits) {
     return nbits;
 }
 
+namespace {
+
+// turn IndexFlatElkan into IndexFlat
+std::unique_ptr<faiss::IndexFlat>
+to_index_flat(std::unique_ptr<faiss::IndexFlat>&& index) {
+    // C++ slicing here
+    return std::make_unique<faiss::IndexFlat>(std::move(*index));
+}
+
+}  // namespace
+
 template <typename T>
 Status
 IvfIndexNode<T>::Train(const DataSet& dataset, const Config& cfg) {
@@ -244,6 +250,8 @@ IvfIndexNode<T>::Train(const DataSet& dataset, const Config& cfg) {
     std::unique_ptr<ThreadPool::ScopedOmpSetter> setter;
     if (base_cfg.num_build_thread.has_value()) {
         setter = std::make_unique<ThreadPool::ScopedOmpSetter>(base_cfg.num_build_thread.value());
+    } else {
+        setter = std::make_unique<ThreadPool::ScopedOmpSetter>();
     }
 
     bool is_cosine = IsMetricType(base_cfg.metric_type.value(), knowhere::metric::COSINE);
@@ -265,67 +273,153 @@ IvfIndexNode<T>::Train(const DataSet& dataset, const Config& cfg) {
     auto dim = dataset.GetDim();
     auto data = dataset.GetTensor();
 
-    typename QuantizerT<T>::type* qzr = nullptr;
-    faiss::IndexIVFPQFastScan* base_index = nullptr;
+    // faiss scann needs at least 16 rows since nbits=4
+    constexpr int64_t SCANN_MIN_ROWS = 16;
+    if constexpr (std::is_same<faiss::IndexScaNN, T>::value) {
+        if (rows < SCANN_MIN_ROWS) {
+            LOG_KNOWHERE_ERROR_ << rows << " rows is not enough, scann needs at least 16 rows to build index";
+            return Status::faiss_inner_error;
+        }
+    }
+
     std::unique_ptr<T> index;
+    // if cfg.use_elkan is used, then we'll use a temporary instance of
+    //  IndexFlatElkan for the training.
     try {
         if constexpr (std::is_same<faiss::IndexIVFFlat, T>::value) {
             const IvfFlatConfig& ivf_flat_cfg = static_cast<const IvfFlatConfig&>(cfg);
             auto nlist = MatchNlist(rows, ivf_flat_cfg.nlist.value());
-            qzr = new (std::nothrow) typename QuantizerT<T>::type(dim, metric.value());
-            index = std::make_unique<faiss::IndexIVFFlat>(qzr, dim, nlist, is_cosine, metric.value());
+
+            const bool use_elkan = ivf_flat_cfg.use_elkan.value_or(true);
+
+            // create quantizer for the training
+            std::unique_ptr<faiss::IndexFlat> qzr =
+                std::make_unique<faiss::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+            // create index. Index does not own qzr
+            index = std::make_unique<faiss::IndexIVFFlat>(qzr.get(), dim, nlist, metric.value(), is_cosine);
+            // train
             index->train(rows, (const float*)data);
+            // replace quantizer with a regular IndexFlat
+            qzr = to_index_flat(std::move(qzr));
+            index->quantizer = qzr.get();
+            // transfer ownership of qzr to index
+            qzr.release();
+            index->own_fields = true;
         }
         if constexpr (std::is_same<faiss::IndexIVFFlatCC, T>::value) {
             const IvfFlatCcConfig& ivf_flat_cc_cfg = static_cast<const IvfFlatCcConfig&>(cfg);
             auto nlist = MatchNlist(rows, ivf_flat_cc_cfg.nlist.value());
-            qzr = new (std::nothrow) typename QuantizerT<T>::type(dim, metric.value());
-            index = std::make_unique<faiss::IndexIVFFlatCC>(qzr, dim, nlist, ivf_flat_cc_cfg.ssize.value(), is_cosine,
-                                                            metric.value());
+
+            const bool use_elkan = ivf_flat_cc_cfg.use_elkan.value_or(true);
+
+            // create quantizer for the training
+            std::unique_ptr<faiss::IndexFlat> qzr =
+                std::make_unique<faiss::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+            // create index. Index does not own qzr
+            index = std::make_unique<faiss::IndexIVFFlatCC>(qzr.get(), dim, nlist, ivf_flat_cc_cfg.ssize.value(),
+                                                            metric.value(), is_cosine);
+            // train
             index->train(rows, (const float*)data);
+            // replace quantizer with a regular IndexFlat
+            qzr = to_index_flat(std::move(qzr));
+            index->quantizer = qzr.get();
+            // transfer ownership of qzr to index
+            qzr.release();
+            index->own_fields = true;
+            // ivfflat_cc has no serialize stage, make map at build stage
+            index->make_direct_map(true, faiss::DirectMap::ConcurrentArray);
         }
         if constexpr (std::is_same<faiss::IndexIVFPQ, T>::value) {
             const IvfPqConfig& ivf_pq_cfg = static_cast<const IvfPqConfig&>(cfg);
             auto nlist = MatchNlist(rows, ivf_pq_cfg.nlist.value());
             auto nbits = MatchNbits(rows, ivf_pq_cfg.nbits.value());
-            qzr = new (std::nothrow) typename QuantizerT<T>::type(dim, metric.value());
-            index = std::make_unique<faiss::IndexIVFPQ>(qzr, dim, nlist, ivf_pq_cfg.m.value(), nbits, metric.value());
+
+            const bool use_elkan = ivf_pq_cfg.use_elkan.value_or(true);
+
+            // create quantizer for the training
+            std::unique_ptr<faiss::IndexFlat> qzr =
+                std::make_unique<faiss::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+            // create index. Index does not own qzr
+            index =
+                std::make_unique<faiss::IndexIVFPQ>(qzr.get(), dim, nlist, ivf_pq_cfg.m.value(), nbits, metric.value());
+            // train
             index->train(rows, (const float*)data);
+            // replace quantizer with a regular IndexFlat
+            qzr = to_index_flat(std::move(qzr));
+            index->quantizer = qzr.get();
+            // transfer ownership of qzr to index
+            qzr.release();
+            index->own_fields = true;
         }
         if constexpr (std::is_same<faiss::IndexScaNN, T>::value) {
             const ScannConfig& scann_cfg = static_cast<const ScannConfig&>(cfg);
             auto nlist = MatchNlist(rows, scann_cfg.nlist.value());
             bool is_cosine = base_cfg.metric_type.value() == metric::COSINE;
-            qzr = new (std::nothrow) typename QuantizerT<T>::type(dim, metric.value());
-            base_index =
-                new (std::nothrow) faiss::IndexIVFPQFastScan(qzr, dim, nlist, dim / 2, 4, is_cosine, metric.value());
-            base_index->own_fields = true;
-            index = std::make_unique<faiss::IndexScaNN>(base_index, (const float*)data);
+
+            const bool use_elkan = scann_cfg.use_elkan.value_or(true);
+
+            // create quantizer for the training
+            std::unique_ptr<faiss::IndexFlat> qzr =
+                std::make_unique<faiss::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+            // create base index. it does not own qzr
+            auto base_index = std::make_unique<faiss::IndexIVFPQFastScan>(qzr.get(), dim, nlist, (dim + 1) / 2, 4,
+                                                                          is_cosine, metric.value());
+            // create scann index, which does not base_index by default,
+            //    but owns the refine index by default omg
+            if (scann_cfg.with_raw_data.value()) {
+                index = std::make_unique<faiss::IndexScaNN>(base_index.get(), (const float*)data);
+            } else {
+                index = std::make_unique<faiss::IndexScaNN>(base_index.get(), nullptr);
+            }
+            // train
             index->train(rows, (const float*)data);
+            // at this moment, we still own qzr.
+            // replace quantizer with a regular IndexFlat
+            qzr = to_index_flat(std::move(qzr));
+            base_index->quantizer = qzr.get();
+            // release qzr
+            qzr.release();
+            base_index->own_fields = true;
+            // transfer ownership of the base index
+            base_index.release();
+            index->own_fields = true;
         }
         if constexpr (std::is_same<faiss::IndexIVFScalarQuantizer, T>::value) {
             const IvfSqConfig& ivf_sq_cfg = static_cast<const IvfSqConfig&>(cfg);
             auto nlist = MatchNlist(rows, ivf_sq_cfg.nlist.value());
-            qzr = new (std::nothrow) typename QuantizerT<T>::type(dim, metric.value());
-            index = std::make_unique<faiss::IndexIVFScalarQuantizer>(qzr, dim, nlist, faiss::QuantizerType::QT_8bit,
-                                                                     metric.value());
+
+            const bool use_elkan = ivf_sq_cfg.use_elkan.value_or(true);
+
+            // create quantizer for the training
+            std::unique_ptr<faiss::IndexFlat> qzr =
+                std::make_unique<faiss::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+            // create index. Index does not own qzr
+            index = std::make_unique<faiss::IndexIVFScalarQuantizer>(
+                qzr.get(), dim, nlist, faiss::ScalarQuantizer::QuantizerType::QT_8bit, metric.value());
+            // train
             index->train(rows, (const float*)data);
+            // replace quantizer with a regular IndexFlat
+            qzr = to_index_flat(std::move(qzr));
+            index->quantizer = qzr.get();
+            // transfer ownership of qzr to index
+            qzr.release();
+            index->own_fields = true;
         }
         if constexpr (std::is_same<faiss::IndexBinaryIVF, T>::value) {
             const IvfBinConfig& ivf_bin_cfg = static_cast<const IvfBinConfig&>(cfg);
             auto nlist = MatchNlist(rows, ivf_bin_cfg.nlist.value());
-            qzr = new (std::nothrow) typename QuantizerT<T>::type(dim, metric.value());
-            index = std::make_unique<faiss::IndexBinaryIVF>(qzr, dim, nlist, metric.value());
+
+            // create quantizer
+            auto qzr = std::make_unique<faiss::IndexBinaryFlat>(dim, metric.value());
+            // create index. Index does not own qzr
+            index = std::make_unique<faiss::IndexBinaryIVF>(qzr.get(), dim, nlist, metric.value());
+            // train
             index->train(rows, (const uint8_t*)data);
+            // transfer ownership of qzr to index
+            qzr.release();
+            index->own_fields = true;
         }
-        index->own_fields = true;
     } catch (std::exception& e) {
-        if (qzr) {
-            delete qzr;
-        }
-        if (base_index) {
-            delete base_index;
-        }
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
         return Status::faiss_inner_error;
     }
@@ -339,7 +433,7 @@ Status
 IvfIndexNode<T>::Add(const DataSet& dataset, const Config& cfg) {
     if (!this->index_) {
         LOG_KNOWHERE_ERROR_ << "Can not add data to empty IVF index.";
-        expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+        return Status::empty_index;
     }
     auto data = dataset.GetTensor();
     auto rows = dataset.GetRows();
@@ -347,6 +441,8 @@ IvfIndexNode<T>::Add(const DataSet& dataset, const Config& cfg) {
     std::unique_ptr<ThreadPool::ScopedOmpSetter> setter;
     if (base_cfg.num_build_thread.has_value()) {
         setter = std::make_unique<ThreadPool::ScopedOmpSetter>(base_cfg.num_build_thread.value());
+    } else {
+        setter = std::make_unique<ThreadPool::ScopedOmpSetter>();
     }
     try {
         if constexpr (std::is_same<faiss::IndexBinaryIVF, T>::value) {
@@ -366,11 +462,11 @@ expected<DataSetPtr>
 IvfIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
     if (!this->index_) {
         LOG_KNOWHERE_WARNING_ << "search on empty index";
-        expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
     if (!this->index_->is_trained) {
         LOG_KNOWHERE_WARNING_ << "index not trained";
-        expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
+        return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
     }
 
     auto dim = dataset.GetDim();
@@ -394,9 +490,18 @@ IvfIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const BitsetV
                 ThreadPool::ScopedOmpSetter setter(1);
                 auto offset = k * index;
                 std::unique_ptr<float[]> copied_query = nullptr;
+
+                BitsetViewIDSelector bw_idselector(bitset);
+                faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+
                 if constexpr (std::is_same<T, faiss::IndexBinaryIVF>::value) {
                     auto cur_data = (const uint8_t*)data + index * dim / 8;
-                    index_->search_thread_safe(1, cur_data, k, i_distances + offset, ids + offset, nprobe, bitset);
+
+                    faiss::IVFSearchParameters ivf_search_params;
+                    ivf_search_params.nprobe = nprobe;
+                    ivf_search_params.sel = id_selector;
+                    index_->search(1, cur_data, k, i_distances + offset, ids + offset, &ivf_search_params);
+
                     if (index_->metric_type == faiss::METRIC_Hamming) {
                         for (int64_t i = 0; i < k; i++) {
                             distances[i + offset] = static_cast<float>(i_distances[i + offset]);
@@ -408,7 +513,13 @@ IvfIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const BitsetV
                         copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         cur_query = copied_query.get();
                     }
-                    index_->search_thread_safe(1, cur_query, k, distances + offset, ids + offset, nprobe, 0, bitset);
+
+                    faiss::IVFSearchParameters ivf_search_params;
+                    ivf_search_params.nprobe = nprobe;
+                    ivf_search_params.max_codes = 0;
+                    ivf_search_params.sel = id_selector;
+
+                    index_->search(1, cur_query, k, distances + offset, ids + offset, &ivf_search_params);
                 } else if constexpr (std::is_same<T, faiss::IndexScaNN>::value) {
                     auto cur_query = (const float*)data + index * dim;
                     const ScannConfig& scann_cfg = static_cast<const ScannConfig&>(cfg);
@@ -416,20 +527,41 @@ IvfIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const BitsetV
                         copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         cur_query = copied_query.get();
                     }
-                    index_->search_thread_safe(1, cur_query, k, distances + offset, ids + offset, nprobe,
-                                               scann_cfg.reorder_k.value(), bitset);
+
+                    // todo aguzhva: this is somewhat alogical. Refactor?
+                    faiss::IVFSearchParameters base_search_params;
+                    base_search_params.sel = id_selector;
+                    base_search_params.nprobe = nprobe;
+
+                    faiss::IndexScaNNSearchParameters scann_search_params;
+                    scann_search_params.base_index_params = &base_search_params;
+                    scann_search_params.reorder_k = scann_cfg.reorder_k.value();
+
+                    index_->search(1, cur_query, k, distances + offset, ids + offset, &scann_search_params);
                 } else {
                     auto cur_query = (const float*)data + index * dim;
                     if (is_cosine) {
                         copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         cur_query = copied_query.get();
                     }
-                    index_->search_thread_safe(1, cur_query, k, distances + offset, ids + offset, nprobe, 0, bitset);
+
+                    faiss::IVFSearchParameters ivf_search_params;
+                    ivf_search_params.nprobe = nprobe;
+                    ivf_search_params.max_codes = 0;
+                    ivf_search_params.sel = id_selector;
+
+                    index_->search(1, cur_query, k, distances + offset, ids + offset, &ivf_search_params);
                 }
             }));
         }
+        // wait for the completion
         for (auto& fut : futs) {
             fut.wait();
+        }
+        // check for exceptions. value() is {}, so either
+        //   a call does nothing, or it throws an inner exception.
+        for (auto& fut : futs) {
+            fut.result().value();
         }
     } catch (const std::exception& e) {
         delete[] ids;
@@ -447,11 +579,11 @@ expected<DataSetPtr>
 IvfIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
     if (!this->index_) {
         LOG_KNOWHERE_WARNING_ << "range search on empty index";
-        expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
     if (!this->index_->is_trained) {
         LOG_KNOWHERE_WARNING_ << "index not trained";
-        expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
+        return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
     }
 
     auto nq = dataset.GetRows();
@@ -482,30 +614,59 @@ IvfIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, const Bi
                 ThreadPool::ScopedOmpSetter setter(1);
                 faiss::RangeSearchResult res(1);
                 std::unique_ptr<float[]> copied_query = nullptr;
+
+                BitsetViewIDSelector bw_idselector(bitset);
+                faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+
                 if constexpr (std::is_same<T, faiss::IndexBinaryIVF>::value) {
                     auto cur_data = (const uint8_t*)xq + index * dim / 8;
-                    index_->range_search_thread_safe(1, cur_data, radius, &res, index_->nlist, bitset);
+
+                    faiss::IVFSearchParameters ivf_search_params;
+                    ivf_search_params.nprobe = index_->nlist;
+                    ivf_search_params.sel = id_selector;
+
+                    index_->range_search(1, cur_data, radius, &res, &ivf_search_params);
                 } else if constexpr (std::is_same<T, faiss::IndexIVFFlat>::value) {
                     auto cur_query = (const float*)xq + index * dim;
                     if (is_cosine) {
                         copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         cur_query = copied_query.get();
                     }
-                    index_->range_search_thread_safe(1, cur_query, radius, &res, index_->nlist, 0, bitset);
+
+                    faiss::IVFSearchParameters ivf_search_params;
+                    ivf_search_params.nprobe = index_->nlist;
+                    ivf_search_params.max_codes = 0;
+                    ivf_search_params.sel = id_selector;
+
+                    index_->range_search(1, cur_query, radius, &res, &ivf_search_params);
                 } else if constexpr (std::is_same<T, faiss::IndexScaNN>::value) {
                     auto cur_query = (const float*)xq + index * dim;
                     if (is_cosine) {
                         copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         cur_query = copied_query.get();
                     }
-                    index_->range_search_thread_safe(1, cur_query, radius, &res, bitset);
+
+                    // todo aguzhva: this is somewhat alogical. Refactor?
+                    faiss::IVFSearchParameters base_search_params;
+                    base_search_params.sel = id_selector;
+
+                    faiss::IndexScaNNSearchParameters scann_search_params;
+                    scann_search_params.base_index_params = &base_search_params;
+
+                    index_->range_search(1, cur_query, radius, &res, &scann_search_params);
                 } else {
                     auto cur_query = (const float*)xq + index * dim;
                     if (is_cosine) {
                         copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         cur_query = copied_query.get();
                     }
-                    index_->range_search_thread_safe(1, cur_query, radius, &res, index_->nlist, 0, bitset);
+
+                    faiss::IVFSearchParameters ivf_search_params;
+                    ivf_search_params.nprobe = index_->nlist;
+                    ivf_search_params.max_codes = 0;
+                    ivf_search_params.sel = id_selector;
+
+                    index_->range_search(1, cur_query, radius, &res, &ivf_search_params);
                 }
                 auto elem_cnt = res.lims[1];
                 result_dist_array[index].resize(elem_cnt);
@@ -521,8 +682,14 @@ IvfIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, const Bi
                 }
             }));
         }
+        // wait for the completion
         for (auto& fut : futs) {
             fut.wait();
+        }
+        // check for exceptions. value() is {}, so either
+        //   a call does nothing, or it throws an inner exception.
+        for (auto& fut : futs) {
+            fut.result().value();
         }
         GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter, distances, ids, lims);
     } catch (const std::exception& e) {
@@ -537,7 +704,7 @@ template <typename T>
 expected<DataSetPtr>
 IvfIndexNode<T>::GetVectorByIds(const DataSet& dataset) const {
     if (!this->index_) {
-        expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
     if (!this->index_->is_trained) {
         return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
@@ -550,7 +717,6 @@ IvfIndexNode<T>::GetVectorByIds(const DataSet& dataset) const {
         uint8_t* data = nullptr;
         try {
             data = new uint8_t[dim * rows / 8];
-            index_->make_direct_map(true);
             for (int64_t i = 0; i < rows; i++) {
                 int64_t id = ids[i];
                 assert(id >= 0 && id < index_->ntotal);
@@ -570,7 +736,6 @@ IvfIndexNode<T>::GetVectorByIds(const DataSet& dataset) const {
         float* data = nullptr;
         try {
             data = new float[dim * rows];
-            index_->make_direct_map(true);
             for (int64_t i = 0; i < rows; i++) {
                 int64_t id = ids[i];
                 assert(id >= 0 && id < index_->ntotal);
@@ -583,6 +748,10 @@ IvfIndexNode<T>::GetVectorByIds(const DataSet& dataset) const {
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
     } else if constexpr (std::is_same<T, faiss::IndexScaNN>::value) {
+        // we should never go here since we should call HasRawData() first
+        if (!index_->with_raw_data()) {
+            return expected<DataSetPtr>::Err(Status::not_implemented, "GetVectorByIds not implemented");
+        }
         auto dim = Dim();
         auto rows = dataset.GetRows();
         auto ids = dataset.GetIds();
@@ -611,7 +780,7 @@ expected<DataSetPtr>
 IvfIndexNode<faiss::IndexIVFFlat>::GetIndexMeta(const Config& config) const {
     if (!index_) {
         LOG_KNOWHERE_WARNING_ << "get index meta on empty index";
-        expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
 
     auto ivf_index = dynamic_cast<faiss::IndexIVF*>(index_.get());
@@ -664,6 +833,50 @@ IvfIndexNode<T>::Serialize(BinarySet& binset) const {
     }
 }
 
+template <>
+Status
+IvfIndexNode<faiss::IndexIVFFlat>::Serialize(BinarySet& binset) const {
+    try {
+        MemoryIOWriter writer;
+        LOG_KNOWHERE_INFO_ << "request version " << version_.VersionNumber();
+        if (version_ <= Version::GetMinimalVersion()) {
+            faiss::write_index_nm(index_.get(), &writer);
+            LOG_KNOWHERE_INFO_ << "write IVF_FLAT_NM, file size " << writer.tellg();
+        } else {
+            faiss::write_index(index_.get(), &writer);
+            LOG_KNOWHERE_INFO_ << "write IVF_FLAT, file size " << writer.tellg();
+        }
+        std::shared_ptr<uint8_t[]> index_data_ptr(writer.data());
+        binset.Append(Type(), index_data_ptr, writer.tellg());
+
+        // append raw data for backward compatible
+        if (version_ <= Version::GetMinimalVersion()) {
+            size_t dim = index_->d;
+            size_t rows = index_->ntotal;
+            size_t raw_data_size = dim * rows * sizeof(float);
+            uint8_t* raw_data = new uint8_t[raw_data_size];
+            std::shared_ptr<uint8_t[]> raw_data_ptr(raw_data);
+            for (size_t i = 0; i < index_->nlist; i++) {
+                size_t list_size = index_->invlists->list_size(i);
+                const faiss::idx_t* ids = index_->invlists->get_ids(i);
+                const uint8_t* codes = index_->invlists->get_codes(i);
+                for (size_t j = 0; j < list_size; j++) {
+                    faiss::idx_t id = ids[j];
+                    const uint8_t* src = codes + j * dim * sizeof(float);
+                    uint8_t* dst = raw_data + id * dim * sizeof(float);
+                    memcpy(dst, src, dim * sizeof(float));
+                }
+            }
+            binset.Append("RAW_DATA", raw_data_ptr, raw_data_size);
+            LOG_KNOWHERE_INFO_ << "append raw data for IVF_FLAT_NM, size " << raw_data_size;
+        }
+        return Status::success;
+    } catch (const std::exception& e) {
+        LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+        return Status::faiss_inner_error;
+    }
+}
+
 template <typename T>
 Status
 IvfIndexNode<T>::Deserialize(const BinarySet& binset, const Config& config) {
@@ -679,9 +892,10 @@ IvfIndexNode<T>::Deserialize(const BinarySet& binset, const Config& config) {
     MemoryIOReader reader(binary->data.get(), binary->size);
     try {
         if constexpr (std::is_same<T, faiss::IndexIVFFlat>::value) {
-            auto raw_binary = binset.GetByName("RAW_DATA");
-            if (raw_binary != nullptr) {
-                ConvertIVFFlatIfNeeded(binset, raw_binary->data.get(), raw_binary->size);
+            if (version_ <= Version::GetMinimalVersion()) {
+                auto raw_binary = binset.GetByName("RAW_DATA");
+                const BaseConfig& base_cfg = static_cast<const BaseConfig&>(config);
+                ConvertIVFFlat(binset, base_cfg.metric_type.value(), raw_binary->data.get(), raw_binary->size);
                 // after conversion, binary size and data will be updated
                 reader.data_ = binary->data.get();
                 reader.total_ = binary->size;
@@ -691,6 +905,12 @@ IvfIndexNode<T>::Deserialize(const BinarySet& binset, const Config& config) {
             index_.reset(static_cast<T*>(faiss::read_index_binary(&reader)));
         } else {
             index_.reset(static_cast<T*>(faiss::read_index(&reader)));
+        }
+        if constexpr (!std::is_same_v<T, faiss::IndexScaNN>) {
+            const BaseConfig& base_cfg = static_cast<const BaseConfig&>(config);
+            if (HasRawData(base_cfg.metric_type.value())) {
+                index_->make_direct_map(true);
+            }
         }
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
@@ -714,6 +934,12 @@ IvfIndexNode<T>::DeserializeFromFile(const std::string& filename, const Config& 
         } else {
             index_.reset(static_cast<T*>(faiss::read_index(filename.data(), io_flags)));
         }
+        if constexpr (!std::is_same_v<T, faiss::IndexScaNN>) {
+            const BaseConfig& base_cfg = static_cast<const BaseConfig&>(config);
+            if (HasRawData(base_cfg.metric_type.value())) {
+                index_->make_direct_map(true);
+            }
+        }
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
         return Status::faiss_inner_error;
@@ -721,36 +947,41 @@ IvfIndexNode<T>::DeserializeFromFile(const std::string& filename, const Config& 
     return Status::success;
 }
 
-KNOWHERE_REGISTER_GLOBAL(IVFBIN, [](const Object& object) {
-    return Index<IvfIndexNode<faiss::IndexBinaryIVF>>::Create(object);
+KNOWHERE_REGISTER_GLOBAL(IVFBIN, [](const int32_t& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexBinaryIVF>>::Create(version, object);
 });
 
-KNOWHERE_REGISTER_GLOBAL(BIN_IVF_FLAT, [](const Object& object) {
-    return Index<IvfIndexNode<faiss::IndexBinaryIVF>>::Create(object);
+KNOWHERE_REGISTER_GLOBAL(BIN_IVF_FLAT, [](const int32_t& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexBinaryIVF>>::Create(version, object);
 });
 
-KNOWHERE_REGISTER_GLOBAL(IVFFLAT,
-                         [](const Object& object) { return Index<IvfIndexNode<faiss::IndexIVFFlat>>::Create(object); });
-KNOWHERE_REGISTER_GLOBAL(IVF_FLAT,
-                         [](const Object& object) { return Index<IvfIndexNode<faiss::IndexIVFFlat>>::Create(object); });
-KNOWHERE_REGISTER_GLOBAL(IVFFLATCC, [](const Object& object) {
-    return Index<IvfIndexNode<faiss::IndexIVFFlatCC>>::Create(object);
+KNOWHERE_REGISTER_GLOBAL(IVFFLAT, [](const int32_t& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexIVFFlat>>::Create(version, object);
 });
-KNOWHERE_REGISTER_GLOBAL(IVF_FLAT_CC, [](const Object& object) {
-    return Index<IvfIndexNode<faiss::IndexIVFFlatCC>>::Create(object);
+KNOWHERE_REGISTER_GLOBAL(IVF_FLAT, [](const int32_t& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexIVFFlat>>::Create(version, object);
 });
-KNOWHERE_REGISTER_GLOBAL(SCANN,
-                         [](const Object& object) { return Index<IvfIndexNode<faiss::IndexScaNN>>::Create(object); });
-KNOWHERE_REGISTER_GLOBAL(IVFPQ,
-                         [](const Object& object) { return Index<IvfIndexNode<faiss::IndexIVFPQ>>::Create(object); });
-KNOWHERE_REGISTER_GLOBAL(IVF_PQ,
-                         [](const Object& object) { return Index<IvfIndexNode<faiss::IndexIVFPQ>>::Create(object); });
+KNOWHERE_REGISTER_GLOBAL(IVFFLATCC, [](const int32_t& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexIVFFlatCC>>::Create(version, object);
+});
+KNOWHERE_REGISTER_GLOBAL(IVF_FLAT_CC, [](const int32_t& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexIVFFlatCC>>::Create(version, object);
+});
+KNOWHERE_REGISTER_GLOBAL(SCANN, [](const int32_t& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexScaNN>>::Create(version, object);
+});
+KNOWHERE_REGISTER_GLOBAL(IVFPQ, [](const int32_t& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexIVFPQ>>::Create(version, object);
+});
+KNOWHERE_REGISTER_GLOBAL(IVF_PQ, [](const int32_t& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexIVFPQ>>::Create(version, object);
+});
 
-KNOWHERE_REGISTER_GLOBAL(IVFSQ, [](const Object& object) {
-    return Index<IvfIndexNode<faiss::IndexIVFScalarQuantizer>>::Create(object);
+KNOWHERE_REGISTER_GLOBAL(IVFSQ, [](const int32_t& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexIVFScalarQuantizer>>::Create(version, object);
 });
-KNOWHERE_REGISTER_GLOBAL(IVF_SQ8, [](const Object& object) {
-    return Index<IvfIndexNode<faiss::IndexIVFScalarQuantizer>>::Create(object);
+KNOWHERE_REGISTER_GLOBAL(IVF_SQ8, [](const int32_t& version, const Object& object) {
+    return Index<IvfIndexNode<faiss::IndexIVFScalarQuantizer>>::Create(version, object);
 });
 
 }  // namespace knowhere

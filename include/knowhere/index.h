@@ -107,6 +107,16 @@ class Index {
         return *this;
     }
 
+    T1*
+    Node() {
+        return node;
+    }
+
+    const T1*
+    Node() const {
+        return node;
+    }
+
     template <typename T2>
     Index<T2>
     Cast() {
@@ -126,6 +136,9 @@ class Index {
 
     expected<DataSetPtr>
     Search(const DataSet& dataset, const Json& json, const BitsetView& bitset) const;
+
+    expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
+    AnnIterator(const DataSet& dataset, const Json& json, const BitsetView& bitset) const;
 
     expected<DataSetPtr>
     RangeSearch(const DataSet& dataset, const Json& json, const BitsetView& bitset) const;

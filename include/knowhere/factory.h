@@ -22,14 +22,14 @@ namespace knowhere {
 class IndexFactory {
  public:
     Index<IndexNode>
-    Create(const std::string& name, const Object& object = nullptr);
+    Create(const std::string& name, const int32_t& version, const Object& object = nullptr);
     const IndexFactory&
-    Register(const std::string& name, std::function<Index<IndexNode>(const Object&)> func);
+    Register(const std::string& name, std::function<Index<IndexNode>(const int32_t& version, const Object&)> func);
     static IndexFactory&
     Instance();
 
  private:
-    typedef std::map<std::string, std::function<Index<IndexNode>(const Object&)>> FuncMap;
+    typedef std::map<std::string, std::function<Index<IndexNode>(const int32_t&, const Object&)>> FuncMap;
     IndexFactory();
     static FuncMap&
     MapInstance();

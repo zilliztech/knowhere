@@ -18,6 +18,7 @@
 #endif
 #include "faiss/Clustering.h"
 #include "faiss/utils/distances.h"
+#include "knowhere/comp/thread_pool.h"
 #include "knowhere/log.h"
 #ifdef KNOWHERE_WITH_GPU
 #include "index/gpu/gpu_res_mgr.h"
@@ -130,6 +131,16 @@ KnowhereConfig::SetAioContextPool(size_t num_ctx) {
     return AioContextPool::InitGlobalAioPool(num_ctx, default_max_events);
 #endif
     return true;
+}
+
+void
+KnowhereConfig::SetBuildThreadPoolSize(size_t num_threads) {
+    knowhere::ThreadPool::InitGlobalBuildThreadPool(num_threads);
+}
+
+void
+KnowhereConfig::SetSearchThreadPoolSize(size_t num_threads) {
+    knowhere::ThreadPool::InitGlobalSearchThreadPool(num_threads);
 }
 
 void

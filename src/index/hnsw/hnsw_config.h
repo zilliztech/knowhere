@@ -19,6 +19,7 @@ namespace knowhere {
 
 namespace {
 
+constexpr const CFG_INT::value_type kIteratorSeedEf = 40;
 constexpr const CFG_INT::value_type kEfMinValue = 16;
 constexpr const CFG_INT::value_type kDefaultRangeSearchEf = 16;
 
@@ -29,6 +30,7 @@ class HnswConfig : public BaseConfig {
     CFG_INT M;
     CFG_INT efConstruction;
     CFG_INT ef;
+    CFG_INT seed_ef;
     CFG_INT overview_levels;
     KNOHWERE_DECLARE_CONFIG(HnswConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(M).description("hnsw M").set_default(30).set_range(1, 2048).for_train();
@@ -43,6 +45,11 @@ class HnswConfig : public BaseConfig {
             .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
             .for_search()
             .for_range_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(seed_ef)
+            .description("hnsw seed_ef when using iterator")
+            .set_default(kIteratorSeedEf)
+            .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
+            .for_iterator();
         KNOWHERE_CONFIG_DECLARE_FIELD(overview_levels)
             .description("hnsw overview levels for feder")
             .set_default(3)
@@ -65,7 +72,7 @@ class HnswConfig : public BaseConfig {
     }
 
     inline Status
-    CheckAndAdjustForRangeSearch() override {
+    CheckAndAdjustForRangeSearch(std::string* err_msg) override {
         if (!ef.has_value()) {
             // if ef is not set by user, set it to default
             ef = kDefaultRangeSearchEf;

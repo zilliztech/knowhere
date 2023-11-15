@@ -1,7 +1,7 @@
 FROM nvidia/cuda:11.6.0-devel-ubuntu20.04
 
-ENV CMAKE_VERSION="v3.23"
-ENV CMAKE_TAR="cmake-3.23.1-linux-x86_64.tar.gz"
+ENV CMAKE_VERSION="v3.27"
+ENV CMAKE_TAR="cmake-3.27.5-linux-x86_64.tar.gz"
 RUN apt-get update && apt-get install -y --no-install-recommends wget curl g++ gcc ca-certificates\
     make ccache python3-dev gfortran python3-setuptools swig libopenblas-dev pip  \
     && apt-get remove --purge -y  \

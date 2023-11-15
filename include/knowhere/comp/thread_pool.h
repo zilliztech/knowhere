@@ -12,8 +12,12 @@
 #pragma once
 
 #include <omp.h>
+#include <sys/resource.h>
 
+#include <cerrno>
+#include <cstring>
 #include <memory>
+#include <thread>
 #include <utility>
 
 #include "folly/executors/CPUThreadPoolExecutor.h"
@@ -23,14 +27,45 @@
 namespace knowhere {
 
 class ThreadPool {
+#ifdef __linux__
+ private:
+    class LowPriorityThreadFactory : public folly::NamedThreadFactory {
+     public:
+        using folly::NamedThreadFactory::NamedThreadFactory;
+        std::thread
+        newThread(folly::Func&& func) override {
+            return folly::NamedThreadFactory::newThread([&, func = std::move(func)]() mutable {
+                if (setpriority(PRIO_PROCESS, gettid(), 19) != 0) {
+                    LOG_KNOWHERE_ERROR_ << "Failed to set priority of knowhere thread. Error is: "
+                                        << std::strerror(errno);
+                } else {
+                    LOG_KNOWHERE_INFO_ << "Successfully set priority of knowhere thread.";
+                }
+                func();
+            });
+        }
+    };
+
  public:
-    explicit ThreadPool(uint32_t num_threads)
+    explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix)
         : pool_(folly::CPUThreadPoolExecutor(
               num_threads,
               std::make_unique<
                   folly::LifoSemMPMCQueue<folly::CPUThreadPoolExecutor::CPUTask, folly::QueueBehaviorIfFull::BLOCK>>(
-                  num_threads * kTaskQueueFactor))) {
+                  num_threads * kTaskQueueFactor),
+              std::make_shared<LowPriorityThreadFactory>(thread_name_prefix))) {
     }
+#else
+ public:
+    explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix)
+        : pool_(folly::CPUThreadPoolExecutor(
+              num_threads,
+              std::make_unique<
+                  folly::LifoSemMPMCQueue<folly::CPUThreadPoolExecutor::CPUTask, folly::QueueBehaviorIfFull::BLOCK>>(
+                  num_threads * kTaskQueueFactor),
+              std::make_shared<folly::NamedThreadFactory>(thread_name_prefix))) {
+    }
+#endif
 
     ThreadPool(const ThreadPool&) = delete;
 
@@ -104,10 +139,10 @@ class ThreadPool {
     GetGlobalBuildThreadPool() {
         if (global_build_thread_pool_size_ == 0) {
             InitThreadPool(std::thread::hardware_concurrency(), global_build_thread_pool_size_);
-            LOG_KNOWHERE_WARNING_ << "Global Search ThreadPool has not been initialized yet, init it with threads num: "
-                                  << global_search_thread_pool_size_;
+            LOG_KNOWHERE_WARNING_ << "Global Build ThreadPool has not been initialized yet, init it with threads num: "
+                                  << global_build_thread_pool_size_;
         }
-        static auto pool = std::make_shared<ThreadPool>(global_build_thread_pool_size_);
+        static auto pool = std::make_shared<ThreadPool>(global_build_thread_pool_size_, "Knowhere_Build");
         return pool;
     }
 
@@ -118,7 +153,7 @@ class ThreadPool {
             LOG_KNOWHERE_WARNING_ << "Global Search ThreadPool has not been initialized yet, init it with threads num: "
                                   << global_search_thread_pool_size_;
         }
-        static auto pool = std::make_shared<ThreadPool>(global_search_thread_pool_size_);
+        static auto pool = std::make_shared<ThreadPool>(global_search_thread_pool_size_, "Knowhere_Search");
         return pool;
     }
 
@@ -126,8 +161,14 @@ class ThreadPool {
         int omp_before;
 
      public:
-        explicit ScopedOmpSetter(int num_threads = 1) : omp_before(omp_get_max_threads()) {
-            omp_set_num_threads(num_threads);
+        explicit ScopedOmpSetter(int num_threads = 0) {
+            if (global_build_thread_pool_size_ == 0) {  // this should not happen in prod
+                omp_before = omp_get_max_threads();
+            } else {
+                omp_before = global_build_thread_pool_size_;
+            }
+
+            omp_set_num_threads(num_threads <= 0 ? omp_before : num_threads);
         }
         ~ScopedOmpSetter() {
             omp_set_num_threads(omp_before);

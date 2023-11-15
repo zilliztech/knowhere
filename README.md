@@ -29,7 +29,7 @@ Here's a list of verified OS types where Knowhere can successfully build and run
 
 ```bash
 $ sudo apt install build-essential libopenblas-dev libaio-dev python3-dev python3-pip
-$ pip3 install conan==1.59.0 --user
+$ pip3 install conan==1.61.0 --user
 $ export PATH=$PATH:$HOME/.local/bin
 ```
 
@@ -110,4 +110,23 @@ rm -rf dist
 rm -rf knowhere.egg-info
 rm knowhere/knowhere_wrap.cpp
 rm knowhere/swigknowhere.py
+```
+
+## Contributing
+
+### Pre-Commit
+
+Before submitting a pull request, please make sure running pre-commit checks locally to ensure the code is ready for review. Use the following command to install pre-commit checks:
+
+```bash
+pip3 install pre-commit
+pre-commit install --hook-type pre-commit --hook-type pre-push
+
+# If clang-format and clang-tidy not already installed:
+# linux
+apt install clang-format clang-tidy
+# mac
+brew install llvm
+ln -s "$(brew --prefix llvm)/bin/clang-format" "/usr/local/bin/clang-format"
+ln -s "$(brew --prefix llvm)/bin/clang-tidy" "/usr/local/bin/clang-tidy"
 ```

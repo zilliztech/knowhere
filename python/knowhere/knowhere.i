@@ -28,7 +28,13 @@ typedef uint64_t size_t;
 #endif
 #include <knowhere/expected.h>
 #include <knowhere/factory.h>
+#include <knowhere/version.h>
+#include <knowhere/utils.h>
+#include <knowhere/comp/brute_force.h>
+#include <knowhere/comp/knowhere_config.h>
 #include <knowhere/comp/local_file_manager.h>
+#include <fstream>
+#include <string>
 using namespace knowhere;
 %}
 
@@ -65,6 +71,7 @@ import_array();
 %apply (float* INPLACE_ARRAY2, int DIM1, int DIM2){(float *dis,int nq_1,int k_1)}
 %apply (int *INPLACE_ARRAY2, int DIM1, int DIM2){(int *ids,int nq_2,int k_2)}
 %apply (float* INPLACE_ARRAY2, int DIM1, int DIM2){(float *data,int rows,int dim)}
+%apply (int32_t *INPLACE_ARRAY2, int DIM1, int DIM2){(int32_t *data,int rows,int dim)}
 
 %typemap(in, numinputs=0) knowhere::Status& status(knowhere::Status tmp) %{
     $1 = &tmp;
@@ -108,14 +115,14 @@ public:
 
 class IndexWrap {
  public:
-    IndexWrap(const std::string& name) {
+    IndexWrap(const std::string& name, const int32_t& version) {
         GILReleaser rel;
-        if (name == std::string("DISKANN")) {
+        if (knowhere::UseDiskLoad(name, version)) {
             std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
             auto diskann_pack = knowhere::Pack(file_manager);
-            idx = IndexFactory::Instance().Create(name, diskann_pack);
+            idx = IndexFactory::Instance().Create(name, version, diskann_pack);
         } else {
-            idx = IndexFactory::Instance().Create(name);
+            idx = IndexFactory::Instance().Create(name, version);
         }
     }
 
@@ -221,21 +228,21 @@ class IndexWrap {
 class BitSet {
  public:
     BitSet(const int num_bits) : num_bits_(num_bits) {
-        bit_set_.resize(num_bits_ / 8, 0);
+        bitset_.resize((num_bits_ + 7) / 8, 0);
     }
 
     void
     SetBit(const int idx) {
-        bit_set_[idx >> 3] |= 0x1 << (idx & 0x7);
+        bitset_[idx >> 3] |= 0x1 << (idx & 0x7);
     }
 
     knowhere::BitsetView
     GetBitSetView() {
-        return knowhere::BitsetView(bit_set_.data(), num_bits_);
+        return knowhere::BitsetView(bitset_.data(), num_bits_);
     }
 
  private:
-    std::vector<uint8_t> bit_set_;
+    std::vector<uint8_t> bitset_;
     int num_bits_ = 0;
 };
 
@@ -253,6 +260,11 @@ Array2DataSetF(float* xb, int nb, int dim) {
     ds->SetTensor(xb);
     return ds;
 };
+
+int32_t
+CurrentVersion() {
+    return knowhere::Version::GetCurrentVersion().VersionNumber();
+}
 
 knowhere::DataSetPtr
 Array2DataSetI(int *xb, int nb, int dim){
@@ -278,19 +290,23 @@ Array2DataSetIds(int* ids, int len){
     return ds;
 };
 
-int64_t DataSet_Rows(knowhere::DataSetPtr results){
+int64_t
+DataSet_Rows(knowhere::DataSetPtr results){
     return results->GetRows();
 }
 
-int64_t DataSet_Dim(knowhere::DataSetPtr results){
+int64_t
+DataSet_Dim(knowhere::DataSetPtr results){
     return results->GetDim();
 }
 
-knowhere::BinarySetPtr GetBinarySet() {
+knowhere::BinarySetPtr
+GetBinarySet() {
     return std::make_shared<knowhere::BinarySet>();
 }
 
-knowhere::DataSetPtr GetNullDataSet() {
+knowhere::DataSetPtr
+GetNullDataSet() {
     return nullptr;
 }
 
@@ -321,6 +337,17 @@ DataSetTensor2Array(knowhere::DataSetPtr result, float* data, int rows, int dim)
 }
 
 void
+BinaryDataSetTensor2Array(knowhere::DataSetPtr result, int32_t* data, int rows, int dim) {
+    GILReleaser rel;
+    auto data_ = result->GetTensor();
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < dim; ++j) {
+            *(data + i * dim + j) = *((int32_t*)(data_) + i * dim + j);
+        }
+    }
+}
+
+void
 DumpRangeResultIds(knowhere::DataSetPtr result, int* ids, int len) {
     GILReleaser rel;
     auto ids_ = result->GetIds();
@@ -344,6 +371,99 @@ DumpRangeResultDis(knowhere::DataSetPtr result, float* dis, int len) {
     auto dist_ = result->GetDistance();
     for (int i = 0; i < len; ++i) {
         *(dis + i) = *((float*)(dist_) + i);
+    }
+}
+
+void
+Dump(knowhere::BinarySetPtr binset, const std::string& file_name) {
+    auto binary_set = *binset;
+    auto binary_map = binset -> binary_map_;
+    std::ofstream outfile;
+    outfile.open(file_name, std::ios::out | std::ios::trunc);
+    if (outfile.good()) {
+        for (auto it = binary_map.begin(); it != binary_map.end(); ++it) {
+            // serialization: name_length(size_t); name(char[]); binset_size(size_t); binset(uint8[]);
+            auto name = it->first;
+            uint64_t name_len = name.size();
+            outfile << name_len;
+            outfile << name;
+            auto value = it->second;
+            outfile << value->size;
+            outfile.write(reinterpret_cast<char*>(value->data.get()), value->size);
+        }
+        // end with 0
+        outfile << 0;
+        outfile.flush();
+    }
+}
+
+void
+Load(knowhere::BinarySetPtr binset, const std::string& file_name) {
+    std::ifstream infile;
+    infile.open(file_name, std::ios::in);
+    if (infile.good()) {
+        uint64_t name_len;
+        while (true) {
+            // deserialization: name_length(size_t); name(char[]); binset_size(size_t); binset(uint8[]);
+            infile >> name_len;
+            if (name_len == 0) break;
+
+            auto _name = new char[name_len];
+            infile.read(_name, name_len);
+            std::string name(_name, name_len);
+
+            int64_t size;
+            infile >> size;
+            if (size > 0) {
+                auto data = new uint8_t[size];
+                std::shared_ptr<uint8_t[]> data_ptr(data);
+                infile.read(reinterpret_cast<char*>(data_ptr.get()), size);
+                binset->Append(name, data_ptr, size);
+            }
+        }
+    }
+}
+
+knowhere::DataSetPtr
+BruteForceSearch(knowhere::DataSetPtr base_dataset, knowhere::DataSetPtr query_dataset, const std::string& json,
+                 const knowhere::BitsetView& bitset, knowhere::Status& status) {
+    GILReleaser rel;
+    auto res = knowhere::BruteForce::Search(base_dataset, query_dataset, knowhere::Json::parse(json), bitset);
+    if (res.has_value()) {
+        status = knowhere::Status::success;
+        return res.value();
+    } else {
+        status = res.error();
+        return nullptr;
+    }
+}
+
+knowhere::DataSetPtr
+BruteForceRangeSearch(knowhere::DataSetPtr base_dataset, knowhere::DataSetPtr query_dataset, const std::string& json,
+                      const knowhere::BitsetView& bitset, knowhere::Status& status) {
+    GILReleaser rel;
+    auto res = knowhere::BruteForce::RangeSearch(base_dataset, query_dataset, knowhere::Json::parse(json), bitset);
+    if (res.has_value()) {
+        status = knowhere::Status::success;
+        return res.value();
+    } else {
+        status = res.error();
+        return nullptr;
+    }
+}
+
+void
+SetSimdType(const std::string type) {
+    if (type == "auto") {
+        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AUTO);
+    } else if (type == "avx512") {
+        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX512);
+    } else if (type == "avx2") {
+        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);
+    } else if (type == "avx" || type == "sse4_2") {
+        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::SSE4_2);
+    } else {
+        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::GENERIC);
     }
 }
 

@@ -13,8 +13,9 @@
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/utils/AlignedTable.h>
 #include <faiss/utils/ordered_key_value.h>
+#ifdef __AVX2__
 #include <faiss/utils/simdlib.h>
-
+#endif
 #include <faiss/impl/platform_macros.h>
 
 namespace faiss {
@@ -222,6 +223,7 @@ typename C::T partition_fuzzy_median3(
  * SIMD routines when vals is an aligned array of uint16_t
  ******************************************************************/
 
+#ifdef __AVX2__
 namespace simd_partitioning {
 
 void find_minimax(
@@ -738,6 +740,8 @@ uint16_t simd_partition_with_bounds(
 
 } // namespace simd_partitioning
 
+#endif
+
 /******************************************************************
  * Driver routine
  ******************************************************************/
@@ -817,7 +821,7 @@ template uint16_t partition_fuzzy<CMax<uint16_t, int>>(
  * Histogram subroutines
  ******************************************************************/
 
-#ifdef __AVX2__
+#if defined(__AVX2__) || defined(__aarch64__)
 /// FIXME when MSB of uint16 is set
 // this code does not compile properly with GCC 7.4.0
 
@@ -833,7 +837,7 @@ simd32uint8 accu4to8(simd16uint16 a4) {
     simd16uint16 a8_0 = a4 & mask4;
     simd16uint16 a8_1 = (a4 >> 4) & mask4;
 
-    return simd32uint8(_mm256_hadd_epi16(a8_0.i, a8_1.i));
+    return simd32uint8(hadd(a8_0, a8_1));
 }
 
 simd16uint16 accu8to16(simd32uint8 a8) {
@@ -842,10 +846,10 @@ simd16uint16 accu8to16(simd32uint8 a8) {
     simd16uint16 a8_0 = simd16uint16(a8) & mask8;
     simd16uint16 a8_1 = (simd16uint16(a8) >> 8) & mask8;
 
-    return simd16uint16(_mm256_hadd_epi16(a8_0.i, a8_1.i));
+    return hadd(a8_0, a8_1);
 }
 
-static const simd32uint8 shifts(_mm256_setr_epi8(
+static const simd32uint8 shifts = simd32uint8::create<
         1,
         16,
         0,
@@ -877,12 +881,12 @@ static const simd32uint8 shifts(_mm256_setr_epi8(
         0,
         0,
         4,
-        64));
+        64>();
 
 // 2-bit accumulator: we can add only up to 3 elements
 // on output we return 2*4-bit results
 // preproc returns either an index in 0..7 or 0xffff
-// that yeilds a 0 when used in the table look-up
+// that yields a 0 when used in the table look-up
 template <int N, class Preproc>
 void compute_accu2(
         const uint16_t*& data,
@@ -937,7 +941,7 @@ simd16uint16 histogram_8(const uint16_t* data, Preproc pp, size_t n_in) {
     simd16uint16 a16lo = accu8to16(a8lo);
     simd16uint16 a16hi = accu8to16(a8hi);
 
-    simd16uint16 a16 = simd16uint16(_mm256_hadd_epi16(a16lo.i, a16hi.i));
+    simd16uint16 a16 = hadd(a16lo, a16hi);
 
     // the 2 lanes must still be combined
     return a16;
@@ -947,7 +951,7 @@ simd16uint16 histogram_8(const uint16_t* data, Preproc pp, size_t n_in) {
  * 16 bins
  ************************************************************/
 
-static const simd32uint8 shifts2(_mm256_setr_epi8(
+static const simd32uint8 shifts2 = simd32uint8::create<
         1,
         2,
         4,
@@ -955,7 +959,7 @@ static const simd32uint8 shifts2(_mm256_setr_epi8(
         16,
         32,
         64,
-        (char)128,
+        128,
         1,
         2,
         4,
@@ -963,7 +967,7 @@ static const simd32uint8 shifts2(_mm256_setr_epi8(
         16,
         32,
         64,
-        (char)128,
+        128,
         1,
         2,
         4,
@@ -971,7 +975,7 @@ static const simd32uint8 shifts2(_mm256_setr_epi8(
         16,
         32,
         64,
-        (char)128,
+        128,
         1,
         2,
         4,
@@ -979,17 +983,10 @@ static const simd32uint8 shifts2(_mm256_setr_epi8(
         16,
         32,
         64,
-        (char)128));
+        128>();
 
 simd32uint8 shiftr_16(simd32uint8 x, int n) {
     return simd32uint8(simd16uint16(x) >> n);
-}
-
-inline simd32uint8 combine_2x2(simd32uint8 a, simd32uint8 b) {
-    __m256i a1b0 = _mm256_permute2f128_si256(a.i, b.i, 0x21);
-    __m256i a0b1 = _mm256_blend_epi32(a.i, b.i, 0xF0);
-
-    return simd32uint8(a1b0) + simd32uint8(a0b1);
 }
 
 // 2-bit accumulator: we can add only up to 3 elements
@@ -1018,7 +1015,7 @@ void compute_accu2_16(
         // contains 0s for out-of-bounds elements
 
         simd16uint16 lt8 = (v >> 3) == simd16uint16(0);
-        lt8.i = _mm256_xor_si256(lt8.i, _mm256_set1_epi16(0xff00));
+        lt8 = lt8 ^ simd16uint16(0xff00);
 
         a1 = a1 & lt8;
 
@@ -1036,11 +1033,15 @@ void compute_accu2_16(
 simd32uint8 accu4to8_2(simd32uint8 a4_0, simd32uint8 a4_1) {
     simd32uint8 mask4(0x0f);
 
-    simd32uint8 a8_0 = combine_2x2(a4_0 & mask4, shiftr_16(a4_0, 4) & mask4);
+    simd16uint16 a8_0 = combine2x2(
+            (simd16uint16)(a4_0 & mask4),
+            (simd16uint16)(shiftr_16(a4_0, 4) & mask4));
 
-    simd32uint8 a8_1 = combine_2x2(a4_1 & mask4, shiftr_16(a4_1, 4) & mask4);
+    simd16uint16 a8_1 = combine2x2(
+            (simd16uint16)(a4_1 & mask4),
+            (simd16uint16)(shiftr_16(a4_1, 4) & mask4));
 
-    return simd32uint8(_mm256_hadd_epi16(a8_0.i, a8_1.i));
+    return simd32uint8(hadd(a8_0, a8_1));
 }
 
 template <class Preproc>
@@ -1079,10 +1080,9 @@ simd16uint16 histogram_16(const uint16_t* data, Preproc pp, size_t n_in) {
     simd16uint16 a16lo = accu8to16(a8lo);
     simd16uint16 a16hi = accu8to16(a8hi);
 
-    simd16uint16 a16 = simd16uint16(_mm256_hadd_epi16(a16lo.i, a16hi.i));
+    simd16uint16 a16 = hadd(a16lo, a16hi);
 
-    __m256i perm32 = _mm256_setr_epi32(0, 2, 4, 6, 1, 3, 5, 7);
-    a16.i = _mm256_permutevar8x32_epi32(a16.i, perm32);
+    a16 = simd16uint16{simd8uint32{a16}.unzip()};
 
     return a16;
 }

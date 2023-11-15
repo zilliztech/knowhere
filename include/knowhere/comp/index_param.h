@@ -16,6 +16,7 @@
 namespace knowhere {
 
 using IndexType = std::string;
+using IndexVersion = int32_t;
 
 namespace IndexEnum {
 
@@ -48,6 +49,10 @@ constexpr const char* INDEX_DISKANN = "DISKANN";
 namespace meta {
 constexpr const char* INDEX_TYPE = "index_type";
 constexpr const char* METRIC_TYPE = "metric_type";
+constexpr const char* DATA_PATH = "data_path";
+constexpr const char* INDEX_PREFIX = "index_prefix";
+constexpr const char* INDEX_ENGINE_VERSION = "index_engine_version";
+constexpr const char* RETRIEVE_FRIENDLY = "retrieve_friendly";
 constexpr const char* DIM = "dim";
 constexpr const char* TENSOR = "tensor";
 constexpr const char* ROWS = "rows";
@@ -70,15 +75,18 @@ namespace indexparam {
 // IVF Params
 constexpr const char* NPROBE = "nprobe";
 constexpr const char* NLIST = "nlist";
+constexpr const char* USE_ELKAN = "use_elkan";
 constexpr const char* NBITS = "nbits";  // PQ/SQ
 constexpr const char* M = "m";          // PQ param for IVFPQ
 constexpr const char* SSIZE = "ssize";
 constexpr const char* REORDER_K = "reorder_k";
+constexpr const char* WITH_RAW_DATA = "with_raw_data";
 
 // HNSW Params
 constexpr const char* EFCONSTRUCTION = "efConstruction";
 constexpr const char* HNSW_M = "M";
 constexpr const char* EF = "ef";
+constexpr const char* SEED_EF = "seed_ef";
 constexpr const char* OVERVIEW_LEVELS = "overview_levels";
 }  // namespace indexparam
 

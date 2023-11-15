@@ -10,17 +10,18 @@
 #ifndef FAISS_INDEX_H
 #define FAISS_INDEX_H
 
+#include <faiss/MetricType.h>
 #include <cstdio>
 #include <sstream>
 #include <string>
 #include <typeinfo>
 
-#include <faiss/MetricType.h>
-#include <knowhere/bitsetview.h>
-using knowhere::BitsetView;
+// #include <knowhere/bitsetview.h>
+// using knowhere::BitsetView;
+
 #define FAISS_VERSION_MAJOR 1
 #define FAISS_VERSION_MINOR 7
-#define FAISS_VERSION_PATCH 2
+#define FAISS_VERSION_PATCH 4
 
 /**
  * @namespace faiss
@@ -40,10 +41,27 @@ using knowhere::BitsetView;
 
 namespace faiss {
 
-/// Forward declarations see AuxIndexStructures.h
+/// Forward declarations see impl/AuxIndexStructures.h, impl/IDSelector.h and
+/// impl/DistanceComputer.h
 struct IDSelector;
 struct RangeSearchResult;
 struct DistanceComputer;
+
+/** Parent class for the optional search paramenters.
+ *
+ * Sub-classes with additional search parameters should inherit this class.
+ * Ownership of the object fields is always to the caller.
+ */
+struct SearchParameters {
+    // BitsetView bitset = nullptr;
+
+    // // Disabled for Knowhere.
+    /// if non-null, only these IDs will be considered during search.
+    IDSelector* sel = nullptr;
+
+    /// make sure we can dynamic_cast this
+    virtual ~SearchParameters() {}
+};
 
 /** Abstract structure for an index, supports adding vectors and searching them.
  *
@@ -51,13 +69,15 @@ struct DistanceComputer;
  * although the internal representation may vary.
  */
 struct Index {
-    using idx_t = int64_t; ///< all indices are this type
     using component_t = float;
     using distance_t = float;
 
     int d;        ///< vector dimension
     idx_t ntotal; ///< total nb of indexed vectors
     bool verbose; ///< verbosity level
+
+    /// both IP and COSINE are regarded as INNER_PRODUCT in faiss
+    bool is_cosine;
 
     /// set if the Index does not require training, or if training is
     /// done already
@@ -110,7 +130,6 @@ struct Index {
      * @param x           input vectors to search, size n * d
      * @param labels      output labels of the NNs, size n*k
      * @param distances   output pairwise distances, size n*k
-     * @param bitset      flags to check the validity of vectors
      */
     virtual void search(
             idx_t n,
@@ -118,7 +137,7 @@ struct Index {
             idx_t k,
             float* distances,
             idx_t* labels,
-            const BitsetView bitset = nullptr) const = 0;
+            const SearchParameters* params = nullptr) const = 0;
 
     /** query n vectors of dimension d to the index.
      *
@@ -135,7 +154,7 @@ struct Index {
             const float* x,
             float radius,
             RangeSearchResult* result,
-            const BitsetView bitset = nullptr) const;
+            const SearchParameters* params = nullptr) const;
 
     /** return the indexes of the k vectors closest to the query x.
      *
@@ -143,11 +162,8 @@ struct Index {
      * @param x           input vectors to search, size n * d
      * @param labels      output labels of the NNs, size n*k
      */
-    virtual void assign(
-            idx_t n,
-            const float* x,
-            idx_t* labels,
-            float* distances = nullptr) const;
+    virtual void assign(idx_t n, const float* x, idx_t* labels, idx_t k = 1)
+            const;
 
     /// removes all elements from the database.
     virtual void reset() = 0;
@@ -164,6 +180,16 @@ struct Index {
      * @param recons      reconstucted vector (size d)
      */
     virtual void reconstruct(idx_t key, float* recons) const;
+
+    /** Reconstruct several stored vectors (or an approximation if lossy coding)
+     *
+     * this function may not be defined for some indexes
+     * @param n        number of vectors to reconstruct
+     * @param keys        ids of the vectors to reconstruct (size n)
+     * @param recons      reconstucted vector (size n * d)
+     */
+    virtual void reconstruct_batch(idx_t n, const idx_t* keys, float* recons)
+            const;
 
     /** Reconstruct vectors i0 to i0 + ni - 1
      *
@@ -186,7 +212,8 @@ struct Index {
             idx_t k,
             float* distances,
             idx_t* labels,
-            float* recons) const;
+            float* recons,
+            const SearchParameters* params = nullptr) const;
 
     /** Computes a residual vector after indexing encoding.
      *
@@ -242,13 +269,24 @@ struct Index {
      */
     virtual void sa_encode(idx_t n, const float* x, uint8_t* bytes) const;
 
-    /** encode a set of vectors
+    /** decode a set of vectors
      *
      * @param n       number of vectors
      * @param bytes   input encoded vectors, size n * sa_code_size()
      * @param x       output vectors, size n * d
      */
     virtual void sa_decode(idx_t n, const uint8_t* bytes, float* x) const;
+
+    /** moves the entries from another dataset to self.
+     * On output, other is empty.
+     * add_id is added to all moved ids
+     * (for sequential ids, this would be this->ntotal) */
+    virtual void merge_from(Index& otherIndex, idx_t add_id = 0);
+
+    /** check that the two indexes are compatible (ie, they are
+     * trained in the same way and have the same
+     * parameters). Otherwise throw. */
+    virtual void check_compatible_for_merge(const Index& otherIndex) const;
 };
 
 } // namespace faiss

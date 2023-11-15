@@ -18,6 +18,10 @@
 
 #include "faiss/FaissHook.h"
 
+#if defined(__ARM_NEON)
+#include "distances_neon.h"
+#endif
+
 #if defined(__x86_64__)
 #include "distances_avx.h"
 #include "distances_avx512.h"
@@ -35,6 +39,8 @@ bool use_avx2 = true;
 bool use_sse4_2 = true;
 #endif
 
+bool support_pq_fast_scan = true;
+
 decltype(fvec_inner_product) fvec_inner_product = fvec_inner_product_ref;
 decltype(fvec_L2sqr) fvec_L2sqr = fvec_L2sqr_ref;
 decltype(fvec_L1) fvec_L1 = fvec_L1_ref;
@@ -44,6 +50,14 @@ decltype(fvec_L2sqr_ny) fvec_L2sqr_ny = fvec_L2sqr_ny_ref;
 decltype(fvec_inner_products_ny) fvec_inner_products_ny = fvec_inner_products_ny_ref;
 decltype(fvec_madd) fvec_madd = fvec_madd_ref;
 decltype(fvec_madd_and_argmin) fvec_madd_and_argmin = fvec_madd_and_argmin_ref;
+
+decltype(fvec_L2sqr_ny_nearest) fvec_L2sqr_ny_nearest = fvec_L2sqr_ny_nearest_ref;
+decltype(fvec_L2sqr_ny_nearest_y_transposed) fvec_L2sqr_ny_nearest_y_transposed =
+    fvec_L2sqr_ny_nearest_y_transposed_ref;
+decltype(fvec_L2sqr_ny_transposed) fvec_L2sqr_ny_transposed = fvec_L2sqr_ny_transposed_ref;
+
+decltype(fvec_inner_product_batch_4) fvec_inner_product_batch_4 = fvec_inner_product_batch_4_ref;
+decltype(fvec_L2sqr_batch_4) fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref;
 
 #if defined(__x86_64__)
 bool
@@ -79,10 +93,14 @@ fvec_hook(std::string& simd_type) {
         fvec_norm_L2sqr = fvec_norm_L2sqr_sse;
         fvec_L2sqr_ny = fvec_L2sqr_ny_sse;
         fvec_inner_products_ny = fvec_inner_products_ny_sse;
-        fvec_madd = fvec_madd_sse;
+        fvec_madd = fvec_madd_avx512;
         fvec_madd_and_argmin = fvec_madd_and_argmin_sse;
 
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_avx512;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_avx512;
+
         simd_type = "AVX512";
+        support_pq_fast_scan = true;
     } else if (use_avx2 && cpu_support_avx2()) {
         fvec_inner_product = fvec_inner_product_avx;
         fvec_L2sqr = fvec_L2sqr_avx;
@@ -92,10 +110,14 @@ fvec_hook(std::string& simd_type) {
         fvec_norm_L2sqr = fvec_norm_L2sqr_sse;
         fvec_L2sqr_ny = fvec_L2sqr_ny_sse;
         fvec_inner_products_ny = fvec_inner_products_ny_sse;
-        fvec_madd = fvec_madd_sse;
+        fvec_madd = fvec_madd_avx;
         fvec_madd_and_argmin = fvec_madd_and_argmin_sse;
 
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_avx;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_avx;
+
         simd_type = "AVX2";
+        support_pq_fast_scan = true;
     } else if (use_sse4_2 && cpu_support_sse4_2()) {
         fvec_inner_product = fvec_inner_product_sse;
         fvec_L2sqr = fvec_L2sqr_sse;
@@ -108,7 +130,11 @@ fvec_hook(std::string& simd_type) {
         fvec_madd = fvec_madd_sse;
         fvec_madd_and_argmin = fvec_madd_and_argmin_sse;
 
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_ref;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref;
+
         simd_type = "SSE4_2";
+        support_pq_fast_scan = false;
     } else {
         fvec_inner_product = fvec_inner_product_ref;
         fvec_L2sqr = fvec_L2sqr_ref;
@@ -121,8 +147,29 @@ fvec_hook(std::string& simd_type) {
         fvec_madd = fvec_madd_ref;
         fvec_madd_and_argmin = fvec_madd_and_argmin_ref;
 
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_ref;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref;
+
         simd_type = "GENERIC";
+        support_pq_fast_scan = false;
     }
+#endif
+
+#if defined(__ARM_NEON)
+    fvec_inner_product = fvec_inner_product_neon;
+    fvec_L2sqr = fvec_L2sqr_neon;
+    fvec_L1 = fvec_L1_neon;
+    fvec_Linf = fvec_Linf_neon;
+
+    fvec_norm_L2sqr = fvec_norm_L2sqr_neon;
+    fvec_L2sqr_ny = fvec_L2sqr_ny_neon;
+    fvec_inner_products_ny = fvec_inner_products_ny_neon;
+    fvec_madd = fvec_madd_neon;
+    fvec_madd_and_argmin = fvec_madd_and_argmin_neon;
+
+    simd_type = "NEON";
+    support_pq_fast_scan = true;
+
 #endif
 }
 

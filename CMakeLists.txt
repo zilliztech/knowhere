@@ -29,6 +29,21 @@ knowhere_option(WITH_BENCHMARK "Build with benchmark" OFF)
 knowhere_option(WITH_COVERAGE "Build with coverage" OFF)
 knowhere_option(WITH_CCACHE "Build with ccache" ON)
 knowhere_option(WITH_PROFILER "Build with profiler" OFF)
+knowhere_option(WITH_FAISS_TESTS "Build with Faiss unit tests" OFF)
+
+# this is needed for clang on ubuntu:20.04, otherwise
+#   the linked fails with 'undefined reference' error.
+# fmt v9 was used by the time the error was encountered.
+# clang on ubuntu:22.04 seems to be unaffected.
+# gcc seems to be unaffected.
+add_definitions(-DFMT_HEADER_ONLY)
+
+# this is needed for clang on ubuntu:20.04, otherwise
+#   the linked fails with 'undefined reference' error.
+# fmt v9 was used by the time the error was encountered.
+# clang on ubuntu:22.04 seems to be unaffected.
+# gcc seems to be unaffected.
+add_definitions(-DFMT_HEADER_ONLY)
 
 if(KNOWHERE_VERSION)
   message(STATUS "Building KNOWHERE version: ${KNOWHERE_VERSION}")
@@ -47,9 +62,11 @@ if(WITH_CCACHE)
   endif()
 endif()
 
+list( APPEND CMAKE_MODULE_PATH ${CMAKE_BINARY_DIR}/)
+
 if(WITH_RAFT)
   if("${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
-    set(CMAKE_CUDA_ARCHITECTURES 80;75;70;61)
+    set(CMAKE_CUDA_ARCHITECTURES 86;80;75;70;61)
   endif()
   enable_language(CUDA)
   find_package(CUDAToolkit REQUIRED)
@@ -82,7 +99,6 @@ find_package(nlohmann_json REQUIRED)
 find_package(glog REQUIRED)
 find_package(prometheus-cpp REQUIRED)
 find_package(fmt REQUIRED)
-include_directories(${fmt_INCLUDE_DIR})
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X deployment version" FORCE)
 
@@ -97,7 +113,8 @@ if(WITH_COVERAGE)
 endif()
 
 knowhere_file_glob(GLOB_RECURSE KNOWHERE_SRCS src/common/*.cc src/index/*.cc
-                   src/io/*.cc src/index/*.cu src/common/raft/*.cu)
+                   src/io/*.cc src/index/*.cu src/common/raft/*.cu
+                   src/common/raft/*.cc)
 
 set(KNOWHERE_LINKER_LIBS "")
 
@@ -116,7 +133,7 @@ list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_GPU_SRCS})
 if(NOT WITH_RAFT)
   knowhere_file_glob(GLOB_RECURSE KNOWHERE_RAFT_SRCS src/index/ivf_raft/*.cc
                      src/index/ivf_raft/*.cu src/index/cagra/*.cu
-                     src/common/raft/*.cu)
+                     src/common/raft/*.cu src/common/raft/*.cc)
   list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_RAFT_SRCS})
 endif()
 
@@ -127,6 +144,7 @@ list(APPEND KNOWHERE_LINKER_LIBS faiss)
 list(APPEND KNOWHERE_LINKER_LIBS glog::glog)
 list(APPEND KNOWHERE_LINKER_LIBS nlohmann_json::nlohmann_json)
 list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
+list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt-header-only)
 list(APPEND KNOWHERE_LINKER_LIBS ${FOLLY_LIBRARIES})
 
 add_library(knowhere SHARED ${KNOWHERE_SRCS})
@@ -144,6 +162,10 @@ endif()
 
 if(WITH_BENCHMARK)
   add_subdirectory(benchmark)
+endif()
+
+if(WITH_FAISS_TESTS)
+  add_subdirectory(tests/faiss)
 endif()
 
 install(TARGETS knowhere

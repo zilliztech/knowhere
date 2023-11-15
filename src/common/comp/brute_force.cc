@@ -18,6 +18,7 @@
 #include "faiss/MetricType.h"
 #include "faiss/utils/binary_distances.h"
 #include "faiss/utils/distances.h"
+#include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/config.h"
 #include "knowhere/expected.h"
@@ -67,11 +68,15 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
             ThreadPool::ScopedOmpSetter setter(1);
             auto cur_labels = labels + topk * index;
             auto cur_distances = distances + topk * index;
+
+            BitsetViewIDSelector bw_idselector(bitset);
+            faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+
             switch (faiss_metric_type) {
                 case faiss::METRIC_L2: {
                     auto cur_query = (const float*)xq + dim * index;
                     faiss::float_maxheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
-                    faiss::knn_L2sqr(cur_query, (const float*)xb, dim, 1, nb, &buf, nullptr, bitset);
+                    faiss::knn_L2sqr(cur_query, (const float*)xb, dim, 1, nb, &buf, nullptr, id_selector);
                     break;
                 }
                 case faiss::METRIC_INNER_PRODUCT: {
@@ -79,16 +84,16 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
                     faiss::float_minheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
                     if (is_cosine) {
                         auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                        faiss::knn_cosine(copied_query.get(), (const float*)xb, dim, 1, nb, &buf, bitset);
+                        faiss::knn_cosine(copied_query.get(), (const float*)xb, nullptr, dim, 1, nb, &buf, id_selector);
                     } else {
-                        faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, &buf, bitset);
+                        faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, &buf, id_selector);
                     }
                     break;
                 }
                 case faiss::METRIC_Jaccard: {
                     auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
                     faiss::float_maxheap_array_t res = {size_t(1), size_t(topk), cur_labels, cur_distances};
-                    binary_knn_hc(faiss::METRIC_Jaccard, &res, cur_query, (const uint8_t*)xb, nb, dim / 8, bitset);
+                    binary_knn_hc(faiss::METRIC_Jaccard, &res, cur_query, (const uint8_t*)xb, nb, dim / 8, id_selector);
                     break;
                 }
                 case faiss::METRIC_Hamming: {
@@ -96,7 +101,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
                     std::vector<int32_t> int_distances(topk);
                     faiss::int_maxheap_array_t res = {size_t(1), size_t(topk), cur_labels, int_distances.data()};
                     binary_knn_hc(faiss::METRIC_Hamming, &res, (const uint8_t*)cur_query, (const uint8_t*)xb, nb,
-                                  dim / 8, bitset);
+                                  dim / 8, id_selector);
                     for (int i = 0; i < topk; ++i) {
                         cur_distances[i] = int_distances[i];
                     }
@@ -107,7 +112,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
                     // only matched ids will be chosen, not to use heap
                     auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
                     binary_knn_mc(faiss_metric_type, cur_query, (const uint8_t*)xb, 1, nb, topk, dim / 8, cur_distances,
-                                  cur_labels, bitset);
+                                  cur_labels, id_selector);
                     break;
                 }
                 default: {
@@ -161,11 +166,15 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
             ThreadPool::ScopedOmpSetter setter(1);
             auto cur_labels = labels + topk * index;
             auto cur_distances = distances + topk * index;
+
+            BitsetViewIDSelector bw_idselector(bitset);
+            faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+
             switch (faiss_metric_type) {
                 case faiss::METRIC_L2: {
                     auto cur_query = (const float*)xq + dim * index;
                     faiss::float_maxheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
-                    faiss::knn_L2sqr(cur_query, (const float*)xb, dim, 1, nb, &buf, nullptr, bitset);
+                    faiss::knn_L2sqr(cur_query, (const float*)xb, dim, 1, nb, &buf, nullptr, id_selector);
                     break;
                 }
                 case faiss::METRIC_INNER_PRODUCT: {
@@ -173,16 +182,16 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                     faiss::float_minheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
                     if (is_cosine) {
                         auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                        faiss::knn_cosine(copied_query.get(), (const float*)xb, dim, 1, nb, &buf, bitset);
+                        faiss::knn_cosine(copied_query.get(), (const float*)xb, nullptr, dim, 1, nb, &buf, id_selector);
                     } else {
-                        faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, &buf, bitset);
+                        faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, &buf, id_selector);
                     }
                     break;
                 }
                 case faiss::METRIC_Jaccard: {
                     auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
                     faiss::float_maxheap_array_t res = {size_t(1), size_t(topk), cur_labels, cur_distances};
-                    binary_knn_hc(faiss::METRIC_Jaccard, &res, cur_query, (const uint8_t*)xb, nb, dim / 8, bitset);
+                    binary_knn_hc(faiss::METRIC_Jaccard, &res, cur_query, (const uint8_t*)xb, nb, dim / 8, id_selector);
                     break;
                 }
                 case faiss::METRIC_Hamming: {
@@ -190,7 +199,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                     std::vector<int32_t> int_distances(topk);
                     faiss::int_maxheap_array_t res = {size_t(1), size_t(topk), cur_labels, int_distances.data()};
                     binary_knn_hc(faiss::METRIC_Hamming, &res, (const uint8_t*)cur_query, (const uint8_t*)xb, nb,
-                                  dim / 8, bitset);
+                                  dim / 8, id_selector);
                     for (int i = 0; i < topk; ++i) {
                         cur_distances[i] = int_distances[i];
                     }
@@ -201,7 +210,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                     // only matched ids will be chosen, not to use heap
                     auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
                     binary_knn_mc(faiss_metric_type, cur_query, (const uint8_t*)xb, 1, nb, topk, dim / 8, cur_distances,
-                                  cur_labels, bitset);
+                                  cur_labels, id_selector);
                     break;
                 }
                 default: {
@@ -263,10 +272,14 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
         futs.emplace_back(pool->push([&, index = i] {
             ThreadPool::ScopedOmpSetter setter(1);
             faiss::RangeSearchResult res(1);
+
+            BitsetViewIDSelector bw_idselector(bitset);
+            faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+
             switch (faiss_metric_type) {
                 case faiss::METRIC_L2: {
                     auto cur_query = (const float*)xq + dim * index;
-                    faiss::range_search_L2sqr(cur_query, (const float*)xb, dim, 1, nb, radius, &res, bitset);
+                    faiss::range_search_L2sqr(cur_query, (const float*)xb, dim, 1, nb, radius, &res, id_selector);
                     break;
                 }
                 case faiss::METRIC_INNER_PRODUCT: {
@@ -274,25 +287,26 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                     auto cur_query = (const float*)xq + dim * index;
                     if (is_cosine) {
                         auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                        faiss::range_search_cosine(copied_query.get(), (const float*)xb, dim, 1, nb, radius, &res,
-                                                   bitset);
+                        faiss::range_search_cosine(copied_query.get(), (const float*)xb, nullptr, dim, 1, nb, radius,
+                                                   &res, id_selector);
                     } else {
                         faiss::range_search_inner_product(cur_query, (const float*)xb, dim, 1, nb, radius, &res,
-                                                          bitset);
+                                                          id_selector);
                     }
                     break;
                 }
                 case faiss::METRIC_Jaccard: {
                     auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
-                    faiss::binary_range_search<faiss::CMin<float, int64_t>, float>(
-                        faiss::METRIC_Jaccard, cur_query, (const uint8_t*)xb, 1, nb, radius, dim / 8, &res, bitset);
+                    faiss::binary_range_search<faiss::CMin<float, int64_t>, float>(faiss::METRIC_Jaccard, cur_query,
+                                                                                   (const uint8_t*)xb, 1, nb, radius,
+                                                                                   dim / 8, &res, id_selector);
                     break;
                 }
                 case faiss::METRIC_Hamming: {
                     auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
                     faiss::binary_range_search<faiss::CMin<int, int64_t>, int>(faiss::METRIC_Hamming, cur_query,
                                                                                (const uint8_t*)xb, 1, nb, (int)radius,
-                                                                               dim / 8, &res, bitset);
+                                                                               dim / 8, &res, id_selector);
                     break;
                 }
                 default: {

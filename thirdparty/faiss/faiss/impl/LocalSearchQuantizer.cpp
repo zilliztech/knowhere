@@ -15,13 +15,23 @@
 
 #include <algorithm>
 
-#include <faiss/Clustering.h>
-#include <faiss/FaissHook.h>
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/utils/distances.h>
 #include <faiss/utils/hamming.h> // BitstringWriter
 #include <faiss/utils/utils.h>
+
+#include <faiss/utils/approx_topk/approx_topk.h>
+
+// this is needed for prefetching
+#include <faiss/impl/platform_macros.h>
+
+// todo aguzhva: is it needed?
+#ifdef __AVX2__
+#include <xmmintrin.h>
+#endif
+
+#include "simd/hook.h"
 
 extern "C" {
 // LU decomoposition of a general matrix
@@ -152,27 +162,8 @@ LocalSearchQuantizer::LocalSearchQuantizer(
         size_t nbits,
         Search_type_t search_type)
         : AdditiveQuantizer(d, std::vector<size_t>(M, nbits), search_type) {
-    is_trained = false;
-    verbose = false;
-
     K = (1 << nbits);
-
-    train_iters = 25;
-    train_ils_iters = 8;
-    icm_iters = 4;
-
-    encode_ils_iters = 16;
-
-    p = 0.5f;
-    lambd = 1e-2f;
-
-    chunk_size = 10000;
-    nperts = 4;
-
-    random_seed = 0x12345;
     std::srand(random_seed);
-
-    icm_encoder_factory = nullptr;
 }
 
 LocalSearchQuantizer::~LocalSearchQuantizer() {
@@ -183,7 +174,7 @@ LocalSearchQuantizer::LocalSearchQuantizer() : LocalSearchQuantizer(0, 0, 0) {}
 
 void LocalSearchQuantizer::train(size_t n, const float* x) {
     FAISS_THROW_IF_NOT(K == (1 << nbits[0]));
-    FAISS_THROW_IF_NOT(nperts <= M);
+    nperts = std::min(nperts, M);
 
     lsq_timer.reset();
     LSQTimerScope scope(&lsq_timer, "train");
@@ -197,7 +188,7 @@ void LocalSearchQuantizer::train(size_t n, const float* x) {
     // allocate memory for codebooks, size [M, K, d]
     codebooks.resize(M * K * d);
 
-    // randomly intialize codes
+    // randomly initialize codes
     std::mt19937 gen(random_seed);
     std::vector<int32_t> codes(n * M); // [n, M]
     random_int32(codes, 0, K - 1, gen);
@@ -265,26 +256,7 @@ void LocalSearchQuantizer::train(size_t n, const float* x) {
         decode_unpacked(codes.data(), x_recons.data(), n);
         fvec_norms_L2sqr(norms.data(), x_recons.data(), d, n);
 
-        norm_min = HUGE_VALF;
-        norm_max = -HUGE_VALF;
-        for (idx_t i = 0; i < n; i++) {
-            if (norms[i] < norm_min) {
-                norm_min = norms[i];
-            }
-            if (norms[i] > norm_max) {
-                norm_max = norms[i];
-            }
-        }
-
-        if (search_type == ST_norm_cqint8 || search_type == ST_norm_cqint4) {
-            size_t k = (1 << 8);
-            if (search_type == ST_norm_cqint4) {
-                k = (1 << 4);
-            }
-            Clustering1D clus(k);
-            clus.train_exact(n, norms.data());
-            qnorm.add(clus.k, clus.centroids.data());
-        }
+        train_norm(n, norms.data());
     }
 
     if (verbose) {
@@ -319,10 +291,11 @@ void LocalSearchQuantizer::perturb_codebooks(
     }
 }
 
-void LocalSearchQuantizer::compute_codes(
+void LocalSearchQuantizer::compute_codes_add_centroids(
         const float* x,
         uint8_t* codes_out,
-        size_t n) const {
+        size_t n,
+        const float* centroids) const {
     FAISS_THROW_IF_NOT_MSG(is_trained, "LSQ is not trained yet.");
 
     lsq_timer.reset();
@@ -336,7 +309,7 @@ void LocalSearchQuantizer::compute_codes(
     random_int32(codes, 0, K - 1, gen);
 
     icm_encode(codes.data(), x, n, encode_ils_iters, gen);
-    pack_codes(n, codes.data(), codes_out);
+    pack_codes(n, codes.data(), codes_out, -1, nullptr, centroids);
 
     if (verbose) {
         scope.finish();
@@ -627,54 +600,72 @@ void LocalSearchQuantizer::icm_encode_step(
     FAISS_THROW_IF_NOT(M != 0 && K != 0);
     FAISS_THROW_IF_NOT(binaries != nullptr);
 
-    for (size_t iter = 0; iter < n_iters; iter++) {
-        // condition on the m-th subcode
-        for (size_t m = 0; m < M; m++) {
-            std::vector<float> objs(n * K);
-#pragma omp parallel for
-            for (int64_t i = 0; i < n; i++) {
-                auto u = unaries + m * n * K + i * K;
-                memcpy(objs.data() + i * K, u, sizeof(float) * K);
-            }
+#pragma omp parallel for schedule(dynamic)
+    for (int64_t i = 0; i < n; i++) {
+        std::vector<float> objs(K);
 
-            // compute objective function by adding unary
-            // and binary terms together
-            for (size_t other_m = 0; other_m < M; other_m++) {
-                if (other_m == m) {
-                    continue;
+        for (size_t iter = 0; iter < n_iters; iter++) {
+            // condition on the m-th subcode
+            for (size_t m = 0; m < M; m++) {
+                // copy
+                auto u = unaries + m * n * K + i * K;
+                for (size_t code = 0; code < K; code++) {
+                    objs[code] = u[code];
                 }
 
-#pragma omp parallel for
-                for (int64_t i = 0; i < n; i++) {
+                // compute objective function by adding unary
+                // and binary terms together
+                for (size_t other_m = 0; other_m < M; other_m++) {
+                    if (other_m == m) {
+                        continue;
+                    }
+
+#ifdef __AVX2__
+                    // TODO: add platform-independent compiler-independent
+                    // prefetch utilities.
+                    if (other_m + 1 < M) {
+                        // do a single prefetch
+                        int32_t code2 = codes[i * M + other_m + 1];
+                        // for (int32_t code = 0; code < K; code += 64) {
+                        int32_t code = 0;
+                        {
+                            size_t binary_idx = (other_m + 1) * M * K * K +
+                                    m * K * K + code2 * K + code;
+                            _mm_prefetch(binaries + binary_idx, _MM_HINT_T0);
+                        }
+                    }
+#endif
+
                     for (int32_t code = 0; code < K; code++) {
                         int32_t code2 = codes[i * M + other_m];
-                        size_t binary_idx = m * M * K * K + other_m * K * K +
-                                code * K + code2;
-                        // binaries[m, other_m, code, code2]
-                        objs[i * K + code] += binaries[binary_idx];
+                        size_t binary_idx = other_m * M * K * K + m * K * K +
+                                code2 * K + code;
+                        // binaries[m, other_m, code, code2].
+                        // It is symmetric over (m <-> other_m)
+                        //   and (code <-> code2).
+                        // So, replace the op with
+                        //   binaries[other_m, m, code2, code].
+                        objs[code] += binaries[binary_idx];
                     }
                 }
-            }
 
-            // find the optimal value of the m-th subcode
-#pragma omp parallel for
-            for (int64_t i = 0; i < n; i++) {
+                // find the optimal value of the m-th subcode
                 float best_obj = HUGE_VALF;
                 int32_t best_code = 0;
-                for (size_t code = 0; code < K; code++) {
-                    float obj = objs[i * K + code];
-                    if (obj < best_obj) {
-                        best_obj = obj;
-                        best_code = code;
-                    }
-                }
-                codes[i * M + m] = best_code;
-            }
 
-        } // loop M
+                // find one using SIMD. The following operation is similar
+                // to the search of the smallest element in objs
+                using C = CMax<float, int>;
+                HeapWithBuckets<C, 16, 1>::addn(
+                        K, objs.data(), 1, &best_obj, &best_code);
+
+                // done
+                codes[i * M + m] = best_code;
+
+            } // loop M
+        }
     }
 }
-
 void LocalSearchQuantizer::perturb_codes(
         int32_t* codes,
         size_t n,

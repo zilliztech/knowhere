@@ -91,6 +91,7 @@ test_data = [
             "m": 64,
             "nbits": 4,
             "reorder_k": 1000,
+            "with_raw_data": True,
         }
     )
     (
@@ -109,12 +110,13 @@ test_data = [
 
 @pytest.mark.parametrize("name,config", test_data)
 def test_index_with_sift(recall, name, config):
+    version = knowhere.GetCurrentVersion()
     download_sift()
     xb = fvecs_read("/tmp/sift/sift_base.fvecs")
     xq = fvecs_read("/tmp/sift/sift_query.fvecs")
     ids_true = ivecs_read("/tmp/sift/sift_groundtruth.ivecs")
 
-    idx = knowhere.CreateIndex(name)
+    idx = knowhere.CreateIndex(name, version)
     idx.Build(
         knowhere.ArrayToDataSet(xb),
         json.dumps(config),

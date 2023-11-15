@@ -15,6 +15,7 @@ def fbin_write(x, fname):
     x.tofile(f)
 
 def test_index(gen_data, faiss_ans, recall, error):
+    version = knowhere.GetCurrentVersion()
     index_name = "DISKANN"
     diskann_dir = "diskann_test"
     data_path = os.path.join(diskann_dir, "diskann_data")
@@ -62,7 +63,7 @@ def test_index(gen_data, faiss_ans, recall, error):
     }
 
     print(index_name, diskann_config["build_config"])
-    diskann = knowhere.CreateIndex(index_name)
+    diskann = knowhere.CreateIndex(index_name, version)
     build_status = diskann.Build(
         knowhere.GetNullDataSet(),
         json.dumps(diskann_config["build_config"]),

@@ -62,6 +62,7 @@ enum PARAM_TYPE {
     FEDER = 1 << 3,
     DESERIALIZE = 1 << 4,
     DESERIALIZE_FROM_FILE = 1 << 5,
+    ITERATOR = 1 << 6,
 };
 
 template <>
@@ -226,6 +227,12 @@ class EntryAccess {
     EntryAccess&
     for_range_search() {
         entry->type |= PARAM_TYPE::RANGE_SEARCH;
+        return *this;
+    }
+
+    EntryAccess&
+    for_iterator() {
+        entry->type |= PARAM_TYPE::ITERATOR;
         return *this;
     }
 
@@ -494,13 +501,33 @@ class BaseConfig : public Config {
     CFG_STRING metric_type;
     CFG_INT k;
     CFG_INT num_build_thread;
+    CFG_BOOL retrieve_friendly;
+    CFG_STRING data_path;
+    CFG_STRING index_prefix;
     CFG_FLOAT radius;
     CFG_FLOAT range_filter;
     CFG_BOOL trace_visit;
     CFG_BOOL enable_mmap;
     CFG_BOOL for_tuning;
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(metric_type).set_default("L2").description("metric type").for_train_and_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
+            .set_default("L2")
+            .description("metric type")
+            .for_train_and_search()
+            .for_deserialize();
+        KNOWHERE_CONFIG_DECLARE_FIELD(retrieve_friendly)
+            .description("whether the index holds raw data for fast retrieval")
+            .set_default(false)
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(data_path)
+            .description("raw data path.")
+            .allow_empty_without_default()
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(index_prefix)
+            .description("path prefix to load or save index.")
+            .allow_empty_without_default()
+            .for_train()
+            .for_deserialize();
         KNOWHERE_CONFIG_DECLARE_FIELD(k)
             .set_default(10)
             .description("search for top k similar vector.")
@@ -537,7 +564,12 @@ class BaseConfig : public Config {
     }
 
     virtual Status
-    CheckAndAdjustForRangeSearch() {
+    CheckAndAdjustForRangeSearch(std::string* err_msg) {
+        return Status::success;
+    }
+
+    virtual Status
+    CheckAndAdjustForIterator() {
         return Status::success;
     }
 

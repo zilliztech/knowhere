@@ -21,14 +21,18 @@ set(DISKANN_SOURCES
     thirdparty/DiskANN/src/logger.cpp
     thirdparty/DiskANN/src/utils.cpp)
 
+find_package(folly REQUIRED)
+
 add_library(diskann STATIC ${DISKANN_SOURCES})
 target_link_libraries(diskann PUBLIC ${AIO_LIBRARIES}
                                      ${DISKANN_BOOST_PROGRAM_OPTIONS_LIB}
                                      nlohmann_json::nlohmann_json
+                                     Folly::folly
+                                     fmt::fmt-header-only
                                      glog::glog)
 if(__X86_64)
   target_compile_options(
     diskann PRIVATE -fno-builtin-malloc -fno-builtin-calloc
-                    -fno-builtin-realloc -fno-builtin-free -mavx2 -DUSE_AVX2)
+                    -fno-builtin-realloc -fno-builtin-free)
 endif()
 list(APPEND KNOWHERE_LINKER_LIBS diskann)

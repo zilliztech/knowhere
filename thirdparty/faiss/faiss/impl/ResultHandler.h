@@ -12,6 +12,7 @@
 #pragma once
 
 #include <faiss/impl/AuxIndexStructures.h>
+#include <faiss/impl/IDSelector.h>
 #include <faiss/utils/Heap.h>
 #include <faiss/utils/partitioning.h>
 
@@ -26,14 +27,14 @@ struct HeapResultHandler {
     using T = typename C::T;
     using TI = typename C::TI;
 
-    int nq;
-    T* heap_dis_tab;
-    TI* heap_ids_tab;
-    bool own_fields;
+    int nq = 0;
+    T* heap_dis_tab = nullptr;
+    TI* heap_ids_tab = nullptr;
+    bool own_fields = false;
 
-    int64_t k; // number of results to keep
+    int64_t k = 0; // number of results to keep
 
-    HeapResultHandler() {}
+    HeapResultHandler() = default;
 
     HeapResultHandler(size_t nq, T* heap_dis_tab, TI* heap_ids_tab, size_t k)
             : nq(nq),
@@ -50,6 +51,7 @@ struct HeapResultHandler {
     }
 
     HeapResultHandler* clone_n(int n, size_t block_x) {
+        // todo aguzhva: potential memory leak
         HeapResultHandler* ress = new HeapResultHandler[n];
 
         T* global_heap_dis_tab = (T*)malloc(block_x * k * n * sizeof(T));
@@ -120,7 +122,7 @@ struct HeapResultHandler {
 
     /// add results for query i0..i1 and j0..j1
     void add_results(size_t j0, size_t j1, const T* dis_tab,
-                     BitsetView bitset = nullptr) {
+                     const IDSelector* sel = nullptr) {
 #pragma omp parallel for
         for (int64_t i = i0; i < i1; i++) {
             T* heap_dis = heap_dis_tab + i * k;
@@ -128,7 +130,7 @@ struct HeapResultHandler {
             const T* dis_tab_i = dis_tab + (j1 - j0) * (i - i0) - j0;
             T thresh = heap_dis[0];
             for (size_t j = j0; j < j1; j++) {
-                if (bitset.empty() || !bitset.test(j)) {
+                if (!sel || sel->is_member(j)) {
                     T dis = dis_tab_i[j];
                     if (C::cmp(thresh, dis)) {
                         heap_replace_top<C>(k, heap_dis, heap_ids, dis, j);
@@ -148,6 +150,7 @@ struct HeapResultHandler {
     }
 
     void merge(size_t i, HeapResultHandler &rh) {
+        // todo aguzhva: no checks for matching sizes
         const size_t ki = i * k, uj = ki + k;
         for (size_t j = ki; j < uj; ++j) {
             add_single_result(i, rh.heap_dis_tab[j], rh.heap_ids_tab[j]);
@@ -163,6 +166,7 @@ struct HeapResultHandler {
     }
 
     void copy_from(HeapResultHandler &res, size_t x_from, size_t size) {
+        // todo aguzhva: no checks for matching sizes
         memcpy(heap_dis_tab + x_from * k, res.heap_dis_tab, size * k * sizeof(T));
         memcpy(heap_ids_tab + x_from * k, res.heap_ids_tab, size * k * sizeof(TI));
     }
@@ -242,13 +246,13 @@ struct ReservoirResultHandler {
     using T = typename C::T;
     using TI = typename C::TI;
 
-    int nq;
-    T* heap_dis_tab;
-    TI* heap_ids_tab;
+    int nq = 0;
+    T* heap_dis_tab = nullptr;
+    TI* heap_ids_tab = nullptr;
 
-    int64_t k;       // number of results to keep
-    size_t capacity; // capacity of the reservoirs
-    bool own_fields;
+    int64_t k = 0;       // number of results to keep
+    size_t capacity = 0; // capacity of the reservoirs
+    bool own_fields = false;
 
     ReservoirResultHandler(
             size_t nq,
@@ -264,7 +268,7 @@ struct ReservoirResultHandler {
         capacity = (2 * k + 15) & ~15;
     }
 
-    ReservoirResultHandler() {}
+    ReservoirResultHandler() = default;
 
     ~ReservoirResultHandler() {
         if (own_fields) {
@@ -274,6 +278,7 @@ struct ReservoirResultHandler {
     }
 
     ReservoirResultHandler *clone_n(int n, size_t block_x) {
+        // todo aguzhva: potential memory leak
         ReservoirResultHandler *ress = new ReservoirResultHandler[n];
 
         T* global_heap_dis_tab = (T*)malloc(block_x * k * n * sizeof(T));
@@ -361,14 +366,14 @@ struct ReservoirResultHandler {
 
     /// add results for query i0..i1 and j0..j1
     void add_results(size_t j0, size_t j1, const T* dis_tab,
-                     BitsetView bitset = nullptr) {
+                     const IDSelector* sel = nullptr) {
         // maybe parallel for
 #pragma omp parallel for
         for (int64_t i = i0; i < i1; i++) {
             ReservoirTopN<C>& reservoir = reservoirs[i - i0];
             const T* dis_tab_i = dis_tab + (j1 - j0) * (i - i0) - j0;
             for (size_t j = j0; j < j1; j++) {
-                if (bitset.empty() || !bitset.test(j)) {
+                if (!sel || sel->is_member(j)) {
                     T dis = dis_tab_i[j];
                     reservoir.add(dis, j);
                 }
@@ -381,6 +386,7 @@ struct ReservoirResultHandler {
     }
 
     void merge(size_t i, ReservoirResultHandler &rh) {
+        // todo aguzhva: no checks for matching sizes
         const size_t ii = i - rh.i0;
         const T* dis = rh.reservoir_dis.data() + ii * rh.capacity;
         const TI* ids = rh.reservoir_ids.data() + ii * rh.capacity;
@@ -399,6 +405,7 @@ struct ReservoirResultHandler {
     }
 
     void copy_from(ReservoirResultHandler &res, size_t x_from, size_t size) {
+        // todo aguzhva: no checks for matching sizes
         memcpy(heap_dis_tab + x_from * k, res.heap_dis_tab, size * k * sizeof(T));
         memcpy(heap_ids_tab + x_from * k, res.heap_ids_tab, size * k * sizeof(TI));
     }
@@ -472,7 +479,7 @@ struct RangeSearchResultHandler {
     /// add results for query i0..i1 and j0..j1
 
     void add_results(size_t j0, size_t j1, const T* dis_tab,
-                     BitsetView bitset = nullptr) {
+                     const IDSelector* sel = nullptr) {
         RangeSearchPartialResult* pres;
         // there is one RangeSearchPartialResult structure per j0
         // (= block of columns of the large distance matrix)
@@ -496,8 +503,9 @@ struct RangeSearchResultHandler {
         for (size_t i = i0; i < i1; i++) {
             const float* ip_line = dis_tab + (i - i0) * (j1 - j0);
             RangeQueryResult& qres = pres->new_result(i);
+
             for (size_t j = j0; j < j1; j++) {
-                if (bitset.empty() || !bitset.test(j)) {
+                if (!sel || sel->is_member(j)) {
                     float dis = *ip_line;
                     if (C::cmp(radius, dis)) {
                         qres.add(dis, j);
@@ -515,6 +523,102 @@ struct RangeSearchResultHandler {
             RangeSearchPartialResult::merge(partial_results);
         }
     }
+};
+
+/*****************************************************************
+ * Single best result handler.
+ * Tracks the only best result, thus avoiding storing
+ * some temporary data in memory.
+ *****************************************************************/
+
+template <class C>
+struct SingleBestResultHandler {
+    using T = typename C::T;
+    using TI = typename C::TI;
+
+    int nq;
+    // contains exactly nq elements
+    T* dis_tab;
+    // contains exactly nq elements
+    TI* ids_tab;
+
+    SingleBestResultHandler(size_t nq, T* dis_tab, TI* ids_tab)
+            : nq(nq), dis_tab(dis_tab), ids_tab(ids_tab) {}
+
+    struct SingleResultHandler {
+        SingleBestResultHandler& hr;
+
+        T min_dis;
+        TI min_idx;
+        size_t current_idx = 0;
+
+        SingleResultHandler(SingleBestResultHandler& hr) : hr(hr) {}
+
+        /// begin results for query # i
+        void begin(const size_t current_idx) {
+            this->current_idx = current_idx;
+            min_dis = HUGE_VALF;
+            min_idx = -1;
+        }
+
+        /// add one result for query i
+        void add_result(T dis, TI idx) {
+            if (C::cmp(min_dis, dis)) {
+                min_dis = dis;
+                min_idx = idx;
+            }
+        }
+
+        /// series of results for query i is done
+        void end() {
+            hr.dis_tab[current_idx] = min_dis;
+            hr.ids_tab[current_idx] = min_idx;
+        }
+    };
+
+    size_t i0, i1;
+
+    /// begin
+    void begin_multiple(size_t i0, size_t i1) {
+        this->i0 = i0;
+        this->i1 = i1;
+
+        for (size_t i = i0; i < i1; i++) {
+            this->dis_tab[i] = HUGE_VALF;
+        }
+    }
+
+    /// add results for query i0..i1 and j0..j1
+    void add_results(size_t j0, size_t j1, const T* dis_tab) {
+        for (int64_t i = i0; i < i1; i++) {
+            const T* dis_tab_i = dis_tab + (j1 - j0) * (i - i0) - j0;
+
+            auto& min_distance = this->dis_tab[i];
+            auto& min_index = this->ids_tab[i];
+
+            for (size_t j = j0; j < j1; j++) {
+                const T distance = dis_tab_i[j];
+
+                if (C::cmp(min_distance, distance)) {
+                    min_distance = distance;
+                    min_index = j;
+                }
+            }
+        }
+    }
+
+    void add_result(const size_t i, const T dis, const TI idx) {
+        auto& min_distance = this->dis_tab[i];
+        auto& min_index = this->ids_tab[i];
+
+        if (C::cmp(min_distance, dis)) {
+            min_distance = dis;
+            min_index = idx;
+        }
+    }
+
+    /// series of results for queries i0..i1 is done
+    void end_multiple() {}
 };
 
 } // namespace faiss

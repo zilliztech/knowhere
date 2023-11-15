@@ -313,14 +313,73 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     mutable std::atomic<long> metric_distance_computations;
     mutable std::atomic<long> metric_hops;
 
+    template <typename AddSearchCandidate, bool has_deletions, bool collect_metrics = false>
+    inline void
+    searchBaseLayerSTNext(const void* data_point, Neighbor next, std::vector<bool>& visited, float& accumulative_alpha,
+                          const knowhere::BitsetView bitset, AddSearchCandidate& add_search_candidate,
+                          const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
+        auto [u, d, s] = next;
+        tableint* list = (tableint*)get_linklist0(u);
+        int size = list[0];
+
+        if constexpr (collect_metrics) {
+            metric_hops++;
+            metric_distance_computations += size;
+        }
+        for (size_t i = 1; i <= size; ++i) {
+#if defined(USE_PREFETCH)
+            if (i + 1 <= size) {
+                _mm_prefetch(getDataByInternalId(list[i + 1]), _MM_HINT_T0);
+            }
+#endif
+            tableint v = list[i];
+            if (visited[v]) {
+                if (feder_result != nullptr) {
+                    feder_result->visit_info_.AddVisitRecord(0, u, v, -1.0);
+                    feder_result->id_set_.insert(u);
+                    feder_result->id_set_.insert(v);
+                }
+                continue;
+            }
+            visited[v] = true;
+            int status = Neighbor::kValid;
+            if (has_deletions && bitset.test((int64_t)v)) {
+                status = Neighbor::kInvalid;
+
+                accumulative_alpha += kAlpha;
+                if (accumulative_alpha < 1.0f) {
+                    continue;
+                }
+                accumulative_alpha -= 1.0f;
+            }
+            dist_t dist = calcDistance(data_point, v);
+            if (feder_result != nullptr) {
+                feder_result->visit_info_.AddVisitRecord(0, u, v, dist);
+                feder_result->id_set_.insert(u);
+                feder_result->id_set_.insert(v);
+            }
+
+            Neighbor nn(v, dist, status);
+            if (add_search_candidate(nn)) {
+#if defined(USE_PREFETCH)
+                _mm_prefetch(get_linklist0(v), _MM_HINT_T0);
+#endif
+            }
+        }
+    }
+
+    // accumulative_alpha: when searching on graph with filter, we want to keep some filtered nodes in the search path
+    // to not destroy the connectivity of the graph; but we do not want to keep all of them as they won't be candidates.
+    // Thus we include only a subset of filtered nodes(controlled by kAlpha) in the search path.
     template <bool has_deletions, bool collect_metrics = false>
-    std::vector<std::pair<dist_t, tableint>>
-    searchBaseLayerST(tableint ep_id, const void* data_point, size_t ef, const knowhere::BitsetView bitset,
-                      const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
+    NeighborSet
+    searchBaseLayerST(tableint ep_id, const void* data_point, size_t ef, std::vector<bool>& visited,
+                      const knowhere::BitsetView bitset,
+                      const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr,
+                      IteratorMinHeap* disqualified = nullptr, float accumulative_alpha = 0.0f) const {
         if (feder_result != nullptr) {
             feder_result->visit_info_.AddLevelVisitRecord(0);
         }
-        auto& visited = visited_list_pool_->getFreeVisitedList();
         NeighborSet retset(ef);
 
         if (!has_deletions || !bitset.test((int64_t)ep_id)) {
@@ -331,66 +390,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
 
         visited[ep_id] = true;
-        // when searching on graph with filter, we want to keep some filtered nodes in the search path to not destroy
-        // the connectivity of the graph; but we do not want to keep all of them as they won't be candidates. Thus we
-        // include only a subset of filtered nodes(controlled by kAlpha) in the search path.
-        float accumulative_alpha = 0.0f;
+        auto add_search_candidate = [&](Neighbor n) { return retset.insert(n, disqualified); };
         while (retset.has_next()) {
-            auto [u, d, s] = retset.pop();
-            tableint* list = (tableint*)get_linklist0(u);
-            int size = list[0];
-
-            if constexpr (collect_metrics) {
-                metric_hops++;
-                metric_distance_computations += size;
-            }
-            for (size_t i = 1; i <= size; ++i) {
-#if defined(USE_PREFETCH)
-                if (i + 1 <= size) {
-                    _mm_prefetch(getDataByInternalId(list[i + 1]), _MM_HINT_T0);
-                }
-#endif
-                tableint v = list[i];
-                if (visited[v]) {
-                    if (feder_result != nullptr) {
-                        feder_result->visit_info_.AddVisitRecord(0, u, v, -1.0);
-                        feder_result->id_set_.insert(u);
-                        feder_result->id_set_.insert(v);
-                    }
-                    continue;
-                }
-                visited[v] = true;
-                int status = Neighbor::kValid;
-                if (has_deletions && bitset.test((int64_t)v)) {
-                    status = Neighbor::kInvalid;
-
-                    accumulative_alpha += kAlpha;
-                    if (accumulative_alpha < 1.0f) {
-                        continue;
-                    }
-                    accumulative_alpha -= 1.0f;
-                }
-                dist_t dist = calcDistance(data_point, v);
-                if (feder_result != nullptr) {
-                    feder_result->visit_info_.AddVisitRecord(0, u, v, dist);
-                    feder_result->id_set_.insert(u);
-                    feder_result->id_set_.insert(v);
-                }
-
-                Neighbor nn(v, dist, status);
-                if (retset.insert(nn)) {
-#if defined(USE_PREFETCH)
-                    _mm_prefetch(get_linklist0(v), _MM_HINT_T0);
-#endif
-                }
-            }
+            searchBaseLayerSTNext<decltype(add_search_candidate), has_deletions, collect_metrics>(
+                data_point, retset.pop(), visited, accumulative_alpha, bitset, add_search_candidate, feder_result);
         }
 
-        std::vector<std::pair<dist_t, tableint>> ans(retset.size());
-        for (int i = 0; i < retset.size(); ++i) {
-            ans[i] = {retset[i].distance, retset[i].id};
-        }
-        return ans;
+        return retset;
     }
 
     std::vector<tableint>
@@ -436,20 +442,20 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
     std::vector<std::pair<dist_t, labeltype>>
-    getNeighboursWithinRadius(std::vector<std::pair<dist_t, tableint>>& top_candidates, const void* data_point,
-                              float radius, const knowhere::BitsetView bitset) const {
+    getNeighboursWithinRadius(NeighborSet& top_candidates, const void* data_point,
+                              float radius, const knowhere::BitsetView& bitset) const {
         std::vector<std::pair<dist_t, labeltype>> result;
         auto& visited = visited_list_pool_->getFreeVisitedList();
 
         std::queue<std::pair<dist_t, tableint>> radius_queue;
-        while (!top_candidates.empty()) {
-            auto cand = top_candidates.back();
-            top_candidates.pop_back();
-            if (cand.first < radius) {
-                radius_queue.push(cand);
-                result.emplace_back(cand.first, cand.second);
+        int i = top_candidates.size() - 1;
+        while (i >= 0) {
+            auto cand = top_candidates[i--];
+            if (cand.distance < radius) {
+                radius_queue.push({cand.distance, cand.id});
+                result.emplace_back(cand.distance, cand.id);
             }
-            visited[cand.second] = true;
+            visited[cand.id] = true;
         }
 
         while (!radius_queue.empty()) {
@@ -733,7 +739,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size_links_per_element_ = maxM_ * sizeof(tableint) + sizeof(linklistsizeint);
 
         size_links_level0_ = maxM0_ * sizeof(tableint) + sizeof(linklistsizeint);
-        std::vector<std::mutex>(max_elements).swap(link_list_locks_);
 
         visited_list_pool_ = new VisitedListPool(max_elements);
 
@@ -860,7 +865,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size_links_per_element_ = maxM_ * sizeof(tableint) + sizeof(linklistsizeint);
 
         size_links_level0_ = maxM0_ * sizeof(tableint) + sizeof(linklistsizeint);
-        std::vector<std::mutex>(max_elements).swap(link_list_locks_);
 
         visited_list_pool_ = new VisitedListPool(max_elements);
 
@@ -1161,40 +1165,18 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return result;
     }
 
-    std::vector<std::pair<dist_t, labeltype>>
-    searchKnn(const void* query_data, size_t k, const knowhere::BitsetView bitset, const SearchParam* param = nullptr,
-              const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
-        if (cur_element_count == 0)
-            return {};
-
-        size_t dim = *(size_t*)dist_func_param_;
-
-        // do normalize for COSINE metric type
-        std::unique_ptr<float[]> query_data_norm;
-        if (metric_type_ == Metric::COSINE) {
-            query_data_norm = knowhere::CopyAndNormalizeVecs((const float*)query_data, 1, dim);
-            query_data = query_data_norm.get();
-        }
-
-        // do bruteforce search when delete rate high
-        if (!bitset.empty()) {
-            const auto bs_cnt = bitset.count();
-            if (bs_cnt == cur_element_count)
-                return {};
-            if (bs_cnt >= (cur_element_count * kHnswSearchKnnBFThreshold)) {
-                return searchKnnBF(query_data, k, bitset);
-            }
-        }
-
+    std::pair<tableint, int64_t>
+    searchTopLayers(const void* query_data, const SearchParam* param = nullptr,
+                    const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
         tableint currObj = enterpoint_node_;
         uint64_t vec_hash;
         if (metric_type_ == Metric::HAMMING || metric_type_ == Metric::JACCARD) {
-            vec_hash = knowhere::hash_binary_vec((const uint8_t*)query_data, dim);
+            vec_hash = knowhere::hash_binary_vec((const uint8_t*)query_data, *(size_t*)dist_func_param_);
         } else {
-            vec_hash = knowhere::hash_vec((const float*)query_data, dim);
+            vec_hash = knowhere::hash_vec((const float*)query_data, *(size_t*)dist_func_param_);
         }
         // for tuning, do not use cache
-        if (param->for_tuning || !lru_cache.try_get(vec_hash, currObj)) {
+        if ((param && param->for_tuning) || !lru_cache.try_get(vec_hash, currObj)) {
             dist_t curdist = calcDistance(query_data, enterpoint_node_);
 
             for (int level = maxlevel_; level > 0; level--) {
@@ -1236,24 +1218,123 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 }
             }
         }
-        std::vector<std::pair<dist_t, tableint>> top_candidates;
-        size_t ef = param ? param->ef_ : this->ef_;
+        return {currObj, vec_hash};
+    }
+
+    std::vector<std::pair<dist_t, labeltype>>
+    searchKnn(const void* query_data, size_t k, const knowhere::BitsetView bitset, const SearchParam* param = nullptr,
+              const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
+        if (cur_element_count == 0 || bitset.count() == cur_element_count)
+            return {};
+
+        // do normalize for COSINE metric type
+        std::unique_ptr<float[]> query_data_norm;
+        if (metric_type_ == Metric::COSINE) {
+            query_data_norm = knowhere::CopyAndNormalizeVecs((const float*)query_data, 1, *(size_t*)dist_func_param_);
+            query_data = query_data_norm.get();
+        }
+
+        // do bruteforce search when delete rate high
         if (!bitset.empty()) {
-            top_candidates = searchBaseLayerST<true, true>(currObj, query_data, std::max(ef, k), bitset, feder_result);
+            if (bitset.count() >= (cur_element_count * kHnswSearchKnnBFThreshold)) {
+                return searchKnnBF(query_data, k, bitset);
+            }
+        }
+
+        auto [currObj, vec_hash] = searchTopLayers(query_data, param, feder_result);
+        NeighborSet retset;
+        size_t ef = param ? param->ef_ : this->ef_;
+        auto visited = visited_list_pool_->getFreeVisitedList();
+        if (!bitset.empty()) {
+            retset = searchBaseLayerST<true, true>(currObj, query_data, std::max(ef, k), visited, bitset, feder_result);
         } else {
-            top_candidates = searchBaseLayerST<false, true>(currObj, query_data, std::max(ef, k), bitset, feder_result);
+            retset =
+                searchBaseLayerST<false, true>(currObj, query_data, std::max(ef, k), visited, bitset, feder_result);
         }
         std::vector<std::pair<dist_t, labeltype>> result;
-        size_t len = std::min(k, top_candidates.size());
+        size_t len = std::min(k, retset.size());
         result.reserve(len);
         for (int i = 0; i < len; ++i) {
-            result.emplace_back(top_candidates[i].first, (labeltype)top_candidates[i].second);
+            result.emplace_back(retset[i].distance, (labeltype)retset[i].id);
         }
         if (len > 0) {
             lru_cache.put(vec_hash, result[0].second);
         }
         return result;
     };
+
+    std::unique_ptr<IteratorWorkspace>
+    getIteratorWorkspace(const void* query_data, const size_t seed_ef, const bool for_tuning,
+                         const knowhere::BitsetView& bitset) const {
+        auto accumulative_alpha = (bitset.count() >= (cur_element_count * kHnswSearchKnnBFThreshold))
+                                      ? std::numeric_limits<float>::max()
+                                      : 0.0f;
+        if (metric_type_ == Metric::COSINE) {
+            return std::make_unique<IteratorWorkspace>(
+                query_data, max_elements_, seed_ef, for_tuning,
+                knowhere::CopyAndNormalizeVecs((const float*)query_data, 1, *(size_t*)dist_func_param_), bitset,
+                accumulative_alpha);
+        } else {
+            return std::make_unique<IteratorWorkspace>(query_data, max_elements_, seed_ef, for_tuning, nullptr, bitset,
+                                                       accumulative_alpha);
+        }
+    }
+
+    std::optional<std::pair<dist_t, labeltype>>
+    getIteratorNext(IteratorWorkspace* workspace,
+                    const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
+        if (cur_element_count == 0 || workspace->bitset.count() == cur_element_count) {
+            return std::nullopt;
+        }
+        auto query_data =
+            (metric_type_ == Metric::COSINE) ? workspace->normalized_query_data.get() : workspace->query_data;
+        const bool has_deletions = !workspace->bitset.empty();
+        if (!workspace->initial_search_done) {
+            tableint currObj = searchTopLayers(query_data, workspace->param.get()).first;
+            NeighborSet retset;
+            if (has_deletions) {
+                retset = searchBaseLayerST<true, true>(currObj, query_data, workspace->seed_ef, workspace->visited,
+                                                       workspace->bitset, feder_result, &workspace->to_visit,
+                                                       workspace->accumulative_alpha);
+            } else {
+                retset = searchBaseLayerST<false, true>(currObj, query_data, workspace->seed_ef, workspace->visited,
+                                                        workspace->bitset, feder_result, &workspace->to_visit,
+                                                        workspace->accumulative_alpha);
+            }
+            for (int i = 0; i < retset.size(); i++) {
+                workspace->retset.push(retset[i]);
+            }
+            workspace->initial_search_done = true;
+        }
+        while (!workspace->to_visit.empty()) {
+            auto top = workspace->to_visit.top();
+            workspace->to_visit.pop();
+            auto add_search_candidate = [&](Neighbor n) {
+                workspace->to_visit.push(n);
+                return true;
+            };
+            if (has_deletions) {
+                searchBaseLayerSTNext<decltype(add_search_candidate), true, true>(
+                    query_data, top, workspace->visited, workspace->accumulative_alpha, workspace->bitset,
+                    add_search_candidate, feder_result);
+            } else {
+                searchBaseLayerSTNext<decltype(add_search_candidate), false, true>(
+                    query_data, top, workspace->visited, workspace->accumulative_alpha, workspace->bitset,
+                    add_search_candidate, feder_result);
+            }
+            if (!has_deletions || !workspace->bitset.test((int64_t)top.id)) {
+                workspace->retset.push(top);
+                break;
+            }
+        }
+        if (workspace->retset.empty()) {
+            return std::nullopt;
+        }
+
+        auto top = workspace->retset.top();
+        workspace->retset.pop();
+        return std::make_optional(std::make_pair(top.distance, top.id));
+    }
 
     std::vector<std::pair<dist_t, labeltype>>
     searchRangeBF(const void* query_data, float radius, const knowhere::BitsetView bitset) const {
@@ -1273,90 +1354,41 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     searchRange(const void* query_data, float radius, const knowhere::BitsetView bitset,
                 const SearchParam* param = nullptr,
                 const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
-        if (cur_element_count == 0) {
+        if (cur_element_count == 0 || bitset.count() == cur_element_count) {
             return {};
         }
-
-        size_t dim = *((size_t*)dist_func_param_);
 
         // do normalize for COSINE metric type
         std::unique_ptr<float[]> query_data_norm;
         if (metric_type_ == Metric::COSINE) {
-            query_data_norm = knowhere::CopyAndNormalizeVecs((const float*)query_data, 1, dim);
+            query_data_norm = knowhere::CopyAndNormalizeVecs((const float*)query_data, 1, *(size_t*)dist_func_param_);
             query_data = query_data_norm.get();
         }
 
         // do bruteforce range search when delete rate high
         if (!bitset.empty()) {
-            const auto bs_cnt = bitset.count();
-            if (bs_cnt == cur_element_count)
-                return {};
-            if (bs_cnt >= (cur_element_count * kHnswSearchRangeBFThreshold)) {
+            if (bitset.count() >= (cur_element_count * kHnswSearchRangeBFThreshold)) {
                 return searchRangeBF(query_data, radius, bitset);
             }
         }
 
-        tableint currObj = enterpoint_node_;
-        uint64_t vec_hash;
-        if (metric_type_ == Metric::HAMMING || metric_type_ == Metric::JACCARD) {
-            vec_hash = knowhere::hash_binary_vec((const uint8_t*)query_data, dim);
-        } else {
-            vec_hash = knowhere::hash_vec((const float*)query_data, dim);
-        }
-        // for tuning, do not use cache
-        if (param->for_tuning || !lru_cache.try_get(vec_hash, currObj)) {
-            dist_t curdist = calcDistance(query_data, enterpoint_node_);
-
-            for (int level = maxlevel_; level > 0; level--) {
-                bool changed = true;
-                if (feder_result != nullptr) {
-                    feder_result->visit_info_.AddLevelVisitRecord(level);
-                }
-                while (changed) {
-                    changed = false;
-                    unsigned int* data;
-
-                    data = (unsigned int*)get_linklist(currObj, level);
-                    int size = getListCount(data);
-                    metric_hops++;
-                    metric_distance_computations += size;
-
-                    tableint* datal = (tableint*)(data + 1);
-                    for (int i = 0; i < size; i++) {
-                        tableint cand = datal[i];
-                        if (cand < 0 || cand > max_elements_)
-                            throw std::runtime_error("cand error");
-                        dist_t d = calcDistance(query_data, cand);
-                        if (feder_result != nullptr) {
-                            feder_result->visit_info_.AddVisitRecord(level, currObj, cand, d);
-                            feder_result->id_set_.insert(currObj);
-                            feder_result->id_set_.insert(cand);
-                        }
-                        if (d < curdist) {
-                            curdist = d;
-                            currObj = cand;
-                            changed = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        std::vector<std::pair<dist_t, tableint>> top_candidates;
+        auto [currObj, vec_hash] = searchTopLayers(query_data, param, feder_result);
+        NeighborSet retset;
         size_t ef = param ? param->ef_ : this->ef_;
+        auto visited = visited_list_pool_->getFreeVisitedList();
         if (!bitset.empty()) {
-            top_candidates = searchBaseLayerST<true, true>(currObj, query_data, ef, bitset, feder_result);
+            retset = searchBaseLayerST<true, true>(currObj, query_data, ef, visited, bitset, feder_result);
         } else {
-            top_candidates = searchBaseLayerST<false, true>(currObj, query_data, ef, bitset, feder_result);
+            retset = searchBaseLayerST<false, true>(currObj, query_data, ef, visited, bitset, feder_result);
         }
 
-        if (top_candidates.size() == 0) {
+        if (retset.size() == 0) {
             return {};
         } else {
-            lru_cache.put(vec_hash, top_candidates[0].second);
+            lru_cache.put(vec_hash, retset[0].id);
         }
 
-        return getNeighboursWithinRadius(top_candidates, query_data, radius, bitset);
+        return getNeighboursWithinRadius(retset, query_data, radius, bitset);
     }
 
     void
@@ -1398,7 +1430,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         ret += sizeof(*this);
         ret += sizeof(*space_);
         ret += visited_list_pool_->size();
-        ret += link_list_locks_.size() * sizeof(std::mutex);
         ret += element_levels_.size() * sizeof(int);
         ret += max_elements_ * size_data_per_element_;
         ret += max_elements_ * sizeof(void*);
@@ -1406,6 +1437,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             if (element_levels_[i] > 0) {
                 ret += size_links_per_element_ * element_levels_[i];
             }
+        }
+        if (metric_type_ == Metric::COSINE) {
+                ret += max_elements_ * sizeof(float);
         }
         return ret;
     }

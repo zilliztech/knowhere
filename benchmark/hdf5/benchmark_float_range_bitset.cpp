@@ -236,7 +236,8 @@ TEST_F(Benchmark_float_range_bitset, TEST_DISKANN) {
     std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
     auto diskann_index_pack = knowhere::Pack(file_manager);
 
-    index_ = knowhere::IndexFactory::Instance().Create(index_type_, diskann_index_pack);
+    auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+    index_ = knowhere::IndexFactory::Instance().Create(index_type_, version, diskann_index_pack);
     printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
     knowhere::DataSetPtr ds_ptr = nullptr;
     index_.Build(*ds_ptr, conf);

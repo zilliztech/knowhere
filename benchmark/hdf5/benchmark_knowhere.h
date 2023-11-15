@@ -20,6 +20,7 @@
 #include "knowhere/config.h"
 #include "knowhere/factory.h"
 #include "knowhere/index.h"
+#include "knowhere/version.h"
 
 class Benchmark_knowhere : public Benchmark_hdf5 {
  public:
@@ -45,7 +46,7 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
     }
 
     void
-    read_index(knowhere::Index<knowhere::IndexNode>& index, const std::string& filename) {
+    read_index(knowhere::Index<knowhere::IndexNode>& index, const std::string& filename, const knowhere::Json& conf) {
         FileIOReader reader(filename);
         int64_t file_size = reader.size();
         if (file_size < 0) {
@@ -74,12 +75,14 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
         }
 
         // IVFFLAT_NM should load raw data
-        knowhere::BinaryPtr bin = std::make_shared<knowhere::Binary>();
-        bin->data = std::shared_ptr<uint8_t[]>((uint8_t*)xb_);
-        bin->size = dim_ * nb_ * sizeof(float);
-        binary_set.Append("RAW_DATA", bin);
+        if (index_type_ == knowhere::IndexEnum::INDEX_FAISS_IVFFLAT && binary_set.GetByName("RAW_DATA") == nullptr) {
+            knowhere::BinaryPtr bin = std::make_shared<knowhere::Binary>();
+            bin->data = std::shared_ptr<uint8_t[]>((uint8_t*)xb_);
+            bin->size = dim_ * nb_ * sizeof(float);
+            binary_set.Append("RAW_DATA", bin);
+        }
 
-        index.Deserialize(binary_set);
+        index.Deserialize(binary_set, conf);
     }
 
     std::string
@@ -93,12 +96,13 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
 
     knowhere::Index<knowhere::IndexNode>
     create_index(const std::string& index_file_name, const knowhere::Json& conf) {
+        auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
         printf("[%.3f s] Creating index \"%s\"\n", get_time_diff(), index_type_.c_str());
-        index_ = knowhere::IndexFactory::Instance().Create(index_type_);
+        index_ = knowhere::IndexFactory::Instance().Create(index_type_, version);
 
         try {
             printf("[%.3f s] Reading index file: %s\n", get_time_diff(), index_file_name.c_str());
-            read_index(index_, index_file_name);
+            read_index(index_, index_file_name, conf);
         } catch (...) {
             printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
             knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nb_, dim_, xb_);
@@ -112,15 +116,16 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
 
     knowhere::Index<knowhere::IndexNode>
     create_golden_index(const knowhere::Json& conf) {
+        auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
         golden_index_type_ = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
 
         std::string golden_index_file_name = ann_test_name_ + "_" + golden_index_type_ + "_GOLDEN" + ".index";
         printf("[%.3f s] Creating golden index \"%s\"\n", get_time_diff(), golden_index_type_.c_str());
-        golden_index_ = knowhere::IndexFactory::Instance().Create(golden_index_type_);
+        golden_index_ = knowhere::IndexFactory::Instance().Create(golden_index_type_, version);
 
         try {
             printf("[%.3f s] Reading golden index file: %s\n", get_time_diff(), golden_index_file_name.c_str());
-            read_index(golden_index_, golden_index_file_name);
+            read_index(golden_index_, golden_index_file_name, conf);
         } catch (...) {
             printf("[%.3f s] Building golden index on %d vectors\n", get_time_diff(), nb_);
             knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nb_, dim_, xb_);

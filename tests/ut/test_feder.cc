@@ -142,6 +142,8 @@ TEST_CASE("Test Feder", "[feder]") {
     int64_t dim = 128;
     int64_t seed = 42;
 
+    auto version = GenTestVersionList();
+
     auto base_gen = [&]() {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
@@ -175,7 +177,7 @@ TEST_CASE("Test Feder", "[feder]") {
 
     SECTION("Test HNSW Feder") {
         auto name = knowhere::IndexEnum::INDEX_HNSW;
-        auto idx = knowhere::IndexFactory::Instance().Create(name);
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         REQUIRE(idx.Type() == name);
 
         auto json = hnsw_gen();
@@ -199,7 +201,7 @@ TEST_CASE("Test Feder", "[feder]") {
 
     SECTION("Test IVF_FLAT Feder") {
         auto name = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
-        auto idx = knowhere::IndexFactory::Instance().Create(name);
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         REQUIRE(idx.Type() == name);
 
         auto json = ivfflat_gen();

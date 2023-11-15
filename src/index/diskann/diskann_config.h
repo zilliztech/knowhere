@@ -25,10 +25,6 @@ constexpr const CFG_INT::value_type kDefaultSearchListSizeForBuild = 128;
 
 class DiskANNConfig : public BaseConfig {
  public:
-    // Path prefix to load or save DiskANN
-    CFG_STRING index_prefix;
-    // The path to the raw data file. Raw data's format should be [row_num(4 bytes) | dim_num(4 bytes) | vectors].
-    CFG_STRING data_path;
     // This is the degree of the graph index, typically between 60 and 150. Larger R will result in larger indices and
     // longer indexing times, but better search quality.
     CFG_INT max_degree;
@@ -84,11 +80,6 @@ class DiskANNConfig : public BaseConfig {
             .description("metric type")
             .for_train_and_search()
             .for_deserialize();
-        KNOWHERE_CONFIG_DECLARE_FIELD(index_prefix)
-            .description("path to load or save Diskann.")
-            .for_train()
-            .for_deserialize();
-        KNOWHERE_CONFIG_DECLARE_FIELD(data_path).description("raw data path.").for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(max_degree)
             .description("the degree of the graph index.")
             .set_default(48)

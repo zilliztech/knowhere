@@ -127,10 +127,13 @@ namespace diskann {
 
     DISKANN_DLLEXPORT diskann::Metric get_metric() const noexcept;
 
+    DISKANN_DLLEXPORT _u64 cal_size();
+
    protected:
     DISKANN_DLLEXPORT void use_medoids_data_as_centroids();
     DISKANN_DLLEXPORT void setup_thread_data(_u64 nthreads);
     DISKANN_DLLEXPORT void destroy_thread_data();
+    DISKANN_DLLEXPORT _u64 get_thread_data_size();
 
    private:
     // sector # on disk where node_id is present with in the graph part

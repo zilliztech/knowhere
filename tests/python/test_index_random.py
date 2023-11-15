@@ -53,6 +53,7 @@ test_data = [
             "nlist": 1024,
             "nprobe": 1024,
             "reorder_k": 1500,
+            "with_raw_data": True,
         },
     ),
 ]
@@ -61,7 +62,8 @@ test_data = [
 @pytest.mark.parametrize("name,config", test_data)
 def test_index(gen_data, faiss_ans, recall, error, name, config):
     print(name, config)
-    idx = knowhere.CreateIndex(name)
+    version = knowhere.GetCurrentVersion()
+    idx = knowhere.CreateIndex(name, version)
     xb, xq = gen_data(10000, 100, 256)
 
     idx.Build(

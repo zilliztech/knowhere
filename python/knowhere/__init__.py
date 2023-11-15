@@ -1,14 +1,28 @@
 from . import swigknowhere
 from .swigknowhere import Status
 from .swigknowhere import GetBinarySet, GetNullDataSet, GetNullBitSetView
+from .swigknowhere import BruteForceSearch, BruteForceRangeSearch
 import numpy as np
 
-def CreateIndex(name):
-    return swigknowhere.IndexWrap(name)
+
+def CreateIndex(name, version):
+    return swigknowhere.IndexWrap(name, version)
+
+
+def GetCurrentVersion():
+    return swigknowhere.CurrentVersion()
 
 
 def CreateBitSet(bits_num):
     return swigknowhere.BitSet(bits_num)
+
+
+def Load(binset, file_name):
+    return swigknowhere.Load(binset, file_name)
+
+
+def Dump(binset, file_name):
+    return swigknowhere.Dump(binset, file_name)
 
 
 def ArrayToDataSet(arr):
@@ -67,9 +81,21 @@ def RangeSearchDataSetToArray(ans):
 
     return dis_list, ids_list
 
+
 def GetVectorDataSetToArray(ans):
     dim = swigknowhere.DataSet_Dim(ans)
     rows = swigknowhere.DataSet_Rows(ans)
     data = np.zeros([rows, dim]).astype(np.float32)
     swigknowhere.DataSetTensor2Array(ans, data)
     return data
+
+
+def GetBinaryVectorDataSetToArray(ans):
+    dim = int(swigknowhere.DataSet_Dim(ans) / 32)
+    rows = swigknowhere.DataSet_Rows(ans)
+    data = np.zeros([rows, dim]).astype(np.int32)
+    swigknowhere.BinaryDataSetTensor2Array(ans, data)
+    return data
+
+def SetSimdType(type):
+    swigknowhere.SetSimdType(type)

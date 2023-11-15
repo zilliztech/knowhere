@@ -18,6 +18,7 @@ static const std::unordered_set<std::string> ext_legal_json_keys = {"metric_type
                                                                     "dim",
                                                                     "nlist",           // IVF param
                                                                     "nprobe",          // IVF param
+                                                                    "use_elkan",       // IVF param
                                                                     "ssize",           // IVF_FLAT_CC param
                                                                     "nbits",           // IVF_PQ param
                                                                     "m",               // IVF_PQ param
@@ -48,6 +49,7 @@ static const std::unordered_set<std::string> ext_legal_json_keys = {"metric_type
                                                                     "round_decimal",
                                                                     "offset",
                                                                     "for_tuning",
+                                                                    "index_engine_version",
                                                                     "reorder_k"};
 
 Status

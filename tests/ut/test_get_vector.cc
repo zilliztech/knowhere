@@ -9,6 +9,8 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <future>
+
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
@@ -16,7 +18,6 @@
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/factory.h"
 #include "utils.h"
-
 TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
     using Catch::Approx;
 
@@ -25,8 +26,9 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
     const int64_t dim = 128;
 
     const auto metric_type = knowhere::metric::HAMMING;
+    auto version = GenTestVersionList();
 
-    auto base_bin_gen = [&]() {
+    auto base_bin_gen = [=]() {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = metric_type;
@@ -34,14 +36,14 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
         return json;
     };
 
-    auto bin_ivfflat_gen = [&base_bin_gen]() {
+    auto bin_ivfflat_gen = [base_bin_gen]() {
         knowhere::Json json = base_bin_gen();
         json[knowhere::indexparam::NLIST] = 16;
         json[knowhere::indexparam::NPROBE] = 4;
         return json;
     };
 
-    auto bin_hnsw_gen = [&base_bin_gen]() {
+    auto bin_hnsw_gen = [base_bin_gen]() {
         knowhere::Json json = base_bin_gen();
         json[knowhere::indexparam::HNSW_M] = 128;
         json[knowhere::indexparam::EFCONSTRUCTION] = 200;
@@ -58,10 +60,7 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT, bin_ivfflat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, bin_hnsw_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name);
-        if (!idx.HasRawData(metric_type)) {
-            return;
-        }
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -69,28 +68,42 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
         auto ids_ds = GenIdsDataSet(nb, nq);
         REQUIRE(idx.Type() == name);
         auto res = idx.Build(*train_ds, json);
+        if (!idx.HasRawData(metric_type)) {
+            return;
+        }
         REQUIRE(res == knowhere::Status::success);
         knowhere::BinarySet bs;
         idx.Serialize(bs);
 
-        auto idx_new = knowhere::IndexFactory::Instance().Create(name);
+        auto idx_new = knowhere::IndexFactory::Instance().Create(name, version);
         idx_new.Deserialize(bs);
-        auto results = idx_new.GetVectorByIds(*ids_ds);
-        REQUIRE(results.has_value());
-        auto xb = (uint8_t*)train_ds->GetTensor();
-        auto res_rows = results.value()->GetRows();
-        auto res_dim = results.value()->GetDim();
-        auto res_data = (uint8_t*)results.value()->GetTensor();
-        REQUIRE(res_rows == nq);
-        REQUIRE(res_dim == dim);
-        const auto data_bytes = dim / 8;
-        for (int i = 0; i < nq; ++i) {
-            auto id = ids_ds->GetIds()[i];
-            for (int j = 0; j < data_bytes; ++j) {
-                REQUIRE(res_data[i * data_bytes + j] == xb[id * data_bytes + j]);
+
+        auto retrieve_task = [&]() {
+            auto results = idx_new.GetVectorByIds(*ids_ds);
+            REQUIRE(results.has_value());
+            auto xb = (uint8_t*)train_ds->GetTensor();
+            auto res_rows = results.value()->GetRows();
+            auto res_dim = results.value()->GetDim();
+            auto res_data = (uint8_t*)results.value()->GetTensor();
+            REQUIRE(res_rows == nq);
+            REQUIRE(res_dim == dim);
+            const auto data_bytes = dim / 8;
+            for (int i = 0; i < nq; ++i) {
+                auto id = ids_ds->GetIds()[i];
+                for (int j = 0; j < data_bytes; ++j) {
+                    REQUIRE(res_data[i * data_bytes + j] == xb[id * data_bytes + j]);
+                }
             }
+        };
+
+        std::vector<std::future<void>> retrieve_task_list;
+        for (int i = 0; i < 20; i++) {
+            retrieve_task_list.push_back(std::async(std::launch::async, [&] { return retrieve_task(); }));
         }
-    }
+        for (auto& task : retrieve_task_list) {
+            task.wait();
+        }
+    };
 }
 
 TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
@@ -101,8 +114,9 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
     const int64_t dim = 128;
 
     auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::COSINE);
+    auto version = GenTestVersionList();
 
-    auto base_gen = [&]() {
+    auto base_gen = [=]() {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = metric;
@@ -110,7 +124,7 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
         return json;
     };
 
-    auto hnsw_gen = [&base_gen]() {
+    auto hnsw_gen = [base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::HNSW_M] = 128;
         json[knowhere::indexparam::EFCONSTRUCTION] = 200;
@@ -118,22 +132,30 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
         return json;
     };
 
-    auto ivfflat_gen = [&base_gen]() {
+    auto ivfflat_gen = [base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::NLIST] = 16;
         json[knowhere::indexparam::NPROBE] = 4;
         return json;
     };
 
-    auto ivfflatcc_gen = [&ivfflat_gen]() {
+    auto ivfflatcc_gen = [ivfflat_gen]() {
         knowhere::Json json = ivfflat_gen();
         json[knowhere::indexparam::SSIZE] = 48;
         return json;
     };
 
-    auto scann_gen = [&ivfflat_gen]() {
+    auto scann_gen = [ivfflat_gen]() {
         knowhere::Json json = ivfflat_gen();
         json[knowhere::indexparam::REORDER_K] = 10;
+        json[knowhere::indexparam::WITH_RAW_DATA] = true;
+        return json;
+    };
+
+    // without raw data, can not get vector from index
+    auto scann_gen2 = [scann_gen]() {
+        knowhere::Json json = scann_gen();
+        json[knowhere::indexparam::WITH_RAW_DATA] = false;
         return json;
     };
 
@@ -148,12 +170,10 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, base_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFPQ, base_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name);
-        if (!idx.HasRawData(metric)) {
-            return;
-        }
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -162,25 +182,39 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
         auto ids_ds = GenIdsDataSet(nb, nq);
         REQUIRE(idx.Type() == name);
         auto res = idx.Build(*train_ds, json);
+        if (!idx.HasRawData(metric)) {
+            return;
+        }
         REQUIRE(res == knowhere::Status::success);
         knowhere::BinarySet bs;
         idx.Serialize(bs);
 
-        auto idx_new = knowhere::IndexFactory::Instance().Create(name);
+        auto idx_new = knowhere::IndexFactory::Instance().Create(name, version);
         idx_new.Deserialize(bs);
-        auto results = idx_new.GetVectorByIds(*ids_ds);
-        REQUIRE(results.has_value());
-        auto xb = (float*)train_ds_copy->GetTensor();
-        auto res_rows = results.value()->GetRows();
-        auto res_dim = results.value()->GetDim();
-        auto res_data = (float*)results.value()->GetTensor();
-        REQUIRE(res_rows == nq);
-        REQUIRE(res_dim == dim);
-        for (int i = 0; i < nq; ++i) {
-            const auto id = ids_ds->GetIds()[i];
-            for (int j = 0; j < dim; ++j) {
-                REQUIRE(res_data[i * dim + j] == xb[id * dim + j]);
+
+        auto retrieve_task = [&]() {
+            auto results = idx_new.GetVectorByIds(*ids_ds);
+            REQUIRE(results.has_value());
+            auto xb = (float*)train_ds_copy->GetTensor();
+            auto res_rows = results.value()->GetRows();
+            auto res_dim = results.value()->GetDim();
+            auto res_data = (float*)results.value()->GetTensor();
+            REQUIRE(res_rows == nq);
+            REQUIRE(res_dim == dim);
+            for (int i = 0; i < nq; ++i) {
+                const auto id = ids_ds->GetIds()[i];
+                for (int j = 0; j < dim; ++j) {
+                    REQUIRE(res_data[i * dim + j] == xb[id * dim + j]);
+                }
             }
+        };
+
+        std::vector<std::future<void>> retrieve_task_list;
+        for (int i = 0; i < 20; i++) {
+            retrieve_task_list.push_back(std::async(std::launch::async, [&] { return retrieve_task(); }));
+        }
+        for (auto& task : retrieve_task_list) {
+            task.wait();
         }
     }
 }

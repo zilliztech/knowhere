@@ -60,7 +60,13 @@ venv/
 **/knowhere/swigknowhere.py
 wheelhouse/*
 
+**/thirdparty/cardinal
+
 
 *.bin
 
 CMakeUserPresets.json
+
+# python
+.eggs
+*.egg-info

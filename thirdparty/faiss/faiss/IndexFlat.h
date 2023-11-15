@@ -13,7 +13,6 @@
 #include <vector>
 
 #include <faiss/IndexFlatCodes.h>
-#include <faiss/impl/AuxIndexStructures.h>
 
 namespace faiss {
 
@@ -22,7 +21,13 @@ struct IndexFlat : IndexFlatCodes {
     /// database vectors, size ntotal * d
     std::vector<float> xb;
 
-    explicit IndexFlat(idx_t d, MetricType metric = METRIC_L2);
+    explicit IndexFlat(idx_t d, MetricType metric = METRIC_L2,
+                       bool is_cosine = false);
+
+    // Be careful with overriding this function, because
+    //   renormalized x may be used inside. 
+    // Overridden by IndexFlat1D.
+    void add(idx_t n, const float* x) override;
 
     void search(
             idx_t n,
@@ -30,17 +35,14 @@ struct IndexFlat : IndexFlatCodes {
             idx_t k,
             float* distances,
             idx_t* labels,
-            const BitsetView bitset = nullptr) const override;
-
-    void assign(idx_t n, const float* x, idx_t* labels, float* distances)
-            const override;
+            const SearchParameters* params = nullptr) const override;
 
     void range_search(
             idx_t n,
             const float* x,
             float radius,
             RangeSearchResult* result,
-            const BitsetView bitset = nullptr) const override;
+            const SearchParameters* params = nullptr) const override;
 
     void reconstruct(idx_t key, float* recons) const override;
 
@@ -67,18 +69,23 @@ struct IndexFlat : IndexFlatCodes {
         return (const float*)codes.data();
     }
 
+    float* get_norms() {
+        return (float*)code_norms.data();
+    }
+    const float* get_norms() const {
+        return (const float*)code_norms.data();
+    }
+
     IndexFlat() {}
 
-    DistanceComputer* get_distance_computer() const override;
+    FlatCodesDistanceComputer* get_FlatCodesDistanceComputer() const override;
 
     /* The stanadlone codec interface (just memcopies in this case) */
     void sa_encode(idx_t n, const float* x, uint8_t* bytes) const override;
 
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
 
-    size_t cal_size() {
-        return this->sa_code_size();
-    }
+    size_t cal_size() const;
 };
 
 struct IndexFlatIP : IndexFlat {
@@ -87,13 +94,27 @@ struct IndexFlatIP : IndexFlat {
 };
 
 struct IndexFlatL2 : IndexFlat {
+    // Special cache for L2 norms.
+    // If this cache is set, then get_distance_computer() returns
+    // a special version that computes the distance using dot products
+    // and l2 norms.
+    std::vector<float> cached_l2norms;
+
     explicit IndexFlatL2(idx_t d) : IndexFlat(d, METRIC_L2) {}
     IndexFlatL2() {}
+
+    // override for l2 norms cache.
+    FlatCodesDistanceComputer* get_FlatCodesDistanceComputer() const override;
+
+    // compute L2 norms
+    void sync_l2norms();
+    // clear L2 norms
+    void clear_l2norms();
 };
 
 /// optimized version for 1D "vectors".
 struct IndexFlat1D : IndexFlatL2 {
-    bool continuous_update; ///< is the permutation updated continuously?
+    bool continuous_update = true; ///< is the permutation updated continuously?
 
     std::vector<idx_t> perm; ///< sorted database indices
 
@@ -114,7 +135,7 @@ struct IndexFlat1D : IndexFlatL2 {
             idx_t k,
             float* distances,
             idx_t* labels,
-            const BitsetView bitset = nullptr) const override;
+            const SearchParameters* params = nullptr) const override;
 };
 
 } // namespace faiss

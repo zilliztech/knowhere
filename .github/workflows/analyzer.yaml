@@ -21,7 +21,14 @@ jobs:
         run: |
           sudo apt update && sudo apt install -y cmake g++ gcc libopenblas-dev libaio-dev libcurl4-openssl-dev libevent-dev clang-tidy python3-pip && \
           pip3 install conan==1.58.0 && conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local
+      - name: Cache conan
+        id: cache-conan
+        uses: actions/cache@v3
+        with:
+          path: ~/.conan
+          key: ${{ runner.os }}-${{ hashFiles('**/conanfile.py') }}
+          restore-keys: ${{ runner.os }}-${{ hashFiles('**/conanfile.py') }}
       - name: Build & Analyzer
         run: |
-          mkdir build && cd build && conan install .. --build=missing -o with_ut=True -o with_diskann=True -o with_asan=True && conan build .. \
+          mkdir build && cd build && conan install .. --build=missing -o with_ut=True -o with_diskann=True && conan build .. \
           && cd .. && find src -type f | grep -E "\.cc$" | xargs /usr/lib/llvm-10/share/clang/run-clang-tidy.py -quiet -p=./build/Release

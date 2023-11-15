@@ -18,11 +18,24 @@
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/object.h"
+#include "knowhere/version.h"
 
 namespace knowhere {
 
 class IndexNode : public Object {
  public:
+    IndexNode(const int32_t ver) : version_(ver) {
+    }
+
+    IndexNode() : version_(Version::GetDefaultVersion()) {
+    }
+
+    IndexNode(const IndexNode& other) : version_(other.version_) {
+    }
+
+    IndexNode(const IndexNode&& other) : version_(other.version_) {
+    }
+
     virtual Status
     Build(const DataSet& dataset, const Config& cfg) {
         RETURN_IF_ERROR(Train(dataset, cfg));
@@ -37,6 +50,22 @@ class IndexNode : public Object {
 
     virtual expected<DataSetPtr>
     Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const = 0;
+
+    // not thread safe.
+    class iterator {
+     public:
+        virtual std::pair<int64_t, float>
+        Next() = 0;
+        [[nodiscard]] virtual bool
+        HasNext() const = 0;
+        virtual ~iterator() {
+        }
+    };
+
+    virtual expected<std::vector<std::shared_ptr<iterator>>>
+    AnnIterator(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
+        throw std::runtime_error("annIterator not supported for current index type");
+    }
 
     virtual expected<DataSetPtr>
     RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const = 0;
@@ -76,6 +105,9 @@ class IndexNode : public Object {
 
     virtual ~IndexNode() {
     }
+
+ protected:
+    Version version_;
 };
 
 }  // namespace knowhere

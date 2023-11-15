@@ -22,17 +22,31 @@ struct Neighbor {
     operator<(const Neighbor& other) const {
         return distance < other.distance;
     }
+    inline bool
+    operator>(const Neighbor& other) const {
+        return distance > other.distance;
+    }
 };
-
+typedef std::priority_queue<Neighbor, std::vector<Neighbor>, std::greater<Neighbor>> IteratorMinHeap;
 class NeighborSet {
  public:
     explicit NeighborSet(size_t capacity = 0) : capacity_(capacity), data_(capacity_ + 1) {
     }
 
+    // will push any neighbor that does not fit into NeighborSet to disqualified.
+    // When searching for iterator, those points removed from NeighborSet may be
+    // qualified candidates as the iterator iterates, thus we need to retain
+    // instead of disposing them.
     bool
-    insert(Neighbor nbr) {
+    insert(Neighbor nbr, IteratorMinHeap* disqualified = nullptr) {
         if (size_ == capacity_ && nbr.distance >= data_[size_ - 1].distance) {
+            if (disqualified) {
+                disqualified->push(nbr);
+            }
             return false;
+        }
+        if (size_ == capacity_ && disqualified) {
+            disqualified->push(data_[size_ - 1]);
         }
         int lo = 0, hi = size_;
         while (lo < hi) {

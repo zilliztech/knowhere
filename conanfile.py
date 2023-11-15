@@ -4,6 +4,7 @@ from conan.tools.scm import Version
 from conan.tools import files
 from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeDeps, CMakeToolchain, cmake_layout
+from conan.tools.gnu import PkgConfigDeps
 from conan.errors import ConanInvalidConfiguration
 from conans import tools
 import os
@@ -19,8 +20,6 @@ class KnowhereConan(ConanFile):
     homepage = "https://github.com/milvus-io/knowhere"
     license = "Apache-2.0"
 
-    generators = "pkg_config"
-
     settings = "os", "arch", "compiler", "build_type"
     options = {
         "shared": [True, False],
@@ -32,6 +31,7 @@ class KnowhereConan(ConanFile):
         "with_ut": [True, False],
         "with_benchmark": [True, False],
         "with_coverage": [True, False],
+        "with_faiss_tests": [True, False],
     }
     default_options = {
         "shared": True,
@@ -47,6 +47,7 @@ class KnowhereConan(ConanFile):
         "with_coverage": False,
         "boost:without_test": True,
         "fmt:header_only": True,
+        "with_faiss_tests": False,
     }
 
     exports_sources = (
@@ -96,6 +97,8 @@ class KnowhereConan(ConanFile):
         if self.options.with_benchmark:
             self.requires("gtest/1.13.0")
             self.requires("hdf5/1.14.0")
+        if self.options.with_faiss_tests:
+            self.requires("gtest/1.13.0")
 
     @property
     def _required_boost_components(self):
@@ -156,9 +159,14 @@ class KnowhereConan(ConanFile):
         tc.variables["WITH_UT"] = self.options.with_ut
         tc.variables["WITH_BENCHMARK"] = self.options.with_benchmark
         tc.variables["WITH_COVERAGE"] = self.options.with_coverage
+        tc.variables["WITH_FAISS_TESTS"] = self.options.with_faiss_tests
         tc.generate()
+
         deps = CMakeDeps(self)
         deps.generate()
+
+        pc = PkgConfigDeps(self)
+        pc.generate()
 
     def build(self):
         # files.apply_conandata_patches(self)

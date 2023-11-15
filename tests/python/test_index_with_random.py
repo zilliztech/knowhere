@@ -29,7 +29,7 @@ test_data = [
             "metric_type": "L2",
             "nlist": 1024,
             "nprobe": 1024,
-            "ssize": 48
+            "ssize": 48,
         },
     ),
     (
@@ -43,6 +43,7 @@ test_data = [
             "nlist": 1024,
             "nprobe": 1024,
             "reorder_k": 1500,
+            "with_raw_data": True,
         },
     ),
     # (
@@ -83,8 +84,9 @@ test_data = [
 
 @pytest.mark.parametrize("name,config", test_data)
 def test_index(gen_data, faiss_ans, recall, error, name, config):
+    version = knowhere.GetCurrentVersion()
     print(name, config)
-    idx = knowhere.CreateIndex(name)
+    idx = knowhere.CreateIndex(name, version)
     xb, xq = gen_data(10000, 100, 256)
 
     idx.Build(
