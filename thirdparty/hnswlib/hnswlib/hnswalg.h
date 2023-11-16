@@ -27,6 +27,7 @@
 #include "hnswlib.h"
 #include "io/memory_io.h"
 #include "knowhere/config.h"
+#include "knowhere/utils.h"
 #include "knowhere/heap.h"
 #include "neighbor.h"
 #include "visited_list_pool.h"
@@ -661,6 +662,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     void
     loadIndex(const std::string& location, const knowhere::Config& config, size_t max_elements_i = 0) {
+        using knowhere::readBinaryPOD;
         auto cfg = static_cast<const knowhere::BaseConfig&>(config);
 
         auto input = knowhere::FileReader(location);
@@ -770,6 +772,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     void
     saveIndex(knowhere::MemoryIOWriter& output) {
+        using knowhere::writeBinaryPOD;
         // write l2/ip calculator
         writeBinaryPOD(output, metric_type_);
         writeBinaryPOD(output, data_size_);
@@ -807,6 +810,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     void
     loadIndex(knowhere::MemoryIOReader& input, size_t max_elements_i = 0) {
+        using knowhere::readBinaryPOD;
         // linxj: init with metrictype
         size_t dim;
         readBinaryPOD(input, metric_type_);
