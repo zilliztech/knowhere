@@ -24,7 +24,7 @@ spec:
           topologyKey: "kubernetes.io/hostname"
   containers:
   - name: build
-    image: milvusdb/knowhere-gpu-build:amd64-ubuntu20.04-20230320-fa11e7b
+    image: milvusdb/knowhere-gpu-build:amd64-ubuntu20.04-20231117-7a169d0
     env:
       - name: ASAN_OPTIONS
         value: protect_shadow_gap=0
