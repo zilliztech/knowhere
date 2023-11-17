@@ -107,7 +107,6 @@ class InvertedIndex {
         return Status::success;
     }
 
-    // TODO not allowing add after load
     Status
     Add(const void* csr_matrix, bool sealed = true) {
         size_t rows, cols, nnz;
@@ -116,24 +115,16 @@ class InvertedIndex {
         const T* data;
         parse_csr_matrix(csr_matrix, rows, cols, nnz, indptr, indices, data);
 
-        // TODO: currently for growing segment we double the underlying array size. Find a better approach.
         const int32_t scale_factor = sealed ? 1 : 2;
 
-        if (indptr_.size() < n_rows_ + rows + 1) {
-            indptr_.resize((n_rows_ + rows + 1) * scale_factor);
-        }
-
         for (size_t i = 0; i < rows + 1; ++i) {
-            indptr_[n_rows_ + i] = nnz_ + indptr[i];
+            indptr_.push_back(nnz_ + indptr[i]);
         }
 
-        if (indices_.size() < nnz_ + nnz) {
-            indices_.resize((nnz_ + nnz) * scale_factor);
-            data_.resize((nnz_ + nnz) * scale_factor);
-        }
-
-        std::copy(indices, indices + nnz, indices_.begin() + nnz_);
-        std::copy(data, data + nnz, data_.begin() + nnz_);
+        indices_.reserve(nnz_ + nnz);
+        indices_.insert(indices_.end(), indices, indices + nnz);
+        data_.reserve(nnz_ + nnz);
+        data_.insert(data_.end(), data, data + nnz);
 
         if (n_cols_ < cols) {
             n_cols_ = cols;
