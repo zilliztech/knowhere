@@ -115,11 +115,11 @@ class GILReleaser {
     PyThreadState* save;
 };
 
-class AnnIterator {
+class AnnIteratorWrap {
  public:
-    AnnIterator(std::shared_ptr<IndexNode::iterator> it = nullptr) : it_(it) {
+    AnnIteratorWrap(std::shared_ptr<IndexNode::iterator> it = nullptr) : it_(it) {
     }
-    ~AnnIterator() {
+    ~AnnIteratorWrap() {
     }
 
     bool HasNext() {
@@ -178,16 +178,16 @@ class IndexWrap {
         }
     }
 
-    std::vector<AnnIterator>
+    std::vector<AnnIteratorWrap>
     GetAnnIterator(knowhere::DataSetPtr dataset, const std::string& json, const knowhere::BitsetView& bitset, knowhere::Status& status) {
         GILReleaser rel;
         auto res = idx.AnnIterator(*dataset, knowhere::Json::parse(json), bitset);
         if (!res.has_value()) {
             status = res.error();
-            return std::vector<AnnIterator>();
+            return std::vector<AnnIteratorWrap>();
         }
         status = knowhere::Status::success;
-        std::vector<AnnIterator> result;
+        std::vector<AnnIteratorWrap> result;
         for (auto it : res.value()) {
             result.emplace_back(it);
         }
@@ -506,4 +506,4 @@ SetSimdType(const std::string type) {
 
 %}
 
-%template(AnnIteratorVector) std::vector<AnnIterator>;
+%template(AnnIteratorWrapVector) std::vector<AnnIteratorWrap>;
