@@ -64,10 +64,15 @@ void IndexFlat::search(
     } else if (metric_type == METRIC_L2) {
         float_maxheap_array_t res = {size_t(n), size_t(k), labels, distances};
         knn_L2sqr(x, get_xb(), d, n, ntotal, &res, nullptr, sel);
-    } else if (is_similarity_metric(metric_type)) {
-        float_minheap_array_t res = {size_t(n), size_t(k), labels, distances};
-        knn_extra_metrics(
-                x, get_xb(), d, n, ntotal, metric_type, metric_arg, &res);
+    // // aguzhva: the following branch from the Faiss baseline is commented out. 
+    // //   Jaccard distance is handled differently.
+    // } else if (is_similarity_metric(metric_type)) {
+    //     float_minheap_array_t res = {size_t(n), size_t(k), labels, distances};
+    //     knn_extra_metrics(
+    //             x, get_xb(), d, n, ntotal, metric_type, metric_arg, &res);
+    } else if (metric_type == METRIC_Jaccard) {
+        float_maxheap_array_t res = {size_t(n), size_t(k), labels, distances};
+        knn_jaccard(x, get_xb(), d, n, ntotal, &res, sel);        
     } else {
         FAISS_THROW_IF_NOT(!sel);
         float_maxheap_array_t res = {size_t(n), size_t(k), labels, distances};
