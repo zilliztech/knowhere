@@ -149,24 +149,28 @@ class DiskANNConfig : public BaseConfig {
             .for_search();
     }
 
-    inline Status
-    CheckAndAdjustForSearch(std::string* err_msg) override {
-        if (!search_list_size.has_value()) {
-            search_list_size = std::max(k.value(), kSearchListSizeMinValue);
-        } else if (k.value() > search_list_size.value()) {
-            *err_msg = "search_list_size(" + std::to_string(search_list_size.value()) + ") should be larger than k(" +
-                       std::to_string(k.value()) + ")";
-            LOG_KNOWHERE_ERROR_ << *err_msg;
-            return Status::out_of_range_in_json;
-        }
-
-        return Status::success;
-    }
-
-    inline Status
-    CheckAndAdjustForBuild() override {
-        if (!search_list_size.has_value()) {
-            search_list_size = kDefaultSearchListSizeForBuild;
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        switch (param_type) {
+            case PARAM_TYPE::TRAIN: {
+                if (!search_list_size.has_value()) {
+                    search_list_size = kDefaultSearchListSizeForBuild;
+                }
+                break;
+            }
+            case PARAM_TYPE::SEARCH: {
+                if (!search_list_size.has_value()) {
+                    search_list_size = std::max(k.value(), kSearchListSizeMinValue);
+                } else if (k.value() > search_list_size.value()) {
+                    *err_msg = "search_list_size(" + std::to_string(search_list_size.value()) +
+                               ") should be larger than k(" + std::to_string(k.value()) + ")";
+                    LOG_KNOWHERE_ERROR_ << *err_msg;
+                    return Status::out_of_range_in_json;
+                }
+                break;
+            }
+            default:
+                break;
         }
         return Status::success;
     }

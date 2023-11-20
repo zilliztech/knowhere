@@ -79,41 +79,46 @@ class ScannConfig : public IvfFlatConfig {
             .for_train();
     }
 
-    inline Status
-    CheckAndAdjustForSearch(std::string* err_msg) override {
-        if (!faiss::support_pq_fast_scan) {
-            *err_msg = "SCANN index is not supported on the current CPU model, avx2 support is needed for x86 arch.";
-            LOG_KNOWHERE_ERROR_ << *err_msg;
-            return Status::invalid_instruction_set;
-        }
-        if (!reorder_k.has_value()) {
-            reorder_k = k.value();
-        } else if (reorder_k.value() < k.value()) {
-            *err_msg = "reorder_k(" + std::to_string(reorder_k.value()) + ") should be larger than k(" +
-                       std::to_string(k.value()) + ")";
-            LOG_KNOWHERE_ERROR_ << *err_msg;
-            return Status::out_of_range_in_json;
-        }
-
-        return Status::success;
-    }
-
-    inline Status
-    CheckAndAdjustForRangeSearch(std::string* err_msg) override {
-        if (!faiss::support_pq_fast_scan) {
-            *err_msg = "SCANN index is not supported on the current CPU model, avx2 support is needed for x86 arch.";
-            LOG_KNOWHERE_ERROR_ << *err_msg;
-            return Status::invalid_instruction_set;
-        }
-        return Status::success;
-    }
-
-    inline Status
-    CheckAndAdjustForBuild() override {
-        if (!faiss::support_pq_fast_scan) {
-            LOG_KNOWHERE_ERROR_
-                << "SCANN index is not supported on the current CPU model, avx2 support is needed for x86 arch.";
-            return Status::invalid_instruction_set;
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        switch (param_type) {
+            case PARAM_TYPE::TRAIN: {
+                if (!faiss::support_pq_fast_scan) {
+                    LOG_KNOWHERE_ERROR_ << "SCANN index is not supported on the current CPU model, avx2 support is "
+                                           "needed for x86 arch.";
+                    return Status::invalid_instruction_set;
+                }
+                break;
+            }
+            case PARAM_TYPE::SEARCH: {
+                if (!faiss::support_pq_fast_scan) {
+                    LOG_KNOWHERE_ERROR_ << "SCANN index is not supported on the current CPU model, avx2 support is "
+                                           "needed for x86 arch.";
+                    return Status::invalid_instruction_set;
+                }
+                if (!reorder_k.has_value()) {
+                    reorder_k = k.value();
+                } else if (reorder_k.value() < k.value()) {
+                    if (!err_msg) {
+                        err_msg = new std::string();
+                    }
+                    *err_msg = "reorder_k(" + std::to_string(reorder_k.value()) + ") should be larger than k(" +
+                               std::to_string(k.value()) + ")";
+                    LOG_KNOWHERE_ERROR_ << *err_msg;
+                    return Status::out_of_range_in_json;
+                }
+                break;
+            }
+            case PARAM_TYPE::RANGE_SEARCH: {
+                if (!faiss::support_pq_fast_scan) {
+                    LOG_KNOWHERE_ERROR_ << "SCANN index is not supported on the current CPU model, avx2 support is "
+                                           "needed for x86 arch.";
+                    return Status::invalid_instruction_set;
+                }
+                break;
+            }
+            default:
+                break;
         }
         return Status::success;
     }

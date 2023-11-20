@@ -37,7 +37,6 @@ inline Status
 Index<T>::Build(const DataSet& dataset, const Json& json) {
     auto cfg = this->node->CreateConfig();
     RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
-    RETURN_IF_ERROR(cfg->CheckAndAdjustForBuild());
 
 #ifdef NOT_COMPILE_FOR_SWIG
     TimeRecorder rc("Build index", 2);
@@ -77,10 +76,6 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
     if (load_status != Status::success) {
         return expected<DataSetPtr>::Err(load_status, msg);
     }
-    const Status search_status = cfg->CheckAndAdjustForSearch(&msg);
-    if (search_status != Status::success) {
-        return expected<DataSetPtr>::Err(search_status, msg);
-    }
 
 #ifdef NOT_COMPILE_FOR_SWIG
     TimeRecorder rc("Search");
@@ -105,10 +100,6 @@ Index<T>::AnnIterator(const DataSet& dataset, const Json& json, const BitsetView
     if (status != Status::success) {
         return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(status, msg);
     }
-    status = cfg->CheckAndAdjustForIterator();
-    if (status != Status::success) {
-        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(status, "invalid params for iterator");
-    }
 
 #ifdef NOT_COMPILE_FOR_SWIG
     // note that this time includes only the initial search phase of iterator.
@@ -130,10 +121,6 @@ Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView
     auto cfg = this->node->CreateConfig();
     std::string msg;
     auto status = LoadConfig(cfg.get(), json, knowhere::RANGE_SEARCH, "RangeSearch", &msg);
-    if (status != Status::success) {
-        return expected<DataSetPtr>::Err(status, std::move(msg));
-    }
-    status = cfg->CheckAndAdjustForRangeSearch(&msg);
     if (status != Status::success) {
         return expected<DataSetPtr>::Err(status, std::move(msg));
     }
