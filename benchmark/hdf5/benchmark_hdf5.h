@@ -34,6 +34,7 @@ static const char* HDF5_DATASET_RADIUS = "radius";
 
 static const char* METRIC_IP_STR = "angular";
 static const char* METRIC_L2_STR = "euclidean";
+static const char* METRIC_COS_STR = "cosine";
 static const char* METRIC_HAM_STR = "hamming";
 static const char* METRIC_JAC_STR = "jaccard";
 
@@ -61,43 +62,58 @@ class Benchmark_hdf5 : public Benchmark_base {
     int32_t
     parse_name_and_dim() {
         size_t pos1, pos2;
-
         assert(!ann_test_name_.empty() || !"ann_test_name not set");
+
         pos1 = ann_test_name_.find_first_of('-', 0);
         assert(pos1 != std::string::npos);
+        dataset_name_ = ann_test_name_.substr(0, pos1);
 
         pos2 = ann_test_name_.find_first_of('-', pos1 + 1);
         assert(pos2 != std::string::npos);
-
         dim_ = std::stoi(ann_test_name_.substr(pos1 + 1, pos2 - pos1 - 1));
         return (pos2 + 1);
     }
 
     void
+    set_metric_type(const std::string& str) {
+        if (str == METRIC_L2_STR || str == "l2") {
+            metric_type_ = "L2";
+        } else if (str == METRIC_IP_STR || str == "ip") {
+            metric_type_ = "IP";
+        } else if (str == METRIC_COS_STR) {
+            metric_type_ = "COSINE";
+        } else if (str == METRIC_HAM_STR) {
+            metric_type_ = "HAMMING";
+        } else if (str == METRIC_JAC_STR) {
+            metric_type_ = "JACCARD";
+        } else {
+            assert(false);
+        }
+    }
+    void
     parse_ann_test_name() {
         auto pos = parse_name_and_dim();
         metric_str_ = ann_test_name_.substr(pos);
+        set_metric_type(metric_str_);
     }
 
     void
     parse_ann_test_name_with_range() {
         auto pos1 = parse_name_and_dim();
-
         auto pos2 = ann_test_name_.find_first_of('-', pos1);
         assert(pos2 != std::string::npos);
         metric_str_ = ann_test_name_.substr(pos1, pos2 - pos1);
-
+        set_metric_type(metric_str_);
         assert("range" == ann_test_name_.substr(pos2 + 1));
     }
 
     void
     parse_ann_test_name_with_range_multi() {
         auto pos1 = parse_name_and_dim();
-
         auto pos2 = ann_test_name_.find_first_of('-', pos1);
         assert(pos2 != std::string::npos);
         metric_str_ = ann_test_name_.substr(pos1, pos2 - pos1);
-
+        set_metric_type(metric_str_);
         assert("range-multi" == ann_test_name_.substr(pos2 + 1));
     }
 
@@ -119,10 +135,10 @@ class Benchmark_hdf5 : public Benchmark_base {
             assert(dim * 32 == dim_ || !"train dataset has incorrect dimension");
         }
 
-        if (metric_str_ == METRIC_IP_STR) {
-            printf("[%.3f s] Normalizing train dataset \n", get_time_diff());
-            normalize((float*)xb_, nb_, dim_);
-        }
+        // if (metric_str_ == METRIC_IP_STR) {
+        //     printf("[%.3f s] Normalizing train dataset \n", get_time_diff());
+        //     normalize((float*)xb_, nb_, dim_);
+        // }
 
         /* load test data */
         printf("[%.3f s] Loading test data\n", get_time_diff());
@@ -134,10 +150,10 @@ class Benchmark_hdf5 : public Benchmark_base {
             assert(dim * 32 == dim_ || !"test dataset has incorrect dimension");
         }
 
-        if (metric_str_ == METRIC_IP_STR) {
-            printf("[%.3f s] Normalizing test dataset \n", get_time_diff());
-            normalize((float*)xq_, nq_, dim_);
-        }
+        // if (metric_str_ == METRIC_IP_STR) {
+        //     printf("[%.3f s] Normalizing test dataset \n", get_time_diff());
+        //     normalize((float*)xq_, nq_, dim_);
+        // }
 
         /* load ground-truth data */
         int32_t gt_nq;
@@ -167,10 +183,10 @@ class Benchmark_hdf5 : public Benchmark_base {
             assert(dim * 32 == dim_ || !"train dataset has incorrect dimension");
         }
 
-        if (metric_str_ == METRIC_IP_STR) {
-            printf("[%.3f s] Normalizing train dataset \n", get_time_diff());
-            normalize((float*)xb_, nb_, dim_);
-        }
+        // if (metric_str_ == METRIC_IP_STR) {
+        //     printf("[%.3f s] Normalizing train dataset \n", get_time_diff());
+        //     normalize((float*)xb_, nb_, dim_);
+        // }
 
         /* load test data */
         printf("[%.3f s] Loading test data\n", get_time_diff());
@@ -182,10 +198,10 @@ class Benchmark_hdf5 : public Benchmark_base {
             assert(dim * 32 == dim_ || !"test dataset has incorrect dimension");
         }
 
-        if (metric_str_ == METRIC_IP_STR) {
-            printf("[%.3f s] Normalizing test dataset \n", get_time_diff());
-            normalize((float*)xq_, nq_, dim_);
-        }
+        // if (metric_str_ == METRIC_IP_STR) {
+        //     printf("[%.3f s] Normalizing test dataset \n", get_time_diff());
+        //     normalize((float*)xq_, nq_, dim_);
+        // }
 
         /* load ground-truth data */
         int32_t cols, rows;
@@ -221,10 +237,10 @@ class Benchmark_hdf5 : public Benchmark_base {
             assert(dim * 32 == dim_ || !"train dataset has incorrect dimension");
         }
 
-        if (metric_str_ == METRIC_IP_STR) {
-            printf("[%.3f s] Normalizing train dataset \n", get_time_diff());
-            normalize((float*)xb_, nb_, dim_);
-        }
+        // if (metric_str_ == METRIC_IP_STR) {
+        //     printf("[%.3f s] Normalizing train dataset \n", get_time_diff());
+        //     normalize((float*)xb_, nb_, dim_);
+        // }
 
         /* load test data */
         printf("[%.3f s] Loading test data\n", get_time_diff());
@@ -236,10 +252,10 @@ class Benchmark_hdf5 : public Benchmark_base {
             assert(dim * 32 == dim_ || !"test dataset has incorrect dimension");
         }
 
-        if (metric_str_ == METRIC_IP_STR) {
-            printf("[%.3f s] Normalizing test dataset \n", get_time_diff());
-            normalize((float*)xq_, nq_, dim_);
-        }
+        // if (metric_str_ == METRIC_IP_STR) {
+        //     printf("[%.3f s] Normalizing test dataset \n", get_time_diff());
+        //     normalize((float*)xq_, nq_, dim_);
+        // }
 
         /* load ground-truth data */
         int32_t cols, rows;
@@ -421,5 +437,6 @@ class Benchmark_hdf5 : public Benchmark_base {
 
  protected:
     std::string ann_test_name_ = "";
+    std::string dataset_name_;
     std::string metric_str_;
 };

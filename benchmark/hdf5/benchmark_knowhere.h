@@ -138,8 +138,6 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
     }
 
  protected:
-    std::string metric_type_;
-
     std::string index_type_;
     knowhere::Json cfg_;
     knowhere::Index<knowhere::IndexNode> index_;

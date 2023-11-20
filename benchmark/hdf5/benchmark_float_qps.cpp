@@ -214,8 +214,6 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         parse_ann_test_name();
         load_hdf5_data<false>();
 
-        assert(metric_str_ == METRIC_IP_STR || metric_str_ == METRIC_L2_STR);
-        metric_type_ = (metric_str_ == METRIC_IP_STR) ? knowhere::metric::IP : knowhere::metric::L2;
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
         knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AUTO);
 #ifdef KNOWHERE_WITH_GPU

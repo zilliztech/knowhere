@@ -147,8 +147,6 @@ class Benchmark_float_range_bitset : public Benchmark_knowhere, public ::testing
         parse_ann_test_name_with_range();
         load_hdf5_data_range<false>();
 
-        assert(metric_str_ == METRIC_IP_STR || metric_str_ == METRIC_L2_STR);
-        metric_type_ = (metric_str_ == METRIC_IP_STR) ? "IP" : "L2";
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
         cfg_[knowhere::meta::RADIUS] = *gt_radius_;
         knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);
