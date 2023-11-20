@@ -9,10 +9,13 @@
 
 #pragma once
 
-#include <faiss/IndexIVF.h>
-#include <faiss/impl/ScalarQuantizerOp.h>
+#include <faiss/impl/AuxIndexStructures.h>
+#include <faiss/impl/DistanceComputer.h>
+#include <faiss/impl/Quantizer.h>
 
 namespace faiss {
+
+struct InvertedListScanner;
 
 /**
  * The uniform quantizer has a range [vmin, vmax]. The range can be
@@ -20,20 +23,36 @@ namespace faiss {
  * (default).
  */
 
-struct ScalarQuantizer {
-    QuantizerType qtype;
+struct ScalarQuantizer : Quantizer {
+    enum QuantizerType {
+        QT_8bit,         ///< 8 bits per component
+        QT_4bit,         ///< 4 bits per component
+        QT_8bit_uniform, ///< same, shared range for all dimensions
+        QT_4bit_uniform,
+        QT_fp16,
+        QT_8bit_direct, ///< fast indexing of uint8s
+        QT_6bit,        ///< 6 bits per component
+    };
 
-    RangeStat rangestat;
-    float rangestat_arg;
+    QuantizerType qtype = QT_8bit;
 
-    /// dimension of input vectors
-    size_t d;
+    /** The uniform encoder can estimate the range of representable
+     * values of the unform encoder using different statistics. Here
+     * rs = rangestat_arg */
+
+    // rangestat_arg.
+    enum RangeStat {
+        RS_minmax,    ///< [min - rs*(max-min), max + rs*(max-min)]
+        RS_meanstd,   ///< [mean - std * rs, mean + std * rs]
+        RS_quantiles, ///< [Q(rs), Q(1-rs)]
+        RS_optim,     ///< alternate optimization of reconstruction error
+    };
+
+    RangeStat rangestat = RS_minmax;
+    float rangestat_arg = 0;
 
     /// bits per scalar code
-    size_t bits;
-
-    /// bytes per vector
-    size_t code_size;
+    size_t bits = 0;
 
     /// trained values (including the range)
     std::vector<float> trained;
@@ -44,36 +63,64 @@ struct ScalarQuantizer {
     /// updates internal values based on qtype and d
     void set_derived_sizes();
 
-    void train(size_t n, const float* x);
-
-    /// Used by an IVF index to train based on the residuals
-    void train_residual(
-            size_t n,
-            const float* x,
-            Index* quantizer,
-            bool by_residual,
-            bool verbose);
+    void train(size_t n, const float* x) override;
 
     /** Encode a set of vectors
      *
      * @param x      vectors to encode, size n * d
      * @param codes  output codes, size n * code_size
      */
-    void compute_codes(const float* x, uint8_t* codes, size_t n) const;
+    void compute_codes(const float* x, uint8_t* codes, size_t n) const override;
 
     /** Decode a set of vectors
      *
      * @param codes  codes to decode, size n * code_size
      * @param x      output vectors, size n * d
      */
-    void decode(const uint8_t* code, float* x, size_t n) const;
+    void decode(const uint8_t* code, float* x, size_t n) const override;
 
     /*****************************************************
      * Objects that provide methods for encoding/decoding, distance
      * computation and inverted list scanning
      *****************************************************/
 
-    Quantizer* select_quantizer() const;
+    struct SQuantizer {
+        // encodes one vector. Assumes code is filled with 0s on input!
+        virtual void encode_vector(const float* x, uint8_t* code) const = 0;
+        virtual void decode_vector(const uint8_t* code, float* x) const = 0;
+
+        virtual ~SQuantizer() {}
+    };
+
+    SQuantizer* select_quantizer() const;
+
+    struct SQDistanceComputer : FlatCodesDistanceComputer {
+        const float* q;
+
+        SQDistanceComputer() : q(nullptr) {}
+
+        virtual float query_to_code(const uint8_t* code) const = 0;
+
+        float distance_to_code(const uint8_t* code) final {
+            return query_to_code(code);
+        }
+
+        virtual void query_to_codes_batch_4(
+            const uint8_t* __restrict code_0,
+            const uint8_t* __restrict code_1,
+            const uint8_t* __restrict code_2,
+            const uint8_t* __restrict code_3,
+            float& dis0,
+            float& dis1,
+            float& dis2,
+            float& dis3
+        ) const {
+            dis0 = this->query_to_code(code_0);
+            dis1 = this->query_to_code(code_1);
+            dis2 = this->query_to_code(code_2);
+            dis3 = this->query_to_code(code_3);
+        }
+    };
 
     SQDistanceComputer* get_distance_computer(
             MetricType metric = METRIC_L2) const;
@@ -82,188 +129,10 @@ struct ScalarQuantizer {
             MetricType mt,
             const Index* quantizer,
             bool store_pairs,
+            const IDSelector* sel,
             bool by_residual = false) const;
 
-    size_t cal_size() {
-        return sizeof(*this) + trained.size() * sizeof(float);
-    }
-};
-
-/*******************************************************************
- * IndexScalarQuantizer/IndexIVFScalarQuantizer scanner object
- *
- * It is an InvertedListScanner, but is designed to work with
- * IndexScalarQuantizer as well.
- ********************************************************************/
-
-template <class DCClass>
-struct IVFSQScannerIP : InvertedListScanner {
-    DCClass dc;
-    bool by_residual;
-
-    float accu0; /// added to all distances
-
-    IVFSQScannerIP(
-            int d,
-            const std::vector<float>& trained,
-            size_t code_size,
-            bool store_pairs,
-            bool by_residual)
-            : dc(d, trained), by_residual(by_residual), accu0(0) {
-        this->store_pairs = store_pairs;
-        this->code_size = code_size;
-    }
-
-    void set_query(const float* query) override {
-        dc.set_query(query);
-    }
-
-    void set_list(idx_t list_no, float coarse_dis) override {
-        this->list_no = list_no;
-        accu0 = by_residual ? coarse_dis : 0;
-    }
-
-    float distance_to_code(const uint8_t* code) const final {
-        return accu0 + dc.query_to_code(code);
-    }
-
-    size_t scan_codes(
-            size_t list_size,
-            const uint8_t* codes,
-            const float* code_norms,
-            const idx_t* ids,
-            float* simi,
-            idx_t* idxi,
-            size_t k,
-            const BitsetView bitset = nullptr) const override {
-        size_t nup = 0;
-
-        for (size_t j = 0; j < list_size; j++) {
-            if (bitset.empty() || !bitset.test(ids[j])) {
-                float accu = accu0 + dc.query_to_code(codes);
-                if (accu > simi[0]) {
-                    int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                    minheap_replace_top(k, simi, idxi, accu, id);
-                    nup++;
-                }
-            }
-            codes += code_size;
-        }
-        return nup;
-    }
-
-    void scan_codes_range(
-            size_t list_size,
-            const uint8_t* codes,
-            const float* code_norms,
-            const idx_t* ids,
-            float radius,
-            RangeQueryResult& res,
-            const BitsetView bitset = nullptr) const override {
-        for (size_t j = 0; j < list_size; j++) {
-            if (bitset.empty() || !bitset.test(ids[j])) {
-                float accu = accu0 + dc.query_to_code(codes);
-                if (accu > radius) {
-                    int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                    res.add(accu, id);
-                }
-            }
-            codes += code_size;
-        }
-    }
-};
-
-template <class DCClass>
-struct IVFSQScannerL2 : InvertedListScanner {
-    DCClass dc;
-
-    bool by_residual;
-    const Index* quantizer;
-    const float* x; /// current query
-
-    std::vector<float> tmp;
-
-    IVFSQScannerL2(
-            int d,
-            const std::vector<float>& trained,
-            size_t code_size,
-            const Index* quantizer,
-            bool store_pairs,
-            bool by_residual)
-            : dc(d, trained),
-              by_residual(by_residual),
-              quantizer(quantizer),
-              x(nullptr),
-              tmp(d) {
-        this->store_pairs = store_pairs;
-        this->code_size = code_size;
-    }
-
-    void set_query(const float* query) override {
-        x = query;
-        if (!quantizer) {
-            dc.set_query(query);
-        }
-    }
-
-    void set_list(idx_t list_no, float /*coarse_dis*/) override {
-        this->list_no = list_no;
-        if (by_residual) {
-            // shift of x_in wrt centroid
-            quantizer->compute_residual(x, tmp.data(), list_no);
-            dc.set_query(tmp.data());
-        } else {
-            dc.set_query(x);
-        }
-    }
-
-    float distance_to_code(const uint8_t* code) const final {
-        return dc.query_to_code(code);
-    }
-
-    size_t scan_codes(
-            size_t list_size,
-            const uint8_t* codes,
-            const float* code_norms,
-            const idx_t* ids,
-            float* simi,
-            idx_t* idxi,
-            size_t k,
-            const BitsetView bitset = nullptr) const override {
-        size_t nup = 0;
-        for (size_t j = 0; j < list_size; j++) {
-            if (bitset.empty() || !bitset.test(ids[j])) {
-                float dis = dc.query_to_code(codes);
-                if (dis < simi[0]) {
-                    int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                    maxheap_replace_top(k, simi, idxi, dis, id);
-                    nup++;
-                }
-            }
-            codes += code_size;
-        }
-        return nup;
-    }
-
-    void scan_codes_range(
-            size_t list_size,
-            const uint8_t* codes,
-            const float* code_norms,
-            const idx_t* ids,
-            float radius,
-            RangeQueryResult& res,
-            const BitsetView bitset = nullptr) const override {
-        for (size_t j = 0; j < list_size; j++) {
-            if (bitset.empty() || !bitset.test(ids[j])) {
-                float dis = dc.query_to_code(codes);
-                if (dis < radius) {
-                    int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                    res.add(dis, id);
-                }
-            }
-            codes += code_size;
-        }
-    }
+    size_t cal_size() const;
 };
 
 } // namespace faiss

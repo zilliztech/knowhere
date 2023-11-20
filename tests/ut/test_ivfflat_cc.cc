@@ -78,7 +78,7 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
                 for (size_t i = 0; i < nlist; i++) {
                     std::mt19937_64 rng(i);
                     int64_t add_size = distribution(rng);
-                    std::vector<faiss::Index::idx_t> ids(add_size, i);
+                    std::vector<faiss::idx_t> ids(add_size, i);
                     float value = i;
                     std::vector<float> codes(add_size * dim, value);
                     std::vector<float> code_normals = knowhere::NormalizeVecs(codes.data(), add_size, dim);
@@ -95,7 +95,7 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
                 for (size_t i = 0; i < nlist; i++) {
                     std::mt19937_64 rng(i * i);
                     int64_t add_size = distribution(rng);
-                    std::vector<faiss::Index::idx_t> ids(add_size, i);
+                    std::vector<faiss::idx_t> ids(add_size, i);
                     float value = i;
                     std::vector<float> codes(add_size * dim, value);
                     std::vector<float> code_normals = knowhere::NormalizeVecs(codes.data(), add_size, dim);

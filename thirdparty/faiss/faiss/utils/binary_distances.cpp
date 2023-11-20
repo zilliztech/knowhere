@@ -16,13 +16,18 @@
 
 #include <omp.h>
 
+#include <faiss/impl/IDSelector.h>
 #include <faiss/utils/hamming.h>
 #include <faiss/utils/jaccard-inl.h>
 #include <faiss/utils/structure-inl.h>
 #include <faiss/utils/utils.h>
 #include <simd/hook.h>
 
+#include <knowhere/bitsetview.h>
+
 namespace faiss {
+
+extern uint8_t lookup8bit[256];
 
 #define fast_loop_imp(fun_u64, fun_u8)                 \
     auto a = reinterpret_cast<const uint64_t*>(data1); \
@@ -83,6 +88,7 @@ namespace faiss {
     }
 
 int popcnt(const uint8_t* data, const size_t code_size) {
+    // todo aguzhva: improve this code, maybe reuse the code from hamming.h
     auto data1 = data, data2 = data; // for the macro fast_loop_imp
 #define fun_u64 accu += popcount64(a[i])
 #define fun_u8(i) accu += lookup8bit[a[i]]
@@ -97,6 +103,7 @@ int xor_popcnt(
         const uint8_t* data1,
         const uint8_t* data2,
         const size_t code_size) {
+    // todo aguzhva: improve this code, maybe reuse the code from hamming.h
 #define fun_u64 accu += popcount64(a[i] ^ b[i]);
 #define fun_u8(i) accu += lookup8bit[a[i] ^ b[i]];
     int accu = 0;
@@ -110,6 +117,7 @@ int or_popcnt(
         const uint8_t* data1,
         const uint8_t* data2,
         const size_t code_size) {
+    // todo aguzhva: improve this code, maybe reuse the code from hamming.h
 #define fun_u64 accu += popcount64(a[i] | b[i])
 #define fun_u8(i) accu += lookup8bit[a[i] | b[i]]
     int accu = 0;
@@ -123,6 +131,7 @@ int and_popcnt(
         const uint8_t* data1,
         const uint8_t* data2,
         const size_t code_size) {
+    // todo aguzhva: improve this code, maybe reuse the code from hamming.h
 #define fun_u64 accu += popcount64(a[i] & b[i])
 #define fun_u8(i) accu += lookup8bit[a[i] & b[i]]
     int accu = 0;
@@ -138,6 +147,7 @@ bool is_subset(
         const uint8_t* data1,
         const uint8_t* data2,
         const size_t code_size) {
+    // todo aguzhva: improve this code, maybe reuse the code from hamming.h
 #define fun_u64                \
     if ((a[i] & b[i]) != a[i]) \
     return false
@@ -154,6 +164,7 @@ float bvec_jaccard(
         const uint8_t* data1,
         const uint8_t* data2,
         const size_t code_size) {
+    // todo aguzhva: improve this code, maybe reuse the code from hamming.h
 #define fun_u64                          \
     accu_num += popcount64(a[i] & b[i]); \
     accu_den += popcount64(a[i] | b[i])
@@ -179,7 +190,7 @@ void binary_knn_mc(
         size_t k,
         float* distances,
         int64_t* labels,
-        const BitsetView bitset) {
+        const IDSelector* sel) {
     int thread_max_num = omp_get_max_threads();
     size_t l3_size = get_l3_size();
 
@@ -201,7 +212,7 @@ void binary_knn_mc(
 
 #pragma omp parallel for
         for (size_t j = 0; j < n2; j++) {
-            if (bitset.empty() || !bitset.test(j)) {
+            if (!sel || sel->is_member(j)) {
                 int thread_no = omp_get_thread_num();
 
                 const uint8_t* bs2_ = bs2 + j * bytes_per_code;
@@ -262,7 +273,7 @@ void binary_knn_mc(
                 T hc(bs1 + i * bytes_per_code, bytes_per_code);
                 const uint8_t* bs2_ = bs2 + j0 * bytes_per_code;
                 for (size_t j = j0; j < j1; j++, bs2_ += bytes_per_code) {
-                    if (bitset.empty() || !bitset.test(j)) {
+                    if (!sel || sel->is_member(j)) {
                         if (hc.compute(bs2_)) {
                             dis[num_i] = 0;
                             lab[num_i] = j;
@@ -298,14 +309,14 @@ void binary_knn_mc(
         size_t ncodes,
         float* distances,
         int64_t* labels,
-        const BitsetView bitset) {
+        const IDSelector* sel) {
     switch (metric_type) {
         case METRIC_Substructure:
             switch (ncodes) {
 #define binary_knn_mc_Substructure(ncodes)                           \
     case ncodes:                                                     \
         binary_knn_mc<faiss::StructureComputer##ncodes<false>>(      \
-                ncodes, a, b, na, nb, k, distances, labels, bitset); \
+                ncodes, a, b, na, nb, k, distances, labels, sel); \
         break;
                 binary_knn_mc_Substructure(8);
                 binary_knn_mc_Substructure(16);
@@ -317,7 +328,7 @@ void binary_knn_mc(
 #undef binary_knn_mc_Substructure
                 default:
                     binary_knn_mc<faiss::StructureComputerDefault<false>>(
-                            ncodes, a, b, na, nb, k, distances, labels, bitset);
+                            ncodes, a, b, na, nb, k, distances, labels, sel);
                     break;
             }
             break;
@@ -327,7 +338,7 @@ void binary_knn_mc(
 #define binary_knn_mc_Superstructure(ncodes)                         \
     case ncodes:                                                     \
         binary_knn_mc<faiss::StructureComputer##ncodes<true>>(       \
-                ncodes, a, b, na, nb, k, distances, labels, bitset); \
+                ncodes, a, b, na, nb, k, distances, labels, sel); \
         break;
                 binary_knn_mc_Superstructure(8);
                 binary_knn_mc_Superstructure(16);
@@ -339,7 +350,7 @@ void binary_knn_mc(
 #undef binary_knn_mc_Superstructure
                 default:
                     binary_knn_mc<faiss::StructureComputerDefault<true>>(
-                            ncodes, a, b, na, nb, k, distances, labels, bitset);
+                            ncodes, a, b, na, nb, k, distances, labels, sel);
                     break;
             }
             break;
@@ -356,7 +367,7 @@ void binary_knn_hc(
         const uint8_t* bs1,
         const uint8_t* bs2,
         size_t n2,
-        const BitsetView bitset) {
+        const IDSelector* sel) {
     typedef typename C::T T;
     size_t k = ha->k;
 
@@ -389,7 +400,7 @@ void binary_knn_hc(
 
 #pragma omp parallel for
         for (size_t j = 0; j < n2; j++) {
-            if (bitset.empty() || !bitset.test(j)) {
+            if (!sel || sel->is_member(j)) {
                 int thread_no = omp_get_thread_num();
 
                 const uint8_t* bs2_ = bs2 + j * bytes_per_code;
@@ -449,7 +460,7 @@ void binary_knn_hc(
                 T* __restrict bh_val_ = ha->val + i * k;
                 int64_t* __restrict bh_ids_ = ha->ids + i * k;
                 for (size_t j = j0; j < j1; j++, bs2_ += bytes_per_code) {
-                    if (bitset.empty() || !bitset.test(j)) {
+                    if (!sel || sel->is_member(j)) {
                         dis = hc.compute(bs2_);
                         if (C::cmp(bh_val_[0], dis)) {
                             faiss::heap_replace_top<C>(
@@ -471,7 +482,7 @@ void binary_knn_hc(
         const uint8_t* b,
         size_t nb,
         size_t ncodes,
-        const BitsetView bitset) {
+        const IDSelector* sel) {
     switch (metric_type) {
         case METRIC_Jaccard: {
             {
@@ -479,7 +490,7 @@ void binary_knn_hc(
 #define binary_knn_hc_jaccard(ncodes)                     \
     case ncodes:                                          \
         binary_knn_hc<C, faiss::JaccardComputer##ncodes>( \
-                ncodes, ha, a, b, nb, bitset);            \
+                ncodes, ha, a, b, nb, sel);            \
         break;
                     binary_knn_hc_jaccard(8);
                     binary_knn_hc_jaccard(16);
@@ -491,7 +502,7 @@ void binary_knn_hc(
 #undef binary_knn_hc_jaccard
                     default:
                         binary_knn_hc<C, faiss::JaccardComputerDefault>(
-                                ncodes, ha, a, b, nb, bitset);
+                                ncodes, ha, a, b, nb, sel);
                         break;
                 }
             }
@@ -504,7 +515,7 @@ void binary_knn_hc(
 #define binary_knn_hc_hamming(ncodes)                     \
     case ncodes:                                          \
         binary_knn_hc<C, faiss::HammingComputer##ncodes>( \
-                ncodes, ha, a, b, nb, bitset);            \
+                ncodes, ha, a, b, nb, sel);            \
         break;
                     binary_knn_hc_hamming(4);
                     binary_knn_hc_hamming(8);
@@ -515,7 +526,7 @@ void binary_knn_hc(
 #undef binary_knn_hc_hamming
                     default:
                         binary_knn_hc<C, faiss::HammingComputerDefault>(
-                                ncodes, ha, a, b, nb, bitset);
+                                ncodes, ha, a, b, nb, sel);
                         break;
                 }
             }
@@ -534,7 +545,7 @@ template void binary_knn_hc<CMax<int, int64_t>>(
         const uint8_t* b,
         size_t nb,
         size_t ncodes,
-        const BitsetView bitset);
+        const IDSelector* sel);
 
 template void binary_knn_hc<CMax<float, int64_t>>(
         MetricType metric_type,
@@ -543,7 +554,7 @@ template void binary_knn_hc<CMax<float, int64_t>>(
         const uint8_t* b,
         size_t nb,
         size_t ncodes,
-        const BitsetView bitset);
+        const IDSelector* sel);
 
 template <class C, typename T, class MetricComputer>
 void binary_range_search(
@@ -554,7 +565,7 @@ void binary_range_search(
         T radius,
         size_t code_size,
         RangeSearchResult* res,
-        const BitsetView bitset = nullptr) {
+        const IDSelector* sel = nullptr) {
 #pragma omp parallel
     {
         RangeSearchPartialResult pres(res);
@@ -563,7 +574,7 @@ void binary_range_search(
             MetricComputer mc(a + i * code_size, code_size);
             RangeQueryResult& qres = pres.new_result(i);
             for (size_t j = 0; j < nb; j++) {
-                if (bitset.empty() || !bitset.test(j)) {
+                if (!sel || sel->is_member(j)) {
                     T dis = mc.compute(b + j * code_size);
                     if (C::cmp(dis, radius)) {
                         qres.add(dis, j);
@@ -585,7 +596,7 @@ void binary_range_search(
         T radius,
         size_t code_size,
         RangeSearchResult* res,
-        const BitsetView bitset) {
+        const IDSelector* sel) {
     switch (metric_type) {
         case METRIC_Jaccard: {
             {
@@ -593,7 +604,7 @@ void binary_range_search(
 #define binary_range_search_jaccard(ncodes)                        \
     case ncodes:                                                   \
         binary_range_search<C, T, faiss::JaccardComputer##ncodes>( \
-                a, b, na, nb, radius, code_size, res, bitset);     \
+                a, b, na, nb, radius, code_size, res, sel);     \
         break;
                     binary_range_search_jaccard(8);
                     binary_range_search_jaccard(16);
@@ -608,7 +619,7 @@ void binary_range_search(
                                 C,
                                 T,
                                 faiss::JaccardComputerDefault>(
-                                a, b, na, nb, radius, code_size, res, bitset);
+                                a, b, na, nb, radius, code_size, res, sel);
                         break;
                 }
             }
@@ -621,7 +632,7 @@ void binary_range_search(
 #define binary_range_search_hamming(ncodes)                        \
     case ncodes:                                                   \
         binary_range_search<C, T, faiss::HammingComputer##ncodes>( \
-                a, b, na, nb, radius, code_size, res, bitset);     \
+                a, b, na, nb, radius, code_size, res, sel);     \
         break;
                     binary_range_search_hamming(4);
                     binary_range_search_hamming(8);
@@ -635,7 +646,7 @@ void binary_range_search(
                                 C,
                                 T,
                                 faiss::HammingComputerDefault>(
-                                a, b, na, nb, radius, code_size, res, bitset);
+                                a, b, na, nb, radius, code_size, res, sel);
                         break;
                 }
             }
@@ -657,7 +668,7 @@ template void binary_range_search<CMin<int, int64_t>, int>(
         int radius,
         size_t code_size,
         RangeSearchResult* res,
-        const BitsetView bitset);
+        const IDSelector* sel);
 
 template void binary_range_search<CMin<float, int64_t>, float>(
         MetricType metric_type,
@@ -668,6 +679,6 @@ template void binary_range_search<CMin<float, int64_t>, float>(
         float radius,
         size_t code_size,
         RangeSearchResult* res,
-        const BitsetView bitset);
+        const IDSelector* sel);
 
 } // namespace faiss

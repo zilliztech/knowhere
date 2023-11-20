@@ -14,14 +14,14 @@
 
 namespace faiss {
 
-SQDistanceComputer* sq_get_distance_computer_ref(
+ScalarQuantizer::SQDistanceComputer* sq_get_distance_computer_ref(
         MetricType metric,
-        QuantizerType qtype,
+        ScalarQuantizer::QuantizerType qtype,
         size_t dim,
         const std::vector<float>& trained);
 
-Quantizer* sq_select_quantizer_ref(
-        QuantizerType qtype,
+ScalarQuantizer::SQuantizer* sq_select_quantizer_ref(
+        ScalarQuantizer::QuantizerType qtype,
         size_t dim,
         const std::vector<float>& trained);
 
@@ -31,6 +31,7 @@ InvertedListScanner* sq_select_inverted_list_scanner_ref(
         const Index* quantizer,
         size_t dim,
         bool store_pairs,
+        const IDSelector* sel,
         bool by_residual);
 
 } // namespace faiss

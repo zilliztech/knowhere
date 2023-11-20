@@ -44,137 +44,12 @@ int sgemm_(
 
 namespace faiss {
 
-/* compute an estimator using look-up tables for typical values of M */
-template <typename CT, class C>
-void pq_estimators_from_tables_Mmul4(
-        int M,
-        const CT* codes,
-        size_t ncodes,
-        const float* __restrict dis_table,
-        size_t ksub,
-        size_t k,
-        float* heap_dis,
-        int64_t* heap_ids) {
-    for (size_t j = 0; j < ncodes; j++) {
-        float dis = 0;
-        const float* dt = dis_table;
-
-        for (size_t m = 0; m < M; m += 4) {
-            float dism = 0;
-            dism = dt[*codes++];
-            dt += ksub;
-            dism += dt[*codes++];
-            dt += ksub;
-            dism += dt[*codes++];
-            dt += ksub;
-            dism += dt[*codes++];
-            dt += ksub;
-            dis += dism;
-        }
-
-        if (C::cmp(heap_dis[0], dis)) {
-            heap_replace_top<C>(k, heap_dis, heap_ids, dis, j);
-        }
-    }
-}
-
-template <typename CT, class C>
-void pq_estimators_from_tables_M4(
-        const CT* codes,
-        size_t ncodes,
-        const float* __restrict dis_table,
-        size_t ksub,
-        size_t k,
-        float* heap_dis,
-        int64_t* heap_ids) {
-    for (size_t j = 0; j < ncodes; j++) {
-        float dis = 0;
-        const float* dt = dis_table;
-        dis = dt[*codes++];
-        dt += ksub;
-        dis += dt[*codes++];
-        dt += ksub;
-        dis += dt[*codes++];
-        dt += ksub;
-        dis += dt[*codes++];
-
-        if (C::cmp(heap_dis[0], dis)) {
-            heap_replace_top<C>(k, heap_dis, heap_ids, dis, j);
-        }
-    }
-}
-
-template <typename CT, class C>
-static inline void pq_estimators_from_tables(
-        const ProductQuantizer& pq,
-        const CT* codes,
-        size_t ncodes,
-        const float* dis_table,
-        size_t k,
-        float* heap_dis,
-        int64_t* heap_ids) {
-    if (pq.M == 4) {
-        pq_estimators_from_tables_M4<CT, C>(
-                codes, ncodes, dis_table, pq.ksub, k, heap_dis, heap_ids);
-        return;
-    }
-
-    if (pq.M % 4 == 0) {
-        pq_estimators_from_tables_Mmul4<CT, C>(
-                pq.M, codes, ncodes, dis_table, pq.ksub, k, heap_dis, heap_ids);
-        return;
-    }
-
-    /* Default is relatively slow */
-    const size_t M = pq.M;
-    const size_t ksub = pq.ksub;
-    for (size_t j = 0; j < ncodes; j++) {
-        float dis = 0;
-        const float* __restrict dt = dis_table;
-        for (int m = 0; m < M; m++) {
-            dis += dt[*codes++];
-            dt += ksub;
-        }
-        if (C::cmp(heap_dis[0], dis)) {
-            heap_replace_top<C>(k, heap_dis, heap_ids, dis, j);
-        }
-    }
-}
-
-template <class C>
-static inline void pq_estimators_from_tables_generic(
-        const ProductQuantizer& pq,
-        size_t nbits,
-        const uint8_t* codes,
-        size_t ncodes,
-        const float* dis_table,
-        size_t k,
-        float* heap_dis,
-        int64_t* heap_ids) {
-    const size_t M = pq.M;
-    const size_t ksub = pq.ksub;
-    for (size_t j = 0; j < ncodes; ++j) {
-        PQDecoderGeneric decoder(codes + j * pq.code_size, nbits);
-        float dis = 0;
-        const float* __restrict dt = dis_table;
-        for (size_t m = 0; m < M; m++) {
-            uint64_t c = decoder.decode();
-            dis += dt[c];
-            dt += ksub;
-        }
-
-        if (C::cmp(heap_dis[0], dis)) {
-            heap_replace_top<C>(k, heap_dis, heap_ids, dis, j);
-        }
-    }
-}
-
 /*********************************************
  * PQ implementation
  *********************************************/
 
 ProductQuantizer::ProductQuantizer(size_t d, size_t M, size_t nbits)
-        : d(d), M(M), nbits(nbits), assign_index(nullptr) {
+        : Quantizer(d, 0), M(M), nbits(nbits), assign_index(nullptr) {
     set_derived_values();
 }
 
@@ -247,7 +122,7 @@ static void init_hypercube_pca(
     }
 }
 
-void ProductQuantizer::train(int n, const float* x) {
+void ProductQuantizer::train(size_t n, const float* x) {
     if (train_type != Train_shared) {
         train_type_t final_train_type;
         final_train_type = train_type;
@@ -322,26 +197,66 @@ void ProductQuantizer::train(int n, const float* x) {
 template <class PQEncoder>
 void compute_code(const ProductQuantizer& pq, const float* x, uint8_t* code) {
     std::vector<float> distances(pq.ksub);
+
+    // It seems to be meaningless to allocate std::vector<float> distances.
+    // But it is done in order to cope the ineffectiveness of the way
+    // the compiler generates the code. Basically, doing something like
+    //
+    //     size_t min_distance = HUGE_VALF;
+    //     size_t idxm = 0;
+    //     for (size_t i = 0; i < N; i++) {
+    //         const float distance = compute_distance(x, y + i * d, d);
+    //         if (distance < min_distance) {
+    //            min_distance = distance;
+    //            idxm = i;
+    //         }
+    //     }
+    //
+    // generates significantly more CPU instructions than the baseline
+    //
+    //     std::vector<float> distances_cached(N);
+    //     for (size_t i = 0; i < N; i++) {
+    //         distances_cached[i] = compute_distance(x, y + i * d, d);
+    //     }
+    //     size_t min_distance = HUGE_VALF;
+    //     size_t idxm = 0;
+    //     for (size_t i = 0; i < N; i++) {
+    //         const float distance = distances_cached[i];
+    //         if (distance < min_distance) {
+    //            min_distance = distance;
+    //            idxm = i;
+    //         }
+    //     }
+    //
+    // So, the baseline is faster. This is because of the vectorization.
+    // I suppose that the branch predictor might affect the performance as well.
+    // So, the buffer is allocated, but it might be unused in
+    // manually optimized code. Let's hope that the compiler is smart enough to
+    // get rid of std::vector allocation in such a case.
+
     PQEncoder encoder(code, pq.nbits);
     for (size_t m = 0; m < pq.M; m++) {
-        float mindis = 1e20;
-        uint64_t idxm = 0;
         const float* xsub = x + m * pq.dsub;
 
-        fvec_L2sqr_ny(
-                distances.data(),
-                xsub,
-                pq.get_centroids(m, 0),
-                pq.dsub,
-                pq.ksub);
-
-        /* Find best centroid */
-        for (size_t i = 0; i < pq.ksub; i++) {
-            float dis = distances[i];
-            if (dis < mindis) {
-                mindis = dis;
-                idxm = i;
-            }
+        uint64_t idxm = 0;
+        if (pq.transposed_centroids.empty()) {
+            // the regular version
+            idxm = fvec_L2sqr_ny_nearest(
+                    distances.data(),
+                    xsub,
+                    pq.get_centroids(m, 0),
+                    pq.dsub,
+                    pq.ksub);
+        } else {
+            // transposed centroids are available, use'em
+            idxm = fvec_L2sqr_ny_nearest_y_transposed(
+                    distances.data(),
+                    xsub,
+                    pq.transposed_centroids.data() + m * pq.ksub,
+                    pq.centroids_sq_lengths.data() + m * pq.ksub,
+                    pq.dsub,
+                    pq.M * pq.ksub,
+                    pq.ksub);
         }
 
         encoder.encode(idxm);
@@ -470,10 +385,13 @@ void ProductQuantizer::compute_codes_with_assign_index(
     }
 }
 
+// block size used in ProductQuantizer::compute_codes
+int product_quantizer_compute_codes_bs = 256 * 1024;
+
 void ProductQuantizer::compute_codes(const float* x, uint8_t* codes, size_t n)
         const {
     // process by blocks to avoid using too much RAM
-    size_t bs = 256 * 1024;
+    size_t bs = product_quantizer_compute_codes_bs;
     if (n > bs) {
         for (size_t i0 = 0; i0 < n; i0 += bs) {
             size_t i1 = std::min(i0 + bs, n);
@@ -488,7 +406,7 @@ void ProductQuantizer::compute_codes(const float* x, uint8_t* codes, size_t n)
         for (int64_t i = 0; i < n; i++)
             compute_code(x + i * d, codes + i * code_size);
 
-    } else { // worthwile to use BLAS
+    } else { // worthwhile to use BLAS
         float* dis_tables = new float[n * ksub * M];
         ScopeDeleter<float> del(dis_tables);
         compute_distance_tables(n, x, dis_tables);
@@ -504,15 +422,28 @@ void ProductQuantizer::compute_codes(const float* x, uint8_t* codes, size_t n)
 
 void ProductQuantizer::compute_distance_table(const float* x, float* dis_table)
         const {
-    size_t m;
-
-    for (m = 0; m < M; m++) {
-        fvec_L2sqr_ny(
-                dis_table + m * ksub,
-                x + m * dsub,
-                get_centroids(m, 0),
-                dsub,
-                ksub);
+    if (transposed_centroids.empty()) {
+        // use regular version
+        for (size_t m = 0; m < M; m++) {
+            fvec_L2sqr_ny(
+                    dis_table + m * ksub,
+                    x + m * dsub,
+                    get_centroids(m, 0),
+                    dsub,
+                    ksub);
+        }
+    } else {
+        // transposed centroids are available, use'em
+        for (size_t m = 0; m < M; m++) {
+            fvec_L2sqr_ny_transposed(
+                    dis_table + m * ksub,
+                    x + m * dsub,
+                    transposed_centroids.data() + m * ksub,
+                    centroids_sq_lengths.data() + m * ksub,
+                    dsub,
+                    M * ksub,
+                    ksub);
+        }
     }
 }
 
@@ -543,7 +474,7 @@ void ProductQuantizer::compute_distance_tables(
 #endif
             if (dsub < 16) {
 
-#pragma omp parallel for
+#pragma omp parallel for if (nx > 1)
         for (int64_t i = 0; i < nx; i++) {
             compute_distance_table(x + i * d, dis_tables + i * ksub * M);
         }
@@ -577,7 +508,7 @@ void ProductQuantizer::compute_inner_prod_tables(
 #endif
             if (dsub < 16) {
 
-#pragma omp parallel for
+#pragma omp parallel for if (nx > 1)
         for (int64_t i = 0; i < nx; i++) {
             compute_inner_prod_table(x + i * d, dis_tables + i * ksub * M);
         }
@@ -607,8 +538,140 @@ void ProductQuantizer::compute_inner_prod_tables(
     }
 }
 
+/**********************************************
+ * Templatized search functions
+ * The template class C indicates whether to keep the highest or smallest values
+ **********************************************/
+
+namespace {
+
+/* compute an estimator using look-up tables for typical values of M */
+template <typename CT, class C>
+void pq_estimators_from_tables_Mmul4(
+        int M,
+        const CT* codes,
+        size_t ncodes,
+        const float* __restrict dis_table,
+        size_t ksub,
+        size_t k,
+        float* heap_dis,
+        int64_t* heap_ids) {
+    for (size_t j = 0; j < ncodes; j++) {
+        float dis = 0;
+        const float* dt = dis_table;
+
+        for (size_t m = 0; m < M; m += 4) {
+            float dism = 0;
+            dism = dt[*codes++];
+            dt += ksub;
+            dism += dt[*codes++];
+            dt += ksub;
+            dism += dt[*codes++];
+            dt += ksub;
+            dism += dt[*codes++];
+            dt += ksub;
+            dis += dism;
+        }
+
+        if (C::cmp(heap_dis[0], dis)) {
+            heap_replace_top<C>(k, heap_dis, heap_ids, dis, j);
+        }
+    }
+}
+
+template <typename CT, class C>
+void pq_estimators_from_tables_M4(
+        const CT* codes,
+        size_t ncodes,
+        const float* __restrict dis_table,
+        size_t ksub,
+        size_t k,
+        float* heap_dis,
+        int64_t* heap_ids) {
+    for (size_t j = 0; j < ncodes; j++) {
+        float dis = 0;
+        const float* dt = dis_table;
+        dis = dt[*codes++];
+        dt += ksub;
+        dis += dt[*codes++];
+        dt += ksub;
+        dis += dt[*codes++];
+        dt += ksub;
+        dis += dt[*codes++];
+
+        if (C::cmp(heap_dis[0], dis)) {
+            heap_replace_top<C>(k, heap_dis, heap_ids, dis, j);
+        }
+    }
+}
+
+template <typename CT, class C>
+void pq_estimators_from_tables(
+        const ProductQuantizer& pq,
+        const CT* codes,
+        size_t ncodes,
+        const float* dis_table,
+        size_t k,
+        float* heap_dis,
+        int64_t* heap_ids) {
+    if (pq.M == 4) {
+        pq_estimators_from_tables_M4<CT, C>(
+                codes, ncodes, dis_table, pq.ksub, k, heap_dis, heap_ids);
+        return;
+    }
+
+    if (pq.M % 4 == 0) {
+        pq_estimators_from_tables_Mmul4<CT, C>(
+                pq.M, codes, ncodes, dis_table, pq.ksub, k, heap_dis, heap_ids);
+        return;
+    }
+
+    /* Default is relatively slow */
+    const size_t M = pq.M;
+    const size_t ksub = pq.ksub;
+    for (size_t j = 0; j < ncodes; j++) {
+        float dis = 0;
+        const float* __restrict dt = dis_table;
+        for (int m = 0; m < M; m++) {
+            dis += dt[*codes++];
+            dt += ksub;
+        }
+        if (C::cmp(heap_dis[0], dis)) {
+            heap_replace_top<C>(k, heap_dis, heap_ids, dis, j);
+        }
+    }
+}
+
 template <class C>
-static void pq_knn_search_with_tables(
+void pq_estimators_from_tables_generic(
+        const ProductQuantizer& pq,
+        size_t nbits,
+        const uint8_t* codes,
+        size_t ncodes,
+        const float* dis_table,
+        size_t k,
+        float* heap_dis,
+        int64_t* heap_ids) {
+    const size_t M = pq.M;
+    const size_t ksub = pq.ksub;
+    for (size_t j = 0; j < ncodes; ++j) {
+        PQDecoderGeneric decoder(codes + j * pq.code_size, nbits);
+        float dis = 0;
+        const float* __restrict dt = dis_table;
+        for (size_t m = 0; m < M; m++) {
+            uint64_t c = decoder.decode();
+            dis += dt[c];
+            dt += ksub;
+        }
+
+        if (C::cmp(heap_dis[0], dis)) {
+            heap_replace_top<C>(k, heap_dis, heap_ids, dis, j);
+        }
+    }
+}
+
+template <class C>
+void pq_knn_search_with_tables(
         const ProductQuantizer& pq,
         size_t nbits,
         const float* dis_tables,
@@ -619,7 +682,7 @@ static void pq_knn_search_with_tables(
     size_t k = res->k, nx = res->nh;
     size_t ksub = pq.ksub, M = pq.M;
 
-#pragma omp parallel for
+#pragma omp parallel for if (nx > 1)
     for (int64_t i = 0; i < nx; i++) {
         /* query preparation for asymmetric search: compute look-up tables */
         const float* dis_table = dis_tables + i * ksub * M;
@@ -667,6 +730,8 @@ static void pq_knn_search_with_tables(
         }
     }
 }
+
+} // anonymous namespace
 
 void ProductQuantizer::search(
         const float* __restrict x,
@@ -780,6 +845,38 @@ void ProductQuantizer::search_sdc(
         if (init_finalize_heap)
             maxheap_reorder(k, heap_dis, heap_ids);
     }
+}
+
+void ProductQuantizer::sync_transposed_centroids() {
+    transposed_centroids.resize(d * ksub);
+    centroids_sq_lengths.resize(ksub * M);
+
+    for (size_t mi = 0; mi < M; mi++) {
+        for (size_t ki = 0; ki < ksub; ki++) {
+            float sqlen = 0;
+
+            for (size_t di = 0; di < dsub; di++) {
+                const float q = centroids[(mi * ksub + ki) * dsub + di];
+
+                transposed_centroids[(di * M + mi) * ksub + ki] = q;
+                sqlen += q * q;
+            }
+
+            centroids_sq_lengths[mi * ksub + ki] = sqlen;
+        }
+    }
+}
+
+void ProductQuantizer::clear_transposed_centroids() {
+    transposed_centroids.clear();
+    transposed_centroids.shrink_to_fit();
+
+    centroids_sq_lengths.clear();
+    centroids_sq_lengths.shrink_to_fit();
+}
+
+size_t ProductQuantizer::cal_size() const {
+    return sizeof(*this) + centroids.size() * sizeof(float);
 }
 
 } // namespace faiss

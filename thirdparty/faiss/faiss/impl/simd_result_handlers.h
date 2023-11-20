@@ -15,10 +15,10 @@
 #include <faiss/utils/simdlib.h>
 
 #include <faiss/impl/AuxIndexStructures.h>
+#include <faiss/impl/IDSelector.h>
 #include <faiss/impl/platform_macros.h>
 #include <faiss/utils/AlignedTable.h>
 #include <faiss/utils/partitioning.h>
-#include <knowhere/bitsetview.h>
 
 /** This file contains callbacks for kernels that compute distances.
  *
@@ -105,15 +105,17 @@ struct SIMDResultHandler {
     int64_t i0 = 0; // query origin
     int64_t j0 = 0; // db origin
     size_t ntotal;  // ignore excess elements after ntotal
-    const BitsetView bitset;
+    const IDSelector* sel;
 
     /// these fields are used mainly for the IVF variants (with_id_map=true)
     const TI* id_map;      // map offset in invlist to vector id
     const int* q_map;      // map q to global query
     const uint16_t* dbias; // table of biases to add to each query
 
-    explicit SIMDResultHandler(size_t ntotal, const BitsetView b = nullptr)
-            : ntotal(ntotal), bitset(b), id_map(nullptr), q_map(nullptr), dbias(nullptr) {}
+    explicit SIMDResultHandler(size_t ntotal, const IDSelector* sel = nullptr)
+            : ntotal(ntotal), id_map(nullptr), q_map(nullptr), dbias(nullptr) {
+        this->sel = sel;
+    }
 
     void set_block_origin(size_t i0, size_t j0) {
         this->i0 = i0;
@@ -209,8 +211,8 @@ struct SingleResultHandler : SIMDResultHandler<C, with_id_map> {
     };
     std::vector<Result> results;
 
-    SingleResultHandler(size_t nq, size_t ntotal, const BitsetView b = nullptr)
-            : SIMDResultHandler<C, with_id_map>(ntotal, b), results(nq) {
+    SingleResultHandler(size_t nq, size_t ntotal, const IDSelector* sel = nullptr)
+            : SIMDResultHandler<C, with_id_map>(ntotal, sel), results(nq) {
         for (int i = 0; i < nq; i++) {
             Result res = {C::neutral(), -1};
             results[i] = res;
@@ -234,18 +236,34 @@ struct SingleResultHandler : SIMDResultHandler<C, with_id_map> {
         d0.store(d32tab);
         d1.store(d32tab + 16);
 
-        while (lt_mask) {
-            // find first non-zero
-            int j = __builtin_ctz(lt_mask);
-            auto real_idx = this->adjust_id(b, j);
-            lt_mask -= 1 << j;
-            if (this->bitset.empty() || !this->bitset.test(real_idx)) {
+        if (this->sel != nullptr) {
+            // todo aguzhva: additional cost for adjust_id
+            while (lt_mask) {
+                // find first non-zero
+                int j = __builtin_ctz(lt_mask);
+                auto real_idx = this->adjust_id(b, j);
+                lt_mask -= 1 << j;
+                if (this->sel->is_member(real_idx)) {
+                    T dis = d32tab[j];
+                    if (C::cmp(res.val, dis)) {
+                        res.val = dis;
+                        res.id = real_idx;
+                    }
+                }
+            }
+        }
+        else {
+            // todo aguzhva: compute adjust_id only whenever is needed
+            while (lt_mask) {
+                // find first non-zero
+                int j = __builtin_ctz(lt_mask);
+                lt_mask -= 1 << j;
                 T dis = d32tab[j];
                 if (C::cmp(res.val, dis)) {
                     res.val = dis;
-                    res.id = real_idx;
+                    res.id = this->adjust_id(b, j);
                 }
-            }
+            }            
         }
     }
 
@@ -284,8 +302,8 @@ struct HeapHandler : SIMDResultHandler<C, with_id_map> {
             TI* heap_ids_tab,
             size_t k,
             size_t ntotal,
-            const BitsetView b = nullptr)
-            : SIMDResultHandler<C, with_id_map>(ntotal, b),
+            const IDSelector* sel = nullptr)
+            : SIMDResultHandler<C, with_id_map>(ntotal, sel),
               nq(nq),
               heap_dis_tab(heap_dis_tab),
               heap_ids_tab(heap_ids_tab),
@@ -321,16 +339,37 @@ struct HeapHandler : SIMDResultHandler<C, with_id_map> {
         d0.store(d32tab);
         d1.store(d32tab + 16);
 
-        while (lt_mask) {
-            // find first non-zero
-            int j = __builtin_ctz(lt_mask);
-            auto real_idx = this->adjust_id(b, j);
-            lt_mask -= 1 << j;
-            if (this->bitset.empty() || !this->bitset.test(real_idx)) {
+        if (this->sel != nullptr) {
+            // todo aguzhva: additional cost for adjust_id
+            while (lt_mask) {
+                // find first non-zero
+                int j = __builtin_ctz(lt_mask);
+                auto real_idx = this->adjust_id(b, j);
+                lt_mask -= 1 << j;
+                if (this->sel->is_member(real_idx)) {
+                    T dis = d32tab[j];
+                    if (C::cmp(heap_dis[0], dis)) {
+                        // todo aguzhva: add heap_replace_top
+                        // todo aguzhva: faiss does not have it?
+                        heap_pop<C>(k, heap_dis, heap_ids);
+                        heap_push<C>(k, heap_dis, heap_ids, dis, real_idx);
+                    }
+                }
+            }
+        }
+        else {
+            // todo aguzhva: compute adjust_id only whenever is needed
+            while (lt_mask) {
+                // find first non-zero
+                int j = __builtin_ctz(lt_mask);
+                lt_mask -= 1 << j;
                 T dis = d32tab[j];
                 if (C::cmp(heap_dis[0], dis)) {
+                    // todo aguzhva: add heap_replace_top
+                    // todo aguzhva: faiss does not have it?
+                    int64_t idx = this->adjust_id(b, j);
                     heap_pop<C>(k, heap_dis, heap_ids);
-                    heap_push<C>(k, heap_dis, heap_ids, dis, real_idx);
+                    heap_push<C>(k, heap_dis, heap_ids, dis, idx);
                 }
             }
         }
@@ -455,8 +494,8 @@ struct ReservoirHandler : SIMDResultHandler<C, with_id_map> {
 
     uint64_t times[4];
 
-    ReservoirHandler(size_t nq, size_t ntotal, size_t n, size_t capacity_in, const BitsetView b = nullptr)
-            : SIMDResultHandler<C, with_id_map>(ntotal, b),
+    ReservoirHandler(size_t nq, size_t ntotal, size_t n, size_t capacity_in, const IDSelector* sel = nullptr)
+            : SIMDResultHandler<C, with_id_map>(ntotal, sel),
               capacity((capacity_in + 15) & ~15),
               all_ids(nq * capacity),
               all_vals(nq * capacity) {
@@ -490,16 +529,30 @@ struct ReservoirHandler : SIMDResultHandler<C, with_id_map> {
         d0.store(d32tab);
         d1.store(d32tab + 16);
 
-        while (lt_mask) {
-            // find first non-zero
-            int j = __builtin_ctz(lt_mask);
-            auto real_idx = this->adjust_id(b, j);
-            lt_mask -= 1 << j;
-            if (this->bitset.empty() || !this->bitset.test(real_idx)) {
-                T dis = d32tab[j];
-                res.add(dis, real_idx);
+        if (this->sel != nullptr) {
+            // todo aguzhva: additional cost for adjust_id
+            while (lt_mask) {
+                // find first non-zero
+                int j = __builtin_ctz(lt_mask);
+                auto real_idx = this->adjust_id(b, j);
+                lt_mask -= 1 << j;
+                if (this->sel->is_member(real_idx)) {
+                    T dis = d32tab[j];
+                    res.add(dis, real_idx);
+                }
             }
         }
+        else {
+            // todo aguzhva: compute adjust_id only whenever is needed
+            while (lt_mask) {
+                // find first non-zero
+                int j = __builtin_ctz(lt_mask);
+                lt_mask -= 1 << j;
+                T dis = d32tab[j];
+                res.add(dis, this->adjust_id(b, j));
+            }
+        }
+        
         times[1] += get_cy() - t1;
     }
 
@@ -569,8 +622,8 @@ struct RangeSearchResultHandler : SIMDResultHandler<C, with_id_map> {
             RangeSearchResult* res,
             float radius,
             size_t ntotal,
-            const BitsetView b = nullptr)
-            : SIMDResultHandler<C, with_id_map>(ntotal, b),
+            const IDSelector* sel = nullptr)
+            : SIMDResultHandler<C, with_id_map>(ntotal, sel),
               pres(res),
               radius(radius),
               normalizers(nullptr) {
@@ -596,12 +649,34 @@ struct RangeSearchResultHandler : SIMDResultHandler<C, with_id_map> {
         d0.store(d32tab);
         d1.store(d32tab + 16);
 
-        while (lt_mask) {
-            // find first non-zero
-            int j = __builtin_ctz(lt_mask);
-            auto real_idx = this->adjust_id(b, j);
-            lt_mask -= 1 << j;
-            if (this->bitset.empty() || !this->bitset.test(real_idx)) {
+        //
+        if (this->sel != nullptr) {
+            // todo aguzhva: additional cost for adjust_id
+            while (lt_mask) {
+                // find first non-zero
+                int j = __builtin_ctz(lt_mask);
+                auto real_idx = this->adjust_id(b, j);
+                lt_mask -= 1 << j;
+                if (this->sel->is_member(real_idx)) {
+                    uint16_t dis = d32tab[j];
+                    float real_dis = dis;
+                    if (normalizers) {
+                        real_dis = (1.0 / normalizers[2 * q]) * real_dis +
+                                normalizers[2 * q + 1];
+                    }
+                    if (C::cmp(radius, real_dis)) {
+                        ++in_range_num;
+                        qres.add(real_dis, real_idx);
+                    }
+                }
+            }
+        }
+        else {
+            // todo aguzhva: compute adjust_id only whenever is needed
+            while (lt_mask) {
+                // find first non-zero
+                int j = __builtin_ctz(lt_mask);
+                lt_mask -= 1 << j;
                 uint16_t dis = d32tab[j];
                 float real_dis = dis;
                 if (normalizers) {
@@ -610,6 +685,7 @@ struct RangeSearchResultHandler : SIMDResultHandler<C, with_id_map> {
                 }
                 if (C::cmp(radius, real_dis)) {
                     ++in_range_num;
+                    auto real_idx = this->adjust_id(b, j);
                     qres.add(real_dis, real_idx);
                 }
             }

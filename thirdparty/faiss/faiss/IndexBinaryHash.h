@@ -51,7 +51,7 @@ struct IndexBinaryHash : IndexBinary {
             const uint8_t* x,
             float radius,
             RangeSearchResult* result,
-            const BitsetView bitset = nullptr) const override;
+            const SearchParameters* params = nullptr) const override;
 
     void search(
             idx_t n,
@@ -59,7 +59,7 @@ struct IndexBinaryHash : IndexBinary {
             idx_t k,
             int32_t* distances,
             idx_t* labels,
-            const BitsetView bitset = nullptr) const override;
+            const SearchParameters* params = nullptr) const override;
 
     void display() const;
     size_t hashtable_size() const;
@@ -110,7 +110,7 @@ struct IndexBinaryMultiHash : IndexBinary {
             const uint8_t* x,
             float radius,
             RangeSearchResult* result,
-            const BitsetView bitset = nullptr) const override;
+            const SearchParameters* params = nullptr) const override;
 
     void search(
             idx_t n,
@@ -118,7 +118,7 @@ struct IndexBinaryMultiHash : IndexBinary {
             idx_t k,
             int32_t* distances,
             idx_t* labels,
-            const BitsetView bitset = nullptr) const override;
+            const SearchParameters* params = nullptr) const override;
 
     size_t hashtable_size() const;
 };

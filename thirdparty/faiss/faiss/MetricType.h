@@ -10,6 +10,8 @@
 #ifndef FAISS_METRIC_TYPE_H
 #define FAISS_METRIC_TYPE_H
 
+#include <faiss/impl/platform_macros.h>
+
 namespace faiss {
 
 /// The metric space for vector comparison for Faiss indices and algorithms.
@@ -25,7 +27,10 @@ enum MetricType {
     METRIC_Lp = 4,            ///< L_p distance, p is given by a faiss::Index
                               /// metric_arg
 
-    METRIC_Jaccard = 5,
+    // Note: Faiss 1.7.4 defines METRIC_Jaccard=23,
+    //   but Knowhere defines one as 5
+    METRIC_Jaccard = 5,       ///< defined as: sum_i(min(a_i, b_i)) / sum_i(max(a_i, b_i))
+                              ///< where a_i, b_i > 0
     METRIC_Hamming = 7,
     METRIC_Substructure = 8,   ///< Tversky case alpha = 0, beta = 1
     METRIC_Superstructure = 9, ///< Tversky case alpha = 1, beta = 0
@@ -35,6 +40,16 @@ enum MetricType {
     METRIC_BrayCurtis = 21,
     METRIC_JensenShannon = 22,
 };
+
+/// all vector indices are this type
+using idx_t = int64_t;
+
+/// this function is used to distinguish between min and max indexes since
+/// we need to support similarity and dis-similarity metrics in a flexible way
+constexpr bool is_similarity_metric(MetricType metric_type) {
+    return ((metric_type == METRIC_INNER_PRODUCT) ||
+            (metric_type == METRIC_Jaccard));
+}
 
 } // namespace faiss
 

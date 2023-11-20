@@ -38,6 +38,21 @@ knowhere_option(WITH_BENCHMARK "Build with benchmark" OFF)
 knowhere_option(WITH_COVERAGE "Build with coverage" OFF)
 knowhere_option(WITH_CCACHE "Build with ccache" ON)
 knowhere_option(WITH_PROFILER "Build with profiler" OFF)
+knowhere_option(WITH_FAISS_TESTS "Build with Faiss unit tests" OFF)
+
+# this is needed for clang on ubuntu:20.04, otherwise
+#   the linked fails with 'undefined reference' error.
+# fmt v9 was used by the time the error was encountered.
+# clang on ubuntu:22.04 seems to be unaffected.
+# gcc seems to be unaffected.
+add_definitions(-DFMT_HEADER_ONLY)
+
+# this is needed for clang on ubuntu:20.04, otherwise
+#   the linked fails with 'undefined reference' error.
+# fmt v9 was used by the time the error was encountered.
+# clang on ubuntu:22.04 seems to be unaffected.
+# gcc seems to be unaffected.
+add_definitions(-DFMT_HEADER_ONLY)
 
 if(KNOWHERE_VERSION)
   message(STATUS "Building KNOWHERE version: ${KNOWHERE_VERSION}")
@@ -81,7 +96,6 @@ find_package(nlohmann_json REQUIRED)
 find_package(glog REQUIRED)
 find_package(prometheus-cpp REQUIRED)
 find_package(fmt REQUIRED)
-include_directories(${fmt_INCLUDE_DIR})
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X deployment version" FORCE)
 
@@ -126,6 +140,7 @@ list(APPEND KNOWHERE_LINKER_LIBS faiss)
 list(APPEND KNOWHERE_LINKER_LIBS glog::glog)
 list(APPEND KNOWHERE_LINKER_LIBS nlohmann_json::nlohmann_json)
 list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
+list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt-header-only)
 list(APPEND KNOWHERE_LINKER_LIBS ${FOLLY_LIBRARIES})
 
 add_library(knowhere SHARED ${KNOWHERE_SRCS})
@@ -143,6 +158,10 @@ endif()
 
 if(WITH_BENCHMARK)
   add_subdirectory(benchmark)
+endif()
+
+if(WITH_FAISS_TESTS)
+  add_subdirectory(tests/faiss)
 endif()
 
 install(TARGETS knowhere

@@ -75,6 +75,7 @@ namespace indexparam {
 // IVF Params
 constexpr const char* NPROBE = "nprobe";
 constexpr const char* NLIST = "nlist";
+constexpr const char* USE_ELKAN = "use_elkan";
 constexpr const char* NBITS = "nbits";  // PQ/SQ
 constexpr const char* M = "m";          // PQ param for IVFPQ
 constexpr const char* SSIZE = "ssize";

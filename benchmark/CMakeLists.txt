@@ -37,6 +37,10 @@ macro(benchmark_test target file)
     set(FILE_SRCS ${file})
     add_executable(${target} ${FILE_SRCS})
     target_link_libraries(${target} ${depend_libs} ${unittest_libs})
+
+    # this is needed for clang in Debug compilation mode
+    target_link_libraries(${target} atomic)
+
     install(TARGETS ${target} DESTINATION unittest)
 endmacro()
 

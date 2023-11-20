@@ -46,7 +46,9 @@ class TestIndexFlat(unittest.TestCase):
             Iref = all_dis.argsort(axis=1)[:, ::-1][:, :k]
 
         Dref = all_dis[np.arange(nq)[:, None], Iref]
-        self.assertLessEqual((Iref != I1).sum(), Iref.size * 0.0001)
+
+        # not too many elements are off.
+        self.assertLessEqual((Iref != I1).sum(), Iref.size * 0.0002)
         #  np.testing.assert_equal(Iref, I1)
         np.testing.assert_almost_equal(Dref, D1, decimal=5)
 
@@ -108,7 +110,39 @@ class TestIndexFlat(unittest.TestCase):
         self.do_test(200, faiss.METRIC_INNER_PRODUCT, k=150)
 
 
+class TestIndexFlatL2(unittest.TestCase):
+    def test_indexflat_l2_sync_norms_1(self):
+        d = 32
+        nb = 10000
+        nt = 0
+        nq = 16
+        k = 10
 
+        (xt, xb, xq) = get_dataset_2(d, nt, nb, nq)
+
+        # instantiate IndexHNSWFlat
+        index = faiss.IndexHNSWFlat(d, 32)
+        index.hnsw.efConstruction = 40
+
+        index.add(xb)
+        D1, I1 = index.search(xq, k)
+
+        index_l2 = faiss.downcast_index(index.storage)
+        index_l2.sync_l2norms()
+        D2, I2 = index.search(xq, k)
+
+        index_l2.clear_l2norms()
+        D3, I3 = index.search(xq, k)
+
+        #  not too many elements are off.
+        self.assertLessEqual((I2 != I1).sum(), 1)
+        #  np.testing.assert_equal(Iref, I1)
+        np.testing.assert_almost_equal(D2, D1, decimal=5)
+
+        #  not too many elements are off.
+        self.assertLessEqual((I3 != I1).sum(), 0)
+        #  np.testing.assert_equal(Iref, I1)
+        np.testing.assert_equal(D3, D1)
 
 
 class EvalIVFPQAccuracy(unittest.TestCase):
@@ -635,16 +669,14 @@ class TestNSG(unittest.TestCase):
                 os.unlink(tmpfile)
 
         Dnsg2, Insg2 = index2.search(self.xq, 1)
-
-        self.assertTrue(np.all(Dnsg2 == Dnsg))
-        self.assertTrue(np.all(Insg2 == Insg))
+        np.testing.assert_array_equal(Dnsg2, Dnsg)
+        np.testing.assert_array_equal(Insg2, Insg)
 
         # also test clone
         index3 = faiss.clone_index(index)
         Dnsg3, Insg3 = index3.search(self.xq, 1)
-
-        self.assertTrue(np.all(Dnsg3 == Dnsg))
-        self.assertTrue(np.all(Insg3 == Insg))
+        np.testing.assert_array_equal(Dnsg3, Dnsg)
+        np.testing.assert_array_equal(Insg3, Insg)
 
     def subtest_connectivity(self, index, nb):
         vt = faiss.VisitedTable(nb)
@@ -772,7 +804,127 @@ class TestNSG(unittest.TestCase):
         indices = np.argsort(D, axis=1)
         gt = np.arange(0, k)[np.newaxis, :]  # [1, k]
         gt = np.repeat(gt, nq, axis=0)  # [nq, k]
-        assert np.array_equal(indices, gt)
+        np.testing.assert_array_equal(indices, gt)
+
+    def test_nsg_pq(self):
+        """Test IndexNSGPQ"""
+        d = self.xq.shape[1]
+        R, pq_M = 32, 4
+        index = faiss.index_factory(d, f"NSG{R}_PQ{pq_M}np")
+        assert isinstance(index, faiss.IndexNSGPQ)
+        idxpq = faiss.downcast_index(index.storage)
+        assert index.nsg.R == R and idxpq.pq.M == pq_M
+
+        flat_index = faiss.IndexFlat(d)
+        flat_index.add(self.xb)
+        Dref, Iref = flat_index.search(self.xq, k=1)
+
+        index.GK = 32
+        index.train(self.xb)
+        index.add(self.xb)
+        D, I = index.search(self.xq, k=1)
+
+        # test accuracy
+        recalls = (Iref == I).sum()
+        print("IndexNSGPQ", recalls)
+        self.assertGreaterEqual(recalls, 190)  # 193
+
+        # test I/O
+        self.subtest_io_and_clone(index, D, I)
+
+    def test_nsg_sq(self):
+        """Test IndexNSGSQ"""
+        d = self.xq.shape[1]
+        R = 32
+        index = faiss.index_factory(d, f"NSG{R}_SQ8")
+        assert isinstance(index, faiss.IndexNSGSQ)
+        idxsq = faiss.downcast_index(index.storage)
+        assert index.nsg.R == R
+        assert idxsq.sq.qtype == faiss.ScalarQuantizer.QT_8bit
+
+        flat_index = faiss.IndexFlat(d)
+        flat_index.add(self.xb)
+        Dref, Iref = flat_index.search(self.xq, k=1)
+
+        index.train(self.xb)
+        index.add(self.xb)
+        D, I = index.search(self.xq, k=1)
+
+        # test accuracy
+        recalls = (Iref == I).sum()
+        print("IndexNSGSQ", recalls)
+        self.assertGreaterEqual(recalls, 405)  # 411
+
+        # test I/O
+        self.subtest_io_and_clone(index, D, I)
+
+
+class TestNNDescent(unittest.TestCase):
+
+    def __init__(self, *args, **kwargs):
+        unittest.TestCase.__init__(self, *args, **kwargs)
+        d = 32
+        nt = 0
+        nb = 1500
+        nq = 500
+        self.GK = 32
+
+        _, self.xb, self.xq = get_dataset_2(d, nt, nb, nq)
+
+    def test_nndescentflat(self):
+        d = self.xq.shape[1]
+        index = faiss.IndexNNDescentFlat(d, 32)
+        index.nndescent.search_L = 8
+
+        flat_index = faiss.IndexFlat(d)
+        flat_index.add(self.xb)
+        Dref, Iref = flat_index.search(self.xq, k=1)
+
+        index.train(self.xb)
+        index.add(self.xb)
+        D, I = index.search(self.xq, k=1)
+
+        # test accuracy
+        recalls = (Iref == I).sum()
+        print("IndexNNDescentFlat", recalls)
+        self.assertGreaterEqual(recalls, 450)  # 462
+
+        # do some IO tests
+        fd, tmpfile = tempfile.mkstemp()
+        os.close(fd)
+        try:
+            faiss.write_index(index, tmpfile)
+            index2 = faiss.read_index(tmpfile)
+        finally:
+            if os.path.exists(tmpfile):
+                os.unlink(tmpfile)
+
+        D2, I2 = index2.search(self.xq, 1)
+        np.testing.assert_array_equal(D2, D)
+        np.testing.assert_array_equal(I2, I)
+
+        # also test clone
+        index3 = faiss.clone_index(index)
+        D3, I3 = index3.search(self.xq, 1)
+        np.testing.assert_array_equal(D3, D)
+        np.testing.assert_array_equal(I3, I)
+
+    def test_order(self):
+        """make sure that output results are sorted"""
+        d = self.xq.shape[1]
+        index = faiss.IndexNNDescentFlat(d, 32)
+
+        index.train(self.xb)
+        index.add(self.xb)
+
+        k = 10
+        nq = self.xq.shape[0]
+        D, _ = index.search(self.xq, k)
+
+        indices = np.argsort(D, axis=1)
+        gt = np.arange(0, k)[np.newaxis, :]  # [1, k]
+        gt = np.repeat(gt, nq, axis=0)  # [nq, k]
+        np.testing.assert_array_equal(indices, gt)
 
 
 class TestDistancesPositive(unittest.TestCase):
@@ -960,9 +1112,6 @@ class TestReconsHash(unittest.TestCase):
     def test_IVFPQ(self):
         self.do_test("IVF5,PQ4x4np")
 
-if __name__ == '__main__':
-    unittest.main()
-
 
 class TestValidIndexParams(unittest.TestCase):
 
@@ -1040,3 +1189,19 @@ class TestLargeRangeSearch(unittest.TestCase):
         lims, D, I = index.range_search(xq, 1.0)
 
         assert len(D) == len(xb) * len(xq)
+
+
+class TestRandomIndex(unittest.TestCase):
+
+    def test_random(self):
+        """ just check if several runs of search retrieve the
+        same results """
+        index = faiss.IndexRandom(32, 1000000000)
+        (xt, xb, xq) = get_dataset_2(32, 0, 0, 10)
+
+        Dref, Iref = index.search(xq, 10)
+        self.assertTrue(np.all(Dref[:, 1:] >= Dref[:, :-1]))
+
+        Dnew, Inew = index.search(xq, 10)
+        np.testing.assert_array_equal(Dref, Dnew)
+        np.testing.assert_array_equal(Iref, Inew)

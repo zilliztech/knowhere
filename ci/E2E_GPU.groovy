@@ -32,7 +32,7 @@ pipeline {
                         sh "apt-get install build-essential libopenblas-dev libcurl4-openssl-dev libaio-dev libdouble-conversion-dev libevent-dev libgflags-dev git -y"
                         sh "git config --global --add safe.directory '*'"
                         sh "git submodule update --recursive --init"
-                        sh "pip3 install conan==1.58.0"
+                        sh "pip3 install conan==1.61.0"
                         sh "conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local"
                         sh "rm -rf /usr/local/lib/cmake/"
                         sh "mkdir build"

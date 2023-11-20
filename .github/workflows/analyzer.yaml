@@ -30,5 +30,5 @@ jobs:
           restore-keys: ${{ runner.os }}-${{ hashFiles('**/conanfile.py') }}
       - name: Build & Analyzer
         run: |
-          mkdir build && cd build && conan install .. --build=missing -o with_ut=True -o with_diskann=True && cmake .. -DCMAKE_BUILD_TYPE=Release -DWITH_DISKANN=ON  \
-          && cd .. && find src -type f | grep -E "\.cc$" | xargs /usr/lib/llvm-10/share/clang/run-clang-tidy.py -quiet -p=./build
+          mkdir build && cd build && conan install .. --build=missing -o with_ut=True -o with_diskann=True && conan build .. \
+          && cd .. && find src -type f | grep -E "\.cc$" | xargs /usr/lib/llvm-10/share/clang/run-clang-tidy.py -quiet -p=./build/Release

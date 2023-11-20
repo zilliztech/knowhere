@@ -20,12 +20,9 @@
 #include <queue>
 #include <unordered_set>
 
-#include <stdint.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-
-#ifdef __SSE__
-#endif
+#include <cstdint>
 
 #include <faiss/FaissHook.h>
 #include <faiss/Index2Layer.h>
@@ -36,6 +33,7 @@
 #include <faiss/utils/Heap.h>
 #include <faiss/utils/distances.h>
 #include <faiss/utils/random.h>
+#include <faiss/utils/sorting.h>
 
 extern "C" {
 
@@ -59,7 +57,6 @@ int sgemm_(
 
 namespace faiss {
 
-using idx_t = Index::idx_t;
 using MinimaxHeap = HNSW::MinimaxHeap;
 using storage_idx_t = HNSW::storage_idx_t;
 using NodeDistFarther = HNSW::NodeDistFarther;
@@ -102,7 +99,7 @@ struct NegativeDistanceComputer : DistanceComputer {
 };
 
 DistanceComputer* storage_distance_computer(const Index* storage) {
-    if (storage->metric_type == METRIC_INNER_PRODUCT) {
+    if (is_similarity_metric(storage->metric_type)) {
         return new NegativeDistanceComputer(storage->get_distance_computer());
     } else {
         return storage->get_distance_computer();
@@ -203,7 +200,10 @@ void hnsw_add_vertices(
                         verbose && omp_get_thread_num() == 0 ? 0 : -1;
                 size_t counter = 0;
 
-#pragma omp for schedule(dynamic)
+                // here we should do schedule(dynamic) but this segfaults for
+                // some versions of LLVM. The performance impact should not be
+                // too large when (i1 - i0) / num_threads >> 1
+#pragma omp for schedule(static)
                 for (int i = i0; i < i1; i++) {
                     storage_idx_t pt_id = order[i];
                     dis->set_query(x + (pt_id - n0) * d);
@@ -220,7 +220,6 @@ void hnsw_add_vertices(
                         printf("  %d / %d\r", i - i0, i1 - i0);
                         fflush(stdout);
                     }
-
                     if (counter % check_period == 0) {
                         if (InterruptCallback::is_interrupted()) {
                             interrupt = true;
@@ -252,18 +251,10 @@ void hnsw_add_vertices(
  **************************************************************/
 
 IndexHNSW::IndexHNSW(int d, int M, MetricType metric)
-        : Index(d, metric),
-          hnsw(M),
-          own_fields(false),
-          storage(nullptr),
-          reconstruct_from_neighbors(nullptr) {}
+        : Index(d, metric), hnsw(M) {}
 
 IndexHNSW::IndexHNSW(Index* storage, int M)
-        : Index(storage->d, storage->metric_type),
-          hnsw(M),
-          own_fields(false),
-          storage(storage),
-          reconstruct_from_neighbors(nullptr) {}
+        : Index(storage->d, storage->metric_type), hnsw(M), storage(storage) {}
 
 IndexHNSW::~IndexHNSW() {
     if (own_fields) {
@@ -286,16 +277,23 @@ void IndexHNSW::search(
         idx_t k,
         float* distances,
         idx_t* labels,
-        const BitsetView bitset) const {
+        const SearchParameters* params_in) const {
     FAISS_THROW_IF_NOT(k > 0);
-
     FAISS_THROW_IF_NOT_MSG(
             storage,
             "Please use IndexHNSWFlat (or variants) instead of IndexHNSW directly");
+    const SearchParametersHNSW* params = nullptr;
+
+    int efSearch = hnsw.efSearch;
+    if (params_in) {
+        params = dynamic_cast<const SearchParametersHNSW*>(params_in);
+        FAISS_THROW_IF_NOT_MSG(params, "params type invalid");
+        efSearch = params->efSearch;
+    }
     size_t n1 = 0, n2 = 0, n3 = 0, ndis = 0, nreorder = 0;
 
-    idx_t check_period = InterruptCallback::get_period_hint(
-            hnsw.max_level * d * hnsw.efSearch);
+    idx_t check_period =
+            InterruptCallback::get_period_hint(hnsw.max_level * d * efSearch);
 
     for (idx_t i0 = 0; i0 < n; i0 += check_period) {
         idx_t i1 = std::min(i0 + check_period, n);
@@ -307,14 +305,14 @@ void IndexHNSW::search(
             DistanceComputer* dis = storage_distance_computer(storage);
             ScopeDeleter1<DistanceComputer> del(dis);
 
-#pragma omp for reduction(+ : n1, n2, n3, ndis, nreorder)
+#pragma omp for reduction(+ : n1, n2, n3, ndis, nreorder) schedule(guided)
             for (idx_t i = i0; i < i1; i++) {
                 idx_t* idxi = labels + i * k;
                 float* simi = distances + i * k;
                 dis->set_query(x + i * d);
 
                 maxheap_heapify(k, simi, idxi);
-                HNSWStats stats = hnsw.search(*dis, k, idxi, simi, vt);
+                HNSWStats stats = hnsw.search(*dis, k, idxi, simi, vt, params);
                 n1 += stats.n1;
                 n2 += stats.n2;
                 n3 += stats.n3;
@@ -341,7 +339,7 @@ void IndexHNSW::search(
         InterruptCallback::check();
     }
 
-    if (metric_type == METRIC_INNER_PRODUCT) {
+    if (is_similarity_metric(metric_type)) {
         // we need to revert the negated distances
         for (size_t i = 0; i < k * n; i++) {
             distances[i] = -distances[i];
@@ -423,16 +421,15 @@ void IndexHNSW::search_level_0(
     FAISS_THROW_IF_NOT(nprobe > 0);
 
     storage_idx_t ntotal = hnsw.levels.size();
-    size_t n1 = 0, n2 = 0, n3 = 0, ndis = 0, nreorder = 0;
 
 #pragma omp parallel
     {
-        DistanceComputer* qdis = storage_distance_computer(storage);
-        ScopeDeleter1<DistanceComputer> del(qdis);
-
+        std::unique_ptr<DistanceComputer> qdis(
+                storage_distance_computer(storage));
+        HNSWStats search_stats;
         VisitedTable vt(ntotal);
 
-#pragma omp for reduction(+ : n1, n2, n3, ndis, nreorder)
+#pragma omp for
         for (idx_t i = 0; i < n; i++) {
             idx_t* idxi = labels + i * k;
             float* simi = distances + i * k;
@@ -440,69 +437,24 @@ void IndexHNSW::search_level_0(
             qdis->set_query(x + i * d);
             maxheap_heapify(k, simi, idxi);
 
-            if (search_type == 1) {
-                int nres = 0;
+            hnsw.search_level_0(
+                    *qdis.get(),
+                    k,
+                    idxi,
+                    simi,
+                    nprobe,
+                    nearest + i * nprobe,
+                    nearest_d + i * nprobe,
+                    search_type,
+                    search_stats,
+                    vt);
 
-                for (int j = 0; j < nprobe; j++) {
-                    storage_idx_t cj = nearest[i * nprobe + j];
-
-                    if (cj < 0)
-                        break;
-
-                    if (vt.get(cj))
-                        continue;
-
-                    int candidates_size = std::max(hnsw.efSearch, int(k));
-                    MinimaxHeap candidates(candidates_size);
-
-                    candidates.push(cj, nearest_d[i * nprobe + j]);
-
-                    HNSWStats search_stats;
-                    nres = hnsw.search_from_candidates(
-                            *qdis,
-                            k,
-                            idxi,
-                            simi,
-                            candidates,
-                            vt,
-                            search_stats,
-                            0,
-                            nres);
-                    n1 += search_stats.n1;
-                    n2 += search_stats.n2;
-                    n3 += search_stats.n3;
-                    ndis += search_stats.ndis;
-                    nreorder += search_stats.nreorder;
-                }
-            } else if (search_type == 2) {
-                int candidates_size = std::max(hnsw.efSearch, int(k));
-                candidates_size = std::max(candidates_size, nprobe);
-
-                MinimaxHeap candidates(candidates_size);
-                for (int j = 0; j < nprobe; j++) {
-                    storage_idx_t cj = nearest[i * nprobe + j];
-
-                    if (cj < 0)
-                        break;
-                    candidates.push(cj, nearest_d[i * nprobe + j]);
-                }
-
-                HNSWStats search_stats;
-                hnsw.search_from_candidates(
-                        *qdis, k, idxi, simi, candidates, vt, search_stats, 0);
-                n1 += search_stats.n1;
-                n2 += search_stats.n2;
-                n3 += search_stats.n3;
-                ndis += search_stats.ndis;
-                nreorder += search_stats.nreorder;
-            }
             vt.advance();
-
             maxheap_reorder(k, simi, idxi);
         }
+#pragma omp critical
+        { hnsw_stats.combine(search_stats); }
     }
-
-    hnsw_stats.combine({n1, n2, n3, ndis, nreorder});
 }
 
 void IndexHNSW::init_level_0_from_knngraph(
@@ -653,6 +605,15 @@ void IndexHNSW::link_singletons() {
     for (int i = 0; i < singletons.size(); i++) {
         FAISS_ASSERT(!"not implemented");
     }
+}
+
+void IndexHNSW::permute_entries(const idx_t* perm) {
+    // todo aguzhva: permute norms?
+    auto flat_storage = dynamic_cast<IndexFlatCodes*>(storage);
+    FAISS_THROW_IF_NOT_MSG(
+            flat_storage, "don't know how to permute this index");
+    flat_storage->permute_entries(perm);
+    hnsw.permute_entries(perm);
 }
 
 /**************************************************************
@@ -905,7 +866,10 @@ IndexHNSWFlat::IndexHNSWFlat() {
 }
 
 IndexHNSWFlat::IndexHNSWFlat(int d, int M, MetricType metric)
-        : IndexHNSW(new IndexFlat(d, metric), M) {
+        : IndexHNSW(
+                  (metric == METRIC_L2) ? new IndexFlatL2(d)
+                                        : new IndexFlat(d, metric),
+                  M) {
     own_fields = true;
     is_trained = true;
 }
@@ -914,10 +878,10 @@ IndexHNSWFlat::IndexHNSWFlat(int d, int M, MetricType metric)
  * IndexHNSWPQ implementation
  **************************************************************/
 
-IndexHNSWPQ::IndexHNSWPQ() {}
+IndexHNSWPQ::IndexHNSWPQ() = default;
 
-IndexHNSWPQ::IndexHNSWPQ(int d, int pq_m, int M)
-        : IndexHNSW(new IndexPQ(d, pq_m, 8), M) {
+IndexHNSWPQ::IndexHNSWPQ(int d, int pq_m, int M, int pq_nbits)
+        : IndexHNSW(new IndexPQ(d, pq_m, pq_nbits), M) {
     own_fields = true;
     is_trained = false;
 }
@@ -933,15 +897,15 @@ void IndexHNSWPQ::train(idx_t n, const float* x) {
 
 IndexHNSWSQ::IndexHNSWSQ(
         int d,
-        QuantizerType qtype,
+        ScalarQuantizer::QuantizerType qtype,
         int M,
         MetricType metric)
         : IndexHNSW(new IndexScalarQuantizer(d, qtype, metric), M) {
-    is_trained = false;
+    is_trained = this->storage->is_trained;
     own_fields = true;
 }
 
-IndexHNSWSQ::IndexHNSWSQ() {}
+IndexHNSWSQ::IndexHNSWSQ() = default;
 
 /**************************************************************
  * IndexHNSW2Level implementation
@@ -957,7 +921,7 @@ IndexHNSW2Level::IndexHNSW2Level(
     is_trained = false;
 }
 
-IndexHNSW2Level::IndexHNSW2Level() {}
+IndexHNSW2Level::IndexHNSW2Level() = default;
 
 namespace {
 
@@ -1036,8 +1000,10 @@ void IndexHNSW2Level::search(
         idx_t k,
         float* distances,
         idx_t* labels,
-        const BitsetView bitset) const {
+        const SearchParameters* params) const {
     FAISS_THROW_IF_NOT(k > 0);
+    FAISS_THROW_IF_NOT_MSG(
+            !params, "search params not supported for this index");
 
     if (dynamic_cast<const Index2Layer*>(storage)) {
         IndexHNSW::search(n, x, k, distances, labels);
@@ -1096,73 +1062,36 @@ void IndexHNSW2Level::search(
                 }
 
                 candidates.clear();
-                // copy the upper_beam elements to candidates list
 
-                int search_policy = 2;
-
-                if (search_policy == 1) {
-                    for (int j = 0; j < hnsw.upper_beam && j < k; j++) {
-                        if (idxi[j] < 0)
-                            break;
-                        candidates.push(idxi[j], simi[j]);
-                        // search_from_candidates adds them back
-                        idxi[j] = -1;
-                        simi[j] = HUGE_VAL;
-                    }
-
-                    // reorder from sorted to heap
-                    maxheap_heapify(k, simi, idxi, simi, idxi, k);
-
-                    HNSWStats search_stats;
-                    hnsw.search_from_candidates(
-                            *dis,
-                            k,
-                            idxi,
-                            simi,
-                            candidates,
-                            vt,
-                            search_stats,
-                            0,
-                            k);
-                    n1 += search_stats.n1;
-                    n2 += search_stats.n2;
-                    n3 += search_stats.n3;
-                    ndis += search_stats.ndis;
-                    nreorder += search_stats.nreorder;
-
-                    vt.advance();
-
-                } else if (search_policy == 2) {
-                    for (int j = 0; j < hnsw.upper_beam && j < k; j++) {
-                        if (idxi[j] < 0)
-                            break;
-                        candidates.push(idxi[j], simi[j]);
-                    }
-
-                    // reorder from sorted to heap
-                    maxheap_heapify(k, simi, idxi, simi, idxi, k);
-
-                    HNSWStats search_stats;
-                    search_from_candidates_2(
-                            hnsw,
-                            *dis,
-                            k,
-                            idxi,
-                            simi,
-                            candidates,
-                            vt,
-                            search_stats,
-                            0,
-                            k);
-                    n1 += search_stats.n1;
-                    n2 += search_stats.n2;
-                    n3 += search_stats.n3;
-                    ndis += search_stats.ndis;
-                    nreorder += search_stats.nreorder;
-
-                    vt.advance();
-                    vt.advance();
+                for (int j = 0; j < hnsw.upper_beam && j < k; j++) {
+                    if (idxi[j] < 0)
+                        break;
+                    candidates.push(idxi[j], simi[j]);
                 }
+
+                // reorder from sorted to heap
+                maxheap_heapify(k, simi, idxi, simi, idxi, k);
+
+                HNSWStats search_stats;
+                search_from_candidates_2(
+                        hnsw,
+                        *dis,
+                        k,
+                        idxi,
+                        simi,
+                        candidates,
+                        vt,
+                        search_stats,
+                        0,
+                        k);
+                n1 += search_stats.n1;
+                n2 += search_stats.n2;
+                n3 += search_stats.n3;
+                ndis += search_stats.ndis;
+                nreorder += search_stats.nreorder;
+
+                vt.advance();
+                vt.advance();
 
                 maxheap_reorder(k, simi, idxi);
             }

@@ -22,7 +22,6 @@ namespace faiss {
 struct IndexHNSW;
 
 struct ReconstructFromNeighbors {
-    typedef Index::idx_t idx_t;
     typedef HNSW::storage_idx_t storage_idx_t;
 
     const IndexHNSW& index;
@@ -75,10 +74,10 @@ struct IndexHNSW : Index {
     HNSW hnsw;
 
     // the sequential storage
-    bool own_fields;
-    Index* storage;
+    bool own_fields = false;
+    Index* storage = nullptr;
 
-    ReconstructFromNeighbors* reconstruct_from_neighbors;
+    ReconstructFromNeighbors* reconstruct_from_neighbors = nullptr;
 
     explicit IndexHNSW(int d = 0, int M = 32, MetricType metric = METRIC_L2);
     explicit IndexHNSW(Index* storage, int M = 32);
@@ -97,7 +96,7 @@ struct IndexHNSW : Index {
             idx_t k,
             float* distances,
             idx_t* labels,
-            const BitsetView bitset = nullptr) const override;
+            const SearchParameters* params = nullptr) const override;
 
     void reconstruct(idx_t key, float* recons) const override;
 
@@ -135,6 +134,8 @@ struct IndexHNSW : Index {
     void reorder_links();
 
     void link_singletons();
+
+    void permute_entries(const idx_t* perm);
 };
 
 /** Flat index topped with with a HNSW structure to access elements
@@ -151,7 +152,7 @@ struct IndexHNSWFlat : IndexHNSW {
  */
 struct IndexHNSWPQ : IndexHNSW {
     IndexHNSWPQ();
-    IndexHNSWPQ(int d, int pq_m, int M);
+    IndexHNSWPQ(int d, int pq_m, int M, int pq_nbits = 8);
     void train(idx_t n, const float* x) override;
 };
 
@@ -162,7 +163,7 @@ struct IndexHNSWSQ : IndexHNSW {
     IndexHNSWSQ();
     IndexHNSWSQ(
             int d,
-            QuantizerType qtype,
+            ScalarQuantizer::QuantizerType qtype,
             int M,
             MetricType metric = METRIC_L2);
 };
@@ -182,7 +183,7 @@ struct IndexHNSW2Level : IndexHNSW {
             idx_t k,
             float* distances,
             idx_t* labels,
-            const BitsetView bitset = nullptr) const override;
+            const SearchParameters* params = nullptr) const override;
 };
 
 } // namespace faiss
