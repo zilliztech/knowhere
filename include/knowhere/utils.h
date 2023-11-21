@@ -80,4 +80,16 @@ ConvertIVFFlat(const BinarySet& binset, const MetricType metric_type, const uint
 bool
 UseDiskLoad(const std::string& index_type, const int32_t& /*version*/);
 
+template <typename T, typename W>
+static void
+writeBinaryPOD(W& out, const T& podRef) {
+    out.write((char*)&podRef, sizeof(T));
+}
+
+template <typename T, typename R>
+static void
+readBinaryPOD(R& in, T& podRef) {
+    in.read((char*)&podRef, sizeof(T));
+}
+
 }  // namespace knowhere

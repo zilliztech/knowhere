@@ -373,6 +373,62 @@ TEST_CASE("Test Mem Index With Binary Vector", "[float metrics]") {
     }
 }
 
+// this is a special case that once triggered a problem in clustering.cpp
+TEST_CASE("Test Mem Index With Binary Vector", "[float metrics][special case 1]") {
+    using Catch::Approx;
+
+    const int64_t nb = 10, nq = 1;
+    const int64_t dim = 16;
+
+    auto metric = GENERATE(as<std::string>{}, knowhere::metric::JACCARD);
+    auto topk = GENERATE(as<int64_t>{}, 1, 1);
+    auto version = GenTestVersionList();
+    auto base_gen = [=]() {
+        knowhere::Json json;
+        json[knowhere::meta::DIM] = dim;
+        json[knowhere::meta::METRIC_TYPE] = metric;
+        json[knowhere::meta::TOPK] = topk;
+        json[knowhere::meta::RADIUS] = knowhere::IsMetricType(metric, knowhere::metric::HAMMING) ? 10.0 : 0.1;
+        json[knowhere::meta::RANGE_FILTER] = 0.0;
+        return json;
+    };
+
+    auto flat_gen = base_gen;
+    auto ivfflat_gen = [base_gen]() {
+        knowhere::Json json = base_gen();
+        json[knowhere::indexparam::NLIST] = 16;
+        json[knowhere::indexparam::NPROBE] = 1;
+        return json;
+    };
+
+    const auto train_ds = GenBinDataSet(nb, dim);
+    const auto query_ds = GenBinDataSet(nq, dim);
+    const knowhere::Json conf = {
+        {knowhere::meta::METRIC_TYPE, metric},
+        {knowhere::meta::TOPK, topk},
+    };
+
+    auto gt = knowhere::BruteForce::Search(train_ds, query_ds, conf, nullptr);
+    SECTION("Test Search") {
+        using std::make_tuple;
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT, ivfflat_gen),
+        }));
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
+        auto cfg_json = gen().dump();
+        CAPTURE(name, cfg_json);
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        REQUIRE(idx.Type() == name);
+        REQUIRE(idx.Build(*train_ds, json) == knowhere::Status::success);
+        REQUIRE(idx.Size() > 0);
+        REQUIRE(idx.Count() == nb);
+        auto results = idx.Search(*query_ds, json, nullptr);
+        REQUIRE(results.has_value());
+        float recall = GetKNNRecall(*gt.value(), *results.value());
+        REQUIRE(recall > kKnnRecallThreshold);
+    }
+}
+
 TEST_CASE("Test Mem Index With Binary Vector", "[bool metrics]") {
     using Catch::Approx;
 
