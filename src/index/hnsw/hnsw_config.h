@@ -57,25 +57,29 @@ class HnswConfig : public BaseConfig {
             .for_feder();
     }
 
-    inline Status
-    CheckAndAdjustForSearch(std::string* err_msg) override {
-        if (!ef.has_value()) {
-            ef = std::max(k.value(), kEfMinValue);
-        } else if (k.value() > ef.value()) {
-            *err_msg =
-                "ef(" + std::to_string(ef.value()) + ") should be larger than k(" + std::to_string(k.value()) + ")";
-            LOG_KNOWHERE_ERROR_ << *err_msg;
-            return Status::out_of_range_in_json;
-        }
-
-        return Status::success;
-    }
-
-    inline Status
-    CheckAndAdjustForRangeSearch(std::string* err_msg) override {
-        if (!ef.has_value()) {
-            // if ef is not set by user, set it to default
-            ef = kDefaultRangeSearchEf;
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        switch (param_type) {
+            case PARAM_TYPE::SEARCH: {
+                if (!ef.has_value()) {
+                    ef = std::max(k.value(), kEfMinValue);
+                } else if (k.value() > ef.value()) {
+                    *err_msg = "ef(" + std::to_string(ef.value()) + ") should be larger than k(" +
+                               std::to_string(k.value()) + ")";
+                    LOG_KNOWHERE_ERROR_ << *err_msg;
+                    return Status::out_of_range_in_json;
+                }
+                break;
+            }
+            case PARAM_TYPE::RANGE_SEARCH: {
+                if (!ef.has_value()) {
+                    // if ef is not set by user, set it to default
+                    ef = kDefaultRangeSearchEf;
+                }
+                break;
+            }
+            default:
+                break;
         }
         return Status::success;
     }
