@@ -28,11 +28,7 @@
 #include "knowhere/utils.h"
 #include "tsl/robin_set.h"
 
-#ifdef _WINDOWS
-#include "windows_aligned_file_reader.h"
-#else
 #include "diskann/linux_aligned_file_reader.h"
-#endif
 
 #define READ_U64(stream, val) stream.read((char *) &val, sizeof(_u64))
 #define READ_U32(stream, val) stream.read((char *) &val, sizeof(_u32))
@@ -84,11 +80,9 @@ namespace diskann {
 
   template<typename T>
   PQFlashIndex<T>::~PQFlashIndex() {
-#ifndef EXEC_ENV_OLS
     if (data != nullptr) {
       delete[] data;
     }
-#endif
 
     if (medoids != nullptr) {
       delete[] medoids;
@@ -227,13 +221,6 @@ namespace diskann {
 
       _u64 node_idx = start_idx;
       for (_u32 i = 0; i < read_reqs.size(); i++) {
-#if defined(_WINDOWS) && \
-    defined(USE_BING_INFRA)  // this block is to handle failed reads in
-                             // production settings
-        if ((*ctx.m_pRequestsStatus)[i] != IOContext::READ_SUCCESS) {
-          continue;
-        }
-#endif
         auto &nhood = nhoods[i];
         char *node_buf = get_offset_to_node(nhood.second, nhood.first);
         T    *node_coords = OFFSET_TO_NODE_COORDS(node_buf);
@@ -259,18 +246,10 @@ namespace diskann {
     LOG_KNOWHERE_DEBUG_ << "done.";
   }
 
-#ifdef EXEC_ENV_OLS
-  template<typename T>
-  void PQFlashIndex<T>::generate_cache_list_from_sample_queries(
-      MemoryMappedFiles &files, std::string sample_bin, _u64 l_search,
-      _u64 beamwidth, _u64 num_nodes_to_cache,
-      std::vector<uint32_t> &node_list) {
-#else
   template<typename T>
   void PQFlashIndex<T>::generate_cache_list_from_sample_queries(
       std::string sample_bin, _u64 l_search, _u64 beamwidth,
       _u64 num_nodes_to_cache, std::vector<uint32_t> &node_list) {
-#endif
     this->count_visited_nodes = true;
     this->node_visit_counter.clear();
     this->node_visit_counter.resize(this->num_points);
@@ -282,17 +261,10 @@ namespace diskann {
     _u64 sample_num, sample_dim, sample_aligned_dim;
     T   *samples;
 
-#ifdef EXEC_ENV_OLS
-    if (files.fileExists(sample_bin)) {
-      diskann::load_aligned_bin<T>(files, sample_bin, samples, sample_num,
-                                   sample_dim, sample_aligned_dim);
-    }
-#else
     if (file_exists(sample_bin)) {
       diskann::load_aligned_bin<T>(sample_bin, samples, sample_num, sample_dim,
                                    sample_aligned_dim);
     }
-#endif
     else {
       diskann::cerr << "Sample bin file not found. Not generating cache."
                     << std::endl;
@@ -407,13 +379,6 @@ namespace diskann {
 
         // process each nhood buf
         for (_u32 i = 0; i < read_reqs.size(); i++) {
-#if defined(_WINDOWS) && \
-    defined(USE_BING_INFRA)  // this block is to handle read failures in
-                             // production settings
-          if ((*ctx.m_pRequestsStatus)[i] != IOContext::READ_SUCCESS) {
-            continue;
-          }
-#endif
           auto &nhood = nhoods[i];
 
           // insert node coord into coord_cache
@@ -519,14 +484,8 @@ namespace diskann {
     this->reader->put_ctx(ctx);
   }
 
-#ifdef EXEC_ENV_OLS
-  template<typename T>
-  int PQFlashIndex<T>::load(MemoryMappedFiles &files, uint32_t num_threads,
-                            const char *index_prefix) {
-#else
   template<typename T>
   int PQFlashIndex<T>::load(uint32_t num_threads, const char *index_prefix) {
-#endif
     std::string pq_table_bin =
         get_pq_pivots_filename(std::string(index_prefix));
     std::string pq_compressed_vectors =
@@ -539,11 +498,7 @@ namespace diskann {
         get_disk_index_centroids_filename(std::string(disk_index_file));
 
     size_t pq_file_dim, pq_file_num_centroids;
-#ifdef EXEC_ENV_OLS
-    get_bin_metadata(files, pq_table_bin, pq_file_num_centroids, pq_file_dim);
-#else
     get_bin_metadata(pq_table_bin, pq_file_num_centroids, pq_file_dim);
-#endif
 
     this->disk_index_file = disk_index_file;
 
@@ -561,22 +516,13 @@ namespace diskann {
     this->aligned_dim = ROUND_UP(pq_file_dim, 8);
 
     size_t npts_u64, nchunks_u64;
-#ifdef EXEC_ENV_OLS
-    diskann::load_bin<_u8>(files, pq_compressed_vectors, this->data, npts_u64,
-                           nchunks_u64);
-#else
     diskann::load_bin<_u8>(pq_compressed_vectors, this->data, npts_u64,
                            nchunks_u64);
-#endif
 
     this->num_points = npts_u64;
     this->n_chunks = nchunks_u64;
 
-#ifdef EXEC_ENV_OLS
-    pq_table.load_pq_centroid_bin(files, pq_table_bin.c_str(), nchunks_u64);
-#else
     pq_table.load_pq_centroid_bin(pq_table_bin.c_str(), nchunks_u64);
-#endif
 
     LOG(INFO)
         << "Loaded PQ centroids and in-memory compressed vectors. #points: "
@@ -586,15 +532,9 @@ namespace diskann {
     std::string disk_pq_pivots_path = this->disk_index_file + "_pq_pivots.bin";
     if (file_exists(disk_pq_pivots_path)) {
       use_disk_index_pq = true;
-#ifdef EXEC_ENV_OLS
-      // giving 0 chunks to make the pq_table infer from the
-      // chunk_offsets file the correct value
-      disk_pq_table.load_pq_centroid_bin(files, disk_pq_pivots_path.c_str(), 0);
-#else
       // giving 0 chunks to make the pq_table infer from the
       // chunk_offsets file the correct value
       disk_pq_table.load_pq_centroid_bin(disk_pq_pivots_path.c_str(), 0);
-#endif
       disk_pq_n_chunks = disk_pq_table.get_num_chunks();
       disk_bytes_per_point =
           disk_pq_n_chunks *
@@ -604,22 +544,7 @@ namespace diskann {
     }
 
 // read index metadata
-#ifdef EXEC_ENV_OLS
-    // This is a bit tricky. We have to read the header from the
-    // disk_index_file. But  this is now exclusively a preserve of the
-    // DiskPriorityIO class. So, we need to estimate how many
-    // bytes are needed to store the header and read in that many using our
-    // 'standard' aligned file reader approach.
-    reader->open(disk_index_file);
-    this->setup_thread_data(num_threads);
-    this->max_nthreads = num_threads;
-
-    char                    *bytes = getHeaderBytes();
-    ContentBuf               buf(bytes, HEADER_SIZE);
-    std::basic_istream<char> index_metadata(&buf);
-#else
     std::ifstream index_metadata(disk_index_file, std::ios::binary);
-#endif
 
     size_t actual_index_size = get_file_size(disk_index_file);
     size_t expected_file_size;
@@ -690,31 +615,17 @@ namespace diskann {
               << ", max node len (bytes): " << max_node_len
               << ", max node degree: " << max_degree;
 
-#ifdef EXEC_ENV_OLS
-    delete[] bytes;
-#else
     index_metadata.close();
-#endif
 
-#ifndef EXEC_ENV_OLS
     // open AlignedFileReader handle to index_file
     std::string index_fname(disk_index_file);
     reader->open(index_fname);
     this->setup_thread_data(num_threads);
     this->max_nthreads = num_threads;
 
-#endif
-
-#ifdef EXEC_ENV_OLS
-    if (files.fileExists(medoids_file)) {
-      size_t tmp_dim;
-      diskann::load_bin<uint32_t>(files, medoids_file, medoids, num_medoids,
-                                  tmp_dim);
-#else
     if (file_exists(medoids_file)) {
       size_t tmp_dim;
       diskann::load_bin<uint32_t>(medoids_file, medoids, num_medoids, tmp_dim);
-#endif
 
       if (tmp_dim != 1) {
         std::stringstream stream;
@@ -724,26 +635,16 @@ namespace diskann {
         throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__,
                                     __LINE__);
       }
-#ifdef EXEC_ENV_OLS
-      if (!files.fileExists(centroids_file)) {
-#else
       if (!file_exists(centroids_file)) {
-#endif
         LOG(INFO)
             << "Centroid data file not found. Using corresponding vectors "
                "for the medoids ";
         use_medoids_data_as_centroids();
       } else {
         size_t num_centroids, aligned_tmp_dim;
-#ifdef EXEC_ENV_OLS
-        diskann::load_aligned_bin<float>(files, centroids_file, centroid_data,
-                                         num_centroids, tmp_dim,
-                                         aligned_tmp_dim);
-#else
         diskann::load_aligned_bin<float>(centroids_file, centroid_data,
                                          num_centroids, tmp_dim,
                                          aligned_tmp_dim);
-#endif
         if (aligned_tmp_dim != aligned_dim || num_centroids != num_medoids) {
           std::stringstream stream;
           stream << "Error loading centroids data file. Expected bin format of "
@@ -783,24 +684,6 @@ namespace diskann {
 
     return 0;
   }
-
-#ifdef USE_BING_INFRA
-  bool getNextCompletedRequest(const IOContext &ctx, size_t size,
-                               int &completedIndex) {
-    bool waitsRemaining = false;
-    for (int i = 0; i < size; i++) {
-      auto ithStatus = (*ctx.m_pRequestsStatus)[i];
-      if (ithStatus == IOContext::Status::READ_SUCCESS) {
-        completedIndex = i;
-        return true;
-      } else if (ithStatus == IOContext::Status::READ_WAIT) {
-        waitsRemaining = true;
-      }
-    }
-    completedIndex = -1;
-    return waitsRemaining;
-  }
-#endif
 
   template<typename T>
   std::optional<float> PQFlashIndex<T>::init_thread_data(ThreadData<T> &data,
@@ -922,11 +805,7 @@ namespace diskann {
       if (frontier_read_reqs.size() == beam_width ||
           it == nodes_in_sectors_to_visit.cend()) {
         io_timer.reset();
-#ifdef USE_BING_INFRA
-        reader->read(frontier_read_reqs, ctx, true);  // async reader windows.
-#else
         reader->read(frontier_read_reqs, ctx);  // synchronous IO linux
-#endif
         if (stats != nullptr) {
           stats->io_us += (double) io_timer.elapsed();
         }
@@ -1201,11 +1080,7 @@ namespace diskann {
           num_ios++;
         }
         io_timer.reset();
-#ifdef USE_BING_INFRA
-        reader->read(frontier_read_reqs, ctx, true);  // async reader windows.
-#else
         reader->read(frontier_read_reqs, ctx);  // synchronous IO linux
-#endif
         if (stats != nullptr) {
           stats->io_us += (double) io_timer.elapsed();
         }
@@ -1291,22 +1166,7 @@ namespace diskann {
                       cached_nhood.second.first, cached_nhood.second.second);
       }
 
-#ifdef USE_BING_INFRA
-      // process each frontier nhood - compute distances to unvisited nodes
-      int completedIndex = -1;
-      // If we issued read requests and if a read is complete or there are reads
-      // in wait state, then enter the while loop.
-      while (frontier_read_reqs.size() > 0 &&
-             getNextCompletedRequest(ctx, frontier_read_reqs.size(),
-                                     completedIndex)) {
-        if (completedIndex == -1) {  // all reads are waiting
-          continue;
-        }
-        auto &frontier_nhood = frontier_nhoods[completedIndex];
-        (*ctx.m_pRequestsStatus)[completedIndex] = IOContext::PROCESS_COMPLETE;
-#else
       for (auto &frontier_nhood : frontier_nhoods) {
-#endif
         char *node_disk_buf =
             get_offset_to_node(frontier_nhood.second, frontier_nhood.first);
         unsigned *node_buf = OFFSET_TO_NODE_NHOOD(node_disk_buf);
@@ -1359,11 +1219,7 @@ namespace diskann {
       }
 
       io_timer.reset();
-#ifdef USE_BING_INFRA
-      reader->read(vec_read_reqs, ctx, false);  // sync reader windows.
-#else
       reader->read(vec_read_reqs, ctx);     // synchronous IO linux
-#endif
       if (stats != nullptr) {
         stats->io_us += io_timer.elapsed();
       }
@@ -1637,24 +1493,6 @@ namespace diskann {
 
     return index_mem_size;
   }
-
-#ifdef EXEC_ENV_OLS
-  template<typename T>
-  char *PQFlashIndex<T>::getHeaderBytes() {
-    IOContext  &ctx = reader->get_ctx();
-    AlignedRead readReq;
-    readReq.buf = new char[PQFlashIndex<T>::HEADER_SIZE];
-    readReq.len = PQFlashIndex<T>::HEADER_SIZE;
-    readReq.offset = 0;
-
-    std::vector<AlignedRead> readReqs;
-    readReqs.push_back(readReq);
-
-    reader->read(readReqs, ctx, false);
-
-    return (char *) readReq.buf;
-  }
-#endif
 
   // instantiations
   template class PQFlashIndex<_u8>;

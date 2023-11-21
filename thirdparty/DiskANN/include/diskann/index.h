@@ -20,7 +20,6 @@
 #include "parameters.h"
 #include "utils.h"
 #include "concurrent_queue.h"
-#include "windows_customizations.h"
 #include "knowhere/comp/thread_pool.h"
 
 #define GRAPH_SLACK_FACTOR 1.3
@@ -95,119 +94,108 @@ namespace diskann {
    public:
     // Constructor for Bulk operations and for creating the index object solely
     // for loading a prexisting index.
-    DISKANN_DLLEXPORT Index(Metric m, bool ip_prepared, const size_t dim,
-                            const size_t max_points, const bool dynamic_index,
-                            const bool enable_tags = false,
-                            const bool support_eager_delete = false);
+    Index(Metric m, bool ip_prepared, const size_t dim, const size_t max_points,
+          const bool dynamic_index, const bool enable_tags = false,
+          const bool support_eager_delete = false);
 
     // Constructor for incremental index
-    DISKANN_DLLEXPORT Index(Metric m, bool ip_prepared, const size_t dim,
-                            const size_t max_points, const bool dynamic_index,
-                            const Parameters &indexParameters,
-                            const Parameters &searchParameters,
-                            const bool        enable_tags = false,
-                            const bool        support_eager_delete = false);
+    Index(Metric m, bool ip_prepared, const size_t dim, const size_t max_points,
+          const bool dynamic_index, const Parameters &indexParameters,
+          const Parameters &searchParameters, const bool enable_tags = false,
+          const bool support_eager_delete = false);
 
-    DISKANN_DLLEXPORT ~Index();
+    ~Index();
 
     // Public Functions for Static Support
 
     // checks if data is consolidated, saves graph, metadata and associated
     // tags.
-    DISKANN_DLLEXPORT void save(const char *filename,
-                                const bool  disk_index = false);
-    DISKANN_DLLEXPORT _u64 save_graph(std::string filename);
-    DISKANN_DLLEXPORT _u64 save_data(std::string filename);
-    DISKANN_DLLEXPORT _u64 save_tags(std::string filename);
-    DISKANN_DLLEXPORT _u64 save_delete_list(const std::string &filename);
+    void save(const char *filename, const bool disk_index = false);
+    _u64 save_graph(std::string filename);
+    _u64 save_data(std::string filename);
+    _u64 save_tags(std::string filename);
+    _u64 save_delete_list(const std::string &filename);
 
-    DISKANN_DLLEXPORT void load(const char *index_file, uint32_t num_threads,
-                                uint32_t search_l);
+    void load(const char *index_file, uint32_t num_threads, uint32_t search_l);
 
-    DISKANN_DLLEXPORT size_t load_graph(const std::string filename,
-                                        size_t            expected_num_points);
+    size_t load_graph(const std::string filename, size_t expected_num_points);
 
-    DISKANN_DLLEXPORT size_t load_data(std::string filename0);
+    size_t load_data(std::string filename0);
 
-    DISKANN_DLLEXPORT size_t load_tags(const std::string tag_file_name);
-    DISKANN_DLLEXPORT size_t load_delete_set(const std::string &filename);
+    size_t load_tags(const std::string tag_file_name);
+    size_t load_delete_set(const std::string &filename);
 
-    DISKANN_DLLEXPORT size_t get_num_points();
+    size_t get_num_points();
 
-    DISKANN_DLLEXPORT size_t return_max_points();
+    size_t return_max_points();
 
-    DISKANN_DLLEXPORT void build(
-        const char *filename, const size_t num_points_to_load,
-        Parameters              &parameters,
-        const std::vector<TagT> &tags = std::vector<TagT>());
+    void build(const char *filename, const size_t num_points_to_load,
+               Parameters              &parameters,
+               const std::vector<TagT> &tags = std::vector<TagT>());
 
-    DISKANN_DLLEXPORT void build(const char  *filename,
-                                 const size_t num_points_to_load,
-                                 Parameters  &parameters,
-                                 const char  *tag_filename);
+    void build(const char *filename, const size_t num_points_to_load,
+               Parameters &parameters, const char *tag_filename);
 
     // Added search overload that takes L as parameter, so that we
     // can customize L on a per-query basis without tampering with "Parameters"
     template<typename IDType>
-    DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> search(
-        const T *query, const size_t K, const unsigned L, IDType *indices,
-        float *distances = nullptr);
+    std::pair<uint32_t, uint32_t> search(const T *query, const size_t K,
+                                         const unsigned L, IDType *indices,
+                                         float *distances = nullptr);
 
-    DISKANN_DLLEXPORT size_t search_with_tags(const T *query, const uint64_t K,
-                                              const unsigned L, TagT *tags,
-                                              float            *distances,
-                                              std::vector<T *> &res_vectors);
+    size_t search_with_tags(const T *query, const uint64_t K, const unsigned L,
+                            TagT *tags, float *distances,
+                            std::vector<T *> &res_vectors);
 
-    DISKANN_DLLEXPORT void clear_index();
+    void clear_index();
 
     // Public Functions for Incremental Support
 
     // insertions possible only when id corresponding to tag does not already
     // exist in the graph
-    DISKANN_DLLEXPORT int insert_point(const T *point, const TagT tag);
+    int insert_point(const T *point, const TagT tag);
 
     // call before triggering deleteions - sets important flags required for
     // deletion related operations
-    DISKANN_DLLEXPORT int enable_delete();
+    int enable_delete();
 
     // call after all delete requests have been served, checks if deletions were
     // executed correctly, rearranges metadata in case of lazy deletes
-    DISKANN_DLLEXPORT int disable_delete(const Parameters &parameters,
-                                         const bool        consolidate = false);
+    int disable_delete(const Parameters &parameters,
+                       const bool        consolidate = false);
 
     // Record deleted point now and restructure graph later. Return -1 if tag
     // not found, 0 if OK. Do not call if _eager_delete was called earlier and
     // data was not consolidated
-    DISKANN_DLLEXPORT int lazy_delete(const TagT &tag);
+    int lazy_delete(const TagT &tag);
 
     // Record deleted points now and restructure graph later. Add to failed_tags
     // if tag not found. Do not call if _eager_delete was called earlier and
     // data was not consolidated. Return -1 if
-    DISKANN_DLLEXPORT int lazy_delete(const tsl::robin_set<TagT> &tags,
-                                      std::vector<TagT>          &failed_tags);
+    int lazy_delete(const tsl::robin_set<TagT> &tags,
+                    std::vector<TagT>          &failed_tags);
 
     // Delete point from graph and restructure it immediately. Do not call if
     // _lazy_delete was called earlier and data was not consolidated
-    DISKANN_DLLEXPORT int eager_delete(const TagT        tag,
-                                       const Parameters &parameters,
-                                       int               delete_mode = 1);
+    int eager_delete(const TagT tag, const Parameters &parameters,
+                     int delete_mode = 1);
     // return _data and tag_to_location offset
-    DISKANN_DLLEXPORT int extract_data(
-        T *ret_data, std::unordered_map<TagT, unsigned> &tag_to_location);
+    int extract_data(T                                  *ret_data,
+                     std::unordered_map<TagT, unsigned> &tag_to_location);
 
-    DISKANN_DLLEXPORT void get_location_to_tag(
+    void get_location_to_tag(
         std::unordered_map<unsigned, TagT> &ret_loc_to_tag);
 
-    DISKANN_DLLEXPORT void prune_all_nbrs(const Parameters &parameters);
+    void prune_all_nbrs(const Parameters &parameters);
 
-    DISKANN_DLLEXPORT void compact_data_for_insert();
+    void compact_data_for_insert();
 
-    DISKANN_DLLEXPORT bool                    hasIndexBeenSaved();
+    bool                                      hasIndexBeenSaved();
     const std::vector<std::vector<unsigned>> *get_graph() const {
       return &this->_final_graph;
     }
 
-    DISKANN_DLLEXPORT unsigned get_entry_point() {
+    unsigned get_entry_point() {
       return _ep;
     }
 
@@ -217,35 +205,33 @@ namespace diskann {
     };
     // repositions frozen points to the end of _data - if they have been moved
     // during deletion
-    DISKANN_DLLEXPORT void reposition_frozen_point_to_end();
-    DISKANN_DLLEXPORT void reposition_point(unsigned old_location,
-                                            unsigned new_location);
+    void reposition_frozen_point_to_end();
+    void reposition_point(unsigned old_location, unsigned new_location);
 
-    DISKANN_DLLEXPORT void compact_frozen_point();
-    DISKANN_DLLEXPORT void compact_data_for_search();
+    void compact_frozen_point();
+    void compact_data_for_search();
 
-    DISKANN_DLLEXPORT void consolidate(Parameters &parameters);
+    void consolidate(Parameters &parameters);
 
-    // DISKANN_DLLEXPORT void save_index_as_one_file(bool flag);
+    // void save_index_as_one_file(bool flag);
 
-    DISKANN_DLLEXPORT void get_active_tags(tsl::robin_set<TagT> &active_tags);
+    void get_active_tags(tsl::robin_set<TagT> &active_tags);
 
-    DISKANN_DLLEXPORT int      get_vector_by_tag(TagT &tag, T *vec);
-    DISKANN_DLLEXPORT const T *get_vector_by_tag(const TagT &tag);
+    int      get_vector_by_tag(TagT &tag, T *vec);
+    const T *get_vector_by_tag(const TagT &tag);
 
-    DISKANN_DLLEXPORT void print_status() const;
+    void print_status() const;
 
     // This variable MUST be updated if the number of entries in the metadata
     // change.
-    DISKANN_DLLEXPORT static const int METADATA_ROWS = 5;
+    static const int METADATA_ROWS = 5;
 
     // For Bulk Index FastL2 search, we interleave the data with graph
-    DISKANN_DLLEXPORT void optimize_index_layout();
+    void optimize_index_layout();
 
     // For FastL2 search on optimized layout
-    DISKANN_DLLEXPORT void search_with_optimized_layout(const T *query,
-                                                        size_t K, size_t L,
-                                                        unsigned *indices);
+    void search_with_optimized_layout(const T *query, size_t K, size_t L,
+                                      unsigned *indices);
 
     /*  Internals of the library */
    protected:

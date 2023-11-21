@@ -1,5 +1,4 @@
 #pragma once
-#include "windows_customizations.h"
 #include <cstdint>
 #include "simd/hook.h"
 #include "diskann/utils.h"

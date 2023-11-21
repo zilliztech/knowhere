@@ -5,21 +5,17 @@
 #include <string>
 #include <stdexcept>
 #include <system_error>
-#include "windows_customizations.h"
 
-#ifndef _WINDOWS
 #define __FUNCSIG__ __PRETTY_FUNCTION__
-#endif
 
 namespace diskann {
 
   class ANNException : public std::runtime_error {
    public:
-    DISKANN_DLLEXPORT ANNException(const std::string& message, int errorCode);
-    DISKANN_DLLEXPORT ANNException(const std::string& message, int errorCode,
-                                   const std::string& funcSig,
-                                   const std::string& fileName,
-                                   unsigned int       lineNum);
+    ANNException(const std::string& message, int errorCode);
+    ANNException(const std::string& message, int errorCode,
+                 const std::string& funcSig, const std::string& fileName,
+                 unsigned int lineNum);
 
    private:
     int _errorCode;
@@ -27,10 +23,8 @@ namespace diskann {
 
   class FileException : public ANNException {
    public:
-    DISKANN_DLLEXPORT FileException(const std::string& filename,
-                                    std::system_error& e,
-                                    const std::string& funcSig,
-                                    const std::string& fileName,
-                                    unsigned int       lineNum);
+    FileException(const std::string& filename, std::system_error& e,
+                  const std::string& funcSig, const std::string& fileName,
+                  unsigned int lineNum);
   };
 }  // namespace diskann

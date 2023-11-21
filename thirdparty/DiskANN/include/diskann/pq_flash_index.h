@@ -22,7 +22,6 @@
 #include "percentile_stats.h"
 #include "pq_table.h"
 #include "utils.h"
-#include "windows_customizations.h"
 #include "diskann/distance.h"
 #include "knowhere/comp/thread_pool.h"
 
@@ -65,75 +64,61 @@ namespace diskann {
   template<typename T>
   class PQFlashIndex {
    public:
-    DISKANN_DLLEXPORT PQFlashIndex(
-        std::shared_ptr<AlignedFileReader> fileReader,
-        diskann::Metric                    metric = diskann::Metric::L2);
-    DISKANN_DLLEXPORT ~PQFlashIndex();
+    PQFlashIndex(std::shared_ptr<AlignedFileReader> fileReader,
+                 diskann::Metric metric = diskann::Metric::L2);
+    ~PQFlashIndex();
 
-#ifdef EXEC_ENV_OLS
-    DISKANN_DLLEXPORT int load(diskann::MemoryMappedFiles &files,
-                               uint32_t num_threads, const char *index_prefix);
-#else
     // load compressed data, and obtains the handle to the disk-resident index
-    DISKANN_DLLEXPORT int  load(uint32_t num_threads, const char *index_prefix);
-#endif
+    int load(uint32_t num_threads, const char *index_prefix);
 
-    DISKANN_DLLEXPORT void load_cache_list(std::vector<uint32_t> &node_list);
+    void load_cache_list(std::vector<uint32_t> &node_list);
 
-#ifdef EXEC_ENV_OLS
-    DISKANN_DLLEXPORT void generate_cache_list_from_sample_queries(
-        MemoryMappedFiles &files, std::string sample_bin, _u64 l_search,
-        _u64 beamwidth, _u64 num_nodes_to_cache,
-        std::vector<uint32_t> &node_list);
-#else
-    DISKANN_DLLEXPORT void generate_cache_list_from_sample_queries(
+    void generate_cache_list_from_sample_queries(
         std::string sample_bin, _u64 l_search, _u64 beamwidth,
         _u64 num_nodes_to_cache, std::vector<uint32_t> &node_list);
-#endif
 
-    DISKANN_DLLEXPORT void cache_bfs_levels(_u64 num_nodes_to_cache,
-                                            std::vector<uint32_t> &node_list);
+    void cache_bfs_levels(_u64                   num_nodes_to_cache,
+                          std::vector<uint32_t> &node_list);
 
-    DISKANN_DLLEXPORT void cached_beam_search(
+    void cached_beam_search(
         const T *query, const _u64 k_search, const _u64 l_search, _s64 *res_ids,
         float *res_dists, const _u64 beam_width,
         const bool use_reorder_data = false, QueryStats *stats = nullptr,
         const knowhere::feder::diskann::FederResultUniq &feder = nullptr,
         knowhere::BitsetView                             bitset_view = nullptr,
-        const float                                      filter_ratio = -1.0f,
-        const bool                                       for_tuning = false);
+        const float filter_ratio = -1.0f, const bool for_tuning = false);
 
-    DISKANN_DLLEXPORT _u32 range_search(
-        const T *query1, const double range, const _u64 min_l_search,
-        const _u64 max_l_search, std::vector<_s64> &indices,
-        std::vector<float> &distances, const _u64 beam_width,
-        const float l_k_ratio, knowhere::BitsetView bitset_view = nullptr,
-        QueryStats *stats = nullptr);
+    _u32 range_search(const T *query1, const double range,
+                      const _u64 min_l_search, const _u64 max_l_search,
+                      std::vector<_s64> &indices, std::vector<float> &distances,
+                      const _u64 beam_width, const float l_k_ratio,
+                      knowhere::BitsetView bitset_view = nullptr,
+                      QueryStats          *stats = nullptr);
 
-    DISKANN_DLLEXPORT void get_vector_by_ids(
-        const int64_t *ids, const int64_t n, T *const output_data);
+    void get_vector_by_ids(const int64_t *ids, const int64_t n,
+                           T *const output_data);
 
     std::shared_ptr<AlignedFileReader> reader;
 
-    DISKANN_DLLEXPORT _u64 get_num_points() const noexcept;
+    _u64 get_num_points() const noexcept;
 
-    DISKANN_DLLEXPORT _u64 get_data_dim() const noexcept;
+    _u64 get_data_dim() const noexcept;
 
-    DISKANN_DLLEXPORT _u64 get_max_degree() const noexcept;
+    _u64 get_max_degree() const noexcept;
 
-    DISKANN_DLLEXPORT _u32 *get_medoids() const noexcept;
+    _u32 *get_medoids() const noexcept;
 
-    DISKANN_DLLEXPORT size_t get_num_medoids() const noexcept;
+    size_t get_num_medoids() const noexcept;
 
-    DISKANN_DLLEXPORT diskann::Metric get_metric() const noexcept;
+    diskann::Metric get_metric() const noexcept;
 
-    DISKANN_DLLEXPORT _u64 cal_size();
+    _u64 cal_size();
 
    protected:
-    DISKANN_DLLEXPORT void use_medoids_data_as_centroids();
-    DISKANN_DLLEXPORT void setup_thread_data(_u64 nthreads);
-    DISKANN_DLLEXPORT void destroy_thread_data();
-    DISKANN_DLLEXPORT _u64 get_thread_data_size();
+    void use_medoids_data_as_centroids();
+    void setup_thread_data(_u64 nthreads);
+    void destroy_thread_data();
+    _u64 get_thread_data_size();
 
    private:
     // sector # on disk where node_id is present with in the graph part
@@ -168,7 +153,7 @@ namespace diskann {
 
     // Assign the index of ids to its corresponding sector and if it is in
     // cache, write to the output_data
-    DISKANN_DLLEXPORT std::unordered_map<_u64, std::vector<_u64>>
+    std::unordered_map<_u64, std::vector<_u64>>
     get_sectors_layout_and_write_data_from_cache(const int64_t *ids, int64_t n,
                                                  T *output_data);
 
@@ -273,13 +258,5 @@ namespace diskann {
     _u64                           reoreder_data_offset = 0;
 
     mutable knowhere::lru_cache<uint64_t, uint32_t> lru_cache;
-
-#ifdef EXEC_ENV_OLS
-    // Set to a larger value than the actual header to accommodate
-    // any additions we make to the header. This is an outer limit
-    // on how big the header can be.
-    static const int HEADER_SIZE = SECTOR_LEN;
-    char            *getHeaderBytes();
-#endif
   };
 }  // namespace diskann

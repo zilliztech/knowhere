@@ -6,14 +6,8 @@
 #include <sstream>
 #include <mutex>
 
-#ifdef EXEC_ENV_OLS
-#include "IANNIndex.h"
-#include "ANNLogging.h"
-#endif
-
 #include "ann_exception.h"
 
-#ifndef EXEC_ENV_OLS
 namespace ANNIndex {
   enum LogLevel {
     LL_Debug = 0,
@@ -25,21 +19,20 @@ namespace ANNIndex {
     LL_Count
   };
 };
-#endif
 
 namespace diskann {
   class ANNStreamBuf : public std::basic_streambuf<char> {
    public:
-    DISKANN_DLLEXPORT explicit ANNStreamBuf(FILE* fp);
-    DISKANN_DLLEXPORT ~ANNStreamBuf();
+    explicit ANNStreamBuf(FILE* fp);
+    ~ANNStreamBuf();
 
-    DISKANN_DLLEXPORT bool is_open() const {
+    bool is_open() const {
       return true;  // because stdout and stderr are always open.
     }
-    DISKANN_DLLEXPORT void        close();
-    DISKANN_DLLEXPORT virtual int underflow();
-    DISKANN_DLLEXPORT virtual int overflow(int c);
-    DISKANN_DLLEXPORT virtual int sync();
+    void        close();
+    virtual int underflow();
+    virtual int overflow(int c);
+    virtual int sync();
 
    private:
     FILE*              _fp;
@@ -51,25 +44,7 @@ namespace diskann {
     int  flush();
     void logImpl(char* str, int numchars);
 
-// Why the two buffer-sizes? If we are running normally, we are basically
-// interacting with a character output system, so we short-circuit the
-// output process by keeping an empty buffer and writing each character
-// to stdout/stderr. But if we are running in OLS, we have to take all
-// the text that is written to diskann::cout/diskann:cerr, consolidate it
-// and push it out in one-shot, because the OLS infra does not give us
-// character based output. Therefore, we use a larger buffer that is large
-// enough to store the longest message, and continuously add characters
-// to it. When the calling code outputs a std::endl or std::flush, sync()
-// will be called and will output a log level, component name, and the text
-// that has been collected. (sync() is also called if the buffer is full, so
-// overflows/missing text are not a concern).
-// This implies calling code _must_ either print std::endl or std::flush
-// to ensure that the message is written immediately.
-#ifdef EXEC_ENV_OLS
-    static const int BUFFER_SIZE = 1024;
-#else
     static const int BUFFER_SIZE = 0;
-#endif
 
     ANNStreamBuf(const ANNStreamBuf&);
     ANNStreamBuf& operator=(const ANNStreamBuf&);
