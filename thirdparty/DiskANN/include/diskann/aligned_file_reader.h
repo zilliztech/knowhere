@@ -7,47 +7,9 @@
 
 #include <vector>
 #include <atomic>
-
-#ifndef _WINDOWS
 #include <fcntl.h>
 #include <libaio.h>
 #include <unistd.h>
-typedef io_context_t IOContext;
-#else
-#include <Windows.h>
-#include <minwinbase.h>
-
-#ifndef USE_BING_INFRA
-struct IOContext {
-  HANDLE                  fhandle = NULL;
-  HANDLE                  iocp = NULL;
-  std::vector<OVERLAPPED> reqs;
-};
-#else
-#include "IDiskPriorityIO.h"
-#include <atomic>
-// TODO: Caller code is very callous about copying IOContext objects
-// all over the place. MUST verify that it won't cause leaks/logical
-// errors.
-// Because of such callous copying, we have to use ptr->atomic instead
-// of atomic, as atomic is not copyable.
-struct IOContext {
-  enum Status { READ_WAIT = 0, READ_SUCCESS, READ_FAILED, PROCESS_COMPLETE };
-
-  std::shared_ptr<ANNIndex::IDiskPriorityIO>               m_pDiskIO = nullptr;
-  std::shared_ptr<std::vector<ANNIndex::AsyncReadRequest>> m_pRequests;
-  std::shared_ptr<std::vector<Status>>                     m_pRequestsStatus;
-
-  IOContext()
-      : m_pRequestsStatus(new std::vector<Status>()),
-        m_pRequests(new std::vector<ANNIndex::AsyncReadRequest>()) {
-    (*m_pRequestsStatus).reserve(MAX_IO_DEPTH);
-    (*m_pRequests).reserve(MAX_IO_DEPTH);
-  }
-};
-#endif
-
-#endif
 
 #include <malloc.h>
 #include <cstdio>
@@ -55,6 +17,8 @@ struct IOContext {
 #include <thread>
 #include "tsl/robin_map.h"
 #include "utils.h"
+
+typedef io_context_t IOContext;
 
 // NOTE :: all 3 fields must be 512-aligned
 struct AlignedRead {

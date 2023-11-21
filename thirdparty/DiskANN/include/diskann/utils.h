@@ -28,25 +28,14 @@
 #include <malloc.h>
 #endif
 
-#ifdef _WINDOWS
-#include <Windows.h>
-typedef HANDLE FileHandle;
-#else
 #include <unistd.h>
 typedef int FileHandle;
-#endif
 
 #include "logger.h"
 #include "cached_io.h"
 #include "ann_exception.h"
 #include "common_includes.h"
-#include "windows_customizations.h"
 #include "knowhere/comp/thread_pool.h"
-
-#ifdef EXEC_ENV_OLS
-#include "content_buf.h"
-#include "memory_mapped_files.h"
-#endif
 
 // taken from
 // https://github.com/Microsoft/BLAS-on-flash/blob/master/include/utils.h
@@ -72,16 +61,8 @@ typedef int FileHandle;
 
 inline bool file_exists(const std::string& name, bool dirCheck = false) {
   int val;
-#ifndef _WINDOWS
   struct stat buffer;
   val = stat(name.c_str(), &buffer);
-#else
-  // It is the 21st century but Windows API still thinks in 32-bit terms.
-  // Turns out calling stat() on a file > 4GB results in errno = 132
-  // (OVERFLOW). How silly is this!? So calling _stat64()
-  struct _stat64 buffer;
-  val = _stat64(name.c_str(), &buffer);
-#endif
 
   if (val != 0) {
     switch (errno) {
@@ -120,14 +101,10 @@ inline void      open_file_to_write(std::ofstream&     writer,
 
   if (writer.fail()) {
          char buff[1024];
-#ifdef _WINDOWS
-    strerror_s(buff, 1024, errno);
-#else
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-result"
     strerror_r(errno, buff, 1024);
 #pragma GCC diagnostic pop
-#endif
     diskann::cerr << std::string("Failed to open file") + filename +
                          " for write because " + buff
                   << std::endl;
@@ -177,23 +154,15 @@ namespace diskann {
   inline void alloc_aligned(void** ptr, size_t size, size_t align) {
     *ptr = nullptr;
     assert(IS_ALIGNED(size, align));
-#ifndef _WINDOWS
     *ptr = ::aligned_alloc(align, size);
-#else
-    *ptr = ::_aligned_malloc(size, align);  // note the swapped arguments!
-#endif
     assert(*ptr != nullptr);
   }
 
   inline void realloc_aligned(void** ptr, size_t size, size_t align) {
     assert(IS_ALIGNED(size, align));
-#ifdef _WINDOWS
-    *ptr = ::_aligned_realloc(*ptr, size, align);
-#else
     diskann::cerr << "No aligned realloc on GCC. Must malloc and mem_align, "
                      "left it out for now."
                   << std::endl;
-#endif
     assert(*ptr != nullptr);
   }
 
@@ -209,11 +178,7 @@ namespace diskann {
     if (ptr == nullptr) {
       return;
     }
-#ifndef _WINDOWS
     free(ptr);
-#else
-    ::_aligned_free(ptr);
-#endif
     // Note: malloc_trim() combines with jemalloc/tcmalloc may cause crash
     // if (malloc_trim(0) == 0) {
     //   LOG_KNOWHERE_DEBUG_ << "Failed to release free memory from the heap.";
@@ -247,18 +212,6 @@ namespace diskann {
     nrows = nrows_32;
     ncols = ncols_32;
   }
-
-#ifdef EXEC_ENV_OLS
-  inline void get_bin_metadata(MemoryMappedFiles& files,
-                               const std::string& bin_file, size_t& nrows,
-                               size_t& ncols) {
-    diskann::cout << "Getting metadata for file: " << bin_file << std::endl;
-    auto                     fc = files.getContent(bin_file);
-    auto                     cb = ContentBuf((char*) fc._content, fc._size);
-    std::basic_istream<char> reader(&cb);
-    get_bin_metadata_impl(reader, nrows, ncols);
-  }
-#endif
 
   inline void get_bin_metadata(const std::string& bin_file, size_t& nrows,
                                size_t& ncols) {
@@ -309,39 +262,6 @@ namespace diskann {
     data = new T[npts * dim];
     reader.read((char*) data, npts * dim * sizeof(T));
   }
-
-#ifdef EXEC_ENV_OLS
-  template<typename T>
-  inline void load_bin(MemoryMappedFiles& files, const std::string& bin_file,
-                       T*& data, size_t& npts, size_t& dim) {
-    diskann::cout << "Reading bin file " << bin_file.c_str() << "... "
-                  << std::endl;
-
-    auto fc = files.getContent(bin_file);
-
-    uint32_t  t_npts, t_dim;
-    uint32_t* contentAsIntPtr = (uint32_t*) (fc._content);
-    t_npts = *(contentAsIntPtr);
-    t_dim = *(contentAsIntPtr + 1);
-
-    npts = t_npts;
-    dim = t_dim;
-
-    auto actual_file_size = npts * dim * sizeof(T) + 2 * sizeof(uint32_t);
-    if (actual_file_size != fc._size) {
-      std::stringstream stream;
-      stream << "Error. File size mismatch. Actual size is " << fc._size
-             << " while expected size is  " << actual_file_size
-             << " npts = " << npts << " dim = " << dim
-             << " size of <T>= " << sizeof(T) << std::endl;
-      throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__,
-                                  __LINE__);
-    }
-
-    data =
-        (T*) ((char*) fc._content + 2 * sizeof(uint32_t));  // No need to copy!
-  }
-#endif
 
   inline void wait_for_keystroke() {
     int a;
@@ -552,16 +472,6 @@ namespace diskann {
     }
   }
 
-#ifdef EXEC_ENV_OLS
-  template<typename T>
-  inline void load_bin(MemoryMappedFiles& files, const std::string& bin_file,
-                       std::unique_ptr<T[]>& data, size_t& npts, size_t& dim) {
-    T* ptr;
-    load_bin<T>(files, bin_file, ptr, npts, dim);
-    data.reset(ptr);
-  }
-#endif
-
   template<typename T>
   inline void load_bin(const std::string& bin_file, std::unique_ptr<T[]>& data,
                        size_t& npts, size_t& dim) {
@@ -631,26 +541,6 @@ namespace diskann {
     stream << " done." << std::endl;
     LOG_KNOWHERE_DEBUG_ << stream.str();
   }
-
-#ifdef EXEC_ENV_OLS
-  template<typename T>
-  inline void load_aligned_bin(MemoryMappedFiles& files,
-                               const std::string& bin_file, T*& data,
-                               size_t& npts, size_t& dim, size_t& rounded_dim) {
-    try {
-      diskann::cout << "Opening bin file " << bin_file << " ..." << std::flush;
-      FileContent              fc = files.getContent(bin_file);
-      ContentBuf               buf((char*) fc._content, fc._size);
-      std::basic_istream<char> reader(&buf);
-
-      size_t actual_file_size = fc._size;
-      load_aligned_bin_impl(reader, actual_file_size, data, npts, dim,
-                            rounded_dim);
-    } catch (std::system_error& e) {
-      throw FileException(bin_file, e, __FUNCSIG__, __FILE__, __LINE__);
-    }
-  }
-#endif
 
   template<typename T>
   inline void load_aligned_bin(const std::string& bin_file, T*& data,
@@ -946,7 +836,7 @@ namespace diskann {
   void block_convert(std::ofstream& writr, std::ifstream& readr,
                      float* read_buf, _u64 npts, _u64 ndims);
 
-  DISKANN_DLLEXPORT void normalize_data_file(const std::string& inFileName,
+  void normalize_data_file(const std::string& inFileName,
                                              const std::string& outFileName);
 
   inline std::string get_pq_pivots_filename(const std::string& prefix) {
@@ -1064,66 +954,12 @@ inline void normalize(T* arr, size_t dim) {
   }
 }
 
-#ifdef _WINDOWS
-#include <intrin.h>
-#include <Psapi.h>
-
-extern bool AvxSupportedCPU;
-extern bool Avx2SupportedCPU;
-
-inline size_t getMemoryUsage() {
-  PROCESS_MEMORY_COUNTERS_EX pmc;
-  GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*) &pmc,
-                       sizeof(pmc));
-  return pmc.PrivateUsage;
-}
-
-inline std::string getWindowsErrorMessage(DWORD lastError) {
-  char* errorText;
-  FormatMessageA(
-      // use system message tables to retrieve error text
-      FORMAT_MESSAGE_FROM_SYSTEM
-          // allocate buffer on local heap for error text
-          | FORMAT_MESSAGE_ALLOCATE_BUFFER
-          // Important! will fail otherwise, since we're not
-          // (and CANNOT) pass insertion parameters
-          | FORMAT_MESSAGE_IGNORE_INSERTS,
-      NULL,  // unused with FORMAT_MESSAGE_FROM_SYSTEM
-      lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-      (LPSTR) &errorText,  // output
-      0,                   // minimum size for output buffer
-      NULL);               // arguments - see note
-
-  return errorText != nullptr ? std::string(errorText) : std::string();
-}
-
-inline void printProcessMemory(const char* message) {
-  PROCESS_MEMORY_COUNTERS counters;
-  HANDLE                  h = GetCurrentProcess();
-  GetProcessMemoryInfo(h, &counters, sizeof(counters));
-  diskann::cout << message << " [Peaking Working Set size: "
-                << counters.PeakWorkingSetSize * 1.0 / (1024.0 * 1024 * 1024)
-                << "GB Working set size: "
-                << counters.WorkingSetSize * 1.0 / (1024.0 * 1024 * 1024)
-                << "GB Private bytes "
-                << counters.PagefileUsage * 1.0 / (1024 * 1024 * 1024) << "GB]"
-                << std::endl;
-}
-#else
-
 // need to check and change this
 inline bool avx2Supported() {
   return true;
 }
 inline void printProcessMemory(const char*) {
 }
-
-inline size_t
-getMemoryUsage() {  // for non-windows, we have not implemented this function
-  return 0;
-}
-
-#endif
 
 extern bool AvxSupportedCPU;
 extern bool Avx2SupportedCPU;

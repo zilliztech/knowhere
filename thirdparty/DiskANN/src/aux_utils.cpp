@@ -239,41 +239,6 @@ namespace diskann {
     return warmup;
   }
 
-#ifdef EXEC_ENV_OLS
-  template<typename T>
-  T *load_warmup(MemoryMappedFiles &files, const std::string &cache_warmup_file,
-                 uint64_t &warmup_num, uint64_t warmup_dim,
-                 uint64_t warmup_aligned_dim) {
-    T       *warmup = nullptr;
-    uint64_t file_dim, file_aligned_dim;
-
-    if (files.fileExists(cache_warmup_file)) {
-      diskann::load_aligned_bin<T>(files, cache_warmup_file, warmup, warmup_num,
-                                   file_dim, file_aligned_dim);
-      diskann::cout << "In the warmup file: " << cache_warmup_file
-                    << " File dim: " << file_dim
-                    << " File aligned dim: " << file_aligned_dim
-                    << " Expected dim: " << warmup_dim
-                    << " Expected aligned dim: " << warmup_aligned_dim
-                    << std::endl;
-
-      if (file_dim != warmup_dim || file_aligned_dim != warmup_aligned_dim) {
-        std::stringstream stream;
-        stream << "Mismatched dimensions in sample file. file_dim = "
-               << file_dim << " file_aligned_dim: " << file_aligned_dim
-               << " index_dim: " << warmup_dim
-               << " index_aligned_dim: " << warmup_aligned_dim << std::endl;
-        diskann::cerr << stream.str();
-        throw diskann::ANNException(stream.str(), -1);
-      }
-    } else {
-      warmup =
-          generateRandomWarmup<T>(warmup_num, warmup_dim, warmup_aligned_dim);
-    }
-    return warmup;
-  }
-#endif
-
   template<typename T>
   T *load_warmup(const std::string &cache_warmup_file, uint64_t &warmup_num,
                  uint64_t warmup_dim, uint64_t warmup_aligned_dim) {
@@ -1332,62 +1297,51 @@ namespace diskann {
     return 0;
   }
 
-  template DISKANN_DLLEXPORT void create_disk_layout<int8_t>(
+  template void create_disk_layout<int8_t>(const std::string base_file,
+                                           const std::string mem_index_file,
+                                           const std::string output_file,
+                                           const std::string reorder_data_file);
+  template void create_disk_layout<uint8_t>(
       const std::string base_file, const std::string mem_index_file,
       const std::string output_file, const std::string reorder_data_file);
-  template DISKANN_DLLEXPORT void create_disk_layout<uint8_t>(
-      const std::string base_file, const std::string mem_index_file,
-      const std::string output_file, const std::string reorder_data_file);
-  template DISKANN_DLLEXPORT void create_disk_layout<float>(
-      const std::string base_file, const std::string mem_index_file,
-      const std::string output_file, const std::string reorder_data_file);
+  template void create_disk_layout<float>(const std::string base_file,
+                                          const std::string mem_index_file,
+                                          const std::string output_file,
+                                          const std::string reorder_data_file);
 
-  template DISKANN_DLLEXPORT int8_t *load_warmup<int8_t>(
-      const std::string &cache_warmup_file, uint64_t &warmup_num,
-      uint64_t warmup_dim, uint64_t warmup_aligned_dim);
-  template DISKANN_DLLEXPORT uint8_t *load_warmup<uint8_t>(
-      const std::string &cache_warmup_file, uint64_t &warmup_num,
-      uint64_t warmup_dim, uint64_t warmup_aligned_dim);
-  template DISKANN_DLLEXPORT float *load_warmup<float>(
-      const std::string &cache_warmup_file, uint64_t &warmup_num,
-      uint64_t warmup_dim, uint64_t warmup_aligned_dim);
+  template int8_t  *load_warmup<int8_t>(const std::string &cache_warmup_file,
+                                       uint64_t          &warmup_num,
+                                       uint64_t           warmup_dim,
+                                       uint64_t           warmup_aligned_dim);
+  template uint8_t *load_warmup<uint8_t>(const std::string &cache_warmup_file,
+                                         uint64_t          &warmup_num,
+                                         uint64_t           warmup_dim,
+                                         uint64_t           warmup_aligned_dim);
+  template float   *load_warmup<float>(const std::string &cache_warmup_file,
+                                     uint64_t &warmup_num, uint64_t warmup_dim,
+                                     uint64_t warmup_aligned_dim);
 
-#ifdef EXEC_ENV_OLS
-  template DISKANN_DLLEXPORT int8_t *load_warmup<int8_t>(
-      MemoryMappedFiles &files, const std::string &cache_warmup_file,
-      uint64_t &warmup_num, uint64_t warmup_dim, uint64_t warmup_aligned_dim);
-  template DISKANN_DLLEXPORT uint8_t *load_warmup<uint8_t>(
-      MemoryMappedFiles &files, const std::string &cache_warmup_file,
-      uint64_t &warmup_num, uint64_t warmup_dim, uint64_t warmup_aligned_dim);
-  template DISKANN_DLLEXPORT float *load_warmup<float>(
-      MemoryMappedFiles &files, const std::string &cache_warmup_file,
-      uint64_t &warmup_num, uint64_t warmup_dim, uint64_t warmup_aligned_dim);
-#endif
-
-  template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<int8_t>(
+  template uint32_t optimize_beamwidth<int8_t>(
       std::unique_ptr<diskann::PQFlashIndex<int8_t>> &pFlashIndex,
       int8_t *tuning_sample, _u64 tuning_sample_num,
       _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
       uint32_t start_bw);
-  template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<uint8_t>(
+  template uint32_t optimize_beamwidth<uint8_t>(
       std::unique_ptr<diskann::PQFlashIndex<uint8_t>> &pFlashIndex,
       uint8_t *tuning_sample, _u64 tuning_sample_num,
       _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
       uint32_t start_bw);
-  template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<float>(
+  template uint32_t optimize_beamwidth<float>(
       std::unique_ptr<diskann::PQFlashIndex<float>> &pFlashIndex,
       float *tuning_sample, _u64 tuning_sample_num,
       _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
       uint32_t start_bw);
 
-  template DISKANN_DLLEXPORT int build_disk_index<int8_t>(
-      const BuildConfig &config);
-  template DISKANN_DLLEXPORT int build_disk_index<uint8_t>(
-      const BuildConfig &config);
-  template DISKANN_DLLEXPORT int build_disk_index<float>(
-      const BuildConfig &config);
+  template int build_disk_index<int8_t>(const BuildConfig &config);
+  template int build_disk_index<uint8_t>(const BuildConfig &config);
+  template int build_disk_index<float>(const BuildConfig &config);
 
-  template DISKANN_DLLEXPORT std::unique_ptr<diskann::Index<int8_t>>
+  template std::unique_ptr<diskann::Index<int8_t>>
   build_merged_vamana_index<int8_t>(std::string base_file, bool ip_prepared,
                                     diskann::Metric compareMetric, unsigned L,
                                     unsigned R, bool accelerate_build,
@@ -1395,7 +1349,7 @@ namespace diskann {
                                     std::string mem_index_path,
                                     std::string medoids_path,
                                     std::string centroids_file);
-  template DISKANN_DLLEXPORT std::unique_ptr<diskann::Index<float>>
+  template std::unique_ptr<diskann::Index<float>>
   build_merged_vamana_index<float>(std::string base_file, bool ip_prepared,
                                    diskann::Metric compareMetric, unsigned L,
                                    unsigned R, bool accelerate_build,
@@ -1403,7 +1357,7 @@ namespace diskann {
                                    std::string mem_index_path,
                                    std::string medoids_path,
                                    std::string centroids_file);
-  template DISKANN_DLLEXPORT std::unique_ptr<diskann::Index<uint8_t>>
+  template std::unique_ptr<diskann::Index<uint8_t>>
   build_merged_vamana_index<uint8_t>(std::string base_file, bool ip_prepared,
                                      diskann::Metric compareMetric, unsigned L,
                                      unsigned R, bool accelerate_build,
@@ -1412,21 +1366,19 @@ namespace diskann {
                                      std::string medoids_path,
                                      std::string centroids_file);
 
-  template DISKANN_DLLEXPORT void
-  generate_cache_list_from_graph_with_pq<int8_t>(
+  template void generate_cache_list_from_graph_with_pq<int8_t>(
       _u64 num_nodes_to_cache, unsigned R, const diskann::Metric compare_metric,
       const std::string &sample_file, const std::string &pq_pivots_path,
       const std::string &pq_compressed_code_path, const unsigned entry_point,
       const std::vector<std::vector<unsigned>> &graph,
       const std::string                        &cache_file);
-  template DISKANN_DLLEXPORT void generate_cache_list_from_graph_with_pq<float>(
+  template void generate_cache_list_from_graph_with_pq<float>(
       _u64 num_nodes_to_cache, unsigned R, const diskann::Metric compare_metric,
       const std::string &sample_file, const std::string &pq_pivots_path,
       const std::string &pq_compressed_code_path, const unsigned entry_point,
       const std::vector<std::vector<unsigned>> &graph,
       const std::string                        &cache_file);
-  template DISKANN_DLLEXPORT void
-  generate_cache_list_from_graph_with_pq<uint8_t>(
+  template void generate_cache_list_from_graph_with_pq<uint8_t>(
       _u64 num_nodes_to_cache, unsigned R, const diskann::Metric compare_metric,
       const std::string &sample_file, const std::string &pq_pivots_path,
       const std::string &pq_compressed_code_path, const unsigned entry_point,

@@ -13,8 +13,6 @@
 #include "tsl/robin_set.h"
 #include "utils.h"
 
-#include "windows_customizations.h"
-
 template<typename T>
 void gen_random_slice(const std::string base_file,
                       const std::string output_prefix, double sampling_rate);
@@ -59,10 +57,10 @@ int partition_with_ram_budget(const std::string data_file,
                               size_t            graph_degree,
                               const std::string prefix_path, size_t k_base);
 
-DISKANN_DLLEXPORT int generate_pq_pivots(
-    const float *train_data, size_t num_train, unsigned dim,
-    unsigned num_centers, unsigned num_pq_chunks, unsigned max_k_means_reps,
-    std::string pq_pivots_path, bool make_zero_mean = false);
+int generate_pq_pivots(const float *train_data, size_t num_train, unsigned dim,
+                       unsigned num_centers, unsigned num_pq_chunks,
+                       unsigned max_k_means_reps, std::string pq_pivots_path,
+                       bool make_zero_mean = false);
 
 template<typename T>
 int generate_pq_data_from_pivots(const std::string data_file,

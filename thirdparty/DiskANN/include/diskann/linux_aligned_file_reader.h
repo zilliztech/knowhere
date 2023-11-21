@@ -2,7 +2,6 @@
 // Licensed under the MIT license.
 
 #pragma once
-#ifndef _WINDOWS
 
 #include "aligned_file_reader.h"
 #include "aio_context_pool.h"
@@ -40,5 +39,3 @@ class LinuxAlignedFileReader : public AlignedFileReader {
   void get_submitted_req (io_context_t &ctx, size_t n_ops) override;
   void submit_req(io_context_t &ctx, std::vector<AlignedRead> &read_reqs);
 };
-
-#endif

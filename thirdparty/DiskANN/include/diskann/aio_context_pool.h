@@ -1,7 +1,5 @@
 #pragma once
 
-#ifndef _WINDOWS
-
 #include <mutex>
 #include <queue>
 #include <libaio.h>
@@ -134,5 +132,3 @@ class AioContextPool {
     }
   }
 };
-
-#endif

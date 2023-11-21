@@ -7,9 +7,6 @@
 #include <cstdint>
 #include <fstream>
 #include <functional>
-#ifdef _WINDOWS
-#include <numeric>
-#endif
 #include <string>
 #include <vector>
 

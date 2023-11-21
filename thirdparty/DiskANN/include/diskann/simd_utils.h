@@ -1,14 +1,7 @@
 #pragma once
-#if defined(_WINDOWS)
+#if defined(__x86_64__)
 #include <immintrin.h>
-#include <smmintrin.h>
-#include <tmmintrin.h>
-#include <intrin.h>
-#elif defined(__x86_64__)
-#include <immintrin.h>
-#endif
 
-#if defined(_WINDOWS) || defined(__x86_64__)
 namespace diskann {
   static inline __m256 _mm256_mul_epi8(__m256i X) {
     __m256i zero = _mm256_setzero_si256();

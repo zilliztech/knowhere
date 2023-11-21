@@ -65,14 +65,11 @@ namespace diskann {
     }
   }
 
-  template DISKANN_DLLEXPORT DISTFUN<float> get_distance_function(
-      diskann::Metric m);
-  template DISKANN_DLLEXPORT DISTFUN<uint8_t> get_distance_function(
-      diskann::Metric m);
-  template DISKANN_DLLEXPORT DISTFUN<int8_t> get_distance_function(
-      diskann::Metric m);
+  template DISTFUN<float>   get_distance_function(diskann::Metric m);
+  template DISTFUN<uint8_t> get_distance_function(diskann::Metric m);
+  template DISTFUN<int8_t>  get_distance_function(diskann::Metric m);
 
-  template DISKANN_DLLEXPORT float norm_l2sqr(const float*, size_t);
-  template DISKANN_DLLEXPORT float norm_l2sqr(const uint8_t*, size_t);
-  template DISKANN_DLLEXPORT float norm_l2sqr(const int8_t*, size_t);
+  template float norm_l2sqr(const float*, size_t);
+  template float norm_l2sqr(const uint8_t*, size_t);
+  template float norm_l2sqr(const int8_t*, size_t);
 }  // namespace diskann
