@@ -383,7 +383,6 @@ BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_d
     futs.reserve(nq);
     for (int i = 0; i < nq; ++i) {
         futs.emplace_back(pool->push([&, index = i] {
-            ThreadPool::ScopedOmpSetter setter(1);
             auto cur_labels = labels + topk * index;
             auto cur_distances = distances + topk * index;
             std::fill(cur_labels, cur_labels + topk, -1);
@@ -400,7 +399,7 @@ BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_d
             for (size_t j = 0; j < len; ++j) {
                 query[cur_indices[j]] = cur_data[j];
             }
-            sparse::MinMaxHeap<float> heap(topk);
+            sparse::MaxMinHeap<float> heap(topk);
             for (size_t j = 0; j < rows; ++j) {
                 if (!bitset.empty() && bitset.test(j)) {
                     continue;
@@ -413,13 +412,13 @@ BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_d
                     }
                 }
                 if (dist > 0) {
-                    heap.push(j, -dist);
+                    heap.push(j, dist);
                 }
             }
             int result_size = heap.size();
             for (int64_t j = result_size - 1; j >= 0; --j) {
                 cur_labels[j] = heap.top().id;
-                cur_distances[j] = -heap.top().distance;
+                cur_distances[j] = heap.top().distance;
                 heap.pop();
             }
             return Status::success;

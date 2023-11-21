@@ -179,25 +179,27 @@ struct Neighbor {
     }
 };
 
-// when pushing new elements into a MinMaxHeap, only the `capacity` smallest elements are kept.
-// pop()/top() returns the largest element out of those `capacity` smallest elements.
+// When pushing new elements into a MaxMinHeap, only the `capacity` largest elements are kept.
+// pop()/top() returns the smallest element out of those `capacity` largest elements.
 template <typename T = float>
-class MinMaxHeap {
+class MaxMinHeap {
  public:
-    explicit MinMaxHeap(int capacity) : capacity_(capacity), pool_(capacity) {
+    explicit MaxMinHeap(int capacity) : capacity_(capacity), pool_(capacity) {
     }
     void
     push(table_t id, T dist) {
         if (size_ < capacity_) {
             pool_[size_] = {id, dist};
-            std::push_heap(pool_.begin(), pool_.begin() + ++size_);
-        } else if (dist < pool_[0].distance) {
+            size_ += 1;
+            std::push_heap(pool_.begin(), pool_.begin() + size_, std::greater<Neighbor<T>>());
+        } else if (dist > pool_[0].distance) {
             sift_down(id, dist);
         }
     }
     table_t
     pop() {
-        std::pop_heap(pool_.begin(), pool_.begin() + size_--);
+        std::pop_heap(pool_.begin(), pool_.begin() + size_, std::greater<Neighbor<T>>());
+        size_ -= 1;
         return pool_[size_].id;
     }
     [[nodiscard]] size_t
@@ -224,10 +226,10 @@ class MinMaxHeap {
         for (; 2 * i + 1 < size_;) {
             size_t j = i;
             size_t l = 2 * i + 1, r = 2 * i + 2;
-            if (pool_[l].distance > dist) {
+            if (pool_[l].distance < dist) {
                 j = l;
             }
-            if (r < size_ && pool_[r].distance > std::max(pool_[l].distance, dist)) {
+            if (r < size_ && pool_[r].distance < std::min(pool_[l].distance, dist)) {
                 j = r;
             }
             if (i == j) {
@@ -241,7 +243,7 @@ class MinMaxHeap {
 
     size_t size_ = 0, capacity_;
     std::vector<Neighbor<T>> pool_;
-};  // class MinMaxHeap
+};  // class MaxMinHeap
 
 }  // namespace sparse
 
