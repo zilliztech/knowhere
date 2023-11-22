@@ -233,6 +233,7 @@ GenTestVersionList() {
     return GENERATE(as<int32_t>{}, knowhere::Version::GetCurrentVersion().VersionNumber());
 }
 
+// Generate a sparse dataset with given sparsity. The indices of each row may be not ordered.
 template <typename ValueT = float, typename IndPtrT = int64_t, typename IndicesT = int32_t, typename ShapeT = int64_t>
 inline knowhere::DataSetPtr
 GenSparseDataSet(ShapeT rows, ShapeT cols, float sparsity, int seed = 42) {

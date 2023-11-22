@@ -100,7 +100,7 @@ namespace sparse {
 // type used to represent the id of a vector in the index interface.
 // this is same as other index types.
 using label_t = int64_t;
-// type used to represent the id of a vector inside the index.
+// type used to represent the id, indices and indptr of a vector inside the index.
 using table_t = uint32_t;
 
 /**

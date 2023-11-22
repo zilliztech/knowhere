@@ -25,10 +25,11 @@ namespace knowhere::sparse {
 
 // Not thread safe, concurrent access must be protected. Concurrent read operations are allowed.
 // TODO: make class thread safe so we can perform concurrent add/search.
-template <typename T, typename IndPtrT = int64_t, typename IndicesT = int32_t, typename ShapeT = int64_t>
+template <typename T>
 class InvertedIndex {
  public:
     explicit InvertedIndex() {
+        indptr_.push_back(0);
     }
 
     void
@@ -52,8 +53,8 @@ class InvertedIndex {
             writeBinaryPOD(writer, indptr_[i]);
         }
         for (size_t i = 0; i < nnz_; ++i) {
-            writeBinaryPOD(writer, indices_[i]);
-            writeBinaryPOD(writer, data_[i]);
+            writeBinaryPOD(writer, data_[i].first);
+            writeBinaryPOD(writer, data_[i].second);
         }
         for (size_t i = 0; i < n_cols_; ++i) {
             auto lut = inverted_lut_[i];
@@ -82,11 +83,10 @@ class InvertedIndex {
         for (size_t i = 0; i <= n_rows_; ++i) {
             readBinaryPOD(reader, indptr_[i]);
         }
-        indices_.resize(nnz_);
         data_.resize(nnz_);
         for (size_t i = 0; i < nnz_; ++i) {
-            readBinaryPOD(reader, indices_[i]);
-            readBinaryPOD(reader, data_[i]);
+            readBinaryPOD(reader, data_[i].first);
+            readBinaryPOD(reader, data_[i].second);
         }
         inverted_lut_.resize(n_cols_);
         for (size_t i = 0; i < n_cols_; ++i) {
@@ -107,6 +107,7 @@ class InvertedIndex {
         return Status::success;
     }
 
+    template <typename IndPtrT = int64_t, typename IndicesT = int32_t, typename ShapeT = int64_t>
     Status
     Add(const void* csr_matrix) {
         size_t rows, cols, nnz;
@@ -115,17 +116,21 @@ class InvertedIndex {
         const T* data;
         parse_csr_matrix(csr_matrix, rows, cols, nnz, indptr, indices, data);
 
-        for (size_t i = 0; i < rows + 1; ++i) {
-            indptr_.push_back(nnz_ + indptr[i]);
-        }
-
         // TODO: benchmark performance: for growing segments with lots of small
         // csr_matrix to add, it may be better to rely on the vector's internal
         // memory management to avoid frequent reallocations caused by reserve.
-        indices_.reserve(nnz_ + nnz);
-        indices_.insert(indices_.end(), indices, indices + nnz);
         data_.reserve(nnz_ + nnz);
-        data_.insert(data_.end(), data, data + nnz);
+        for (size_t i = 0; i < nnz; ++i) {
+            data_.emplace_back(indices[i], data[i]);
+        }
+
+        for (size_t i = 1; i < rows + 1; ++i) {
+            indptr_.push_back(nnz_ + indptr[i]);
+            auto start = *(indptr_.rbegin() + 1);
+            auto end = *(indptr_.rbegin());
+            // make sure each row in data_ is sorted by index
+            std::sort(data_.begin() + start, data_.begin() + end);
+        }
 
         if (n_cols_ < cols) {
             n_cols_ = cols;
@@ -137,9 +142,10 @@ class InvertedIndex {
 
         for (size_t i = n_rows_; i < n_rows_ + rows; ++i) {
             for (IndPtrT j = indptr_[i]; j < indptr_[i + 1]; ++j) {
-                inverted_lut_[indices_[j]].emplace_back(i, data_[j]);
+                auto [idx, val] = data_[j];
+                inverted_lut_[idx].emplace_back(i, val);
                 if (use_wand_) {
-                    max_in_dim_[indices_[j]] = std::max(max_in_dim_[indices_[j]], data_[j]);
+                    max_in_dim_[idx] = std::max(max_in_dim_[idx], val);
                 }
             }
         }
@@ -149,6 +155,7 @@ class InvertedIndex {
         return Status::success;
     }
 
+    template <typename IndPtrT = int64_t, typename IndicesT = int32_t, typename ShapeT = int64_t>
     void
     Search(const void* query_csr_matrix, int64_t q_id, size_t k, float drop_ratio_search, float* distances,
            label_t* labels, size_t refine_factor, const BitsetView& bitset) const {
@@ -169,33 +176,27 @@ class InvertedIndex {
             refine_factor = 1;
         }
 
-        std::vector<std::pair<IndicesT, T>> q_vec(len);
+        std::vector<std::pair<table_t, T>> q_vec(len);
         for (size_t i = 0; i < len; ++i) {
             q_vec[i] = std::make_pair(indices[i], data[i]);
         }
         std::sort(q_vec.begin(), q_vec.end(),
                   [](const auto& lhs, const auto& rhs) { return std::abs(lhs.second) > std::abs(rhs.second); });
-        while (!q_vec.empty() && q_vec[0].second * drop_ratio_search > q_vec.back().second) {
-            q_vec.pop_back();
-        }
 
         MaxMinHeap<T> heap(k * refine_factor);
         if (!use_wand_) {
-            search_brute_force(q_vec, heap, bitset);
+            search_brute_force(q_vec, drop_ratio_search, heap, bitset);
         } else {
-            search_wand(q_vec, heap, bitset);
+            search_wand(q_vec, drop_ratio_search, heap, bitset);
         }
 
         // no refinement needed
         if (refine_factor == 1) {
             collect_result(heap, distances, labels);
         } else {
-            // TODO tweak the map buckets number for best performance
-            std::unordered_map<IndicesT, T> q_map(4 * len);
-            for (size_t i = 0; i < len; ++i) {
-                q_map[indices[i]] = data[i];
-            }
-            refine_and_collect(q_map, heap, k, distances, labels);
+            std::sort(q_vec.begin(), q_vec.end(),
+                      [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
+            refine_and_collect(q_vec, heap, k, distances, labels);
         }
     }
 
@@ -203,9 +204,8 @@ class InvertedIndex {
     size() const {
         size_t res = 0;
         res += sizeof(*this);
-        res += sizeof(T) * data_.capacity();
-        res += sizeof(IndicesT) * indices_.capacity();
-        res += sizeof(IndPtrT) * indptr_.capacity();
+        res += sizeof(std::pair<table_t, T>) * data_.capacity();
+        res += sizeof(table_t) * indptr_.capacity();
         res += sizeof(std::vector<Neighbor<T>>) * inverted_lut_.capacity();
         for (auto& lut : inverted_lut_) {
             res += sizeof(Neighbor<T>) * lut.capacity();
@@ -228,14 +228,21 @@ class InvertedIndex {
 
  private:
     [[nodiscard]] float
-    dot_product(const std::unordered_map<IndicesT, T>& q_map, table_t u) const {
+    dot_product(const std::vector<std::pair<table_t, T>>& q_vec, table_t u) const {
         float res = 0.0f;
-        for (IndPtrT i = indptr_[u]; i < indptr_[u + 1]; ++i) {
-            auto idx = indices_[i];
-            float val = float(data_[i]);
-            auto it = q_map.find(idx);
-            if (it != q_map.end()) {
-                res += val * it->second;
+        table_t pu = indptr_[u];
+        table_t pq = 0;
+        while (pu < indptr_[u + 1] && pq < q_vec.size()) {
+            auto [idx, val] = data_[pu];
+            auto [q_idx, q_val] = q_vec[pq];
+            if (idx == q_idx) {
+                res += float(val) * float(q_val);
+                pu++;
+                pq++;
+            } else if (idx < q_idx) {
+                pu++;
+            } else {
+                pq++;
             }
         }
         return res;
@@ -243,13 +250,16 @@ class InvertedIndex {
 
     // find the top-k candidates using brute force search, k as specified by the capacity of the heap.
     void
-    search_brute_force(const std::vector<std::pair<IndicesT, T>>& q_vec, MaxMinHeap<T>& heap,
+    search_brute_force(const std::vector<std::pair<table_t, T>>& q_vec, float drop_ratio, MaxMinHeap<T>& heap,
                        const BitsetView& bitset) const {
         std::vector<float> scores(n_rows_, 0.0f);
         for (auto [i, v] : q_vec) {
             for (size_t j = 0; j < inverted_lut_[i].size(); j++) {
                 auto [idx, val] = inverted_lut_[i][j];
                 scores[idx] += v * float(val);
+            }
+            if (q_vec[0].second * drop_ratio > v) {
+                break;
             }
         }
         for (size_t i = 0; i < n_rows_; ++i) {
@@ -322,11 +332,16 @@ class InvertedIndex {
     };  // class Cursor
 
     void
-    search_wand(std::vector<std::pair<IndicesT, T>>& q_vec, MaxMinHeap<T>& heap, const BitsetView& bitset) const {
+    search_wand(std::vector<std::pair<table_t, T>>& q_vec, float drop_ratio, MaxMinHeap<T>& heap,
+                const BitsetView& bitset) const {
         auto q_dim = q_vec.size();
         std::vector<std::shared_ptr<Cursor>> cursors(q_dim);
         for (size_t i = 0; i < q_dim; ++i) {
             auto [idx, val] = q_vec[i];
+            if (q_vec[0].second * drop_ratio > val) {
+                cursors.resize(i);
+                break;
+            }
             cursors[i] = std::make_shared<Cursor>(inverted_lut_[idx], n_rows_, max_in_dim_[idx] * val, val, bitset);
         }
         auto sort_cursors = [&cursors] {
@@ -380,7 +395,7 @@ class InvertedIndex {
     }
 
     void
-    refine_and_collect(const std::unordered_map<IndicesT, T>& q_map, MaxMinHeap<T>& inaccurate, size_t k,
+    refine_and_collect(const std::vector<std::pair<table_t, T>>& q_vec, MaxMinHeap<T>& inaccurate, size_t k,
                        float* distances, label_t* labels) const {
         std::priority_queue<Neighbor<T>, std::vector<Neighbor<T>>, std::greater<Neighbor<T>>> heap;
 
@@ -388,7 +403,7 @@ class InvertedIndex {
             auto [u, d] = inaccurate.top();
             inaccurate.pop();
 
-            auto dist_acc = dot_product(q_map, u);
+            auto dist_acc = dot_product(q_vec, u);
             if (heap.size() < k) {
                 heap.emplace(u, dist_acc);
             } else if (heap.top().distance < dist_acc) {
@@ -415,9 +430,8 @@ class InvertedIndex {
     size_t nnz_ = 0;
     std::vector<std::vector<Neighbor<T>>> inverted_lut_;
 
-    std::vector<T> data_;
-    std::vector<IndicesT> indices_;
-    std::vector<IndPtrT> indptr_;
+    std::vector<std::pair<table_t, T>> data_;
+    std::vector<table_t> indptr_;
 
     bool use_wand_ = false;
     float drop_ratio_build_ = 0;

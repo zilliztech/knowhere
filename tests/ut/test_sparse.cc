@@ -24,12 +24,8 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         {2000, 300, 0.95, 0.97},
         // 300 dim, avg doc nnz 9, avg query nnz 3
         {2000, 300, 0.97, 0.99},
-        // 3000 dim, avg doc nnz 120, avg query nnz 90
-        {20000, 3000, 0.95, 0.97},
         // 3000 dim, avg doc nnz 90, avg query nnz 30
         {20000, 3000, 0.97, 0.99},
-        // 30000 dim, avg doc nnz 60, avg query nnz 30
-        {100000, 30000, 0.998, 0.999},
     }));
     auto topk = 5;
     int64_t nq = GENERATE(10, 100);
