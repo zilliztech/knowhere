@@ -290,9 +290,9 @@ IndexDiskANN<T>::Prepare(const Config& config) {
         KNOWHERE_THROW_MSG("Failed to generate cache, num_nodes_to_cache is larger than 1/3 of the total data number.");
     }
     if (num_nodes_to_cache > 0) {
-        std::vector<uint32_t> node_list;
         LOG_KNOWHERE_INFO_ << "Caching " << num_nodes_to_cache << " sample nodes around medoid(s).";
         if (prep_conf.use_bfs_cache) {
+            std::vector<uint32_t> node_list;
             auto gen_cache_successful = TryDiskANNCall<bool>([&]() -> bool {
                 pq_flash_index_->cache_bfs_levels(num_nodes_to_cache, node_list);
                 return true;
@@ -302,29 +302,28 @@ IndexDiskANN<T>::Prepare(const Config& config) {
                 LOG_KNOWHERE_ERROR_ << "Failed to generate bfs cache for DiskANN.";
                 return false;
             }
-        } else {
-            auto gen_cache_successful = TryDiskANNCall<bool>([&]() -> bool {
-                pq_flash_index_->generate_cache_list_from_sample_queries(warmup_query_file, 15, 6, num_nodes_to_cache,
-                                                                         prep_conf.num_threads, node_list);
+            auto load_cache_successful = TryDiskANNCall<bool>([&]() -> bool {
+                pq_flash_index_->load_cache_list(node_list);
                 return true;
             });
 
-            if (!gen_cache_successful.has_value()) {
-                LOG_KNOWHERE_ERROR_ << "Failed to generate cache from sample queries for DiskANN.";
+            if (!load_cache_successful.has_value()) {
+                LOG_KNOWHERE_ERROR_ << "Failed to load cache for DiskANN.";
                 return false;
             }
-        }
-        auto load_cache_successful = TryDiskANNCall<bool>([&]() -> bool {
-            pq_flash_index_->load_cache_list(node_list);
-            return true;
-        });
-
-        if (!load_cache_successful.has_value()) {
-            LOG_KNOWHERE_ERROR_ << "Failed to load cache for DiskANN.";
-            return false;
+        } else {
+            pq_flash_index_->set_async_cache_flag(true);
+            pool_->push([&, cache_num = num_nodes_to_cache,
+                        sample_nodes_file = warmup_query_file]() {
+                try {
+                    pq_flash_index_->generate_cache_list_from_sample_queries(
+                        sample_nodes_file, 15, 6, cache_num);
+                } catch (const std::exception& e) {
+                    LOG_KNOWHERE_ERROR_ << "DiskANN Exception: " << e.what();
+                }
+            });
         }
     }
-
     // warmup
     if (prep_conf.warm_up) {
         LOG_KNOWHERE_DEBUG_ << "Warming up.";
