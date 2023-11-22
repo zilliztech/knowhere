@@ -33,27 +33,40 @@ using SQuantizer = ScalarQuantizer::SQuantizer;
  */
 
 struct Codec8bit {
-    static void encode_component(float x, uint8_t* code, int i) {
+    static FAISS_ALWAYS_INLINE void encode_component(
+            float x,
+            uint8_t* code,
+            int i) {
         code[i] = (int)(255 * x);
     }
 
-    static float decode_component(const uint8_t* code, int i) {
+    static FAISS_ALWAYS_INLINE float decode_component(
+            const uint8_t* code,
+            int i) {
         return (code[i] + 0.5f) / 255.0f;
     }
 };
 
 struct Codec4bit {
-    static void encode_component(float x, uint8_t* code, int i) {
+    static FAISS_ALWAYS_INLINE void encode_component(
+            float x,
+            uint8_t* code,
+            int i) {
         code[i / 2] |= (int)(x * 15.0) << ((i & 1) << 2);
     }
 
-    static float decode_component(const uint8_t* code, int i) {
+    static FAISS_ALWAYS_INLINE float decode_component(
+            const uint8_t* code,
+            int i) {
         return (((code[i / 2] >> ((i & 1) << 2)) & 0xf) + 0.5f) / 15.0f;
     }
 };
 
 struct Codec6bit {
-    static void encode_component(float x, uint8_t* code, int i) {
+    static FAISS_ALWAYS_INLINE void encode_component(
+            float x,
+            uint8_t* code,
+            int i) {
         int bits = (int)(x * 63.0);
         code += (i >> 2) * 3;
         switch (i & 3) {
@@ -74,7 +87,9 @@ struct Codec6bit {
         }
     }
 
-    static float decode_component(const uint8_t* code, int i) {
+    static FAISS_ALWAYS_INLINE float decode_component(
+            const uint8_t* code,
+            int i) {
         uint8_t bits = 0x00;
         code += (i >> 2) * 3;
         switch (i & 3) {
@@ -136,7 +151,8 @@ struct QuantizerTemplate<Codec, true, 1> : SQuantizer {
         }
     }
 
-    float reconstruct_component(const uint8_t* code, int i) const {
+    FAISS_ALWAYS_INLINE float reconstruct_component(const uint8_t* code, int i)
+            const {
         float xi = Codec::decode_component(code, i);
         return vmin + xi * vdiff;
     }
@@ -173,7 +189,8 @@ struct QuantizerTemplate<Codec, false, 1> : SQuantizer {
         }
     }
 
-    float reconstruct_component(const uint8_t* code, int i) const {
+    FAISS_ALWAYS_INLINE float reconstruct_component(const uint8_t* code, int i)
+            const {
         float xi = Codec::decode_component(code, i);
         return vmin[i] + xi * vdiff[i];
     }
@@ -204,7 +221,8 @@ struct QuantizerFP16<1> : SQuantizer {
         }
     }
 
-    float reconstruct_component(const uint8_t* code, int i) const {
+    FAISS_ALWAYS_INLINE float reconstruct_component(const uint8_t* code, int i)
+            const {
         return decode_fp16(((uint16_t*)code)[i]);
     }
 };
@@ -235,7 +253,8 @@ struct Quantizer8bitDirect<1> : SQuantizer {
         }
     }
 
-    float reconstruct_component(const uint8_t* code, int i) const {
+    FAISS_ALWAYS_INLINE float reconstruct_component(const uint8_t* code, int i)
+            const {
         return code[i];
     }
 };
@@ -291,22 +310,22 @@ struct SimilarityL2<1> {
 
     float accu;
 
-    void begin() {
+    FAISS_ALWAYS_INLINE void begin() {
         accu = 0;
         yi = y;
     }
 
-    void add_component(float x) {
+    FAISS_ALWAYS_INLINE void add_component(float x) {
         float tmp = *yi++ - x;
         accu += tmp * tmp;
     }
 
-    void add_component_2(float x1, float x2) {
+    FAISS_ALWAYS_INLINE void add_component_2(float x1, float x2) {
         float tmp = x1 - x2;
         accu += tmp * tmp;
     }
 
-    float result() {
+    FAISS_ALWAYS_INLINE float result() {
         return accu;
     }
 };
@@ -324,20 +343,20 @@ struct SimilarityIP<1> {
 
     explicit SimilarityIP(const float* y) : y(y) {}
 
-    void begin() {
+    FAISS_ALWAYS_INLINE void begin() {
         accu = 0;
         yi = y;
     }
 
-    void add_component(float x) {
+    FAISS_ALWAYS_INLINE void add_component(float x) {
         accu += *yi++ * x;
     }
 
-    void add_component_2(float x1, float x2) {
+    FAISS_ALWAYS_INLINE void add_component_2(float x1, float x2) {
         accu += x1 * x2;
     }
 
-    float result() {
+    FAISS_ALWAYS_INLINE float result() {
         return accu;
     }
 };
