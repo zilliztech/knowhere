@@ -31,7 +31,6 @@
 #include "diskann/partition_and_pq.h"
 #include "diskann/timer.h"
 #include "diskann/utils.h"
-#include "diskann/windows_customizations.h"
 #include "diskann/ann_exception.h"
 #if defined(RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && \
     defined(DISKANN_BUILD)
@@ -489,10 +488,6 @@ namespace diskann {
                         << std::endl;
   }
 
-#ifdef EXEC_ENV_OLS
-  template<typename T, typename TagT>
-  size_t Index<T, TagT>::load_tags(AlignedFileReader &reader) {
-#else
   template<typename T, typename TagT>
   size_t Index<T, TagT>::load_tags(const std::string tag_filename) {
     if (_enable_tags && !file_exists(tag_filename)) {
@@ -500,7 +495,6 @@ namespace diskann {
       throw diskann::ANNException("Tag file provided does not exist!", -1,
                                   __FUNCSIG__, __FILE__, __LINE__);
     }
-#endif
     if (!_enable_tags) {
       diskann::cout << "Tags not loaded as tags not enabled." << std::endl;
       return 0;
@@ -508,12 +502,8 @@ namespace diskann {
 
     size_t file_dim, file_num_points;
     TagT  *tag_data;
-#ifdef EXEC_ENV_OLS
-    load_bin<TagT>(reader, tag_data, file_num_points, file_dim);
-#else
     load_bin<TagT>(std::string(tag_filename), tag_data, file_num_points,
                    file_dim);
-#endif
 
     if (file_dim != 1) {
       std::stringstream stream;
@@ -540,15 +530,8 @@ namespace diskann {
   }
 
   template<typename T, typename TagT>
-#ifdef EXEC_ENV_OLS
-  size_t Index<T, TagT>::load_data(AlignedFileReader &reader) {
-#else
   size_t Index<T, TagT>::load_data(std::string filename) {
-#endif
     size_t file_dim, file_num_points;
-#ifdef EXEC_ENV_OLS
-    diskann::get_bin_metadata(reader, file_num_points, file_dim);
-#else
     if (!file_exists(filename)) {
       std::stringstream stream;
       stream << "ERROR: data file " << filename << " does not exist."
@@ -559,7 +542,6 @@ namespace diskann {
                                   __LINE__);
     }
     diskann::get_bin_metadata(filename, file_num_points, file_dim);
-#endif
 
     // since we are loading a new dataset, _empty_slots must be cleared
     _empty_slots.clear();
@@ -582,31 +564,17 @@ namespace diskann {
       resize(file_num_points);
     }
 
-#ifdef EXEC_ENV_OLS
-    copy_aligned_data_from_file<T>(reader, _data, file_num_points, file_dim,
-                                   _aligned_dim);
-#else
     copy_aligned_data_from_file<T>(std::string(filename), _data,
                                    file_num_points, file_dim, _aligned_dim);
-#endif
     return file_num_points;
   }
 
-#ifdef EXEC_ENV_OLS
-  template<typename T, typename TagT>
-  size_t Index<T, TagT>::load_delete_set(AlignedFileReader &reader) {
-#else
   template<typename T, typename TagT>
   size_t Index<T, TagT>::load_delete_set(const std::string &filename) {
-#endif
     std::unique_ptr<_u32[]> delete_list;
     _u64                    npts, ndim;
 
-#ifdef EXEC_ENV_OLS
-    diskann::load_bin<_u32>(reader, delete_list, npts, ndim);
-#else
     diskann::load_bin<_u32>(filename, delete_list, npts, ndim);
-#endif
     assert(ndim == 1);
     for (uint32_t i = 0; i < npts; i++) {
       _delete_set.insert(delete_list[i]);
@@ -617,20 +585,14 @@ namespace diskann {
   // load the index from file and update the width (max_degree), ep (navigating
   // node id), and _final_graph (adjacency list)
   template<typename T, typename TagT>
-#ifdef EXEC_ENV_OLS
-  void Index<T, TagT>::load(AlignedFileReader &reader, uint32_t num_threads,
-                            uint32_t search_l) {
-#else
   void Index<T, TagT>::load(const char *filename, uint32_t num_threads,
                             uint32_t search_l) {
-#endif
     _change_lock.lock();
 
     size_t tags_file_num_pts = 0, graph_num_pts = 0, data_file_num_pts = 0;
 
     if (!_save_as_one_file) {
 // For DLVS Store, we will not support saving the index in multiple files.
-#ifndef EXEC_ENV_OLS
       std::string data_file = std::string(filename) + ".data";
       std::string tags_file = std::string(filename) + ".tags";
       std::string delete_set_file = std::string(filename) + ".del";
@@ -643,8 +605,6 @@ namespace diskann {
         tags_file_num_pts = load_tags(tags_file);
       }
       graph_num_pts = load_graph(graph_file, data_file_num_pts);
-#endif
-
     } else {
       diskann::cout << "Single index file saving/loading support not yet "
                        "enabled. Not loading the index."
@@ -694,31 +654,12 @@ namespace diskann {
     _change_lock.unlock();
   }
 
-#ifdef EXEC_ENV_OLS
-  template<typename T, typename TagT>
-  size_t Index<T, TagT>::load_graph(AlignedFileReader &reader,
-                                    size_t             expected_num_points) {
-#else
 
   template<typename T, typename TagT>
   size_t Index<T, TagT>::load_graph(std::string filename,
                                     size_t      expected_num_points) {
-#endif
     size_t expected_file_size;
     _u64   file_frozen_pts;
-
-#ifdef EXEC_ENV_OLS
-    int header_size = 2 * sizeof(_u64) + 2 * sizeof(unsigned);
-    std::unique_ptr<char[]> header = std::make_unique<char[]>(header_size);
-    read_array(reader, header.get(), header_size);
-
-    expected_file_size = *((_u64 *) header.get());
-    _width = *((_u32 *) (header.get() + sizeof(_u64)));
-    _ep = *((_u32 *) (header.get() + sizeof(_u64) + sizeof(unsigned)));
-    file_frozen_pts = *((_u64 *) (header.get() + sizeof(_u64) +
-                                  sizeof(unsigned) + sizeof(unsigned)));
-#else
-
     _u64 file_offset = 0;  // will need this for single file format support
     std::ifstream in(filename, std::ios::binary);
     in.seekg(file_offset, in.beg);
@@ -729,7 +670,6 @@ namespace diskann {
     _u64 vamana_metadata_size =
         sizeof(_u64) + sizeof(_u32) + sizeof(_u32) + sizeof(_u64);
 
-#endif
     diskann::cout << "From graph header, expected_file_size: "
                   << expected_file_size << ", _width: " << _width
                   << ", _ep: " << _ep
@@ -752,11 +692,7 @@ namespace diskann {
                                   __LINE__);
     }
 
-#ifdef EXEC_ENV_OLS
-    diskann::cout << "Loading vamana graph from reader..." << std::flush;
-#else
     diskann::cout << "Loading vamana graph " << filename << "..." << std::flush;
-#endif
 
     // Sanity check. In case the user gave us fewer points as max_points than
     // the number
@@ -769,29 +705,6 @@ namespace diskann {
       _final_graph.resize(expected_num_points + _num_frozen_pts);
       _max_points = expected_num_points;
     }
-#ifdef EXEC_ENV_OLS
-    _u32 nodes_read = 0;
-    _u64 cc = 0;
-    _u64 graph_offset = file_offset + header_size;
-    while (nodes_read < expected_num_points) {
-      _u32 k;
-      read_value(reader, k, graph_offset);
-      graph_offset += sizeof(_u32);
-      std::vector<_u32> tmp(k);
-      tmp.reserve(k);
-      read_array(reader, tmp.data(), k, graph_offset);
-      graph_offset += k * sizeof(_u32);
-      cc += k;
-      _final_graph[nodes_read].swap(tmp);
-      nodes_read++;
-      if (nodes_read % 1000000 == 0) {
-        diskann::cout << "." << std::flush;
-      }
-      if (k > _max_range_of_loaded_graph) {
-        _max_range_of_loaded_graph = k;
-      }
-    }
-#else
 
     size_t   bytes_read = vamana_metadata_size;
     size_t   cc = 0;
@@ -818,7 +731,6 @@ namespace diskann {
         _max_range_of_loaded_graph = k;
       }
     }
-#endif
 
     diskann::cout << "done. Index has " << nodes_read << " nodes and " << cc
                   << " out-edges, _ep is set to " << _ep << std::endl;
@@ -2047,13 +1959,9 @@ namespace diskann {
             (IdType) it.id;  // safe because our indices are always uint32_t and
                              // IDType will be uint32_t or uint64_t
         if (distances != nullptr) {
-#ifdef EXEC_ENV_OLS
-          distances[pos] = it.distance;  // DLVS expects negative distances
-#else
           distances[pos] = _dist_metric == diskann::Metric::INNER_PRODUCT
                                ? -1 * it.distance
                                : it.distance;
-#endif
         }
         pos++;
       }
@@ -2099,12 +2007,8 @@ namespace diskann {
         }
 
         if (distances != nullptr) {
-#ifdef EXEC_ENV_OLS
-          distances[pos] = dist_interim[i];  // DLVS expects negative distances
-#else
           distances[pos] = _dist_metric == INNER_PRODUCT ? -1 * dist_interim[i]
                                                          : dist_interim[i];
-#endif
         }
         pos++;
         // in the weird case that res_vectors.size() != k, terminate at the
@@ -2772,7 +2676,6 @@ namespace diskann {
     auto start = std::chrono::high_resolution_clock::now();
     assert(_empty_slots.size() ==
            0);  // should not resize if there are empty slots.
-#ifndef _WINDOWS
     T *new_data;
     alloc_aligned((void **) &new_data,
                   (new_max_points + 1) * _aligned_dim * sizeof(T),
@@ -2780,11 +2683,6 @@ namespace diskann {
     memcpy(new_data, _data, (_max_points + 1) * _aligned_dim * sizeof(T));
     aligned_free(_data);
     _data = new_data;
-#else
-    realloc_aligned((void **) &_data,
-                    (new_max_points + 1) * _aligned_dim * sizeof(T),
-                    8 * sizeof(T));
-#endif
     _final_graph.resize(new_max_points + 1);
     _locks = std::vector<std::mutex>(new_max_points + 1);
     if (_support_eager_delete) {
@@ -3240,69 +3138,69 @@ namespace diskann {
   const float Index<T, TagT>::INDEX_GROWTH_FACTOR = 1.5f;
 
   // EXPORTS
-  template DISKANN_DLLEXPORT class Index<float, int32_t>;
-  template DISKANN_DLLEXPORT class Index<int8_t, int32_t>;
-  template DISKANN_DLLEXPORT class Index<uint8_t, int32_t>;
-  template DISKANN_DLLEXPORT class Index<float, uint32_t>;
-  template DISKANN_DLLEXPORT class Index<int8_t, uint32_t>;
-  template DISKANN_DLLEXPORT class Index<uint8_t, uint32_t>;
-  template DISKANN_DLLEXPORT class Index<float, int64_t>;
-  template DISKANN_DLLEXPORT class Index<int8_t, int64_t>;
-  template DISKANN_DLLEXPORT class Index<uint8_t, int64_t>;
-  template DISKANN_DLLEXPORT class Index<float, uint64_t>;
-  template DISKANN_DLLEXPORT class Index<int8_t, uint64_t>;
-  template DISKANN_DLLEXPORT class Index<uint8_t, uint64_t>;
+  template class Index<float, int32_t>;
+  template class Index<int8_t, int32_t>;
+  template class Index<uint8_t, int32_t>;
+  template class Index<float, uint32_t>;
+  template class Index<int8_t, uint32_t>;
+  template class Index<uint8_t, uint32_t>;
+  template class Index<float, int64_t>;
+  template class Index<int8_t, int64_t>;
+  template class Index<uint8_t, int64_t>;
+  template class Index<float, uint64_t>;
+  template class Index<int8_t, uint64_t>;
+  template class Index<uint8_t, uint64_t>;
 
-  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t>
+  template std::pair<uint32_t, uint32_t>
   Index<float, uint64_t>::search<uint64_t>(const float *query, const size_t K,
                                            const unsigned L, uint64_t *indices,
                                            float *distances);
-  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t>
+  template std::pair<uint32_t, uint32_t>
   Index<float, uint64_t>::search<uint32_t>(const float *query, const size_t K,
                                            const unsigned L, uint32_t *indices,
                                            float *distances);
-  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t>
+  template std::pair<uint32_t, uint32_t>
   Index<uint8_t, uint64_t>::search<uint64_t>(const uint8_t *query,
                                              const size_t K, const unsigned L,
                                              uint64_t *indices,
                                              float    *distances);
-  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t>
+  template std::pair<uint32_t, uint32_t>
   Index<uint8_t, uint64_t>::search<uint32_t>(const uint8_t *query,
                                              const size_t K, const unsigned L,
                                              uint32_t *indices,
                                              float    *distances);
-  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t>
+  template std::pair<uint32_t, uint32_t>
   Index<int8_t, uint64_t>::search<uint64_t>(const int8_t *query, const size_t K,
                                             const unsigned L, uint64_t *indices,
                                             float *distances);
-  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t>
+  template std::pair<uint32_t, uint32_t>
   Index<int8_t, uint64_t>::search<uint32_t>(const int8_t *query, const size_t K,
                                             const unsigned L, uint32_t *indices,
                                             float *distances);
   // TagT==uint32_t
-  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t>
+  template std::pair<uint32_t, uint32_t>
   Index<float, uint32_t>::search<uint64_t>(const float *query, const size_t K,
                                            const unsigned L, uint64_t *indices,
                                            float *distances);
-  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t>
+  template std::pair<uint32_t, uint32_t>
   Index<float, uint32_t>::search<uint32_t>(const float *query, const size_t K,
                                            const unsigned L, uint32_t *indices,
                                            float *distances);
-  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t>
+  template std::pair<uint32_t, uint32_t>
   Index<uint8_t, uint32_t>::search<uint64_t>(const uint8_t *query,
                                              const size_t K, const unsigned L,
                                              uint64_t *indices,
                                              float    *distances);
-  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t>
+  template std::pair<uint32_t, uint32_t>
   Index<uint8_t, uint32_t>::search<uint32_t>(const uint8_t *query,
                                              const size_t K, const unsigned L,
                                              uint32_t *indices,
                                              float    *distances);
-  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t>
+  template std::pair<uint32_t, uint32_t>
   Index<int8_t, uint32_t>::search<uint64_t>(const int8_t *query, const size_t K,
                                             const unsigned L, uint64_t *indices,
                                             float *distances);
-  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t>
+  template std::pair<uint32_t, uint32_t>
   Index<int8_t, uint32_t>::search<uint32_t>(const int8_t *query, const size_t K,
                                             const unsigned L, uint32_t *indices,
                                             float *distances);

@@ -64,7 +64,6 @@ namespace diskann {
     }
 
     virtual ~FixedChunkPQTable() {
-#ifndef EXEC_ENV_OLS
       if (tables != nullptr)
         delete[] tables;
       if (tables_T != nullptr)
@@ -75,15 +74,9 @@ namespace diskann {
         delete[] chunk_offsets;
       if (centroid != nullptr)
         delete[] centroid;
-#endif
     }
 
-#ifdef EXEC_ENV_OLS
-    void load_pq_centroid_bin(MemoryMappedFiles& files,
-                              const char* pq_table_file, size_t num_chunks){
-#else
     void load_pq_centroid_bin(const char* pq_table_file, size_t num_chunks) {
-#endif
         std::string rearrangement_file =
             get_pq_rearrangement_perm_filename(std::string(pq_table_file));
     std::string chunk_offset_file =
@@ -94,32 +87,18 @@ namespace diskann {
     // bin structure: [256][ndims][ndims(float)]
     uint64_t numr, numc;
     size_t   npts_u64, ndims_u64;
-#ifdef EXEC_ENV_OLS
-    diskann::load_bin<float>(files, pq_table_file, tables, npts_u64, ndims_u64);
-#else
       diskann::load_bin<float>(pq_table_file, tables, npts_u64, ndims_u64);
-#endif
     this->ndims = ndims_u64;
 
     if (file_exists(chunk_offset_file)) {
-#ifdef EXEC_ENV_OLS
-      diskann::load_bin<_u32>(files, rearrangement_file, rearrangement, numr,
-                              numc);
-#else
         diskann::load_bin<_u32>(rearrangement_file, rearrangement, numr, numc);
-#endif
       if (numr != ndims_u64 || numc != 1) {
         diskann::cerr << "Error loading rearrangement file" << std::endl;
         throw diskann::ANNException("Error loading rearrangement file", -1,
                                     __FUNCSIG__, __FILE__, __LINE__);
       }
 
-#ifdef EXEC_ENV_OLS
-      diskann::load_bin<_u32>(files, chunk_offset_file, chunk_offsets, numr,
-                              numc);
-#else
         diskann::load_bin<_u32>(chunk_offset_file, chunk_offsets, numr, numc);
-#endif
       if (numc != 1 || (numr != num_chunks + 1 && num_chunks != 0)) {
         LOG(ERROR) << "Error loading chunk offsets file. numc: " << numc
                    << " (should be 1). numr: " << numr << " (should be "
@@ -130,11 +109,7 @@ namespace diskann {
       LOG_KNOWHERE_DEBUG_ << "PQ data has " << numr - 1 << " bytes per point.";
       this->n_chunks = numr - 1;
 
-#ifdef EXEC_ENV_OLS
-      diskann::load_bin<float>(files, centroid_file, centroid, numr, numc);
-#else
         diskann::load_bin<float>(centroid_file, centroid, numr, numc);
-#endif
       if (numc != 1 || numr != ndims_u64) {
         LOG(ERROR) << "Error loading centroid file";
         throw diskann::ANNException("Error loading centroid file", -1,

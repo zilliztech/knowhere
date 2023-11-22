@@ -90,7 +90,7 @@ setup(
     description=(
         "A library for efficient similarity search and clustering of vectors."
     ),
-    url="https://github.com/milvus-io/knowhere",
+    url="https://github.com/zilliztech/knowhere",
     author="Milvus Team",
     author_email="milvus-team@zilliz.com",
     license='Apache License 2.0',

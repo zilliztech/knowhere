@@ -51,11 +51,13 @@ import_array();
 %include <std_pair.i>
 %include <std_map.i>
 %include <std_shared_ptr.i>
+%include <std_vector.i>
 %include <exception.i>
 %shared_ptr(knowhere::DataSet)
 %shared_ptr(knowhere::BinarySet)
 %template(DataSetPtr) std::shared_ptr<knowhere::DataSet>;
 %template(BinarySetPtr) std::shared_ptr<knowhere::BinarySet>;
+%template(int64_float_pair) std::pair<long long int, float>;
 %include <knowhere/expected.h>
 %include <knowhere/dataset.h>
 %include <knowhere/binaryset.h>
@@ -104,13 +106,35 @@ del Enum
 %inline %{
 
 class GILReleaser {
-public:
+ public:
     GILReleaser() : save(PyEval_SaveThread()) {
     }
     ~GILReleaser() {
         PyEval_RestoreThread(save);
     }
     PyThreadState* save;
+};
+
+class AnnIteratorWrap {
+ public:
+    AnnIteratorWrap(std::shared_ptr<IndexNode::iterator> it = nullptr) : it_(it) {
+        if (it_ == nullptr) {
+            throw std::runtime_error("ann iterator must not be nullptr.");
+        }
+    }
+    ~AnnIteratorWrap() {
+    }
+
+    bool HasNext() {
+        return it_->HasNext();
+    }
+
+    std::pair<int64_t, float> Next() {
+        return it_->Next();
+    }
+
+ private:
+    std::shared_ptr<IndexNode::iterator> it_;
 };
 
 class IndexWrap {
@@ -155,6 +179,22 @@ class IndexWrap {
             status = res.error();
             return nullptr;
         }
+    }
+
+    std::vector<AnnIteratorWrap>
+    GetAnnIterator(knowhere::DataSetPtr dataset, const std::string& json, const knowhere::BitsetView& bitset, knowhere::Status& status) {
+        GILReleaser rel;
+        auto res = idx.AnnIterator(*dataset, knowhere::Json::parse(json), bitset);
+        std::vector<AnnIteratorWrap> result;
+        if (!res.has_value()) {
+            status = res.error();
+            return result;
+        }
+        status = knowhere::Status::success;
+        for (auto it : res.value()) {
+            result.emplace_back(it);
+        }
+        return result;
     }
 
     knowhere::DataSetPtr
@@ -468,3 +508,5 @@ SetSimdType(const std::string type) {
 }
 
 %}
+
+%template(AnnIteratorWrapVector) std::vector<AnnIteratorWrap>;

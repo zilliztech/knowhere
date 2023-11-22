@@ -9,12 +9,15 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include "knowhere/feder/DiskANN.h"
+
 #include <omp.h>
 
 #include <cstdint>
 
 #include "common/range_util.h"
 #include "diskann/aux_utils.h"
+#include "diskann/linux_aligned_file_reader.h"
 #include "diskann/pq_flash_index.h"
 #include "fmt/core.h"
 #include "index/diskann/diskann_config.h"
@@ -22,13 +25,7 @@
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
-#ifndef _WINDOWS
-#include "diskann/linux_aligned_file_reader.h"
-#else
-#include "diskann/windows_aligned_file_reader.h"
-#endif
 #include "knowhere/factory.h"
-#include "knowhere/feder/DiskANN.h"
 #include "knowhere/file_manager.h"
 #include "knowhere/log.h"
 #include "knowhere/utils.h"

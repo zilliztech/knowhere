@@ -476,7 +476,11 @@ class Config {
             }
         }
 
-        return Status::success;
+        if (!err_msg) {
+            std::string tem_msg;
+            return cfg.CheckAndAdjust(type, &tem_msg);
+        }
+        return cfg.CheckAndAdjust(type, err_msg);
     }
 
     virtual ~Config() {
@@ -485,6 +489,12 @@ class Config {
     using VarEntry =
         std::variant<Entry<CFG_STRING>, Entry<CFG_FLOAT>, Entry<CFG_INT>, Entry<CFG_LIST>, Entry<CFG_BOOL>>;
     std::unordered_map<std::string, VarEntry> __DICT__;
+
+ protected:
+    inline virtual Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* const err_msg) {
+        return Status::success;
+    }
 };
 
 #define KNOHWERE_DECLARE_CONFIG(CONFIG) CONFIG()
@@ -556,26 +566,6 @@ class BaseConfig : public Config {
             .description("enable mmap for load index")
             .for_deserialize_from_file();
         KNOWHERE_CONFIG_DECLARE_FIELD(for_tuning).set_default(false).description("for tuning").for_search();
-    }
-
-    virtual Status
-    CheckAndAdjustForSearch(std::string* err_msg) {
-        return Status::success;
-    }
-
-    virtual Status
-    CheckAndAdjustForRangeSearch(std::string* err_msg) {
-        return Status::success;
-    }
-
-    virtual Status
-    CheckAndAdjustForIterator() {
-        return Status::success;
-    }
-
-    virtual inline Status
-    CheckAndAdjustForBuild() {
-        return Status::success;
     }
 };
 }  // namespace knowhere
