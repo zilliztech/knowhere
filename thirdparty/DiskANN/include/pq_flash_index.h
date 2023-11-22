@@ -22,6 +22,7 @@
 #include "percentile_stats.h"
 #include "pq_table.h"
 #include "utils.h"
+#include "semaphore.h"
 #include "windows_customizations.h"
 
 #define MAX_GRAPH_DEGREE 512
@@ -80,16 +81,15 @@ namespace diskann {
 
     DISKANN_DLLEXPORT void load_cache_list(std::vector<uint32_t> &node_list);
 
+    // asynchronously collect the access frequency of each node in the graph
 #ifdef EXEC_ENV_OLS
     DISKANN_DLLEXPORT void generate_cache_list_from_sample_queries(
-        MemoryMappedFiles &files, std::string sample_bin, _u64 l_search,
-        _u64 beamwidth, _u64 num_nodes_to_cache, uint32_t nthreads,
-        std::vector<uint32_t> &node_list);
+        MemoryMappedFiles files, std::string sample_bin, _u64 l_search,
+        _u64 beamwidth, _u64 num_nodes_to_cache);
 #else
     DISKANN_DLLEXPORT void generate_cache_list_from_sample_queries(
         std::string sample_bin, _u64 l_search, _u64 beamwidth,
-        _u64 num_nodes_to_cache, uint32_t num_threads,
-        std::vector<uint32_t> &node_list);
+        _u64 num_nodes_to_cache);
 #endif
 
     DISKANN_DLLEXPORT void cache_bfs_levels(_u64 num_nodes_to_cache,
@@ -127,6 +127,8 @@ namespace diskann {
     DISKANN_DLLEXPORT size_t get_num_medoids() const noexcept;
 
     DISKANN_DLLEXPORT diskann::Metric get_metric() const noexcept;
+
+    DISKANN_DLLEXPORT void set_async_cache_flag(const bool flag);
 
    protected:
     DISKANN_DLLEXPORT void use_medoids_data_as_centroids();
@@ -195,6 +197,7 @@ namespace diskann {
 
     std::string                        disk_index_file;
     std::vector<std::pair<_u32, _u32>> node_visit_counter;
+    std::atomic<_u32>                  search_counter = 0;
 
     // PQ data
     // n_chunks = # of chunks ndims is split into
@@ -233,12 +236,14 @@ namespace diskann {
     // coord_cache
     T *                       coord_cache_buf = nullptr;
     tsl::robin_map<_u32, T *> coord_cache;
+    Semaphore                 semaph;
+    std::atomic<bool>         async_generate_cache = false;
 
     // thread-specific scratch
     ConcurrentQueue<ThreadData<T>> thread_data;
     _u64                           max_nthreads;
     bool                           load_flag = false;
-    bool                           count_visited_nodes = false;
+    std::atomic<bool>              count_visited_nodes = false;
     bool                           reorder_data_exists = false;
     _u64                           reoreder_data_offset = 0;
 
