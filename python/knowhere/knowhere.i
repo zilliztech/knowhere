@@ -118,12 +118,15 @@ class GILReleaser {
 class AnnIteratorWrap {
  public:
     AnnIteratorWrap(std::shared_ptr<IndexNode::iterator> it = nullptr) : it_(it) {
+        if (it_ == nullptr) {
+            throw std::runtime_error("ann iterator must not be nullptr.");
+        }
     }
     ~AnnIteratorWrap() {
     }
 
     bool HasNext() {
-        return it_ && it_->HasNext();
+        return it_->HasNext();
     }
 
     std::pair<int64_t, float> Next() {
@@ -182,12 +185,12 @@ class IndexWrap {
     GetAnnIterator(knowhere::DataSetPtr dataset, const std::string& json, const knowhere::BitsetView& bitset, knowhere::Status& status) {
         GILReleaser rel;
         auto res = idx.AnnIterator(*dataset, knowhere::Json::parse(json), bitset);
+        std::vector<AnnIteratorWrap> result;
         if (!res.has_value()) {
             status = res.error();
-            return std::vector<AnnIteratorWrap>();
+            return result;
         }
         status = knowhere::Status::success;
-        std::vector<AnnIteratorWrap> result;
         for (auto it : res.value()) {
             result.emplace_back(it);
         }
