@@ -13,7 +13,7 @@
 # the License
 
 cmake_minimum_required(VERSION 3.26.4 FATAL_ERROR)
-
+project(knowhere CXX C)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/")
 include(GNUInstallDirs)
@@ -22,13 +22,10 @@ include(cmake/utils/utils.cmake)
 
 knowhere_option(WITH_RAFT "Build with RAFT indexes" OFF)
 if (WITH_RAFT)
-  if("${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
-    set(CMAKE_CUDA_ARCHITECTURES RAPIDS)
-  endif()
+  set(CMAKE_CUDA_ARCHITECTURES RAPIDS)
   include(cmake/libs/librapids.cmake)
   project(knowhere CXX C CUDA)
-else()
-  project(knowhere CXX C)
+  include(cmake/libs/libraft.cmake)
 endif()
 
 knowhere_option(WITH_UT "Build with UT test" OFF)
@@ -85,12 +82,8 @@ include_directories(thirdparty/faiss)
 find_package(OpenMP REQUIRED)
 
 find_package(folly REQUIRED)
-set(FOLLY_LIBRARIES Folly::folly)
 include_directories(${folly_INCLUDE_DIRS})
 
-if(WITH_RAFT)
-  include(cmake/libs/libraft.cmake)
-endif()
 
 find_package(nlohmann_json REQUIRED)
 find_package(glog REQUIRED)
@@ -141,7 +134,7 @@ list(APPEND KNOWHERE_LINKER_LIBS glog::glog)
 list(APPEND KNOWHERE_LINKER_LIBS nlohmann_json::nlohmann_json)
 list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
 list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt-header-only)
-list(APPEND KNOWHERE_LINKER_LIBS ${FOLLY_LIBRARIES})
+list(APPEND KNOWHERE_LINKER_LIBS Folly::folly)
 
 add_library(knowhere SHARED ${KNOWHERE_SRCS})
 add_dependencies(knowhere ${KNOWHERE_LINKER_LIBS})
