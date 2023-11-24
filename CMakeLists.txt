@@ -12,19 +12,25 @@
 # License for the specific language governing permissions and limitations under
 # the License
 
-cmake_minimum_required(VERSION 3.23.0 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.26.4 FATAL_ERROR)
 project(knowhere CXX C)
-
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/")
 include(GNUInstallDirs)
 include(ExternalProject)
 include(cmake/utils/utils.cmake)
 
+knowhere_option(WITH_RAFT "Build with RAFT indexes" OFF)
+if (WITH_RAFT)
+  set(CMAKE_CUDA_ARCHITECTURES RAPIDS)
+  include(cmake/libs/librapids.cmake)
+  project(knowhere CXX C CUDA)
+  include(cmake/libs/libraft.cmake)
+endif()
+
 knowhere_option(WITH_UT "Build with UT test" OFF)
 knowhere_option(WITH_ASAN "Build with ASAN" OFF)
 knowhere_option(WITH_DISKANN "Build with diskann index" OFF)
-knowhere_option(WITH_RAFT "Build with RAFT indexes" OFF)
 knowhere_option(WITH_BENCHMARK "Build with benchmark" OFF)
 knowhere_option(WITH_COVERAGE "Build with coverage" OFF)
 knowhere_option(WITH_CCACHE "Build with ccache" ON)
@@ -64,18 +70,6 @@ endif()
 
 list( APPEND CMAKE_MODULE_PATH ${CMAKE_BINARY_DIR}/)
 
-if(WITH_RAFT)
-  if("${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
-    set(CMAKE_CUDA_ARCHITECTURES 86;80;75;70;61)
-  endif()
-  enable_language(CUDA)
-  find_package(CUDAToolkit REQUIRED)
-  if(${CUDAToolkit_VERSION_MAJOR} GREATER 10)
-    # cuda11 support --threads for compile some large .cu more efficient
-    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:--threads=4>)
-  endif()
-endif()
-
 add_definitions(-DNOT_COMPILE_FOR_SWIG)
 
 include(cmake/utils/compile_flags.cmake)
@@ -88,12 +82,8 @@ include_directories(thirdparty/faiss)
 find_package(OpenMP REQUIRED)
 
 find_package(folly REQUIRED)
-set(FOLLY_LIBRARIES Folly::folly)
 include_directories(${folly_INCLUDE_DIRS})
 
-if(WITH_RAFT)
-  include(cmake/libs/libraft.cmake)
-endif()
 
 find_package(nlohmann_json REQUIRED)
 find_package(glog REQUIRED)
@@ -113,8 +103,7 @@ if(WITH_COVERAGE)
 endif()
 
 knowhere_file_glob(GLOB_RECURSE KNOWHERE_SRCS src/common/*.cc src/index/*.cc
-                   src/io/*.cc src/index/*.cu src/common/raft/*.cu
-                   src/common/raft/*.cc)
+                   src/io/*.cc src/common/*.cu src/index/*.cu src/io/*.cu)
 
 set(KNOWHERE_LINKER_LIBS "")
 
@@ -127,13 +116,13 @@ else()
 endif()
 
 knowhere_file_glob(GLOB_RECURSE KNOWHERE_GPU_SRCS src/index/gpu/flat_gpu/*.cc
-                     src/index/gpu/ivf_gpu/*.cc src/index/cagra/*.cu)
+                     src/index/gpu/ivf_gpu/*.cc)
 list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_GPU_SRCS})
 
 if(NOT WITH_RAFT)
-  knowhere_file_glob(GLOB_RECURSE KNOWHERE_RAFT_SRCS src/index/ivf_raft/*.cc
-                     src/index/ivf_raft/*.cu src/index/cagra/*.cu
-                     src/common/raft/*.cu src/common/raft/*.cc)
+  knowhere_file_glob(GLOB_RECURSE KNOWHERE_RAFT_SRCS
+                     src/common/raft/*.cu src/common/raft/*.cc
+                     src/index/gpu_raft/*.cc)
   list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_RAFT_SRCS})
 endif()
 
@@ -145,12 +134,12 @@ list(APPEND KNOWHERE_LINKER_LIBS glog::glog)
 list(APPEND KNOWHERE_LINKER_LIBS nlohmann_json::nlohmann_json)
 list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
 list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt-header-only)
-list(APPEND KNOWHERE_LINKER_LIBS ${FOLLY_LIBRARIES})
+list(APPEND KNOWHERE_LINKER_LIBS Folly::folly)
 
 add_library(knowhere SHARED ${KNOWHERE_SRCS})
 add_dependencies(knowhere ${KNOWHERE_LINKER_LIBS})
 if(WITH_RAFT)
-  list(APPEND KNOWHERE_LINKER_LIBS raft::raft)
+  list(APPEND KNOWHERE_LINKER_LIBS raft::raft CUDA::cublas CUDA::cusparse CUDA::cusolver)
 endif()
 target_link_libraries(knowhere PUBLIC ${KNOWHERE_LINKER_LIBS})
 target_include_directories(

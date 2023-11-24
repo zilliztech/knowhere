@@ -81,7 +81,6 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
             bin->size = dim_ * nb_ * sizeof(float);
             binary_set.Append("RAW_DATA", bin);
         }
-
         index.Deserialize(binary_set, conf);
     }
 
