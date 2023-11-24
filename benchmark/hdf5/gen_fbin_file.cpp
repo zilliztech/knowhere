@@ -53,11 +53,27 @@ class Create_FBIN : public Benchmark_hdf5, public ::testing::Test {
     }
 
     void
+    fbin_write_binary(const std::string& filename, const uint32_t rows, const uint32_t dim, const void* data) {
+        FileIOWriter writer(filename);
+        writer((void*)&rows, sizeof(rows));
+        writer((void*)&dim, sizeof(dim));
+        writer((void*)data, rows * (dim / 8) * sizeof(uint8_t));
+    }
+
+    void
     fbin_read(const std::string& filename, uint32_t& rows, uint32_t& dim, void* data) {
         FileIOReader reader(filename);
         reader((void*)&rows, sizeof(rows));
         reader((void*)&dim, sizeof(dim));
         reader((void*)data, rows * dim * sizeof(float));
+    }
+
+    void
+    fbin_read_binary(const std::string& filename, uint32_t& rows, uint32_t& dim, void* data) {
+        FileIOReader reader(filename);
+        reader((void*)&rows, sizeof(rows));
+        reader((void*)&dim, sizeof(dim));
+        reader((void*)data, rows * (dim / 8) * sizeof(uint8_t));
     }
 
     void
@@ -167,6 +183,48 @@ TEST_F(Create_FBIN, HDF5_RANGE_TO_FBIN) {
 
     filename = prefix + "query" + postfix;
     fbin_write(filename, nq_, dim_, xq_);
+
+    filename = prefix + metric_str_ + "-gt" + postfix;
+    fbin_range_result_write(filename, nq_, *gt_radius_, (uint32_t*)gt_lims_, (uint32_t*)gt_ids_, gt_dist_);
+
+    free_all();
+}
+
+TEST_F(Create_FBIN, HDF5_BIN_TO_FBIN) {
+    set_ann_test_name("rand-1024-hamming");
+    parse_ann_test_name();
+    load_hdf5_data<true>();
+
+    std::string prefix = dataset_name_ + "-" + std::to_string(dim_) + "-";
+    std::string postfix = ".fbin";
+    std::string filename;
+
+    filename = prefix + "base" + postfix;
+    fbin_write_binary(filename, nb_, dim_, xb_);
+
+    filename = prefix + "query" + postfix;
+    fbin_write_binary(filename, nq_, dim_, xq_);
+
+    filename = prefix + metric_str_ + "-gt" + postfix;
+    fbin_result_write(filename, nq_, gt_k_, (uint32_t*)gt_ids_, gt_dist_);
+
+    free_all();
+}
+
+TEST_F(Create_FBIN, HDF5_BIN_RANGE_TO_FBIN) {
+    set_ann_test_name("rand-1024-hamming-range");
+    parse_ann_test_name_with_range();
+    load_hdf5_data_range<true>();
+
+    std::string prefix = dataset_name_ + "-" + std::to_string(dim_) + "-range-";
+    std::string postfix = ".fbin";
+    std::string filename;
+
+    filename = prefix + "base" + postfix;
+    fbin_write_binary(filename, nb_, dim_, xb_);
+
+    filename = prefix + "query" + postfix;
+    fbin_write_binary(filename, nq_, dim_, xq_);
 
     filename = prefix + metric_str_ + "-gt" + postfix;
     fbin_range_result_write(filename, nq_, *gt_radius_, (uint32_t*)gt_lims_, (uint32_t*)gt_ids_, gt_dist_);
