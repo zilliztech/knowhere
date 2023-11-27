@@ -711,6 +711,12 @@ void IndexIVF::search_preassigned(
         }
     }
 
+    // // baseline Faiss version contains the following additional code,
+    // //   introduced in 0a00d8137a386a0efd7f789e3e0912ab4eb73508
+    // if (ivf_stats == nullptr) {
+    //     ivf_stats = &indexIVF_stats;
+    // }
+
     if (ivf_stats) {
         ivf_stats->nq += n;
         ivf_stats->nlist += nlistv;
@@ -910,6 +916,12 @@ void IndexIVF::range_search_preassigned(
             FAISS_THROW_MSG("computation interrupted");
         }
     }
+
+    // // baseline Faiss version contains the following additional code,
+    // //   introduced in 0a00d8137a386a0efd7f789e3e0912ab4eb73508
+    // if (stats == nullptr) {
+    //     stats = &indexIVF_stats;
+    // }
 
     if (stats) {
         stats->nq += nx;
