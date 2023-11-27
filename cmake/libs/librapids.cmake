@@ -13,7 +13,7 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-set(RAPIDS_VERSION "23.04")
+set(RAPIDS_VERSION 23.12)
 
 if(NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/RAPIDS.cmake)
   file(
@@ -22,3 +22,15 @@ if(NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/RAPIDS.cmake)
     ${CMAKE_CURRENT_BINARY_DIR}/RAPIDS.cmake)
 endif()
 include(${CMAKE_CURRENT_BINARY_DIR}/RAPIDS.cmake)
+
+include(rapids-cpm)  # Dependency tracking
+include(rapids-find) # Wrappers for finding packages
+include(rapids-cuda) # Common CMake CUDA logic
+
+rapids_cuda_init_architectures(knowhere)
+message(STATUS "INIT: ${CMAKE_CUDA_ARCHITECTURES}")
+
+rapids_cpm_init()
+
+set(CMAKE_CUDA_FLAGS
+    "${CMAKE_CUDA_FLAGS} --expt-extended-lambda --expt-relaxed-constexpr")

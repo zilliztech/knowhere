@@ -74,6 +74,60 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
     }
 
     void
+    test_cagra(const knowhere::Json& cfg) {
+        auto conf = cfg;
+
+        auto find_smallest_max_iters = [&](float expected_recall) -> int32_t {
+            auto ds_ptr = knowhere::GenDataSet(nq_, dim_, xq_);
+            auto left = 32;
+            auto right = 256;
+            auto max_iterations = left;
+
+            float recall;
+            while (left <= right) {
+                max_iterations = left + (right - left) / 2;
+                conf[knowhere::indexparam::MAX_ITERATIONS] = max_iterations;
+
+                auto result = index_.Search(*ds_ptr, conf, nullptr);
+                recall = CalcRecall(result.value()->GetIds(), nq_, topk_);
+                printf(
+                    "[%0.3f s] iterate CAGRA param for recall %.4f: max_iterations=%d, k=%d, "
+                    "R@=%.4f\n",
+                    get_time_diff(), expected_recall, max_iterations, topk_, recall);
+                std::fflush(stdout);
+                if (std::abs(recall - expected_recall) <= 0.0001) {
+                    return max_iterations;
+                }
+                if (recall < expected_recall) {
+                    left = max_iterations + 1;
+                } else {
+                    right = max_iterations - 1;
+                }
+            }
+            return left;
+        };
+
+        for (auto expected_recall : EXPECTED_RECALLs_) {
+            conf[knowhere::indexparam::ITOPK_SIZE] = ((int{topk_} + 32 - 1) / 32) * 32;
+            conf[knowhere::meta::TOPK] = topk_;
+            conf[knowhere::indexparam::MAX_ITERATIONS] = find_smallest_max_iters(expected_recall);
+
+            printf(
+                "\n[%0.3f s] %s | %s | k=%d, "
+                "R@=%.4f\n",
+                get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(), topk_, expected_recall);
+            printf("================================================================================\n");
+            for (auto thread_num : THREAD_NUMs_) {
+                CALC_TIME_SPAN(task(conf, thread_num, nq_));
+                printf("  thread_num = %2d, elapse = %6.3fs, VPS = %.3f\n", thread_num, t_diff, nq_ / t_diff);
+                std::fflush(stdout);
+            }
+            printf("================================================================================\n");
+            printf("[%.3f s] Test '%s/%s' done\n\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
+        }
+    }
+
+    void
     test_hnsw(const knowhere::Json& cfg) {
         auto conf = cfg;
         auto M = conf[knowhere::indexparam::HNSW_M].get<int32_t>();
@@ -220,6 +274,9 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         knowhere::KnowhereConfig::InitGPUResource(GPU_DEVICE_ID, 2);
         cfg_[knowhere::meta::DEVICE_ID] = GPU_DEVICE_ID;
 #endif
+#ifdef KNOWHERE_WITH_RAFT
+        knowhere::KnowhereConfig::SetRaftMemPool();
+#endif
     }
 
     void
@@ -249,6 +306,9 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
     // SCANN index params
     const std::vector<int32_t> SCANN_REORDER_K = {256, 512, 768, 1024};
     const std::vector<bool> SCANN_WITH_RAW_DATA = {true};
+
+    // CAGRA index params
+    const std::vector<int32_t> GRAPH_DEGREE_ = {32, 64};
 };
 
 TEST_F(Benchmark_float_qps, TEST_IVF_FLAT) {
@@ -340,5 +400,17 @@ TEST_F(Benchmark_float_qps, TEST_SCANN) {
                 test_scann(conf);
             }
         }
+    }
+}
+TEST_F(Benchmark_float_qps, TEST_CAGRA) {
+    index_type_ = knowhere::IndexEnum::INDEX_RAFT_CAGRA;
+    knowhere::Json conf = cfg_;
+    for (auto gd : GRAPH_DEGREE_) {
+        conf[knowhere::indexparam::GRAPH_DEGREE] = gd;
+        conf[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE] = gd;
+        conf[knowhere::indexparam::MAX_ITERATIONS] = 64;
+        std::string index_file_name = get_index_name({gd});
+        create_index(index_file_name, conf);
+        test_cagra(conf);
     }
 }
