@@ -40,8 +40,9 @@
 namespace hnswlib {
 typedef unsigned int tableint;
 typedef unsigned int linklistsizeint;
-constexpr float kHnswSearchKnnBFThreshold = 0.93f;
-constexpr float kHnswSearchRangeBFThreshold = 0.97f;
+constexpr float kHnswSearchKnnBFFilterThreshold = 0.93f;
+constexpr float kHnswSearchRangeBFFilterThreshold = 0.97f;
+constexpr float kHnswSearchBFTopkThreshold = 0.5f;
 constexpr float kAlpha = 0.15f;
 
 enum Metric {
@@ -1155,7 +1156,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     searchKnnBF(const void* query_data, size_t k, const knowhere::BitsetView bitset) const {
         knowhere::ResultMaxHeap<dist_t, labeltype> max_heap(k);
         for (labeltype id = 0; id < cur_element_count; ++id) {
-            if (!bitset.test(id)) {
+            if (bitset.empty() || !bitset.test(id)) {
                 dist_t dist = calcDistance(query_data, id);
                 max_heap.Push(dist, id);
             }
@@ -1238,9 +1239,15 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             query_data = query_data_norm.get();
         }
 
+        // do bruteforce search when topk is super large
+        if (k >= (cur_element_count * kHnswSearchBFTopkThreshold)) {
+            return searchKnnBF(query_data, k, bitset);
+        }
+
         // do bruteforce search when delete rate high
         if (!bitset.empty()) {
-            if (bitset.count() >= (cur_element_count * kHnswSearchKnnBFThreshold)) {
+            const size_t filtered_out_num = bitset.count();
+            if (filtered_out_num >= (cur_element_count * kHnswSearchKnnBFFilterThreshold) || k >= (cur_element_count - filtered_out_num) * kHnswSearchBFTopkThreshold) {
                 return searchKnnBF(query_data, k, bitset);
             }
         }
@@ -1270,7 +1277,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     std::unique_ptr<IteratorWorkspace>
     getIteratorWorkspace(const void* query_data, const size_t seed_ef, const bool for_tuning,
                          const knowhere::BitsetView& bitset) const {
-        auto accumulative_alpha = (bitset.count() >= (cur_element_count * kHnswSearchKnnBFThreshold))
+        auto accumulative_alpha = (bitset.count() >= (cur_element_count * kHnswSearchKnnBFFilterThreshold))
                                       ? std::numeric_limits<float>::max()
                                       : 0.0f;
         if (metric_type_ == Metric::COSINE) {
@@ -1344,7 +1351,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     searchRangeBF(const void* query_data, float radius, const knowhere::BitsetView bitset) const {
         std::vector<std::pair<dist_t, labeltype>> result;
         for (labeltype id = 0; id < cur_element_count; ++id) {
-            if (!bitset.test(id)) {
+            if (bitset.empty() || !bitset.test(id)) {
                 dist_t dist = calcDistance(query_data, id);
                 if (dist < radius) {
                     result.emplace_back(dist, id);
@@ -1369,16 +1376,22 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             query_data = query_data_norm.get();
         }
 
+        // do bruteforce range search when ef is super large
+        size_t ef = param ? param->ef_ : this->ef_;
+        if (ef >= (cur_element_count * kHnswSearchBFTopkThreshold)) {
+            return searchRangeBF(query_data, radius, bitset);
+        }
+
         // do bruteforce range search when delete rate high
         if (!bitset.empty()) {
-            if (bitset.count() >= (cur_element_count * kHnswSearchRangeBFThreshold)) {
+            const size_t filtered_out_num = bitset.count();
+            if (filtered_out_num >= (cur_element_count * kHnswSearchRangeBFFilterThreshold) || ef >= (cur_element_count - filtered_out_num) * kHnswSearchBFTopkThreshold) {
                 return searchRangeBF(query_data, radius, bitset);
             }
         }
 
         auto [currObj, vec_hash] = searchTopLayers(query_data, param, feder_result);
         NeighborSet retset;
-        size_t ef = param ? param->ef_ : this->ef_;
         auto visited = visited_list_pool_->getFreeVisitedList();
         if (!bitset.empty()) {
             retset = searchBaseLayerST<true, true>(currObj, query_data, ef, visited, bitset, feder_result);

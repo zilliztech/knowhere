@@ -112,7 +112,7 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
     SECTION("Test Search with Bitset using iterator") {
         using std::make_tuple;
         auto [name, gen, threshold] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>, float>({
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen, hnswlib::kHnswSearchKnnBFThreshold),
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen, hnswlib::kHnswSearchKnnBFFilterThreshold),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
@@ -142,7 +142,7 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
     SECTION("Test Search with Bitset using iterator insufficient results") {
         using std::make_tuple;
         auto [name, gen, threshold] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>, float>({
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen, hnswlib::kHnswSearchKnnBFThreshold),
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen, hnswlib::kHnswSearchKnnBFFilterThreshold),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
