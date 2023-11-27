@@ -21,8 +21,10 @@ struct IndexFlat : IndexFlatCodes {
     /// database vectors, size ntotal * d
     std::vector<float> xb;
 
-    explicit IndexFlat(idx_t d, MetricType metric = METRIC_L2,
-                       bool is_cosine = false);
+    explicit IndexFlat(
+            idx_t d, ///< dimensionality of the input vectors
+            MetricType metric = METRIC_L2,
+            bool is_cosine = false);
 
     // Be careful with overriding this function, because
     //   renormalized x may be used inside. 
@@ -89,6 +91,9 @@ struct IndexFlat : IndexFlatCodes {
 };
 
 struct IndexFlatIP : IndexFlat {
+    /**
+     * @param d dimensionality of the input vectors
+     */
     explicit IndexFlatIP(idx_t d) : IndexFlat(d, METRIC_INNER_PRODUCT) {}
     IndexFlatIP() {}
 };
@@ -100,6 +105,9 @@ struct IndexFlatL2 : IndexFlat {
     // and l2 norms.
     std::vector<float> cached_l2norms;
 
+    /**
+     * @param d dimensionality of the input vectors
+     */
     explicit IndexFlatL2(idx_t d) : IndexFlat(d, METRIC_L2) {}
     IndexFlatL2() {}
 
