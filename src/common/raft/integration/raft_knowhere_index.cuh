@@ -457,6 +457,10 @@ struct raft_knowhere_index<IndexKind>::impl {
                 device_distances, config.refine_ratio, input_indexing_type{}, dataset_view,
                 raft::neighbors::filtering::bitset_filter<knowhere_bitset_data_type, knowhere_bitset_indexing_type>{
                     device_bitset->view()});
+            thrust::replace(res.get_thrust_policy(), thrust::device_ptr<indexing_type>(device_ids.data_handle()),
+                            thrust::device_ptr<indexing_type>(device_ids.data_handle() + output_size),
+                            std::numeric_limits<indexing_type>::max(), indexing_type{-1});
+
         } else {
             raft_index_type::search(res, *index_, search_params, raft::make_const_mdspan(device_data_storage.view()),
                                     device_ids, device_distances, config.refine_ratio, input_indexing_type{},
@@ -465,7 +469,7 @@ struct raft_knowhere_index<IndexKind>::impl {
         if constexpr (index_kind == raft_proto::raft_index_kind::ivf_pq) {
             thrust::replace(res.get_thrust_policy(), thrust::device_ptr<indexing_type>(device_ids.data_handle()),
                             thrust::device_ptr<indexing_type>(device_ids.data_handle() + output_size),
-                            raft::neighbors::ivf_pq::kOutOfBoundsRecord<indexing_type>, indexing_type{-1});
+                            std::numeric_limits<indexing_type>::max(), indexing_type{-1});
         }
         raft::copy(res, host_ids, device_ids);
         raft::copy(res, host_distances, device_distances);
