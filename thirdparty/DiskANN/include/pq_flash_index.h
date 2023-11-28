@@ -127,8 +127,8 @@ namespace diskann {
     DISKANN_DLLEXPORT size_t get_num_medoids() const noexcept;
 
     DISKANN_DLLEXPORT diskann::Metric get_metric() const noexcept;
-
-    DISKANN_DLLEXPORT void set_async_cache_flag(const bool flag);
+    // init asy
+    DISKANN_DLLEXPORT void init_cache_async_task();
 
    protected:
     DISKANN_DLLEXPORT void use_medoids_data_as_centroids();
