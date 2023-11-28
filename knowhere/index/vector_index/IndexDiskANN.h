@@ -11,17 +11,16 @@
 
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <string>
-#include <atomic>
 
 #include "DiskANN/include/pq_flash_index.h"
 #include "knowhere/common/FileManager.h"
-#include "knowhere/index/VecIndex.h"
 #include "knowhere/common/ThreadPool.h"
+#include "knowhere/index/VecIndex.h"
 
 namespace knowhere {
-
 template <typename T>
 class IndexDiskANN : public VecIndex {
     static_assert(std::is_same_v<T, float>, "DiskANN only support float");

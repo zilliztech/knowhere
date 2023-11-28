@@ -307,76 +307,78 @@ namespace diskann {
       std::string sample_bin, _u64 l_search, _u64 beamwidth,
       _u64 num_nodes_to_cache) {
 #endif
-    auto s = std::chrono::high_resolution_clock::now();
-    this->search_counter.store(0);
-    this->node_visit_counter.clear();
-    this->node_visit_counter.resize(this->num_points);
-    this->count_visited_nodes.store(true);
-
-    for (_u32 i = 0; i < node_visit_counter.size(); i++) {
-      this->node_visit_counter[i].first = i;
-      this->node_visit_counter[i].second = 0;
-    }
-
-    _u64 sample_num, sample_dim, sample_aligned_dim;
     T *  samples;
+    try {
+      auto s = std::chrono::high_resolution_clock::now();
+
+      _u64 sample_num, sample_dim, sample_aligned_dim;
+      std::stringstream stream;
 
 #ifdef EXEC_ENV_OLS
-    if (files.fileExists(sample_bin)) {
-      diskann::load_aligned_bin<T>(files, sample_bin, samples, sample_num,
-                                   sample_dim, sample_aligned_dim);
-    }
+      if (files.fileExists(sample_bin)) {
+        diskann::load_aligned_bin<T>(files, sample_bin, samples, sample_num,
+                                    sample_dim, sample_aligned_dim);
+      }
 #else
-    if (file_exists(sample_bin)) {
-      diskann::load_aligned_bin<T>(sample_bin, samples, sample_num, sample_dim,
-                                   sample_aligned_dim);
-    }
+      if (file_exists(sample_bin)) {
+        diskann::load_aligned_bin<T>(sample_bin, samples, sample_num, sample_dim,
+                                    sample_aligned_dim);
+      }
 #endif
-    else {
-      diskann::cerr << "Sample bin file not found. Not generating cache."
-                    << std::endl;
-      return;
+      else {
+        stream << "Sample bin file not found. Not generating cache."
+                      << std::endl;
+        throw diskann::ANNException(stream.str(), -1);
+      }
+
+      int64_t tmp_result_ids_64;
+      float tmp_result_dists;
+
+      auto id = 0;
+      while (this->search_counter.load() < sample_num && id < sample_num &&
+            !this->semaph.IsWaitting()) {
+        cached_beam_search(samples + (id * sample_aligned_dim), 1, l_search,
+                          &tmp_result_ids_64, &tmp_result_dists, beamwidth);
+        id++;
+      }
+
+      if (this->semaph.IsWaitting()) {
+        stream << "pq_flash_index is destoried, async thread should be exit."
+              << std::endl;
+        throw diskann::ANNException(stream.str(), -1);
+      }
+
+      this->count_visited_nodes.store(false);
+      std::sort(this->node_visit_counter.begin(), node_visit_counter.end(),
+                [](std::pair<_u32, _u32> &left, std::pair<_u32, _u32> &right) {
+                  return left.second > right.second;
+                });
+    
+      std::vector<uint32_t> node_list;
+      node_list.clear();
+      node_list.reserve(num_nodes_to_cache);
+      for (_u64 i = 0; i < num_nodes_to_cache; i++) {
+        node_list.push_back(this->node_visit_counter[i].first);
+      }
+
+      this->load_cache_list(node_list);
+      auto e = std::chrono::high_resolution_clock::now();
+      std::chrono::duration<double> diff = e - s;
+      LOG(INFO) << "Using sample queries to generate cache, cost: " << diff.count() << "s";
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "DiskANN Exception: " << e.what();
     }
-
-    int64_t tmp_result_ids_64;
-    float tmp_result_dists;
-
-    auto id = 0;
-    while (this->search_counter.load() < sample_num && id < sample_num &&
-          !this->semaph.IsWaitting()) {
-      cached_beam_search(samples + (id * sample_aligned_dim), 1, l_search,
-                        &tmp_result_ids_64, &tmp_result_dists, beamwidth);
-      id++;
-    }
-
-    if (this->semaph.IsWaitting()) {
-      this->semaph.Signal();
-      return;
-    }
-
-    this->count_visited_nodes.store(false);
-    std::sort(this->node_visit_counter.begin(), node_visit_counter.end(),
-              [](std::pair<_u32, _u32> &left, std::pair<_u32, _u32> &right) {
-                return left.second > right.second;
-              });
-  
-    std::vector<uint32_t> node_list;
-    node_list.clear();
-    node_list.shrink_to_fit();
-    node_list.reserve(num_nodes_to_cache);
-    for (_u64 i = 0; i < num_nodes_to_cache; i++) {
-      node_list.push_back(this->node_visit_counter[i].first);
+    // clear up
+    if (this->count_visited_nodes.load() == true) {
+      this->count_visited_nodes.store(false);
     }
     this->node_visit_counter.clear();
     this->node_visit_counter.shrink_to_fit();
     this->search_counter.store(0);
-
-    diskann::aligned_free(samples);
-    this->load_cache_list(node_list);
-    auto e = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> diff = e - s;
-    LOG(INFO) << "Using sample queries to generate cache, cost: " << diff.count() << "s";
-    
+    // free samples 
+    if (samples != nullptr) {
+      diskann::aligned_free(samples);
+    }
     this->semaph.Signal();
     return;
   }
@@ -1574,8 +1576,17 @@ namespace diskann {
   }
   
   template<typename T>
-  void PQFlashIndex<T>::set_async_cache_flag(const bool flag) {
-    this->async_generate_cache.exchange(flag);
+  void PQFlashIndex<T>::init_cache_async_task() {
+    this->async_generate_cache.exchange(true);
+    this->search_counter.store(0);
+    this->node_visit_counter.clear();
+    this->node_visit_counter.resize(this->num_points);
+    this->count_visited_nodes.store(true);
+
+    for (_u32 i = 0; i < node_visit_counter.size(); i++) {
+      this->node_visit_counter[i].first = i;
+      this->node_visit_counter[i].second = 0;
+    }
   }
 
 #ifdef EXEC_ENV_OLS

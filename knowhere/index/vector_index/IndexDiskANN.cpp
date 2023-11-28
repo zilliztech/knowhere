@@ -11,6 +11,7 @@
 
 #include "index/vector_index/IndexDiskANN.h"
 
+#include <math.h>
 #include <omp.h>
 
 #include <limits>
@@ -56,6 +57,7 @@ IndexDiskANN<T>::IndexDiskANN(std::string index_prefix, MetricType metric_type,
 namespace {
 static constexpr float kCacheExpansionRate = 1.2;
 static constexpr uint32_t kLinuxAioMaxnrLimit = 65536;
+static std::shared_ptr<ThreadPool> async_pool;
 void
 CheckPreparation(bool is_prepared) {
     if (!is_prepared) {
@@ -152,6 +154,16 @@ TryDiskANNCallAndThrow(std::function<T()>&& diskann_call) {
     } catch (const std::exception& e) {
         KNOWHERE_THROW_MSG("DiskANN Other Exception: " + std::string(e.what()));
     }
+}
+
+static std::shared_ptr<ThreadPool>
+GetGlobalAsyncThreadPool() {
+    auto glb_pool = ThreadPool::GetGlobalThreadPool();
+    auto glb_pool_size = glb_pool->size();
+    uint32_t async_thread_pool_size = int(std::ceil(glb_pool_size / 2.0));
+    LOG_KNOWHERE_WARNING_ << "async thread pool size with thread number:" << async_thread_pool_size;
+    static auto async_pool = std::make_shared<ThreadPool>(async_thread_pool_size);
+    return async_pool;
 }
 }  // namespace
 
@@ -312,15 +324,11 @@ IndexDiskANN<T>::Prepare(const Config& config) {
                 return false;
             }
         } else {
-            pq_flash_index_->set_async_cache_flag(true);
-            pool_->push([&, cache_num = num_nodes_to_cache,
-                        sample_nodes_file = warmup_query_file]() {
-                try {
-                    pq_flash_index_->generate_cache_list_from_sample_queries(
-                        sample_nodes_file, 15, 6, cache_num);
-                } catch (const std::exception& e) {
-                    LOG_KNOWHERE_ERROR_ << "DiskANN Exception: " << e.what();
-                }
+            auto aysnc_pool_ = GetGlobalAsyncThreadPool();
+            // init the statistical object
+            pq_flash_index_->init_cache_async_task();
+            aysnc_pool_->push([&, cache_num = num_nodes_to_cache, sample_nodes_file = warmup_query_file]() {
+                pq_flash_index_->generate_cache_list_from_sample_queries(sample_nodes_file, 15, 6, cache_num);
             });
         }
     }
@@ -445,10 +453,9 @@ IndexDiskANN<T>::QueryByRange(const DatasetPtr& dataset_ptr, const Config& confi
             std::vector<int64_t> indices;
             std::vector<float> distances;
 
-            auto res_count = pq_flash_index_->range_search(query + (index * dim), radius, query_conf.min_k,
-                                                           query_conf.max_k, result_id_array[index],
-                                                           result_dist_array[index], query_conf.beamwidth,
-                                                           query_conf.search_list_and_k_ratio, bitset);
+            auto res_count = pq_flash_index_->range_search(
+                query + (index * dim), radius, query_conf.min_k, query_conf.max_k, result_id_array[index],
+                result_dist_array[index], query_conf.beamwidth, query_conf.search_list_and_k_ratio, bitset);
 
             // filter range search result
             if (range_filter_exist) {
