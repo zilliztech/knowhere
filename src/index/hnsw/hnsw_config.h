@@ -33,7 +33,7 @@ class HnswConfig : public BaseConfig {
     CFG_INT seed_ef;
     CFG_INT overview_levels;
     KNOHWERE_DECLARE_CONFIG(HnswConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(M).description("hnsw M").set_default(30).set_range(1, 2048).for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(M).description("hnsw M").set_default(30).set_range(2, 2048).for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(efConstruction)
             .description("hnsw efConstruction")
             .set_default(360)
