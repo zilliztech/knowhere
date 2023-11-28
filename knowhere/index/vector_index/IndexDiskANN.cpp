@@ -312,15 +312,13 @@ IndexDiskANN<T>::Prepare(const Config& config) {
                 return false;
             }
         } else {
-            pq_flash_index_->set_async_cache_flag(true);
-            pool_->push([&, cache_num = num_nodes_to_cache,
+            auto aysnc_pool_ = ThreadPool::GetGlobalAsyncThreadPool();
+
+            pq_flash_index_->setup_cache_sync_task();
+            aysnc_pool_->push([&, cache_num = num_nodes_to_cache,
                         sample_nodes_file = warmup_query_file]() {
-                try {
-                    pq_flash_index_->generate_cache_list_from_sample_queries(
-                        sample_nodes_file, 15, 6, cache_num);
-                } catch (const std::exception& e) {
-                    LOG_KNOWHERE_ERROR_ << "DiskANN Exception: " << e.what();
-                }
+                pq_flash_index_->generate_cache_list_from_sample_queries(
+                    sample_nodes_file, 15, 6, cache_num);
             });
         }
     }

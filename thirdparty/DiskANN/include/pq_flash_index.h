@@ -128,7 +128,7 @@ namespace diskann {
 
     DISKANN_DLLEXPORT diskann::Metric get_metric() const noexcept;
 
-    DISKANN_DLLEXPORT void set_async_cache_flag(const bool flag);
+    DISKANN_DLLEXPORT void setup_cache_sync_task();
 
    protected:
     DISKANN_DLLEXPORT void use_medoids_data_as_centroids();

@@ -60,4 +60,19 @@ ThreadPool::GetGlobalThreadPool() {
     static auto pool = std::make_shared<ThreadPool>(global_thread_pool_size_);
     return pool;
 }
+
+std::shared_ptr<ThreadPool>
+ThreadPool::GetGlobalAsyncThreadPool() {
+    if (global_thread_pool_size_ == 0) {
+        std::lock_guard<std::mutex> lock(global_thread_pool_mutex_);
+        if (global_thread_pool_size_ == 0) {
+            global_thread_pool_size_ = std::thread::hardware_concurrency();
+        }
+    }
+    uint32_t async_thread_pool_size = int(std::ceil(global_thread_pool_size_ / 2.0));
+    LOG_KNOWHERE_WARNING_ << "async thread pool size init with thread number:"
+                          << async_thread_pool_size;
+    static auto async_pool = std::make_shared<ThreadPool>(async_thread_pool_size);
+    return async_pool;
+}
 }  // namespace knowhere

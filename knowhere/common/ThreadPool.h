@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <math.h>  
 #include <memory>
 #include <utility>
 
@@ -57,6 +58,14 @@ class ThreadPool {
      */
     static std::shared_ptr<ThreadPool>
     GetGlobalThreadPool();
+
+    /**
+     * @brief Get the global async thread pool of knowhere.
+     *
+     * @return ThreadPool&
+     */
+    static std::shared_ptr<ThreadPool>
+    GetGlobalAsyncThreadPool();
 
     class ScopedOmpSetter {
         int omp_before;
