@@ -84,7 +84,7 @@ void count_lt_and_eq(
         n_lt += 16 - i_ge;
     }
 
-    for (size_t i = n1 * 16; i < n; i++) {
+    for (size_t i = n1 * 16; i < (size_t)n; i++) {
         uint16_t v = *vals++;
         if (C::cmp(thresh, v)) {
             n_lt++;
@@ -162,7 +162,7 @@ int simd_compress_array(
     }
 
     // end with scalar
-    for (int i = (n & ~15); i < n; i++) {
+    for (size_t i = (n & ~15); i < n; i++) {
         if (C::cmp(thresh, vals[i])) {
             vals[wp] = vals[i];
             ids[wp] = ids[i];
