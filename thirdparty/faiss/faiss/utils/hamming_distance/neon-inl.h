@@ -294,7 +294,7 @@ struct HammingComputer64 {
     }
 
     inline int compute(const uint8_t* b8) const {
-        return hc0.hamming(b8) + hc1.hamming(b8 + 32);
+        return hc0.compute(b8) + hc1.compute(b8 + 32);
     }
 
     inline static constexpr int get_code_size() {
@@ -454,7 +454,7 @@ struct GenHammingComputer32 {
     }
 
     inline int compute(const uint8_t* b8) const {
-        return a0.hamming(b8) + a1.hamming(b8 + 16);
+        return a0.compute(b8) + a1.compute(b8 + 16);
     }
 
     inline static constexpr int get_code_size() {
