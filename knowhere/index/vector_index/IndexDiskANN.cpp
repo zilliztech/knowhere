@@ -366,6 +366,7 @@ IndexDiskANN<T>::Prepare(const Config& config) {
     }
 
     is_prepared_.store(true);
+    LOG_KNOWHERE_INFO_ << "End of diskann preparation.";
     return true;
 }
 
