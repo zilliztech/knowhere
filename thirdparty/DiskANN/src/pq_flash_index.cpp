@@ -366,7 +366,7 @@ namespace diskann {
       std::chrono::duration<double> diff = e - s;
       LOG(INFO) << "Using sample queries to generate cache, cost: " << diff.count() << "s";
     } catch (const std::exception& e) {
-        LOG(ERROR) << "DiskANN Exception: " << e.what();
+        LOG(INFO) << "Can't generate Diskann cache: " << e.what();
     }
     // clear up
     if (this->count_visited_nodes.load() == true) {
