@@ -57,7 +57,7 @@ IndexDiskANN<T>::IndexDiskANN(std::string index_prefix, MetricType metric_type,
 namespace {
 static constexpr float kCacheExpansionRate = 1.2;
 static constexpr uint32_t kLinuxAioMaxnrLimit = 65536;
-static std::shared_ptr<ThreadPool> async_pool;
+static auto async_pool = ThreadPool(1);
 void
 CheckPreparation(bool is_prepared) {
     if (!is_prepared) {
@@ -156,15 +156,6 @@ TryDiskANNCallAndThrow(std::function<T()>&& diskann_call) {
     }
 }
 
-static std::shared_ptr<ThreadPool>
-GetGlobalAsyncThreadPool() {
-    auto glb_pool = ThreadPool::GetGlobalThreadPool();
-    auto glb_pool_size = glb_pool->size();
-    uint32_t async_thread_pool_size = int(std::ceil(glb_pool_size / 2.0));
-    LOG_KNOWHERE_WARNING_ << "async thread pool size with thread number:" << async_thread_pool_size;
-    static auto async_pool = std::make_shared<ThreadPool>(async_thread_pool_size);
-    return async_pool;
-}
 }  // namespace
 
 template <typename T>
@@ -324,10 +315,9 @@ IndexDiskANN<T>::Prepare(const Config& config) {
                 return false;
             }
         } else {
-            auto aysnc_pool_ = GetGlobalAsyncThreadPool();
             // init the statistical object
             pq_flash_index_->init_cache_async_task();
-            aysnc_pool_->push([&, cache_num = num_nodes_to_cache, sample_nodes_file = warmup_query_file]() {
+            async_pool.push([&, cache_num = num_nodes_to_cache, sample_nodes_file = warmup_query_file]() {
                 pq_flash_index_->generate_cache_list_from_sample_queries(sample_nodes_file, 15, 6, cache_num);
             });
         }
