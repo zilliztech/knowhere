@@ -134,7 +134,7 @@ class DiskANNConfig : public BaseConfig {
             .for_range_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(max_k)
             .description("the max l_search size used in range search.")
-            .set_default(10000)
+            .set_default(std::numeric_limits<CFG_INT::value_type>::max())
             .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
             .for_range_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(search_list_and_k_ratio)
