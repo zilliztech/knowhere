@@ -564,6 +564,7 @@ class BaseConfig : public Config {
         KNOWHERE_CONFIG_DECLARE_FIELD(enable_mmap)
             .set_default(false)
             .description("enable mmap for load index")
+            .for_deserialize()
             .for_deserialize_from_file();
         KNOWHERE_CONFIG_DECLARE_FIELD(for_tuning).set_default(false).description("for tuning").for_search();
     }
