@@ -99,7 +99,7 @@ namespace diskann {
   template<typename T>
   PQFlashIndex<T>::PQFlashIndex(
       std::shared_ptr<AlignedFileReader> fileReader, diskann::Metric m)
-      : reader(fileReader), metric(m), semaph(0) {
+      : reader(fileReader), metric(m) {
     if (m == diskann::Metric::COSINE || m == diskann::Metric::INNER_PRODUCT) {
       if (std::is_floating_point<T>::value) {
         LOG(INFO) << "Cosine metric chosen for (normalized) float data."
@@ -114,15 +114,13 @@ namespace diskann {
 
     this->dist_cmp = diskann::get_distance_function<T>(m);
     this->dist_cmp_float = diskann::get_distance_function<float>(m);
+
+    this->async_status.store(AsyncStatus::NONE);
   }
-
-
 
   template<typename T>
   PQFlashIndex<T>::~PQFlashIndex() {
-    if (this->async_generate_cache) {
-      this->semaph.Wait();
-    }
+    destroy_cache_async_task();
 #ifndef EXEC_ENV_OLS
     if (data != nullptr) {
       delete[] data;
@@ -144,6 +142,7 @@ namespace diskann {
       this->destroy_thread_data();
       reader->close();
     }
+    
   }
 
   template<typename T>
@@ -307,6 +306,14 @@ namespace diskann {
       std::string sample_bin, _u64 l_search, _u64 beamwidth,
       _u64 num_nodes_to_cache) {
 #endif
+    {
+      std::unique_lock<std::mutex> guard(async_status_mtx);
+      if (this->async_status.load() == AsyncStatus::KILLED) {
+        this->async_status.store(AsyncStatus::DONE);
+        return;
+      }
+      this->async_status.store(AsyncStatus::DOING);
+    }
     T *  samples;
     try {
       auto s = std::chrono::high_resolution_clock::now();
@@ -336,13 +343,13 @@ namespace diskann {
 
       auto id = 0;
       while (this->search_counter.load() < sample_num && id < sample_num &&
-            !this->semaph.IsWaitting()) {
+            this->async_status.load() != AsyncStatus::STOPPING) {
         cached_beam_search(samples + (id * sample_aligned_dim), 1, l_search,
                           &tmp_result_ids_64, &tmp_result_dists, beamwidth);
         id++;
       }
 
-      if (this->semaph.IsWaitting()) {
+      if (this->async_status.load() == AsyncStatus::STOPPING) {
         stream << "pq_flash_index is destoried, async thread should be exit."
               << std::endl;
         throw diskann::ANNException(stream.str(), -1);
@@ -379,7 +386,13 @@ namespace diskann {
     if (samples != nullptr) {
       diskann::aligned_free(samples);
     }
-    this->semaph.Signal();
+    
+    {
+      std::unique_lock<std::mutex> guard(async_status_mtx);
+      this->async_status.store(AsyncStatus::DONE);
+      this->async_cond.notify_one();
+    }
+
     return;
   }
 
@@ -1577,7 +1590,6 @@ namespace diskann {
   
   template<typename T>
   void PQFlashIndex<T>::init_cache_async_task() {
-    this->async_generate_cache.exchange(true);
     this->search_counter.store(0);
     this->node_visit_counter.clear();
     this->node_visit_counter.resize(this->num_points);
@@ -1586,6 +1598,22 @@ namespace diskann {
     for (_u32 i = 0; i < node_visit_counter.size(); i++) {
       this->node_visit_counter[i].first = i;
       this->node_visit_counter[i].second = 0;
+    }
+  }
+
+  template<typename T>
+  void PQFlashIndex<T>::destroy_cache_async_task() {
+    std::unique_lock<std::mutex> guard(async_status_mtx);
+    if (this->async_status.load() == AsyncStatus::DONE) {
+      return;
+    }
+    if (this->async_status.load() == AsyncStatus::NONE) {
+      this->async_status.store(AsyncStatus::KILLED);
+      return;
+    }
+    this->async_status.store(STOPPING);
+    if (this->async_status.load() != AsyncStatus::DONE) { 
+      async_cond.wait(guard);
     }
   }
 

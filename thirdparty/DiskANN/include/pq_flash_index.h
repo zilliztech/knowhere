@@ -3,7 +3,9 @@
 
 #pragma once
 #include <cassert>
+#include <condition_variable>
 #include <optional>
+#include <mutex>
 #include <sstream>
 #include <stack>
 #include <string>
@@ -22,7 +24,6 @@
 #include "percentile_stats.h"
 #include "pq_table.h"
 #include "utils.h"
-#include "semaphore.h"
 #include "windows_customizations.h"
 
 #define MAX_GRAPH_DEGREE 512
@@ -32,6 +33,13 @@
 #define FULL_PRECISION_REORDER_MULTIPLIER 3
 
 namespace diskann {
+  enum AsyncStatus {
+    NONE  = 0,
+    DOING,
+    STOPPING,
+    DONE,
+    KILLED,
+  };
   template<typename T>
   struct QueryScratch {
     T *  coord_scratch = nullptr;  // MUST BE AT LEAST [sizeof(T) * data_dim]
@@ -129,6 +137,7 @@ namespace diskann {
     DISKANN_DLLEXPORT diskann::Metric get_metric() const noexcept;
     // init asy
     DISKANN_DLLEXPORT void init_cache_async_task();
+    DISKANN_DLLEXPORT void destroy_cache_async_task();
 
    protected:
     DISKANN_DLLEXPORT void use_medoids_data_as_centroids();
@@ -236,8 +245,9 @@ namespace diskann {
     // coord_cache
     T *                       coord_cache_buf = nullptr;
     tsl::robin_map<_u32, T *> coord_cache;
-    Semaphore                 semaph;
-    std::atomic<bool>         async_generate_cache = false;
+    std::atomic<AsyncStatus>  async_status;
+    std::condition_variable   async_cond;
+    std::mutex                async_status_mtx;
 
     // thread-specific scratch
     ConcurrentQueue<ThreadData<T>> thread_data;
