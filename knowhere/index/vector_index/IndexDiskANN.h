@@ -49,8 +49,8 @@ class IndexDiskANN : public VecIndex {
     }
 
     /**
-     * @brief Due to legacy reasons, Train() and AddWithoutIds() are bonded together. We will put the building work in
-     * AddWIthoutIds() and leave Train() empty for now.
+     * @brief Due to legacy reasons, Train() and AddWithoutIds() are bonded together. We will put the building work
+     * in AddWIthoutIds() and leave Train() empty for now.
      */
     void
     Train(const DatasetPtr& /* unused */, const Config& /* unused */) override{};

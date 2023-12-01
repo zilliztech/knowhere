@@ -57,7 +57,6 @@ IndexDiskANN<T>::IndexDiskANN(std::string index_prefix, MetricType metric_type,
 namespace {
 static constexpr float kCacheExpansionRate = 1.2;
 static constexpr uint32_t kLinuxAioMaxnrLimit = 65536;
-static auto async_pool = ThreadPool(1);
 void
 CheckPreparation(bool is_prepared) {
     if (!is_prepared) {
@@ -316,10 +315,8 @@ IndexDiskANN<T>::Prepare(const Config& config) {
             }
         } else {
             // init the statistical object
-            pq_flash_index_->init_cache_async_task();
-            async_pool.push([&, cache_num = num_nodes_to_cache, sample_nodes_file = warmup_query_file]() {
-                pq_flash_index_->generate_cache_list_from_sample_queries(sample_nodes_file, 15, 6, cache_num);
-            });
+            pq_flash_index_->async_generate_cache_list_from_sample_queries(warmup_query_file, 15, 6,
+                                                                           num_nodes_to_cache);
         }
     }
     // warmup
