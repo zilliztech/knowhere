@@ -7,6 +7,8 @@
 #include <sstream>
 #include <stack>
 #include <string>
+#include <mutex>
+#include <shared_mutex>
 #include "knowhere/common/lru_cache.h"
 #include "tsl/robin_map.h"
 #include "tsl/robin_set.h"
@@ -232,12 +234,13 @@ namespace diskann {
     // nhood_cache
     unsigned *                                    nhood_cache_buf = nullptr;
     tsl::robin_map<_u32, std::pair<_u32, _u32 *>> nhood_cache; // <id, <neihbors_num, neihbors>>
-
+    mutable std::shared_mutex                     nhood_mtx;
     // coord_cache
-    T *                       coord_cache_buf = nullptr;
-    tsl::robin_map<_u32, T *> coord_cache;
-    Semaphore                 semaph;
-    std::atomic<bool>         async_generate_cache = false;
+    T *                         coord_cache_buf = nullptr;
+    tsl::robin_map<_u32, T *>   coord_cache;
+    Semaphore                   semaph;
+    std::atomic<bool>           async_generate_cache = false;
+    mutable std::shared_mutex   coord_mtx;
 
     // thread-specific scratch
     ConcurrentQueue<ThreadData<T>> thread_data;
