@@ -1,4 +1,4 @@
-int total_timeout_minutes = 60*2
+int total_timeout_minutes = 120
 def knowhere_wheel=''
 pipeline {
     agent {
@@ -36,7 +36,7 @@ pipeline {
                         sh "conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local"
                         sh "cmake --version"
                         sh "mkdir build"
-                        sh "cd build/ && conan install .. --build=missing -o with_ut=True -o with_diskann=True -o with_raft=True -s compiler.libcxx=libstdc++11 && conan build .."
+                        sh "cd build/ && conan install .. --build=missing -o with_diskann=True -o with_raft=True -s compiler.libcxx=libstdc++11 && conan build .."
                         sh "cd python && VERSION=${version} python3 setup.py bdist_wheel"
                         dir('python/dist'){
                         knowhere_wheel=sh(returnStdout: true, script: 'ls | grep .whl').trim()
@@ -73,7 +73,7 @@ pipeline {
                       sh "apt install libopenblas-dev libaio-dev libdouble-conversion-dev libevent-dev -y"
                       sh "nvidia-smi"
                       sh "pip3 install ${knowhere_wheel} \
-                          && pip3 install -r requirements.txt --timeout 30 --retries 6  && pytest -v -m 'L0 and gpu'"
+                          && pip3 install -r requirements.txt --timeout 30 --retries 6  && pytest -v"
                     }
                 }
             }
