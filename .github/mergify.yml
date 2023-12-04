@@ -1,7 +1,9 @@
 pull_request_rules:
   - name: Add needs-dco label when DCO check failed
     conditions:
-      - base=main
+      - or:
+          - base=main
+          - base~=^2(\.\d+){1,2}$
       - -status-success=DCO
     actions:
       label:
@@ -12,7 +14,9 @@ pull_request_rules:
 
   - name: Add dco-passed label when DCO check passed
     conditions:
-      - base=main
+      - or:
+          - base=main
+          - base~=^2(\.\d+){1,2}$
       - status-success=DCO
     actions:
       label:
@@ -24,7 +28,9 @@ pull_request_rules:
 
   - name: Blocking PR if missing a related issue or PR doesn't have kind/improvement label
     conditions:
-      - base=main
+      - or:
+          - base=main
+          - base~=^2(\.\d+){1,2}$
       - -title~=\[automated\]
       - -label=kind/improvement
       - or:
@@ -57,7 +63,9 @@ pull_request_rules:
 
   - name: Dismiss block label if related issue be added into PR
     conditions:
-      - base=main
+      - or:
+          - base=main
+          - base~=^2(\.\d+){1,2}$
       - or:
         - label=kind/improvement
         - and:
@@ -75,7 +83,9 @@ pull_request_rules:
 
   - name: Blocking PR if have multiple 'kind' type labels
     conditions:
-      - base=main
+      - or:
+          - base=main
+          - base~=^2(\.\d+){1,2}$
       - or:
         - and:
           - label=kind/improvement
@@ -112,7 +122,9 @@ pull_request_rules:
 
   - name: Dismiss block PR if have not multiple 'kind' type labels
     conditions:
-      - base=main
+      - or:
+          - base=main
+          - base~=^2(\.\d+){1,2}$
       - or:
         - and:
           - label=kind/improvement
@@ -147,7 +159,9 @@ pull_request_rules:
 
   - name: Test passed for code changed for main
     conditions:
-      - base=main
+      - or:
+          - base=main
+          - base~=^2(\.\d+){1,2}$
       - "status-success=ut on ubuntu-20.04"
       - 'status-success=pre-commit'
       - 'status-success=analyzer'
@@ -162,7 +176,9 @@ pull_request_rules:
 
   - name: Test passed for cpu code changed only for main
     conditions:
-      - base=main
+      - or:
+          - base=main
+          - base~=^2(\.\d+){1,2}$
       - -files~=^(?=src/index/ivf_raft/)
       - files~=^(?=.*((\.(h|cpp)|CMakeLists.txt))).*$
       - "status-success=ut on ubuntu-20.04"
@@ -177,7 +193,9 @@ pull_request_rules:
 
   - name: Test passed for non c++ or go code changed for main
     conditions:
-      - base=main
+      - or:
+          - base=main
+          - base~=^2(\.\d+){1,2}$
       - -files~=^(?=.*((\.(h|cpp)|CMakeLists.txt))).*$
       - 'status-success=pre-commit'
       - 'status-success=analyzer'
@@ -189,7 +207,9 @@ pull_request_rules:
 
   - name: Test passed for title skip e2e
     conditions:
-      - base=main
+      - or:
+          - base=main
+          - base~=^2(\.\d+){1,2}$
       - title~=\[skip e2e\]
       - -files~=^(?=.*((\.(h|cpp)|CMakeLists.txt))).*$
     actions:
@@ -199,7 +219,9 @@ pull_request_rules:
 
   - name: Remove ci-passed label when ut failed for main
     conditions:
-      - base=main
+      - or:
+          - base=main
+          - base~=^2(\.\d+){1,2}$
       - or:
         - "status-success!=ut on ubuntu-20.04"
         - "status-success!=pre-commit"
@@ -214,7 +236,9 @@ pull_request_rules:
 
   - name: Remove ci-passed label when gpu ut failed for main
     conditions:
-      - base=main
+      - or:
+          - base=main
+          - base~=^2(\.\d+){1,2}$
       - or:
         - "status-success!=ut on ubuntu-20.04"
         - "status-success!=pre-commit"
