@@ -819,7 +819,7 @@ template uint16_t partition_fuzzy<CMax<uint16_t, int>>(
  * Histogram subroutines
  ******************************************************************/
 
-#if defined(__AVX2__) || defined(__aarch64__)
+#if defined(__AVX2__)
 /// FIXME when MSB of uint16 is set
 // this code does not compile properly with GCC 7.4.0
 
