@@ -86,7 +86,6 @@ TEST_CASE("Invalid diskann params test", "[diskann]") {
         json["beamwidth"] = 8;
         json["min_k"] = 10;
         json["max_k"] = 8000;
-        json["search_list_and_k_ratio"] = 2.0;
         return json;
     };
     std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
@@ -218,7 +217,6 @@ TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
         json["beamwidth"] = 8;
         json["min_k"] = 10;
         json["max_k"] = 8000;
-        json["search_list_and_k_ratio"] = 2.0;
         return json;
     };
 

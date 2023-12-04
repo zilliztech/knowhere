@@ -1482,8 +1482,7 @@ namespace diskann {
       const T *query1, const double range, const _u64 min_l_search,
       const _u64 max_l_search, std::vector<_s64> &indices,
       std::vector<float> &distances, const _u64 beam_width,
-      const float l_k_ratio, knowhere::BitsetView bitset_view,
-      QueryStats *stats) {
+      knowhere::BitsetView bitset_view, QueryStats *stats) {
     _u32 res_count = 0;
 
     bool stop_flag = false;
@@ -1494,7 +1493,7 @@ namespace diskann {
       distances.resize(l_search);
       for (auto &x : distances)
         x = std::numeric_limits<float>::max();
-      this->cached_beam_search(query1, l_search, l_k_ratio * l_search,
+      this->cached_beam_search(query1, l_search, l_search,
                                indices.data(), distances.data(), beam_width,
                                false, stats, nullptr, bitset_view);
       for (_u32 i = 0; i < l_search; i++) {
