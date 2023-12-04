@@ -594,7 +594,6 @@ DiskANNIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, cons
     auto beamwidth = static_cast<uint64_t>(search_conf.beamwidth.value());
     auto min_k = static_cast<uint64_t>(search_conf.min_k.value());
     auto max_k = static_cast<uint64_t>(search_conf.max_k.value());
-    auto search_list_and_k_ratio = search_conf.search_list_and_k_ratio.value();
 
     auto radius = search_conf.radius.value();
     auto range_filter = search_conf.range_filter.value();
@@ -620,7 +619,7 @@ DiskANNIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, cons
             std::vector<int64_t> indices;
             std::vector<float> distances;
             pq_flash_index_->range_search(xq + (index * dim), radius, min_k, max_k, result_id_array[index],
-                                          result_dist_array[index], beamwidth, search_list_and_k_ratio, bitset);
+                                          result_dist_array[index], beamwidth, bitset);
             // filter range search result
             if (search_conf.range_filter.value() != defaultRangeFilter) {
                 FilterRangeSearchResultForOneNq(result_dist_array[index], result_id_array[index], is_ip, radius,
