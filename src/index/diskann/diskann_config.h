@@ -67,9 +67,6 @@ class DiskANNConfig : public BaseConfig {
     CFG_INT min_k;
     // DiskANN uses TopK search to simulate range search by double the K in every round. This is the largest K.
     CFG_INT max_k;
-    // DiskANN uses TopK search to simulate range search, this is the ratio of search list size and k. With larger
-    // ratio, the accuracy will get higher but throughput will get affected.
-    CFG_FLOAT search_list_and_k_ratio;
     // The threshold which determines when to switch to PQ + Refine strategy based on the number of bits set. The
     // value should be in range of [0.0, 1.0] which means when greater or equal to x% of the bits are set,
     // use PQ + Refine. Default to -1.0f, negative vlaues will use dynamic threshold calculator given topk.
@@ -136,11 +133,6 @@ class DiskANNConfig : public BaseConfig {
             .description("the max l_search size used in range search.")
             .set_default(std::numeric_limits<CFG_INT::value_type>::max())
             .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
-            .for_range_search();
-        KNOWHERE_CONFIG_DECLARE_FIELD(search_list_and_k_ratio)
-            .description("the ratio of search list size and k.")
-            .set_default(2.0)
-            .set_range(1.0, 5.0)
             .for_range_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(filter_threshold)
             .description("the threshold of filter ratio to use PQ + Refine.")

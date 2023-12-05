@@ -91,7 +91,7 @@ namespace diskann {
     _u32 range_search(const T *query1, const double range,
                       const _u64 min_l_search, const _u64 max_l_search,
                       std::vector<_s64> &indices, std::vector<float> &distances,
-                      const _u64 beam_width, const float l_k_ratio,
+                      const _u64 beam_width,
                       knowhere::BitsetView bitset_view = nullptr,
                       QueryStats          *stats = nullptr);
 
