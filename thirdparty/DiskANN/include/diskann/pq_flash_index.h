@@ -107,7 +107,7 @@ namespace diskann {
         const T *query1, const double range, const _u64 min_l_search,
         const _u64 max_l_search, std::vector<_s64> &indices,
         std::vector<float> &distances, const _u64 beam_width,
-        const float l_k_ratio, knowhere::BitsetView bitset_view = nullptr,
+        knowhere::BitsetView bitset_view = nullptr,
         QueryStats *stats = nullptr);
 
     DISKANN_DLLEXPORT void get_vector_by_ids(
