@@ -1,4 +1,4 @@
-int total_timeout_minutes = 60*2
+int total_timeout_minutes = 120
 def knowhere_wheel=''
 pipeline {
     agent {
@@ -18,7 +18,6 @@ pipeline {
     }
     stages {
         stage("UT"){
-
             steps {
                 container("build"){
                     script{
@@ -31,9 +30,9 @@ pipeline {
                         sh "conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local"
                         sh "rm -rf /usr/local/lib/cmake/"
                         sh "mkdir build"
-                        sh "cd build/ && conan install .. --build=missing -s build_type=Debug -o with_ut=True -o with_raft=True -s compiler.libcxx=libstdc++11 \
+                        sh "cd build/ && conan install .. --build=missing -s build_type=Release -o with_diskann=True -o with_ut=True -o with_raft=True -s compiler.libcxx=libstdc++11 \
                               && conan build .. \
-                              && ./Debug/tests/ut/knowhere_tests"
+                              && ./Release/tests/ut/knowhere_tests"
                     }
                 }
             }
