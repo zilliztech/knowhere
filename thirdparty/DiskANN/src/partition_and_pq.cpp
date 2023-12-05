@@ -3,8 +3,10 @@
 
 #include "diskann/math_utils.h"
 #include "knowhere/comp/thread_pool.h"
+#include "knowhere/log.h"
 #include <omp.h>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -309,6 +311,8 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
 
   full_pivot_data.reset(new float[num_centers * dim]);
 
+  std::atomic<uint32_t> num_chunk_done(0);
+  const uint32_t num_chunk_step = num_pq_chunks / COMPLETION_PERCENT;
   auto thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
   std::vector<folly::Future<folly::Unit>> futures;
   futures.reserve(num_pq_chunks);
@@ -346,6 +350,11 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
         std::memcpy(full_pivot_data.get() + j * dim + chunk_offsets[index],
                     cur_pivot_data.get() + j * chunk_size,
                     chunk_size * sizeof(float));
+      }
+      uint32_t cur_chunk_done = num_chunk_done.fetch_add(1);
+      if (cur_chunk_done % num_chunk_step == 0 || cur_chunk_done == num_pq_chunks) {
+        LOG_KNOWHERE_INFO_ << "Genereated pivots for " << cur_chunk_done
+                           << " chunks out of " << num_pq_chunks;
       }
     }));
   }
