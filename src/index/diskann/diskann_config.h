@@ -139,7 +139,7 @@ class DiskANNConfig : public BaseConfig {
             .for_range_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(search_list_and_k_ratio)
             .description("the ratio of search list size and k.")
-            .set_default(2.0)
+            .set_default(1.0)
             .set_range(1.0, 5.0)
             .for_range_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(filter_threshold)
