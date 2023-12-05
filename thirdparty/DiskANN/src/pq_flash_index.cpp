@@ -972,7 +972,7 @@ namespace diskann {
               distances[i] *= (max_base_norm * query_norm);
             }
           } else if (metric == diskann::Metric::COSINE) {
-            distances[i] = 1.0 - distances[i];
+            distances[i] = -distances[i];
           }
         }
       } else {
