@@ -48,9 +48,9 @@ struct GpuRaftIvfPqConfig : public IvfPqConfig {
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(m).set_default(8).description("m").set_range(0, 65536).for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(nbits)
-            .set_default(8)
+            .set_default(0)
             .description("nbits")
-            .set_range(4, 8)  // Declared in base but limited here
+            .set_range(0, 8)  // Declared in base but limited here
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(kmeans_n_iters)
             .description("iterations to search for kmeans centers")

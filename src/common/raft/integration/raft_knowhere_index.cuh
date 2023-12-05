@@ -324,14 +324,11 @@ struct raft_knowhere_index<IndexKind>::impl {
     using data_type = raft_data_t<index_kind>;
     using indexing_type = raft_indexing_t<index_kind>;
     using input_indexing_type = raft_input_indexing_t<index_kind>;
+    using raft_index_type = raft_index_t<index_kind>;
 
     impl() {
     }
 
- private:
-    using raft_index_type = raft_index_t<index_kind>;
-
- public:
     auto
     is_trained() const {
         return index_.has_value();
