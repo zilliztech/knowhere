@@ -942,7 +942,7 @@ namespace diskann {
 
     // scan un-marked points and calculate pq dists
     for (_u64 id = 0; id < num_points; ++id) {
-      if (!bitset_view.test(id)) {
+      if (bitset_view.empty() || !bitset_view.test(id)) {
         pq_batch_ids.push_back(id);
       }
 
@@ -1084,10 +1084,12 @@ namespace diskann {
     float query_norm = query_norm_opt.value();
     auto  ctx = this->reader->get_ctx();
 
+    size_t bv_cnt = 0;
+
     if (!bitset_view.empty()) {
       const auto filter_threshold =
           filter_ratio_in < 0 ? kFilterThreshold : filter_ratio_in;
-      const auto bv_cnt = bitset_view.count();
+      bv_cnt = bitset_view.count();
       if (bitset_view.size() == bv_cnt) {
         for (_u64 i = 0; i < k_search; i++) {
           indices[i] = -1;
@@ -1106,6 +1108,16 @@ namespace diskann {
         this->reader->put_ctx(ctx);
         return;
       }
+    }
+
+    // Turn to BF is k_search is too large
+    if (k_search > 0.5 * (num_points - bv_cnt)) {
+      brute_force_beam_search(data, query_norm, k_search, indices, distances,
+                              beam_width, ctx, stats, feder, bitset_view);
+      this->thread_data.push(data);
+      this->thread_data.push_notify_all();
+      this->reader->put_ctx(ctx);
+      return;
     }
 
     auto         query_scratch = &(data.scratch);
@@ -1577,9 +1589,9 @@ namespace diskann {
       distances.resize(l_search);
       for (auto &x : distances)
         x = std::numeric_limits<float>::max();
-      this->cached_beam_search(query1, l_search, l_search,
-                               indices.data(), distances.data(), beam_width,
-                               false, stats, nullptr, bitset_view);
+      this->cached_beam_search(query1, l_search, l_search, indices.data(),
+                               distances.data(), beam_width, false, stats,
+                               nullptr, bitset_view);
       for (_u32 i = 0; i < l_search; i++) {
         if (indices[i] == -1) {
           res_count = i;
