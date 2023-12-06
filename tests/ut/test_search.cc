@@ -187,10 +187,35 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         }
     }
 
+    SECTION("Test Search with super large topk") {
+        using std::make_tuple;
+        auto hnsw_gen_ = [base_gen]() {
+            knowhere::Json json = base_gen();
+            json[knowhere::indexparam::HNSW_M] = 12;
+            json[knowhere::indexparam::EFCONSTRUCTION] = 30;
+            json[knowhere::meta::TOPK] = GENERATE(as<int64_t>{}, 600);
+            return json;
+        };
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen_),
+        }));
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
+        auto cfg_json = gen().dump();
+        CAPTURE(name, cfg_json);
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        REQUIRE(idx.Type() == name);
+        REQUIRE(idx.Build(*train_ds, json) == knowhere::Status::success);
+
+        auto results = idx.Search(*query_ds, json, nullptr);
+        auto gt = knowhere::BruteForce::Search(train_ds, query_ds, json, nullptr);
+        float recall = GetKNNRecall(*gt.value(), *results.value());
+        REQUIRE(recall > kBruteForceRecallThreshold);
+    }
+
     SECTION("Test Search with Bitset") {
         using std::make_tuple;
         auto [name, gen, threshold] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>, float>({
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen, hnswlib::kHnswSearchKnnBFThreshold),
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen, hnswlib::kHnswSearchKnnBFFilterThreshold),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
@@ -201,7 +226,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
 
         std::vector<std::function<std::vector<uint8_t>(size_t, size_t)>> gen_bitset_funcs = {
             GenerateBitsetWithFirstTbitsSet, GenerateBitsetWithRandomTbitsSet};
-        const auto bitset_percentages = {0.4f, 0.98f};
+        const auto bitset_percentages = {0.4f, 0.8f, 0.98f};
         for (const float percentage : bitset_percentages) {
             for (const auto& gen_func : gen_bitset_funcs) {
                 auto bitset_data = gen_func(nb, percentage * nb);
@@ -209,7 +234,8 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
                 auto results = idx.Search(*query_ds, json, bitset);
                 auto gt = knowhere::BruteForce::Search(train_ds, query_ds, json, bitset);
                 float recall = GetKNNRecall(*gt.value(), *results.value());
-                if (percentage > threshold) {
+                if (percentage > threshold ||
+                    json[knowhere::meta::TOPK] > (1 - percentage) * nb * hnswlib::kHnswSearchBFTopkThreshold) {
                     REQUIRE(recall > kBruteForceRecallThreshold);
                 } else {
                     REQUIRE(recall > kKnnRecallThreshold);
