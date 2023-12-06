@@ -86,9 +86,16 @@ class HnswIndexNode : public IndexNode {
         std::vector<folly::Future<folly::Unit>> futures;
         futures.reserve(rows);
 
+        std::atomic<uint64_t> counter{0};
+        uint64_t one_tenth_row = rows / 10;
         for (int i = 1; i < rows; ++i) {
-            futures.emplace_back(build_pool->push(
-                [&, idx = i]() { index_->addPoint(((const char*)tensor + index_->data_size_ * idx), idx); }));
+            futures.emplace_back(build_pool->push([&, idx = i]() {
+                index_->addPoint(((const char*)tensor + index_->data_size_ * idx), idx);
+                uint64_t added = counter.fetch_add(1);
+                if (added % one_tenth_row == 0) {
+                    LOG_KNOWHERE_INFO_ << "HNSW build progress: " << (added / one_tenth_row) << "0%";
+                }
+            }));
         }
         for (auto& future : futures) {
             future.wait();
