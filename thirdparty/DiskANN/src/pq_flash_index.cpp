@@ -23,6 +23,7 @@
 #include "diskann/aux_utils.h"
 #include "diskann/timer.h"
 #include "diskann/utils.h"
+#include "knowhere/comp/thread_pool.h"
 #include "knowhere/heap.h"
 
 #include "knowhere/utils.h"
@@ -50,8 +51,11 @@
   ((((_u64) (id)) % nvecs_per_sector) * data_dim * sizeof(float))
 
 namespace {
-  constexpr _u64 kRefineBeamWidthFactor = 2;
-  constexpr _u64 kBruteForceTopkRefineExpansionFactor = 2;
+  static auto async_pool =
+      knowhere::ThreadPool(1, "DiskANN_Async_Cache_Making");
+
+  constexpr _u64  kRefineBeamWidthFactor = 2;
+  constexpr _u64  kBruteForceTopkRefineExpansionFactor = 2;
   constexpr float kFilterThreshold = 0.93f;
   constexpr float kAlpha = 0.15f;
 }  // namespace
@@ -80,6 +84,7 @@ namespace diskann {
 
   template<typename T>
   PQFlashIndex<T>::~PQFlashIndex() {
+    destroy_cache_async_task();
     if (data != nullptr) {
       delete[] data;
     }
@@ -149,9 +154,10 @@ namespace diskann {
     thread_data_size += ROUND_UP(sizeof(T) * this->aligned_dim, 256);
     thread_data_size +=
         ROUND_UP((_u64) MAX_N_SECTOR_READS * read_len_for_node, SECTOR_LEN);
+    thread_data_size += ROUND_UP(
+        (_u64) MAX_GRAPH_DEGREE * (_u64) this->aligned_dim * sizeof(_u8), 256);
     thread_data_size +=
-        ROUND_UP((_u64) MAX_GRAPH_DEGREE * (_u64) this->aligned_dim * sizeof(_u8), 256);
-    thread_data_size += ROUND_UP( 256 * (_u64) this->aligned_dim * sizeof(float), 256);
+        ROUND_UP(256 * (_u64) this->aligned_dim * sizeof(float), 256);
     thread_data_size += ROUND_UP((_u64) MAX_GRAPH_DEGREE * sizeof(float), 256);
     thread_data_size += ROUND_UP(this->aligned_dim * sizeof(T), 8 * sizeof(T));
     thread_data_size +=
@@ -187,6 +193,8 @@ namespace diskann {
     _u64 num_cached_nodes = node_list.size();
     LOG_KNOWHERE_DEBUG_ << "Loading the cache list(" << num_cached_nodes
                         << " points) into memory...";
+    assert(this->nhood_cache_buf == nullptr && "nhoodc_cache_buf is not null");
+    assert(this->coord_cache_buf == nullptr && "coord_cache_buf is not null");
 
     auto ctx = this->reader->get_ctx();
 
@@ -226,7 +234,6 @@ namespace diskann {
         T    *node_coords = OFFSET_TO_NODE_COORDS(node_buf);
         T    *cached_coords = coord_cache_buf + node_idx * aligned_dim;
         memcpy(cached_coords, node_coords, disk_bytes_per_point);
-        coord_cache.insert(std::make_pair(nhood.first, cached_coords));
 
         // insert node nhood into nhood_cache
         unsigned *node_nhood = OFFSET_TO_NODE_NHOOD(node_buf);
@@ -237,7 +244,11 @@ namespace diskann {
         cnhood.first = nnbrs;
         cnhood.second = nhood_cache_buf + node_idx * (max_degree + 1);
         memcpy(cnhood.second, nbrs, nnbrs * sizeof(unsigned));
-        nhood_cache.insert(std::make_pair(nhood.first, cnhood));
+        {
+          std::unique_lock<std::shared_mutex> lock(this->cache_mtx);
+          coord_cache.insert(std::make_pair(nhood.first, cached_coords));
+          nhood_cache.insert(std::make_pair(nhood.first, cnhood));
+        }
         aligned_free(nhood.second);
         node_idx++;
       }
@@ -247,62 +258,121 @@ namespace diskann {
   }
 
   template<typename T>
-  void PQFlashIndex<T>::generate_cache_list_from_sample_queries(
+  void PQFlashIndex<T>::async_generate_cache_list_from_sample_queries(
       std::string sample_bin, _u64 l_search, _u64 beamwidth,
-      _u64 num_nodes_to_cache, std::vector<uint32_t> &node_list) {
-    this->count_visited_nodes = true;
-    this->node_visit_counter.clear();
-    this->node_visit_counter.resize(this->num_points);
-    for (_u32 i = 0; i < node_visit_counter.size(); i++) {
+      _u64 num_nodes_to_cache) {
+    this->search_counter.store(0);
+    node_visit_counter.clear();
+    node_visit_counter.resize(this->num_points);
+    for (_u32 i = 0; i < this->node_visit_counter.size(); i++) {
       this->node_visit_counter[i].first = i;
-      this->node_visit_counter[i].second = 0;
+      this->node_visit_counter[i].second =
+          std::make_unique<std::atomic<_u32>>(0);
     }
+    this->count_visited_nodes.store(true);
 
-    _u64 sample_num, sample_dim, sample_aligned_dim;
-    T   *samples;
+    async_pool.push([&, state_controller = this->state_controller, sample_bin,
+                     l_search, beamwidth, num_nodes_to_cache]() {
+      {
+        std::unique_lock<std::mutex> guard(state_controller->status_mtx);
+        if (state_controller->status.load() ==
+            ThreadSafeStateController::Status::KILLED) {
+          state_controller->status.store(
+              ThreadSafeStateController::Status::DONE);
+          return;
+        }
+        state_controller->status.store(
+            ThreadSafeStateController::Status::DOING);
+      }
+      T *samples;
+      try {
+        auto s = std::chrono::high_resolution_clock::now();
+        _u64 sample_num, sample_dim, sample_aligned_dim;
 
-    if (file_exists(sample_bin)) {
-      diskann::load_aligned_bin<T>(sample_bin, samples, sample_num, sample_dim,
-                                   sample_aligned_dim);
-    }
-    else {
-      diskann::cerr << "Sample bin file not found. Not generating cache."
-                    << std::endl;
-      return;
-    }
+        std::stringstream stream;
 
-    std::vector<int64_t> tmp_result_ids_64(sample_num, 0);
-    std::vector<float>   tmp_result_dists(sample_num, 0);
+        if (file_exists(sample_bin)) {
+          diskann::load_aligned_bin<T>(sample_bin, samples, sample_num,
+                                       sample_dim, sample_aligned_dim);
+        } else {
+          stream << "Sample bin file not found. Not generating cache."
+                 << std::endl;
+          throw diskann::ANNException(stream.str(), -1);
+        }
 
-    auto thread_pool = knowhere::ThreadPool::GetGlobalSearchThreadPool();
-    std::vector<folly::Future<folly::Unit>> futures;
-    futures.reserve(sample_num);
-    for (_s64 i = 0; i < (int64_t) sample_num; i++) {
-      futures.emplace_back(thread_pool->push([&, index = i]() {
-        cached_beam_search(samples + (index * sample_aligned_dim), 1, l_search,
-                           tmp_result_ids_64.data() + (index * 1),
-                           tmp_result_dists.data() + (index * 1), beamwidth);
-      }));
-    }
+        int64_t tmp_result_id_64 = 0;
+        float   tmp_result_dist = 0.0;
 
-    for (auto &future : futures) {
-      future.wait();
-    }
+        _u64 id = 0;
+        while (this->search_counter.load() < sample_num && id < sample_num &&
+               state_controller->status.load() !=
+                   ThreadSafeStateController::Status::STOPPING) {
+          cached_beam_search(samples + (id * sample_aligned_dim), 1, l_search,
+                             &tmp_result_id_64, &tmp_result_dist, beamwidth);
+          id++;
+        }
 
-    std::sort(this->node_visit_counter.begin(), node_visit_counter.end(),
-              [](std::pair<_u32, _u32> &left, std::pair<_u32, _u32> &right) {
-                return left.second > right.second;
-              });
-    node_list.clear();
-    node_list.shrink_to_fit();
-    node_list.reserve(num_nodes_to_cache);
-    for (_u64 i = 0; i < num_nodes_to_cache; i++) {
-      node_list.push_back(this->node_visit_counter[i].first);
-    }
-    this->count_visited_nodes = false;
-    std::vector<std::pair<_u32, _u32>>().swap(this->node_visit_counter);
+        if (state_controller->status.load() ==
+            ThreadSafeStateController::Status::STOPPING) {
+          stream << "pq_flash_index is destoried, async thread should be exit."
+                 << std::endl;
+          throw diskann::ANNException(stream.str(), -1);
+        }
 
-    diskann::aligned_free(samples);
+        {
+          std::unique_lock<std::shared_mutex> lock(
+              this->node_visit_counter_mtx);
+          this->count_visited_nodes.store(false);
+
+          std::sort(this->node_visit_counter.begin(),
+                    this->node_visit_counter.end(),
+                    [](auto &left, auto &right) {
+                      return *(left.second) > *(right.second);
+                    });
+        }
+
+        std::vector<uint32_t> node_list;
+        node_list.clear();
+        node_list.shrink_to_fit();
+        node_list.reserve(num_nodes_to_cache);
+        for (_u64 i = 0; i < num_nodes_to_cache; i++) {
+          node_list.push_back(this->node_visit_counter[i].first);
+        }
+
+        this->load_cache_list(node_list);
+        auto e = std::chrono::high_resolution_clock::now();
+
+        std::chrono::duration<double> diff = e - s;
+        LOG(INFO) << "Using sample queries to generate cache, cost: "
+                  << diff.count() << "s";
+      } catch (std::exception &e) {
+        LOG(INFO) << "Can't generate Diskann cache: " << e.what();
+      }
+
+      // clear up
+      {
+        std::unique_lock<std::shared_mutex> lock(this->node_visit_counter_mtx);
+        if (this->count_visited_nodes.load() == true) {
+          this->count_visited_nodes.store(false);
+        }
+        node_visit_counter.clear();
+        node_visit_counter.shrink_to_fit();
+      }
+
+      this->search_counter.store(0);
+      // free samples
+      if (samples != nullptr) {
+        diskann::aligned_free(samples);
+      }
+
+      {
+        std::unique_lock<std::mutex> guard(state_controller->status_mtx);
+        state_controller->status.store(ThreadSafeStateController::Status::DONE);
+        state_controller->cond.notify_one();
+      }
+    });
+
+    return;
   }
 
   template<typename T>
@@ -543,7 +613,7 @@ namespace diskann {
                 << disk_pq_n_chunks << " bytes per point." << std::endl;
     }
 
-// read index metadata
+    // read index metadata
     std::ifstream index_metadata(disk_index_file, std::ios::binary);
 
     size_t actual_index_size = get_file_size(disk_index_file);
@@ -777,11 +847,14 @@ namespace diskann {
       const auto [dist, id] = opt.value();
 
       // check if in cache
-      if (coord_cache.find(id) != coord_cache.end()) {
-        float dist =
-            dist_cmp_wrap(query, coord_cache.at(id), (size_t) aligned_dim, id);
-        max_heap.Push(dist, id);
-        continue;
+      {
+        std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
+        if (coord_cache.find(id) != coord_cache.end()) {
+          float dist = dist_cmp_wrap(query, coord_cache.at(id),
+                                     (size_t) aligned_dim, id);
+          max_heap.Push(dist, id);
+          continue;
+        }
       }
 
       // deduplicate and prepare for I/O
@@ -819,7 +892,7 @@ namespace diskann {
             memcpy(node_fp_coords_copy, node_buf,
                    disk_bytes_per_point);  // Do we really need memcpy here?
             float dist = dist_cmp_wrap(query, node_fp_coords_copy,
-                                  (size_t) aligned_dim, cur_id);
+                                       (size_t) aligned_dim, cur_id);
             max_heap.Push(dist, cur_id);
             if (feder != nullptr) {
               feder->visit_info_.AddTopCandidateInfo(cur_id, dist);
@@ -869,7 +942,8 @@ namespace diskann {
       const T *query1, const _u64 k_search, const _u64 l_search, _s64 *indices,
       float *distances, const _u64 beam_width, const bool use_reorder_data,
       QueryStats *stats, const knowhere::feder::diskann::FederResultUniq &feder,
-      knowhere::BitsetView bitset_view, const float filter_ratio_in, const bool for_tuning) {
+      knowhere::BitsetView bitset_view, const float filter_ratio_in,
+      const bool for_tuning) {
     if (beam_width > MAX_N_SECTOR_READS)
       throw ANNException("Beamwidth can not be higher than MAX_N_SECTOR_READS",
                          -1, __FUNCSIG__, __FILE__, __LINE__);
@@ -966,9 +1040,9 @@ namespace diskann {
       float best_dist = (std::numeric_limits<float>::max)();
       std::vector<SimpleNeighbor> medoid_dists;
       for (_u64 cur_m = 0; cur_m < num_medoids; cur_m++) {
-        float cur_expanded_dist =
-            dist_cmp_float_wrap(query_float, centroid_data + aligned_dim * cur_m,
-                           (size_t) aligned_dim, medoids[cur_m]);
+        float cur_expanded_dist = dist_cmp_float_wrap(
+            query_float, centroid_data + aligned_dim * cur_m,
+            (size_t) aligned_dim, medoids[cur_m]);
         if (cur_expanded_dist < best_dist) {
           best_medoid = medoids[cur_m];
           best_dist = cur_expanded_dist;
@@ -1031,21 +1105,26 @@ namespace diskann {
              num_seen < beam_width) {
         if (retset[marker].flag) {
           num_seen++;
-          auto iter = nhood_cache.find(retset[marker].id);
-          if (iter != nhood_cache.end()) {
-            cached_nhoods.push_back(
-                std::make_pair(retset[marker].id, iter->second));
-            if (stats != nullptr) {
-              stats->n_cache_hits++;
+          {
+            std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
+            auto iter = nhood_cache.find(retset[marker].id);
+            if (iter != nhood_cache.end()) {
+              cached_nhoods.push_back(
+                  std::make_pair(retset[marker].id, iter->second));
+              if (stats != nullptr) {
+                stats->n_cache_hits++;
+              }
+            } else {
+              frontier.push_back(retset[marker].id);
             }
-          } else {
-            frontier.push_back(retset[marker].id);
           }
           retset[marker].flag = false;
-          if (this->count_visited_nodes) {
-            reinterpret_cast<std::atomic<_u32> &>(
-                this->node_visit_counter[retset[marker].id].second)
-                .fetch_add(1);
+          {
+            std::shared_lock<std::shared_mutex> lock(
+                this->node_visit_counter_mtx);
+            if (this->count_visited_nodes) {
+              this->node_visit_counter[retset[marker].id].second->fetch_add(1);
+            }
           }
           if (!bitset_view.empty() && bitset_view.test(retset[marker].id)) {
             std::memmove(&retset[marker], &retset[marker + 1],
@@ -1087,13 +1166,12 @@ namespace diskann {
       }
 
       auto process_node = [&](T *node_fp_coords_copy, auto node_id, auto n_nbr,
-                               auto *nbrs) {
+                              auto *nbrs) {
         if (bitset_view.empty() || !bitset_view.test(node_id)) {
           float cur_expanded_dist;
           if (!use_disk_index_pq) {
-            cur_expanded_dist =
-                dist_cmp_wrap(query, node_fp_coords_copy, (size_t) aligned_dim,
-                         node_id);
+            cur_expanded_dist = dist_cmp_wrap(query, node_fp_coords_copy,
+                                              (size_t) aligned_dim, node_id);
           } else {
             if (metric == diskann::Metric::INNER_PRODUCT ||
                 metric == diskann::Metric::COSINE)
@@ -1108,8 +1186,7 @@ namespace diskann {
 
           // add top candidate info into feder result
           if (feder != nullptr) {
-            feder->visit_info_.AddTopCandidateInfo(node_id,
-                                                   cur_expanded_dist);
+            feder->visit_info_.AddTopCandidateInfo(node_id, cur_expanded_dist);
             feder->id_set_.insert(node_id);
           }
         }
@@ -1139,8 +1216,7 @@ namespace diskann {
           if (stats != nullptr) {
             stats->n_cmps++;
           }
-          if (cur_list_size > 0 &&
-              dist >= retset[cur_list_size - 1].distance &&
+          if (cur_list_size > 0 && dist >= retset[cur_list_size - 1].distance &&
               (cur_list_size == l_search))
             continue;
           Neighbor nn(id, dist, true);
@@ -1160,10 +1236,14 @@ namespace diskann {
 
       // process cached nhoods
       for (auto &cached_nhood : cached_nhoods) {
-        auto global_cache_iter = coord_cache.find(cached_nhood.first);
-        T   *node_fp_coords_copy = global_cache_iter->second;
+        T *node_fp_coords_copy;
+        {
+          std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
+          auto global_cache_iter = coord_cache.find(cached_nhood.first);
+          node_fp_coords_copy = global_cache_iter->second;
+        }
         process_node(node_fp_coords_copy, cached_nhood.first,
-                      cached_nhood.second.first, cached_nhood.second.second);
+                     cached_nhood.second.first, cached_nhood.second.second);
       }
 
       for (auto &frontier_nhood : frontier_nhoods) {
@@ -1171,10 +1251,10 @@ namespace diskann {
             get_offset_to_node(frontier_nhood.second, frontier_nhood.first);
         unsigned *node_buf = OFFSET_TO_NODE_NHOOD(node_disk_buf);
         T        *node_fp_coords = OFFSET_TO_NODE_COORDS(node_disk_buf);
-        T *node_fp_coords_copy = data_buf;
+        T        *node_fp_coords_copy = data_buf;
         memcpy(node_fp_coords_copy, node_fp_coords, disk_bytes_per_point);
         process_node(node_fp_coords_copy, frontier_nhood.first, *node_buf,
-                      node_buf + 1);
+                     node_buf + 1);
       }
 
       // update best inserted position
@@ -1219,7 +1299,7 @@ namespace diskann {
       }
 
       io_timer.reset();
-      reader->read(vec_read_reqs, ctx);     // synchronous IO linux
+      reader->read(vec_read_reqs, ctx);  // synchronous IO linux
       if (stats != nullptr) {
         stats->io_us += io_timer.elapsed();
       }
@@ -1274,6 +1354,9 @@ namespace diskann {
     if (stats != nullptr) {
       stats->total_us = (double) query_timer.elapsed();
     }
+    if (this->count_visited_nodes) {
+      this->search_counter.fetch_add(1);
+    }
   }
 
   // range search returns results of all neighbors within distance of range.
@@ -1295,9 +1378,9 @@ namespace diskann {
       distances.resize(l_search);
       for (auto &x : distances)
         x = std::numeric_limits<float>::max();
-      this->cached_beam_search(query1, l_search, l_search,
-                               indices.data(), distances.data(), beam_width,
-                               false, stats, nullptr, bitset_view);
+      this->cached_beam_search(query1, l_search, l_search, indices.data(),
+                               distances.data(), beam_width, false, stats,
+                               nullptr, bitset_view);
       for (_u32 i = 0; i < l_search; i++) {
         if (indices[i] == -1) {
           res_count = i;
@@ -1305,8 +1388,8 @@ namespace diskann {
         }
         bool in_range = (metric == diskann::Metric::INNER_PRODUCT ||
                          metric == diskann::Metric::COSINE)
-                                ? distances[i] > (float) range
-                                : distances[i] < (float) range;
+                            ? distances[i] > (float) range
+                            : distances[i] < (float) range;
         if (!in_range) {
           res_count = i;
           break;
@@ -1348,11 +1431,14 @@ namespace diskann {
     std::unordered_map<_u64, std::vector<_u64>> sectors_to_visit;
     for (int64_t i = 0; i < n; ++i) {
       _u64 id = ids[i];
-      if (coord_cache.find(id) != coord_cache.end()) {
-        copy_vec_base_data(output_data, i, coord_cache.at(id));
-      } else {
-        const _u64 sector_offset = get_node_sector_offset(id);
-        sectors_to_visit[sector_offset].push_back(i);
+      {
+        std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
+        if (coord_cache.find(id) != coord_cache.end()) {
+          copy_vec_base_data(output_data, i, coord_cache.at(id));
+        } else {
+          const _u64 sector_offset = get_node_sector_offset(id);
+          sectors_to_visit[sector_offset].push_back(i);
+        }
       }
     }
     return sectors_to_visit;
@@ -1377,7 +1463,7 @@ namespace diskann {
         std::min(AioContextPool::GetGlobalAioPool()->max_events_per_ctx(),
                  std::min(MAX_N_SECTOR_READS / 2UL, sectors_to_visit.size()));
     const size_t half_buf_idx = MAX_N_SECTOR_READS / 2 * read_len_for_node;
-    char *sector_scratch = data.scratch.sector_scratch;
+    char        *sector_scratch = data.scratch.sector_scratch;
     std::vector<AlignedRead> frontier_read_reqs;
     frontier_read_reqs.reserve(batch_size);
 
@@ -1387,11 +1473,11 @@ namespace diskann {
       sector_offsets.emplace_back(it.first);
     }
 
-    auto ctx = this->reader->get_ctx();
-    const auto sector_num = sector_offsets.size();
-    const _u64 num_blocks = DIV_ROUND_UP(sector_num, batch_size);
+    auto                     ctx = this->reader->get_ctx();
+    const auto               sector_num = sector_offsets.size();
+    const _u64               num_blocks = DIV_ROUND_UP(sector_num, batch_size);
     std::vector<AlignedRead> last_reqs;
-    bool rotate = false;
+    bool                     rotate = false;
 
     for (_u64 i = 0; i < num_blocks; ++i) {
       _u64 start_idx = i * batch_size;
@@ -1401,16 +1487,16 @@ namespace diskann {
       for (_u64 j = 0; j < idx_len; ++j) {
         char *sector_buf =
             sector_scratch + rotate * half_buf_idx + j * read_len_for_node;
-        frontier_read_reqs.emplace_back(sector_offsets[start_idx + j], read_len_for_node,
-                                    sector_buf);
+        frontier_read_reqs.emplace_back(sector_offsets[start_idx + j],
+                                        read_len_for_node, sector_buf);
       }
       rotate ^= 0x1;
       reader->submit_req(ctx, frontier_read_reqs);
-      for (const auto& req : last_reqs) {
-        auto offset = req.offset;
-        char* sector_buf = static_cast<char*>(req.buf);
+      for (const auto &req : last_reqs) {
+        auto  offset = req.offset;
+        char *sector_buf = static_cast<char *>(req.buf);
         for (auto idx : sectors_to_visit.at(offset)) {
-          char* node_buf = get_offset_to_node(sector_buf, ids[idx]);
+          char *node_buf = get_offset_to_node(sector_buf, ids[idx]);
           copy_vec_base_data(output_data, idx, node_buf);
         }
       }
@@ -1418,11 +1504,11 @@ namespace diskann {
     }
 
     // if any remaining
-    for (const auto& req : frontier_read_reqs) {
-      auto offset = req.offset;
-      char* sector_buf = static_cast<char*>(req.buf);
+    for (const auto &req : frontier_read_reqs) {
+      auto  offset = req.offset;
+      char *sector_buf = static_cast<char *>(req.buf);
       for (auto idx : sectors_to_visit.at(offset)) {
-        char* node_buf = get_offset_to_node(sector_buf, ids[idx]);
+        char *node_buf = get_offset_to_node(sector_buf, ids[idx]);
         copy_vec_base_data(output_data, idx, node_buf);
       }
     }
@@ -1491,6 +1577,27 @@ namespace diskann {
     }
 
     return index_mem_size;
+  }
+
+  template<typename T>
+  void PQFlashIndex<T>::destroy_cache_async_task() {
+    std::unique_lock<std::mutex> guard(state_controller->status_mtx);
+    if (this->state_controller->status.load() ==
+        ThreadSafeStateController::Status::DONE) {
+      return;
+    }
+    if (this->state_controller->status.load() ==
+        ThreadSafeStateController::Status::NONE) {
+      this->state_controller->status.store(
+          ThreadSafeStateController::Status::KILLED);
+      return;
+    }
+    this->state_controller->status.store(
+        ThreadSafeStateController::Status::STOPPING);
+    if (this->state_controller->status.load() !=
+        ThreadSafeStateController::Status::DONE) {
+      this->state_controller->cond.wait(guard);
+    }
   }
 
   // instantiations
