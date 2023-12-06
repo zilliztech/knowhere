@@ -58,6 +58,7 @@ typedef int FileHandle;
         // 4KB for unified files
 
 #define BUFFER_SIZE_FOR_CACHED_IO (_u64) 1024 * (_u64) 1048576
+#define COMPLETION_PERCENT 10
 
 inline bool file_exists(const std::string& name, bool dirCheck = false) {
   int val;

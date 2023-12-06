@@ -13,6 +13,7 @@
 #include <shared_mutex>
 #include <sstream>
 #include <string>
+#include "knowhere/log.h"
 #include "tsl/robin_set.h"
 #include "tsl/robin_map.h"
 #include <unordered_map>
@@ -1569,14 +1570,14 @@ namespace diskann {
                  << "/" << num_syncs << " with L " << L << ")"
                  << " sync_time: " << sync_time << "s"
                  << "; inter_time: " << inter_time << "s" << std::endl;
-          LOG_KNOWHERE_DEBUG_ << stream.str();
+          LOG_KNOWHERE_INFO_ << stream.str();
           total_sync_time += sync_time;
           total_inter_time += inter_time;
           total_inter_count += inter_count;
           sync_time = 0;
           inter_time = 0;
           inter_count = 0;
-          progress_counter += 5;
+          progress_counter += 20;
         }
       }
 // Gopal. Splitting nsg_dll into separate DLLs for search and build.

@@ -1216,10 +1216,13 @@ namespace diskann {
       make_zero_mean = false;
 
     auto pq_s = std::chrono::high_resolution_clock::now();
+
+    LOG_KNOWHERE_INFO_ << "Generating PQ pivots";
     generate_pq_pivots(train_data, train_size, (uint32_t) dim, 256,
                        (uint32_t) num_pq_chunks, NUM_KMEANS_REPS,
                        pq_pivots_path, make_zero_mean);
 
+    LOG_KNOWHERE_INFO_ << "Encoding PQ data";
     generate_pq_data_from_pivots<T>(data_file_to_use.c_str(), 256,
                                     (uint32_t) num_pq_chunks, pq_pivots_path,
                                     pq_compressed_vectors_path);
