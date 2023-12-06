@@ -942,7 +942,7 @@ namespace diskann {
 
     // scan un-marked points and calculate pq dists
     for (_u64 id = 0; id < num_points; ++id) {
-      if (!bitset_view.test(id)) {
+      if (bitset_view.empty() || !bitset_view.test(id)) {
         pq_batch_ids.push_back(id);
       }
 
