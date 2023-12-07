@@ -65,7 +65,6 @@ GetRangeSearchResult(const faiss::RangeSearchResult& res, const bool is_ip, cons
     distances = new float[total_valid];
     labels = new int64_t[total_valid];
 
-#pragma omp parallel for
     for (auto i = 0; i < nq; i++) {
         FilterRangeSearchResultForOneNq(res.lims[i + 1] - res.lims[i], res.distances + res.lims[i],
                                         res.labels + res.lims[i], is_ip, radius, range_filter, lims[i + 1] - lims[i],

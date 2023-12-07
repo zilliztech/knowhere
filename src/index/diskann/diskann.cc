@@ -11,8 +11,6 @@
 
 #include "knowhere/feder/DiskANN.h"
 
-#include <omp.h>
-
 #include <cstdint>
 
 #include "common/range_util.h"
