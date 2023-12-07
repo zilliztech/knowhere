@@ -11,9 +11,6 @@
 
 #include "knowhere/feder/HNSW.h"
 
-#include <omp.h>
-
-#include <exception>
 #include <new>
 
 #include "common/range_util.h"
