@@ -217,6 +217,17 @@ pull_request_rules:
         add:
           - ci-passed
 
+  - name: Add comment when jenkins job failed
+    conditions:
+      - or:
+          - base=master
+          - base~=^2(\.\d+){1,2}$
+      - 'check-failure=e2e'
+    actions:
+      comment:
+        message: |
+          @{{author}} e2e jenkins job failed, comment `/run-e2e` can trigger the job again.
+
   - name: Remove ci-passed label when ut failed for main
     conditions:
       - or:
