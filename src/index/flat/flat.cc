@@ -39,7 +39,7 @@ class FlatIndexNode : public IndexNode {
 
         auto metric = Str2FaissMetricType(f_cfg.metric_type.value());
         if (!metric.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "please check metric type: " << f_cfg.metric_type.value();
+            LOG_KNOWHERE_ERROR_ << "unsupported metric type: " << f_cfg.metric_type.value();
             return metric.error();
         }
         if constexpr (std::is_same<faiss::IndexBinaryFlat, T>::value) {
