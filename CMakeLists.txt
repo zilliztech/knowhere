@@ -20,6 +20,7 @@ include(GNUInstallDirs)
 include(ExternalProject)
 include(cmake/utils/utils.cmake)
 
+
 knowhere_option(WITH_RAFT "Build with RAFT indexes" OFF)
 if (WITH_RAFT)
   set(CMAKE_CUDA_ARCHITECTURES RAPIDS)
