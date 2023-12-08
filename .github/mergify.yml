@@ -1,78 +1,32 @@
 pull_request_rules:
-  - name: Add needs-dco label when DCO check failed
-    conditions:
-      - or:
-          - base=main
-          - base~=^2(\.\d+){1,2}$
-      - -status-success=DCO
-    actions:
-      label:
-        remove:
-          - dco-passed
-        add:
-          - needs-dco
+   - name: Blocking PR if missing a related issue or PR doesn't have kind/improvement label
+      conditions:
+        - or:
+            - -body~=\#[0-9]{1,6}(\s+|$)
+            - -body~=https://github.com/zilliztech/Knowhere/issues/[0-9]{1,6}(\s+|$)
+      actions:
+        label:
+          add:
+            - do-not-merge/missing-related-issue
+        comment:
+          message: |
+            @{{author}} 🔍 Important: PR Classification Needed!
 
-  - name: Add dco-passed label when DCO check passed
-    conditions:
-      - or:
-          - base=main
-          - base~=^2(\.\d+){1,2}$
-      - status-success=DCO
-    actions:
-      label:
-        remove:
-          - needs-dco
-        add:
-          - dco-passed
+            For efficient project management and a seamless review process, it's essential to classify your PR correctly. Here's how:
 
+            1. If you're fixing a bug, label it as kind/bug.
+            2. For small tweaks (less than 20 lines without altering any functionality), please use kind/improvement.
+            3. Significant changes that don't modify existing functionalities should be tagged as kind/enhancement.
+            4. Adjusting APIs or changing functionality? Go with kind/feature.
 
-  - name: Blocking PR if missing a related issue or PR doesn't have kind/improvement label
-    conditions:
-      - or:
-          - base=main
-          - base~=^2(\.\d+){1,2}$
-      - -title~=\[automated\]
-      - -label=kind/improvement
-      - or:
-        - and:
-          - -body~=\#[0-9]{1,6}(\s+|$)
-          - -body~=https://github.com/zilliztech/Knowhere/issues/[0-9]{1,6}(\s+|$)
-        - and:
-          - -label=kind/enhancement
-          - -label=kind/feature
-          - -label=kind/bug
-    actions:
-      label:
-        add:
-          - do-not-merge/missing-related-issue
-      comment:
-        message: |
-          @{{author}} 🔍 Important: PR Classification Needed!
+            For any PR outside the kind/improvement category, ensure you link to the associated issue using the format: “issue: #<issue-number>”.
 
-          For efficient project management and a seamless review process, it's essential to classify your PR correctly. Here's how:
+            Thanks for your efforts and contribution to the community!.
 
-          1. If you're fixing a bug, label it as kind/bug.
-          2. For small tweaks (less than 20 lines without altering any functionality), please use kind/improvement.
-          3. Significant changes that don't modify existing functionalities should be tagged as kind/enhancement.
-          4. Adjusting APIs or changing functionality? Go with kind/feature.
-
-          For any PR outside the kind/improvement category, ensure you link to the associated issue using the format: “issue: #<issue-number>”.
-
-          Thanks for your efforts and contribution to the community!.
 
 
   - name: Dismiss block label if related issue be added into PR
     conditions:
-      - or:
-          - base=main
-          - base~=^2(\.\d+){1,2}$
-      - or:
-        - label=kind/improvement
-        - and:
-          - or:
-            - label=kind/enhancement
-            - label=kind/feature
-            - label=kind/bug
           - or:
             - body~=\#[0-9]{1,6}(\s+|$)
             - body~=https://github.com/zilliztech/Knowhere/issues/[0-9]{1,6}(\s+|$)
@@ -80,187 +34,3 @@ pull_request_rules:
       label:
         remove:
           - do-not-merge/missing-related-issue
-
-  - name: Blocking PR if have multiple 'kind' type labels
-    conditions:
-      - or:
-          - base=main
-          - base~=^2(\.\d+){1,2}$
-      - or:
-        - and:
-          - label=kind/improvement
-          - or:
-            - label=kind/enhancement
-            - label=kind/feature
-            - label=kind/bug
-        - and:
-          - label=kind/enhancement
-          - or:
-            - label=kind/improvement
-            - label=kind/feature
-            - label=kind/bug
-        - and:
-          - label=kind/feature
-          - or:
-            - label=kind/enhancement
-            - label=kind/improvement
-            - label=kind/bug
-        - and:
-          - label=kind/bug
-          - or:
-            - label=kind/enhancement
-            - label=kind/feature
-            - label=kind/improvement
-    actions:
-      label:
-        add:
-          - do-not-merge/description-tag-conflict
-      comment:
-        message: |
-          @{{author}} Please remove redundant `kind/xxx` labels and make sure that there is only one `kind/xxx` label  of your Pull Request.  (eg. “/remove-kind improvement”)
-
-
-  - name: Dismiss block PR if have not multiple 'kind' type labels
-    conditions:
-      - or:
-          - base=main
-          - base~=^2(\.\d+){1,2}$
-      - or:
-        - and:
-          - label=kind/improvement
-          - -label=kind/enhancement
-          - -label=kind/feature
-          - -label=kind/bug
-        - and:
-          - label=kind/enhancement
-          - -label=kind/improvement
-          - -label=kind/feature
-          - -label=kind/bug
-        - and:
-          - label=kind/feature
-          - -label=kind/enhancement
-          - -label=kind/improvement
-          - -label=kind/bug
-        - and:
-          - label=kind/bug
-          - -label=kind/enhancement
-          - -label=kind/feature
-          - -label=kind/improvement
-        - and:
-          - -label=kind/improvement
-          - -label=kind/enhancement
-          - -label=kind/feature
-          - -label=kind/bug
-    actions:
-      label:
-        remove:
-          - do-not-merge/description-tag-conflict
-
-
-  - name: Test passed for code changed for main
-    conditions:
-      - or:
-          - base=main
-          - base~=^2(\.\d+){1,2}$
-      - "status-success=ut on ubuntu-20.04"
-      - 'status-success=pre-commit'
-      - 'status-success=analyzer'
-      - 'status-success=python3 wheel'
-      - "status-success=e2e"
-      - "status-success=e2e-gpu"
-      - "status-success=ut-gpu"
-    actions:
-      label:
-        add:
-          - ci-passed
-
-  - name: Test passed for cpu code changed only for main
-    conditions:
-      - or:
-          - base=main
-          - base~=^2(\.\d+){1,2}$
-      - -files~=^(?=src/index/ivf_raft/)
-      - files~=^(?=.*((\.(h|cpp)|CMakeLists.txt))).*$
-      - "status-success=ut on ubuntu-20.04"
-      - 'status-success=pre-commit'
-      - 'status-success=analyzer'
-      - 'status-success=python3 wheel'
-      - "status-success=e2e"
-    actions:
-      label:
-        add:
-          - ci-passed
-
-  - name: Test passed for non c++ or go code changed for main
-    conditions:
-      - or:
-          - base=main
-          - base~=^2(\.\d+){1,2}$
-      - -files~=^(?=.*((\.(h|cpp)|CMakeLists.txt))).*$
-      - 'status-success=pre-commit'
-      - 'status-success=analyzer'
-      - "status-success=e2e"
-    actions:
-      label:
-        add:
-          - ci-passed
-
-  - name: Test passed for title skip e2e
-    conditions:
-      - or:
-          - base=main
-          - base~=^2(\.\d+){1,2}$
-      - title~=\[skip e2e\]
-      - -files~=^(?=.*((\.(h|cpp)|CMakeLists.txt))).*$
-    actions:
-      label:
-        add:
-          - ci-passed
-
-  - name: Add comment when jenkins job failed
-    conditions:
-      - or:
-          - base=master
-          - base~=^2(\.\d+){1,2}$
-      - 'check-failure=e2e'
-    actions:
-      comment:
-        message: |
-          @{{author}} e2e jenkins job failed, comment `/run-e2e` can trigger the job again.
-
-  - name: Remove ci-passed label when ut failed for main
-    conditions:
-      - or:
-          - base=main
-          - base~=^2(\.\d+){1,2}$
-      - or:
-        - "status-success!=ut on ubuntu-20.04"
-        - "status-success!=pre-commit"
-        - "status-success!=analyzer"
-        - "status-success!=python3 wheel"
-        - "status-success!=e2e"
-      - files~=^(?=.*((\.(h|cpp)|CMakeLists.txt))).*$
-    actions:
-      label:
-        remove:
-          - ci-passed
-
-  - name: Remove ci-passed label when gpu ut failed for main
-    conditions:
-      - or:
-          - base=main
-          - base~=^2(\.\d+){1,2}$
-      - or:
-        - "status-success!=ut on ubuntu-20.04"
-        - "status-success!=pre-commit"
-        - "status-success!=analyzer"
-        - "status-success!=python3 wheel"
-        - "status-success!=e2e"
-        - "status-success!=e2e-gpu"
-        - "status-success!=ut-gpu"
-      - files~=^(?=src/index/ivf_raft/)
-      - files~=^(?=.*((\.(h|cpp)|CMakeLists.txt))).*$
-    actions:
-      label:
-        remove:
-          - ci-passed
