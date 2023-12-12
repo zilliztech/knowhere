@@ -18,10 +18,10 @@
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/object.h"
+#include "knowhere/operands.h"
 #include "knowhere/version.h"
 
 namespace knowhere {
-
 class IndexNode : public Object {
  public:
     IndexNode(const int32_t ver) : version_(ver) {

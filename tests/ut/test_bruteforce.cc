@@ -38,7 +38,7 @@ TEST_CASE("Test Brute Force", "[float vector]") {
     };
 
     SECTION("Test Search") {
-        auto res = knowhere::BruteForce::Search(train_ds, query_ds, conf, nullptr);
+        auto res = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
         REQUIRE(res.has_value());
         auto ids = res.value()->GetIds();
         auto dist = res.value()->GetDistance();
@@ -55,7 +55,7 @@ TEST_CASE("Test Brute Force", "[float vector]") {
     SECTION("Test Search With Buf") {
         auto ids = new int64_t[nq * k];
         auto dist = new float[nq * k];
-        auto res = knowhere::BruteForce::SearchWithBuf(train_ds, query_ds, ids, dist, conf, nullptr);
+        auto res = knowhere::BruteForce::SearchWithBuf<float>(train_ds, query_ds, ids, dist, conf, nullptr);
         REQUIRE(res == knowhere::Status::success);
         for (int64_t i = 0; i < nq; i++) {
             REQUIRE(ids[i * k] == i);
@@ -70,7 +70,7 @@ TEST_CASE("Test Brute Force", "[float vector]") {
     }
 
     SECTION("Test Range Search") {
-        auto res = knowhere::BruteForce::RangeSearch(train_ds, query_ds, conf, nullptr);
+        auto res = knowhere::BruteForce::RangeSearch<float>(train_ds, query_ds, conf, nullptr);
         REQUIRE(res.has_value());
         auto ids = res.value()->GetIds();
         auto dist = res.value()->GetDistance();
@@ -112,7 +112,7 @@ TEST_CASE("Test Brute Force", "[binary vector]") {
     };
 
     SECTION("Test Search") {
-        auto res = knowhere::BruteForce::Search(train_ds, query_ds, conf, nullptr);
+        auto res = knowhere::BruteForce::Search<knowhere::bin1>(train_ds, query_ds, conf, nullptr);
         REQUIRE(res.has_value());
         auto ids = res.value()->GetIds();
         auto dist = res.value()->GetDistance();
@@ -125,7 +125,7 @@ TEST_CASE("Test Brute Force", "[binary vector]") {
     SECTION("Test Search With Buf") {
         auto ids = new int64_t[nq * k];
         auto dist = new float[nq * k];
-        auto res = knowhere::BruteForce::SearchWithBuf(train_ds, query_ds, ids, dist, conf, nullptr);
+        auto res = knowhere::BruteForce::SearchWithBuf<knowhere::bin1>(train_ds, query_ds, ids, dist, conf, nullptr);
         REQUIRE(res == knowhere::Status::success);
         for (int64_t i = 0; i < nq; i++) {
             REQUIRE(ids[i * k] == i);
@@ -144,7 +144,7 @@ TEST_CASE("Test Brute Force", "[binary vector]") {
         auto cfg = conf;
         cfg[knowhere::meta::RADIUS] = radius_map[metric];
 
-        auto res = knowhere::BruteForce::RangeSearch(train_ds, query_ds, cfg, nullptr);
+        auto res = knowhere::BruteForce::RangeSearch<knowhere::bin1>(train_ds, query_ds, cfg, nullptr);
         REQUIRE(res.has_value());
         auto ids = res.value()->GetIds();
         auto dist = res.value()->GetDistance();

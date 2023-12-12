@@ -68,6 +68,26 @@ hash_binary_vec(const uint8_t* x, size_t d) {
     return h;
 }
 
+template <typename InType, typename OutType>
+inline DataSetPtr
+data_type_conversion(const DataSet& src) {
+    auto dim = src.GetDim();
+    auto rows = src.GetRows();
+
+    auto des_data = new OutType[dim * rows];
+    auto src_data = (InType*)src.GetTensor();
+    for (auto i = 0; i < dim * rows; i++) {
+        des_data[i] = (OutType)src_data[i];
+    }
+
+    auto des = std::make_shared<DataSet>();
+    des->SetRows(rows);
+    des->SetDim(dim);
+    des->SetTensor(des_data);
+    des->SetIsOwner(true);
+    return des;
+}
+
 template <typename T>
 inline T
 round_down(const T value, const T align) {
