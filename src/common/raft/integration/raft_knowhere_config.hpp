@@ -75,6 +75,9 @@ struct raft_knowhere_config {
 // of RAFT index configurations.
 [[nodiscard]] inline auto
 validate_raft_knowhere_config(raft_knowhere_config config) {
+    if (config.index_type == raft_proto::raft_index_kind::brute_force) {
+        config.add_data_on_build = false;
+    }
     if (config.index_type == raft_proto::raft_index_kind::ivf_flat ||
         config.index_type == raft_proto::raft_index_kind::ivf_pq) {
         config.add_data_on_build = true;

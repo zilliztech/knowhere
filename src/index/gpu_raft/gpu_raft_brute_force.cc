@@ -14,8 +14,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#pragma once
 
-namespace raft_proto {
-enum struct raft_index_kind { brute_force, ivf_flat, ivf_pq, cagra };
-}  // namespace raft_proto
+#include <vector>
+
+#include "common/raft/proto/raft_index_kind.hpp"
+#include "gpu_raft.h"
+#include "knowhere/factory.h"
+#include "knowhere/index_node_thread_pool_wrapper.h"
+
+namespace knowhere {
+template struct GpuRaftIndexNode<raft_proto::raft_index_kind::brute_force>;
+
+KNOWHERE_REGISTER_GLOBAL(GPU_RAFT_BRUTE_FORCE, [](const int32_t& version, const Object& object) {
+    return Index<IndexNodeThreadPoolWrapper>::Create(std::make_unique<GpuRaftBruteForceIndexNode>(version, object),
+                                                     cuda_concurrent_size);
+});
+
+}  // namespace knowhere

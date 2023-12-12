@@ -37,6 +37,7 @@ constexpr const char* INDEX_FAISS_GPU_IVFFLAT = "GPU_FAISS_IVF_FLAT";
 constexpr const char* INDEX_FAISS_GPU_IVFPQ = "GPU_FAISS_IVF_PQ";
 constexpr const char* INDEX_FAISS_GPU_IVFSQ8 = "GPU_FAISS_IVF_SQ8";
 
+constexpr const char* INDEX_RAFT_BRUTEFORCE = "GPU_RAFT_BRUTE_FORCE";
 constexpr const char* INDEX_RAFT_IVFFLAT = "GPU_RAFT_IVF_FLAT";
 constexpr const char* INDEX_RAFT_IVFPQ = "GPU_RAFT_IVF_PQ";
 constexpr const char* INDEX_RAFT_CAGRA = "GPU_RAFT_CAGRA";

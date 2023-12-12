@@ -29,6 +29,7 @@
 #include "common/raft/integration/raft_knowhere_config.hpp"
 #include "common/raft/integration/raft_knowhere_index.hpp"
 #include "common/raft/proto/raft_index_kind.hpp"
+#include "index/gpu_raft/gpu_raft_brute_force_config.h"
 #include "index/gpu_raft/gpu_raft_cagra_config.h"
 #include "index/gpu_raft/gpu_raft_ivf_flat_config.h"
 #include "index/gpu_raft/gpu_raft_ivf_pq_config.h"
@@ -44,6 +45,11 @@ auto static constexpr cuda_concurrent_size = std::uint32_t{32};
 
 template <raft_proto::raft_index_kind K>
 struct KnowhereConfigType {};
+
+template <>
+struct KnowhereConfigType<raft_proto::raft_index_kind::brute_force> {
+    using Type = GpuRaftBruteForceConfig;
+};
 
 template <>
 struct KnowhereConfigType<raft_proto::raft_index_kind::ivf_flat> {
@@ -226,7 +232,9 @@ struct GpuRaftIndexNode : public IndexNode {
 
     std::string
     Type() const override {
-        if constexpr (index_kind == raft_proto::raft_index_kind::ivf_flat) {
+        if constexpr (index_kind == raft_proto::raft_index_kind::brute_force) {
+            return knowhere::IndexEnum::INDEX_RAFT_BRUTEFORCE;
+        } else if constexpr (index_kind == raft_proto::raft_index_kind::ivf_flat) {
             return knowhere::IndexEnum::INDEX_RAFT_IVFFLAT;
         } else if constexpr (index_kind == raft_proto::raft_index_kind::ivf_pq) {
             return knowhere::IndexEnum::INDEX_RAFT_IVFPQ;
@@ -255,10 +263,12 @@ struct GpuRaftIndexNode : public IndexNode {
     }
 };
 
+extern template struct GpuRaftIndexNode<raft_proto::raft_index_kind::brute_force>;
 extern template struct GpuRaftIndexNode<raft_proto::raft_index_kind::ivf_flat>;
 extern template struct GpuRaftIndexNode<raft_proto::raft_index_kind::ivf_pq>;
 extern template struct GpuRaftIndexNode<raft_proto::raft_index_kind::cagra>;
 
+using GpuRaftBruteForceIndexNode = GpuRaftIndexNode<raft_proto::raft_index_kind::brute_force>;
 using GpuRaftIvfFlatIndexNode = GpuRaftIndexNode<raft_proto::raft_index_kind::ivf_flat>;
 using GpuRaftIvfPqIndexNode = GpuRaftIndexNode<raft_proto::raft_index_kind::ivf_pq>;
 using GpuRaftCagraIndexNode = GpuRaftIndexNode<raft_proto::raft_index_kind::cagra>;
