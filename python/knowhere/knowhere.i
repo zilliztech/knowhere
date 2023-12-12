@@ -30,6 +30,7 @@ typedef uint64_t size_t;
 #include <knowhere/factory.h>
 #include <knowhere/version.h>
 #include <knowhere/utils.h>
+#include <knowhere/operands.h>
 #include <knowhere/comp/brute_force.h>
 #include <knowhere/comp/knowhere_config.h>
 #include <knowhere/comp/local_file_manager.h>
@@ -138,6 +139,7 @@ class AnnIteratorWrap {
     std::shared_ptr<IndexNode::iterator> it_;
 };
 
+template<typename T>
 class IndexWrap {
  public:
     IndexWrap(const std::string& name, const int32_t& version) {
@@ -145,9 +147,9 @@ class IndexWrap {
         if (knowhere::UseDiskLoad(name, version)) {
             std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
             auto diskann_pack = knowhere::Pack(file_manager);
-            idx = IndexFactory::Instance().Create(name, version, diskann_pack);
+            idx = IndexFactory::Instance().Create<T>(name, version, diskann_pack);
         } else {
-            idx = IndexFactory::Instance().Create(name, version);
+            idx = IndexFactory::Instance().Create<T>(name, version);
         }
     }
 
@@ -302,6 +304,39 @@ Array2DataSetF(float* xb, int nb, int dim) {
     return ds;
 };
 
+knowhere::DataSetPtr
+Array2DataSetFP16(float* xb, int nb, int dim) {
+    auto ds = std::make_shared<DataSet>();
+    ds->SetIsOwner(true);
+    ds->SetRows(nb);
+    ds->SetDim(dim);
+    // float to fp16
+    auto fp16_data = new knowhere::fp16[nb * dim];
+    for (int i = 0; i < nb * dim; ++i) {
+        fp16_data[i] = knowhere::fp16(xb[i]);
+    }
+    ds->SetTensor(fp16_data);
+    return ds;
+};
+#pragma GCC push_options
+#pragma GCC optimize("O0")
+knowhere::DataSetPtr
+Array2DataSetBF16(float* xb, int nb, int dim) {
+    using bf16 = knowhere::bf16;
+    auto ds = std::make_shared<DataSet>();
+    ds->SetIsOwner(true);
+    ds->SetRows(nb);
+    ds->SetDim(dim);
+    bf16* bf16_data = new bf16[nb * dim];
+    for (int i = 0; i < nb * dim; ++i) {
+        bf16_data[i] = knowhere::bf16(xb[i]);
+    }
+
+    ds->SetTensor(bf16_data);
+    return ds;
+};
+#pragma GCC pop_options
+
 int32_t
 CurrentVersion() {
     return knowhere::Version::GetCurrentVersion().VersionNumber();
@@ -373,6 +408,28 @@ DataSetTensor2Array(knowhere::DataSetPtr result, float* data, int rows, int dim)
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < dim; ++j) {
             *(data + i * dim + j) = *((float*)(data_) + i * dim + j);
+        }
+    }
+}
+
+void
+Float16DataSetTensor2Array(knowhere::DataSetPtr result, float* data, int rows, int dim) {
+    GILReleaser rel;
+    auto data_ = result->GetTensor();
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < dim; ++j) {
+            *(data + i * dim + j) = (float)*((knowhere::fp16*)(data_) + i * dim + j);
+        }
+    }
+}
+
+void
+BFloat16DataSetTensor2Array(knowhere::DataSetPtr result, float* data, int rows, int dim) {
+    GILReleaser rel;
+    auto data_ = result->GetTensor();
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < dim; ++j) {
+            *(data + i * dim + j) = (float)*((knowhere::bf16*)(data_) + i * dim + j);
         }
     }
 }
@@ -465,11 +522,12 @@ Load(knowhere::BinarySetPtr binset, const std::string& file_name) {
     }
 }
 
+template<typename T>
 knowhere::DataSetPtr
 BruteForceSearch(knowhere::DataSetPtr base_dataset, knowhere::DataSetPtr query_dataset, const std::string& json,
                  const knowhere::BitsetView& bitset, knowhere::Status& status) {
     GILReleaser rel;
-    auto res = knowhere::BruteForce::Search(base_dataset, query_dataset, knowhere::Json::parse(json), bitset);
+    auto res = knowhere::BruteForce::Search<T>(base_dataset, query_dataset, knowhere::Json::parse(json), bitset);
     if (res.has_value()) {
         status = knowhere::Status::success;
         return res.value();
@@ -479,11 +537,12 @@ BruteForceSearch(knowhere::DataSetPtr base_dataset, knowhere::DataSetPtr query_d
     }
 }
 
+template<typename T>
 knowhere::DataSetPtr
 BruteForceRangeSearch(knowhere::DataSetPtr base_dataset, knowhere::DataSetPtr query_dataset, const std::string& json,
                       const knowhere::BitsetView& bitset, knowhere::Status& status) {
     GILReleaser rel;
-    auto res = knowhere::BruteForce::RangeSearch(base_dataset, query_dataset, knowhere::Json::parse(json), bitset);
+    auto res = knowhere::BruteForce::RangeSearch<T>(base_dataset, query_dataset, knowhere::Json::parse(json), bitset);
     if (res.has_value()) {
         status = knowhere::Status::success;
         return res.value();
@@ -521,3 +580,18 @@ SetSearchThreadPool(uint32_t num_threads) {
 %}
 
 %template(AnnIteratorWrapVector) std::vector<AnnIteratorWrap>;
+
+%template(IndexWrapFloat) IndexWrap<float>;
+%template(IndexWrapFP16) IndexWrap<knowhere::fp16>;
+%template(IndexWrapBF16) IndexWrap<knowhere::bf16>;
+%template(IndexWrapBin) IndexWrap<knowhere::bin1>;
+
+%template(BruteForceSearchFloat) BruteForceSearch<float>;
+%template(BruteForceSearchFP16) BruteForceSearch<knowhere::fp16>;
+%template(BruteForceSearchBF16) BruteForceSearch<knowhere::bf16>;
+%template(BruteForceSearchBin) BruteForceSearch<knowhere::bin1>;
+
+%template(BruteForceRangeSearchFloat) BruteForceRangeSearch<float>;
+%template(BruteForceRangeSearchFP16) BruteForceRangeSearch<knowhere::fp16>;
+%template(BruteForceRangeSearchBF16) BruteForceRangeSearch<knowhere::bf16>;
+%template(BruteForceRangeSearchBin) BruteForceRangeSearch<knowhere::bin1>;

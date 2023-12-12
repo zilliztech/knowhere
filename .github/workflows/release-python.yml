@@ -44,7 +44,7 @@ jobs:
           CIBW_ARCHS: ${{ matrix.arch }}
           CIBW_BEFORE_ALL_LINUX: "bash scripts/python_deps.sh && rm -rf build && mkdir build && cd build && conan install .. --build=missing -o with_diskann=True -s compiler.libcxx=libstdc++11 -s build_type=Release && conan build .. && cd -"
           # CIBW_BEFORE_ALL_MACOS: "bash scripts/python_deps.sh && rm -rf build && mkdir build && cd build && CC=$(brew --prefix llvm)/bin/clang CXX=$(brew --prefix llvm)/bin/clang++ conan install .. --build=missing -s build_type=Release && CC=$(brew --prefix llvm)/bin/clang CXX=$(brew --prefix llvm)/bin/clang++ conan build .. && cd -"
-          CIBW_BEFORE_BUILD: "pip3 install pytest numpy faiss-cpu"
+          CIBW_BEFORE_BUILD: "pip3 install pytest numpy faiss-cpu bfloat16"
           # CIBW_ENVIRONMENT_MACOS: >
           #   _PYTHON_HOST_PLATFORM=macosx-10.15-${{ matrix.arch }}
           # CIBW_BEFORE_BUILD: "bash scripts/python_deps.sh && pip3 install pytest numpy faiss-cpu"

@@ -116,7 +116,7 @@ TEST_CASE("Search mmap", "[float metrics]") {
         {knowhere::meta::METRIC_TYPE, metric},
         {knowhere::meta::TOPK, topk},
     };
-    auto gt = knowhere::BruteForce::Search(train_ds, query_ds, conf, nullptr);
+    auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
 
     SECTION("Test Search") {
         using std::make_tuple;
@@ -127,7 +127,7 @@ TEST_CASE("Search mmap", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFPQ, ivfpq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -154,7 +154,7 @@ TEST_CASE("Search mmap", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFPQ, ivfpq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -178,7 +178,7 @@ TEST_CASE("Search mmap", "[float metrics]") {
         auto [name, gen, threshold] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>, float>({
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen, hnswlib::kHnswSearchKnnBFFilterThreshold),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -194,7 +194,7 @@ TEST_CASE("Search mmap", "[float metrics]") {
                 auto bitset_data = gen_func(nb, percentage * nb);
                 knowhere::BitsetView bitset(bitset_data.data(), nb);
                 auto results = idx.Search(*query_ds, json, bitset);
-                auto gt = knowhere::BruteForce::Search(train_ds, query_ds, json, bitset);
+                auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, json, bitset);
                 float recall = GetKNNRecall(*gt.value(), *results.value());
                 if (percentage > threshold) {
                     REQUIRE(recall > kBruteForceRecallThreshold);
@@ -262,7 +262,7 @@ TEST_CASE("Search binary mmap", "[float metrics]") {
         REQUIRE(index.DeserializeFromFile(path, conf) == knowhere::Status::success);
     };
 
-    auto gt = knowhere::BruteForce::Search(train_ds, query_ds, conf, nullptr);
+    auto gt = knowhere::BruteForce::Search<knowhere::bin1>(train_ds, query_ds, conf, nullptr);
     SECTION("Test Search") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
@@ -270,7 +270,7 @@ TEST_CASE("Search binary mmap", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT, ivfflat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::bin1>(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -292,7 +292,7 @@ TEST_CASE("Search binary mmap", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IDMAP, flat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT, ivfflat_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::bin1>(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -374,7 +374,7 @@ TEST_CASE("Search binary mmap", "[bool metrics]") {
             std::make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IDMAP, flat_gen),
             std::make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT, ivfflat_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::bin1>(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -417,7 +417,7 @@ TEST_CASE("Search binary mmap", "[bool metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IDMAP, flat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT, ivfflat_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::bin1>(name);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);

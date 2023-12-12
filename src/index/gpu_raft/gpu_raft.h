@@ -66,7 +66,7 @@ struct KnowhereConfigType<raft_proto::raft_index_kind::cagra> {
     using Type = GpuRaftCagraConfig;
 };
 
-template <raft_proto::raft_index_kind K>
+template <typename DataType, raft_proto::raft_index_kind K>
 struct GpuRaftIndexNode : public IndexNode {
     auto static constexpr index_kind = K;
     using knowhere_config_type = typename KnowhereConfigType<index_kind>::Type;
@@ -263,15 +263,14 @@ struct GpuRaftIndexNode : public IndexNode {
     }
 };
 
-extern template struct GpuRaftIndexNode<raft_proto::raft_index_kind::brute_force>;
-extern template struct GpuRaftIndexNode<raft_proto::raft_index_kind::ivf_flat>;
-extern template struct GpuRaftIndexNode<raft_proto::raft_index_kind::ivf_pq>;
-extern template struct GpuRaftIndexNode<raft_proto::raft_index_kind::cagra>;
-
-using GpuRaftBruteForceIndexNode = GpuRaftIndexNode<raft_proto::raft_index_kind::brute_force>;
-using GpuRaftIvfFlatIndexNode = GpuRaftIndexNode<raft_proto::raft_index_kind::ivf_flat>;
-using GpuRaftIvfPqIndexNode = GpuRaftIndexNode<raft_proto::raft_index_kind::ivf_pq>;
-using GpuRaftCagraIndexNode = GpuRaftIndexNode<raft_proto::raft_index_kind::cagra>;
+template <typename DataType>
+using GpuRaftBruteForceIndexNode = GpuRaftIndexNode<DataType, raft_proto::raft_index_kind::brute_force>;
+template <typename DataType>
+using GpuRaftIvfFlatIndexNode = GpuRaftIndexNode<DataType, raft_proto::raft_index_kind::ivf_flat>;
+template <typename DataType>
+using GpuRaftIvfPqIndexNode = GpuRaftIndexNode<DataType, raft_proto::raft_index_kind::ivf_pq>;
+template <typename DataType>
+using GpuRaftCagraIndexNode = GpuRaftIndexNode<DataType, raft_proto::raft_index_kind::cagra>;
 
 }  // namespace knowhere
 
