@@ -314,17 +314,18 @@ struct raft_index {
 
     template <typename T, typename IdxT>
     void static serialize(raft::resources const& res, std::ostream& os,
-                          raft_index<underlying_index_type, raft_index_args...> const& index) {
+                          raft_index<underlying_index_type, raft_index_args...> const& index,
+                          bool include_dataset = true) {
         auto const& underlying_index = index.get_vector_index();
 
         if constexpr (vector_index_kind == raft_index_kind::brute_force) {
-            return raft::neighbors::brute_force::serialize<T>(res, os, underlying_index);
+            return raft::neighbors::brute_force::serialize<T>(res, os, underlying_index, include_dataset);
         } else if constexpr (vector_index_kind == raft_index_kind::ivf_flat) {
             return raft::neighbors::ivf_flat::serialize<T, IdxT>(res, os, underlying_index);
         } else if constexpr (vector_index_kind == raft_index_kind::ivf_pq) {
             return raft::neighbors::ivf_pq::serialize<IdxT>(res, os, underlying_index);
         } else if constexpr (vector_index_kind == raft_index_kind::cagra) {
-            return raft::neighbors::cagra::serialize<T, IdxT>(res, os, underlying_index);
+            return raft::neighbors::cagra::serialize<T, IdxT>(res, os, underlying_index, include_dataset);
         }
     }
 
@@ -338,6 +339,17 @@ struct raft_index {
             return raft_index{raft::neighbors::ivf_pq::deserialize<IdxT>(res, is)};
         } else if constexpr (vector_index_kind == raft_index_kind::cagra) {
             return raft_index{raft::neighbors::cagra::deserialize<T, IdxT>(res, is)};
+        }
+    }
+
+    template <typename T, typename InputIdxT>
+    void static update_dataset(raft::resources const& res, raft_index<underlying_index_type, raft_index_args...>& index,
+                               raft::device_matrix_view<T const, InputIdxT> data) {
+        if constexpr (vector_index_kind == raft_index_kind::brute_force ||
+                      vector_index_kind == raft_index_kind::cagra) {
+            index.get_vector_index().update_dataset(res, data);
+        } else {
+            RAFT_FAIL("update_dataset is not supported for this index type");
         }
     }
 
