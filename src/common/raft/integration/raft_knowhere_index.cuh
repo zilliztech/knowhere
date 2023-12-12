@@ -355,6 +355,10 @@ struct raft_knowhere_index<IndexKind>::impl {
           knowhere_indexing_type feature_count) {
         auto scoped_device = raft::device_setter{device_id};
         auto index_params = config_to_index_params<index_kind>(config);
+        if constexpr (index_kind == raft_proto::raft_index_kind::ivf_flat ||
+                      index_kind == raft_proto::raft_index_kind::ivf_pq) {
+            index_params.n_lists = std::min(knowhere_indexing_type(index_params.n_lists), row_count);
+        }
         auto const& res = raft::device_resources_manager::get_device_resources();
         auto host_data = raft::make_host_matrix_view(data, row_count, feature_count);
         device_dataset_storage =
