@@ -1155,13 +1155,13 @@ void elkan_L2_sse(
         size_t nx,
         size_t ny,
         int64_t* ids,
-        float* val) {
+        float* val,
+        float* tmp_buffer) {
     if (nx == 0 || ny == 0) {
         return;
     }
 
     const size_t bs_y = 1024;
-    float* data = (float*)malloc((bs_y * (bs_y - 1) / 2) * sizeof(float));
 
     for (size_t j0 = 0; j0 < ny; j0 += bs_y) {
         size_t j1 = j0 + bs_y;
@@ -1171,8 +1171,8 @@ void elkan_L2_sse(
         auto Y = [&](size_t i, size_t j) -> float& {
             assert(i != j);
             i -= j0, j -= j0;
-            return (i > j) ? data[j + i * (i - 1) / 2]
-                           : data[i + j * (j - 1) / 2];
+            return (i > j) ? tmp_buffer[j + i * (i - 1) / 2]
+                           : tmp_buffer[i + j * (j - 1) / 2];
         };
 
 #pragma omp parallel
@@ -1219,7 +1219,6 @@ void elkan_L2_sse(
         }
     }
 
-    free(data);
 }
 
 } // namespace faiss

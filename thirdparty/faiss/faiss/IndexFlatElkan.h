@@ -12,6 +12,7 @@
 #pragma once
 
 #include <faiss/IndexFlat.h>
+#include <memory>
 
 namespace faiss {
 
@@ -27,8 +28,17 @@ namespace faiss {
 // This index is intended to be used in Knowhere's ivf.cc file ONLY!!!
 //
 // Elkan algo was introduced into Knowhere in #2178, #2180 and #2258. 
+//
+// It pre-allocates a temporary buffer, to be used by elkan algorithm
+// to avoid the overhead caused by frequent memory allocation and
+// deallocation. Due to this strategy, the index is not thread-safe
+// on the search. Concurrent access by multiple threads to
+// 'IndexFlatElkan::search()' on the same instance should be avoided
+// to prevent data overwite corruption in the temporary buffer.
+//
 struct IndexFlatElkan : IndexFlat {
     bool use_elkan = true;
+    std::unique_ptr<float[]> tmp_buffer_for_elkan = nullptr;
 
     explicit IndexFlatElkan(idx_t d, MetricType metric = METRIC_L2,
                        bool is_cosine = false, bool use_elkan = true);
