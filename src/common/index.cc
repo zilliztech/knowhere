@@ -44,7 +44,6 @@ Index<T>::Build(const DataSet& dataset, const Json& json) {
     auto span = rc.ElapseFromBegin("done");
     span *= 0.000001;  // convert to s
     knowhere_build_latency.Observe(span);
-    knowhere_build_count.Increment();
 #else
     auto res = this->node->Build(dataset, *cfg);
 #endif
@@ -83,8 +82,6 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
     auto span = rc.ElapseFromBegin("done");
     span *= 0.001;  // convert to ms
     knowhere_search_latency.Observe(span);
-    knowhere_search_count.Increment();
-    knowhere_search_topk.Observe(cfg->k.value());
 #else
     auto res = this->node->Search(dataset, *cfg, bitset);
 #endif
@@ -108,7 +105,6 @@ Index<T>::AnnIterator(const DataSet& dataset, const Json& json, const BitsetView
     auto span = rc.ElapseFromBegin("done");
     span *= 0.001;  // convert to ms
     knowhere_search_latency.Observe(span);
-    knowhere_ann_iterator_count.Increment();
 #else
     auto res = this->node->AnnIterator(dataset, *cfg, bitset);
 #endif
@@ -131,7 +127,6 @@ Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView
     auto span = rc.ElapseFromBegin("done");
     span *= 0.001;  // convert to ms
     knowhere_range_search_latency.Observe(span);
-    knowhere_range_search_count.Increment();
 #else
     auto res = this->node->RangeSearch(dataset, *cfg, bitset);
 #endif
