@@ -75,6 +75,7 @@ extern const std::unique_ptr<PrometheusClient> prometheusClient;
 #define DECLARE_PROMETHEUS_HISTOGRAM(name_histogram) extern prometheus::Histogram& name_histogram;
 
 DECLARE_PROMETHEUS_HISTOGRAM(knowhere_build_latency);
+DECLARE_PROMETHEUS_HISTOGRAM(knowhere_load_latency);
 DECLARE_PROMETHEUS_HISTOGRAM(knowhere_search_latency);
 DECLARE_PROMETHEUS_HISTOGRAM(knowhere_range_search_latency);
 DECLARE_PROMETHEUS_HISTOGRAM(knowhere_ann_iterator_init_latency);

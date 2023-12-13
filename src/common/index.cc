@@ -179,7 +179,17 @@ Index<T>::Deserialize(const BinarySet& binset, const Json& json) {
     if (res != Status::success) {
         return res;
     }
-    return this->node->Deserialize(binset, *cfg);
+
+#ifdef NOT_COMPILE_FOR_SWIG
+    TimeRecorder rc("Load index", 2);
+    res = this->node->Deserialize(binset, *cfg);
+    auto span = rc.ElapseFromBegin("done");
+    span *= 0.001;  // convert to ms
+    knowhere_load_latency.Observe(span);
+#else
+    res = this->node->Deserialize(binset, *cfg);
+#endif
+    return res;
 }
 
 template <typename T>
@@ -198,7 +208,17 @@ Index<T>::DeserializeFromFile(const std::string& filename, const Json& json) {
     if (res != Status::success) {
         return res;
     }
-    return this->node->DeserializeFromFile(filename, *cfg);
+
+#ifdef NOT_COMPILE_FOR_SWIG
+    TimeRecorder rc("Load index from file", 2);
+    res = this->node->DeserializeFromFile(filename, *cfg);
+    auto span = rc.ElapseFromBegin("done");
+    span *= 0.001;  // convert to ms
+    knowhere_load_latency.Observe(span);
+#else
+    res = this->node->DeserializeFromFile(filename, *cfg);
+#endif
+    return res;
 }
 
 template <typename T>
