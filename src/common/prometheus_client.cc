@@ -29,5 +29,6 @@ DEFINE_PROMETHEUS_HISTOGRAM(knowhere_build_latency, "index build latency in know
 DEFINE_PROMETHEUS_HISTOGRAM(knowhere_search_latency, "search latency in knowhere (ms)")
 DEFINE_PROMETHEUS_HISTOGRAM(knowhere_range_search_latency, "range search latency in knowhere (ms)")
 DEFINE_PROMETHEUS_HISTOGRAM(knowhere_ann_iterator_init_latency, "ann iterator init latency in knowhere (ms)")
+DEFINE_PROMETHEUS_HISTOGRAM(knowhere_search_topk, "knowhere search topk")
 
 }  // namespace knowhere

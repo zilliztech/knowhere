@@ -82,6 +82,7 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
     auto span = rc.ElapseFromBegin("done");
     span *= 0.001;  // convert to ms
     knowhere_search_latency.Observe(span);
+    knowhere_search_topk.Observe(cfg->k.value());
 #else
     auto res = this->node->Search(dataset, *cfg, bitset);
 #endif
