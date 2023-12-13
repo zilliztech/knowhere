@@ -33,6 +33,7 @@ typedef uint64_t size_t;
 #include <knowhere/comp/brute_force.h>
 #include <knowhere/comp/knowhere_config.h>
 #include <knowhere/comp/local_file_manager.h>
+#include <knowhere/comp/task.h>
 #include <fstream>
 #include <string>
 using namespace knowhere;
@@ -505,6 +506,16 @@ SetSimdType(const std::string type) {
     } else {
         knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::GENERIC);
     }
+}
+
+void
+SetBuildThreadPool(uint32_t num_threads) {
+    knowhere::InitBuildThreadPool(num_threads);
+}
+
+void
+SetSearchThreadPool(uint32_t num_threads) {
+    knowhere::InitSearchThreadPool(num_threads);
 }
 
 %}
