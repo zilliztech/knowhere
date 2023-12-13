@@ -206,6 +206,10 @@ struct raft_index {
         }
     }
 
+    auto static get_metric(raft_index<underlying_index_type, raft_index_args...> const& index) {
+        return index.get_vector_index().metric();
+    }
+
     template <typename T, typename IdxT, typename InputIdxT, typename FilterT = std::nullptr_t>
     auto static search(raft::resources const& res, raft_index<underlying_index_type, raft_index_args...> const& index,
                        search_params_type const& search_params, raft::device_matrix_view<T const, InputIdxT> queries,

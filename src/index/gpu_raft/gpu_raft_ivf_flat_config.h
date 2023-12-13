@@ -34,11 +34,6 @@ struct GpuRaftIvfFlatConfig : public IvfFlatConfig {
             .set_default(1.0f)
             .description("search refine_ratio * k results then refine")
             .for_search();
-        KNOWHERE_CONFIG_DECLARE_FIELD(k)
-            .set_default(10)
-            .description("search for top k similar vector.")
-            .set_range(1, 256)  // Declared in base but limited to 256
-            .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(kmeans_n_iters)
             .description("iterations to search for kmeans centers")
             .set_default(20)
