@@ -73,7 +73,7 @@ pipeline {
                       sh "apt install libopenblas-dev libaio-dev libdouble-conversion-dev libevent-dev -y"
                       sh "nvidia-smi"
                       sh "pip3 install ${knowhere_wheel} \
-                          && pip3 install -r requirements.txt --timeout 30 --retries 6  && pytest -v"
+                          && cat requirements.txt | xargs -n 1 pip3 install --timeout 30 --retries 6 && pytest -v"
                     }
                 }
             }
