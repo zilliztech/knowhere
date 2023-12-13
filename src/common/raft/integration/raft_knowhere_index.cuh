@@ -509,12 +509,12 @@ struct raft_knowhere_index<IndexKind>::impl {
             std::optional<raft::device_matrix<knowhere_indexing_type, input_indexing_type>>{};
         auto device_knowhere_ids = [&device_knowhere_ids_storage, &res, row_count, k_tmp, device_ids]() {
             if constexpr (std::is_signed_v<indexing_type>) {
+                return device_ids;
+            } else {
                 device_knowhere_ids_storage =
                     raft::make_device_matrix<knowhere_indexing_type, input_indexing_type>(res, row_count, k_tmp);
                 raft::copy(res, device_knowhere_ids_storage->view(), device_ids);
                 return device_knowhere_ids_storage->view();
-            } else {
-                return device_ids;
             }
         }();
 
