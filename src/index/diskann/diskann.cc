@@ -19,6 +19,7 @@
 #include "diskann/pq_flash_index.h"
 #include "fmt/core.h"
 #include "index/diskann/diskann_config.h"
+#include "io/trailer.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/dataset.h"
@@ -189,9 +190,13 @@ TryDiskANNCall(std::function<void()>&& diskann_call) {
     }
 }
 
+inline std::string
+GetDiskAnnTrailerFileName(const std::string& disk_index_filename) {
+    return disk_index_filename + "_trailer.bin";
+}
+
 std::vector<std::string>
-GetNecessaryFilenames(const std::string& prefix, const bool need_norm, const bool use_sample_cache,
-                      const bool use_sample_warmup) {
+GetNecessaryFilenames(const std::string& prefix, const bool need_norm) {
     std::vector<std::string> filenames;
     auto pq_pivots_filename = diskann::get_pq_pivots_filename(prefix);
     auto disk_index_filename = diskann::get_disk_index_filename(prefix);
@@ -205,9 +210,6 @@ GetNecessaryFilenames(const std::string& prefix, const bool need_norm, const boo
     if (need_norm) {
         filenames.push_back(diskann::get_disk_index_max_base_norm_file(disk_index_filename));
     }
-    if (use_sample_cache || use_sample_warmup) {
-        filenames.push_back(diskann::get_sample_data_filename(prefix));
-    }
     return filenames;
 }
 
@@ -218,6 +220,7 @@ GetOptionalFilenames(const std::string& prefix) {
     filenames.push_back(diskann::get_disk_index_centroids_filename(disk_index_filename));
     filenames.push_back(diskann::get_disk_index_medoids_filename(disk_index_filename));
     filenames.push_back(diskann::get_cached_nodes_file(prefix));
+    filenames.push_back(GetDiskAnnTrailerFileName(prefix));
     return filenames;
 }
 
@@ -231,7 +234,7 @@ AnyIndexFileExist(const std::string& index_prefix) {
         }
         return false;
     };
-    return file_exist(GetNecessaryFilenames(index_prefix, diskann::INNER_PRODUCT, true, true)) ||
+    return file_exist(GetNecessaryFilenames(index_prefix, diskann::INNER_PRODUCT)) ||
            file_exist(GetOptionalFilenames(index_prefix));
 }
 
@@ -312,8 +315,16 @@ DiskANNIndexNode<T>::Build(const DataSet& dataset, const Config& cfg) {
                                         -1);
     }));
 
+    auto trailer_file = GetDiskAnnTrailerFileName(index_prefix_);
+    auto necessary_files = GetNecessaryFilenames(index_prefix_, need_norm);
+    auto trailer_status = AddTrailerForFiles(necessary_files, trailer_file, Type(), version_);
+    if (trailer_status != Status::success) {
+        LOG_KNOWHERE_ERROR_ << "Failed to trailer file.";
+        return trailer_status;
+    }
+
     // Add file to the file manager
-    for (auto& filename : GetNecessaryFilenames(index_prefix_, need_norm, true, true)) {
+    for (auto& filename : necessary_files) {
         if (!AddFile(filename)) {
             LOG_KNOWHERE_ERROR_ << "Failed to add file " << filename << ".";
             return Status::disk_file_error;
@@ -360,9 +371,8 @@ DiskANNIndexNode<T>::Deserialize(const BinarySet& binset, const Config& cfg) {
     }();
 
     // Load file from file manager.
-    for (auto& filename : GetNecessaryFilenames(
-             index_prefix_, need_norm, prep_conf.search_cache_budget_gb.value() > 0 && !prep_conf.use_bfs_cache.value(),
-             prep_conf.warm_up.value())) {
+    auto necessary_files = GetNecessaryFilenames(index_prefix_, need_norm);
+    for (auto& filename : necessary_files) {
         if (!LoadFile(filename)) {
             return Status::disk_file_error;
         }
@@ -376,6 +386,13 @@ DiskANNIndexNode<T>::Deserialize(const BinarySet& binset, const Config& cfg) {
         if (is_exist_op.value() && !LoadFile(filename)) {
             return Status::disk_file_error;
         }
+    }
+
+    auto trailer_file = GetDiskAnnTrailerFileName(index_prefix_);
+    auto trailer_stat = CheckTrailerForFiles(necessary_files, trailer_file, Type());
+    if (trailer_stat != Status::success) {
+        LOG_KNOWHERE_ERROR_ << "Failed to check diskann trailer.";
+        return trailer_stat;
     }
 
     // set thread pool

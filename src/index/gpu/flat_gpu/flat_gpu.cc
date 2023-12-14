@@ -16,6 +16,7 @@
 #include "index/flat_gpu/flat_gpu_config.h"
 #include "index/gpu/gpu_res_mgr.h"
 #include "io/memory_io.h"
+#include "io/trailer.h"
 #include "knowhere/factory.h"
 #include "knowhere/log.h"
 
@@ -120,6 +121,11 @@ class GpuFlatIndexNode : public IndexNode {
             MemoryIOWriter writer;
             // Serialize() is called after Add(), at this time index_ is CPU index actually
             faiss::write_index(index_.get(), &writer);
+            auto trailer_status = AddTrailerForMemoryIO(writer, Type(), this->version_);
+            if (trailer_status != Status::success) {
+                LOG_KNOWHERE_ERROR_ << "fail to append trailer.";
+                return trailer_status;
+            }
             std::shared_ptr<uint8_t[]> data(writer.data());
             binset.Append(Type(), data, writer.tellg());
         } catch (const std::exception& e) {

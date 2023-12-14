@@ -16,6 +16,7 @@
 #include "faiss/index_io.h"
 #include "index/flat/flat_config.h"
 #include "io/memory_io.h"
+#include "io/trailer.h"
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/factory.h"
@@ -303,6 +304,11 @@ class FlatIndexNode : public IndexNode {
             }
             if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
                 faiss::write_index_binary(index_.get(), &writer);
+            }
+            auto trailer_status = AddTrailerForMemoryIO(writer, Type(), this->version_);
+            if (trailer_status != Status::success) {
+                LOG_KNOWHERE_ERROR_ << "fail to append trailer.";
+                return trailer_status;
             }
             std::shared_ptr<uint8_t[]> data(writer.data());
             binset.Append(Type(), data, writer.tellg());

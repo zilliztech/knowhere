@@ -32,6 +32,8 @@
 #include "index/gpu_raft/gpu_raft_cagra_config.h"
 #include "index/gpu_raft/gpu_raft_ivf_flat_config.h"
 #include "index/gpu_raft/gpu_raft_ivf_pq_config.h"
+#include "io/memory_io.h"
+#include "io/trailer.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/expected.h"
 #include "knowhere/factory.h"
@@ -170,9 +172,15 @@ struct GpuRaftIndexNode : public IndexNode {
             os.flush();
         }
         if (result == Status::success) {
-            std::shared_ptr<uint8_t[]> index_binary(new (std::nothrow) uint8_t[buf.str().size()]);
-            memcpy(index_binary.get(), buf.str().c_str(), buf.str().size());
+            MemoryIOWriter writer;
+            writer.write(buf.str().c_str(), buf.str().size());
+            auto trailer_status = AddTrailerForMemoryIO(writer, Type(), this->version_);
+            if (trailer_status != Status::success) {
+                LOG_KNOWHERE_ERROR_ << "fail to append trailer.";
+                return trailer_status;
+            }
             binset.Append(this->Type(), index_binary, buf.str().size());
+            writer.close();
         }
         return result;
     }

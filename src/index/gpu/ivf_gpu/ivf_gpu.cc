@@ -24,6 +24,7 @@
 #include "index/gpu/gpu_res_mgr.h"
 #include "index/ivf_gpu/ivf_gpu_config.h"
 #include "io/memory_io.h"
+#include "io/trailer.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/factory.h"
 #include "knowhere/log.h"
@@ -68,7 +69,7 @@ class GpuIvfIndexNode : public IndexNode {
 
         auto metric = Str2FaissMetricType(ivf_gpu_cfg.metric_type);
         if (!metric.has_value()) {
-            LOG_KNOWHERE_ERROR_ << "unsupported metric type: " << ivf_gpu_cfg.metric_type;
+            LOG_KNOWHERE_WARNING_ << "please check metric value: " << ivf_gpu_cfg.metric_type;
             return metric.error();
         }
 
@@ -191,6 +192,12 @@ class GpuIvfIndexNode : public IndexNode {
                 faiss::write_index(host_index, &writer);
                 delete host_index;
             }
+            auto trailer_status = AddTrailerForMemoryIO(writer, Type(), this->version_);
+            if (trailer_status != Status::success) {
+                LOG_KNOWHERE_ERROR_ << "fail to append trailer.";
+                return trailer_status;
+            }
+
             std::shared_ptr<uint8_t[]> data(writer.data());
             binset.Append(Type(), data, writer.tellg());
         } catch (std::exception& e) {
