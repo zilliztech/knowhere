@@ -377,5 +377,28 @@ fvec_madd_and_argmin_sse(size_t n, const float* a, float bf, const float* b, flo
     return _mm_cvtsi128_si32(imin4);
 }
 
+// trust the compiler to unroll this properly
+int32_t
+ivec_inner_product_sse(const int8_t* x, const int8_t* y, size_t d) {
+    size_t i;
+    int32_t res = 0;
+    for (i = 0; i < d; i++) {
+        res += (int32_t)x[i] * y[i];
+    }
+    return res;
+}
+
+// trust the compiler to unroll this properly
+int32_t
+ivec_L2sqr_sse(const int8_t* x, const int8_t* y, size_t d) {
+    size_t i;
+    int32_t res = 0;
+    for (i = 0; i < d; i++) {
+        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
+        res += tmp * tmp;
+    }
+    return res;
+}
+
 }  // namespace faiss
 #endif

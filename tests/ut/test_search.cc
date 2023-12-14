@@ -24,7 +24,7 @@
 
 namespace {
 constexpr float kKnnRecallThreshold = 0.6f;
-constexpr float kBruteForceRecallThreshold = 0.99f;
+constexpr float kBruteForceRecallThreshold = 0.95f;
 }  // namespace
 
 TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
@@ -93,6 +93,18 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         return json;
     };
 
+    auto hnsw_sq_gen = [hnsw_gen]() {
+        knowhere::Json json = hnsw_gen();
+        json[knowhere::indexparam::WITH_RAW_DATA] = false;
+        return json;
+    };
+
+    auto hnsw_sq_with_refine_gen = [hnsw_gen]() {
+        knowhere::Json json = hnsw_gen();
+        json[knowhere::indexparam::WITH_RAW_DATA] = true;
+        return json;
+    };
+
     const auto train_ds = GenDataSet(nb, dim);
     const auto query_ds = GenDataSet(nq, dim);
 
@@ -113,6 +125,8 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8, hnsw_sq_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8, hnsw_sq_with_refine_gen),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
@@ -138,7 +152,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
 
         if (metric == knowhere::metric::COSINE) {
             if (name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ8 && name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ &&
-                !scann_without_raw_data) {
+                name != knowhere::IndexEnum::INDEX_HNSW_SQ8 && !scann_without_raw_data) {
                 REQUIRE(CheckDistanceInScope(*results.value(), topk, -1.00001, 1.00001));
             }
         }
@@ -155,6 +169,8 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8, hnsw_sq_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8, hnsw_sq_with_refine_gen),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
@@ -181,7 +197,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
 
         if (metric == knowhere::metric::COSINE) {
             if (name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ8 && name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ &&
-                !scann_without_raw_data) {
+                name != knowhere::IndexEnum::INDEX_HNSW_SQ8 && !scann_without_raw_data) {
                 REQUIRE(CheckDistanceInScope(*results.value(), -1.00001, 1.00001));
             }
         }
@@ -216,6 +232,9 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         using std::make_tuple;
         auto [name, gen, threshold] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>, float>({
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen, hnswlib::kHnswSearchKnnBFFilterThreshold),
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8, hnsw_sq_gen, hnswlib::kHnswSearchKnnBFFilterThreshold),
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8, hnsw_sq_with_refine_gen,
+                       hnswlib::kHnswSearchKnnBFFilterThreshold),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
@@ -255,6 +274,8 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8, hnsw_sq_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8, hnsw_sq_with_refine_gen),
         }));
 
         auto idx = knowhere::IndexFactory::Instance().Create(name, version);

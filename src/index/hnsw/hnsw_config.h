@@ -85,6 +85,17 @@ class HnswConfig : public BaseConfig {
     }
 };
 
+class HnswSQConfig : public HnswConfig {
+ public:
+    CFG_BOOL with_raw_data;
+    KNOHWERE_DECLARE_CONFIG(HnswSQConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(with_raw_data)
+            .description("with raw data in index")
+            .set_default(true)
+            .for_train();
+    }
+};
+
 }  // namespace knowhere
 
 #endif /* HNSW_CONFIG_H */

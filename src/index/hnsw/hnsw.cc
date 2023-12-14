@@ -27,6 +27,7 @@
 #include "knowhere/utils.h"
 
 namespace knowhere {
+template <bool USE_SQ>
 class HnswIndexNode : public IndexNode {
  public:
     HnswIndexNode(const int32_t& /*version*/, const Object& object) : index_(nullptr) {
@@ -53,8 +54,12 @@ class HnswIndexNode : public IndexNode {
             LOG_KNOWHERE_WARNING_ << "metric type not support in hnsw: " << hnsw_cfg.metric_type.value();
             return Status::invalid_metric_type;
         }
-        auto index = new (std::nothrow)
-            hnswlib::HierarchicalNSW<float>(space, rows, hnsw_cfg.M.value(), hnsw_cfg.efConstruction.value());
+        bool use_sq_refine = false;
+        if constexpr (USE_SQ) {
+            use_sq_refine = static_cast<const HnswSQConfig&>(cfg).with_raw_data.value();
+        }
+        auto index = new (std::nothrow) hnswlib::HierarchicalNSW<float>(
+            space, rows, hnsw_cfg.M.value(), hnsw_cfg.efConstruction.value(), USE_SQ, use_sq_refine);
         if (index == nullptr) {
             LOG_KNOWHERE_WARNING_ << "memory malloc error.";
             return Status::malloc_error;
@@ -64,6 +69,9 @@ class HnswIndexNode : public IndexNode {
             LOG_KNOWHERE_WARNING_ << "index not empty, deleted old index";
         }
         this->index_ = index;
+        if constexpr (USE_SQ) {
+            this->index_->trainSQuant((const float*)dataset.GetTensor(), rows);
+        }
         return Status::success;
     }
 
@@ -352,7 +360,7 @@ class HnswIndexNode : public IndexNode {
 
     bool
     HasRawData(const std::string& metric_type) const override {
-        return true;
+        return !USE_SQ || index_->sq_refine_enabled_;
     }
 
     expected<DataSetPtr>
@@ -418,7 +426,7 @@ class HnswIndexNode : public IndexNode {
 
             hnswlib::SpaceInterface<float>* space = nullptr;
             index_ = new (std::nothrow) hnswlib::HierarchicalNSW<float>(space);
-            index_->loadIndex(reader);
+            index_->loadIndex(reader, USE_SQ);
             LOG_KNOWHERE_INFO_ << "Loaded HNSW index. #points num:" << index_->max_elements_ << " #M:" << index_->M_
                                << " #max level:" << index_->maxlevel_
                                << " #ef_construction:" << index_->ef_construction_
@@ -438,7 +446,7 @@ class HnswIndexNode : public IndexNode {
         try {
             hnswlib::SpaceInterface<float>* space = nullptr;
             index_ = new (std::nothrow) hnswlib::HierarchicalNSW<float>(space);
-            index_->loadIndex(filename, config);
+            index_->loadIndex(filename, config, USE_SQ);
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
             return Status::hnsw_inner_error;
@@ -448,7 +456,11 @@ class HnswIndexNode : public IndexNode {
 
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
-        return std::make_unique<HnswConfig>();
+        if constexpr (USE_SQ) {
+            return std::make_unique<HnswSQConfig>();
+        } else {
+            return std::make_unique<HnswConfig>();
+        }
     }
 
     int64_t
@@ -477,7 +489,7 @@ class HnswIndexNode : public IndexNode {
 
     std::string
     Type() const override {
-        return knowhere::IndexEnum::INDEX_HNSW;
+        return USE_SQ ? knowhere::IndexEnum::INDEX_HNSW_SQ8 : knowhere::IndexEnum::INDEX_HNSW;
     }
 
     ~HnswIndexNode() override {
@@ -529,7 +541,10 @@ class HnswIndexNode : public IndexNode {
 };
 
 KNOWHERE_REGISTER_GLOBAL(HNSW, [](const int32_t& version, const Object& object) {
-    return Index<HnswIndexNode>::Create(version, object);
+    return Index<HnswIndexNode<false>>::Create(version, object);
+});
+KNOWHERE_REGISTER_GLOBAL(HNSW_SQ8, [](const int32_t& version, const Object& object) {
+    return Index<HnswIndexNode<true>>::Create(version, object);
 });
 
 }  // namespace knowhere

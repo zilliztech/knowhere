@@ -12,6 +12,7 @@
 #ifndef DISTANCES_NEON_H
 #define DISTANCES_NEON_H
 
+#include <cstdint>
 #include <cstdio>
 
 namespace faiss {
@@ -49,6 +50,12 @@ fvec_madd_neon(size_t n, const float* a, float bf, const float* b, float* c);
 
 int
 fvec_madd_and_argmin_neon(size_t n, const float* a, float bf, const float* b, float* c);
+
+int32_t
+ivec_inner_product_neon(const int8_t* x, const int8_t* y, size_t d);
+
+int32_t
+ivec_L2sqr_neon(const int8_t* x, const int8_t* y, size_t d);
 
 }  // namespace faiss
 

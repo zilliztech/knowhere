@@ -161,6 +161,11 @@ class SpaceInterface {
     virtual DISTFUNC<MTYPE>
     get_dist_func() = 0;
 
+    virtual DISTFUNC<float>
+    get_dist_func_sq() {
+        throw std::runtime_error("Not implemented\n");
+    }
+
     virtual void*
     get_dist_func_param() = 0;
 
