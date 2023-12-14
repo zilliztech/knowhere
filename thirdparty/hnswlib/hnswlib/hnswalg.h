@@ -54,10 +54,16 @@ enum Metric {
     UNKNOWN = 100,
 };
 
-template <typename dist_t>
+enum QuantType { None = 0, SQ8 = 1, SQ8Refine = 2 };
+
+template <typename dist_t, QuantType quant_type>
 class HierarchicalNSW : public AlgorithmInterface<dist_t> {
  public:
     static const tableint max_update_element_locks = 65536;
+
+    static constexpr bool sq_enabled = quant_type != QuantType::None;
+    static constexpr bool has_raw_data = quant_type == QuantType::None || quant_type == QuantType::SQ8Refine;
+
     HierarchicalNSW(SpaceInterface<dist_t>* s) {
     }
 
@@ -91,6 +97,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         num_deleted_ = 0;
         data_size_ = s->get_data_size();
         fstdistfunc_ = s->get_dist_func();
+        if constexpr (sq_enabled) {
+            fstdistfunc_sq_ = space_->get_dist_func_sq();
+        }
         dist_func_param_ = s->get_dist_func_param();
         M_ = M;
         maxM_ = M_;
@@ -102,8 +111,20 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         update_probability_generator_.seed(random_seed + 1);
 
         size_links_level0_ = maxM0_ * sizeof(tableint) + sizeof(linklistsizeint);
-        size_data_per_element_ = size_links_level0_ + data_size_;  // + sizeof(labeltype);
+        size_data_per_element_ = size_links_level0_;  // + sizeof(labeltype);
+        if constexpr (has_raw_data) {
+            size_data_per_element_ += data_size_;
+        }
+        if constexpr (sq_enabled) {
+            size_data_per_element_ += *(size_t*)dist_func_param_ * sizeof(int8_t);
+        }
         offsetData_ = size_links_level0_;
+        if constexpr (sq_enabled) {
+            offsetSQData_ = offsetData_;
+            if constexpr (has_raw_data) {
+                offsetSQData_ += data_size_;
+            }
+        }
         // label_offset_ = size_links_level0_ + data_size_;
         offsetLevel0_ = 0;
 
@@ -190,7 +211,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     tableint enterpoint_node_;
 
     size_t size_links_level0_;
-    size_t offsetData_, offsetLevel0_;
+    size_t offsetData_, offsetSQData_, offsetLevel0_;
 
     char* data_level0_memory_;
     float* data_norm_l2_;  // vector's l2 norm
@@ -201,6 +222,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     size_t label_offset_;
     DISTFUNC<dist_t> fstdistfunc_;
+    DISTFUNC<dist_t> fstdistfunc_sq_;
     void* dist_func_param_;
 
     std::default_random_engine level_generator_;
@@ -210,7 +232,52 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     char* map_;
     size_t map_size_;
 
+    float alpha_ = 0.0f;
+
     mutable knowhere::lru_cache<uint64_t, tableint> lru_cache;
+
+    // Symmetric quantization to encode float value from [-alpha, alpha] to [-127, 127]
+    void
+    trainSQuant(const float* train_data, size_t ntrain) {
+        alpha_ = 0.0f;
+        size_t dim = *(size_t*)dist_func_param_;
+        for (size_t i = 0; i < ntrain; ++i) {
+            const float* vec = train_data + i * dim;
+            std::unique_ptr<float[]> vec_norm = nullptr;
+            if (metric_type_ == Metric::COSINE) {
+                vec_norm = knowhere::CopyAndNormalizeVecs(vec, 1, dim);
+                vec = vec_norm.get();
+            }
+            for (size_t j = 0; j < dim; ++j) {
+                alpha_ = std::max(alpha_, std::abs(vec[j]));
+            }
+        }
+    }
+
+    void
+    encodeSQuant(const float* from, int8_t* to) const {
+        size_t dim = *(size_t*)dist_func_param_;
+        std::unique_ptr<float[]> data_norm = nullptr;
+        if (metric_type_ == Metric::COSINE) {
+            data_norm = knowhere::CopyAndNormalizeVecs(from, 1, dim);
+            from = data_norm.get();
+        }
+        for (size_t i = 0; i < dim; ++i) {
+            float x = from[i] / alpha_;
+            if (x > 1.0f) {
+                x = 1.0f;
+            }
+            if (x < -1.0f) {
+                x = -1.0f;
+            }
+            to[i] = std::round(x * 127.0f);
+        }
+    }
+
+    inline char*
+    getSQDataByInternalId(tableint internal_id) const {
+        return (data_level0_memory_ + internal_id * size_data_per_element_ + offsetSQData_);
+    }
 
     inline char*
     getDataByInternalId(tableint internal_id) const {
@@ -226,20 +293,50 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     inline dist_t
     calcDistance(const tableint id1, const tableint id2) const {
-        dist_t dist = fstdistfunc_(getDataByInternalId(id1), getDataByInternalId(id2), dist_func_param_);
-        if (metric_type_ == Metric::COSINE) {
-            dist /= (data_norm_l2_[id1] * data_norm_l2_[id2]);
+        if constexpr (sq_enabled) {
+            return fstdistfunc_sq_(getSQDataByInternalId(id1), getSQDataByInternalId(id2), dist_func_param_) * alpha_ *
+                   alpha_ / 127.0f / 127.0f;
+        } else {
+            dist_t dist = fstdistfunc_(getDataByInternalId(id1), getDataByInternalId(id2), dist_func_param_);
+            if (metric_type_ == Metric::COSINE) {
+                dist /= (data_norm_l2_[id1] * data_norm_l2_[id2]);
+            }
+            return dist;
         }
-        return dist;
     }
 
     inline dist_t
     calcDistance(const void* vec, const tableint id) const {
+        if constexpr (sq_enabled) {
+            return fstdistfunc_sq_(vec, getSQDataByInternalId(id), dist_func_param_) * alpha_ * alpha_ / 127.0f /
+                   127.0f;
+        } else {
+            dist_t dist = fstdistfunc_(vec, getDataByInternalId(id), dist_func_param_);
+            if (metric_type_ == Metric::COSINE) {
+                dist /= data_norm_l2_[id];
+            }
+            return dist;
+        }
+    }
+
+    inline dist_t
+    calcRefineDistance(const void* vec, const tableint id) const {
         dist_t dist = fstdistfunc_(vec, getDataByInternalId(id), dist_func_param_);
         if (metric_type_ == Metric::COSINE) {
             dist /= data_norm_l2_[id];
         }
         return dist;
+    }
+
+    void
+    prefetchData(const tableint id) const {
+#if defined(USE_PREFETCH)
+        if constexpr (sq_enabled) {
+            _mm_prefetch(getSQDataByInternalId(id), _MM_HINT_T0);
+        } else {
+            _mm_prefetch(getDataByInternalId(id), _MM_HINT_T0);
+        }
+#endif
     }
 
     std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
@@ -278,11 +375,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             }
             size_t size = getListCount((linklistsizeint*)data);
             tableint* datal = (tableint*)(data + 1);
-#if defined(USE_PREFETCH)
             for (size_t j = 0; j < size; ++j) {
-                _mm_prefetch(getDataByInternalId(datal[j]), _MM_HINT_T0);
+                prefetchData(datal[j]);
             }
-#endif
             for (size_t j = 0; j < size; j++) {
                 tableint candidate_id = *(datal + j);
                 // if (candidate_id == 0) continue;
@@ -294,9 +389,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 dist_t dist1 = calcDistance(cur_c, candidate_id);
                 if (top_candidates.size() < ef_construction_ || lowerBound > dist1) {
                     candidateSet.emplace(-dist1, candidate_id);
-#if defined(USE_PREFETCH)
-                    _mm_prefetch(getDataByInternalId(candidateSet.top().second), _MM_HINT_T0);
-#endif
+                    prefetchData(candidateSet.top().second);
 
                     top_candidates.emplace(dist1, candidate_id);
 
@@ -330,11 +423,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         float kAlpha = bitset.filter_ratio() / 2.0f;
         for (size_t i = 1; i <= size; ++i) {
-#if defined(USE_PREFETCH)
             if (i + 1 <= size) {
-                _mm_prefetch(getDataByInternalId(list[i + 1]), _MM_HINT_T0);
+                prefetchData(list[i + 1]);
             }
-#endif
             tableint v = list[i];
             if (visited[v]) {
                 if (feder_result != nullptr) {
@@ -473,11 +564,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             int* data = (int*)get_linklist0(current_id);
             size_t size = getListCount((linklistsizeint*)data);
 
-#if defined(USE_PREFETCH)
             for (size_t j = 1; j <= size; ++j) {
-                _mm_prefetch(getDataByInternalId(data[j]), _MM_HINT_T0);
+                prefetchData(data[j]);
             }
-#endif
             for (size_t j = 1; j <= size; j++) {
                 int candidate_id = *(data + j);
                 if (!visited[candidate_id]) {
@@ -699,6 +788,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         fstdistfunc_ = space_->get_dist_func();
         dist_func_param_ = space_->get_dist_func_param();
+        if constexpr (sq_enabled) {
+            readBinaryPOD(input, alpha_);
+            fstdistfunc_sq_ = space_->get_dist_func_sq();
+        }
 
         readBinaryPOD(input, offsetLevel0_);
         readBinaryPOD(input, max_elements_);
@@ -712,6 +805,12 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         readBinaryPOD(input, size_data_per_element_);
         readBinaryPOD(input, label_offset_);
         readBinaryPOD(input, offsetData_);
+        if constexpr (sq_enabled) {
+            offsetSQData_ = offsetData_;
+            if constexpr (has_raw_data) {
+                offsetSQData_ += data_size_;
+            }
+        }
         readBinaryPOD(input, maxlevel_);
         readBinaryPOD(input, enterpoint_node_);
 
@@ -783,6 +882,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         writeBinaryPOD(output, metric_type_);
         writeBinaryPOD(output, data_size_);
         writeBinaryPOD(output, *((size_t*)dist_func_param_));
+        if constexpr (sq_enabled) {
+            writeBinaryPOD(output, alpha_);
+        }
 
         writeBinaryPOD(output, offsetLevel0_);
         writeBinaryPOD(output, max_elements_);
@@ -811,6 +913,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             if (linkListSize)
                 output.write(linkLists_[i], linkListSize);
         }
+
         // output.close();
     }
 
@@ -837,6 +940,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         fstdistfunc_ = space_->get_dist_func();
         dist_func_param_ = space_->get_dist_func_param();
+        if constexpr (sq_enabled) {
+            readBinaryPOD(input, alpha_);
+            fstdistfunc_sq_ = space_->get_dist_func_sq();
+        }
 
         readBinaryPOD(input, offsetLevel0_);
         readBinaryPOD(input, max_elements_);
@@ -850,6 +957,12 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         readBinaryPOD(input, size_data_per_element_);
         readBinaryPOD(input, label_offset_);
         readBinaryPOD(input, offsetData_);
+        if constexpr (sq_enabled) {
+            offsetSQData_ = offsetData_;
+            if constexpr (has_raw_data) {
+                offsetSQData_ += data_size_;
+            }
+        }
         readBinaryPOD(input, maxlevel_);
         readBinaryPOD(input, enterpoint_node_);
 
@@ -1013,11 +1126,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     data = get_linklist_at_level(currObj, level);
                     int size = getListCount(data);
                     tableint* datal = (tableint*)(data + 1);
-#if defined(USE_PREFETCH)
                     for (int i = 0; i < size; ++i) {
-                        _mm_prefetch(getDataByInternalId(datal[i]), _MM_HINT_T0);
+                        prefetchData(datal[i]);
                     }
-#endif
                     for (int i = 0; i < size; i++) {
                         tableint cand = datal[i];
                         dist_t d = calcDistance(dataPoint, cand);
@@ -1091,13 +1202,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         tableint enterpoint_copy = enterpoint_node_;
 
         memset(data_level0_memory_ + cur_c * size_data_per_element_ + offsetLevel0_, 0, size_data_per_element_);
-        memcpy(getDataByInternalId(cur_c), data_point, data_size_);
-
-        if (metric_type_ == Metric::COSINE) {
-            data_norm_l2_[cur_c] =
-                std::sqrt(faiss::fvec_norm_L2sqr((const float*)data_point, *(size_t*)(dist_func_param_)));
+        if constexpr (has_raw_data) {
+            memcpy(getDataByInternalId(cur_c), data_point, data_size_);
+            if (metric_type_ == Metric::COSINE) {
+                data_norm_l2_[cur_c] =
+                    std::sqrt(faiss::fvec_norm_L2sqr((const float*)data_point, *(size_t*)(dist_func_param_)));
+            }
         }
-
+        if constexpr (sq_enabled) {
+            encodeSQuant((const float*)data_point, (int8_t*)getSQDataByInternalId(cur_c));
+        }
         if (curlevel) {
             linkLists_[cur_c] = (char*)malloc(size_links_per_element_ * curlevel + 1);
             if (linkLists_[cur_c] == nullptr)
@@ -1183,7 +1297,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         if (metric_type_ == Metric::HAMMING || metric_type_ == Metric::JACCARD) {
             vec_hash = knowhere::hash_binary_vec((const uint8_t*)query_data, *(size_t*)dist_func_param_);
         } else {
-            vec_hash = knowhere::hash_vec((const float*)query_data, *(size_t*)dist_func_param_);
+            if constexpr (sq_enabled) {
+                vec_hash = knowhere::hash_u8_vec((const uint8_t*)query_data, *(size_t*)dist_func_param_);
+            } else {
+                vec_hash = knowhere::hash_vec((const float*)query_data, *(size_t*)dist_func_param_);
+            }
         }
         // for tuning, do not use cache
         if ((param && param->for_tuning) || !lru_cache.try_get(vec_hash, currObj)) {
@@ -1203,11 +1321,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     metric_hops++;
                     metric_distance_computations += size;
                     tableint* datal = (tableint*)(data + 1);
-#if defined(USE_PREFETCH)
                     for (int i = 0; i < size; ++i) {
-                        _mm_prefetch(getDataByInternalId(datal[i]), _MM_HINT_T0);
+                        prefetchData(datal[i]);
                     }
-#endif
                     for (int i = 0; i < size; i++) {
                         tableint cand = datal[i];
                         if (cand < 0 || cand > max_elements_)
@@ -1243,6 +1359,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             query_data_norm = knowhere::CopyAndNormalizeVecs((const float*)query_data, 1, *(size_t*)dist_func_param_);
             query_data = query_data_norm.get();
         }
+        std::unique_ptr<int8_t[]> query_data_sq;
+        const float* raw_data = (const float*)query_data;
+        if constexpr (sq_enabled) {
+            query_data_sq = std::make_unique<int8_t[]>(*(size_t*)dist_func_param_);
+            encodeSQuant((const float*)query_data, query_data_sq.get());
+            query_data = query_data_sq.get();
+        }
 
         // do bruteforce search when topk is super large
         if (k >= (cur_element_count * kHnswSearchBFTopkThreshold)) {
@@ -1256,7 +1379,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             double ratio = ((double)filtered_out_num) / bitset.size();
             knowhere::knowhere_hnsw_bitset_ratio.Observe(ratio);
 #endif
-            if (filtered_out_num >= (cur_element_count * kHnswSearchKnnBFFilterThreshold) || k >= (cur_element_count - filtered_out_num) * kHnswSearchBFTopkThreshold) {
+            if (filtered_out_num >= (cur_element_count * kHnswSearchKnnBFFilterThreshold) ||
+                k >= (cur_element_count - filtered_out_num) * kHnswSearchBFTopkThreshold) {
                 return searchKnnBF(query_data, k, bitset);
             }
         }
@@ -1274,8 +1398,19 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         std::vector<std::pair<dist_t, labeltype>> result;
         size_t len = std::min(k, retset.size());
         result.reserve(len);
-        for (int i = 0; i < len; ++i) {
-            result.emplace_back(retset[i].distance, (labeltype)retset[i].id);
+        if constexpr (sq_enabled && has_raw_data) {
+            knowhere::ResultMaxHeap<dist_t, labeltype> max_heap(len);
+            for (int i = 0; i < retset.size(); ++i) {
+                max_heap.Push(calcRefineDistance(raw_data, retset[i].id), retset[i].id);
+            }
+            for (int64_t i = len - 1; i >= 0; --i) {
+                const auto op = max_heap.Pop();
+                result.emplace_back(op.value());
+            }
+        } else {
+            for (int i = 0; i < len; ++i) {
+                result.emplace_back(retset[i].distance, (labeltype)retset[i].id);
+            }
         }
         if (len > 0) {
             lru_cache.put(vec_hash, result[0].second);
@@ -1385,6 +1520,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             query_data = query_data_norm.get();
         }
 
+        std::unique_ptr<int8_t[]> query_data_sq;
+        if constexpr (sq_enabled) {
+            query_data_sq = std::make_unique<int8_t[]>(*(size_t*)dist_func_param_);
+            encodeSQuant((const float*)query_data, query_data_sq.get());
+            query_data = query_data_sq.get();
+        }
+
         // do bruteforce range search when ef is super large
         size_t ef = param ? param->ef_ : this->ef_;
         if (ef >= (cur_element_count * kHnswSearchBFTopkThreshold)) {
@@ -1398,7 +1540,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             double ratio = ((double)filtered_out_num) / bitset.size();
             knowhere::knowhere_hnsw_bitset_ratio.Observe(ratio);
 #endif
-            if (filtered_out_num >= (cur_element_count * kHnswSearchRangeBFFilterThreshold) || ef >= (cur_element_count - filtered_out_num) * kHnswSearchBFTopkThreshold) {
+            if (filtered_out_num >= (cur_element_count * kHnswSearchRangeBFFilterThreshold) ||
+                ef >= (cur_element_count - filtered_out_num) * kHnswSearchBFTopkThreshold) {
                 return searchRangeBF(query_data, radius, bitset);
             }
         }
@@ -1464,9 +1607,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             for (tableint i = 0; i < cur_element_count; ++i) {
                 if (element_levels_[i] >= level) {
                     if (!visited[i]) {
-                        if (level > 0) {  // for upper level, directly add edges since nodes num is usually small and fast to search its neighbors
+                        if (level > 0) {  // for upper level, directly add edges since nodes num is usually small and
+                                          // fast to search its neighbors
                             repairGraphConnectivity(i, level);
-                        } else {  // for base level, collect the unreachable nodes and repair them concurrently                 
+                        } else {  // for base level, collect the unreachable nodes and repair them concurrently
                             unreached.push_back(i);
                         }
                     }
@@ -1513,8 +1657,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 }
             }
         }
-        std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> candidates = searchBaseLayer(
-            currObj, cur_c, level);
+        std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
+            candidates = searchBaseLayer(currObj, cur_c, level);
 
         // get sorted id
         std::vector<tableint> top_candidate_ids(candidates.size());
@@ -1531,10 +1675,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
             // try to connect candidate to the element
             // add an edge if there is space
-            std::unique_lock <std::mutex> lock(link_list_locks_[cand_id]);
-            linklistsizeint *ll_cand = get_linklist_at_level(cand_id, level);
+            std::unique_lock<std::mutex> lock(link_list_locks_[cand_id]);
+            linklistsizeint* ll_cand = get_linklist_at_level(cand_id, level);
             size_t size = getListCount(ll_cand);
-            tableint *data_cand = (tableint *) (ll_cand + 1);
+            tableint* data_cand = (tableint*)(ll_cand + 1);
             if (size < m_max) {
                 data_cand[size] = cur_c;
                 setListCount(ll_cand, size + 1);

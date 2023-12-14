@@ -24,6 +24,11 @@ InnerProductDistance(const void* pVect1, const void* pVect2, const void* qty_ptr
     return -1.0f * InnerProduct(pVect1, pVect2, qty_ptr);
 }
 
+static float
+InnerProductSQ8Distance(const void* pVect1, const void* pVect2, const void* qty_ptr) {
+    return -1.0f * faiss::ivec_inner_product((const int8_t*)pVect1, (const int8_t*)pVect2, *(size_t*)qty_ptr);
+}
+
 #if defined(USE_AVX)
 
 // Favor using AVX if available.
@@ -321,12 +326,14 @@ InnerProductDistanceSIMD4ExtResiduals(const void* pVect1v, const void* pVect2v, 
 
 class InnerProductSpace : public SpaceInterface<float> {
     DISTFUNC<float> fstdistfunc_;
+    DISTFUNC<float> fstdistfunc_sq_;
     size_t data_size_;
     size_t dim_;
 
  public:
     InnerProductSpace(size_t dim) {
         fstdistfunc_ = InnerProductDistance;
+        fstdistfunc_sq_ = InnerProductSQ8Distance;
 #if 0 /* use FAISS distance calculation algorithm instead */
 #if defined(USE_AVX) || defined(USE_SSE) || defined(USE_AVX512)
 #if defined(USE_AVX512)
@@ -372,6 +379,11 @@ class InnerProductSpace : public SpaceInterface<float> {
     DISTFUNC<float>
     get_dist_func() {
         return fstdistfunc_;
+    }
+
+    DISTFUNC<float>
+    get_dist_func_sq() {
+        return fstdistfunc_sq_;
     }
 
     void*

@@ -12,6 +12,7 @@
 #ifndef DISTANCES_SSE_H
 #define DISTANCES_SSE_H
 
+#include <cstdint>
 #include <cstdio>
 namespace faiss {
 
@@ -45,6 +46,12 @@ fvec_madd_sse(size_t n, const float* a, float bf, const float* b, float* c);
 
 int
 fvec_madd_and_argmin_sse(size_t n, const float* a, float bf, const float* b, float* c);
+
+int32_t
+ivec_inner_product_sse(const int8_t* x, const int8_t* y, size_t d);
+
+int32_t
+ivec_L2sqr_sse(const int8_t* x, const int8_t* y, size_t d);
 
 }  // namespace faiss
 

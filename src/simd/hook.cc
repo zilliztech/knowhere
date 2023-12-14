@@ -59,6 +59,9 @@ decltype(fvec_L2sqr_ny_transposed) fvec_L2sqr_ny_transposed = fvec_L2sqr_ny_tran
 decltype(fvec_inner_product_batch_4) fvec_inner_product_batch_4 = fvec_inner_product_batch_4_ref;
 decltype(fvec_L2sqr_batch_4) fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref;
 
+decltype(ivec_inner_product) ivec_inner_product = ivec_inner_product_ref;
+decltype(ivec_L2sqr) ivec_L2sqr = ivec_L2sqr_ref;
+
 #if defined(__x86_64__)
 bool
 cpu_support_avx512() {
@@ -99,6 +102,9 @@ fvec_hook(std::string& simd_type) {
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_avx512;
         fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_avx512;
 
+        ivec_inner_product = ivec_inner_product_avx512;
+        ivec_L2sqr = ivec_L2sqr_avx512;
+
         simd_type = "AVX512";
         support_pq_fast_scan = true;
     } else if (use_avx2 && cpu_support_avx2()) {
@@ -115,6 +121,9 @@ fvec_hook(std::string& simd_type) {
 
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_avx;
         fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_avx;
+
+        ivec_inner_product = ivec_inner_product_avx;
+        ivec_L2sqr = ivec_L2sqr_avx;
 
         simd_type = "AVX2";
         support_pq_fast_scan = true;
@@ -133,6 +142,9 @@ fvec_hook(std::string& simd_type) {
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_ref;
         fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref;
 
+        ivec_inner_product = ivec_inner_product_sse;
+        ivec_L2sqr = ivec_L2sqr_sse;
+
         simd_type = "SSE4_2";
         support_pq_fast_scan = false;
     } else {
@@ -149,6 +161,9 @@ fvec_hook(std::string& simd_type) {
 
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_ref;
         fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref;
+
+        ivec_inner_product = ivec_inner_product_ref;
+        ivec_L2sqr = ivec_L2sqr_ref;
 
         simd_type = "GENERIC";
         support_pq_fast_scan = false;
@@ -167,6 +182,9 @@ fvec_hook(std::string& simd_type) {
     fvec_madd = fvec_madd_neon;
     fvec_madd_and_argmin = fvec_madd_and_argmin_neon;
 
+    ivec_inner_product = ivec_inner_product_neon;
+    ivec_L2sqr = ivec_L2sqr_neon;
+
     simd_type = "NEON";
     support_pq_fast_scan = true;
 
@@ -184,6 +202,9 @@ fvec_hook(std::string& simd_type) {
     fvec_inner_products_ny = fvec_inner_products_ny_ref;
     fvec_madd = fvec_madd_ref;
     fvec_madd_and_argmin = fvec_madd_and_argmin_ref;
+
+    ivec_inner_product = ivec_inner_product_ref;
+    ivec_L2sqr = ivec_L2sqr_ref;
 
     simd_type = "GENERIC";
     support_pq_fast_scan = false;

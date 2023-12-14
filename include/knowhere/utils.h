@@ -60,6 +60,15 @@ hash_vec(const float* x, size_t d) {
 }
 
 inline uint64_t
+hash_u8_vec(const uint8_t* x, size_t d) {
+    uint64_t h = seed;
+    for (size_t i = 0; i < d; ++i) {
+        h = h * 13331 + *(x + i);
+    }
+    return h;
+}
+
+inline uint64_t
 hash_binary_vec(const uint8_t* x, size_t d) {
     size_t len = (d + 7) / 8;
     uint64_t h = seed;
