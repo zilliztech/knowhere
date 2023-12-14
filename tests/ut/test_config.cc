@@ -44,14 +44,22 @@ TEST_CASE("Test config json parse", "[config]") {
             })",
                                          R"({
                 "12-s": 19878
-            })",
+            })");
+        knowhere::BaseConfig test_config;
+        knowhere::Json test_json = knowhere::Json::parse(invalid_json_str);
+        s = knowhere::Config::FormatAndCheck(test_config, test_json);
+        CHECK(s == knowhere::Status::success);
+    }
+
+    SECTION("check invalid json values") {
+        auto invalid_json_str = GENERATE(as<std::string>{},
                                          R"({
                 "k": "100.12"
             })");
         knowhere::BaseConfig test_config;
         knowhere::Json test_json = knowhere::Json::parse(invalid_json_str);
         s = knowhere::Config::FormatAndCheck(test_config, test_json);
-        CHECK(s != knowhere::Status::success);
+        CHECK(s == knowhere::Status::invalid_value_in_json);
     }
 
     SECTION("Check the json for the specific index") {
@@ -83,7 +91,7 @@ TEST_CASE("Test config json parse", "[config]") {
         })");
         knowhere::HnswConfig hnsw_config;
         s = knowhere::Config::FormatAndCheck(hnsw_config, large_build_json);
-        CHECK(s == knowhere::Status::invalid_param_in_json);
+        CHECK(s == knowhere::Status::success);
         knowhere::DiskANNConfig diskann_config;
         s = knowhere::Config::FormatAndCheck(diskann_config, large_build_json);
         CHECK(s == knowhere::Status::success);

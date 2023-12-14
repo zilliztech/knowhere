@@ -55,21 +55,22 @@ static const std::unordered_set<std::string> ext_legal_json_keys = {"metric_type
 
 Status
 Config::FormatAndCheck(const Config& cfg, Json& json, std::string* const err_msg) {
-    try {
-        for (auto& it : json.items()) {
-            // valid only if it.key() exists in one of cfg.__DICT__ and ext_legal_json_keys
-            if (cfg.__DICT__.find(it.key()) == cfg.__DICT__.end() &&
-                ext_legal_json_keys.find(it.key()) == ext_legal_json_keys.end()) {
-                throw KnowhereException(std::string("invalid json key ") + it.key());
-            }
-        }
-    } catch (std::exception& e) {
-        LOG_KNOWHERE_ERROR_ << e.what();
-        if (err_msg) {
-            *err_msg = e.what();
-        }
-        return Status::invalid_param_in_json;
-    }
+    // Deprecated invalid json key check for now
+    // try {
+    //     for (auto& it : json.items()) {
+    //         // valid only if it.key() exists in one of cfg.__DICT__ and ext_legal_json_keys
+    //         if (cfg.__DICT__.find(it.key()) == cfg.__DICT__.end() &&
+    //             ext_legal_json_keys.find(it.key()) == ext_legal_json_keys.end()) {
+    //             throw KnowhereException(std::string("invalid json key ") + it.key());
+    //         }
+    //     }
+    // } catch (std::exception& e) {
+    //     LOG_KNOWHERE_ERROR_ << e.what();
+    //     if (err_msg) {
+    //         *err_msg = e.what();
+    //     }
+    //     return Status::invalid_param_in_json;
+    // }
 
     try {
         for (const auto& it : cfg.__DICT__) {
