@@ -76,6 +76,7 @@ struct raft_knowhere_index {
     }
 };
 
+extern template struct raft_knowhere_index<raft_proto::raft_index_kind::brute_force>;
 extern template struct raft_knowhere_index<raft_proto::raft_index_kind::ivf_flat>;
 extern template struct raft_knowhere_index<raft_proto::raft_index_kind::ivf_pq>;
 extern template struct raft_knowhere_index<raft_proto::raft_index_kind::cagra>;

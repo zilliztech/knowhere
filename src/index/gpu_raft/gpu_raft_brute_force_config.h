@@ -14,8 +14,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#pragma once
+#ifndef GPU_RAFT_BRUTE_FORCE_CONFIG_H
+#define GPU_RAFT_BRUTE_FORCE_CONFIG_H
 
-namespace raft_proto {
-enum struct raft_index_kind { brute_force, ivf_flat, ivf_pq, cagra };
-}  // namespace raft_proto
+#include "common/raft/integration/raft_knowhere_config.hpp"
+#include "common/raft/proto/raft_index_kind.hpp"
+#include "knowhere/config.h"
+
+namespace knowhere {
+
+struct GpuRaftBruteForceConfig : public BaseConfig {};
+
+[[nodiscard]] inline auto
+to_raft_knowhere_config(GpuRaftBruteForceConfig const& cfg) {
+    auto result = raft_knowhere::raft_knowhere_config{raft_proto::raft_index_kind::brute_force};
+
+    result.metric_type = cfg.metric_type.value();
+    result.k = cfg.k.value();
+
+    return result;
+}
+
+}  // namespace knowhere
+
+#endif /*GPU_RAFT_BRUTE_FORCE_CONFIG_H*/

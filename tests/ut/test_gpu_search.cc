@@ -40,6 +40,8 @@ TEST_CASE("Test All GPU Index", "[search]") {
         return json;
     };
 
+    auto bruteforce_gen = base_gen;
+
     auto ivfflat_gen = [&base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::NLIST] = 16;
@@ -79,6 +81,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
             // make_tuple(knowhere::IndexEnum::INDEX_FAISS_GPU_IVFFLAT, ivfflat_gen),
             // make_tuple(knowhere::IndexEnum::INDEX_FAISS_GPU_IVFPQ, ivfpq_gen),
             // make_tuple(knowhere::IndexEnum::INDEX_FAISS_GPU_IVFSQ8, ivfsq_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_RAFT_BRUTEFORCE, bruteforce_gen),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFFLAT, ivfflat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFFLAT, refined_gen(ivfflat_gen)),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFPQ, ivfpq_gen),
@@ -106,6 +109,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
     SECTION("Test Gpu Index Search With Bitset") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+            make_tuple(knowhere::IndexEnum::INDEX_RAFT_BRUTEFORCE, bruteforce_gen),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFFLAT, ivfflat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFFLAT, refined_gen(ivfflat_gen)),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFPQ, ivfpq_gen),
@@ -145,6 +149,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
     SECTION("Test Gpu Index Search TopK") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+            make_tuple(knowhere::IndexEnum::INDEX_RAFT_BRUTEFORCE, bruteforce_gen),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFFLAT, ivfflat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFFLAT, refined_gen(ivfflat_gen)),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFPQ, ivfpq_gen),
@@ -176,6 +181,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
     SECTION("Test Gpu Index Serialize/Deserialize") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+            make_tuple(knowhere::IndexEnum::INDEX_RAFT_BRUTEFORCE, bruteforce_gen),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFFLAT, ivfflat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFFLAT, refined_gen(ivfflat_gen)),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFPQ, ivfpq_gen),
@@ -207,13 +213,12 @@ TEST_CASE("Test All GPU Index", "[search]") {
 
     SECTION("Test Gpu Index Search Simple Bitset") {
         using std::make_tuple;
-        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFFLAT, ivfflat_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFFLAT, refined_gen(ivfflat_gen)),
-            make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFPQ, ivfpq_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFPQ, refined_gen(ivfpq_gen)),
-            make_tuple(knowhere::IndexEnum::INDEX_RAFT_CAGRA, cagra_gen),
-        }));
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(
+            {make_tuple(knowhere::IndexEnum::INDEX_RAFT_BRUTEFORCE, bruteforce_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFFLAT, refined_gen(ivfflat_gen)),
+             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFPQ, ivfpq_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFPQ, refined_gen(ivfpq_gen)),
+             make_tuple(knowhere::IndexEnum::INDEX_RAFT_CAGRA, cagra_gen)}));
         auto rows = 16;
         auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();

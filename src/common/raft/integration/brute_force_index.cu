@@ -14,8 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#pragma once
+#undef RAFT_EXPLICIT_INSTANTIATE_ONLY
+#include "common/raft/integration/raft_knowhere_index.cuh"
+#include "common/raft/proto/filtered_search_instantiation.cuh"
+#include "common/raft/proto/raft_index_kind.hpp"
 
-namespace raft_proto {
-enum struct raft_index_kind { brute_force, ivf_flat, ivf_pq, cagra };
-}  // namespace raft_proto
+namespace raft_knowhere {
+template struct raft_knowhere_index<raft_proto::raft_index_kind::brute_force>;
+}  // namespace raft_knowhere
