@@ -26,6 +26,7 @@ const std::unique_ptr<PrometheusClient> prometheusClient = std::make_unique<Prom
  *   text format parsing error in line 50: expected float as value, got "=\"0.9\"}"
  ******************************************************************************/
 DEFINE_PROMETHEUS_HISTOGRAM(knowhere_build_latency, "index build latency in knowhere (s)")
+DEFINE_PROMETHEUS_HISTOGRAM(knowhere_load_latency, "index load latency in knowhere (ms)")
 DEFINE_PROMETHEUS_HISTOGRAM(knowhere_search_latency, "search latency in knowhere (ms)")
 DEFINE_PROMETHEUS_HISTOGRAM(knowhere_range_search_latency, "range search latency in knowhere (ms)")
 DEFINE_PROMETHEUS_HISTOGRAM(knowhere_ann_iterator_init_latency, "ann iterator init latency in knowhere (ms)")
