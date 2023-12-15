@@ -101,9 +101,6 @@ spec:
         stage ('Build'){
             steps {
                 container('main') {
-                    // sh "git clone --depth 1 -b ${branch} https://github.com/${repo_owner}/milvus.git"
-
-                    // dir ('milvus') {
                     script {
                         sh 'ls -lah'
                         sh 'chmod +x ci/docker/set_docker_mirror.sh'
@@ -117,7 +114,6 @@ spec:
                             sh "docker push ${image}"
                         }
                     }
-                    // }
                 }
             }
         }
