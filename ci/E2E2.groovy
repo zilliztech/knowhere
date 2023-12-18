@@ -62,6 +62,7 @@ pipeline {
                     dir('tests'){
                       unarchive mapping: ["${knowhere_wheel}": "${knowhere_wheel}"]
                       sh "apt-get update || true"
+                      sh "apt-get install -y python3-pip"
                       sh "apt-get install -y libopenblas-dev libaio-dev libdouble-conversion-dev libevent-dev"
                       sh "pip3 install ${knowhere_wheel}"
                       sh "cat requirements.txt | xargs -n 1 pip3 install"
