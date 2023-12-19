@@ -25,7 +25,6 @@
 #include "pq_table.h"
 #include "utils.h"
 #include "diskann/distance.h"
-#include "knowhere/comp/thread_pool.h"
 
 #define MAX_GRAPH_DEGREE 512
 #define SECTOR_LEN (_u64) 4096
@@ -61,7 +60,7 @@ namespace diskann {
         nullptr;  // MUST BE AT LEAST diskann MAX_DEGREE
     _u8 *aligned_pq_coord_scratch =
         nullptr;  // MUST BE AT LEAST  [N_CHUNKS * MAX_DEGREE]
-    T     *aligned_query_T = nullptr;
+    T *    aligned_query_T = nullptr;
     float *aligned_query_float = nullptr;
 
     tsl::robin_set<_u64> *visited = nullptr;
@@ -111,7 +110,7 @@ namespace diskann {
                       std::vector<_s64> &indices, std::vector<float> &distances,
                       const _u64           beam_width,
                       knowhere::BitsetView bitset_view = nullptr,
-                      QueryStats          *stats = nullptr);
+                      QueryStats *         stats = nullptr);
 
     void get_vector_by_ids(const int64_t *ids, const int64_t n,
                            T *const output_data);
@@ -225,7 +224,7 @@ namespace diskann {
     // data: _u8 * n_chunks
     // chunk_size = chunk size of each dimension chunk
     // pq_tables = float* [[2^8 * [chunk_size]] * n_chunks]
-    _u8              *data = nullptr;
+    _u8 *             data = nullptr;
     _u64              n_chunks;
     FixedChunkPQTable pq_table;
 
@@ -276,7 +275,7 @@ namespace diskann {
         nhood_cache;  // <id, <neihbors_num, neihbors>>
 
     // coord_cache
-    T                        *coord_cache_buf = nullptr;
+    T *                       coord_cache_buf = nullptr;
     tsl::robin_map<_u32, T *> coord_cache;
 
     // thread-specific scratch

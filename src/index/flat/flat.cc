@@ -13,11 +13,12 @@
 #include "common/range_util.h"
 #include "faiss/IndexBinaryFlat.h"
 #include "faiss/IndexFlat.h"
+#include "faiss/impl/AuxIndexStructures.h"
 #include "faiss/index_io.h"
 #include "index/flat/flat_config.h"
 #include "io/memory_io.h"
 #include "knowhere/bitsetview_idselector.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/comp/task.h"
 #include "knowhere/factory.h"
 #include "knowhere/log.h"
 #include "knowhere/utils.h"
@@ -30,7 +31,6 @@ class FlatIndexNode : public IndexNode {
     FlatIndexNode(const int32_t version, const Object& object) : index_(nullptr) {
         static_assert(std::is_same<T, faiss::IndexFlat>::value || std::is_same<T, faiss::IndexBinaryFlat>::value,
                       "not support");
-        search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
     }
 
     Status
@@ -87,11 +87,10 @@ class FlatIndexNode : public IndexNode {
         try {
             ids = new (std::nothrow) int64_t[len];
             distances = new (std::nothrow) float[len];
-            std::vector<folly::Future<folly::Unit>> futs;
-            futs.reserve(nq);
+            std::vector<std::function<void()>> tasks;
+            tasks.reserve(nq);
             for (int i = 0; i < nq; ++i) {
-                futs.emplace_back(search_pool_->push([&, index = i] {
-                    ThreadPool::ScopedOmpSetter setter(1);
+                tasks.emplace_back([&, index = i] {
                     auto cur_ids = ids + k * index;
                     auto cur_dis = distances + k * index;
 
@@ -125,17 +124,10 @@ class FlatIndexNode : public IndexNode {
                             }
                         }
                     }
-                }));
+                });
             }
-            // wait for the completion
-            for (auto& fut : futs) {
-                fut.wait();
-            }
-            // check for exceptions. value() is {}, so either
-            //   a call does nothing, or it throws an inner exception.
-            for (auto& fut : futs) {
-                fut.result().value();
-            }
+
+            ExecOverSearchThreadPool(tasks);
         } catch (const std::exception& e) {
             std::unique_ptr<int64_t[]> auto_delete_ids(ids);
             std::unique_ptr<float[]> auto_delete_dis(distances);
@@ -174,11 +166,10 @@ class FlatIndexNode : public IndexNode {
         std::vector<size_t> result_lims(nq + 1);
 
         try {
-            std::vector<folly::Future<folly::Unit>> futs;
-            futs.reserve(nq);
+            std::vector<std::function<void()>> tasks;
+            tasks.reserve(nq);
             for (int i = 0; i < nq; ++i) {
-                futs.emplace_back(search_pool_->push([&, index = i] {
-                    ThreadPool::ScopedOmpSetter setter(1);
+                tasks.emplace_back([&, index = i] {
                     faiss::RangeSearchResult res(1);
 
                     BitsetViewIDSelector bw_idselector(bitset);
@@ -215,17 +206,10 @@ class FlatIndexNode : public IndexNode {
                         FilterRangeSearchResultForOneNq(result_dist_array[index], result_id_array[index], is_ip, radius,
                                                         range_filter);
                     }
-                }));
+                });
             }
-            // wait for the completion
-            for (auto& fut : futs) {
-                fut.wait();
-            }
-            // check for exceptions. value() is {}, so either
-            //   a call does nothing, or it throws an inner exception.
-            for (auto& fut : futs) {
-                fut.result().value();
-            }
+            ExecOverSearchThreadPool(tasks);
+
             GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter, distances, ids,
                                  lims);
         } catch (const std::exception& e) {
@@ -388,7 +372,6 @@ class FlatIndexNode : public IndexNode {
 
  private:
     std::unique_ptr<T> index_;
-    std::shared_ptr<ThreadPool> search_pool_;
 };
 
 KNOWHERE_REGISTER_GLOBAL(FLAT, [](const int32_t& version, const Object& object) {

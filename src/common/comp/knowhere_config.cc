@@ -18,7 +18,6 @@
 #endif
 #include "faiss/Clustering.h"
 #include "faiss/utils/distances.h"
-#include "knowhere/comp/thread_pool.h"
 #include "knowhere/log.h"
 #ifdef KNOWHERE_WITH_GPU
 #include "index/gpu/gpu_res_mgr.h"
@@ -26,8 +25,8 @@
 #ifdef KNOWHERE_WITH_RAFT
 #include "common/raft/integration/raft_initialization.hpp"
 #endif
+#include "knowhere/comp/task.h"
 #include "simd/hook.h"
-
 namespace knowhere {
 
 void
@@ -135,12 +134,12 @@ KnowhereConfig::SetAioContextPool(size_t num_ctx) {
 
 void
 KnowhereConfig::SetBuildThreadPoolSize(size_t num_threads) {
-    knowhere::ThreadPool::InitGlobalBuildThreadPool(num_threads);
+    knowhere::InitBuildThreadPool(num_threads);
 }
 
 void
 KnowhereConfig::SetSearchThreadPoolSize(size_t num_threads) {
-    knowhere::ThreadPool::InitGlobalSearchThreadPool(num_threads);
+    knowhere::InitSearchThreadPool(num_threads);
 }
 
 void

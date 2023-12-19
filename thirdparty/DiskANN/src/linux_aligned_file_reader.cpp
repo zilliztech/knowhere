@@ -50,8 +50,8 @@ namespace {
         cbs[i] = cb.data() + i;
       }
 
-      int64_t ret;
-      int64_t num_submitted = 0;
+      int64_t  ret;
+      int64_t  num_submitted = 0;
       uint64_t submit_retry = 0;
       while (num_submitted < n_ops) {
         while ((ret = io_submit(ctx, n_ops - num_submitted,
@@ -80,7 +80,7 @@ namespace {
         }
       }
 
-      int64_t num_read = 0;
+      int64_t  num_read = 0;
       uint64_t read_retry = 0;
       while (num_read < n_ops) {
         while ((ret = io_getevents(ctx, n_ops - num_read, n_ops - num_read,
@@ -173,7 +173,7 @@ void LinuxAlignedFileReader::read(std::vector<AlignedRead> &read_reqs,
              read_reqs);
 }
 
-void LinuxAlignedFileReader::submit_req(io_context_t             &ctx,
+void LinuxAlignedFileReader::submit_req(io_context_t &            ctx,
                                         std::vector<AlignedRead> &read_reqs) {
   const auto maxnr = this->ctx_pool_->max_events_per_ctx();
   if (read_reqs.size() > maxnr) {
@@ -196,7 +196,7 @@ void LinuxAlignedFileReader::submit_req(io_context_t             &ctx,
     cbs[i] = cb.data() + i;
   }
 
-  int64_t ret;
+  int64_t  ret;
   uint64_t num_submitted = 0, submit_retry = 0;
   while (num_submitted < n_ops) {
     while ((ret = io_submit(ctx, n_ops - num_submitted,
@@ -225,7 +225,8 @@ void LinuxAlignedFileReader::submit_req(io_context_t             &ctx,
   }
 }
 
-void LinuxAlignedFileReader::get_submitted_req(io_context_t &ctx, size_t n_ops) {
+void LinuxAlignedFileReader::get_submitted_req(io_context_t &ctx,
+                                               size_t        n_ops) {
   if (n_ops > this->ctx_pool_->max_events_per_ctx()) {
     std::stringstream err;
     err << "Async does not support getting number of read requests (" << n_ops
@@ -234,8 +235,8 @@ void LinuxAlignedFileReader::get_submitted_req(io_context_t &ctx, size_t n_ops) 
     throw diskann::ANNException(err.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
   }
 
-  int64_t ret;
-  uint64_t                 num_read = 0, read_retry = 0;
+  int64_t                 ret;
+  uint64_t                num_read = 0, read_retry = 0;
   std::vector<io_event_t> evts(n_ops);
   while (num_read < n_ops) {
     while ((ret = io_getevents(ctx, n_ops - num_read, n_ops - num_read,

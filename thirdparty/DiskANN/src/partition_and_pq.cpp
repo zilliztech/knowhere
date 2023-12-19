@@ -2,7 +2,6 @@
 // Licensed under the MIT license.
 
 #include "diskann/math_utils.h"
-#include "knowhere/comp/thread_pool.h"
 #include "knowhere/log.h"
 #include <omp.h>
 #include <algorithm>
@@ -152,7 +151,7 @@ template<typename T>
 void gen_random_slice(const T *inputdata, size_t npts, size_t ndims,
                       double p_val, float *&sampled_data, size_t &slice_size) {
   std::vector<std::vector<float>> sampled_vectors;
-  const T                        *cur_vector_T;
+  const T *                       cur_vector_T;
 
   p_val = p_val < 1 ? p_val : 1;
 
@@ -309,16 +308,13 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
   full_pivot_data.reset(new float[num_centers * dim]);
 
   std::atomic<uint32_t> num_chunk_done(0);
-  const uint32_t num_chunk_step = num_pq_chunks / COMPLETION_PERCENT;
-  auto thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
-  std::vector<folly::Future<folly::Unit>> futures;
-  futures.reserve(num_pq_chunks);
+  const uint32_t        num_chunk_step = num_pq_chunks / COMPLETION_PERCENT;
+  std::vector<std::function<void()>> tasks;
   for (size_t i = 0; i < num_pq_chunks; i++) {
     size_t cur_chunk_size = chunk_offsets[i + 1] - chunk_offsets[i];
     if (cur_chunk_size == 0)
       continue;
-    futures.emplace_back(thread_pool->push([&, chunk_size = cur_chunk_size,
-                                         index = i]() {
+    tasks.emplace_back([&, chunk_size = cur_chunk_size, index = i]() {
       std::unique_ptr<float[]> cur_pivot_data =
           std::make_unique<float[]>(num_centers * chunk_size);
       std::unique_ptr<float[]> cur_data =
@@ -349,15 +345,15 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
                     chunk_size * sizeof(float));
       }
       uint32_t cur_chunk_done = num_chunk_done.fetch_add(1);
-      if (cur_chunk_done % num_chunk_step == 0 || cur_chunk_done == num_pq_chunks) {
+      if (cur_chunk_done % num_chunk_step == 0 ||
+          cur_chunk_done == num_pq_chunks) {
         LOG_KNOWHERE_INFO_ << "Genereated pivots for " << cur_chunk_done
                            << " chunks out of " << num_pq_chunks;
       }
-    }));
+    });
   }
-  for (auto &future : futures) {
-    future.wait();
-  }
+
+  knowhere::ExecOverBuildThreadPool(tasks);
 
   diskann::save_bin<float>(pq_pivots_path.c_str(), full_pivot_data.get(),
                            (size_t) num_centers, dim);
@@ -492,13 +488,11 @@ int generate_pq_data_from_pivots(const std::string data_file,
       std::make_unique<float[]>(block_size * dim);
 
   size_t num_blocks = DIV_ROUND_UP(num_points, block_size);
-  auto   thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
-  std::vector<folly::Future<folly::Unit>> futures;
-  futures.reserve(num_pq_chunks);
+  std::vector<std::function<void()>> tasks;
 
   for (size_t block = 0; block < num_blocks; block++) {
     size_t start_id = block * block_size;
-    size_t end_id = (std::min)((block + 1) * block_size, num_points);
+    size_t end_id = (std::min) ((block + 1) * block_size, num_points);
     size_t cur_blk_size = end_id - start_id;
 
     base_reader.read((char *) (block_data_T.get()),
@@ -508,11 +502,10 @@ int generate_pq_data_from_pivots(const std::string data_file,
 
     LOG_KNOWHERE_DEBUG_ << "Processing points  [" << start_id << ", " << end_id
                         << ")..";
-    auto num_threads = thread_pool->size();
-    futures.reserve(num_threads);
+    auto num_threads = knowhere::GetBuildThreadPoolSize();
     auto batch_size = DIV_ROUND_UP(cur_blk_size, num_threads);
     for (uint64_t p = 0; p < cur_blk_size; p += batch_size) {
-      futures.emplace_back(thread_pool->push(
+      tasks.emplace_back(
           [&, batch_beg_id = p,
            batch_end_id = std::min(p + batch_size, cur_blk_size)]() {
             std::vector<float> block_data_tmp(dim);
@@ -528,17 +521,17 @@ int generate_pq_data_from_pivots(const std::string data_file,
                 block_data_float[index * dim + d] = block_data_tmp[d];
               }
             }
-          }));
+          });
     }
 
-    futures.clear();
-    futures.reserve(num_pq_chunks);
+    knowhere::ExecOverBuildThreadPool(tasks);
+
+    tasks.clear();
     for (size_t i = 0; i < num_pq_chunks; i++) {
       size_t cur_chunk_size = chunk_offsets[i + 1] - chunk_offsets[i];
       if (cur_chunk_size == 0)
         continue;
-      futures.emplace_back(thread_pool->push([&, chunk_size = cur_chunk_size,
-                                           chunk_index = i]() {
+      tasks.emplace_back([&, chunk_size = cur_chunk_size, chunk_index = i]() {
         std::unique_ptr<float[]> cur_pivot_data =
             std::make_unique<float[]>(num_centers * chunk_size);
         std::unique_ptr<float[]> cur_data =
@@ -572,11 +565,9 @@ int generate_pq_data_from_pivots(const std::string data_file,
                 centroid[chunk_offsets[chunk_index] + k];
 #endif
         }
-      }));
+      });
     }
-    for (auto &future : futures) {
-      future.wait();
-    }
+    knowhere::ExecOverBuildThreadPool(tasks);
 
     if (num_centers > 256) {
       compressed_file_writer.write(
@@ -623,14 +614,14 @@ int estimate_cluster_sizes(float *test_data_float, size_t num_test,
   }
 
   size_t block_size = num_test <= BLOCK_SIZE ? num_test : BLOCK_SIZE;
-  _u32  *block_closest_centers = new _u32[block_size * k_base];
+  _u32 * block_closest_centers = new _u32[block_size * k_base];
   float *block_data_float;
 
   size_t num_blocks = DIV_ROUND_UP(num_test, block_size);
 
   for (size_t block = 0; block < num_blocks; block++) {
     size_t start_id = block * block_size;
-    size_t end_id = (std::min)((block + 1) * block_size, num_test);
+    size_t end_id = (std::min) ((block + 1) * block_size, num_test);
     size_t cur_blk_size = end_id - start_id;
 
     block_data_float = test_data_float + start_id * test_dim;
@@ -711,7 +702,7 @@ int shard_data_into_clusters(const std::string data_file, float *pivots,
 
   for (size_t block = 0; block < num_blocks; block++) {
     size_t start_id = block * block_size;
-    size_t end_id = (std::min)((block + 1) * block_size, num_points);
+    size_t end_id = (std::min) ((block + 1) * block_size, num_points);
     size_t cur_blk_size = end_id - start_id;
 
     base_reader.read((char *) block_data_T.get(),
@@ -807,7 +798,7 @@ int shard_data_into_clusters_only_ids(const std::string data_file,
 
   for (size_t block = 0; block < num_blocks; block++) {
     size_t start_id = block * block_size;
-    size_t end_id = (std::min)((block + 1) * block_size, num_points);
+    size_t end_id = (std::min) ((block + 1) * block_size, num_points);
     size_t cur_blk_size = end_id - start_id;
 
     base_reader.read((char *) block_data_T.get(),
@@ -885,7 +876,7 @@ int retrieve_shard_data_from_ids(const std::string data_file,
 
   for (size_t block = 0; block < num_blocks; block++) {
     size_t start_id = block * block_size;
-    size_t end_id = (std::min)((block + 1) * block_size, num_points);
+    size_t end_id = (std::min) ((block + 1) * block_size, num_points);
     size_t cur_blk_size = end_id - start_id;
 
     base_reader.read((char *) block_data_T.get(),

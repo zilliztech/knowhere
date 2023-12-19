@@ -19,12 +19,11 @@
 #include "faiss/utils/binary_distances.h"
 #include "faiss/utils/distances.h"
 #include "knowhere/bitsetview_idselector.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/comp/task.h"
 #include "knowhere/config.h"
 #include "knowhere/expected.h"
 #include "knowhere/log.h"
 #include "knowhere/utils.h"
-
 namespace knowhere {
 
 /* knowhere wrapper API to call faiss brute force search for all metric types */
@@ -60,12 +59,10 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     auto labels = new int64_t[nq * topk];
     auto distances = new float[nq * topk];
 
-    auto pool = ThreadPool::GetGlobalSearchThreadPool();
-    std::vector<folly::Future<Status>> futs;
-    futs.reserve(nq);
+    std::vector<std::function<void()>> tasks;
+    tasks.reserve(nq);
     for (int i = 0; i < nq; ++i) {
-        futs.emplace_back(pool->push([&, index = i] {
-            ThreadPool::ScopedOmpSetter setter(1);
+        tasks.emplace_back([&, index = i] {
             auto cur_labels = labels + topk * index;
             auto cur_distances = distances + topk * index;
 
@@ -121,15 +118,11 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
                 }
             }
             return Status::success;
-        }));
+        });
     }
-    for (auto& fut : futs) {
-        fut.wait();
-        auto ret = fut.result().value();
-        if (ret != Status::success) {
-            return expected<DataSetPtr>::Err(ret, "failed to brute force search");
-        }
-    }
+
+    ExecOverSearchThreadPool(tasks);
+
     return GenResultDataSet(nq, cfg.k.value(), labels, distances);
 }
 
@@ -158,12 +151,10 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     auto labels = ids;
     auto distances = dis;
 
-    auto pool = ThreadPool::GetGlobalSearchThreadPool();
-    std::vector<folly::Future<Status>> futs;
-    futs.reserve(nq);
+    std::vector<std::function<void()>> tasks;
+    tasks.reserve(nq);
     for (int i = 0; i < nq; ++i) {
-        futs.emplace_back(pool->push([&, index = i] {
-            ThreadPool::ScopedOmpSetter setter(1);
+        tasks.emplace_back([&, index = i] {
             auto cur_labels = labels + topk * index;
             auto cur_distances = distances + topk * index;
 
@@ -219,13 +210,9 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                 }
             }
             return Status::success;
-        }));
+        });
     }
-    for (auto& fut : futs) {
-        fut.wait();
-        auto ret = fut.result().value();
-        RETURN_IF_ERROR(ret);
-    }
+    ExecOverSearchThreadPool(tasks);
     return Status::success;
 }
 
@@ -260,17 +247,14 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     bool is_ip = false;
     float range_filter = cfg.range_filter.value();
 
-    auto pool = ThreadPool::GetGlobalSearchThreadPool();
-
     std::vector<std::vector<int64_t>> result_id_array(nq);
     std::vector<std::vector<float>> result_dist_array(nq);
     std::vector<size_t> result_size(nq);
     std::vector<size_t> result_lims(nq + 1);
-    std::vector<folly::Future<Status>> futs;
-    futs.reserve(nq);
+    std::vector<std::function<void()>> tasks;
+    tasks.reserve(nq);
     for (int i = 0; i < nq; ++i) {
-        futs.emplace_back(pool->push([&, index = i] {
-            ThreadPool::ScopedOmpSetter setter(1);
+        tasks.emplace_back([&, index = i]() {
             faiss::RangeSearchResult res(1);
 
             BitsetViewIDSelector bw_idselector(bitset);
@@ -327,15 +311,9 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                                                 range_filter);
             }
             return Status::success;
-        }));
+        });
     }
-    for (auto& fut : futs) {
-        fut.wait();
-        auto ret = fut.result().value();
-        if (ret != Status::success) {
-            return expected<DataSetPtr>::Err(ret, "failed to brute force search");
-        }
-    }
+    ExecOverSearchThreadPool(tasks);
 
     int64_t* ids = nullptr;
     float* distances = nullptr;

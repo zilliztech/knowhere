@@ -8,9 +8,9 @@
 
 class LinuxAlignedFileReader : public AlignedFileReader {
  private:
-  uint64_t     file_sz;
-  FileHandle   file_desc;
-  io_context_t bad_ctx = (io_context_t) -1;
+  uint64_t                        file_sz;
+  FileHandle                      file_desc;
+  io_context_t                    bad_ctx = (io_context_t) -1;
   std::shared_ptr<AioContextPool> ctx_pool_;
 
  public:
@@ -36,6 +36,6 @@ class LinuxAlignedFileReader : public AlignedFileReader {
             bool async = false);
 
   // async reads
-  void get_submitted_req (io_context_t &ctx, size_t n_ops) override;
+  void get_submitted_req(io_context_t &ctx, size_t n_ops) override;
   void submit_req(io_context_t &ctx, std::vector<AlignedRead> &read_reqs);
 };

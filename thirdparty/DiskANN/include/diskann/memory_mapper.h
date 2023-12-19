@@ -14,7 +14,7 @@
 namespace diskann {
   class MemoryMapper {
    private:
-    int _fd;
+    int         _fd;
     char*       _buf;
     size_t      _fileSize;
     const char* _fileName;

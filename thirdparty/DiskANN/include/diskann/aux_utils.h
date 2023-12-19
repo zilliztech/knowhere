@@ -25,7 +25,6 @@
 #include "tsl/robin_set.h"
 
 #include "utils.h"
-#include "knowhere/comp/thread_pool.h"
 #include "diskann/index.h"
 
 typedef int FileHandle;
@@ -80,7 +79,7 @@ namespace diskann {
   template<typename T>
   std::string preprocess_base_file(const std::string &infile,
                                    const std::string &indexPrefix,
-                                   diskann::Metric   &distMetric);
+                                   diskann::Metric &  distMetric);
 
   /* The entry point of the graph is used as the return value. If the graph
    * parameter cannot be generated successfully, it is set to -1.*/
@@ -97,7 +96,7 @@ namespace diskann {
       const std::string &sample_file, const std::string &pq_pivots_path,
       const std::string &pq_compressed_code_path, const unsigned entry_point,
       const std::vector<std::vector<unsigned>> &graph,
-      const std::string                        &cache_file);
+      const std::string &                       cache_file);
 
   template<typename T>
   uint32_t optimize_beamwidth(

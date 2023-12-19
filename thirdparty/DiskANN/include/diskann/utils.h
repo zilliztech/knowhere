@@ -35,7 +35,6 @@ typedef int FileHandle;
 #include "cached_io.h"
 #include "ann_exception.h"
 #include "common_includes.h"
-#include "knowhere/comp/thread_pool.h"
 
 // taken from
 // https://github.com/Microsoft/BLAS-on-flash/blob/master/include/utils.h
@@ -61,7 +60,7 @@ typedef int FileHandle;
 #define COMPLETION_PERCENT 10
 
 inline bool file_exists(const std::string& name, bool dirCheck = false) {
-  int val;
+  int         val;
   struct stat buffer;
   val = stat(name.c_str(), &buffer);
 
@@ -94,14 +93,14 @@ typedef uint8_t  _u8;
 typedef int8_t   _s8;
 inline void      open_file_to_write(std::ofstream&     writer,
                                     const std::string& filename) {
-       writer.exceptions(std::ofstream::failbit | std::ofstream::badbit);
-       if (!file_exists(filename))
+  writer.exceptions(std::ofstream::failbit | std::ofstream::badbit);
+  if (!file_exists(filename))
     writer.open(filename, std::ios::binary | std::ios::out);
   else
     writer.open(filename, std::ios::binary | std::ios::in | std::ios::out);
 
   if (writer.fail()) {
-         char buff[1024];
+    char buff[1024];
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-result"
     strerror_r(errno, buff, 1024);
@@ -658,9 +657,8 @@ namespace diskann {
 
   template<typename T>
   std::vector<float> prepare_base_for_cosine(const std::string in_file,
-                                        const std::string out_file) {
-    LOG_KNOWHERE_DEBUG_
-        << "Pre-processing base file by normalizing";
+                                             const std::string out_file) {
+    LOG_KNOWHERE_DEBUG_ << "Pre-processing base file by normalizing";
     std::ifstream in_reader(in_file.c_str(), std::ios::binary);
     std::ofstream out_writer(out_file.c_str(), std::ios::binary);
     _u64          npts, in_dims, out_dims;
@@ -838,7 +836,7 @@ namespace diskann {
                      float* read_buf, _u64 npts, _u64 ndims);
 
   void normalize_data_file(const std::string& inFileName,
-                                             const std::string& outFileName);
+                           const std::string& outFileName);
 
   inline std::string get_pq_pivots_filename(const std::string& prefix) {
     return prefix + "_pq_pivots.bin";

@@ -24,14 +24,13 @@
 #include "index/ivf/ivf_config.h"
 #include "io/memory_io.h"
 #include "knowhere/bitsetview_idselector.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/comp/task.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/factory.h"
 #include "knowhere/feder/IVFFlat.h"
 #include "knowhere/log.h"
 #include "knowhere/utils.h"
-
 namespace knowhere {
 
 template <typename T>
@@ -43,7 +42,6 @@ class IvfIndexNode : public IndexNode {
                           std::is_same<T, faiss::IndexIVFScalarQuantizer>::value ||
                           std::is_same<T, faiss::IndexBinaryIVF>::value || std::is_same<T, faiss::IndexScaNN>::value,
                       "not support");
-        search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
     }
     Status
     Train(const DataSet& dataset, const Config& cfg) override;
@@ -193,7 +191,6 @@ class IvfIndexNode : public IndexNode {
 
  private:
     std::unique_ptr<T> index_;
-    std::shared_ptr<ThreadPool> search_pool_;
 };
 
 }  // namespace knowhere
@@ -249,9 +246,9 @@ IvfIndexNode<T>::Train(const DataSet& dataset, const Config& cfg) {
     const BaseConfig& base_cfg = static_cast<const IvfConfig&>(cfg);
     std::unique_ptr<ThreadPool::ScopedOmpSetter> setter;
     if (base_cfg.num_build_thread.has_value()) {
-        setter = std::make_unique<ThreadPool::ScopedOmpSetter>(base_cfg.num_build_thread.value());
+        setter = knowhere::CreateScopeOmpSetter(base_cfg.num_build_thread.value());
     } else {
-        setter = std::make_unique<ThreadPool::ScopedOmpSetter>();
+        setter = knowhere::CreateScopeOmpSetter();
     }
 
     bool is_cosine = IsMetricType(base_cfg.metric_type.value(), knowhere::metric::COSINE);
@@ -483,11 +480,10 @@ IvfIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const BitsetV
     float* distances(new (std::nothrow) float[rows * k]);
     int32_t* i_distances = reinterpret_cast<int32_t*>(distances);
     try {
-        std::vector<folly::Future<folly::Unit>> futs;
-        futs.reserve(rows);
+        std::vector<std::function<void()>> tasks;
+        tasks.reserve(rows);
         for (int i = 0; i < rows; ++i) {
-            futs.emplace_back(search_pool_->push([&, index = i] {
-                ThreadPool::ScopedOmpSetter setter(1);
+            tasks.emplace_back([&, index = i] {
                 auto offset = k * index;
                 std::unique_ptr<float[]> copied_query = nullptr;
 
@@ -552,17 +548,10 @@ IvfIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const BitsetV
 
                     index_->search(1, cur_query, k, distances + offset, ids + offset, &ivf_search_params);
                 }
-            }));
+            });
         }
-        // wait for the completion
-        for (auto& fut : futs) {
-            fut.wait();
-        }
-        // check for exceptions. value() is {}, so either
-        //   a call does nothing, or it throws an inner exception.
-        for (auto& fut : futs) {
-            fut.result().value();
-        }
+
+        ExecOverSearchThreadPool(tasks);
     } catch (const std::exception& e) {
         delete[] ids;
         delete[] distances;
@@ -607,11 +596,10 @@ IvfIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, const Bi
     std::vector<size_t> result_lims(nq + 1);
 
     try {
-        std::vector<folly::Future<folly::Unit>> futs;
-        futs.reserve(nq);
+        std::vector<std::function<void()>> tasks;
+        tasks.reserve(nq);
         for (int i = 0; i < nq; ++i) {
-            futs.emplace_back(search_pool_->push([&, index = i] {
-                ThreadPool::ScopedOmpSetter setter(1);
+            tasks.emplace_back([&, index = i] {
                 faiss::RangeSearchResult res(1);
                 std::unique_ptr<float[]> copied_query = nullptr;
 
@@ -680,17 +668,9 @@ IvfIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, const Bi
                     FilterRangeSearchResultForOneNq(result_dist_array[index], result_id_array[index], is_ip, radius,
                                                     range_filter);
                 }
-            }));
+            });
         }
-        // wait for the completion
-        for (auto& fut : futs) {
-            fut.wait();
-        }
-        // check for exceptions. value() is {}, so either
-        //   a call does nothing, or it throws an inner exception.
-        for (auto& fut : futs) {
-            fut.result().value();
-        }
+        ExecOverSearchThreadPool(tasks);
         GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter, distances, ids, lims);
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();

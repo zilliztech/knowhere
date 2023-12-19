@@ -9,8 +9,6 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License
 
-#pragma once
-
 #include <omp.h>
 #include <sys/resource.h>
 
@@ -22,6 +20,7 @@
 
 #include "folly/executors/CPUThreadPoolExecutor.h"
 #include "folly/futures/Future.h"
+#include "knowhere/index_node_thread_pool_wrapper.h"
 #include "knowhere/log.h"
 
 namespace knowhere {
@@ -161,18 +160,8 @@ class ThreadPool {
         int omp_before;
 
      public:
-        explicit ScopedOmpSetter(int num_threads = 0) {
-            if (global_build_thread_pool_size_ == 0) {  // this should not happen in prod
-                omp_before = omp_get_max_threads();
-            } else {
-                omp_before = global_build_thread_pool_size_;
-            }
-
-            omp_set_num_threads(num_threads <= 0 ? omp_before : num_threads);
-        }
-        ~ScopedOmpSetter() {
-            omp_set_num_threads(omp_before);
-        }
+        explicit ScopedOmpSetter(int num_threads = 0);
+        ~ScopedOmpSetter();
     };
 
  private:
@@ -182,4 +171,117 @@ class ThreadPool {
     inline static std::mutex global_thread_pool_mutex_;
     constexpr static size_t kTaskQueueFactor = 16;
 };
+
+ThreadPool::ScopedOmpSetter::ScopedOmpSetter(int num_threads) {
+    if (global_build_thread_pool_size_ == 0) {  // this should not happen in prod
+        omp_before = omp_get_max_threads();
+    } else {
+        omp_before = global_build_thread_pool_size_;
+    }
+
+    omp_set_num_threads(num_threads <= 0 ? omp_before : num_threads);
+}
+
+ThreadPool::ScopedOmpSetter::~ScopedOmpSetter() {
+    omp_set_num_threads(omp_before);
+}
+
+void
+ExecOverSearchThreadPool(std::vector<std::function<void()>>& tasks) {
+    auto pool = ThreadPool::GetGlobalSearchThreadPool();
+    std::vector<folly::Future<folly::Unit>> futures;
+    futures.reserve(tasks.size());
+    for (auto&& t : tasks) {
+        futures.emplace_back(pool->push([&t]() {
+            ThreadPool::ScopedOmpSetter setter(1);
+            t();
+        }));
+    }
+    std::this_thread::yield();
+    // check for exceptions. value() is {}, so either
+    //   a call does nothing, or it throws an inner exception.
+    for (auto& f : futures) {
+        f.wait();
+    }
+    for (auto& f : futures) {
+        f.result().value();
+    }
+}
+
+void
+ExecOverBuildThreadPool(std::vector<std::function<void()>>& tasks) {
+    auto pool = ThreadPool::GetGlobalBuildThreadPool();
+    std::vector<folly::Future<folly::Unit>> futures;
+    futures.reserve(tasks.size());
+    for (auto&& t : tasks) {
+        futures.emplace_back(pool->push([&t]() {
+            ThreadPool::ScopedOmpSetter setter(1);
+            t();
+        }));
+    }
+    std::this_thread::yield();
+    // check for exceptions. value() is {}, so either
+    //   a call does nothing, or it throws an inner exception.
+    for (auto& f : futures) {
+        f.wait();
+    }
+    for (auto& f : futures) {
+        f.result().value();
+    }
+}
+
+void
+InitBuildThreadPool(uint32_t num_threads) {
+    ThreadPool::InitGlobalBuildThreadPool(num_threads);
+}
+
+void
+InitSearchThreadPool(uint32_t num_threads) {
+    ThreadPool::InitGlobalSearchThreadPool(num_threads);
+}
+
+size_t
+GetSearchThreadPoolSize() {
+    return ThreadPool::GetGlobalSearchThreadPool()->size();
+}
+
+size_t
+GetBuildThreadPoolSize() {
+    return ThreadPool::GetGlobalBuildThreadPool()->size();
+}
+
+std::unique_ptr<ThreadPool::ScopedOmpSetter>
+CreateScopeOmpSetter(int num_threads) {
+    return std::make_unique<ThreadPool::ScopedOmpSetter>(num_threads);
+}
+
+namespace {
+
+std::shared_ptr<ThreadPool>
+GlobalThreadPool(size_t pool_size) {
+    static std::shared_ptr<ThreadPool> pool = std::make_shared<ThreadPool>(pool_size, "Knowhere_Global");
+    return pool;
+}
+
+}  // namespace
+
+IndexNodeThreadPoolWrapper::IndexNodeThreadPoolWrapper(std::unique_ptr<IndexNode> index_node, size_t pool_size)
+    : IndexNodeThreadPoolWrapper(std::move(index_node), GlobalThreadPool(pool_size)) {
+}
+
+IndexNodeThreadPoolWrapper::IndexNodeThreadPoolWrapper(std::unique_ptr<IndexNode> index_node,
+                                                       std::shared_ptr<ThreadPool> thread_pool)
+    : index_node_(std::move(index_node)), thread_pool_(thread_pool) {
+}
+
+expected<DataSetPtr>
+IndexNodeThreadPoolWrapper::Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
+    return thread_pool_->push([&]() { return this->index_node_->Search(dataset, cfg, bitset); }).get();
+}
+
+expected<DataSetPtr>
+IndexNodeThreadPoolWrapper::RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
+    return thread_pool_->push([&]() { return this->index_node_->RangeSearch(dataset, cfg, bitset); }).get();
+}
+
 }  // namespace knowhere

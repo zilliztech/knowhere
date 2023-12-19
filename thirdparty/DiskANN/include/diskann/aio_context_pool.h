@@ -55,7 +55,8 @@ class AioContextPool {
       return false;
     }
     if (max_events > default_max_events) {
-      LOG(ERROR) << "max_events " << max_events << " should not be larger than " << default_max_events;
+      LOG(ERROR) << "max_events " << max_events << " should not be larger than "
+                 << default_max_events;
       return false;
     }
     if (global_aio_pool_size == 0) {
@@ -69,7 +70,7 @@ class AioContextPool {
     LOG(WARNING)
         << "Global AioContextPool has already been inialized with context num: "
         << global_aio_pool_size;
-        return true;
+    return true;
   }
 
   static std::shared_ptr<AioContextPool> GetGlobalAioPool() {
@@ -105,9 +106,9 @@ class AioContextPool {
   bool                      stop_ = false;
   size_t                    num_ctx_;
   size_t                    max_events_;
-  inline static size_t           global_aio_pool_size = 0;
-  inline static size_t           global_aio_max_events = 0;
-  inline static std::mutex       global_aio_pool_mut;
+  inline static size_t      global_aio_pool_size = 0;
+  inline static size_t      global_aio_max_events = 0;
+  inline static std::mutex  global_aio_pool_mut;
 
   AioContextPool(size_t num_ctx, size_t max_events)
       : num_ctx_(num_ctx), max_events_(max_events) {

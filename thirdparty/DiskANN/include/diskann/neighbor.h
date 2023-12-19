@@ -109,8 +109,7 @@ namespace diskann {
     std::vector<SimpleNeighbor> pool;
   };
 
-  static inline unsigned InsertIntoPool(Neighbor *addr, int K,
-                                        Neighbor nn) {
+  static inline unsigned InsertIntoPool(Neighbor *addr, int K, Neighbor nn) {
     // find the location to insert
     assert(K >= 0);
     int left = 0, right = K - 1;

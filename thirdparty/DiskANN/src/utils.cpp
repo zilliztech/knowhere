@@ -1,16 +1,14 @@
 #include "diskann/utils.h"
 #include <stdio.h>
-
+#include "knowhere/comp/task.h"
 namespace diskann {
   void block_convert(std::ofstream& writr, std::ifstream& readr,
                      float* read_buf, _u64 npts, _u64 ndims) {
     readr.read((char*) read_buf, npts * ndims * sizeof(float));
-    _u32 ndims_u32 = (_u32) ndims;
-    auto thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
-    std::vector<folly::Future<folly::Unit>> futures;
-    futures.reserve(npts);
+    _u32                               ndims_u32 = (_u32) ndims;
+    std::vector<std::function<void()>> tasks;
     for (_s64 i = 0; i < (_s64) npts; i++) {
-      futures.emplace_back(thread_pool->push([&, index = i]() {
+      tasks.emplace_back([&, index = i]() {
         float norm_pt = std::numeric_limits<float>::epsilon();
         for (_u32 dim = 0; dim < ndims_u32; dim++) {
           norm_pt += *(read_buf + index * ndims + dim) *
@@ -21,11 +19,9 @@ namespace diskann {
           *(read_buf + index * ndims + dim) =
               *(read_buf + index * ndims + dim) / norm_pt;
         }
-      }));
+      });
     }
-    for (auto& future : futures) {
-      future.wait();
-    }
+    knowhere::ExecOverBuildThreadPool(tasks);
     writr.write((char*) read_buf, npts * ndims * sizeof(float));
   }
 

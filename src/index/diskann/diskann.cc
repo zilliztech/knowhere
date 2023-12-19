@@ -20,7 +20,6 @@
 #include "fmt/core.h"
 #include "index/diskann/diskann_config.h"
 #include "knowhere/comp/index_param.h"
-#include "knowhere/comp/thread_pool.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/factory.h"
@@ -379,7 +378,6 @@ DiskANNIndexNode<T>::Deserialize(const BinarySet& binset, const Config& cfg) {
     }
 
     // set thread pool
-    search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
 
     // load diskann pq code and meta info
     std::shared_ptr<AlignedFileReader> reader = nullptr;
@@ -388,7 +386,7 @@ DiskANNIndexNode<T>::Deserialize(const BinarySet& binset, const Config& cfg) {
 
     pq_flash_index_ = std::make_unique<diskann::PQFlashIndex<T>>(reader, diskann_metric);
     auto disk_ann_call = [&]() {
-        int res = pq_flash_index_->load(search_pool_->size(), index_prefix_.c_str());
+        int res = pq_flash_index_->load(knowhere::GetSearchThreadPoolSize(), index_prefix_.c_str());
         if (res != 0) {
             throw diskann::ANNException("pq_flash_index_->load returned non-zero value: " + std::to_string(res), -1);
         }
@@ -476,19 +474,18 @@ DiskANNIndexNode<T>::Deserialize(const BinarySet& binset, const Config& cfg) {
 
         bool all_searches_are_good = true;
 
-        std::vector<folly::Future<folly::Unit>> futures;
-        futures.reserve(warmup_num);
+        std::vector<std::function<void()>> tasks;
         for (_s64 i = 0; i < (int64_t)warmup_num; ++i) {
-            futures.emplace_back(search_pool_->push([&, index = i]() {
+            tasks.emplace_back([&, index = i]() {
                 pq_flash_index_->cached_beam_search(warmup + (index * warmup_aligned_dim), 1, warmup_L,
                                                     warmup_result_ids_64.data() + (index * 1),
                                                     warmup_result_dists.data() + (index * 1), 4);
-            }));
+            });
         }
-        for (auto& future : futures) {
-            if (TryDiskANNCall([&]() { future.wait(); }) != Status::success) {
-                all_searches_are_good = false;
-            }
+        try {
+            knowhere::ExecOverSearchThreadPool(tasks);
+        } catch (...) {
+            all_searches_are_good = false;
         }
         if (warmup != nullptr) {
             diskann::aligned_free(warmup);
@@ -541,21 +538,19 @@ DiskANNIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const Bit
     auto p_dist = new float[k * nq];
 
     bool all_searches_are_good = true;
-    std::vector<folly::Future<folly::Unit>> futures;
-    futures.reserve(nq);
+    std::vector<std::function<void()>> tasks;
     for (int64_t row = 0; row < nq; ++row) {
-        futures.emplace_back(search_pool_->push([&, index = row]() {
+        tasks.emplace_back([&, index = row]() {
             pq_flash_index_->cached_beam_search(xq + (index * dim), k, lsearch, p_id + (index * k),
                                                 p_dist + (index * k), beamwidth, false, nullptr, feder_result, bitset,
                                                 filter_ratio, for_tuning);
-        }));
+        });
     }
-    for (auto& future : futures) {
-        if (TryDiskANNCall([&]() { future.wait(); }) != Status::success) {
-            all_searches_are_good = false;
-        }
+    try {
+        knowhere::ExecOverSearchThreadPool(tasks);
+    } catch (...) {
+        all_searches_are_good = false;
     }
-
     if (!all_searches_are_good) {
         return expected<DataSetPtr>::Err(Status::diskann_inner_error, "some search failed");
     }
@@ -610,11 +605,10 @@ DiskANNIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, cons
     std::vector<std::vector<int64_t>> result_id_array(nq);
     std::vector<std::vector<float>> result_dist_array(nq);
 
-    std::vector<folly::Future<folly::Unit>> futures;
-    futures.reserve(nq);
+    std::vector<std::function<void()>> tasks;
     bool all_searches_are_good = true;
     for (int64_t row = 0; row < nq; ++row) {
-        futures.emplace_back(search_pool_->push([&, index = row]() {
+        tasks.emplace_back([&, index = row]() {
             std::vector<int64_t> indices;
             std::vector<float> distances;
             pq_flash_index_->range_search(xq + (index * dim), radius, min_k, max_k, result_id_array[index],
@@ -624,12 +618,12 @@ DiskANNIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, cons
                 FilterRangeSearchResultForOneNq(result_dist_array[index], result_id_array[index], is_ip, radius,
                                                 range_filter);
             }
-        }));
+        });
     }
-    for (auto& future : futures) {
-        if (TryDiskANNCall([&]() { future.wait(); }) != Status::success) {
-            all_searches_are_good = false;
-        }
+    try {
+        knowhere::ExecOverSearchThreadPool(tasks);
+    } catch (...) {
+        all_searches_are_good = false;
     }
     if (!all_searches_are_good) {
         return expected<DataSetPtr>::Err(Status::diskann_inner_error, "some search failed");

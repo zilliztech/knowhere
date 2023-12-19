@@ -11,11 +11,13 @@
 
 #pragma once
 
-#include <faiss/impl/AuxIndexStructures.h>
-
 #include <vector>
 
 #include "knowhere/bitsetview.h"
+
+namespace faiss {
+struct RangeSearchResult;
+}
 
 namespace knowhere {
 

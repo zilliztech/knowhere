@@ -25,7 +25,7 @@
 #include "diskann/percentile_stats.h"
 #include "diskann/pq_flash_index.h"
 #include "tsl/robin_set.h"
-
+#include "knowhere/comp/task.h"
 #include "diskann/utils.h"
 
 namespace diskann {
@@ -67,7 +67,7 @@ namespace diskann {
     }
 
     size_t num_blocks = DIV_ROUND_UP(fsize, read_blk_size);
-    char  *dump = new char[read_blk_size];
+    char * dump = new char[read_blk_size];
     for (_u64 i = 0; i < num_blocks; i++) {
       size_t cur_block_size = read_blk_size > fsize - (i * read_blk_size)
                                   ? fsize - (i * read_blk_size)
@@ -242,7 +242,7 @@ namespace diskann {
   template<typename T>
   T *load_warmup(const std::string &cache_warmup_file, uint64_t &warmup_num,
                  uint64_t warmup_dim, uint64_t warmup_aligned_dim) {
-    T       *warmup = nullptr;
+    T *      warmup = nullptr;
     uint64_t file_dim, file_aligned_dim;
 
     if (file_exists(cache_warmup_file)) {
@@ -420,7 +420,7 @@ namespace diskann {
         // Gopal. random_shuffle() is deprecated.
         std::shuffle(final_nhood.begin(), final_nhood.end(), urng);
         nnbrs =
-            (unsigned) (std::min)(final_nhood.size(), (uint64_t) max_degree);
+            (unsigned) (std::min) (final_nhood.size(), (uint64_t) max_degree);
         // write into merged ofstream
         merged_vamana_writer.write((char *) &nnbrs, sizeof(unsigned));
         merged_vamana_writer.write((char *) final_nhood.data(),
@@ -452,7 +452,7 @@ namespace diskann {
 
     // Gopal. random_shuffle() is deprecated.
     std::shuffle(final_nhood.begin(), final_nhood.end(), urng);
-    nnbrs = (unsigned) (std::min)(final_nhood.size(), (uint64_t) max_degree);
+    nnbrs = (unsigned) (std::min) (final_nhood.size(), (uint64_t) max_degree);
     // write into merged ofstream
     merged_vamana_writer.write((char *) &nnbrs, sizeof(unsigned));
     merged_vamana_writer.write((char *) final_nhood.data(),
@@ -586,7 +586,7 @@ namespace diskann {
       const std::string &sample_file, const std::string &pq_pivots_path,
       const std::string &pq_compressed_code_path, const unsigned entry_point,
       const std::vector<std::vector<unsigned>> &graph,
-      const std::string                        &cache_file) {
+      const std::string &                       cache_file) {
     if (num_nodes_to_cache <= 0) {
       LOG_KNOWHERE_INFO_
           << "The number of cache nodes <= 0, no need to generate cache files";
@@ -599,7 +599,7 @@ namespace diskann {
     }
 
     _u64 sample_num, sample_dim;
-    T   *samples = nullptr;
+    T *  samples = nullptr;
     if (file_exists(sample_file)) {
       diskann::load_bin<T>(sample_file, samples, sample_num, sample_dim);
     } else {
@@ -607,8 +607,6 @@ namespace diskann {
                           << std::endl;
       return;
     }
-
-    auto thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
 
     auto points_num = graph.size();
     if (num_nodes_to_cache >= points_num) {
@@ -619,7 +617,7 @@ namespace diskann {
       num_nodes_to_cache = points_num;
     }
 
-    uint8_t                   *pq_code = nullptr;
+    uint8_t *                  pq_code = nullptr;
     diskann::FixedChunkPQTable pq_table;
     uint64_t                   pq_chunks, pq_npts = 0;
     if (file_exists(pq_pivots_path) && file_exists(pq_compressed_code_path)) {
@@ -634,16 +632,14 @@ namespace diskann {
     }
     LOG_KNOWHERE_INFO_ << "Use " << sample_num << " sampled quries to generate "
                        << num_nodes_to_cache << " cached nodes.";
-    std::vector<folly::Future<folly::Unit>> futures;
-    futures.reserve(sample_num);
-
+    std::vector<std::function<void()>>         tasks;
     std::vector<std::pair<uint32_t, uint32_t>> node_count_list(points_num);
     for (size_t node_id = 0; node_id < points_num; node_id++) {
       node_count_list[node_id] = std::pair<uint32_t, uint32_t>(node_id, 0);
     }
 
     for (_s64 i = 0; i < (int64_t) sample_num; i++) {
-      futures.push_back(thread_pool->push([&, index = i]() {
+      tasks.emplace_back([&, index = i]() {
         // search params
         auto search_l = kSearchLForCache;
 
@@ -741,12 +737,10 @@ namespace diskann {
             ++k;
           }
         }
-      }));
+      });
     }
 
-    for (auto &future : futures) {
-      future.wait();
-    }
+    knowhere::ExecOverBuildThreadPool(tasks);
 
     std::sort(node_count_list.begin(), node_count_list.end(),
               [](std::pair<_u32, _u32> &a, std::pair<_u32, _u32> &b) {
@@ -780,28 +774,23 @@ namespace diskann {
     uint32_t best_bw = start_bw;
     bool     stop_flag = false;
 
-    auto thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
-
     while (!stop_flag) {
       std::vector<int64_t> tuning_sample_result_ids_64(tuning_sample_num, 0);
       std::vector<float>   tuning_sample_result_dists(tuning_sample_num, 0);
       diskann::QueryStats *stats = new diskann::QueryStats[tuning_sample_num];
 
-      std::vector<folly::Future<folly::Unit>> futures;
-      futures.reserve(tuning_sample_num);
+      std::vector<std::function<void()>> tasks;
       auto s = std::chrono::high_resolution_clock::now();
       for (_s64 i = 0; i < (int64_t) tuning_sample_num; i++) {
-        futures.emplace_back(thread_pool->push([&, index = i]() {
+        tasks.emplace_back([&, index = i]() {
           pFlashIndex->cached_beam_search(
               tuning_sample + (index * tuning_sample_aligned_dim), 1, L,
               tuning_sample_result_ids_64.data() + (index * 1),
               tuning_sample_result_dists.data() + (index * 1), cur_bw, false,
               stats + index);
-        }));
+        });
       }
-      for (auto &future : futures) {
-        future.wait();
-      }
+      knowhere::ExecOverBuildThreadPool(tasks);
       auto e = std::chrono::high_resolution_clock::now();
       std::chrono::duration<double> diff = e - s;
       double                        qps =
@@ -818,7 +807,7 @@ namespace diskann {
       if (qps > max_qps && lat_999 < (15000) + mean_latency * 2) {
         max_qps = qps;
         best_bw = cur_bw;
-        cur_bw = (uint32_t) (std::ceil)((float) cur_bw * 1.1f);
+        cur_bw = (uint32_t) (std::ceil) ((float) cur_bw * 1.1f);
       } else {
         stop_flag = true;
       }
@@ -1171,7 +1160,7 @@ namespace diskann {
     diskann::get_bin_metadata(data_file_to_use.c_str(), points_num, dim);
 
     size_t num_pq_chunks =
-        (size_t) (std::floor)(_u64(pq_code_size_limit / points_num));
+        (size_t) (std::floor) (_u64(pq_code_size_limit / points_num));
 
     num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;
     num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks;
@@ -1312,15 +1301,15 @@ namespace diskann {
                                           const std::string output_file,
                                           const std::string reorder_data_file);
 
-  template int8_t  *load_warmup<int8_t>(const std::string &cache_warmup_file,
-                                       uint64_t          &warmup_num,
+  template int8_t * load_warmup<int8_t>(const std::string &cache_warmup_file,
+                                       uint64_t &         warmup_num,
                                        uint64_t           warmup_dim,
                                        uint64_t           warmup_aligned_dim);
   template uint8_t *load_warmup<uint8_t>(const std::string &cache_warmup_file,
-                                         uint64_t          &warmup_num,
+                                         uint64_t &         warmup_num,
                                          uint64_t           warmup_dim,
                                          uint64_t           warmup_aligned_dim);
-  template float   *load_warmup<float>(const std::string &cache_warmup_file,
+  template float *  load_warmup<float>(const std::string &cache_warmup_file,
                                      uint64_t &warmup_num, uint64_t warmup_dim,
                                      uint64_t warmup_aligned_dim);
 
@@ -1374,17 +1363,17 @@ namespace diskann {
       const std::string &sample_file, const std::string &pq_pivots_path,
       const std::string &pq_compressed_code_path, const unsigned entry_point,
       const std::vector<std::vector<unsigned>> &graph,
-      const std::string                        &cache_file);
+      const std::string &                       cache_file);
   template void generate_cache_list_from_graph_with_pq<float>(
       _u64 num_nodes_to_cache, unsigned R, const diskann::Metric compare_metric,
       const std::string &sample_file, const std::string &pq_pivots_path,
       const std::string &pq_compressed_code_path, const unsigned entry_point,
       const std::vector<std::vector<unsigned>> &graph,
-      const std::string                        &cache_file);
+      const std::string &                       cache_file);
   template void generate_cache_list_from_graph_with_pq<uint8_t>(
       _u64 num_nodes_to_cache, unsigned R, const diskann::Metric compare_metric,
       const std::string &sample_file, const std::string &pq_pivots_path,
       const std::string &pq_compressed_code_path, const unsigned entry_point,
       const std::vector<std::vector<unsigned>> &graph,
-      const std::string                        &cache_file);
+      const std::string &                       cache_file);
 };  // namespace diskann

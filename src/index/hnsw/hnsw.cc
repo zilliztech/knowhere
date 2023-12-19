@@ -18,19 +18,17 @@
 #include "hnswlib/hnswlib.h"
 #include "index/hnsw/hnsw_config.h"
 #include "knowhere/comp/index_param.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/comp/task.h"
 #include "knowhere/comp/time_recorder.h"
 #include "knowhere/config.h"
 #include "knowhere/expected.h"
 #include "knowhere/factory.h"
 #include "knowhere/log.h"
 #include "knowhere/utils.h"
-
 namespace knowhere {
 class HnswIndexNode : public IndexNode {
  public:
     HnswIndexNode(const int32_t& /*version*/, const Object& object) : index_(nullptr) {
-        search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
     }
 
     Status
@@ -79,24 +77,21 @@ class HnswIndexNode : public IndexNode {
         auto tensor = dataset.GetTensor();
         auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
         index_->addPoint(tensor, 0);
-        auto build_pool = ThreadPool::GetGlobalBuildThreadPool();
-        std::vector<folly::Future<folly::Unit>> futures;
-        futures.reserve(rows);
+
+        std::vector<std::function<void()>> tasks;
 
         std::atomic<uint64_t> counter{0};
         uint64_t one_tenth_row = rows / 10;
         for (int i = 1; i < rows; ++i) {
-            futures.emplace_back(build_pool->push([&, idx = i]() {
+            tasks.emplace_back([&, idx = i]() {
                 index_->addPoint(((const char*)tensor + index_->data_size_ * idx), idx);
                 uint64_t added = counter.fetch_add(1);
                 if (added % one_tenth_row == 0) {
                     LOG_KNOWHERE_INFO_ << "HNSW build progress: " << (added / one_tenth_row) << "0%";
                 }
-            }));
+            });
         }
-        for (auto& future : futures) {
-            future.wait();
-        }
+        ExecOverBuildThreadPool(tasks);
         build_time.RecordSection("");
         LOG_KNOWHERE_INFO_ << "HNSW built with #points num:" << index_->max_elements_ << " #M:" << index_->M_
                            << " #max level:" << index_->maxlevel_ << " #ef_construction:" << index_->ef_construction_
@@ -131,10 +126,10 @@ class HnswIndexNode : public IndexNode {
         bool transform =
             (index_->metric_type_ == hnswlib::Metric::INNER_PRODUCT || index_->metric_type_ == hnswlib::Metric::COSINE);
 
-        std::vector<folly::Future<folly::Unit>> futs;
-        futs.reserve(nq);
+        std::vector<std::function<void()>> tasks;
+        tasks.reserve(nq);
         for (int i = 0; i < nq; ++i) {
-            futs.emplace_back(search_pool_->push([&, idx = i]() {
+            tasks.emplace_back([&, idx = i]() {
                 auto single_query = (const char*)xq + idx * index_->data_size_;
                 auto rst = index_->searchKnn(single_query, k, bitset, &param, feder_result);
                 size_t rst_size = rst.size();
@@ -149,12 +144,10 @@ class HnswIndexNode : public IndexNode {
                     p_single_dis[idx] = float(1.0 / 0.0);
                     p_single_id[idx] = -1;
                 }
-            }));
-        }
-        for (auto& fut : futs) {
-            fut.wait();
+            });
         }
 
+        ExecOverSearchThreadPool(tasks);
         auto res = GenResultDataSet(nq, k, p_id, p_dist);
 
         // set visit_info json string into result dataset
@@ -228,20 +221,16 @@ class HnswIndexNode : public IndexNode {
         bool transform =
             (index_->metric_type_ == hnswlib::Metric::INNER_PRODUCT || index_->metric_type_ == hnswlib::Metric::COSINE);
         auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
-        std::vector<folly::Future<folly::Unit>> futs;
-        futs.reserve(nq);
+        std::vector<std::function<void()>> tasks;
+        tasks.reserve(nq);
         for (int i = 0; i < nq; ++i) {
-            futs.emplace_back(search_pool_->push([&, i]() {
+            tasks.emplace_back([&, i]() {
                 auto single_query = (const char*)xq + i * index_->data_size_;
                 vec[i].reset(new iterator(this->index_, single_query, transform, bitset, hnsw_cfg.for_tuning.value(),
                                           hnsw_cfg.seed_ef.value()));
-            }));
+            });
         }
-        // wait for initial search(in top layers and search for seed_ef in base layer) to finish
-        for (auto& fut : futs) {
-            fut.wait();
-        }
-
+        ExecOverSearchThreadPool(tasks);
         return vec;
     }
 
@@ -282,10 +271,9 @@ class HnswIndexNode : public IndexNode {
         std::vector<size_t> result_size(nq);
         std::vector<size_t> result_lims(nq + 1);
 
-        std::vector<folly::Future<folly::Unit>> futs;
-        futs.reserve(nq);
+        std::vector<std::function<void()>> tasks;
         for (int64_t i = 0; i < nq; ++i) {
-            futs.emplace_back(search_pool_->push([&, idx = i]() {
+            tasks.emplace_back([&, idx = i]() {
                 auto single_query = (const char*)xq + idx * index_->data_size_;
                 auto rst = index_->searchRange(single_query, radius_for_calc, bitset, &param, feder_result);
                 auto elem_cnt = rst.size();
@@ -301,12 +289,9 @@ class HnswIndexNode : public IndexNode {
                     FilterRangeSearchResultForOneNq(result_dist_array[idx], result_id_array[idx], is_ip,
                                                     radius_for_filter, range_filter);
                 }
-            }));
+            });
         }
-        for (auto& fut : futs) {
-            fut.wait();
-        }
-
+        ExecOverSearchThreadPool(tasks);
         // filter range search result
         GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius_for_filter, range_filter, dis, ids,
                              lims);
@@ -525,7 +510,6 @@ class HnswIndexNode : public IndexNode {
 
  private:
     hnswlib::HierarchicalNSW<float>* index_;
-    std::shared_ptr<ThreadPool> search_pool_;
 };
 
 KNOWHERE_REGISTER_GLOBAL(HNSW, [](const int32_t& version, const Object& object) {

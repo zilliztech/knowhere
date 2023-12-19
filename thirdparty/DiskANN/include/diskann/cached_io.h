@@ -35,7 +35,7 @@ class cached_ifstream {
       reader.seekg(0, std::ios::beg);
       assert(reader.is_open());
       assert(cacheSize > 0);
-      cacheSize = (std::min)(cacheSize, fsize);
+      cacheSize = (std::min) (cacheSize, fsize);
       this->cache_size = cacheSize;
       cache_buf = new char[cacheSize];
       reader.read(cache_buf, cacheSize);
