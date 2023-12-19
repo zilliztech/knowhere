@@ -26,6 +26,7 @@
 #include <raft/core/device_setter.hpp>
 #include <raft/core/resource/cuda_stream.hpp>
 #include <raft/core/resource/thrust_policy.hpp>
+#include <raft/core/serialize.hpp>
 #include <raft/distance/distance_types.hpp>
 #include <raft/neighbors/ivf_pq_types.hpp>
 #include <raft/neighbors/sample_filter.cuh>
@@ -574,20 +575,46 @@ struct raft_knowhere_index<IndexKind>::impl {
         auto const& res = raft::device_resources_manager::get_device_resources();
         RAFT_EXPECTS(index_, "Index has not yet been trained");
         raft_index_type::template serialize<data_type, indexing_type>(res, os, *index_);
+
+        if (device_dataset_storage) {
+            raft::serialize_scalar(res, os, true);
+            raft::serialize_scalar(res, os, device_dataset_storage->extent(0));
+            raft::serialize_scalar(res, os, device_dataset_storage->extent(1));
+            raft::serialize_mdspan(res, os, device_dataset_storage->view());
+        } else {
+            raft::serialize_scalar(res, os, false);
+        }
     }
     auto static deserialize(std::istream& is) {
         auto new_device_id = select_device_id();
         auto scoped_device = raft::device_setter{new_device_id};
         auto const& res = raft::device_resources_manager::get_device_resources();
-        return std::make_unique<typename raft_knowhere_index<index_kind>::impl>(
-            raft_index_type::template deserialize<data_type, indexing_type>(res, is), new_device_id);
+        auto des_index = raft_index_type::template deserialize<data_type, indexing_type>(res, is);
+
+        auto dataset = std::optional<raft::device_matrix<data_type, input_indexing_type>>{};
+        auto has_dataset = raft::deserialize_scalar<bool>(res, is);
+        if (has_dataset) {
+            auto rows = raft::deserialize_scalar<input_indexing_type>(res, is);
+            auto cols = raft::deserialize_scalar<input_indexing_type>(res, is);
+            dataset = raft::make_device_matrix<data_type, input_indexing_type>(res, rows, cols);
+            raft::deserialize_mdspan(res, is, dataset->view());
+            if constexpr (index_kind == raft_proto::raft_index_kind::brute_force ||
+                          index_kind == raft_proto::raft_index_kind::cagra) {
+                raft_index_type::template update_dataset<data_type, input_indexing_type>(
+                    res, des_index, raft::make_const_mdspan(dataset->view()));
+            }
+        }
+        return std::make_unique<typename raft_knowhere_index<index_kind>::impl>(std::move(des_index), new_device_id,
+                                                                                std::move(dataset));
     }
     void
     synchronize() const {
         auto scoped_device = raft::device_setter{device_id};
         raft::device_resources_manager::get_device_resources().sync_stream();
     }
-    impl(raft_index_type&& index, int new_device_id) : index_{std::move(index)}, device_id{new_device_id} {
+    impl(raft_index_type&& index, int new_device_id,
+         std::optional<raft::device_matrix<data_type, input_indexing_type>>&& dataset)
+        : index_{std::move(index)}, device_id{new_device_id}, device_dataset_storage{std::move(dataset)} {
     }
 
  private:
