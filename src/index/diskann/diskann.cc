@@ -439,8 +439,8 @@ DiskANNIndexNode<T>::Deserialize(const BinarySet& binset, const Config& cfg) {
             } else {
                 LOG_KNOWHERE_INFO_ << "Use sample_queries to generate cache list";
                 if (TryDiskANNCall([&]() {
-                        pq_flash_index_->generate_cache_list_from_sample_queries(warmup_query_file, 15, 6,
-                                                                                 num_nodes_to_cache, node_list);
+                        pq_flash_index_->async_generate_cache_list_from_sample_queries(warmup_query_file, 15, 6,
+                                                                                       num_nodes_to_cache);
                     }) != Status::success) {
                     LOG_KNOWHERE_ERROR_ << "Failed to generate cache from sample queries for DiskANN.";
                     return Status::diskann_inner_error;
@@ -501,6 +501,7 @@ DiskANNIndexNode<T>::Deserialize(const BinarySet& binset, const Config& cfg) {
     }
 
     is_prepared_.store(true);
+    LOG_KNOWHERE_INFO_ << "End of diskann loading.";
     return Status::success;
 }
 

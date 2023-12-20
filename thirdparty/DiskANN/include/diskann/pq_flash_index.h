@@ -3,7 +3,9 @@
 
 #pragma once
 #include <cassert>
+#include <condition_variable>
 #include <future>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <stack>
@@ -31,6 +33,20 @@
 #define FULL_PRECISION_REORDER_MULTIPLIER 3
 
 namespace diskann {
+  class ThreadSafeStateController {
+   public:
+    enum class Status {
+      NONE,
+      DOING,
+      STOPPING,
+      DONE,
+      KILLED,
+    };
+
+    std::atomic<Status>     status;
+    std::condition_variable cond;
+    std::mutex              status_mtx;
+  };
   template<typename T>
   struct QueryScratch {
     T *coord_scratch = nullptr;  // MUST BE AT LEAST [sizeof(T) * data_dim]
@@ -73,9 +89,11 @@ namespace diskann {
 
     void load_cache_list(std::vector<uint32_t> &node_list);
 
-    void generate_cache_list_from_sample_queries(
-        std::string sample_bin, _u64 l_search, _u64 beamwidth,
-        _u64 num_nodes_to_cache, std::vector<uint32_t> &node_list);
+    // asynchronously collect the access frequency of each node in the graph
+    void async_generate_cache_list_from_sample_queries(std::string sample_bin,
+                                                       _u64        l_search,
+                                                       _u64        beamwidth,
+                                                       _u64 num_nodes_to_cache);
 
     void cache_bfs_levels(_u64                   num_nodes_to_cache,
                           std::vector<uint32_t> &node_list);
@@ -91,7 +109,7 @@ namespace diskann {
     _u32 range_search(const T *query1, const double range,
                       const _u64 min_l_search, const _u64 max_l_search,
                       std::vector<_s64> &indices, std::vector<float> &distances,
-                      const _u64 beam_width,
+                      const _u64           beam_width,
                       knowhere::BitsetView bitset_view = nullptr,
                       QueryStats          *stats = nullptr);
 
@@ -113,6 +131,9 @@ namespace diskann {
     diskann::Metric get_metric() const noexcept;
 
     _u64 cal_size();
+
+    // for async cache making task
+    void destroy_cache_async_task();
 
    protected:
     void use_medoids_data_as_centroids();
@@ -190,8 +211,14 @@ namespace diskann {
     _u64 aligned_dim = 0;
     _u64 disk_bytes_per_point = 0;
 
-    std::string                        disk_index_file;
-    std::vector<std::pair<_u32, _u32>> node_visit_counter;
+    std::string       disk_index_file;
+    std::shared_mutex node_visit_counter_mtx;
+    std::vector<std::pair<_u32, std::unique_ptr<std::atomic<_u32>>>>
+                      node_visit_counter;
+    std::atomic<_u32> search_counter = 0;
+
+    std::shared_ptr<ThreadSafeStateController> state_controller =
+        std::make_shared<ThreadSafeStateController>();
 
     // PQ data
     // n_chunks = # of chunks ndims is split into
@@ -240,6 +267,9 @@ namespace diskann {
     // closest centroid as the starting point of search
     float *centroid_data = nullptr;
 
+    // cache
+    std::shared_mutex cache_mtx;
+
     // nhood_cache
     unsigned *nhood_cache_buf = nullptr;
     tsl::robin_map<_u32, std::pair<_u32, _u32 *>>
@@ -253,7 +283,7 @@ namespace diskann {
     ConcurrentQueue<ThreadData<T>> thread_data;
     _u64                           max_nthreads;
     bool                           load_flag = false;
-    bool                           count_visited_nodes = false;
+    std::atomic<bool>              count_visited_nodes = false;
     bool                           reorder_data_exists = false;
     _u64                           reoreder_data_offset = 0;
 
