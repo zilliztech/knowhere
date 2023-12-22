@@ -36,7 +36,7 @@ TEST_CASE("Knowhere global config", "[init]") {
 #endif
 
 #ifdef KNOWHERE_WITH_RAFT
-    knowhere::KnowhereConfig::SetRaftMemPool(1LL << 30, 2LL << 30);
+    knowhere::KnowhereConfig::SetRaftMemPool(1LL << 10, 2LL << 10);
 #endif
 }
 
