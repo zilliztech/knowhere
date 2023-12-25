@@ -7,25 +7,22 @@
 #include <malloc.h>
 #include "diskann/percentile_stats.h"
 
-#include <omp.h>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <iterator>
 #include <optional>
 #include <random>
 #include <thread>
 #include <unordered_map>
 #include "diskann/distance.h"
 #include "diskann/exceptions.h"
-#include "diskann/parameters.h"
 #include "diskann/aux_utils.h"
 #include "diskann/timer.h"
 #include "diskann/utils.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/heap.h"
-
+#include "knowhere/prometheus_client.h"
 #include "knowhere/utils.h"
 #include "tsl/robin_set.h"
 
@@ -969,6 +966,10 @@ namespace diskann {
       const auto filter_threshold =
           filter_ratio_in < 0 ? kFilterThreshold : filter_ratio_in;
       bv_cnt = bitset_view.count();
+#ifdef NOT_COMPILE_FOR_SWIG
+      double ratio = ((double)bv_cnt) / bitset_view.size();
+      knowhere::knowhere_diskann_bitset_ratio.Observe(ratio);
+#endif
       if (bitset_view.size() == bv_cnt) {
         for (_u64 i = 0; i < k_search; i++) {
           indices[i] = -1;
@@ -1248,6 +1249,9 @@ namespace diskann {
 
       // process cached nhoods
       for (auto &cached_nhood : cached_nhoods) {
+        if (stats != nullptr) {
+          stats->n_hops++;
+        }
         T *node_fp_coords_copy;
         {
           std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
@@ -1386,6 +1390,9 @@ namespace diskann {
 
     _u32 l_search = min_l_search;  // starting size of the candidate list
     while (!stop_flag) {
+      if (stats != nullptr) {
+        stats->n_iters++;
+      }
       indices.resize(l_search);
       distances.resize(l_search);
       for (auto &x : distances)
