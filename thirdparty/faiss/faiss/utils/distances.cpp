@@ -1156,15 +1156,14 @@ void elkan_L2_sse(
         size_t ny,
         int64_t* ids,
         float* val,
-        float* tmp_buffer) {
+        float* tmp_buffer,
+        size_t sym_dim) {
     if (nx == 0 || ny == 0) {
         return;
     }
 
-    const size_t bs_y = 1024;
-
-    for (size_t j0 = 0; j0 < ny; j0 += bs_y) {
-        size_t j1 = j0 + bs_y;
+    for (size_t j0 = 0; j0 < ny; j0 += sym_dim) {
+        size_t j1 = j0 + sym_dim;
         if (j1 > ny)
             j1 = ny;
 

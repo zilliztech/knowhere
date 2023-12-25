@@ -36,8 +36,13 @@ namespace faiss {
 // 'IndexFlatElkan::search()' on the same instance should be avoided
 // to prevent data overwite corruption in the temporary buffer.
 //
+// The temporary buffer is used to store half size of symmetric matrix
+// data, excluding the diagnoal. IndexFlatElkan specifies the dimension
+// of the matrix.
+//
 struct IndexFlatElkan : IndexFlat {
     bool use_elkan = true;
+    size_t sym_dim = 0;
     std::unique_ptr<float[]> tmp_buffer_for_elkan = nullptr;
 
     explicit IndexFlatElkan(idx_t d, MetricType metric = METRIC_L2,
