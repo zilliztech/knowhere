@@ -89,72 +89,60 @@ class ThreadPool {
         return pool_.numThreads();
     }
 
-    /**
-     * @brief Set the threads number to the global build thread pool of knowhere
-     *
-     * @param num_threads
-     */
     static void
-    InitThreadPool(uint32_t num_threads, uint32_t& thread_pool_size) {
+    InitGlobalBuildThreadPool(uint32_t num_threads) {
         if (num_threads <= 0) {
             LOG_KNOWHERE_ERROR_ << "num_threads should be bigger than 0";
             return;
         }
 
-        if (thread_pool_size == 0) {
-            std::lock_guard<std::mutex> lock(global_thread_pool_mutex_);
-            if (thread_pool_size == 0) {
-                thread_pool_size = num_threads;
+        if (build_pool_ == nullptr) {
+            std::lock_guard<std::mutex> lock(build_pool_mutex_);
+            if (build_pool_ == nullptr) {
+                build_pool_ = std::make_shared<ThreadPool>(num_threads, "knowhere_build");
+                LOG_KNOWHERE_INFO_ << "Init global build thread pool with size " << num_threads;
                 return;
             }
+        } else {
+            LOG_KNOWHERE_INFO_ << "Global build thread pool size has already been initialized to "
+                               << build_pool_->size();
         }
     }
 
     static void
-    InitGlobalBuildThreadPool(uint32_t num_threads) {
-        InitThreadPool(num_threads, global_build_thread_pool_size_);
-        LOG_KNOWHERE_WARNING_ << "Global Build ThreadPool has already been initialized with threads num: "
-                              << global_build_thread_pool_size_;
-    }
-
-    /**
-     * @brief Set the threads number to the global search thread pool of knowhere
-     *
-     * @param num_threads
-     */
-    static void
     InitGlobalSearchThreadPool(uint32_t num_threads) {
-        InitThreadPool(num_threads, global_search_thread_pool_size_);
-        LOG_KNOWHERE_WARNING_ << "Global Search ThreadPool has already been initialized with threads num: "
-                              << global_search_thread_pool_size_;
-    }
+        if (num_threads <= 0) {
+            LOG_KNOWHERE_ERROR_ << "num_threads should be bigger than 0";
+            return;
+        }
 
-    /**
-     * @brief Get the global thread pool of knowhere.
-     *
-     * @return ThreadPool&
-     */
+        if (search_pool_ == nullptr) {
+            std::lock_guard<std::mutex> lock(search_pool_mutex_);
+            if (search_pool_ == nullptr) {
+                search_pool_ = std::make_shared<ThreadPool>(num_threads, "knowhere_search");
+                LOG_KNOWHERE_INFO_ << "Init global search thread pool with size " << num_threads;
+                return;
+            }
+        } else {
+            LOG_KNOWHERE_INFO_ << "Global search thread pool size has already been initialized to "
+                               << search_pool_->size();
+        }
+    }
 
     static std::shared_ptr<ThreadPool>
     GetGlobalBuildThreadPool() {
-        if (global_build_thread_pool_size_ == 0) {
-            InitThreadPool(std::thread::hardware_concurrency(), global_build_thread_pool_size_);
-            LOG_KNOWHERE_WARNING_ << "Global Build ThreadPool has not been initialized yet, init it with threads num: "
-                                  << global_build_thread_pool_size_;
+        if (build_pool_ == nullptr) {
+            InitGlobalBuildThreadPool(std::thread::hardware_concurrency());
         }
-        static auto pool = std::make_shared<ThreadPool>(global_build_thread_pool_size_, "Knowhere_Build");
-        return pool;
+        return build_pool_;
     }
 
     static std::shared_ptr<ThreadPool>
     GetGlobalSearchThreadPool() {
-        if (global_search_thread_pool_size_ == 0) {
-            InitThreadPool(std::thread::hardware_concurrency(), global_search_thread_pool_size_);
-            LOG_KNOWHERE_WARNING_ << "Global Search ThreadPool has not been initialized yet, init it with threads num: "
-                                  << global_search_thread_pool_size_;
+        if (search_pool_ == nullptr) {
+            InitGlobalSearchThreadPool(std::thread::hardware_concurrency());
         }
-        static auto pool = std::make_shared<ThreadPool>(global_search_thread_pool_size_, "Knowhere_Search");
-        return pool;
+        return search_pool_;
     }
 
     class ScopedOmpSetter {
@@ -162,10 +150,10 @@ class ThreadPool {
 
      public:
         explicit ScopedOmpSetter(int num_threads = 0) {
-            if (global_build_thread_pool_size_ == 0) {  // this should not happen in prod
+            if (build_pool_ == nullptr) {  // this should not happen in prod
                 omp_before = omp_get_max_threads();
             } else {
-                omp_before = global_build_thread_pool_size_;
+                omp_before = build_pool_->size();
             }
 
             omp_set_num_threads(num_threads <= 0 ? omp_before : num_threads);
@@ -177,9 +165,13 @@ class ThreadPool {
 
  private:
     folly::CPUThreadPoolExecutor pool_;
-    inline static uint32_t global_build_thread_pool_size_ = 0;
-    inline static uint32_t global_search_thread_pool_size_ = 0;
-    inline static std::mutex global_thread_pool_mutex_;
+
+    inline static std::mutex build_pool_mutex_;
+    inline static std::shared_ptr<ThreadPool> build_pool_ = nullptr;
+
+    inline static std::mutex search_pool_mutex_;
+    inline static std::shared_ptr<ThreadPool> search_pool_ = nullptr;
+
     constexpr static size_t kTaskQueueFactor = 16;
 };
 }  // namespace knowhere
