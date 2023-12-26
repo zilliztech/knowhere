@@ -99,3 +99,9 @@ def GetBinaryVectorDataSetToArray(ans):
 
 def SetSimdType(type):
     swigknowhere.SetSimdType(type)
+
+def SetBuildThreadPool(num_threads):
+    swigknowhere.SetBuildThreadPool(num_threads)
+
+def SetSearchThreadPool(num_threads):
+    swigknowhere.SetSearchThreadPool(num_threads)
