@@ -1325,9 +1325,10 @@ void IndexIVFPQFastScan::range_search_implem_12(
                 ij++;
             }
         }
-        std::sort(qcs.begin(), qcs.end(), [](const QC& a, const QC& b) {
-            return a.list_no < b.list_no;
-        });
+        // comment this code, check out https://github.com/zilliztech/knowhere/issues/171
+        // std::sort(qcs.begin(), qcs.end(), [](const QC& a, const QC& b) {
+        //     return a.list_no < b.list_no;
+        // });
     }
     TIC;
 
