@@ -212,4 +212,25 @@ fvec_L2sqr_batch_4_ref(const float* x, const float* y0, const float* y1, const f
     dis3 = d3;
 }
 
+int32_t
+ivec_inner_product_ref(const int8_t* x, const int8_t* y, size_t d) {
+    size_t i;
+    int32_t res = 0;
+    for (i = 0; i < d; i++) {
+        res += (int32_t)x[i] * y[i];
+    }
+    return res;
+}
+
+int32_t
+ivec_L2sqr_ref(const int8_t* x, const int8_t* y, size_t d) {
+    size_t i;
+    int32_t res = 0;
+    for (i = 0; i < d; i++) {
+        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
+        res += tmp * tmp;
+    }
+    return res;
+}
+
 }  // namespace faiss

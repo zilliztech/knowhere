@@ -70,6 +70,10 @@ extern void (*fvec_inner_product_batch_4)(const float*, const float*, const floa
 extern void (*fvec_L2sqr_batch_4)(const float*, const float*, const float*, const float*, const float*, const size_t,
                                   float&, float&, float&, float&);
 
+extern int32_t (*ivec_inner_product)(const int8_t*, const int8_t*, size_t);
+
+extern int32_t (*ivec_L2sqr)(const int8_t*, const int8_t*, size_t);
+
 #if defined(__x86_64__)
 extern bool use_avx512;
 extern bool use_avx2;

@@ -95,6 +95,18 @@ TEST_CASE("Search mmap", "[float metrics]") {
         return json;
     };
 
+    auto hnsw_sq_gen = [hnsw_gen]() {
+        knowhere::Json json = hnsw_gen();
+        json[knowhere::indexparam::WITH_RAW_DATA] = false;
+        return json;
+    };
+
+    auto hnsw_sq_with_refine_gen = [hnsw_gen]() {
+        knowhere::Json json = hnsw_gen();
+        json[knowhere::indexparam::WITH_RAW_DATA] = true;
+        return json;
+    };
+
     auto reload_from_file = [](knowhere::Index<knowhere::IndexNode>& index, const knowhere::DataSet& dataset,
                                const knowhere::Json& conf) {
         auto path = kDir / index.Type();
@@ -126,6 +138,8 @@ TEST_CASE("Search mmap", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivfsq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFPQ, ivfpq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8, hnsw_sq_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8, hnsw_sq_with_refine_gen),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
@@ -153,6 +167,8 @@ TEST_CASE("Search mmap", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivfsq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFPQ, ivfpq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8, hnsw_sq_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8, hnsw_sq_with_refine_gen),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         auto cfg_json = gen().dump();
