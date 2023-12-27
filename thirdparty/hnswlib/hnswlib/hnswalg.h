@@ -27,8 +27,9 @@
 #include "hnswlib.h"
 #include "io/memory_io.h"
 #include "knowhere/config.h"
-#include "knowhere/utils.h"
 #include "knowhere/heap.h"
+#include "knowhere/prometheus_client.h"
+#include "knowhere/utils.h"
 #include "neighbor.h"
 #include "visited_list_pool.h"
 
@@ -393,11 +394,15 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         visited[ep_id] = true;
         auto add_search_candidate = [&](Neighbor n) { return retset.insert(n, disqualified); };
+        size_t hops = 0;
         while (retset.has_next()) {
             searchBaseLayerSTNext<decltype(add_search_candidate), has_deletions, collect_metrics>(
                 data_point, retset.pop(), visited, accumulative_alpha, bitset, add_search_candidate, feder_result);
+            hops++;
         }
-
+#ifdef NOT_COMPILE_FOR_SWIG
+        knowhere::knowhere_hnsw_search_hops.Observe(hops);
+#endif
         return retset;
     }
 
@@ -1247,6 +1252,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // do bruteforce search when delete rate high
         if (!bitset.empty()) {
             const size_t filtered_out_num = bitset.count();
+#ifdef NOT_COMPILE_FOR_SWIG
+            double ratio = ((double)filtered_out_num) / bitset.size();
+            knowhere::knowhere_hnsw_bitset_ratio.Observe(ratio);
+#endif
             if (filtered_out_num >= (cur_element_count * kHnswSearchKnnBFFilterThreshold) || k >= (cur_element_count - filtered_out_num) * kHnswSearchBFTopkThreshold) {
                 return searchKnnBF(query_data, k, bitset);
             }
@@ -1385,6 +1394,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // do bruteforce range search when delete rate high
         if (!bitset.empty()) {
             const size_t filtered_out_num = bitset.count();
+#ifdef NOT_COMPILE_FOR_SWIG
+            double ratio = ((double)filtered_out_num) / bitset.size();
+            knowhere::knowhere_hnsw_bitset_ratio.Observe(ratio);
+#endif
             if (filtered_out_num >= (cur_element_count * kHnswSearchRangeBFFilterThreshold) || ef >= (cur_element_count - filtered_out_num) * kHnswSearchBFTopkThreshold) {
                 return searchRangeBF(query_data, radius, bitset);
             }

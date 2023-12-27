@@ -52,7 +52,7 @@ class PrometheusClient {
 
 /*****************************************************************************/
 // prometheus metrics
-extern const prometheus::Histogram::BucketBoundaries buckets;
+extern const prometheus::Histogram::BucketBoundaries defaultBuckets;
 extern const std::unique_ptr<PrometheusClient> prometheusClient;
 
 #define DEFINE_PROMETHEUS_GAUGE(name, desc)                                                                  \
@@ -65,10 +65,12 @@ extern const std::unique_ptr<PrometheusClient> prometheusClient;
         prometheus::BuildCounter().Name(#name).Help(desc).Register(knowhere::prometheusClient->GetRegistry()); \
     prometheus::Counter& name = name##_family.Add({});
 
-#define DEFINE_PROMETHEUS_HISTOGRAM(name, desc)                                                                  \
+#define DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(name, desc, buckets)                                            \
     prometheus::Family<prometheus::Histogram>& name##_family =                                                   \
         prometheus::BuildHistogram().Name(#name).Help(desc).Register(knowhere::prometheusClient->GetRegistry()); \
-    prometheus::Histogram& name = name##_family.Add({}, knowhere::buckets);
+    prometheus::Histogram& name = name##_family.Add({}, buckets);
+
+#define DEFINE_PROMETHEUS_HISTOGRAM(name, desc) DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(name, desc, defaultBuckets)
 
 #define DECLARE_PROMETHEUS_GAUGE(name_gauge) extern prometheus::Gauge& name_gauge;
 #define DECLARE_PROMETHEUS_COUNTER(name_counter) extern prometheus::Counter& name_counter;
@@ -80,4 +82,11 @@ DECLARE_PROMETHEUS_HISTOGRAM(knowhere_search_latency);
 DECLARE_PROMETHEUS_HISTOGRAM(knowhere_range_search_latency);
 DECLARE_PROMETHEUS_HISTOGRAM(knowhere_ann_iterator_init_latency);
 DECLARE_PROMETHEUS_HISTOGRAM(knowhere_search_topk);
+
+DECLARE_PROMETHEUS_HISTOGRAM(knowhere_hnsw_bitset_ratio);
+DECLARE_PROMETHEUS_HISTOGRAM(knowhere_hnsw_search_hops);
+
+DECLARE_PROMETHEUS_HISTOGRAM(knowhere_diskann_bitset_ratio);
+DECLARE_PROMETHEUS_HISTOGRAM(knowhere_diskann_search_hops);
+DECLARE_PROMETHEUS_HISTOGRAM(knowhere_diskann_range_search_iters);
 }  // namespace knowhere

@@ -27,6 +27,7 @@ namespace diskann {
     unsigned n_cmps = 0;        // # cmps
     unsigned n_cache_hits = 0;  // # cache_hits
     unsigned n_hops = 0;        // # search hops
+    unsigned n_iters = 0;       // # range search iterations
   };
 
   template<typename T>

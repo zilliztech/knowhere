@@ -26,6 +26,7 @@
 #include "knowhere/factory.h"
 #include "knowhere/file_manager.h"
 #include "knowhere/log.h"
+#include "knowhere/prometheus_client.h"
 #include "knowhere/utils.h"
 
 namespace knowhere {
@@ -545,9 +546,13 @@ DiskANNIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const Bit
     futures.reserve(nq);
     for (int64_t row = 0; row < nq; ++row) {
         futures.emplace_back(search_pool_->push([&, index = row]() {
+            diskann::QueryStats stats;
             pq_flash_index_->cached_beam_search(xq + (index * dim), k, lsearch, p_id + (index * k),
-                                                p_dist + (index * k), beamwidth, false, nullptr, feder_result, bitset,
+                                                p_dist + (index * k), beamwidth, false, &stats, feder_result, bitset,
                                                 filter_ratio, for_tuning);
+#ifdef NOT_COMPILE_FOR_SWIG
+            knowhere_diskann_search_hops.Observe(stats.n_hops);
+#endif
         }));
     }
     for (auto& future : futures) {
@@ -617,8 +622,12 @@ DiskANNIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, cons
         futures.emplace_back(search_pool_->push([&, index = row]() {
             std::vector<int64_t> indices;
             std::vector<float> distances;
+            diskann::QueryStats stats;
             pq_flash_index_->range_search(xq + (index * dim), radius, min_k, max_k, result_id_array[index],
-                                          result_dist_array[index], beamwidth, bitset);
+                                          result_dist_array[index], beamwidth, bitset, &stats);
+#ifdef NOT_COMPILE_FOR_SWIG
+            knowhere_diskann_range_search_iters.Observe(stats.n_iters);
+#endif
             // filter range search result
             if (search_conf.range_filter.value() != defaultRangeFilter) {
                 FilterRangeSearchResultForOneNq(result_dist_array[index], result_id_array[index], is_ip, radius,
