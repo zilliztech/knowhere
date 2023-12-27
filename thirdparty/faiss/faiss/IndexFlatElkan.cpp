@@ -21,6 +21,10 @@ namespace faiss {
 IndexFlatElkan::IndexFlatElkan(idx_t d, MetricType metric, bool is_cosine, bool use_elkan)
         : IndexFlat(d, metric, is_cosine) {
     this->use_elkan = use_elkan;
+    if (this->use_elkan) {
+        this->sym_dim = 1024;
+        this->tmp_buffer_for_elkan = std::make_unique<float[]>(this->sym_dim * (this->sym_dim - 1) / 2);
+    }
 }
 
 void IndexFlatElkan::search(
@@ -54,7 +58,7 @@ void IndexFlatElkan::search(
             // ignore the metric_type, both use L2
             if (use_elkan) {
                 // use elkan
-                elkan_L2_sse(x, get_xb(), d, n, ntotal, labels, dis_inner);
+                elkan_L2_sse(x, get_xb(), d, n, ntotal, labels, dis_inner, tmp_buffer_for_elkan.get(), sym_dim);
             }
             else {
                 // use L2 search. The same code as in IndexFlat::search() for L2.
