@@ -30,4 +30,9 @@ KNOWHERE_REGISTER_GLOBAL(GPU_RAFT_BRUTE_FORCE, [](const int32_t& version, const 
                                                      cuda_concurrent_size);
 });
 
+KNOWHERE_REGISTER_GLOBAL(GPU_BRUTE_FORCE, [](const int32_t& version, const Object& object) {
+    return Index<IndexNodeThreadPoolWrapper>::Create(std::make_unique<GpuRaftBruteForceIndexNode>(version, object),
+                                                     cuda_concurrent_size);
+});
+
 }  // namespace knowhere
