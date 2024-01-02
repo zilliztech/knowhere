@@ -305,7 +305,8 @@ DiskANNIndexNode<T>::Build(const DataSet& dataset, const Config& cfg) {
                                                        static_cast<uint32_t>(build_conf.disk_pq_dims.value()),
                                                        false,
                                                        build_conf.accelerate_build.value(),
-                                                       static_cast<uint32_t>(num_nodes_to_cache)};
+                                                       static_cast<uint32_t>(num_nodes_to_cache),
+                                                       build_conf.shuffle_build.value()};
     RETURN_IF_ERROR(TryDiskANNCall([&]() {
         int res = diskann::build_disk_index<T>(diskann_internal_build_config);
         if (res != 0)

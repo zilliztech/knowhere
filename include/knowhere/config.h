@@ -519,6 +519,7 @@ class BaseConfig : public Config {
     CFG_BOOL trace_visit;
     CFG_BOOL enable_mmap;
     CFG_BOOL for_tuning;
+    CFG_BOOL shuffle_build;
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
             .set_default("L2")
@@ -567,6 +568,10 @@ class BaseConfig : public Config {
             .for_deserialize()
             .for_deserialize_from_file();
         KNOWHERE_CONFIG_DECLARE_FIELD(for_tuning).set_default(false).description("for tuning").for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(shuffle_build)
+            .set_default(true)
+            .description("shuffle ids before index building")
+            .for_train();
     }
 };
 }  // namespace knowhere
