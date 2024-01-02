@@ -23,6 +23,11 @@
 #include "knowhere/config.h"
 
 namespace knowhere {
+namespace {
+constexpr const CFG_INT::value_type kSearchWidth = 1;
+constexpr const CFG_INT::value_type kAlignFactor = 32;
+constexpr const CFG_INT::value_type kItopkSize = 64;
+}  // namespace
 
 struct GpuRaftCagraConfig : public BaseConfig {
     CFG_FLOAT refine_ratio;
@@ -54,7 +59,7 @@ struct GpuRaftCagraConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(graph_degree).description("degree of knn graph").set_default(64).for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(itopk_size)
             .description("intermediate results retained during search")
-            .set_default(64)
+            .allow_empty_without_default()
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(max_queries).description("maximum batch size").set_default(0).for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(build_algo)
@@ -72,7 +77,7 @@ struct GpuRaftCagraConfig : public BaseConfig {
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(search_width)
             .description("nodes to select as starting point in each iteration")
-            .set_default(1)
+            .allow_empty_without_default()
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(min_iterations)
             .description("minimum number of search iterations")
@@ -97,6 +102,26 @@ struct GpuRaftCagraConfig : public BaseConfig {
             .description("number of iterations for NN descent")
             .set_default(20)
             .for_train();
+    }
+
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        if (param_type == PARAM_TYPE::SEARCH) {
+            // auto align itopk_size
+            auto itopk_v = itopk_size.value_or(std::max(k.value(), kItopkSize));
+            itopk_size = int32_t((itopk_v + kAlignFactor - 1) / kAlignFactor) * kAlignFactor;
+
+            if (search_width.has_value()) {
+                if (std::max(itopk_size.value(), kAlignFactor * search_width.value()) < k.value()) {
+                    *err_msg = "max((itopk_size + 31)// 32, search_width) * 32< topk";
+                    LOG_KNOWHERE_ERROR_ << *err_msg;
+                    return Status::out_of_range_in_json;
+                }
+            } else {
+                search_width = std::max((k.value() - 1) / kAlignFactor + 1, kSearchWidth);
+            }
+        }
+        return Status::success;
     }
 };
 
