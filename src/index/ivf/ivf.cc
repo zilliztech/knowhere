@@ -23,6 +23,7 @@
 #include "faiss/index_io.h"
 #include "index/ivf/ivf_config.h"
 #include "io/memory_io.h"
+#include "io/trailer.h"
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/dataset.h"
@@ -824,6 +825,11 @@ IvfIndexNode<T>::Serialize(BinarySet& binset) const {
         } else {
             faiss::write_index(index_.get(), &writer);
         }
+        auto trailer_status = AddTrailerForMemoryIO(writer, Type(), this->version_);
+        if (trailer_status != Status::success) {
+            LOG_KNOWHERE_ERROR_ << "fail to append trailer.";
+            return trailer_status;
+        }
         std::shared_ptr<uint8_t[]> data(writer.data());
         binset.Append(Type(), data, writer.tellg());
         return Status::success;
@@ -845,6 +851,11 @@ IvfIndexNode<faiss::IndexIVFFlat>::Serialize(BinarySet& binset) const {
         } else {
             faiss::write_index(index_.get(), &writer);
             LOG_KNOWHERE_INFO_ << "write IVF_FLAT, file size " << writer.tellg();
+        }
+        auto trailer_status = AddTrailerForMemoryIO(writer, Type(), this->version_);
+        if (trailer_status != Status::success) {
+            LOG_KNOWHERE_ERROR_ << "fail to append trailer.";
+            return trailer_status;
         }
         std::shared_ptr<uint8_t[]> index_data_ptr(writer.data());
         binset.Append(Type(), index_data_ptr, writer.tellg());
