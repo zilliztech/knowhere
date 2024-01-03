@@ -28,23 +28,48 @@ const std::unique_ptr<PrometheusClient> prometheusClient = std::make_unique<Prom
  *   An error has occurred while serving metrics:
  *   text format parsing error in line 50: expected float as value, got "=\"0.9\"}"
  ******************************************************************************/
-DEFINE_PROMETHEUS_HISTOGRAM(knowhere_build_latency, "index build latency in knowhere (s)")
-DEFINE_PROMETHEUS_HISTOGRAM(knowhere_load_latency, "index load latency in knowhere (ms)")
-DEFINE_PROMETHEUS_HISTOGRAM(knowhere_search_latency, "search latency in knowhere (ms)")
-DEFINE_PROMETHEUS_HISTOGRAM(knowhere_range_search_latency, "range search latency in knowhere (ms)")
-DEFINE_PROMETHEUS_HISTOGRAM(knowhere_ann_iterator_init_latency, "ann iterator init latency in knowhere (ms)")
-DEFINE_PROMETHEUS_HISTOGRAM(knowhere_search_topk, "knowhere search topk")
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(build_latency, "index build latency (s)")
+DEFINE_PROMETHEUS_HISTOGRAM(build_latency, PROMETHEUS_LABEL_KNOWHERE)
+DEFINE_PROMETHEUS_HISTOGRAM(build_latency, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(knowhere_hnsw_bitset_ratio,
-                                         "knowhere HNSW bitset ratio for search and range search", ratioBuckets)
-DEFINE_PROMETHEUS_HISTOGRAM(knowhere_hnsw_search_hops, "knowhere HNSW search hops in layer 0")
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(load_latency, "index load latency (ms)")
+DEFINE_PROMETHEUS_HISTOGRAM(load_latency, PROMETHEUS_LABEL_KNOWHERE)
+DEFINE_PROMETHEUS_HISTOGRAM(load_latency, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(knowhere_diskann_bitset_ratio,
-                                         "knowhere DISKANN bitset ratio for search and range search", ratioBuckets)
-DEFINE_PROMETHEUS_HISTOGRAM(knowhere_diskann_search_hops, "knowhere DISKANN search hops")
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_latency, "search latency (ms)")
+DEFINE_PROMETHEUS_HISTOGRAM(search_latency, PROMETHEUS_LABEL_KNOWHERE)
+DEFINE_PROMETHEUS_HISTOGRAM(search_latency, PROMETHEUS_LABEL_CARDINAL)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(range_search_latency, "range search latency (ms)")
+DEFINE_PROMETHEUS_HISTOGRAM(range_search_latency, PROMETHEUS_LABEL_KNOWHERE)
+DEFINE_PROMETHEUS_HISTOGRAM(range_search_latency, PROMETHEUS_LABEL_CARDINAL)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(ann_iterator_init_latency, "ann iterator init latency (ms)")
+DEFINE_PROMETHEUS_HISTOGRAM(ann_iterator_init_latency, PROMETHEUS_LABEL_KNOWHERE)
+DEFINE_PROMETHEUS_HISTOGRAM(ann_iterator_init_latency, PROMETHEUS_LABEL_CARDINAL)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_topk, "search topk")
+DEFINE_PROMETHEUS_HISTOGRAM(search_topk, PROMETHEUS_LABEL_KNOWHERE)
+DEFINE_PROMETHEUS_HISTOGRAM(search_topk, PROMETHEUS_LABEL_CARDINAL)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(bitset_ratio, "bitset ratio")
+DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(bitset_ratio, PROMETHEUS_LABEL_CARDINAL, ratioBuckets)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(hnsw_bitset_ratio, "HNSW bitset ratio for search and range search")
+DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(hnsw_bitset_ratio, PROMETHEUS_LABEL_KNOWHERE, ratioBuckets)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(hnsw_search_hops, "HNSW search hops in layer 0")
+DEFINE_PROMETHEUS_HISTOGRAM(hnsw_search_hops, PROMETHEUS_LABEL_KNOWHERE)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(diskann_bitset_ratio, "DISKANN bitset ratio for search and range search")
+DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(diskann_bitset_ratio, PROMETHEUS_LABEL_KNOWHERE, ratioBuckets)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(diskann_search_hops, "DISKANN search hops")
+DEFINE_PROMETHEUS_HISTOGRAM(diskann_search_hops, PROMETHEUS_LABEL_KNOWHERE)
 
 const prometheus::Histogram::BucketBoundaries diskannRangeSearchIterBuckets = {2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22};
-DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(knowhere_diskann_range_search_iters,
-                                         "knowhere DISKANN range search iterations", diskannRangeSearchIterBuckets)
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(diskann_range_search_iters, "DISKANN range search iterations")
+DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(diskann_range_search_iters, PROMETHEUS_LABEL_KNOWHERE,
+                                         diskannRangeSearchIterBuckets)
 
 }  // namespace knowhere
