@@ -1429,6 +1429,7 @@ namespace diskann {
     _indexingRange = parameters.Get<unsigned>("R");
     _indexingMaxC = parameters.Get<unsigned>("C");
     const bool  accelerate_build = parameters.Get<bool>("accelerate_build");
+    const bool  shuffle_build    = parameters.Get<bool>("shuffle_build"); 
     const float last_round_alpha = parameters.Get<float>("alpha");
     unsigned    L = _indexingQueueSize;
 
@@ -1518,10 +1519,20 @@ namespace diskann {
       }
 
       futures.reserve(round_size);
+      std::vector<unsigned> shuffle_batch_ids;
+      if (shuffle_build) {
+        shuffle_batch_ids.reserve(round_num_syncs);
+        for (unsigned i = 0; i < (unsigned) round_num_syncs; i++) {
+          shuffle_batch_ids.emplace_back(i);
+        }
+        std::random_device rng;
+        std::mt19937       urng(rng());
+        std::shuffle(shuffle_batch_ids.begin(), shuffle_batch_ids.end(), urng);
+      }
       for (uint32_t sync_num = 0; sync_num < round_num_syncs; sync_num++) {
-        size_t start_id = sync_num * round_size;
+        size_t start_id = (shuffle_build ? shuffle_batch_ids[sync_num] : sync_num) * round_size;
         size_t end_id =
-            (std::min)(_nd + _num_frozen_pts, (sync_num + 1) * round_size);
+            (std::min)(_nd + _num_frozen_pts, ((shuffle_build ? shuffle_batch_ids[sync_num] : sync_num) + 1) * round_size);
 
         auto s = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> diff;
