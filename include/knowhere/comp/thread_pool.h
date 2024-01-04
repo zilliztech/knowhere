@@ -89,6 +89,19 @@ class ThreadPool {
         return pool_.numThreads();
     }
 
+    void
+    SetNumThreads(uint32_t num_threads) {
+        if (num_threads == 0) {
+            LOG_KNOWHERE_ERROR_ << "set number of threads can not be 0";
+            return;
+        } else {
+            // setNumThreads() adjust the relevant variables instead of changing the number of threads directly;
+            // If numThreads < active threads, reduce number of running threads.
+            pool_.setNumThreads(num_threads);
+            return;
+        }
+    }
+
     static void
     InitGlobalBuildThreadPool(uint32_t num_threads) {
         if (num_threads <= 0) {
@@ -126,6 +139,30 @@ class ThreadPool {
         } else {
             LOG_KNOWHERE_INFO_ << "Global search thread pool size has already been initialized to "
                                << search_pool_->size();
+        }
+    }
+
+    static void
+    SetGlobalBuildThreadPoolSize(uint32_t num_threads) {
+        if (build_pool_ == nullptr) {
+            InitGlobalBuildThreadPool(num_threads);
+            return;
+        } else {
+            build_pool_->SetNumThreads(num_threads);
+            LOG_KNOWHERE_INFO_ << "Global build thread pool size has already been set to " << build_pool_->size();
+            return;
+        }
+    }
+
+    static void
+    SetGlobalSearchThreadPoolSize(uint32_t num_threads) {
+        if (search_pool_ == nullptr) {
+            InitGlobalSearchThreadPool(num_threads);
+            return;
+        } else {
+            search_pool_->SetNumThreads(num_threads);
+            LOG_KNOWHERE_INFO_ << "Global search thread pool size has already been set to " << search_pool_->size();
+            return;
         }
     }
 
