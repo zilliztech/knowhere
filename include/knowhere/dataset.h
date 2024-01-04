@@ -78,6 +78,11 @@ class DataSet {
         this->data_[meta::IDS] = Var(std::in_place_index<2>, ids);
     }
 
+    /**
+     * For dense float vector, tensor is a rows * dim float array
+     * For sparse float vector, tensor is a CSR matrix. See namespace sparse in utils.h for details.
+     * rows and dim should be set for both dense/sparse dataset.
+     */
     void
     SetTensor(const void* tensor) {
         std::unique_lock lock(mutex_);

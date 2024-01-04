@@ -29,6 +29,16 @@ class BruteForce {
     static expected<DataSetPtr>
     RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                 const BitsetView& bitset);
+
+    // Perform row oriented sparse vector brute force search.
+    // For unit test purpose only, assumes that the tensor is csr matrix with types:
+    // shape: int64
+    // indptr: int64
+    // indices: int32
+    // data: float
+    static expected<DataSetPtr>
+    SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                 const BitsetView& bitset);
 };
 
 }  // namespace knowhere
