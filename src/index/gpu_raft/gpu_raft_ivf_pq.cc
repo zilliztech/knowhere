@@ -30,7 +30,7 @@ KNOWHERE_REGISTER_GLOBAL(GPU_RAFT_IVF_PQ, [](const int32_t& version, const Objec
                                                      cuda_concurrent_size);
 });
 
-KNOWHERE_REGISTER_GLOBAL(GPU_RAFT_IVF_PQ, [](const int32_t& version, const Object& object) {
+KNOWHERE_REGISTER_GLOBAL(GPU_IVF_PQ, [](const int32_t& version, const Object& object) {
     return Index<IndexNodeThreadPoolWrapper>::Create(std::make_unique<GpuRaftIvfPqIndexNode>(version, object),
                                                      cuda_concurrent_size);
 });
