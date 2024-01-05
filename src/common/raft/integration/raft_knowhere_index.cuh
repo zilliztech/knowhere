@@ -399,6 +399,9 @@ struct raft_knowhere_index<IndexKind>::impl {
         raft::copy(res, device_data, host_data);
         index_ = raft_index_type::template build<data_type, indexing_type, input_indexing_type>(
             res, index_params, raft::make_const_mdspan(device_data));
+        if (!config.cache_dataset_on_device) {
+            device_dataset_storage = std::nullopt;
+        }
     }
 
     void
