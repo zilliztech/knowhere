@@ -160,6 +160,7 @@ KnowhereConfig::FreeGPUResource() {
     knowhere::GPUResMgr::GetInstance().Free();
 #endif
 }
+
 void
 KnowhereConfig::SetRaftMemPool(size_t init_size, size_t max_size) {
 #ifdef KNOWHERE_WITH_RAFT
@@ -171,6 +172,7 @@ KnowhereConfig::SetRaftMemPool(size_t init_size, size_t max_size) {
     raft_knowhere::initialize_raft(config);
 #endif
 }
+
 void
 KnowhereConfig::SetRaftMemPool() {
     // Overload for default values

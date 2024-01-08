@@ -99,11 +99,12 @@ find_package(OpenMP REQUIRED)
 find_package(folly REQUIRED)
 include_directories(${folly_INCLUDE_DIRS})
 
-
 find_package(nlohmann_json REQUIRED)
 find_package(glog REQUIRED)
 find_package(prometheus-cpp REQUIRED)
 find_package(fmt REQUIRED)
+find_package(opentelemetry-cpp REQUIRED)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X deployment version" FORCE)
 
@@ -150,6 +151,11 @@ list(APPEND KNOWHERE_LINKER_LIBS nlohmann_json::nlohmann_json)
 list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
 list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt-header-only)
 list(APPEND KNOWHERE_LINKER_LIBS Folly::folly)
+list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_trace)
+list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_exporter_ostream_span)
+list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_exporter_jaeger_trace)
+list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_exporter_otlp_grpc)
+list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_exporter_otlp_http)
 
 add_library(knowhere SHARED ${KNOWHERE_SRCS})
 add_dependencies(knowhere ${KNOWHERE_LINKER_LIBS})

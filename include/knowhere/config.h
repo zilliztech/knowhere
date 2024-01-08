@@ -520,6 +520,9 @@ class BaseConfig : public Config {
     CFG_BOOL enable_mmap;
     CFG_BOOL for_tuning;
     CFG_BOOL shuffle_build;
+    CFG_STRING trace_id;
+    CFG_STRING span_id;
+    CFG_INT trace_flags;
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
             .set_default("L2")
@@ -572,6 +575,21 @@ class BaseConfig : public Config {
             .set_default(true)
             .description("shuffle ids before index building")
             .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(trace_id)
+            .description("trace id")
+            .allow_empty_without_default()
+            .for_search()
+            .for_range_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(span_id)
+            .description("span id")
+            .allow_empty_without_default()
+            .for_search()
+            .for_range_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(trace_flags)
+            .set_default(0)
+            .description("trace flags")
+            .for_search()
+            .for_range_search();
     }
 };
 }  // namespace knowhere
