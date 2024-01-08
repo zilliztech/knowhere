@@ -68,6 +68,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
         return [upstream_gen]() {
             knowhere::Json json = upstream_gen();
             json[knowhere::indexparam::REFINE_RATIO] = 1.5;
+            json[knowhere::indexparam::CACHE_DATASET_ON_DEVICE] = true;
             return json;
         };
     };
