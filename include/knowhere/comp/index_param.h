@@ -84,6 +84,7 @@ constexpr const char* REORDER_K = "reorder_k";
 constexpr const char* WITH_RAW_DATA = "with_raw_data";
 // RAFT Params
 constexpr const char* REFINE_RATIO = "refine_ratio";
+constexpr const char* CACHE_DATASET_ON_DEVICE = "cache_dataset_on_device";
 // RAFT-specific IVF Params
 constexpr const char* KMEANS_N_ITERS = "kmeans_n_iters";
 constexpr const char* KMEANS_TRAINSET_FRACTION = "kmeans_trainset_fraction";

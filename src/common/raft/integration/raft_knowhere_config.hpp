@@ -32,6 +32,7 @@ struct raft_knowhere_config {
     std::string metric_type = std::string{"L2"};
     float metric_arg = 2.0f;
     bool add_data_on_build = true;
+    bool cache_dataset_on_device = false;
     float refine_ratio = 1.0f;
 
     // Shared IVF Parameters
@@ -77,6 +78,7 @@ struct raft_knowhere_config {
 validate_raft_knowhere_config(raft_knowhere_config config) {
     if (config.index_type == raft_proto::raft_index_kind::brute_force) {
         config.add_data_on_build = false;
+        config.cache_dataset_on_device = true;
     }
     if (config.index_type == raft_proto::raft_index_kind::ivf_flat ||
         config.index_type == raft_proto::raft_index_kind::ivf_pq) {

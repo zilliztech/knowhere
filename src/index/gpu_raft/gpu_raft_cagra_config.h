@@ -30,6 +30,7 @@ constexpr const CFG_INT::value_type kItopkSize = 64;
 }  // namespace
 
 struct GpuRaftCagraConfig : public BaseConfig {
+    CFG_BOOL cache_dataset_on_device;
     CFG_FLOAT refine_ratio;
     CFG_INT intermediate_graph_degree;
     CFG_INT graph_degree;
@@ -48,6 +49,10 @@ struct GpuRaftCagraConfig : public BaseConfig {
     CFG_INT nn_descent_niter;
 
     KNOHWERE_DECLARE_CONFIG(GpuRaftCagraConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(cache_dataset_on_device)
+            .set_default(false)
+            .description("cache dataset on device for refinement")
+            .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(refine_ratio)
             .set_default(1.0f)
             .description("search refine_ratio * k results then refine")
@@ -130,6 +135,7 @@ to_raft_knowhere_config(GpuRaftCagraConfig const& cfg) {
     auto result = raft_knowhere::raft_knowhere_config{raft_proto::raft_index_kind::cagra};
 
     result.metric_type = cfg.metric_type.value();
+    result.cache_dataset_on_device = cfg.cache_dataset_on_device.value();
     result.refine_ratio = cfg.refine_ratio.value();
     result.k = cfg.k.value();
 
