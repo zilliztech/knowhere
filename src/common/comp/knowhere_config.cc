@@ -135,12 +135,12 @@ KnowhereConfig::SetAioContextPool(size_t num_ctx) {
 
 void
 KnowhereConfig::SetBuildThreadPoolSize(size_t num_threads) {
-    knowhere::ThreadPool::InitGlobalBuildThreadPool(num_threads);
+    knowhere::ThreadPool::SetGlobalBuildThreadPoolSize(num_threads);
 }
 
 void
 KnowhereConfig::SetSearchThreadPoolSize(size_t num_threads) {
-    knowhere::ThreadPool::InitGlobalSearchThreadPool(num_threads);
+    knowhere::ThreadPool::SetGlobalSearchThreadPoolSize(num_threads);
 }
 
 void
