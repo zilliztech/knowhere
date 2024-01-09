@@ -38,7 +38,7 @@ TEST_CASE("Test BruteForce Search SIMD", "[bf]") {
 
     auto test_search_with_simd = [&](knowhere::KnowhereConfig::SimdType simd_type) {
         knowhere::KnowhereConfig::SetSimdType(simd_type);
-        auto gt = knowhere::BruteForce::Search(train_ds, query_ds, conf, nullptr);
+        auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
         REQUIRE(gt.has_value());
         auto gt_ids = gt.value()->GetIds();
         auto gt_dist = gt.value()->GetDistance();
@@ -83,7 +83,7 @@ TEST_CASE("Test PQ Search SIMD", "[pq]") {
         conf[knowhere::indexparam::M] = m;
 
         knowhere::KnowhereConfig::SetSimdType(simd_type);
-        auto gt = knowhere::BruteForce::Search(train_ds, query_ds, conf, nullptr);
+        auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
         REQUIRE(gt.has_value());
         auto gt_ids = gt.value()->GetIds();
         auto gt_dist = gt.value()->GetDistance();
@@ -97,7 +97,8 @@ TEST_CASE("Test PQ Search SIMD", "[pq]") {
             }
         }
 
-        auto idx = knowhere::IndexFactory::Instance().Create(knowhere::IndexEnum::INDEX_FAISS_IVFPQ, version);
+        auto idx =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IVFPQ, version);
         REQUIRE(idx.Build(*train_ds, conf) == knowhere::Status::success);
         auto res = idx.Search(*query_ds, conf, nullptr);
         REQUIRE(res.has_value());

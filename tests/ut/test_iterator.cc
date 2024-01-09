@@ -83,14 +83,14 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         {knowhere::meta::METRIC_TYPE, metric},
         {knowhere::meta::TOPK, topk},
     };
-    auto gt = knowhere::BruteForce::Search(train_ds, query_ds, conf, nullptr);
+    auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
 
     SECTION("Test Search using iterator") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -114,7 +114,7 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         auto [name, gen, threshold] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>, float>({
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen, hnswlib::kHnswSearchKnnBFFilterThreshold),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -132,7 +132,7 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
                 auto its = idx.AnnIterator(*query_ds, json, bitset);
                 REQUIRE(its.has_value());
                 auto results = GetKNNResult(its.value(), topk, &bitset);
-                auto gt = knowhere::BruteForce::Search(train_ds, query_ds, json, bitset);
+                auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, json, bitset);
                 float recall = GetKNNRecall(*gt.value(), *results);
                 REQUIRE(recall > kKnnRecallThreshold);
             }
@@ -144,7 +144,7 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         auto [name, gen, threshold] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>, float>({
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen, hnswlib::kHnswSearchKnnBFFilterThreshold),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -165,7 +165,7 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
             for (const auto& it : its.value()) {
                 REQUIRE(!it->HasNext());
             }
-            auto gt = knowhere::BruteForce::Search(train_ds, query_ds, json, bitset);
+            auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, json, bitset);
             float recall = GetKNNRecall(*gt.value(), *results);
             REQUIRE(recall > kKnnRecallThreshold);
         }
@@ -205,13 +205,13 @@ TEST_CASE("Test Iterator Mem Index With Binary Vector", "[float metrics]") {
         {knowhere::meta::TOPK, topk},
     };
 
-    auto gt = knowhere::BruteForce::Search(train_ds, query_ds, conf, nullptr);
+    auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
     SECTION("Test Search using iterator") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);

@@ -21,6 +21,7 @@
 
 namespace knowhere {
 
+template <typename T>
 class GpuFlatIndexNode : public IndexNode {
  public:
     GpuFlatIndexNode(const int32_t& version, const Object& object) : index_(nullptr) {
@@ -189,8 +190,5 @@ class GpuFlatIndexNode : public IndexNode {
     std::unique_ptr<faiss::Index> index_;
 };
 
-KNOWHERE_REGISTER_GLOBAL(GPU_FAISS_FLAT, [](const int32_t& version, const Object& object) {
-    return Index<GpuFlatIndexNode>::Create(version, object);
-});
-
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(GPU_FAISS_FLAT, GpuFlatIndexNode, fp32);
 }  // namespace knowhere

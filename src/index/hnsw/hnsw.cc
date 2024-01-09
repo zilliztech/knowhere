@@ -24,12 +24,18 @@
 #include "knowhere/config.h"
 #include "knowhere/expected.h"
 #include "knowhere/factory.h"
+#include "knowhere/index_node_data_mock_wrapper.h"
 #include "knowhere/log.h"
 #include "knowhere/utils.h"
 
 namespace knowhere {
+template <typename DataType>
 class HnswIndexNode : public IndexNode {
+    static_assert(std::is_same_v<DataType, fp32> || std::is_same_v<DataType, bin1>,
+                  "HnswIndexNode only support float/bianry");
+
  public:
+    using DistType = float;
     HnswIndexNode(const int32_t& /*version*/, const Object& object) : index_(nullptr) {
         search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
     }
@@ -39,7 +45,7 @@ class HnswIndexNode : public IndexNode {
         auto rows = dataset.GetRows();
         auto dim = dataset.GetDim();
         auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
-        hnswlib::SpaceInterface<float>* space = nullptr;
+        hnswlib::SpaceInterface<DistType>* space = nullptr;
         if (IsMetricType(hnsw_cfg.metric_type.value(), metric::L2)) {
             space = new (std::nothrow) hnswlib::L2Space(dim);
         } else if (IsMetricType(hnsw_cfg.metric_type.value(), metric::IP)) {
@@ -55,7 +61,7 @@ class HnswIndexNode : public IndexNode {
             return Status::invalid_metric_type;
         }
         auto index = new (std::nothrow)
-            hnswlib::HierarchicalNSW<float>(space, rows, hnsw_cfg.M.value(), hnsw_cfg.efConstruction.value());
+            hnswlib::HierarchicalNSW<DistType>(space, rows, hnsw_cfg.M.value(), hnsw_cfg.efConstruction.value());
         if (index == nullptr) {
             LOG_KNOWHERE_WARNING_ << "memory malloc error.";
             return Status::malloc_error;
@@ -153,7 +159,7 @@ class HnswIndexNode : public IndexNode {
         }
 
         auto p_id = new int64_t[k * nq];
-        auto p_dist = new float[k * nq];
+        auto p_dist = new DistType[k * nq];
 
         hnswlib::SearchParam param{(size_t)hnsw_cfg.ef.value(), hnsw_cfg.for_tuning.value()};
         bool transform =
@@ -174,7 +180,7 @@ class HnswIndexNode : public IndexNode {
                     p_single_id[idx] = id;
                 }
                 for (size_t idx = rst_size; idx < (size_t)k; idx++) {
-                    p_single_dis[idx] = float(1.0 / 0.0);
+                    p_single_dis[idx] = DistType(1.0 / 0.0);
                     p_single_id[idx] = -1;
                 }
             }));
@@ -199,7 +205,7 @@ class HnswIndexNode : public IndexNode {
  private:
     class iterator : public IndexNode::iterator {
      public:
-        iterator(const hnswlib::HierarchicalNSW<float>* index, const char* query, const bool transform,
+        iterator(const hnswlib::HierarchicalNSW<DistType>* index, const char* query, const bool transform,
                  const BitsetView& bitset, const bool for_tuning = false, const size_t seed_ef = kIteratorSeedEf)
             : index_(index),
               transform_(transform),
@@ -207,7 +213,7 @@ class HnswIndexNode : public IndexNode {
             UpdateNext();
         }
 
-        std::pair<int64_t, float>
+        std::pair<int64_t, DistType>
         Next() override {
             auto ret = std::make_pair(next_id_, next_dist_);
             UpdateNext();
@@ -232,11 +238,11 @@ class HnswIndexNode : public IndexNode {
                 has_next_ = false;
             }
         }
-        const hnswlib::HierarchicalNSW<float>* index_;
+        const hnswlib::HierarchicalNSW<DistType>* index_;
         const bool transform_;
         std::unique_ptr<hnswlib::IteratorWorkspace> workspace_;
         bool has_next_;
-        float next_dist_;
+        DistType next_dist_;
         int64_t next_id_;
     };
 
@@ -286,10 +292,10 @@ class HnswIndexNode : public IndexNode {
         auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
         bool is_ip =
             (index_->metric_type_ == hnswlib::Metric::INNER_PRODUCT || index_->metric_type_ == hnswlib::Metric::COSINE);
-        float range_filter = hnsw_cfg.range_filter.value();
+        DistType range_filter = hnsw_cfg.range_filter.value();
 
-        float radius_for_calc = (is_ip ? -hnsw_cfg.radius.value() : hnsw_cfg.radius.value());
-        float radius_for_filter = hnsw_cfg.radius.value();
+        DistType radius_for_calc = (is_ip ? -hnsw_cfg.radius.value() : hnsw_cfg.radius.value());
+        DistType radius_for_filter = hnsw_cfg.radius.value();
 
         feder::hnsw::FederResultUniq feder_result;
         if (hnsw_cfg.trace_visit.value()) {
@@ -302,11 +308,11 @@ class HnswIndexNode : public IndexNode {
         hnswlib::SearchParam param{(size_t)hnsw_cfg.ef.value()};
 
         int64_t* ids = nullptr;
-        float* dis = nullptr;
+        DistType* dis = nullptr;
         size_t* lims = nullptr;
 
         std::vector<std::vector<int64_t>> result_id_array(nq);
-        std::vector<std::vector<float>> result_dist_array(nq);
+        std::vector<std::vector<DistType>> result_dist_array(nq);
         std::vector<size_t> result_size(nq);
         std::vector<size_t> result_lims(nq + 1);
 
@@ -444,8 +450,8 @@ class HnswIndexNode : public IndexNode {
 
             MemoryIOReader reader(binary->data.get(), binary->size);
 
-            hnswlib::SpaceInterface<float>* space = nullptr;
-            index_ = new (std::nothrow) hnswlib::HierarchicalNSW<float>(space);
+            hnswlib::SpaceInterface<DistType>* space = nullptr;
+            index_ = new (std::nothrow) hnswlib::HierarchicalNSW<DistType>(space);
             index_->loadIndex(reader);
             LOG_KNOWHERE_INFO_ << "Loaded HNSW index. #points num:" << index_->max_elements_ << " #M:" << index_->M_
                                << " #max level:" << index_->maxlevel_
@@ -464,8 +470,8 @@ class HnswIndexNode : public IndexNode {
             delete index_;
         }
         try {
-            hnswlib::SpaceInterface<float>* space = nullptr;
-            index_ = new (std::nothrow) hnswlib::HierarchicalNSW<float>(space);
+            hnswlib::SpaceInterface<DistType>* space = nullptr;
+            index_ = new (std::nothrow) hnswlib::HierarchicalNSW<DistType>(space);
             index_->loadIndex(filename, config);
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
@@ -552,12 +558,12 @@ class HnswIndexNode : public IndexNode {
     }
 
  private:
-    hnswlib::HierarchicalNSW<float>* index_;
+    hnswlib::HierarchicalNSW<DistType>* index_;
     std::shared_ptr<ThreadPool> search_pool_;
 };
 
-KNOWHERE_REGISTER_GLOBAL(HNSW, [](const int32_t& version, const Object& object) {
-    return Index<HnswIndexNode>::Create(version, object);
-});
-
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW, HnswIndexNode, fp32);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW, HnswIndexNode, bin1);
+KNOWHERE_MOCK_REGISTER_GLOBAL(HNSW, HnswIndexNode, fp16);
+KNOWHERE_MOCK_REGISTER_GLOBAL(HNSW, HnswIndexNode, bf16);
 }  // namespace knowhere
