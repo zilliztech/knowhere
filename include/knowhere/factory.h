@@ -26,7 +26,7 @@ class IndexFactory {
     Create(const std::string& name, const int32_t& version, const Object& object = nullptr);
     template <typename DataType>
     const IndexFactory&
-    Register(const std::string& name, std::function<Index<IndexNode>(const int32_t& version, const Object&)> func);
+    Register(const std::string& name, std::function<Index<IndexNode>(const int32_t&, const Object&)> func);
     static IndexFactory&
     Instance();
 
@@ -53,12 +53,11 @@ class IndexFactory {
 #define KNOWHERE_CONCAT(x, y) index_factory_ref_##x##y
 #define KNOWHERE_REGISTER_GLOBAL(name, func, data_type) \
     const IndexFactory& KNOWHERE_CONCAT(name, data_type) = IndexFactory::Instance().Register<data_type>(#name, func)
-#define KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, data_type, ...)                  \
-    KNOWHERE_REGISTER_GLOBAL(                                                              \
-        name,                                                                              \
-        [](const int32_t& version, const Object& object) {                                 \
-            return (Index<index_node<data_type, ##__VA_ARGS__>>::Create(version, object)); \
-        },                                                                                 \
+#define KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, data_type, ...)                             \
+    KNOWHERE_REGISTER_GLOBAL(                                                                         \
+        name,                                                                                         \
+        (static_cast<Index<index_node<data_type, ##__VA_ARGS__>> (*)(const int32_t&, const Object&)>( \
+            &Index<index_node<data_type, ##__VA_ARGS__>>::Create)),                                   \
         data_type)
 #define KNOWHERE_MOCK_REGISTER_GLOBAL(name, index_node, data_type, ...)                                    \
     KNOWHERE_REGISTER_GLOBAL(                                                                              \
@@ -68,7 +67,7 @@ class IndexFactory {
                 std::make_unique<index_node<MockData<data_type>::type, ##__VA_ARGS__>>(version, object))); \
         },                                                                                                 \
         data_type)
-#define KNOWHERE_WITH_THREAD_POOL_REGISTER_GLOBAL(name, index_node, data_type, thread_size)              \
+#define KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(name, index_node, data_type, thread_size)              \
     KNOWHERE_REGISTER_GLOBAL(                                                                            \
         name,                                                                                            \
         [](const int32_t& version, const Object& object) {                                               \

@@ -23,6 +23,6 @@
 #include "knowhere/index_node_thread_pool_wrapper.h"
 
 namespace knowhere {
-KNOWHERE_WITH_THREAD_POOL_REGISTER_GLOBAL(GPU_RAFT_BRUTE_FORCE, GpuRaftBruteForceIndexNode, fp32, cuda_concurrent_size);
-KNOWHERE_WITH_THREAD_POOL_REGISTER_GLOBAL(GPU_BRUTE_FORCE, GpuRaftBruteForceIndexNode, fp32, cuda_concurrent_size);
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_RAFT_BRUTE_FORCE, GpuRaftBruteForceIndexNode, fp32, cuda_concurrent_size);
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_BRUTE_FORCE, GpuRaftBruteForceIndexNode, fp32, cuda_concurrent_size);
 }  // namespace knowhere

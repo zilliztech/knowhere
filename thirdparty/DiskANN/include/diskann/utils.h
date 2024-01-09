@@ -836,10 +836,6 @@ namespace diskann {
   // NOTE: Implementation in utils.cpp.
   void block_convert(std::ofstream& writr, std::ifstream& readr,
                      float* read_buf, _u64 npts, _u64 ndims);
-  
-  template<typename IN, typename OUT>
-  void convert_types_in_file(const std::string& inFileName,
-                                             const std::string& outFileName);
 
   void normalize_data_file(const std::string& inFileName,
                                              const std::string& outFileName);
