@@ -14,18 +14,22 @@
 #include "knowhere/bitsetview.h"
 #include "knowhere/dataset.h"
 #include "knowhere/factory.h"
+#include "knowhere/operands.h"
 
 namespace knowhere {
 
 class BruteForce {
  public:
+    template <typename DataType>
     static expected<DataSetPtr>
     Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config, const BitsetView& bitset);
 
+    template <typename DataType>
     static Status
     SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids, float* dis,
                   const Json& config, const BitsetView& bitset);
 
+    template <typename DataType>
     static expected<DataSetPtr>
     RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                 const BitsetView& bitset);

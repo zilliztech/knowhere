@@ -13,20 +13,42 @@
 
 namespace knowhere {
 
+template <typename DataType>
 Index<IndexNode>
 IndexFactory::Create(const std::string& name, const int32_t& version, const Object& object) {
+    static_assert(KnowhereDataTypeCheck<DataType>::value == true);
     auto& func_mapping_ = MapInstance();
-    assert(func_mapping_.find(name) != func_mapping_.end());
-    LOG_KNOWHERE_INFO_ << "create knowhere index " << name << " with version " << version;
-    return func_mapping_[name](version, object);
+    auto key = GetMapKey<DataType>(name);
+    assert(func_mapping_.find(key) != func_mapping_.end());
+    auto fun_map_v = (FunMapValue<Index<IndexNode>>*)(func_mapping_[key].get());
+    return fun_map_v->fun_value(version, object);
 }
 
+template <typename DataType>
 const IndexFactory&
-IndexFactory::Register(const std::string& name,
-                       std::function<Index<IndexNode>(const int32_t& version, const Object&)> func) {
+IndexFactory::Register(const std::string& name, std::function<Index<IndexNode>(const int32_t&, const Object&)> func) {
+    static_assert(KnowhereDataTypeCheck<DataType>::value == true);
     auto& func_mapping_ = MapInstance();
-    func_mapping_[name] = func;
+    auto key = GetMapKey<DataType>(name);
+    assert(func_mapping_.find(key) == func_mapping_.end());
+    func_mapping_[key] = std::make_unique<FunMapValue<Index<IndexNode>>>(func);
     return *this;
+}
+
+template <typename DataType>
+std::string
+IndexFactory::GetMapKey(const std::string& name) {
+    if (std::is_same_v<DataType, knowhere::fp32>) {
+        return name + std::string("_fp32");
+    } else if (std::is_same_v<DataType, knowhere::fp16>) {
+        return name + std::string("_fp16");
+    } else if (std::is_same_v<DataType, knowhere::bf16>) {
+        return name + std::string("_bf16");
+    } else if (std::is_same_v<DataType, knowhere::bin1>) {
+        return name + std::string("_bin1");
+    } else {
+        assert(false && "invalid data type");
+    }
 }
 
 IndexFactory&
@@ -42,4 +64,33 @@ IndexFactory::MapInstance() {
     static FuncMap func_map;
     return func_map;
 }
+
+template class Index<IndexNode>
+IndexFactory::Create<knowhere::fp32>(const std::string&, const int32_t&, const Object&);
+template class Index<IndexNode>
+IndexFactory::Create<knowhere::bin1>(const std::string&, const int32_t&, const Object&);
+template class Index<IndexNode>
+IndexFactory::Create<knowhere::fp16>(const std::string&, const int32_t&, const Object&);
+template class Index<IndexNode>
+IndexFactory::Create<knowhere::bf16>(const std::string&, const int32_t&, const Object&);
+template const IndexFactory&
+IndexFactory::Register<knowhere::fp32>(const std::string&,
+                                       std::function<Index<IndexNode>(const int32_t&, const Object&)>);
+template const IndexFactory&
+IndexFactory::Register<knowhere::bin1>(const std::string&,
+                                       std::function<Index<IndexNode>(const int32_t&, const Object&)>);
+template const IndexFactory&
+IndexFactory::Register<knowhere::fp16>(const std::string&,
+                                       std::function<Index<IndexNode>(const int32_t&, const Object&)>);
+template const IndexFactory&
+IndexFactory::Register<knowhere::bf16>(const std::string&,
+                                       std::function<Index<IndexNode>(const int32_t&, const Object&)>);
+template std::string
+IndexFactory::GetMapKey<knowhere::fp32>(const std::string&);
+template std::string
+IndexFactory::GetMapKey<knowhere::fp16>(const std::string&);
+template std::string
+IndexFactory::GetMapKey<knowhere::bin1>(const std::string&);
+template std::string
+IndexFactory::GetMapKey<knowhere::bf16>(const std::string&);
 }  // namespace knowhere

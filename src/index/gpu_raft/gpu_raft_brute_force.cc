@@ -23,16 +23,6 @@
 #include "knowhere/index_node_thread_pool_wrapper.h"
 
 namespace knowhere {
-template struct GpuRaftIndexNode<raft_proto::raft_index_kind::brute_force>;
-
-KNOWHERE_REGISTER_GLOBAL(GPU_RAFT_BRUTE_FORCE, [](const int32_t& version, const Object& object) {
-    return Index<IndexNodeThreadPoolWrapper>::Create(std::make_unique<GpuRaftBruteForceIndexNode>(version, object),
-                                                     cuda_concurrent_size);
-});
-
-KNOWHERE_REGISTER_GLOBAL(GPU_BRUTE_FORCE, [](const int32_t& version, const Object& object) {
-    return Index<IndexNodeThreadPoolWrapper>::Create(std::make_unique<GpuRaftBruteForceIndexNode>(version, object),
-                                                     cuda_concurrent_size);
-});
-
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_RAFT_BRUTE_FORCE, GpuRaftBruteForceIndexNode, fp32, cuda_concurrent_size);
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_BRUTE_FORCE, GpuRaftBruteForceIndexNode, fp32, cuda_concurrent_size);
 }  // namespace knowhere

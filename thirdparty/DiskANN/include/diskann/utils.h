@@ -36,6 +36,7 @@ typedef int FileHandle;
 #include "ann_exception.h"
 #include "common_includes.h"
 #include "knowhere/comp/thread_pool.h"
+#include "knowhere/operands.h"
 
 // taken from
 // https://github.com/Microsoft/BLAS-on-flash/blob/master/include/utils.h
@@ -565,7 +566,6 @@ namespace diskann {
   template<typename InType, typename OutType>
   void convert_types(const InType* srcmat, OutType* destmat, size_t npts,
                      size_t dim) {
-#pragma omp parallel for schedule(static, 65536)
     for (int64_t i = 0; i < (_s64) npts; i++) {
       for (uint64_t j = 0; j < dim; j++) {
         destmat[i * dim + j] = (OutType) srcmat[i * dim + j];
