@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, dist
 from setuptools.extension import Extension
 from setuptools.command.build_py import build_py
 import os
@@ -16,7 +16,6 @@ class CustomBuildPy(build_py):
     """Run build_ext before build_py to compile swig code."""
 
     def run(self):
-        __builtins__.__NUMPY_SETUP__ = False
         so_src = os.path.join("..", "build", "Release", "libknowhere.so")
         dylib_src = os.path.join("..", "build", "Release", "libknowhere.dylib")
         if os.path.exists(so_src):
@@ -96,8 +95,8 @@ setup(
     author_email="milvus-team@zilliz.com",
     license='Apache License 2.0',
     keywords="search nearest neighbors",
+    install_requires=["numpy", "bfloat16==1.2.0"],
     setup_requires=["numpy", "setuptools_scm"],
-    install_requires=["bfloat16"],
     #use_scm_version={'root': '..', 'local_scheme': 'no-local-version', 'version_scheme': 'release-branch-semver'},
     long_description=get_readme(),
     long_description_content_type="text/markdown",
