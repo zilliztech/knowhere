@@ -95,6 +95,7 @@ setup(
     author_email="milvus-team@zilliz.com",
     license='Apache License 2.0',
     keywords="search nearest neighbors",
+    install_requires=["numpy", "bfloat16"],
     setup_requires=["numpy", "setuptools_scm"],
     #use_scm_version={'root': '..', 'local_scheme': 'no-local-version', 'version_scheme': 'release-branch-semver'},
     long_description=get_readme(),

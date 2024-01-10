@@ -86,7 +86,6 @@ install dependency:
 
 ```
 sudo apt install swig python3-dev
-pip3 install bfloat16
 ```
 
 after build knowhere:
