@@ -188,21 +188,35 @@ struct raft_index {
         return vector_index_.dim();
     }
 
-    template <typename T, typename IdxT, typename InputIdxT>
-    auto static build(raft::resources const& res, index_params_type const& index_params,
-                      raft::device_matrix_view<T const, InputIdxT> data) {
-        if constexpr (vector_index_kind == raft_index_kind::brute_force) {
-            return raft_index<underlying_index_type, raft_index_args...>{
-                raft::neighbors::brute_force::build<T>(res, index_params, data)};
-        } else if constexpr (vector_index_kind == raft_index_kind::ivf_flat) {
-            return raft_index<underlying_index_type, raft_index_args...>{
-                raft::neighbors::ivf_flat::build<T, IdxT>(res, index_params, data)};
-        } else if constexpr (vector_index_kind == raft_index_kind::ivf_pq) {
-            return raft_index<underlying_index_type, raft_index_args...>{
-                raft::neighbors::ivf_pq::build<T, IdxT>(res, index_params, data)};
-        } else if constexpr (vector_index_kind == raft_index_kind::cagra) {
-            return raft_index<underlying_index_type, raft_index_args...>{
-                raft::neighbors::cagra::build<T>(res, index_params, data)};
+    template <typename T, typename IdxT, typename InputIdxT, typename DataMdspanT>
+    auto static build(raft::resources const& res, index_params_type const& index_params, DataMdspanT data) {
+        if constexpr (std::is_same_v<DataMdspanT, raft::host_matrix_view<T const, InputIdxT>>) {
+            if constexpr (vector_index_kind == raft_index_kind::brute_force) {
+                return raft_index<underlying_index_type, raft_index_args...>{
+                    raft::neighbors::brute_force::build<T>(res, index_params, data)};
+            } else if constexpr (vector_index_kind == raft_index_kind::cagra) {
+                return raft_index<underlying_index_type, raft_index_args...>{
+                    raft::neighbors::cagra::build<T>(res, index_params, data)};
+            } else if constexpr (vector_index_kind == raft_index_kind::ivf_pq) {
+                return raft_index<underlying_index_type, raft_index_args...>{raft::neighbors::ivf_pq::build<T, IdxT>(
+                    res, index_params, data.handle(), data.extent(0), data.extent(1))};
+            } else {
+                RAFT_FAIL("IVF flat does not support construction from host data");
+            }
+        } else {
+            if constexpr (vector_index_kind == raft_index_kind::brute_force) {
+                return raft_index<underlying_index_type, raft_index_args...>{
+                    raft::neighbors::brute_force::build<T>(res, index_params, data)};
+            } else if constexpr (vector_index_kind == raft_index_kind::ivf_flat) {
+                return raft_index<underlying_index_type, raft_index_args...>{
+                    raft::neighbors::ivf_flat::build<T, IdxT>(res, index_params, data)};
+            } else if constexpr (vector_index_kind == raft_index_kind::ivf_pq) {
+                return raft_index<underlying_index_type, raft_index_args...>{
+                    raft::neighbors::ivf_pq::build<T, IdxT>(res, index_params, data)};
+            } else if constexpr (vector_index_kind == raft_index_kind::cagra) {
+                return raft_index<underlying_index_type, raft_index_args...>{
+                    raft::neighbors::cagra::build<T>(res, index_params, data)};
+            }
         }
     }
 
