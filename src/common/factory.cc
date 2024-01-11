@@ -50,24 +50,25 @@ IndexFactory::MapInstance() {
     return func_map;
 }
 
-template class Index<IndexNode>
-IndexFactory::Create<knowhere::fp32>(const std::string&, const int32_t&, const Object&);
-template class Index<IndexNode>
-IndexFactory::Create<knowhere::bin1>(const std::string&, const int32_t&, const Object&);
-template class Index<IndexNode>
-IndexFactory::Create<knowhere::fp16>(const std::string&, const int32_t&, const Object&);
-template class Index<IndexNode>
-IndexFactory::Create<knowhere::bf16>(const std::string&, const int32_t&, const Object&);
-template const IndexFactory&
-IndexFactory::Register<knowhere::fp32>(const std::string&,
-                                       std::function<Index<IndexNode>(const int32_t&, const Object&)>);
-template const IndexFactory&
-IndexFactory::Register<knowhere::bin1>(const std::string&,
-                                       std::function<Index<IndexNode>(const int32_t&, const Object&)>);
-template const IndexFactory&
-IndexFactory::Register<knowhere::fp16>(const std::string&,
-                                       std::function<Index<IndexNode>(const int32_t&, const Object&)>);
-template const IndexFactory&
-IndexFactory::Register<knowhere::bf16>(const std::string&,
-                                       std::function<Index<IndexNode>(const int32_t&, const Object&)>);
 }  // namespace knowhere
+   //
+template knowhere::Index<knowhere::IndexNode>
+knowhere::IndexFactory::Create<knowhere::fp32>(const std::string&, const int32_t&, const Object&);
+template knowhere::Index<knowhere::IndexNode>
+knowhere::IndexFactory::Create<knowhere::bin1>(const std::string&, const int32_t&, const Object&);
+template knowhere::Index<knowhere::IndexNode>
+knowhere::IndexFactory::Create<knowhere::fp16>(const std::string&, const int32_t&, const Object&);
+template knowhere::Index<knowhere::IndexNode>
+knowhere::IndexFactory::Create<knowhere::bf16>(const std::string&, const int32_t&, const Object&);
+template const knowhere::IndexFactory&
+knowhere::IndexFactory::Register<knowhere::fp32>(
+    const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>);
+template const knowhere::IndexFactory&
+knowhere::IndexFactory::Register<knowhere::bin1>(
+    const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>);
+template const knowhere::IndexFactory&
+knowhere::IndexFactory::Register<knowhere::fp16>(
+    const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>);
+template const knowhere::IndexFactory&
+knowhere::IndexFactory::Register<knowhere::bf16>(
+    const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>);

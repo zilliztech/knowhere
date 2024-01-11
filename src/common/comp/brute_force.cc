@@ -362,42 +362,53 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter, distances, ids, lims);
     return GenResultDataSet(nq, ids, distances, lims);
 }
-template expected<DataSetPtr>
-BruteForce::Search<knowhere::fp32>(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                                   const BitsetView& bitset);
-template expected<DataSetPtr>
-BruteForce::Search<knowhere::fp16>(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                                   const BitsetView& bitset);
-template expected<DataSetPtr>
-BruteForce::Search<knowhere::bf16>(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                                   const BitsetView& bitset);
-template expected<DataSetPtr>
-BruteForce::Search<knowhere::bin1>(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                                   const BitsetView& bitset);
-
-template Status
-BruteForce::SearchWithBuf<knowhere::fp32>(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids,
-                                          float* dis, const Json& config, const BitsetView& bitset);
-template Status
-BruteForce::SearchWithBuf<knowhere::fp16>(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids,
-                                          float* dis, const Json& config, const BitsetView& bitset);
-template Status
-BruteForce::SearchWithBuf<knowhere::bf16>(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids,
-                                          float* dis, const Json& config, const BitsetView& bitset);
-template Status
-BruteForce::SearchWithBuf<knowhere::bin1>(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids,
-                                          float* dis, const Json& config, const BitsetView& bitset);
-
-template expected<DataSetPtr>
-BruteForce::RangeSearch<knowhere::fp32>(const DataSetPtr base_dataset, const DataSetPtr query_dataset,
-                                        const Json& config, const BitsetView& bitset);
-template expected<DataSetPtr>
-BruteForce::RangeSearch<knowhere::fp16>(const DataSetPtr base_dataset, const DataSetPtr query_dataset,
-                                        const Json& config, const BitsetView& bitset);
-template expected<DataSetPtr>
-BruteForce::RangeSearch<knowhere::bf16>(const DataSetPtr base_dataset, const DataSetPtr query_dataset,
-                                        const Json& config, const BitsetView& bitset);
-template expected<DataSetPtr>
-BruteForce::RangeSearch<knowhere::bin1>(const DataSetPtr base_dataset, const DataSetPtr query_dataset,
-                                        const Json& config, const BitsetView& bitset);
 }  // namespace knowhere
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::Search<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
+                                             const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
+                                             const knowhere::BitsetView& bitset);
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::Search<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
+                                             const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
+                                             const knowhere::BitsetView& bitset);
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::Search<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
+                                             const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
+                                             const knowhere::BitsetView& bitset);
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::Search<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
+                                             const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
+                                             const knowhere::BitsetView& bitset);
+template knowhere::Status
+knowhere::BruteForce::SearchWithBuf<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
+                                                    const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
+                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::Status
+knowhere::BruteForce::SearchWithBuf<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
+                                                    const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
+                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::Status
+knowhere::BruteForce::SearchWithBuf<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
+                                                    const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
+                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::Status
+knowhere::BruteForce::SearchWithBuf<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
+                                                    const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
+                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset);
+
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::RangeSearch<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
+                                                  const knowhere::DataSetPtr query_dataset,
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::RangeSearch<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
+                                                  const knowhere::DataSetPtr query_dataset,
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::RangeSearch<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
+                                                  const knowhere::DataSetPtr query_dataset,
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::RangeSearch<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
+                                                  const knowhere::DataSetPtr query_dataset,
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);

@@ -123,7 +123,7 @@ class Create_FBIN : public Benchmark_hdf5, public ::testing::Test {
             json[knowhere::meta::METRIC_TYPE] = metric_type;
             json[knowhere::meta::TOPK] = topk;
 
-            auto result = knowhere::BruteForce::Search(xb_ds, xq_ds, json, nullptr);
+            auto result = knowhere::BruteForce::Search<knowhere::fp32>(xb_ds, xq_ds, json, nullptr);
             assert(result.has_value());
 
             // convert golden_ids to int32
