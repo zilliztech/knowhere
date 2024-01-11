@@ -79,7 +79,7 @@ class Create_HDF5 : public Benchmark_hdf5, public ::testing::Test {
             xq_ds = GenDataSet(nq, dim);
         }
 
-        auto result = knowhere::BruteForce::Search(xb_ds, xq_ds, json, nullptr);
+        auto result = knowhere::BruteForce::Search<knowhere::fp32>(xb_ds, xq_ds, json, nullptr);
         assert(result.has_value());
 
         // convert golden_ids to int32
@@ -115,7 +115,7 @@ class Create_HDF5 : public Benchmark_hdf5, public ::testing::Test {
             xq_ds = GenDataSet(nq, dim);
         }
 
-        auto result = knowhere::BruteForce::RangeSearch(xb_ds, xq_ds, json, nullptr);
+        auto result = knowhere::BruteForce::RangeSearch<knowhere::fp32>(xb_ds, xq_ds, json, nullptr);
         assert(result.has_value());
 
         // convert golden_lims to int32
