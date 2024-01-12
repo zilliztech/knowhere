@@ -68,13 +68,14 @@ Index<T>::Add(const DataSet& dataset, const Json& json) {
 
 template <typename T>
 inline expected<DataSetPtr>
-Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bitset) const {
+Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bitset_) const {
     auto cfg = this->node->CreateConfig();
     std::string msg;
     const Status load_status = LoadConfig(cfg.get(), json, knowhere::SEARCH, "Search", &msg);
     if (load_status != Status::success) {
         return expected<DataSetPtr>::Err(load_status, msg);
     }
+    const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
 
 #ifdef NOT_COMPILE_FOR_SWIG
     TimeRecorder rc("Search");
@@ -91,13 +92,14 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
 
 template <typename T>
 inline expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
-Index<T>::AnnIterator(const DataSet& dataset, const Json& json, const BitsetView& bitset) const {
+Index<T>::AnnIterator(const DataSet& dataset, const Json& json, const BitsetView& bitset_) const {
     auto cfg = this->node->CreateConfig();
     std::string msg;
     Status status = LoadConfig(cfg.get(), json, knowhere::ITERATOR, "Iterator", &msg);
     if (status != Status::success) {
         return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(status, msg);
     }
+    const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
 
 #ifdef NOT_COMPILE_FOR_SWIG
     // note that this time includes only the initial search phase of iterator.
@@ -114,13 +116,14 @@ Index<T>::AnnIterator(const DataSet& dataset, const Json& json, const BitsetView
 
 template <typename T>
 inline expected<DataSetPtr>
-Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView& bitset) const {
+Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView& bitset_) const {
     auto cfg = this->node->CreateConfig();
     std::string msg;
     auto status = LoadConfig(cfg.get(), json, knowhere::RANGE_SEARCH, "RangeSearch", &msg);
     if (status != Status::success) {
         return expected<DataSetPtr>::Err(status, std::move(msg));
     }
+    const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
 
 #ifdef NOT_COMPILE_FOR_SWIG
     TimeRecorder rc("Range Search");
