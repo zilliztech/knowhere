@@ -150,6 +150,12 @@ Index<T>::HasRawData(const std::string& metric_type) const {
 }
 
 template <typename T>
+inline bool
+Index<T>::IsAdditionalScalarSupported() const {
+    return this->node->IsAdditionalScalarSupported();
+}
+
+template <typename T>
 inline expected<DataSetPtr>
 Index<T>::GetIndexMeta(const Json& json) const {
     auto cfg = this->node->CreateConfig();
