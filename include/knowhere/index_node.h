@@ -76,6 +76,11 @@ class IndexNode : public Object {
     virtual bool
     HasRawData(const std::string& metric_type) const = 0;
 
+    virtual bool
+    IsAdditionalScalarSupported() const {
+        return false;
+    }
+
     virtual expected<DataSetPtr>
     GetIndexMeta(const Config& cfg) const = 0;
 
