@@ -81,7 +81,7 @@ class HnswIndexNode : public IndexNode {
             return Status::empty_index;
         }
 
-        knowhere::TimeRecorder build_time("Building HNSW cost");
+        knowhere::TimeRecorder build_time("Building HNSW cost", 2);
         auto rows = dataset.GetRows();
         if (rows <= 0) {
             LOG_KNOWHERE_ERROR_ << "Can not add empty data to HNSW index.";
@@ -109,32 +109,60 @@ class HnswIndexNode : public IndexNode {
             std::mt19937 urng(rng());
             std::shuffle(shuffle_batch_ids.begin(), shuffle_batch_ids.end(), urng);
         }
-        index_->addPoint(tensor, 0);
+        try {
+            index_->addPoint(tensor, 0);
 
-        futures.reserve(batch_size);
-        for (int64_t round_id = 0; round_id < round_num; round_id++) {
-            int64_t start_id = (shuffle_build ? shuffle_batch_ids[round_id] : round_id) * batch_size;
-            int64_t end_id =
-                std::min(rows - 1, ((shuffle_build ? shuffle_batch_ids[round_id] : round_id) + 1) * batch_size);
-            for (int64_t i = start_id; i < end_id; ++i) {
-                futures.emplace_back(build_pool->push([&, idx = i + 1]() {
-                    index_->addPoint(((const char*)tensor + index_->data_size_ * idx), idx);
-                    uint64_t added = counter.fetch_add(1);
-                    if (added % one_tenth_row == 0) {
-                        LOG_KNOWHERE_INFO_ << "HNSW build progress: " << (added / one_tenth_row) << "0%";
-                    }
-                }));
+            futures.reserve(batch_size);
+            for (int64_t round_id = 0; round_id < round_num; round_id++) {
+                int64_t start_id = (shuffle_build ? shuffle_batch_ids[round_id] : round_id) * batch_size;
+                int64_t end_id =
+                    std::min(rows - 1, ((shuffle_build ? shuffle_batch_ids[round_id] : round_id) + 1) * batch_size);
+                for (int64_t i = start_id; i < end_id; ++i) {
+                    futures.emplace_back(build_pool->push([&, idx = i + 1]() {
+                        index_->addPoint(((const char*)tensor + index_->data_size_ * idx), idx);
+                        uint64_t added = counter.fetch_add(1);
+                        if (added % one_tenth_row == 0) {
+                            LOG_KNOWHERE_INFO_ << "HNSW build progress: " << (added / one_tenth_row) << "0%";
+                        }
+                    }));
+                }
+                for (auto& future : futures) {
+                    future.wait();
+                }
+                // check for exceptions
+                for (auto& future : futures) {
+                    future.result().value();
+                }
+                futures.clear();
             }
-            for (auto& future : futures) {
-                future.wait();
+
+            build_time.RecordSection("graph build");
+            std::vector<unsigned> unreached = index_->findUnreachableVectors();
+            int unreached_num = unreached.size();
+            LOG_KNOWHERE_INFO_ << "there are " << unreached_num << " points can not be reached";
+            if (unreached_num > 0) {
+                futures.reserve(unreached_num);
+                for (int i = 0; i < unreached_num; ++i) {
+                    futures.emplace_back(
+                        build_pool->push([&, idx = i]() { index_->repairGraphConnectivity(unreached[idx]); }));
+                }
+                for (auto& future : futures) {
+                    future.wait();
+                }
+                // check for exceptions
+                for (auto& future : futures) {
+                    future.result().value();
+                }
             }
-            futures.clear();
+            build_time.RecordSection("graph repair");
+            LOG_KNOWHERE_INFO_ << "HNSW built with #points num:" << index_->max_elements_ << " #M:" << index_->M_
+                               << " #max level:" << index_->maxlevel_
+                               << " #ef_construction:" << index_->ef_construction_
+                               << " #dim:" << *(size_t*)(index_->space_->get_dist_func_param());
+        } catch (std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
+            return Status::hnsw_inner_error;
         }
-
-        build_time.RecordSection("");
-        LOG_KNOWHERE_INFO_ << "HNSW built with #points num:" << index_->max_elements_ << " #M:" << index_->M_
-                           << " #max level:" << index_->maxlevel_ << " #ef_construction:" << index_->ef_construction_
-                           << " #dim:" << *(size_t*)(index_->space_->get_dist_func_param());
         return Status::success;
     }
 
