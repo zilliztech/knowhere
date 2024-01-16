@@ -70,6 +70,9 @@ constexpr const char* NUM_BUILD_THREAD = "num_build_thread";
 constexpr const char* TRACE_VISIT = "trace_visit";
 constexpr const char* JSON_INFO = "json_info";
 constexpr const char* JSON_ID_SET = "json_id_set";
+constexpr const char* TRACE_ID = "trace_id";
+constexpr const char* SPAN_ID = "span_id";
+constexpr const char* TRACE_FLAGS = "trace_flags";
 };  // namespace meta
 
 namespace indexparam {

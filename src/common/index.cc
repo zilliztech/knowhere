@@ -18,6 +18,7 @@
 
 #ifdef NOT_COMPILE_FOR_SWIG
 #include "knowhere/prometheus_client.h"
+#include "knowhere/tracer.h"
 #endif
 
 namespace knowhere {
@@ -41,9 +42,9 @@ Index<T>::Build(const DataSet& dataset, const Json& json) {
 #ifdef NOT_COMPILE_FOR_SWIG
     TimeRecorder rc("Build index", 2);
     auto res = this->node->Build(dataset, *cfg);
-    auto span = rc.ElapseFromBegin("done");
-    span *= 0.000001;  // convert to s
-    knowhere_build_latency.Observe(span);
+    auto time = rc.ElapseFromBegin("done");
+    time *= 0.000001;  // convert to s
+    knowhere_build_latency.Observe(time);
 #else
     auto res = this->node->Build(dataset, *cfg);
 #endif
@@ -78,12 +79,26 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
     const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
 
 #ifdef NOT_COMPILE_FOR_SWIG
+    const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
+    std::shared_ptr<tracer::trace::Span> span = nullptr;
+    if (b_cfg.trace_id.has_value()) {
+        auto ctx = tracer::TraceContext{(uint8_t*)b_cfg.trace_id.value().c_str(),
+                                        (uint8_t*)b_cfg.span_id.value().c_str(), (uint8_t)b_cfg.trace_flags.value()};
+        span = tracer::StartSpan("knowhere search", &ctx);
+        span->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
+        span->SetAttribute(meta::TOPK, b_cfg.k.value());
+    }
+
     TimeRecorder rc("Search");
     auto res = this->node->Search(dataset, *cfg, bitset);
-    auto span = rc.ElapseFromBegin("done");
-    span *= 0.001;  // convert to ms
-    knowhere_search_latency.Observe(span);
+    auto time = rc.ElapseFromBegin("done");
+    time *= 0.001;  // convert to ms
+    knowhere_search_latency.Observe(time);
     knowhere_search_topk.Observe(cfg->k.value());
+
+    if (b_cfg.trace_id.has_value()) {
+        span->End();
+    }
 #else
     auto res = this->node->Search(dataset, *cfg, bitset);
 #endif
@@ -105,9 +120,9 @@ Index<T>::AnnIterator(const DataSet& dataset, const Json& json, const BitsetView
     // note that this time includes only the initial search phase of iterator.
     TimeRecorder rc("AnnIterator");
     auto res = this->node->AnnIterator(dataset, *cfg, bitset);
-    auto span = rc.ElapseFromBegin("done");
-    span *= 0.001;  // convert to ms
-    knowhere_search_latency.Observe(span);
+    auto time = rc.ElapseFromBegin("done");
+    time *= 0.001;  // convert to ms
+    knowhere_search_latency.Observe(time);
 #else
     auto res = this->node->AnnIterator(dataset, *cfg, bitset);
 #endif
@@ -126,11 +141,28 @@ Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView
     const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
 
 #ifdef NOT_COMPILE_FOR_SWIG
+    const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
+    std::shared_ptr<tracer::trace::Span> span = nullptr;
+    if (b_cfg.trace_id.has_value()) {
+        auto ctx = tracer::TraceContext{(uint8_t*)b_cfg.trace_id.value().c_str(),
+                                        (uint8_t*)b_cfg.span_id.value().c_str(), (uint8_t)b_cfg.trace_flags.value()};
+        span = tracer::StartSpan("knowhere range search", &ctx);
+        span->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
+        span->SetAttribute(meta::RADIUS, b_cfg.radius.value());
+        if (b_cfg.range_filter.value() != defaultRangeFilter) {
+            span->SetAttribute(meta::RANGE_FILTER, b_cfg.range_filter.value());
+        }
+    }
+
     TimeRecorder rc("Range Search");
     auto res = this->node->RangeSearch(dataset, *cfg, bitset);
-    auto span = rc.ElapseFromBegin("done");
-    span *= 0.001;  // convert to ms
-    knowhere_range_search_latency.Observe(span);
+    auto time = rc.ElapseFromBegin("done");
+    time *= 0.001;  // convert to ms
+    knowhere_range_search_latency.Observe(time);
+
+    if (b_cfg.trace_id.has_value()) {
+        span->End();
+    }
 #else
     auto res = this->node->RangeSearch(dataset, *cfg, bitset);
 #endif
@@ -193,9 +225,9 @@ Index<T>::Deserialize(const BinarySet& binset, const Json& json) {
 #ifdef NOT_COMPILE_FOR_SWIG
     TimeRecorder rc("Load index", 2);
     res = this->node->Deserialize(binset, *cfg);
-    auto span = rc.ElapseFromBegin("done");
-    span *= 0.001;  // convert to ms
-    knowhere_load_latency.Observe(span);
+    auto time = rc.ElapseFromBegin("done");
+    time *= 0.001;  // convert to ms
+    knowhere_load_latency.Observe(time);
 #else
     res = this->node->Deserialize(binset, *cfg);
 #endif
@@ -222,9 +254,9 @@ Index<T>::DeserializeFromFile(const std::string& filename, const Json& json) {
 #ifdef NOT_COMPILE_FOR_SWIG
     TimeRecorder rc("Load index from file", 2);
     res = this->node->DeserializeFromFile(filename, *cfg);
-    auto span = rc.ElapseFromBegin("done");
-    span *= 0.001;  // convert to ms
-    knowhere_load_latency.Observe(span);
+    auto time = rc.ElapseFromBegin("done");
+    time *= 0.001;  // convert to ms
+    knowhere_load_latency.Observe(time);
 #else
     res = this->node->DeserializeFromFile(filename, *cfg);
 #endif
