@@ -29,6 +29,7 @@ if (WITH_RAFT)
       list(REMOVE_ITEM supported_archs "86")
     endif()
     if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" AND CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 11.8.0)
+      list(REMOVE_ITEM supported_archs "89")
       list(REMOVE_ITEM supported_archs "90")
     endif()
 
