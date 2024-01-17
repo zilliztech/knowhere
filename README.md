@@ -28,8 +28,9 @@ Here's a list of verified OS types where Knowhere can successfully build and run
 #### Install Dependencies
 
 ```bash
-$ sudo apt install build-essential libopenblas-dev libaio-dev python3-dev python3-pip
+$ sudo apt install build-essential libaio-dev python3-dev python3-pip
 $ pip3 install conan==1.61.0 --user
+$ conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local
 $ export PATH=$PATH:$HOME/.local/bin
 ```
 

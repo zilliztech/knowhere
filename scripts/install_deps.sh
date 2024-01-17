@@ -46,37 +46,6 @@ if [[ "${MACHINE}" == "Linux" ]]; then
         sudo apt-get install -y libaio-dev
         pip3 install conan==1.61.0
         conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local
-        # Pre-installation of openblas can save about 15 minutes of openblas building time.
-        # But the apt-installed openblas version is 0.2.20, while the latest openblas version is 0.3.19.
-        # So we only pre-install openblas in Unittest, and compile openblas-0.3.19 when release.
-        if [[ "${INSTALL_OPENBLAS}" == "true" ]]
-          then
-            sudo apt install -y libopenblas-dev
-          else
-            wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | sudo tee \
-            /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null \
-            && echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ '$ubuntu_alias' main' | sudo tee \
-            /etc/apt/sources.list.d/kitware.list >/dev/null \
-            && sudo apt update && sudo apt install -y cmake \
-            && wget https://github.com/Reference-LAPACK/lapack/archive/refs/tags/v3.10.1.tar.gz \
-            && tar zxvf v3.10.1.tar.gz && cd lapack-3.10.1/  \
-            && cmake -B build -S . -DCMAKE_SKIP_RPATH=ON -DBUILD_SHARED_LIBS=ON \
-            -DBUILD_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local \
-            -DCMAKE_Fortran_COMPILER=gfortran -DLAPACKE_WITH_TMG=ON -DCBLAS=OFF \
-            -DBUILD_DEPRECATED=OFF \
-            && cmake --build build \
-            && sudo cmake --install build
-
-            wget https://github.com/xianyi/OpenBLAS/archive/refs/tags/v0.3.21.tar.gz && \
-            tar zxvf v0.3.21.tar.gz && cd OpenBLAS-0.3.21 && \
-            make NO_STATIC=1 NO_LAPACK=1 NO_LAPACKE=1 NO_AFFINITY=1 USE_OPENMP=1 \
-            TARGET=HASWELL DYNAMIC_ARCH=1 \
-            NUM_THREADS=64 MAJOR_VERSION=3 libs shared && \
-            sudo make PREFIX=/usr/local NUM_THREADS=64 MAJOR_VERSION=3 install && \
-            sudo ln -s /usr/local/lib/libopenblasp-r0.3.21.so /usr/local/lib/libblas.so && \
-            sudo ln -s /usr/local/lib/libopenblasp-r0.3.21.so /usr/local/lib/libblas.so.3 && \
-            sudo ln -s /usr/local/lib/pkgconfig/openblas.pc /usr/local/lib/pkgconfig/blas.pc
-        fi
     elif [[ -x "$(command -v yum)" ]]; then
         # for CentOS 7
         sudo yum install -y epel-release centos-release-scl-rh wget && \
@@ -111,6 +80,5 @@ if [[ "${MACHINE}" == "MinGw"  ]]; then
     git make tar dos2unix zip unzip patch \
     mingw-w64-x86_64-toolchain \
     mingw-w64-x86_64-make \
-    mingw-w64-x86_64-cmake \
-    mingw-w64-x86_64-openblas
+    mingw-w64-x86_64-cmake
 fi

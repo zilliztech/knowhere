@@ -27,7 +27,7 @@ pipeline {
                         version="${env.CHANGE_ID}.${date}.${gitShortCommit}"
                         sh "apt-get update || true"
                         sh "apt-get install -y git python3-pip"
-                        sh "apt-get install -y build-essential libopenblas-dev libcurl4-openssl-dev libaio-dev libdouble-conversion-dev libevent-dev libgflags-dev"
+                        sh "apt-get install -y build-essential libcurl4-openssl-dev libaio-dev libdouble-conversion-dev libevent-dev libgflags-dev"
                         sh "git config --global --add safe.directory '*'"
                         sh "git submodule update --recursive --init"
                         sh "pip3 install conan==1.61.0"
@@ -66,7 +66,7 @@ pipeline {
                       unarchive mapping: ["${knowhere_wheel}": "${knowhere_wheel}"]
                       sh "apt-get update || true"
                       sh "apt-get install -y python3-pip"
-                      sh "apt-get install -y libopenblas-dev libaio-dev libdouble-conversion-dev libevent-dev"
+                      sh "apt-get install -y libaio-dev libdouble-conversion-dev libevent-dev"
                       sh "pip3 install ${knowhere_wheel}"
                       sh "cat requirements.txt | xargs -n 1 pip3 install"
                       sh "pytest -v"
