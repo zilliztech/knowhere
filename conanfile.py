@@ -48,6 +48,8 @@ class KnowhereConan(ConanFile):
         "boost:without_test": True,
         "fmt:header_only": True,
         "with_faiss_tests": False,
+        "openblas:shared": True,
+        "openblas:dynamic_arch": True,
     }
 
     exports_sources = (
@@ -80,6 +82,8 @@ class KnowhereConan(ConanFile):
     def configure(self):
         if self.options.shared:
             self.options.rm_safe("fPIC")
+        if self.settings.arch == "armv8":
+            self.options["openblas"].dynamic_arch = False
 
     def requirements(self):
         self.requires("boost/1.83.0")
@@ -96,6 +100,7 @@ class KnowhereConan(ConanFile):
         self.requires("opentelemetry-cpp/1.8.1.1@milvus/dev")
         if self.settings.os != "Macos":
             self.requires("libunwind/1.7.2")
+            self.requires("openblas/0.3.23@milvus/dev")
         if self.options.with_ut:
             self.requires("catch2/3.3.1")
         if self.options.with_benchmark:
