@@ -45,6 +45,8 @@ constexpr const char* INDEX_RAFT_CAGRA = "GPU_RAFT_CAGRA";
 constexpr const char* INDEX_HNSW = "HNSW";
 constexpr const char* INDEX_DISKANN = "DISKANN";
 
+constexpr const char* INDEX_SPARSE_INVERTED_INDEX = "SPARSE_INVERTED_INDEX";
+constexpr const char* INDEX_SPARSE_WAND = "SPARSE_WAND";
 }  // namespace IndexEnum
 
 namespace meta {
@@ -123,6 +125,10 @@ constexpr const char* HNSW_M = "M";
 constexpr const char* EF = "ef";
 constexpr const char* SEED_EF = "seed_ef";
 constexpr const char* OVERVIEW_LEVELS = "overview_levels";
+
+// Sparse Params
+constexpr const char* DROP_RATIO_BUILD = "drop_ratio_build";
+constexpr const char* DROP_RATIO_SEARCH = "drop_ratio_search";
 }  // namespace indexparam
 
 using MetricType = std::string;

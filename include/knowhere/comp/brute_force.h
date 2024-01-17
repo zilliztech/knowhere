@@ -33,6 +33,15 @@ class BruteForce {
     static expected<DataSetPtr>
     RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                 const BitsetView& bitset);
+
+    // Perform row oriented sparse vector brute force search.
+    static expected<DataSetPtr>
+    SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                 const BitsetView& bitset);
+
+    static Status
+    SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, sparse::label_t* ids, float* dis,
+                        const Json& config, const BitsetView& bitset);
 };
 
 }  // namespace knowhere

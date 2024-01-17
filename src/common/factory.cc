@@ -20,7 +20,7 @@ IndexFactory::Create(const std::string& name, const int32_t& version, const Obje
     auto& func_mapping_ = MapInstance();
     auto key = GetIndexKey<DataType>(name);
     assert(func_mapping_.find(key) != func_mapping_.end());
-    LOG_KNOWHERE_INFO_ << "use key" << key << " to create knowhere index " << name << " with version " << version;
+    LOG_KNOWHERE_INFO_ << "use key " << key << " to create knowhere index " << name << " with version " << version;
     auto fun_map_v = (FunMapValue<Index<IndexNode>>*)(func_mapping_[key].get());
     return fun_map_v->fun_value(version, object);
 }

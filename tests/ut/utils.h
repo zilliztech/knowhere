@@ -232,3 +232,48 @@ inline auto
 GenTestVersionList() {
     return GENERATE(as<int32_t>{}, knowhere::Version::GetCurrentVersion().VersionNumber());
 }
+
+// Generate a sparse dataset with given sparsity.
+inline knowhere::DataSetPtr
+GenSparseDataSet(int32_t rows, int32_t cols, float sparsity, int seed = 42) {
+    int32_t num_elements = static_cast<int32_t>(rows * cols * (1.0f - sparsity));
+
+    std::mt19937 rng(seed);
+    auto real_distrib = std::uniform_real_distribution<float>(0, 1);
+    auto row_distrib = std::uniform_int_distribution<int32_t>(0, rows - 1);
+    auto col_distrib = std::uniform_int_distribution<int32_t>(0, cols - 1);
+
+    std::vector<std::map<int32_t, float>> data(rows);
+
+    for (int32_t i = 0; i < num_elements; ++i) {
+        auto row = row_distrib(rng);
+        while (data[row].size() == (size_t)cols) {
+            row = row_distrib(rng);
+        }
+        auto col = col_distrib(rng);
+        while (data[row].find(col) != data[row].end()) {
+            col = col_distrib(rng);
+        }
+        auto val = real_distrib(rng);
+        data[row][col] = val;
+    }
+
+    auto tensor = std::make_unique<knowhere::sparse::SparseRow<float>[]>(rows);
+
+    for (int32_t i = 0; i < rows; ++i) {
+        if (data[i].size() == 0) {
+            continue;
+        }
+        knowhere::sparse::SparseRow<float> row(data[i].size());
+        size_t j = 0;
+        for (auto& [idx, val] : data[i]) {
+            row.set_at(j++, idx, val);
+        }
+        tensor[i] = std::move(row);
+    }
+
+    auto ds = knowhere::GenDataSet(rows, cols, tensor.release());
+    ds->SetIsOwner(true);
+    ds->SetIsSparse(true);
+    return ds;
+}
