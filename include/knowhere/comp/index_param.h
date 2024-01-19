@@ -80,6 +80,7 @@ constexpr const char* M = "m";          // PQ param for IVFPQ
 constexpr const char* SSIZE = "ssize";
 constexpr const char* REORDER_K = "reorder_k";
 constexpr const char* WITH_RAW_DATA = "with_raw_data";
+constexpr const char* ENSURE_TOPK_FULL = "ensure_topk_full";
 
 // HNSW Params
 constexpr const char* EFCONSTRUCTION = "efConstruction";

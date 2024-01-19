@@ -178,14 +178,15 @@ void test_lowlevel_access(const char* index_key, MetricType metric) {
 
             // here we get the inverted lists from the InvertedLists
             // object but they could come from anywhere
-
+            size_t scan_cnt = 0;
             scanner->scan_codes(
                     il->list_size(list_no),
                     InvertedLists::ScopedCodes(il, list_no).get(),
                     InvertedLists::ScopedIds(il, list_no).get(),
                     D.data(),
                     I.data(),
-                    k);
+                    k,
+                    scan_cnt);
 
             if (j == 0) {
                 // all results so far come from list_no, so let's check if
@@ -340,14 +341,15 @@ void test_lowlevel_access_binary(const char* index_key) {
 
             // here we get the inverted lists from the InvertedLists
             // object but they could come from anywhere
-
+            size_t scan_cnt = 0;
             scanner->scan_codes(
                     il->list_size(list_no),
                     InvertedLists::ScopedCodes(il, list_no).get(),
                     InvertedLists::ScopedIds(il, list_no).get(),
                     D.data(),
                     I.data(),
-                    k);
+                    k,
+                    scan_cnt);
 
             if (j == 0) {
                 // all results so far come from list_no, so let's check if
@@ -502,13 +504,15 @@ void test_threaded_search(const char* index_key, MetricType metric) {
                     continue;
                 scanner->set_list(list_no, q_dis[i * nprobe + j]);
 
+                size_t scan_cnt = 0;
                 scanner->scan_codes(
                         il->list_size(list_no),
                         InvertedLists::ScopedCodes(il, list_no).get(),
                         InvertedLists::ScopedIds(il, list_no).get(),
                         local_D,
                         local_I,
-                        k);
+                        k,
+                        scan_cnt);
             }
         };
 

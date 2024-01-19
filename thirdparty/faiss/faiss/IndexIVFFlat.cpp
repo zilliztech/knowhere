@@ -191,11 +191,13 @@ struct IVFFlatScanner : InvertedListScanner {
             float* simi,
             idx_t* idxi,
             size_t k,
+            size_t& scan_cnt,
             const BitsetView bitset) const override {
         const float* list_vecs = (const float*)codes;
         size_t nup = 0;
         for (size_t j = 0; j < list_size; j++) {
             if (bitset.empty() || !bitset.test(ids[j])) {
+                scan_cnt++;
                 const float* yj = list_vecs + d * j;
                 float dis = metric == METRIC_INNER_PRODUCT
                         ? fvec_inner_product(xi, yj, d)

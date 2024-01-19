@@ -1071,6 +1071,7 @@ struct IVFPQScanner : IVFPQScannerT<Index::idx_t, METRIC_TYPE, PQDecoder>,
             float* heap_sim,
             idx_t* heap_ids,
             size_t k,
+            size_t& scan_cnt,
             const BitsetView bitset = nullptr) const override {
         KnnSearchResults<C> res = {
                 /* key */ this->key,
