@@ -71,6 +71,7 @@ struct Level1Quantizer {
 struct SearchParametersIVF : SearchParameters {
     size_t nprobe = 1;    ///< number of probes at query time
     size_t max_codes = 0; ///< max nb of codes to visit to do a query
+    bool ensure_topk_full = false; ///< indicate whether we make sure topk result is full
     SearchParameters* quantizer_params = nullptr;
 
     virtual ~SearchParametersIVF() {}
@@ -493,7 +494,8 @@ struct InvertedListScanner {
             const idx_t* ids,
             float* distances,
             idx_t* labels,
-            size_t k) const;
+            size_t k,
+            size_t& scan_cnt) const;
 
     // same as scan_codes, using an iterator
     virtual size_t iterate_codes(

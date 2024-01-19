@@ -85,6 +85,7 @@ constexpr const char* M = "m";          // PQ param for IVFPQ
 constexpr const char* SSIZE = "ssize";
 constexpr const char* REORDER_K = "reorder_k";
 constexpr const char* WITH_RAW_DATA = "with_raw_data";
+constexpr const char* ENSURE_TOPK_FULL = "ensure_topk_full";
 // RAFT Params
 constexpr const char* REFINE_RATIO = "refine_ratio";
 constexpr const char* CACHE_DATASET_ON_DEVICE = "cache_dataset_on_device";

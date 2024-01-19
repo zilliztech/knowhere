@@ -286,7 +286,8 @@ struct IVFFlatScanner : InvertedListScanner {
             const idx_t* ids,
             float* simi,
             idx_t* idxi,
-            size_t k) const override {
+            size_t k,
+            size_t& scan_cnt) const override {
         const float* list_vecs = (const float*)codes;
         size_t nup = 0;
 
@@ -294,10 +295,11 @@ struct IVFFlatScanner : InvertedListScanner {
         auto filter = 
             [&](const size_t j) { return (!use_sel || sel->is_member(ids[j])); };
 
-        // the lambda that applies a filtered element.
+        // the lambda that applies a valid element.
         auto apply = 
             [&](const float dis_in, const size_t j) {
                 const float dis = (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]); 
+                scan_cnt++;
                 if (C::cmp(simi[0], dis)) {
                     const int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
                     heap_replace_top<C>(k, simi, idxi, dis, id);
@@ -389,7 +391,8 @@ struct IVFFlatBitsetViewScanner : InvertedListScanner {
             const idx_t* __restrict ids,
             float* __restrict simi,
             idx_t* __restrict idxi,
-            size_t k) const override {
+            size_t k,
+            size_t& scan_cnt) const override {
         const float* list_vecs = (const float*)codes;
         size_t nup = 0;
 
@@ -397,10 +400,11 @@ struct IVFFlatBitsetViewScanner : InvertedListScanner {
         auto filter = 
             [&](const size_t j) { return (!use_sel || !bitset.test(ids[j])); };
 
-        // the lambda that applies a filtered element.
+        // the lambda that applies a valid element.
         auto apply = 
             [&](const float dis_in, const size_t j) {
                 const float dis = (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]); 
+                scan_cnt++;
                 if (C::cmp(simi[0], dis)) {
                     const int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
                     heap_replace_top<C>(k, simi, idxi, dis, id);
