@@ -21,6 +21,7 @@ class IvfConfig : public BaseConfig {
     CFG_INT nlist;
     CFG_INT nprobe;
     CFG_BOOL use_elkan;
+    CFG_BOOL ensure_topk_full;
     KNOHWERE_DECLARE_CONFIG(IvfConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(nlist)
             .set_default(128)
@@ -36,6 +37,10 @@ class IvfConfig : public BaseConfig {
             .set_default(true)
             .description("whether to use elkan algorithm")
             .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(ensure_topk_full)
+            .set_default(true)
+            .description("whether to make sure topk results full")
+            .for_search();
     }
 };
 

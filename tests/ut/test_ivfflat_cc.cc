@@ -48,6 +48,7 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::NLIST] = 128;
         json[knowhere::indexparam::NPROBE] = 16;
+        json[knowhere::indexparam::ENSURE_TOPK_FULL] = false;
         return json;
     };
 

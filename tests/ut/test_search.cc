@@ -212,6 +212,32 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         REQUIRE(recall > kBruteForceRecallThreshold);
     }
 
+    SECTION("Test Search with IVFFLATCC ensure topk full") {
+        using std::make_tuple;
+        auto ivfflatcc_gen_ = [base_gen, nb]() {
+            knowhere::Json json = base_gen();
+            json[knowhere::indexparam::NLIST] = 16;
+            json[knowhere::indexparam::NPROBE] = 1;
+            json[knowhere::indexparam::SSIZE] = 48;
+            json[knowhere::meta::TOPK] = nb;
+            return json;
+        };
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen_),
+        }));
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+        auto cfg_json = gen().dump();
+        CAPTURE(name, cfg_json);
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        REQUIRE(idx.Type() == name);
+        REQUIRE(idx.Build(*train_ds, json) == knowhere::Status::success);
+
+        auto results = idx.Search(*query_ds, json, nullptr);
+        auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, json, nullptr);
+        float recall = GetKNNRecall(*gt.value(), *results.value());
+        REQUIRE(recall > kBruteForceRecallThreshold);
+    }
+
     SECTION("Test Search with Bitset") {
         using std::make_tuple;
         auto [name, gen, threshold] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>, float>({
