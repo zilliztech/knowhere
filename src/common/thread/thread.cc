@@ -19,6 +19,7 @@
 #include <utility>
 
 #include "knowhere/comp/thread_pool.h"
+
 namespace knowhere {
 
 void
@@ -33,14 +34,7 @@ ExecOverSearchThreadPool(std::vector<std::function<void()>>& tasks) {
         }));
     }
     std::this_thread::yield();
-    // check for exceptions. value() is {}, so either
-    //   a call does nothing, or it throws an inner exception.
-    for (auto& f : futures) {
-        f.wait();
-    }
-    for (auto& f : futures) {
-        f.result().value();
-    }
+    WaitAllSuccess(futures);
 }
 
 void
@@ -55,14 +49,7 @@ ExecOverBuildThreadPool(std::vector<std::function<void()>>& tasks) {
         }));
     }
     std::this_thread::yield();
-    // check for exceptions. value() is {}, so either
-    //   a call does nothing, or it throws an inner exception.
-    for (auto& f : futures) {
-        f.wait();
-    }
-    for (auto& f : futures) {
-        f.result().value();
-    }
+    WaitAllSuccess(futures);
 }
 
 void

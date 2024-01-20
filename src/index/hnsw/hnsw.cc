@@ -126,13 +126,7 @@ class HnswIndexNode : public IndexNode {
                         }
                     }));
                 }
-                for (auto& future : futures) {
-                    future.wait();
-                }
-                // check for exceptions
-                for (auto& future : futures) {
-                    future.result().value();
-                }
+                WaitAllSuccess(futures);
                 futures.clear();
             }
 
@@ -146,13 +140,7 @@ class HnswIndexNode : public IndexNode {
                     futures.emplace_back(
                         build_pool->push([&, idx = i]() { index_->repairGraphConnectivity(unreached[idx]); }));
                 }
-                for (auto& future : futures) {
-                    future.wait();
-                }
-                // check for exceptions
-                for (auto& future : futures) {
-                    future.result().value();
-                }
+                WaitAllSuccess(futures);
             }
             build_time.RecordSection("graph repair");
             LOG_KNOWHERE_INFO_ << "HNSW built with #points num:" << index_->max_elements_ << " #M:" << index_->M_
@@ -213,9 +201,7 @@ class HnswIndexNode : public IndexNode {
                 }
             }));
         }
-        for (auto& fut : futs) {
-            fut.wait();
-        }
+        WaitAllSuccess(futs);
 
         auto res = GenResultDataSet(nq, k, p_id, p_dist);
 
@@ -300,9 +286,7 @@ class HnswIndexNode : public IndexNode {
             }));
         }
         // wait for initial search(in top layers and search for seed_ef in base layer) to finish
-        for (auto& fut : futs) {
-            fut.wait();
-        }
+        WaitAllSuccess(futs);
 
         return vec;
     }
@@ -365,9 +349,7 @@ class HnswIndexNode : public IndexNode {
                 }
             }));
         }
-        for (auto& fut : futs) {
-            fut.wait();
-        }
+        WaitAllSuccess(futs);
 
         // filter range search result
         GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius_for_filter, range_filter, dis, ids,

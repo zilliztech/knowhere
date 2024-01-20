@@ -1,4 +1,6 @@
 #include "diskann/utils.h"
+#include "knowhere/comp/thread_pool.h"
+
 #include <stdio.h>
 
 namespace diskann {
@@ -23,9 +25,7 @@ namespace diskann {
         }
       }));
     }
-    for (auto& future : futures) {
-      future.wait();
-    }
+    knowhere::WaitAllSuccess(futures);
     writr.write((char*) read_buf, npts * ndims * sizeof(float));
   }
 

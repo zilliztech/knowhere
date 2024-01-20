@@ -128,12 +128,9 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
             return Status::success;
         }));
     }
-    for (auto& fut : futs) {
-        fut.wait();
-        auto ret = fut.result().value();
-        if (ret != Status::success) {
-            return expected<DataSetPtr>::Err(ret, "failed to brute force search");
-        }
+    auto ret = WaitAllSuccess(futs);
+    if (ret != Status::success) {
+        return expected<DataSetPtr>::Err(ret, "failed to brute force search");
     }
     return GenResultDataSet(nq, cfg.k.value(), labels, distances);
 }
@@ -233,11 +230,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
             return Status::success;
         }));
     }
-    for (auto& fut : futs) {
-        fut.wait();
-        auto ret = fut.result().value();
-        RETURN_IF_ERROR(ret);
-    }
+    RETURN_IF_ERROR(WaitAllSuccess(futs));
     return Status::success;
 }
 
@@ -348,12 +341,9 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
             return Status::success;
         }));
     }
-    for (auto& fut : futs) {
-        fut.wait();
-        auto ret = fut.result().value();
-        if (ret != Status::success) {
-            return expected<DataSetPtr>::Err(ret, "failed to brute force search");
-        }
+    auto ret = WaitAllSuccess(futs);
+    if (ret != Status::success) {
+        return expected<DataSetPtr>::Err(ret, "failed to brute force search");
     }
 
     int64_t* ids = nullptr;

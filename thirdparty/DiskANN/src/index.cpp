@@ -14,6 +14,7 @@
 #include <sstream>
 #include <string>
 #include "knowhere/log.h"
+#include "knowhere/comp/thread_pool.h"
 #include "tsl/robin_set.h"
 #include "tsl/robin_map.h"
 #include <unordered_map>
@@ -816,9 +817,7 @@ namespace diskann {
             }
           }));
     }
-    for (auto &future : futures) {
-      future.wait();
-    }
+    knowhere::WaitAllSuccess(futures);
     // find imin
     unsigned min_idx = 0;
     float    min_dist = distances[0];
@@ -1343,7 +1342,7 @@ namespace diskann {
     _indexingRange = parameters.Get<unsigned>("R");
     _indexingMaxC = parameters.Get<unsigned>("C");
     const bool  accelerate_build = parameters.Get<bool>("accelerate_build");
-    const bool  shuffle_build    = parameters.Get<bool>("shuffle_build"); 
+    const bool  shuffle_build    = parameters.Get<bool>("shuffle_build");
     const float last_round_alpha = parameters.Get<float>("alpha");
     unsigned    L = _indexingQueueSize;
 
@@ -1483,9 +1482,7 @@ namespace diskann {
             prune_neighbors(node, pool, pruned_list);
           }));
         }
-        for (auto &future : futures) {
-          future.wait();
-        }
+        knowhere::WaitAllSuccess(futures);
         diff = std::chrono::high_resolution_clock::now() - s;
         sync_time += diff.count();
 
@@ -1509,9 +1506,7 @@ namespace diskann {
                 }
               }));
         }
-        for (auto &future : futures) {
-          future.wait();
-        }
+        knowhere::WaitAllSuccess(futures);
         s = std::chrono::high_resolution_clock::now();
 
         futures.clear();
@@ -1532,9 +1527,7 @@ namespace diskann {
                 }
               }));
         }
-        for (auto &future : futures) {
-          future.wait();
-        }
+        knowhere::WaitAllSuccess(futures);
 
         futures.clear();
         for (_s64 node_ctr = 0; node_ctr < (_s64) (visit_order.size());
@@ -1567,9 +1560,7 @@ namespace diskann {
             }));
           }
         }
-        for (auto &future : futures) {
-          future.wait();
-        }
+        knowhere::WaitAllSuccess(futures);
 
         diff = std::chrono::high_resolution_clock::now() - s;
         inter_time += diff.count();
@@ -1638,9 +1629,7 @@ namespace diskann {
         }));
       }
     }
-    for (auto &future : futures) {
-      future.wait();
-    }
+    knowhere::WaitAllSuccess(futures);
     if (_nd > 0) {
       LOG_KNOWHERE_DEBUG_ << "final cleanup done. Link time: "
                           << ((double) link_timer.elapsed() / (double) 1000000)
@@ -1683,9 +1672,7 @@ namespace diskann {
         }
       }
     }
-    for (auto &future : futures) {
-      future.wait();
-    }
+    knowhere::WaitAllSuccess(futures);
 
     diskann::cout << "Prune time : " << timer.elapsed() / 1000 << "ms"
                   << std::endl;
@@ -2385,9 +2372,7 @@ namespace diskann {
       }));
     }
 
-    for (auto &future : futures) {
-      future.wait();
-    }
+    knowhere::WaitAllSuccess(futures);
 
     if (_support_eager_delete)
       update_in_graph();

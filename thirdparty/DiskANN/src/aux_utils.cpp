@@ -24,6 +24,7 @@
 #include "diskann/partition_and_pq.h"
 #include "diskann/percentile_stats.h"
 #include "diskann/pq_flash_index.h"
+#include "knowhere/comp/thread_pool.h"
 #include "tsl/robin_set.h"
 
 #include "diskann/utils.h"
@@ -496,7 +497,7 @@ namespace diskann {
       paras.Set<bool>("saturate_graph", 1);
       paras.Set<std::string>("save_path", mem_index_path);
       paras.Set<bool>("accelerate_build", accelerate_build);
-      paras.Set<bool>("shuffle_build", shuffle_build); 
+      paras.Set<bool>("shuffle_build", shuffle_build);
 
       std::unique_ptr<diskann::Index<T>> _pvamanaIndex =
           std::unique_ptr<diskann::Index<T>>(new diskann::Index<T>(
@@ -745,9 +746,7 @@ namespace diskann {
       }));
     }
 
-    for (auto &future : futures) {
-      future.wait();
-    }
+    knowhere::WaitAllSuccess(futures);
 
     std::sort(node_count_list.begin(), node_count_list.end(),
               [](std::pair<_u32, _u32> &a, std::pair<_u32, _u32> &b) {
@@ -800,9 +799,7 @@ namespace diskann {
               stats + index);
         }));
       }
-      for (auto &future : futures) {
-        future.wait();
-      }
+      knowhere::WaitAllSuccess(futures);
       auto e = std::chrono::high_resolution_clock::now();
       std::chrono::duration<double> diff = e - s;
       double                        qps =
