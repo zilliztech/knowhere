@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "knowhere/binaryset.h"
+#include "knowhere/comp/thread_pool.h"
 #include "knowhere/dataset.h"
 #include "knowhere/operands.h"
 
