@@ -71,7 +71,12 @@ struct Level1Quantizer {
 struct SearchParametersIVF : SearchParameters {
     size_t nprobe = 1;    ///< number of probes at query time
     size_t max_codes = 0; ///< max nb of codes to visit to do a query
-    bool ensure_topk_full = false; ///< indicate whether we make sure topk result is full
+    ///< indicate whether we should early teriminate before topk results full when search reaches max_codes
+    ///< to minimize code change, when users only use nprobe to search, this config does not take affect since we will first retrieve the nearest nprobe buckets
+    ///< it is a bit heavy to further retrieve more buckets
+    ///< therefore to make sure we get topk results, use nprobe=nlist and use max_codes to narrow down the search range
+    bool ensure_topk_full = false;
+    
     SearchParameters* quantizer_params = nullptr;
 
     virtual ~SearchParametersIVF() {}
@@ -485,6 +490,7 @@ struct InvertedListScanner {
      * @param distances  heap distances (size k)
      * @param labels     heap labels (size k)
      * @param k          heap size
+     * @param scan_cnt   valid number of codes be scanned
      * @return number of heap updates performed
      */
     virtual size_t scan_codes(

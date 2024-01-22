@@ -21,7 +21,7 @@ class IvfConfig : public BaseConfig {
     CFG_INT nlist;
     CFG_INT nprobe;
     CFG_BOOL use_elkan;
-    CFG_BOOL ensure_topk_full;
+    CFG_BOOL ensure_topk_full;  // only take affect on temp index(IVF_FLAT_CC) now
     KNOHWERE_DECLARE_CONFIG(IvfConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(nlist)
             .set_default(128)

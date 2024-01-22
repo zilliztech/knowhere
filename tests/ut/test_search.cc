@@ -216,15 +216,21 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         using std::make_tuple;
         auto ivfflatcc_gen_ = [base_gen, nb]() {
             knowhere::Json json = base_gen();
-            json[knowhere::indexparam::NLIST] = 16;
+            json[knowhere::indexparam::NLIST] = 32;
             json[knowhere::indexparam::NPROBE] = 1;
             json[knowhere::indexparam::SSIZE] = 48;
             json[knowhere::meta::TOPK] = nb;
             return json;
         };
-        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen_),
-        }));
+        auto ivfflatcc_gen_no_ensure_topk_ = [ivfflatcc_gen_, nb]() {
+            knowhere::Json json = ivfflatcc_gen_();
+            json[knowhere::meta::TOPK] = nb / 2;
+            json[knowhere::indexparam::ENSURE_TOPK_FULL] = false;
+            return json;
+        };
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(
+            {make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen_),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen_no_ensure_topk_)}));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
@@ -235,7 +241,27 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         auto results = idx.Search(*query_ds, json, nullptr);
         auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, json, nullptr);
         float recall = GetKNNRecall(*gt.value(), *results.value());
-        REQUIRE(recall > kBruteForceRecallThreshold);
+        if (ivfflatcc_gen_().dump() == cfg_json) {
+            REQUIRE(recall > kBruteForceRecallThreshold);
+        } else {
+            REQUIRE(recall < kBruteForceRecallThreshold);
+        }
+
+        std::vector<std::function<std::vector<uint8_t>(size_t, size_t)>> gen_bitset_funcs = {
+            GenerateBitsetWithFirstTbitsSet, GenerateBitsetWithRandomTbitsSet};
+        const auto bitset_percentages = 0.5f;
+        for (const auto& gen_func : gen_bitset_funcs) {
+            auto bitset_data = gen_func(nb, bitset_percentages * nb);
+            knowhere::BitsetView bitset(bitset_data.data(), nb);
+            auto results = idx.Search(*query_ds, json, bitset);
+            auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, json, bitset);
+            float recall = GetKNNRecall(*gt.value(), *results.value());
+            if (ivfflatcc_gen_().dump() == cfg_json) {
+                REQUIRE(recall > kBruteForceRecallThreshold);
+            } else {
+                REQUIRE(recall < kBruteForceRecallThreshold);
+            }
+        }
     }
 
     SECTION("Test Search with Bitset") {
