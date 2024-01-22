@@ -530,6 +530,9 @@ int generate_pq_data_from_pivots(const std::string data_file,
             }
           }));
     }
+    for (auto &future : futures) {
+      future.wait();
+    }
 
     futures.clear();
     futures.reserve(num_pq_chunks);
