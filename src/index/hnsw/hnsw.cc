@@ -126,13 +126,7 @@ class HnswIndexNode : public IndexNode {
                         }
                     }));
                 }
-                for (auto& future : futures) {
-                    future.wait();
-                }
-                // check for exceptions
-                for (auto& future : futures) {
-                    future.result().value();
-                }
+                WaitAllSuccess(futures);
                 futures.clear();
             }
 
@@ -146,13 +140,7 @@ class HnswIndexNode : public IndexNode {
                     futures.emplace_back(
                         build_pool->push([&, idx = i]() { index_->repairGraphConnectivity(unreached[idx]); }));
                 }
-                for (auto& future : futures) {
-                    future.wait();
-                }
-                // check for exceptions
-                for (auto& future : futures) {
-                    future.result().value();
-                }
+                WaitAllSuccess(futures);
             }
             build_time.RecordSection("graph repair");
             LOG_KNOWHERE_INFO_ << "HNSW built with #points num:" << index_->max_elements_ << " #M:" << index_->M_
@@ -186,8 +174,8 @@ class HnswIndexNode : public IndexNode {
             feder_result = std::make_unique<feder::hnsw::FederResult>();
         }
 
-        auto p_id = new int64_t[k * nq];
-        auto p_dist = new DistType[k * nq];
+        auto p_id = std::make_unique<int64_t[]>(k * nq);
+        auto p_dist = std::make_unique<DistType[]>(k * nq);
 
         hnswlib::SearchParam param{(size_t)hnsw_cfg.ef.value(), hnsw_cfg.for_tuning.value()};
         bool transform =
@@ -196,12 +184,12 @@ class HnswIndexNode : public IndexNode {
         std::vector<folly::Future<folly::Unit>> futs;
         futs.reserve(nq);
         for (int i = 0; i < nq; ++i) {
-            futs.emplace_back(search_pool_->push([&, idx = i]() {
+            futs.emplace_back(search_pool_->push([&, idx = i, p_id_ptr = p_id.get(), p_dist_ptr = p_dist.get()]() {
                 auto single_query = (const char*)xq + idx * index_->data_size_;
                 auto rst = index_->searchKnn(single_query, k, bitset, &param, feder_result);
                 size_t rst_size = rst.size();
-                auto p_single_dis = p_dist + idx * k;
-                auto p_single_id = p_id + idx * k;
+                auto p_single_dis = p_dist_ptr + idx * k;
+                auto p_single_id = p_id_ptr + idx * k;
                 for (size_t idx = 0; idx < rst_size; ++idx) {
                     const auto& [dist, id] = rst[idx];
                     p_single_dis[idx] = transform ? (-dist) : dist;
@@ -213,11 +201,9 @@ class HnswIndexNode : public IndexNode {
                 }
             }));
         }
-        for (auto& fut : futs) {
-            fut.wait();
-        }
+        WaitAllSuccess(futs);
 
-        auto res = GenResultDataSet(nq, k, p_id, p_dist);
+        auto res = GenResultDataSet(nq, k, p_id.release(), p_dist.release());
 
         // set visit_info json string into result dataset
         if (feder_result != nullptr) {
@@ -300,9 +286,7 @@ class HnswIndexNode : public IndexNode {
             }));
         }
         // wait for initial search(in top layers and search for seed_ef in base layer) to finish
-        for (auto& fut : futs) {
-            fut.wait();
-        }
+        WaitAllSuccess(futs);
 
         return vec;
     }
@@ -335,10 +319,6 @@ class HnswIndexNode : public IndexNode {
 
         hnswlib::SearchParam param{(size_t)hnsw_cfg.ef.value()};
 
-        int64_t* ids = nullptr;
-        DistType* dis = nullptr;
-        size_t* lims = nullptr;
-
         std::vector<std::vector<int64_t>> result_id_array(nq);
         std::vector<std::vector<DistType>> result_dist_array(nq);
         std::vector<size_t> result_size(nq);
@@ -365,9 +345,11 @@ class HnswIndexNode : public IndexNode {
                 }
             }));
         }
-        for (auto& fut : futs) {
-            fut.wait();
-        }
+        WaitAllSuccess(futs);
+
+        int64_t* ids = nullptr;
+        DistType* dis = nullptr;
+        size_t* lims = nullptr;
 
         // filter range search result
         GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius_for_filter, range_filter, dis, ids,
