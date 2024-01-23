@@ -364,7 +364,7 @@ namespace diskann {
       return 0;
     }
     size_t tag_bytes_written;
-    TagT  *tag_data = new TagT[_nd + _num_frozen_pts];
+    auto tag_data = std::make_unique<TagT[]>(_nd + _num_frozen_pts);
     for (_u32 i = 0; i < _nd; i++) {
       if (_location_to_tag.find(i) != _location_to_tag.end()) {
         tag_data[i] = _location_to_tag[i];
@@ -378,11 +378,10 @@ namespace diskann {
     }
     try {
       tag_bytes_written =
-          save_bin<TagT>(tags_file, tag_data, _nd + _num_frozen_pts, 1);
+          save_bin<TagT>(tags_file, tag_data.get(), _nd + _num_frozen_pts, 1);
     } catch (std::system_error &e) {
       throw FileException(tags_file, e, __FUNCSIG__, __FILE__, __LINE__);
     }
-    delete[] tag_data;
     return tag_bytes_written;
   }
 
@@ -777,7 +776,7 @@ namespace diskann {
   template<typename T, typename TagT>
   unsigned Index<T, TagT>::calculate_entry_point() {
     // allocate and init centroid
-    float *center = new float[_aligned_dim]();
+    auto center = std::make_unique<float[]>(_aligned_dim);
     for (size_t j = 0; j < _aligned_dim; j++)
       center[j] = 0;
 
@@ -789,28 +788,30 @@ namespace diskann {
       center[j] /= (float) _nd;
 
     // compute all to one distance
-    float *distances = new float[_nd]();
-    auto   l2_distance_fun = get_distance_function<float>(diskann::Metric::L2);
+    auto distances = std::make_unique<float[]>(_nd);
+    auto l2_distance_fun = get_distance_function<float>(diskann::Metric::L2);
 
-    auto                                    num_threads = _build_thread_pool->size();
+    auto num_threads = _build_thread_pool->size();
     std::vector<folly::Future<folly::Unit>> futures;
     futures.reserve(num_threads);
     auto future_task_size = DIV_ROUND_UP(_nd, num_threads);
     for (_s64 i = 0; i < (_s64) _nd; i += future_task_size) {
       futures.emplace_back(_build_thread_pool->push(
-          [&, beg_id = i, end_id = std::min(_nd, i + future_task_size)]() {
+          [&, beg_id = i, end_id = std::min(_nd, i + future_task_size),
+           center_ptr = center.get(), distances_ptr = distances.get()]() {
             for (auto node_id = beg_id; node_id < (_s64) end_id; node_id++) {
               // extract point and distance reference
-              float   &dist = distances[node_id];
+              float   &dist = distances_ptr[node_id];
               const T *cur_vec = _data + (node_id * (size_t) _aligned_dim);
               if constexpr (std::is_same<T, float>::value) {
-                dist = l2_distance_fun(center, cur_vec, (size_t) _aligned_dim);
+                dist =
+                    l2_distance_fun(center_ptr, cur_vec, (size_t) _aligned_dim);
               } else {
                 dist = 0;
                 float diff = 0;
                 for (size_t j = 0; j < _aligned_dim; j++) {
-                  diff = (center[j] - (float) cur_vec[j]) *
-                         (center[j] - (float) cur_vec[j]);
+                  diff = (center_ptr[j] - (float) cur_vec[j]) *
+                         (center_ptr[j] - (float) cur_vec[j]);
                   dist += diff;
                 }
               }
@@ -828,8 +829,6 @@ namespace diskann {
       }
     }
 
-    delete[] distances;
-    delete[] center;
     return min_idx;
   }
 

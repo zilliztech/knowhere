@@ -538,17 +538,17 @@ DiskANNIndexNode<DataType>::Search(const DataSet& dataset, const Config& cfg, co
                                                  search_conf.search_list_size.value());
     }
 
-    auto p_id = new int64_t[k * nq];
-    auto p_dist = new DistType[k * nq];
+    auto p_id = std::make_unique<int64_t[]>(k * nq);
+    auto p_dist = std::make_unique<DistType[]>(k * nq);
 
     std::vector<folly::Future<folly::Unit>> futures;
     futures.reserve(nq);
     for (int64_t row = 0; row < nq; ++row) {
-        futures.emplace_back(search_pool_->push([&, index = row]() {
+        futures.emplace_back(search_pool_->push([&, index = row, p_id_ptr = p_id.get(), p_dist_ptr = p_dist.get()]() {
             diskann::QueryStats stats;
-            pq_flash_index_->cached_beam_search(xq + (index * dim), k, lsearch, p_id + (index * k),
-                                                p_dist + (index * k), beamwidth, false, &stats, feder_result, bitset,
-                                                filter_ratio, for_tuning);
+            pq_flash_index_->cached_beam_search(xq + (index * dim), k, lsearch, p_id_ptr + (index * k),
+                                                p_dist_ptr + (index * k), beamwidth, false, &stats, feder_result,
+                                                bitset, filter_ratio, for_tuning);
 #ifdef NOT_COMPILE_FOR_SWIG
             knowhere_diskann_search_hops.Observe(stats.n_hops);
 #endif
@@ -559,7 +559,7 @@ DiskANNIndexNode<DataType>::Search(const DataSet& dataset, const Config& cfg, co
         return expected<DataSetPtr>::Err(Status::diskann_inner_error, "some search failed");
     }
 
-    auto res = GenResultDataSet(nq, k, p_id, p_dist);
+    auto res = GenResultDataSet(nq, k, p_id.release(), p_dist.release());
 
     // set visit_info json string into result dataset
     if (feder_result != nullptr) {

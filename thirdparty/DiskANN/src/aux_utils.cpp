@@ -601,7 +601,7 @@ namespace diskann {
     }
 
     _u64 sample_num, sample_dim;
-    T   *samples = nullptr;
+    std::unique_ptr<T[]> samples;
     if (file_exists(sample_file)) {
       diskann::load_bin<T>(sample_file, samples, sample_num, sample_dim);
     } else {
@@ -621,7 +621,7 @@ namespace diskann {
       num_nodes_to_cache = points_num;
     }
 
-    uint8_t                   *pq_code = nullptr;
+    std::unique_ptr<uint8_t[]> pq_code;
     diskann::FixedChunkPQTable pq_table;
     uint64_t                   pq_chunks, pq_npts = 0;
     if (file_exists(pq_pivots_path) && file_exists(pq_compressed_code_path)) {
@@ -685,7 +685,8 @@ namespace diskann {
         auto compute_dists = [&, scratch_ids, pq_table_dists](
                                  const unsigned *ids, const _u64 n_ids,
                                  float *dists_out) {
-          aggregate_coords(ids, n_ids, pq_code, pq_chunks, scratch_ids.get());
+          aggregate_coords(ids, n_ids, pq_code.get(), pq_chunks,
+                           scratch_ids.get());
           pq_dist_lookup(scratch_ids.get(), n_ids, pq_chunks,
                          pq_table_dists.get(), dists_out);
         };
@@ -760,10 +761,6 @@ namespace diskann {
 
     save_bin<uint32_t>(cache_file, node_list.data(), num_nodes_to_cache, 1);
 
-    if (samples != nullptr)
-      delete[] samples;
-    if (pq_code != nullptr)
-      delete[] pq_code;
   }
 
   // General purpose support for DiskANN interface
@@ -786,6 +783,7 @@ namespace diskann {
       std::vector<int64_t> tuning_sample_result_ids_64(tuning_sample_num, 0);
       std::vector<float>   tuning_sample_result_dists(tuning_sample_num, 0);
       diskann::QueryStats *stats = new diskann::QueryStats[tuning_sample_num];
+      std::unique_ptr<diskann::QueryStats[]> stats_deleter(stats);
 
       std::vector<folly::Future<folly::Unit>> futures;
       futures.reserve(tuning_sample_num);
@@ -822,8 +820,6 @@ namespace diskann {
       }
       if (cur_bw > 64)
         stop_flag = true;
-
-      delete[] stats;
     }
     return best_bw;
   }
