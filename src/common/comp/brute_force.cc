@@ -23,6 +23,7 @@
 #include "knowhere/config.h"
 #include "knowhere/expected.h"
 #include "knowhere/log.h"
+#include "knowhere/sparse_utils.h"
 #include "knowhere/utils.h"
 
 namespace knowhere {
@@ -352,6 +353,91 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter, distances, ids, lims);
     return GenResultDataSet(nq, ids, distances, lims);
 }
+
+Status
+BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, sparse::label_t* labels,
+                                float* distances, const Json& config, const BitsetView& bitset) {
+    auto base = static_cast<const sparse::SparseRow<float>*>(base_dataset->GetTensor());
+    auto rows = base_dataset->GetRows();
+
+    auto xq = static_cast<const sparse::SparseRow<float>*>(query_dataset->GetTensor());
+    auto nq = query_dataset->GetRows();
+
+    BruteForceConfig cfg;
+    std::string msg;
+    auto status = Config::Load(cfg, config, knowhere::SEARCH, &msg);
+    if (status != Status::success) {
+        LOG_KNOWHERE_ERROR_ << "Failed to load config, msg is: " << msg;
+        return status;
+    }
+
+    std::string metric_str = cfg.metric_type.value();
+    auto result = Str2FaissMetricType(metric_str);
+    if (result.error() != Status::success) {
+        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
+        return result.error();
+    }
+    if (!IsMetricType(metric_str, metric::IP)) {
+        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
+        return Status::invalid_metric_type;
+    }
+
+    int topk = cfg.k.value();
+    std::fill(distances, distances + nq * topk, std::numeric_limits<float>::quiet_NaN());
+    std::fill(labels, labels + nq * topk, -1);
+
+    auto pool = ThreadPool::GetGlobalSearchThreadPool();
+    std::vector<folly::Future<folly::Unit>> futs;
+    futs.reserve(nq);
+    for (int64_t i = 0; i < nq; ++i) {
+        futs.emplace_back(pool->push([&, index = i] {
+            auto cur_labels = labels + topk * index;
+            auto cur_distances = distances + topk * index;
+
+            const auto& row = xq[index];
+            if (row.size() == 0) {
+                return;
+            }
+            sparse::MaxMinHeap<float> heap(topk);
+            for (int64_t j = 0; j < rows; ++j) {
+                if (!bitset.empty() && bitset.test(j)) {
+                    continue;
+                }
+                float dist = row.dot(base[j]);
+                if (dist > 0) {
+                    heap.push(j, dist);
+                }
+            }
+            int result_size = heap.size();
+            for (int j = result_size - 1; j >= 0; --j) {
+                cur_labels[j] = heap.top().id;
+                cur_distances[j] = heap.top().val;
+                heap.pop();
+            }
+        }));
+    }
+    WaitAllSuccess(futs);
+    return Status::success;
+}
+
+expected<DataSetPtr>
+BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                         const BitsetView& bitset) {
+    auto nq = query_dataset->GetRows();
+    BruteForceConfig cfg;
+    std::string msg;
+    auto status = Config::Load(cfg, config, knowhere::SEARCH, &msg);
+    if (status != Status::success) {
+        return expected<DataSetPtr>::Err(status, msg);
+    }
+    int topk = cfg.k.value();
+    auto labels = std::make_unique<sparse::label_t[]>(nq * topk);
+    auto distances = std::make_unique<float[]>(nq * topk);
+
+    SearchSparseWithBuf(base_dataset, query_dataset, labels.get(), distances.get(), config, bitset);
+    return GenResultDataSet(nq, topk, labels.release(), distances.release());
+}
+
 }  // namespace knowhere
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::Search<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,

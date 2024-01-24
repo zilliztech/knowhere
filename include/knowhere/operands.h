@@ -16,6 +16,8 @@
 #define OPERANDS_H
 #include <math.h>
 
+#include <cstring>
+
 namespace {
 union fp32_bits {
     uint32_t as_bits;

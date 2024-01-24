@@ -21,6 +21,7 @@
 #include <variant>
 
 #include "comp/index_param.h"
+#include "knowhere/sparse_utils.h"
 
 namespace knowhere {
 
@@ -54,7 +55,11 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
             {
                 auto ptr = std::get_if<3>(&x.second);
                 if (ptr != nullptr) {
-                    delete[](char*)(*ptr);
+                    if (is_sparse) {
+                        delete[](sparse::SparseRow<float>*)(*ptr);
+                    } else {
+                        delete[](char*)(*ptr);
+                    }
                 }
             }
         }
@@ -78,6 +83,11 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
         this->data_[meta::IDS] = Var(std::in_place_index<2>, ids);
     }
 
+    /**
+     * For dense float vector, tensor is a rows * dim float array
+     * For sparse float vector, tensor is pointer to sparse::Sparse<float>*
+     * and values in each row should be sorted by column id.
+     */
     void
     SetTensor(const void* tensor) {
         std::unique_lock lock(mutex_);
@@ -202,6 +212,12 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
         this->is_owner = is_owner;
     }
 
+    void
+    SetIsSparse(bool is_sparse) {
+        std::unique_lock lock(mutex_);
+        this->is_sparse = is_sparse;
+    }
+
     // deprecated API
     template <typename T>
     void
@@ -225,6 +241,7 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
     mutable std::shared_mutex mutex_;
     std::map<std::string, Var> data_;
     bool is_owner = true;
+    bool is_sparse = false;
 };
 using DataSetPtr = std::shared_ptr<DataSet>;
 inline DataSetPtr
