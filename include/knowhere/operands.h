@@ -154,5 +154,8 @@ template <>
 struct MockData<knowhere::bf16> {
     using type = knowhere::fp32;
 };
+
+enum class IndexDataType { BIN1, BF16, FP16, FLOAT32 };
+
 }  // namespace knowhere
 #endif /* OPERANDS_H */

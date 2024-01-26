@@ -571,9 +571,14 @@ class HnswIndexNode : public IndexNode {
     hnswlib::HierarchicalNSW<DistType>* index_;
     std::shared_ptr<ThreadPool> search_pool_;
 };
-
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW, HnswIndexNode, fp32);
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW, HnswIndexNode, bin1);
+#ifdef KNOWHERE_WITH_CARDINAL
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW_DEPRECATED, HnswIndexNode, fp32);
+KNOWHERE_MOCK_REGISTER_GLOBAL(HNSW_DEPRECATED, HnswIndexNode, fp16);
+KNOWHERE_MOCK_REGISTER_GLOBAL(HNSW_DEPRECATED, HnswIndexNode, bf16);
+#else
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW, HnswIndexNode, fp32);
 KNOWHERE_MOCK_REGISTER_GLOBAL(HNSW, HnswIndexNode, fp16);
 KNOWHERE_MOCK_REGISTER_GLOBAL(HNSW, HnswIndexNode, bf16);
+#endif
 }  // namespace knowhere

@@ -693,5 +693,9 @@ DiskANNIndexNode<DataType>::GetCachedNodeNum(const float cache_dram_budget, cons
     return num_nodes_to_cache;
 }
 
+#ifdef KNOWHERE_WITH_CARDINAL
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(DISKANN_DEPRECATED, DiskANNIndexNode, fp32);
+#else
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(DISKANN, DiskANNIndexNode, fp32);
+#endif
 }  // namespace knowhere

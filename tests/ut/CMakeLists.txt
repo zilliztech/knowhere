@@ -14,6 +14,13 @@ if(NOT WITH_DISKANN)
   knowhere_file_glob(GLOB_RECURSE KNOWHERE_DISKANN_TESTS test_diskann.cc)
   list(REMOVE_ITEM KNOWHERE_UT_SRCS ${KNOWHERE_DISKANN_TESTS})
 endif()
+
+# TODO : cardinal need support iterator and sparse
+if (WITH_CARDINAL)
+    knowhere_file_glob(GLOB_RECURSE CARDINAL_UNSUPPORT_TESTS test_iterator.cc test_feder.cc test_sparse.cc)
+    list(REMOVE_ITEM KNOWHERE_UT_SRCS ${CARDINAL_UNSUPPORT_TESTS})
+endif()
+
 add_executable(knowhere_tests ${KNOWHERE_UT_SRCS})
 find_package(Catch2)
 if (NOT Catch2_FOUND)

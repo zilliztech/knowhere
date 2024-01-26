@@ -11,6 +11,9 @@
 
 #include "knowhere/comp/knowhere_config.h"
 
+#include <dlfcn.h>
+
+#include <filesystem>
 #include <string>
 
 #ifdef KNOWHERE_WITH_DISKANN
@@ -26,6 +29,8 @@
 #ifdef KNOWHERE_WITH_RAFT
 #include "common/raft/integration/raft_initialization.hpp"
 #endif
+#include "knowhere/factory.h"
+#include "knowhere/index.h"
 #include "simd/hook.h"
 
 namespace knowhere {
@@ -123,6 +128,79 @@ KnowhereConfig::SetClusteringType(const ClusteringType clustering_type) {
             faiss::clustering_type = faiss::ClusteringType::K_MEANS_PLUS_PLUS;
             break;
     }
+}
+
+bool
+KnowhereConfig::InitPlugin(std::string path) {
+    static std::once_flag init_plugin_once_;
+    static bool init_result = false;
+
+    auto init = [&]() {
+        auto splitPaths = [&](std::string input, char delimiter) {
+            std::vector<std::string> tokens;
+            std::size_t start = 0;
+            std::size_t end = input.find(delimiter);
+
+            while (end != std::string::npos) {
+                tokens.push_back(input.substr(start, end - start));
+                start = end + 1;
+                end = input.find(delimiter, start);
+            }
+
+            tokens.push_back(input.substr(start));
+            return tokens;
+        };
+
+        auto getDynamicLibs = [&](std::string path) { return splitPaths(path, ':'); };
+
+        auto libs = getDynamicLibs(path);
+
+        if (libs.size() == 0) {
+            LOG_KNOWHERE_INFO_ << "Plugin index list is empty";
+        }
+
+        for (auto& lib : libs) {
+            if (!std::filesystem::exists(lib)) {
+                LOG_KNOWHERE_ERROR_ << "Failed to find lib " << lib << " in filesystem";
+                init_result = false;
+                return init_result;
+            }
+            void* plugin = dlopen(lib.c_str(), RTLD_NOW | RTLD_GLOBAL);
+            if (!plugin) {
+                LOG_KNOWHERE_ERROR_ << "Failed to load the library: " << dlerror();
+                init_result = false;
+                return init_result;
+            }
+            typedef knowhere::PluginIndexList (*GetPluginIndexes)();
+            auto getImpList = dlsym(plugin, "getPluginIndexList");
+            GetPluginIndexes getPluginIndexes = reinterpret_cast<GetPluginIndexes>(getImpList);
+            if (!getImpList) {
+                LOG_KNOWHERE_ERROR_ << "Failed to get the index list function!";
+                init_result = false;
+                return init_result;
+            }
+            auto indexList = getPluginIndexes();
+            for (auto const& index : indexList) {
+                if (index.data_type == IndexDataType::FLOAT32) {
+                    IndexFactory::Instance().Register<knowhere::fp32>(index.index_name, index.create_func);
+                } else if (index.data_type == IndexDataType::BF16) {
+                    IndexFactory::Instance().Register<knowhere::bf16>(index.index_name, index.create_func);
+                } else if (index.data_type == IndexDataType::FP16) {
+                    IndexFactory::Instance().Register<knowhere::fp16>(index.index_name, index.create_func);
+                } else if (index.data_type == IndexDataType::BIN1) {
+                    IndexFactory::Instance().Register<knowhere::bin1>(index.index_name, index.create_func);
+                } else {
+                    LOG_KNOWHERE_ERROR_ << "Unknown data type";
+                    init_result = false;
+                    return init_result;
+                }
+            }
+        }
+        init_result = true;
+        return init_result;
+    };
+    std::call_once(init_plugin_once_, init);
+    return init_result;
 }
 
 bool

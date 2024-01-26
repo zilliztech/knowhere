@@ -11,6 +11,8 @@
 
 #include "range_util.h"
 
+#include <faiss/impl/AuxIndexStructures.h>
+
 #include <algorithm>
 #include <cinttypes>
 

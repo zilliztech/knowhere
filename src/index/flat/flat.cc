@@ -13,6 +13,7 @@
 #include "common/range_util.h"
 #include "faiss/IndexBinaryFlat.h"
 #include "faiss/IndexFlat.h"
+#include "faiss/impl/AuxIndexStructures.h"
 #include "faiss/index_io.h"
 #include "index/flat/flat_config.h"
 #include "io/memory_io.h"

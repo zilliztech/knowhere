@@ -191,6 +191,15 @@ class Index {
     T1* node;
 };
 
+struct IndexTemplate {
+    std::string index_name;
+    IndexDataType data_type;
+    std::function<Index<IndexNode>(const int32_t&, const Object&)> create_func;
+    IndexTemplate(const std::string& indexName, IndexDataType dataType,
+                  const std::function<Index<IndexNode>(const int32_t&, const Object&)>& createFunc);
+};
+
+typedef std::vector<IndexTemplate> PluginIndexList;
 }  // namespace knowhere
 
 #endif /* INDEX_H */
