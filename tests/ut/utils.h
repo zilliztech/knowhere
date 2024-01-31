@@ -128,6 +128,60 @@ GetKNNRecall(const knowhere::DataSet& ground_truth, const knowhere::DataSet& res
     return ((float)matched_num) / ((float)nq * res_k);
 }
 
+//  Compare two ann-search results
+//      "ground_truth" here is just used as a baseline value for comparison. It is not real groundtruth and the knn
+//  results may be worse, we can call the compare results as "relative-recall".
+//      when the k-th distance of gt is worth, define the recall as 1.0f
+//      when the k-th distance of gt is better, define the recall as (intersection_count / size)
+inline float
+GetKNNRelativeRecall(const knowhere::DataSet& ground_truth, const knowhere::DataSet& result, bool dist_less_better) {
+    REQUIRE(ground_truth.GetDim() >= result.GetDim());
+
+    auto nq = result.GetRows();
+    auto gt_k = ground_truth.GetDim();
+    auto res_k = result.GetDim();
+    auto gt_ids = ground_truth.GetIds();
+    auto res_ids = result.GetIds();
+    auto gt_dists = ground_truth.GetDistance();
+    auto res_dists = result.GetDistance();
+
+    double acc_recall = 0;
+    for (auto i = 0; i < nq; ++i) {
+        // Results may be insufficient, less than k
+        int64_t valid_gt_count = 0;
+        while (valid_gt_count < gt_k && gt_ids[i * gt_k + valid_gt_count] >= 0) {
+            valid_gt_count++;
+        }
+
+        if (valid_gt_count == 0) {
+            acc_recall += 1.0;
+            continue;
+        }
+
+        bool gt_better = dist_less_better
+                             ? gt_dists[i * gt_k + valid_gt_count - 1] < res_dists[i * res_k + valid_gt_count - 1]
+                             : gt_dists[i * gt_k + valid_gt_count - 1] > res_dists[i * res_k + valid_gt_count - 1];
+
+        if (gt_better) {
+            std::vector<int64_t> ids_0(gt_ids + i * gt_k, gt_ids + i * gt_k + valid_gt_count);
+            std::vector<int64_t> ids_1(res_ids + i * res_k, res_ids + i * res_k + valid_gt_count);
+
+            std::sort(ids_0.begin(), ids_0.end());
+            std::sort(ids_1.begin(), ids_1.end());
+
+            std::vector<int64_t> v(std::max(ids_0.size(), ids_1.size()));
+            std::vector<int64_t>::iterator it;
+            it = std::set_intersection(ids_0.begin(), ids_0.end(), ids_1.begin(), ids_1.end(), v.begin());
+            v.resize(it - v.begin());
+
+            acc_recall += double(v.size()) / valid_gt_count;
+        } else {
+            acc_recall += 1.0;
+        }
+    }
+    return acc_recall / nq;
+}
+
 inline float
 GetRangeSearchRecall(const knowhere::DataSet& gt, const knowhere::DataSet& result) {
     uint32_t nq = result.GetRows();
