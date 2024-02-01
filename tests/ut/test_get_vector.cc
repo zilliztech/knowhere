@@ -16,7 +16,7 @@
 #include "catch2/generators/catch_generators.hpp"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_config.h"
-#include "knowhere/factory.h"
+#include "knowhere/index/index_factory.h"
 #include "utils.h"
 TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
     using Catch::Approx;

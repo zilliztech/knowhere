@@ -17,7 +17,7 @@
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_config.h"
-#include "knowhere/factory.h"
+#include "knowhere/index/index_factory.h"
 #include "utils.h"
 
 TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {

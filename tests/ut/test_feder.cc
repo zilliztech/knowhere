@@ -16,10 +16,10 @@
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/config.h"
-#include "knowhere/factory.h"
 #include "knowhere/feder/DiskANN.h"
 #include "knowhere/feder/HNSW.h"
 #include "knowhere/feder/IVFFlat.h"
+#include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
 #include "utils.h"
 

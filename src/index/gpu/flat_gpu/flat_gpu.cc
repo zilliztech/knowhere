@@ -16,7 +16,7 @@
 #include "index/flat_gpu/flat_gpu_config.h"
 #include "index/gpu/gpu_res_mgr.h"
 #include "io/memory_io.h"
-#include "knowhere/factory.h"
+#include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
 
 namespace knowhere {

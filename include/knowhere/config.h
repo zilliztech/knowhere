@@ -73,6 +73,7 @@ enum PARAM_TYPE {
     DESERIALIZE = 1 << 4,
     DESERIALIZE_FROM_FILE = 1 << 5,
     ITERATOR = 1 << 6,
+    CLUSTER = 1 << 7,
 };
 
 template <>
@@ -295,6 +296,12 @@ class EntryAccess {
     EntryAccess&
     for_feder() {
         entry->type |= PARAM_TYPE::FEDER;
+        return *this;
+    }
+
+    EntryAccess&
+    for_cluster() {
+        entry->type |= PARAM_TYPE::CLUSTER;
         return *this;
     }
 

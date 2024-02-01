@@ -128,6 +128,29 @@ GetKNNRecall(const knowhere::DataSet& ground_truth, const knowhere::DataSet& res
     return ((float)matched_num) / ((float)nq * res_k);
 }
 
+inline float
+GetKNNRecall(const knowhere::DataSet& ground_truth, const std::vector<std::vector<int64_t>>& result) {
+    auto nq = result.size();
+    auto gt_k = ground_truth.GetDim();
+    auto gt_ids = ground_truth.GetIds();
+
+    uint32_t matched_num = 0;
+    for (auto i = 0; i < nq; ++i) {
+        std::vector<int64_t> ids_0(gt_ids + i * gt_k, gt_ids + i * gt_k + gt_k);
+        std::vector<int64_t> ids_1 = result[i];
+
+        std::sort(ids_0.begin(), ids_0.end());
+        std::sort(ids_1.begin(), ids_1.end());
+
+        std::vector<int64_t> v(std::max(ids_0.size(), ids_1.size()));
+        std::vector<int64_t>::iterator it;
+        it = std::set_intersection(ids_0.begin(), ids_0.end(), ids_1.begin(), ids_1.end(), v.begin());
+        v.resize(it - v.begin());
+        matched_num += v.size();
+    }
+    return ((float)matched_num) / ((float)nq * gt_k);
+}
+
 //  Compare two ann-search results
 //      "ground_truth" here is just used as a baseline value for comparison. It is not real groundtruth and the knn
 //  results may be worse, we can call the compare results as "relative-recall".

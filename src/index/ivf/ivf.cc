@@ -28,9 +28,9 @@
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
-#include "knowhere/factory.h"
 #include "knowhere/feder/IVFFlat.h"
-#include "knowhere/index_node_data_mock_wrapper.h"
+#include "knowhere/index/index_factory.h"
+#include "knowhere/index/index_node_data_mock_wrapper.h"
 #include "knowhere/log.h"
 #include "knowhere/utils.h"
 

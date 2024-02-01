@@ -18,8 +18,8 @@
 #include "io/memory_io.h"
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/thread_pool.h"
-#include "knowhere/factory.h"
-#include "knowhere/index_node_data_mock_wrapper.h"
+#include "knowhere/index/index_factory.h"
+#include "knowhere/index/index_node_data_mock_wrapper.h"
 #include "knowhere/log.h"
 #include "knowhere/utils.h"
 

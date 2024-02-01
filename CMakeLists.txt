@@ -120,6 +120,7 @@ if(NOT WITH_LIGHT)
     KNOWHERE_SRCS
     src/common/*.cc
     src/index/*.cc
+    src/cluster/*.cc
     src/io/*.cc
     src/common/*.cu
     src/index/*.cu

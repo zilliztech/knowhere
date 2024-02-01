@@ -25,7 +25,7 @@
 #include "index/ivf_gpu/ivf_gpu_config.h"
 #include "io/memory_io.h"
 #include "knowhere/comp/index_param.h"
-#include "knowhere/factory.h"
+#include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
 
 namespace knowhere {

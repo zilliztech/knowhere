@@ -9,7 +9,7 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
-#include "knowhere/factory.h"
+#include "knowhere/index/index_factory.h"
 
 #ifdef KNOWHERE_WITH_RAFT
 #include <cuda_runtime_api.h>
@@ -44,7 +44,7 @@ expected<Index<IndexNode>>
 IndexFactory::Create(const std::string& name, const int32_t& version, const Object& object) {
     static_assert(KnowhereDataTypeCheck<DataType>::value == true);
     auto& func_mapping_ = MapInstance();
-    auto key = GetIndexKey<DataType>(name);
+    auto key = GetKey<DataType>(name);
     if (func_mapping_.find(key) == func_mapping_.end()) {
         LOG_KNOWHERE_ERROR_ << "failed to find index " << key << " in factory";
         return expected<Index<IndexNode>>::Err(Status::invalid_index_error, "index not supported");
@@ -66,7 +66,7 @@ const IndexFactory&
 IndexFactory::Register(const std::string& name, std::function<Index<IndexNode>(const int32_t&, const Object&)> func) {
     static_assert(KnowhereDataTypeCheck<DataType>::value == true);
     auto& func_mapping_ = MapInstance();
-    auto key = GetIndexKey<DataType>(name);
+    auto key = GetKey<DataType>(name);
     assert(func_mapping_.find(key) == func_mapping_.end());
     func_mapping_[key] = std::make_unique<FunMapValue<Index<IndexNode>>>(func);
     return *this;

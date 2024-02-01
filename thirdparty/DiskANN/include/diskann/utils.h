@@ -37,18 +37,7 @@ typedef int FileHandle;
 #include "common_includes.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/operands.h"
-
-// taken from
-// https://github.com/Microsoft/BLAS-on-flash/blob/master/include/utils.h
-// round up X to the nearest multiple of Y
-#define ROUND_UP(X, Y) \
-  ((((uint64_t) (X) / (Y)) + ((uint64_t) (X) % (Y) != 0)) * (Y))
-
-#define DIV_ROUND_UP(X, Y) \
-  (((uint64_t) (X) / (Y)) + ((uint64_t) (X) % (Y) != 0))
-
-// round down X to the nearest multiple of Y
-#define ROUND_DOWN(X, Y) (((uint64_t) (X) / (Y)) * (Y))
+#include "knowhere/utils.h"
 
 // alignment tests
 #define IS_ALIGNED(X, Y) ((uint64_t) (X) % (uint64_t) (Y) == 0)

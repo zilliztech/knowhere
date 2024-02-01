@@ -17,8 +17,8 @@
 
 #include "knowhere/bitsetview.h"
 #include "knowhere/dataset.h"
-#include "knowhere/factory.h"
-#include "knowhere/index_node.h"
+#include "knowhere/index/index_factory.h"
+#include "knowhere/index/index_node.h"
 #include "knowhere/operands.h"
 
 namespace knowhere {

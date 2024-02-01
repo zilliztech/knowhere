@@ -17,8 +17,11 @@ if(NOT WITH_DISKANN)
 endif()
 
 if (WITH_CARDINAL)
-    knowhere_file_glob(GLOB_RECURSE CARDINAL_UNSUPPORTED_TESTS test_iterator.cc test_feder.cc test_sparse.cc)
-    list(REMOVE_ITEM KNOWHERE_UT_SRCS ${CARDINAL_UNSUPPORTED_TESTS})
+  knowhere_file_glob(GLOB_RECURSE CARDINAL_UNSUPPORTED_TESTS test_iterator.cc test_feder.cc test_sparse.cc)
+  list(REMOVE_ITEM KNOWHERE_UT_SRCS ${CARDINAL_UNSUPPORTED_TESTS})
+else()
+  knowhere_file_glob(GLOB_RECURSE KNOWHERE_CLUSTER_TESTS test_cluster.cc)
+  list(REMOVE_ITEM KNOWHERE_UT_SRCS ${KNOWHERE_CLUSTER_TESTS})
 endif()
 
 add_executable(knowhere_tests ${KNOWHERE_UT_SRCS})
