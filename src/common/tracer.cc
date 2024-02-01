@@ -120,9 +120,11 @@ AddEvent(const std::string& event_label) {
 
 bool
 isEmptyID(const uint8_t* id, int length) {
-    for (int i = 0; i < length; i++) {
-        if (id[i] != 0) {
-            return false;
+    if (id != nullptr) {
+        for (int i = 0; i < length; i++) {
+            if (id[i] != 0) {
+                return false;
+            }
         }
     }
     return true;
