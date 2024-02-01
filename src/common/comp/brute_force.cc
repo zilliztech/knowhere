@@ -22,6 +22,7 @@
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/config.h"
 #include "knowhere/expected.h"
+#include "knowhere/index_node.h"
 #include "knowhere/log.h"
 #include "knowhere/sparse_utils.h"
 #include "knowhere/utils.h"
@@ -534,6 +535,142 @@ BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_d
     return GenResultDataSet(nq, topk, labels.release(), distances.release());
 }
 
+class BruteForceIterator : public IndexNode::iterator {
+ public:
+    BruteForceIterator(std::vector<std::pair<float, int64_t>>&& distances_ids, bool larger_is_closer)
+        : comp_(larger_is_closer), results_(std::move(distances_ids)) {
+        sort_size_ = std::max((size_t)50000, results_.size() / 10);
+        sort_next();
+    }
+
+    std::pair<int64_t, float>
+    Next() override {
+        sort_next();
+        auto& result = results_[next_++];
+        return std::make_pair(result.second, result.first);
+    }
+
+    [[nodiscard]] bool
+    HasNext() const override {
+        return next_ < results_.size() && results_[next_].second != -1;
+    }
+
+ private:
+    // sort the next sort_size_ elements
+    inline void
+    sort_next() {
+        if (next_ < sorted_) {
+            return;
+        }
+        size_t current_end = std::min(results_.size(), sorted_ + sort_size_);
+        std::nth_element(results_.begin() + sorted_, results_.begin() + current_end, results_.end(), comp_);
+        std::sort(results_.begin() + sorted_, results_.begin() + current_end, comp_);
+        sorted_ = current_end;
+    }
+    struct PairComparator {
+        bool larger_is_closer;
+        PairComparator(bool larger) : larger_is_closer(larger) {
+        }
+
+        bool
+        operator()(const std::pair<float, int64_t>& a, const std::pair<float, int64_t>& b) const {
+            if (a.second == -1) {
+                return false;
+            }
+            if (b.second == -1) {
+                return true;
+            }
+            return larger_is_closer ? a.first > b.first : a.first < b.first;
+        }
+    } comp_;
+
+    std::vector<std::pair<float, int64_t>> results_;
+    size_t next_ = 0;
+    size_t sorted_ = 0;
+    size_t sort_size_;
+};
+
+template <typename DataType>
+expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
+BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                        const BitsetView& bitset) {
+    DataSetPtr base(base_dataset);
+    DataSetPtr query(query_dataset);
+    if constexpr (!std::is_same_v<DataType, typename MockData<DataType>::type>) {
+        base = data_type_conversion<DataType, typename MockData<DataType>::type>(*base_dataset);
+        query = data_type_conversion<DataType, typename MockData<DataType>::type>(*query_dataset);
+    }
+    auto xb = base->GetTensor();
+    auto nb = base->GetRows();
+    auto dim = base->GetDim();
+
+    auto xq = query->GetTensor();
+    auto nq = query->GetRows();
+    BruteForceConfig cfg;
+    std::string msg;
+    auto status = Config::Load(cfg, config, knowhere::ITERATOR, &msg);
+    if (status != Status::success) {
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(status, msg);
+    }
+    std::string metric_str = cfg.metric_type.value();
+    auto result = Str2FaissMetricType(metric_str);
+    if (result.error() != Status::success) {
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(result.error(), result.what());
+    }
+    faiss::MetricType faiss_metric_type = result.value();
+    bool is_cosine = IsMetricType(metric_str, metric::COSINE);
+
+    auto pool = ThreadPool::GetGlobalSearchThreadPool();
+    auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
+    std::vector<folly::Future<Status>> futs;
+    futs.reserve(nq);
+
+    for (int i = 0; i < nq; ++i) {
+        futs.emplace_back(pool->push([&, index = i] {
+            ThreadPool::ScopedOmpSetter setter(1);
+
+            BitsetViewIDSelector bw_idselector(bitset);
+            faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+            auto larger_is_closer = faiss::is_similarity_metric(faiss_metric_type) || is_cosine;
+            auto max_dis = larger_is_closer ? std::numeric_limits<float>::lowest() : std::numeric_limits<float>::max();
+            std::vector<std::pair<float, int64_t>> distances_ids(nb, {max_dis, -1});
+
+            switch (faiss_metric_type) {
+                case faiss::METRIC_L2: {
+                    auto cur_query = (const float*)xq + dim * index;
+                    faiss::all_L2sqr(cur_query, (const float*)xb, dim, 1, nb, distances_ids, nullptr, id_selector);
+                    break;
+                }
+                case faiss::METRIC_INNER_PRODUCT: {
+                    auto cur_query = (const float*)xq + dim * index;
+                    if (is_cosine) {
+                        auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
+                        faiss::all_cosine(copied_query.get(), (const float*)xb, nullptr, dim, 1, nb, distances_ids,
+                                          id_selector);
+                    } else {
+                        faiss::all_inner_product(cur_query, (const float*)xb, dim, 1, nb, distances_ids, id_selector);
+                    }
+                    break;
+                }
+                default: {
+                    LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
+                    return Status::invalid_metric_type;
+                }
+            }
+            vec[index] = std::make_shared<BruteForceIterator>(std::move(distances_ids), larger_is_closer);
+
+            return Status::success;
+        }));
+    }
+
+    auto ret = WaitAllSuccess(futs);
+    if (ret != Status::success) {
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(
+            ret, "failed to brute force search for iterator");
+    }
+    return vec;
+}
+
 }  // namespace knowhere
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::Search<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
@@ -582,5 +719,18 @@ knowhere::BruteForce::RangeSearch<knowhere::bf16>(const knowhere::DataSetPtr bas
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
+                                                  const knowhere::DataSetPtr query_dataset,
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+
+template knowhere::expected<std::vector<std::shared_ptr<knowhere::IndexNode::iterator>>>
+knowhere::BruteForce::AnnIterator<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
+                                                  const knowhere::DataSetPtr query_dataset,
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::expected<std::vector<std::shared_ptr<knowhere::IndexNode::iterator>>>
+knowhere::BruteForce::AnnIterator<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
+                                                  const knowhere::DataSetPtr query_dataset,
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::expected<std::vector<std::shared_ptr<knowhere::IndexNode::iterator>>>
+knowhere::BruteForce::AnnIterator<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset);

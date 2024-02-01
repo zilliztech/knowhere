@@ -11,9 +11,14 @@
 
 #ifndef BRUTE_FORCE_H
 #define BRUTE_FORCE_H
+
+#include <memory>
+#include <vector>
+
 #include "knowhere/bitsetview.h"
 #include "knowhere/dataset.h"
 #include "knowhere/factory.h"
+#include "knowhere/index_node.h"
 #include "knowhere/operands.h"
 
 namespace knowhere {
@@ -42,6 +47,11 @@ class BruteForce {
     static Status
     SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, sparse::label_t* ids, float* dis,
                         const Json& config, const BitsetView& bitset);
+
+    template <typename DataType>
+    static expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
+    AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                const BitsetView& bitset);
 };
 
 }  // namespace knowhere

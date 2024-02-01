@@ -9,6 +9,8 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <set>
+
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
@@ -44,6 +46,41 @@ GetKNNResult(const std::vector<std::shared_ptr<knowhere::IndexNode::iterator>>& 
         }
     }
     return knowhere::GenResultDataSet(nq, k, p_id, p_dist);
+}
+
+// BruteForceIterator should return vectors in the exact same order as BruteForce search.
+void
+AssertBruteForceIteratorResultCorrect(size_t nb,
+                                      const std::vector<std::shared_ptr<knowhere::IndexNode::iterator>>& iterators,
+                                      const knowhere::DataSetPtr gt) {
+    int nq = iterators.size();
+    for (int i = 0; i < nq; ++i) {
+        auto& iter = *iterators[i];
+        auto gt_ids = gt->GetIds() + i * nb;
+        auto gt_dist = gt->GetDistance() + i * nb;
+
+        std::unordered_set<int64_t> ids_set;
+        size_t j = 0;
+        while (j < nb) {
+            if (gt_ids[j] == -1) {
+                REQUIRE(!iter.HasNext());
+                break;
+            }
+            auto dis = gt_dist[j];
+            ids_set.insert(gt_ids[j]);
+            while (j + 1 < nb && gt_dist[j + 1] == dis) {
+                ids_set.insert(gt_ids[++j]);
+            }
+            ++j;
+            while (!ids_set.empty()) {
+                REQUIRE(iter.HasNext());
+                auto [id, dist] = iter.Next();
+                REQUIRE(ids_set.find(id) != ids_set.end());
+                REQUIRE(dist == dis);
+                ids_set.erase(id);
+            }
+        }
+    }
 }
 }  // namespace
 
@@ -225,5 +262,46 @@ TEST_CASE("Test Iterator Mem Index With Binary Vector", "[float metrics]") {
         auto results = GetKNNResult(its.value(), topk);
         float recall = GetKNNRecall(*gt.value(), *results);
         REQUIRE(recall > kKnnRecallThreshold);
+    }
+}
+
+TEST_CASE("Test Iterator BruteForce With Float Vector", "[float metrics]") {
+    using Catch::Approx;
+
+    const int64_t nb = 1000, nq = 10;
+    const int64_t dim = 4;
+
+    auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::IP, knowhere::metric::COSINE);
+    auto version = GenTestVersionList();
+
+    auto rand = GENERATE(1, 2, 3, 5);
+
+    const auto train_ds = GenDataSet(nb, dim, rand);
+    const auto query_ds = GenDataSet(nq, dim, rand + 777);
+
+    const knowhere::Json conf = {
+        {knowhere::meta::METRIC_TYPE, metric}, {knowhere::meta::TOPK, nb},  // to return all vectors
+    };
+
+    SECTION("Test Iterator BruteForce") {
+        auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
+        auto iterators = knowhere::BruteForce::AnnIterator<knowhere::fp32>(train_ds, query_ds, conf, nullptr).value();
+        AssertBruteForceIteratorResultCorrect(nb, iterators, gt.value());
+    }
+
+    SECTION("Test Iterator BruteForce with filtering") {
+        std::vector<std::function<std::vector<uint8_t>(size_t, size_t)>> gen_bitset_funcs = {
+            GenerateBitsetWithFirstTbitsSet, GenerateBitsetWithRandomTbitsSet};
+        const auto bitset_percentages = {0.4f, 0.98f};
+        for (const float percentage : bitset_percentages) {
+            for (const auto& gen_func : gen_bitset_funcs) {
+                auto bitset_data = gen_func(nb, percentage * nb);
+                knowhere::BitsetView bitset(bitset_data.data(), nb);
+                auto iterators =
+                    knowhere::BruteForce::AnnIterator<knowhere::fp32>(train_ds, query_ds, conf, bitset).value();
+                auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, bitset);
+                AssertBruteForceIteratorResultCorrect(nb, iterators, gt.value());
+            }
+        }
     }
 }
