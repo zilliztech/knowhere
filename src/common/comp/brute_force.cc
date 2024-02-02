@@ -563,8 +563,7 @@ class BruteForceIterator : public IndexNode::iterator {
             return;
         }
         size_t current_end = std::min(results_.size(), sorted_ + sort_size_);
-        std::nth_element(results_.begin() + sorted_, results_.begin() + current_end, results_.end(), comp_);
-        std::sort(results_.begin() + sorted_, results_.begin() + current_end, comp_);
+        std::partial_sort(results_.begin() + sorted_, results_.begin() + current_end, results_.end(), comp_);
         sorted_ = current_end;
     }
     struct PairComparator {
@@ -587,7 +586,7 @@ class BruteForceIterator : public IndexNode::iterator {
     std::vector<std::pair<float, int64_t>> results_;
     size_t next_ = 0;
     size_t sorted_ = 0;
-    size_t sort_size_;
+    size_t sort_size_ = 0;
 };
 
 template <typename DataType>

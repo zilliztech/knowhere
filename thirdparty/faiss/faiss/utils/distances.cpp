@@ -737,8 +737,9 @@ void knn_inner_product(
     }
 }
 
-// compute and store all L2 distances into output. Output should be preallocated
-// of size nx * ny, each element should be initialized to {-1, -1}.
+// computes and stores all IP distances into output. Output should be
+// preallocated of size nx * ny, each element should be initialized to
+// {lowest distance, -1}.
 void all_inner_product(
         const float* x,
         const float* y,
@@ -783,8 +784,9 @@ void knn_L2sqr(
     }
 }
 
-// compute and store all L2 distances into output. Output should be preallocated
-// of size nx * ny, each element should be initialized to {inf, -1}.
+// computes and stores all L2 distances into output. Output should be
+// preallocated of size nx * ny, each element should be initialized to
+// {lowest distance, -1}.
 void all_L2sqr(
         const float* x,
         const float* y,
@@ -830,8 +832,9 @@ void knn_cosine(
     }
 }
 
-// compute and store all L2 distances into output. Output should be preallocated
-// of size nx * ny, each element should be initialized to {-1, -1}.
+// computes and stores all cosine distances into output. Output should be
+// preallocated of size nx * ny, each element should be initialized to
+// {lowest distance, -1}.
 void all_cosine(
         const float* x,
         const float* y,
