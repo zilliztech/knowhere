@@ -41,7 +41,7 @@
 
 namespace knowhere {
 
-auto static constexpr cuda_concurrent_size = std::uint32_t{32};
+auto static constexpr cuda_concurrent_size = std::uint32_t{16};
 
 template <raft_proto::raft_index_kind K>
 struct KnowhereConfigType {};
@@ -150,11 +150,7 @@ struct GpuRaftIndexNode : public IndexNode {
 
     bool
     HasRawData(const std::string& metric_type) const override {
-        if constexpr (index_kind == raft_proto::raft_index_kind::ivf_flat) {
-            return !IsMetricType(metric_type, metric::COSINE);
-        } else {
-            return false;
-        }
+        return false;
     }
 
     Status
