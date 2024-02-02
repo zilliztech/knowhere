@@ -616,6 +616,19 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
     if (result.error() != Status::success) {
         return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(result.error(), result.what());
     }
+
+#ifdef NOT_COMPILE_FOR_SWIG
+    std::shared_ptr<tracer::trace::Span> span = nullptr;
+    if (cfg.trace_id.has_value()) {
+        auto ctx = tracer::TraceContext{(uint8_t*)cfg.trace_id.value().c_str(), (uint8_t*)cfg.span_id.value().c_str(),
+                                        (uint8_t)cfg.trace_flags.value()};
+        span = tracer::StartSpan("knowhere bf ann iterator initialization", &ctx);
+        span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
+        span->SetAttribute(meta::ROWS, nb);
+        span->SetAttribute(meta::DIM, dim);
+        span->SetAttribute(meta::NQ, nq);
+    }
+#endif
     faiss::MetricType faiss_metric_type = result.value();
     bool is_cosine = IsMetricType(metric_str, metric::COSINE);
 
@@ -667,6 +680,12 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
         return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(
             ret, "failed to brute force search for iterator");
     }
+
+#ifdef NOT_COMPILE_FOR_SWIG
+    if (cfg.trace_id.has_value()) {
+        span->End();
+    }
+#endif
     return vec;
 }
 
