@@ -32,6 +32,7 @@
 #include "diskann/parameters.h"
 #include "tsl/robin_set.h"
 #include "diskann/utils.h"
+#include "knowhere/comp/thread_pool.h"
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -358,9 +359,7 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
       }
     }));
   }
-  for (auto &future : futures) {
-    future.wait();
-  }
+  knowhere::WaitAllSuccess(futures);
 
   diskann::save_bin<float>(pq_pivots_path.c_str(), full_pivot_data.get(),
                            (size_t) num_centers, dim);
@@ -577,9 +576,7 @@ int generate_pq_data_from_pivots(const std::string data_file,
         }
       }));
     }
-    for (auto &future : futures) {
-      future.wait();
-    }
+    knowhere::WaitAllSuccess(futures);
 
     if (num_centers > 256) {
       compressed_file_writer.write(
