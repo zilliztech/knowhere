@@ -71,6 +71,8 @@ class IvfIndexNode : public IndexNode {
     Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override;
     expected<DataSetPtr>
     RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override;
+    expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
+    AnnIterator(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override;
     expected<DataSetPtr>
     GetVectorByIds(const DataSet& dataset) const override;
     bool
@@ -229,6 +231,64 @@ class IvfIndexNode : public IndexNode {
     TrainInternal(const DataSet& dataset, const Config& cfg);
 
  private:
+    // only support IVFFlat and IVFFlatCC
+    // iterator will own the copied_norm_query
+    class iterator : public IndexNode::iterator {
+     public:
+        iterator(const IndexType* index, const float* query_data, std::unique_ptr<float[]>&& copied_norm_query,
+                 const BitsetView& bitset, size_t nprobe)
+            : index_(index), copied_norm_query_(std::move(copied_norm_query)) {
+            if (copied_norm_query_ != nullptr) {
+                query_data = copied_norm_query_.get();
+            }
+
+            BitsetViewIDSelector bw_idselector(bitset);
+            faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+            ivf_search_params_.sel = id_selector;
+
+            ivf_search_params_.nprobe = nprobe;
+            ivf_search_params_.max_codes = 0;
+
+            workspace_ = index_->getIteratorWorkspace(query_data, &ivf_search_params_);
+            UpdateNext();
+        }
+
+        std::pair<int64_t, float>
+        Next() override {
+            auto ret = std::make_pair(next_id_, next_dist_);
+            UpdateNext();
+            return ret;
+        }
+
+        [[nodiscard]] bool
+        HasNext() const override {
+            return has_next_;
+        }
+
+     private:
+        void
+        UpdateNext() {
+            auto next = index_->getIteratorNext(workspace_.get());
+            if (next.has_value()) {
+                auto [dist, id] = next.value();
+                next_dist_ = dist;
+                next_id_ = id;
+                has_next_ = true;
+            } else {
+                has_next_ = false;
+            }
+        }
+
+        const IndexType* index_ = nullptr;
+        std::unique_ptr<faiss::IVFFlatIteratorWorkspace> workspace_ = nullptr;
+        std::unique_ptr<float[]> copied_norm_query_ = nullptr;
+        faiss::IVFSearchParameters ivf_search_params_;
+
+        bool has_next_ = false;
+        float next_dist_ = 0.0f;
+        int64_t next_id_ = -1;
+    };
+
     std::unique_ptr<IndexType> index_;
     std::shared_ptr<ThreadPool> search_pool_;
     // Faiss uses OpenMP for training/building the index and we have no control
@@ -749,6 +809,68 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSet& dataset, const Con
     }
 
     return GenResultDataSet(nq, ids, distances, lims);
+}
+
+template <typename DataType, typename IndexType>
+expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
+IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSet& dataset, const Config& cfg,
+                                               const BitsetView& bitset) const {
+    if (!index_) {
+        LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::empty_index,
+                                                                                "index not loaded");
+    }
+    if (!index_->is_trained) {
+        LOG_KNOWHERE_WARNING_ << "index not trained";
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::index_not_trained,
+                                                                                "index not trained");
+    }
+    // only support IVFFlat and IVFFlatCC;
+    if constexpr (!std::is_same<faiss::IndexIVFFlatCC, IndexType>::value &&
+                  !std::is_same<faiss::IndexIVFFlat, IndexType>::value) {
+        LOG_KNOWHERE_WARNING_ << "Current index_type: " << Type() << ", only IVFFlat and IVFFlatCC support Iterator.";
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::not_implemented,
+                                                                                "index not supported");
+    } else {
+        auto dim = dataset.GetDim();
+        auto rows = dataset.GetRows();
+        auto data = dataset.GetTensor();
+
+        auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(rows, nullptr);
+
+        const IvfConfig& ivf_cfg = static_cast<const IvfConfig&>(cfg);
+        bool is_cosine = IsMetricType(ivf_cfg.metric_type.value(), knowhere::metric::COSINE);
+
+        size_t nprobe = ivf_cfg.nprobe.value();
+
+        try {
+            std::vector<folly::Future<folly::Unit>> futs;
+            futs.reserve(rows);
+            for (int i = 0; i < rows; ++i) {
+                futs.emplace_back(search_pool_->push([&, index = i] {
+                    auto cur_query = (const float*)data + index * dim;
+                    std::unique_ptr<float[]> copied_norm_query = nullptr;
+                    if (is_cosine) {
+                        copied_norm_query = CopyAndNormalizeVecs(cur_query, 1, dim);
+                    }
+
+                    // the iterator only own the copied_norm_query.
+                    vec[index].reset(
+                        new iterator(index_.get(), cur_query, std::move(copied_norm_query), bitset, nprobe));
+                }));
+            }
+
+            // wait for the completion
+            // initial search - scan at least (nprobe/nlist)% codes
+            WaitAllSuccess(futs);
+
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+            return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::faiss_inner_error,
+                                                                                    e.what());
+        }
+        return vec;
+    }
 }
 
 template <typename DataType, typename IndexType>
