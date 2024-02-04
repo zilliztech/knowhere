@@ -114,14 +114,7 @@ class FlatIndexNode : public IndexNode {
                 }));
             }
             // wait for the completion
-            for (auto& fut : futs) {
-                fut.wait();
-            }
-            // check for exceptions. value() is {}, so either
-            //   a call does nothing, or it throws an inner exception.
-            for (auto& fut : futs) {
-                fut.result().value();
-            }
+            WaitAllSuccess(futs);
         } catch (const std::exception& e) {
             std::unique_ptr<int64_t[]> auto_delete_ids(ids);
             std::unique_ptr<float[]> auto_delete_dis(distances);
@@ -193,14 +186,7 @@ class FlatIndexNode : public IndexNode {
                 }));
             }
             // wait for the completion
-            for (auto& fut : futs) {
-                fut.wait();
-            }
-            // check for exceptions. value() is {}, so either
-            //   a call does nothing, or it throws an inner exception.
-            for (auto& fut : futs) {
-                fut.result().value();
-            }
+            WaitAllSuccess(futs);
             GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter, distances, ids,
                                  lims);
         } catch (const std::exception& e) {

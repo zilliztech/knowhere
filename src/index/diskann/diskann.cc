@@ -478,8 +478,6 @@ DiskANNIndexNode<T>::Deserialize(const BinarySet& binset, const Config& cfg) {
         std::vector<int64_t> warmup_result_ids_64(warmup_num, 0);
         std::vector<float> warmup_result_dists(warmup_num, 0);
 
-        bool all_searches_are_good = true;
-
         std::vector<folly::Future<folly::Unit>> futures;
         futures.reserve(warmup_num);
         for (_s64 i = 0; i < (int64_t)warmup_num; ++i) {
@@ -489,16 +487,14 @@ DiskANNIndexNode<T>::Deserialize(const BinarySet& binset, const Config& cfg) {
                                                     warmup_result_dists.data() + (index * 1), 4);
             }));
         }
-        for (auto& future : futures) {
-            if (TryDiskANNCall([&]() { future.wait(); }) != Status::success) {
-                all_searches_are_good = false;
-            }
-        }
+
+        bool failed = TryDiskANNCall([&]() { WaitAllSuccess(futures); }) != Status::success;
+
         if (warmup != nullptr) {
             diskann::aligned_free(warmup);
         }
 
-        if (!all_searches_are_good) {
+        if (failed) {
             LOG_KNOWHERE_ERROR_ << "Failed to do search on warmup file for DiskANN.";
             return Status::diskann_inner_error;
         }
@@ -550,30 +546,24 @@ DiskANNIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const Bit
                                                  search_conf.search_list_size.value());
     }
 
-    auto p_id = new int64_t[k * nq];
-    auto p_dist = new float[k * nq];
+    auto p_id = std::make_unique<int64_t[]>(k * nq);
+    auto p_dist = std::make_unique<float[]>(k * nq);
 
-    bool all_searches_are_good = true;
     std::vector<folly::Future<folly::Unit>> futures;
     futures.reserve(nq);
     for (int64_t row = 0; row < nq; ++row) {
-        futures.emplace_back(search_pool_->push([&, index = row]() {
-            pq_flash_index_->cached_beam_search(xq + (index * dim), k, lsearch, p_id + (index * k),
-                                                p_dist + (index * k), beamwidth, false, nullptr, feder_result, bitset,
-                                                filter_ratio, for_tuning);
+        futures.emplace_back(search_pool_->push([&, index = row, p_id_ptr = p_id.get(), p_dist_ptr = p_dist.get()]() {
+            pq_flash_index_->cached_beam_search(xq + (index * dim), k, lsearch, p_id_ptr + (index * k),
+                                                p_dist_ptr + (index * k), beamwidth, false, nullptr, feder_result,
+                                                bitset, filter_ratio, for_tuning);
         }));
     }
-    for (auto& future : futures) {
-        if (TryDiskANNCall([&]() { future.wait(); }) != Status::success) {
-            all_searches_are_good = false;
-        }
-    }
 
-    if (!all_searches_are_good) {
+    if (TryDiskANNCall([&]() { WaitAllSuccess(futures); }) != Status::success) {
         return expected<DataSetPtr>::Err(Status::diskann_inner_error, "some search failed");
     }
 
-    auto res = GenResultDataSet(nq, k, p_id, p_dist);
+    auto res = GenResultDataSet(nq, k, p_id.release(), p_dist.release());
 
     // set visit_info json string into result dataset
     if (feder_result != nullptr) {
@@ -625,7 +615,6 @@ DiskANNIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, cons
 
     std::vector<folly::Future<folly::Unit>> futures;
     futures.reserve(nq);
-    bool all_searches_are_good = true;
     for (int64_t row = 0; row < nq; ++row) {
         futures.emplace_back(search_pool_->push([&, index = row]() {
             std::vector<int64_t> indices;
@@ -639,12 +628,7 @@ DiskANNIndexNode<T>::RangeSearch(const DataSet& dataset, const Config& cfg, cons
             }
         }));
     }
-    for (auto& future : futures) {
-        if (TryDiskANNCall([&]() { future.wait(); }) != Status::success) {
-            all_searches_are_good = false;
-        }
-    }
-    if (!all_searches_are_good) {
+    if (TryDiskANNCall([&]() { WaitAllSuccess(futures); }) != Status::success) {
         return expected<DataSetPtr>::Err(Status::diskann_inner_error, "some search failed");
     }
 

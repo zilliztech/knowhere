@@ -56,17 +56,17 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     bool is_cosine = IsMetricType(metric_str, metric::COSINE);
 
     int topk = cfg.k.value();
-    auto labels = new int64_t[nq * topk];
-    auto distances = new float[nq * topk];
+    auto labels = std::make_unique<int64_t[]>(nq * topk);
+    auto distances = std::make_unique<float[]>(nq * topk);
 
     auto pool = ThreadPool::GetGlobalSearchThreadPool();
     std::vector<folly::Future<Status>> futs;
     futs.reserve(nq);
     for (int i = 0; i < nq; ++i) {
-        futs.emplace_back(pool->push([&, index = i] {
+        futs.emplace_back(pool->push([&, index = i, labels_ptr = labels.get(), distances_ptr = distances.get()] {
             ThreadPool::ScopedOmpSetter setter(1);
-            auto cur_labels = labels + topk * index;
-            auto cur_distances = distances + topk * index;
+            auto cur_labels = labels_ptr + topk * index;
+            auto cur_distances = distances_ptr + topk * index;
             switch (faiss_metric_type) {
                 case faiss::METRIC_L2: {
                     auto cur_query = (const float*)xq + dim * index;
@@ -118,14 +118,11 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
             return Status::success;
         }));
     }
-    for (auto& fut : futs) {
-        fut.wait();
-        auto ret = fut.result().value();
-        if (ret != Status::success) {
-            return expected<DataSetPtr>::Err(ret, "failed to brute force search");
-        }
+    auto ret = WaitAllSuccess(futs);
+    if (ret != Status::success) {
+        return expected<DataSetPtr>::Err(ret, "failed to brute force search");
     }
-    return GenResultDataSet(nq, cfg.k.value(), labels, distances);
+    return GenResultDataSet(nq, cfg.k.value(), labels.release(), distances.release());
 }
 
 Status
@@ -212,11 +209,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
             return Status::success;
         }));
     }
-    for (auto& fut : futs) {
-        fut.wait();
-        auto ret = fut.result().value();
-        RETURN_IF_ERROR(ret);
-    }
+    RETURN_IF_ERROR(WaitAllSuccess(futs));
     return Status::success;
 }
 
@@ -315,12 +308,9 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
             return Status::success;
         }));
     }
-    for (auto& fut : futs) {
-        fut.wait();
-        auto ret = fut.result().value();
-        if (ret != Status::success) {
-            return expected<DataSetPtr>::Err(ret, "failed to brute force search");
-        }
+    auto ret = WaitAllSuccess(futs);
+    if (ret != Status::success) {
+        return expected<DataSetPtr>::Err(ret, "failed to brute force search");
     }
 
     int64_t* ids = nullptr;

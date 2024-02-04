@@ -22,6 +22,7 @@
 
 #include "folly/executors/CPUThreadPoolExecutor.h"
 #include "folly/futures/Future.h"
+#include "knowhere/expected.h"
 #include "knowhere/log.h"
 
 namespace knowhere {
@@ -182,4 +183,23 @@ class ThreadPool {
     inline static std::mutex global_thread_pool_mutex_;
     constexpr static size_t kTaskQueueFactor = 16;
 };
+
+// T is either folly::Unit or Status
+template <typename T>
+inline Status
+WaitAllSuccess(std::vector<folly::Future<T>>& futures) {
+    static_assert(std::is_same<T, folly::Unit>::value || std::is_same<T, Status>::value,
+                  "WaitAllSuccess can only be used with folly::Unit or knowhere::Status");
+    auto allFuts = folly::collectAll(futures.begin(), futures.end()).get();
+    for (const auto& result : allFuts) {
+        result.throwUnlessValue();
+        if constexpr (!std::is_same_v<T, folly::Unit>) {
+            if (result.value() != Status::success) {
+                return result.value();
+            }
+        }
+    }
+    return Status::success;
+}
+
 }  // namespace knowhere
