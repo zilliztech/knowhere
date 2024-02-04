@@ -532,6 +532,7 @@ int generate_pq_data_from_pivots(const std::string data_file,
             }
           }));
     }
+    knowhere::WaitAllSuccess(futures);
 
     futures.clear();
     futures.reserve(num_pq_chunks);
