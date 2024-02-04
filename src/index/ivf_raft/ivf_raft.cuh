@@ -453,12 +453,7 @@ class RaftIvfIndexNode : public IndexNode {
 
     bool
     HasRawData(const std::string& metric_type) const override {
-        if constexpr (std::is_same_v<detail::raft_ivf_flat_index, T>) {
-            return !IsMetricType(metric_type, metric::COSINE);
-        }
-        if constexpr (std::is_same_v<detail::raft_ivf_pq_index, T>) {
-            return false;
-        }
+        return false;
     }
 
     expected<DataSetPtr>
