@@ -21,6 +21,7 @@
 #include <utility>
 
 #include "folly/executors/CPUThreadPoolExecutor.h"
+#include "folly/executors/task_queue/UnboundedBlockingQueue.h"
 #include "folly/futures/Future.h"
 #include "knowhere/expected.h"
 #include "knowhere/log.h"
@@ -28,6 +29,8 @@
 namespace knowhere {
 
 class ThreadPool {
+ public:
+    enum class QueueType { LIFO, FIFO };
 #ifdef __linux__
  private:
     class LowPriorityThreadFactory : public folly::NamedThreadFactory {
@@ -48,23 +51,33 @@ class ThreadPool {
     };
 
  public:
-    explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix)
-        : pool_(folly::CPUThreadPoolExecutor(
-              num_threads,
-              std::make_unique<
-                  folly::LifoSemMPMCQueue<folly::CPUThreadPoolExecutor::CPUTask, folly::QueueBehaviorIfFull::BLOCK>>(
-                  num_threads * kTaskQueueFactor),
-              std::make_shared<LowPriorityThreadFactory>(thread_name_prefix))) {
+    explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix, QueueType queueT = QueueType::LIFO)
+        : pool_(queueT == QueueType::LIFO
+                    ? folly::CPUThreadPoolExecutor(
+                          num_threads,
+                          std::make_unique<folly::LifoSemMPMCQueue<folly::CPUThreadPoolExecutor::CPUTask,
+                                                                   folly::QueueBehaviorIfFull::BLOCK>>(
+                              num_threads * kTaskQueueFactor),
+                          std::make_shared<LowPriorityThreadFactory>(thread_name_prefix))
+                    : folly::CPUThreadPoolExecutor(
+                          num_threads,
+                          std::make_unique<folly::UnboundedBlockingQueue<folly::CPUThreadPoolExecutor::CPUTask>>(),
+                          std::make_shared<LowPriorityThreadFactory>(thread_name_prefix))) {
     }
 #else
  public:
-    explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix)
-        : pool_(folly::CPUThreadPoolExecutor(
-              num_threads,
-              std::make_unique<
-                  folly::LifoSemMPMCQueue<folly::CPUThreadPoolExecutor::CPUTask, folly::QueueBehaviorIfFull::BLOCK>>(
-                  num_threads * kTaskQueueFactor),
-              std::make_shared<folly::NamedThreadFactory>(thread_name_prefix))) {
+    explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix, QueueType queueT = QueueType::LIFO)
+        : pool_(queueT == QueueType::LIFO
+                    ? folly::CPUThreadPoolExecutor(
+                          num_threads,
+                          std::make_unique<folly::LifoSemMPMCQueue<folly::CPUThreadPoolExecutor::CPUTask,
+                                                                   folly::QueueBehaviorIfFull::BLOCK>>(
+                              num_threads * kTaskQueueFactor),
+                          std::make_shared<folly::NamedThreadFactory>(thread_name_prefix))
+                    : folly::CPUThreadPoolExecutor(
+                          num_threads,
+                          std::make_unique<folly::UnboundedBlockingQueue<folly::CPUThreadPoolExecutor::CPUTask>>(),
+                          std::make_shared<folly::NamedThreadFactory>(thread_name_prefix))) {
     }
 #endif
 
