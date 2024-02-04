@@ -69,7 +69,13 @@ struct IVFSearchParameters {
     size_t max_codes;  ///< max nb of codes to visit to do a query
     int parallel_mode; // default value if -1, and we will use
                        // this->parallel_mode in this case
-    IVFSearchParameters() : nprobe(1), max_codes(0), parallel_mode(-1) {}
+
+    ///< indicate whether we should early teriminate before topk results full when search reaches max_codes
+    ///< to minimize code change, when users only use nprobe to search, this config does not take affect since we will first retrieve the nearest nprobe buckets
+    ///< it is a bit heavy to further retrieve more buckets
+    ///< therefore to make sure we get topk results, use nprobe=nlist and use max_codes to narrow down the search range
+    bool ensure_topk_full = false;
+    IVFSearchParameters() : nprobe(1), max_codes(0), parallel_mode(-1), ensure_topk_full(false) {}
     virtual ~IVFSearchParameters() {}
 };
 
@@ -421,6 +427,7 @@ struct InvertedListScanner {
      * @param distances  heap distances (size k)
      * @param labels     heap labels (size k)
      * @param k          heap size
+     * @param scan_cnt   valid number of codes be scanned
      * @return number of heap updates performed
      */
     virtual size_t scan_codes(
@@ -431,6 +438,7 @@ struct InvertedListScanner {
             float* distances,
             idx_t* labels,
             size_t k,
+            size_t& scan_cnt,
             const BitsetView bitset = nullptr) const;
 
     /** scan a set of codes, compute distances to current query and

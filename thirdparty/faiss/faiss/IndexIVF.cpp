@@ -424,6 +424,7 @@ void IndexIVF::search_preassigned(
     FAISS_THROW_IF_NOT(nprobe > 0);
 
     idx_t max_codes = params ? params->max_codes : this->max_codes;
+    bool ensure_topk_full = params ? params->ensure_topk_full : false;
 
     size_t nlistv = 0, ndis = 0, nheap = 0;
 
@@ -522,7 +523,7 @@ void IndexIVF::search_preassigned(
 
             nlistv++;
 
-            size_t scan_cnt = 0;
+            size_t scan_cnt = 0;  // only record valid cnt
             try {
                 size_t segment_num = invlists->get_segment_num(key);
                 for (size_t segment_idx = 0; segment_idx < segment_num; segment_idx++) {
@@ -547,8 +548,8 @@ void IndexIVF::search_preassigned(
                             simi,
                             idxi,
                             k,
+                            scan_cnt,
                             bitset);
-                    scan_cnt += segment_size;
                 }
             } catch (const std::exception& e) {
                 std::lock_guard<std::mutex> lock(exception_mutex);
@@ -589,11 +590,11 @@ void IndexIVF::search_preassigned(
                             simi,
                             idxi,
                             bitset);
-
-                    if (max_codes && nscan >= max_codes) {
+                    // if ensure_topk_full enabled, also make sure nscan >= k, then stop search further
+                    if (max_codes && nscan >= max_codes && (!ensure_topk_full || nscan >= k)) {
                         break;
                     }
-                }
+                } 
 
                 ndis += nscan;
                 reorder_result(simi, idxi);
@@ -1181,12 +1182,14 @@ size_t InvertedListScanner::scan_codes(
         float* simi,
         idx_t* idxi,
         size_t k,
+        size_t& scan_cnt,
         const BitsetView bitset) const {
     size_t nup = 0;
 
     if (!keep_max) {
         for (size_t j = 0; j < list_size; j++) {
             if (bitset.empty() || !bitset.test(j)) {
+                scan_cnt++;
                 float dis = distance_to_code(codes);
                 if (code_norms) {
                     dis /= code_norms[j];
@@ -1202,6 +1205,7 @@ size_t InvertedListScanner::scan_codes(
     } else {
         for (size_t j = 0; j < list_size; j++) {
             if (bitset.empty() || !bitset.test(j)) {
+                scan_cnt++;
                 float dis = distance_to_code(codes);
                 if (code_norms) {
                     dis /= code_norms[j];

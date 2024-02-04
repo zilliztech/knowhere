@@ -415,13 +415,23 @@ IvfIndexNode<T>::Search(const DataSet& dataset, const Config& cfg, const BitsetV
                             distances[i + offset] = static_cast<float>(i_distances[i + offset]);
                         }
                     }
-                } else if constexpr (std::is_same<T, faiss::IndexIVFFlat>::value) {
+                } else if constexpr (std::is_same<T, faiss::IndexIVFFlatCC>::value) {
                     auto cur_query = (const float*)data + index * dim;
                     if (is_cosine) {
                         copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         cur_query = copied_query.get();
                     }
-                    index_->search_thread_safe(1, cur_query, k, distances + offset, ids + offset, nprobe, 0, bitset);
+                    bool ensure_topk_full = ivf_cfg.ensure_topk_full.value();
+                    if (ensure_topk_full) {
+                        // use max_codes to early termination
+                        size_t max_codes =
+                            (nprobe * 1.0 / index_->nlist) * (index_->ntotal - (bitset.empty() ? 0 : bitset.count()));
+                        index_->search_thread_safe(1, cur_query, k, distances + offset, ids + offset, index_->nlist,
+                                                   max_codes, bitset);
+                    } else {
+                        index_->search_thread_safe(1, cur_query, k, distances + offset, ids + offset, nprobe, 0,
+                                                   bitset);
+                    }
                 } else if constexpr (std::is_same<T, faiss::IndexScaNN>::value) {
                     auto cur_query = (const float*)data + index * dim;
                     const ScannConfig& scann_cfg = static_cast<const ScannConfig&>(cfg);

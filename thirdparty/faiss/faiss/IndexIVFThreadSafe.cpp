@@ -48,6 +48,7 @@ void IndexIVF::search_thread_safe(
     const size_t final_nprobe = std::min(nlist, nprobe);
     FAISS_THROW_IF_NOT(final_nprobe > 0);
     IVFSearchParameters params = gen_search_param(final_nprobe, 0, max_codes);
+    params.ensure_topk_full = (final_nprobe == nlist && max_codes > 0);
 
     // search function for a subset of queries
     auto sub_search_func = [this, k, final_nprobe, bitset, &params](

@@ -135,11 +135,13 @@ struct IVFSQScannerIP : InvertedListScanner {
             float* simi,
             idx_t* idxi,
             size_t k,
+            size_t& scan_cnt,
             const BitsetView bitset = nullptr) const override {
         size_t nup = 0;
 
         for (size_t j = 0; j < list_size; j++) {
             if (bitset.empty() || !bitset.test(ids[j])) {
+                scan_cnt++;
                 float accu = accu0 + dc.query_to_code(codes);
                 if (accu > simi[0]) {
                     int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
@@ -229,10 +231,12 @@ struct IVFSQScannerL2 : InvertedListScanner {
             float* simi,
             idx_t* idxi,
             size_t k,
+            size_t& scan_cnt,
             const BitsetView bitset = nullptr) const override {
         size_t nup = 0;
         for (size_t j = 0; j < list_size; j++) {
             if (bitset.empty() || !bitset.test(ids[j])) {
+                scan_cnt++;
                 float dis = dc.query_to_code(codes);
                 if (dis < simi[0]) {
                     int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
