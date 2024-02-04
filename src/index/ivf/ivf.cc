@@ -52,6 +52,7 @@ class IvfIndexNode : public IndexNode {
                           std::is_same<T, faiss::IndexBinaryIVF>::value || std::is_same<T, faiss::IndexScaNN>::value,
                       "not support");
         search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
+        build_pool_ = ThreadPool::GetGlobalBuildThreadPool();
     }
     Status
     Train(const DataSet& dataset, const Config& cfg) override;
@@ -200,8 +201,16 @@ class IvfIndexNode : public IndexNode {
     };
 
  private:
+    Status
+    TrainInternal(const DataSet& dataset, const Config& cfg);
+
     std::unique_ptr<T> index_;
     std::shared_ptr<ThreadPool> search_pool_;
+    // Faiss uses OpenMP for training/building the index and we have no control
+    // over those threads. build_pool_ is used to make sure the OMP threads
+    // spawded during index training/building can inherit the low nice value of
+    // threads in build_pool_.
+    std::shared_ptr<ThreadPool> build_pool_;
 };
 
 }  // namespace knowhere
@@ -243,6 +252,20 @@ MatchNbits(int64_t size, int64_t nbits) {
 template <typename T>
 Status
 IvfIndexNode<T>::Train(const DataSet& dataset, const Config& cfg) {
+    auto tryObj = build_pool_->push([&] { return TrainInternal(dataset, cfg); }).getTry();
+    if (tryObj.hasValue()) {
+        // lambda did not throw exception and returned a Status, we just return
+        // the Status as is, success or failure.
+        return tryObj.value();
+    }
+    assert(tryObj.hasException());
+    LOG_KNOWHERE_WARNING_ << "faiss internal error: " << tryObj.exception().what();
+    return Status::faiss_inner_error;
+}
+
+template <typename T>
+Status
+IvfIndexNode<T>::TrainInternal(const DataSet& dataset, const Config& cfg) {
     const BaseConfig& base_cfg = static_cast<const IvfConfig&>(cfg);
     std::unique_ptr<ThreadPool::ScopedOmpSetter> setter;
     if (base_cfg.num_build_thread.has_value()) {
@@ -355,20 +378,26 @@ IvfIndexNode<T>::Add(const DataSet& dataset, const Config& cfg) {
     auto data = dataset.GetTensor();
     auto rows = dataset.GetRows();
     const BaseConfig& base_cfg = static_cast<const IvfConfig&>(cfg);
-    std::unique_ptr<ThreadPool::ScopedOmpSetter> setter;
-    if (base_cfg.num_build_thread.has_value()) {
-        setter = std::make_unique<ThreadPool::ScopedOmpSetter>(base_cfg.num_build_thread.value());
-    } else {
-        setter = std::make_unique<ThreadPool::ScopedOmpSetter>();
-    }
-    try {
-        if constexpr (std::is_same<faiss::IndexBinaryIVF, T>::value) {
-            index_->add(rows, (const uint8_t*)data);
-        } else {
-            index_->add(rows, (const float*)data);
-        }
-    } catch (std::exception& e) {
-        LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+
+    // use build_pool_ to make sure the OMP threads spawded by index_->add
+    // can inherit the low nice value of threads in build_pool_.
+    auto tryObj = build_pool_
+                      ->push([&] {
+                          std::unique_ptr<ThreadPool::ScopedOmpSetter> setter;
+                          if (base_cfg.num_build_thread.has_value()) {
+                              setter = std::make_unique<ThreadPool::ScopedOmpSetter>(base_cfg.num_build_thread.value());
+                          } else {
+                              setter = std::make_unique<ThreadPool::ScopedOmpSetter>();
+                          }
+                          if constexpr (std::is_same<faiss::IndexBinaryIVF, T>::value) {
+                              index_->add(rows, (const uint8_t*)data);
+                          } else {
+                              index_->add(rows, (const float*)data);
+                          }
+                      })
+                      .getTry();
+    if (tryObj.hasException()) {
+        LOG_KNOWHERE_WARNING_ << "faiss internal error: " << tryObj.exception().what();
         return Status::faiss_inner_error;
     }
     return Status::success;
