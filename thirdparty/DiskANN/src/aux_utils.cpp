@@ -510,7 +510,7 @@ namespace diskann {
   template<typename T>
   std::unique_ptr<diskann::Index<T>> build_merged_vamana_index(
       std::string base_file, bool ip_prepared, diskann::Metric compareMetric,
-      unsigned L, unsigned R, bool accelerate_build, double sampling_rate,
+      unsigned L, unsigned R, bool accelerate_build, bool shuffle_build, double sampling_rate,
       double ram_budget, std::string mem_index_path, std::string medoids_file,
       std::string centroids_file) {
     size_t base_num, base_dim;
@@ -532,6 +532,7 @@ namespace diskann {
       paras.Set<bool>("saturate_graph", 1);
       paras.Set<std::string>("save_path", mem_index_path);
       paras.Set<bool>("accelerate_build", accelerate_build);
+      paras.Set<bool>("shuffle_build", shuffle_build); 
 
       std::unique_ptr<diskann::Index<T>> _pvamanaIndex =
           std::unique_ptr<diskann::Index<T>>(new diskann::Index<T>(
@@ -1270,7 +1271,7 @@ namespace diskann {
     auto graph_s = std::chrono::high_resolution_clock::now();
     auto vamana_index = diskann::build_merged_vamana_index<T>(
         data_file_to_use.c_str(), ip_prepared, diskann::Metric::L2, L, R,
-        config.accelerate_build, p_val, indexing_ram_budget, mem_index_path,
+        config.accelerate_build, config.shuffle_build, p_val, indexing_ram_budget, mem_index_path,
         medoids_path, centroids_path);
     auto graph_e = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> graph_diff = graph_e - graph_s;
@@ -1386,7 +1387,7 @@ namespace diskann {
   template DISKANN_DLLEXPORT std::unique_ptr<diskann::Index<int8_t>>
   build_merged_vamana_index<int8_t>(std::string base_file, bool ip_prepared,
                                     diskann::Metric compareMetric, unsigned L,
-                                    unsigned R, bool accelerate_build,
+                                    unsigned R, bool accelerate_build, bool shuffle_build,
                                     double sampling_rate, double ram_budget,
                                     std::string mem_index_path,
                                     std::string medoids_path,
@@ -1394,7 +1395,7 @@ namespace diskann {
   template DISKANN_DLLEXPORT std::unique_ptr<diskann::Index<float>>
   build_merged_vamana_index<float>(std::string base_file, bool ip_prepared,
                                    diskann::Metric compareMetric, unsigned L,
-                                   unsigned R, bool accelerate_build,
+                                   unsigned R, bool accelerate_build, bool shuffle_build,
                                    double sampling_rate, double ram_budget,
                                    std::string mem_index_path,
                                    std::string medoids_path,
@@ -1402,7 +1403,7 @@ namespace diskann {
   template DISKANN_DLLEXPORT std::unique_ptr<diskann::Index<uint8_t>>
   build_merged_vamana_index<uint8_t>(std::string base_file, bool ip_prepared,
                                      diskann::Metric compareMetric, unsigned L,
-                                     unsigned R, bool accelerate_build,
+                                     unsigned R, bool accelerate_build, bool shuffle_build,
                                      double sampling_rate, double ram_budget,
                                      std::string mem_index_path,
                                      std::string medoids_path,

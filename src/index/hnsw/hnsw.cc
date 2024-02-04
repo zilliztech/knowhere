@@ -12,6 +12,7 @@
 #include "knowhere/feder/HNSW.h"
 
 #include <new>
+#include <numeric>
 
 #include "common/range_util.h"
 #include "hnswlib/hnswalg.h"
@@ -76,29 +77,57 @@ class HnswIndexNode : public IndexNode {
 
         knowhere::TimeRecorder build_time("Building HNSW cost");
         auto rows = dataset.GetRows();
+        if (rows <= 0) {
+            LOG_KNOWHERE_ERROR_ << "Can not add empty data to HNSW index.";
+            return Status::empty_index;
+        }
         auto tensor = dataset.GetTensor();
         auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
-        index_->addPoint(tensor, 0);
-        auto build_pool = ThreadPool::GetGlobalBuildThreadPool();
-        std::vector<folly::Future<folly::Unit>> futures;
-        futures.reserve(rows);
+        bool shuffle_build = hnsw_cfg.shuffle_build.value();
 
         std::atomic<uint64_t> counter{0};
         uint64_t one_tenth_row = rows / 10;
-        for (int i = 1; i < rows; ++i) {
-            futures.emplace_back(build_pool->push([&, idx = i]() {
-                index_->addPoint(((const char*)tensor + index_->data_size_ * idx), idx);
-                uint64_t added = counter.fetch_add(1);
-                if (added % one_tenth_row == 0) {
-                    LOG_KNOWHERE_INFO_ << "HNSW build progress: " << (added / one_tenth_row) << "0%";
-                }
-            }));
+
+        std::vector<int> shuffle_batch_ids;
+        constexpr int64_t batch_size = 8192;  // same with diskann
+        int64_t round_num = std::ceil(float(rows - 1) / batch_size);
+        auto build_pool = ThreadPool::GetGlobalBuildThreadPool();
+        std::vector<folly::Future<folly::Unit>> futures;
+
+        if (shuffle_build) {
+            shuffle_batch_ids.reserve(round_num);
+            for (int i = 0; i < round_num; ++i) {
+                shuffle_batch_ids.emplace_back(i);
+            }
+            std::random_device rng;
+            std::mt19937 urng(rng());
+            std::shuffle(shuffle_batch_ids.begin(), shuffle_batch_ids.end(), urng);
         }
-        knowhere::WaitAllSuccess(futures);
+        index_->addPoint(tensor, 0);
+
+        futures.reserve(batch_size);
+        for (int64_t round_id = 0; round_id < round_num; round_id++) {
+            int64_t start_id = (shuffle_build ? shuffle_batch_ids[round_id] : round_id) * batch_size;
+            int64_t end_id =
+                std::min(rows - 1, ((shuffle_build ? shuffle_batch_ids[round_id] : round_id) + 1) * batch_size);
+            for (int64_t i = start_id; i < end_id; ++i) {
+                futures.emplace_back(build_pool->push([&, idx = i + 1]() {
+                    index_->addPoint(((const char*)tensor + index_->data_size_ * idx), idx);
+                    uint64_t added = counter.fetch_add(1);
+                    if (added % one_tenth_row == 0) {
+                        LOG_KNOWHERE_INFO_ << "HNSW build progress: " << (added / one_tenth_row) << "0%";
+                    }
+                }));
+            }
+            WaitAllSuccess(futures);
+            futures.clear();
+        }
+
         build_time.RecordSection("");
         LOG_KNOWHERE_INFO_ << "HNSW built with #points num:" << index_->max_elements_ << " #M:" << index_->M_
                            << " #max level:" << index_->maxlevel_ << " #ef_construction:" << index_->ef_construction_
                            << " #dim:" << *(size_t*)(index_->space_->get_dist_func_param());
+
         return Status::success;
     }
 
