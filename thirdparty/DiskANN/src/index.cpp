@@ -1648,6 +1648,7 @@ namespace diskann {
           }
         }
         knowhere::WaitAllSuccess(futures);
+        futures.clear();
 
         diff = std::chrono::high_resolution_clock::now() - s;
         inter_time += diff.count();

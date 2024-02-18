@@ -578,6 +578,7 @@ int generate_pq_data_from_pivots(const std::string data_file,
       }));
     }
     knowhere::WaitAllSuccess(futures);
+    futures.clear();
 
     if (num_centers > 256) {
       compressed_file_writer.write(
