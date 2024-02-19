@@ -351,7 +351,7 @@ namespace diskann {
     size_t     _num_frozen_pts = 0;
     bool       _has_built = false;
     DISTFUN<T> _func = nullptr;
-    std::function<T(const T *, const T *, size_t)> _distance;
+    DISTFUN<T> _distance;
     unsigned                                       _width = 0;
     unsigned                                       _ep = 0;
     size_t _max_range_of_loaded_graph = 0;
