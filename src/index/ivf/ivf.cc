@@ -242,9 +242,10 @@ class IvfIndexNode : public IndexNode {
                 query_data = copied_norm_query_.get();
             }
 
-            BitsetViewIDSelector bw_idselector(bitset);
-            faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
-            ivf_search_params_.sel = id_selector;
+            if (!bitset.empty()) {
+                bw_idselector_ = std::make_unique<BitsetViewIDSelector>(bitset);
+                ivf_search_params_.sel = bw_idselector_.get();
+            }
 
             ivf_search_params_.nprobe = nprobe;
             ivf_search_params_.max_codes = 0;
@@ -282,6 +283,7 @@ class IvfIndexNode : public IndexNode {
         const IndexType* index_ = nullptr;
         std::unique_ptr<faiss::IVFFlatIteratorWorkspace> workspace_ = nullptr;
         std::unique_ptr<float[]> copied_norm_query_ = nullptr;
+        std::unique_ptr<BitsetViewIDSelector> bw_idselector_ = nullptr;
         faiss::IVFSearchParameters ivf_search_params_;
 
         bool has_next_ = false;
