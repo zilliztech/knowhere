@@ -350,7 +350,8 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
                     chunk_size * sizeof(float));
       }
       uint32_t cur_chunk_done = num_chunk_done.fetch_add(1);
-      if (cur_chunk_done % num_chunk_step == 0 || cur_chunk_done == num_pq_chunks) {
+      if (num_chunk_step == 0 || cur_chunk_done % num_chunk_step == 0 ||
+          cur_chunk_done == num_pq_chunks) {
         LOG_KNOWHERE_INFO_ << "Genereated pivots for " << cur_chunk_done
                            << " chunks out of " << num_pq_chunks;
       }
