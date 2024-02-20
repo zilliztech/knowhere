@@ -24,11 +24,11 @@ spec:
           topologyKey: "kubernetes.io/hostname"
   containers:
   - name: build
-    image: milvusdb/knowhere-gpu-build:amd64-ubuntu20.04-20231117-7a169d0
+    image: milvusdb/knowhere-gpu-build:amd64-ubuntu20.04-20240117-5230b6a
     tty: true
     args: ["cat"]
   - name: main
-    image: nvidia/cuda:11.6.0-runtime-ubuntu20.04
+    image: milvusdb/knowhere-gpu-build:amd64-ubuntu20.04-20240117-5230b6a
     tty: true
     args: ["cat"]
     resources:

@@ -24,20 +24,18 @@ spec:
           topologyKey: "kubernetes.io/hostname"
   containers:
   - name: build
-    image: milvusdb/knowhere-gpu-build:amd64-ubuntu20.04-20231117-7a169d0
+    image: milvusdb/knowhere-cpu-build:amd64-ubuntu20.04-20240220-c02e01b
     tty: true
     args: ["cat"]
   - name: main
-    image: milvusdb/knowhere-gpu-e2e:amd64-ubuntu20.04-20221011-1249a57
+    image: milvusdb/knowhere-cpu-build:amd64-ubuntu20.04-20240220-c02e01b
     tty: true
     args: ["cat"]
     resources:
       requests:
-        nvidia.com/gpu: 1
         memory: "30Gi"
         cpu: "8"
       limits:
-        nvidia.com/gpu: 1
         memory: "30Gi"
         cpu: "8"
     volumeMounts:
