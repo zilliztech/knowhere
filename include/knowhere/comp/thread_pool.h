@@ -15,7 +15,10 @@
 
 #ifdef __linux__
 #include <sys/resource.h>
+#if __GLIBC__ == 2 && __GLIBC_MINOR__ < 30
 #include <sys/syscall.h>
+#define gettid() syscall(SYS_gettid)
+#endif
 #endif
 
 #include <cerrno>
@@ -40,7 +43,7 @@ class ThreadPool {
         std::thread
         newThread(folly::Func&& func) override {
             return folly::NamedThreadFactory::newThread([&, func = std::move(func)]() mutable {
-                if (setpriority(PRIO_PROCESS, static_cast<pid_t>(syscall(SYS_gettid)), 19) != 0) {
+                if (setpriority(PRIO_PROCESS, gettid(), 19) != 0) {
                     LOG_KNOWHERE_ERROR_ << "Failed to set priority of knowhere thread. Error is: "
                                         << std::strerror(errno);
                 } else {
