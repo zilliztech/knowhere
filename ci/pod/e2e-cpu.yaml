@@ -36,8 +36,8 @@ spec:
         memory: "30Gi"
         cpu: "8"
       limits:
-        memory: "30Gi"
-        cpu: "8"
+        memory: "32Gi"
+        cpu: "12"
     volumeMounts:
       - mountPath: /home/data
         name: db-data
