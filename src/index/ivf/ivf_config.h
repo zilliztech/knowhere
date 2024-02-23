@@ -124,6 +124,29 @@ class IvfSqConfig : public IvfConfig {};
 
 class IvfBinConfig : public IvfConfig {};
 
+class IvfSqCcConfig: public IvfFlatCcConfig {
+ public:
+    CFG_INT code_size;
+    KNOHWERE_DECLARE_CONFIG(IvfSqCcConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(code_size)
+            .set_default(8)
+            .description("code size, range in [4, 6, 8, 16]")
+            .for_train();
+    }
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        if (param_type == PARAM_TYPE::TRAIN) {
+            auto code_size_v = code_size.value();
+            auto legal_code_size_list = std::vector<int>{4, 6, 8, 16};
+            if (std::find(legal_code_size_list.begin(), legal_code_size_list.end(), code_size_v) == legal_code_size_list.end()) {
+                *err_msg = "compress a vector into (code_size * dim)/8 bytes, code size value should be in 4, 6, 8, 16";
+                LOG_KNOWHERE_ERROR_ << *err_msg;
+                return Status::invalid_value_in_json;
+            }
+        }
+        return Status::success;
+    }
+};
 }  // namespace knowhere
 
 #endif /* IVF_CONFIG_H */

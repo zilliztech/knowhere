@@ -10,6 +10,7 @@
 #include <omp.h>
 #include <algorithm>
 #include <cstdio>
+#include <iostream>
 
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/ScalarQuantizer.h>

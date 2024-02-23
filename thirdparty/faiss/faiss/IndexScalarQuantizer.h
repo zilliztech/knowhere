@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <vector>
 
+#include "knowhere/utils.h"
 #include <faiss/IndexFlatCodes.h>
 #include <faiss/IndexIVF.h>
 #include <faiss/impl/ScalarQuantizer.h>
@@ -106,6 +107,25 @@ struct IndexIVFScalarQuantizer : IndexIVF {
 
     /* standalone codec interface */
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
+};
+
+struct IndexIVFScalarQuantizerCC : IndexIVFScalarQuantizer{
+    IndexIVFScalarQuantizerCC(
+            Index* quantizer,
+            size_t d,
+            size_t nlist,
+            size_t ssize,
+            ScalarQuantizer::QuantizerType qtype,
+            MetricType metric = METRIC_L2,
+            bool is_cosine = false,
+            bool by_residual = true
+            );
+
+    IndexIVFScalarQuantizerCC();
+
+    void train(idx_t n, const float* x) override;
+
+    void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
 };
 
 } // namespace faiss

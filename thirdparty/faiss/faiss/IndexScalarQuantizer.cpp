@@ -284,4 +284,38 @@ void IndexIVFScalarQuantizer::reconstruct_from_offset(
     }
 }
 
+IndexIVFScalarQuantizerCC::IndexIVFScalarQuantizerCC(
+    Index* quantizer,
+    size_t d,
+    size_t nlist,
+    size_t ssize,
+    ScalarQuantizer::QuantizerType qtype,
+    MetricType metric,
+    bool is_cosine,
+    bool by_residual)
+    :IndexIVFScalarQuantizer(quantizer, d, nlist, qtype, metric, by_residual) {
+    this->is_cosine = is_cosine;
+    // add code into ConcurrentArrayInvertedLists, no need to normalize ig metric == cosine
+    replace_invlists(new ConcurrentArrayInvertedLists(nlist, code_size, ssize, false), true);
+}
+
+IndexIVFScalarQuantizerCC::IndexIVFScalarQuantizerCC() {}
+
+void IndexIVFScalarQuantizerCC::train(idx_t n, const float* x) {
+    if (is_cosine) {
+        auto x_normalized = knowhere::CopyAndNormalizeVecs(x, n, d);
+        IndexIVF::train(n, x_normalized.get());
+    } else {
+        IndexIVF::train(n, x);
+    } 
+} 
+
+void IndexIVFScalarQuantizerCC::add_with_ids(idx_t n, const float* x, const idx_t* xids) {
+    if (is_cosine) {
+        auto x_normalized = knowhere::CopyAndNormalizeVecs(x, n, d);
+        IndexIVFScalarQuantizer::add_with_ids(n, x_normalized.get(), xids);
+    } else {
+        IndexIVFScalarQuantizer::add_with_ids(n, x, xids);
+    } 
+}
 } // namespace faiss

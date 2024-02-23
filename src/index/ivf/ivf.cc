@@ -56,7 +56,8 @@ class IvfIndexNode : public IndexNode {
                           std::is_same<IndexType, faiss::IndexIVFPQ>::value ||
                           std::is_same<IndexType, faiss::IndexIVFScalarQuantizer>::value ||
                           std::is_same<IndexType, faiss::IndexBinaryIVF>::value ||
-                          std::is_same<IndexType, faiss::IndexScaNN>::value,
+                          std::is_same<IndexType, faiss::IndexScaNN>::value ||
+                          std::is_same<IndexType, faiss::IndexIVFScalarQuantizerCC>::value,
                       "not support");
         static_assert(std::is_same_v<DataType, fp32> || std::is_same_v<DataType, bin1>,
                       "IvfIndexNode only support float/bianry");
@@ -98,6 +99,9 @@ class IvfIndexNode : public IndexNode {
         if constexpr (std::is_same<faiss::IndexBinaryIVF, IndexType>::value) {
             return true;
         }
+if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
+            return true;
+        }
     }
     expected<DataSetPtr>
     GetIndexMeta(const Config& cfg) const override {
@@ -130,6 +134,9 @@ class IvfIndexNode : public IndexNode {
         }
         if constexpr (std::is_same<faiss::IndexBinaryIVF, IndexType>::value) {
             return std::make_unique<IvfBinConfig>();
+        }
+if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
+            return std::make_unique<IvfSqCcConfig>();
         }
     };
     int64_t
@@ -183,6 +190,13 @@ class IvfIndexNode : public IndexNode {
             auto code_size = index_->code_size;
             return (nb * code_size + nb * sizeof(int64_t) + nlist * code_size);
         }
+        if constexpr (std::is_same<IndexType, faiss::IndexIVFScalarQuantizerCC>::value) {
+            //todo: double check
+            auto nb = index_->invlists->compute_ntotal();
+            auto code_size = index_->code_size;
+            auto nlist = index_->nlist;
+            return (nb * code_size + nb * sizeof(int64_t) + 2 * code_size + nlist * code_size);
+        }
     };
     int64_t
     Count() const override {
@@ -210,6 +224,9 @@ class IvfIndexNode : public IndexNode {
         }
         if constexpr (std::is_same<IndexType, faiss::IndexBinaryIVF>::value) {
             return knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT;
+        }
+        if constexpr (std::is_same<IndexType, faiss::IndexIVFScalarQuantizerCC>::value) {
+            return knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC;
         }
     };
 
@@ -343,6 +360,18 @@ std::unique_ptr<faiss::IndexFlat>
 to_index_flat(std::unique_ptr<faiss::IndexFlat>&& index) {
     // C++ slicing here
     return std::make_unique<faiss::IndexFlat>(std::move(*index));
+}
+
+expected<faiss::ScalarQuantizer::QuantizerType>
+get_ivf_sq_quantizer_type(int code_size) {
+    switch (code_size) {
+        case 4: return faiss::ScalarQuantizer::QuantizerType::QT_4bit; 
+        case 6: return faiss::ScalarQuantizer::QuantizerType::QT_6bit;
+        case 8: return faiss::ScalarQuantizer::QuantizerType::QT_8bit;
+        case 16: return faiss::ScalarQuantizer::QuantizerType::QT_fp16;
+        default: return expected<faiss::ScalarQuantizer::QuantizerType>::Err(Status::invalid_args,
+                                                fmt::format("current code size {} not in (4, 6, 8, 16)", code_size));
+    }
 }
 
 }  // namespace
@@ -534,6 +563,34 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSet& dataset, const C
         // transfer ownership of qzr to index
         qzr.release();
         index->own_fields = true;
+    }
+    if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
+        const IvfSqCcConfig& ivf_sq_cc_cfg = static_cast<const IvfSqCcConfig&>(cfg);
+        auto nlist = MatchNlist(rows, ivf_sq_cc_cfg.nlist.value());
+        auto ssize = ivf_sq_cc_cfg.ssize.value();
+
+        const bool use_elkan = ivf_sq_cc_cfg.use_elkan.value_or(true);
+
+        // create quantizer for the training
+        std::unique_ptr<faiss::IndexFlat> qzr =
+            std::make_unique<faiss::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+        // create index. Index does not own qzr
+        auto qzr_type = get_ivf_sq_quantizer_type(ivf_sq_cc_cfg.code_size.value());
+        if (!qzr_type.has_value()) {
+            LOG_KNOWHERE_ERROR_ << "fail to get ivf sq quantizer type, " << qzr_type.what();
+            return qzr_type.error();
+        }
+        index = std::make_unique<faiss::IndexIVFScalarQuantizerCC>(
+            qzr.get(), dim, nlist, ssize, qzr_type.value(), metric.value(), is_cosine);
+        // train
+        index->train(rows, (const float*)data);
+        // replace quantizer with a regular IndexFlat
+        qzr = to_index_flat(std::move(qzr));
+        index->quantizer = qzr.get();
+        // transfer ownership of qzr to index
+        qzr.release();
+        index->own_fields = true;
+        index->make_direct_map(true, faiss::DirectMap::ConcurrentArray);
     }
     index_ = std::move(index);
 
@@ -1135,6 +1192,7 @@ KNOWHERE_SIMPLE_REGISTER_GLOBAL(IVFPQ, IvfIndexNode, fp32, faiss::IndexIVFPQ);
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(IVF_PQ, IvfIndexNode, fp32, faiss::IndexIVFPQ);
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(IVFSQ, IvfIndexNode, fp32, faiss::IndexIVFScalarQuantizer);
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(IVF_SQ8, IvfIndexNode, fp32, faiss::IndexIVFScalarQuantizer);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(IVF_SQ_CC, IvfIndexNode, fp32, faiss::IndexIVFScalarQuantizerCC);
 // fp16
 KNOWHERE_MOCK_REGISTER_GLOBAL(IVFFLAT, IvfIndexNode, fp16, faiss::IndexIVFFlat);
 KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_FLAT, IvfIndexNode, fp16, faiss::IndexIVFFlat);
@@ -1145,6 +1203,7 @@ KNOWHERE_MOCK_REGISTER_GLOBAL(IVFPQ, IvfIndexNode, fp16, faiss::IndexIVFPQ);
 KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_PQ, IvfIndexNode, fp16, faiss::IndexIVFPQ);
 KNOWHERE_MOCK_REGISTER_GLOBAL(IVFSQ, IvfIndexNode, fp16, faiss::IndexIVFScalarQuantizer);
 KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_SQ8, IvfIndexNode, fp16, faiss::IndexIVFScalarQuantizer);
+KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_SQ_CC, IvfIndexNode, fp16, faiss::IndexIVFScalarQuantizerCC);
 // bf16
 KNOWHERE_MOCK_REGISTER_GLOBAL(IVFFLAT, IvfIndexNode, bf16, faiss::IndexIVFFlat);
 KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_FLAT, IvfIndexNode, bf16, faiss::IndexIVFFlat);
@@ -1155,4 +1214,5 @@ KNOWHERE_MOCK_REGISTER_GLOBAL(IVFPQ, IvfIndexNode, bf16, faiss::IndexIVFPQ);
 KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_PQ, IvfIndexNode, bf16, faiss::IndexIVFPQ);
 KNOWHERE_MOCK_REGISTER_GLOBAL(IVFSQ, IvfIndexNode, bf16, faiss::IndexIVFScalarQuantizer);
 KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_SQ8, IvfIndexNode, bf16, faiss::IndexIVFScalarQuantizer);
+KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_SQ_CC, IvfIndexNode, bf16, faiss::IndexIVFScalarQuantizerCC);
 }  // namespace knowhere
