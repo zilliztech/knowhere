@@ -23,10 +23,6 @@ spec:
               - knowhere-e2e
           topologyKey: "kubernetes.io/hostname"
   containers:
-  - name: build
-    image: milvusdb/knowhere-cpu-build:amd64-ubuntu20.04-20240220-c02e01b
-    tty: true
-    args: ["cat"]
   - name: main
     image: milvusdb/knowhere-cpu-build:amd64-ubuntu20.04-20240220-c02e01b
     tty: true
