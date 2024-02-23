@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <memory>
 #include <sstream>
 #include <mutex>
 
@@ -36,7 +37,7 @@ namespace diskann {
 
    private:
     FILE*              _fp;
-    char*              _buf;
+    std::unique_ptr<char[]> _buf;
     int                _bufIndex;
     std::mutex         _mutex;
     ANNIndex::LogLevel _logLevel;

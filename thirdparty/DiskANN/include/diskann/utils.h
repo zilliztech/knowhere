@@ -236,8 +236,8 @@ namespace diskann {
   // load_bin functions START
   template<typename T>
   inline void load_bin_impl(std::basic_istream<char>& reader,
-                            size_t actual_file_size, T*& data, size_t& npts,
-                            size_t& dim) {
+                            size_t actual_file_size, std::unique_ptr<T[]>& data,
+                            size_t& npts, size_t& dim) {
     int npts_i32, dim_i32;
     reader.read((char*) &npts_i32, sizeof(int));
     reader.read((char*) &dim_i32, sizeof(int));
@@ -260,8 +260,8 @@ namespace diskann {
                                   __LINE__);
     }
 
-    data = new T[npts * dim];
-    reader.read((char*) data, npts * dim * sizeof(T));
+    data = std::make_unique<T[]>(npts * dim);
+    reader.read(reinterpret_cast<char*>(data.get()), npts * dim * sizeof(T));
   }
 
   inline void wait_for_keystroke() {
@@ -271,7 +271,7 @@ namespace diskann {
   }
 
   template<typename T>
-  inline void load_bin(const std::string& bin_file, T*& data, size_t& npts,
+  inline void load_bin(const std::string& bin_file, std::unique_ptr<T[]>& data, size_t& npts,
                        size_t& dim) {
     // OLS
     //_u64            read_blk_size = 64 * 1024 * 1024;
@@ -295,8 +295,10 @@ namespace diskann {
   }
   // load_bin functions END
 
-  inline void load_truthset(const std::string& bin_file, uint32_t*& ids,
-                            float*& dists, size_t& npts, size_t& dim) {
+  inline void load_truthset(const std::string&           bin_file,
+                            std::unique_ptr<uint32_t[]>& ids,
+                            std::unique_ptr<float[]>& dists, size_t& npts,
+                            size_t& dim) {
     _u64            read_blk_size = 64 * 1024 * 1024;
     cached_ifstream reader(bin_file, read_blk_size);
     LOG_KNOWHERE_DEBUG_ << "Reading truthset file " << bin_file.c_str()
@@ -339,12 +341,12 @@ namespace diskann {
                                   __LINE__);
     }
 
-    ids = new uint32_t[npts * dim];
-    reader.read((char*) ids, npts * dim * sizeof(uint32_t));
+    ids = std::make_unique<uint32_t[]>(npts * dim);
+    reader.read(reinterpret_cast<char*>(ids.get()), npts * dim * sizeof(uint32_t));
 
     if (truthset_type == 1) {
-      dists = new float[npts * dim];
-      reader.read((char*) dists, npts * dim * sizeof(float));
+      dists = std::make_unique<float[]>(npts * dim);
+      reader.read(reinterpret_cast<char*>(dists.get()), npts * dim * sizeof(float));
     }
   }
 
@@ -362,8 +364,6 @@ namespace diskann {
     reader.read((char*) &dim_i32, sizeof(int));
     npts = (unsigned) npts_i32;
     _u64   dim = (unsigned) dim_i32;
-    _u32*  ids;
-    float* dists;
 
     LOG_KNOWHERE_DEBUG_ << "Metadata: #pts = " << npts << ", #dims = " << dim
                         << "... ";
@@ -388,12 +388,13 @@ namespace diskann {
                                   __LINE__);
     }
 
-    ids = new uint32_t[npts * dim];
-    reader.read((char*) ids, npts * dim * sizeof(uint32_t));
+    auto ids = std::make_unique<_u32[]>(npts * dim);
+    reader.read(reinterpret_cast<char*>(ids.get()), npts * dim * sizeof(uint32_t));
+    std::unique_ptr<float[]> dists = nullptr;
 
     if (truthset_type == 1) {
-      dists = new float[npts * dim];
-      reader.read((char*) dists, npts * dim * sizeof(float));
+      dists = std::make_unique<float[]>(npts * dim);
+      reader.read(reinterpret_cast<char*>(dists.get()), npts * dim * sizeof(float));
     }
     float min_dist = std::numeric_limits<float>::max();
     float max_dist = 0;
@@ -413,8 +414,6 @@ namespace diskann {
     }
     std::cout << "Min dist: " << min_dist << ", Max dist: " << max_dist
               << std::endl;
-    delete[] ids;
-    delete[] dists;
   }
 
   inline void load_range_truthset(const std::string&              bin_file,
@@ -471,14 +470,6 @@ namespace diskann {
       if (gt_count[i] != 0)
         reader.read((char*) groundtruth[i].data(), sizeof(_u32) * gt_count[i]);
     }
-  }
-
-  template<typename T>
-  inline void load_bin(const std::string& bin_file, std::unique_ptr<T[]>& data,
-                       size_t& npts, size_t& dim) {
-    T* ptr;
-    load_bin<T>(bin_file, ptr, npts, dim);
-    data.reset(ptr);
   }
 
   template<typename T>

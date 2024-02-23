@@ -417,12 +417,9 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, const Config& c
     if (file_exists(cached_nodes_file)) {
         LOG_KNOWHERE_INFO_ << "Reading cached nodes from file.";
         size_t num_nodes, nodes_id_dim;
-        uint32_t* cached_nodes_ids = nullptr;
+        std::unique_ptr<uint32_t[]> cached_nodes_ids = nullptr;
         diskann::load_bin<uint32_t>(cached_nodes_file, cached_nodes_ids, num_nodes, nodes_id_dim);
-        node_list.assign(cached_nodes_ids, cached_nodes_ids + num_nodes);
-        if (cached_nodes_ids != nullptr) {
-            delete[] cached_nodes_ids;
-        }
+        node_list.assign(cached_nodes_ids.get(), cached_nodes_ids.get() + num_nodes);
     } else {
         auto num_nodes_to_cache = GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(),
                                                    pq_flash_index_->get_data_dim(), pq_flash_index_->get_max_degree());

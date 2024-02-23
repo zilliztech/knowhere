@@ -68,18 +68,18 @@ namespace diskann {
     }
 
     size_t num_blocks = DIV_ROUND_UP(fsize, read_blk_size);
-    char  *dump = new char[read_blk_size];
+    auto dump = std::make_unique<char[]>(read_blk_size);
     for (_u64 i = 0; i < num_blocks; i++) {
       size_t cur_block_size = read_blk_size > fsize - (i * read_blk_size)
                                   ? fsize - (i * read_blk_size)
                                   : read_blk_size;
-      reader.read(dump, cur_block_size);
-      writer.write(dump, cur_block_size);
+      reader.read(dump.get(), cur_block_size);
+      writer.write(dump.get(), cur_block_size);
     }
+    dump.reset();
     //    reader.close();
     //    writer.close();
 
-    delete[] dump;
     std::vector<_u64> new_meta;
     for (_u64 i = 0; i < nr; i++)
       new_meta.push_back(metadata[i]);
@@ -657,7 +657,7 @@ namespace diskann {
         }
         auto aligned_dim = ROUND_UP(query_dim, 8);
 
-        auto   query_float = std::unique_ptr<float[]>(new float[aligned_dim]);
+        auto   query_float = std::make_unique<float[]>(aligned_dim);
         double query_norm_dw = 0.0;
         for (uint32_t d = 0; d < old_dim; d++) {
           query_float[d] = static_cast<float>(samples[index * old_dim + d]);
@@ -782,8 +782,7 @@ namespace diskann {
     while (!stop_flag) {
       std::vector<int64_t> tuning_sample_result_ids_64(tuning_sample_num, 0);
       std::vector<float>   tuning_sample_result_dists(tuning_sample_num, 0);
-      diskann::QueryStats *stats = new diskann::QueryStats[tuning_sample_num];
-      std::unique_ptr<diskann::QueryStats[]> stats_deleter(stats);
+      auto stats = std::make_unique<diskann::QueryStats[]>(tuning_sample_num);
 
       std::vector<folly::Future<folly::Unit>> futures;
       futures.reserve(tuning_sample_num);
@@ -794,7 +793,7 @@ namespace diskann {
               tuning_sample + (index * tuning_sample_aligned_dim), 1, L,
               tuning_sample_result_ids_64.data() + (index * 1),
               tuning_sample_result_dists.data() + (index * 1), cur_bw, false,
-              stats + index);
+              stats.get() + index);
         }));
       }
       knowhere::WaitAllSuccess(futures);
@@ -804,11 +803,11 @@ namespace diskann {
           (1.0f * (float) tuning_sample_num) / (1.0f * (float) diff.count());
 
       double lat_999 = diskann::get_percentile_stats<float>(
-          stats, tuning_sample_num, 0.999f,
+          stats.get(), tuning_sample_num, 0.999f,
           [](const diskann::QueryStats &stats) { return stats.total_us; });
 
       double mean_latency = diskann::get_mean_stats<float>(
-          stats, tuning_sample_num,
+          stats.get(), tuning_sample_num,
           [](const diskann::QueryStats &stats) { return stats.total_us; });
 
       if (qps > max_qps && lat_999 < (15000) + mean_latency * 2) {
@@ -1174,7 +1173,7 @@ namespace diskann {
                        << num_pq_chunks << " bytes per vector.";
 
     size_t train_size, train_dim;
-    float *train_data;
+    std::unique_ptr<float[]> train_data = nullptr;
 
     double p_val = ((double) MAX_PQ_TRAINING_SET_SIZE / (double) points_num);
     // generates random sample and sets it to train_data and updates
@@ -1188,7 +1187,7 @@ namespace diskann {
 
       LOG_KNOWHERE_DEBUG_ << "Compressing base for disk-PQ into "
                           << disk_pq_dims << " chunks ";
-      generate_pq_pivots(train_data, train_size, (uint32_t) dim, 256,
+      generate_pq_pivots(train_data.get(), train_size, (uint32_t) dim, 256,
                          (uint32_t) disk_pq_dims, NUM_KMEANS_REPS,
                          disk_pq_pivots_path, false);
       if (config.compare_metric == diskann::Metric::INNER_PRODUCT ||
@@ -1212,7 +1211,7 @@ namespace diskann {
     auto pq_s = std::chrono::high_resolution_clock::now();
 
     LOG_KNOWHERE_INFO_ << "Generating PQ pivots";
-    generate_pq_pivots(train_data, train_size, (uint32_t) dim, 256,
+    generate_pq_pivots(train_data.get(), train_size, (uint32_t) dim, 256,
                        (uint32_t) num_pq_chunks, NUM_KMEANS_REPS,
                        pq_pivots_path, make_zero_mean);
 
@@ -1223,9 +1222,6 @@ namespace diskann {
     auto pq_e = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> pq_diff = pq_e - pq_s;
     LOG_KNOWHERE_INFO_ << "Training PQ codes cost: " << pq_diff.count() << "s";
-    delete[] train_data;
-
-    train_data = nullptr;
 // Gopal. Splitting diskann_dll into separate DLLs for search and build.
 // This code should only be available in the "build" DLL.
 #if defined(RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && \

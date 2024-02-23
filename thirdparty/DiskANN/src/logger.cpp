@@ -26,16 +26,15 @@ namespace diskann {
     _fp = fp;
     _logLevel = (_fp == stdout) ? ANNIndex::LogLevel::LL_Info
                                 : ANNIndex::LogLevel::LL_Error;
-    _buf = new char[BUFFER_SIZE];  // See comment in the header
+    _buf = std::make_unique<char[]>(BUFFER_SIZE);
 
-    std::memset(_buf, 0, (BUFFER_SIZE) * sizeof(char));
-    setp(_buf, _buf + BUFFER_SIZE);
+    std::memset(_buf.get(), 0, (BUFFER_SIZE) * sizeof(char));
+    setp(_buf.get(), _buf.get() + BUFFER_SIZE);
   }
 
   ANNStreamBuf::~ANNStreamBuf() {
     sync();
     _fp = nullptr;  // we'll not close because we can't.
-    delete[] _buf;
   }
 
   int ANNStreamBuf::overflow(int c) {

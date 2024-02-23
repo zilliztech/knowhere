@@ -22,7 +22,6 @@ class cached_ifstream {
     this->open(filename, cache_size);
   }
   ~cached_ifstream() {
-    delete[] cache_buf;
     reader.close();
   }
 
@@ -37,8 +36,8 @@ class cached_ifstream {
       assert(cacheSize > 0);
       cacheSize = (std::min)(cacheSize, fsize);
       this->cache_size = cacheSize;
-      cache_buf = new char[cacheSize];
-      reader.read(cache_buf, cacheSize);
+      cache_buf = std::make_unique<char[]>(cacheSize);
+      reader.read(cache_buf.get(), cacheSize);
       LOG_KNOWHERE_DEBUG_ << "Opened: " << filename.c_str()
                           << ", size: " << fsize
                           << ", cache_size: " << cacheSize;
@@ -58,7 +57,7 @@ class cached_ifstream {
 
     if (n_bytes <= (cache_size - cur_off)) {
       // case 1: cache contains all data
-      memcpy(read_buf, cache_buf + cur_off, n_bytes);
+      memcpy(read_buf, cache_buf.get() + cur_off, n_bytes);
       cur_off += n_bytes;
     } else {
       // case 2: cache contains some data
@@ -73,7 +72,7 @@ class cached_ifstream {
         throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__,
                                     __LINE__);
       }
-      memcpy(read_buf, cache_buf + cur_off, cached_bytes);
+      memcpy(read_buf, cache_buf.get() + cur_off, cached_bytes);
 
       // go to disk and fetch more data
       reader.read(read_buf + cached_bytes, n_bytes - cached_bytes);
@@ -83,7 +82,7 @@ class cached_ifstream {
       uint64_t size_left = fsize - reader.tellg();
 
       if (size_left >= cache_size) {
-        reader.read(cache_buf, cache_size);
+        reader.read(cache_buf.get(), cache_size);
         cur_off = 0;
       }
       // note that if size_left < cache_size, then cur_off = cache_size, so
@@ -97,7 +96,7 @@ class cached_ifstream {
   // # bytes to cache in one shot read
   uint64_t cache_size = 0;
   // underlying buf for cache
-  char* cache_buf = nullptr;
+  std::unique_ptr<char[]> cache_buf = nullptr;
   // offset into cache_buf for cur_pos
   uint64_t cur_off = 0;
   // file size
@@ -114,7 +113,7 @@ class cached_ofstream {
       writer.open(filename, std::ios::binary);
       assert(writer.is_open());
       assert(cache_size > 0);
-      cache_buf = new char[cache_size];
+      cache_buf = std::make_unique<char[]>(cache_size);
       LOG_KNOWHERE_DEBUG_ << "Opened: " << filename.c_str()
                           << ", cache_size: " << cache_size;
     } catch (std::system_error& e) {
@@ -129,7 +128,6 @@ class cached_ofstream {
       this->flush_cache();
     }
 
-    delete[] cache_buf;
     writer.close();
     LOG_KNOWHERE_DEBUG_ << "Finished writing " << fsize << "B";
   }
@@ -142,27 +140,27 @@ class cached_ofstream {
     assert(cache_buf != nullptr);
     if (n_bytes <= (cache_size - cur_off)) {
       // case 1: cache can take all data
-      memcpy(cache_buf + cur_off, write_buf, n_bytes);
+      memcpy(cache_buf.get() + cur_off, write_buf, n_bytes);
       cur_off += n_bytes;
     } else {
       // case 2: cache cant take all data
       // go to disk and write existing cache data
-      writer.write(cache_buf, cur_off);
+      writer.write(cache_buf.get(), cur_off);
       fsize += cur_off;
       // write the new data to disk
       writer.write(write_buf, n_bytes);
       fsize += n_bytes;
       // memset all cache data and reset cur_off
-      memset(cache_buf, 0, cache_size);
+      memset(cache_buf.get(), 0, cache_size);
       cur_off = 0;
     }
   }
 
   void flush_cache() {
     assert(cache_buf != nullptr);
-    writer.write(cache_buf, cur_off);
+    writer.write(cache_buf.get(), cur_off);
     fsize += cur_off;
-    memset(cache_buf, 0, cache_size);
+    memset(cache_buf.get(), 0, cache_size);
     cur_off = 0;
   }
 
@@ -177,7 +175,7 @@ class cached_ofstream {
   // # bytes to cache for one shot write
   uint64_t cache_size = 0;
   // underlying buf for cache
-  char* cache_buf = nullptr;
+  std::unique_ptr<char[]> cache_buf = nullptr;
   // offset into cache_buf for cur_pos
   uint64_t cur_off = 0;
 
