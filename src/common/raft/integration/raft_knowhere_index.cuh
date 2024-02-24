@@ -416,6 +416,7 @@ struct raft_knowhere_index<IndexKind>::impl {
                     res, index_params, raft::make_const_mdspan(host_data));
             }
         }
+        this->synchronize();
     }
 
     void
@@ -462,6 +463,7 @@ struct raft_knowhere_index<IndexKind>::impl {
                 RAFT_FAIL("Index has not yet been trained");
             }
         }
+        this->synchronize();
     }
 
     auto
@@ -576,6 +578,7 @@ struct raft_knowhere_index<IndexKind>::impl {
             raft::copy(res, host_ids, device_knowhere_ids);
             raft::copy(res, host_distances, device_distances);
         }
+        this->synchronize();
         return std::make_tuple(ids.release(), distances.release());
     }
     void
@@ -601,6 +604,7 @@ struct raft_knowhere_index<IndexKind>::impl {
         } else {
             raft::serialize_scalar(res, os, false);
         }
+        this->synchronize();
     }
     auto static deserialize(std::istream& is) {
         auto new_device_id = select_device_id();
@@ -621,6 +625,7 @@ struct raft_knowhere_index<IndexKind>::impl {
                     res, des_index, raft::make_const_mdspan(dataset->view()));
             }
         }
+        this->synchronize();
         return std::make_unique<typename raft_knowhere_index<index_kind>::impl>(std::move(des_index), new_device_id,
                                                                                 std::move(dataset));
     }
