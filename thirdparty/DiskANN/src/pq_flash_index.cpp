@@ -48,8 +48,7 @@
   ((((_u64) (id)) % nvecs_per_sector) * data_dim * sizeof(float))
 
 namespace {
-  static auto async_pool =
-      knowhere::ThreadPool(1, "DiskANN_Async_Cache_Making");
+  static auto async_pool = knowhere::ThreadPool::CreateFIFO(1, "DiskANN_Async_Cache_Making");
 
   constexpr _u64  kRefineBeamWidthFactor = 2;
   constexpr _u64  kBruteForceTopkRefineExpansionFactor = 2;
@@ -181,19 +180,21 @@ namespace diskann {
     _u64 num_cached_nodes = node_list.size();
     LOG_KNOWHERE_DEBUG_ << "Loading the cache list(" << num_cached_nodes
                         << " points) into memory...";
-    assert(this->nhood_cache_buf == nullptr && "nhoodc_cache_buf is not null");
-    assert(this->coord_cache_buf == nullptr && "coord_cache_buf is not null");
 
     auto ctx = this->reader->get_ctx();
 
-    nhood_cache_buf =
-        std::make_unique<unsigned[]>(num_cached_nodes * (max_degree + 1));
-    memset(nhood_cache_buf.get(), 0, num_cached_nodes * (max_degree + 1));
+    if (nhood_cache_buf == nullptr) {
+      nhood_cache_buf =
+          std::make_unique<unsigned[]>(num_cached_nodes * (max_degree + 1));
+      memset(nhood_cache_buf.get(), 0, num_cached_nodes * (max_degree + 1) * sizeof(unsigned));
+    }
 
     _u64 coord_cache_buf_len = num_cached_nodes * aligned_dim;
-    diskann::alloc_aligned((void **) &coord_cache_buf,
-                           coord_cache_buf_len * sizeof(T), 8 * sizeof(T));
-    memset(coord_cache_buf, 0, coord_cache_buf_len * sizeof(T));
+    if (coord_cache_buf == nullptr) {
+        diskann::alloc_aligned((void **) &coord_cache_buf,
+                             coord_cache_buf_len * sizeof(T), 8 * sizeof(T));
+        memset(coord_cache_buf, 0, coord_cache_buf_len * sizeof(T));
+    }
 
     size_t BLOCK_SIZE = 32;
     size_t num_blocks = DIV_ROUND_UP(num_cached_nodes, BLOCK_SIZE);
@@ -259,6 +260,20 @@ namespace diskann {
           std::make_unique<std::atomic<_u32>>(0);
     }
     this->count_visited_nodes.store(true);
+
+    // sync allocate memory
+    if (nhood_cache_buf == nullptr) {
+      nhood_cache_buf =
+          std::make_unique<unsigned[]>(num_nodes_to_cache * (max_degree + 1));
+      memset(nhood_cache_buf.get(), 0, num_nodes_to_cache * (max_degree + 1) * sizeof(unsigned));
+    }
+
+    _u64 coord_cache_buf_len = num_nodes_to_cache * aligned_dim;
+    if (coord_cache_buf == nullptr) {
+        diskann::alloc_aligned((void **) &coord_cache_buf,
+                             coord_cache_buf_len * sizeof(T), 8 * sizeof(T));
+        memset(coord_cache_buf, 0, coord_cache_buf_len * sizeof(T));
+    }
 
     async_pool.push([&, state_controller = this->state_controller, sample_bin,
                      l_search, beamwidth, num_nodes_to_cache]() {
