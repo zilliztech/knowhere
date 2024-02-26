@@ -196,7 +196,7 @@ namespace diskann {
     float max_base_norm = 0.0f;
 
     // used only for cosine search to re-scale the caculated distance.
-    float *base_norms = nullptr;
+    std::unique_ptr<float[]> base_norms = nullptr;
 
     // data info
     bool long_node = false;
@@ -225,7 +225,7 @@ namespace diskann {
     // data: _u8 * n_chunks
     // chunk_size = chunk size of each dimension chunk
     // pq_tables = float* [[2^8 * [chunk_size]] * n_chunks]
-    _u8              *data = nullptr;
+    std::unique_ptr<_u8[]> data = nullptr;
     _u64              n_chunks;
     FixedChunkPQTable pq_table;
 
@@ -259,7 +259,7 @@ namespace diskann {
 
     // graph has one entry point by default,
     // we can optionally have multiple starting points
-    uint32_t *medoids = nullptr;
+    std::unique_ptr<uint32_t[]> medoids = nullptr;
     // defaults to 1
     size_t num_medoids;
     // by default, it is empty. If there are multiple
@@ -271,7 +271,7 @@ namespace diskann {
     std::shared_mutex cache_mtx;
 
     // nhood_cache
-    unsigned *nhood_cache_buf = nullptr;
+    std::unique_ptr<unsigned[]> nhood_cache_buf = nullptr;
     tsl::robin_map<_u32, std::pair<_u32, _u32 *>>
         nhood_cache;  // <id, <neihbors_num, neihbors>>
 

@@ -82,22 +82,13 @@ namespace diskann {
   template<typename T>
   PQFlashIndex<T>::~PQFlashIndex() {
     destroy_cache_async_task();
-    if (data != nullptr) {
-      delete[] data;
-    }
 
-    if (medoids != nullptr) {
-      delete[] medoids;
-    }
     if (centroid_data != nullptr)
       aligned_free(centroid_data);
     // delete backing bufs for nhood and coord cache
     if (nhood_cache_buf != nullptr) {
-      delete[] nhood_cache_buf;
+      nhood_cache_buf.reset();
       diskann::aligned_free(coord_cache_buf);
-    }
-    if (base_norms != nullptr) {
-      delete[] base_norms;
     }
 
     if (load_flag) {
@@ -195,8 +186,9 @@ namespace diskann {
 
     auto ctx = this->reader->get_ctx();
 
-    nhood_cache_buf = new unsigned[num_cached_nodes * (max_degree + 1)];
-    memset(nhood_cache_buf, 0, num_cached_nodes * (max_degree + 1));
+    nhood_cache_buf =
+        std::make_unique<unsigned[]>(num_cached_nodes * (max_degree + 1));
+    memset(nhood_cache_buf.get(), 0, num_cached_nodes * (max_degree + 1));
 
     _u64 coord_cache_buf_len = num_cached_nodes * aligned_dim;
     diskann::alloc_aligned((void **) &coord_cache_buf,
@@ -239,7 +231,7 @@ namespace diskann {
         unsigned                   *nbrs = node_nhood + 1;
         std::pair<_u32, unsigned *> cnhood;
         cnhood.first = nnbrs;
-        cnhood.second = nhood_cache_buf + node_idx * (max_degree + 1);
+        cnhood.second = nhood_cache_buf.get() + node_idx * (max_degree + 1);
         memcpy(cnhood.second, nbrs, nnbrs * sizeof(unsigned));
         {
           std::unique_lock<std::shared_mutex> lock(this->cache_mtx);
@@ -725,7 +717,7 @@ namespace diskann {
       }
     } else {
       num_medoids = 1;
-      medoids = new uint32_t[1];
+      medoids =  std::make_unique<uint32_t[]>(1);
       medoids[0] = (_u32) (medoid_id_on_file);
       use_medoids_data_as_centroids();
     }
@@ -735,12 +727,11 @@ namespace diskann {
 
     if (file_exists(norm_file) && metric == diskann::Metric::INNER_PRODUCT) {
       _u64   dumr, dumc;
-      float *norm_val;
+      std::unique_ptr<float[]> norm_val = nullptr;
       diskann::load_bin<float>(norm_file, norm_val, dumr, dumc);
       this->max_base_norm = norm_val[0];
       LOG_KNOWHERE_DEBUG_ << "Setting re-scaling factor of base vectors to "
                           << this->max_base_norm;
-      delete[] norm_val;
     }
 
     if (file_exists(norm_file) && metric == diskann::Metric::COSINE) {
@@ -828,7 +819,7 @@ namespace diskann {
 
       if (pq_batch_ids.size() == pq_batch_size || id == num_points - 1) {
         const size_t sz = pq_batch_ids.size();
-        aggregate_coords(pq_batch_ids.data(), sz, this->data, this->n_chunks,
+        aggregate_coords(pq_batch_ids.data(), sz, this->data.get(), this->n_chunks,
                          pq_coord_scratch);
         pq_dist_lookup(pq_coord_scratch, sz, this->n_chunks, pq_dists,
                        dist_scratch);
@@ -1035,7 +1026,7 @@ namespace diskann {
     auto compute_dists = [this, pq_coord_scratch, pq_dists](const unsigned *ids,
                                                             const _u64 n_ids,
                                                             float *dists_out) {
-      aggregate_coords(ids, n_ids, this->data, this->n_chunks,
+      aggregate_coords(ids, n_ids, this->data.get(), this->n_chunks,
                        pq_coord_scratch);
       pq_dist_lookup(pq_coord_scratch, n_ids, this->n_chunks, pq_dists,
                      dists_out);
@@ -1554,7 +1545,7 @@ namespace diskann {
 
   template<typename T>
   _u32 *PQFlashIndex<T>::get_medoids() const noexcept {
-    return medoids;
+    return medoids.get();
   }
 
   template<typename T>

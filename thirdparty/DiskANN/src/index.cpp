@@ -502,7 +502,7 @@ namespace diskann {
     }
 
     size_t file_dim, file_num_points;
-    TagT  *tag_data;
+    std::unique_ptr<TagT[]> tag_data = nullptr;
     load_bin<TagT>(std::string(tag_filename), tag_data, file_num_points,
                    file_dim);
 
@@ -511,7 +511,6 @@ namespace diskann {
       stream << "ERROR: Found " << file_dim << " dimensions for tags,"
              << "but tag file must have 1 dimension.";
       LOG(ERROR) << stream.str();
-      delete[] tag_data;
       throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__,
                                   __LINE__);
     }
@@ -519,14 +518,13 @@ namespace diskann {
     size_t num_data_points =
         _num_frozen_pts > 0 ? file_num_points - 1 : file_num_points;
     for (_u32 i = 0; i < (_u32) num_data_points; i++) {
-      TagT tag = *(tag_data + i);
+      TagT tag = tag_data[i];
       if (_delete_set.find(i) == _delete_set.end()) {
         _location_to_tag[i] = tag;
         _tag_to_location[tag] = (_u32) i;
       }
     }
     diskann::cout << "Tags loaded." << std::endl;
-    delete[] tag_data;
     return file_num_points;
   }
 
@@ -1850,7 +1848,7 @@ namespace diskann {
           if (file_exists(tag_filename)) {
             LOG_KNOWHERE_DEBUG_ << "Loading tags from " << tag_filename
                                 << " for vamana index build";
-            TagT  *tag_data = nullptr;
+            std::unique_ptr<TagT[]> tag_data = nullptr;
             size_t npts, ndim;
             diskann::load_bin(tag_filename, tag_data, npts, ndim);
             if (npts != num_points_to_load) {
@@ -1866,7 +1864,6 @@ namespace diskann {
               _tag_to_location[tag_data[i]] = (unsigned) i;
               _location_to_tag[(unsigned) i] = tag_data[i];
             }
-            delete[] tag_data;
           } else {
             LOG(ERROR) << "Tag file " << tag_filename
                        << " does not exist. Exiting...";

@@ -49,31 +49,21 @@ namespace diskann {
 
   class FixedChunkPQTable {
     // data_dim = n_chunks * chunk_size;
-    float* tables =
+    std::unique_ptr<float[]> tables =
         nullptr;  // pq_tables = float* [[2^8 * [chunk_size]] * n_chunks]
     //    _u64   n_chunks;    // n_chunks = # of chunks ndims is split into
     //    _u64   chunk_size;  // chunk_size = chunk size of each dimension chunk
     _u64   ndims = 0;  // ndims = chunk_size * n_chunks
     _u64   n_chunks = 0;
-    _u32*  chunk_offsets = nullptr;
-    _u32*  rearrangement = nullptr;
-    float* centroid = nullptr;
-    float* tables_T = nullptr;  // same as pq_tables, but col-major
+    std::unique_ptr<_u32[]>  chunk_offsets = nullptr;
+    std::unique_ptr<_u32[]>  rearrangement = nullptr;
+    std::unique_ptr<float[]> centroid = nullptr;
+    std::unique_ptr<float[]> tables_T = nullptr;  // same as pq_tables, but col-major
    public:
     FixedChunkPQTable() {
     }
 
     virtual ~FixedChunkPQTable() {
-      if (tables != nullptr)
-        delete[] tables;
-      if (tables_T != nullptr)
-        delete[] tables_T;
-      if (rearrangement != nullptr)
-        delete[] rearrangement;
-      if (chunk_offsets != nullptr)
-        delete[] chunk_offsets;
-      if (centroid != nullptr)
-        delete[] centroid;
     }
 
     void load_pq_centroid_bin(const char* pq_table_file, size_t num_chunks) {
@@ -117,23 +107,23 @@ namespace diskann {
       }
     } else {
       this->n_chunks = num_chunks;
-      rearrangement = new uint32_t[ndims];
+      rearrangement = std::make_unique<uint32_t[]>(ndims);
 
       uint64_t chunk_size = DIV_ROUND_UP(ndims, num_chunks);
       for (uint32_t d = 0; d < ndims; d++)
         rearrangement[d] = d;
-      chunk_offsets = new uint32_t[num_chunks + 1];
+      chunk_offsets = std::make_unique<uint32_t[]>(num_chunks + 1);
       for (uint32_t d = 0; d <= num_chunks; d++)
         chunk_offsets[d] = (_u32) (std::min)(ndims, d * chunk_size);
-      centroid = new float[ndims];
-      std::memset(centroid, 0, ndims * sizeof(float));
+      centroid = std::make_unique<float[]>(ndims);
+      std::memset(centroid.get(), 0, ndims * sizeof(float));
     }
 
     LOG_KNOWHERE_INFO_ << "PQ Pivots: #ctrs: " << npts_u64
                        << ", #dims: " << ndims_u64 << ", #chunks: " << n_chunks;
     //      assert((_u64) ndims_u32 == n_chunks * chunk_size);
     // alloc and compute transpose
-    tables_T = new float[256 * ndims_u64];
+    tables_T = std::make_unique<float[]>(256 * ndims_u64);
     for (_u64 i = 0; i < 256; i++) {
       for (_u64 j = 0; j < ndims_u64; j++) {
         tables_T[j * 256 + i] = tables[i * ndims_u64 + j];
@@ -157,7 +147,7 @@ namespace diskann {
       float* chunk_dists = dist_vec + (256 * chunk);
       for (_u64 j = chunk_offsets[chunk]; j < chunk_offsets[chunk + 1]; j++) {
         _u64         permuted_dim_in_query = rearrangement[j];
-        const float* centers_dim_vec = tables_T + (256 * j);
+        const float* centers_dim_vec = tables_T.get() + (256 * j);
         for (_u64 idx = 0; idx < 256; idx++) {
           double diff =
               centers_dim_vec[idx] - (query_vec[permuted_dim_in_query] -
@@ -173,7 +163,7 @@ namespace diskann {
     for (_u64 chunk = 0; chunk < n_chunks; chunk++) {
       for (_u64 j = chunk_offsets[chunk]; j < chunk_offsets[chunk + 1]; j++) {
         _u64         permuted_dim_in_query = rearrangement[j];
-        const float* centers_dim_vec = tables_T + (256 * j);
+        const float* centers_dim_vec = tables_T.get() + (256 * j);
         float        diff = centers_dim_vec[base_vec[chunk]] -
                      (query_vec[permuted_dim_in_query] -
                       centroid[permuted_dim_in_query]);
@@ -188,7 +178,7 @@ namespace diskann {
     for (_u64 chunk = 0; chunk < n_chunks; chunk++) {
       for (_u64 j = chunk_offsets[chunk]; j < chunk_offsets[chunk + 1]; j++) {
         _u64         permuted_dim_in_query = rearrangement[j];
-        const float* centers_dim_vec = tables_T + (256 * j);
+        const float* centers_dim_vec = tables_T.get() + (256 * j);
         float        diff =
             centers_dim_vec[base_vec[chunk]] *
             query_vec[permuted_dim_in_query];  // assumes centroid is 0 to
@@ -204,7 +194,7 @@ namespace diskann {
     for (_u64 chunk = 0; chunk < n_chunks; chunk++) {
       for (_u64 j = chunk_offsets[chunk]; j < chunk_offsets[chunk + 1]; j++) {
         _u64         original_dim = rearrangement[j];
-        const float* centers_dim_vec = tables_T + (256 * j);
+        const float* centers_dim_vec = tables_T.get() + (256 * j);
         out_vec[original_dim] =
             centers_dim_vec[base_vec[chunk]] + centroid[original_dim];
       }
@@ -219,7 +209,7 @@ namespace diskann {
       float* chunk_dists = dist_vec + (256 * chunk);
       for (_u64 j = chunk_offsets[chunk]; j < chunk_offsets[chunk + 1]; j++) {
         _u64         permuted_dim_in_query = rearrangement[j];
-        const float* centers_dim_vec = tables_T + (256 * j);
+        const float* centers_dim_vec = tables_T.get() + (256 * j);
         for (_u64 idx = 0; idx < 256; idx++) {
           double prod =
               centers_dim_vec[idx] *
