@@ -250,7 +250,10 @@ void IndexIVF::add_core(
             if (list_no >= 0 && list_no % nt == rank) {
                 idx_t id = xids ? xids[i] : ntotal + i;
                 size_t ofs = invlists->add_entry(
-                        list_no, id, flat_codes.get() + i * code_size, (x_norms == nullptr) ? nullptr : x_norms + i);
+                        list_no,
+                        id,
+                        flat_codes.get() + i * code_size,
+                        (x_norms == nullptr) ? nullptr : x_norms + i);
 
                 dm_adder.add(i, list_no, ofs);
 
@@ -546,22 +549,28 @@ void IndexIVF::search_preassigned(
 
                     return list_size;
                 } else {
-                    size_t scan_cnt = 0;  // only record valid cnt
+                    size_t scan_cnt = 0; // only record valid cnt
 
                     size_t segment_num = invlists->get_segment_num(key);
-                    for (size_t segment_idx = 0; segment_idx < segment_num; segment_idx++) {
-                        size_t segment_size = invlists->get_segment_size(key, segment_idx);
-                        size_t segment_offset = invlists->get_segment_offset(key, segment_idx);
-                        InvertedLists::ScopedCodes scodes(invlists, key, segment_offset);
+                    for (size_t segment_idx = 0; segment_idx < segment_num;
+                         segment_idx++) {
+                        size_t segment_size =
+                                invlists->get_segment_size(key, segment_idx);
+                        size_t segment_offset =
+                                invlists->get_segment_offset(key, segment_idx);
+                        InvertedLists::ScopedCodes scodes(
+                                invlists, key, segment_offset);
                         std::unique_ptr<InvertedLists::ScopedIds> sids;
                         const idx_t* ids = nullptr;
 
-                        auto scode_norms = std::make_unique<InvertedLists::ScopedCodeNorms>(invlists, key, segment_offset);
+                        auto scode_norms = std::make_unique<
+                                InvertedLists::ScopedCodeNorms>(
+                                invlists, key, segment_offset);
                         const float* code_norms = scode_norms->get();
 
                         if (!store_pairs) {
                             sids = std::make_unique<InvertedLists::ScopedIds>(
-                                invlists, key, segment_offset);
+                                    invlists, key, segment_offset);
                             ids = sids->get();
                         }
                         nheap += scanner->scan_codes(
@@ -573,7 +582,7 @@ void IndexIVF::search_preassigned(
                                 idxi,
                                 k,
                                 scan_cnt);
-                    }                
+                    }
 
                     return scan_cnt;
                 }
@@ -615,8 +624,10 @@ void IndexIVF::search_preassigned(
                             idxi,
                             max_codes - nscan);
 
-                    // if ensure_topk_full enabled, also make sure nscan >= k, then stop search further
-                    if (nscan >= max_codes && (!ensure_topk_full || nscan >= k)) {
+                    // if ensure_topk_full enabled, also make sure nscan >= k,
+                    // then stop search further
+                    if (nscan >= max_codes &&
+                        (!ensure_topk_full || nscan >= k)) {
                         break;
                     }
                 }
@@ -778,8 +789,7 @@ void IndexIVF::range_search_preassigned(
         bool store_pairs,
         const IVFSearchParameters* params,
         IndexIVFStats* stats) const {
-
-    // Knowhere-specific code: 
+    // Knowhere-specific code:
     //   only "parallel_mode == 0" branch is supported.
 
     idx_t nprobe = params ? params->nprobe : this->nprobe;
@@ -787,7 +797,8 @@ void IndexIVF::range_search_preassigned(
     FAISS_THROW_IF_NOT(nprobe > 0);
 
     idx_t max_codes = params ? params->max_codes : this->max_codes;
-    size_t max_empty_result_buckets = params ? params->max_empty_result_buckets: 1;
+    size_t max_empty_result_buckets =
+            params ? params->max_empty_result_buckets : 1;
     IDSelector* sel = params ? params->sel : nullptr;
 
     FAISS_THROW_IF_NOT_MSG(
@@ -851,13 +862,19 @@ void IndexIVF::range_search_preassigned(
                     ndis += list_size;
                 } else {
                     size_t segment_num = invlists->get_segment_num(key);
-                    for (size_t segment_idx = 0; segment_idx < segment_num; segment_idx++) {
-                        size_t segment_size = invlists->get_segment_size(key, segment_idx);
-                        size_t segment_offset = invlists->get_segment_offset(key, segment_idx);
+                    for (size_t segment_idx = 0; segment_idx < segment_num;
+                         segment_idx++) {
+                        size_t segment_size =
+                                invlists->get_segment_size(key, segment_idx);
+                        size_t segment_offset =
+                                invlists->get_segment_offset(key, segment_idx);
 
-                        InvertedLists::ScopedCodes scodes(invlists, key, segment_offset);
-                        InvertedLists::ScopedIds ids(invlists, key, segment_offset);
-                        InvertedLists::ScopedCodeNorms scode_norms(invlists, key, segment_offset);
+                        InvertedLists::ScopedCodes scodes(
+                                invlists, key, segment_offset);
+                        InvertedLists::ScopedIds ids(
+                                invlists, key, segment_offset);
+                        InvertedLists::ScopedCodeNorms scode_norms(
+                                invlists, key, segment_offset);
 
                         scanner->set_list(key, coarse_dis[i * nprobe + ik]);
                         nlistv++;
@@ -889,7 +906,7 @@ void IndexIVF::range_search_preassigned(
                 // ====================================================
                 // The following piece of the code is Knowhere-specific.
                 //
-                // cbe86cf716dc1969fc716c29ccf8ea63e82a2b4c: 
+                // cbe86cf716dc1969fc716c29ccf8ea63e82a2b4c:
                 //   Adopt new strategy for faiss IVF range search
 
                 size_t prev_nres = qres.nres;
@@ -911,7 +928,7 @@ void IndexIVF::range_search_preassigned(
                     prev_nres = qres.nres;
                 }
 
-                // The end of Knowhere-specific code. 
+                // The end of Knowhere-specific code.
                 // ====================================================
             }
         } else {
@@ -943,6 +960,185 @@ void IndexIVF::range_search_preassigned(
         stats->nlist += nlistv;
         stats->ndis += ndis;
     }
+}
+
+std::unique_ptr<IVFIteratorWorkspace> IndexIVF::getIteratorWorkspace(
+        const float* query_data,
+        const IVFSearchParameters* ivfsearchParams) const {
+    return std::make_unique<IVFIteratorWorkspace>(query_data, ivfsearchParams);
+}
+
+std::optional<std::pair<float, idx_t>> IndexIVF::getIteratorNext(
+        IVFIteratorWorkspace* workspace) const {
+    FAISS_THROW_IF_NOT_MSG(workspace != nullptr, "workspace is null");
+    auto scan_one_list_then_add_to_backup =
+            [&](idx_t list_no,
+                float coarse_list_centroid_dist, // no use, dist for residual.
+                float* distances,
+                idx_t* labels,
+                size_t& counter_back,
+                size_t max_codes) {
+                if (list_no < 0) {
+                    // not enough centroids for multiprobe
+                    return (size_t)0;
+                }
+                FAISS_THROW_IF_NOT_FMT(
+                        list_no < (idx_t)nlist,
+                        "Invalid list_no=%" PRId64 " nlist=%zd\n",
+                        list_no,
+                        nlist);
+
+                // don't waste time on empty lists
+                if (invlists->is_empty(list_no)) {
+                    return (size_t)0;
+                }
+
+                // get scanner
+                IDSelector* sel = workspace->search_params
+                        ? workspace->search_params->sel
+                        : nullptr;
+                InvertedListScanner* scanner =
+                        get_InvertedListScanner(false, sel);
+                scanner->set_query(workspace->query_data);
+                scanner->set_list(list_no, coarse_list_centroid_dist);
+                ScopeDeleter1<InvertedListScanner> del(scanner);
+
+                size_t segment_num = invlists->get_segment_num(list_no);
+                size_t scan_cnt = 0;
+                for (size_t segment_idx = 0; segment_idx < segment_num;
+                     segment_idx++) {
+                    size_t segment_size =
+                            invlists->get_segment_size(list_no, segment_idx);
+                    size_t should_scan_size =
+                            std::min(segment_size, max_codes - scan_cnt);
+                    scan_cnt += should_scan_size;
+                    if (should_scan_size <= 0) {
+                        break;
+                    }
+                    size_t segment_offset =
+                            invlists->get_segment_offset(list_no, segment_idx);
+                    InvertedLists::ScopedCodes scodes(
+                            invlists, list_no, segment_offset);
+                    InvertedLists::ScopedCodeNorms scode_norms(
+                            invlists, list_no, segment_offset);
+                    InvertedLists::ScopedIds sids(
+                            invlists, list_no, segment_offset);
+
+                    scanner->scan_codes_and_push_back(
+                            should_scan_size,
+                            scodes.get(),
+                            scode_norms.get(),
+                            sids.get(),
+                            distances,
+                            labels,
+                            counter_back);
+                }
+
+                return max_codes;
+            };
+
+    FAISS_THROW_IF_NOT_MSG(
+            workspace->search_params != nullptr,
+            "search_params is empty in workspace.");
+    if (!workspace->initial_search_done) {
+        // snapshot of list_sizes;
+        auto coarse_list_sizes = std::make_unique<size_t[]>(nlist);
+        size_t count = 0;
+        for (size_t list_no = 0; list_no < nlist; ++list_no) {
+            auto list_size = invlists->list_size(list_no);
+            coarse_list_sizes[list_no] = list_size;
+            count += list_size;
+            if (list_size > workspace->max_coarse_list_size) {
+                workspace->max_coarse_list_size = list_size;
+            }
+        }
+
+        // compute backup_count_threshold - (nprobe / nlist) * count
+        size_t nprobe = workspace->search_params->nprobe
+                ? workspace->search_params->nprobe
+                : this->nprobe;
+        nprobe = std::min(nlist, nprobe);
+        workspace->backup_count_threshold = count * nprobe / nlist;
+        workspace->max_backup_count = workspace->max_coarse_list_size +
+                workspace->backup_count_threshold;
+
+        // compute distances of all centroids
+        auto coarse_idx = std::make_unique<idx_t[]>(nlist);
+        auto coarse_dis = std::make_unique<float[]>(nlist);
+        quantizer->search(
+                1,
+                workspace->query_data,
+                nlist,
+                coarse_dis.get(),
+                coarse_idx.get(),
+                workspace->search_params
+                        ? workspace->search_params->quantizer_params
+                        : nullptr);
+
+        // init backup_nodes until more than threshold
+        invlists->prefetch_lists(coarse_idx.get(), nprobe);
+        auto labels = std::make_unique<idx_t[]>(workspace->max_backup_count);
+        auto distances = std::make_unique<float[]>(workspace->max_backup_count);
+        size_t backup_count = 0;
+        size_t next_visit_coarse_list_idx = 0;
+        while (next_visit_coarse_list_idx < nlist &&
+               backup_count < workspace->backup_count_threshold) {
+            scan_one_list_then_add_to_backup(
+                    coarse_idx[next_visit_coarse_list_idx],
+                    coarse_dis[next_visit_coarse_list_idx],
+                    distances.get(),
+                    labels.get(),
+                    backup_count,
+                    coarse_list_sizes[coarse_idx[next_visit_coarse_list_idx]]);
+            next_visit_coarse_list_idx++;
+        }
+        workspace->backup_count = backup_count;
+        workspace->next_visit_coarse_list_idx = next_visit_coarse_list_idx;
+
+        workspace->labels = std::move(labels);
+        workspace->distances = std::move(distances);
+        workspace->coarse_idx = std::move(coarse_idx);
+        workspace->coarse_dis = std::move(coarse_dis);
+        workspace->coarse_list_sizes = std::move(coarse_list_sizes);
+
+        workspace->initial_search_done = true;
+    }
+
+    // terminate when no backup nodes.
+    if (workspace->backup_count == 0 &&
+        workspace->next_visit_coarse_list_idx >= nlist) {
+        return std::nullopt;
+    }
+    while (workspace->backup_count < workspace->backup_count_threshold &&
+           workspace->next_visit_coarse_list_idx < nlist) {
+        auto next_list_idx = workspace->next_visit_coarse_list_idx;
+        scan_one_list_then_add_to_backup(
+                workspace->coarse_idx[next_list_idx],
+                workspace->coarse_dis[next_list_idx],
+                workspace->distances.get(),
+                workspace->labels.get(),
+                workspace->backup_count,
+                workspace->coarse_list_sizes
+                        [workspace->coarse_idx[next_list_idx]]);
+        workspace->next_visit_coarse_list_idx++;
+    }
+
+    auto next_dis = workspace->distances[0];
+    auto next_id = workspace->labels[0];
+    if (metric_type == METRIC_INNER_PRODUCT) {
+        heap_pop<CMax<float, int64_t>>(
+                workspace->backup_count,
+                workspace->distances.get(),
+                workspace->labels.get());
+    } else {
+        heap_pop<CMin<float, int64_t>>(
+                workspace->backup_count,
+                workspace->distances.get(),
+                workspace->labels.get());
+    }
+    workspace->backup_count--;
+
+    return std::make_optional(std::make_pair(next_dis, next_id));
 }
 
 InvertedListScanner* IndexIVF::get_InvertedListScanner(

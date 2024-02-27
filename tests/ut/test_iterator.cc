@@ -114,7 +114,7 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         return json;
     };
 
-    auto ivfflat_gen = [&base_gen]() {
+    auto ivf_base_gen = [&base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::NPROBE] = 16;
         json[knowhere::indexparam::NLIST] = 24;
@@ -129,6 +129,16 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         return json;
     };
 
+    auto ivf_sq_cc_gen = [&base_gen]() {
+        knowhere::Json json = base_gen();
+        json[knowhere::indexparam::NPROBE] = 16;
+        json[knowhere::indexparam::NLIST] = 24;
+        json[knowhere::indexparam::SSIZE] = 32;
+        json[knowhere::indexparam::CODE_SIZE] = 8;
+        json[knowhere::indexparam::ENSURE_TOPK_FULL] = false;
+        return json;
+    };
+
     auto rand = GENERATE(1, 2, 3, 5);
 
     const auto train_ds = GenDataSet(nb, dim, rand);
@@ -138,8 +148,10 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(
             {make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
-             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivfflat_gen),
-             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen)}));
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivf_base_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivf_base_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_cc_gen)}));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
@@ -169,8 +181,10 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(
             {make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
-             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivfflat_gen),
-             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen)}));
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivf_base_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivf_base_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_cc_gen)}));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
@@ -203,8 +217,10 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(
             {make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
-             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivfflat_gen),
-             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen)}));
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivf_base_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivf_base_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_cc_gen)}));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
@@ -263,6 +279,12 @@ TEST_CASE("Test Iterator IVFFlatCC With Newly Insert Vectors", "[float metrics] 
         return json;
     };
 
+    auto ivf_sq_cc_gen = [&ivfflatcc_gen]() {
+        knowhere::Json json = ivfflatcc_gen();
+        json[knowhere::indexparam::CODE_SIZE] = 8;
+        return json;
+    };
+
     auto rand = GENERATE(1, 3, 5);
 
     const auto train_ds = GenDataSet(nb, dim, rand);
@@ -272,7 +294,8 @@ TEST_CASE("Test Iterator IVFFlatCC With Newly Insert Vectors", "[float metrics] 
     SECTION("Test Search using iterator with newly inserted vectors") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(
-            {make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen)}));
+            {make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_cc_gen)}));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json, nb_new);

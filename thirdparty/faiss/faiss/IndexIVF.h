@@ -12,6 +12,7 @@
 
 #include <stdint.h>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -71,10 +72,12 @@ struct Level1Quantizer {
 struct SearchParametersIVF : SearchParameters {
     size_t nprobe = 1;    ///< number of probes at query time
     size_t max_codes = 0; ///< max nb of codes to visit to do a query
-    ///< indicate whether we should early teriminate before topk results full when search reaches max_codes
-    ///< to minimize code change, when users only use nprobe to search, this config does not take affect since we will first retrieve the nearest nprobe buckets
-    ///< it is a bit heavy to further retrieve more buckets
-    ///< therefore to make sure we get topk results, use nprobe=nlist and use max_codes to narrow down the search range
+    ///< indicate whether we should early teriminate before topk results full
+    ///< when search reaches max_codes to minimize code change, when users only
+    ///< use nprobe to search, this config does not take affect since we will
+    ///< first retrieve the nearest nprobe buckets it is a bit heavy to further
+    ///< retrieve more buckets therefore to make sure we get topk results, use
+    ///< nprobe=nlist and use max_codes to narrow down the search range
     bool ensure_topk_full = false;
 
     ///< during IVF range search, if reach 'max_empty_result_buckets' num of
@@ -92,6 +95,30 @@ using IVFSearchParameters = SearchParametersIVF;
 struct InvertedListScanner;
 struct IndexIVFStats;
 struct CodePacker;
+
+struct IVFIteratorWorkspace {
+    IVFIteratorWorkspace(
+            const float* query_data,
+            const IVFSearchParameters* search_params)
+            : query_data(query_data), search_params(search_params) {}
+    const float* query_data = nullptr; // single query
+    const IVFSearchParameters* search_params = nullptr;
+    bool initial_search_done = false;
+    std::unique_ptr<float[]> distances = nullptr; // backup distances (heap)
+    std::unique_ptr<idx_t[]> labels = nullptr;    // backup ids (heap)
+    // scan a new coarse-list when less than backup_count_threshold
+    size_t backup_count = 0;
+    size_t max_backup_count = 0;
+    size_t backup_count_threshold = 0; // count * nprobe / nlist
+    size_t next_visit_coarse_list_idx = 0;
+    // backup coarse centroids distances (heap)
+    std::unique_ptr<float[]> coarse_dis = nullptr;
+    // backup coarse centroids ids (heap)
+    std::unique_ptr<idx_t[]> coarse_idx = nullptr;
+    // snapshot of the list_size
+    std::unique_ptr<size_t[]> coarse_list_sizes = nullptr;
+    size_t max_coarse_list_size = 0;
+};
 
 struct IndexIVFInterface : Level1Quantizer {
     size_t nprobe = 1;    ///< number of probes at query time
@@ -317,6 +344,19 @@ struct IndexIVF : Index, IndexIVFInterface {
             RangeSearchResult* result,
             const SearchParameters* params = nullptr) const override;
 
+    std::unique_ptr<IVFIteratorWorkspace> getIteratorWorkspace(
+            const float* query_data,
+            const IVFSearchParameters* ivfsearchParams) const;
+
+    // Unlike regular knn-search, the iterator does not know the size `k` of the
+    // returned result.
+    //   The workspace will maintain a heap of at least (nprobe/nlist) nodes for
+    //   iterator `Next()` operation.
+    //   When there are not enough nodes in the heap, iterator will scan the
+    //   next coarse list.
+    std::optional<std::pair<float, idx_t>> getIteratorNext(
+            IVFIteratorWorkspace* workspace) const;
+
     /** Get a scanner for this index (store_pairs means ignore labels)
      *
      * The default search implementation uses this to compute the distances
@@ -436,7 +476,9 @@ struct IndexIVF : Index, IndexIVFInterface {
      * @param new_maintain_direct_map    if true, create a direct map,
      *                                   else clear it
      */
-    void make_direct_map(bool new_maintain_direct_map = true, DirectMap::Type type = DirectMap::Type::Array);
+    void make_direct_map(
+            bool new_maintain_direct_map = true,
+            DirectMap::Type type = DirectMap::Type::Array);
 
     void set_direct_map_type(DirectMap::Type type);
 
