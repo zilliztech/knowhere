@@ -70,7 +70,7 @@ class SparseRow {
 
     // copy constructor and copy assignment operator perform deep copy
     SparseRow(const SparseRow<T>& other) : SparseRow(other.count_) {
-        std::copy(other.data_, other.data_ + count_ * element_size(), data_);
+        std::memcpy(data_, other.data_, data_byte_size());
     }
 
     SparseRow(SparseRow<T>&& other) noexcept : SparseRow() {
@@ -106,7 +106,12 @@ class SparseRow {
 
     size_t
     memory_usage() const {
-        return count_ * element_size() + sizeof(*this);
+        return data_byte_size() + sizeof(*this);
+    }
+
+    size_t
+    data_byte_size() const {
+        return count_ * element_size();
     }
 
     void*
