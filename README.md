@@ -39,6 +39,8 @@ $ export PATH=$PATH:$HOME/.local/bin
 
 ```bash
 $ mkdir build && cd build
+#add conan remote
+$ conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local
 #DEBUG CPU
 $ conan install .. --build=missing -o with_ut=True -s compiler.libcxx=libstdc++11 -s build_type=Debug
 #RELEASE CPU
