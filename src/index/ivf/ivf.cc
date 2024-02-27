@@ -298,7 +298,7 @@ class IvfIndexNode : public IndexNode {
         }
 
         const IndexType* index_ = nullptr;
-        std::unique_ptr<faiss::IVFFlatIteratorWorkspace> workspace_ = nullptr;
+        std::unique_ptr<faiss::IVFIteratorWorkspace> workspace_ = nullptr;
         std::unique_ptr<float[]> copied_norm_query_ = nullptr;
         std::unique_ptr<BitsetViewIDSelector> bw_idselector_ = nullptr;
         faiss::IVFSearchParameters ivf_search_params_;
@@ -891,8 +891,10 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSet& dataset, const Con
     }
     // only support IVFFlat and IVFFlatCC;
     if constexpr (!std::is_same<faiss::IndexIVFFlatCC, IndexType>::value &&
-                  !std::is_same<faiss::IndexIVFFlat, IndexType>::value) {
-        LOG_KNOWHERE_WARNING_ << "Current index_type: " << Type() << ", only IVFFlat and IVFFlatCC support Iterator.";
+                  !std::is_same<faiss::IndexIVFFlat, IndexType>::value &&
+                  !std::is_same<faiss::IndexIVFScalarQuantizer, IndexType>::value) {
+        LOG_KNOWHERE_WARNING_ << "Current index_type: " << Type()
+                              << ", only IVFFlat, IVFFlatCC and IVFSQ8 support Iterator.";
         return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::not_implemented,
                                                                                 "index not supported");
     } else {

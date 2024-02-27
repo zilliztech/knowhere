@@ -12,6 +12,7 @@
 
 #include <stdint.h>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -88,6 +89,30 @@ using IVFSearchParameters = SearchParametersIVF;
 struct InvertedListScanner;
 struct IndexIVFStats;
 struct CodePacker;
+
+struct IVFIteratorWorkspace {
+    IVFIteratorWorkspace(
+            const float* query_data,
+            const IVFSearchParameters* search_params)
+            : query_data(query_data), search_params(search_params) {}
+    const float* query_data = nullptr; // single query
+    const IVFSearchParameters* search_params = nullptr;
+    bool initial_search_done = false;
+    std::unique_ptr<float[]> distances = nullptr; // backup distances (heap)
+    std::unique_ptr<idx_t[]> labels = nullptr;    // backup ids (heap)
+    // scan a new coarse-list when less than backup_count_threshold
+    size_t backup_count = 0;
+    size_t max_backup_count = 0;
+    size_t backup_count_threshold = 0; // count * nprobe / nlist
+    size_t next_visit_coarse_list_idx = 0;
+    // backup coarse centroids distances (heap)
+    std::unique_ptr<float[]> coarse_dis = nullptr;
+    // backup coarse centroids ids (heap)
+    std::unique_ptr<idx_t[]> coarse_idx = nullptr;
+    // snapshot of the list_size
+    std::unique_ptr<size_t[]> coarse_list_sizes = nullptr;
+    size_t max_coarse_list_size = 0;
+};
 
 struct IndexIVFInterface : Level1Quantizer {
     size_t nprobe = 1;    ///< number of probes at query time
@@ -313,6 +338,19 @@ struct IndexIVF : Index, IndexIVFInterface {
             RangeSearchResult* result,
             const SearchParameters* params = nullptr) const override;
 
+    std::unique_ptr<IVFIteratorWorkspace> getIteratorWorkspace(
+            const float* query_data,
+            const IVFSearchParameters* ivfsearchParams) const;
+
+    // Unlike regular knn-search, the iterator does not know the size `k` of the
+    // returned result.
+    //   The workspace will maintain a heap of at least (nprobe/nlist) nodes for
+    //   iterator `Next()` operation.
+    //   When there are not enough nodes in the heap, iterator will scan the
+    //   next coarse list.
+    std::optional<std::pair<float, idx_t>> getIteratorNext(
+            IVFIteratorWorkspace* workspace) const;
+
     /** Get a scanner for this index (store_pairs means ignore labels)
      *
      * The default search implementation uses this to compute the distances
@@ -516,7 +554,7 @@ struct InvertedListScanner {
      * @param counter_back  heap size (will increase)
      * @return number of heap pushes performed
      */
-    virtual size_t scan_codes_and_push_back(
+    virtual void scan_codes_and_push_back(
             size_t list_size,
             const uint8_t* codes,
             const float* code_norms,

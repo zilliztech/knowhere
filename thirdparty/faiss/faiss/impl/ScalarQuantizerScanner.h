@@ -83,6 +83,26 @@ struct IVFSQScannerIP : InvertedListScanner {
         return nup;
     }
 
+
+    void scan_codes_and_push_back(
+            size_t list_size,
+            const uint8_t* codes,
+            const float* code_norms,
+            const idx_t* ids,
+            float* distances,
+            idx_t* labels,
+            size_t& counter_back) const override {
+        for (size_t j = 0; j < list_size; j++, codes += code_size) {
+            if (use_sel && !sel->is_member(use_sel == 1 ? ids[j] : j)) {
+                continue;
+            }
+            float accu = accu0 + dc.query_to_code(codes);
+            counter_back++;
+            heap_push<CMax<float, int64_t>>(
+                    counter_back, distances, labels, accu, ids[j]);
+        }
+    }
+
     void scan_codes_range(
             size_t list_size,
             const uint8_t* codes,
@@ -253,6 +273,26 @@ struct IVFSQScannerL2 : InvertedListScanner {
         fvec_L2sqr_ny_scalar_if(dc, codes, code_size, list_size, filter, apply);
 
         return nup;
+    }
+
+    void scan_codes_and_push_back(
+            size_t list_size,
+            const uint8_t* codes,
+            const float* code_norms,
+            const idx_t* ids,
+            float* distances,
+            idx_t* labels,
+            size_t& counter_back) const override {
+        auto filter = [&](const size_t j) {
+            return (!use_sel || sel->is_member(use_sel == 1 ? ids[j] : j));
+        };
+
+        auto apply = [&](const float dis_in, const size_t j) {
+            counter_back++;
+            heap_push<CMin<float, int64_t>>(
+                    counter_back, distances, labels, dis_in, ids[j]);
+        };
+        fvec_L2sqr_ny_scalar_if(dc, codes, code_size, list_size, filter, apply);
     }
 
     void scan_codes_range(
