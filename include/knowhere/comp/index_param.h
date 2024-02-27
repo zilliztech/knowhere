@@ -76,6 +76,7 @@ constexpr const char* JSON_ID_SET = "json_id_set";
 constexpr const char* TRACE_ID = "trace_id";
 constexpr const char* SPAN_ID = "span_id";
 constexpr const char* TRACE_FLAGS = "trace_flags";
+constexpr const char* MATERIALIZED_VIEW_SEARCH_INFO = "materialized_view_search_info";
 };  // namespace meta
 
 namespace indexparam {
