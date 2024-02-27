@@ -32,7 +32,8 @@
 namespace knowhere {
 template <typename DataType>
 class DiskANNIndexNode : public IndexNode {
-    static_assert(std::is_same_v<DataType, fp32>, "DiskANN only support float");
+    static_assert(KnowhereFloatTypeCheck<DataType>::value,
+                  "DiskANN only support floating point data type(float32, float16, bfloat16)");
 
  public:
     using DistType = float;
@@ -694,4 +695,6 @@ DiskANNIndexNode<DataType>::GetCachedNodeNum(const float cache_dram_budget, cons
 }
 
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(DISKANN, DiskANNIndexNode, fp32);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(DISKANN, DiskANNIndexNode, fp16);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(DISKANN, DiskANNIndexNode, bf16);
 }  // namespace knowhere

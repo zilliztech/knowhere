@@ -5,15 +5,16 @@ namespace diskann {
   template<typename T>
   DISTFUN<T> get_distance_function(diskann::Metric m) {
     if (m == diskann::Metric::L2) {
-      return [](const T* x, const T* y, size_t size) -> T {
+      return [](const T* x, const T* y, size_t size) -> float {
         float res = 0;
         for (size_t i = 0; i < size; i++) {
           res += ((float) x[i] - (float) y[i]) * ((float) x[i] - (float) y[i]);
         }
         return res;
       };
-    } else if (m == diskann::Metric::INNER_PRODUCT) {
-      return [](const T* x, const T* y, size_t size) -> T {
+    } else if (m == diskann::Metric::INNER_PRODUCT ||
+               m == diskann::Metric::COSINE) {
+      return [](const T* x, const T* y, size_t size) -> float {
         float res = 0;
         for (size_t i = 0; i < size; i++) {
           res += (float) x[i] * (float) y[i];
@@ -65,11 +66,15 @@ namespace diskann {
     }
   }
 
-  template DISTFUN<float>   get_distance_function(diskann::Metric m);
-  template DISTFUN<uint8_t> get_distance_function(diskann::Metric m);
-  template DISTFUN<int8_t>  get_distance_function(diskann::Metric m);
+  template DISTFUN<float>          get_distance_function(diskann::Metric m);
+  template DISTFUN<uint8_t>        get_distance_function(diskann::Metric m);
+  template DISTFUN<int8_t>         get_distance_function(diskann::Metric m);
+  template DISTFUN<knowhere::fp16> get_distance_function(diskann::Metric m);
+  template DISTFUN<knowhere::bf16> get_distance_function(diskann::Metric m);
 
   template float norm_l2sqr(const float*, size_t);
   template float norm_l2sqr(const uint8_t*, size_t);
   template float norm_l2sqr(const int8_t*, size_t);
+  template float norm_l2sqr(const knowhere::fp16*, size_t);
+  template float norm_l2sqr(const knowhere::bf16*, size_t);
 }  // namespace diskann

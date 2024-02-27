@@ -233,7 +233,7 @@ namespace diskann {
     DISTFUN<T>     dist_cmp;
     DISTFUN<float> dist_cmp_float;
 
-    T dist_cmp_wrap(const T *x, const T *y, size_t d, int32_t u) {
+    float dist_cmp_wrap(const T *x, const T *y, size_t d, int32_t u) {
       if (metric == Metric::COSINE) {
         return dist_cmp(x, y, d) / base_norms[u];
       } else {
