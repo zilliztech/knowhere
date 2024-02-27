@@ -19,6 +19,8 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/")
 include(GNUInstallDirs)
 include(ExternalProject)
 include(cmake/utils/utils.cmake)
+include(cmake/utils/compile_flags.cmake)
+include(cmake/utils/platform_check.cmake)
 
 knowhere_option(WITH_RAFT "Build with RAFT indexes" OFF)
 if (WITH_RAFT)
