@@ -60,6 +60,15 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         return json;
     };
 
+<<<<<<< HEAD
+=======
+    auto ivfsqcc_gen = [ivfflatcc_gen]() {
+        knowhere::Json json = ivfflatcc_gen();
+        json[knowhere::indexparam::CODE_SIZE] = 4;
+        return json;
+    };
+
+>>>>>>> 5a1aff3 (update)
     auto ivfsq_gen = ivfflat_gen;
 
     auto flat_gen = base_gen;

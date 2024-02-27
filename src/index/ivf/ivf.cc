@@ -99,7 +99,7 @@ class IvfIndexNode : public IndexNode {
         if constexpr (std::is_same<faiss::IndexBinaryIVF, IndexType>::value) {
             return true;
         }
-if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
+        if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
             return true;
         }
     }
@@ -135,7 +135,7 @@ if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) 
         if constexpr (std::is_same<faiss::IndexBinaryIVF, IndexType>::value) {
             return std::make_unique<IvfBinConfig>();
         }
-if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
+        if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
             return std::make_unique<IvfSqCcConfig>();
         }
     };
@@ -191,7 +191,7 @@ if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) 
             return (nb * code_size + nb * sizeof(int64_t) + nlist * code_size);
         }
         if constexpr (std::is_same<IndexType, faiss::IndexIVFScalarQuantizerCC>::value) {
-            //todo: double check
+            // todo: double check
             auto nb = index_->invlists->compute_ntotal();
             auto code_size = index_->code_size;
             auto nlist = index_->nlist;
@@ -365,12 +365,17 @@ to_index_flat(std::unique_ptr<faiss::IndexFlat>&& index) {
 expected<faiss::ScalarQuantizer::QuantizerType>
 get_ivf_sq_quantizer_type(int code_size) {
     switch (code_size) {
-        case 4: return faiss::ScalarQuantizer::QuantizerType::QT_4bit;
-        case 6: return faiss::ScalarQuantizer::QuantizerType::QT_6bit;
-        case 8: return faiss::ScalarQuantizer::QuantizerType::QT_8bit;
-        case 16: return faiss::ScalarQuantizer::QuantizerType::QT_fp16;
-        default: return expected<faiss::ScalarQuantizer::QuantizerType>::Err(Status::invalid_args,
-                                                fmt::format("current code size {} not in (4, 6, 8, 16)", code_size));
+        case 4:
+            return faiss::ScalarQuantizer::QuantizerType::QT_4bit;
+        case 6:
+            return faiss::ScalarQuantizer::QuantizerType::QT_6bit;
+        case 8:
+            return faiss::ScalarQuantizer::QuantizerType::QT_8bit;
+        case 16:
+            return faiss::ScalarQuantizer::QuantizerType::QT_fp16;
+        default:
+            return expected<faiss::ScalarQuantizer::QuantizerType>::Err(
+                Status::invalid_args, fmt::format("current code size {} not in (4, 6, 8, 16)", code_size));
     }
 }
 
@@ -580,8 +585,8 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSet& dataset, const C
             LOG_KNOWHERE_ERROR_ << "fail to get ivf sq quantizer type, " << qzr_type.what();
             return qzr_type.error();
         }
-        index = std::make_unique<faiss::IndexIVFScalarQuantizerCC>(
-            qzr.get(), dim, nlist, ssize, qzr_type.value(), metric.value(), is_cosine);
+        index = std::make_unique<faiss::IndexIVFScalarQuantizerCC>(qzr.get(), dim, nlist, ssize, qzr_type.value(),
+                                                                   metric.value(), is_cosine);
         // train
         index->train(rows, (const float*)data);
         // replace quantizer with a regular IndexFlat

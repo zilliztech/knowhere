@@ -62,7 +62,8 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
     auto ivf_sq_4_cc_gen = [&]() {
         knowhere::Json json = ivf_cc_gen();
         json[knowhere::indexparam::CODE_SIZE] = 4;
-        json[knowhere::meta::RADIUS] = knowhere::IsMetricType(metric, knowhere::metric::L2) ? 1000.0 : 0.99; // precision loss by sq4
+        json[knowhere::meta::RADIUS] =
+            knowhere::IsMetricType(metric, knowhere::metric::L2) ? 1000.0 : 0.99;  // precision loss by sq4
         return json;
     };
 
@@ -153,9 +154,9 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
     SECTION("Test Add & Search & RangeSearch Serialized ") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            //make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivf_cc_gen),
+            // make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivf_cc_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_4_cc_gen),
-            //make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_8_cc_gen),
+            // make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_8_cc_gen),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         auto cfg_json = gen().dump();
@@ -202,10 +203,8 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC),
         }));
-        auto ivf = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            index_name, version);
-        auto ivf_cc = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            cc_index_name, version);
+        auto ivf = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_name, version);
+        auto ivf_cc = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(cc_index_name, version);
 
         knowhere::Json ivf_json = knowhere::Json::parse(ivf_gen().dump());
         knowhere::Json ivf_cc_json = knowhere::Json::parse(ivf_cc_gen().dump());
@@ -260,9 +259,9 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
     SECTION("Test Add & Search & RangeSearch ConCurrent") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            //make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivf_cc_gen),
+            // make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivf_cc_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_4_cc_gen),
-            //make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_8_cc_gen),
+            // make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_8_cc_gen),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         auto cfg_json = gen().dump();
@@ -308,8 +307,9 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
             if (name == knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC) {
                 for (int j = 0; j < search_task_num; j++) {
                     auto& retrieve_ids_set = retrieve_search_list[j];
-                    retrieve_task_list.push_back(std::async(
-                        std::launch::async, [&idx, &retrieve_ids_set] { return idx.GetVectorByIds(*retrieve_ids_set); }));
+                    retrieve_task_list.push_back(std::async(std::launch::async, [&idx, &retrieve_ids_set] {
+                        return idx.GetVectorByIds(*retrieve_ids_set);
+                    }));
                 }
             }
             for (auto& task : add_task_list) {
