@@ -365,7 +365,7 @@ to_index_flat(std::unique_ptr<faiss::IndexFlat>&& index) {
 expected<faiss::ScalarQuantizer::QuantizerType>
 get_ivf_sq_quantizer_type(int code_size) {
     switch (code_size) {
-        case 4: return faiss::ScalarQuantizer::QuantizerType::QT_4bit; 
+        case 4: return faiss::ScalarQuantizer::QuantizerType::QT_4bit;
         case 6: return faiss::ScalarQuantizer::QuantizerType::QT_6bit;
         case 8: return faiss::ScalarQuantizer::QuantizerType::QT_8bit;
         case 16: return faiss::ScalarQuantizer::QuantizerType::QT_fp16;

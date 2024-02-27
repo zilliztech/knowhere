@@ -186,7 +186,7 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
                 auto results = idx.RangeSearch(*query_ds, json, nullptr);
                 REQUIRE(results.has_value());
                 auto ids = results.value()->GetIds();
-                auto lims = results.value()->GetLims(); 
+                auto lims = results.value()->GetLims();
                 // for (int j = 0; j < nq; ++j) {
                 //     for (int k = 0; k <= i; k++) {
                 //         CHECK(ids[lims[j] + k] % nb == j);
