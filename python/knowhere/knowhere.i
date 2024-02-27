@@ -244,6 +244,12 @@ class IndexWrap {
         return idx.Deserialize(*binset, knowhere::Json::parse(json));
     }
 
+    knowhere::Status
+    DeserializeFromFile(const std::string& filename, const std::string& json) {
+        GILReleaser rel;
+        return idx.DeserializeFromFile(filename, knowhere::Json::parse(json));
+    }
+
     int64_t
     Dim() {
         return idx.Dim();
