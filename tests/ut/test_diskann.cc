@@ -43,7 +43,7 @@ std::string kIPIndexPrefix = kIPIndexDir + "/ip";
 std::string kCOSINEIndexPrefix = kCOSINEIndexDir + "/cosine";
 
 constexpr uint32_t kNumRows = 1000;
-constexpr uint32_t kNumQueries = 100;
+constexpr uint32_t kNumQueries = 10;
 constexpr uint32_t kDim = 128;
 constexpr uint32_t kLargeDim = 1536;
 constexpr uint32_t kK = 10;

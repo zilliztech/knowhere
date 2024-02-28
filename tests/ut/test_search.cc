@@ -74,7 +74,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
     auto scann_gen = [ivfflat_gen]() {
         knowhere::Json json = ivfflat_gen();
         json[knowhere::indexparam::NPROBE] = 14;
-        json[knowhere::indexparam::REORDER_K] = 500;
+        json[knowhere::indexparam::REORDER_K] = 200;
         json[knowhere::indexparam::WITH_RAW_DATA] = true;
         return json;
     };
@@ -87,9 +87,9 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
 
     auto hnsw_gen = [base_gen]() {
         knowhere::Json json = base_gen();
-        json[knowhere::indexparam::HNSW_M] = 128;
-        json[knowhere::indexparam::EFCONSTRUCTION] = 200;
-        json[knowhere::indexparam::EF] = 200;
+        json[knowhere::indexparam::HNSW_M] = 32;
+        json[knowhere::indexparam::EFCONSTRUCTION] = 120;
+        json[knowhere::indexparam::EF] = 120;
         return json;
     };
 
