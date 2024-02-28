@@ -46,7 +46,7 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
     auto bin_hnsw_gen = [base_bin_gen]() {
         knowhere::Json json = base_bin_gen();
         json[knowhere::indexparam::HNSW_M] = 128;
-        json[knowhere::indexparam::EFCONSTRUCTION] = 200;
+        json[knowhere::indexparam::EFCONSTRUCTION] = 100;
         json[knowhere::indexparam::EF] = 64;
         return json;
     };
@@ -126,8 +126,8 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
 
     auto hnsw_gen = [base_gen]() {
         knowhere::Json json = base_gen();
-        json[knowhere::indexparam::HNSW_M] = 128;
-        json[knowhere::indexparam::EFCONSTRUCTION] = 200;
+        json[knowhere::indexparam::HNSW_M] = 32;
+        json[knowhere::indexparam::EFCONSTRUCTION] = 100;
         json[knowhere::indexparam::EF] = 32;
         return json;
     };
