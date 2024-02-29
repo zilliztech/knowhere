@@ -101,7 +101,7 @@ python3 setup.py bdist_wheel
 install knowhere wheel:
 
 ```bash
-pip3 install dist/knowhere-1.0.0-cp38-cp38-linux_x86_64.whl
+pip3 install dist/pyknowhere-0.0.0-cp38-cp38-linux_x86_64.whl
 ```
 
 clean
