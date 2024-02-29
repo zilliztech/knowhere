@@ -26,6 +26,7 @@ typedef uint64_t size_t;
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/arrayobject.h>
 #endif
+#include <knowhere/binaryset.h>
 #include <knowhere/expected.h>
 #include <knowhere/factory.h>
 #include <knowhere/version.h>
@@ -526,6 +527,25 @@ Load(knowhere::BinarySetPtr binset, const std::string& file_name) {
             }
         }
     }
+}
+
+bool
+WriteIndexToDisk(const knowhere::BinarySetPtr binset, const std::string& index_type, const std::string& data_path) {
+    auto bin = binset->GetByName(index_type);
+    if (bin == nullptr) {
+        return false;
+    }
+
+    std::ofstream outfile;
+    outfile.open(data_path, std::ios::binary | std::ios::trunc);
+    if (!outfile.good()) {
+        return false;
+    }
+    outfile.write(reinterpret_cast<char*>(bin->data.get()), bin->size);
+    outfile.flush();
+    outfile.close();
+
+    return true;
 }
 
 template<typename T>
