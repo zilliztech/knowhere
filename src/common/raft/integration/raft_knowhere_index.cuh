@@ -15,13 +15,18 @@
  * limitations under the License.
  */
 #pragma once
+#include <cmath>
 #include <cstdint>
 #include <istream>
+#include <limits>
 #include <ostream>
 #include <raft/core/bitset.cuh>
 #include <raft/core/copy.cuh>
 #include <raft/core/device_resources_manager.hpp>
 #include <raft/core/device_setter.hpp>
+#include <raft/core/resource/cuda_stream.hpp>
+#include <raft/core/resource/thrust_policy.hpp>
+#include <raft/core/serialize.hpp>
 #include <raft/distance/distance_types.hpp>
 #include <raft/neighbors/ivf_pq_types.hpp>
 #include <raft/neighbors/sample_filter.cuh>
@@ -40,6 +45,15 @@ namespace detail {
 template <bool B, raft_proto::raft_index_kind IndexKind>
 struct raft_index_type_mapper : std::false_type {};
 
+template <>
+struct raft_index_type_mapper<true, raft_proto::raft_index_kind::brute_force> : std::true_type {
+    using data_type = raft_data_t<raft_proto::raft_index_kind::brute_force>;
+    using indexing_type = raft_indexing_t<raft_proto::raft_index_kind::brute_force>;
+    using type = raft_proto::raft_index<raft::neighbors::brute_force::index, data_type>;
+    using underlying_index_type = typename type::vector_index_type;
+    using index_params_type = typename type::index_params_type;
+    using search_params_type = typename type::search_params_type;
+};
 template <>
 struct raft_index_type_mapper<true, raft_proto::raft_index_kind::ivf_flat> : std::true_type {
     using data_type = raft_data_t<raft_proto::raft_index_kind::ivf_flat>;
@@ -66,6 +80,24 @@ struct raft_index_type_mapper<true, raft_proto::raft_index_kind::cagra> : std::t
     using underlying_index_type = typename type::vector_index_type;
     using index_params_type = typename type::index_params_type;
     using search_params_type = typename type::search_params_type;
+};
+
+template <typename T, typename U, typename V>
+struct check_valid_entry {
+    __device__ __host__
+    check_valid_entry(U max_distance, V max_id)
+        : max_distance_(max_distance), max_id_(max_id) {
+    }
+    __device__ auto
+    operator()(T id_distance) {
+        auto id = thrust::get<0>(id_distance);
+        auto distance = thrust::get<1>(id_distance);
+        return distance >= max_distance_ || distance < 0 || id >= max_id_;
+    }
+
+ private:
+    U max_distance_;
+    V max_id_;
 };
 
 }  // namespace detail
@@ -324,14 +356,11 @@ struct raft_knowhere_index<IndexKind>::impl {
     using data_type = raft_data_t<index_kind>;
     using indexing_type = raft_indexing_t<index_kind>;
     using input_indexing_type = raft_input_indexing_t<index_kind>;
+    using raft_index_type = raft_index_t<index_kind>;
 
     impl() {
     }
 
- private:
-    using raft_index_type = raft_index_t<index_kind>;
-
- public:
     auto
     is_trained() const {
         return index_.has_value();
@@ -358,20 +387,45 @@ struct raft_knowhere_index<IndexKind>::impl {
           knowhere_indexing_type feature_count) {
         auto scoped_device = raft::device_setter{device_id};
         auto index_params = config_to_index_params<index_kind>(config);
+        if constexpr (index_kind == raft_proto::raft_index_kind::ivf_flat ||
+                      index_kind == raft_proto::raft_index_kind::ivf_pq) {
+            index_params.n_lists = std::min(knowhere_indexing_type(index_params.n_lists), row_count);
+        }
         auto const& res = raft::device_resources_manager::get_device_resources();
         auto host_data = raft::make_host_matrix_view(data, row_count, feature_count);
-        device_dataset_storage =
-            raft::make_device_matrix<data_type, input_indexing_type>(res, row_count, feature_count);
-        auto device_data = device_dataset_storage->view();
-        raft::copy(res, device_data, host_data);
-        index_ = raft_index_type::template build<data_type, indexing_type, input_indexing_type>(
-            res, index_params, raft::make_const_mdspan(device_data));
+        if constexpr (index_kind == raft_proto::raft_index_kind::ivf_flat) {
+            device_dataset_storage =
+                raft::make_device_matrix<data_type, input_indexing_type>(res, row_count, feature_count);
+            auto device_data = device_dataset_storage->view();
+            raft::copy(res, device_data, host_data);
+            index_ = raft_index_type::template build<data_type, indexing_type, input_indexing_type>(
+                res, index_params, raft::make_const_mdspan(device_data));
+            if (!config.cache_dataset_on_device) {
+                device_dataset_storage = std::nullopt;
+            }
+        } else {
+            if (config.cache_dataset_on_device) {
+                device_dataset_storage =
+                    raft::make_device_matrix<data_type, input_indexing_type>(res, row_count, feature_count);
+                auto device_data = device_dataset_storage->view();
+                raft::copy(res, device_data, host_data);
+                index_ = raft_index_type::template build<data_type, indexing_type, input_indexing_type>(
+                    res, index_params, raft::make_const_mdspan(device_data));
+            } else {
+                index_ = raft_index_type::template build<data_type, indexing_type, input_indexing_type>(
+                    res, index_params, raft::make_const_mdspan(host_data));
+            }
+        }
     }
 
     void
     add(data_type const* data, knowhere_indexing_type row_count, knowhere_indexing_type feature_count,
         knowhere_indexing_type const* new_ids) {
-        if constexpr (index_kind == raft_proto::raft_index_kind::cagra) {
+        if constexpr (index_kind == raft_proto::raft_index_kind::brute_force) {
+            if (index_) {
+                RAFT_FAIL("RAFT brute force does not support adding vectors after training");
+            }
+        } else if constexpr (index_kind == raft_proto::raft_index_kind::cagra) {
             if (index_) {
                 RAFT_FAIL("CAGRA does not support adding vectors after training");
             }
@@ -426,12 +480,22 @@ struct raft_knowhere_index<IndexKind>::impl {
 
         auto device_bitset =
             std::optional<raft::core::bitset<knowhere_bitset_data_type, knowhere_bitset_indexing_type>>{};
+        auto k_tmp = k;
 
         if (bitset_data != nullptr && bitset_byte_size != 0) {
             device_bitset =
                 raft::core::bitset<knowhere_bitset_data_type, knowhere_bitset_indexing_type>(res, bitset_size);
             raft::copy(res, device_bitset->to_mdspan(), raft::make_host_vector_view(bitset_data, bitset_byte_size));
-            device_bitset->flip(res);
+            if constexpr (index_kind == raft_proto::raft_index_kind::brute_force) {
+                k_tmp += device_bitset->count(res);
+                if (k_tmp == k) {
+                    device_bitset = std::nullopt;
+                }
+                k_tmp = std::min(k_tmp, size());
+            }
+            if (device_bitset) {
+                device_bitset->flip(res);
+            }
         }
 
         auto output_size = row_count * k;
@@ -441,8 +505,8 @@ struct raft_knowhere_index<IndexKind>::impl {
         auto host_ids = raft::make_host_matrix_view(ids.get(), row_count, k);
         auto host_distances = raft::make_host_matrix_view(distances.get(), row_count, k);
 
-        auto device_ids_storage = raft::make_device_matrix<indexing_type, input_indexing_type>(res, row_count, k);
-        auto device_distances_storage = raft::make_device_matrix<data_type, input_indexing_type>(res, row_count, k);
+        auto device_ids_storage = raft::make_device_matrix<indexing_type, input_indexing_type>(res, row_count, k_tmp);
+        auto device_distances_storage = raft::make_device_matrix<data_type, input_indexing_type>(res, row_count, k_tmp);
         auto device_ids = device_ids_storage.view();
         auto device_distances = device_distances_storage.view();
 
@@ -457,22 +521,61 @@ struct raft_knowhere_index<IndexKind>::impl {
                 device_distances, config.refine_ratio, input_indexing_type{}, dataset_view,
                 raft::neighbors::filtering::bitset_filter<knowhere_bitset_data_type, knowhere_bitset_indexing_type>{
                     device_bitset->view()});
-            thrust::replace(res.get_thrust_policy(), thrust::device_ptr<indexing_type>(device_ids.data_handle()),
-                            thrust::device_ptr<indexing_type>(device_ids.data_handle() + output_size),
-                            std::numeric_limits<indexing_type>::max(), indexing_type{-1});
-
         } else {
             raft_index_type::search(res, *index_, search_params, raft::make_const_mdspan(device_data_storage.view()),
                                     device_ids, device_distances, config.refine_ratio, input_indexing_type{},
                                     dataset_view);
         }
-        if constexpr (index_kind == raft_proto::raft_index_kind::ivf_pq) {
-            thrust::replace(res.get_thrust_policy(), thrust::device_ptr<indexing_type>(device_ids.data_handle()),
-                            thrust::device_ptr<indexing_type>(device_ids.data_handle() + output_size),
-                            std::numeric_limits<indexing_type>::max(), indexing_type{-1});
+
+        auto device_knowhere_ids_storage =
+            std::optional<raft::device_matrix<knowhere_indexing_type, input_indexing_type>>{};
+        auto device_knowhere_ids = [&device_knowhere_ids_storage, &res, row_count, k_tmp, device_ids]() {
+            if constexpr (std::is_signed_v<indexing_type>) {
+                return device_ids;
+            } else {
+                device_knowhere_ids_storage =
+                    raft::make_device_matrix<knowhere_indexing_type, input_indexing_type>(res, row_count, k_tmp);
+                raft::copy(res, device_knowhere_ids_storage->view(), device_ids);
+                return device_knowhere_ids_storage->view();
+            }
+        }();
+
+        auto max_distance = std::nextafter(std::numeric_limits<data_type>::max(), 0.0f);
+        thrust::replace_if(
+            raft::resource::get_thrust_policy(res),
+            thrust::device_ptr<typename decltype(device_knowhere_ids)::value_type>(device_knowhere_ids.data_handle()),
+            thrust::device_ptr<typename decltype(device_knowhere_ids)::value_type>(device_knowhere_ids.data_handle() +
+                                                                                   device_knowhere_ids.size()),
+            thrust::make_zip_iterator(thrust::make_tuple(
+                thrust::device_ptr<typename decltype(device_knowhere_ids)::value_type>(
+                    device_knowhere_ids.data_handle()),
+                thrust::device_ptr<typename decltype(device_distances)::value_type>(device_distances.data_handle()))),
+            detail::check_valid_entry<thrust::tuple<typename decltype(device_knowhere_ids)::value_type,
+                                                    typename decltype(device_distances)::value_type>,
+                                      decltype(max_distance), knowhere_indexing_type>{max_distance,
+                                                                                      knowhere_indexing_type(size())},
+            typename decltype(device_knowhere_ids)::value_type{-1});
+
+        if constexpr (index_kind == raft_proto::raft_index_kind::brute_force) {
+            if (k_tmp > k) {
+                for (auto i = 0; i < host_ids.extent(0); ++i) {
+                    raft::copy(res, raft::make_host_vector_view(host_ids.data_handle() + i * host_ids.extent(1), k),
+                               raft::make_device_vector_view(
+                                   device_knowhere_ids.data_handle() + i * device_knowhere_ids.extent(1), k));
+                    raft::copy(
+                        res,
+                        raft::make_host_vector_view(host_distances.data_handle() + i * host_distances.extent(1), k),
+                        raft::make_device_vector_view(device_distances.data_handle() + i * device_distances.extent(1),
+                                                      k));
+                }
+            } else {
+                raft::copy(res, host_ids, device_knowhere_ids);
+                raft::copy(res, host_distances, device_distances);
+            }
+        } else {
+            raft::copy(res, host_ids, device_knowhere_ids);
+            raft::copy(res, host_distances, device_distances);
         }
-        raft::copy(res, host_ids, device_ids);
-        raft::copy(res, host_distances, device_distances);
         return std::make_tuple(ids.release(), distances.release());
     }
     void
@@ -489,20 +592,46 @@ struct raft_knowhere_index<IndexKind>::impl {
         auto const& res = raft::device_resources_manager::get_device_resources();
         RAFT_EXPECTS(index_, "Index has not yet been trained");
         raft_index_type::template serialize<data_type, indexing_type>(res, os, *index_);
+
+        if (device_dataset_storage) {
+            raft::serialize_scalar(res, os, true);
+            raft::serialize_scalar(res, os, device_dataset_storage->extent(0));
+            raft::serialize_scalar(res, os, device_dataset_storage->extent(1));
+            raft::serialize_mdspan(res, os, device_dataset_storage->view());
+        } else {
+            raft::serialize_scalar(res, os, false);
+        }
     }
     auto static deserialize(std::istream& is) {
         auto new_device_id = select_device_id();
         auto scoped_device = raft::device_setter{new_device_id};
         auto const& res = raft::device_resources_manager::get_device_resources();
-        return std::make_unique<typename raft_knowhere_index<index_kind>::impl>(
-            raft_index_type::template deserialize<data_type, indexing_type>(res, is), new_device_id);
+        auto des_index = raft_index_type::template deserialize<data_type, indexing_type>(res, is);
+
+        auto dataset = std::optional<raft::device_matrix<data_type, input_indexing_type>>{};
+        auto has_dataset = raft::deserialize_scalar<bool>(res, is);
+        if (has_dataset) {
+            auto rows = raft::deserialize_scalar<input_indexing_type>(res, is);
+            auto cols = raft::deserialize_scalar<input_indexing_type>(res, is);
+            dataset = raft::make_device_matrix<data_type, input_indexing_type>(res, rows, cols);
+            raft::deserialize_mdspan(res, is, dataset->view());
+            if constexpr (index_kind == raft_proto::raft_index_kind::brute_force ||
+                          index_kind == raft_proto::raft_index_kind::cagra) {
+                raft_index_type::template update_dataset<data_type, input_indexing_type>(
+                    res, des_index, raft::make_const_mdspan(dataset->view()));
+            }
+        }
+        return std::make_unique<typename raft_knowhere_index<index_kind>::impl>(std::move(des_index), new_device_id,
+                                                                                std::move(dataset));
     }
     void
     synchronize() const {
         auto scoped_device = raft::device_setter{device_id};
         raft::device_resources_manager::get_device_resources().sync_stream();
     }
-    impl(raft_index_type&& index, int new_device_id) : index_{std::move(index)}, device_id{new_device_id} {
+    impl(raft_index_type&& index, int new_device_id,
+         std::optional<raft::device_matrix<data_type, input_indexing_type>>&& dataset)
+        : index_{std::move(index)}, device_id{new_device_id}, device_dataset_storage{std::move(dataset)} {
     }
 
  private:

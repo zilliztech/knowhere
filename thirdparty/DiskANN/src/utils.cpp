@@ -1,5 +1,8 @@
 #include "diskann/utils.h"
+#include "knowhere/comp/thread_pool.h"
+
 #include <stdio.h>
+#include <memory>
 
 namespace diskann {
   void block_convert(std::ofstream& writr, std::ifstream& readr,
@@ -23,9 +26,7 @@ namespace diskann {
         }
       }));
     }
-    for (auto& future : futures) {
-      future.wait();
-    }
+    knowhere::WaitAllSuccess(futures);
     writr.write((char*) read_buf, npts * ndims * sizeof(float));
   }
 
@@ -49,12 +50,11 @@ namespace diskann {
     _u64 nblks = ROUND_UP(npts, blk_size) / blk_size;
     LOG_KNOWHERE_DEBUG_ << "# blks: " << nblks;
 
-    float* read_buf = new float[npts * ndims];
+    auto read_buf = std::make_unique<float[]>(npts * ndims);
     for (_u64 i = 0; i < nblks; i++) {
       _u64 cblk_size = std::min(npts - i * blk_size, blk_size);
-      block_convert(writr, readr, read_buf, cblk_size, ndims);
+      block_convert(writr, readr, read_buf.get(), cblk_size, ndims);
     }
-    delete[] read_buf;
 
     LOG_KNOWHERE_DEBUG_ << "Wrote normalized points to file: " << outFileName;
   }

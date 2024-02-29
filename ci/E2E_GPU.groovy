@@ -1,4 +1,4 @@
-int total_timeout_minutes = 60*2
+int total_timeout_minutes = 240
 def knowhere_wheel=''
 pipeline {
     agent {
@@ -20,23 +20,23 @@ pipeline {
         stage("Build"){
 
             steps {
-                container("build"){
+                container("main"){
                     script{
                         def date = sh(returnStdout: true, script: 'date +%Y%m%d').trim()
                         def gitShortCommit = sh(returnStdout: true, script: "echo ${env.GIT_COMMIT} | cut -b 1-7 ").trim()
                         version="${env.CHANGE_ID}.${date}.${gitShortCommit}"
                         sh "apt-get update || true"
-                        sh "nvidia-smi"
-                        sh "apt-get install dirmngr -y"
-                        sh "apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 42D5A192B819C5DA"
-                        sh "apt-get install build-essential libopenblas-dev libcurl4-openssl-dev libaio-dev libdouble-conversion-dev libevent-dev libgflags-dev git -y"
+                        sh "apt-get install -y git python3-pip"
+                        sh "apt-get install -y build-essential libopenblas-dev libcurl4-openssl-dev libaio-dev libdouble-conversion-dev libevent-dev libgflags-dev"
                         sh "git config --global --add safe.directory '*'"
                         sh "git submodule update --recursive --init"
                         sh "pip3 install conan==1.61.0"
                         sh "conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local"
                         sh "cmake --version"
+                        sh "nvidia-smi --query-gpu=name --format=csv,noheader"
+                        sh "./scripts/prepare_gpu_build.sh"
                         sh "mkdir build"
-                        sh "cd build/ && conan install .. --build=missing -o with_ut=True -o with_diskann=True -o with_raft=True -s compiler.libcxx=libstdc++11 && conan build .."
+                        sh "cd build/ && conan install .. --build=missing -o with_diskann=True -o with_raft=True -s compiler.libcxx=libstdc++11 && conan build .."
                         sh "cd python && VERSION=${version} python3 setup.py bdist_wheel"
                         dir('python/dist'){
                         knowhere_wheel=sh(returnStdout: true, script: 'ls | grep .whl').trim()
@@ -67,13 +67,11 @@ pipeline {
                     dir('tests'){
                       unarchive mapping: ["${knowhere_wheel}": "${knowhere_wheel}"]
                       sh "apt-get update || true"
-                      sh "apt-get install dirmngr -y"
-                      sh "apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 42D5A192B819C5DA"
-                      sh "apt install python3-pip -y"
-                      sh "apt install libopenblas-dev libaio-dev libdouble-conversion-dev libevent-dev -y"
-                      sh "nvidia-smi"
-                      sh "pip3 install ${knowhere_wheel} \
-                          && pip3 install -r requirements.txt --timeout 30 --retries 6  && pytest -v -m 'L0 and gpu'"
+                      sh "apt-get install -y python3-pip"
+                      sh "apt-get install -y libopenblas-dev libaio-dev libdouble-conversion-dev libevent-dev"
+                      sh "pip3 install ${knowhere_wheel}"
+                      sh "cat requirements.txt | xargs -n 1 pip3 install"
+                      sh "pytest -v"
                     }
                 }
             }

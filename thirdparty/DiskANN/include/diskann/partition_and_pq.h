@@ -19,14 +19,16 @@ void gen_random_slice(const std::string base_file,
 
 template<typename T>
 void gen_random_slice(const std::string data_file, double p_val,
-                      float *&sampled_data, size_t &slice_size, size_t &ndims);
+                      std::unique_ptr<float[]> &sampled_data,
+                      size_t &slice_size, size_t &ndims);
 
 template<typename T>
 void gen_random_slice(const T *inputdata, size_t npts, size_t ndims,
-                      double p_val, float *&sampled_data, size_t &slice_size);
+                      double p_val, std::unique_ptr<float[]> &sampled_data,
+                      size_t &slice_size);
 
 int estimate_cluster_sizes(float *test_data_float, size_t num_test,
-                           float *pivots, const size_t num_centers,
+                           const float *pivots, const size_t num_centers,
                            const size_t dim, const size_t k_base,
                            std::vector<size_t> &cluster_sizes);
 

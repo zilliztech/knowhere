@@ -16,7 +16,7 @@
 #
 
 default_language_version:
-    python: python3.8
+    python: python3
 exclude: '^thirdparty'
 fail_fast: True
 repos:
@@ -32,4 +32,5 @@ repos:
       rev: v1.3.5
       hooks:
         - id: clang-format
+          types_or: [c, c++, cuda]
           args: [-style=file]

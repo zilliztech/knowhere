@@ -1228,7 +1228,8 @@ struct IVFPQScanner : IVFPQScannerT<idx_t, METRIC_TYPE, PQDecoder>,
             const idx_t* ids,
             float* heap_sim,
             idx_t* heap_ids,
-            size_t k) const override {
+            size_t k,
+            size_t& scan_cnt) const override {
         KnnSearchResults<C, use_sel> res = {
                 /* key */ this->key,
                 /* ids */ this->store_pairs ? nullptr : ids,

@@ -29,6 +29,8 @@ target_link_libraries(diskann PUBLIC ${AIO_LIBRARIES}
                                      nlohmann_json::nlohmann_json
                                      Folly::folly
                                      fmt::fmt-header-only
+                                     prometheus-cpp::core
+                                     prometheus-cpp::push
                                      glog::glog)
 if(__X86_64)
   target_compile_options(

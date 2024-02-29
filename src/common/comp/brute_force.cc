@@ -22,24 +22,36 @@
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/config.h"
 #include "knowhere/expected.h"
+#include "knowhere/index_node.h"
 #include "knowhere/log.h"
+#include "knowhere/sparse_utils.h"
 #include "knowhere/utils.h"
+
+#ifdef NOT_COMPILE_FOR_SWIG
+#include "knowhere/tracer.h"
+#endif
 
 namespace knowhere {
 
 /* knowhere wrapper API to call faiss brute force search for all metric types */
 
 class BruteForceConfig : public BaseConfig {};
-
+template <typename DataType>
 expected<DataSetPtr>
 BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                    const BitsetView& bitset) {
-    auto xb = base_dataset->GetTensor();
-    auto nb = base_dataset->GetRows();
-    auto dim = base_dataset->GetDim();
+    DataSetPtr base(base_dataset);
+    DataSetPtr query(query_dataset);
+    if constexpr (!std::is_same_v<DataType, typename MockData<DataType>::type>) {
+        base = data_type_conversion<DataType, typename MockData<DataType>::type>(*base_dataset);
+        query = data_type_conversion<DataType, typename MockData<DataType>::type>(*query_dataset);
+    }
+    auto xb = base->GetTensor();
+    auto nb = base->GetRows();
+    auto dim = base->GetDim();
 
-    auto xq = query_dataset->GetTensor();
-    auto nq = query_dataset->GetRows();
+    auto xq = query->GetTensor();
+    auto nq = query->GetRows();
 
     BruteForceConfig cfg;
     std::string msg;
@@ -47,6 +59,20 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     if (status != Status::success) {
         return expected<DataSetPtr>::Err(status, msg);
     }
+
+#ifdef NOT_COMPILE_FOR_SWIG
+    std::shared_ptr<tracer::trace::Span> span = nullptr;
+    if (cfg.trace_id.has_value()) {
+        auto ctx = tracer::TraceContext{(uint8_t*)cfg.trace_id.value().c_str(), (uint8_t*)cfg.span_id.value().c_str(),
+                                        (uint8_t)cfg.trace_flags.value()};
+        span = tracer::StartSpan("knowhere bf search", &ctx);
+        span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
+        span->SetAttribute(meta::TOPK, cfg.k.value());
+        span->SetAttribute(meta::ROWS, nb);
+        span->SetAttribute(meta::DIM, dim);
+        span->SetAttribute(meta::NQ, nq);
+    }
+#endif
 
     std::string metric_str = cfg.metric_type.value();
     auto result = Str2FaissMetricType(metric_str);
@@ -57,17 +83,17 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     bool is_cosine = IsMetricType(metric_str, metric::COSINE);
 
     int topk = cfg.k.value();
-    auto labels = new int64_t[nq * topk];
-    auto distances = new float[nq * topk];
+    auto labels = std::make_unique<int64_t[]>(nq * topk);
+    auto distances = std::make_unique<float[]>(nq * topk);
 
     auto pool = ThreadPool::GetGlobalSearchThreadPool();
     std::vector<folly::Future<Status>> futs;
     futs.reserve(nq);
     for (int i = 0; i < nq; ++i) {
-        futs.emplace_back(pool->push([&, index = i] {
+        futs.emplace_back(pool->push([&, index = i, labels_ptr = labels.get(), distances_ptr = distances.get()] {
             ThreadPool::ScopedOmpSetter setter(1);
-            auto cur_labels = labels + topk * index;
-            auto cur_distances = distances + topk * index;
+            auto cur_labels = labels_ptr + topk * index;
+            auto cur_distances = distances_ptr + topk * index;
 
             BitsetViewIDSelector bw_idselector(bitset);
             faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
@@ -123,28 +149,54 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
             return Status::success;
         }));
     }
-    for (auto& fut : futs) {
-        fut.wait();
-        auto ret = fut.result().value();
-        if (ret != Status::success) {
-            return expected<DataSetPtr>::Err(ret, "failed to brute force search");
-        }
+    auto ret = WaitAllSuccess(futs);
+    if (ret != Status::success) {
+        return expected<DataSetPtr>::Err(ret, "failed to brute force search");
     }
-    return GenResultDataSet(nq, cfg.k.value(), labels, distances);
+    auto res = GenResultDataSet(nq, cfg.k.value(), labels.release(), distances.release());
+
+#ifdef NOT_COMPILE_FOR_SWIG
+    if (cfg.trace_id.has_value()) {
+        span->End();
+    }
+#endif
+
+    return res;
 }
 
+template <typename DataType>
 Status
 BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids, float* dis,
                           const Json& config, const BitsetView& bitset) {
-    auto xb = base_dataset->GetTensor();
-    auto nb = base_dataset->GetRows();
-    auto dim = base_dataset->GetDim();
+    DataSetPtr base(base_dataset);
+    DataSetPtr query(query_dataset);
+    if constexpr (!std::is_same_v<DataType, typename MockData<DataType>::type>) {
+        base = data_type_conversion<DataType, typename MockData<DataType>::type>(*base_dataset);
+        query = data_type_conversion<DataType, typename MockData<DataType>::type>(*query_dataset);
+    }
+    auto xb = base->GetTensor();
+    auto nb = base->GetRows();
+    auto dim = base->GetDim();
 
-    auto xq = query_dataset->GetTensor();
-    auto nq = query_dataset->GetRows();
+    auto xq = query->GetTensor();
+    auto nq = query->GetRows();
 
     BruteForceConfig cfg;
     RETURN_IF_ERROR(Config::Load(cfg, config, knowhere::SEARCH));
+
+#ifdef NOT_COMPILE_FOR_SWIG
+    std::shared_ptr<tracer::trace::Span> span = nullptr;
+    if (cfg.trace_id.has_value()) {
+        auto ctx = tracer::TraceContext{(uint8_t*)cfg.trace_id.value().c_str(), (uint8_t*)cfg.span_id.value().c_str(),
+                                        (uint8_t)cfg.trace_flags.value()};
+        span = tracer::StartSpan("knowhere bf search with buf", &ctx);
+        span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
+        span->SetAttribute(meta::TOPK, cfg.k.value());
+        span->SetAttribute(meta::ROWS, nb);
+        span->SetAttribute(meta::DIM, dim);
+        span->SetAttribute(meta::NQ, nq);
+    }
+#endif
 
     std::string metric_str = cfg.metric_type.value();
     auto result = Str2FaissMetricType(cfg.metric_type.value());
@@ -221,25 +273,35 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
             return Status::success;
         }));
     }
-    for (auto& fut : futs) {
-        fut.wait();
-        auto ret = fut.result().value();
-        RETURN_IF_ERROR(ret);
+    RETURN_IF_ERROR(WaitAllSuccess(futs));
+
+#ifdef NOT_COMPILE_FOR_SWIG
+    if (cfg.trace_id.has_value()) {
+        span->End();
     }
+#endif
+
     return Status::success;
 }
 
 /** knowhere wrapper API to call faiss brute force range search for all metric types
  */
+template <typename DataType>
 expected<DataSetPtr>
 BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                         const BitsetView& bitset) {
-    auto xb = base_dataset->GetTensor();
-    auto nb = base_dataset->GetRows();
-    auto dim = base_dataset->GetDim();
+    DataSetPtr base(base_dataset);
+    DataSetPtr query(query_dataset);
+    if constexpr (!std::is_same_v<DataType, typename MockData<DataType>::type>) {
+        base = data_type_conversion<DataType, typename MockData<DataType>::type>(*base_dataset);
+        query = data_type_conversion<DataType, typename MockData<DataType>::type>(*query_dataset);
+    }
+    auto xb = base->GetTensor();
+    auto nb = base->GetRows();
+    auto dim = base->GetDim();
 
-    auto xq = query_dataset->GetTensor();
-    auto nq = query_dataset->GetRows();
+    auto xq = query->GetTensor();
+    auto nq = query->GetRows();
 
     BruteForceConfig cfg;
     std::string msg;
@@ -247,6 +309,23 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     if (status != Status::success) {
         return expected<DataSetPtr>::Err(status, std::move(msg));
     }
+
+#ifdef NOT_COMPILE_FOR_SWIG
+    std::shared_ptr<tracer::trace::Span> span = nullptr;
+    if (cfg.trace_id.has_value()) {
+        auto ctx = tracer::TraceContext{(uint8_t*)cfg.trace_id.value().c_str(), (uint8_t*)cfg.span_id.value().c_str(),
+                                        (uint8_t)cfg.trace_flags.value()};
+        span = tracer::StartSpan("knowhere bf range search", &ctx);
+        span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
+        span->SetAttribute(meta::RADIUS, cfg.radius.value());
+        if (cfg.range_filter.value() != defaultRangeFilter) {
+            span->SetAttribute(meta::RANGE_FILTER, cfg.range_filter.value());
+        }
+        span->SetAttribute(meta::ROWS, nb);
+        span->SetAttribute(meta::DIM, dim);
+        span->SetAttribute(meta::NQ, nq);
+    }
+#endif
 
     std::string metric_str = cfg.metric_type.value();
     auto result = Str2FaissMetricType(metric_str);
@@ -329,18 +408,347 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
             return Status::success;
         }));
     }
-    for (auto& fut : futs) {
-        fut.wait();
-        auto ret = fut.result().value();
-        if (ret != Status::success) {
-            return expected<DataSetPtr>::Err(ret, "failed to brute force search");
-        }
+    auto ret = WaitAllSuccess(futs);
+    if (ret != Status::success) {
+        return expected<DataSetPtr>::Err(ret, "failed to brute force search");
     }
 
     int64_t* ids = nullptr;
     float* distances = nullptr;
     size_t* lims = nullptr;
     GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter, distances, ids, lims);
-    return GenResultDataSet(nq, ids, distances, lims);
+    auto res = GenResultDataSet(nq, ids, distances, lims);
+
+#ifdef NOT_COMPILE_FOR_SWIG
+    if (cfg.trace_id.has_value()) {
+        span->End();
+    }
+#endif
+
+    return res;
 }
+
+Status
+BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, sparse::label_t* labels,
+                                float* distances, const Json& config, const BitsetView& bitset) {
+    auto base = static_cast<const sparse::SparseRow<float>*>(base_dataset->GetTensor());
+    auto rows = base_dataset->GetRows();
+    auto dim = base_dataset->GetDim();
+
+    auto xq = static_cast<const sparse::SparseRow<float>*>(query_dataset->GetTensor());
+    auto nq = query_dataset->GetRows();
+
+    BruteForceConfig cfg;
+    std::string msg;
+    auto status = Config::Load(cfg, config, knowhere::SEARCH, &msg);
+    if (status != Status::success) {
+        LOG_KNOWHERE_ERROR_ << "Failed to load config, msg is: " << msg;
+        return status;
+    }
+
+#ifdef NOT_COMPILE_FOR_SWIG
+    std::shared_ptr<tracer::trace::Span> span = nullptr;
+    if (cfg.trace_id.has_value()) {
+        auto ctx = tracer::TraceContext{(uint8_t*)cfg.trace_id.value().c_str(), (uint8_t*)cfg.span_id.value().c_str(),
+                                        (uint8_t)cfg.trace_flags.value()};
+        span = tracer::StartSpan("knowhere bf search sparse with buf", &ctx);
+        span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
+        span->SetAttribute(meta::TOPK, cfg.k.value());
+        span->SetAttribute(meta::ROWS, rows);
+        span->SetAttribute(meta::DIM, dim);
+        span->SetAttribute(meta::NQ, nq);
+    }
+#endif
+
+    std::string metric_str = cfg.metric_type.value();
+    auto result = Str2FaissMetricType(metric_str);
+    if (result.error() != Status::success) {
+        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
+        return result.error();
+    }
+    if (!IsMetricType(metric_str, metric::IP)) {
+        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
+        return Status::invalid_metric_type;
+    }
+
+    int topk = cfg.k.value();
+    std::fill(distances, distances + nq * topk, std::numeric_limits<float>::quiet_NaN());
+    std::fill(labels, labels + nq * topk, -1);
+
+    auto pool = ThreadPool::GetGlobalSearchThreadPool();
+    std::vector<folly::Future<folly::Unit>> futs;
+    futs.reserve(nq);
+    for (int64_t i = 0; i < nq; ++i) {
+        futs.emplace_back(pool->push([&, index = i] {
+            auto cur_labels = labels + topk * index;
+            auto cur_distances = distances + topk * index;
+
+            const auto& row = xq[index];
+            if (row.size() == 0) {
+                return;
+            }
+            sparse::MaxMinHeap<float> heap(topk);
+            for (int64_t j = 0; j < rows; ++j) {
+                if (!bitset.empty() && bitset.test(j)) {
+                    continue;
+                }
+                float dist = row.dot(base[j]);
+                if (dist > 0) {
+                    heap.push(j, dist);
+                }
+            }
+            int result_size = heap.size();
+            for (int j = result_size - 1; j >= 0; --j) {
+                cur_labels[j] = heap.top().id;
+                cur_distances[j] = heap.top().val;
+                heap.pop();
+            }
+        }));
+    }
+    WaitAllSuccess(futs);
+
+#ifdef NOT_COMPILE_FOR_SWIG
+    if (cfg.trace_id.has_value()) {
+        span->End();
+    }
+#endif
+
+    return Status::success;
+}
+
+expected<DataSetPtr>
+BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                         const BitsetView& bitset) {
+    auto nq = query_dataset->GetRows();
+    BruteForceConfig cfg;
+    std::string msg;
+    auto status = Config::Load(cfg, config, knowhere::SEARCH, &msg);
+    if (status != Status::success) {
+        return expected<DataSetPtr>::Err(status, msg);
+    }
+
+    int topk = cfg.k.value();
+    auto labels = std::make_unique<sparse::label_t[]>(nq * topk);
+    auto distances = std::make_unique<float[]>(nq * topk);
+
+    SearchSparseWithBuf(base_dataset, query_dataset, labels.get(), distances.get(), config, bitset);
+    return GenResultDataSet(nq, topk, labels.release(), distances.release());
+}
+
+class BruteForceIterator : public IndexNode::iterator {
+ public:
+    BruteForceIterator(std::vector<std::pair<float, int64_t>>&& distances_ids, bool larger_is_closer)
+        : comp_(larger_is_closer), results_(std::move(distances_ids)) {
+        sort_size_ = std::max((size_t)50000, results_.size() / 10);
+        sort_next();
+    }
+
+    std::pair<int64_t, float>
+    Next() override {
+        sort_next();
+        auto& result = results_[next_++];
+        return std::make_pair(result.second, result.first);
+    }
+
+    [[nodiscard]] bool
+    HasNext() const override {
+        return next_ < results_.size() && results_[next_].second != -1;
+    }
+
+ private:
+    // sort the next sort_size_ elements
+    inline void
+    sort_next() {
+        if (next_ < sorted_) {
+            return;
+        }
+        size_t current_end = std::min(results_.size(), sorted_ + sort_size_);
+        std::partial_sort(results_.begin() + sorted_, results_.begin() + current_end, results_.end(), comp_);
+        sorted_ = current_end;
+    }
+    struct PairComparator {
+        bool larger_is_closer;
+        PairComparator(bool larger) : larger_is_closer(larger) {
+        }
+
+        bool
+        operator()(const std::pair<float, int64_t>& a, const std::pair<float, int64_t>& b) const {
+            if (a.second == -1) {
+                return false;
+            }
+            if (b.second == -1) {
+                return true;
+            }
+            return larger_is_closer ? a.first > b.first : a.first < b.first;
+        }
+    } comp_;
+
+    std::vector<std::pair<float, int64_t>> results_;
+    size_t next_ = 0;
+    size_t sorted_ = 0;
+    size_t sort_size_ = 0;
+};
+
+template <typename DataType>
+expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
+BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                        const BitsetView& bitset) {
+    DataSetPtr base(base_dataset);
+    DataSetPtr query(query_dataset);
+    if constexpr (!std::is_same_v<DataType, typename MockData<DataType>::type>) {
+        base = data_type_conversion<DataType, typename MockData<DataType>::type>(*base_dataset);
+        query = data_type_conversion<DataType, typename MockData<DataType>::type>(*query_dataset);
+    }
+    auto xb = base->GetTensor();
+    auto nb = base->GetRows();
+    auto dim = base->GetDim();
+
+    auto xq = query->GetTensor();
+    auto nq = query->GetRows();
+    BruteForceConfig cfg;
+    std::string msg;
+    auto status = Config::Load(cfg, config, knowhere::ITERATOR, &msg);
+    if (status != Status::success) {
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(status, msg);
+    }
+    std::string metric_str = cfg.metric_type.value();
+    auto result = Str2FaissMetricType(metric_str);
+    if (result.error() != Status::success) {
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(result.error(), result.what());
+    }
+
+#ifdef NOT_COMPILE_FOR_SWIG
+    std::shared_ptr<tracer::trace::Span> span = nullptr;
+    if (cfg.trace_id.has_value()) {
+        auto ctx = tracer::TraceContext{(uint8_t*)cfg.trace_id.value().c_str(), (uint8_t*)cfg.span_id.value().c_str(),
+                                        (uint8_t)cfg.trace_flags.value()};
+        span = tracer::StartSpan("knowhere bf ann iterator initialization", &ctx);
+        span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
+        span->SetAttribute(meta::ROWS, nb);
+        span->SetAttribute(meta::DIM, dim);
+        span->SetAttribute(meta::NQ, nq);
+    }
+#endif
+    faiss::MetricType faiss_metric_type = result.value();
+    bool is_cosine = IsMetricType(metric_str, metric::COSINE);
+
+    auto pool = ThreadPool::GetGlobalSearchThreadPool();
+    auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
+    std::vector<folly::Future<Status>> futs;
+    futs.reserve(nq);
+
+    for (int i = 0; i < nq; ++i) {
+        futs.emplace_back(pool->push([&, index = i] {
+            ThreadPool::ScopedOmpSetter setter(1);
+
+            BitsetViewIDSelector bw_idselector(bitset);
+            faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+            auto larger_is_closer = faiss::is_similarity_metric(faiss_metric_type) || is_cosine;
+            auto max_dis = larger_is_closer ? std::numeric_limits<float>::lowest() : std::numeric_limits<float>::max();
+            std::vector<std::pair<float, int64_t>> distances_ids(nb, {max_dis, -1});
+
+            switch (faiss_metric_type) {
+                case faiss::METRIC_L2: {
+                    auto cur_query = (const float*)xq + dim * index;
+                    faiss::all_L2sqr(cur_query, (const float*)xb, dim, 1, nb, distances_ids, nullptr, id_selector);
+                    break;
+                }
+                case faiss::METRIC_INNER_PRODUCT: {
+                    auto cur_query = (const float*)xq + dim * index;
+                    if (is_cosine) {
+                        auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
+                        faiss::all_cosine(copied_query.get(), (const float*)xb, nullptr, dim, 1, nb, distances_ids,
+                                          id_selector);
+                    } else {
+                        faiss::all_inner_product(cur_query, (const float*)xb, dim, 1, nb, distances_ids, id_selector);
+                    }
+                    break;
+                }
+                default: {
+                    LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
+                    return Status::invalid_metric_type;
+                }
+            }
+            vec[index] = std::make_shared<BruteForceIterator>(std::move(distances_ids), larger_is_closer);
+
+            return Status::success;
+        }));
+    }
+
+    auto ret = WaitAllSuccess(futs);
+    if (ret != Status::success) {
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(
+            ret, "failed to brute force search for iterator");
+    }
+
+#ifdef NOT_COMPILE_FOR_SWIG
+    if (cfg.trace_id.has_value()) {
+        span->End();
+    }
+#endif
+    return vec;
+}
+
 }  // namespace knowhere
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::Search<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
+                                             const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
+                                             const knowhere::BitsetView& bitset);
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::Search<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
+                                             const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
+                                             const knowhere::BitsetView& bitset);
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::Search<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
+                                             const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
+                                             const knowhere::BitsetView& bitset);
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::Search<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
+                                             const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
+                                             const knowhere::BitsetView& bitset);
+template knowhere::Status
+knowhere::BruteForce::SearchWithBuf<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
+                                                    const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
+                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::Status
+knowhere::BruteForce::SearchWithBuf<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
+                                                    const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
+                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::Status
+knowhere::BruteForce::SearchWithBuf<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
+                                                    const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
+                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::Status
+knowhere::BruteForce::SearchWithBuf<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
+                                                    const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
+                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset);
+
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::RangeSearch<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
+                                                  const knowhere::DataSetPtr query_dataset,
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::RangeSearch<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
+                                                  const knowhere::DataSetPtr query_dataset,
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::RangeSearch<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
+                                                  const knowhere::DataSetPtr query_dataset,
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::RangeSearch<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
+                                                  const knowhere::DataSetPtr query_dataset,
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+
+template knowhere::expected<std::vector<std::shared_ptr<knowhere::IndexNode::iterator>>>
+knowhere::BruteForce::AnnIterator<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
+                                                  const knowhere::DataSetPtr query_dataset,
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::expected<std::vector<std::shared_ptr<knowhere::IndexNode::iterator>>>
+knowhere::BruteForce::AnnIterator<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
+                                                  const knowhere::DataSetPtr query_dataset,
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::expected<std::vector<std::shared_ptr<knowhere::IndexNode::iterator>>>
+knowhere::BruteForce::AnnIterator<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
+                                                  const knowhere::DataSetPtr query_dataset,
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);

@@ -13,19 +13,26 @@
 
 namespace knowhere {
 
+template <typename DataType>
 Index<IndexNode>
 IndexFactory::Create(const std::string& name, const int32_t& version, const Object& object) {
+    static_assert(KnowhereDataTypeCheck<DataType>::value == true);
     auto& func_mapping_ = MapInstance();
-    assert(func_mapping_.find(name) != func_mapping_.end());
-    LOG_KNOWHERE_INFO_ << "create knowhere index " << name << " with version " << version;
-    return func_mapping_[name](version, object);
+    auto key = GetIndexKey<DataType>(name);
+    assert(func_mapping_.find(key) != func_mapping_.end());
+    LOG_KNOWHERE_INFO_ << "use key " << key << " to create knowhere index " << name << " with version " << version;
+    auto fun_map_v = (FunMapValue<Index<IndexNode>>*)(func_mapping_[key].get());
+    return fun_map_v->fun_value(version, object);
 }
 
+template <typename DataType>
 const IndexFactory&
-IndexFactory::Register(const std::string& name,
-                       std::function<Index<IndexNode>(const int32_t& version, const Object&)> func) {
+IndexFactory::Register(const std::string& name, std::function<Index<IndexNode>(const int32_t&, const Object&)> func) {
+    static_assert(KnowhereDataTypeCheck<DataType>::value == true);
     auto& func_mapping_ = MapInstance();
-    func_mapping_[name] = func;
+    auto key = GetIndexKey<DataType>(name);
+    assert(func_mapping_.find(key) == func_mapping_.end());
+    func_mapping_[key] = std::make_unique<FunMapValue<Index<IndexNode>>>(func);
     return *this;
 }
 
@@ -42,4 +49,26 @@ IndexFactory::MapInstance() {
     static FuncMap func_map;
     return func_map;
 }
+
 }  // namespace knowhere
+   //
+template knowhere::Index<knowhere::IndexNode>
+knowhere::IndexFactory::Create<knowhere::fp32>(const std::string&, const int32_t&, const Object&);
+template knowhere::Index<knowhere::IndexNode>
+knowhere::IndexFactory::Create<knowhere::bin1>(const std::string&, const int32_t&, const Object&);
+template knowhere::Index<knowhere::IndexNode>
+knowhere::IndexFactory::Create<knowhere::fp16>(const std::string&, const int32_t&, const Object&);
+template knowhere::Index<knowhere::IndexNode>
+knowhere::IndexFactory::Create<knowhere::bf16>(const std::string&, const int32_t&, const Object&);
+template const knowhere::IndexFactory&
+knowhere::IndexFactory::Register<knowhere::fp32>(
+    const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>);
+template const knowhere::IndexFactory&
+knowhere::IndexFactory::Register<knowhere::bin1>(
+    const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>);
+template const knowhere::IndexFactory&
+knowhere::IndexFactory::Register<knowhere::fp16>(
+    const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>);
+template const knowhere::IndexFactory&
+knowhere::IndexFactory::Register<knowhere::bf16>(
+    const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>);

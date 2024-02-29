@@ -11,6 +11,7 @@
 
 #include "catch2/catch_test_macros.hpp"
 #include "common/range_util.h"
+#include "faiss/impl/AuxIndexStructures.h"
 #include "knowhere/factory.h"
 #include "utils.h"
 

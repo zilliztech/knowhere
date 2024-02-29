@@ -416,6 +416,7 @@ void IndexIVF::search_preassigned(
 
     const idx_t unlimited_list_size = std::numeric_limits<idx_t>::max();
     idx_t max_codes = params ? params->max_codes : this->max_codes;
+    bool ensure_topk_full = params ? params->ensure_topk_full : false;
     IDSelector* sel = params ? params->sel : nullptr;
     const IDSelectorRange* selr = dynamic_cast<const IDSelectorRange*>(sel);
     if (selr) {
@@ -545,7 +546,7 @@ void IndexIVF::search_preassigned(
 
                     return list_size;
                 } else {
-                    size_t scan_cnt = 0;
+                    size_t scan_cnt = 0;  // only record valid cnt
 
                     size_t segment_num = invlists->get_segment_num(key);
                     for (size_t segment_idx = 0; segment_idx < segment_num; segment_idx++) {
@@ -570,8 +571,8 @@ void IndexIVF::search_preassigned(
                                 ids,
                                 simi,
                                 idxi,
-                                k);
-                        scan_cnt += segment_size;
+                                k,
+                                scan_cnt);
                     }                
 
                     return scan_cnt;
@@ -613,7 +614,9 @@ void IndexIVF::search_preassigned(
                             simi,
                             idxi,
                             max_codes - nscan);
-                    if (nscan >= max_codes) {
+
+                    // if ensure_topk_full enabled, also make sure nscan >= k, then stop search further
+                    if (nscan >= max_codes && (!ensure_topk_full || nscan >= k)) {
                         break;
                     }
                 }
@@ -1306,13 +1309,15 @@ size_t InvertedListScanner::scan_codes(
         const idx_t* ids,
         float* simi,
         idx_t* idxi,
-        size_t k) const {
+        size_t k,
+        size_t& scan_cnt) const {
     size_t nup = 0;
 
     if (!keep_max) {
         for (size_t j = 0; j < list_size; j++) {
             // // todo aguzhva: use int64_t id instead of j ?
             if (!sel || sel->is_member(j)) {
+                scan_cnt++;
                 float dis = distance_to_code(codes);
                 if (code_norms) {
                     dis /= code_norms[j];
@@ -1329,6 +1334,7 @@ size_t InvertedListScanner::scan_codes(
         for (size_t j = 0; j < list_size; j++) {
             // // todo aguzhva: use int64_t id instead of j ?
             if (!sel || sel->is_member(j)) {
+                scan_cnt++;
                 float dis = distance_to_code(codes);
                 if (code_norms) {
                     dis /= code_norms[j];
@@ -1343,6 +1349,17 @@ size_t InvertedListScanner::scan_codes(
         }
     }
     return nup;
+}
+
+size_t InvertedListScanner::scan_codes_and_push_back(
+        size_t list_size,
+        const uint8_t* codes,
+        const float* code_norms,
+        const idx_t* ids,
+        float* distances,
+        idx_t* labels,
+        size_t& counter_back) const {
+    FAISS_THROW_MSG("Not implemented.");
 }
 
 size_t InvertedListScanner::iterate_codes(

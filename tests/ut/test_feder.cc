@@ -173,11 +173,11 @@ TEST_CASE("Test Feder", "[feder]") {
     const auto query_ds = GenDataSet(nq, dim, seed);
 
     const knowhere::Json conf = base_gen();
-    auto gt = knowhere::BruteForce::Search(train_ds, query_ds, conf, nullptr);
+    auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
 
     SECTION("Test HNSW Feder") {
         auto name = knowhere::IndexEnum::INDEX_HNSW;
-        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         REQUIRE(idx.Type() == name);
 
         auto json = hnsw_gen();
@@ -201,7 +201,7 @@ TEST_CASE("Test Feder", "[feder]") {
 
     SECTION("Test IVF_FLAT Feder") {
         auto name = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
-        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         REQUIRE(idx.Type() == name);
 
         auto json = ivfflat_gen();

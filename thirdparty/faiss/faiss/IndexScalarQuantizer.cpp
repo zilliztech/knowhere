@@ -77,7 +77,8 @@ void IndexScalarQuantizer::search(
                 minheap_heapify(k, D, I);
             }
             scanner->set_query(x + i * d);
-            scanner->scan_codes(ntotal, codes.data(), nullptr, nullptr, D, I, k);
+            size_t scan_cnt = 0;
+            scanner->scan_codes(ntotal, codes.data(), nullptr, nullptr, D, I, k, scan_cnt);
 
             // re-order heap
             if (metric_type == METRIC_L2) {

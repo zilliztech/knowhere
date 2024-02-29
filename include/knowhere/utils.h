@@ -18,6 +18,7 @@
 
 #include "knowhere/binaryset.h"
 #include "knowhere/dataset.h"
+#include "knowhere/operands.h"
 
 namespace knowhere {
 
@@ -66,6 +67,41 @@ hash_binary_vec(const uint8_t* x, size_t d) {
         h = h * 13331 + x[i];
     }
     return h;
+}
+
+template <typename DataType>
+inline std::string
+GetIndexKey(const std::string& name) {
+    static_assert(KnowhereDataTypeCheck<DataType>::value == true);
+    if (std::is_same_v<DataType, fp32>) {
+        return name + std::string("_fp32");
+    } else if (std::is_same_v<DataType, fp16>) {
+        return name + std::string("_fp16");
+    } else if (std::is_same_v<DataType, bf16>) {
+        return name + std::string("_bf16");
+    } else if (std::is_same_v<DataType, bin1>) {
+        return name + std::string("_bin1");
+    }
+}
+
+template <typename InType, typename OutType>
+inline DataSetPtr
+data_type_conversion(const DataSet& src) {
+    auto dim = src.GetDim();
+    auto rows = src.GetRows();
+
+    auto des_data = new OutType[dim * rows];
+    auto src_data = (InType*)src.GetTensor();
+    for (auto i = 0; i < dim * rows; i++) {
+        des_data[i] = (OutType)src_data[i];
+    }
+
+    auto des = std::make_shared<DataSet>();
+    des->SetRows(rows);
+    des->SetDim(dim);
+    des->SetTensor(des_data);
+    des->SetIsOwner(true);
+    return des;
 }
 
 template <typename T>

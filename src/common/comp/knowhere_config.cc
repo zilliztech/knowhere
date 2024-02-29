@@ -135,12 +135,12 @@ KnowhereConfig::SetAioContextPool(size_t num_ctx) {
 
 void
 KnowhereConfig::SetBuildThreadPoolSize(size_t num_threads) {
-    knowhere::ThreadPool::InitGlobalBuildThreadPool(num_threads);
+    knowhere::ThreadPool::SetGlobalBuildThreadPoolSize(num_threads);
 }
 
 void
 KnowhereConfig::SetSearchThreadPoolSize(size_t num_threads) {
-    knowhere::ThreadPool::InitGlobalSearchThreadPool(num_threads);
+    knowhere::ThreadPool::SetGlobalSearchThreadPoolSize(num_threads);
 }
 
 void
@@ -160,6 +160,7 @@ KnowhereConfig::FreeGPUResource() {
     knowhere::GPUResMgr::GetInstance().Free();
 #endif
 }
+
 void
 KnowhereConfig::SetRaftMemPool(size_t init_size, size_t max_size) {
 #ifdef KNOWHERE_WITH_RAFT
@@ -171,6 +172,7 @@ KnowhereConfig::SetRaftMemPool(size_t init_size, size_t max_size) {
     raft_knowhere::initialize_raft(config);
 #endif
 }
+
 void
 KnowhereConfig::SetRaftMemPool() {
     // Overload for default values

@@ -19,17 +19,21 @@
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/factory.h"
+#include "knowhere/index_node_data_mock_wrapper.h"
 #include "knowhere/log.h"
 #include "knowhere/utils.h"
 
 namespace knowhere {
 
-template <typename T>
+template <typename DataType, typename IndexType>
 class FlatIndexNode : public IndexNode {
  public:
     FlatIndexNode(const int32_t version, const Object& object) : index_(nullptr) {
-        static_assert(std::is_same<T, faiss::IndexFlat>::value || std::is_same<T, faiss::IndexBinaryFlat>::value,
-                      "not support");
+        static_assert(
+            std::is_same<IndexType, faiss::IndexFlat>::value || std::is_same<IndexType, faiss::IndexBinaryFlat>::value,
+            "not support");
+        static_assert(std::is_same_v<DataType, fp32> || std::is_same_v<DataType, bin1>,
+                      "FlatIndexNode only support float/bianry");
         search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
     }
 
@@ -39,13 +43,13 @@ class FlatIndexNode : public IndexNode {
 
         auto metric = Str2FaissMetricType(f_cfg.metric_type.value());
         if (!metric.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "please check metric type: " << f_cfg.metric_type.value();
+            LOG_KNOWHERE_ERROR_ << "unsupported metric type: " << f_cfg.metric_type.value();
             return metric.error();
         }
-        if constexpr (std::is_same<faiss::IndexBinaryFlat, T>::value) {
+        if constexpr (std::is_same<faiss::IndexBinaryFlat, IndexType>::value) {
             index_ = std::make_unique<faiss::IndexBinaryFlat>(dataset.GetDim(), metric.value());
         }
-        if constexpr (std::is_same<faiss::IndexFlat, T>::value) {
+        if constexpr (std::is_same<faiss::IndexFlat, IndexType>::value) {
             bool is_cosine = IsMetricType(f_cfg.metric_type.value(), knowhere::metric::COSINE);
             index_ = std::make_unique<faiss::IndexFlat>(dataset.GetDim(), metric.value(), is_cosine);
         }
@@ -56,12 +60,7 @@ class FlatIndexNode : public IndexNode {
     Add(const DataSet& dataset, const Config& cfg) override {
         auto x = dataset.GetTensor();
         auto n = dataset.GetRows();
-        if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
-            index_->add(n, (const float*)x);
-        }
-        if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
-            index_->add(n, (const uint8_t*)x);
-        }
+        index_->add(n, (const DataType*)x);
         return Status::success;
     }
 
@@ -98,9 +97,9 @@ class FlatIndexNode : public IndexNode {
                     BitsetViewIDSelector bw_idselector(bitset);
                     faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
 
-                    if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
-                        auto cur_query = (const float*)x + dim * index;
-                        std::unique_ptr<float[]> copied_query = nullptr;
+                    if constexpr (std::is_same<IndexType, faiss::IndexFlat>::value) {
+                        auto cur_query = (const DataType*)x + dim * index;
+                        std::unique_ptr<DataType[]> copied_query = nullptr;
                         if (is_cosine) {
                             copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                             cur_query = copied_query.get();
@@ -111,7 +110,7 @@ class FlatIndexNode : public IndexNode {
 
                         index_->search(1, cur_query, k, cur_dis, cur_ids, &search_params);
                     }
-                    if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
+                    if constexpr (std::is_same<IndexType, faiss::IndexBinaryFlat>::value) {
                         auto cur_i_dis = reinterpret_cast<int32_t*>(cur_dis);
 
                         faiss::SearchParameters search_params;
@@ -128,21 +127,13 @@ class FlatIndexNode : public IndexNode {
                 }));
             }
             // wait for the completion
-            for (auto& fut : futs) {
-                fut.wait();
-            }
-            // check for exceptions. value() is {}, so either
-            //   a call does nothing, or it throws an inner exception.
-            for (auto& fut : futs) {
-                fut.result().value();
-            }
+            WaitAllSuccess(futs);
         } catch (const std::exception& e) {
             std::unique_ptr<int64_t[]> auto_delete_ids(ids);
             std::unique_ptr<float[]> auto_delete_dis(distances);
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
-
         return GenResultDataSet(nq, k, ids, distances);
     }
 
@@ -184,9 +175,9 @@ class FlatIndexNode : public IndexNode {
                     BitsetViewIDSelector bw_idselector(bitset);
                     faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
 
-                    if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
-                        auto cur_query = (const float*)xq + dim * index;
-                        std::unique_ptr<float[]> copied_query = nullptr;
+                    if constexpr (std::is_same<IndexType, faiss::IndexFlat>::value) {
+                        auto cur_query = (const DataType*)xq + dim * index;
+                        std::unique_ptr<DataType[]> copied_query = nullptr;
                         if (is_cosine) {
                             copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                             cur_query = copied_query.get();
@@ -197,7 +188,7 @@ class FlatIndexNode : public IndexNode {
 
                         index_->range_search(1, cur_query, radius, &res, &search_params);
                     }
-                    if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
+                    if constexpr (std::is_same<IndexType, faiss::IndexBinaryFlat>::value) {
                         faiss::SearchParameters search_params;
                         search_params.sel = id_selector;
 
@@ -218,14 +209,7 @@ class FlatIndexNode : public IndexNode {
                 }));
             }
             // wait for the completion
-            for (auto& fut : futs) {
-                fut.wait();
-            }
-            // check for exceptions. value() is {}, so either
-            //   a call does nothing, or it throws an inner exception.
-            for (auto& fut : futs) {
-                fut.result().value();
-            }
+            WaitAllSuccess(futs);
             GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter, distances, ids,
                                  lims);
         } catch (const std::exception& e) {
@@ -241,21 +225,21 @@ class FlatIndexNode : public IndexNode {
         auto dim = Dim();
         auto rows = dataset.GetRows();
         auto ids = dataset.GetIds();
-        if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
-            float* data = nullptr;
+        if constexpr (std::is_same<IndexType, faiss::IndexFlat>::value) {
+            DataType* data = nullptr;
             try {
-                data = new float[rows * dim];
+                data = new DataType[rows * dim];
                 for (int64_t i = 0; i < rows; i++) {
                     index_->reconstruct(ids[i], data + i * dim);
                 }
                 return GenResultDataSet(rows, dim, data);
             } catch (const std::exception& e) {
-                std::unique_ptr<float[]> auto_del(data);
+                std::unique_ptr<DataType[]> auto_del(data);
                 LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
                 return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
             }
         }
-        if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
+        if constexpr (std::is_same<IndexType, faiss::IndexBinaryFlat>::value) {
             uint8_t* data = nullptr;
             try {
                 data = new uint8_t[rows * dim / 8];
@@ -273,14 +257,14 @@ class FlatIndexNode : public IndexNode {
 
     bool
     HasRawData(const std::string& metric_type) const override {
-        if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
-            if (version_ <= Version::GetMinimalVersion()) {
+        if constexpr (std::is_same<IndexType, faiss::IndexFlat>::value) {
+            if (this->version_ <= Version::GetMinimalVersion()) {
                 return !IsMetricType(metric_type, metric::COSINE);
             } else {
                 return true;
             }
         }
-        if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
+        if constexpr (std::is_same<IndexType, faiss::IndexBinaryFlat>::value) {
             return true;
         }
     }
@@ -298,10 +282,10 @@ class FlatIndexNode : public IndexNode {
         }
         try {
             MemoryIOWriter writer;
-            if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
+            if constexpr (std::is_same<IndexType, faiss::IndexFlat>::value) {
                 faiss::write_index(index_.get(), &writer);
             }
-            if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
+            if constexpr (std::is_same<IndexType, faiss::IndexBinaryFlat>::value) {
                 faiss::write_index_binary(index_.get(), &writer);
             }
             std::shared_ptr<uint8_t[]> data(writer.data());
@@ -325,13 +309,13 @@ class FlatIndexNode : public IndexNode {
         }
 
         MemoryIOReader reader(binary->data.get(), binary->size);
-        if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
+        if constexpr (std::is_same<IndexType, faiss::IndexFlat>::value) {
             faiss::Index* index = faiss::read_index(&reader);
-            index_.reset(static_cast<T*>(index));
+            index_.reset(static_cast<IndexType*>(index));
         }
-        if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
+        if constexpr (std::is_same<IndexType, faiss::IndexBinaryFlat>::value) {
             faiss::IndexBinary* index = faiss::read_index_binary(&reader);
-            index_.reset(static_cast<T*>(index));
+            index_.reset(static_cast<IndexType*>(index));
         }
         return Status::success;
     }
@@ -345,13 +329,13 @@ class FlatIndexNode : public IndexNode {
             io_flags |= faiss::IO_FLAG_MMAP;
         }
 
-        if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
+        if constexpr (std::is_same<IndexType, faiss::IndexFlat>::value) {
             faiss::Index* index = faiss::read_index(filename.data(), io_flags);
-            index_.reset(static_cast<T*>(index));
+            index_.reset(static_cast<IndexType*>(index));
         }
-        if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
+        if constexpr (std::is_same<IndexType, faiss::IndexBinaryFlat>::value) {
             faiss::IndexBinary* index = faiss::read_index_binary(filename.data(), io_flags);
-            index_.reset(static_cast<T*>(index));
+            index_.reset(static_cast<IndexType*>(index));
         }
         return Status::success;
     }
@@ -368,7 +352,7 @@ class FlatIndexNode : public IndexNode {
 
     int64_t
     Size() const override {
-        return index_->ntotal * index_->d * sizeof(float);
+        return index_->ntotal * index_->d * sizeof(DataType);
     }
 
     int64_t
@@ -378,27 +362,22 @@ class FlatIndexNode : public IndexNode {
 
     std::string
     Type() const override {
-        if constexpr (std::is_same<T, faiss::IndexFlat>::value) {
+        if constexpr (std::is_same<IndexType, faiss::IndexFlat>::value) {
             return knowhere::IndexEnum::INDEX_FAISS_IDMAP;
         }
-        if constexpr (std::is_same<T, faiss::IndexBinaryFlat>::value) {
+        if constexpr (std::is_same<IndexType, faiss::IndexBinaryFlat>::value) {
             return knowhere::IndexEnum::INDEX_FAISS_BIN_IDMAP;
         }
     }
 
  private:
-    std::unique_ptr<T> index_;
+    std::unique_ptr<IndexType> index_;
     std::shared_ptr<ThreadPool> search_pool_;
 };
 
-KNOWHERE_REGISTER_GLOBAL(FLAT, [](const int32_t& version, const Object& object) {
-    return Index<FlatIndexNode<faiss::IndexFlat>>::Create(version, object);
-});
-KNOWHERE_REGISTER_GLOBAL(BINFLAT, [](const int32_t& version, const Object& object) {
-    return Index<FlatIndexNode<faiss::IndexBinaryFlat>>::Create(version, object);
-});
-KNOWHERE_REGISTER_GLOBAL(BIN_FLAT, [](const int32_t& version, const Object& object) {
-    return Index<FlatIndexNode<faiss::IndexBinaryFlat>>::Create(version, object);
-});
-
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(FLAT, FlatIndexNode, fp32, faiss::IndexFlat);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(BINFLAT, FlatIndexNode, bin1, faiss::IndexBinaryFlat);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(BIN_FLAT, FlatIndexNode, bin1, faiss::IndexBinaryFlat);
+KNOWHERE_MOCK_REGISTER_GLOBAL(FLAT, FlatIndexNode, fp16, faiss::IndexFlat);
+KNOWHERE_MOCK_REGISTER_GLOBAL(FLAT, FlatIndexNode, bf16, faiss::IndexFlat);
 }  // namespace knowhere

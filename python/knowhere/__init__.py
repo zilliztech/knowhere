@@ -1,12 +1,44 @@
 from . import swigknowhere
 from .swigknowhere import Status
 from .swigknowhere import GetBinarySet, GetNullDataSet, GetNullBitSetView
-from .swigknowhere import BruteForceSearch, BruteForceRangeSearch
+from .swigknowhere import BruteForceSearchFloat, BruteForceRangeSearchFloat
+from .swigknowhere import BruteForceSearchFP16, BruteForceRangeSearchFP16
+from .swigknowhere import BruteForceSearchBF16, BruteForceRangeSearchBF16
+from .swigknowhere import BruteForceSearchBin, BruteForceRangeSearchBin
+
 import numpy as np
+from bfloat16 import bfloat16
 
 
-def CreateIndex(name, version):
-    return swigknowhere.IndexWrap(name, version)
+def CreateIndex(name, version, type=np.float32):
+    if type == np.float32:
+        return swigknowhere.IndexWrapFloat(name, version)
+    if type == np.float16:
+        return swigknowhere.IndexWrapFP16(name, version)
+    if type == bfloat16:
+        return swigknowhere.IndexWrapBF16(name, version)
+    if type == np.uint8:
+        return swigknowhere.IndexWrapBin(name, version)
+
+def BruteForceSearch(type=np.float32, *args):
+    if type == np.float32:
+        return BruteForceSearchFloat(*args)
+    if type == np.float16:
+        return BruteForceSearchFP16(*args)
+    if type == bfloat16:
+        return BruteForceSearchBF16(*args)
+    if type == np.uint8:
+        return BruteForceSearchBin(*args)
+
+def BruteForceRangeSearch(type=np.float32, *args):
+    if type == np.float32:
+        return BruteForceRangeSearchFloat(*args)
+    if type == np.float16:
+        return BruteForceRangeSearchFP16(*args)
+    if type == bfloat16:
+        return BruteForceRangeSearchBF16(*args)
+    if type == np.uint8:
+        return BruteForceRangeSearchBin(*args)
 
 
 def GetCurrentVersion():
@@ -25,6 +57,10 @@ def Dump(binset, file_name):
     return swigknowhere.Dump(binset, file_name)
 
 
+def WriteIndexToDisk(binset, index_type, data_path):
+    return swigknowhere.WriteIndexToDisk(binset, index_type, data_path)
+
+
 def ArrayToDataSet(arr):
     if arr.ndim == 1:
         return swigknowhere.Array2DataSetIds(arr)
@@ -33,9 +69,15 @@ def ArrayToDataSet(arr):
             return swigknowhere.Array2DataSetI(arr)
         if arr.dtype == np.float32:
             return swigknowhere.Array2DataSetF(arr)
+        if arr.dtype == np.float16:
+            arr = arr.astype(np.float32)
+            return swigknowhere.Array2DataSetFP16(arr)
+        if arr.dtype == bfloat16:
+            arr = arr.astype(np.float32)
+            return swigknowhere.Array2DataSetBF16(arr)
     raise ValueError(
         """
-        ArrayToDataSet only support numpy array dtype float32 and int32.
+        ArrayToDataSet only support numpy array dtype float32,int32,float16 and bfloat16.
         """
     )
 
@@ -89,6 +131,21 @@ def GetVectorDataSetToArray(ans):
     swigknowhere.DataSetTensor2Array(ans, data)
     return data
 
+def GetFloat16VectorDataSetToArray(ans):
+    dim = swigknowhere.DataSet_Dim(ans)
+    rows = swigknowhere.DataSet_Rows(ans)
+    data = np.zeros([rows, dim]).astype(np.float32)
+    swigknowhere.Float16DataSetTensor2Array(ans, data)
+    data = data.astype(np.float16)
+    return data
+
+def GetBFloat16VectorDataSetToArray(ans):
+    dim = swigknowhere.DataSet_Dim(ans)
+    rows = swigknowhere.DataSet_Rows(ans)
+    data = np.zeros([rows, dim]).astype(np.float32)
+    swigknowhere.BFloat16DataSetTensor2Array(ans, data)
+    data = data.astype(bfloat16)
+    return data
 
 def GetBinaryVectorDataSetToArray(ans):
     dim = int(swigknowhere.DataSet_Dim(ans) / 32)
@@ -99,3 +156,9 @@ def GetBinaryVectorDataSetToArray(ans):
 
 def SetSimdType(type):
     swigknowhere.SetSimdType(type)
+
+def SetBuildThreadPool(num_threads):
+    swigknowhere.SetBuildThreadPool(num_threads)
+
+def SetSearchThreadPool(num_threads):
+    swigknowhere.SetSearchThreadPool(num_threads)

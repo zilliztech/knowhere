@@ -23,7 +23,8 @@ class BitsetView {
     BitsetView() = default;
     ~BitsetView() = default;
 
-    BitsetView(const uint8_t* data, size_t num_bits) : bits_(data), num_bits_(num_bits) {
+    BitsetView(const uint8_t* data, size_t num_bits, size_t filtered_out_num = 0)
+        : bits_(data), num_bits_(num_bits), filtered_out_num_(filtered_out_num) {
     }
 
     BitsetView(const std::nullptr_t) : BitsetView() {
@@ -57,6 +58,16 @@ class BitsetView {
 
     size_t
     count() const {
+        return filtered_out_num_;
+    }
+
+    float
+    filter_ratio() const {
+        return empty() ? 0.0f : ((float)filtered_out_num_ / num_bits_);
+    }
+
+    size_t
+    get_filtered_out_num_() const {
         size_t ret = 0;
         auto len_uint8 = byte_size();
         auto len_uint64 = len_uint8 >> 3;
@@ -100,6 +111,7 @@ class BitsetView {
  private:
     const uint8_t* bits_ = nullptr;
     size_t num_bits_ = 0;
+    size_t filtered_out_num_ = 0;
 };
 }  // namespace knowhere
 

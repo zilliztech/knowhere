@@ -18,10 +18,10 @@
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/object.h"
+#include "knowhere/operands.h"
 #include "knowhere/version.h"
 
 namespace knowhere {
-
 class IndexNode : public Object {
  public:
     IndexNode(const int32_t ver) : version_(ver) {
@@ -75,6 +75,11 @@ class IndexNode : public Object {
 
     virtual bool
     HasRawData(const std::string& metric_type) const = 0;
+
+    virtual bool
+    IsAdditionalScalarSupported() const {
+        return false;
+    }
 
     virtual expected<DataSetPtr>
     GetIndexMeta(const Config& cfg) const = 0;

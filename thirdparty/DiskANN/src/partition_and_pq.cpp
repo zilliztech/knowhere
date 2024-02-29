@@ -3,8 +3,10 @@
 
 #include "diskann/math_utils.h"
 #include "knowhere/comp/thread_pool.h"
+#include "knowhere/log.h"
 #include <omp.h>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -14,6 +16,7 @@
 #include <iomanip>
 #include <iterator>
 #include <map>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <string>
@@ -30,6 +33,7 @@
 #include "diskann/parameters.h"
 #include "tsl/robin_set.h"
 #include "diskann/utils.h"
+#include "knowhere/comp/thread_pool.h"
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -101,7 +105,7 @@ void gen_random_slice(const std::string base_file,
 
 template<typename T>
 void gen_random_slice(const std::string data_file, double p_val,
-                      float *&sampled_data, size_t &slice_size, size_t &ndims) {
+                      std::unique_ptr<float[]>& sampled_data, size_t &slice_size, size_t &ndims) {
   size_t                          npts;
   uint32_t                        npts32, ndims32;
   std::vector<std::vector<float>> sampled_vectors;
@@ -131,12 +135,12 @@ void gen_random_slice(const std::string data_file, double p_val,
     if (rnd_val < p_val) {
       std::vector<float> cur_vector_float;
       for (size_t d = 0; d < ndims; d++)
-        cur_vector_float.push_back(cur_vector_T[d]);
+        cur_vector_float.push_back(float(cur_vector_T[d]));
       sampled_vectors.push_back(cur_vector_float);
     }
   }
   slice_size = sampled_vectors.size();
-  sampled_data = new float[slice_size * ndims];
+  sampled_data = std::make_unique<float[]>(slice_size * ndims);
   for (size_t i = 0; i < slice_size; i++) {
     for (size_t j = 0; j < ndims; j++) {
       sampled_data[i * ndims + j] = sampled_vectors[i][j];
@@ -148,7 +152,7 @@ void gen_random_slice(const std::string data_file, double p_val,
 // npts*ndims to return sampled_data of size slice_size*ndims.
 template<typename T>
 void gen_random_slice(const T *inputdata, size_t npts, size_t ndims,
-                      double p_val, float *&sampled_data, size_t &slice_size) {
+                      double p_val, std::unique_ptr<float[]> &sampled_data, size_t &slice_size) {
   std::vector<std::vector<float>> sampled_vectors;
   const T                        *cur_vector_T;
 
@@ -167,15 +171,15 @@ void gen_random_slice(const T *inputdata, size_t npts, size_t ndims,
     if (rnd_val < p_val) {
       std::vector<float> cur_vector_float;
       for (size_t d = 0; d < ndims; d++)
-        cur_vector_float.push_back(cur_vector_T[d]);
+        cur_vector_float.push_back((float) cur_vector_T[d]);
       sampled_vectors.push_back(cur_vector_float);
     }
   }
   slice_size = sampled_vectors.size();
-  sampled_data = new float[slice_size * ndims];
+  sampled_data = std::make_unique<float[]>(slice_size * ndims);
   for (size_t i = 0; i < slice_size; i++) {
     for (size_t j = 0; j < ndims; j++) {
-      sampled_data[i * ndims + j] = sampled_vectors[i][j];
+      sampled_data[i * ndims + j] = (float) sampled_vectors[i][j];
     }
   }
 }
@@ -306,6 +310,8 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
 
   full_pivot_data.reset(new float[num_centers * dim]);
 
+  std::atomic<uint32_t> num_chunk_done(0);
+  const uint32_t        num_chunk_step = num_pq_chunks / COMPLETION_PERCENT;
   auto thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
   std::vector<folly::Future<folly::Unit>> futures;
   futures.reserve(num_pq_chunks);
@@ -314,7 +320,7 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
     if (cur_chunk_size == 0)
       continue;
     futures.emplace_back(thread_pool->push([&, chunk_size = cur_chunk_size,
-                                         index = i]() {
+                                            index = i]() {
       std::unique_ptr<float[]> cur_pivot_data =
           std::make_unique<float[]>(num_centers * chunk_size);
       std::unique_ptr<float[]> cur_data =
@@ -344,11 +350,15 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
                     cur_pivot_data.get() + j * chunk_size,
                     chunk_size * sizeof(float));
       }
+      uint32_t cur_chunk_done = num_chunk_done.fetch_add(1);
+      if (num_chunk_step == 0 || cur_chunk_done % num_chunk_step == 0 ||
+          cur_chunk_done == num_pq_chunks) {
+        LOG_KNOWHERE_INFO_ << "Genereated pivots for " << cur_chunk_done
+                           << " chunks out of " << num_pq_chunks;
+      }
     }));
   }
-  for (auto &future : futures) {
-    future.wait();
-  }
+  knowhere::WaitAllSuccess(futures);
 
   diskann::save_bin<float>(pq_pivots_path.c_str(), full_pivot_data.get(),
                            (size_t) num_centers, dim);
@@ -521,6 +531,7 @@ int generate_pq_data_from_pivots(const std::string data_file,
             }
           }));
     }
+    knowhere::WaitAllSuccess(futures);
 
     futures.clear();
     futures.reserve(num_pq_chunks);
@@ -529,7 +540,7 @@ int generate_pq_data_from_pivots(const std::string data_file,
       if (cur_chunk_size == 0)
         continue;
       futures.emplace_back(thread_pool->push([&, chunk_size = cur_chunk_size,
-                                           chunk_index = i]() {
+                                              chunk_index = i]() {
         std::unique_ptr<float[]> cur_pivot_data =
             std::make_unique<float[]>(num_centers * chunk_size);
         std::unique_ptr<float[]> cur_data =
@@ -565,9 +576,8 @@ int generate_pq_data_from_pivots(const std::string data_file,
         }
       }));
     }
-    for (auto &future : futures) {
-      future.wait();
-    }
+    knowhere::WaitAllSuccess(futures);
+    futures.clear();
 
     if (num_centers > 256) {
       compressed_file_writer.write(
@@ -602,19 +612,19 @@ int generate_pq_data_from_pivots(const std::string data_file,
 }
 
 int estimate_cluster_sizes(float *test_data_float, size_t num_test,
-                           float *pivots, const size_t num_centers,
+                           const float *pivots, const size_t num_centers,
                            const size_t test_dim, const size_t k_base,
                            std::vector<size_t> &cluster_sizes) {
   cluster_sizes.clear();
 
-  size_t *shard_counts = new size_t[num_centers];
+  auto shard_counts = std::make_unique<size_t[]>(num_centers);
 
   for (size_t i = 0; i < num_centers; i++) {
     shard_counts[i] = 0;
   }
 
   size_t block_size = num_test <= BLOCK_SIZE ? num_test : BLOCK_SIZE;
-  _u32  *block_closest_centers = new _u32[block_size * k_base];
+  auto block_closest_centers = std::make_unique<_u32[]>(block_size * k_base);
   float *block_data_float;
 
   size_t num_blocks = DIV_ROUND_UP(num_test, block_size);
@@ -628,7 +638,7 @@ int estimate_cluster_sizes(float *test_data_float, size_t num_test,
 
     math_utils::compute_closest_centers(block_data_float, cur_blk_size,
                                         test_dim, pivots, num_centers, k_base,
-                                        block_closest_centers);
+                                        block_closest_centers.get());
 
     for (size_t p = 0; p < cur_blk_size; p++) {
       for (size_t p1 = 0; p1 < k_base; p1++) {
@@ -645,8 +655,6 @@ int estimate_cluster_sizes(float *test_data_float, size_t num_test,
     cluster_size_stream << cur_shard_count << " ";
   }
   LOG_KNOWHERE_DEBUG_ << cluster_size_stream.str();
-  delete[] shard_counts;
-  delete[] block_closest_centers;
   return 0;
 }
 
@@ -861,7 +869,7 @@ int retrieve_shard_data_from_ids(const std::string data_file,
   shard_data_writer.write((char *) &dummy_size, sizeof(uint32_t));
   shard_data_writer.write((char *) &basedim32, sizeof(uint32_t));
 
-  _u32 *shard_ids;
+  std::unique_ptr<_u32[]> shard_ids = nullptr;
   _u64  shard_size, tmp;
   diskann::load_bin<_u32>(idmap_filename, shard_ids, shard_size, tmp);
 
@@ -902,7 +910,6 @@ int retrieve_shard_data_from_ids(const std::string data_file,
   shard_data_writer.seekp(0);
   shard_data_writer.write((char *) &num_written, sizeof(uint32_t));
   shard_data_writer.close();
-  delete[] shard_ids;
   return 0;
 }
 
@@ -918,12 +925,10 @@ int partition(const std::string data_file, const float sampling_rate,
               const std::string prefix_path, size_t k_base) {
   size_t train_dim;
   size_t num_train;
-  float *train_data_float;
+  std::unique_ptr<float[]> train_data_float = nullptr;
 
   gen_random_slice<T>(data_file, sampling_rate, train_data_float, num_train,
                       train_dim);
-
-  float *pivot_data;
 
   std::string cur_file = std::string(prefix_path);
   std::string output_file;
@@ -933,27 +938,25 @@ int partition(const std::string data_file, const float sampling_rate,
   //  cur_file = cur_file + "_kmeans_partitioning-" + std::to_string(num_parts);
   output_file = cur_file + "_centroids.bin";
 
-  pivot_data = new float[num_parts * train_dim];
+  auto pivot_data = std::make_unique<float[]>(num_parts * train_dim);
 
   // Process Global k-means for kmeans_partitioning Step
   LOG_KNOWHERE_DEBUG_ << "Processing global k-means (kmeans_partitioning Step)";
-  kmeans::kmeanspp_selecting_pivots(train_data_float, num_train, train_dim,
-                                    pivot_data, num_parts);
+  kmeans::kmeanspp_selecting_pivots(train_data_float.get(), num_train, train_dim,
+                                    pivot_data.get(), num_parts);
 
-  kmeans::run_lloyds(train_data_float, num_train, train_dim, pivot_data,
+  kmeans::run_lloyds(train_data_float.get(), num_train, train_dim, pivot_data.get(),
                      num_parts, max_k_means_reps, NULL, NULL);
 
   LOG_KNOWHERE_DEBUG_ << "Saving global k-center pivots";
-  diskann::save_bin<float>(output_file.c_str(), pivot_data, (size_t) num_parts,
+  diskann::save_bin<float>(output_file.c_str(), pivot_data.get(), (size_t) num_parts,
                            train_dim);
 
   // now pivots are ready. need to stream base points and assign them to
   // closest clusters.
 
-  shard_data_into_clusters<T>(data_file, pivot_data, num_parts, train_dim,
+  shard_data_into_clusters<T>(data_file, pivot_data.get(), num_parts, train_dim,
                               k_base, prefix_path);
-  delete[] pivot_data;
-  delete[] train_data_float;
   return 0;
 }
 
@@ -964,7 +967,7 @@ int partition_with_ram_budget(const std::string data_file,
                               const std::string prefix_path, size_t k_base) {
   size_t train_dim;
   size_t num_train;
-  float *train_data_float;
+  std::unique_ptr<float[]> train_data_float = nullptr;
   size_t max_k_means_reps = 10;
 
   int  num_parts = 3;
@@ -975,12 +978,11 @@ int partition_with_ram_budget(const std::string data_file,
 
   size_t test_dim;
   size_t num_test;
-  float *test_data_float;
+  std::unique_ptr<float[]> test_data_float = nullptr;
   gen_random_slice<T>(data_file, sampling_rate, test_data_float, num_test,
                       test_dim);
-
-  float *pivot_data = nullptr;
-
+  
+  std::unique_ptr<float[]> pivot_data = nullptr;
   std::string cur_file = std::string(prefix_path);
   std::string output_file;
 
@@ -993,24 +995,21 @@ int partition_with_ram_budget(const std::string data_file,
     fit_in_ram = true;
 
     double max_ram_usage = 0;
-    if (pivot_data != nullptr)
-      delete[] pivot_data;
-
-    pivot_data = new float[num_parts * train_dim];
+    pivot_data = std::make_unique<float[]>(num_parts * train_dim);
     // Process Global k-means for kmeans_partitioning Step
     LOG_KNOWHERE_INFO_
         << "Processing global k-means (kmeans_partitioning Step)";
-    kmeans::kmeanspp_selecting_pivots(train_data_float, num_train, train_dim,
-                                      pivot_data, num_parts);
+    kmeans::kmeanspp_selecting_pivots(train_data_float.get(), num_train, train_dim,
+                                      pivot_data.get(), num_parts);
 
-    kmeans::run_lloyds(train_data_float, num_train, train_dim, pivot_data,
+    kmeans::run_lloyds(train_data_float.get(), num_train, train_dim, pivot_data.get(),
                        num_parts, max_k_means_reps, NULL, NULL);
 
     // now pivots are ready. need to stream base points and assign them to
     // closest clusters.
 
     std::vector<size_t> cluster_sizes;
-    estimate_cluster_sizes(test_data_float, num_test, pivot_data, num_parts,
+    estimate_cluster_sizes(test_data_float.get(), num_test, pivot_data.get(), num_parts,
                            train_dim, k_base, cluster_sizes);
 
     for (auto &p : cluster_sizes) {
@@ -1034,14 +1033,11 @@ int partition_with_ram_budget(const std::string data_file,
   }
 
   LOG_KNOWHERE_DEBUG_ << "Saving global k-center pivots";
-  diskann::save_bin<float>(output_file.c_str(), pivot_data, (size_t) num_parts,
+  diskann::save_bin<float>(output_file.c_str(), pivot_data.get(), (size_t) num_parts,
                            train_dim);
 
-  shard_data_into_clusters_only_ids<T>(data_file, pivot_data, num_parts,
+  shard_data_into_clusters_only_ids<T>(data_file, pivot_data.get(), num_parts,
                                        train_dim, k_base, prefix_path);
-  delete[] pivot_data;
-  delete[] train_data_float;
-  delete[] test_data_float;
   return num_parts;
 }
 
@@ -1056,28 +1052,48 @@ template void gen_random_slice<uint8_t>(const std::string base_file,
 template void gen_random_slice<float>(const std::string base_file,
                                       const std::string output_file,
                                       double            sampling_rate);
+template void gen_random_slice<knowhere::fp16>(const std::string base_file,
+                                               const std::string output_file,
+                                               double            sampling_rate);
+template void gen_random_slice<knowhere::bf16>(const std::string base_file,
+                                               const std::string output_file,
+                                               double            sampling_rate);
 
 template void gen_random_slice<float>(const float *inputdata, size_t npts,
                                       size_t ndims, double p_val,
-                                      float *&sampled_data, size_t &slice_size);
+                                      std::unique_ptr<float[]> &sampled_data,
+                                      size_t                 &slice_size);
 template void gen_random_slice<uint8_t>(const uint8_t *inputdata, size_t npts,
                                         size_t ndims, double p_val,
-                                        float *&sampled_data,
-                                        size_t &slice_size);
+                                        std::unique_ptr<float[]> &sampled_data,
+                                        size_t                 &slice_size);
 template void gen_random_slice<int8_t>(const int8_t *inputdata, size_t npts,
                                        size_t ndims, double p_val,
-                                       float *&sampled_data,
-                                       size_t &slice_size);
-
+                                       std::unique_ptr<float[]> &sampled_data,
+                                       size_t                   &slice_size);
+template void gen_random_slice<knowhere::fp16>(
+    const knowhere::fp16 *inputdata, size_t npts, size_t ndims, double p_val,
+    std::unique_ptr<float[]> &sampled_data, size_t &slice_size);
+template void gen_random_slice<knowhere::bf16>(
+    const knowhere::bf16 *inputdata, size_t npts, size_t ndims, double p_val,
+    std::unique_ptr<float[]> &sampled_data, size_t &slice_size);
 template void gen_random_slice<float>(const std::string data_file, double p_val,
-                                      float *&sampled_data, size_t &slice_size,
-                                      size_t &ndims);
-template void gen_random_slice<uint8_t>(const std::string data_file,
-                                        double p_val, float *&sampled_data,
+                                      std::unique_ptr<float[]> &sampled_data,
+                                      size_t &slice_size, size_t &ndims);
+template void gen_random_slice<uint8_t>(const std::string         data_file,
+                                        double                    p_val,
+                                        std::unique_ptr<float[]> &sampled_data,
                                         size_t &slice_size, size_t &ndims);
-template void gen_random_slice<int8_t>(const std::string data_file,
-                                       double p_val, float *&sampled_data,
+template void gen_random_slice<int8_t>(const std::string         data_file,
+                                       double                    p_val,
+                                       std::unique_ptr<float[]> &sampled_data,
                                        size_t &slice_size, size_t &ndims);
+template void gen_random_slice<knowhere::fp16>(
+    const std::string data_file, double p_val,
+    std::unique_ptr<float[]> &sampled_data, size_t &slice_size, size_t &ndims);
+template void gen_random_slice<knowhere::bf16>(
+    const std::string data_file, double p_val,
+    std::unique_ptr<float[]> &sampled_data, size_t &slice_size, size_t &ndims);
 
 template int partition<int8_t>(const std::string data_file,
                                const float sampling_rate, size_t num_centers,
@@ -1091,6 +1107,12 @@ template int partition<float>(const std::string data_file,
                               const float sampling_rate, size_t num_centers,
                               size_t            max_k_means_reps,
                               const std::string prefix_path, size_t k_base);
+template int partition<knowhere::fp16>(
+    const std::string data_file, const float sampling_rate, size_t num_centers,
+    size_t max_k_means_reps, const std::string prefix_path, size_t k_base);
+template int partition<knowhere::bf16>(
+    const std::string data_file, const float sampling_rate, size_t num_centers,
+    size_t max_k_means_reps, const std::string prefix_path, size_t k_base);
 
 template int partition_with_ram_budget<int8_t>(
     const std::string data_file, const double sampling_rate, double ram_budget,
@@ -1099,6 +1121,12 @@ template int partition_with_ram_budget<uint8_t>(
     const std::string data_file, const double sampling_rate, double ram_budget,
     size_t graph_degree, const std::string prefix_path, size_t k_base);
 template int partition_with_ram_budget<float>(
+    const std::string data_file, const double sampling_rate, double ram_budget,
+    size_t graph_degree, const std::string prefix_path, size_t k_base);
+template int partition_with_ram_budget<knowhere::fp16>(
+    const std::string data_file, const double sampling_rate, double ram_budget,
+    size_t graph_degree, const std::string prefix_path, size_t k_base);
+template int partition_with_ram_budget<knowhere::bf16>(
     const std::string data_file, const double sampling_rate, double ram_budget,
     size_t graph_degree, const std::string prefix_path, size_t k_base);
 
@@ -1111,6 +1139,12 @@ template int retrieve_shard_data_from_ids<uint8_t>(const std::string data_file,
 template int retrieve_shard_data_from_ids<int8_t>(const std::string data_file,
                                                   std::string idmap_filename,
                                                   std::string data_filename);
+template int retrieve_shard_data_from_ids<knowhere::fp16>(
+    const std::string data_file, std::string idmap_filename,
+    std::string data_filename);
+template int retrieve_shard_data_from_ids<knowhere::bf16>(
+    const std::string data_file, std::string idmap_filename,
+    std::string data_filename);
 
 template int generate_pq_data_from_pivots<int8_t>(
     const std::string data_file, unsigned num_centers, unsigned num_pq_chunks,
@@ -1119,5 +1153,11 @@ template int generate_pq_data_from_pivots<uint8_t>(
     const std::string data_file, unsigned num_centers, unsigned num_pq_chunks,
     std::string pq_pivots_path, std::string pq_compressed_vectors_path);
 template int generate_pq_data_from_pivots<float>(
+    const std::string data_file, unsigned num_centers, unsigned num_pq_chunks,
+    std::string pq_pivots_path, std::string pq_compressed_vectors_path);
+template int generate_pq_data_from_pivots<knowhere::fp16>(
+    const std::string data_file, unsigned num_centers, unsigned num_pq_chunks,
+    std::string pq_pivots_path, std::string pq_compressed_vectors_path);
+template int generate_pq_data_from_pivots<knowhere::bf16>(
     const std::string data_file, unsigned num_centers, unsigned num_pq_chunks,
     std::string pq_pivots_path, std::string pq_compressed_vectors_path);

@@ -21,6 +21,7 @@ class IvfConfig : public BaseConfig {
     CFG_INT nlist;
     CFG_INT nprobe;
     CFG_BOOL use_elkan;
+    CFG_BOOL ensure_topk_full;  // only take affect on temp index(IVF_FLAT_CC) now
     KNOHWERE_DECLARE_CONFIG(IvfConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(nlist)
             .set_default(128)
@@ -31,11 +32,16 @@ class IvfConfig : public BaseConfig {
             .set_default(8)
             .description("number of probes at query time.")
             .for_search()
+            .for_iterator()
             .set_range(1, 65536);
         KNOWHERE_CONFIG_DECLARE_FIELD(use_elkan)
             .set_default(true)
             .description("whether to use elkan algorithm")
             .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(ensure_topk_full)
+            .set_default(true)
+            .description("whether to make sure topk results full")
+            .for_search();
     }
 };
 
@@ -58,7 +64,7 @@ class IvfPqConfig : public IvfConfig {
     CFG_INT m;
     CFG_INT nbits;
     KNOHWERE_DECLARE_CONFIG(IvfPqConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(m).description("m").set_default(4).for_train().set_range(1, 65536);
+        KNOWHERE_CONFIG_DECLARE_FIELD(m).description("m").set_default(32).for_train().set_range(1, 65536);
         KNOWHERE_CONFIG_DECLARE_FIELD(nbits).description("nbits").set_default(8).for_train().set_range(1, 64);
     }
 };

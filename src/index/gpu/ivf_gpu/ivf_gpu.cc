@@ -68,7 +68,7 @@ class GpuIvfIndexNode : public IndexNode {
 
         auto metric = Str2FaissMetricType(ivf_gpu_cfg.metric_type);
         if (!metric.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "please check metric value: " << ivf_gpu_cfg.metric_type;
+            LOG_KNOWHERE_ERROR_ << "unsupported metric type: " << ivf_gpu_cfg.metric_type;
             return metric.error();
         }
 
@@ -273,14 +273,7 @@ class GpuIvfIndexNode : public IndexNode {
     std::unique_ptr<faiss::Index> index_;
 };
 
-KNOWHERE_REGISTER_GLOBAL(GPU_FAISS_IVF_FLAT, [](const int32_t& version, const Object& object) {
-    return Index<GpuIvfIndexNode<faiss::IndexIVFFlat>>::Create(version, object);
-});
-KNOWHERE_REGISTER_GLOBAL(GPU_FAISS_IVF_PQ, [](const int32_t& version, const Object& object) {
-    return Index<GpuIvfIndexNode<faiss::IndexIVFPQ>>::Create(version, object);
-});
-KNOWHERE_REGISTER_GLOBAL(GPU_FAISS_IVF_SQ8, [](const int32_t& version, const Object& object) {
-    return Index<GpuIvfIndexNode<faiss::IndexIVFScalarQuantizer>>::Create(version, object);
-});
-
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(GPU_FAISS_IVF_FLAT, GpuIvfIndexNode, fp32, faiss::IndexIVFFlat);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(GPU_FAISS_IVF_PQ, GpuIvfIndexNode, fp32, faiss::IndexIVFPQ);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(GPU_FAISS_IVF_SQ8, GpuIvfIndexNode, fp32, faiss::IndexIVFScalarQuantizer);
 }  // namespace knowhere

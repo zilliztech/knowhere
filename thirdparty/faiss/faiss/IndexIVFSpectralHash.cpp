@@ -258,12 +258,13 @@ struct IVFScanner : InvertedListScanner {
             const idx_t* ids,
             float* simi,
             idx_t* idxi,
-            size_t k) const override {
+            size_t k,
+            size_t& scan_cnt) const override {
         size_t nup = 0;
         for (size_t j = 0; j < list_size; j++) {
             if (!sel || sel->is_member(ids[j])) {
                 float dis = hc.compute(codes);
-
+                scan_cnt++;
                 if (dis < simi[0]) {
                     int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
                     maxheap_replace_top(k, simi, idxi, dis, id);

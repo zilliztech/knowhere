@@ -19,7 +19,6 @@
 #include "knowhere/index_node.h"
 
 namespace knowhere {
-
 template <typename T1>
 class Index {
  public:
@@ -148,6 +147,9 @@ class Index {
 
     bool
     HasRawData(const std::string& metric_type) const;
+
+    bool
+    IsAdditionalScalarSupported() const;
 
     expected<DataSetPtr>
     GetIndexMeta(const Json& json) const;

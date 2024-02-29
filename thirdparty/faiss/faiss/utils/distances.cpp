@@ -192,8 +192,8 @@ void exhaustive_inner_product_seq(
             resi.begin(i);
 
             // the lambda that filters acceptable elements.
-            auto filter = [&selector](const size_t j) { 
-                return selector.is_member(j); 
+            auto filter = [&selector](const size_t j) {
+                return selector.is_member(j);
             };
 
             // the lambda that applies a filtered element.
@@ -309,8 +309,8 @@ void exhaustive_L2sqr_seq(
             resi.begin(i);
 
             // the lambda that filters acceptable elements.
-            auto filter = [&selector](const size_t j) { 
-                return selector.is_member(j); 
+            auto filter = [&selector](const size_t j) {
+                return selector.is_member(j);
             };
 
             // the lambda that applies a filtered element.
@@ -737,6 +737,25 @@ void knn_inner_product(
     }
 }
 
+// computes and stores all IP distances into output. Output should be
+// preallocated of size nx * ny, each element should be initialized to
+// {lowest distance, -1}.
+void all_inner_product(
+        const float* x,
+        const float* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        std::vector<std::pair<float, int64_t>>& output,
+        const IDSelector* sel) {
+    CollectAllResultHandler<CMax<float, int64_t>> res(ny, output);
+    if (nx < distance_compute_blas_threshold) {
+        exhaustive_inner_product_seq(x, y, d, nx, ny, res, sel);
+    } else {
+        exhaustive_inner_product_blas(x, y, d, nx, ny, res, sel);
+    }
+}
+
 void knn_L2sqr(
         const float* x,
         const float* y,
@@ -765,6 +784,26 @@ void knn_L2sqr(
     }
 }
 
+// computes and stores all L2 distances into output. Output should be
+// preallocated of size nx * ny, each element should be initialized to
+// {lowest distance, -1}.
+void all_L2sqr(
+        const float* x,
+        const float* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        std::vector<std::pair<float, int64_t>>& output,
+        const float* y_norms,
+        const IDSelector* sel) {
+    CollectAllResultHandler<CMax<float, int64_t>> res(ny, output);
+    if (nx < distance_compute_blas_threshold) {
+        exhaustive_L2sqr_seq(x, y, d, nx, ny, res, sel);
+    } else {
+        exhaustive_L2sqr_blas(x, y, d, nx, ny, res, y_norms, sel);
+    }
+}
+
 void knn_cosine(
         const float* x,
         const float* y,
@@ -790,6 +829,26 @@ void knn_cosine(
         } else {
             exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, res, sel);
         }
+    }
+}
+
+// computes and stores all cosine distances into output. Output should be
+// preallocated of size nx * ny, each element should be initialized to
+// {lowest distance, -1}.
+void all_cosine(
+        const float* x,
+        const float* y,
+        const float* y_norms,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        std::vector<std::pair<float, int64_t>>& output,
+        const IDSelector* sel) {
+    CollectAllResultHandler<CMax<float, int64_t>> res(ny, output);
+    if (nx < distance_compute_blas_threshold) {
+        exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, res, sel);
+    } else {
+        exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, res, sel);
     }
 }
 
@@ -908,7 +967,7 @@ void fvec_inner_products_by_idx(
 
         // the lambda that filters acceptable elements.
         auto filter = [=](const size_t i) { return (idsj[i] >= 0); };
-        
+
         // the lambda that applies a filtered element.
         auto apply = [=](const float dis, const size_t i) {
             ipj[i] = dis;
@@ -1155,24 +1214,23 @@ void elkan_L2_sse(
         size_t nx,
         size_t ny,
         int64_t* ids,
-        float* val) {
+        float* val,
+        float* tmp_buffer,
+        size_t sym_dim) {
     if (nx == 0 || ny == 0) {
         return;
     }
 
-    const size_t bs_y = 1024;
-    float* data = (float*)malloc((bs_y * (bs_y - 1) / 2) * sizeof(float));
-
-    for (size_t j0 = 0; j0 < ny; j0 += bs_y) {
-        size_t j1 = j0 + bs_y;
+    for (size_t j0 = 0; j0 < ny; j0 += sym_dim) {
+        size_t j1 = j0 + sym_dim;
         if (j1 > ny)
             j1 = ny;
 
         auto Y = [&](size_t i, size_t j) -> float& {
             assert(i != j);
             i -= j0, j -= j0;
-            return (i > j) ? data[j + i * (i - 1) / 2]
-                           : data[i + j * (j - 1) / 2];
+            return (i > j) ? tmp_buffer[j + i * (i - 1) / 2]
+                           : tmp_buffer[i + j * (j - 1) / 2];
         };
 
 #pragma omp parallel
@@ -1219,7 +1277,6 @@ void elkan_L2_sse(
         }
     }
 
-    free(data);
 }
 
 } // namespace faiss

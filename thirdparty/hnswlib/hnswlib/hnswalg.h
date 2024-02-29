@@ -27,8 +27,9 @@
 #include "hnswlib.h"
 #include "io/memory_io.h"
 #include "knowhere/config.h"
-#include "knowhere/utils.h"
 #include "knowhere/heap.h"
+#include "knowhere/prometheus_client.h"
+#include "knowhere/utils.h"
 #include "neighbor.h"
 #include "visited_list_pool.h"
 
@@ -43,7 +44,6 @@ typedef unsigned int linklistsizeint;
 constexpr float kHnswSearchKnnBFFilterThreshold = 0.93f;
 constexpr float kHnswSearchRangeBFFilterThreshold = 0.97f;
 constexpr float kHnswSearchBFTopkThreshold = 0.5f;
-constexpr float kAlpha = 0.15f;
 
 enum Metric {
     L2 = 0,
@@ -318,7 +318,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     template <typename AddSearchCandidate, bool has_deletions, bool collect_metrics = false>
     inline void
     searchBaseLayerSTNext(const void* data_point, Neighbor next, std::vector<bool>& visited, float& accumulative_alpha,
-                          const knowhere::BitsetView bitset, AddSearchCandidate& add_search_candidate,
+                          const knowhere::BitsetView& bitset, AddSearchCandidate& add_search_candidate,
                           const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
         auto [u, d, s] = next;
         tableint* list = (tableint*)get_linklist0(u);
@@ -328,6 +328,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             metric_hops++;
             metric_distance_computations += size;
         }
+        float kAlpha = bitset.filter_ratio() / 2.0f;
         for (size_t i = 1; i <= size; ++i) {
 #if defined(USE_PREFETCH)
             if (i + 1 <= size) {
@@ -374,30 +375,34 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     // to not destroy the connectivity of the graph; but we do not want to keep all of them as they won't be candidates.
     // Thus we include only a subset of filtered nodes(controlled by kAlpha) in the search path.
     template <bool has_deletions, bool collect_metrics = false>
-    NeighborSet
+    NeighborSetDoublePopList
     searchBaseLayerST(tableint ep_id, const void* data_point, size_t ef, std::vector<bool>& visited,
-                      const knowhere::BitsetView bitset,
+                      const knowhere::BitsetView& bitset,
                       const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr,
                       IteratorMinHeap* disqualified = nullptr, float accumulative_alpha = 0.0f) const {
         if (feder_result != nullptr) {
             feder_result->visit_info_.AddLevelVisitRecord(0);
         }
-        NeighborSet retset(ef);
+        NeighborSetDoublePopList retset(ef);
 
+        dist_t dist = calcDistance(data_point, ep_id);
         if (!has_deletions || !bitset.test((int64_t)ep_id)) {
-            dist_t dist = calcDistance(data_point, ep_id);
             retset.insert(Neighbor(ep_id, dist, Neighbor::kValid));
         } else {
-            retset.insert(Neighbor(ep_id, std::numeric_limits<dist_t>::max(), Neighbor::kInvalid));
+            retset.insert(Neighbor(ep_id, dist, Neighbor::kInvalid));
         }
 
         visited[ep_id] = true;
         auto add_search_candidate = [&](Neighbor n) { return retset.insert(n, disqualified); };
+        size_t hops = 0;
         while (retset.has_next()) {
             searchBaseLayerSTNext<decltype(add_search_candidate), has_deletions, collect_metrics>(
                 data_point, retset.pop(), visited, accumulative_alpha, bitset, add_search_candidate, feder_result);
+            hops++;
         }
-
+#ifdef NOT_COMPILE_FOR_SWIG
+        knowhere::knowhere_hnsw_search_hops.Observe(hops);
+#endif
         return retset;
     }
 
@@ -444,8 +449,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
     std::vector<std::pair<dist_t, labeltype>>
-    getNeighboursWithinRadius(NeighborSet& top_candidates, const void* data_point,
-                              float radius, const knowhere::BitsetView& bitset) const {
+    getNeighboursWithinRadius(NeighborSetDoublePopList& top_candidates, const void* data_point, float radius,
+                              const knowhere::BitsetView& bitset) const {
         std::vector<std::pair<dist_t, labeltype>> result;
         auto& visited = visited_list_pool_->getFreeVisitedList();
 
@@ -1247,13 +1252,17 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // do bruteforce search when delete rate high
         if (!bitset.empty()) {
             const size_t filtered_out_num = bitset.count();
+#ifdef NOT_COMPILE_FOR_SWIG
+            double ratio = ((double)filtered_out_num) / bitset.size();
+            knowhere::knowhere_hnsw_bitset_ratio.Observe(ratio);
+#endif
             if (filtered_out_num >= (cur_element_count * kHnswSearchKnnBFFilterThreshold) || k >= (cur_element_count - filtered_out_num) * kHnswSearchBFTopkThreshold) {
                 return searchKnnBF(query_data, k, bitset);
             }
         }
 
         auto [currObj, vec_hash] = searchTopLayers(query_data, param, feder_result);
-        NeighborSet retset;
+        NeighborSetDoublePopList retset;
         size_t ef = param ? param->ef_ : this->ef_;
         auto visited = visited_list_pool_->getFreeVisitedList();
         if (!bitset.empty()) {
@@ -1302,7 +1311,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         const bool has_deletions = !workspace->bitset.empty();
         if (!workspace->initial_search_done) {
             tableint currObj = searchTopLayers(query_data, workspace->param.get()).first;
-            NeighborSet retset;
+            NeighborSetDoublePopList retset;
             if (has_deletions) {
                 retset = searchBaseLayerST<true, true>(currObj, query_data, workspace->seed_ef, workspace->visited,
                                                        workspace->bitset, feder_result, &workspace->to_visit,
@@ -1385,13 +1394,17 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // do bruteforce range search when delete rate high
         if (!bitset.empty()) {
             const size_t filtered_out_num = bitset.count();
+#ifdef NOT_COMPILE_FOR_SWIG
+            double ratio = ((double)filtered_out_num) / bitset.size();
+            knowhere::knowhere_hnsw_bitset_ratio.Observe(ratio);
+#endif
             if (filtered_out_num >= (cur_element_count * kHnswSearchRangeBFFilterThreshold) || ef >= (cur_element_count - filtered_out_num) * kHnswSearchBFTopkThreshold) {
                 return searchRangeBF(query_data, radius, bitset);
             }
         }
 
         auto [currObj, vec_hash] = searchTopLayers(query_data, param, feder_result);
-        NeighborSet retset;
+        NeighborSetDoublePopList retset;
         auto visited = visited_list_pool_->getFreeVisitedList();
         if (!bitset.empty()) {
             retset = searchBaseLayerST<true, true>(currObj, query_data, ef, visited, bitset, feder_result);
@@ -1406,6 +1419,132 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
 
         return getNeighboursWithinRadius(retset, query_data, radius, bitset);
+    }
+
+    // get those unreachable vectors at the base layer after index building
+    // only be called after index building
+    std::vector<tableint>
+    findUnreachableVectors() {
+        tableint currObj = enterpoint_node_;
+        std::vector<tableint> start_points;
+        start_points.push_back(currObj);
+        std::vector<bool> visited;
+        std::vector<tableint> unreached;
+        for (int level = maxlevel_; level >= 0; level--) {
+            visited = std::vector<bool>(cur_element_count, false);
+            std::vector<tableint> touched;
+            for (auto start_point : start_points) {
+                if (visited[start_point])
+                    continue;
+                std::queue<tableint> q;
+                q.push(start_point);
+                visited[start_point] = true;
+                if (level > 0)
+                    touched.push_back(start_point);
+                while (!q.empty()) {
+                    tableint j = q.front();
+                    q.pop();
+                    unsigned int* data;
+                    data = (unsigned int*)get_linklist_at_level(j, level);
+                    size_t size = getListCount((linklistsizeint*)data);
+                    tableint* datal = (tableint*)(data + 1);
+                    for (size_t k = 0; k < size; k++) {
+                        tableint cand = datal[k];
+                        if (!visited[cand]) {
+                            visited[cand] = true;
+                            q.push(cand);
+                            if (level > 0)
+                                touched.push_back(cand);
+                        }
+                    }
+                }
+            }
+            start_points = touched;
+
+            for (tableint i = 0; i < cur_element_count; ++i) {
+                if (element_levels_[i] >= level) {
+                    if (!visited[i]) {
+                        if (level > 0) {  // for upper level, directly add edges since nodes num is usually small and fast to search its neighbors
+                            repairGraphConnectivity(i, level);
+                        } else {  // for base level, collect the unreachable nodes and repair them concurrently                 
+                            unreached.push_back(i);
+                        }
+                    }
+                }
+            }
+        }
+        return unreached;
+    }
+
+    // add some edges for those unreachable vectors to improve graph connectivity
+    // only call this method after index building
+    void
+    repairGraphConnectivity(tableint cur_c, int level = 0) {
+        size_t m_max = level ? maxM_ : maxM0_;
+        tableint currObj = enterpoint_node_;
+
+        dist_t curdist = calcDistance(cur_c, currObj);
+
+        for (int level_above = maxlevel_; level_above > level; level_above--) {
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                unsigned int* data;
+                // do not a lock here, since upper layer will not be modified
+                data = (unsigned int*)get_linklist(currObj, level_above);
+                int size = getListCount(data);
+                tableint* datal = (tableint*)(data + 1);
+#if defined(USE_PREFETCH)
+                for (int i = 0; i < size; ++i) {
+                    _mm_prefetch(getDataByInternalId(datal[i]), _MM_HINT_T0);
+                }
+#endif
+                for (int i = 0; i < size; i++) {
+                    tableint cand = datal[i];
+                    if (cand < 0 || cand > max_elements_)
+                        throw std::runtime_error("cand error");
+                    dist_t d = calcDistance(cur_c, cand);
+
+                    if (d < curdist) {
+                        curdist = d;
+                        currObj = cand;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> candidates = searchBaseLayer(
+            currObj, cur_c, level);
+
+        // get sorted id
+        std::vector<tableint> top_candidate_ids(candidates.size());
+        for (int i = static_cast<int>(candidates.size() - 1); i >= 0; i--) {
+            top_candidate_ids[i] = candidates.top().second;
+            candidates.pop();
+        }
+        int add_count = 0;
+        for (auto cand_id : top_candidate_ids) {
+            // skip same element
+            if (cand_id == cur_c) {
+                continue;
+            }
+
+            // try to connect candidate to the element
+            // add an edge if there is space
+            std::unique_lock <std::mutex> lock(link_list_locks_[cand_id]);
+            linklistsizeint *ll_cand = get_linklist_at_level(cand_id, level);
+            size_t size = getListCount(ll_cand);
+            tableint *data_cand = (tableint *) (ll_cand + 1);
+            if (size < m_max) {
+                data_cand[size] = cur_c;
+                setListCount(ll_cand, size + 1);
+                add_count++;
+            }
+            // do not add too much? If we already have m_max nodes connecting to the element
+            if (add_count >= m_max) {
+                break;
+            }
+        }
     }
 
     void
@@ -1456,7 +1595,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             }
         }
         if (metric_type_ == Metric::COSINE) {
-                ret += max_elements_ * sizeof(float);
+            ret += max_elements_ * sizeof(float);
         }
         return ret;
     }

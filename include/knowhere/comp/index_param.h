@@ -37,6 +37,7 @@ constexpr const char* INDEX_FAISS_GPU_IVFFLAT = "GPU_FAISS_IVF_FLAT";
 constexpr const char* INDEX_FAISS_GPU_IVFPQ = "GPU_FAISS_IVF_PQ";
 constexpr const char* INDEX_FAISS_GPU_IVFSQ8 = "GPU_FAISS_IVF_SQ8";
 
+constexpr const char* INDEX_RAFT_BRUTEFORCE = "GPU_RAFT_BRUTE_FORCE";
 constexpr const char* INDEX_RAFT_IVFFLAT = "GPU_RAFT_IVF_FLAT";
 constexpr const char* INDEX_RAFT_IVFPQ = "GPU_RAFT_IVF_PQ";
 constexpr const char* INDEX_RAFT_CAGRA = "GPU_RAFT_CAGRA";
@@ -44,6 +45,8 @@ constexpr const char* INDEX_RAFT_CAGRA = "GPU_RAFT_CAGRA";
 constexpr const char* INDEX_HNSW = "HNSW";
 constexpr const char* INDEX_DISKANN = "DISKANN";
 
+constexpr const char* INDEX_SPARSE_INVERTED_INDEX = "SPARSE_INVERTED_INDEX";
+constexpr const char* INDEX_SPARSE_WAND = "SPARSE_WAND";
 }  // namespace IndexEnum
 
 namespace meta {
@@ -56,6 +59,7 @@ constexpr const char* RETRIEVE_FRIENDLY = "retrieve_friendly";
 constexpr const char* DIM = "dim";
 constexpr const char* TENSOR = "tensor";
 constexpr const char* ROWS = "rows";
+constexpr const char* NQ = "nq";
 constexpr const char* IDS = "ids";
 constexpr const char* DISTANCE = "distance";
 constexpr const char* LIMS = "lims";
@@ -69,6 +73,10 @@ constexpr const char* NUM_BUILD_THREAD = "num_build_thread";
 constexpr const char* TRACE_VISIT = "trace_visit";
 constexpr const char* JSON_INFO = "json_info";
 constexpr const char* JSON_ID_SET = "json_id_set";
+constexpr const char* TRACE_ID = "trace_id";
+constexpr const char* SPAN_ID = "span_id";
+constexpr const char* TRACE_FLAGS = "trace_flags";
+constexpr const char* MATERIALIZED_VIEW_SEARCH_INFO = "materialized_view_search_info";
 };  // namespace meta
 
 namespace indexparam {
@@ -81,8 +89,10 @@ constexpr const char* M = "m";          // PQ param for IVFPQ
 constexpr const char* SSIZE = "ssize";
 constexpr const char* REORDER_K = "reorder_k";
 constexpr const char* WITH_RAW_DATA = "with_raw_data";
+constexpr const char* ENSURE_TOPK_FULL = "ensure_topk_full";
 // RAFT Params
 constexpr const char* REFINE_RATIO = "refine_ratio";
+constexpr const char* CACHE_DATASET_ON_DEVICE = "cache_dataset_on_device";
 // RAFT-specific IVF Params
 constexpr const char* KMEANS_N_ITERS = "kmeans_n_iters";
 constexpr const char* KMEANS_TRAINSET_FRACTION = "kmeans_trainset_fraction";
@@ -117,6 +127,10 @@ constexpr const char* HNSW_M = "M";
 constexpr const char* EF = "ef";
 constexpr const char* SEED_EF = "seed_ef";
 constexpr const char* OVERVIEW_LEVELS = "overview_levels";
+
+// Sparse Params
+constexpr const char* DROP_RATIO_BUILD = "drop_ratio_build";
+constexpr const char* DROP_RATIO_SEARCH = "drop_ratio_search";
 }  // namespace indexparam
 
 using MetricType = std::string;

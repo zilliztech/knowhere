@@ -171,6 +171,23 @@ fvec_hook(std::string& simd_type) {
     support_pq_fast_scan = true;
 
 #endif
+
+// ToDo MG: include VSX intrinsics via distances_vsx once _ref tests succeed
+#if defined(__powerpc64__)
+    fvec_inner_product = fvec_inner_product_ref;
+    fvec_L2sqr = fvec_L2sqr_ref;
+    fvec_L1 = fvec_L1_ref;
+    fvec_Linf = fvec_Linf_ref;
+
+    fvec_norm_L2sqr = fvec_norm_L2sqr_ref;
+    fvec_L2sqr_ny = fvec_L2sqr_ny_ref;
+    fvec_inner_products_ny = fvec_inner_products_ny_ref;
+    fvec_madd = fvec_madd_ref;
+    fvec_madd_and_argmin = fvec_madd_and_argmin_ref;
+
+    simd_type = "GENERIC";
+    support_pq_fast_scan = false;
+#endif
 }
 
 static int init_hook_ = []() {

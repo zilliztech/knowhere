@@ -14,12 +14,12 @@
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
-#include "index/diskann/diskann.cc"
 #include "index/diskann/diskann_config.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/local_file_manager.h"
 #include "knowhere/expected.h"
 #include "knowhere/factory.h"
+#include "knowhere/utils.h"
 #include "utils.h"
 #if __has_include(<filesystem>)
 #include <filesystem>
@@ -43,7 +43,7 @@ std::string kIPIndexPrefix = kIPIndexDir + "/ip";
 std::string kCOSINEIndexPrefix = kCOSINEIndexDir + "/cosine";
 
 constexpr uint32_t kNumRows = 1000;
-constexpr uint32_t kNumQueries = 100;
+constexpr uint32_t kNumQueries = 10;
 constexpr uint32_t kDim = 128;
 constexpr uint32_t kLargeDim = 1536;
 constexpr uint32_t kK = 10;
@@ -52,12 +52,13 @@ constexpr float kL2RangeAp = 0.9;
 constexpr float kIpRangeAp = 0.9;
 constexpr float kCosineRangeAp = 0.9;
 
+template <typename DataType>
 void
-WriteRawDataToDisk(const std::string data_path, const float* raw_data, const uint32_t num, const uint32_t dim) {
+WriteRawDataToDisk(const std::string data_path, const DataType* raw_data, const uint32_t num, const uint32_t dim) {
     std::ofstream writer(data_path.c_str(), std::ios::binary);
     writer.write((char*)&num, sizeof(uint32_t));
     writer.write((char*)&dim, sizeof(uint32_t));
-    writer.write((char*)raw_data, sizeof(float) * num * dim);
+    writer.write((char*)raw_data, sizeof(DataType) * num * dim);
     writer.close();
 }
 
@@ -86,18 +87,18 @@ TEST_CASE("Invalid diskann params test", "[diskann]") {
         json["beamwidth"] = 8;
         json["min_k"] = 10;
         json["max_k"] = 8000;
-        json["search_list_and_k_ratio"] = 2.0;
         return json;
     };
     std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
     auto diskann_index_pack = knowhere::Pack(file_manager);
     auto base_ds = GenDataSet(rows_num, kDim, 30);
     auto base_ptr = static_cast<const float*>(base_ds->GetTensor());
-    WriteRawDataToDisk(kRawDataPath, base_ptr, rows_num, kDim);
+    WriteRawDataToDisk<float>(kRawDataPath, base_ptr, rows_num, kDim);
     // build process
     SECTION("Invalid build params test") {
         knowhere::DataSet* ds_ptr = nullptr;
-        auto diskann = knowhere::IndexFactory::Instance().Create("DISKANN", version, diskann_index_pack);
+        auto diskann =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>("DISKANN", version, diskann_index_pack);
         knowhere::Json test_json;
         knowhere::Status test_stat;
         // invalid metric type
@@ -115,7 +116,8 @@ TEST_CASE("Invalid diskann params test", "[diskann]") {
     SECTION("Invalid search params test") {
         knowhere::DataSet* ds_ptr = nullptr;
         auto binarySet = knowhere::BinarySet();
-        auto diskann = knowhere::IndexFactory::Instance().Create("DISKANN", version, diskann_index_pack);
+        auto diskann =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>("DISKANN", version, diskann_index_pack);
         diskann.Build(*ds_ptr, test_gen());
         diskann.Serialize(binarySet);
         diskann.Deserialize(binarySet, test_gen());
@@ -145,7 +147,9 @@ TEST_CASE("Invalid diskann params test", "[diskann]") {
     fs::remove(kDir);
 }
 
-TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
+template <typename DataType>
+inline void
+base_search() {
     fs::remove_all(kDir);
     fs::remove(kDir);
     REQUIRE_NOTHROW(fs::create_directory(kDir));
@@ -218,24 +222,29 @@ TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
         json["beamwidth"] = 8;
         json["min_k"] = 10;
         json["max_k"] = 8000;
-        json["search_list_and_k_ratio"] = 2.0;
         return json;
     };
 
-    auto query_ds = GenDataSet(kNumQueries, kDim, 42);
+    auto fp32_query_ds = GenDataSet(kNumQueries, kDim, 42);
     knowhere::DataSetPtr knn_gt_ptr = nullptr;
     knowhere::DataSetPtr range_search_gt_ptr = nullptr;
-    auto base_ds = GenDataSet(kNumRows, kDim, 30);
+    auto fp32_base_ds = GenDataSet(kNumRows, kDim, 30);
+    knowhere::DataSetPtr base_ds(fp32_base_ds);
+    knowhere::DataSetPtr query_ds(fp32_query_ds);
+    if (!std::is_same_v<float, DataType>) {
+        base_ds = knowhere::data_type_conversion<float, DataType>(*fp32_base_ds);
+        query_ds = knowhere::data_type_conversion<float, DataType>(*fp32_query_ds);
+    }
     {
-        auto base_ptr = static_cast<const float*>(base_ds->GetTensor());
-        WriteRawDataToDisk(kRawDataPath, base_ptr, kNumRows, kDim);
+        auto base_ptr = static_cast<const DataType*>(base_ds->GetTensor());
+        WriteRawDataToDisk<DataType>(kRawDataPath, base_ptr, kNumRows, kDim);
 
         // generate the gt of knn search and range search
         auto base_json = base_gen();
 
-        auto result_knn = knowhere::BruteForce::Search(base_ds, query_ds, base_json, nullptr);
+        auto result_knn = knowhere::BruteForce::Search<DataType>(base_ds, query_ds, base_json, nullptr);
         knn_gt_ptr = result_knn.value();
-        auto result_range = knowhere::BruteForce::RangeSearch(base_ds, query_ds, base_json, nullptr);
+        auto result_range = knowhere::BruteForce::RangeSearch<DataType>(base_ds, query_ds, base_json, nullptr);
         range_search_gt_ptr = result_range.value();
     }
 
@@ -247,7 +256,7 @@ TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
         // build process
         {
             knowhere::DataSet* ds_ptr = nullptr;
-            auto diskann = knowhere::IndexFactory::Instance().Create("DISKANN", version, diskann_index_pack);
+            auto diskann = knowhere::IndexFactory::Instance().Create<DataType>("DISKANN", version, diskann_index_pack);
             auto build_json = build_gen().dump();
             knowhere::Json json = knowhere::Json::parse(build_json);
             diskann.Build(*ds_ptr, json);
@@ -255,7 +264,7 @@ TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
         }
         {
             // knn search
-            auto diskann = knowhere::IndexFactory::Instance().Create("DISKANN", version, diskann_index_pack);
+            auto diskann = knowhere::IndexFactory::Instance().Create<DataType>("DISKANN", version, diskann_index_pack);
             diskann.Deserialize(binset, deserialize_json);
 
             auto knn_search_json = knn_search_gen().dump();
@@ -272,7 +281,8 @@ TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
                 if (fs::exists(cached_nodes_file_path)) {
                     fs::remove(cached_nodes_file_path);
                 }
-                auto diskann_tmp = knowhere::IndexFactory::Instance().Create("DISKANN", version, diskann_index_pack);
+                auto diskann_tmp =
+                    knowhere::IndexFactory::Instance().Create<DataType>("DISKANN", version, diskann_index_pack);
                 diskann_tmp.Deserialize(binset, deserialize_json);
                 auto knn_search_json = knn_search_gen().dump();
                 knowhere::Json knn_json = knowhere::Json::parse(knn_search_json);
@@ -293,7 +303,7 @@ TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
                         auto bitset_data = gen_func(kNumRows, percentage * kNumRows);
                         knowhere::BitsetView bitset(bitset_data.data(), kNumRows);
                         auto results = diskann.Search(*query_ds, knn_json, bitset);
-                        auto gt = knowhere::BruteForce::Search(base_ds, query_ds, knn_json, bitset);
+                        auto gt = knowhere::BruteForce::Search<DataType>(base_ds, query_ds, knn_json, bitset);
                         float recall = GetKNNRecall(*gt.value(), *results.value());
                         if (percentage == 0.98f) {
                             REQUIRE(recall >= 0.9f);
@@ -316,6 +326,10 @@ TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
     }
     fs::remove_all(kDir);
     fs::remove(kDir);
+}
+
+TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
+    base_search<knowhere::fp32>();
 }
 
 // This test case only check L2
@@ -349,13 +363,14 @@ TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {
         auto query_ds = GenDataSet(kNumQueries, dim, 42);
         auto base_ds = GenDataSet(kNumRows, dim, 30);
         auto base_ptr = static_cast<const float*>(base_ds->GetTensor());
-        WriteRawDataToDisk(kRawDataPath, base_ptr, kNumRows, dim);
+        WriteRawDataToDisk<float>(kRawDataPath, base_ptr, kNumRows, dim);
 
         std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
         auto diskann_index_pack = knowhere::Pack(file_manager);
 
         knowhere::DataSet* ds_ptr = nullptr;
-        auto diskann = knowhere::IndexFactory::Instance().Create("DISKANN", version, diskann_index_pack);
+        auto diskann =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>("DISKANN", version, diskann_index_pack);
         auto build_json = build_gen().dump();
         knowhere::Json json = knowhere::Json::parse(build_json);
         diskann.Build(*ds_ptr, json);
@@ -371,7 +386,8 @@ TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {
                     return json;
                 };
                 knowhere::Json deserialize_json = knowhere::Json::parse(deserialize_gen().dump());
-                auto index = knowhere::IndexFactory::Instance().Create("DISKANN", version, diskann_index_pack);
+                auto index =
+                    knowhere::IndexFactory::Instance().Create<knowhere::fp32>("DISKANN", version, diskann_index_pack);
                 auto ret = index.Deserialize(binset, deserialize_json);
                 REQUIRE(ret == knowhere::Status::success);
                 std::vector<double> ids_sizes = {1, kNumRows * 0.2, kNumRows * 0.7, kNumRows};

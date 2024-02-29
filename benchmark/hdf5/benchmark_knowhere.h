@@ -97,7 +97,7 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
     create_index(const std::string& index_file_name, const knowhere::Json& conf) {
         auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
         printf("[%.3f s] Creating index \"%s\"\n", get_time_diff(), index_type_.c_str());
-        index_ = knowhere::IndexFactory::Instance().Create(index_type_, version);
+        index_ = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_type_, version);
 
         try {
             printf("[%.3f s] Reading index file: %s\n", get_time_diff(), index_file_name.c_str());
@@ -120,7 +120,7 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
 
         std::string golden_index_file_name = ann_test_name_ + "_" + golden_index_type_ + "_GOLDEN" + ".index";
         printf("[%.3f s] Creating golden index \"%s\"\n", get_time_diff(), golden_index_type_.c_str());
-        golden_index_ = knowhere::IndexFactory::Instance().Create(golden_index_type_, version);
+        golden_index_ = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(golden_index_type_, version);
 
         try {
             printf("[%.3f s] Reading golden index file: %s\n", get_time_diff(), golden_index_file_name.c_str());

@@ -29,6 +29,7 @@
 #include "common/raft/integration/raft_knowhere_config.hpp"
 #include "common/raft/integration/raft_knowhere_index.hpp"
 #include "common/raft/proto/raft_index_kind.hpp"
+#include "index/gpu_raft/gpu_raft_brute_force_config.h"
 #include "index/gpu_raft/gpu_raft_cagra_config.h"
 #include "index/gpu_raft/gpu_raft_ivf_flat_config.h"
 #include "index/gpu_raft/gpu_raft_ivf_pq_config.h"
@@ -40,10 +41,15 @@
 
 namespace knowhere {
 
-auto static constexpr cuda_concurrent_size = std::uint32_t{32};
+auto static constexpr cuda_concurrent_size_per_device = std::uint32_t{8};
 
 template <raft_proto::raft_index_kind K>
 struct KnowhereConfigType {};
+
+template <>
+struct KnowhereConfigType<raft_proto::raft_index_kind::brute_force> {
+    using Type = GpuRaftBruteForceConfig;
+};
 
 template <>
 struct KnowhereConfigType<raft_proto::raft_index_kind::ivf_flat> {
@@ -60,7 +66,7 @@ struct KnowhereConfigType<raft_proto::raft_index_kind::cagra> {
     using Type = GpuRaftCagraConfig;
 };
 
-template <raft_proto::raft_index_kind K>
+template <typename DataType, raft_proto::raft_index_kind K>
 struct GpuRaftIndexNode : public IndexNode {
     auto static constexpr index_kind = K;
     using knowhere_config_type = typename KnowhereConfigType<index_kind>::Type;
@@ -144,11 +150,7 @@ struct GpuRaftIndexNode : public IndexNode {
 
     bool
     HasRawData(const std::string& metric_type) const override {
-        if constexpr (index_kind == raft_proto::raft_index_kind::ivf_flat) {
-            return !IsMetricType(metric_type, metric::COSINE);
-        } else {
-            return false;
-        }
+        return false;
     }
 
     Status
@@ -226,7 +228,9 @@ struct GpuRaftIndexNode : public IndexNode {
 
     std::string
     Type() const override {
-        if constexpr (index_kind == raft_proto::raft_index_kind::ivf_flat) {
+        if constexpr (index_kind == raft_proto::raft_index_kind::brute_force) {
+            return knowhere::IndexEnum::INDEX_RAFT_BRUTEFORCE;
+        } else if constexpr (index_kind == raft_proto::raft_index_kind::ivf_flat) {
             return knowhere::IndexEnum::INDEX_RAFT_IVFFLAT;
         } else if constexpr (index_kind == raft_proto::raft_index_kind::ivf_pq) {
             return knowhere::IndexEnum::INDEX_RAFT_IVFPQ;
@@ -255,13 +259,14 @@ struct GpuRaftIndexNode : public IndexNode {
     }
 };
 
-extern template struct GpuRaftIndexNode<raft_proto::raft_index_kind::ivf_flat>;
-extern template struct GpuRaftIndexNode<raft_proto::raft_index_kind::ivf_pq>;
-extern template struct GpuRaftIndexNode<raft_proto::raft_index_kind::cagra>;
-
-using GpuRaftIvfFlatIndexNode = GpuRaftIndexNode<raft_proto::raft_index_kind::ivf_flat>;
-using GpuRaftIvfPqIndexNode = GpuRaftIndexNode<raft_proto::raft_index_kind::ivf_pq>;
-using GpuRaftCagraIndexNode = GpuRaftIndexNode<raft_proto::raft_index_kind::cagra>;
+template <typename DataType>
+using GpuRaftBruteForceIndexNode = GpuRaftIndexNode<DataType, raft_proto::raft_index_kind::brute_force>;
+template <typename DataType>
+using GpuRaftIvfFlatIndexNode = GpuRaftIndexNode<DataType, raft_proto::raft_index_kind::ivf_flat>;
+template <typename DataType>
+using GpuRaftIvfPqIndexNode = GpuRaftIndexNode<DataType, raft_proto::raft_index_kind::ivf_pq>;
+template <typename DataType>
+using GpuRaftCagraIndexNode = GpuRaftIndexNode<DataType, raft_proto::raft_index_kind::cagra>;
 
 }  // namespace knowhere
 

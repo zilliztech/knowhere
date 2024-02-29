@@ -14,9 +14,10 @@
 # the License.
 
 add_definitions(-DKNOWHERE_WITH_RAFT)
+add_definitions(-DRAFT_EXPLICIT_INSTANTIATE_ONLY)
 set(RAFT_VERSION "${RAPIDS_VERSION}")
-set(RAFT_FORK "rapidsai")
-set(RAFT_PINNED_TAG "branch-23.12")
+set(RAFT_FORK "wphicks")
+set(RAFT_PINNED_TAG "knowhere-2.4")
 
 
 rapids_find_package(CUDAToolkit REQUIRED
@@ -38,7 +39,7 @@ function(find_and_configure_raft)
     GLOBAL_TARGETS
     raft::raft
     COMPONENTS
-    ${RAFT_COMPONENTS}
+    compiled_static
     CPM_ARGS
     GIT_REPOSITORY
     https://github.com/${PKG_FORK}/raft.git
@@ -47,6 +48,7 @@ function(find_and_configure_raft)
     SOURCE_SUBDIR
     cpp
     OPTIONS
+    "RAFT_COMPILE_LIBRARY ON"
     "BUILD_TESTS OFF"
     "BUILD_BENCH OFF"
     "RAFT_USE_FAISS_STATIC OFF") # Turn this on to build FAISS into your binary

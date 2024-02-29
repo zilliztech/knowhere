@@ -10,11 +10,14 @@
 # or implied. See the License for the specific language governing permissions and limitations under the License
 
 knowhere_file_glob(GLOB_RECURSE KNOWHERE_UT_SRCS *.cc)
+
 if(NOT WITH_DISKANN)
   knowhere_file_glob(GLOB_RECURSE KNOWHERE_DISKANN_TESTS test_diskann.cc)
   list(REMOVE_ITEM KNOWHERE_UT_SRCS ${KNOWHERE_DISKANN_TESTS})
 endif()
+
 add_executable(knowhere_tests ${KNOWHERE_UT_SRCS})
+
 find_package(Catch2)
 if (NOT Catch2_FOUND)
   message("Catch2 not found, fetching Catch2 from github")
@@ -26,14 +29,13 @@ if (NOT Catch2_FOUND)
   )
   FetchContent_MakeAvailable(Catch2)
 endif()
+
 set_target_properties(knowhere_tests PROPERTIES
   CXX_STANDARD 17
 )
 
-if(WITH_DISKANN)
-    target_link_libraries(knowhere_tests PRIVATE Catch2::Catch2WithMain knowhere stdc++fs)
-else()
-    target_link_libraries(knowhere_tests PRIVATE Catch2::Catch2WithMain knowhere)
-endif()
-
-target_link_libraries(knowhere_tests PRIVATE atomic)
+target_link_libraries(knowhere_tests PRIVATE
+        Catch2::Catch2WithMain
+        atomic
+        stdc++fs
+        knowhere)

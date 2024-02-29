@@ -621,4 +621,63 @@ struct SingleBestResultHandler {
     void end_multiple() {}
 };
 
+template <class C>
+struct CollectAllResultHandler {
+    using T = typename C::T;
+    using TI = typename C::TI;
+
+    CollectAllResultHandler(size_t ny, std::vector<std::pair<T, TI>>& output)
+            : ny(ny), output(output) {}
+
+    size_t ny;
+    std::vector<std::pair<T, TI>>& output;
+
+    struct SingleResultHandler {
+        CollectAllResultHandler& all_handler;
+
+        std::pair<T, TI>* target;
+
+        SingleResultHandler(CollectAllResultHandler& all_handler) : all_handler(all_handler) {}
+
+        /// begin results for query # i
+        void begin(size_t i) {
+            target = all_handler.output.data() + i * all_handler.ny;
+        }
+
+        /// add one result for query i
+        void add_result(T dis, TI idx) {
+            target[idx] = {dis, idx};
+        }
+
+        void end() {}
+    };
+
+    /******************************************************
+     * API for multiple results (called from 1 thread)
+     */
+    size_t i0, i1;
+
+    void begin_multiple(size_t i0, size_t i1) {
+        this->i0 = i0;
+        this->i1 = i1;
+    }
+
+    void add_results(size_t j0, size_t j1, const T* dis_tab,
+                     const IDSelector* sel = nullptr) {
+#pragma omp parallel for
+        for (int64_t i = i0; i < i1; i++) {
+            auto* target = output.data() + i * ny;
+            const T* dis_tab_i = dis_tab + (j1 - j0) * (i - i0) - j0;
+            for (size_t j = j0; j < j1; j++) {
+                if (!sel || sel->is_member(j)) {
+                    T dis = dis_tab_i[j];
+                    target[j] = {dis, j};
+                }
+            }
+        }
+    }
+
+    void end_multiple() {}
+};
+
 } // namespace faiss
