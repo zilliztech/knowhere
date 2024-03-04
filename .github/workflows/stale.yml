@@ -1,0 +1,27 @@
+name: "Manage Stale Issues & PR"
+
+on:
+  schedule:
+    - cron: '30 1 * * *'
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          # Number of days of inactivity before an issue becomes stale
+          days-before-stale: 30
+          # Number of days of inactivity before a stale issue is closed
+          days-before-close: 7
+          # Issues with these labels will never be considered stale
+          exempt-issue-labels: 'priority/critical-urgent,priority/important-longterm,kind/feature'
+          # Label to use when marking an issue as stale
+          stale-issue-label: 'stale'
+          # Comment to post when marking an issue as stale
+          stale-issue-message: >
+            This issue has been automatically marked as stale because it has not had
+            recent activity. It will be closed if no further activity occurs. Thank you
+            for your contributions.
+            Rotten issues close after 30d of inactivity.
+            Reopen the issue with `/reopen`.
