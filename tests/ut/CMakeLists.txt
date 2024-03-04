@@ -30,6 +30,9 @@ if (NOT Catch2_FOUND)
   FetchContent_MakeAvailable(Catch2)
 endif()
 
+add_subdirectory(plugin_demo)
+add_definitions(-DCUSTOMIDX_LIB_PATH=${CMAKE_CURRENT_BINARY_DIR}/plugin_demo/libcustomIdx.so)
+
 set_target_properties(knowhere_tests PROPERTIES
   CXX_STANDARD 17
 )

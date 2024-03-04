@@ -12,6 +12,7 @@
 #ifndef COMP_KNOWHERE_CONFIG_H
 #define COMP_KNOWHERE_CONFIG_H
 
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -113,6 +114,24 @@ class KnowhereConfig {
      */
     static void
     SetRaftMemPool();
+};
+
+class KnowherePluginManager {
+ public:
+    static KnowherePluginManager&
+    Instance();
+
+    bool
+    InitPlugin(const std::string& path);
+
+    virtual ~KnowherePluginManager() = default;
+
+ private:
+    KnowherePluginManager() = default;
+
+    bool inited_ = false;
+    bool init_results_ = false;
+    std::mutex init_mutex_;
 };
 
 }  // namespace knowhere

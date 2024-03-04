@@ -295,4 +295,8 @@ Index<T>::Type() const {
 
 template class Index<IndexNode>;
 
+IndexTemplate::IndexTemplate(const std::string& indexName, IndexDataType dataType,
+                             const std::function<Index<IndexNode>(const int32_t&, const Object&)>& createFunc)
+    : index_name(indexName), data_type(dataType), create_func(createFunc) {
+}
 }  // namespace knowhere
