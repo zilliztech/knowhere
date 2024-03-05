@@ -118,7 +118,7 @@ struct IndexIVFScalarQuantizerCC : IndexIVFScalarQuantizer{
             ScalarQuantizer::QuantizerType qtype,
             MetricType metric = METRIC_L2,
             bool is_cosine = false,
-            bool by_residual = true
+            bool by_residual = false
             );
 
     IndexIVFScalarQuantizerCC();

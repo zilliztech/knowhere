@@ -91,6 +91,10 @@ void ScalarQuantizer::set_derived_sizes() {
             code_size = d * 2;
             bits = 16;
             break;
+        case QT_8bit_in_row:
+            code_size = d + 3 * sizeof(float);
+            bits = 8;
+            break;
     }
 }
 
@@ -127,6 +131,7 @@ void ScalarQuantizer::train(size_t n, const float* x) {
             break;
         case QT_fp16:
         case QT_8bit_direct:
+        case QT_8bit_in_row:
             // no training necessary
             break;
     }

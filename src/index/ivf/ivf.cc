@@ -100,7 +100,7 @@ class IvfIndexNode : public IndexNode {
             return true;
         }
         if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
-            return true;
+            return false;
         }
     }
     expected<DataSetPtr>
@@ -191,7 +191,6 @@ class IvfIndexNode : public IndexNode {
             return (nb * code_size + nb * sizeof(int64_t) + nlist * code_size);
         }
         if constexpr (std::is_same<IndexType, faiss::IndexIVFScalarQuantizerCC>::value) {
-            // todo: double check
             auto nb = index_->invlists->compute_ntotal();
             auto code_size = index_->code_size;
             auto nlist = index_->nlist;
@@ -370,7 +369,7 @@ get_ivf_sq_quantizer_type(int code_size) {
         case 6:
             return faiss::ScalarQuantizer::QuantizerType::QT_6bit;
         case 8:
-            return faiss::ScalarQuantizer::QuantizerType::QT_8bit;
+            return faiss::ScalarQuantizer::QuantizerType::QT_8bit_in_row;
         case 16:
             return faiss::ScalarQuantizer::QuantizerType::QT_fp16;
         default:
@@ -892,7 +891,8 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSet& dataset, const Con
     // only support IVFFlat and IVFFlatCC;
     if constexpr (!std::is_same<faiss::IndexIVFFlatCC, IndexType>::value &&
                   !std::is_same<faiss::IndexIVFFlat, IndexType>::value &&
-                  !std::is_same<faiss::IndexIVFScalarQuantizer, IndexType>::value) {
+                  !std::is_same<faiss::IndexIVFScalarQuantizer, IndexType>::value &&
+                  !std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
         LOG_KNOWHERE_WARNING_ << "Current index_type: " << Type()
                               << ", only IVFFlat, IVFFlatCC and IVFSQ8 support Iterator.";
         return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::not_implemented,

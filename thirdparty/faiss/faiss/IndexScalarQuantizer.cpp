@@ -32,7 +32,8 @@ IndexScalarQuantizer::IndexScalarQuantizer(
         MetricType metric)
         : IndexFlatCodes(0, d, metric), sq(d, qtype) {
     is_trained = qtype == ScalarQuantizer::QT_fp16 ||
-            qtype == ScalarQuantizer::QT_8bit_direct;
+            qtype == ScalarQuantizer::QT_8bit_direct || 
+            qtype == ScalarQuantizer::QT_8bit_in_row;
     code_size = sq.code_size;
 }
 
@@ -299,7 +300,9 @@ IndexIVFScalarQuantizerCC::IndexIVFScalarQuantizerCC(
     replace_invlists(new ConcurrentArrayInvertedLists(nlist, code_size, ssize, false), true);
 }
 
-IndexIVFScalarQuantizerCC::IndexIVFScalarQuantizerCC() {}
+IndexIVFScalarQuantizerCC::IndexIVFScalarQuantizerCC() {
+    this->by_residual = false;
+}
 
 void IndexIVFScalarQuantizerCC::train(idx_t n, const float* x) {
     if (is_cosine) {

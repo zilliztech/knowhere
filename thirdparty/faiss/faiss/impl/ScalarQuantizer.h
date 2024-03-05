@@ -32,6 +32,7 @@ struct ScalarQuantizer : Quantizer {
         QT_fp16,
         QT_8bit_direct, ///< fast indexing of uint8s
         QT_6bit,        ///< 6 bits per component
+        QT_8bit_in_row, ///< 8 bits per component, quaniter a vector in row
     };
 
     QuantizerType qtype = QT_8bit;

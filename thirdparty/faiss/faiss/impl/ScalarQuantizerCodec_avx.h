@@ -195,6 +195,239 @@ struct QuantizerFP16_avx<8> : public QuantizerFP16<1> {
  *******************************************************************/
 
 template <int SIMDWIDTH>
+struct Quantizer8bitInRow_avx {};
+template <>
+struct Quantizer8bitInRow_avx<1> : public Quantizer8bitInRow<1> {
+    Quantizer8bitInRow_avx(size_t d, const std::vector<float>& unused)
+            : Quantizer8bitInRow(d) {}
+};
+
+template <>
+struct Quantizer8bitInRow_avx<8> : public Quantizer8bitInRow<1> {
+    Quantizer8bitInRow_avx(size_t d, const std::vector<float>& trained)
+            : Quantizer8bitInRow<1>(d) {}
+
+    FAISS_ALWAYS_INLINE __m256
+    reconstruct_8_components(const uint8_t* code, int i) const {
+        __m128i x8 = _mm_loadl_epi64((__m128i*)(code + i)); // 8 * int8
+        __m256i y8 = _mm256_cvtepu8_epi32(x8);              // 8 * int32
+        return _mm256_cvtepi32_ps(y8);                      // 8 * float32
+    }
+
+    FAISS_ALWAYS_INLINE float
+    u8_dot_product(const uint8_t* code1, const uint8_t* code2) const {
+        auto tmp_d = d;
+        const uint8_t* code1_data = code1 + 12;
+        const uint8_t* code2_data = code2 + 12;
+        __m256i accu = _mm256_setzero_si256();
+        while (tmp_d >= 16) {
+            __m256i c1 = _mm256_cvtepu8_epi16(
+                    _mm_loadu_si128((__m128i*)(code1_data)));
+            __m256i c2 = _mm256_cvtepu8_epi16(
+                    _mm_loadu_si128((__m128i*)(code2_data)));
+            __m256i dot =  _mm256_madd_epi16(c1, c2);
+            accu = _mm256_add_epi32(accu, dot);
+            code1_data += 16;
+            code2_data += 16;
+            tmp_d -= 16;
+        }
+        if (tmp_d >= 8) {
+            __m256i c1 = _mm256_cvtepu8_epi16(
+                    _mm_loadl_epi64((__m128i*)(code1_data)));
+            __m256i c2 = _mm256_cvtepu8_epi16(
+                    _mm_loadl_epi64((__m128i*)(code2_data)));
+            __m256i dot =  _mm256_madd_epi16(c1, c2);
+            accu = _mm256_add_epi32(accu, dot);
+            code1_data += 8;
+            code2_data += 8;
+            tmp_d -= 8;
+        }
+        __m128i sum = _mm256_extractf128_si256(accu, 0);
+        sum = _mm_add_epi32(sum, _mm256_extractf128_si256(accu, 1));
+        sum = _mm_hadd_epi32(sum, sum);
+        sum = _mm_hadd_epi32(sum, sum);
+        int dot_product = _mm_cvtsi128_si32(sum);
+
+        // can't go into these lines
+        while (tmp_d > 0) {
+            dot_product += (*code1_data) * (*code2_data);
+            code1_data ++;
+            code2_data ++;
+            tmp_d --;
+        }
+        return float(dot_product);
+    }
+
+    FAISS_ALWAYS_INLINE void dot_product_batch_4(
+        const uint8_t* __restrict codex,
+        const uint8_t* __restrict codey1,
+        const uint8_t* __restrict codey2,
+        const uint8_t* __restrict codey3,
+        const uint8_t* __restrict codey4,
+        float* result1,
+        float* result2,
+        float* result3,
+        float* result4) const {
+        uint32_t tmp_d =d;
+        const uint8_t* q_code = codex + 12;
+        const uint8_t* code1 = codey1 + 12;
+        const uint8_t* code2 = codey2 + 12;
+        const uint8_t* code3 = codey3 + 12;
+        const uint8_t* code4 = codey4 + 12;
+        __m256i accu = _mm256_setzero_si256(); 
+        while (tmp_d >= 16) {
+            __m256i x = _mm256_cvtepu8_epi16(
+            _mm_loadu_si128((__m128i*)(q_code))); 
+            __m256i y1 = _mm256_cvtepu8_epi16(
+            _mm_loadu_si128((__m128i*)(code1))); 
+            __m256i y2 = _mm256_cvtepu8_epi16(
+            _mm_loadu_si128((__m128i*)(code2)));
+            __m256i y3 = _mm256_cvtepu8_epi16(
+            _mm_loadu_si128((__m128i*)(code3)));
+            __m256i y4 = _mm256_cvtepu8_epi16(
+            _mm_loadu_si128((__m128i*)(code4)));
+            __m256i accu_y1_y2 = _mm256_hadd_epi32(_mm256_madd_epi16(x, y1),  _mm256_madd_epi16(x, y2));
+            __m256i accu_y3_y4 = _mm256_hadd_epi32(_mm256_madd_epi16(x, y3),  _mm256_madd_epi16(x, y4));
+            accu = _mm256_add_epi32(_mm256_hadd_epi32(accu_y1_y2, accu_y3_y4), accu);
+            tmp_d -= 16;
+            q_code += 16; code1 +=16; code2 +=16; code3 +=16; code4 +=16; 
+        }
+        if (tmp_d >= 8) {
+            __m256i x = _mm256_cvtepu8_epi16(
+                _mm_loadl_epi64((__m128i*)(q_code))); 
+            __m256i y1 = _mm256_cvtepu8_epi16(
+                _mm_loadl_epi64((__m128i*)(code1))); 
+            __m256i y2 = _mm256_cvtepu8_epi16(
+                _mm_loadl_epi64((__m128i*)(code2)));
+            __m256i y3 = _mm256_cvtepu8_epi16(
+                _mm_loadl_epi64((__m128i*)(code3)));
+            __m256i y4 = _mm256_cvtepu8_epi16(
+                _mm_loadl_epi64((__m128i*)(code4)));
+            __m256i accu_y1_y2 = _mm256_hadd_epi32(_mm256_madd_epi16(x, y1),  _mm256_madd_epi16(x, y2));
+            __m256i accu_y3_y4 = _mm256_hadd_epi32(_mm256_madd_epi16(x, y3),  _mm256_madd_epi16(x, y4));
+            accu = _mm256_add_epi32(_mm256_hadd_epi32(accu_y1_y2, accu_y3_y4), accu);
+            tmp_d -= 8;
+            q_code += 8; code1 += 8; code2 += 8; code3 += 8; code4 += 8;
+        }
+        __m128i sum = _mm256_extractf128_si256(accu, 0);
+        sum = _mm_add_epi32(sum, _mm256_extractf128_si256(accu, 1));
+        uint32_t tmp_res[4];
+        _mm_store_si128((__m128i*)tmp_res, sum);
+        *result1 = (float)tmp_res[0];*result2 = (float)tmp_res[1];*result3 = (float)tmp_res[2];*result4 = (float)tmp_res[3];
+        while(tmp_d > 0) {
+            (*result1) += (*code1) * (*q_code); code1++;
+            (*result2) += (*code1) * (*q_code); code2++;
+            (*result3) += (*code1) * (*q_code); code3++;
+            (*result4) += (*code1) * (*q_code); code4++;
+            q_code++;
+            tmp_d--;
+        }
+    }
+
+    FAISS_ALWAYS_INLINE uint32_t sum(const uint8_t* code) const {
+        const uint8_t* code_data = code + 12;
+        __m256i accu = _mm256_setzero_si256(); // 8 * uint32_t result  
+        auto tmp_d = d;
+        while (tmp_d >= 32) {
+            __m256i c1 = _mm256_cvtepu8_epi16(
+            _mm_loadu_si128((__m128i*)(code_data)));
+            __m256i c2 = _mm256_cvtepu8_epi16(
+            _mm_loadu_si128((__m128i*)(code_data + 16)));
+            __m256i h_sum = _mm256_add_epi16(c1, c2);
+            accu = _mm256_add_epi16(h_sum, accu); 
+            code_data += 32;
+            tmp_d -= 32;
+        }
+        if (tmp_d >= 16) {
+            __m256i c = _mm256_cvtepu8_epi16(
+            _mm_loadu_si128((__m128i*)(code_data)));
+            accu = _mm256_add_epi16(c, accu);
+            code_data += 16;
+            tmp_d -= 16;
+        }
+        __m256i lo = _mm256_and_si256(accu, _mm256_set1_epi32(65535));
+        __m256i hi = _mm256_srli_epi32(accu, 16);
+        accu  = _mm256_add_epi16(lo, hi);
+        if (tmp_d >= 8) {
+            __m256i c = _mm256_cvtepu8_epi32(_mm_loadl_epi64((__m128i*)(code_data)));
+            code_data += 8;
+            tmp_d -= 8;
+            accu  = _mm256_add_epi16(accu, c);
+        }
+        __m128i sum = _mm256_extractf128_si256(accu, 0);
+        sum = _mm_add_epi32(sum, _mm256_extractf128_si256(accu, 1));
+        sum = _mm_hadd_epi32(sum, sum);
+        sum = _mm_hadd_epi32(sum, sum);
+        uint32_t code_sum = _mm_cvtsi128_si32(sum);
+        // can't go these lines
+        while (tmp_d > 0) {
+            code_sum += *code_data;
+            code_data++;
+            tmp_d--;
+        }
+        return code_sum;
+    }
+
+    FAISS_ALWAYS_INLINE void sum_batch_4(
+            const uint8_t* __restrict code_0,
+            const uint8_t* __restrict code_1,
+            const uint8_t* __restrict code_2,
+            const uint8_t* __restrict code_3,
+            uint32_t* result) const {
+        uint32_t tmp_d =d;
+        const uint8_t* code1 = code_0 + 12;
+        const uint8_t* code2 = code_1 + 12;
+        const uint8_t* code3 = code_2 + 12;
+        const uint8_t* code4 = code_3 + 12;
+        __m256i accu = _mm256_setzero_si256(); // dis0, dis1, dist2, dist3, dis0, dis1, dist2, dist3
+        while (tmp_d >= 16) {
+            __m256i c1 = _mm256_cvtepu8_epi16(
+            _mm_loadu_si128((__m128i*)(code1))); // dis0: 16 elements  
+            __m256i c2 = _mm256_cvtepu8_epi16(
+            _mm_loadu_si128((__m128i*)(code2)));
+            __m256i c3 = _mm256_cvtepu8_epi16(
+            _mm_loadu_si128((__m128i*)(code3)));
+            __m256i c4 = _mm256_cvtepu8_epi16(
+            _mm_loadu_si128((__m128i*)(code4)));
+            auto sum_c1_c2 = _mm256_hadd_epi16(c1, c2); // dis0: 8 elements  
+            auto sum_c3_c4 = _mm256_hadd_epi16(c3, c4);
+            auto sum_c1_c2_c3_c4 = _mm256_hadd_epi16(sum_c1_c2, sum_c3_c4); // dis0: 4 elements  
+            accu = _mm256_add_epi32(_mm256_blend_epi16(sum_c1_c2_c3_c4, _mm256_setzero_si256(),0xAA), accu);
+            accu = _mm256_add_epi32(_mm256_blend_epi16(_mm256_srli_epi32(sum_c1_c2_c3_c4, 16), _mm256_setzero_si256(),0xAA), accu);
+            code1 +=16;
+            code2 += 16; code3+=16; code4+=16;
+            tmp_d-=16;
+        }
+        if (tmp_d >=8) {
+            __m256i c1 = _mm256_cvtepu8_epi32(_mm_loadl_epi64((__m128i*)(code1)));// c1: 8 elements  
+            __m256i c2 = _mm256_cvtepu8_epi32(_mm_loadl_epi64((__m128i*)(code2)));
+            __m256i c3 = _mm256_cvtepu8_epi32(_mm_loadl_epi64((__m128i*)(code3)));
+            __m256i c4 = _mm256_cvtepu8_epi32(_mm_loadl_epi64((__m128i*)(code4)));
+            auto sum_c1_c2 = _mm256_hadd_epi32(c1, c2); // c1: 4 elements
+            auto sum_c3_c4 = _mm256_hadd_epi32(c3, c4);
+            accu = _mm256_add_epi32( _mm256_hadd_epi32(sum_c1_c2, sum_c3_c4), accu);
+            code1 += 8; code2 += 8; code3 += 8; code4 += 8;
+            tmp_d -= 8;
+        }
+        __m128i sum = _mm256_extractf128_si256(accu, 0);
+        sum = _mm_add_epi32(sum, _mm256_extractf128_si256(accu, 1));
+        _mm_store_si128((__m128i*)result, sum);
+        while (tmp_d > 0) {
+            (*result) += *code1; code1++;
+            *(result+4) += *code2; code2++;
+            *(result+8) += *code3; code3++;
+            *(result+12) += *code4; code4++;
+            tmp_d--;
+        }
+    }
+};
+
+
+/*******************************************************************
+ * 8bit_direct quantizer
+ *******************************************************************/
+
+template <int SIMDWIDTH>
 struct Quantizer8bitDirect_avx {};
 
 template <>
@@ -241,6 +474,8 @@ SQuantizer* select_quantizer_1_avx(
             return new QuantizerFP16_avx<SIMDWIDTH>(d, trained);
         case QuantizerType::QT_8bit_direct:
             return new Quantizer8bitDirect_avx<SIMDWIDTH>(d, trained);
+        case QuantizerType::QT_8bit_in_row:
+            return new Quantizer8bitInRow_avx<SIMDWIDTH>(d, trained);
     }
     FAISS_THROW_MSG("unknown qtype");
 }
@@ -452,6 +687,86 @@ struct DCTemplate_avx<Quantizer, Similarity, 8> : SQDistanceComputer {
         dis3 = sim3.result_8();
     }
 };
+
+template <class Similarity>
+struct DCTemplate_avx<Quantizer8bitInRow_avx<8>, Similarity, 8> : SQDistanceComputer {
+    using Sim = Similarity;
+
+    Quantizer8bitInRow_avx<8> quant;
+    std::vector<uint8_t> query_code;
+
+    DCTemplate_avx(size_t d, const std::vector<float>& trained)
+            : quant(d, trained), query_code(d + 12) {}
+    
+    float compute_code_distance(const uint8_t* code1, const uint8_t* code2) const { 
+        auto encode_distace_ip = [&](const uint8_t* code1, const uint8_t* code2) -> float {
+            float part1 = quant.u8_dot_product(code1, code2) * quant.code_len(code1) * quant.code_len(code2);
+            float part2 = (float)quant.sum(code1) * quant.code_len(code1) * quant.code_bias(code2);
+            float part3 = (float)quant.sum(code2) * quant.code_len(code2) * quant.code_bias(code1);
+            float part4 = quant.code_bias(code1) *  quant.code_bias(code2) * quant.d;
+            float res =  part1 + part2 + part3 + part4;
+            return res;
+        };
+        if constexpr (std::is_same_v<Similarity, SimilarityL2_avx<8>>) {
+            auto res = quant.l2_norm(code1) + quant.l2_norm(code2); 
+            float dot_product = encode_distace_ip(code1, code2);
+            return res - 2.0 * dot_product;
+        }
+        if constexpr (std::is_same_v<Similarity, SimilarityIP_avx<8>>) {
+            return encode_distace_ip(code1, code2);
+        }
+    }
+
+    float query_to_code(const uint8_t* code) const override final {
+        return compute_code_distance(query_code.data(), code);
+    }
+
+    void query_to_codes_batch_4(const uint8_t* __restrict code_0,
+            const uint8_t* __restrict code_1,
+            const uint8_t* __restrict code_2,
+            const uint8_t* __restrict code_3,
+            float& dis0,
+            float& dis1,
+            float& dis2,
+            float& dis3) const override final {
+            uint32_t l1_norm[4];
+            quant.sum_batch_4(code_0,code_1,code_2,code_3,l1_norm);
+            quant.dot_product_batch_4(query_code.data(), code_0, code_1, code_2, code_3, &dis0, &dis1, &dis2, &dis3);
+            auto query_len = quant.code_len(query_code.data());
+            auto query_l1_norm = quant.code_len(query_code.data());
+            auto query_bias = quant.code_bias(query_code.data());
+            
+            dis0 = dis0 * query_len * (float)quant.code_len(code_0);
+            dis1 = dis1 * query_len * (float)quant.code_len(code_1);
+            dis2 = dis2 * query_len * (float)quant.code_len(code_2);
+            dis3 = dis3 * query_len * (float)quant.code_len(code_3);
+            dis0 += query_l1_norm * query_len * quant.code_bias(code_0) + l1_norm[0] * quant.code_len(code_0) * query_bias;
+            dis1 += query_l1_norm * query_len * quant.code_bias(code_1) + l1_norm[1] * quant.code_len(code_1) * query_bias;
+            dis2 += query_l1_norm * query_len * quant.code_bias(code_2) + l1_norm[2] * quant.code_len(code_2) * query_bias;
+            dis3 += query_l1_norm * query_len * quant.code_bias(code_3) + l1_norm[3] * quant.code_len(code_3) * query_bias;
+            dis0 += query_bias * quant.code_bias(code_0) * quant.d;
+            dis1 += query_bias * quant.code_bias(code_1) * quant.d;
+            dis2 += query_bias * quant.code_bias(code_2) * quant.d;
+            dis3 += query_bias * quant.code_bias(code_3) * quant.d;
+            if constexpr (std::is_same_v<Similarity, SimilarityL2_avx<8>>) {
+                auto query_l2_norm = quant.l2_norm(query_code.data());
+                dis0 = query_l2_norm + quant.l2_norm(code_0) - 2 * dis0;
+                dis1 = query_l2_norm + quant.l2_norm(code_1) - 2 * dis1;
+                dis2 = query_l2_norm + quant.l2_norm(code_2) - 2 * dis2;
+                dis3 = query_l2_norm + quant.l2_norm(code_3) - 2 * dis3;
+            } 
+    }
+    void set_query(const float* x) final {
+        q = x;
+        quant.encode_vector(x, query_code.data());
+    }
+
+    float symmetric_dis(idx_t i, idx_t j) override {
+        return compute_code_distance(
+                codes + i * code_size, codes + j * code_size);
+    }
+    
+};
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
 /*******************************************************************
@@ -581,6 +896,12 @@ SQDistanceComputer* select_distance_computer_avx(
                     QuantizerFP16_avx<SIMDWIDTH>,
                     Sim,
                     SIMDWIDTH>(d, trained);
+        
+        case QuantizerType::QT_8bit_in_row:
+            return new DCTemplate_avx<
+                    Quantizer8bitInRow_avx<SIMDWIDTH>,
+                    Sim,
+                    SIMDWIDTH>(d, trained);
 
         case QuantizerType::QT_8bit_direct:
             if (d % 16 == 0) {
@@ -591,6 +912,7 @@ SQDistanceComputer* select_distance_computer_avx(
                         Sim,
                         SIMDWIDTH>(d, trained);
             }
+
     }
     FAISS_THROW_MSG("unknown qtype");
     return nullptr;
@@ -671,6 +993,11 @@ InvertedListScanner* sel1_InvertedListScanner_avx(
                         Similarity,
                         SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
             }
+        case QuantizerType::QT_8bit_in_row:
+             return sel2_InvertedListScanner_avx<DCTemplate_avx<
+                    Quantizer8bitInRow_avx<SIMDWIDTH>,
+                    Similarity,
+                    SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
     }
 
     FAISS_THROW_MSG("unknown qtype");

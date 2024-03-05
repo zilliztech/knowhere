@@ -23,11 +23,13 @@ void sq_hook() {
     std::lock_guard<std::mutex> lock(hook_mutex);
 
     if (use_avx512 && cpu_support_avx512()) {
+        // todo: add avx512_function
         /* for IVFSQ */
-        sq_get_distance_computer = sq_get_distance_computer_avx512;
-        sq_sel_quantizer = sq_select_quantizer_avx512;
-        sq_sel_inv_list_scanner = sq_select_inverted_list_scanner_avx512;
+        sq_get_distance_computer =sq_get_distance_computer_avx;
+        sq_sel_quantizer = sq_select_quantizer_avx;
+        sq_sel_inv_list_scanner = sq_select_inverted_list_scanner_avx;
     } else if (use_avx2 && cpu_support_avx2()) {
+        // todo: add avx2_function
         /* for IVFSQ */
         sq_get_distance_computer = sq_get_distance_computer_avx;
         sq_sel_quantizer = sq_select_quantizer_avx;

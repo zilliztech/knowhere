@@ -46,6 +46,14 @@ struct Codec8bit {
             int i) {
         return (code[i] + 0.5f) / 255.0f;
     }
+
+    static FAISS_ALWAYS_INLINE int part_num() {
+        return 255;
+    }
+
+    static FAISS_ALWAYS_INLINE float decode_bias() {
+        return 0.5 / 255.0f;
+    }
 };
 
 struct Codec4bit {
@@ -229,6 +237,97 @@ struct QuantizerFP16<1> : SQuantizer {
 };
 
 /*******************************************************************
+ * 8bit_in_row quantizer
+ *******************************************************************/
+template <int SIMDWIDTH>
+struct Quantizer8bitInRow {};
+
+template <>
+struct Quantizer8bitInRow<1> : SQuantizer {
+    const size_t d;
+
+    Quantizer8bitInRow(size_t d)
+            : d(d) {}
+
+    void encode_vector(const float* x, uint8_t* code) const final {
+        float vmin = HUGE_VAL;
+        float vmax = -HUGE_VAL;
+        float l2_norm = 0.0;
+        for (size_t i = 0; i < d; i++) {
+            if (x[i] < vmin)
+                vmin = x[i];
+            if (x[i] > vmax)
+                vmax = x[i];
+            l2_norm += x[i] * x[i];
+        }
+        auto vdiff = vmax - vmin;
+        *((float*)code) = vmin;
+        *(float*)(code + 4) = vdiff;
+        *(float*)(code + 8) = l2_norm;
+        uint8_t* code_data = code + 12;
+        for (size_t i = 0; i < d; i++) {
+            float xi = (x[i] - vmin)/ vdiff;
+            Codec8bit::encode_component(xi, code_data, i);
+        }
+    }
+
+    void decode_vector(const uint8_t* code, float* x) const final {
+        float vmin = *((float*)code);
+        float vdiff = *(float*)(code + 4);
+        const uint8_t* code_data = code + 12;
+        for (size_t i = 0; i < d; i++) {
+            auto xi = Codec8bit::decode_component(code_data, i);
+            x[i] = vmin + xi * vdiff;
+        }
+    }
+
+    FAISS_ALWAYS_INLINE float reconstruct_component(const uint8_t* code, int i)
+            const {
+        float vmin = *((float*)code);
+        float vdiff = *(float*)(code + 4);
+        const uint8_t* code_data = code + 12;
+
+        auto xi = Codec8bit::decode_component(code_data, i);
+        xi = vmin + xi * vdiff;
+        return xi;
+    }
+
+    FAISS_ALWAYS_INLINE float code_bias(const uint8_t* code) const {
+        float vmin = *((float*)code);
+        float vdiff = *(float*)(code + 4);
+        return vmin + vdiff * Codec8bit::decode_bias();
+    }
+
+    FAISS_ALWAYS_INLINE float code_len(const uint8_t* code) const {
+        float vdiff = *(float*)(code + 4);
+        return vdiff/float(Codec8bit::part_num());
+    }
+
+    FAISS_ALWAYS_INLINE float l2_norm(const uint8_t* code) const {
+        return *(float*)(code + 8);
+    }
+    
+    FAISS_ALWAYS_INLINE uint32_t sum(const uint8_t* code) const {
+        const uint8_t* code_data = code + 12;
+        uint32_t sum = 0;
+        for (int i = 0; i < d; i++) {
+            sum += (uint32_t)code_data[i];
+        }
+        return sum;
+    }
+
+    FAISS_ALWAYS_INLINE const float u8_dot_product(const uint8_t* code1, const uint8_t* code2) const {
+        const uint8_t* code1_data = code1 + 12;
+        const uint8_t* code2_data = code2 + 12;
+        float res = 0.0;
+        for (auto i = 0; i < d; i++) {
+            res+= (float)code1_data[i] * (float)code2_data[i];
+        } 
+        return res;
+    }
+};
+
+/*******************************************************************
  * 8bit_direct quantizer
  *******************************************************************/
 
@@ -285,6 +384,8 @@ SQuantizer* select_quantizer_1(
             return new QuantizerFP16<SIMDWIDTH>(d, trained);
         case ScalarQuantizer::QT_8bit_direct:
             return new Quantizer8bitDirect<SIMDWIDTH>(d, trained);
+        case ScalarQuantizer::QT_8bit_in_row:
+            return new Quantizer8bitInRow<SIMDWIDTH>(d);
     }
     FAISS_THROW_MSG("unknown qtype");
 }
@@ -415,6 +516,80 @@ struct DCTemplate<Quantizer, Similarity, 1> : SQDistanceComputer {
     }
 };
 
+template <class Similarity>
+struct DCTemplate<Quantizer8bitInRow<Similarity::simdwidth>, Similarity, 1> : SQDistanceComputer {
+    using Sim = Similarity;
+
+    Quantizer8bitInRow<Similarity::simdwidth> quant;
+    std::vector<uint8_t> query_code;
+
+    DCTemplate(size_t d, const std::vector<float>& trained)
+            : quant(d), query_code(d + 12) {}
+
+    float compute_distance(const float* x, const uint8_t* code) const {
+        Similarity sim(x);
+        sim.begin();
+        for (size_t i = 0; i < quant.d; i++) {
+            float xi = quant.reconstruct_component(code, i);
+            sim.add_component(xi);
+        }
+        return sim.result();
+    }
+
+    float compute_code_distance(const uint8_t* code1, const uint8_t* code2) const {
+        auto encode_distace_ip = [&](const uint8_t* code1, const uint8_t* code2) -> float {
+            // get encode ip distance:
+            // divide into 4 part:
+            // decode(x)*decode(y)
+            // = sum(x_code*code_len(x) + code_bias(x))*(y_code*code_len(y) + code_bias(y))
+            // = x_code*y_code*code_len(x)*code_len(y) + sum(x_code)*code_len(x)*code_bias(y) + code_bias(x)*sum(y_code)*code_len(y) + code_bias(x)*code_bias(y)
+            // part1: x_code * y_code * code_len(x) * code_len(y)
+            // part2: sum(x_code) * code_len(x) * code_bias(y)
+            // part3: sum(y_code) * code_len(y) * code_bias(x)
+            // part4: code_bias(x) * code_bias(y) * d
+            float part1 = quant.u8_dot_product(code1, code2) * quant.code_len(code1) * quant.code_len(code2);
+            float part2 = (float)quant.sum(code1) * quant.code_len(code1) * quant.code_bias(code2);
+            float part3 = (float)quant.sum(code2) * quant.code_len(code2) * quant.code_bias(code1);
+            float part4 = quant.code_bias(code1) *  quant.code_bias(code2) * quant.d;
+            float res =  part1 + part2 + part3 + part4;
+            return res;
+        };
+        if constexpr (std::is_same_v<Similarity, SimilarityL2<1>>) {
+            // get encode l2 distace:
+            // = x*x + y*y - 2*x*y
+            // = x*x + y*y - 2*encode_distace_ip(x, y)
+            auto res = quant.l2_norm(code1) + quant.l2_norm(code2); 
+            float dot_product = encode_distace_ip(code1, code2);
+            return res - 2.0 * dot_product;
+        }
+        if constexpr (std::is_same_v<Similarity, SimilarityIP<1>>) {
+            return encode_distace_ip(code1, code2);
+        } 
+        Similarity sim(nullptr);
+        sim.begin();
+        for (size_t i = 0; i < quant.d; i++) {
+            float x1 = quant.reconstruct_component(code1, i);
+            float x2 = quant.reconstruct_component(code2, i);
+            sim.add_component_2(x1, x2);
+        }
+        return sim.result();
+    }
+
+    void set_query(const float* x) final {
+        q = x;
+        quant.encode_vector(x, query_code.data());
+    }
+
+    float symmetric_dis(idx_t i, idx_t j) override {
+        return compute_code_distance(
+                codes + i * code_size, codes + j * code_size);
+    }
+
+    float query_to_code(const uint8_t* code) const override final {
+        return compute_code_distance(query_code.data(), code);
+    }
+};
+
 /*******************************************************************
  * DistanceComputerByte: computes distances in the integer domain
  *******************************************************************/
@@ -521,6 +696,11 @@ SQDistanceComputer* select_distance_computer(
                         Sim,
                         SIMDWIDTH>(d, trained);
             }
+        case ScalarQuantizer::QT_8bit_in_row:
+            return new DCTemplate<
+                    Quantizer8bitInRow<SIMDWIDTH>,
+                    Sim,
+                    SIMDWIDTH>(d, trained);
     }
     FAISS_THROW_MSG("unknown qtype");
     return nullptr;
@@ -625,6 +805,12 @@ InvertedListScanner* sel1_InvertedListScanner(
                         Similarity,
                         SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
             }
+        case ScalarQuantizer::QT_8bit_in_row:
+            return sel2_InvertedListScanner<DCTemplate<
+                    Quantizer8bitInRow<SIMDWIDTH>,
+                    Similarity,
+                    SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
+
     }
 
     FAISS_THROW_MSG("unknown qtype");

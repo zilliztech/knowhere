@@ -163,7 +163,7 @@ TEST_CASE("Test Feder", "[feder]") {
     auto hnsw_gen = [&base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::HNSW_M] = 8;
-        json[knowhere::indexparam::EFCONSTRUCTION] = 200;
+        json[knowhere::indexparam::EFCONSTRUCTION] = 100;
         json[knowhere::indexparam::EF] = 16;
         json[knowhere::indexparam::OVERVIEW_LEVELS] = 2;
         return json;

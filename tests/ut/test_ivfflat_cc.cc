@@ -201,7 +201,6 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
         using std::make_tuple;
         auto [index_name, cc_index_name] = GENERATE_REF(table<std::string, std::string>({
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC),
         }));
         auto ivf = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_name, version);
         auto ivf_cc = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(cc_index_name, version);

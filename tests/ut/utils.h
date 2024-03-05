@@ -111,6 +111,13 @@ GetKNNRecall(const knowhere::DataSet& ground_truth, const knowhere::DataSet& res
     auto gt_ids = ground_truth.GetIds();
     auto res_ids = result.GetIds();
 
+    // auto gt_dis = ground_truth.GetDistance();
+    // auto res_dis = result.GetDistance();
+    // for (auto i = 0; i < res_k; i++) {
+    //     std::cout <<"gt: "<< gt_ids[i]<<" "<<gt_dis[i]<<std::endl;
+    //     std::cout <<"res: "<< res_ids[i]<<" "<<res_dis[i]<<std::endl;
+    // }
+
     uint32_t matched_num = 0;
     for (auto i = 0; i < nq; ++i) {
         std::vector<int64_t> ids_0(gt_ids + i * gt_k, gt_ids + i * gt_k + res_k);
