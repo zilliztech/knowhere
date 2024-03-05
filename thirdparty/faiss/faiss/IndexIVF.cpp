@@ -1351,6 +1351,17 @@ size_t InvertedListScanner::scan_codes(
     return nup;
 }
 
+size_t InvertedListScanner::scan_codes_and_push_back(
+        size_t list_size,
+        const uint8_t* codes,
+        const float* code_norms,
+        const idx_t* ids,
+        float* distances,
+        idx_t* labels,
+        size_t& counter_back) const {
+    FAISS_THROW_MSG("Not implemented.");
+}
+
 size_t InvertedListScanner::iterate_codes(
         InvertedListsIterator* it,
         float* simi,

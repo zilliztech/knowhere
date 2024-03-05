@@ -11,11 +11,32 @@
 #define FAISS_INDEX_IVF_FLAT_H
 
 #include <stdint.h>
+#include <optional>
 #include <unordered_map>
 
 #include <faiss/IndexIVF.h>
 
 namespace faiss {
+struct IVFFlatIteratorWorkspace {
+    IVFFlatIteratorWorkspace(
+            const float* query_data,
+            const IVFSearchParameters* search_params)
+            : query_data(query_data), search_params(search_params) {}
+
+    const float* query_data = nullptr; // single query
+    const IVFSearchParameters* search_params = nullptr;
+    bool initial_search_done = false;
+    std::unique_ptr<float[]> distances = nullptr; // backup distances (heap)
+    std::unique_ptr<idx_t[]> labels = nullptr;    // backup ids (heap)
+    size_t backup_count = 0;            // scan a new coarse-list when less than backup_count_threshold
+    size_t max_backup_count = 0;        
+    size_t backup_count_threshold = 0;  // count * nprobe / nlist
+    size_t next_visit_coarse_list_idx = 0;
+    std::unique_ptr<float[]> coarse_dis = nullptr;   // backup coarse centroids distances (heap)
+    std::unique_ptr<idx_t[]> coarse_idx = nullptr;   // backup coarse centroids ids (heap)
+    std::unique_ptr<size_t[]> coarse_list_sizes = nullptr;  // snapshot of the list_size
+    size_t max_coarse_list_size = 0;
+};
 
 /** Inverted file with stored vectors. Here the inverted file
  * pre-selects the vectors to be searched, but they are not otherwise
@@ -32,7 +53,7 @@ struct IndexIVFFlat : IndexIVF {
     void restore_codes(const uint8_t* raw_data, const size_t raw_size);
 
     // Be careful with overriding this function, because
-    //   renormalized x may be used inside. 
+    //   renormalized x may be used inside.
     // Overridden by IndexIVFFlatDedup.
     void train(idx_t n, const float* x) override;
 
@@ -62,6 +83,19 @@ struct IndexIVFFlat : IndexIVF {
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
 
     IndexIVFFlat();
+
+    std::unique_ptr<IVFFlatIteratorWorkspace> getIteratorWorkspace(
+            const float* query_data,
+            const IVFSearchParameters* ivfsearchParams) const;
+
+    // Unlike regular knn-search, the iterator does not know the size `k` of the
+    // returned result.
+    //   The workspace will maintain a heap of at least (nprobe/nlist) nodes for
+    //   iterator `Next()` operation.
+    //   When there are not enough nodes in the heap, iterator will scan the
+    //   next coarse list.
+    std::optional<std::pair<float, idx_t>> getIteratorNext(
+            IVFFlatIteratorWorkspace* workspace) const;
 };
 
 struct IndexIVFFlatCC : IndexIVFFlat {

@@ -21,8 +21,17 @@
 #include "gpu_raft.h"
 #include "knowhere/factory.h"
 #include "knowhere/index_node_thread_pool_wrapper.h"
+#include "raft/util/cuda_rt_essentials.hpp"
 
 namespace knowhere {
-KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_RAFT_CAGRA, GpuRaftCagraIndexNode, fp32, cuda_concurrent_size);
-KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuRaftCagraIndexNode, fp32, cuda_concurrent_size);
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_RAFT_CAGRA, GpuRaftCagraIndexNode, fp32, []() {
+    int count;
+    RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
+    return count * cuda_concurrent_size_per_device;
+}());
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuRaftCagraIndexNode, fp32, []() {
+    int count;
+    RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
+    return count * cuda_concurrent_size_per_device;
+}());
 }  // namespace knowhere

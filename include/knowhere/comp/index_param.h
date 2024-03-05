@@ -59,6 +59,7 @@ constexpr const char* RETRIEVE_FRIENDLY = "retrieve_friendly";
 constexpr const char* DIM = "dim";
 constexpr const char* TENSOR = "tensor";
 constexpr const char* ROWS = "rows";
+constexpr const char* NQ = "nq";
 constexpr const char* IDS = "ids";
 constexpr const char* DISTANCE = "distance";
 constexpr const char* LIMS = "lims";
@@ -75,6 +76,7 @@ constexpr const char* JSON_ID_SET = "json_id_set";
 constexpr const char* TRACE_ID = "trace_id";
 constexpr const char* SPAN_ID = "span_id";
 constexpr const char* TRACE_FLAGS = "trace_flags";
+constexpr const char* MATERIALIZED_VIEW_SEARCH_INFO = "materialized_view_search_info";
 };  // namespace meta
 
 namespace indexparam {

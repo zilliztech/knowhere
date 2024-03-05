@@ -57,6 +57,10 @@ def Dump(binset, file_name):
     return swigknowhere.Dump(binset, file_name)
 
 
+def WriteIndexToDisk(binset, index_type, data_path):
+    return swigknowhere.WriteIndexToDisk(binset, index_type, data_path)
+
+
 def ArrayToDataSet(arr):
     if arr.ndim == 1:
         return swigknowhere.Array2DataSetIds(arr)

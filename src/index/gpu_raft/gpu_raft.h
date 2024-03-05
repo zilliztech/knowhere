@@ -42,6 +42,7 @@
 namespace knowhere {
 
 auto static constexpr cuda_concurrent_size = std::uint32_t{16};
+auto static constexpr cuda_concurrent_size_per_device = std::uint32_t{8};
 
 template <raft_proto::raft_index_kind K>
 struct KnowhereConfigType {};

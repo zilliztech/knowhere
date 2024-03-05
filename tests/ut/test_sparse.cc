@@ -9,6 +9,8 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <future>
+
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 #include "knowhere/bitsetview.h"
@@ -39,7 +41,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
     auto metric = knowhere::metric::IP;
     auto version = GenTestVersionList();
 
-    auto base_gen = [=]() {
+    auto base_gen = [=, dim = dim]() {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = metric;
@@ -47,7 +49,8 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         return json;
     };
 
-    auto sparse_inverted_index_gen = [base_gen, drop_ratio_build, drop_ratio_search]() {
+    auto sparse_inverted_index_gen = [base_gen, drop_ratio_build = drop_ratio_build,
+                                      drop_ratio_search = drop_ratio_search]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::DROP_RATIO_BUILD] = drop_ratio_build;
         json[knowhere::indexparam::DROP_RATIO_SEARCH] = drop_ratio_search;
@@ -187,7 +190,7 @@ TEST_CASE("Test Mem Sparse Index GetVectorByIds", "[float metrics]") {
     auto metric = knowhere::metric::IP;
     auto version = GenTestVersionList();
 
-    auto base_gen = [=]() {
+    auto base_gen = [=, dim = dim]() {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = metric;
@@ -195,7 +198,8 @@ TEST_CASE("Test Mem Sparse Index GetVectorByIds", "[float metrics]") {
         return json;
     };
 
-    auto sparse_inverted_index_gen = [base_gen, drop_ratio_build, drop_ratio_search]() {
+    auto sparse_inverted_index_gen = [base_gen, drop_ratio_build = drop_ratio_build,
+                                      drop_ratio_search = drop_ratio_search]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::DROP_RATIO_BUILD] = drop_ratio_build;
         json[knowhere::indexparam::DROP_RATIO_SEARCH] = drop_ratio_search;

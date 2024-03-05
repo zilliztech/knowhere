@@ -24,6 +24,7 @@
 #include <unordered_set>
 #include <variant>
 
+#include "knowhere/comp/materialized_view.h"
 #include "knowhere/expected.h"
 #include "knowhere/log.h"
 #include "nlohmann/json.hpp"
@@ -50,6 +51,10 @@ typedef nlohmann::json Json;
 
 #ifndef CFG_BOOL
 #define CFG_BOOL std::optional<bool>
+#endif
+
+#ifndef CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE
+#define CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE std::optional<MaterializedViewSearchInfo>
 #endif
 
 template <typename T>
@@ -177,6 +182,29 @@ struct Entry<CFG_BOOL> {
 
     CFG_BOOL* val;
     std::optional<CFG_BOOL::value_type> default_val;
+    uint32_t type;
+    std::optional<std::string> desc;
+    bool allow_empty_without_default = false;
+};
+
+template <>
+struct Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE> {
+    explicit Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE>(CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE* v) {
+        val = v;
+        default_val = std::nullopt;
+        type = 0x0;
+        desc = std::nullopt;
+    }
+
+    Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE>() {
+        val = nullptr;
+        default_val = std::nullopt;
+        type = 0x0;
+        desc = std::nullopt;
+    }
+
+    CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE* val;
+    std::optional<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE::value_type> default_val;
     uint32_t type;
     std::optional<std::string> desc;
     bool allow_empty_without_default = false;
@@ -474,6 +502,28 @@ class Config {
                 }
                 *ptr->val = json[it.first];
             }
+
+            if (const Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE>* ptr =
+                    std::get_if<Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE>>(&var)) {
+                if (!(type & ptr->type)) {
+                    continue;
+                }
+                if (json.find(it.first) == json.end() && !ptr->default_val.has_value()) {
+                    if (ptr->allow_empty_without_default) {
+                        continue;
+                    }
+                    LOG_KNOWHERE_ERROR_ << "Invalid param [" << it.first << "] in json.";
+                    if (err_msg) {
+                        *err_msg = std::string("invalid param ") + it.first;
+                    }
+                    return Status::invalid_param_in_json;
+                }
+                if (json.find(it.first) == json.end()) {
+                    *ptr->val = ptr->default_val;
+                    continue;
+                }
+                *ptr->val = json[it.first];
+            }
         }
 
         if (!err_msg) {
@@ -486,8 +536,8 @@ class Config {
     virtual ~Config() {
     }
 
-    using VarEntry =
-        std::variant<Entry<CFG_STRING>, Entry<CFG_FLOAT>, Entry<CFG_INT>, Entry<CFG_LIST>, Entry<CFG_BOOL>>;
+    using VarEntry = std::variant<Entry<CFG_STRING>, Entry<CFG_FLOAT>, Entry<CFG_INT>, Entry<CFG_LIST>, Entry<CFG_BOOL>,
+                                  Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE>>;
     std::unordered_map<std::string, VarEntry> __DICT__;
 
  protected:
@@ -523,11 +573,13 @@ class BaseConfig : public Config {
     CFG_STRING trace_id;
     CFG_STRING span_id;
     CFG_INT trace_flags;
+    CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE materialized_view_search_info;
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
             .set_default("L2")
             .description("metric type")
             .for_train_and_search()
+            .for_iterator()
             .for_deserialize();
         KNOWHERE_CONFIG_DECLARE_FIELD(retrieve_friendly)
             .description("whether the index holds raw data for fast retrieval")
@@ -588,6 +640,11 @@ class BaseConfig : public Config {
         KNOWHERE_CONFIG_DECLARE_FIELD(trace_flags)
             .set_default(0)
             .description("trace flags")
+            .for_search()
+            .for_range_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(materialized_view_search_info)
+            .description("materialized view search info")
+            .allow_empty_without_default()
             .for_search()
             .for_range_search();
     }

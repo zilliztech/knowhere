@@ -1,4 +1,4 @@
-int total_timeout_minutes = 60
+int total_timeout_minutes = 120
 def knowhere_wheel=''
 pipeline {
     agent {
@@ -19,7 +19,7 @@ pipeline {
     stages {
         stage("Build"){
             steps {
-                container("build"){
+                container("main"){
                     script{
                         def date = sh(returnStdout: true, script: 'date +%Y%m%d').trim()
                         def gitShortCommit = sh(returnStdout: true, script: "echo ${env.GIT_COMMIT} | cut -b 1-7 ").trim()

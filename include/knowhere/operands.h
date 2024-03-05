@@ -139,6 +139,8 @@ template <typename InType, typename... Types>
 using TypeMatch = std::bool_constant<(... | std::is_same_v<InType, Types>)>;
 template <typename InType>
 using KnowhereDataTypeCheck = TypeMatch<InType, bin1, fp16, fp32, bf16>;
+template <typename InType>
+using KnowhereFloatTypeCheck = TypeMatch<InType, fp16, fp32, bf16>;
 
 template <typename T>
 struct MockData {

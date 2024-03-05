@@ -131,12 +131,12 @@ isEmptyID(const uint8_t* id, int length) {
 }
 
 bool
-EmptyTraceID(TraceContext* ctx) {
+EmptyTraceID(const TraceContext* ctx) {
     return isEmptyID(ctx->traceID, trace::TraceId::kSize);
 }
 
 bool
-EmptySpanID(TraceContext* ctx) {
+EmptySpanID(const TraceContext* ctx) {
     return isEmptyID(ctx->spanID, trace::SpanId::kSize);
 }
 

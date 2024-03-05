@@ -87,6 +87,9 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
         span = tracer::StartSpan("knowhere search", &ctx);
         span->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
         span->SetAttribute(meta::TOPK, b_cfg.k.value());
+        span->SetAttribute(meta::ROWS, Count());
+        span->SetAttribute(meta::DIM, Dim());
+        span->SetAttribute(meta::NQ, dataset.GetRows());
     }
 
     TimeRecorder rc("Search");
@@ -152,6 +155,9 @@ Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView
         if (b_cfg.range_filter.value() != defaultRangeFilter) {
             span->SetAttribute(meta::RANGE_FILTER, b_cfg.range_filter.value());
         }
+        span->SetAttribute(meta::ROWS, Count());
+        span->SetAttribute(meta::DIM, Dim());
+        span->SetAttribute(meta::NQ, dataset.GetRows());
     }
 
     TimeRecorder rc("Range Search");

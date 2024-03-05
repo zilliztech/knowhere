@@ -12,6 +12,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <vector>
 
 #include <faiss/impl/platform_macros.h>
 #include <faiss/utils/Heap.h>
@@ -227,6 +228,15 @@ void knn_inner_product(
         int64_t* indexes,
         const IDSelector* sel = nullptr);
 
+void all_inner_product(
+        const float* x,
+        const float* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        std::vector<std::pair<float, int64_t>>& output,
+        const IDSelector* sel);
+
 /** Return the k nearest neighors of each of the nx vectors x among the ny
  *  vector y, for the L2 distance
  * @param x    query vectors, size nx * d
@@ -267,6 +277,16 @@ void knn_L2sqr(
         const float* y_norm2 = nullptr,
         const IDSelector* sel = nullptr);
 
+void all_L2sqr(
+        const float* x,
+        const float* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        std::vector<std::pair<float, int64_t>>& output,
+        const float* y_norms,
+        const IDSelector* sel);
+
 // Knowhere-specific function
 void knn_cosine(
         const float* x,
@@ -277,6 +297,16 @@ void knn_cosine(
         size_t ny,
         float_minheap_array_t* ha,
         const IDSelector* sel = nullptr);
+
+void all_cosine(
+        const float* x,
+        const float* y,
+        const float* y_norms,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        std::vector<std::pair<float, int64_t>>& output,
+        const IDSelector* sel);
 
 // Knowhere-specific function
 void knn_jaccard(

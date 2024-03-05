@@ -36,6 +36,7 @@ typedef int FileHandle;
 #include "ann_exception.h"
 #include "common_includes.h"
 #include "knowhere/comp/thread_pool.h"
+#include "knowhere/operands.h"
 
 // taken from
 // https://github.com/Microsoft/BLAS-on-flash/blob/master/include/utils.h
@@ -61,7 +62,7 @@ typedef int FileHandle;
 #define COMPLETION_PERCENT 10
 
 inline bool file_exists(const std::string& name, bool dirCheck = false) {
-  int val;
+  int         val;
   struct stat buffer;
   val = stat(name.c_str(), &buffer);
 
@@ -236,8 +237,8 @@ namespace diskann {
   // load_bin functions START
   template<typename T>
   inline void load_bin_impl(std::basic_istream<char>& reader,
-                            size_t actual_file_size, T*& data, size_t& npts,
-                            size_t& dim) {
+                            size_t actual_file_size, std::unique_ptr<T[]>& data,
+                            size_t& npts, size_t& dim) {
     int npts_i32, dim_i32;
     reader.read((char*) &npts_i32, sizeof(int));
     reader.read((char*) &dim_i32, sizeof(int));
@@ -260,8 +261,8 @@ namespace diskann {
                                   __LINE__);
     }
 
-    data = new T[npts * dim];
-    reader.read((char*) data, npts * dim * sizeof(T));
+    data = std::make_unique<T[]>(npts * dim);
+    reader.read(reinterpret_cast<char*>(data.get()), npts * dim * sizeof(T));
   }
 
   inline void wait_for_keystroke() {
@@ -271,7 +272,7 @@ namespace diskann {
   }
 
   template<typename T>
-  inline void load_bin(const std::string& bin_file, T*& data, size_t& npts,
+  inline void load_bin(const std::string& bin_file, std::unique_ptr<T[]>& data, size_t& npts,
                        size_t& dim) {
     // OLS
     //_u64            read_blk_size = 64 * 1024 * 1024;
@@ -295,8 +296,10 @@ namespace diskann {
   }
   // load_bin functions END
 
-  inline void load_truthset(const std::string& bin_file, uint32_t*& ids,
-                            float*& dists, size_t& npts, size_t& dim) {
+  inline void load_truthset(const std::string&           bin_file,
+                            std::unique_ptr<uint32_t[]>& ids,
+                            std::unique_ptr<float[]>& dists, size_t& npts,
+                            size_t& dim) {
     _u64            read_blk_size = 64 * 1024 * 1024;
     cached_ifstream reader(bin_file, read_blk_size);
     LOG_KNOWHERE_DEBUG_ << "Reading truthset file " << bin_file.c_str()
@@ -339,12 +342,12 @@ namespace diskann {
                                   __LINE__);
     }
 
-    ids = new uint32_t[npts * dim];
-    reader.read((char*) ids, npts * dim * sizeof(uint32_t));
+    ids = std::make_unique<uint32_t[]>(npts * dim);
+    reader.read(reinterpret_cast<char*>(ids.get()), npts * dim * sizeof(uint32_t));
 
     if (truthset_type == 1) {
-      dists = new float[npts * dim];
-      reader.read((char*) dists, npts * dim * sizeof(float));
+      dists = std::make_unique<float[]>(npts * dim);
+      reader.read(reinterpret_cast<char*>(dists.get()), npts * dim * sizeof(float));
     }
   }
 
@@ -362,8 +365,6 @@ namespace diskann {
     reader.read((char*) &dim_i32, sizeof(int));
     npts = (unsigned) npts_i32;
     _u64   dim = (unsigned) dim_i32;
-    _u32*  ids;
-    float* dists;
 
     LOG_KNOWHERE_DEBUG_ << "Metadata: #pts = " << npts << ", #dims = " << dim
                         << "... ";
@@ -388,12 +389,13 @@ namespace diskann {
                                   __LINE__);
     }
 
-    ids = new uint32_t[npts * dim];
-    reader.read((char*) ids, npts * dim * sizeof(uint32_t));
+    auto ids = std::make_unique<_u32[]>(npts * dim);
+    reader.read(reinterpret_cast<char*>(ids.get()), npts * dim * sizeof(uint32_t));
+    std::unique_ptr<float[]> dists = nullptr;
 
     if (truthset_type == 1) {
-      dists = new float[npts * dim];
-      reader.read((char*) dists, npts * dim * sizeof(float));
+      dists = std::make_unique<float[]>(npts * dim);
+      reader.read(reinterpret_cast<char*>(dists.get()), npts * dim * sizeof(float));
     }
     float min_dist = std::numeric_limits<float>::max();
     float max_dist = 0;
@@ -413,8 +415,6 @@ namespace diskann {
     }
     std::cout << "Min dist: " << min_dist << ", Max dist: " << max_dist
               << std::endl;
-    delete[] ids;
-    delete[] dists;
   }
 
   inline void load_range_truthset(const std::string&              bin_file,
@@ -474,14 +474,6 @@ namespace diskann {
   }
 
   template<typename T>
-  inline void load_bin(const std::string& bin_file, std::unique_ptr<T[]>& data,
-                       size_t& npts, size_t& dim) {
-    T* ptr;
-    load_bin<T>(bin_file, ptr, npts, dim);
-    data.reset(ptr);
-  }
-
-  template<typename T>
   inline uint64_t save_bin(const std::string& filename, T* data, size_t npts,
                            size_t ndims) {
     std::ofstream writer(filename, std::ios::binary | std::ios::out);
@@ -537,7 +529,8 @@ namespace diskann {
 
     for (size_t i = 0; i < npts; i++) {
       reader.read((char*) (data + i * rounded_dim), dim * sizeof(T));
-      memset(data + i * rounded_dim + dim, 0, (rounded_dim - dim) * sizeof(T));
+      memset((void*) (data + i * rounded_dim + dim), 0,
+             (rounded_dim - dim) * sizeof(T));
     }
     stream << " done." << std::endl;
     LOG_KNOWHERE_DEBUG_ << stream.str();
@@ -583,6 +576,9 @@ namespace diskann {
   template<typename T>
   float prepare_base_for_inner_products(const std::string in_file,
                                         const std::string out_file) {
+    static_assert(
+        knowhere::KnowhereFloatTypeCheck<T>::value,
+        "prepare_base_for_inner_products only support fp16, bf16, fp32.");
     LOG_KNOWHERE_DEBUG_
         << "Pre-processing base file by adding extra coordinate";
     std::ifstream in_reader(in_file.c_str(), std::ios::binary);
@@ -606,10 +602,11 @@ namespace diskann {
     size_t               block_size = npts <= BLOCK_SIZE ? npts : BLOCK_SIZE;
     std::unique_ptr<T[]> in_block_data =
         std::make_unique<T[]>(block_size * in_dims);
-    std::unique_ptr<float[]> out_block_data =
-        std::make_unique<float[]>(block_size * out_dims);
+    std::unique_ptr<T[]> out_block_data =
+        std::make_unique<T[]>(block_size * out_dims);
 
-    std::memset(out_block_data.get(), 0, sizeof(float) * block_size * out_dims);
+    std::memset((void*) out_block_data.get(), 0,
+                sizeof(T) * block_size * out_dims);
     _u64 num_blocks = DIV_ROUND_UP(npts, block_size);
 
     std::vector<float> norms(npts, 0);
@@ -642,14 +639,14 @@ namespace diskann {
       for (_u64 p = 0; p < block_pts; p++) {
         for (_u64 j = 0; j < in_dims; j++) {
           out_block_data[p * out_dims + j] =
-              in_block_data[p * in_dims + j] / max_norm;
+              (T) (((float) in_block_data[p * in_dims + j]) / max_norm);
         }
         float res = 1 - (norms[start_id + p] / (max_norm * max_norm));
         res = res <= 0 ? 0 : std::sqrt(res);
-        out_block_data[p * out_dims + out_dims - 1] = res;
+        out_block_data[p * out_dims + out_dims - 1] = (T) res;
       }
       out_writer.write((char*) out_block_data.get(),
-                       block_pts * out_dims * sizeof(float));
+                       block_pts * out_dims * sizeof(T));
     }
     out_writer.close();
     return max_norm;
@@ -657,9 +654,10 @@ namespace diskann {
 
   template<typename T>
   std::vector<float> prepare_base_for_cosine(const std::string in_file,
-                                        const std::string out_file) {
-    LOG_KNOWHERE_DEBUG_
-        << "Pre-processing base file by normalizing";
+                                             const std::string out_file) {
+    static_assert(knowhere::KnowhereFloatTypeCheck<T>::value,
+                  "prepare_base_for_cosine only support fp16, bf16, fp32.");
+    LOG_KNOWHERE_DEBUG_ << "Pre-processing base file by normalizing";
     std::ifstream in_reader(in_file.c_str(), std::ios::binary);
     std::ofstream out_writer(out_file.c_str(), std::ios::binary);
     _u64          npts, in_dims, out_dims;
@@ -680,10 +678,11 @@ namespace diskann {
     size_t               block_size = npts <= BLOCK_SIZE ? npts : BLOCK_SIZE;
     std::unique_ptr<T[]> in_block_data =
         std::make_unique<T[]>(block_size * in_dims);
-    std::unique_ptr<float[]> out_block_data =
-        std::make_unique<float[]>(block_size * out_dims);
+    std::unique_ptr<T[]> out_block_data =
+        std::make_unique<T[]>(block_size * out_dims);
 
-    std::memset(out_block_data.get(), 0, sizeof(float) * block_size * out_dims);
+    std::memset((void*) out_block_data.get(), 0,
+                sizeof(T) * block_size * out_dims);
     _u64 num_blocks = DIV_ROUND_UP(npts, block_size);
 
     std::vector<float> norms(npts, 0);
@@ -716,11 +715,12 @@ namespace diskann {
       for (_u64 p = 0; p < block_pts; p++) {
         for (_u64 j = 0; j < in_dims; j++) {
           out_block_data[p * out_dims + j] =
-              in_block_data[p * in_dims + j] / norms[start_id + p];
+              (T) (((float) in_block_data[p * in_dims + j]) /
+                   norms[start_id + p]);
         }
       }
       out_writer.write((char*) out_block_data.get(),
-                       block_pts * out_dims * sizeof(float));
+                       block_pts * out_dims * sizeof(T));
     }
     out_writer.close();
 
@@ -805,7 +805,8 @@ namespace diskann {
 
     for (size_t i = 0; i < npts; i++) {
       reader.read((char*) (data + i * rounded_dim), dim * sizeof(T));
-      memset(data + i * rounded_dim + dim, 0, (rounded_dim - dim) * sizeof(T));
+      memset((void*) (data + i * rounded_dim + dim), 0,
+             (rounded_dim - dim) * sizeof(T));
     }
   }
 
@@ -837,7 +838,7 @@ namespace diskann {
                      float* read_buf, _u64 npts, _u64 ndims);
 
   void normalize_data_file(const std::string& inFileName,
-                                             const std::string& outFileName);
+                           const std::string& outFileName);
 
   inline std::string get_pq_pivots_filename(const std::string& prefix) {
     return prefix + "_pq_pivots.bin";

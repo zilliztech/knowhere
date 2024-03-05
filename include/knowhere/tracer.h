@@ -56,9 +56,9 @@ void
 AddEvent(const std::string& event_label);
 
 bool
-EmptyTraceID(TraceContext* ctx);
+EmptyTraceID(const TraceContext* ctx);
 
 bool
-EmptySpanID(TraceContext* ctx);
+EmptySpanID(const TraceContext* ctx);
 
 }  // namespace knowhere::tracer
