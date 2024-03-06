@@ -83,15 +83,10 @@ class InvertedIndex {
         readBinaryPOD(reader, rows);
         use_wand_ = rows > 0;
         rows = std::abs(rows);
-        size_t dim;
-        readBinaryPOD(reader, dim);
+        readBinaryPOD(reader, max_dim_);
         readBinaryPOD(reader, value_threshold_);
 
         raw_data_.reserve(rows);
-        inverted_lut_.resize(dim);
-        if (use_wand_) {
-            max_in_dim_.resize(dim);
-        }
 
         for (int64_t i = 0; i < rows; ++i) {
             size_t count;
@@ -142,12 +137,8 @@ class InvertedIndex {
             LOG_KNOWHERE_ERROR_ << "Not allowed to add data to a built index with drop_ratio_build > 0.";
             return Status::invalid_args;
         }
-
-        if (inverted_lut_.size() < (size_t)dim) {
-            inverted_lut_.resize(dim);
-            if (use_wand_) {
-                max_in_dim_.resize(dim);
-            }
+        if ((size_t)dim > max_dim_) {
+            max_dim_ = dim;
         }
 
         raw_data_.insert(raw_data_.end(), data, data + rows);
@@ -209,12 +200,12 @@ class InvertedIndex {
             res += row.memory_usage();
         }
 
-        res += sizeof(std::vector<IdVal<T>>) * inverted_lut_.capacity();
-        for (auto& lut : inverted_lut_) {
+        res += (sizeof(table_t) + sizeof(std::vector<IdVal<T>>)) * inverted_lut_.size();
+        for (const auto& [idx, lut] : inverted_lut_) {
             res += sizeof(IdVal<T>) * lut.capacity();
         }
         if (use_wand_) {
-            res += sizeof(T) * max_in_dim_.capacity();
+            res += (sizeof(table_t) + sizeof(T)) * max_in_dim_.size();
         }
         return res;
     }
@@ -239,7 +230,7 @@ class InvertedIndex {
 
     size_t
     n_cols_internal() const {
-        return inverted_lut_.size();
+        return max_dim_;
     }
 
     // find the top-k candidates using brute force search, k as specified by the capacity of the heap.
@@ -252,9 +243,14 @@ class InvertedIndex {
             if (v < q_threshold || i >= n_cols_internal()) {
                 continue;
             }
+            auto lut_it = inverted_lut_.find(i);
+            if (lut_it == inverted_lut_.end()) {
+                continue;
+            }
             // TODO: improve with SIMD
-            for (size_t j = 0; j < inverted_lut_[i].size(); j++) {
-                auto [idx, val] = inverted_lut_[i][j];
+            auto& lut = lut_it->second;
+            for (size_t j = 0; j < lut.size(); j++) {
+                auto [idx, val] = lut[j];
                 scores[idx] += v * float(val);
             }
         }
@@ -339,8 +335,13 @@ class InvertedIndex {
             if (std::abs(val) < q_threshold || idx >= n_cols_internal()) {
                 continue;
             }
+            auto lut_it = inverted_lut_.find(idx);
+            if (lut_it == inverted_lut_.end()) {
+                continue;
+            }
+            auto& lut = lut_it->second;
             cursors[valid_q_dim++] = std::make_shared<Cursor<std::vector<IdVal<T>>>>(
-                inverted_lut_[idx], n_rows_internal(), max_in_dim_[idx] * val, val, bitset);
+                lut, n_rows_internal(), max_in_dim_.find(idx)->second * val, val, bitset);
         }
         if (valid_q_dim == 0) {
             return;
@@ -436,6 +437,12 @@ class InvertedIndex {
             if (drop_during_build_ && fabs(val) < value_threshold_) {
                 continue;
             }
+            if (inverted_lut_.find(idx) == inverted_lut_.end()) {
+                inverted_lut_[idx];
+                if (use_wand_) {
+                    max_in_dim_[idx] = 0;
+                }
+            }
             inverted_lut_[idx].emplace_back(id, val);
             if (use_wand_) {
                 max_in_dim_[idx] = std::max(max_in_dim_[idx], val);
@@ -446,7 +453,7 @@ class InvertedIndex {
     std::vector<SparseRow<T>> raw_data_;
     mutable std::shared_mutex mu_;
 
-    std::vector<std::vector<IdVal<T>>> inverted_lut_;
+    std::unordered_map<table_t, std::vector<IdVal<T>>> inverted_lut_;
     bool use_wand_ = false;
     // If we want to drop small values during build, we must first train the
     // index with all the data to compute value_threshold_.
@@ -455,7 +462,8 @@ class InvertedIndex {
     // will not be added to inverted_lut_. value_threshold_ is set to the
     // drop_ratio_build-th percentile of all absolute values in the index.
     T value_threshold_ = 0.0f;
-    std::vector<T> max_in_dim_;
+    std::unordered_map<table_t, T> max_in_dim_;
+    size_t max_dim_ = 0;
 
 };  // class InvertedIndex
 

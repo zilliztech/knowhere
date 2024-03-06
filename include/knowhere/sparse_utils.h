@@ -109,6 +109,7 @@ class SparseRow {
         return data_byte_size() + sizeof(*this);
     }
 
+    // return the number of bytes used by the underlying data array.
     size_t
     data_byte_size() const {
         return count_ * element_size();
