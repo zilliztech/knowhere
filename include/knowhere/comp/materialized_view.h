@@ -35,18 +35,13 @@ struct MaterializedViewSearchInfo {
     bool has_not = false;
 };
 
-inline void
-to_json(nlohmann::json& j, const MaterializedViewSearchInfo& info) {
-    j = nlohmann::json{{"field_id_to_touched_categories_cnt", info.field_id_to_touched_categories_cnt},
-                       {"is_pure_and", info.is_pure_and},
-                       {"has_not", info.has_not}};
-}
+// DO NOT CALL THIS FUNCTION MANUALLY
+// use `json j = materialized_view_search_info`
+void
+to_json(nlohmann::json& j, const MaterializedViewSearchInfo& info);
 
-inline void
-from_json(const nlohmann::json& j, MaterializedViewSearchInfo& info) {
-    j.at("field_id_to_touched_categories_cnt").get_to(info.field_id_to_touched_categories_cnt);
-    j.at("is_pure_and").get_to(info.is_pure_and);
-    j.at("has_not").get_to(info.has_not);
-}
-
+// DO NOT CALL THIS FUNCTION MANUALLY
+// use `auto j = j.get<MaterializedViewSearchInfo>() or j[KEY]`
+void
+from_json(const nlohmann::json& j, MaterializedViewSearchInfo& info);
 }  // namespace knowhere
