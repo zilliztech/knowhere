@@ -12,14 +12,6 @@ extern "C" {
 //
 typedef void* knowhere_dataset_handle;
 
-// int knowhere_dataset_create(
-//     knowhere_dataset_handle* handle
-// );
-
-// int knowhere_dataset_destroy(
-//     knowhere_dataset_handle handle
-// );
-
 int knowhere_dataset_set_rows(
     knowhere_dataset_handle handle,
     const int64_t rows
