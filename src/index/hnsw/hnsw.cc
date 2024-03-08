@@ -29,7 +29,10 @@
 #include "knowhere/utils.h"
 
 namespace knowhere {
-template <typename DataType>
+
+using hnswlib::QuantType;
+
+template <typename DataType, QuantType quant_type = QuantType::None>
 class HnswIndexNode : public IndexNode {
     static_assert(std::is_same_v<DataType, fp32> || std::is_same_v<DataType, bin1>,
                   "HnswIndexNode only support float/bianry");
@@ -60,8 +63,8 @@ class HnswIndexNode : public IndexNode {
             LOG_KNOWHERE_WARNING_ << "metric type not support in hnsw: " << hnsw_cfg.metric_type.value();
             return Status::invalid_metric_type;
         }
-        auto index = new (std::nothrow)
-            hnswlib::HierarchicalNSW<DistType>(space, rows, hnsw_cfg.M.value(), hnsw_cfg.efConstruction.value());
+        auto index = new (std::nothrow) hnswlib::HierarchicalNSW<DistType, quant_type>(space, rows, hnsw_cfg.M.value(),
+                                                                                       hnsw_cfg.efConstruction.value());
         if (index == nullptr) {
             LOG_KNOWHERE_WARNING_ << "memory malloc error.";
             return Status::malloc_error;
@@ -71,6 +74,9 @@ class HnswIndexNode : public IndexNode {
             LOG_KNOWHERE_WARNING_ << "index not empty, deleted old index";
         }
         this->index_ = index;
+        if constexpr (quant_type != QuantType::None) {
+            this->index_->trainSQuant((const float*)dataset.GetTensor(), rows);
+        }
         return Status::success;
     }
 
@@ -219,7 +225,7 @@ class HnswIndexNode : public IndexNode {
  private:
     class iterator : public IndexNode::iterator {
      public:
-        iterator(const hnswlib::HierarchicalNSW<DistType>* index, const char* query, const bool transform,
+        iterator(const hnswlib::HierarchicalNSW<DistType, quant_type>* index, const char* query, const bool transform,
                  const BitsetView& bitset, const bool for_tuning = false, const size_t seed_ef = kIteratorSeedEf)
             : index_(index),
               transform_(transform),
@@ -252,7 +258,7 @@ class HnswIndexNode : public IndexNode {
                 has_next_ = false;
             }
         }
-        const hnswlib::HierarchicalNSW<DistType>* index_;
+        const hnswlib::HierarchicalNSW<DistType, quant_type>* index_;
         const bool transform_;
         std::unique_ptr<hnswlib::IteratorWorkspace> workspace_;
         bool has_next_;
@@ -396,7 +402,7 @@ class HnswIndexNode : public IndexNode {
 
     bool
     HasRawData(const std::string& metric_type) const override {
-        return true;
+        return quant_type == QuantType::None || quant_type == QuantType::SQ8Refine;
     }
 
     expected<DataSetPtr>
@@ -460,8 +466,8 @@ class HnswIndexNode : public IndexNode {
 
             MemoryIOReader reader(binary->data.get(), binary->size);
 
-            hnswlib::SpaceInterface<DistType>* space = nullptr;
-            index_ = new (std::nothrow) hnswlib::HierarchicalNSW<DistType>(space);
+            hnswlib::SpaceInterface<float>* space = nullptr;
+            index_ = new (std::nothrow) hnswlib::HierarchicalNSW<DistType, quant_type>(space);
             index_->loadIndex(reader);
             LOG_KNOWHERE_INFO_ << "Loaded HNSW index. #points num:" << index_->max_elements_ << " #M:" << index_->M_
                                << " #max level:" << index_->maxlevel_
@@ -480,8 +486,8 @@ class HnswIndexNode : public IndexNode {
             delete index_;
         }
         try {
-            hnswlib::SpaceInterface<DistType>* space = nullptr;
-            index_ = new (std::nothrow) hnswlib::HierarchicalNSW<DistType>(space);
+            hnswlib::SpaceInterface<float>* space = nullptr;
+            index_ = new (std::nothrow) hnswlib::HierarchicalNSW<DistType, quant_type>(space);
             index_->loadIndex(filename, config);
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
@@ -521,7 +527,14 @@ class HnswIndexNode : public IndexNode {
 
     std::string
     Type() const override {
-        return knowhere::IndexEnum::INDEX_HNSW;
+        if constexpr (quant_type == QuantType::SQ8) {
+            return knowhere::IndexEnum::INDEX_HNSW_SQ8;
+        } else if constexpr (quant_type == QuantType::SQ8Refine) {
+            return knowhere::IndexEnum::INDEX_HNSW_SQ8_REFINE;
+
+        } else {
+            return knowhere::IndexEnum::INDEX_HNSW;
+        }
     }
 
     ~HnswIndexNode() override {
@@ -568,12 +581,18 @@ class HnswIndexNode : public IndexNode {
     }
 
  private:
-    hnswlib::HierarchicalNSW<DistType>* index_;
+    hnswlib::HierarchicalNSW<DistType, quant_type>* index_;
     std::shared_ptr<ThreadPool> search_pool_;
 };
 
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW, HnswIndexNode, fp32);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW_SQ8, HnswIndexNode, fp32, QuantType::SQ8);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW_SQ8_REFINE, HnswIndexNode, fp32, QuantType::SQ8Refine);
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW, HnswIndexNode, bin1);
 KNOWHERE_MOCK_REGISTER_GLOBAL(HNSW, HnswIndexNode, fp16);
+KNOWHERE_MOCK_REGISTER_GLOBAL(HNSW_SQ8, HnswIndexNode, fp16, QuantType::SQ8);
+KNOWHERE_MOCK_REGISTER_GLOBAL(HNSW_SQ8_REFINE, HnswIndexNode, fp16, QuantType::SQ8Refine);
 KNOWHERE_MOCK_REGISTER_GLOBAL(HNSW, HnswIndexNode, bf16);
+KNOWHERE_MOCK_REGISTER_GLOBAL(HNSW_SQ8, HnswIndexNode, bf16, QuantType::SQ8);
+KNOWHERE_MOCK_REGISTER_GLOBAL(HNSW_SQ8_REFINE, HnswIndexNode, bf16, QuantType::SQ8Refine);
 }  // namespace knowhere

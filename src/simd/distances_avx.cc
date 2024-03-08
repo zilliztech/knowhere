@@ -215,5 +215,28 @@ fvec_L2sqr_batch_4_avx(const float* x, const float* y0, const float* y1, const f
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
+// trust the compiler to unroll this properly
+int32_t
+ivec_inner_product_avx(const int8_t* x, const int8_t* y, size_t d) {
+    size_t i;
+    int32_t res = 0;
+    for (i = 0; i < d; i++) {
+        res += (int32_t)x[i] * y[i];
+    }
+    return res;
+}
+
+// trust the compiler to unroll this properly
+int32_t
+ivec_L2sqr_avx(const int8_t* x, const int8_t* y, size_t d) {
+    size_t i;
+    int32_t res = 0;
+    for (i = 0; i < d; i++) {
+        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
+        res += tmp * tmp;
+    }
+    return res;
+}
+
 }  // namespace faiss
 #endif

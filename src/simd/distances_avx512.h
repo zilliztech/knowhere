@@ -43,6 +43,12 @@ void
 fvec_L2sqr_batch_4_avx512(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
                           const size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
 
+int32_t
+ivec_inner_product_avx512(const int8_t* x, const int8_t* y, size_t d);
+
+int32_t
+ivec_L2sqr_avx512(const int8_t* x, const int8_t* y, size_t d);
+
 }  // namespace faiss
 
 #endif /* DISTANCES_AVX512_H */

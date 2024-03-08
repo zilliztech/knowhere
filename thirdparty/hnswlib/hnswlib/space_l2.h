@@ -25,6 +25,11 @@ L2Sqr(const void* pVect1v, const void* pVect2v, const void* qty_ptr) {
 #endif
 }
 
+static float
+L2SqrSQ8(const void* pVect1v, const void* pVect2v, const void* qty_ptr) {
+    return faiss::ivec_L2sqr((const int8_t*)pVect1v, (const int8_t*)pVect2v, *(size_t*)qty_ptr);
+}
+
 #if defined(USE_AVX512)
 
 // Favor using AVX512 if available.
@@ -210,12 +215,14 @@ L2SqrSIMD4ExtResiduals(const void* pVect1v, const void* pVect2v, const void* qty
 
 class L2Space : public SpaceInterface<float> {
     DISTFUNC<float> fstdistfunc_;
+    DISTFUNC<float> fstdistfunc_sq_;
     size_t data_size_;
     size_t dim_;
 
  public:
     L2Space(size_t dim) {
         fstdistfunc_ = L2Sqr;
+        fstdistfunc_sq_ = L2SqrSQ8;
 #if 0 /* use FAISS distance calculation algorithm instead */
 #if defined(USE_SSE) || defined(USE_AVX) || defined(USE_AVX512)
 #if defined(USE_AVX512)
@@ -250,6 +257,11 @@ class L2Space : public SpaceInterface<float> {
     DISTFUNC<float>
     get_dist_func() {
         return fstdistfunc_;
+    }
+
+    DISTFUNC<float>
+    get_dist_func_sq() {
+        return fstdistfunc_sq_;
     }
 
     void*
