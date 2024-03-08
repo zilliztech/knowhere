@@ -11,6 +11,9 @@
 
 #include "knowhere/tracer.h"
 
+#include <iomanip>
+#include <iostream>
+#include <sstream>
 #include <utility>
 
 #include "knowhere/log.h"
@@ -89,9 +92,9 @@ StartSpan(const std::string& name, TraceContext* ctx) {
         if (EmptyTraceID(ctx) || EmptySpanID(ctx)) {
             return noop_trace_provider->GetTracer("noop")->StartSpan("noop");
         }
-        opts.parent =
-            trace::SpanContext(trace::TraceId({ctx->traceID, trace::TraceId::kSize}),
-                               trace::SpanId({ctx->spanID, trace::SpanId::kSize}), trace::TraceFlags(ctx->flag), true);
+        opts.parent = trace::SpanContext(trace::TraceId({ctx->traceID, trace::TraceId::kSize}),
+                                         trace::SpanId({ctx->spanID, trace::SpanId::kSize}),
+                                         trace::TraceFlags(ctx->traceFlags), true);
     }
     return GetTracer()->StartSpan(name, opts);
 }
@@ -138,6 +141,27 @@ EmptyTraceID(const TraceContext* ctx) {
 bool
 EmptySpanID(const TraceContext* ctx) {
     return isEmptyID(ctx->spanID, trace::SpanId::kSize);
+}
+
+std::string
+StringToHex(const std::string& input) {
+    std::stringstream ss;
+    ss << std::hex << std::setfill('0');
+    for (unsigned char c : input) {
+        ss << std::setw(2) << static_cast<int>(c);
+    }
+    return ss.str();
+}
+
+std::string
+HexToString(const std::string& input) {
+    std::stringstream ss;
+    for (size_t i = 0; i < input.length(); i += 2) {
+        std::string byteString = input.substr(i, 2);
+        char byte = static_cast<char>(std::stoi(byteString, nullptr, 16));
+        ss << byte;
+    }
+    return ss.str();
 }
 
 }  // namespace knowhere::tracer

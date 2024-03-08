@@ -33,7 +33,7 @@ struct TraceConfig {
 struct TraceContext {
     const uint8_t* traceID = nullptr;
     const uint8_t* spanID = nullptr;
-    uint8_t flag = 0;
+    uint8_t traceFlags = 0;
 };
 namespace trace = opentelemetry::trace;
 
@@ -60,5 +60,11 @@ EmptyTraceID(const TraceContext* ctx);
 
 bool
 EmptySpanID(const TraceContext* ctx);
+
+std::string
+StringToHex(const std::string& input);
+
+std::string
+HexToString(const std::string& input);
 
 }  // namespace knowhere::tracer
