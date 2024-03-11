@@ -59,11 +59,20 @@ export VERBOSE=1
 
 * MacOS
 
+**Note**
+- Use LLVM Clang (`brew install llvm`) instead of Apple Clang, because Apple Clang does not support OpenMP by default
+- Remove `atomic` and `stdc++fs` in target link libraries in `tests/ut/CMakeLists.txt` before `conan build ..`
+
 ```bash
+mkdir build && cd build
+#add conan remote
+conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local
 #RELEASE CPU
 conan install .. --build=missing -o with_ut=True -s compiler.libcxx=libc++ -s build_type=Release
 #DEBUG CPU
 conan install .. --build=missing -o with_ut=True -s compiler.libcxx=libc++ -s build_type=Debug
+#build with conan
+conan build ..
 ```
 
 #### Running Unit Tests
