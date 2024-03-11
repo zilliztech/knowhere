@@ -88,14 +88,6 @@ class ScannConfig : public IvfFlatConfig {
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
         switch (param_type) {
-            case PARAM_TYPE::TRAIN: {
-                if (!faiss::support_pq_fast_scan) {
-                    LOG_KNOWHERE_ERROR_ << "SCANN index is not supported on the current CPU model, avx2 support is "
-                                           "needed for x86 arch.";
-                    return Status::invalid_instruction_set;
-                }
-                break;
-            }
             case PARAM_TYPE::SEARCH: {
                 if (!faiss::support_pq_fast_scan) {
                     LOG_KNOWHERE_ERROR_ << "SCANN index is not supported on the current CPU model, avx2 support is "
@@ -115,7 +107,7 @@ class ScannConfig : public IvfFlatConfig {
                 }
                 break;
             }
-            case PARAM_TYPE::RANGE_SEARCH: {
+            default: {
                 if (!faiss::support_pq_fast_scan) {
                     LOG_KNOWHERE_ERROR_ << "SCANN index is not supported on the current CPU model, avx2 support is "
                                            "needed for x86 arch.";
@@ -123,8 +115,6 @@ class ScannConfig : public IvfFlatConfig {
                 }
                 break;
             }
-            default:
-                break;
         }
         return Status::success;
     }
