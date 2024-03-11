@@ -549,9 +549,10 @@ class Config {
 
 #define KNOHWERE_DECLARE_CONFIG(CONFIG) CONFIG()
 
-#define KNOWHERE_CONFIG_DECLARE_FIELD(PARAM)                                                             \
-    __DICT__[#PARAM] = knowhere::Config::VarEntry(std::in_place_type<Entry<decltype(PARAM)>>, &PARAM);   \
-    EntryAccess<decltype(PARAM)> PARAM##_access(std::get_if<Entry<decltype(PARAM)>>(&__DICT__[#PARAM])); \
+#define KNOWHERE_CONFIG_DECLARE_FIELD(PARAM)                                                                     \
+    __DICT__[#PARAM] = knowhere::Config::VarEntry(std::in_place_type<knowhere::Entry<decltype(PARAM)>>, &PARAM); \
+    knowhere::EntryAccess<decltype(PARAM)> PARAM##_access(                                                       \
+        std::get_if<knowhere::Entry<decltype(PARAM)>>(&__DICT__[#PARAM]));                                       \
     PARAM##_access
 
 const float defaultRangeFilter = 1.0f / 0.0;

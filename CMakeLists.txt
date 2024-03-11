@@ -149,7 +149,7 @@ add_dependencies(knowhere ${KNOWHERE_LINKER_LIBS})
 if(WITH_RAFT)
   list(APPEND KNOWHERE_LINKER_LIBS raft::raft raft::compiled_static CUDA::cublas CUDA::cusparse CUDA::cusolver)
 endif()
-target_link_libraries(knowhere PUBLIC ${KNOWHERE_LINKER_LIBS})
+target_link_libraries(knowhere PUBLIC ${KNOWHERE_LINKER_LIBS} "-Wl,--disable-new-dtags")
 target_include_directories(
   knowhere PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 

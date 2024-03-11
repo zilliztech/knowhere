@@ -46,6 +46,9 @@ class KnowhereConan(ConanFile):
         "with_benchmark": False,
         "with_coverage": False,
         "boost:without_test": True,
+        "folly:shared": True,
+        "glog:shared": True,
+        "double-conversion:shared": True,
         "fmt:header_only": True,
         "with_faiss_tests": False,
         "openblas:shared": True,
@@ -87,7 +90,7 @@ class KnowhereConan(ConanFile):
 
     def requirements(self):
         self.requires("boost/1.83.0")
-        self.requires("glog/0.4.0")
+        self.requires("glog/0.6.0")
         self.requires("nlohmann_json/3.11.2")
         self.requires("openssl/1.1.1t")
         self.requires("prometheus-cpp/1.1.0")
@@ -95,7 +98,7 @@ class KnowhereConan(ConanFile):
         self.requires("double-conversion/3.2.1")
         self.requires("xz_utils/5.2.5")
         self.requires("fmt/9.1.0")
-        self.requires("folly/2023.10.30.04@milvus/dev")
+        self.requires("folly/2023.10.30.05@milvus/dev")
         self.requires("libcurl/8.2.1")
         self.requires("opentelemetry-cpp/1.8.1.1@milvus/dev")
         if self.settings.os != "Macos":
