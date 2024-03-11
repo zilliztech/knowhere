@@ -23,7 +23,10 @@ set(FAISS_TEST_SRCS
   ../../thirdparty/faiss/tests/test_sliding_ivf.cpp
   ../../thirdparty/faiss/tests/test_transfer_invlists.cpp
   ../../thirdparty/faiss/tests/test_distances_if.cpp
-)
+  ../../thirdparty/faiss/tests/test_fastscan_perf.cpp
+  ../../thirdparty/faiss/tests/test_ivf_index.cpp
+  ../../thirdparty/faiss/tests/test_disable_pq_sdc_tables.cpp
+  )
 
 find_package(GTest REQUIRED)
 
