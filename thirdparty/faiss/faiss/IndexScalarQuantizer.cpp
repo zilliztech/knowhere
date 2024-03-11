@@ -60,10 +60,9 @@ void IndexScalarQuantizer::search(
 
 #pragma omp parallel
     {
-        InvertedListScanner* scanner =
-                sq.select_InvertedListScanner(metric_type, nullptr, true, sel);
+        std::unique_ptr<InvertedListScanner> scanner(
+                sq.select_InvertedListScanner(metric_type, nullptr, true, sel));
 
-        ScopeDeleter1<InvertedListScanner> del(scanner);
         scanner->list_no = 0; // directly the list number
 
 #pragma omp for
@@ -214,15 +213,15 @@ void IndexIVFScalarQuantizer::add_core(
         const float* x,
         const float* x_norms,
         const idx_t* xids,
-        const idx_t* coarse_idx) {
+        const idx_t* coarse_idx,
+        void* inverted_list_context) {
     FAISS_THROW_IF_NOT(is_trained);
 
-    size_t nadd = 0;
     std::unique_ptr<ScalarQuantizer::SQuantizer> squant(sq.select_quantizer());
 
     DirectMapAdd dm_add(direct_map, n, xids);
 
-#pragma omp parallel reduction(+ : nadd)
+#pragma omp parallel
     {
         std::vector<float> residual(d);
         std::vector<uint8_t> one_code(code_size);
@@ -244,10 +243,10 @@ void IndexIVFScalarQuantizer::add_core(
                 memset(one_code.data(), 0, code_size);
                 squant->encode_vector(xi, one_code.data());
 
-                size_t ofs = invlists->add_entry(list_no, id, one_code.data());
+                size_t ofs = invlists->add_entry(
+                        list_no, id, one_code.data(), nullptr, inverted_list_context);
 
                 dm_add.add(i, list_no, ofs);
-                nadd++;
 
             } else if (rank == 0 && list_no == -1) {
                 dm_add.add(i, -1, 0);

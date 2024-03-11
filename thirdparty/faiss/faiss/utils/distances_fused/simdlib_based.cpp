@@ -62,7 +62,7 @@ void kernel(
         const float* const __restrict y,
         const float* const __restrict y_transposed,
         const size_t ny,
-        SingleBestResultHandler<CMax<float, int64_t>>& res,
+        Top1BlockResultHandler<CMax<float, int64_t>>& res,
         const float* __restrict y_norms,
         const size_t i) {
     const size_t ny_p =
@@ -73,7 +73,7 @@ void kernel(
 
     // prefetch the next point
 #if defined(__AVX2__)
-    _mm_prefetch(xd_0 + DIM * sizeof(float), _MM_HINT_NTA);
+    _mm_prefetch((const char*)(xd_0 + DIM * sizeof(float)), _MM_HINT_NTA);
 #endif
 
     // load a single point from x

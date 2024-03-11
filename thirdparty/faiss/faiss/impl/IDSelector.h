@@ -140,7 +140,7 @@ struct IDSelectorAnd : IDSelector {
             : lhs(lhs), rhs(rhs) {}
     bool is_member(idx_t id) const final {
         return lhs->is_member(id) && rhs->is_member(id);
-    };
+    }
     virtual ~IDSelectorAnd() {}
 };
 

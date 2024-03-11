@@ -72,7 +72,8 @@ struct IndexIVFPQ : IndexIVF {
             const float* x,
             const float* x_norms,
             const idx_t* xids,
-            const idx_t* precomputed_idx) override;
+            const idx_t* precomputed_idx,
+            void* inverted_list_context = nullptr) override;
 
     /// same as add_core, also:
     /// - output 2nd level residuals if residuals_2 != NULL
@@ -82,7 +83,8 @@ struct IndexIVFPQ : IndexIVF {
             const float* x,
             const idx_t* xids,
             float* residuals_2,
-            const idx_t* precomputed_idx = nullptr);
+            const idx_t* precomputed_idx = nullptr,
+            void* inverted_list_context = nullptr);
 
     /// trains the product quantizer
     void train_encoder(idx_t n, const float* x, const idx_t* assign) override;

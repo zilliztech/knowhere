@@ -251,7 +251,7 @@ int split_clusters(
     return nsplit;
 }
 
-}; // namespace
+} // namespace
 
 ClusteringType clustering_type = ClusteringType::K_MEANS;
 double early_stop_threshold = 0.0;
@@ -755,7 +755,7 @@ void copy_columns(idx_t n, idx_t d1, const float* src, idx_t d2, float* dest) {
     }
 }
 
-}; // namespace
+} // namespace
 
 void ProgressiveDimClustering::train(
         idx_t n,
