@@ -10,7 +10,6 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License
 
 #pragma once
-
 #include <faiss/impl/io.h>
 
 namespace knowhere {
@@ -136,9 +135,19 @@ struct MemoryIOReader : public faiss::IOReader {
         return rp_;
     }
 
+    size_t
+    size() {
+        return total_;
+    }
+
     void
     reset() {
         rp_ = 0;
+    }
+
+    void
+    seekg(const size_t offset) {
+        rp_ = offset;
     }
 };
 

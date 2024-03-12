@@ -18,6 +18,7 @@
 #include "hnswlib/hnswalg.h"
 #include "hnswlib/hnswlib.h"
 #include "index/hnsw/hnsw_config.h"
+#include "io/trailer.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/comp/time_recorder.h"
@@ -443,6 +444,11 @@ class HnswIndexNode : public IndexNode {
         try {
             MemoryIOWriter writer;
             index_->saveIndex(writer);
+            auto trailer_status = AddTrailerForMemoryIO(writer, Type(), this->version_);
+            if (trailer_status != Status::success) {
+                LOG_KNOWHERE_ERROR_ << "fail to append trailer.";
+                return trailer_status;
+            }
             std::shared_ptr<uint8_t[]> data(writer.data());
             binset.Append(Type(), data, writer.tellg());
         } catch (std::exception& e) {
@@ -465,7 +471,6 @@ class HnswIndexNode : public IndexNode {
             }
 
             MemoryIOReader reader(binary->data.get(), binary->size);
-
             hnswlib::SpaceInterface<float>* space = nullptr;
             index_ = new (std::nothrow) hnswlib::HierarchicalNSW<DistType, quant_type>(space);
             index_->loadIndex(reader);
