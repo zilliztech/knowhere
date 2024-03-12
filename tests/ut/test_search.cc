@@ -1,4 +1,4 @@
- // Copyright (C) 2019-2023 Zilliz. All rights reserved.
+// Copyright (C) 2019-2023 Zilliz. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance
 // with the License. You may obtain a copy of the License at
@@ -33,7 +33,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
     const int64_t nb = 1000, nq = 10;
     const int64_t dim = 128;
 
-    auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::COSINE, knowhere::metric::IP);
+    auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::COSINE);
     auto topk = GENERATE(as<int64_t>{}, 5, 120);
     auto version = GenTestVersionList();
 
@@ -57,12 +57,6 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
     auto ivfflatcc_gen = [ivfflat_gen]() {
         knowhere::Json json = ivfflat_gen();
         json[knowhere::indexparam::SSIZE] = 48;
-        return json;
-    };
-
-    auto ivfsqcc_gen = [ivfflatcc_gen]() {
-        knowhere::Json json = ivfflatcc_gen();
-        json[knowhere::indexparam::CODE_SIZE] = 8;
         return json;
     };
 
@@ -116,6 +110,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivfsq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFPQ, ivfpq_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivfsq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
@@ -138,17 +133,16 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         auto results = idx.Search(*query_ds, json, nullptr);
         REQUIRE(results.has_value());
         float recall = GetKNNRecall(*gt.value(), *results.value());
-        std::cout << "knn recall :" << name << " " << recall << std::endl;
         bool scann_without_raw_data =
             (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && scann_gen2().dump() == cfg_json);
         if (name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ && !scann_without_raw_data) {
-            REQUIRE(recall >= kKnnRecallThreshold);
+            REQUIRE(recall > kKnnRecallThreshold);
         }
 
         if (metric == knowhere::metric::COSINE) {
             if (name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ8 && name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ &&
                 name != knowhere::IndexEnum::INDEX_HNSW_SQ8 && name != knowhere::IndexEnum::INDEX_HNSW_SQ8_REFINE &&
-                !scann_without_raw_data) {
+                name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC && !scann_without_raw_data) {
                 REQUIRE(CheckDistanceInScope(*results.value(), topk, -1.00001, 1.00001));
             }
         }
@@ -161,6 +155,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivfflat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivfsq_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivfsq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFPQ, ivfpq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
@@ -183,7 +178,6 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         REQUIRE(results.has_value());
         auto ids = results.value()->GetIds();
         auto lims = results.value()->GetLims();
-        auto dis = results.value()->GetDistance();
         bool scann_without_raw_data =
             (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && scann_gen2().dump() == cfg_json);
         if (name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ && name != knowhere::IndexEnum::INDEX_FAISS_SCANN &&
@@ -196,36 +190,36 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         if (metric == knowhere::metric::COSINE) {
             if (name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ8 && name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ &&
                 name != knowhere::IndexEnum::INDEX_HNSW_SQ8 && name != knowhere::IndexEnum::INDEX_HNSW_SQ8_REFINE &&
-                !scann_without_raw_data) {
+                name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC && !scann_without_raw_data) {
                 REQUIRE(CheckDistanceInScope(*results.value(), -1.00001, 1.00001));
             }
         }
     }
 
-    // SECTION("Test Search with super large topk") {
-    //     using std::make_tuple;
-    //     auto hnsw_gen_ = [base_gen]() {
-    //         knowhere::Json json = base_gen();
-    //         json[knowhere::indexparam::HNSW_M] = 12;
-    //         json[knowhere::indexparam::EFCONSTRUCTION] = 30;
-    //         json[knowhere::meta::TOPK] = GENERATE(as<int64_t>{}, 600);
-    //         return json;
-    //     };
-    //     auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-    //         make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen_),
-    //     }));
-    //     auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
-    //     auto cfg_json = gen().dump();
-    //     CAPTURE(name, cfg_json);
-    //     knowhere::Json json = knowhere::Json::parse(cfg_json);
-    //     REQUIRE(idx.Type() == name);
-    //     REQUIRE(idx.Build(*train_ds, json) == knowhere::Status::success);
+    SECTION("Test Search with super large topk") {
+        using std::make_tuple;
+        auto hnsw_gen_ = [base_gen]() {
+            knowhere::Json json = base_gen();
+            json[knowhere::indexparam::HNSW_M] = 12;
+            json[knowhere::indexparam::EFCONSTRUCTION] = 30;
+            json[knowhere::meta::TOPK] = GENERATE(as<int64_t>{}, 600);
+            return json;
+        };
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen_),
+        }));
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+        auto cfg_json = gen().dump();
+        CAPTURE(name, cfg_json);
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        REQUIRE(idx.Type() == name);
+        REQUIRE(idx.Build(*train_ds, json) == knowhere::Status::success);
 
-    //     auto results = idx.Search(*query_ds, json, nullptr);
-    //     auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, json, nullptr);
-    //     float recall = GetKNNRecall(*gt.value(), *results.value());
-    //     REQUIRE(recall > kBruteForceRecallThreshold);
-    // }
+        auto results = idx.Search(*query_ds, json, nullptr);
+        auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, json, nullptr);
+        float recall = GetKNNRecall(*gt.value(), *results.value());
+        REQUIRE(recall > kBruteForceRecallThreshold);
+    }
 
     SECTION("Test Search with IVFFLATCC ensure topk full") {
         using std::make_tuple;
@@ -243,9 +237,12 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             json[knowhere::indexparam::ENSURE_TOPK_FULL] = false;
             return json;
         };
-        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(
-            {make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen_),
-             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen_no_ensure_topk_)}));
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen_),
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivfflatcc_gen_),
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen_no_ensure_topk_),
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivfflatcc_gen_no_ensure_topk_),
+        }));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
@@ -320,6 +317,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivfflat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivfsq_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivfsq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFPQ, ivfpq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),

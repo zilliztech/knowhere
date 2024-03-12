@@ -9,6 +9,7 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <filesystem>
 #include <future>
 
 #include "catch2/catch_approx.hpp"
@@ -154,9 +155,9 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
     SECTION("Test Add & Search & RangeSearch Serialized ") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            // make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivf_cc_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivf_cc_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_4_cc_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_8_cc_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_8_cc_gen),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         auto cfg_json = gen().dump();
@@ -188,11 +189,13 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
                 REQUIRE(results.has_value());
                 auto ids = results.value()->GetIds();
                 auto lims = results.value()->GetLims();
-                // for (int j = 0; j < nq; ++j) {
-                //     for (int k = 0; k <= i; k++) {
-                //         CHECK(ids[lims[j] + k] % nb == j);
-                //     }
-                // }
+                if (name == knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC) {
+                    for (int j = 0; j < nq; ++j) {
+                        for (int k = 0; k <= i; k++) {
+                            CHECK(ids[lims[j] + k] % nb == j);
+                        }
+                    }
+                }
             }
         }
     }
@@ -258,14 +261,15 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
     SECTION("Test Add & Search & RangeSearch ConCurrent") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            // make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivf_cc_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivf_cc_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_4_cc_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_8_cc_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_8_cc_gen),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
+        json[knowhere::indexparam::RAW_DATA_STORE_PREFIX] = std::filesystem::current_path().string() + "/";
         auto train_ds = GenDataSet(nb, dim, seed);
         auto res = idx.Build(*train_ds, json);
         REQUIRE(res == knowhere::Status::success);
@@ -303,14 +307,12 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
                     return idx.RangeSearch(*range_query_set, json, nullptr);
                 }));
             }
-            if (name == knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC) {
-                for (int j = 0; j < search_task_num; j++) {
-                    auto& retrieve_ids_set = retrieve_search_list[j];
-                    retrieve_task_list.push_back(std::async(std::launch::async, [&idx, &retrieve_ids_set] {
-                        return idx.GetVectorByIds(*retrieve_ids_set);
-                    }));
-                }
+            for (int j = 0; j < search_task_num; j++) {
+                auto& retrieve_ids_set = retrieve_search_list[j];
+                retrieve_task_list.push_back(std::async(
+                    std::launch::async, [&idx, &retrieve_ids_set] { return idx.GetVectorByIds(*retrieve_ids_set); }));
             }
+
             for (auto& task : add_task_list) {
                 REQUIRE(task.get() == knowhere::Status::success);
             }
@@ -331,12 +333,14 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
                 REQUIRE(results.has_value());
                 auto ids = results.value()->GetIds();
                 auto lims = results.value()->GetLims();
-                // for (int j = 0; j < nq; ++j) {
-                //     // duplicate result
-                //     for (int k = 0; k < i; k++) {
-                //         CHECK(ids[lims[j] + k] % nb == j);
-                //     }
-                // }
+                if (name == knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC) {
+                    for (int j = 0; j < nq; ++j) {
+                        // duplicate result
+                        for (int k = 0; k < i; k++) {
+                            CHECK(ids[lims[j] + k] % nb == j);
+                        }
+                    }
+                }
             }
             for (size_t nt = 0; nt < retrieve_task_list.size(); nt++) {
                 auto& task = retrieve_task_list[nt];

@@ -126,13 +126,22 @@ class IvfBinConfig : public IvfConfig {};
 
 class IvfSqCcConfig : public IvfFlatCcConfig {
  public:
+    // user can use code size to control ivf)sq_cc quntizer type
     CFG_INT code_size;
+    // IVF_SQ_CC holds all vectors in file when raw_data_store_prefix has value;
+    // cc index is a just-in-time index, raw data is avaliable after training if raw_data_store_prefix has value.
+    // ivf sq cc index will not keep raw data after using binaryset to create a new ivf sq cc index.
+    CFG_STRING raw_data_store_prefix;
     KNOHWERE_DECLARE_CONFIG(IvfSqCcConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(code_size)
             .set_default(8)
             .description("code size, range in [4, 6, 8, 16]")
             .for_train();
-    }
+        KNOWHERE_CONFIG_DECLARE_FIELD(raw_data_store_prefix)
+            .description("Raw data will be set in this prefix path")
+            .for_train()
+            .allow_empty_without_default();
+    };
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
         if (param_type == PARAM_TYPE::TRAIN) {

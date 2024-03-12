@@ -100,7 +100,7 @@ class IvfIndexNode : public IndexNode {
             return true;
         }
         if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
-            return false;
+            return index_->with_raw_data();
         }
     }
     expected<DataSetPtr>
@@ -585,7 +585,8 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSet& dataset, const C
             return qzr_type.error();
         }
         index = std::make_unique<faiss::IndexIVFScalarQuantizerCC>(qzr.get(), dim, nlist, ssize, qzr_type.value(),
-                                                                   metric.value(), is_cosine);
+                                                                   metric.value(), is_cosine, false,
+                                                                   ivf_sq_cc_cfg.raw_data_store_prefix);
         // train
         index->train(rows, (const float*)data);
         // replace quantizer with a regular IndexFlat
@@ -685,7 +686,8 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSet& dataset, const Config& 
                             distances[i + offset] = static_cast<float>(i_distances[i + offset]);
                         }
                     }
-                } else if constexpr (std::is_same<IndexType, faiss::IndexIVFFlatCC>::value) {
+                } else if constexpr (std::is_same<IndexType, faiss::IndexIVFFlatCC>::value ||
+                                     std::is_same<IndexType, faiss::IndexIVFScalarQuantizerCC>::value) {
                     auto cur_query = (const float*)data + index * dim;
                     if (is_cosine) {
                         copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
@@ -987,7 +989,8 @@ IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSet& dataset) const 
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
-    } else if constexpr (std::is_same<IndexType, faiss::IndexScaNN>::value) {
+    } else if constexpr (std::is_same<IndexType, faiss::IndexScaNN>::value ||
+                         std::is_same<IndexType, faiss::IndexIVFScalarQuantizerCC>::value) {
         // we should never go here since we should call HasRawData() first
         if (!index_->with_raw_data()) {
             return expected<DataSetPtr>::Err(Status::not_implemented, "GetVectorByIds not implemented");

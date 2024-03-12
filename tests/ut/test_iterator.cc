@@ -26,6 +26,7 @@
 
 namespace {
 constexpr float kKnnRecallThreshold = 0.8f;
+constexpr float kIvfSqCcKnnRecallThreshold = 0.74f; // ivf sq cc not use kmeans centriods to generate res vex;
 
 knowhere::DataSetPtr
 GetIteratorKNNResult(const std::vector<std::shared_ptr<knowhere::IndexNode::iterator>>& iterators, int k,
@@ -140,7 +141,8 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
             {make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivfflat_gen),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
-             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivfflat_gen)}));
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivfflat_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivfflat_gen)}));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
@@ -163,7 +165,11 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         REQUIRE(search_results.has_value());
         bool dist_less_better = knowhere::IsMetricType(metric, knowhere::metric::L2);
         float recall = GetKNNRelativeRecall(*search_results.value(), *iterator_results, dist_less_better);
-        REQUIRE(recall > kKnnRecallThreshold);
+        if (name == knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC) {
+            REQUIRE(recall > kIvfSqCcKnnRecallThreshold);
+        } else {
+            REQUIRE(recall >kKnnRecallThreshold);
+        }
     }
 
     SECTION("Test Search with Bitset using iterator") {
@@ -172,7 +178,8 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
             {make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivfflat_gen),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
-             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivfflat_gen)}));
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivfflat_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivfflat_gen)}));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
@@ -196,7 +203,11 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
                 REQUIRE(search_results.has_value());
                 bool dist_less_better = knowhere::IsMetricType(metric, knowhere::metric::L2);
                 float recall = GetKNNRelativeRecall(*search_results.value(), *iterator_results, dist_less_better);
-                REQUIRE(recall > kKnnRecallThreshold);
+                if (name == knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC) {
+                    REQUIRE(recall >kIvfSqCcKnnRecallThreshold);
+                } else {
+                    REQUIRE(recall >kKnnRecallThreshold);
+                }
             }
         }
     }
@@ -207,7 +218,8 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
             {make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivfflat_gen),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
-             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivfflat_gen)}));
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivfflat_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivfflat_gen)}));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
@@ -233,7 +245,11 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
             REQUIRE(search_results.has_value());
             bool dist_less_better = knowhere::IsMetricType(metric, knowhere::metric::L2);
             float recall = GetKNNRelativeRecall(*search_results.value(), *iterator_results, dist_less_better);
-            REQUIRE(recall > kKnnRecallThreshold);
+            if (name == knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC) {
+                REQUIRE(recall >kIvfSqCcKnnRecallThreshold);
+            } else {
+                REQUIRE(recall >kKnnRecallThreshold);
+            }
         }
     }
 }
@@ -376,7 +392,11 @@ TEST_CASE("Test Iterator Mem Index With Binary Metrics", "[float metrics]") {
         REQUIRE(search_results.has_value());
         bool dist_less_better = knowhere::IsMetricType(metric, knowhere::metric::L2);
         float recall = GetKNNRelativeRecall(*search_results.value(), *iterator_results, dist_less_better);
-        REQUIRE(recall > kKnnRecallThreshold);
+        if (name == knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC) {
+            REQUIRE(recall >kIvfSqCcKnnRecallThreshold);
+        } else {
+            REQUIRE(recall >kKnnRecallThreshold);
+        }
     }
 }
 
