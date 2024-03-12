@@ -16,6 +16,11 @@ if(NOT WITH_DISKANN)
   list(REMOVE_ITEM KNOWHERE_UT_SRCS ${KNOWHERE_DISKANN_TESTS})
 endif()
 
+if (WITH_CARDINAL)
+    knowhere_file_glob(GLOB_RECURSE CARDINAL_UNSUPPORTED_TESTS test_iterator.cc test_feder.cc test_sparse.cc)
+    list(REMOVE_ITEM KNOWHERE_UT_SRCS ${CARDINAL_UNSUPPORTED_TESTS})
+endif()
+
 add_executable(knowhere_tests ${KNOWHERE_UT_SRCS})
 
 find_package(Catch2)

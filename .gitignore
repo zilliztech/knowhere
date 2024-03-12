@@ -60,9 +60,6 @@ venv/
 **/knowhere/swigknowhere.py
 wheelhouse/*
 
-**/thirdparty/cardinal
-
-
 *.bin
 
 CMakeUserPresets.json

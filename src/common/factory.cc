@@ -19,6 +19,9 @@ IndexFactory::Create(const std::string& name, const int32_t& version, const Obje
     static_assert(KnowhereDataTypeCheck<DataType>::value == true);
     auto& func_mapping_ = MapInstance();
     auto key = GetIndexKey<DataType>(name);
+    if (func_mapping_.find(key) == func_mapping_.end()) {
+        LOG_KNOWHERE_ERROR_ << "failed to find index " << key << " in factory";
+    }
     assert(func_mapping_.find(key) != func_mapping_.end());
     LOG_KNOWHERE_INFO_ << "use key " << key << " to create knowhere index " << name << " with version " << version;
     auto fun_map_v = (FunMapValue<Index<IndexNode>>*)(func_mapping_[key].get());

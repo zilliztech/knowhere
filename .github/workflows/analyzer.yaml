@@ -16,7 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
         with:
-          submodules: recursive
+          submodules: 'none'
       - name: Install Dependency
         run: |
           sudo apt update && sudo apt install -y cmake g++ gcc libopenblas-dev libaio-dev libcurl4-openssl-dev libevent-dev clang-tidy python3-pip && \

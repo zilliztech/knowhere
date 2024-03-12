@@ -40,6 +40,7 @@ enum class Status {
     raft_inner_error = 18,
     invalid_binary_set = 19,
     invalid_instruction_set = 20,
+    cardinal_inner_error = 21,
 };
 
 inline std::string
@@ -83,6 +84,8 @@ Status2String(knowhere::Status status) {
             return "invalid binary set";
         case knowhere::Status::invalid_instruction_set:
             return "the current index is not supported on the current CPU model";
+        case knowhere::Status::cardinal_inner_error:
+            return "cardinal inner error";
         default:
             return "unexpected status";
     }
