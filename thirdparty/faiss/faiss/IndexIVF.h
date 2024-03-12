@@ -76,7 +76,11 @@ struct SearchParametersIVF : SearchParameters {
     ///< it is a bit heavy to further retrieve more buckets
     ///< therefore to make sure we get topk results, use nprobe=nlist and use max_codes to narrow down the search range
     bool ensure_topk_full = false;
-    
+
+    ///< during IVF range search, if reach 'max_empty_result_buckets' num of
+    ///< continuous buckets with no valid results, terminate range search
+    size_t max_empty_result_buckets = 0;
+
     SearchParameters* quantizer_params = nullptr;
 
     virtual ~SearchParametersIVF() {}

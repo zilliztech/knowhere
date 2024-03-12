@@ -787,6 +787,7 @@ void IndexIVF::range_search_preassigned(
     FAISS_THROW_IF_NOT(nprobe > 0);
 
     idx_t max_codes = params ? params->max_codes : this->max_codes;
+    size_t max_empty_result_buckets = params ? params->max_empty_result_buckets: 1;
     IDSelector* sel = params ? params->sel : nullptr;
 
     FAISS_THROW_IF_NOT_MSG(
@@ -892,10 +893,21 @@ void IndexIVF::range_search_preassigned(
                 //   Adopt new strategy for faiss IVF range search
 
                 size_t prev_nres = qres.nres;
+                size_t ndup = 0;
 
                 for (size_t ik = 0; ik < nprobe; ik++) {
                     scan_list_func(i, ik, qres);
-                    if (qres.nres == prev_nres) break;
+
+                    // if no valid results in N continuous buckets,
+                    // skip rest buckets
+                    if (qres.nres == prev_nres) {
+                        ndup++;
+                    } else {
+                        ndup = 0;
+                    }
+                    if (ndup == max_empty_result_buckets) {
+                        break;
+                    }
                     prev_nres = qres.nres;
                 }
 

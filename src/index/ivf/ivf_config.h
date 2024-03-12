@@ -22,6 +22,7 @@ class IvfConfig : public BaseConfig {
     CFG_INT nprobe;
     CFG_BOOL use_elkan;
     CFG_BOOL ensure_topk_full;  // only take affect on temp index(IVF_FLAT_CC) now
+    CFG_INT max_empty_result_buckets;
     KNOHWERE_DECLARE_CONFIG(IvfConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(nlist)
             .set_default(128)
@@ -42,6 +43,11 @@ class IvfConfig : public BaseConfig {
             .set_default(true)
             .description("whether to make sure topk results full")
             .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(max_empty_result_buckets)
+            .set_default(1)
+            .description("the maximum of continuous buckets with empty result")
+            .for_range_search()
+            .set_range(1, 65536);
     }
 };
 
