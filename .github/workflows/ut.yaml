@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-20.04
     timeout-minutes: 90
     strategy:
-      fail-fast: false
+      fail-fast: true
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -37,16 +37,45 @@ jobs:
           && sudo apt install -y cmake g++ gcc libopenblas-dev libcurl4-openssl-dev libaio-dev libevent-dev python3 python3-pip lcov \
           && pip3 install conan==1.61.0 \
           && conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local
+      - name: Download Conan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # this run-id is got from a successful "Upload Conan Artifact" workflow run on 2024/03/14,
+          # it will be valid till 2024/06/14
+          run-id: 8275055492
+          name: conan-asan
+          path: downloaded
+        continue-on-error: true
+      - name: Unpack Conan Data
+        run: |
+          if [ -f downloaded/conan.tar.gz ]; then
+            echo "download conan.tar.gz successfully"
+            cd downloaded \
+            && tar xfz conan.tar.gz \
+            && rm -rf conan.tar.gz /home/runner/.conan \
+            && mv ./.conan /home/runner/.conan
+          else
+            echo "download conan.tar.gz fail"
+          fi
       - name: Build
         run: |
           mkdir build && cd build \
           && conan install .. --build=missing -s build_type=Release -o with_ut=True -o with_diskann=True -o with_asan=True -o with_coverage=True \
           && conan build ..
+#      - name: Pack Conan Data
+#        run: |
+#          cd /home/runner && tar cfz conan.tar.gz .conan/
+#      - name: Upload Conan Artifact
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: conan-asan
+#          path: /home/runner/conan.tar.gz
       - name: Run
         run: |
           ./scripts/run_codecov.sh
       - name: Archive result
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: codecov-result
           path: |
@@ -60,14 +89,14 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Download code coverage results
-        uses: actions/download-artifact@v3.0.1
+        uses: actions/download-artifact@v4.1.0
         with:
           name: codecov-result
       - name: Display structure of code coverage results
         run: |
           ls -lah
       - name: Upload coverage to Codecov
-        if: "github.repository == 'milvus-io/knowhere'"
+        if: "github.repository == 'zilliztech/knowhere'"
         uses: codecov/codecov-action@v3.1.1
         id: upload_cov
         with:
@@ -76,13 +105,13 @@ jobs:
           name: ubuntu-20.04-unittests
           fail_ci_if_error: true
       - name: Retry Upload coverage to Codecov
-        if: "${{ failure() }} && github.repository == 'milvus-io/knowhere'"
+        if: "${{ failure() }} && github.repository == 'zilliztech/knowhere'"
         uses: codecov/codecov-action@v3.1.1
         id: retry_upload_cov
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./lcov_output.info
-          name: ubuntu-${{ matrix.ubuntu }}-unittests
+          name: ubuntu-20.04-unittests
           fail_ci_if_error: true
 
   swig-build:
@@ -105,12 +134,41 @@ jobs:
           && pip3 install conan==1.61.0 pytest faiss-cpu numpy wheel \
           && pip3 install bfloat16 \
           && conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local
+      - name: Download Conan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # this run-id is got from a successful "Upload Conan Artifact" workflow run on 2024/03/14,
+          # it will be valid till 2024/06/14
+          run-id: 8275055492
+          name: conan-wheel
+          path: downloaded
+        continue-on-error: true
+      - name: Unpack Conan Data
+        run: |
+          if [ -f downloaded/conan.tar.gz ]; then
+            echo "download conan.tar.gz successfully"
+            cd downloaded \
+            && tar xfz conan.tar.gz \
+            && rm -rf conan.tar.gz /home/runner/.conan \
+            && mv ./.conan /home/runner/.conan
+          else
+            echo "download conan.tar.gz fail"
+          fi
       - name: Build
         run: |
           mkdir build \
           && cd build \
           && conan install .. --build=missing -o with_diskann=True -s compiler.libcxx=libstdc++11 -s build_type=Release \
           && conan build ..
+#      - name: Pack Conan Data
+#        run: |
+#          cd /home/runner && tar cfz conan.tar.gz .conan/
+#      - name: Upload Conan Artifact
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: conan-wheel
+#          path: /home/runner/conan.tar.gz
       - name: Swig Build
         run: |
           cd python && python3 setup.py bdist_wheel
