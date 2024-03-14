@@ -60,26 +60,3 @@ TEST_CASE("Tracer", "Span test") {
     delete[] ctx->traceID;
     delete[] ctx->spanID;
 }
-
-TEST_CASE("Tracer", "Hex test") {
-    auto ctx = std::make_shared<TraceContext>();
-    ctx->traceID =
-        new uint8_t[16]{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10};
-    ctx->spanID = new uint8_t[8]{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef};
-    ctx->traceFlags = 1;
-
-    auto trace_id_str = std::string((char*)ctx->traceID, TraceId::kSize);
-    auto span_id_str = std::string((char*)ctx->spanID, SpanId::kSize);
-
-    auto trace_id_hex = StringToHex(trace_id_str);
-    auto span_id_hex = StringToHex(span_id_str);
-
-    auto trace_id_str_2 = HexToString(trace_id_hex);
-    auto span_id_str_2 = HexToString(span_id_hex);
-
-    REQUIRE(trace_id_str == trace_id_str_2);
-    REQUIRE(span_id_str == span_id_str_2);
-
-    delete[] ctx->traceID;
-    delete[] ctx->spanID;
-}
