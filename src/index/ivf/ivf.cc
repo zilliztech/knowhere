@@ -743,6 +743,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSet& dataset, const Con
 
                     faiss::IVFSearchParameters ivf_search_params;
                     ivf_search_params.nprobe = index_->nlist;
+                    ivf_search_params.max_empty_result_buckets = ivf_cfg.max_empty_result_buckets.value();
                     ivf_search_params.sel = id_selector;
 
                     index_->range_search(1, cur_data, radius, &res, &ivf_search_params);
@@ -756,6 +757,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSet& dataset, const Con
                     faiss::IVFSearchParameters ivf_search_params;
                     ivf_search_params.nprobe = index_->nlist;
                     ivf_search_params.max_codes = 0;
+                    ivf_search_params.max_empty_result_buckets = ivf_cfg.max_empty_result_buckets.value();
                     ivf_search_params.sel = id_selector;
 
                     index_->range_search(1, cur_query, radius, &res, &ivf_search_params);
@@ -768,6 +770,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSet& dataset, const Con
 
                     // todo aguzhva: this is somewhat alogical. Refactor?
                     faiss::IVFSearchParameters base_search_params;
+                    base_search_params.max_empty_result_buckets = ivf_cfg.max_empty_result_buckets.value();
                     base_search_params.sel = id_selector;
 
                     faiss::IndexScaNNSearchParameters scann_search_params;
@@ -784,6 +787,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSet& dataset, const Con
                     faiss::IVFSearchParameters ivf_search_params;
                     ivf_search_params.nprobe = index_->nlist;
                     ivf_search_params.max_codes = 0;
+                    ivf_search_params.max_empty_result_buckets = ivf_cfg.max_empty_result_buckets.value();
                     ivf_search_params.sel = id_selector;
 
                     index_->range_search(1, cur_query, radius, &res, &ivf_search_params);

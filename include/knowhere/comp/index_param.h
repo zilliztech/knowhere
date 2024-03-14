@@ -79,6 +79,7 @@ constexpr const char* TRACE_ID = "trace_id";
 constexpr const char* SPAN_ID = "span_id";
 constexpr const char* TRACE_FLAGS = "trace_flags";
 constexpr const char* MATERIALIZED_VIEW_SEARCH_INFO = "materialized_view_search_info";
+constexpr const char* MAX_EMPTY_RESULT_BUCKETS = "max_empty_result_buckets";
 };  // namespace meta
 
 namespace indexparam {

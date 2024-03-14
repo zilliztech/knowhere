@@ -1150,6 +1150,7 @@ void IndexBinaryIVF::range_search_preassigned(
     bool store_pairs = false;
     size_t nlistv = 0, ndis = 0;
 
+    size_t max_empty_result_buckets = params ? params->max_empty_result_buckets: 1;
     IDSelector* sel = params ? params->sel : nullptr;
 
     std::vector<RangeSearchPartialResult*> all_pres(omp_get_max_threads());
@@ -1201,10 +1202,21 @@ void IndexBinaryIVF::range_search_preassigned(
             //   Adopt new strategy for faiss IVF range search
 
             size_t prev_nres = qres.nres;
+            size_t ndup = 0;
 
             for (size_t ik = 0; ik < nprobe; ik++) {
                 scan_list_func(i, ik, qres);
-                if (qres.nres == prev_nres) break;
+
+                // if no valid results in N continuous buckets,
+                // skip rest buckets
+                if (qres.nres == prev_nres) {
+                    ndup++;
+                } else {
+                    ndup = 0;
+                }
+                if (ndup == max_empty_result_buckets) {
+                    break;
+                }
                 prev_nres = qres.nres;
             }
 
