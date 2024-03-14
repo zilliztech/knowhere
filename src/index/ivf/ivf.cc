@@ -769,14 +769,11 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSet& dataset, const Con
                     }
 
                     // todo aguzhva: this is somewhat alogical. Refactor?
-                    faiss::IVFSearchParameters base_search_params;
-                    base_search_params.max_empty_result_buckets = ivf_cfg.max_empty_result_buckets.value();
-                    base_search_params.sel = id_selector;
+                    faiss::IVFSearchParameters search_params;
+                    search_params.max_empty_result_buckets = ivf_cfg.max_empty_result_buckets.value();
+                    search_params.sel = id_selector;
 
-                    faiss::IndexScaNNSearchParameters scann_search_params;
-                    scann_search_params.base_index_params = &base_search_params;
-
-                    index_->range_search(1, cur_query, radius, &res, &scann_search_params);
+                    index_->range_search(1, cur_query, radius, &res, &search_params);
                 } else {
                     auto cur_query = (const float*)xq + index * dim;
                     if (is_cosine) {

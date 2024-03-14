@@ -202,23 +202,21 @@ void IndexScaNN::range_search(
 
     FAISS_THROW_IF_NOT(is_trained);
 
-    const IndexScaNNSearchParameters* params = nullptr;
+    const IVFSearchParameters* params = nullptr;
     if (params_in) {
-        params = dynamic_cast<const IndexScaNNSearchParameters*>(params_in);
+        params = dynamic_cast<const IVFSearchParameters*>(params_in);
         FAISS_THROW_IF_NOT_MSG(params, "IndexScaNN params have incorrect type");
     }
-
-    SearchParameters* base_index_params = 
-        (params != nullptr) ? params->base_index_params : nullptr;
-
 
     auto base = dynamic_cast<const IndexIVFPQFastScan*>(base_index);
     FAISS_THROW_IF_NOT(base);
 
     IVFSearchParameters ivf_search_params;
     ivf_search_params.nprobe = base->nlist;
+    ivf_search_params.max_empty_result_buckets = params->max_empty_result_buckets;
     // todo aguzhva: this is somewhat hacky
-    ivf_search_params.sel = base_index_params->sel;
+    ivf_search_params.sel = params->sel;
+
     base->range_search(n, x, radius, result, &ivf_search_params);
 
     // nothing to refine, directly return the result
