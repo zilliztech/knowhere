@@ -39,6 +39,9 @@ knowhere_option(WITH_CCACHE "Build with ccache" ON)
 knowhere_option(WITH_PROFILER "Build with profiler" OFF)
 knowhere_option(WITH_FAISS_TESTS "Build with Faiss unit tests" OFF)
 
+# cardinal is an enterprise vector search engine and can only be enabled for cloud environment
+knowhere_option(WITH_CARDINAL "Build with cardinal" OFF)
+
 # this is needed for clang on ubuntu:20.04, otherwise
 #   the linked fails with 'undefined reference' error.
 # fmt v9 was used by the time the error was encountered.
@@ -109,6 +112,11 @@ knowhere_file_glob(GLOB_RECURSE KNOWHERE_SRCS src/common/*.cc src/index/*.cc
                    src/io/*.cc src/common/*.cu src/index/*.cu src/io/*.cu)
 
 set(KNOWHERE_LINKER_LIBS "")
+
+if(WITH_CARDINAL)
+  add_definitions(-DKNOWHERE_WITH_CARDINAL)
+  include(thirdparty/cardinal/know/libcardinal.cmake)
+endif()
 
 if(WITH_DISKANN)
   add_definitions(-DKNOWHERE_WITH_DISKANN)

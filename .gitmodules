@@ -1,0 +1,3 @@
+[submodule "thirdparty/cardinal"]
+	path = thirdparty/cardinal
+	url = https://github.com/zilliztech/cardinal.git

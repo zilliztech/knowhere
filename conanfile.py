@@ -27,6 +27,7 @@ class KnowhereConan(ConanFile):
         "with_raft": [True, False],
         "with_asan": [True, False],
         "with_diskann": [True, False],
+        "with_cardinal": [True, False],
         "with_profiler": [True, False],
         "with_ut": [True, False],
         "with_benchmark": [True, False],
@@ -39,6 +40,7 @@ class KnowhereConan(ConanFile):
         "with_raft": False,
         "with_asan": False,
         "with_diskann": False,
+        "with_cardinal": False,
         "with_profiler": False,
         "with_ut": False,
         "glog:with_gflags": True,
@@ -158,6 +160,7 @@ class KnowhereConan(ConanFile):
                 self)
         tc.variables["WITH_ASAN"] = self.options.with_asan
         tc.variables["WITH_DISKANN"] = self.options.with_diskann
+        tc.variables["WITH_CARDINAL"] = self.options.with_cardinal
         tc.variables["WITH_RAFT"] = self.options.with_raft
         tc.variables["WITH_PROFILER"] = self.options.with_profiler
         tc.variables["WITH_UT"] = self.options.with_ut
