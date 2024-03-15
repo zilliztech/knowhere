@@ -113,9 +113,10 @@ knowhere_file_glob(GLOB_RECURSE KNOWHERE_SRCS src/common/*.cc src/index/*.cc
 
 set(KNOWHERE_LINKER_LIBS "")
 
+
 if(WITH_CARDINAL)
   add_definitions(-DKNOWHERE_WITH_CARDINAL)
-  include(thirdparty/cardinal/know/libcardinal.cmake)
+  include(cmake/libs/libcardinal.cmake)
 endif()
 
 if(WITH_DISKANN)
