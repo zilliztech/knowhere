@@ -1369,6 +1369,7 @@ void IndexIVFFastScan::range_search_implem_12(
 
     const size_t nprobe = params ? params->nprobe : this->nprobe;
     const size_t max_codes = params ? params->max_codes : this->max_codes;
+    const int max_empty_result_buckets = params ? params->max_empty_result_buckets : 1;
     const IDSelector* sel = params ? params->sel : nullptr;
     const SearchParameters* quantizer_params =
             params ? params->quantizer_params : nullptr;
@@ -1445,6 +1446,8 @@ void IndexIVFFastScan::range_search_implem_12(
 
     size_t i0 = 0;
     uint64_t t_copy_pack = 0, t_scan = 0;
+    handler->in_range_num = 0;
+    int ndup = 0;
     while (i0 < qcs.size()) {
         uint64_t tt0 = get_cy();
 
@@ -1498,7 +1501,7 @@ void IndexIVFFastScan::range_search_implem_12(
         handler->ntotal = list_size;
         handler->q_map = q_map.data();
         handler->id_map = ids.get();
-        handler->in_range_num = 0;
+        int prev_in_range_num = handler->in_range_num;
         uint64_t tt1 = get_cy();
 
         pq4_accumulate_loop_qbs(
@@ -1509,7 +1512,12 @@ void IndexIVFFastScan::range_search_implem_12(
                 LUT.get(),
                 *(handler.get()),
                 scaler);
-        if (handler->in_range_num <= 0) {
+        if (handler->in_range_num == prev_in_range_num) {
+            ndup++;
+        } else {
+            ndup = 0;
+        }
+        if (ndup == max_empty_result_buckets) {
             break;
         }
 
