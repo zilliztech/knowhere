@@ -14,6 +14,7 @@
 #include <memory>
 #include <string>
 
+#include "knowhere/config.h"
 #include "opentelemetry/trace/provider.h"
 
 #define TRACE_SERVICE_KNOWHERE "knowhere"
@@ -61,10 +62,7 @@ EmptyTraceID(const TraceContext* ctx);
 bool
 EmptySpanID(const TraceContext* ctx);
 
-std::string
-StringToHex(const std::string& input);
-
-std::string
-HexToString(const std::string& input);
+tracer::TraceContext
+GetTraceCtxFromCfg(const BaseConfig* cfg);
 
 }  // namespace knowhere::tracer

@@ -82,10 +82,7 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
     const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (b_cfg.trace_id.has_value()) {
-        auto trace_id_str = tracer::HexToString(b_cfg.trace_id.value());
-        auto span_id_str = tracer::HexToString(b_cfg.span_id.value());
-        auto ctx = tracer::TraceContext{(uint8_t*)trace_id_str.c_str(), (uint8_t*)span_id_str.c_str(),
-                                        (uint8_t)b_cfg.trace_flags.value()};
+        auto ctx = tracer::GetTraceCtxFromCfg(&b_cfg);
         span = tracer::StartSpan("knowhere search", &ctx);
         span->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
         span->SetAttribute(meta::TOPK, b_cfg.k.value());
@@ -149,10 +146,7 @@ Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView
     const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (b_cfg.trace_id.has_value()) {
-        auto trace_id_str = tracer::HexToString(b_cfg.trace_id.value());
-        auto span_id_str = tracer::HexToString(b_cfg.span_id.value());
-        auto ctx = tracer::TraceContext{(uint8_t*)trace_id_str.c_str(), (uint8_t*)span_id_str.c_str(),
-                                        (uint8_t)b_cfg.trace_flags.value()};
+        auto ctx = tracer::GetTraceCtxFromCfg(&b_cfg);
         span = tracer::StartSpan("knowhere range search", &ctx);
         span->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
         span->SetAttribute(meta::RADIUS, b_cfg.radius.value());

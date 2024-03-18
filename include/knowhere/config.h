@@ -23,6 +23,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
+#include <vector>
 
 #include "knowhere/comp/materialized_view.h"
 #include "knowhere/expected.h"
@@ -55,6 +56,10 @@ typedef nlohmann::json Json;
 
 #ifndef CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE
 #define CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE std::optional<MaterializedViewSearchInfo>
+#endif
+
+#ifndef CFG_BYTES
+#define CFG_BYTES std::optional<std::vector<uint8_t>>
 #endif
 
 template <typename T>
@@ -205,6 +210,29 @@ struct Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE> {
 
     CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE* val;
     std::optional<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE::value_type> default_val;
+    uint32_t type;
+    std::optional<std::string> desc;
+    bool allow_empty_without_default = false;
+};
+
+template <>
+struct Entry<CFG_BYTES> {
+    explicit Entry<CFG_BYTES>(CFG_BYTES* v) {
+        val = v;
+        default_val = std::nullopt;
+        type = 0x0;
+        desc = std::nullopt;
+    }
+
+    Entry<CFG_BYTES>() {
+        val = nullptr;
+        default_val = std::nullopt;
+        type = 0x0;
+        desc = std::nullopt;
+    }
+
+    CFG_BYTES* val;
+    std::optional<CFG_BYTES::value_type> default_val;
     uint32_t type;
     std::optional<std::string> desc;
     bool allow_empty_without_default = false;
@@ -524,6 +552,37 @@ class Config {
                 }
                 *ptr->val = json[it.first];
             }
+
+            if (const Entry<CFG_BYTES>* ptr = std::get_if<Entry<CFG_BYTES>>(&var)) {
+                if (!(type & ptr->type)) {
+                    continue;
+                }
+                if (json.find(it.first) == json.end() && !ptr->default_val.has_value()) {
+                    if (ptr->allow_empty_without_default) {
+                        continue;
+                    }
+                    LOG_KNOWHERE_ERROR_ << "Invalid param [" << it.first << "] in json.";
+                    if (err_msg) {
+                        *err_msg = std::string("invalid param ") + it.first;
+                    }
+                    return Status::invalid_param_in_json;
+                }
+                if (json.find(it.first) == json.end()) {
+                    *ptr->val = ptr->default_val;
+                    continue;
+                }
+                if (!json[it.first].is_array()) {
+                    LOG_KNOWHERE_ERROR_ << "Type conflict in json: param [" << it.first << "] should be an array.";
+                    if (err_msg) {
+                        *err_msg = std::string("param ") + it.first + " should be an array";
+                    }
+                    return Status::type_conflict_in_json;
+                }
+                *ptr->val = CFG_BYTES::value_type();
+                for (auto&& i : json[it.first]) {
+                    ptr->val->value().push_back(i);
+                }
+            }
         }
 
         if (!err_msg) {
@@ -537,7 +596,7 @@ class Config {
     }
 
     using VarEntry = std::variant<Entry<CFG_STRING>, Entry<CFG_FLOAT>, Entry<CFG_INT>, Entry<CFG_LIST>, Entry<CFG_BOOL>,
-                                  Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE>>;
+                                  Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE>, Entry<CFG_BYTES>>;
     std::unordered_map<std::string, VarEntry> __DICT__;
 
  protected:
@@ -570,8 +629,8 @@ class BaseConfig : public Config {
     CFG_BOOL enable_mmap;
     CFG_BOOL for_tuning;
     CFG_BOOL shuffle_build;
-    CFG_STRING trace_id;
-    CFG_STRING span_id;
+    CFG_BYTES trace_id;
+    CFG_BYTES span_id;
     CFG_INT trace_flags;
     CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE materialized_view_search_info;
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {

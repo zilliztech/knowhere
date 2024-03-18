@@ -36,6 +36,7 @@ namespace knowhere {
 /* knowhere wrapper API to call faiss brute force search for all metric types */
 
 class BruteForceConfig : public BaseConfig {};
+
 template <typename DataType>
 expected<DataSetPtr>
 BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
@@ -63,10 +64,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
 #ifdef NOT_COMPILE_FOR_SWIG
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
-        auto trace_id_str = tracer::HexToString(cfg.trace_id.value());
-        auto span_id_str = tracer::HexToString(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{(uint8_t*)trace_id_str.c_str(), (uint8_t*)span_id_str.c_str(),
-                                        (uint8_t)cfg.trace_flags.value()};
+        auto ctx = tracer::GetTraceCtxFromCfg(&cfg);
         span = tracer::StartSpan("knowhere bf search", &ctx);
         span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
         span->SetAttribute(meta::TOPK, cfg.k.value());
@@ -189,10 +187,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
 #ifdef NOT_COMPILE_FOR_SWIG
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
-        auto trace_id_str = tracer::HexToString(cfg.trace_id.value());
-        auto span_id_str = tracer::HexToString(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{(uint8_t*)trace_id_str.c_str(), (uint8_t*)span_id_str.c_str(),
-                                        (uint8_t)cfg.trace_flags.value()};
+        auto ctx = tracer::GetTraceCtxFromCfg(&cfg);
         span = tracer::StartSpan("knowhere bf search with buf", &ctx);
         span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
         span->SetAttribute(meta::TOPK, cfg.k.value());
@@ -317,10 +312,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
 #ifdef NOT_COMPILE_FOR_SWIG
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
-        auto trace_id_str = tracer::HexToString(cfg.trace_id.value());
-        auto span_id_str = tracer::HexToString(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{(uint8_t*)trace_id_str.c_str(), (uint8_t*)span_id_str.c_str(),
-                                        (uint8_t)cfg.trace_flags.value()};
+        auto ctx = tracer::GetTraceCtxFromCfg(&cfg);
         span = tracer::StartSpan("knowhere bf range search", &ctx);
         span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
         span->SetAttribute(meta::RADIUS, cfg.radius.value());
@@ -455,10 +447,7 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
 #ifdef NOT_COMPILE_FOR_SWIG
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
-        auto trace_id_str = tracer::HexToString(cfg.trace_id.value());
-        auto span_id_str = tracer::HexToString(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{(uint8_t*)trace_id_str.c_str(), (uint8_t*)span_id_str.c_str(),
-                                        (uint8_t)cfg.trace_flags.value()};
+        auto ctx = tracer::GetTraceCtxFromCfg(&cfg);
         span = tracer::StartSpan("knowhere bf search sparse with buf", &ctx);
         span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
         span->SetAttribute(meta::TOPK, cfg.k.value());
@@ -628,10 +617,7 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
 #ifdef NOT_COMPILE_FOR_SWIG
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
-        auto trace_id_str = tracer::HexToString(cfg.trace_id.value());
-        auto span_id_str = tracer::HexToString(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{(uint8_t*)trace_id_str.c_str(), (uint8_t*)span_id_str.c_str(),
-                                        (uint8_t)cfg.trace_flags.value()};
+        auto ctx = tracer::GetTraceCtxFromCfg(&cfg);
         span = tracer::StartSpan("knowhere bf ann iterator initialization", &ctx);
         span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
         span->SetAttribute(meta::ROWS, nb);
