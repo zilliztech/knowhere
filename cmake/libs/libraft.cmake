@@ -16,7 +16,7 @@
 add_definitions(-DKNOWHERE_WITH_RAFT)
 add_definitions(-DRAFT_EXPLICIT_INSTANTIATE_ONLY)
 set(RAFT_VERSION "${RAPIDS_VERSION}")
-set(RAFT_FORK "wphicks")
+set(RAFT_FORK "cjnolet")
 set(RAFT_PINNED_TAG "knowhere-2.4")
 
 
