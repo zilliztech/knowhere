@@ -139,11 +139,6 @@ class SparseInvertedIndexNode : public IndexNode {
         return true;
     }
 
-    [[nodiscard]] expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override {
-        throw std::runtime_error("GetIndexMeta not supported for current index type");
-    }
-
     Status
     Serialize(BinarySet& binset) const override {
         if (!index_) {

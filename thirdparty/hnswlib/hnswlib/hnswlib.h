@@ -124,7 +124,6 @@ AVX512Capable() {
 #endif
 
 #include <knowhere/bitsetview.h>
-#include <knowhere/feder/HNSW.h>
 #include <string.h>
 
 #include <fstream>
@@ -221,21 +220,19 @@ class AlgorithmInterface {
     searchKnnBF(const void*, size_t, const knowhere::BitsetView) const = 0;
 
     virtual std::vector<std::pair<dist_t, labeltype>>
-    searchKnn(const void*, size_t, const knowhere::BitsetView, const SearchParam*,
-              const knowhere::feder::hnsw::FederResultUniq&) const = 0;
+    searchKnn(const void*, size_t, const knowhere::BitsetView, const SearchParam*) const = 0;
 
     virtual std::unique_ptr<IteratorWorkspace>
     getIteratorWorkspace(const void*, const size_t, const bool, const knowhere::BitsetView&) const = 0;
 
     virtual std::optional<std::pair<dist_t, labeltype>>
-    getIteratorNext(IteratorWorkspace*, const knowhere::feder::hnsw::FederResultUniq&) const = 0;
+    getIteratorNext(IteratorWorkspace*) const = 0;
 
     virtual std::vector<std::pair<dist_t, labeltype>>
     searchRangeBF(const void*, float, const knowhere::BitsetView) const = 0;
 
     virtual std::vector<std::pair<dist_t, labeltype>>
-    searchRange(const void*, float, const knowhere::BitsetView, const SearchParam*,
-                const knowhere::feder::hnsw::FederResultUniq&) const = 0;
+    searchRange(const void*, float, const knowhere::BitsetView, const SearchParam*) const = 0;
 
     // Return k nearest neighbor in the order of closer fist
     virtual std::vector<std::pair<dist_t, labeltype>>
@@ -249,19 +246,18 @@ class AlgorithmInterface {
 
 template <typename dist_t>
 std::vector<std::pair<dist_t, labeltype>>
-AlgorithmInterface<dist_t>::searchKnnCloserFirst(void* query_data, size_t k,
-                                                 const knowhere::BitsetView bitset) const {
+AlgorithmInterface<dist_t>::searchKnnCloserFirst(void* query_data, size_t k, const knowhere::BitsetView bitset) const {
     std::vector<std::pair<dist_t, labeltype>> result;
 
     // here searchKnn returns the result in the order of further first
-    return searchKnn(query_data, k, bitset, nullptr, nullptr);
+    return searchKnn(query_data, k, bitset, nullptr);
 }
 }  // namespace hnswlib
 
 #include "hnswalg.h"
-#include "space_ip.h"
-#include "space_l2.h"
 #include "space_cosine.h"
 #include "space_hamming.h"
+#include "space_ip.h"
 #include "space_jaccard.h"
+#include "space_l2.h"
 #pragma GCC diagnostic pop

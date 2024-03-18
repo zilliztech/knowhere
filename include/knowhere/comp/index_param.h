@@ -72,7 +72,6 @@ constexpr const char* INPUT_IDS = "input_ids";
 constexpr const char* OUTPUT_TENSOR = "output_tensor";
 constexpr const char* DEVICE_ID = "gpu_id";
 constexpr const char* NUM_BUILD_THREAD = "num_build_thread";
-constexpr const char* TRACE_VISIT = "trace_visit";
 constexpr const char* JSON_INFO = "json_info";
 constexpr const char* JSON_ID_SET = "json_id_set";
 constexpr const char* TRACE_ID = "trace_id";
@@ -129,7 +128,6 @@ constexpr const char* EFCONSTRUCTION = "efConstruction";
 constexpr const char* HNSW_M = "M";
 constexpr const char* EF = "ef";
 constexpr const char* SEED_EF = "seed_ef";
-constexpr const char* OVERVIEW_LEVELS = "overview_levels";
 
 // Sparse Params
 constexpr const char* DROP_RATIO_BUILD = "drop_ratio_build";

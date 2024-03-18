@@ -28,7 +28,6 @@
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/factory.h"
-#include "knowhere/feder/IVFFlat.h"
 #include "knowhere/index_node_data_mock_wrapper.h"
 #include "knowhere/log.h"
 #include "knowhere/utils.h"
@@ -98,10 +97,6 @@ class IvfIndexNode : public IndexNode {
         if constexpr (std::is_same<faiss::IndexBinaryIVF, IndexType>::value) {
             return true;
         }
-    }
-    expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override {
-        return this->GetIndexMetaImpl(cfg, typename IndexDispatch<IndexType>::Tag{});
     }
     Status
     Serialize(BinarySet& binset) const override {
@@ -214,13 +209,6 @@ class IvfIndexNode : public IndexNode {
     };
 
  private:
-    expected<DataSetPtr>
-    GetIndexMetaImpl(const Config& cfg, IVFBaseTag) const {
-        return expected<DataSetPtr>::Err(Status::not_implemented, "GetIndexMeta not implemented");
-    }
-    expected<DataSetPtr>
-    GetIndexMetaImpl(const Config& cfg, IVFFlatTag) const;
-
     Status
     SerializeImpl(BinarySet& binset, IVFBaseTag) const;
 
@@ -950,45 +938,6 @@ IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSet& dataset) const 
     } else {
         return expected<DataSetPtr>::Err(Status::not_implemented, "GetVectorByIds not implemented");
     }
-}
-
-template <typename DataType, typename IndexType>
-expected<DataSetPtr>
-IvfIndexNode<DataType, IndexType>::GetIndexMetaImpl(const Config& config, IVFFlatTag) const {
-    if (!index_) {
-        LOG_KNOWHERE_WARNING_ << "get index meta on empty index";
-        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
-    }
-
-    auto ivf_index = dynamic_cast<faiss::IndexIVF*>(index_.get());
-    auto ivf_quantizer = dynamic_cast<faiss::IndexFlat*>(ivf_index->quantizer);
-
-    int64_t dim = ivf_index->d;
-    int64_t nlist = ivf_index->nlist;
-    int64_t ntotal = ivf_index->ntotal;
-
-    feder::ivfflat::IVFFlatMeta meta(nlist, dim, ntotal);
-    std::unordered_set<int64_t> id_set;
-
-    for (int32_t i = 0; i < nlist; i++) {
-        // copy from IndexIVF::search_preassigned
-        std::unique_ptr<faiss::InvertedLists::ScopedIds> sids =
-            std::make_unique<faiss::InvertedLists::ScopedIds>(index_->invlists, i);
-
-        // node ids
-        auto node_num = index_->invlists->list_size(i);
-        auto node_id_codes = sids->get();
-
-        // centroid vector
-        auto centroid_vec = ivf_quantizer->get_xb() + i * dim;
-
-        meta.AddCluster(i, node_id_codes, node_num, centroid_vec, dim);
-    }
-
-    Json json_meta, json_id_set;
-    nlohmann::to_json(json_meta, meta);
-    nlohmann::to_json(json_id_set, id_set);
-    return GenResultDataSet(json_meta.dump(), json_id_set.dump());
 }
 
 template <typename DataType, typename IndexType>

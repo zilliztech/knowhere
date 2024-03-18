@@ -151,9 +151,6 @@ class Index {
     bool
     IsAdditionalScalarSupported() const;
 
-    expected<DataSetPtr>
-    GetIndexMeta(const Json& json) const;
-
     Status
     Serialize(BinarySet& binset) const;
 

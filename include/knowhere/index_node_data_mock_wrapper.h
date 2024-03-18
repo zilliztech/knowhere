@@ -51,11 +51,6 @@ class IndexNodeDataMockWrapper : public IndexNode {
         return index_node_->HasRawData(metric_type);
     }
 
-    expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override {
-        return index_node_->GetIndexMeta(cfg);
-    }
-
     Status
     Serialize(BinarySet& binset) const override {
         return index_node_->Serialize(binset);

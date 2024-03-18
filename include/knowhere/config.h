@@ -69,7 +69,6 @@ enum PARAM_TYPE {
     TRAIN = 1 << 0,
     SEARCH = 1 << 1,
     RANGE_SEARCH = 1 << 2,
-    FEDER = 1 << 3,
     DESERIALIZE = 1 << 4,
     DESERIALIZE_FROM_FILE = 1 << 5,
     ITERATOR = 1 << 6,
@@ -289,12 +288,6 @@ class EntryAccess {
     EntryAccess&
     for_iterator() {
         entry->type |= PARAM_TYPE::ITERATOR;
-        return *this;
-    }
-
-    EntryAccess&
-    for_feder() {
-        entry->type |= PARAM_TYPE::FEDER;
         return *this;
     }
 
@@ -625,7 +618,6 @@ class BaseConfig : public Config {
     CFG_STRING index_prefix;
     CFG_FLOAT radius;
     CFG_FLOAT range_filter;
-    CFG_BOOL trace_visit;
     CFG_BOOL enable_mmap;
     CFG_BOOL for_tuning;
     CFG_BOOL shuffle_build;
@@ -670,11 +662,6 @@ class BaseConfig : public Config {
         KNOWHERE_CONFIG_DECLARE_FIELD(range_filter)
             .set_default(defaultRangeFilter)
             .description("result filter for range search")
-            .for_range_search();
-        KNOWHERE_CONFIG_DECLARE_FIELD(trace_visit)
-            .set_default(false)
-            .description("trace visit for feder")
-            .for_search()
             .for_range_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(enable_mmap)
             .set_default(false)

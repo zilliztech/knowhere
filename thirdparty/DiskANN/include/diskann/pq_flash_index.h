@@ -15,7 +15,6 @@
 #include "tsl/robin_set.h"
 
 #include "knowhere/bitsetview.h"
-#include "knowhere/feder/DiskANN.h"
 
 #include "aligned_file_reader.h"
 #include "concurrent_queue.h"
@@ -98,13 +97,14 @@ namespace diskann {
     void cache_bfs_levels(_u64                   num_nodes_to_cache,
                           std::vector<uint32_t> &node_list);
 
-    void cached_beam_search(
-        const T *query, const _u64 k_search, const _u64 l_search, _s64 *res_ids,
-        float *res_dists, const _u64 beam_width,
-        const bool use_reorder_data = false, QueryStats *stats = nullptr,
-        const knowhere::feder::diskann::FederResultUniq &feder = nullptr,
-        knowhere::BitsetView                             bitset_view = nullptr,
-        const float filter_ratio = -1.0f, const bool for_tuning = false);
+    void cached_beam_search(const T *query, const _u64 k_search,
+                            const _u64 l_search, _s64 *res_ids,
+                            float *res_dists, const _u64 beam_width,
+                            const bool           use_reorder_data = false,
+                            QueryStats          *stats = nullptr,
+                            knowhere::BitsetView bitset_view = nullptr,
+                            const float          filter_ratio = -1.0f,
+                            const bool           for_tuning = false);
 
     _u32 range_search(const T *query1, const double range,
                       const _u64 min_l_search, const _u64 max_l_search,
@@ -165,12 +165,11 @@ namespace diskann {
     // sending whole bunch of requests at once to avoid all threads sending I/O
     // requests and the time overlaps.
     // The beam width is adjusted in the function.
-    void brute_force_beam_search(
-        ThreadData<T> &data, const float query_norm, const _u64 k_search,
-        _s64 *indices, float *distances, const _u64 beam_width_param,
-        IOContext &ctx, QueryStats *stats,
-        const knowhere::feder::diskann::FederResultUniq &feder,
-        knowhere::BitsetView                             bitset_view);
+    void brute_force_beam_search(ThreadData<T> &data, const float query_norm,
+                                 const _u64 k_search, _s64 *indices,
+                                 float *distances, const _u64 beam_width_param,
+                                 IOContext &ctx, QueryStats *stats,
+                                 knowhere::BitsetView bitset_view);
 
     // Assign the index of ids to its corresponding sector and if it is in
     // cache, write to the output_data
@@ -226,8 +225,8 @@ namespace diskann {
     // chunk_size = chunk size of each dimension chunk
     // pq_tables = float* [[2^8 * [chunk_size]] * n_chunks]
     std::unique_ptr<_u8[]> data = nullptr;
-    _u64              n_chunks;
-    FixedChunkPQTable pq_table;
+    _u64                   n_chunks;
+    FixedChunkPQTable      pq_table;
 
     // distance comparator
     DISTFUN<T>     dist_cmp;

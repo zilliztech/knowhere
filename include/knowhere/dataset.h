@@ -37,28 +37,28 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
             {
                 auto ptr = std::get_if<0>(&x.second);
                 if (ptr != nullptr) {
-                    delete[] * ptr;
+                    delete[] *ptr;
                 }
             }
             {
                 auto ptr = std::get_if<1>(&x.second);
                 if (ptr != nullptr) {
-                    delete[] * ptr;
+                    delete[] *ptr;
                 }
             }
             {
                 auto ptr = std::get_if<2>(&x.second);
                 if (ptr != nullptr) {
-                    delete[] * ptr;
+                    delete[] *ptr;
                 }
             }
             {
                 auto ptr = std::get_if<3>(&x.second);
                 if (ptr != nullptr) {
                     if (is_sparse) {
-                        delete[](sparse::SparseRow<float>*)(*ptr);
+                        delete[] (sparse::SparseRow<float>*)(*ptr);
                     } else {
-                        delete[](char*)(*ptr);
+                        delete[] (char*)(*ptr);
                     }
                 }
             }
@@ -104,18 +104,6 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
     SetDim(const int64_t dim) {
         std::unique_lock lock(mutex_);
         this->data_[meta::DIM] = Var(std::in_place_index<4>, dim);
-    }
-
-    void
-    SetJsonInfo(const std::string& info) {
-        std::unique_lock lock(mutex_);
-        this->data_[meta::JSON_INFO] = Var(std::in_place_index<5>, info);
-    }
-
-    void
-    SetJsonIdSet(const std::string& idset) {
-        std::unique_lock lock(mutex_);
-        this->data_[meta::JSON_ID_SET] = Var(std::in_place_index<5>, idset);
     }
 
     const float*
@@ -182,28 +170,6 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
             return res;
         }
         return 0;
-    }
-
-    std::string
-    GetJsonInfo() const {
-        std::shared_lock lock(mutex_);
-        auto it = this->data_.find(meta::JSON_INFO);
-        if (it != this->data_.end()) {
-            std::string res = *std::get_if<5>(&it->second);
-            return res;
-        }
-        return "";
-    }
-
-    std::string
-    GetJsonIdSet() const {
-        std::shared_lock lock(mutex_);
-        auto it = this->data_.find(meta::JSON_ID_SET);
-        if (it != this->data_.end()) {
-            std::string res = *std::get_if<5>(&it->second);
-            return res;
-        }
-        return "";
     }
 
     void
@@ -293,15 +259,6 @@ GenResultDataSet(const int64_t nq, const int64_t* ids, const float* distance, co
     ret_ds->SetIds(ids);
     ret_ds->SetDistance(distance);
     ret_ds->SetLims(lims);
-    ret_ds->SetIsOwner(true);
-    return ret_ds;
-}
-
-inline DataSetPtr
-GenResultDataSet(const std::string& json_info, const std::string& json_id_set) {
-    auto ret_ds = std::make_shared<DataSet>();
-    ret_ds->SetJsonInfo(json_info);
-    ret_ds->SetJsonIdSet(json_id_set);
     ret_ds->SetIsOwner(true);
     return ret_ds;
 }

@@ -168,11 +168,6 @@ class GpuIvfIndexNode : public IndexNode {
         return Status::not_implemented;
     }
 
-    expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override {
-        return Status::not_implemented;
-    }
-
     Status
     Serialize(BinarySet& binset) const override {
         if (!index_) {

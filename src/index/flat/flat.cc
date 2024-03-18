@@ -269,11 +269,6 @@ class FlatIndexNode : public IndexNode {
         }
     }
 
-    expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override {
-        return expected<DataSetPtr>::Err(Status::not_implemented, "GetIndexMeta not implemented");
-    }
-
     Status
     Serialize(BinarySet& binset) const override {
         if (!index_) {

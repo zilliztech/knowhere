@@ -81,9 +81,6 @@ class IndexNode : public Object {
         return false;
     }
 
-    virtual expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const = 0;
-
     virtual Status
     Serialize(BinarySet& binset) const = 0;
 

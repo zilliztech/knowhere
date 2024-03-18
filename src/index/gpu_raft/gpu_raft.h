@@ -206,11 +206,6 @@ struct GpuRaftIndexNode : public IndexNode {
         return std::make_unique<knowhere_config_type>();
     }
 
-    expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override {
-        return expected<DataSetPtr>::Err(Status::not_implemented, "GetIndexMeta not implemented");
-    }
-
     int64_t
     Dim() const override {
         return index_.dim();

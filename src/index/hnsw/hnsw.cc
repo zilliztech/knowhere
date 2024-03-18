@@ -9,8 +9,6 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
-#include "knowhere/feder/HNSW.h"
-
 #include <new>
 #include <numeric>
 
@@ -172,14 +170,6 @@ class HnswIndexNode : public IndexNode {
         auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
         auto k = hnsw_cfg.k.value();
 
-        feder::hnsw::FederResultUniq feder_result;
-        if (hnsw_cfg.trace_visit.value()) {
-            if (nq != 1) {
-                return expected<DataSetPtr>::Err(Status::invalid_args, "nq must be 1");
-            }
-            feder_result = std::make_unique<feder::hnsw::FederResult>();
-        }
-
         auto p_id = std::make_unique<int64_t[]>(k * nq);
         auto p_dist = std::make_unique<DistType[]>(k * nq);
 
@@ -192,7 +182,7 @@ class HnswIndexNode : public IndexNode {
         for (int i = 0; i < nq; ++i) {
             futs.emplace_back(search_pool_->push([&, idx = i, p_id_ptr = p_id.get(), p_dist_ptr = p_dist.get()]() {
                 auto single_query = (const char*)xq + idx * index_->data_size_;
-                auto rst = index_->searchKnn(single_query, k, bitset, &param, feder_result);
+                auto rst = index_->searchKnn(single_query, k, bitset, &param);
                 size_t rst_size = rst.size();
                 auto p_single_dis = p_dist_ptr + idx * k;
                 auto p_single_id = p_id_ptr + idx * k;
@@ -210,15 +200,6 @@ class HnswIndexNode : public IndexNode {
         WaitAllSuccess(futs);
 
         auto res = GenResultDataSet(nq, k, p_id.release(), p_dist.release());
-
-        // set visit_info json string into result dataset
-        if (feder_result != nullptr) {
-            Json json_visit_info, json_id_set;
-            nlohmann::to_json(json_visit_info, feder_result->visit_info_);
-            nlohmann::to_json(json_id_set, feder_result->id_set_);
-            res->SetJsonInfo(json_visit_info.dump());
-            res->SetJsonIdSet(json_id_set.dump());
-        }
         return res;
     }
 
@@ -315,14 +296,6 @@ class HnswIndexNode : public IndexNode {
         DistType radius_for_calc = (is_ip ? -hnsw_cfg.radius.value() : hnsw_cfg.radius.value());
         DistType radius_for_filter = hnsw_cfg.radius.value();
 
-        feder::hnsw::FederResultUniq feder_result;
-        if (hnsw_cfg.trace_visit.value()) {
-            if (nq != 1) {
-                return expected<DataSetPtr>::Err(Status::invalid_args, "nq must be 1");
-            }
-            feder_result = std::make_unique<feder::hnsw::FederResult>();
-        }
-
         hnswlib::SearchParam param{(size_t)hnsw_cfg.ef.value()};
 
         std::vector<std::vector<int64_t>> result_id_array(nq);
@@ -335,7 +308,7 @@ class HnswIndexNode : public IndexNode {
         for (int64_t i = 0; i < nq; ++i) {
             futs.emplace_back(search_pool_->push([&, idx = i]() {
                 auto single_query = (const char*)xq + idx * index_->data_size_;
-                auto rst = index_->searchRange(single_query, radius_for_calc, bitset, &param, feder_result);
+                auto rst = index_->searchRange(single_query, radius_for_calc, bitset, &param);
                 auto elem_cnt = rst.size();
                 result_dist_array[idx].resize(elem_cnt);
                 result_id_array[idx].resize(elem_cnt);
@@ -362,15 +335,6 @@ class HnswIndexNode : public IndexNode {
                              lims);
 
         auto res = GenResultDataSet(nq, ids, dis, lims);
-
-        // set visit_info json string into result dataset
-        if (feder_result != nullptr) {
-            Json json_visit_info, json_id_set;
-            nlohmann::to_json(json_visit_info, feder_result->visit_info_);
-            nlohmann::to_json(json_id_set, feder_result->id_set_);
-            res->SetJsonInfo(json_visit_info.dump());
-            res->SetJsonIdSet(json_id_set.dump());
-        }
         return res;
     }
 
@@ -403,35 +367,6 @@ class HnswIndexNode : public IndexNode {
     bool
     HasRawData(const std::string& metric_type) const override {
         return quant_type == QuantType::None || quant_type == QuantType::SQ8Refine;
-    }
-
-    expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override {
-        if (!index_) {
-            LOG_KNOWHERE_WARNING_ << "get index meta on empty index";
-            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
-        }
-
-        auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
-        auto overview_levels = hnsw_cfg.overview_levels.value();
-        feder::hnsw::HNSWMeta meta(index_->ef_construction_, index_->M_, index_->cur_element_count, index_->maxlevel_,
-                                   index_->enterpoint_node_, overview_levels);
-        std::unordered_set<int64_t> id_set;
-
-        for (int i = 0; i < overview_levels; i++) {
-            int64_t level = index_->maxlevel_ - i;
-            // do not record level 0
-            if (level <= 0) {
-                break;
-            }
-            meta.AddLevelLinkGraph(level);
-            UpdateLevelLinkList(level, meta, id_set);
-        }
-
-        Json json_meta, json_id_set;
-        nlohmann::to_json(json_meta, meta);
-        nlohmann::to_json(json_id_set, id_set);
-        return GenResultDataSet(json_meta.dump(), json_id_set.dump());
     }
 
     Status
@@ -540,43 +475,6 @@ class HnswIndexNode : public IndexNode {
     ~HnswIndexNode() override {
         if (index_) {
             delete index_;
-        }
-    }
-
- private:
-    void
-    UpdateLevelLinkList(int32_t level, feder::hnsw::HNSWMeta& meta, std::unordered_set<int64_t>& id_set) const {
-        if (!(level > 0 && level <= index_->maxlevel_)) {
-            return;
-        }
-        if (index_->cur_element_count == 0) {
-            return;
-        }
-
-        std::vector<hnswlib::tableint> level_elements;
-
-        // get all elements in current level
-        for (size_t i = 0; i < index_->cur_element_count; i++) {
-            // elements in high level also exist in low level
-            if (index_->element_levels_[i] >= level) {
-                level_elements.emplace_back(i);
-            }
-        }
-
-        // iterate all elements in current level, record their link lists
-        for (auto curr_id : level_elements) {
-            auto data = index_->get_linklist(curr_id, level);
-            auto size = index_->getListCount(data);
-
-            hnswlib::tableint* datal = (hnswlib::tableint*)(data + 1);
-            std::vector<int64_t> neighbors(size);
-            for (int i = 0; i < size; i++) {
-                hnswlib::tableint cand = datal[i];
-                neighbors[i] = cand;
-            }
-            id_set.insert(curr_id);
-            id_set.insert(neighbors.begin(), neighbors.end());
-            meta.AddNodeInfo(level, curr_id, std::move(neighbors));
         }
     }
 

@@ -192,18 +192,6 @@ Index<T>::IsAdditionalScalarSupported() const {
 }
 
 template <typename T>
-inline expected<DataSetPtr>
-Index<T>::GetIndexMeta(const Json& json) const {
-    auto cfg = this->node->CreateConfig();
-    std::string msg;
-    auto status = LoadConfig(cfg.get(), json, knowhere::FEDER, "GetIndexMeta", &msg);
-    if (status != Status::success) {
-        return expected<DataSetPtr>::Err(status, msg);
-    }
-    return this->node->GetIndexMeta(*cfg);
-}
-
-template <typename T>
 inline Status
 Index<T>::Serialize(BinarySet& binset) const {
     return this->node->Serialize(binset);

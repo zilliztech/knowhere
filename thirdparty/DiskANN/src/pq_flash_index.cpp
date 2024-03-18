@@ -48,7 +48,8 @@
   ((((_u64) (id)) % nvecs_per_sector) * data_dim * sizeof(float))
 
 namespace {
-  static auto async_pool = knowhere::ThreadPool::CreateFIFO(1, "DiskANN_Async_Cache_Making");
+  static auto async_pool =
+      knowhere::ThreadPool::CreateFIFO(1, "DiskANN_Async_Cache_Making");
 
   constexpr _u64  kRefineBeamWidthFactor = 2;
   constexpr _u64  kBruteForceTopkRefineExpansionFactor = 2;
@@ -187,14 +188,15 @@ namespace diskann {
     if (nhood_cache_buf == nullptr) {
       nhood_cache_buf =
           std::make_unique<unsigned[]>(num_cached_nodes * (max_degree + 1));
-      memset(nhood_cache_buf.get(), 0, num_cached_nodes * (max_degree + 1) * sizeof(unsigned));
+      memset(nhood_cache_buf.get(), 0,
+             num_cached_nodes * (max_degree + 1) * sizeof(unsigned));
     }
 
     _u64 coord_cache_buf_len = num_cached_nodes * aligned_dim;
     if (coord_cache_buf == nullptr) {
-        diskann::alloc_aligned((void **) &coord_cache_buf,
+      diskann::alloc_aligned((void **) &coord_cache_buf,
                              coord_cache_buf_len * sizeof(T), 8 * sizeof(T));
-        memset(coord_cache_buf, 0, coord_cache_buf_len * sizeof(T));
+      memset(coord_cache_buf, 0, coord_cache_buf_len * sizeof(T));
     }
 
     size_t BLOCK_SIZE = 32;
@@ -266,14 +268,15 @@ namespace diskann {
     if (nhood_cache_buf == nullptr) {
       nhood_cache_buf =
           std::make_unique<unsigned[]>(num_nodes_to_cache * (max_degree + 1));
-      memset(nhood_cache_buf.get(), 0, num_nodes_to_cache * (max_degree + 1) * sizeof(unsigned));
+      memset(nhood_cache_buf.get(), 0,
+             num_nodes_to_cache * (max_degree + 1) * sizeof(unsigned));
     }
 
     _u64 coord_cache_buf_len = num_nodes_to_cache * aligned_dim;
     if (coord_cache_buf == nullptr) {
-        diskann::alloc_aligned((void **) &coord_cache_buf,
+      diskann::alloc_aligned((void **) &coord_cache_buf,
                              coord_cache_buf_len * sizeof(T), 8 * sizeof(T));
-        memset(coord_cache_buf, 0, coord_cache_buf_len * sizeof(T));
+      memset(coord_cache_buf, 0, coord_cache_buf_len * sizeof(T));
     }
 
     async_pool.push([&, state_controller = this->state_controller, sample_bin,
@@ -732,7 +735,7 @@ namespace diskann {
       }
     } else {
       num_medoids = 1;
-      medoids =  std::make_unique<uint32_t[]>(1);
+      medoids = std::make_unique<uint32_t[]>(1);
       medoids[0] = (_u32) (medoid_id_on_file);
       use_medoids_data_as_centroids();
     }
@@ -741,7 +744,7 @@ namespace diskann {
         get_disk_index_max_base_norm_file(std::string(disk_index_file));
 
     if (file_exists(norm_file) && metric == diskann::Metric::INNER_PRODUCT) {
-      _u64   dumr, dumc;
+      _u64                     dumr, dumc;
       std::unique_ptr<float[]> norm_val = nullptr;
       diskann::load_bin<float>(norm_file, norm_val, dumr, dumc);
       this->max_base_norm = norm_val[0];
@@ -802,9 +805,7 @@ namespace diskann {
   void PQFlashIndex<T>::brute_force_beam_search(
       ThreadData<T> &data, const float query_norm, const _u64 k_search,
       _s64 *indices, float *distances, const _u64 beam_width_param,
-      IOContext &ctx, QueryStats *stats,
-      const knowhere::feder::diskann::FederResultUniq &feder,
-      knowhere::BitsetView                             bitset_view) {
+      IOContext &ctx, QueryStats *stats, knowhere::BitsetView bitset_view) {
     auto         query_scratch = &(data.scratch);
     const T     *query = data.scratch.aligned_query_T;
     auto         beam_width = beam_width_param * kRefineBeamWidthFactor;
@@ -835,8 +836,8 @@ namespace diskann {
 
       if (pq_batch_ids.size() == pq_batch_size || id == num_points - 1) {
         const size_t sz = pq_batch_ids.size();
-        aggregate_coords(pq_batch_ids.data(), sz, this->data.get(), this->n_chunks,
-                         pq_coord_scratch);
+        aggregate_coords(pq_batch_ids.data(), sz, this->data.get(),
+                         this->n_chunks, pq_coord_scratch);
         pq_dist_lookup(pq_coord_scratch, sz, this->n_chunks, pq_dists,
                        dist_scratch);
         for (size_t i = 0; i < sz; ++i) {
@@ -898,10 +899,6 @@ namespace diskann {
             float dist = dist_cmp_wrap(query, node_fp_coords_copy,
                                        (size_t) aligned_dim, cur_id);
             max_heap.Push(dist, cur_id);
-            if (feder != nullptr) {
-              feder->visit_info_.AddTopCandidateInfo(cur_id, dist);
-              feder->id_set_.insert(cur_id);
-            }
           }
         }
         frontier_read_reqs.clear();
@@ -945,9 +942,8 @@ namespace diskann {
   void PQFlashIndex<T>::cached_beam_search(
       const T *query1, const _u64 k_search, const _u64 l_search, _s64 *indices,
       float *distances, const _u64 beam_width, const bool use_reorder_data,
-      QueryStats *stats, const knowhere::feder::diskann::FederResultUniq &feder,
-      knowhere::BitsetView bitset_view, const float filter_ratio_in,
-      const bool for_tuning) {
+      QueryStats *stats, knowhere::BitsetView bitset_view,
+      const float filter_ratio_in, const bool for_tuning) {
     if (beam_width > MAX_N_SECTOR_READS)
       throw ANNException("Beamwidth can not be higher than MAX_N_SECTOR_READS",
                          -1, __FUNCSIG__, __FILE__, __LINE__);
@@ -989,7 +985,7 @@ namespace diskann {
 
       if (bv_cnt >= bitset_view.size() * filter_threshold) {
         brute_force_beam_search(data, query_norm, k_search, indices, distances,
-                                beam_width, ctx, stats, feder, bitset_view);
+                                beam_width, ctx, stats, bitset_view);
         this->thread_data.push(data);
         this->thread_data.push_notify_all();
         this->reader->put_ctx(ctx);
@@ -1000,7 +996,7 @@ namespace diskann {
     // Turn to BF is k_search is too large
     if (k_search > 0.5 * (num_points - bv_cnt)) {
       brute_force_beam_search(data, query_norm, k_search, indices, distances,
-                              beam_width, ctx, stats, feder, bitset_view);
+                              beam_width, ctx, stats, bitset_view);
       this->thread_data.push(data);
       this->thread_data.push_notify_all();
       this->reader->put_ctx(ctx);
@@ -1203,12 +1199,6 @@ namespace diskann {
           }
           full_retset.push_back(
               Neighbor((unsigned) node_id, cur_expanded_dist, true));
-
-          // add top candidate info into feder result
-          if (feder != nullptr) {
-            feder->visit_info_.AddTopCandidateInfo(node_id, cur_expanded_dist);
-            feder->id_set_.insert(node_id);
-          }
         }
         auto [nnbrs, node_nbrs] = filter_nbrs(n_nbr, nbrs);
 
@@ -1224,13 +1214,6 @@ namespace diskann {
         // process prefetched nhood
         for (_u64 m = 0; m < nnbrs; ++m) {
           unsigned id = node_nbrs[m];
-
-          // add neighbor info into feder result
-          if (feder != nullptr) {
-            feder->visit_info_.AddTopCandidateNeighbor(node_id, id,
-                                                       dist_scratch[m]);
-            feder->id_set_.insert(id);
-          }
 
           float dist = dist_scratch[m];
           if (stats != nullptr) {

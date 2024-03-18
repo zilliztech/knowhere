@@ -16,15 +16,16 @@ if(NOT WITH_DISKANN)
   list(REMOVE_ITEM KNOWHERE_UT_SRCS ${KNOWHERE_DISKANN_TESTS})
 endif()
 
-if (WITH_CARDINAL)
-    knowhere_file_glob(GLOB_RECURSE CARDINAL_UNSUPPORTED_TESTS test_iterator.cc test_feder.cc test_sparse.cc)
-    list(REMOVE_ITEM KNOWHERE_UT_SRCS ${CARDINAL_UNSUPPORTED_TESTS})
+if(WITH_CARDINAL)
+  knowhere_file_glob(GLOB_RECURSE CARDINAL_UNSUPPORTED_TESTS test_iterator.cc test_sparse.cc)
+  list(REMOVE_ITEM KNOWHERE_UT_SRCS ${CARDINAL_UNSUPPORTED_TESTS})
 endif()
 
 add_executable(knowhere_tests ${KNOWHERE_UT_SRCS})
 
 find_package(Catch2)
-if (NOT Catch2_FOUND)
+
+if(NOT Catch2_FOUND)
   message("Catch2 not found, fetching Catch2 from github")
   Include(FetchContent)
   FetchContent_Declare(
@@ -40,7 +41,7 @@ set_target_properties(knowhere_tests PROPERTIES
 )
 
 target_link_libraries(knowhere_tests PRIVATE
-        Catch2::Catch2WithMain
-        atomic
-        stdc++fs
-        knowhere)
+  Catch2::Catch2WithMain
+  atomic
+  stdc++fs
+  knowhere)

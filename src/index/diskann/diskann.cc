@@ -9,8 +9,6 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
-#include "knowhere/feder/DiskANN.h"
-
 #include <cstdint>
 
 #include "common/range_util.h"
@@ -70,9 +68,6 @@ class DiskANNIndexNode : public IndexNode {
     HasRawData(const std::string& metric_type) const override {
         return IsMetricType(metric_type, metric::L2) || IsMetricType(metric_type, metric::COSINE);
     }
-
-    expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override;
 
     Status
     Serialize(BinarySet& binset) const override {
@@ -526,16 +521,6 @@ DiskANNIndexNode<DataType>::Search(const DataSet& dataset, const Config& cfg, co
     auto dim = dataset.GetDim();
     auto xq = static_cast<const DataType*>(dataset.GetTensor());
 
-    feder::diskann::FederResultUniq feder_result;
-    if (search_conf.trace_visit.value()) {
-        if (nq != 1) {
-            return expected<DataSetPtr>::Err(Status::invalid_args, "nq must be 1");
-        }
-        feder_result = std::make_unique<feder::diskann::FederResult>();
-        feder_result->visit_info_.SetQueryConfig(search_conf.k.value(), search_conf.beamwidth.value(),
-                                                 search_conf.search_list_size.value());
-    }
-
     auto p_id = std::make_unique<int64_t[]>(k * nq);
     auto p_dist = std::make_unique<DistType[]>(k * nq);
 
@@ -545,8 +530,8 @@ DiskANNIndexNode<DataType>::Search(const DataSet& dataset, const Config& cfg, co
         futures.emplace_back(search_pool_->push([&, index = row, p_id_ptr = p_id.get(), p_dist_ptr = p_dist.get()]() {
             diskann::QueryStats stats;
             pq_flash_index_->cached_beam_search(xq + (index * dim), k, lsearch, p_id_ptr + (index * k),
-                                                p_dist_ptr + (index * k), beamwidth, false, &stats, feder_result,
-                                                bitset, filter_ratio, for_tuning);
+                                                p_dist_ptr + (index * k), beamwidth, false, &stats, bitset,
+                                                filter_ratio, for_tuning);
 #ifdef NOT_COMPILE_FOR_SWIG
             knowhere_diskann_search_hops.Observe(stats.n_hops);
 #endif
@@ -559,14 +544,6 @@ DiskANNIndexNode<DataType>::Search(const DataSet& dataset, const Config& cfg, co
 
     auto res = GenResultDataSet(nq, k, p_id.release(), p_dist.release());
 
-    // set visit_info json string into result dataset
-    if (feder_result != nullptr) {
-        Json json_visit_info, json_id_set;
-        nlohmann::to_json(json_visit_info, feder_result->visit_info_);
-        nlohmann::to_json(json_id_set, feder_result->id_set_);
-        res->SetJsonInfo(json_visit_info.dump());
-        res->SetJsonIdSet(json_id_set.dump());
-    }
     return res;
 }
 
@@ -662,26 +639,6 @@ DiskANNIndexNode<DataType>::GetVectorByIds(const DataSet& dataset) const {
     };
 
     return GenResultDataSet(rows, dim, data);
-}
-
-template <typename DataType>
-expected<DataSetPtr>
-DiskANNIndexNode<DataType>::GetIndexMeta(const Config& cfg) const {
-    std::vector<int64_t> entry_points;
-    for (size_t i = 0; i < pq_flash_index_->get_num_medoids(); i++) {
-        entry_points.push_back(pq_flash_index_->get_medoids()[i]);
-    }
-    auto diskann_conf = static_cast<const DiskANNConfig&>(cfg);
-    feder::diskann::DiskANNMeta meta(diskann_conf.data_path.value(), diskann_conf.max_degree.value(),
-                                     diskann_conf.search_list_size.value(), diskann_conf.pq_code_budget_gb.value(),
-                                     diskann_conf.build_dram_budget_gb.value(), diskann_conf.disk_pq_dims.value(),
-                                     diskann_conf.accelerate_build.value(), Count(), entry_points);
-    std::unordered_set<int64_t> id_set(entry_points.begin(), entry_points.end());
-
-    Json json_meta, json_id_set;
-    nlohmann::to_json(json_meta, meta);
-    nlohmann::to_json(json_id_set, id_set);
-    return GenResultDataSet(json_meta.dump(), json_id_set.dump());
 }
 
 template <typename DataType>
