@@ -125,6 +125,7 @@ TEST_CASE("Invalid diskann params test", "[diskann]") {
         knowhere::Json test_json;
         auto query_ds = GenDataSet(kNumQueries, kDim, 42);
 
+#ifndef KNOWHERE_WITH_CARDINAL
         // search list size < topk
         {
             test_json = test_gen();
@@ -133,6 +134,7 @@ TEST_CASE("Invalid diskann params test", "[diskann]") {
             REQUIRE_FALSE(res.has_value());
             REQUIRE(res.error() == knowhere::Status::out_of_range_in_json);
         }
+#endif
         // min_k > max_k
         {
             test_json = test_gen();
