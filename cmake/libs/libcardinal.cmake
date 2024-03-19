@@ -1,7 +1,7 @@
 set(CARDINAL_VERSION master)
 set(CARDINAL_REPO_URL "https://github.com/zilliztech/cardinal.git")
 
-set(CARDINAL_REPO_DIR "${CMAKE_SOURCE_DIR}/thirdparty/cardinal")
+set(CARDINAL_REPO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/cardinal")
 
 message(STATUS "Build Cardinal-${CARDINAL_VERSION}")
 
