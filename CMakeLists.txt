@@ -24,7 +24,7 @@ include(cmake/utils/platform_check.cmake)
 
 knowhere_option(WITH_RAFT "Build with RAFT indexes" OFF)
 if (WITH_RAFT)
-    set(CMAKE_CUDA_ARCHITECTURES RAPIDS)
+    set(CMAKE_CUDA_ARCHITECTURES 75-real)
     include(cmake/libs/librapids.cmake)
     project(knowhere CXX C CUDA)
     include(cmake/libs/libraft.cmake)
