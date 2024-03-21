@@ -104,6 +104,33 @@ TEST_CASE("Test config json parse", "[config]") {
 #endif
     }
 
+    SECTION("check materialized view config") {
+        knowhere::Json json = knowhere::Json::parse(R"({
+            "opt_fields_path": "/tmp/test",
+            "materialized_view_search_info": {
+                "field_id_to_touched_categories_cnt": [[1,2]],
+                "is_pure_and": false,
+                "has_not": true
+            }
+        })");
+        knowhere::Status s;
+        knowhere::BaseConfig train_cfg;
+        s = knowhere::Config::Load(train_cfg, json, knowhere::TRAIN);
+        CHECK(s == knowhere::Status::success);
+        CHECK(train_cfg.opt_fields_path.value() == "/tmp/test");
+        CHECK(train_cfg.materialized_view_search_info.has_value() == false);
+
+        knowhere::BaseConfig search_config;
+        s = knowhere::Config::Load(search_config, json, knowhere::SEARCH);
+        CHECK(s == knowhere::Status::success);
+        CHECK(search_config.opt_fields_path.has_value() == false);
+        auto mv = search_config.materialized_view_search_info.value();
+        CHECK(mv.field_id_to_touched_categories_cnt.size() == 1);
+        CHECK(mv.field_id_to_touched_categories_cnt[1] == 2);
+        CHECK(mv.is_pure_and == false);
+        CHECK(mv.has_not == true);
+    }
+
     SECTION("check flat index config") {
         knowhere::Json json = knowhere::Json::parse(R"({
             "metric_type": "L2",
