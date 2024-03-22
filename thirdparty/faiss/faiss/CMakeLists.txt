@@ -60,6 +60,7 @@ set(FAISS_SRC
   VectorTransform.cpp
   clone_index.cpp
   index_factory.cpp
+  IndexIVFScalarQuantizerCC.cpp
   impl/AuxIndexStructures.cpp
   impl/FaissException.cpp
   impl/HNSW.cpp
@@ -99,6 +100,7 @@ set(FAISS_SRC
   utils/quantize_lut.cpp
   utils/random.cpp
   utils/utils.cpp
+  utils/data_backup_file.cpp
 )
 
 if("${CMAKE_SYSTEM}" MATCHES "Linux")
@@ -146,6 +148,7 @@ set(FAISS_HEADERS
   IndexAdditiveQuantizer.h
   IndexSQHybrid.h
   IndexScalarQuantizer.h
+  IndexIVFScalarQuantizerCC.h
   IndexScaNN.h
   IndexShards.h
   MatrixStats.h
@@ -206,6 +209,7 @@ set(FAISS_HEADERS
   utils/simdlib_neon.h
   utils/structure-inl.h
   utils/utils.h
+  utils/data_backup_file.h
 )
 
 # OK for MSYS
