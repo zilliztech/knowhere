@@ -44,7 +44,7 @@ class IvfConfig : public BaseConfig {
             .description("whether to make sure topk results full")
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(max_empty_result_buckets)
-            .set_default(1)
+            .set_default(2)
             .description("the maximum of continuous buckets with empty result")
             .for_range_search()
             .set_range(1, 65536);
