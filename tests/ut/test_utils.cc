@@ -123,8 +123,13 @@ TEST_CASE("Test Version") {
 TEST_CASE("Test DiskLoad") {
     REQUIRE(knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_DISKANN,
                                   knowhere::Version::GetCurrentVersion().VersionNumber()));
+#ifdef KNOWHERE_WITH_CARDINAL
+    REQUIRE(
+        knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_HNSW, knowhere::Version::GetCurrentVersion().VersionNumber()));
+#else
     REQUIRE(!knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_HNSW,
                                    knowhere::Version::GetCurrentVersion().VersionNumber()));
+#endif
 }
 
 TEST_CASE("Test WaitAllSuccess with folly::Unit futures") {

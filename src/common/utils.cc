@@ -108,8 +108,16 @@ ConvertIVFFlat(const BinarySet& binset, const MetricType metric_type, const uint
 }
 
 bool
-UseDiskLoad(const std::string& index_type, const int32_t& /*version*/) {
+UseDiskLoad(const std::string& index_type, const int32_t& version) {
+#ifdef KNOWHERE_WITH_CARDINAL
+    if (version == 0) {
+        return !index_type.compare(IndexEnum::INDEX_DISKANN);
+    } else {
+        return !index_type.compare(IndexEnum::INDEX_DISKANN) || !index_type.compare(IndexEnum::INDEX_HNSW);
+    }
+#else
     return !index_type.compare(IndexEnum::INDEX_DISKANN);
+#endif
 }
 
 }  // namespace knowhere
