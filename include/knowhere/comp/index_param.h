@@ -61,6 +61,7 @@ constexpr const char* INDEX_ENGINE_VERSION = "index_engine_version";
 constexpr const char* RETRIEVE_FRIENDLY = "retrieve_friendly";
 constexpr const char* DIM = "dim";
 constexpr const char* TENSOR = "tensor";
+constexpr const char* CENTROID_ID_MAPPING = "centroid_id_mapping";
 constexpr const char* ROWS = "rows";
 constexpr const char* NQ = "nq";
 constexpr const char* IDS = "ids";

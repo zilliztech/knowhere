@@ -95,6 +95,12 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
     }
 
     void
+    SetCentroidIdMapping(const void* id_mapping) {
+        std::unique_lock lock(mutex_);
+        this->data_[meta::CENTROID_ID_MAPPING] = Var(std::in_place_index<3>, id_mapping);
+    }
+
+    void
     SetRows(const int64_t rows) {
         std::unique_lock lock(mutex_);
         this->data_[meta::ROWS] = Var(std::in_place_index<4>, rows);
@@ -155,6 +161,17 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
     GetTensor() const {
         std::shared_lock lock(mutex_);
         auto it = this->data_.find(meta::TENSOR);
+        if (it != this->data_.end()) {
+            const void* res = *std::get_if<3>(&it->second);
+            return res;
+        }
+        return nullptr;
+    }
+
+    const void*
+    GetCentroidIdMapping() const {
+        std::shared_lock lock(mutex_);
+        auto it = this->data_.find(meta::CENTROID_ID_MAPPING);
         if (it != this->data_.end()) {
             const void* res = *std::get_if<3>(&it->second);
             return res;
@@ -271,6 +288,26 @@ GenResultDataSet(const int64_t rows, const int64_t dim, const void* tensor) {
     ret_ds->SetRows(rows);
     ret_ds->SetDim(dim);
     ret_ds->SetTensor(tensor);
+    ret_ds->SetIsOwner(true);
+    return ret_ds;
+}
+
+inline DataSetPtr
+GenResultDataSet(const int64_t dim, const void* tensor, const int64_t rows, const void* centroid_id_mapping) {
+    auto ret_ds = std::make_shared<DataSet>();
+    ret_ds->SetRows(rows);
+    ret_ds->SetDim(dim);
+    ret_ds->SetTensor(tensor);
+    ret_ds->SetCentroidIdMapping(centroid_id_mapping);
+    ret_ds->SetIsOwner(true);
+    return ret_ds;
+}
+
+inline DataSetPtr
+GenResultDataSet(const int64_t rows, const void* centroid_id_mapping) {
+    auto ret_ds = std::make_shared<DataSet>();
+    ret_ds->SetRows(rows);
+    ret_ds->SetCentroidIdMapping(centroid_id_mapping);
     ret_ds->SetIsOwner(true);
     return ret_ds;
 }
