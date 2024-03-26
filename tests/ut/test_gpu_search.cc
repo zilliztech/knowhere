@@ -76,12 +76,6 @@ TEST_CASE("Test All GPU Index", "[search]") {
     SECTION("Test Gpu Index Search") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            // GPU_FLAT cannot run this test is because its Train() and Add() actually run in CPU,
-            // "res_" in gpu_index_ is not set correctly
-            // make_tuple(knowhere::IndexEnum::INDEX_FAISS_GPU_IDMAP, gpu_flat_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_FAISS_GPU_IVFFLAT, ivfflat_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_FAISS_GPU_IVFPQ, ivfpq_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_FAISS_GPU_IVFSQ8, ivfsq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_BRUTEFORCE, bruteforce_gen),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFFLAT, ivfflat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_RAFT_IVFFLAT, refined_gen(ivfflat_gen)),
@@ -166,8 +160,9 @@ TEST_CASE("Test All GPU Index", "[search]") {
         REQUIRE(idx.Type() == name);
         auto res = idx.Build(*train_ds, json);
         REQUIRE(res == knowhere::Status::success);
-        const auto topk_values = {// Tuple with [TopKValue, Threshold]
-                                  make_tuple(5, 0.85f), make_tuple(25, 0.85f), make_tuple(100, 0.85f)};
+        const auto topk_values = {
+            // Tuple with [TopKValue, Threshold]
+            make_tuple(5, 0.85f), make_tuple(25, 0.85f), make_tuple(100, 0.85f), make_tuple(1025, 0.85f)};
 
         for (const auto& topKTuple : topk_values) {
             json[knowhere::meta::TOPK] = std::get<0>(topKTuple);

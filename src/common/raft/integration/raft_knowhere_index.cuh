@@ -15,10 +15,12 @@
  * limitations under the License.
  */
 #pragma once
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <istream>
 #include <limits>
+#include <mutex>
 #include <ostream>
 #include <raft/core/bitset.cuh>
 #include <raft/core/copy.cuh>
@@ -301,10 +303,12 @@ config_to_index_params(raft_knowhere_config const& raw_config) {
 
 // Given a generic config without RAFT symbols, convert to RAFT index search
 // parameters
-template <raft_proto::raft_index_kind IndexKind>
+template <raft_proto::raft_index_kind IndexKind, bool check_kind = true>
 [[nodiscard]] auto
 config_to_search_params(raft_knowhere_config const& raw_config) {
-    RAFT_EXPECTS(raw_config.index_type == IndexKind, "Incorrect index type for this index");
+    if constexpr (check_kind) {
+        RAFT_EXPECTS(raw_config.index_type == IndexKind, "Incorrect index type for this index");
+    }
     auto config = validate_raft_knowhere_config(raw_config);
     auto result = raft_search_params_t<IndexKind>{};
     if constexpr (IndexKind == raft_proto::raft_index_kind::ivf_flat ||
@@ -358,6 +362,16 @@ struct raft_knowhere_index<IndexKind>::impl {
     using input_indexing_type = raft_input_indexing_t<index_kind>;
     using raft_index_type = raft_index_t<index_kind>;
 
+ private:
+    // The following definitions are used to enable fallback to brute force for
+    // large k values.
+    auto static constexpr exact_index_kind = raft_proto::raft_index_kind::brute_force;
+    using exact_data_type = raft_data_t<exact_index_kind>;
+    using exact_indexing_type = raft_indexing_t<exact_index_kind>;
+    using exact_input_indexing_type = raft_input_indexing_t<exact_index_kind>;
+    using exact_raft_index_type = raft_index_t<exact_index_kind>;
+
+ public:
     impl() {
     }
 
@@ -464,18 +478,63 @@ struct raft_knowhere_index<IndexKind>::impl {
         }
     }
 
+ private:
+    template <typename InputIdxT = input_indexing_type>
     auto
-    search(raft_knowhere_config const& config, data_type const* data, knowhere_indexing_type row_count,
-           knowhere_indexing_type feature_count, knowhere_bitset_data_type const* bitset_data,
-           knowhere_bitset_indexing_type bitset_byte_size, knowhere_bitset_indexing_type bitset_size) const {
+    get_dataset_view() const {
+        auto result = std::optional<raft::device_matrix_view<const data_type, InputIdxT>>{};
+        if (device_dataset_storage) {
+            result = raft::make_const_mdspan(raft::make_device_matrix_view(
+                device_dataset_storage->data_handle(), InputIdxT(device_dataset_storage->extent(0)),
+                InputIdxT(device_dataset_storage->extent(1))));
+        }
+        return result;
+    }
+
+    template <bool exact_search = false>
+    auto const&
+    get_index() const {
+        RAFT_EXPECTS(index_, "Index has not yet been trained");
+        if constexpr (exact_search) {
+            // Standard double-checked locking pattern
+            std::atomic_thread_fence(std::memory_order_acquire);
+            if (!exact_index_) {
+                auto lock = std::unique_lock{exact_index_mutex_};
+                if (!exact_index_) {
+                    RAFT_EXPECTS(device_dataset_storage, "Exact search requires a dataset");
+                    auto const& res = raft::device_resources_manager::get_device_resources();
+                    auto index_params = raft_index_params_t<exact_index_kind>{};
+                    index_params.metric = raft_index_type::get_metric(*index_);
+                    exact_index_ = exact_raft_index_type::template build<data_type, exact_indexing_type,
+                                                                         exact_input_indexing_type>(
+                        res, index_params, *get_dataset_view<exact_input_indexing_type>());
+                }
+                std::atomic_thread_fence(std::memory_order_release);
+            }
+            return *exact_index_;
+        } else {
+            return *index_;
+        }
+    }
+
+    template <bool exact_search = false,
+              typename IdxT = std::conditional_t<exact_search, exact_indexing_type, indexing_type>,
+              typename InputIdxT = std::conditional_t<exact_search, exact_input_indexing_type, input_indexing_type>,
+              typename VecIdxT = std::conditional_t<exact_search, exact_raft_index_type, raft_index_type>>
+    auto
+    search_(raft_knowhere_config const& config, data_type const* data, knowhere_indexing_type row_count,
+            knowhere_indexing_type feature_count, knowhere_bitset_data_type const* bitset_data,
+            knowhere_bitset_indexing_type bitset_byte_size, knowhere_bitset_indexing_type bitset_size) const {
+        auto constexpr IdxK = exact_search ? exact_index_kind : index_kind;
+
+        auto result = std::tuple<knowhere_indexing_type*, knowhere_data_type*>{};
         auto scoped_device = raft::device_setter{device_id};
         auto const& res = raft::device_resources_manager::get_device_resources();
         auto k = knowhere_indexing_type(config.k);
-        auto search_params = config_to_search_params<index_kind>(config);
+        auto search_params = config_to_search_params<IdxK, !exact_search>(config);
 
         auto host_data = raft::make_host_matrix_view(data, row_count, feature_count);
-        auto device_data_storage =
-            raft::make_device_matrix<data_type, input_indexing_type>(res, row_count, feature_count);
+        auto device_data_storage = raft::make_device_matrix<data_type, InputIdxT>(res, row_count, feature_count);
         raft::copy(res, device_data_storage.view(), host_data);
 
         auto device_bitset =
@@ -486,7 +545,7 @@ struct raft_knowhere_index<IndexKind>::impl {
             device_bitset =
                 raft::core::bitset<knowhere_bitset_data_type, knowhere_bitset_indexing_type>(res, bitset_size);
             raft::copy(res, device_bitset->to_mdspan(), raft::make_host_vector_view(bitset_data, bitset_byte_size));
-            if constexpr (index_kind == raft_proto::raft_index_kind::brute_force) {
+            if constexpr (IdxK == raft_proto::raft_index_kind::brute_force) {
                 k_tmp += device_bitset->count(res);
                 if (k_tmp == k) {
                     device_bitset = std::nullopt;
@@ -505,26 +564,28 @@ struct raft_knowhere_index<IndexKind>::impl {
         auto host_ids = raft::make_host_matrix_view(ids.get(), row_count, k);
         auto host_distances = raft::make_host_matrix_view(distances.get(), row_count, k);
 
-        auto device_ids_storage = raft::make_device_matrix<indexing_type, input_indexing_type>(res, row_count, k_tmp);
-        auto device_distances_storage = raft::make_device_matrix<data_type, input_indexing_type>(res, row_count, k_tmp);
+        auto device_ids_storage = raft::make_device_matrix<IdxT, InputIdxT>(res, row_count, k_tmp);
+        auto device_distances_storage = raft::make_device_matrix<data_type, InputIdxT>(res, row_count, k_tmp);
         auto device_ids = device_ids_storage.view();
         auto device_distances = device_distances_storage.view();
 
         RAFT_EXPECTS(index_, "Index has not yet been trained");
-        auto dataset_view = device_dataset_storage
-                                ? std::make_optional(device_dataset_storage->view())
-                                : std::optional<raft::device_matrix_view<const data_type, input_indexing_type>>{};
+
+        auto refine_ratio = config.refine_ratio;
+        if constexpr (IdxK == raft_proto::raft_index_kind::brute_force) {
+            refine_ratio = 1;
+        }
 
         if (device_bitset) {
-            raft_index_type::search(
-                res, *index_, search_params, raft::make_const_mdspan(device_data_storage.view()), device_ids,
-                device_distances, config.refine_ratio, input_indexing_type{}, dataset_view,
+            VecIdxT::search(
+                res, get_index<exact_search>(), search_params, raft::make_const_mdspan(device_data_storage.view()),
+                device_ids, device_distances, refine_ratio, InputIdxT{}, get_dataset_view<InputIdxT>(),
                 raft::neighbors::filtering::bitset_filter<knowhere_bitset_data_type, knowhere_bitset_indexing_type>{
                     device_bitset->view()});
         } else {
-            raft_index_type::search(res, *index_, search_params, raft::make_const_mdspan(device_data_storage.view()),
-                                    device_ids, device_distances, config.refine_ratio, input_indexing_type{},
-                                    dataset_view);
+            VecIdxT::search(res, get_index<exact_search>(), search_params,
+                            raft::make_const_mdspan(device_data_storage.view()), device_ids, device_distances,
+                            refine_ratio, InputIdxT{}, get_dataset_view<InputIdxT>());
         }
 
         auto device_knowhere_ids_storage =
@@ -578,6 +639,30 @@ struct raft_knowhere_index<IndexKind>::impl {
         }
         return std::make_tuple(ids.release(), distances.release());
     }
+
+ public:
+    auto
+    search(raft_knowhere_config const& config, data_type const* data, knowhere_indexing_type row_count,
+           knowhere_indexing_type feature_count, knowhere_bitset_data_type const* bitset_data,
+           knowhere_bitset_indexing_type bitset_byte_size, knowhere_bitset_indexing_type bitset_size) const {
+        auto k = knowhere_indexing_type(config.k);
+        auto search_max_k = maximum_k.value_or(k);
+        if constexpr (index_kind == raft_proto::raft_index_kind::brute_force) {
+            search_max_k = k;
+        } else if constexpr (index_kind == raft_proto::raft_index_kind::cagra) {
+            search_max_k = std::min(search_max_k, knowhere_indexing_type(config.itopk_size.value_or(search_max_k)));
+        }
+
+        auto result = std::tuple<knowhere_indexing_type*, knowhere_data_type*>{};
+
+        if (k > search_max_k) {
+            result = search_<true>(config, data, row_count, feature_count, bitset_data, bitset_byte_size, bitset_size);
+        } else {
+            result = search_<false>(config, data, row_count, feature_count, bitset_data, bitset_byte_size, bitset_size);
+        }
+        return result;
+    }
+
     void
     range_search() const {
         RAFT_FAIL("Range search not yet implemented for RAFT indexes");
@@ -636,8 +721,20 @@ struct raft_knowhere_index<IndexKind>::impl {
 
  private:
     std::optional<raft_index_type> index_ = std::nullopt;
+    std::optional<exact_raft_index_type> mutable exact_index_ = std::nullopt;
+    std::mutex mutable exact_index_mutex_;
     int device_id = select_device_id();
     std::optional<raft::device_matrix<data_type, input_indexing_type>> device_dataset_storage = std::nullopt;
+    std::optional<input_indexing_type> maximum_k = []() {
+        if constexpr (index_kind == raft_proto::raft_index_kind::ivf_flat) {
+            return std::make_optional<input_indexing_type>(256);
+        } else if constexpr (index_kind == raft_proto::raft_index_kind::cagra ||
+                             index_kind == raft_proto::raft_index_kind::ivf_pq) {
+            return std::make_optional<input_indexing_type>(1024);
+        } else {
+            return std::optional<input_indexing_type>{};
+        }
+    }();
 };
 
 template <raft_proto::raft_index_kind IndexKind>
