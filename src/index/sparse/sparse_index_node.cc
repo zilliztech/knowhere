@@ -99,9 +99,33 @@ class SparseInvertedIndexNode : public IndexNode {
         return GenResultDataSet(nq, k, p_id.release(), p_dist.release());
     }
 
+    // TODO: for now inverted index and wand use the same impl for AnnIterator.
     [[nodiscard]] expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
-    AnnIterator(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
-        throw std::runtime_error("annIterator not supported for current index type");
+    AnnIterator(const DataSet& dataset, const Config& config, const BitsetView& bitset) const override {
+        if (!index_) {
+            LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
+            return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::empty_index,
+                                                                                    "index not loaded");
+        }
+        auto nq = dataset.GetRows();
+        auto queries = static_cast<const sparse::SparseRow<T>*>(dataset.GetTensor());
+
+        auto cfg = static_cast<const SparseInvertedIndexConfig&>(config);
+        auto drop_ratio_search = cfg.drop_ratio_search.value_or(0.0f);
+
+        auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
+        std::vector<folly::Future<folly::Unit>> futs;
+        futs.reserve(nq);
+        for (int i = 0; i < nq; ++i) {
+            futs.emplace_back(search_pool_->push([&, i]() {
+                vec[i].reset(new PrecomputedDistanceIterator(
+                    index_->GetAllDistances(queries[i], drop_ratio_search, bitset), true));
+            }));
+        }
+        // wait for initial search(in top layers and search for seed_ef in base layer) to finish
+        WaitAllSuccess(futs);
+
+        return vec;
     }
 
     [[nodiscard]] expected<DataSetPtr>
