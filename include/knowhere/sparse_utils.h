@@ -152,6 +152,7 @@ class SparseRow {
     dot(const SparseRow<T>& other) const {
         float product_sum = 0.0f;
         size_t i = 0, j = 0;
+        // TODO: improve with _mm_cmpistrm or the AVX512 alternative.
         while (i < count_ && j < other.count_) {
             auto* left = reinterpret_cast<const ElementProxy*>(data_) + i;
             auto* right = reinterpret_cast<const ElementProxy*>(other.data_) + j;

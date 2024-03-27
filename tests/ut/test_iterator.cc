@@ -50,7 +50,7 @@ GetIteratorKNNResult(const std::vector<std::shared_ptr<knowhere::IndexNode::iter
     return knowhere::GenResultDataSet(nq, k, p_id, p_dist);
 }
 
-// BruteForceIterator should return vectors in the exact same order as BruteForce search.
+// BruteForce Iterator should return vectors in the exact same order as BruteForce search.
 void
 AssertBruteForceIteratorResultCorrect(size_t nb,
                                       const std::vector<std::shared_ptr<knowhere::IndexNode::iterator>>& iterators,
@@ -412,6 +412,50 @@ TEST_CASE("Test Iterator BruteForce With Float Vector", "[float metrics]") {
                 auto iterators =
                     knowhere::BruteForce::AnnIterator<knowhere::fp32>(train_ds, query_ds, conf, bitset).value();
                 auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, bitset);
+                AssertBruteForceIteratorResultCorrect(nb, iterators, gt.value());
+            }
+        }
+    }
+}
+
+TEST_CASE("Test Iterator BruteForce With Sparse Float Vector", "[IP metric]") {
+    using Catch::Approx;
+
+    const int64_t nb = 1000, nq = 10;
+    const int64_t dim = 4;
+
+    auto metric = knowhere::metric::IP;
+    auto version = GenTestVersionList();
+
+    auto rand = GENERATE(1, 2, 3, 5);
+
+    const auto train_ds = GenSparseDataSet(nb, dim, 0.9, rand);
+    const auto query_ds = GenSparseDataSet(nq, dim, 0.9, rand + 777);
+
+    const knowhere::Json conf = {
+        {knowhere::meta::METRIC_TYPE, metric}, {knowhere::meta::TOPK, nb},  // to return all vectors
+    };
+
+    SECTION("Test Iterator BruteForce") {
+        auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, conf, nullptr);
+        auto iterators =
+            knowhere::BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(train_ds, query_ds, conf, nullptr)
+                .value();
+        AssertBruteForceIteratorResultCorrect(nb, iterators, gt.value());
+    }
+
+    SECTION("Test Iterator BruteForce with filtering") {
+        std::vector<std::function<std::vector<uint8_t>(size_t, size_t)>> gen_bitset_funcs = {
+            GenerateBitsetWithFirstTbitsSet, GenerateBitsetWithRandomTbitsSet};
+        const auto bitset_percentages = {0.4f, 0.98f};
+        for (const float percentage : bitset_percentages) {
+            for (const auto& gen_func : gen_bitset_funcs) {
+                auto bitset_data = gen_func(nb, percentage * nb);
+                knowhere::BitsetView bitset(bitset_data.data(), nb);
+                auto iterators = knowhere::BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(
+                                     train_ds, query_ds, conf, bitset)
+                                     .value();
+                auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, conf, bitset);
                 AssertBruteForceIteratorResultCorrect(nb, iterators, gt.value());
             }
         }

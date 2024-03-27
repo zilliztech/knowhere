@@ -33,7 +33,8 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .set_default(0.0f)
             .set_range(0.0f, 1.0f)
             .for_search()
-            .for_range_search();
+            .for_range_search()
+            .for_iterator();
         KNOWHERE_CONFIG_DECLARE_FIELD(refine_factor)
             .description("refine factor")
             .set_default(10)
