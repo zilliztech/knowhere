@@ -15,8 +15,8 @@
 #include <cinttypes>
 #include <cstdio>
 
-#include "knowhere/utils.h"
 #include "knowhere/bitsetview_idselector.h"
+#include "knowhere/utils.h"
 
 #include <faiss/IndexFlat.h>
 
@@ -82,7 +82,6 @@ void IndexIVFFlat::add_with_ids(idx_t n, const float* x, const idx_t* xids) {
     }
 }
 
-
 IndexIVFFlat::IndexIVFFlat() {
     by_residual = false;
 }
@@ -115,7 +114,8 @@ void IndexIVFFlat::add_core(
             if (list_no >= 0 && list_no % nt == rank) {
                 idx_t id = xids ? xids[i] : ntotal + i;
                 const float* xi = x + i * d;
-                const float* xi_normal = (x_norms == nullptr) ? nullptr : (x_norms + i);
+                const float* xi_normal =
+                        (x_norms == nullptr) ? nullptr : (x_norms + i);
                 size_t offset = invlists->add_entry(
                         list_no, id, (const uint8_t*)xi, xi_normal);
                 dm_adder.add(i, list_no, offset);
@@ -292,28 +292,27 @@ struct IVFFlatScanner : InvertedListScanner {
         size_t nup = 0;
 
         // the lambda that filters acceptable elements.
-        auto filter = 
-            [&](const size_t j) { return (!use_sel || sel->is_member(ids[j])); };
+        auto filter = [&](const size_t j) {
+            return (!use_sel || sel->is_member(ids[j]));
+        };
 
         // the lambda that applies a valid element.
-        auto apply = 
-            [&](const float dis_in, const size_t j) {
-                const float dis = (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]); 
-                scan_cnt++;
-                if (C::cmp(simi[0], dis)) {
-                    const int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                    heap_replace_top<C>(k, simi, idxi, dis, id);
-                    nup++;
-                }
-            };
+        auto apply = [&](const float dis_in, const size_t j) {
+            const float dis =
+                    (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]);
+            scan_cnt++;
+            if (C::cmp(simi[0], dis)) {
+                const int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
+                heap_replace_top<C>(k, simi, idxi, dis, id);
+                nup++;
+            }
+        };
 
         if constexpr (metric == METRIC_INNER_PRODUCT) {
             fvec_inner_products_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
-        }
-        else {
-            fvec_L2sqr_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
+                    xi, list_vecs, d, list_size, filter, apply);
+        } else {
+            fvec_L2sqr_ny_if(xi, list_vecs, d, list_size, filter, apply);
         }
 
         return nup;
@@ -370,26 +369,25 @@ struct IVFFlatScanner : InvertedListScanner {
         const float* list_vecs = (const float*)codes;
 
         // the lambda that filters acceptable elements.
-        auto filter = 
-            [&](const size_t j) { return (!use_sel || sel->is_member(ids[j])); };
+        auto filter = [&](const size_t j) {
+            return (!use_sel || sel->is_member(ids[j]));
+        };
 
         // the lambda that applies a filtered element.
-        auto apply = 
-            [&](const float dis_in, const size_t j) {
-                const float dis = (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]); 
-                if (C::cmp(radius, dis)) {
-                    int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                    res.add(dis, id);
-                }
-            };
+        auto apply = [&](const float dis_in, const size_t j) {
+            const float dis =
+                    (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]);
+            if (C::cmp(radius, dis)) {
+                int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
+                res.add(dis, id);
+            }
+        };
 
         if constexpr (metric == METRIC_INNER_PRODUCT) {
             fvec_inner_products_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
-        }
-        else {
-            fvec_L2sqr_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
+                    xi, list_vecs, d, list_size, filter, apply);
+        } else {
+            fvec_L2sqr_ny_if(xi, list_vecs, d, list_size, filter, apply);
         }
     }
 };
@@ -402,8 +400,11 @@ struct IVFFlatBitsetViewScanner : InvertedListScanner {
 
     IVFFlatBitsetViewScanner(size_t d, bool store_pairs, const IDSelector* sel)
             : InvertedListScanner(store_pairs, sel), d(d) {
-        const auto* bitsetview_sel = dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
-        FAISS_ASSERT_MSG((bitsetview_sel != nullptr), "Unsupported scanner for IVFFlatBitsetViewScanner");
+        const auto* bitsetview_sel =
+                dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
+        FAISS_ASSERT_MSG(
+                (bitsetview_sel != nullptr),
+                "Unsupported scanner for IVFFlatBitsetViewScanner");
 
         bitset = bitsetview_sel->bitset_view;
     }
@@ -438,28 +439,27 @@ struct IVFFlatBitsetViewScanner : InvertedListScanner {
         size_t nup = 0;
 
         // the lambda that filters acceptable elements.
-        auto filter = 
-            [&](const size_t j) { return (!use_sel || !bitset.test(ids[j])); };
+        auto filter = [&](const size_t j) {
+            return (!use_sel || !bitset.test(ids[j]));
+        };
 
         // the lambda that applies a valid element.
-        auto apply = 
-            [&](const float dis_in, const size_t j) {
-                const float dis = (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]); 
-                scan_cnt++;
-                if (C::cmp(simi[0], dis)) {
-                    const int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                    heap_replace_top<C>(k, simi, idxi, dis, id);
-                    nup++;
-                }
-            };
+        auto apply = [&](const float dis_in, const size_t j) {
+            const float dis =
+                    (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]);
+            scan_cnt++;
+            if (C::cmp(simi[0], dis)) {
+                const int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
+                heap_replace_top<C>(k, simi, idxi, dis, id);
+                nup++;
+            }
+        };
 
         if constexpr (metric == METRIC_INNER_PRODUCT) {
             fvec_inner_products_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
-        }
-        else {
-            fvec_L2sqr_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
+                    xi, list_vecs, d, list_size, filter, apply);
+        } else {
+            fvec_L2sqr_ny_if(xi, list_vecs, d, list_size, filter, apply);
         }
 
         return nup;
@@ -516,26 +516,25 @@ struct IVFFlatBitsetViewScanner : InvertedListScanner {
         const float* list_vecs = (const float*)codes;
 
         // the lambda that filters acceptable elements.
-        auto filter = 
-            [&](const size_t j) { return (!use_sel || !bitset.test(ids[j])); };
+        auto filter = [&](const size_t j) {
+            return (!use_sel || !bitset.test(ids[j]));
+        };
 
         // the lambda that applies a filtered element.
-        auto apply = 
-            [&](const float dis_in, const size_t j) {
-                const float dis = (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]); 
-                if (C::cmp(radius, dis)) {
-                    int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                    res.add(dis, id);
-                }
-            };
+        auto apply = [&](const float dis_in, const size_t j) {
+            const float dis =
+                    (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]);
+            if (C::cmp(radius, dis)) {
+                int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
+                res.add(dis, id);
+            }
+        };
 
         if constexpr (metric == METRIC_INNER_PRODUCT) {
             fvec_inner_products_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
-        }
-        else {
-            fvec_L2sqr_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
+                    xi, list_vecs, d, list_size, filter, apply);
+        } else {
+            fvec_L2sqr_ny_if(xi, list_vecs, d, list_size, filter, apply);
         }
     }
 };
@@ -545,19 +544,22 @@ InvertedListScanner* get_InvertedListScanner1(
         const IndexIVFFlat* ivf,
         bool store_pairs,
         const IDSelector* sel) {
-    // A specialized version for Knowhere. 
-    //   It is needed to get rid of virtual function calls, because sel 
+    // A specialized version for Knowhere.
+    //   It is needed to get rid of virtual function calls, because sel
     //   can filter out 99% of samples, so the cost of virtual function calls
     //   becomes noticeable compared to distance computations.
-    if (const auto* bitsetview_sel = dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel)) {
+    if (const auto* bitsetview_sel =
+                dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel)) {
         if (ivf->metric_type == METRIC_INNER_PRODUCT) {
             return new IVFFlatBitsetViewScanner<
                     METRIC_INNER_PRODUCT,
                     CMin<float, int64_t>,
                     use_sel>(ivf->d, store_pairs, sel);
         } else if (ivf->metric_type == METRIC_L2) {
-            return new IVFFlatBitsetViewScanner<METRIC_L2, CMax<float, int64_t>, use_sel>(
-                    ivf->d, store_pairs, sel);
+            return new IVFFlatBitsetViewScanner<
+                    METRIC_L2,
+                    CMax<float, int64_t>,
+                    use_sel>(ivf->d, store_pairs, sel);
         } else {
             FAISS_THROW_MSG("metric type not supported");
         }
@@ -596,180 +598,6 @@ void IndexIVFFlat::reconstruct_from_offset(
     memcpy(recons, invlists->get_single_code(list_no, offset), code_size);
 }
 
-std::unique_ptr<IVFFlatIteratorWorkspace> IndexIVFFlat::getIteratorWorkspace(
-        const float* query_data,
-        const IVFSearchParameters* ivfsearchParams) const {
-    return std::make_unique<IVFFlatIteratorWorkspace>(
-            query_data, ivfsearchParams);
-}
-
-std::optional<std::pair<float, idx_t>> IndexIVFFlat::getIteratorNext(
-        IVFFlatIteratorWorkspace* workspace) const {
-    auto scan_one_list_then_add_to_backup =
-            [&](idx_t list_no,
-                float coarse_list_centroid_dist, // no use, dist for residual.
-                float* distances,
-                idx_t* labels,
-                size_t& counter_back,
-                size_t max_codes) {
-                if (list_no < 0) {
-                    // not enough centroids for multiprobe
-                    return (size_t)0;
-                }
-                FAISS_THROW_IF_NOT_FMT(
-                        list_no < (idx_t)nlist,
-                        "Invalid list_no=%" PRId64 " nlist=%zd\n",
-                        list_no,
-                        nlist);
-
-                // don't waste time on empty lists
-                if (invlists->is_empty(list_no)) {
-                    return (size_t)0;
-                }
-
-                // get scanner
-                IDSelector* sel = workspace->search_params
-                        ? workspace->search_params->sel
-                        : nullptr;
-                InvertedListScanner* scanner = get_InvertedListScanner(false, sel);
-                scanner->set_query(workspace->query_data);
-                ScopeDeleter1<InvertedListScanner> del(scanner);
-
-                size_t segment_num = invlists->get_segment_num(list_no);
-                size_t scan_cnt = 0;
-                for (size_t segment_idx = 0; segment_idx < segment_num;
-                     segment_idx++) {
-                    size_t segment_size =
-                            invlists->get_segment_size(list_no, segment_idx);
-                    size_t should_scan_size =
-                            std::min(segment_size, max_codes - scan_cnt);
-                    scan_cnt += should_scan_size;
-                    if (should_scan_size <= 0) {
-                        break;
-                    }
-                    size_t segment_offset =
-                            invlists->get_segment_offset(list_no, segment_idx);
-                    InvertedLists::ScopedCodes scodes(
-                            invlists, list_no, segment_offset);
-                    InvertedLists::ScopedCodeNorms scode_norms(
-                            invlists, list_no, segment_offset);
-                    InvertedLists::ScopedIds sids(
-                            invlists, list_no, segment_offset);
-
-                    size_t n_heap = scanner->scan_codes_and_push_back(
-                            should_scan_size,
-                            scodes.get(),
-                            scode_norms.get(),
-                            sids.get(),
-                            distances,
-                            labels,
-                            counter_back);
-                }
-
-                return max_codes;
-            };
-
-    if (!workspace->initial_search_done) {
-        // snapshot of list_sizes;
-        auto coarse_list_sizes = std::make_unique<size_t[]>(nlist);
-        size_t count = 0;
-        for (size_t list_no = 0; list_no < nlist; ++list_no) {
-            auto list_size = invlists->list_size(list_no);
-            coarse_list_sizes[list_no] = list_size;
-            count += list_size;
-            if (list_size > workspace->max_coarse_list_size) {
-                workspace->max_coarse_list_size = list_size;
-            }
-        }
-
-        // compute backup_count_threshold - (nprobe / nlist) * count
-        size_t nprobe = workspace->search_params->nprobe
-                ? workspace->search_params->nprobe
-                : this->nprobe;
-        nprobe = std::min(nlist, nprobe);
-        workspace->backup_count_threshold = count * nprobe / nlist;
-        workspace->max_backup_count = workspace->max_coarse_list_size +
-                workspace->backup_count_threshold;
-
-        // compute distances of all centroids
-        auto coarse_idx = std::make_unique<idx_t[]>(nlist);
-        auto coarse_dis = std::make_unique<float[]>(nlist);
-        quantizer->search(
-                1,
-                workspace->query_data,
-                nlist,
-                coarse_dis.get(),
-                coarse_idx.get(),
-                workspace->search_params
-                        ? workspace->search_params->quantizer_params
-                        : nullptr);
-
-        // init backup_nodes until more than threshold
-        invlists->prefetch_lists(coarse_idx.get(), nprobe);
-        auto labels = std::make_unique<idx_t[]>(workspace->max_backup_count);
-        auto distances = std::make_unique<float[]>(workspace->max_backup_count);
-        size_t backup_count = 0;
-        size_t next_visit_coarse_list_idx = 0;
-        while (next_visit_coarse_list_idx < nlist &&
-               backup_count < workspace->backup_count_threshold) {
-            scan_one_list_then_add_to_backup(
-                    coarse_idx[next_visit_coarse_list_idx],
-                    coarse_dis[next_visit_coarse_list_idx], // no use
-                    distances.get(),
-                    labels.get(),
-                    backup_count,
-                    coarse_list_sizes[coarse_idx[next_visit_coarse_list_idx]]);
-            next_visit_coarse_list_idx++;
-        }
-        workspace->backup_count = backup_count;
-        workspace->next_visit_coarse_list_idx = next_visit_coarse_list_idx;
-
-        workspace->labels = std::move(labels);
-        workspace->distances = std::move(distances);
-        workspace->coarse_idx = std::move(coarse_idx);
-        workspace->coarse_dis = std::move(coarse_dis);
-        workspace->coarse_list_sizes = std::move(coarse_list_sizes);
-
-        workspace->initial_search_done = true;
-    }
-
-    // terminate when no backup nodes.
-    if (workspace->backup_count == 0 &&
-        workspace->next_visit_coarse_list_idx >= nlist) {
-        return std::nullopt;
-    }
-    while (workspace->backup_count < workspace->backup_count_threshold &&
-           workspace->next_visit_coarse_list_idx < nlist) {
-        auto next_list_idx = workspace->next_visit_coarse_list_idx;
-        scan_one_list_then_add_to_backup(
-                workspace->coarse_idx[next_list_idx],
-                workspace->coarse_dis[next_list_idx], // no use
-                workspace->distances.get(),
-                workspace->labels.get(),
-                workspace->backup_count,
-                workspace->coarse_list_sizes
-                        [workspace->coarse_idx[next_list_idx]]);
-        workspace->next_visit_coarse_list_idx++;
-    }
-
-    auto next_dis = workspace->distances[0];
-    auto next_id = workspace->labels[0];
-    if (metric_type == METRIC_INNER_PRODUCT) {
-        heap_pop<CMax<float, int64_t>>(
-                workspace->backup_count,
-                workspace->distances.get(),
-                workspace->labels.get());
-    } else {
-        heap_pop<CMin<float, int64_t>>(
-                workspace->backup_count,
-                workspace->distances.get(),
-                workspace->labels.get());
-    }
-    workspace->backup_count--;
-
-    return std::make_optional(std::make_pair(next_dis, next_id));
-}
-
 IndexIVFFlatCC::IndexIVFFlatCC(
         Index* quantizer,
         size_t d,
@@ -778,7 +606,10 @@ IndexIVFFlatCC::IndexIVFFlatCC(
         MetricType metric,
         bool is_cosine)
         : IndexIVFFlat(quantizer, d, nlist, metric, is_cosine) {
-    replace_invlists(new ConcurrentArrayInvertedLists(nlist, code_size, ssize, is_cosine), true);
+    replace_invlists(
+            new ConcurrentArrayInvertedLists(
+                    nlist, code_size, ssize, is_cosine),
+            true);
 }
 
 IndexIVFFlatCC::IndexIVFFlatCC() {}
