@@ -101,16 +101,16 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
 
         try {
             printf("[%.3f s] Reading index file: %s\n", get_time_diff(), index_file_name.c_str());
-            read_index(index_, index_file_name, conf);
+            read_index(index_.value(), index_file_name, conf);
         } catch (...) {
             printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
             knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nb_, dim_, xb_);
-            index_.Build(*ds_ptr, conf);
+            index_.value().Build(*ds_ptr, conf);
 
             printf("[%.3f s] Writing index file: %s\n", get_time_diff(), index_file_name.c_str());
-            write_index(index_, index_file_name, conf);
+            write_index(index_.value(), index_file_name, conf);
         }
-        return index_;
+        return index_.value();
     }
 
     knowhere::Index<knowhere::IndexNode>
@@ -124,24 +124,24 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
 
         try {
             printf("[%.3f s] Reading golden index file: %s\n", get_time_diff(), golden_index_file_name.c_str());
-            read_index(golden_index_, golden_index_file_name, conf);
+            read_index(golden_index_.value(), golden_index_file_name, conf);
         } catch (...) {
             printf("[%.3f s] Building golden index on %d vectors\n", get_time_diff(), nb_);
             knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nb_, dim_, xb_);
-            golden_index_.Build(*ds_ptr, conf);
+            golden_index_.value().Build(*ds_ptr, conf);
 
             printf("[%.3f s] Writing golden index file: %s\n", get_time_diff(), golden_index_file_name.c_str());
-            write_index(golden_index_, golden_index_file_name, conf);
+            write_index(golden_index_.value(), golden_index_file_name, conf);
         }
-        return golden_index_;
+        return golden_index_.value();
     }
 
  protected:
     std::string index_type_;
     knowhere::Json cfg_;
-    knowhere::Index<knowhere::IndexNode> index_;
+    knowhere::expected<knowhere::Index<knowhere::IndexNode>> index_;
 
     std::string golden_index_type_;
     knowhere::Json golden_cfg_;
-    knowhere::Index<knowhere::IndexNode> golden_index_;
+    knowhere::expected<knowhere::Index<knowhere::IndexNode>> golden_index_;
 };

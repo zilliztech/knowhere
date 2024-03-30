@@ -41,6 +41,8 @@ enum class Status {
     invalid_binary_set = 19,
     invalid_instruction_set = 20,
     cardinal_inner_error = 21,
+    cuda_runtime_error = 22,
+    invalid_index_error = 23,
 };
 
 inline std::string
@@ -100,13 +102,13 @@ class expected {
 
     expected(const expected<T>&) = default;
 
-    expected(expected<T>&&) noexcept = default;
+    expected(expected<T>&&) = default;
 
     expected&
     operator=(const expected<T>&) = default;
 
     expected&
-    operator=(expected<T>&&) noexcept = default;
+    operator=(expected<T>&&) = default;
 
     bool
     has_value() const {
@@ -120,6 +122,11 @@ class expected {
 
     const T&
     value() const {
+        assert(val.has_value() == true);
+        return val.value();
+    }
+    T&
+    value() {
         assert(val.has_value() == true);
         return val.value();
     }
