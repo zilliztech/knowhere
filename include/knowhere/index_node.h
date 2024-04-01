@@ -120,18 +120,21 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
  public:
     PrecomputedDistanceIterator(std::vector<std::pair<float, int64_t>>&& distances_ids, bool larger_is_closer)
         : comp_(larger_is_closer), results_(std::move(distances_ids)) {
-        sort_size_ = std::max((size_t)50000, results_.size() / 10);
+        sort_size_ = get_sort_size(results_.size());
         sort_next();
     }
 
     // Construct an iterator from a list of distances with index being id, filtering out zero distances.
-    PrecomputedDistanceIterator(std::vector<float> distances, bool larger_is_closer) : comp_(larger_is_closer) {
+    PrecomputedDistanceIterator(const std::vector<float>& distances, bool larger_is_closer) : comp_(larger_is_closer) {
+        // 30% is a ratio guesstimate of non-zero distances: probability of 2 random sparse splade vectors(100 non zero
+        // dims out of 30000 total dims) sharing at least 1 common non-zero dimension.
+        results_.reserve(distances.size() * 0.3);
         for (size_t i = 0; i < distances.size(); i++) {
             if (distances[i] != 0) {
                 results_.push_back(std::make_pair(distances[i], i));
             }
         }
-        sort_size_ = std::max((size_t)50000, results_.size() / 10);
+        sort_size_ = get_sort_size(results_.size());
         sort_next();
     }
 
@@ -148,6 +151,11 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
     }
 
  private:
+    static inline size_t
+    get_sort_size(size_t rows) {
+        return std::max((size_t)50000, rows / 10);
+    }
+
     // sort the next sort_size_ elements
     inline void
     sort_next() {
@@ -170,6 +178,10 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
             }
             if (b.second == -1) {
                 return true;
+            }
+            // to ensure deterministic behavior
+            if (a.first == b.first) {
+                return a.second < b.second;
             }
             return larger_is_closer ? a.first > b.first : a.first < b.first;
         }

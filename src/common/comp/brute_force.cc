@@ -647,34 +647,36 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
     std::string msg;
     auto status = Config::Load(cfg, config, knowhere::ITERATOR, &msg);
     if (status != Status::success) {
-        LOG_KNOWHERE_ERROR_ << "Failed to load config, msg is: " << msg;
+        LOG_KNOWHERE_ERROR_ << "Failed to load config: " << msg;
         return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(
-            status, "failed to brute force search sparse for iterator");
+            status, "Failed to brute force search sparse for iterator: failed to load config: " + msg);
     }
+
+    std::string metric_str = cfg.metric_type.value();
 
 #ifdef NOT_COMPILE_FOR_SWIG
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
         auto ctx = tracer::GetTraceCtxFromCfg(&cfg);
         span = tracer::StartSpan("knowhere bf iterator sparse", &ctx);
-        span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
+        span->SetAttribute(meta::METRIC_TYPE, metric_str);
         span->SetAttribute(meta::ROWS, rows);
         span->SetAttribute(meta::DIM, dim);
         span->SetAttribute(meta::NQ, nq);
     }
 #endif
 
-    std::string metric_str = cfg.metric_type.value();
     auto result = Str2FaissMetricType(metric_str);
     if (result.error() != Status::success) {
-        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
+        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << metric_str;
         return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(
-            result.error(), "failed to brute force search sparse for iterator");
+            result.error(), "Failed to brute force search sparse for iterator: invalid metric type " + metric_str);
     }
     if (!IsMetricType(metric_str, metric::IP)) {
-        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
+        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << metric_str;
         return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(
-            Status::invalid_metric_type, "failed to brute force search sparse for iterator");
+            Status::invalid_metric_type,
+            "Failed to brute force search sparse for iterator: invalid metric type " + metric_str);
     }
 
     auto pool = ThreadPool::GetGlobalSearchThreadPool();
