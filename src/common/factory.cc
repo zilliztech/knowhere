@@ -11,10 +11,36 @@
 
 #include "knowhere/factory.h"
 
+#ifdef KNOWHERE_WITH_RAFT
+#include <cuda_runtime_api.h>
+#endif
+
 namespace knowhere {
 
+#ifdef KNOWHERE_WITH_RAFT
+
+bool
+checkGpuAvailable(const std::string& name) {
+    if (name == "GPU_RAFT_BRUTE_FORCE" || name == "GPU_BRUTE_FORCE" || name == "GPU_RAFT_CAGRA" ||
+        name == "GPU_CAGRA" || name == "GPU_RAFT_IVF_FLAT" || name == "GPU_IVF_FLAT" || name == "GPU_RAFT_IVF_PQ" ||
+        name == "GPU_IVF_PQ") {
+        int count = 0;
+        auto status = cudaGetDeviceCount(&count);
+        if (status != cudaSuccess) {
+            LOG_KNOWHERE_INFO_ << cudaGetErrorString(status);
+            return false;
+        }
+        if (count < 1) {
+            LOG_KNOWHERE_INFO_ << "GPU not available";
+            return false;
+        }
+    }
+    return true;
+}
+#endif
+
 template <typename DataType>
-Index<IndexNode>
+expected<Index<IndexNode>>
 IndexFactory::Create(const std::string& name, const int32_t& version, const Object& object) {
     static_assert(KnowhereDataTypeCheck<DataType>::value == true);
     auto& func_mapping_ = MapInstance();
@@ -22,9 +48,18 @@ IndexFactory::Create(const std::string& name, const int32_t& version, const Obje
     if (func_mapping_.find(key) == func_mapping_.end()) {
         LOG_KNOWHERE_ERROR_ << "failed to find index " << key << " in factory";
     }
-    assert(func_mapping_.find(key) != func_mapping_.end());
-    LOG_KNOWHERE_INFO_ << "use key " << key << " to create knowhere index " << name << " with version " << version;
+    if (func_mapping_.find(key) == func_mapping_.end()) {
+        LOG_KNOWHERE_INFO_ << "use key " << key << " to create knowhere index " << name << " with version " << version;
+        return expected<Index<IndexNode>>::Err(Status::invalid_index_error, "index not supported");
+    }
     auto fun_map_v = (FunMapValue<Index<IndexNode>>*)(func_mapping_[key].get());
+
+#ifdef KNOWHERE_WITH_RAFT
+    if (!checkGpuAvailable(name)) {
+        return expected<Index<IndexNode>>::Err(Status::cuda_runtime_error, "gpu not available");
+    }
+#endif
+
     return fun_map_v->fun_value(version, object);
 }
 
@@ -55,13 +90,13 @@ IndexFactory::MapInstance() {
 
 }  // namespace knowhere
    //
-template knowhere::Index<knowhere::IndexNode>
+template knowhere::expected<knowhere::Index<knowhere::IndexNode>>
 knowhere::IndexFactory::Create<knowhere::fp32>(const std::string&, const int32_t&, const Object&);
-template knowhere::Index<knowhere::IndexNode>
+template knowhere::expected<knowhere::Index<knowhere::IndexNode>>
 knowhere::IndexFactory::Create<knowhere::bin1>(const std::string&, const int32_t&, const Object&);
-template knowhere::Index<knowhere::IndexNode>
+template knowhere::expected<knowhere::Index<knowhere::IndexNode>>
 knowhere::IndexFactory::Create<knowhere::fp16>(const std::string&, const int32_t&, const Object&);
-template knowhere::Index<knowhere::IndexNode>
+template knowhere::expected<knowhere::Index<knowhere::IndexNode>>
 knowhere::IndexFactory::Create<knowhere::bf16>(const std::string&, const int32_t&, const Object&);
 template const knowhere::IndexFactory&
 knowhere::IndexFactory::Register<knowhere::fp32>(

@@ -97,8 +97,9 @@ TEST_CASE("Test PQ Search SIMD", "[pq]") {
             }
         }
 
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT,
-                                                                             version);
+        auto idx = knowhere::IndexFactory::Instance()
+                       .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, version)
+                       .value();
         REQUIRE(idx.Build(*train_ds, conf) == knowhere::Status::success);
         auto res = idx.Search(*query_ds, conf, nullptr);
         REQUIRE(res.has_value());

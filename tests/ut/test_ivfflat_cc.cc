@@ -150,7 +150,7 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivf_cc_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_8_cc_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -194,8 +194,8 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
         auto [index_name, cc_index_name] = GENERATE_REF(table<std::string, std::string>({
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC),
         }));
-        auto ivf = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_name, version);
-        auto ivf_cc = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(cc_index_name, version);
+        auto ivf = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_name, version).value();
+        auto ivf_cc = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(cc_index_name, version).value();
 
         knowhere::Json ivf_json = knowhere::Json::parse(ivf_gen().dump());
         knowhere::Json ivf_cc_json = knowhere::Json::parse(ivf_cc_gen().dump());
@@ -253,7 +253,7 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivf_cc_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_8_cc_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);

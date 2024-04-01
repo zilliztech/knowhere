@@ -60,7 +60,7 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT, bin_ivfflat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, bin_hnsw_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::bin1>(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::bin1>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -75,7 +75,7 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
         knowhere::BinarySet bs;
         idx.Serialize(bs);
 
-        auto idx_new = knowhere::IndexFactory::Instance().Create<knowhere::bin1>(name, version);
+        auto idx_new = knowhere::IndexFactory::Instance().Create<knowhere::bin1>(name, version).value();
         idx_new.Deserialize(bs);
 
         auto retrieve_task = [&]() {
@@ -174,7 +174,7 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -190,7 +190,7 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
         knowhere::BinarySet bs;
         idx.Serialize(bs);
 
-        auto idx_new = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+        auto idx_new = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         idx_new.Deserialize(bs);
 
         auto retrieve_task = [&]() {

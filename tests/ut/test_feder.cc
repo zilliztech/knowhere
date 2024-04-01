@@ -177,7 +177,7 @@ TEST_CASE("Test Feder", "[feder]") {
 
     SECTION("Test HNSW Feder") {
         auto name = knowhere::IndexEnum::INDEX_HNSW;
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         REQUIRE(idx.Type() == name);
 
         auto json = hnsw_gen();
@@ -201,7 +201,7 @@ TEST_CASE("Test Feder", "[feder]") {
 
     SECTION("Test IVF_FLAT Feder") {
         auto name = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         REQUIRE(idx.Type() == name);
 
         auto json = ivfflat_gen();

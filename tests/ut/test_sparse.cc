@@ -104,7 +104,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -137,7 +137,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -219,7 +219,7 @@ TEST_CASE("Test Mem Sparse Index GetVectorByIds", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -234,7 +234,7 @@ TEST_CASE("Test Mem Sparse Index GetVectorByIds", "[float metrics]") {
         knowhere::BinarySet bs;
         idx.Serialize(bs);
 
-        auto idx_new = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+        auto idx_new = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         idx_new.Deserialize(bs);
 
         auto retrieve_task = [&]() {

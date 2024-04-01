@@ -25,6 +25,7 @@
 #endif
 #ifdef KNOWHERE_WITH_RAFT
 #include "common/raft/integration/raft_initialization.hpp"
+#include "cuda_runtime_api.h"
 #endif
 #include "simd/hook.h"
 
@@ -147,6 +148,7 @@ void
 KnowhereConfig::InitGPUResource(int64_t gpu_id, int64_t res_num) {
 #ifdef KNOWHERE_WITH_GPU
     LOG_KNOWHERE_INFO_ << "init GPU resource for gpu id " << gpu_id << ", resource num " << res_num;
+
     knowhere::GPUParams gpu_params(res_num);
     knowhere::GPUResMgr::GetInstance().InitDevice(gpu_id, gpu_params);
     knowhere::GPUResMgr::GetInstance().Init();
@@ -164,6 +166,17 @@ KnowhereConfig::FreeGPUResource() {
 void
 KnowhereConfig::SetRaftMemPool(size_t init_size, size_t max_size) {
 #ifdef KNOWHERE_WITH_RAFT
+    int count = 0;
+    auto status = cudaGetDeviceCount(&count);
+    if (status != cudaSuccess) {
+        LOG_KNOWHERE_INFO_ << cudaGetErrorString(status);
+        return;
+    }
+    if (count < 1) {
+        LOG_KNOWHERE_INFO_ << "GPU not available";
+        return;
+    }
+
     auto config = raft_knowhere::raft_configuration{};
     config.init_mem_pool_size_mb = init_size;
     config.max_mem_pool_size_mb = max_size;

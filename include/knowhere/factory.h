@@ -23,7 +23,7 @@ namespace knowhere {
 class IndexFactory {
  public:
     template <typename DataType>
-    Index<IndexNode>
+    expected<Index<IndexNode>>
     Create(const std::string& name, const int32_t& version, const Object& object = nullptr);
     template <typename DataType>
     const IndexFactory&

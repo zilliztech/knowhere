@@ -149,7 +149,8 @@ class IndexWrap {
         if (name == std::string(knowhere::IndexEnum::INDEX_DISKANN)) {
             std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
             auto diskann_pack = knowhere::Pack(file_manager);
-            idx = IndexFactory::Instance().Create<T>(name, version, diskann_pack);
+            idx = IndexFactory::Instance().Create<T>(name, version,
+            diskann_pack);
         } else {
             idx = IndexFactory::Instance().Create<T>(name, version);
         }
@@ -158,25 +159,25 @@ class IndexWrap {
     knowhere::Status
     Build(knowhere::DataSetPtr dataset, const std::string& json) {
         GILReleaser rel;
-        return idx.Build(*dataset, knowhere::Json::parse(json));
+        return idx.value().Build(*dataset, knowhere::Json::parse(json));
     }
 
     knowhere::Status
     Train(knowhere::DataSetPtr dataset, const std::string& json) {
         GILReleaser rel;
-        return idx.Train(*dataset, knowhere::Json::parse(json));
+        return idx.value().Train(*dataset, knowhere::Json::parse(json));
     }
 
     knowhere::Status
     Add(knowhere::DataSetPtr dataset, const std::string& json) {
         GILReleaser rel;
-        return idx.Add(*dataset, knowhere::Json::parse(json));
+        return idx.value().Add(*dataset, knowhere::Json::parse(json));
     }
 
     knowhere::DataSetPtr
     Search(knowhere::DataSetPtr dataset, const std::string& json, const knowhere::BitsetView& bitset, knowhere::Status& status) {
         GILReleaser rel;
-        auto res = idx.Search(*dataset, knowhere::Json::parse(json), bitset);
+        auto res = idx.value().Search(*dataset, knowhere::Json::parse(json), bitset);
         if (res.has_value()) {
             status = knowhere::Status::success;
             return res.value();
@@ -189,7 +190,7 @@ class IndexWrap {
     std::vector<AnnIteratorWrap>
     GetAnnIterator(knowhere::DataSetPtr dataset, const std::string& json, const knowhere::BitsetView& bitset, knowhere::Status& status) {
         GILReleaser rel;
-        auto res = idx.AnnIterator(*dataset, knowhere::Json::parse(json), bitset);
+        auto res = idx.value().AnnIterator(*dataset, knowhere::Json::parse(json), bitset);
         std::vector<AnnIteratorWrap> result;
         if (!res.has_value()) {
             status = res.error();
@@ -205,7 +206,7 @@ class IndexWrap {
     knowhere::DataSetPtr
     RangeSearch(knowhere::DataSetPtr dataset, const std::string& json, const knowhere::BitsetView& bitset, knowhere::Status& status){
         GILReleaser rel;
-        auto res = idx.RangeSearch(*dataset, knowhere::Json::parse(json), bitset);
+        auto res = idx.value().RangeSearch(*dataset, knowhere::Json::parse(json), bitset);
         if (res.has_value()) {
             status = knowhere::Status::success;
             return res.value();
@@ -218,7 +219,7 @@ class IndexWrap {
     knowhere::DataSetPtr
     GetVectorByIds(knowhere::DataSetPtr dataset, knowhere::Status& status) {
         GILReleaser rel;
-        auto res = idx.GetVectorByIds(*dataset);
+        auto res = idx.value().GetVectorByIds(*dataset);
         if (res.has_value()) {
             status = knowhere::Status::success;
             return res.value();
@@ -231,49 +232,49 @@ class IndexWrap {
     bool
     HasRawData(const std::string& metric_type) {
         GILReleaser rel;
-        return idx.HasRawData(metric_type);
+        return idx.value().HasRawData(metric_type);
     }
 
     knowhere::Status
     Serialize(knowhere::BinarySetPtr binset) {
         GILReleaser rel;
-        return idx.Serialize(*binset);
+        return idx.value().Serialize(*binset);
     }
 
     knowhere::Status
     Deserialize(knowhere::BinarySetPtr binset, const std::string& json) {
         GILReleaser rel;
-        return idx.Deserialize(*binset, knowhere::Json::parse(json));
+        return idx.value().Deserialize(*binset, knowhere::Json::parse(json));
     }
 
     knowhere::Status
     DeserializeFromFile(const std::string& filename, const std::string& json) {
         GILReleaser rel;
-        return idx.DeserializeFromFile(filename, knowhere::Json::parse(json));
+        return idx.value().DeserializeFromFile(filename, knowhere::Json::parse(json));
     }
 
     int64_t
     Dim() {
-        return idx.Dim();
+        return idx.value().Dim();
     }
 
     int64_t
     Size() {
-        return idx.Size();
+        return idx.value().Size();
     }
 
     int64_t
     Count() {
-        return idx.Count();
+        return idx.value().Count();
     }
 
     std::string
     Type() {
-        return idx.Type();
+        return idx.value().Type();
     }
 
  private:
-    Index<IndexNode> idx;
+    expected<Index<IndexNode>> idx;
 };
 
 class BitSet {
