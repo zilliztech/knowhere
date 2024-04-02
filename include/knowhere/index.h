@@ -43,6 +43,20 @@ class Index {
         node = idx.node;
     }
 
+    Index<T1>&
+    operator=(const Index<T1>& idx) {
+        if (&idx == this) {
+            return *this;
+        }
+        if (idx.node == nullptr) {
+            node = nullptr;
+            return *this;
+        }
+        idx.node->IncRef();
+        node = idx.node;
+        return *this;
+    }
+
     Index(Index<T1>&& idx) {
         if (idx.node == nullptr) {
             node = nullptr;
