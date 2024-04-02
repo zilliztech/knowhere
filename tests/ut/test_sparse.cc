@@ -169,6 +169,44 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
             REQUIRE(recall >= 0.8);
         }
     }
+
+    SECTION("Test Sparse Iterator with Bitset") {
+        using std::make_tuple;
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
+        }));
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto cfg_json = gen().dump();
+        CAPTURE(name, cfg_json);
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        REQUIRE(idx.Type() == name);
+        REQUIRE(idx.Build(*train_ds, json) == knowhere::Status::success);
+        REQUIRE(idx.Size() > 0);
+        REQUIRE(idx.Count() == nb);
+
+        auto gen_bitset_fn = GENERATE(GenerateBitsetWithFirstTbitsSet, GenerateBitsetWithRandomTbitsSet);
+        auto bitset_percentages = GENERATE(0.4f, 0.9f);
+
+        auto bitset_data = gen_bitset_fn(nb, bitset_percentages * nb);
+        knowhere::BitsetView bitset(bitset_data.data(), nb);
+        auto iterators_or = idx.AnnIterator(*query_ds, json, bitset);
+        REQUIRE(iterators_or.has_value());
+        auto& iterators = iterators_or.value();
+        REQUIRE(iterators.size() == (size_t)nq);
+        // verify the distances are monotonic decreasing, as INDEX_SPARSE_INVERTED_INDEX and INDEX_SPARSE_WAND
+        // performs exausitive search for iterator.
+        for (int i = 0; i < nq; ++i) {
+            auto& iter = iterators[i];
+            float prev_dist = std::numeric_limits<float>::max();
+            while (iter->HasNext()) {
+                auto [id, dist] = iter->Next();
+                REQUIRE(!bitset.test(id));
+                REQUIRE(prev_dist >= dist);
+                prev_dist = dist;
+            }
+        }
+    }
 }
 
 TEST_CASE("Test Mem Sparse Index GetVectorByIds", "[float metrics]") {

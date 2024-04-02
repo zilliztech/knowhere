@@ -532,60 +532,6 @@ BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_d
     return GenResultDataSet(nq, topk, labels.release(), distances.release());
 }
 
-class BruteForceIterator : public IndexNode::iterator {
- public:
-    BruteForceIterator(std::vector<std::pair<float, int64_t>>&& distances_ids, bool larger_is_closer)
-        : comp_(larger_is_closer), results_(std::move(distances_ids)) {
-        sort_size_ = std::max((size_t)50000, results_.size() / 10);
-        sort_next();
-    }
-
-    std::pair<int64_t, float>
-    Next() override {
-        sort_next();
-        auto& result = results_[next_++];
-        return std::make_pair(result.second, result.first);
-    }
-
-    [[nodiscard]] bool
-    HasNext() const override {
-        return next_ < results_.size() && results_[next_].second != -1;
-    }
-
- private:
-    // sort the next sort_size_ elements
-    inline void
-    sort_next() {
-        if (next_ < sorted_) {
-            return;
-        }
-        size_t current_end = std::min(results_.size(), sorted_ + sort_size_);
-        std::partial_sort(results_.begin() + sorted_, results_.begin() + current_end, results_.end(), comp_);
-        sorted_ = current_end;
-    }
-    struct PairComparator {
-        bool larger_is_closer;
-        PairComparator(bool larger) : larger_is_closer(larger) {
-        }
-
-        bool
-        operator()(const std::pair<float, int64_t>& a, const std::pair<float, int64_t>& b) const {
-            if (a.second == -1) {
-                return false;
-            }
-            if (b.second == -1) {
-                return true;
-            }
-            return larger_is_closer ? a.first > b.first : a.first < b.first;
-        }
-    } comp_;
-
-    std::vector<std::pair<float, int64_t>> results_;
-    size_t next_ = 0;
-    size_t sorted_ = 0;
-    size_t sort_size_ = 0;
-};
-
 template <typename DataType>
 expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
 BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
@@ -665,7 +611,7 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                     return Status::invalid_metric_type;
                 }
             }
-            vec[index] = std::make_shared<BruteForceIterator>(std::move(distances_ids), larger_is_closer);
+            vec[index] = std::make_shared<PrecomputedDistanceIterator>(std::move(distances_ids), larger_is_closer);
 
             return Status::success;
         }));
@@ -682,6 +628,87 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
         span->End();
     }
 #endif
+    return vec;
+}
+
+template <>
+expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
+BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr base_dataset,
+                                                            const DataSetPtr query_dataset, const Json& config,
+                                                            const BitsetView& bitset) {
+    auto base = static_cast<const sparse::SparseRow<float>*>(base_dataset->GetTensor());
+    auto rows = base_dataset->GetRows();
+    auto dim = base_dataset->GetDim();
+
+    auto xq = static_cast<const sparse::SparseRow<float>*>(query_dataset->GetTensor());
+    auto nq = query_dataset->GetRows();
+
+    BruteForceConfig cfg;
+    std::string msg;
+    auto status = Config::Load(cfg, config, knowhere::ITERATOR, &msg);
+    if (status != Status::success) {
+        LOG_KNOWHERE_ERROR_ << "Failed to load config: " << msg;
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(
+            status, "Failed to brute force search sparse for iterator: failed to load config: " + msg);
+    }
+
+    std::string metric_str = cfg.metric_type.value();
+
+#ifdef NOT_COMPILE_FOR_SWIG
+    std::shared_ptr<tracer::trace::Span> span = nullptr;
+    if (cfg.trace_id.has_value()) {
+        auto ctx = tracer::GetTraceCtxFromCfg(&cfg);
+        span = tracer::StartSpan("knowhere bf iterator sparse", &ctx);
+        span->SetAttribute(meta::METRIC_TYPE, metric_str);
+        span->SetAttribute(meta::ROWS, rows);
+        span->SetAttribute(meta::DIM, dim);
+        span->SetAttribute(meta::NQ, nq);
+    }
+#endif
+
+    auto result = Str2FaissMetricType(metric_str);
+    if (result.error() != Status::success) {
+        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << metric_str;
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(
+            result.error(), "Failed to brute force search sparse for iterator: invalid metric type " + metric_str);
+    }
+    if (!IsMetricType(metric_str, metric::IP)) {
+        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << metric_str;
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(
+            Status::invalid_metric_type,
+            "Failed to brute force search sparse for iterator: invalid metric type " + metric_str);
+    }
+
+    auto pool = ThreadPool::GetGlobalSearchThreadPool();
+    auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
+    std::vector<folly::Future<folly::Unit>> futs;
+    futs.reserve(nq);
+    for (int64_t i = 0; i < nq; ++i) {
+        futs.emplace_back(pool->push([&, index = i] {
+            const auto& row = xq[index];
+            std::vector<std::pair<float, int64_t>> distances_ids;
+            if (row.size() > 0) {
+                for (int64_t j = 0; j < rows; ++j) {
+                    if (!bitset.empty() && bitset.test(j)) {
+                        continue;
+                    }
+                    auto dist = row.dot(base[j]);
+                    if (dist > 0) {
+                        distances_ids.emplace_back(dist, j);
+                    }
+                }
+            }
+            vec[index] = std::make_shared<PrecomputedDistanceIterator>(std::move(distances_ids), true);
+        }));
+    }
+    WaitAllSuccess(futs);
+
+#ifdef NOT_COMPILE_FOR_SWIG
+    if (cfg.trace_id.has_value()) {
+        span->End();
+    }
+#endif
+
     return vec;
 }
 

@@ -186,6 +186,29 @@ class InvertedIndex {
         }
     }
 
+    std::vector<float>
+    GetAllDistances(const SparseRow<T>& query, float drop_ratio_search, const BitsetView& bitset) const {
+        if (query.size() == 0) {
+            return {};
+        }
+        std::vector<T> values(query.size());
+        for (size_t i = 0; i < query.size(); ++i) {
+            values[i] = std::abs(query[i].val);
+        }
+        auto pos = values.begin() + static_cast<size_t>(drop_ratio_search * values.size());
+        std::nth_element(values.begin(), pos, values.end());
+        auto q_threshold = *pos;
+        std::shared_lock<std::shared_mutex> lock(mu_);
+        auto distances = compute_all_distances(query, q_threshold);
+        for (size_t i = 0; i < distances.size(); ++i) {
+            if (bitset.empty() || !bitset.test(i)) {
+                continue;
+            }
+            distances[i] = 0.0f;
+        }
+        return distances;
+    }
+
     void
     GetVectorById(const label_t id, SparseRow<T>& output) const {
         output = raw_data_[id];
@@ -233,10 +256,8 @@ class InvertedIndex {
         return max_dim_;
     }
 
-    // find the top-k candidates using brute force search, k as specified by the capacity of the heap.
-    // any value in q_vec that is smaller than q_threshold and any value with dimension >= n_cols() will be ignored.
-    void
-    search_brute_force(const SparseRow<T>& q_vec, T q_threshold, MaxMinHeap<T>& heap, const BitsetView& bitset) const {
+    std::vector<float>
+    compute_all_distances(const SparseRow<T>& q_vec, T q_threshold) const {
         std::vector<float> scores(n_rows_internal(), 0.0f);
         for (size_t idx = 0; idx < q_vec.size(); ++idx) {
             auto [i, v] = q_vec[idx];
@@ -254,6 +275,15 @@ class InvertedIndex {
                 scores[idx] += v * float(val);
             }
         }
+        return scores;
+    }
+
+    // find the top-k candidates using brute force search, k as specified by the capacity of the heap.
+    // any value in q_vec that is smaller than q_threshold and any value with dimension >= n_cols() will be ignored.
+    // TODO: may switch to row-wise brute force if filter rate is high. Benchmark needed.
+    void
+    search_brute_force(const SparseRow<T>& q_vec, T q_threshold, MaxMinHeap<T>& heap, const BitsetView& bitset) const {
+        auto scores = compute_all_distances(q_vec, q_threshold);
         for (size_t i = 0; i < n_rows_internal(); ++i) {
             if ((bitset.empty() || !bitset.test(i)) && scores[i] != 0) {
                 heap.push(i, scores[i]);
