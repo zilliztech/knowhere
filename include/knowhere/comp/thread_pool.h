@@ -110,6 +110,11 @@ class ThreadPool {
         return pool_.numThreads();
     }
 
+    size_t
+    GetPendingTaskCount() {
+        return pool_.getPendingTaskCount();
+    }
+
     void
     SetNumThreads(uint32_t num_threads) {
         if (num_threads == 0) {
@@ -195,6 +200,16 @@ class ThreadPool {
             LOG_KNOWHERE_INFO_ << "Global search thread pool size has already been set to " << search_pool_->size();
             return;
         }
+    }
+
+    static size_t
+    GetSearchThreadPoolPendingTaskCount() {
+        return ThreadPool::GetGlobalSearchThreadPool()->GetPendingTaskCount();
+    }
+
+    static size_t
+    GetBuildThreadPoolPendingTaskCount() {
+        return ThreadPool::GetGlobalBuildThreadPool()->GetPendingTaskCount();
     }
 
     static std::shared_ptr<ThreadPool>
