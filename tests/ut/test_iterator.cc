@@ -323,7 +323,7 @@ TEST_CASE("Test Iterator IVFFlatCC With Newly Insert Vectors", "[float metrics] 
     }
 }
 
-TEST_CASE("Test Iterator Mem Index With Binary Metrics", "[float metrics]") {
+TEST_CASE("Test Iterator Mem Index With Binary Metrics", "[binary metrics]") {
     using Catch::Approx;
 
     const int64_t nb = 1000, nq = 10;
@@ -348,21 +348,21 @@ TEST_CASE("Test Iterator Mem Index With Binary Metrics", "[float metrics]") {
         json[knowhere::indexparam::SEED_EF] = 64;
         return json;
     };
-    const auto train_ds = GenDataSet(nb, dim);
-    const auto query_ds = GenDataSet(nq, dim);
+    const auto train_ds = GenBinDataSet(nb, dim);
+    const auto query_ds = GenBinDataSet(nq, dim);
 
     const knowhere::Json conf = {
         {knowhere::meta::METRIC_TYPE, metric},
         {knowhere::meta::TOPK, topk},
     };
 
-    auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
+    auto gt = knowhere::BruteForce::Search<knowhere::bin1>(train_ds, query_ds, conf, nullptr);
     SECTION("Test Search using iterator") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::bin1>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);

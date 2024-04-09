@@ -150,17 +150,17 @@ class pairGreater {
     }
 };
 
-template <typename MTYPE>
-using DISTFUNC = MTYPE (*)(const void*, const void*, const void*);
+template <typename DistanceType>
+using DISTFUNC = DistanceType (*)(const void*, const void*, const void*);
 
-template <typename MTYPE>
+template <typename DistanceType>
 class SpaceInterface {
  public:
     // virtual void search(void *);
     virtual size_t
     get_data_size() = 0;
 
-    virtual DISTFUNC<MTYPE>
+    virtual DISTFUNC<DistanceType>
     get_dist_func() = 0;
 
     virtual DISTFUNC<float>
@@ -182,7 +182,7 @@ struct SearchParam {
 
 struct IteratorWorkspace {
     IteratorWorkspace(std::unique_ptr<int8_t[]> query_data_sq, const size_t num_elements, const size_t seed_ef,
-                      const bool for_tuning, std::unique_ptr<float[]> raw_query_data,
+                      const bool for_tuning, std::unique_ptr<int8_t[]> raw_query_data,
                       const knowhere::BitsetView& bitset, float accumulative_alpha)
         : query_data(query_data_sq ? (const void*)(query_data_sq.get()) : (const void*)(raw_query_data.get())),
           query_data_sq(std::move(query_data_sq)),
@@ -212,7 +212,7 @@ struct IteratorWorkspace {
     std::unique_ptr<SearchParam> param;
     // though named raw_query_vector, it is normalized for cosine metric. used
     // only for refinement when quantization is enabled.
-    std::unique_ptr<float[]> raw_query_data;
+    std::unique_ptr<int8_t[]> raw_query_data;
     const knowhere::BitsetView bitset;
     float accumulative_alpha;
 };
@@ -255,8 +255,7 @@ class AlgorithmInterface {
 
 template <typename dist_t>
 std::vector<std::pair<dist_t, labeltype>>
-AlgorithmInterface<dist_t>::searchKnnCloserFirst(void* query_data, size_t k,
-                                                 const knowhere::BitsetView bitset) const {
+AlgorithmInterface<dist_t>::searchKnnCloserFirst(void* query_data, size_t k, const knowhere::BitsetView bitset) const {
     std::vector<std::pair<dist_t, labeltype>> result;
 
     // here searchKnn returns the result in the order of further first
@@ -265,9 +264,9 @@ AlgorithmInterface<dist_t>::searchKnnCloserFirst(void* query_data, size_t k,
 }  // namespace hnswlib
 
 #include "hnswalg.h"
-#include "space_ip.h"
-#include "space_l2.h"
 #include "space_cosine.h"
 #include "space_hamming.h"
+#include "space_ip.h"
 #include "space_jaccard.h"
+#include "space_l2.h"
 #pragma GCC diagnostic pop
