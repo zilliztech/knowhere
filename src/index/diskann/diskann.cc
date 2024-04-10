@@ -611,8 +611,6 @@ DiskANNIndexNode<DataType>::RangeSearch(const DataSet& dataset, const Config& cf
     futures.reserve(nq);
     for (int64_t row = 0; row < nq; ++row) {
         futures.emplace_back(search_pool_->push([&, index = row]() {
-            std::vector<int64_t> indices;
-            std::vector<float> distances;
             diskann::QueryStats stats;
             pq_flash_index_->range_search(xq + (index * dim), radius, min_k, max_k, result_id_array[index],
                                           result_dist_array[index], beamwidth, bitset, &stats);

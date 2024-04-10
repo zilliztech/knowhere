@@ -28,13 +28,14 @@ class DiskANNConfig : public BaseConfig {
     // This is the degree of the graph index, typically between 60 and 150. Larger R will result in larger indices and
     // longer indexing times, but better search quality.
     CFG_INT max_degree;
-    // The size of the search list during the index build or (knn/ange) search. Typical values are between 75 to 200.
+    // The size of the search list during the index build or (knn/range) search. Typical values are between 75 to 200.
     // Larger values will take more time to build but result in indices that provide higher recall for the same search
     // complexity. Plz set this value larger than the max_degree unless you need to build indices really quickly and can
     // somewhat compromise on quality.
     CFG_INT search_list_size;
-    // Limit the size of the PQ code after the raw vector has been PQ-encoded. PQ code is (a search_list_size / row_num
-    // )-dimensional uint8 vector. If pq_code_budget_gb is too large, it will be adjusted to the size of dim*row_num.
+    // Limit the size of the PQ code after the raw vector has been PQ-encoded. PQ code is a (pq_code_budget_gb * 1024 *
+    // 1024 * 1024) / row_num)-dimensional uint8 vector. If pq_code_budget_gb is too large, it will be adjusted to the
+    // size of dim*row_num.
     CFG_FLOAT pq_code_budget_gb;
     // Limit on the memory allowed for building the index in GB. If you specify a value less than what is required to
     // build the index in one pass, the index is built using a divide and conquer approach so that sub-graphs will fit
