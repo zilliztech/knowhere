@@ -97,7 +97,7 @@ jobs:
           ls -lah
       - name: Upload coverage to Codecov
         if: "github.repository == 'zilliztech/knowhere'"
-        uses: codecov/codecov-action@v3.1.1
+        uses: codecov/codecov-action@v4
         id: upload_cov
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -106,7 +106,7 @@ jobs:
           fail_ci_if_error: true
       - name: Retry Upload coverage to Codecov
         if: "${{ failure() }} && github.repository == 'zilliztech/knowhere'"
-        uses: codecov/codecov-action@v3.1.1
+        uses: codecov/codecov-action@v4
         id: retry_upload_cov
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
