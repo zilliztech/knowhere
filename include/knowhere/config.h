@@ -627,6 +627,7 @@ class BaseConfig : public Config {
     CFG_FLOAT range_filter;
     CFG_BOOL trace_visit;
     CFG_BOOL enable_mmap;
+    CFG_BOOL enable_mmap_pop;
     CFG_BOOL for_tuning;
     CFG_BOOL shuffle_build;
     CFG_BYTES trace_id;
@@ -680,6 +681,11 @@ class BaseConfig : public Config {
         KNOWHERE_CONFIG_DECLARE_FIELD(enable_mmap)
             .set_default(false)
             .description("enable mmap for load index")
+            .for_deserialize()
+            .for_deserialize_from_file();
+        KNOWHERE_CONFIG_DECLARE_FIELD(enable_mmap_pop)
+            .set_default(false)
+            .description("enable map_populate option for mmap")
             .for_deserialize()
             .for_deserialize_from_file();
         KNOWHERE_CONFIG_DECLARE_FIELD(for_tuning).set_default(false).description("for tuning").for_search();
