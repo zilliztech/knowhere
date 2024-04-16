@@ -763,9 +763,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         auto input = knowhere::FileReader(location);
         map_size_ = input.size();
         int map_flags = MAP_SHARED;
+        if (cfg.enable_mmap_pop.has_value() && cfg.enable_mmap_pop.value()) {
 #ifdef MAP_POPULATE
-        map_flags |= MAP_POPULATE;
+            map_flags |= MAP_POPULATE;
 #endif
+        }
         map_ = static_cast<char*>(mmap(nullptr, map_size_, PROT_READ, map_flags, input.descriptor(), 0));
         madvise(map_, map_size_, MADV_RANDOM);
 
