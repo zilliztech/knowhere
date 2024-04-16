@@ -13,11 +13,36 @@
 #define OBJECT_H
 
 #include <atomic>
+#include <cassert>
 #include <iostream>
 
 #include "knowhere/file_manager.h"
 
 namespace knowhere {
+
+template <typename I, typename T>
+struct IdVal {
+    I id;
+    T val;
+
+    IdVal() = default;
+    IdVal(I id, T val) : id(id), val(val) {
+    }
+
+    inline friend bool
+    operator<(const IdVal<I, T>& lhs, const IdVal<I, T>& rhs) {
+        return lhs.val < rhs.val || (lhs.val == rhs.val && lhs.id < rhs.id);
+    }
+    inline friend bool
+    operator>(const IdVal<I, T>& lhs, const IdVal<I, T>& rhs) {
+        return !(lhs < rhs);
+    }
+
+    inline friend bool
+    operator==(const IdVal<I, T>& lhs, const IdVal<I, T>& rhs) {
+        return lhs.id == rhs.id && lhs.val == rhs.val;
+    }
+};
 
 class Object {
  public:

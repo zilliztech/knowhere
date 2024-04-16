@@ -21,6 +21,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "knowhere/object.h"
 #include "knowhere/operands.h"
 
 namespace knowhere::sparse {
@@ -32,28 +33,7 @@ using table_t = uint32_t;
 using label_t = int64_t;
 
 template <typename T>
-struct IdVal {
-    table_t id;
-    T val;
-
-    IdVal() = default;
-    IdVal(table_t id, T val) : id(id), val(val) {
-    }
-
-    inline friend bool
-    operator<(const IdVal& lhs, const IdVal& rhs) {
-        return lhs.val < rhs.val || (lhs.val == rhs.val && lhs.id < rhs.id);
-    }
-    inline friend bool
-    operator>(const IdVal& lhs, const IdVal& rhs) {
-        return !(lhs < rhs);
-    }
-
-    inline friend bool
-    operator==(const IdVal& lhs, const IdVal& rhs) {
-        return lhs.id == rhs.id && lhs.val == rhs.val;
-    }
-};
+using SparseIdVal = IdVal<table_t, T>;
 
 template <typename T>
 class SparseRow {
@@ -135,7 +115,7 @@ class SparseRow {
         return elem->index + 1;
     }
 
-    IdVal<T>
+    SparseIdVal<T>
     operator[](size_t i) const {
         auto* elem = reinterpret_cast<const ElementProxy*>(data_) + i;
         return {elem->index, elem->value};
@@ -212,14 +192,14 @@ class MaxMinHeap {
         if (size_ < capacity_) {
             pool_[size_] = {id, val};
             size_ += 1;
-            std::push_heap(pool_.begin(), pool_.begin() + size_, std::greater<IdVal<T>>());
+            std::push_heap(pool_.begin(), pool_.begin() + size_, std::greater<SparseIdVal<T>>());
         } else if (val > pool_[0].val) {
             sift_down(id, val);
         }
     }
     table_t
     pop() {
-        std::pop_heap(pool_.begin(), pool_.begin() + size_, std::greater<IdVal<T>>());
+        std::pop_heap(pool_.begin(), pool_.begin() + size_, std::greater<SparseIdVal<T>>());
         size_ -= 1;
         return pool_[size_].id;
     }
@@ -231,7 +211,7 @@ class MaxMinHeap {
     empty() const {
         return size() == 0;
     }
-    IdVal<T>
+    SparseIdVal<T>
     top() const {
         return pool_[0];
     }
@@ -263,7 +243,7 @@ class MaxMinHeap {
     }
 
     size_t size_ = 0, capacity_;
-    std::vector<IdVal<T>> pool_;
+    std::vector<SparseIdVal<T>> pool_;
 };  // class MaxMinHeap
 
 }  // namespace knowhere::sparse

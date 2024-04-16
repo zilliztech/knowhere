@@ -223,9 +223,9 @@ class InvertedIndex {
             res += row.memory_usage();
         }
 
-        res += (sizeof(table_t) + sizeof(std::vector<IdVal<T>>)) * inverted_lut_.size();
+        res += (sizeof(table_t) + sizeof(std::vector<SparseIdVal<T>>)) * inverted_lut_.size();
         for (const auto& [idx, lut] : inverted_lut_) {
-            res += sizeof(IdVal<T>) * lut.capacity();
+            res += sizeof(SparseIdVal<T>) * lut.capacity();
         }
         if (use_wand_) {
             res += (sizeof(table_t) + sizeof(T)) * max_in_dim_.size();
@@ -291,7 +291,7 @@ class InvertedIndex {
         }
     }
 
-    // LUT supports size() and operator[] which returns an IdVal.
+    // LUT supports size() and operator[] which returns an SparseIdVal.
     template <typename LUT>
     class Cursor {
      public:
@@ -358,7 +358,7 @@ class InvertedIndex {
     void
     search_wand(const SparseRow<T>& q_vec, T q_threshold, MaxMinHeap<T>& heap, const BitsetView& bitset) const {
         auto q_dim = q_vec.size();
-        std::vector<std::shared_ptr<Cursor<std::vector<IdVal<T>>>>> cursors(q_dim);
+        std::vector<std::shared_ptr<Cursor<std::vector<SparseIdVal<T>>>>> cursors(q_dim);
         auto valid_q_dim = 0;
         for (size_t i = 0; i < q_dim; ++i) {
             auto [idx, val] = q_vec[i];
@@ -370,7 +370,7 @@ class InvertedIndex {
                 continue;
             }
             auto& lut = lut_it->second;
-            cursors[valid_q_dim++] = std::make_shared<Cursor<std::vector<IdVal<T>>>>(
+            cursors[valid_q_dim++] = std::make_shared<Cursor<std::vector<SparseIdVal<T>>>>(
                 lut, n_rows_internal(), max_in_dim_.find(idx)->second * val, val, bitset);
         }
         if (valid_q_dim == 0) {
@@ -430,7 +430,7 @@ class InvertedIndex {
     void
     refine_and_collect(const SparseRow<T>& q_vec, MaxMinHeap<T>& inaccurate, size_t k, float* distances,
                        label_t* labels) const {
-        std::priority_queue<IdVal<T>, std::vector<IdVal<T>>, std::greater<IdVal<T>>> heap;
+        std::priority_queue<SparseIdVal<T>, std::vector<SparseIdVal<T>>, std::greater<SparseIdVal<T>>> heap;
 
         while (!inaccurate.empty()) {
             auto [u, d] = inaccurate.top();
@@ -483,7 +483,7 @@ class InvertedIndex {
     std::vector<SparseRow<T>> raw_data_;
     mutable std::shared_mutex mu_;
 
-    std::unordered_map<table_t, std::vector<IdVal<T>>> inverted_lut_;
+    std::unordered_map<table_t, std::vector<SparseIdVal<T>>> inverted_lut_;
     bool use_wand_ = false;
     // If we want to drop small values during build, we must first train the
     // index with all the data to compute value_threshold_.
