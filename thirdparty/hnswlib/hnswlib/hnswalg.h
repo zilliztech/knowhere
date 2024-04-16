@@ -1428,25 +1428,35 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         auto accumulative_alpha = (bitset.count() >= (cur_element_count * kHnswSearchKnnBFFilterThreshold))
                                       ? std::numeric_limits<float>::max()
                                       : 0.0f;
+        std::unique_ptr<float[]> query_data_copy = nullptr;
         if (metric_type_ == Metric::COSINE) {
-            return std::make_unique<IteratorWorkspace>(
-                query_data, max_elements_, seed_ef, for_tuning,
-                knowhere::CopyAndNormalizeVecs((const float*)query_data, 1, *(size_t*)dist_func_param_), bitset,
-                accumulative_alpha);
+            query_data_copy = knowhere::CopyAndNormalizeVecs((const float*)query_data, 1, *(size_t*)dist_func_param_);
         } else {
-            return std::make_unique<IteratorWorkspace>(query_data, max_elements_, seed_ef, for_tuning, nullptr, bitset,
-                                                       accumulative_alpha);
+            // Only binary vectors have padding bits.
+            auto float_count = (data_size_ + sizeof(float) - 1) / sizeof(float);
+            query_data_copy = std::make_unique<float[]>(float_count);
+            memcpy(query_data_copy.get(), query_data, data_size_);
         }
+
+        std::unique_ptr<int8_t[]> query_data_sq = nullptr;
+        if constexpr (sq_enabled) {
+            query_data_sq = std::make_unique<int8_t[]>(*(size_t*)dist_func_param_);
+            encodeSQuant(query_data_copy.get(), query_data_sq.get());
+        }
+
+        return std::make_unique<IteratorWorkspace>(std::move(query_data_sq), max_elements_, seed_ef, for_tuning,
+                                                   std::move(query_data_copy), bitset, accumulative_alpha);
     }
 
-    std::optional<std::pair<dist_t, labeltype>>
-    getIteratorNext(IteratorWorkspace* workspace,
-                    const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
+    void
+    getIteratorNextBatch(IteratorWorkspace* workspace,
+                         const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
+        workspace->dists.clear();
         if (cur_element_count == 0 || workspace->bitset.count() == cur_element_count) {
-            return std::nullopt;
+            return;
         }
-        auto query_data =
-            (metric_type_ == Metric::COSINE) ? workspace->normalized_query_data.get() : workspace->query_data;
+        // TODO: add bruteforce
+        auto query_data = workspace->query_data;
         const bool has_deletions = !workspace->bitset.empty();
         if (!workspace->initial_search_done) {
             tableint currObj = searchTopLayers(query_data, workspace->param.get()).first;
@@ -1460,11 +1470,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                                                         workspace->bitset, feder_result, &workspace->to_visit,
                                                         workspace->accumulative_alpha);
             }
+            workspace->dists.reserve(retset.size());
             for (int i = 0; i < retset.size(); i++) {
-                workspace->retset.push(retset[i]);
+                workspace->dists.emplace_back(retset[i].id, retset[i].distance);
             }
             workspace->initial_search_done = true;
+            return;
         }
+        // TODO: currently each time iterator.Next() is called, we return 1 result but adds more than 1 results to
+        // to_visit. Consider limit the size of visit by searching 1 step only after several Next() calls. Careful: how
+        // does such strategy affect the correctness of the search?
         while (!workspace->to_visit.empty()) {
             auto top = workspace->to_visit.top();
             workspace->to_visit.pop();
@@ -1482,17 +1497,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     add_search_candidate, feder_result);
             }
             if (!has_deletions || !workspace->bitset.test((int64_t)top.id)) {
-                workspace->retset.push(top);
-                break;
+                workspace->dists.emplace_back(top.id, top.distance);
+                return;
             }
         }
-        if (workspace->retset.empty()) {
-            return std::nullopt;
-        }
-
-        auto top = workspace->retset.top();
-        workspace->retset.pop();
-        return std::make_optional(std::make_pair(top.distance, top.id));
     }
 
     std::vector<std::pair<dist_t, labeltype>>

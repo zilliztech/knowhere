@@ -635,6 +635,7 @@ class BaseConfig : public Config {
     CFG_INT trace_flags;
     CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE materialized_view_search_info;
     CFG_STRING opt_fields_path;
+    CFG_FLOAT iterator_refine_ratio;
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
             .set_default("L2")
@@ -717,6 +718,11 @@ class BaseConfig : public Config {
             .description("materialized view optional fields path")
             .allow_empty_without_default()
             .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(iterator_refine_ratio)
+            .set_default(0.5)
+            .description("refine ratio for iterator")
+            .for_iterator()
+            .for_range_search();
     }
 };
 }  // namespace knowhere

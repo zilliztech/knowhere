@@ -223,47 +223,45 @@ class HnswIndexNode : public IndexNode {
     }
 
  private:
-    class iterator : public IndexNode::iterator {
+    class iterator : public IndexIterator {
      public:
         iterator(const hnswlib::HierarchicalNSW<DistType, quant_type>* index, const char* query, const bool transform,
-                 const BitsetView& bitset, const bool for_tuning = false, const size_t seed_ef = kIteratorSeedEf)
-            : index_(index),
+                 const BitsetView& bitset, const bool for_tuning = false, const size_t seed_ef = kIteratorSeedEf,
+                 const float refine_ratio = 0.5f)
+            : IndexIterator(transform, (hnswlib::HierarchicalNSW<DistType, quant_type>::sq_enabled &&
+                                        hnswlib::HierarchicalNSW<DistType, quant_type>::has_raw_data)
+                                           ? refine_ratio
+                                           : 0.0f),
+              index_(index),
               transform_(transform),
               workspace_(index_->getIteratorWorkspace(query, seed_ef, for_tuning, bitset)) {
-            UpdateNext();
         }
 
-        std::pair<int64_t, DistType>
-        Next() override {
-            auto ret = std::make_pair(next_id_, next_dist_);
-            UpdateNext();
-            return ret;
+     protected:
+        void
+        next_batch(std::function<void(const std::vector<DistId>&)> batch_handler) override {
+            index_->getIteratorNextBatch(workspace_.get());
+            if (transform_) {
+                for (auto& p : workspace_->dists) {
+                    p.val = -p.val;
+                }
+            }
+            batch_handler(workspace_->dists);
+            workspace_->dists.clear();
         }
-
-        [[nodiscard]] bool
-        HasNext() const override {
-            return has_next_;
+        float
+        raw_distance(int64_t id) override {
+            if constexpr (hnswlib::HierarchicalNSW<DistType, quant_type>::sq_enabled &&
+                          hnswlib::HierarchicalNSW<DistType, quant_type>::has_raw_data) {
+                return (transform_ ? -1 : 1) * index_->calcRefineDistance(workspace_->raw_query_data.get(), id);
+            }
+            throw std::runtime_error("raw_distance not supported: index does not have raw data or sq is not enabled");
         }
 
      private:
-        void
-        UpdateNext() {
-            auto next = index_->getIteratorNext(workspace_.get());
-            if (next.has_value()) {
-                auto [dist, id] = next.value();
-                next_dist_ = transform_ ? (-dist) : dist;
-                next_id_ = id;
-                has_next_ = true;
-            } else {
-                has_next_ = false;
-            }
-        }
         const hnswlib::HierarchicalNSW<DistType, quant_type>* index_;
         const bool transform_;
         std::unique_ptr<hnswlib::IteratorWorkspace> workspace_;
-        bool has_next_;
-        DistType next_dist_;
-        int64_t next_id_;
     };
 
  public:
@@ -287,8 +285,10 @@ class HnswIndexNode : public IndexNode {
         for (int i = 0; i < nq; ++i) {
             futs.emplace_back(search_pool_->push([&, i]() {
                 auto single_query = (const char*)xq + i * index_->data_size_;
-                vec[i].reset(new iterator(this->index_, single_query, transform, bitset, hnsw_cfg.for_tuning.value(),
-                                          hnsw_cfg.seed_ef.value()));
+                auto it = new iterator(this->index_, single_query, transform, bitset, hnsw_cfg.for_tuning.value(),
+                                       hnsw_cfg.seed_ef.value(), hnsw_cfg.iterator_refine_ratio.value());
+                it->initialize();
+                vec[i].reset(it);
             }));
         }
         // wait for initial search(in top layers and search for seed_ef in base layer) to finish

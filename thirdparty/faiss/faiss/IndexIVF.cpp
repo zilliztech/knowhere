@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <limits>
 #include <memory>
+#include <vector>
 
 #include <faiss/utils/hamming.h>
 #include <faiss/utils/utils.h>
@@ -27,6 +28,8 @@
 #include <faiss/impl/CodePacker.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/IDSelector.h>
+
+#include "knowhere/object.h"
 
 namespace faiss {
 
@@ -581,7 +584,7 @@ void IndexIVF::search_preassigned(
                                 idxi,
                                 k,
                                 scan_cnt);
-                    }                
+                    }
 
                     return scan_cnt;
                 }
@@ -786,7 +789,7 @@ void IndexIVF::range_search_preassigned(
         const IVFSearchParameters* params,
         IndexIVFStats* stats) const {
 
-    // Knowhere-specific code: 
+    // Knowhere-specific code:
     //   only "parallel_mode == 0" branch is supported.
 
     idx_t nprobe = params ? params->nprobe : this->nprobe;
@@ -899,7 +902,7 @@ void IndexIVF::range_search_preassigned(
                 // ====================================================
                 // The following piece of the code is Knowhere-specific.
                 //
-                // cbe86cf716dc1969fc716c29ccf8ea63e82a2b4c: 
+                // cbe86cf716dc1969fc716c29ccf8ea63e82a2b4c:
                 //   Adopt new strategy for faiss IVF range search
 
                 size_t prev_nres = qres.nres;
@@ -921,7 +924,7 @@ void IndexIVF::range_search_preassigned(
                     prev_nres = qres.nres;
                 }
 
-                // The end of Knowhere-specific code. 
+                // The end of Knowhere-specific code.
                 // ====================================================
             }
         } else {
@@ -1373,14 +1376,12 @@ size_t InvertedListScanner::scan_codes(
     return nup;
 }
 
-size_t InvertedListScanner::scan_codes_and_push_back(
-        size_t list_size,
-        const uint8_t* codes,
-        const float* code_norms,
-        const idx_t* ids,
-        float* distances,
-        idx_t* labels,
-        size_t& counter_back) const {
+void InvertedListScanner::scan_codes_and_return(
+                size_t list_size,
+                const uint8_t* codes,
+                const float* code_norms,
+                const idx_t* ids,
+                std::vector<knowhere::DistId>& out) const {
     FAISS_THROW_MSG("Not implemented.");
 }
 

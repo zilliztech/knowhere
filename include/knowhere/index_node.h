@@ -12,6 +12,11 @@
 #ifndef INDEX_NODE_H
 #define INDEX_NODE_H
 
+#include <functional>
+#include <queue>
+#include <utility>
+#include <vector>
+
 #include "knowhere/binaryset.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/config.h"
@@ -22,6 +27,7 @@
 #include "knowhere/version.h"
 
 namespace knowhere {
+
 class IndexNode : public Object {
  public:
     IndexNode(const int32_t ver) : version_(ver) {
@@ -57,7 +63,7 @@ class IndexNode : public Object {
         virtual std::pair<int64_t, float>
         Next() = 0;
         [[nodiscard]] virtual bool
-        HasNext() const = 0;
+        HasNext() = 0;
         virtual ~iterator() {
         }
     };
@@ -115,6 +121,97 @@ class IndexNode : public Object {
     Version version_;
 };
 
+// Common superclass for iterators that expand search range as needed. Subclasses need
+// to override `next_batch` which will add expanded vectors to the results. For indexes
+// with quantization, override `raw_distance`.
+class IndexIterator : public IndexNode::iterator {
+ public:
+    IndexIterator(bool larger_is_closer, float refine_ratio = 0.0f)
+        : refine_ratio_(refine_ratio), refine_(refine_ratio != 0.0f), sign_(larger_is_closer ? -1 : 1) {
+    }
+
+    std::pair<int64_t, float>
+    Next() override {
+        if (!initialized_) {
+            throw std::runtime_error("Next should not be called before initialization");
+        }
+        auto& q = refined_res_.empty() ? res_ : refined_res_;
+        if (q.empty()) {
+            throw std::runtime_error("No more elements");
+        }
+        auto ret = q.top();
+        q.pop();
+        UpdateNext();
+        return std::make_pair(ret.id, ret.val * sign_);
+    }
+
+    [[nodiscard]] bool
+    HasNext() override {
+        if (!initialized_) {
+            throw std::runtime_error("HasNext should not be called before initialization");
+        }
+        return !res_.empty() || !refined_res_.empty();
+    }
+
+    virtual void
+    initialize() {
+        if (initialized_) {
+            throw std::runtime_error("initialize should not be called twice");
+        }
+        UpdateNext();
+        initialized_ = true;
+    }
+
+ protected:
+    virtual void
+    next_batch(std::function<void(const std::vector<DistId>&)> batch_handler) = 0;
+    // will be called only if refine_ratio_ is not 0.
+    virtual float
+    raw_distance(int64_t id) {
+        if (!refine_) {
+            throw std::runtime_error("raw_distance should not be called for indexes without quantization");
+        }
+        throw std::runtime_error("raw_distance not implemented");
+    }
+
+    const float refine_ratio_;
+    const bool refine_;
+
+    std::priority_queue<DistId, std::vector<DistId>, std::greater<DistId>> res_;
+    // unused if refine_ is false
+    std::priority_queue<DistId, std::vector<DistId>, std::greater<DistId>> refined_res_;
+
+ private:
+    inline size_t
+    min_refine_size() const {
+        // TODO: maybe make this configurable
+        return std::max((size_t)20, (size_t)(res_.size() * refine_ratio_));
+    }
+
+    void
+    UpdateNext() {
+        auto batch_handler = [this](const std::vector<DistId>& batch) {
+            if (batch.empty()) {
+                return;
+            }
+            for (const auto& dist_id : batch) {
+                res_.emplace(dist_id.id, dist_id.val * sign_);
+            }
+            if (refine_) {
+                while (!res_.empty() && (refined_res_.empty() || refined_res_.size() < min_refine_size())) {
+                    auto pair = res_.top();
+                    res_.pop();
+                    refined_res_.emplace(pair.id, raw_distance(pair.id) * sign_);
+                }
+            }
+        };
+        next_batch(batch_handler);
+    }
+
+    bool initialized_ = false;
+    const int64_t sign_;
+};
+
 // An iterator implementation that accepts a list of distances and ids and returns them in order.
 class PrecomputedDistanceIterator : public IndexNode::iterator {
  public:
@@ -147,7 +244,7 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
     }
 
     [[nodiscard]] bool
-    HasNext() const override {
+    HasNext() override {
         return next_ < results_.size() && results_[next_].id != -1;
     }
 

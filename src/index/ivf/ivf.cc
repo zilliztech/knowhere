@@ -247,14 +247,25 @@ class IvfIndexNode : public IndexNode {
     Status
     TrainInternal(const DataSet& dataset, const Config& cfg);
 
+    static constexpr bool
+    IsQuantized() {
+        return std::is_same_v<IndexType, faiss::IndexIVFPQ> ||
+               std::is_same_v<IndexType, faiss::IndexIVFScalarQuantizer> ||
+               std::is_same_v<IndexType, faiss::IndexIVFScalarQuantizerCC> ||
+               std::is_same_v<IndexType, faiss::IndexScaNN>;
+    }
+
  private:
     // only support IVFFlat and IVFFlatCC
     // iterator will own the copied_norm_query
-    class iterator : public IndexNode::iterator {
+    // TODO: iterator should copy and own query data.
+    class iterator : public IndexIterator {
      public:
         iterator(const IndexType* index, const float* query_data, std::unique_ptr<float[]>&& copied_norm_query,
-                 const BitsetView& bitset, size_t nprobe)
-            : index_(index), copied_norm_query_(std::move(copied_norm_query)) {
+                 const BitsetView& bitset, size_t nprobe, bool larger_is_closer, const float refine_ratio = 0.5f)
+            : IndexIterator(larger_is_closer, IsQuantized() ? refine_ratio : 0.0f),
+              index_(index),
+              copied_norm_query_(std::move(copied_norm_query)) {
             if (copied_norm_query_ != nullptr) {
                 query_data = copied_norm_query_.get();
             }
@@ -268,44 +279,22 @@ class IvfIndexNode : public IndexNode {
             ivf_search_params_.max_codes = 0;
 
             workspace_ = index_->getIteratorWorkspace(query_data, &ivf_search_params_);
-            UpdateNext();
         }
 
-        std::pair<int64_t, float>
-        Next() override {
-            auto ret = std::make_pair(next_id_, next_dist_);
-            UpdateNext();
-            return ret;
-        }
-
-        [[nodiscard]] bool
-        HasNext() const override {
-            return has_next_;
+     protected:
+        void
+        next_batch(std::function<void(const std::vector<DistId>&)> batch_handler) override {
+            index_->getIteratorNextBatch(workspace_.get(), res_.size());
+            batch_handler(workspace_->dists);
+            workspace_->dists.clear();
         }
 
      private:
-        void
-        UpdateNext() {
-            auto next = index_->getIteratorNext(workspace_.get());
-            if (next.has_value()) {
-                auto [dist, id] = next.value();
-                next_dist_ = dist;
-                next_id_ = id;
-                has_next_ = true;
-            } else {
-                has_next_ = false;
-            }
-        }
-
         const IndexType* index_ = nullptr;
         std::unique_ptr<faiss::IVFFlatIteratorWorkspace> workspace_ = nullptr;
         std::unique_ptr<float[]> copied_norm_query_ = nullptr;
         std::unique_ptr<BitsetViewIDSelector> bw_idselector_ = nullptr;
         faiss::IVFSearchParameters ivf_search_params_;
-
-        bool has_next_ = false;
-        float next_dist_ = 0.0f;
-        int64_t next_id_ = -1;
     };
 
     std::unique_ptr<IndexType> index_;
@@ -906,6 +895,7 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSet& dataset, const Con
 
         const IvfConfig& ivf_cfg = static_cast<const IvfConfig&>(cfg);
         bool is_cosine = IsMetricType(ivf_cfg.metric_type.value(), knowhere::metric::COSINE);
+        auto larger_is_closer = IsMetricType(ivf_cfg.metric_type.value(), knowhere::metric::IP) || is_cosine;
 
         size_t nprobe = ivf_cfg.nprobe.value();
 
@@ -921,8 +911,10 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSet& dataset, const Con
                     }
 
                     // the iterator only own the copied_norm_query.
-                    vec[index].reset(
-                        new iterator(index_.get(), cur_query, std::move(copied_norm_query), bitset, nprobe));
+                    auto it = new iterator(index_.get(), cur_query, std::move(copied_norm_query), bitset, nprobe,
+                                           larger_is_closer, ivf_cfg.iterator_refine_ratio.value());
+                    it->initialize();
+                    vec[index].reset(it);
                 }));
             }
 
