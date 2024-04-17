@@ -33,9 +33,10 @@ struct IdVal {
     operator<(const IdVal<I, T>& lhs, const IdVal<I, T>& rhs) {
         return lhs.val < rhs.val || (lhs.val == rhs.val && lhs.id < rhs.id);
     }
+
     inline friend bool
     operator>(const IdVal<I, T>& lhs, const IdVal<I, T>& rhs) {
-        return !(lhs < rhs);
+        return !(lhs < rhs) && !(lhs == rhs);
     }
 
     inline friend bool
