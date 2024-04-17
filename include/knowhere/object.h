@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cassert>
 #include <iostream>
+#include <memory>
 
 #include "knowhere/file_manager.h"
 
@@ -44,6 +45,8 @@ struct IdVal {
         return lhs.id == rhs.id && lhs.val == rhs.val;
     }
 };
+
+using DistId = IdVal<int64_t, float>;
 
 class Object {
  public:

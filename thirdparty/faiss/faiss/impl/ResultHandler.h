@@ -16,6 +16,8 @@
 #include <faiss/utils/Heap.h>
 #include <faiss/utils/partitioning.h>
 
+#include "knowhere/object.h"
+
 namespace faiss {
 
 /*****************************************************************
@@ -626,16 +628,16 @@ struct CollectAllResultHandler {
     using T = typename C::T;
     using TI = typename C::TI;
 
-    CollectAllResultHandler(size_t ny, std::vector<std::pair<T, TI>>& output)
+    CollectAllResultHandler(size_t ny, std::vector<knowhere::IdVal<TI, T>>& output)
             : ny(ny), output(output) {}
 
     size_t ny;
-    std::vector<std::pair<T, TI>>& output;
+    std::vector<knowhere::IdVal<TI, T>>& output;
 
     struct SingleResultHandler {
         CollectAllResultHandler& all_handler;
 
-        std::pair<T, TI>* target;
+        knowhere::IdVal<TI, T>* target;
 
         SingleResultHandler(CollectAllResultHandler& all_handler) : all_handler(all_handler) {}
 
@@ -646,7 +648,7 @@ struct CollectAllResultHandler {
 
         /// add one result for query i
         void add_result(T dis, TI idx) {
-            target[idx] = {dis, idx};
+            target[idx] = {idx, dis};
         }
 
         void end() {}
@@ -671,7 +673,7 @@ struct CollectAllResultHandler {
             for (size_t j = j0; j < j1; j++) {
                 if (!sel || sel->is_member(j)) {
                     T dis = dis_tab_i[j];
-                    target[j] = {dis, j};
+                    target[j] = {(int64_t)j, dis};
                 }
             }
         }

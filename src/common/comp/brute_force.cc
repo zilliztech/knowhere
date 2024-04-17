@@ -587,7 +587,7 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
             faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
             auto larger_is_closer = faiss::is_similarity_metric(faiss_metric_type) || is_cosine;
             auto max_dis = larger_is_closer ? std::numeric_limits<float>::lowest() : std::numeric_limits<float>::max();
-            std::vector<std::pair<float, int64_t>> distances_ids(nb, {max_dis, -1});
+            std::vector<DistId> distances_ids(nb, {-1, max_dis});
 
             switch (faiss_metric_type) {
                 case faiss::METRIC_L2: {
@@ -686,7 +686,7 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
     for (int64_t i = 0; i < nq; ++i) {
         futs.emplace_back(pool->push([&, index = i] {
             const auto& row = xq[index];
-            std::vector<std::pair<float, int64_t>> distances_ids;
+            std::vector<DistId> distances_ids;
             if (row.size() > 0) {
                 for (int64_t j = 0; j < rows; ++j) {
                     if (!bitset.empty() && bitset.test(j)) {
@@ -694,7 +694,7 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
                     }
                     auto dist = row.dot(base[j]);
                     if (dist > 0) {
-                        distances_ids.emplace_back(dist, j);
+                        distances_ids.emplace_back(j, dist);
                     }
                 }
             }
