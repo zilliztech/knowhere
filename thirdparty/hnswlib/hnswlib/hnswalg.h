@@ -28,7 +28,9 @@
 #include "io/memory_io.h"
 #include "knowhere/config.h"
 #include "knowhere/heap.h"
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
 #include "knowhere/prometheus_client.h"
+#endif
 #include "knowhere/utils.h"
 #include "neighbor.h"
 #include "visited_list_pool.h"
@@ -491,7 +493,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 data_point, retset.pop(), visited, accumulative_alpha, bitset, add_search_candidate, feder_result);
             hops++;
         }
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         knowhere::knowhere_hnsw_search_hops.Observe(hops);
 #endif
         return retset;
@@ -1377,7 +1379,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // do bruteforce search when delete rate high
         if (!bitset.empty()) {
             const size_t filtered_out_num = bitset.count();
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
             double ratio = ((double)filtered_out_num) / bitset.size();
             knowhere::knowhere_hnsw_bitset_ratio.Observe(ratio);
 #endif
@@ -1538,7 +1540,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // do bruteforce range search when delete rate high
         if (!bitset.empty()) {
             const size_t filtered_out_num = bitset.count();
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
             double ratio = ((double)filtered_out_num) / bitset.size();
             knowhere::knowhere_hnsw_bitset_ratio.Observe(ratio);
 #endif

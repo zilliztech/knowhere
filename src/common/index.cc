@@ -16,7 +16,7 @@
 #include "knowhere/expected.h"
 #include "knowhere/log.h"
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
 #include "knowhere/prometheus_client.h"
 #include "knowhere/tracer.h"
 #endif
@@ -39,7 +39,7 @@ Index<T>::Build(const DataSet& dataset, const Json& json) {
     auto cfg = this->node->CreateConfig();
     RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     TimeRecorder rc("Build index", 2);
     auto res = this->node->Build(dataset, *cfg);
     auto time = rc.ElapseFromBegin("done");
@@ -78,7 +78,7 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
     }
     const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (b_cfg.trace_id.has_value()) {
@@ -118,7 +118,7 @@ Index<T>::AnnIterator(const DataSet& dataset, const Json& json, const BitsetView
     }
     const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // note that this time includes only the initial search phase of iterator.
     TimeRecorder rc("AnnIterator");
     auto res = this->node->AnnIterator(dataset, *cfg, bitset);
@@ -142,7 +142,7 @@ Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView
     }
     const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (b_cfg.trace_id.has_value()) {
@@ -226,7 +226,7 @@ Index<T>::Deserialize(const BinarySet& binset, const Json& json) {
         return res;
     }
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     TimeRecorder rc("Load index", 2);
     res = this->node->Deserialize(binset, *cfg);
     auto time = rc.ElapseFromBegin("done");
@@ -255,7 +255,7 @@ Index<T>::DeserializeFromFile(const std::string& filename, const Json& json) {
         return res;
     }
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     TimeRecorder rc("Load index from file", 2);
     res = this->node->DeserializeFromFile(filename, *cfg);
     auto time = rc.ElapseFromBegin("done");

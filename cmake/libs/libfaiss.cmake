@@ -6,13 +6,15 @@ knowhere_file_glob(
 knowhere_file_glob(GLOB FAISS_AVX512_SRCS
                    thirdparty/faiss/faiss/impl/*avx512.cpp)
 
-knowhere_file_glob(GLOB FAISS_AVX2_SRCS
-                   thirdparty/faiss/faiss/impl/*avx.cpp
-                   thirdparty/faiss/faiss/impl/pq4_fast_scan_search_1.cpp
-                   thirdparty/faiss/faiss/impl/pq4_fast_scan_search_qbs.cpp
-                   thirdparty/faiss/faiss/utils/partitioning_avx2.cpp
-                   thirdparty/faiss/faiss/IndexPQFastScan.cpp
-                   thirdparty/faiss/faiss/IndexIVFPQFastScan.cpp)
+knowhere_file_glob(
+  GLOB
+  FAISS_AVX2_SRCS
+  thirdparty/faiss/faiss/impl/*avx.cpp
+  thirdparty/faiss/faiss/impl/pq4_fast_scan_search_1.cpp
+  thirdparty/faiss/faiss/impl/pq4_fast_scan_search_qbs.cpp
+  thirdparty/faiss/faiss/utils/partitioning_avx2.cpp
+  thirdparty/faiss/faiss/IndexPQFastScan.cpp
+  thirdparty/faiss/faiss/IndexIVFPQFastScan.cpp)
 
 list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX512_SRCS})
 
@@ -43,7 +45,8 @@ if(__X86_64)
 endif()
 
 if(__AARCH64)
-  set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc src/simd/distances_neon.cc)
+  set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc
+                src/simd/distances_neon.cc)
   add_library(knowhere_utils STATIC ${UTILS_SRC})
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
 endif()
@@ -74,14 +77,8 @@ if(__X86_64)
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX2_SRCS})
 
   add_library(faiss_avx2 OBJECT ${FAISS_AVX2_SRCS})
-  target_compile_options(
-    faiss_avx2
-    PRIVATE $<$<COMPILE_LANGUAGE:CXX>:
-            -msse4.2
-            -mavx2
-            -mfma
-            -mf16c
-            -mpopcnt>)
+  target_compile_options(faiss_avx2 PRIVATE $<$<COMPILE_LANGUAGE:CXX>: -msse4.2
+                                            -mavx2 -mfma -mf16c -mpopcnt>)
   add_library(faiss_avx512 OBJECT ${FAISS_AVX512_SRCS})
   target_compile_options(
     faiss_avx512

@@ -23,7 +23,7 @@ if(NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/RAPIDS.cmake)
 endif()
 include(${CMAKE_CURRENT_BINARY_DIR}/RAPIDS.cmake)
 
-include(rapids-cpm)  # Dependency tracking
+include(rapids-cpm) # Dependency tracking
 include(rapids-find) # Wrappers for finding packages
 include(rapids-cuda) # Common CMake CUDA logic
 
