@@ -49,7 +49,8 @@ void IndexIVFScalarQuantizerCC::add_core(
         const float* x,
         const float* x_norms,
         const idx_t* xids,
-        const idx_t* coarse_idx) {
+        const idx_t* coarse_idx,
+        void* inverted_list_context) {
     FAISS_THROW_IF_NOT(is_trained);
     std::unique_ptr<float[]> x_normalized = nullptr;
     const float* base_x = x;
@@ -85,7 +86,8 @@ void IndexIVFScalarQuantizerCC::add_core(
                 memset(one_code.data(), 0, code_size);
                 squant->encode_vector(xi, one_code.data());
 
-                size_t ofs = invlists->add_entry(list_no, id, one_code.data());
+                size_t ofs = invlists->add_entry(
+                        list_no, id, one_code.data(), nullptr, inverted_list_context);
 
                 dm_add.add(i, list_no, ofs);
                 if (raw_data_backup_ != nullptr) {

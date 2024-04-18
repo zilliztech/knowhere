@@ -7,12 +7,17 @@
 
 #include <faiss/impl/pq4_fast_scan.h>
 
+#include <type_traits>
+
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/LookupTableScaler.h>
 #include <faiss/impl/simd_result_handlers.h>
 #include <faiss/utils/simdlib.h>
 
 namespace faiss {
+
+// declared in simd_result_handlers.h
+bool simd_result_handlers_accept_virtual = true;
 
 using namespace simd_result_handlers;
 
@@ -108,6 +113,18 @@ void kernel_accumulate_block(
     }
 }
 
+namespace {
+
+// a helper that checks whether a ResultHandler has a .sel member
+template<typename T, typename = void>
+struct has_sel_member : std::false_type {};
+template<typename T>
+struct has_sel_member<T, std::void_t<decltype(T::sel)>> : std::true_type {};
+template<typename T>
+inline constexpr bool has_sel_member_v = has_sel_member<T>::value;
+
+}
+
 // handle at most 4 blocks of queries
 template <int QBS, class ResultHandler, class Scaler>
 void accumulate_q_4step(
@@ -127,19 +144,21 @@ void accumulate_q_4step(
         res.set_block_origin(0, j0);
 
         // skip computing distances if all vectors inside a block are filtered out
-        if (res.sel != nullptr) {  // we have filter here
-            bool skip_flag = true;
-            for (size_t jj = 0; jj < std::min<size_t>(32, ntotal2 - j0);
-                 jj++) {
-                auto real_idx = res.adjust_id(0, jj);
-                if (res.sel->is_member(real_idx)) {  // id is not filtered out, can not skip computing
-                    skip_flag = false;
-                    break;
+        if constexpr(has_sel_member_v<ResultHandler>) {
+            if (res.sel != nullptr) {  // we have filter here
+                bool skip_flag = true;
+                for (size_t jj = 0; jj < std::min<size_t>(32, ntotal2 - j0);
+                    jj++) {
+                    auto real_idx = res.adjust_id(0, jj);
+                    if (res.sel->is_member(real_idx)) {  // id is not filtered out, can not skip computing
+                        skip_flag = false;
+                        break;
+                    }
                 }
-            }
 
-            if (skip_flag) {
-                continue;
+                if (skip_flag) {
+                    continue;
+                }
             }
         }
 
@@ -211,10 +230,8 @@ void accumulate(
 #undef DISPATCH
 }
 
-} // namespace
-
 template <class ResultHandler, class Scaler>
-void pq4_accumulate_loop_qbs(
+void pq4_accumulate_loop_qbs_fixed_scaler(
         int qbs,
         size_t ntotal2,
         int nsq,
@@ -289,65 +306,39 @@ void pq4_accumulate_loop_qbs(
     }
 }
 
-// explicit template instantiations
+struct Run_pq4_accumulate_loop_qbs {
+    template <class ResultHandler>
+    void f(ResultHandler& res,
+           int qbs,
+           size_t nb,
+           int nsq,
+           const uint8_t* codes,
+           const uint8_t* LUT,
+           const NormTableScaler* scaler) {
+        if (scaler) {
+            pq4_accumulate_loop_qbs_fixed_scaler(
+                    qbs, nb, nsq, codes, LUT, res, *scaler);
+        } else {
+            DummyScaler dummy;
+            pq4_accumulate_loop_qbs_fixed_scaler(
+                    qbs, nb, nsq, codes, LUT, res, dummy);
+        }
+    }
+};
 
-#define INSTANTIATE_ACCUMULATE_Q(RH)                            \
-    template void pq4_accumulate_loop_qbs<RH, DummyScaler>(     \
-            int,                                                \
-            size_t,                                             \
-            int,                                                \
-            const uint8_t*,                                     \
-            const uint8_t*,                                     \
-            RH&,                                                \
-            const DummyScaler&);                                \
-    template void pq4_accumulate_loop_qbs<RH, NormTableScaler>( \
-            int,                                                \
-            size_t,                                             \
-            int,                                                \
-            const uint8_t*,                                     \
-            const uint8_t*,                                     \
-            RH&,                                                \
-            const NormTableScaler&);
+} // namespace
 
-using Csi = CMax<uint16_t, int>;
-INSTANTIATE_ACCUMULATE_Q(SingleResultHandler<Csi>)
-INSTANTIATE_ACCUMULATE_Q(HeapHandler<Csi>)
-INSTANTIATE_ACCUMULATE_Q(ReservoirHandler<Csi>)
-
-using CRSci = CMax<float, int>;
-INSTANTIATE_ACCUMULATE_Q(RangeSearchResultHandler<CRSci>)
-
-using Csi2 = CMin<uint16_t, int>;
-INSTANTIATE_ACCUMULATE_Q(SingleResultHandler<Csi2>)
-INSTANTIATE_ACCUMULATE_Q(HeapHandler<Csi2>)
-INSTANTIATE_ACCUMULATE_Q(ReservoirHandler<Csi2>)
-
-using CRSci2 = CMin<float, int>;
-INSTANTIATE_ACCUMULATE_Q(RangeSearchResultHandler<CRSci2>)
-
-using Cfl = CMax<uint16_t, int64_t>;
-using HHCsl = HeapHandler<Cfl, true>;
-using RHCsl = ReservoirHandler<Cfl, true>;
-using SHCsl = SingleResultHandler<Cfl, true>;
-INSTANTIATE_ACCUMULATE_Q(HHCsl)
-INSTANTIATE_ACCUMULATE_Q(RHCsl)
-INSTANTIATE_ACCUMULATE_Q(SHCsl)
-
-using CRSfl = CMax<float, int64_t>;
-using RSHCsl = RangeSearchResultHandler<CRSfl, true>;
-INSTANTIATE_ACCUMULATE_Q(RSHCsl)
-
-using Cfl2 = CMin<uint16_t, int64_t>;
-using HHCsl2 = HeapHandler<Cfl2, true>;
-using RHCsl2 = ReservoirHandler<Cfl2, true>;
-using SHCsl2 = SingleResultHandler<Cfl2, true>;
-INSTANTIATE_ACCUMULATE_Q(HHCsl2)
-INSTANTIATE_ACCUMULATE_Q(RHCsl2)
-INSTANTIATE_ACCUMULATE_Q(SHCsl2)
-
-using CRSfl2 = CMin<float, int64_t>;
-using RSHCsl2 = RangeSearchResultHandler<CRSfl2, true>;
-INSTANTIATE_ACCUMULATE_Q(RSHCsl2)
+void pq4_accumulate_loop_qbs(
+        int qbs,
+        size_t nb,
+        int nsq,
+        const uint8_t* codes,
+        const uint8_t* LUT,
+        SIMDResultHandler& res,
+        const NormTableScaler* scaler) {
+    Run_pq4_accumulate_loop_qbs consumer;
+    dispatch_SIMDResultHanlder(res, consumer, qbs, nb, nsq, codes, LUT, scaler);
+}
 
 /***************************************************************
  * Packing functions

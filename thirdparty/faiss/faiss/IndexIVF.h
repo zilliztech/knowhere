@@ -83,6 +83,9 @@ struct SearchParametersIVF : SearchParameters {
 
     SearchParameters* quantizer_params = nullptr;
 
+    /// context object to pass to InvertedLists
+    void* inverted_list_context = nullptr;
+
     virtual ~SearchParametersIVF() {}
 };
 
@@ -243,7 +246,8 @@ struct IndexIVF : Index, IndexIVFInterface {
             const float* x,
             const float* x_norms,
             const idx_t* xids,
-            const idx_t* precomputed_idx);
+            const idx_t* precomputed_idx,
+            void* inverted_list_context = nullptr);
 
     /** Encodes a set of vectors as they would appear in the inverted lists
      *

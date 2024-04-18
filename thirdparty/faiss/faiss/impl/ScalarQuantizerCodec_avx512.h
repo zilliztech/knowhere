@@ -322,8 +322,8 @@ struct SimilarityL2_avx512<16> {
         accu16 = _mm512_fmadd_ps(tmp, tmp, accu16);
     }
 
-    FAISS_ALWAYS_INLINE void add_16_components_2(__m512 x, __m512 y) {
-        __m512 tmp = _mm512_sub_ps(y, x);
+    FAISS_ALWAYS_INLINE void add_16_components_2(__m512 x, __m512 y_2) {
+        __m512 tmp = _mm512_sub_ps(y_2, x);
         accu16 = _mm512_fmadd_ps(tmp, tmp, accu16);
     }
 

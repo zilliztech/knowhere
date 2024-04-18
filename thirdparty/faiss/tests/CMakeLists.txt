@@ -51,6 +51,7 @@ set(FAISS_TEST_SRC
   test_ivfpq_codec.cpp
   test_ivfpq_indexing.cpp
   test_lowlevel_ivf.cpp
+  test_ivf_index.cpp
   test_merge.cpp
   test_omp_threads.cpp
   test_ondisk_ivf.cpp
@@ -72,9 +73,15 @@ set(FAISS_TEST_SRC
   test_hnsw.cpp
   test_partitioning.cpp
   test_distances_if.cpp
+  test_fastscan_perf.cpp
+  test_disable_pq_sdc_tables.cpp
 )
 
 add_executable(faiss_test ${FAISS_TEST_SRC})
+
+if(NOT FAISS_OPT_LEVEL STREQUAL "avx2" AND NOT FAISS_OPT_LEVEL STREQUAL "avx512")
+  target_link_libraries(faiss_test PRIVATE faiss)
+endif()
 
 if(FAISS_OPT_LEVEL STREQUAL "avx2")
   if(NOT WIN32)
@@ -83,8 +90,15 @@ if(FAISS_OPT_LEVEL STREQUAL "avx2")
     target_compile_options(faiss_test PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/arch:AVX2>)
   endif()
   target_link_libraries(faiss_test PRIVATE faiss_avx2)
-else()
-  target_link_libraries(faiss_test PRIVATE faiss)
+endif()
+
+if(FAISS_OPT_LEVEL STREQUAL "avx512")
+  if(NOT WIN32)
+    target_compile_options(faiss_test PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-mavx2 -mfma -mavx512f -mavx512f -mavx512cd -mavx512vl -mavx512dq -mavx512bw>)
+  else()
+    target_compile_options(faiss_test PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/arch:AVX512>)
+  endif()
+  target_link_libraries(faiss_test PRIVATE faiss_avx512)
 endif()
 
 include(FetchContent)
