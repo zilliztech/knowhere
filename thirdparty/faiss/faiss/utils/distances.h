@@ -17,6 +17,8 @@
 #include <faiss/impl/platform_macros.h>
 #include <faiss/utils/Heap.h>
 
+#include "knowhere/object.h"
+
 namespace faiss {
 
 struct IDSelector;
@@ -234,7 +236,7 @@ void all_inner_product(
         size_t d,
         size_t nx,
         size_t ny,
-        std::vector<std::pair<float, int64_t>>& output,
+        std::vector<knowhere::DistId>& output,
         const IDSelector* sel);
 
 /** Return the k nearest neighors of each of the nx vectors x among the ny
@@ -283,7 +285,7 @@ void all_L2sqr(
         size_t d,
         size_t nx,
         size_t ny,
-        std::vector<std::pair<float, int64_t>>& output,
+        std::vector<knowhere::DistId>& output,
         const float* y_norms,
         const IDSelector* sel);
 
@@ -305,7 +307,7 @@ void all_cosine(
         size_t d,
         size_t nx,
         size_t ny,
-        std::vector<std::pair<float, int64_t>>& output,
+        std::vector<knowhere::DistId>& output,
         const IDSelector* sel);
 
 // Knowhere-specific function

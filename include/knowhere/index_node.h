@@ -118,20 +118,21 @@ class IndexNode : public Object {
 // An iterator implementation that accepts a list of distances and ids and returns them in order.
 class PrecomputedDistanceIterator : public IndexNode::iterator {
  public:
-    PrecomputedDistanceIterator(std::vector<std::pair<float, int64_t>>&& distances_ids, bool larger_is_closer)
-        : comp_(larger_is_closer), results_(std::move(distances_ids)) {
+    PrecomputedDistanceIterator(std::vector<DistId>&& distances_ids, bool larger_is_closer)
+        : larger_is_closer_(larger_is_closer), results_(std::move(distances_ids)) {
         sort_size_ = get_sort_size(results_.size());
         sort_next();
     }
 
     // Construct an iterator from a list of distances with index being id, filtering out zero distances.
-    PrecomputedDistanceIterator(const std::vector<float>& distances, bool larger_is_closer) : comp_(larger_is_closer) {
+    PrecomputedDistanceIterator(const std::vector<float>& distances, bool larger_is_closer)
+        : larger_is_closer_(larger_is_closer) {
         // 30% is a ratio guesstimate of non-zero distances: probability of 2 random sparse splade vectors(100 non zero
         // dims out of 30000 total dims) sharing at least 1 common non-zero dimension.
         results_.reserve(distances.size() * 0.3);
         for (size_t i = 0; i < distances.size(); i++) {
             if (distances[i] != 0) {
-                results_.push_back(std::make_pair(distances[i], i));
+                results_.emplace_back((int64_t)i, distances[i]);
             }
         }
         sort_size_ = get_sort_size(results_.size());
@@ -142,12 +143,12 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
     Next() override {
         sort_next();
         auto& result = results_[next_++];
-        return std::make_pair(result.second, result.first);
+        return std::make_pair(result.id, result.val);
     }
 
     [[nodiscard]] bool
     HasNext() const override {
-        return next_ < results_.size() && results_[next_].second != -1;
+        return next_ < results_.size() && results_[next_].id != -1;
     }
 
  private:
@@ -163,31 +164,19 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
             return;
         }
         size_t current_end = std::min(results_.size(), sorted_ + sort_size_);
-        std::partial_sort(results_.begin() + sorted_, results_.begin() + current_end, results_.end(), comp_);
+        if (larger_is_closer_) {
+            std::partial_sort(results_.begin() + sorted_, results_.begin() + current_end, results_.end(),
+                              std::greater<DistId>());
+        } else {
+            std::partial_sort(results_.begin() + sorted_, results_.begin() + current_end, results_.end(),
+                              std::less<DistId>());
+        }
+
         sorted_ = current_end;
     }
-    struct PairComparator {
-        bool larger_is_closer;
-        PairComparator(bool larger) : larger_is_closer(larger) {
-        }
+    const bool larger_is_closer_;
 
-        bool
-        operator()(const std::pair<float, int64_t>& a, const std::pair<float, int64_t>& b) const {
-            if (a.second == -1) {
-                return false;
-            }
-            if (b.second == -1) {
-                return true;
-            }
-            // to ensure deterministic behavior
-            if (a.first == b.first) {
-                return a.second < b.second;
-            }
-            return larger_is_closer ? a.first > b.first : a.first < b.first;
-        }
-    } comp_;
-
-    std::vector<std::pair<float, int64_t>> results_;
+    std::vector<DistId> results_;
     size_t next_ = 0;
     size_t sorted_ = 0;
     size_t sort_size_ = 0;

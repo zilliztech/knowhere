@@ -19,6 +19,7 @@
 #include <omp.h>
 
 #include "knowhere/bitsetview_idselector.h"
+#include "knowhere/object.h"
 
 #include <faiss/FaissHook.h>
 #include <faiss/impl/AuxIndexStructures.h>
@@ -746,7 +747,7 @@ void all_inner_product(
         size_t d,
         size_t nx,
         size_t ny,
-        std::vector<std::pair<float, int64_t>>& output,
+        std::vector<knowhere::DistId>& output,
         const IDSelector* sel) {
     CollectAllResultHandler<CMax<float, int64_t>> res(ny, output);
     if (nx < distance_compute_blas_threshold) {
@@ -793,7 +794,7 @@ void all_L2sqr(
         size_t d,
         size_t nx,
         size_t ny,
-        std::vector<std::pair<float, int64_t>>& output,
+        std::vector<knowhere::DistId>& output,
         const float* y_norms,
         const IDSelector* sel) {
     CollectAllResultHandler<CMax<float, int64_t>> res(ny, output);
@@ -842,7 +843,7 @@ void all_cosine(
         size_t d,
         size_t nx,
         size_t ny,
-        std::vector<std::pair<float, int64_t>>& output,
+        std::vector<knowhere::DistId>& output,
         const IDSelector* sel) {
     CollectAllResultHandler<CMax<float, int64_t>> res(ny, output);
     if (nx < distance_compute_blas_threshold) {
