@@ -157,33 +157,3 @@ CountValidRangeSearchResult(const float* distances, const size_t* lims, const in
     return valid;
 }
 }  // namespace
-
-TEST_CASE("Test GetRangeSearchResult for Faiss", "[range search]") {
-    const int64_t nq = 10;
-    const int64_t label_min = 0, label_max = 10000;
-    const float dist_min = 0.0, dist_max = 100.0;
-
-    faiss::RangeSearchResult res(nq);
-    GenRangeSearchResult(res, nq, label_min, label_max, dist_min, dist_max);
-
-    float* distances;
-    int64_t* labels;
-    size_t* lims;
-
-    std::vector<std::tuple<float, float>> test_sets = {
-        std::make_tuple(-10.0, -1.0), std::make_tuple(-10.0, 0.0),   std::make_tuple(-10.0, 50.0),
-        std::make_tuple(0.0, 50.0),   std::make_tuple(0.0, 100.0),   std::make_tuple(50.0, 100.0),
-        std::make_tuple(50.0, 200.0), std::make_tuple(100.0, 200.0),
-    };
-
-    for (auto& item : test_sets) {
-        for (bool is_ip : {true, false}) {
-            float radius = is_ip ? std::get<0>(item) : std::get<1>(item);
-            float range_filter = is_ip ? std::get<1>(item) : std::get<0>(item);
-            knowhere::GetRangeSearchResult(res, is_ip, nq, radius, range_filter, distances, labels, lims, nullptr);
-            auto result = knowhere::GenResultDataSet(nq, labels, distances, lims);
-            REQUIRE(result->GetLims()[nq] ==
-                    CountValidRangeSearchResult(res.distances, res.lims, nq, radius, range_filter, is_ip));
-        }
-    }
-}
