@@ -10,9 +10,9 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include "catch2/catch_test_macros.hpp"
-#include "common/range_util.h"
 #include "faiss/impl/AuxIndexStructures.h"
 #include "knowhere/index/index_factory.h"
+#include "knowhere/range_util.h"
 #include "utils.h"
 
 TEST_CASE("Test distance_in_range", "[range search]") {

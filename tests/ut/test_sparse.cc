@@ -95,15 +95,15 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         }
     };
 
-    auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, conf, nullptr);
-    check_distance_decreasing(*gt.value());
-
     SECTION("Test Search") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
         }));
+        auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, conf, nullptr);
+        check_distance_decreasing(*gt.value());
+
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
@@ -206,6 +206,74 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
                 prev_dist = dist;
             }
         }
+    }
+
+    SECTION("Test Sparse Range Search") {
+        using std::make_tuple;
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
+        }));
+
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto cfg_json = gen().dump();
+        CAPTURE(name, cfg_json);
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        REQUIRE(idx.Type() == name);
+        REQUIRE(idx.Build(*train_ds, json) == knowhere::Status::success);
+        REQUIRE(idx.Size() > 0);
+        REQUIRE(idx.Count() == nb);
+
+        auto [radius, range_filter] = GENERATE(table<float, float>({
+            {0.5, 1},
+            {1, 1.5},
+        }));
+        json[knowhere::meta::RADIUS] = radius;
+        json[knowhere::meta::RANGE_FILTER] = range_filter;
+
+        auto results = idx.RangeSearch(*query_ds, json, nullptr);
+        REQUIRE(results.has_value());
+
+        auto gt =
+            knowhere::BruteForce::RangeSearch<knowhere::sparse::SparseRow<float>>(train_ds, query_ds, json, nullptr);
+        REQUIRE(gt.has_value());
+
+        auto ids = results.value()->GetIds();
+        auto lims = results.value()->GetLims();
+        auto distances = results.value()->GetDistance();
+        // any distance must be in range
+        for (size_t i = 0; i < lims[nq]; ++i) {
+            REQUIRE(distances[i] >= radius);
+            REQUIRE(distances[i] <= range_filter);
+        }
+
+        auto ids_gt = gt.value()->GetIds();
+        auto lims_gt = gt.value()->GetLims();
+        auto distances_gt = gt.value()->GetDistance();
+        // any distance must be in range
+        for (size_t i = 0; i < lims_gt[nq]; ++i) {
+            REQUIRE(distances_gt[i] > radius);
+            REQUIRE(distances_gt[i] <= range_filter);
+        }
+
+        int actual_count = 0;
+        int gt_count = 0;
+
+        for (int i = 0; i < nq; ++i) {
+            gt_count += lims_gt[i + 1] - lims_gt[i];
+
+            std::unordered_set<int64_t> gt_ids;
+            for (size_t j = lims_gt[i]; j < lims_gt[i + 1]; ++j) {
+                gt_ids.insert(ids_gt[j]);
+            }
+            for (size_t j = lims[i]; j < lims[i + 1]; ++j) {
+                if (gt_ids.find(ids[j]) != gt_ids.end()) {
+                    actual_count++;
+                }
+            }
+        }
+        // most above 0.95, only a few between 0.9 and 0.85
+        REQUIRE(actual_count * 1.0f / gt_count >= 0.85);
     }
 }
 

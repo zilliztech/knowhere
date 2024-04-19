@@ -25,6 +25,9 @@
 
 namespace knowhere {
 
+// Inverted Index impl for sparse vectors. May optionally use WAND algorithm to speed up search.
+//
+// Not overriding RangeSerach, will use the default implementation in IndexNode.
 template <typename T, bool use_wand>
 class SparseInvertedIndexNode : public IndexNode {
     static_assert(std::is_same_v<T, fp32>, "SparseInvertedIndexNode only support float");
@@ -126,11 +129,6 @@ class SparseInvertedIndexNode : public IndexNode {
         WaitAllSuccess(futs);
 
         return vec;
-    }
-
-    [[nodiscard]] expected<DataSetPtr>
-    RangeSearch(const DataSet& dataset, const Config& config, const BitsetView& bitset) const override {
-        throw std::runtime_error("RangeSearch not supported for current index type");
     }
 
     [[nodiscard]] expected<DataSetPtr>

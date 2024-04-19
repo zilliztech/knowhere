@@ -21,9 +21,10 @@
 #include <vector>
 
 #include "catch2/generators/catch_generators.hpp"
-#include "common/range_util.h"
 #include "knowhere/binaryset.h"
 #include "knowhere/dataset.h"
+#include "knowhere/object.h"
+#include "knowhere/range_util.h"
 #include "knowhere/version.h"
 
 constexpr int64_t kSeed = 42;
@@ -48,6 +49,7 @@ GenDataSet(int rows, int dim, int seed = 42) {
 
 inline knowhere::DataSetPtr
 CopyDataSet(knowhere::DataSetPtr dataset, const int64_t copy_rows) {
+    REQUIRE(!dataset->GetIsSparse());
     auto rows = copy_rows;
     auto dim = dataset->GetDim();
     auto data = dataset->GetTensor();
@@ -72,6 +74,7 @@ GenBinDataSet(int rows, int dim, int seed = 42) {
 
 inline knowhere::DataSetPtr
 CopyBinDataSet(knowhere::DataSetPtr dataset, const int64_t copy_rows) {
+    REQUIRE(!dataset->GetIsSparse());
     auto rows = copy_rows;
     auto dim = dataset->GetDim();
     auto data = dataset->GetTensor();

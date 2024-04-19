@@ -14,7 +14,6 @@
 #include <new>
 #include <numeric>
 
-#include "common/range_util.h"
 #include "hnswlib/hnswalg.h"
 #include "hnswlib/hnswlib.h"
 #include "index/hnsw/hnsw_config.h"
@@ -26,6 +25,7 @@
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/index_node_data_mock_wrapper.h"
 #include "knowhere/log.h"
+#include "knowhere/range_util.h"
 #include "knowhere/utils.h"
 
 namespace knowhere {
@@ -335,8 +335,6 @@ class HnswIndexNode : public IndexNode {
 
         std::vector<std::vector<int64_t>> result_id_array(nq);
         std::vector<std::vector<DistType>> result_dist_array(nq);
-        std::vector<size_t> result_size(nq);
-        std::vector<size_t> result_lims(nq + 1);
 
         std::vector<folly::Future<folly::Unit>> futs;
         futs.reserve(nq);
@@ -352,7 +350,6 @@ class HnswIndexNode : public IndexNode {
                     result_dist_array[idx][j] = (is_ip ? (-p.first) : p.first);
                     result_id_array[idx][j] = p.second;
                 }
-                result_size[idx] = rst.size();
                 if (hnsw_cfg.range_filter.value() != defaultRangeFilter) {
                     FilterRangeSearchResultForOneNq(result_dist_array[idx], result_id_array[idx], is_ip,
                                                     radius_for_filter, range_filter);

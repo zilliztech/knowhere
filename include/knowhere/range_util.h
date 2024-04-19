@@ -11,7 +11,9 @@
 
 #pragma once
 
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
 #include <faiss/impl/AuxIndexStructures.h>
+#endif
 
 #include <vector>
 
@@ -24,10 +26,12 @@ distance_in_range(const float dist, const float radius, const float range_filter
     return ((is_ip && radius < dist && dist <= range_filter) || (!is_ip && range_filter <= dist && dist < radius));
 }
 
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
 void
 GetRangeSearchResult(const faiss::RangeSearchResult& res, const bool is_ip, const int64_t nq, const float radius,
                      const float range_filter, float*& distances, int64_t*& labels, size_t*& lims,
                      const BitsetView& bitset);
+#endif
 
 void
 FilterRangeSearchResultForOneNq(std::vector<float>& distances, std::vector<int64_t>& labels, const bool is_ip,

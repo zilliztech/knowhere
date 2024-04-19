@@ -10,7 +10,6 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include "common/metric.h"
-#include "common/range_util.h"
 #include "faiss/IndexBinaryFlat.h"
 #include "faiss/IndexBinaryIVF.h"
 #include "faiss/IndexFlat.h"
@@ -32,6 +31,7 @@
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/index_node_data_mock_wrapper.h"
 #include "knowhere/log.h"
+#include "knowhere/range_util.h"
 #include "knowhere/utils.h"
 
 namespace knowhere {
@@ -775,8 +775,6 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSet& dataset, const Con
 
     std::vector<std::vector<int64_t>> result_id_array(nq);
     std::vector<std::vector<float>> result_dist_array(nq);
-    std::vector<size_t> result_size(nq);
-    std::vector<size_t> result_lims(nq + 1);
 
     try {
         std::vector<folly::Future<folly::Unit>> futs;
@@ -844,7 +842,6 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSet& dataset, const Con
                 auto elem_cnt = res.lims[1];
                 result_dist_array[index].resize(elem_cnt);
                 result_id_array[index].resize(elem_cnt);
-                result_size[index] = elem_cnt;
                 for (size_t j = 0; j < elem_cnt; j++) {
                     result_dist_array[index][j] = res.distances[j];
                     result_id_array[index][j] = res.labels[j];

@@ -630,6 +630,8 @@ class BaseConfig : public Config {
     CFG_BOOL retrieve_friendly;
     CFG_STRING data_path;
     CFG_STRING index_prefix;
+    // for distance metrics, we search for vectors with distance in [range_filter, radius).
+    // for similarity metrics, we search for vectors with similarity in (radius, range_filter].
     CFG_FLOAT radius;
     CFG_FLOAT range_filter;
     CFG_BOOL trace_visit;
