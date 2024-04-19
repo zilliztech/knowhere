@@ -12,7 +12,7 @@
 #ifndef INDEX_NODE_DATA_MOCK_WRAPPER_H
 #define INDEX_NODE_DATA_MOCK_WRAPPER_H
 
-#include "knowhere/index_node.h"
+#include "knowhere/index/index_node.h"
 #include "knowhere/utils.h"
 namespace knowhere {
 
@@ -21,8 +21,8 @@ class IndexNodeDataMockWrapper : public IndexNode {
  public:
     IndexNodeDataMockWrapper(std::unique_ptr<IndexNode> index_node) : index_node_(std::move(index_node)) {
         if constexpr (!std::is_same_v<DataType, typename MockData<DataType>::type>) {
-            LOG_KNOWHERE_INFO_ << "replace index " << (GetIndexKey<DataType>(this->Type())) << " with "
-                               << (GetIndexKey<typename MockData<DataType>::type>(this->Type()));
+            LOG_KNOWHERE_INFO_ << "replace index " << (GetKey<DataType>(this->Type())) << " with "
+                               << (GetKey<typename MockData<DataType>::type>(this->Type()));
         }
     }
 

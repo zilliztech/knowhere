@@ -80,7 +80,7 @@ hash_binary_vec(const uint8_t* x, size_t d) {
 
 template <typename DataType>
 inline std::string
-GetIndexKey(const std::string& name) {
+GetKey(const std::string& name) {
     static_assert(KnowhereDataTypeCheck<DataType>::value == true);
     if (std::is_same_v<DataType, fp32>) {
         return name + std::string("_fp32");
@@ -136,5 +136,15 @@ static void
 readBinaryPOD(R& in, T& podRef) {
     in.read((char*)&podRef, sizeof(T));
 }
+
+// taken from
+// https://github.com/Microsoft/BLAS-on-flash/blob/master/include/utils.h
+// round up X to the nearest multiple of Y
+#define ROUND_UP(X, Y) ((((uint64_t)(X) / (Y)) + ((uint64_t)(X) % (Y) != 0)) * (Y))
+
+#define DIV_ROUND_UP(X, Y) (((uint64_t)(X) / (Y)) + ((uint64_t)(X) % (Y) != 0))
+
+// round down X to the nearest multiple of Y
+#define ROUND_DOWN(X, Y) (((uint64_t)(X) / (Y)) * (Y))
 
 }  // namespace knowhere

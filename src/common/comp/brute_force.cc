@@ -22,7 +22,7 @@
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/config.h"
 #include "knowhere/expected.h"
-#include "knowhere/index_node.h"
+#include "knowhere/index/index_node.h"
 #include "knowhere/log.h"
 #include "knowhere/sparse_utils.h"
 #include "knowhere/utils.h"

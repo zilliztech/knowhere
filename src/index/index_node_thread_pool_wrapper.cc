@@ -9,10 +9,10 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
-#include "knowhere/index_node_thread_pool_wrapper.h"
+#include "knowhere/index/index_node_thread_pool_wrapper.h"
 
 #include "knowhere/comp/thread_pool.h"
-#include "knowhere/index_node.h"
+#include "knowhere/index/index_node.h"
 
 namespace knowhere {
 

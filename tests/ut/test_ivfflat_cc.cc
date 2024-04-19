@@ -17,7 +17,7 @@
 #include "catch2/generators/catch_generators.hpp"
 #include "faiss/invlists/InvertedLists.h"
 #include "knowhere/comp/index_param.h"
-#include "knowhere/factory.h"
+#include "knowhere/index/index_factory.h"
 #include "knowhere/utils.h"
 #include "utils.h"
 

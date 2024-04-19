@@ -12,7 +12,7 @@
 #ifndef INDEX_NODE_THREAD_POOL_WRAPPER_H
 #define INDEX_NODE_THREAD_POOL_WRAPPER_H
 
-#include "knowhere/index_node.h"
+#include "knowhere/index/index_node.h"
 
 namespace knowhere {
 

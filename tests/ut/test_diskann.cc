@@ -18,7 +18,7 @@
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/local_file_manager.h"
 #include "knowhere/expected.h"
-#include "knowhere/factory.h"
+#include "knowhere/index/index_factory.h"
 #include "knowhere/utils.h"
 #include "utils.h"
 #if __has_include(<filesystem>)
