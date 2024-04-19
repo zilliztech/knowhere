@@ -37,11 +37,12 @@ TEST_CASE("Test Kmeans With Float Vector", "[float metrics]") {
     const int64_t nb = 1000, nq = 10;
     const int64_t dim = 128;
     const int64_t num_clusters = 8;
+    const std::string NUM_CLUSTERS = "num_clusters";
     auto topk = 1;
 
     auto base_gen = [&]() {
         knowhere::Json json;
-        json[knowhere::meta::NUM_CLUSTERS] = num_clusters;
+        json[NUM_CLUSTERS] = num_clusters;
         return json;
     };
 
