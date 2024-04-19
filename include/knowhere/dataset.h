@@ -254,13 +254,16 @@ GenDataSet(const int64_t nb, const int64_t dim, const void* xb) {
     return ret_ds;
 }
 
-#ifdef NOT_COMPILE_FOR_SWIG
-// TOOD: python wheel build error for this API, need check
+// swig won't compile when using int64_t* or size_t* as parameter
 inline DataSetPtr
+#ifdef NOT_COMPILE_FOR_SWIG
 GenIdsDataSet(const int64_t rows, const int64_t* ids) {
+#else
+GenIdsDataSet(const int64_t rows, const void* ids) {
+#endif
     auto ret_ds = std::make_shared<DataSet>();
     ret_ds->SetRows(rows);
-    ret_ds->SetIds(ids);
+    ret_ds->SetIds((const int64_t*)ids);
     ret_ds->SetIsOwner(false);
     return ret_ds;
 }
@@ -276,23 +279,31 @@ GenResultDataSet(const int64_t rows, const int64_t dim, const void* tensor) {
 }
 
 inline DataSetPtr
+#ifdef NOT_COMPILE_FOR_SWIG
 GenResultDataSet(const int64_t nq, const int64_t topk, const int64_t* ids, const float* distance) {
+#else
+GenResultDataSet(const int64_t nq, const int64_t topk, const void* ids, const float* distance) {
+#endif
     auto ret_ds = std::make_shared<DataSet>();
     ret_ds->SetRows(nq);
     ret_ds->SetDim(topk);
-    ret_ds->SetIds(ids);
+    ret_ds->SetIds((const int64_t*)ids);
     ret_ds->SetDistance(distance);
     ret_ds->SetIsOwner(true);
     return ret_ds;
 }
 
 inline DataSetPtr
+#ifdef NOT_COMPILE_FOR_SWIG
 GenResultDataSet(const int64_t nq, const int64_t* ids, const float* distance, const size_t* lims) {
+#else
+GenResultDataSet(const int64_t nq, const void* ids, const float* distance, const void* lims) {
+#endif
     auto ret_ds = std::make_shared<DataSet>();
     ret_ds->SetRows(nq);
-    ret_ds->SetIds(ids);
+    ret_ds->SetIds((const int64_t*)ids);
     ret_ds->SetDistance(distance);
-    ret_ds->SetLims(lims);
+    ret_ds->SetLims((const size_t*)lims);
     ret_ds->SetIsOwner(true);
     return ret_ds;
 }
@@ -305,7 +316,6 @@ GenResultDataSet(const std::string& json_info, const std::string& json_id_set) {
     ret_ds->SetIsOwner(true);
     return ret_ds;
 }
-#endif
 
 }  // namespace knowhere
 #endif /* DATASET_H */
