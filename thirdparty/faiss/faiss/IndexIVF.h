@@ -23,6 +23,8 @@
 #include <faiss/invlists/InvertedLists.h>
 #include <faiss/utils/Heap.h>
 
+#include "knowhere/object.h"
+
 namespace faiss {
 
 /** Encapsulates a quantizer object for the IndexIVF
@@ -512,26 +514,20 @@ struct InvertedListScanner {
             size_t& scan_cnt) const;
 
     /** scan a set of codes, compute distances to current query and
-     * push all to heap. Default implemetation
-     * calls distance_to_code.
+     * return in a vector.
      *
      * @param list_size     number of codes to scan
      * @param codes         codes to scan (list_size * code_size)
      * @param code_norms    norms of code (for cosine)
      * @param ids           corresponding ids (ignored if store_pairs)
-     * @param distances     heap distances (size counter_back)
-     * @param labels        heap labels (size counter_back)
-     * @param counter_back  heap size (will increase)
-     * @return number of heap pushes performed
+     * @param out           output distances and ids
      */
-    virtual size_t scan_codes_and_push_back(
+    virtual void scan_codes_and_return(
             size_t list_size,
             const uint8_t* codes,
             const float* code_norms,
             const idx_t* ids,
-            float* distances,
-            idx_t* labels,
-            size_t& counter_back) const;
+            std::vector<knowhere::DistId>& out) const;
 
     // same as scan_codes, using an iterator
     virtual size_t iterate_codes(
