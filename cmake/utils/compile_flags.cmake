@@ -21,8 +21,8 @@ if(__X86_64)
   set(CMAKE_CXX_FLAGS "-msse4.2 ${CMAKE_CXX_FLAGS}")
 endif()
 
-set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g  -Wl,--no-as-needed")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG  -Wl,--no-as-needed")
+set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 
 if(WITH_RAFT)
   set(CMAKE_CUDA_FLAGS_DEBUG "-O0 -g -Xcompiler=-w ")
