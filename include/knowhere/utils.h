@@ -36,17 +36,21 @@ IsFlatIndex(const knowhere::IndexType& index_type) {
     return std::find(flat_index_list.begin(), flat_index_list.end(), index_type) != flat_index_list.end();
 }
 
+template <typename DataType>
 extern float
-NormalizeVec(float* x, int32_t d);
+NormalizeVec(DataType* x, int32_t d);
 
+template <typename DataType>
 extern std::vector<float>
-NormalizeVecs(float* x, size_t rows, int32_t dim);
+NormalizeVecs(DataType* x, size_t rows, int32_t dim);
 
+template <typename DataType = knowhere::fp32>
 extern void
 Normalize(const DataSet& dataset);
 
-extern std::unique_ptr<float[]>
-CopyAndNormalizeVecs(const float* x, size_t rows, int32_t dim);
+template <typename DataType>
+extern std::unique_ptr<DataType[]>
+CopyAndNormalizeVecs(const DataType* x, size_t rows, int32_t dim);
 
 constexpr inline uint64_t seed = 0xc70f6907UL;
 
@@ -74,6 +78,16 @@ hash_binary_vec(const uint8_t* x, size_t d) {
     uint64_t h = seed;
     for (size_t i = 0; i < len; ++i) {
         h = h * 13331 + x[i];
+    }
+    return h;
+}
+
+inline uint64_t
+hash_half_precision_float(const void* x, size_t d) {
+    uint64_t h = seed;
+    auto u16_x = (uint16_t*)(x);
+    for (size_t i = 0; i < d; ++i) {
+        h = h * 13331 + u16_x[i];
     }
     return h;
 }

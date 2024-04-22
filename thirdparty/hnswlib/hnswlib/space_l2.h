@@ -5,24 +5,43 @@
 
 namespace hnswlib {
 
-static float
-L2Sqr(const void* pVect1v, const void* pVect2v, const void* qty_ptr) {
-#if 0 /* use FAISS distance calculation algorithm instead */
-    float* pVect1 = (float*)pVect1v;
-    float* pVect2 = (float*)pVect2v;
-    size_t qty = *((size_t*)qty_ptr);
+template <typename DataType, typename DistanceType>
+static DistanceType
+NormSqr(const void* pVect1v, const void* qty_ptr) {
+    if constexpr (!std::is_same_v<DataType, float>) {
+        auto pVect1 = (DataType*)pVect1v;
+        size_t qty = *((size_t*)qty_ptr);
 
-    float res = 0;
-    for (size_t i = 0; i < qty; i++) {
-        float t = *pVect1 - *pVect2;
-        pVect1++;
-        pVect2++;
-        res += t * t;
+        float res = 0;
+        for (size_t i = 0; i < qty; i++) {
+            res += (DistanceType)(*pVect1) * (DistanceType)(*pVect1);
+            pVect1++;
+        }
+        return (res);
+    } else {
+        return faiss::fvec_norm_L2sqr((const float*)pVect1v, *(size_t*)(qty_ptr));
     }
-    return (res);
-#else
-    return faiss::fvec_L2sqr((const float*)pVect1v, (const float*)pVect2v, *((size_t*)qty_ptr));
-#endif
+}
+
+template <typename DataType, typename DistanceType>
+static DistanceType
+L2Sqr(const void* pVect1v, const void* pVect2v, const void* qty_ptr) {
+    if constexpr (!std::is_same_v<DataType, float>) {
+        auto pVect1 = (DataType*)pVect1v;
+        auto pVect2 = (DataType*)pVect2v;
+        size_t qty = *((size_t*)qty_ptr);
+
+        float res = 0;
+        for (size_t i = 0; i < qty; i++) {
+            float t = (DistanceType)(*pVect1) - (DistanceType)(*pVect2);
+            pVect1++;
+            pVect2++;
+            res += t * t;
+        }
+        return (res);
+    } else {
+        return faiss::fvec_L2sqr((const float*)pVect1v, (const float*)pVect2v, *((size_t*)qty_ptr));
+    }
 }
 
 static float
@@ -213,15 +232,16 @@ L2SqrSIMD4ExtResiduals(const void* pVect1v, const void* pVect2v, const void* qty
 }
 #endif
 
-class L2Space : public SpaceInterface<float> {
-    DISTFUNC<float> fstdistfunc_;
-    DISTFUNC<float> fstdistfunc_sq_;
+template <typename DataType, typename DistanceType>
+class L2Space : public SpaceInterface<DistanceType> {
+    DISTFUNC<DistanceType> fstdistfunc_;
+    DISTFUNC<DistanceType> fstdistfunc_sq_;
     size_t data_size_;
     size_t dim_;
 
  public:
     L2Space(size_t dim) {
-        fstdistfunc_ = L2Sqr;
+        fstdistfunc_ = L2Sqr<DataType, DistanceType>;
         fstdistfunc_sq_ = L2SqrSQ8;
 #if 0 /* use FAISS distance calculation algorithm instead */
 #if defined(USE_SSE) || defined(USE_AVX) || defined(USE_AVX512)
@@ -246,7 +266,7 @@ class L2Space : public SpaceInterface<float> {
 #endif
 #endif
         dim_ = dim;
-        data_size_ = dim * sizeof(float);
+        data_size_ = dim * sizeof(DataType);
     }
 
     size_t
@@ -254,7 +274,7 @@ class L2Space : public SpaceInterface<float> {
         return data_size_;
     }
 
-    DISTFUNC<float>
+    DISTFUNC<DistanceType>
     get_dist_func() {
         return fstdistfunc_;
     }
