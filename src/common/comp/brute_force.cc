@@ -14,7 +14,6 @@
 #include <vector>
 
 #include "common/metric.h"
-#include "common/range_util.h"
 #include "faiss/MetricType.h"
 #include "faiss/utils/binary_distances.h"
 #include "faiss/utils/distances.h"
@@ -24,6 +23,7 @@
 #include "knowhere/expected.h"
 #include "knowhere/index/index_node.h"
 #include "knowhere/log.h"
+#include "knowhere/range_util.h"
 #include "knowhere/sparse_utils.h"
 #include "knowhere/utils.h"
 
@@ -291,9 +291,12 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                         const BitsetView& bitset) {
     DataSetPtr base(base_dataset);
     DataSetPtr query(query_dataset);
-    if constexpr (!std::is_same_v<DataType, typename MockData<DataType>::type>) {
-        base = data_type_conversion<DataType, typename MockData<DataType>::type>(*base_dataset);
-        query = data_type_conversion<DataType, typename MockData<DataType>::type>(*query_dataset);
+    bool is_sparse = std::is_same<DataType, knowhere::sparse::SparseRow<float>>::value;
+    if (!is_sparse) {
+        if constexpr (!std::is_same_v<DataType, typename MockData<DataType>::type>) {
+            base = data_type_conversion<DataType, typename MockData<DataType>::type>(*base_dataset);
+            query = data_type_conversion<DataType, typename MockData<DataType>::type>(*query_dataset);
+        }
     }
     auto xb = base->GetTensor();
     auto nb = base->GetRows();
@@ -331,6 +334,10 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
         return expected<DataSetPtr>::Err(result.error(), result.what());
     }
     faiss::MetricType faiss_metric_type = result.value();
+    if (is_sparse && !IsMetricType(metric_str, metric::IP)) {
+        return expected<DataSetPtr>::Err(Status::invalid_metric_type,
+                                         "Invalid metric type for sparse float vector: " + metric_str);
+    }
     bool is_cosine = IsMetricType(metric_str, metric::COSINE);
 
     auto radius = cfg.radius.value();
@@ -341,12 +348,27 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
 
     std::vector<std::vector<int64_t>> result_id_array(nq);
     std::vector<std::vector<float>> result_dist_array(nq);
-    std::vector<size_t> result_size(nq);
-    std::vector<size_t> result_lims(nq + 1);
+
     std::vector<folly::Future<Status>> futs;
     futs.reserve(nq);
     for (int i = 0; i < nq; ++i) {
         futs.emplace_back(pool->push([&, index = i] {
+            if (is_sparse) {
+                auto cur_query = (const sparse::SparseRow<float>*)xq + index;
+                auto xb_sparse = (const sparse::SparseRow<float>*)xb;
+                for (int j = 0; j < nb; ++j) {
+                    if (!bitset.empty() && bitset.test(j)) {
+                        continue;
+                    }
+                    auto dist = cur_query->dot(xb_sparse[j]);
+                    if (dist > radius && dist <= range_filter) {
+                        result_id_array[index].push_back(j);
+                        result_dist_array[index].push_back(dist);
+                    }
+                }
+                return Status::success;
+            }
+            // else not sparse:
             ThreadPool::ScopedOmpSetter setter(1);
             faiss::RangeSearchResult res(1);
 
@@ -394,7 +416,6 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
             auto elem_cnt = res.lims[1];
             result_dist_array[index].resize(elem_cnt);
             result_id_array[index].resize(elem_cnt);
-            result_size[index] = elem_cnt;
             for (size_t j = 0; j < elem_cnt; j++) {
                 result_dist_array[index][j] = res.distances[j];
                 result_id_array[index][j] = res.labels[j];
@@ -761,6 +782,12 @@ template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::RangeSearch<knowhere::sparse::SparseRow<float>>(const knowhere::DataSetPtr base_dataset,
+                                                                      const knowhere::DataSetPtr query_dataset,
+                                                                      const knowhere::Json& config,
+                                                                      const knowhere::BitsetView& bitset);
+
 template knowhere::expected<std::vector<std::shared_ptr<knowhere::IndexNode::iterator>>>
 knowhere::BruteForce::AnnIterator<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,

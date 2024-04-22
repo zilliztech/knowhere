@@ -212,6 +212,12 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
         this->is_owner = is_owner;
     }
 
+    bool
+    GetIsSparse() {
+        std::unique_lock lock(mutex_);
+        return this->is_sparse;
+    }
+
     void
     SetIsSparse(bool is_sparse) {
         std::unique_lock lock(mutex_);
