@@ -1,4 +1,4 @@
-set(CARDINAL_VERSION master)
+set(CARDINAL_VERSION 0bb6d5771a7c279362bd3b6ea7dc94b53d0c4de1 )
 set(CARDINAL_REPO_URL "https://github.com/zilliztech/cardinal.git")
 
 set(CARDINAL_REPO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/cardinal")
