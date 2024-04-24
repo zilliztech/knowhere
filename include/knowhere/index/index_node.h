@@ -110,7 +110,7 @@ class IndexNode : public Object {
             while (it->HasNext()) {
                 auto [id, dist] = it->Next();
                 // too close
-                if (similarity_metric ? dist >= range_filter : dist <= range_filter) {
+                if (similarity_metric ? dist > range_filter : dist < range_filter) {
                     continue;
                 }
                 // too far
