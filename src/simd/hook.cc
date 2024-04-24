@@ -191,7 +191,7 @@ fvec_hook(std::string& simd_type) {
 #endif
 
 // ToDo MG: include VSX intrinsics via distances_vsx once _ref tests succeed
-#if defined(__powerpc64__)
+#if defined(__powerpc64__) || defined(__loongarch64)
     fvec_inner_product = fvec_inner_product_ref;
     fvec_L2sqr = fvec_L2sqr_ref;
     fvec_L1 = fvec_L1_ref;

@@ -52,6 +52,13 @@ if(__AARCH64)
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
 endif()
 
+if(__LOONGARCH64)
+  set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc)
+  add_library(knowhere_utils STATIC ${UTILS_SRC})
+  target_link_libraries(knowhere_utils PUBLIC glog::glog)
+endif()
+
+
 # ToDo: Add distances_vsx.cc for powerpc64 SIMD acceleration
 if(__PPC64)
   set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc)
@@ -111,6 +118,28 @@ if(__X86_64)
 endif()
 
 if(__AARCH64)
+  knowhere_file_glob(GLOB FAISS_AVX_SRCS thirdparty/faiss/faiss/impl/*avx.cpp)
+
+  list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX_SRCS})
+  add_library(faiss STATIC ${FAISS_SRCS})
+
+  target_compile_options(
+    faiss
+    PRIVATE $<$<COMPILE_LANGUAGE:CXX>:
+            -Wno-sign-compare
+            -Wno-unused-variable
+            -Wno-reorder
+            -Wno-unused-local-typedefs
+            -Wno-unused-function
+            -Wno-strict-aliasing>)
+
+  add_dependencies(faiss knowhere_utils)
+  target_link_libraries(faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES}
+                                     ${LAPACK_LIBRARIES} knowhere_utils)
+  target_compile_definitions(faiss PRIVATE FINTEGER=int)
+endif()
+
+if(__LOONGARCH64)
   knowhere_file_glob(GLOB FAISS_AVX_SRCS thirdparty/faiss/faiss/impl/*avx.cpp)
 
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX_SRCS})
