@@ -90,6 +90,16 @@ KnowhereConfig::SetSimdType(const SimdType simd_type) {
 }
 
 void
+KnowhereConfig::EnablePatchForComputeFP32AsBF16() {
+    LOG_KNOWHERE_INFO_ << "Just interface adaptation. Enable patch for compute fp32 as bf16";
+}
+
+void
+KnowhereConfig::DisablePatchForComputeFP32AsBF16() {
+    LOG_KNOWHERE_INFO_ << "Just interface adaptation. Disable patch for compute fp32 as bf16";
+}
+
+void
 KnowhereConfig::SetBlasThreshold(const int64_t use_blas_threshold) {
     LOG_KNOWHERE_INFO_ << "Set faiss::distance_compute_blas_threshold to " << use_blas_threshold;
     faiss::distance_compute_blas_threshold = static_cast<int>(use_blas_threshold);
