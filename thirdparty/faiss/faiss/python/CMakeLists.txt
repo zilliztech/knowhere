@@ -11,7 +11,7 @@ project(pyfaiss
   HOMEPAGE_URL "https://github.com/facebookresearch/faiss"
   LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 
 find_package(SWIG REQUIRED COMPONENTS python)
 include(${SWIG_USE_FILE})
@@ -67,11 +67,20 @@ else()
   find_package(faiss REQUIRED)
 endif()
 
+if (${CMAKE_SYSTEM_NAME} MATCHES "AIX")
+swig_add_library(swigfaiss
+  TYPE MODULE
+  LANGUAGE python
+  SOURCES swigfaiss.swig
+)
+else ()
 swig_add_library(swigfaiss
   TYPE SHARED
   LANGUAGE python
   SOURCES swigfaiss.swig
 )
+endif()
+
 set_property(TARGET swigfaiss PROPERTY SWIG_COMPILE_OPTIONS -doxygen)
 
 set_property(SOURCE swigfaiss_avx2.swig
@@ -103,13 +112,21 @@ if(NOT WIN32)
   set_target_properties(swigfaiss PROPERTIES SUFFIX .so)
   set_target_properties(swigfaiss_avx2 PROPERTIES SUFFIX .so)
   set_target_properties(swigfaiss_avx512 PROPERTIES SUFFIX .so)
+else()
+  # we need bigobj for the swig wrapper
+  target_compile_options(swigfaiss PRIVATE /bigobj)
+  target_compile_options(swigfaiss_avx2 PRIVATE /bigobj)
+  target_compile_options(swigfaiss_avx512 PRIVATE /bigobj)
 endif()
 
 if(FAISS_ENABLE_GPU)
   find_package(CUDAToolkit REQUIRED)
-  target_link_libraries(swigfaiss PRIVATE CUDA::cudart)
-  target_link_libraries(swigfaiss_avx2 PRIVATE CUDA::cudart)
-  target_link_libraries(swigfaiss_avx512 PRIVATE CUDA::cudart)
+  if(FAISS_ENABLE_RAFT)
+    find_package(raft COMPONENTS compiled distributed)
+  endif()
+  target_link_libraries(swigfaiss PRIVATE CUDA::cudart $<$<BOOL:${FAISS_ENABLE_RAFT}>:raft::raft> $<$<BOOL:${FAISS_ENABLE_RAFT}>:nvidia::cutlass::cutlass>)
+  target_link_libraries(swigfaiss_avx2 PRIVATE CUDA::cudart $<$<BOOL:${FAISS_ENABLE_RAFT}>:raft::raft> $<$<BOOL:${FAISS_ENABLE_RAFT}>:nvidia::cutlass::cutlass>)
+  target_link_libraries(swigfaiss_avx512 PRIVATE CUDA::cudart $<$<BOOL:${FAISS_ENABLE_RAFT}>:raft::raft> $<$<BOOL:${FAISS_ENABLE_RAFT}>:nvidia::cutlass::cutlass>)
 endif()
 
 find_package(OpenMP REQUIRED)
@@ -152,6 +169,10 @@ set_property(TARGET faiss_python_callbacks
   PROPERTY POSITION_INDEPENDENT_CODE ON
 )
 
+if (${CMAKE_SYSTEM_NAME} MATCHES "AIX")
+target_link_libraries(faiss_python_callbacks PRIVATE faiss)
+endif()
+
 # Hack so that python_callbacks.h can be included as
 # `#include <faiss/python/python_callbacks.h>`.
 target_include_directories(faiss_python_callbacks PRIVATE ${PROJECT_SOURCE_DIR}/../..)
@@ -164,6 +185,10 @@ target_link_libraries(swigfaiss_avx512 PRIVATE faiss_python_callbacks)
 configure_file(setup.py setup.py COPYONLY)
 configure_file(__init__.py __init__.py COPYONLY)
 configure_file(loader.py loader.py COPYONLY)
+configure_file(class_wrappers.py class_wrappers.py COPYONLY)
+configure_file(gpu_wrappers.py gpu_wrappers.py COPYONLY)
+configure_file(extra_wrappers.py extra_wrappers.py COPYONLY)
+configure_file(array_conversions.py array_conversions.py COPYONLY)
 
 file(GLOB files "${PROJECT_SOURCE_DIR}/../../contrib/*.py")
 file(COPY ${files} DESTINATION contrib/)
