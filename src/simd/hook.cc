@@ -71,6 +71,26 @@ cpu_support_sse4_2() {
 }
 #endif
 
+static std::mutex patch_bf16_mutex;
+
+void
+enable_patch_for_fp32_bf16() {
+    std::lock_guard<std::mutex> lock(patch_bf16_mutex);
+
+    enable_avx512_patch_fp32_bf16 = true;
+    enable_avx_patch_fp32_bf16 = true;
+    enable_ref_patch_fp32_bf16 = true;
+}
+
+void
+disable_patch_for_fp32_bf16() {
+    std::lock_guard<std::mutex> lock(patch_bf16_mutex);
+
+    enable_avx512_patch_fp32_bf16 = false;
+    enable_avx_patch_fp32_bf16 = false;
+    enable_ref_patch_fp32_bf16 = false;
+}
+
 void
 fvec_hook(std::string& simd_type) {
     static std::mutex hook_mutex;

@@ -5,6 +5,10 @@
 
 namespace faiss {
 
+extern bool enable_ref_patch_fp32_bf16;
+
+float
+bf16_patch(float f);
 /// Squared L2 distance between two vectors
 float
 fvec_L2sqr_ref(const float* x, const float* y, size_t d);

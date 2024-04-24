@@ -17,6 +17,8 @@
 
 namespace faiss {
 
+extern bool enable_avx512_patch_fp32_bf16;
+
 float
 fvec_L2sqr_avx512(const float* x, const float* y, size_t d);
 

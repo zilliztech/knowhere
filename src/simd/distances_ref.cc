@@ -10,14 +10,36 @@
 #include "distances_ref.h"
 
 #include <cmath>
+#include <cstdint>
+
 namespace faiss {
+
+bool enable_ref_patch_fp32_bf16 = false;
+
+namespace {
+union fp32_uint32_union {
+    uint32_t as_bits;
+    float as_value;
+};
+}  // namespace
+
+inline float
+bf16_patch(float f) {
+    if (!enable_ref_patch_fp32_bf16) {
+        return f;
+    } else {
+        auto u32 = fp32_uint32_union{.as_value = f}.as_bits;
+        // Round off
+        return fp32_uint32_union{.as_bits = (u32 + 0x8000) & 0xFFFF0000}.as_value;
+    }
+}
 
 float
 fvec_L2sqr_ref(const float* x, const float* y, size_t d) {
     size_t i;
     float res = 0;
     for (i = 0; i < d; i++) {
-        const float tmp = x[i] - y[i];
+        const float tmp = x[i] - bf16_patch(y[i]);
         res += tmp * tmp;
     }
     return res;
@@ -48,7 +70,7 @@ float
 fvec_inner_product_ref(const float* x, const float* y, size_t d) {
     size_t i;
     float res = 0;
-    for (i = 0; i < d; i++) res += x[i] * y[i];
+    for (i = 0; i < d; i++) res += x[i] * bf16_patch(y[i]);
     return res;
 }
 

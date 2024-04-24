@@ -19,6 +19,8 @@
 
 namespace faiss {
 
+bool enable_avx_patch_fp32_bf16 = false;
+
 #define ALIGNED(x) __attribute__((aligned(x)))
 
 // reads 0 <= d < 4 floats as __m128
@@ -38,6 +40,38 @@ masked_read(int d, const float* x) {
     // cannot use AVX2 _mm_mask_set1_epi32
 }
 
+namespace {
+
+inline __m256
+avx2_bf16_patch(__m256 f256) {
+    if (!enable_avx_patch_fp32_bf16) {
+        return f256;
+    } else {
+        __m256i i_f256 = _mm256_castps_si256(f256);
+        __m256i rounding_increment = _mm256_set1_epi32(0x8000);
+
+        __m256i mask = _mm256_set1_epi32(0xFFFF0000);
+
+        return _mm256_castsi256_ps(_mm256_and_si256(_mm256_add_epi32(i_f256, rounding_increment), mask));
+    }
+}
+
+inline __m128
+avx_bf16_patch(__m128 f128) {
+    if (!enable_avx_patch_fp32_bf16) {
+        return f128;
+    } else {
+        __m128i i_f128 = _mm_castps_si128(f128);
+        __m128i rounding_increment = _mm_set1_epi32(0x8000);
+
+        __m128i mask = _mm_set1_epi32(0xFFFF0000);
+
+        return _mm_castsi128_ps(_mm_and_si128(_mm_add_epi32(i_f128, rounding_increment), mask));
+    }
+}
+
+}  // namespace
+
 float
 fvec_inner_product_avx(const float* x, const float* y, size_t d) {
     __m256 msum1 = _mm256_setzero_ps();
@@ -45,7 +79,7 @@ fvec_inner_product_avx(const float* x, const float* y, size_t d) {
     while (d >= 8) {
         __m256 mx = _mm256_loadu_ps(x);
         x += 8;
-        __m256 my = _mm256_loadu_ps(y);
+        __m256 my = avx2_bf16_patch(_mm256_loadu_ps(y));
         y += 8;
         msum1 = _mm256_add_ps(msum1, _mm256_mul_ps(mx, my));
         d -= 8;
@@ -57,7 +91,7 @@ fvec_inner_product_avx(const float* x, const float* y, size_t d) {
     if (d >= 4) {
         __m128 mx = _mm_loadu_ps(x);
         x += 4;
-        __m128 my = _mm_loadu_ps(y);
+        __m128 my = avx_bf16_patch(_mm_loadu_ps(y));
         y += 4;
         msum2 = _mm_add_ps(msum2, _mm_mul_ps(mx, my));
         d -= 4;
@@ -65,7 +99,7 @@ fvec_inner_product_avx(const float* x, const float* y, size_t d) {
 
     if (d > 0) {
         __m128 mx = masked_read(d, x);
-        __m128 my = masked_read(d, y);
+        __m128 my = avx_bf16_patch(masked_read(d, y));
         msum2 = _mm_add_ps(msum2, _mm_mul_ps(mx, my));
     }
 
@@ -81,7 +115,7 @@ fvec_L2sqr_avx(const float* x, const float* y, size_t d) {
     while (d >= 8) {
         __m256 mx = _mm256_loadu_ps(x);
         x += 8;
-        __m256 my = _mm256_loadu_ps(y);
+        __m256 my = avx2_bf16_patch(_mm256_loadu_ps(y));
         y += 8;
         const __m256 a_m_b1 = _mm256_sub_ps(mx, my);
         msum1 = _mm256_add_ps(msum1, _mm256_mul_ps(a_m_b1, a_m_b1));
@@ -94,7 +128,7 @@ fvec_L2sqr_avx(const float* x, const float* y, size_t d) {
     if (d >= 4) {
         __m128 mx = _mm_loadu_ps(x);
         x += 4;
-        __m128 my = _mm_loadu_ps(y);
+        __m128 my = avx_bf16_patch(_mm_loadu_ps(y));
         y += 4;
         const __m128 a_m_b1 = _mm_sub_ps(mx, my);
         msum2 = _mm_add_ps(msum2, _mm_mul_ps(a_m_b1, a_m_b1));
@@ -103,7 +137,7 @@ fvec_L2sqr_avx(const float* x, const float* y, size_t d) {
 
     if (d > 0) {
         __m128 mx = masked_read(d, x);
-        __m128 my = masked_read(d, y);
+        __m128 my = avx_bf16_patch(masked_read(d, y));
         __m128 a_m_b1 = _mm_sub_ps(mx, my);
         msum2 = _mm_add_ps(msum2, _mm_mul_ps(a_m_b1, a_m_b1));
     }

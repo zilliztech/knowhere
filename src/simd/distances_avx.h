@@ -17,6 +17,8 @@
 
 namespace faiss {
 
+extern bool enable_avx_patch_fp32_bf16;
+
 /// Squared L2 distance between two vectors
 float
 fvec_L2sqr_avx(const float* x, const float* y, size_t d);
