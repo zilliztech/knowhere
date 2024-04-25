@@ -77,7 +77,7 @@ class InvertedIndex {
     }
 
     Status
-    Load(MemoryIOReader& reader) {
+    Load(MemoryIOReader& reader, bool is_mmap) {
         std::unique_lock<std::shared_mutex> lock(mu_);
         int64_t rows;
         readBinaryPOD(reader, rows);
@@ -91,11 +91,16 @@ class InvertedIndex {
         for (int64_t i = 0; i < rows; ++i) {
             size_t count;
             readBinaryPOD(reader, count);
-            raw_data_.emplace_back(count);
-            if (count == 0) {
-                continue;
+            if (is_mmap) {
+                raw_data_.emplace_back(count, reader.data() + reader.tellg(), false);
+                reader.advance(count * SparseRow<T>::element_size());
+            } else {
+                raw_data_.emplace_back(count);
+                if (count == 0) {
+                    continue;
+                }
+                reader.read(raw_data_[i].data(), count * SparseRow<T>::element_size());
             }
-            reader.read(raw_data_[i].data(), count * SparseRow<T>::element_size());
             add_row_to_index(raw_data_[i], i);
         }
 

@@ -104,30 +104,50 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, conf, nullptr);
         check_distance_decreasing(*gt.value());
 
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
-        auto cfg_json = gen().dump();
-        CAPTURE(name, cfg_json);
-        knowhere::Json json = knowhere::Json::parse(cfg_json);
-        REQUIRE(idx.Type() == name);
-        REQUIRE(idx.Build(*train_ds, json) == knowhere::Status::success);
-        REQUIRE(idx.Size() > 0);
-        REQUIRE(idx.Count() == nb);
+        auto use_mmap = GENERATE(true, false);
+        auto tmp_file = "/tmp/knowhere_sparse_inverted_index_test";
+        {
+            auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+            auto cfg_json = gen().dump();
+            CAPTURE(name, cfg_json);
+            knowhere::Json json = knowhere::Json::parse(cfg_json);
+            REQUIRE(idx.Type() == name);
+            REQUIRE(idx.Build(*train_ds, json) == knowhere::Status::success);
+            REQUIRE(idx.Size() > 0);
+            REQUIRE(idx.Count() == nb);
 
-        knowhere::BinarySet bs;
-        REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
-        REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
+            knowhere::BinarySet bs;
+            REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
+            if (use_mmap) {
+                auto binary = bs.GetByName(idx.Type());
+                auto data = binary->data.get();
+                auto size = binary->size;
+                // if tmp_file already exists, remove it
+                std::remove(tmp_file);
+                std::ofstream out(tmp_file, std::ios::binary);
+                out.write((const char*)data, size);
+                out.close();
+                REQUIRE(idx.DeserializeFromFile(tmp_file, json) == knowhere::Status::success);
+            } else {
+                REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
+            }
 
-        auto results = idx.Search(*query_ds, json, nullptr);
-        REQUIRE(results.has_value());
-        float recall = GetKNNRecall(*gt.value(), *results.value());
-        check_distance_decreasing(*results.value());
-        auto drop_ratio_build = json[knowhere::indexparam::DROP_RATIO_BUILD].get<float>();
-        auto drop_ratio_search = json[knowhere::indexparam::DROP_RATIO_SEARCH].get<float>();
-        if (drop_ratio_build == 0 && drop_ratio_search == 0) {
-            REQUIRE(recall == 1);
-        } else {
-            // most test cases are above 0.95, only a few between 0.9 and 0.95
-            REQUIRE(recall >= 0.85);
+            auto results = idx.Search(*query_ds, json, nullptr);
+            REQUIRE(results.has_value());
+            float recall = GetKNNRecall(*gt.value(), *results.value());
+            check_distance_decreasing(*results.value());
+            auto drop_ratio_build = json[knowhere::indexparam::DROP_RATIO_BUILD].get<float>();
+            auto drop_ratio_search = json[knowhere::indexparam::DROP_RATIO_SEARCH].get<float>();
+            if (drop_ratio_build == 0 && drop_ratio_search == 0) {
+                REQUIRE(recall == 1);
+            } else {
+                // most test cases are above 0.95, only a few between 0.9 and 0.95
+                REQUIRE(recall >= 0.85);
+            }
+            // idx to destruct and munmap
+        }
+        if (use_mmap) {
+            REQUIRE(std::remove(tmp_file) == 0);
         }
     }
 

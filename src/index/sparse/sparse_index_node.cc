@@ -9,9 +9,12 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <sys/mman.h>
+
 #include "index/hnsw/hnsw_config.h"
 #include "index/sparse/sparse_inverted_index.h"
 #include "index/sparse/sparse_inverted_index_config.h"
+#include "io/file_io.h"
 #include "io/memory_io.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/config.h"
@@ -38,10 +41,7 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     ~SparseInvertedIndexNode() override {
-        if (index_ != nullptr) {
-            delete index_;
-            index_ = nullptr;
-        }
+        delete_index();
     }
 
     Status
@@ -58,7 +58,7 @@ class SparseInvertedIndexNode : public IndexNode {
                      drop_ratio_build);
         if (index_ != nullptr) {
             LOG_KNOWHERE_WARNING_ << Type() << " deleting old index during train";
-            delete index_;
+            delete_index();
         }
         index_ = index;
         return Status::success;
@@ -183,8 +183,7 @@ class SparseInvertedIndexNode : public IndexNode {
     Deserialize(const BinarySet& binset, const Config& config) override {
         if (index_) {
             LOG_KNOWHERE_WARNING_ << Type() << " has already been created, deleting old";
-            delete index_;
-            index_ = nullptr;
+            delete_index();
         }
         auto binary = binset.GetByName(Type());
         if (binary == nullptr) {
@@ -194,12 +193,35 @@ class SparseInvertedIndexNode : public IndexNode {
         MemoryIOReader reader(binary->data.get(), binary->size);
         index_ = new sparse::InvertedIndex<T>();
         // no need to set use_wand_ of index_, since it will be set in Load()
-        return index_->Load(reader);
+        return index_->Load(reader, false);
     }
 
     Status
     DeserializeFromFile(const std::string& filename, const Config& config) override {
-        throw std::runtime_error("DeserializeFromFile not supported for current index type");
+        if (index_) {
+            LOG_KNOWHERE_WARNING_ << Type() << " has already been created, deleting old";
+            delete_index();
+        }
+        auto cfg = static_cast<const knowhere::BaseConfig&>(config);
+        auto reader = knowhere::FileReader(filename);
+        map_size_ = reader.size();
+        int map_flags = MAP_SHARED;
+        if (cfg.enable_mmap_pop.has_value() && cfg.enable_mmap_pop.value()) {
+#ifdef MAP_POPULATE
+            map_flags |= MAP_POPULATE;
+#endif
+        }
+        map_ = static_cast<char*>(mmap(nullptr, map_size_, PROT_READ, map_flags, reader.descriptor(), 0));
+        if (map_ == MAP_FAILED) {
+            LOG_KNOWHERE_ERROR_ << "Failed to mmap file: " << strerror(errno);
+            return Status::disk_file_error;
+        }
+        if (madvise(map_, map_size_, MADV_RANDOM) != 0) {
+            LOG_KNOWHERE_WARNING_ << "Failed to madvise file: " << strerror(errno);
+        }
+        index_ = new sparse::InvertedIndex<T>();
+        MemoryIOReader map_reader((uint8_t*)map_, map_size_);
+        return index_->Load(map_reader, true);
     }
 
     [[nodiscard]] std::unique_ptr<BaseConfig>
@@ -229,8 +251,28 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
  private:
+    void
+    delete_index() {
+        if (index_ != nullptr) {
+            delete index_;
+            index_ = nullptr;
+        }
+        if (map_ != nullptr) {
+            auto res = munmap(map_, map_size_);
+            if (res != 0) {
+                LOG_KNOWHERE_ERROR_ << "Failed to munmap when trying to delete index: " << strerror(errno);
+            }
+            map_ = nullptr;
+            map_size_ = 0;
+        }
+    }
+
     sparse::InvertedIndex<T>* index_{};
     std::shared_ptr<ThreadPool> search_pool_;
+
+    // if map_ is not nullptr, it means the index is mmapped from disk.
+    char* map_ = nullptr;
+    size_t map_size_ = 0;
 };  // class SparseInvertedIndexNode
 
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(SPARSE_INVERTED_INDEX, SparseInvertedIndexNode, fp32, /*use_wand=*/false);
