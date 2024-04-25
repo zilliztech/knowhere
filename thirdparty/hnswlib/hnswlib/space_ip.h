@@ -26,7 +26,7 @@ InnerProductDistance(const void* pVect1, const void* pVect2, const void* qty_ptr
     return -1.0f * InnerProduct<DataType, DistanceType>(pVect1, pVect2, qty_ptr);
 }
 
-static float
+static inline float
 InnerProductSQ8Distance(const void* pVect1, const void* pVect2, const void* qty_ptr) {
     return -1.0f * faiss::ivec_inner_product((const int8_t*)pVect1, (const int8_t*)pVect2, *(size_t*)qty_ptr);
 }

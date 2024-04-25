@@ -44,7 +44,7 @@ L2Sqr(const void* pVect1v, const void* pVect2v, const void* qty_ptr) {
     }
 }
 
-static float
+static inline float
 L2SqrSQ8(const void* pVect1v, const void* pVect2v, const void* qty_ptr) {
     return faiss::ivec_L2sqr((const int8_t*)pVect1v, (const int8_t*)pVect2v, *(size_t*)qty_ptr);
 }

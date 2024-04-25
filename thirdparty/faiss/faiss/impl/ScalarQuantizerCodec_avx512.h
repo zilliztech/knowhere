@@ -474,7 +474,6 @@ struct DCTemplate_avx512<Quantizer, Similarity, 16> : SQDistanceComputer {
         sim2.begin_16();
         sim3.begin_16();
 
-        FAISS_PRAGMA_IMPRECISE_LOOP
         for (size_t i = 0; i < quant.d; i += 16) {
             __m512 xi0 = quant.reconstruct_16_components(code_0, i);
             __m512 xi1 = quant.reconstruct_16_components(code_1, i);
