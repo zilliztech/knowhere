@@ -26,6 +26,9 @@
 #include <faiss/impl/IDSelector.h>
 #include <faiss/impl/ResultHandler.h>
 #include <faiss/utils/utils.h>
+#ifdef FAISS_WITH_DNNL
+#include <faiss/utils/onednn_utils.h>
+#endif
 
 #ifndef FINTEGER
 #define FINTEGER long
@@ -183,6 +186,32 @@ void exhaustive_inner_product_seq(
     using SingleResultHandler = typename ResultHandler::SingleResultHandler;
     int nt = std::min(int(nx), omp_get_max_threads());
 
+#ifdef FAISS_WITH_DNNL
+    if (is_dnnl_enabled()) {
+        float *res_arr = NULL;
+
+        comput_f32bf16f32_inner_product(nx, d, ny, d, const_cast<float*>(x), const_cast<float*>(y), &res_arr);
+        if (res_arr == NULL) {
+            printf("res_arr = NULL\n");
+            fflush(stderr);
+            exit(1);
+        }
+
+#pragma omp parallel num_threads(nt)
+        {
+            SingleResultHandler resi(res);
+#pragma omp for
+            for (size_t i = 0; i < nx; i++) {
+                resi.begin(i);
+                for (size_t j = 0; j < ny; j++) {
+                    float ip = res_arr[i*ny + j];
+                    resi.add_result(ip , j);
+                }
+                resi.end();
+            }
+        }
+    } else {
+#endif
 #pragma omp parallel num_threads(nt)
     {
         SingleResultHandler resi(res);
@@ -207,6 +236,9 @@ void exhaustive_inner_product_seq(
             resi.end();
         }
     }
+#ifdef FAISS_WITH_DNNL
+    }
+#endif
 }
 
 

@@ -113,6 +113,13 @@ if(__X86_64)
     faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
                  faiss_avx2 faiss_avx512 knowhere_utils)
   target_compile_definitions(faiss PRIVATE FINTEGER=int)
+if(WITH_DNNL)
+  find_package(DNNL REQUIRED)
+  find_library(RT_LIB rt)
+  find_library(DNNL_LIB dnnl)
+  target_link_libraries(faiss PRIVATE ${RT_LIB} ${DNNL_LIB})
+  add_definitions(-DFAISS_WITH_DNNL)
+endif()
 endif()
 
 if(__AARCH64)
