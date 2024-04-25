@@ -191,7 +191,9 @@ class NeighborSetDoublePopList {
         if (hasCandNext != hasResNext) {
             return hasCandNext ? invalid_ns_->pop() : valid_ns_->pop();
         }
-        return {0, 0, Neighbor::kValid};
+        // caller must always check has_next() before calling pop(), reaching
+        // here means a bug in the implementation.
+        throw std::runtime_error("No more elements to pop");
     }
 
     std::unique_ptr<NeighborSetPopList<true>> valid_ns_ = nullptr;

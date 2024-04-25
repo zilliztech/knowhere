@@ -1501,6 +1501,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             for (int i = 0; i < retset.size(); i++) {
                 workspace->dists.emplace_back(retset[i].id, retset[i].distance);
             }
+            // unvisited invalid nodes should be added to to_visit to ensure conectivity
+            while (retset.has_next()) {
+                auto n = retset.pop();
+                if (n.status == Neighbor::kInvalid) {
+                    workspace->to_visit.push(n);
+                }
+            }
             workspace->initial_search_done = true;
             return;
         }
