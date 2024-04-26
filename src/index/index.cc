@@ -11,6 +11,7 @@
 
 #include "knowhere/index/index.h"
 
+#include "fmt/format.h"
 #include "knowhere/comp/time_recorder.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
@@ -76,6 +77,17 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
     if (load_status != Status::success) {
         return expected<DataSetPtr>::Err(load_status, msg);
     }
+    // when index is immutable, bitset size should always equal to data count in index
+    // when index is mutable, it could happen that data count larger than bitset size, see
+    // https://github.com/zilliztech/knowhere/issues/70
+    // so something must be wrong at caller side when passed bitset size larger than data count
+    if (bitset_.size() > this->Count()) {
+        msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
+                          bitset_.size(), this->Count());
+        LOG_KNOWHERE_ERROR_ << msg;
+        return expected<DataSetPtr>::Err(Status::invalid_args, msg);
+    }
+
     const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
@@ -116,6 +128,17 @@ Index<T>::AnnIterator(const DataSet& dataset, const Json& json, const BitsetView
     if (status != Status::success) {
         return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(status, msg);
     }
+    // when index is immutable, bitset size should always equal to data count in index
+    // when index is mutable, it could happen that data count larger than bitset size, see
+    // https://github.com/zilliztech/knowhere/issues/70
+    // so something must be wrong at caller side when passed bitset size larger than data count
+    if (bitset_.size() > this->Count()) {
+        msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
+                          bitset_.size(), this->Count());
+        LOG_KNOWHERE_ERROR_ << msg;
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::invalid_args, msg);
+    }
+
     const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
@@ -140,6 +163,17 @@ Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView
     if (status != Status::success) {
         return expected<DataSetPtr>::Err(status, std::move(msg));
     }
+    // when index is immutable, bitset size should always equal to data count in index
+    // when index is mutable, it could happen that data count larger than bitset size, see
+    // https://github.com/zilliztech/knowhere/issues/70
+    // so something must be wrong at caller side when passed bitset size larger than data count
+    if (bitset_.size() > this->Count()) {
+        msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
+                          bitset_.size(), this->Count());
+        LOG_KNOWHERE_ERROR_ << msg;
+        return expected<DataSetPtr>::Err(Status::invalid_args, msg);
+    }
+
     const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
