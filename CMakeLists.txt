@@ -19,7 +19,6 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/")
 include(GNUInstallDirs)
 include(ExternalProject)
 include(cmake/utils/utils.cmake)
-include(cmake/utils/compile_flags.cmake)
 include(cmake/utils/platform_check.cmake)
 
 knowhere_option(WITH_RAFT "Build with RAFT indexes" OFF)
@@ -82,13 +81,14 @@ if(WITH_LIGHT)
 endif()
 
 include(cmake/utils/platform_check.cmake)
-include(cmake/utils/compile_flags.cmake)
 include(cmake/libs/libfaiss.cmake)
 include(cmake/libs/libhnsw.cmake)
 
 include_directories(thirdparty/faiss)
 
-find_package(OpenMP REQUIRED)
+if(LINUX)
+    find_package(OpenMP REQUIRED)
+endif()
 
 find_package(folly REQUIRED)
 include_directories(${folly_INCLUDE_DIRS})
@@ -100,9 +100,7 @@ find_package(fmt REQUIRED)
 find_package(opentelemetry-cpp REQUIRED)
 
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_OSX_DEPLOYMENT_TARGET
-    "10.13"
-    CACHE STRING "Minimum OS X deployment version" FORCE)
+set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum OS X deployment version" FORCE)
 
 if(OPENMP_FOUND)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")

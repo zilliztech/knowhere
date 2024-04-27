@@ -127,8 +127,13 @@ if(__AARCH64)
             -Wno-strict-aliasing>)
 
   add_dependencies(faiss knowhere_utils)
-  target_link_libraries(faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES}
+  if(APPLE)
+    target_link_libraries(faiss PUBLIC ${BLAS_LIBRARIES}
                                      ${LAPACK_LIBRARIES} knowhere_utils)
+  else()
+    target_link_libraries(faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES}
+                                     ${LAPACK_LIBRARIES} knowhere_utils)
+  endif()
   target_compile_definitions(faiss PRIVATE FINTEGER=int)
 endif()
 
@@ -151,7 +156,12 @@ if(__PPC64)
             -Wno-strict-aliasing>)
 
   add_dependencies(faiss knowhere_utils)
-  target_link_libraries(faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES}
-                                     ${LAPACK_LIBRARIES} knowhere_utils)
+  if(APPLE)
+    target_link_libraries(faiss PUBLIC ${BLAS_LIBRARIES}
+                                    ${LAPACK_LIBRARIES} knowhere_utils)
+  else()
+    target_link_libraries(faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES}
+                                    ${LAPACK_LIBRARIES} knowhere_utils)
+  endif()
   target_compile_definitions(faiss PRIVATE FINTEGER=int)
 endif()
