@@ -36,17 +36,21 @@ IsFlatIndex(const knowhere::IndexType& index_type) {
     return std::find(flat_index_list.begin(), flat_index_list.end(), index_type) != flat_index_list.end();
 }
 
+template <typename DataType>
 extern float
-NormalizeVec(float* x, int32_t d);
+NormalizeVec(DataType* x, int32_t d);
 
+template <typename DataType>
 extern std::vector<float>
-NormalizeVecs(float* x, size_t rows, int32_t dim);
+NormalizeVecs(DataType* x, size_t rows, int32_t dim);
 
+template <typename DataType = knowhere::fp32>
 extern void
 Normalize(const DataSet& dataset);
 
-extern std::unique_ptr<float[]>
-CopyAndNormalizeVecs(const float* x, size_t rows, int32_t dim);
+template <typename DataType>
+extern std::unique_ptr<DataType[]>
+CopyAndNormalizeVecs(const DataType* x, size_t rows, int32_t dim);
 
 constexpr inline uint64_t seed = 0xc70f6907UL;
 
@@ -78,9 +82,19 @@ hash_binary_vec(const uint8_t* x, size_t d) {
     return h;
 }
 
+inline uint64_t
+hash_half_precision_float(const void* x, size_t d) {
+    uint64_t h = seed;
+    auto u16_x = (uint16_t*)(x);
+    for (size_t i = 0; i < d; ++i) {
+        h = h * 13331 + u16_x[i];
+    }
+    return h;
+}
+
 template <typename DataType>
 inline std::string
-GetIndexKey(const std::string& name) {
+GetKey(const std::string& name) {
     static_assert(KnowhereDataTypeCheck<DataType>::value == true);
     if (std::is_same_v<DataType, fp32>) {
         return name + std::string("_fp32");
@@ -136,5 +150,15 @@ static void
 readBinaryPOD(R& in, T& podRef) {
     in.read((char*)&podRef, sizeof(T));
 }
+
+// taken from
+// https://github.com/Microsoft/BLAS-on-flash/blob/master/include/utils.h
+// round up X to the nearest multiple of Y
+#define ROUND_UP(X, Y) ((((uint64_t)(X) / (Y)) + ((uint64_t)(X) % (Y) != 0)) * (Y))
+
+#define DIV_ROUND_UP(X, Y) (((uint64_t)(X) / (Y)) + ((uint64_t)(X) % (Y) != 0))
+
+// round down X to the nearest multiple of Y
+#define ROUND_DOWN(X, Y) (((uint64_t)(X) / (Y)) * (Y))
 
 }  // namespace knowhere

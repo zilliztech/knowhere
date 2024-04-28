@@ -542,15 +542,12 @@ static void read_NSG(NSG* nsg, IOReader* f) {
     graph = std::make_shared<nsg::Graph<int>>(N, R);
     std::fill_n(graph->data, N * R, EMPTY_ID);
 
-    int size = 0;
-
     for (int i = 0; i < N; i++) {
         for (int j = 0; j < R + 1; j++) {
             int id;
             READ1(id);
             if (id != EMPTY_ID) {
                 graph->at(i, j) = id;
-                size += 1;
             } else {
                 break;
             }
@@ -580,7 +577,7 @@ ProductQuantizer* read_ProductQuantizer(const char* fname) {
 
 ProductQuantizer* read_ProductQuantizer(IOReader* reader) {
     ProductQuantizer* pq = new ProductQuantizer();
-    ScopeDeleter1<ProductQuantizer> del(pq);
+    std::unique_ptr<ProductQuantizer> del(pq);
 
     read_ProductQuantizer(pq, reader);
     del.release();
@@ -1154,7 +1151,7 @@ Index* read_index(IOReader* f, int io_flags) {
         read_HNSW(&idxhnsw->hnsw, f);
         idxhnsw->storage = read_index(f, io_flags);
         idxhnsw->own_fields = true;
-        if (h == fourcc("IHNp")) {
+        if (h == fourcc("IHNp") && !(io_flags & IO_FLAG_PQ_SKIP_SDC_TABLE)) {
             dynamic_cast<IndexPQ*>(idxhnsw->storage)->pq.compute_sdc_table();
         }
         idx = idxhnsw;

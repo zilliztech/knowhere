@@ -12,10 +12,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-#include "knowhere/index_node_data_mock_wrapper.h"
+#include "knowhere/index/index_node_data_mock_wrapper.h"
 
 #include "knowhere/comp/thread_pool.h"
-#include "knowhere/index_node.h"
+#include "knowhere/index/index_node.h"
 #include "knowhere/utils.h"
 
 namespace knowhere {

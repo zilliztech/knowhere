@@ -14,7 +14,6 @@
 #include <vector>
 
 #include "common/metric.h"
-#include "common/range_util.h"
 #include "faiss/MetricType.h"
 #include "faiss/utils/binary_distances.h"
 #include "faiss/utils/distances.h"
@@ -25,12 +24,13 @@
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/config.h"
 #include "knowhere/expected.h"
-#include "knowhere/index_node.h"
+#include "knowhere/index/index_node.h"
 #include "knowhere/log.h"
+#include "knowhere/range_util.h"
 #include "knowhere/sparse_utils.h"
 #include "knowhere/utils.h"
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
 #include "knowhere/tracer.h"
 #endif
 
@@ -64,7 +64,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
         return expected<DataSetPtr>::Err(status, msg);
     }
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
         auto ctx = tracer::GetTraceCtxFromCfg(&cfg);
@@ -172,7 +172,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
 #endif
     auto res = GenResultDataSet(nq, cfg.k.value(), labels.release(), distances.release());
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     if (cfg.trace_id.has_value()) {
         span->End();
     }
@@ -201,7 +201,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     BruteForceConfig cfg;
     RETURN_IF_ERROR(Config::Load(cfg, config, knowhere::SEARCH));
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
         auto ctx = tracer::GetTraceCtxFromCfg(&cfg);
@@ -291,7 +291,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     }
     RETURN_IF_ERROR(WaitAllSuccess(futs));
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     if (cfg.trace_id.has_value()) {
         span->End();
     }
@@ -308,9 +308,12 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                         const BitsetView& bitset) {
     DataSetPtr base(base_dataset);
     DataSetPtr query(query_dataset);
-    if constexpr (!std::is_same_v<DataType, typename MockData<DataType>::type>) {
-        base = data_type_conversion<DataType, typename MockData<DataType>::type>(*base_dataset);
-        query = data_type_conversion<DataType, typename MockData<DataType>::type>(*query_dataset);
+    bool is_sparse = std::is_same<DataType, knowhere::sparse::SparseRow<float>>::value;
+    if (!is_sparse) {
+        if constexpr (!std::is_same_v<DataType, typename MockData<DataType>::type>) {
+            base = data_type_conversion<DataType, typename MockData<DataType>::type>(*base_dataset);
+            query = data_type_conversion<DataType, typename MockData<DataType>::type>(*query_dataset);
+        }
     }
     auto xb = base->GetTensor();
     auto nb = base->GetRows();
@@ -326,7 +329,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
         return expected<DataSetPtr>::Err(status, std::move(msg));
     }
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
         auto ctx = tracer::GetTraceCtxFromCfg(&cfg);
@@ -348,6 +351,10 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
         return expected<DataSetPtr>::Err(result.error(), result.what());
     }
     faiss::MetricType faiss_metric_type = result.value();
+    if (is_sparse && !IsMetricType(metric_str, metric::IP)) {
+        return expected<DataSetPtr>::Err(Status::invalid_metric_type,
+                                         "Invalid metric type for sparse float vector: " + metric_str);
+    }
     bool is_cosine = IsMetricType(metric_str, metric::COSINE);
 
     auto radius = cfg.radius.value();
@@ -358,12 +365,27 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
 
     std::vector<std::vector<int64_t>> result_id_array(nq);
     std::vector<std::vector<float>> result_dist_array(nq);
-    std::vector<size_t> result_size(nq);
-    std::vector<size_t> result_lims(nq + 1);
+
     std::vector<folly::Future<Status>> futs;
     futs.reserve(nq);
     for (int i = 0; i < nq; ++i) {
         futs.emplace_back(pool->push([&, index = i] {
+            if (is_sparse) {
+                auto cur_query = (const sparse::SparseRow<float>*)xq + index;
+                auto xb_sparse = (const sparse::SparseRow<float>*)xb;
+                for (int j = 0; j < nb; ++j) {
+                    if (!bitset.empty() && bitset.test(j)) {
+                        continue;
+                    }
+                    auto dist = cur_query->dot(xb_sparse[j]);
+                    if (dist > radius && dist <= range_filter) {
+                        result_id_array[index].push_back(j);
+                        result_dist_array[index].push_back(dist);
+                    }
+                }
+                return Status::success;
+            }
+            // else not sparse:
             ThreadPool::ScopedOmpSetter setter(1);
             faiss::RangeSearchResult res(1);
 
@@ -411,7 +433,6 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
             auto elem_cnt = res.lims[1];
             result_dist_array[index].resize(elem_cnt);
             result_id_array[index].resize(elem_cnt);
-            result_size[index] = elem_cnt;
             for (size_t j = 0; j < elem_cnt; j++) {
                 result_dist_array[index][j] = res.distances[j];
                 result_id_array[index][j] = res.labels[j];
@@ -434,7 +455,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter, distances, ids, lims);
     auto res = GenResultDataSet(nq, ids, distances, lims);
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     if (cfg.trace_id.has_value()) {
         span->End();
     }
@@ -461,7 +482,7 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
         return status;
     }
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
         auto ctx = tracer::GetTraceCtxFromCfg(&cfg);
@@ -521,7 +542,7 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
     }
     WaitAllSuccess(futs);
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     if (cfg.trace_id.has_value()) {
         span->End();
     }
@@ -577,7 +598,7 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
         return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(result.error(), result.what());
     }
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
         auto ctx = tracer::GetTraceCtxFromCfg(&cfg);
@@ -604,7 +625,7 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
             faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
             auto larger_is_closer = faiss::is_similarity_metric(faiss_metric_type) || is_cosine;
             auto max_dis = larger_is_closer ? std::numeric_limits<float>::lowest() : std::numeric_limits<float>::max();
-            std::vector<std::pair<float, int64_t>> distances_ids(nb, {max_dis, -1});
+            std::vector<DistId> distances_ids(nb, {-1, max_dis});
 
             switch (faiss_metric_type) {
                 case faiss::METRIC_L2: {
@@ -640,7 +661,7 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
             ret, "failed to brute force search for iterator");
     }
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     if (cfg.trace_id.has_value()) {
         span->End();
     }
@@ -671,7 +692,7 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
 
     std::string metric_str = cfg.metric_type.value();
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
         auto ctx = tracer::GetTraceCtxFromCfg(&cfg);
@@ -703,7 +724,7 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
     for (int64_t i = 0; i < nq; ++i) {
         futs.emplace_back(pool->push([&, index = i] {
             const auto& row = xq[index];
-            std::vector<std::pair<float, int64_t>> distances_ids;
+            std::vector<DistId> distances_ids;
             if (row.size() > 0) {
                 for (int64_t j = 0; j < rows; ++j) {
                     if (!bitset.empty() && bitset.test(j)) {
@@ -711,7 +732,7 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
                     }
                     auto dist = row.dot(base[j]);
                     if (dist > 0) {
-                        distances_ids.emplace_back(dist, j);
+                        distances_ids.emplace_back(j, dist);
                     }
                 }
             }
@@ -720,7 +741,7 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
     }
     WaitAllSuccess(futs);
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     if (cfg.trace_id.has_value()) {
         span->End();
     }
@@ -762,7 +783,6 @@ template knowhere::Status
 knowhere::BruteForce::SearchWithBuf<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
                                                     const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
                                                     const knowhere::Json& config, const knowhere::BitsetView& bitset);
-
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
@@ -779,6 +799,11 @@ template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::RangeSearch<knowhere::sparse::SparseRow<float>>(const knowhere::DataSetPtr base_dataset,
+                                                                      const knowhere::DataSetPtr query_dataset,
+                                                                      const knowhere::Json& config,
+                                                                      const knowhere::BitsetView& bitset);
 
 template knowhere::expected<std::vector<std::shared_ptr<knowhere::IndexNode::iterator>>>
 knowhere::BruteForce::AnnIterator<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,

@@ -28,7 +28,7 @@ typedef uint64_t size_t;
 #endif
 #include <knowhere/binaryset.h>
 #include <knowhere/expected.h>
-#include <knowhere/factory.h>
+#include <knowhere/index/index_factory.h>
 #include <knowhere/version.h>
 #include <knowhere/utils.h>
 #include <knowhere/operands.h>

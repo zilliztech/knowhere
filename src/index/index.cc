@@ -9,14 +9,15 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
-#include "knowhere/index.h"
+#include "knowhere/index/index.h"
 
+#include "fmt/format.h"
 #include "knowhere/comp/time_recorder.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/log.h"
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
 #include "knowhere/prometheus_client.h"
 #include "knowhere/tracer.h"
 #endif
@@ -39,7 +40,7 @@ Index<T>::Build(const DataSet& dataset, const Json& json) {
     auto cfg = this->node->CreateConfig();
     RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     TimeRecorder rc("Build index", 2);
     auto res = this->node->Build(dataset, *cfg);
     auto time = rc.ElapseFromBegin("done");
@@ -76,9 +77,20 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
     if (load_status != Status::success) {
         return expected<DataSetPtr>::Err(load_status, msg);
     }
+    // when index is immutable, bitset size should always equal to data count in index
+    // when index is mutable, it could happen that data count larger than bitset size, see
+    // https://github.com/zilliztech/knowhere/issues/70
+    // so something must be wrong at caller side when passed bitset size larger than data count
+    if (bitset_.size() > this->Count()) {
+        msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
+                          bitset_.size(), this->Count());
+        LOG_KNOWHERE_ERROR_ << msg;
+        return expected<DataSetPtr>::Err(Status::invalid_args, msg);
+    }
+
     const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (b_cfg.trace_id.has_value()) {
@@ -116,9 +128,20 @@ Index<T>::AnnIterator(const DataSet& dataset, const Json& json, const BitsetView
     if (status != Status::success) {
         return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(status, msg);
     }
+    // when index is immutable, bitset size should always equal to data count in index
+    // when index is mutable, it could happen that data count larger than bitset size, see
+    // https://github.com/zilliztech/knowhere/issues/70
+    // so something must be wrong at caller side when passed bitset size larger than data count
+    if (bitset_.size() > this->Count()) {
+        msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
+                          bitset_.size(), this->Count());
+        LOG_KNOWHERE_ERROR_ << msg;
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::invalid_args, msg);
+    }
+
     const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // note that this time includes only the initial search phase of iterator.
     TimeRecorder rc("AnnIterator");
     auto res = this->node->AnnIterator(dataset, *cfg, bitset);
@@ -140,9 +163,20 @@ Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView
     if (status != Status::success) {
         return expected<DataSetPtr>::Err(status, std::move(msg));
     }
+    // when index is immutable, bitset size should always equal to data count in index
+    // when index is mutable, it could happen that data count larger than bitset size, see
+    // https://github.com/zilliztech/knowhere/issues/70
+    // so something must be wrong at caller side when passed bitset size larger than data count
+    if (bitset_.size() > this->Count()) {
+        msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
+                          bitset_.size(), this->Count());
+        LOG_KNOWHERE_ERROR_ << msg;
+        return expected<DataSetPtr>::Err(Status::invalid_args, msg);
+    }
+
     const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (b_cfg.trace_id.has_value()) {
@@ -226,7 +260,7 @@ Index<T>::Deserialize(const BinarySet& binset, const Json& json) {
         return res;
     }
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     TimeRecorder rc("Load index", 2);
     res = this->node->Deserialize(binset, *cfg);
     auto time = rc.ElapseFromBegin("done");
@@ -255,7 +289,7 @@ Index<T>::DeserializeFromFile(const std::string& filename, const Json& json) {
         return res;
     }
 
-#ifdef NOT_COMPILE_FOR_SWIG
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     TimeRecorder rc("Load index from file", 2);
     res = this->node->DeserializeFromFile(filename, *cfg);
     auto time = rc.ElapseFromBegin("done");

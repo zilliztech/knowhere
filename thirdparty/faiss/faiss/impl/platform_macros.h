@@ -40,11 +40,13 @@
 
 #include <intrin.h>
 
+#ifndef __clang__
 inline int __builtin_ctzll(uint64_t x) {
     unsigned long ret;
     _BitScanForward64(&ret, x);
     return (int)ret;
 }
+#endif
 
 // cudatoolkit provides __builtin_ctz for NVCC >= 11.0
 #if !defined(__CUDACC__) || __CUDACC_VER_MAJOR__ < 11
@@ -55,12 +57,19 @@ inline int __builtin_ctz(unsigned long x) {
 }
 #endif
 
+#ifndef __clang__
 inline int __builtin_clzll(uint64_t x) {
     return (int)__lzcnt64(x);
 }
+#endif
 
 #define __builtin_popcount __popcnt
 #define __builtin_popcountl __popcnt64
+
+#ifndef __clang__
+#define __m128i_u __m128i
+#define __m256i_u __m256i
+#endif
 
 // MSVC does not define __SSEx__, and _M_IX86_FP is only defined on 32-bit
 // processors cf.
@@ -155,4 +164,25 @@ inline int __builtin_clzll(uint64_t x) {
 #define FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 #endif
 
+#if defined(_MSC_VER) && defined(_MSVC_LANG)
+static_assert(_MSVC_LANG >= 201703L, "C++17 is expected");
+#else
+// make sure that at least C++17 is used
+static_assert(__cplusplus >= 201703L, "C++17 is expected");
+#endif
+
 // clang-format on
+
+/*******************************************************
+ * BIGENDIAN specific macros
+ *******************************************************/
+#if !defined(_MSC_VER) && \
+        (defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__))
+#define FAISS_BIG_ENDIAN
+#endif
+
+#define Swap2Bytes(val) ((((val) >> 8) & 0x00FF) | (((val) << 8) & 0xFF00))
+
+#define Swap4Bytes(val)                                           \
+    ((((val) >> 24) & 0x000000FF) | (((val) >> 8) & 0x0000FF00) | \
+     (((val) << 8) & 0x00FF0000) | (((val) << 24) & 0xFF000000))

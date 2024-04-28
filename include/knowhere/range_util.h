@@ -11,8 +11,6 @@
 
 #pragma once
 
-#include <faiss/impl/AuxIndexStructures.h>
-
 #include <vector>
 
 #include "knowhere/bitsetview.h"
@@ -23,11 +21,6 @@ inline bool
 distance_in_range(const float dist, const float radius, const float range_filter, const bool is_ip) {
     return ((is_ip && radius < dist && dist <= range_filter) || (!is_ip && range_filter <= dist && dist < radius));
 }
-
-void
-GetRangeSearchResult(const faiss::RangeSearchResult& res, const bool is_ip, const int64_t nq, const float radius,
-                     const float range_filter, float*& distances, int64_t*& labels, size_t*& lims,
-                     const BitsetView& bitset);
 
 void
 FilterRangeSearchResultForOneNq(std::vector<float>& distances, std::vector<int64_t>& labels, const bool is_ip,

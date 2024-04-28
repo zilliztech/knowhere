@@ -33,7 +33,8 @@ struct IndexIVFScalarQuantizerCC : IndexIVFScalarQuantizer {
             const float* x,
             const float* x_norms,
             const idx_t* xids,
-            const idx_t* coarse_idx) override;
+            const idx_t* precomputed_idx,
+            void* inverted_list_context = nullptr) override;
 
     void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
 

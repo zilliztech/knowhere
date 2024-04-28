@@ -73,6 +73,7 @@ enum PARAM_TYPE {
     DESERIALIZE = 1 << 4,
     DESERIALIZE_FROM_FILE = 1 << 5,
     ITERATOR = 1 << 6,
+    CLUSTER = 1 << 7,
 };
 
 template <>
@@ -295,6 +296,12 @@ class EntryAccess {
     EntryAccess&
     for_feder() {
         entry->type |= PARAM_TYPE::FEDER;
+        return *this;
+    }
+
+    EntryAccess&
+    for_cluster() {
+        entry->type |= PARAM_TYPE::CLUSTER;
         return *this;
     }
 
@@ -623,10 +630,13 @@ class BaseConfig : public Config {
     CFG_BOOL retrieve_friendly;
     CFG_STRING data_path;
     CFG_STRING index_prefix;
+    // for distance metrics, we search for vectors with distance in [range_filter, radius).
+    // for similarity metrics, we search for vectors with similarity in (radius, range_filter].
     CFG_FLOAT radius;
     CFG_FLOAT range_filter;
     CFG_BOOL trace_visit;
     CFG_BOOL enable_mmap;
+    CFG_BOOL enable_mmap_pop;
     CFG_BOOL for_tuning;
     CFG_BOOL shuffle_build;
     CFG_BYTES trace_id;
@@ -634,6 +644,7 @@ class BaseConfig : public Config {
     CFG_INT trace_flags;
     CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE materialized_view_search_info;
     CFG_STRING opt_fields_path;
+    CFG_FLOAT iterator_refine_ratio;
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
             .set_default("L2")
@@ -682,6 +693,11 @@ class BaseConfig : public Config {
             .description("enable mmap for load index")
             .for_deserialize()
             .for_deserialize_from_file();
+        KNOWHERE_CONFIG_DECLARE_FIELD(enable_mmap_pop)
+            .set_default(false)
+            .description("enable map_populate option for mmap")
+            .for_deserialize()
+            .for_deserialize_from_file();
         KNOWHERE_CONFIG_DECLARE_FIELD(for_tuning).set_default(false).description("for tuning").for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(shuffle_build)
             .set_default(true)
@@ -711,6 +727,11 @@ class BaseConfig : public Config {
             .description("materialized view optional fields path")
             .allow_empty_without_default()
             .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(iterator_refine_ratio)
+            .set_default(0.5)
+            .description("refine ratio for iterator")
+            .for_iterator()
+            .for_range_search();
     }
 };
 }  // namespace knowhere

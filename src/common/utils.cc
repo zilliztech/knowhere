@@ -27,6 +27,27 @@ namespace knowhere {
 const float FloatAccuracy = 0.00001;
 
 // normalize one vector and return its norm
+// todo(cqy123456): Template specialization for fp16/bf16;
+// float16 uses the smallest representable positive float16 value(6.1 x 10^(-5)) as FloatAccuracy;
+// bfloat16 uses the same FloatAccuracy as float32;
+template <typename DataType>
+float
+NormalizeVec(DataType* x, int32_t d) {
+    float norm_l2_sqr = 0.0;
+    for (auto i = 0; i < d; i++) {
+        norm_l2_sqr += (float)x[i] * (float)x[i];
+    }
+    if (norm_l2_sqr > 0 && std::abs(1.0f - norm_l2_sqr) > FloatAccuracy) {
+        float norm_l2 = std::sqrt(norm_l2_sqr);
+        for (int32_t i = 0; i < d; i++) {
+            x[i] = (DataType)((float)x[i] / norm_l2);
+        }
+        return norm_l2;
+    }
+    return 1.0f;
+}
+
+template <>
 float
 NormalizeVec(float* x, int32_t d) {
     float norm_l2_sqr = faiss::fvec_norm_L2sqr(x, d);
@@ -41,8 +62,9 @@ NormalizeVec(float* x, int32_t d) {
 }
 
 // normalize all vectors and return their norms
+template <typename DataType>
 std::vector<float>
-NormalizeVecs(float* x, size_t rows, int32_t dim) {
+NormalizeVecs(DataType* x, size_t rows, int32_t dim) {
     std::vector<float> norms(rows);
     for (size_t i = 0; i < rows; i++) {
         norms[i] = NormalizeVec(x + i * dim, dim);
@@ -50,11 +72,12 @@ NormalizeVecs(float* x, size_t rows, int32_t dim) {
     return norms;
 }
 
+template <typename DataType>
 void
 Normalize(const DataSet& dataset) {
     auto rows = dataset.GetRows();
     auto dim = dataset.GetDim();
-    float* data = (float*)dataset.GetTensor();
+    auto data = (DataType*)dataset.GetTensor();
 
     LOG_KNOWHERE_DEBUG_ << "vector normalize, rows " << rows << ", dim " << dim;
 
@@ -64,9 +87,10 @@ Normalize(const DataSet& dataset) {
 }
 
 // copy and return normalized vectors
-std::unique_ptr<float[]>
-CopyAndNormalizeVecs(const float* x, size_t rows, int32_t dim) {
-    auto x_normalized = std::make_unique<float[]>(rows * dim);
+template <typename DataType>
+std::unique_ptr<DataType[]>
+CopyAndNormalizeVecs(const DataType* x, size_t rows, int32_t dim) {
+    auto x_normalized = std::make_unique<DataType[]>(rows * dim);
     std::copy_n(x, rows * dim, x_normalized.get());
     NormalizeVecs(x_normalized.get(), rows, dim);
     return x_normalized;
@@ -120,4 +144,29 @@ UseDiskLoad(const std::string& index_type, const int32_t& version) {
 #endif
 }
 
+template float
+NormalizeVec<fp16>(fp16* x, int32_t d);
+template float
+NormalizeVec<bf16>(bf16* x, int32_t d);
+
+template std::vector<float>
+NormalizeVecs<fp32>(fp32* x, size_t rows, int32_t dim);
+template std::vector<float>
+NormalizeVecs<fp16>(fp16* x, size_t rows, int32_t dim);
+template std::vector<float>
+NormalizeVecs<bf16>(bf16* x, size_t rows, int32_t dim);
+
+template void
+Normalize<fp32>(const DataSet& dataset);
+template void
+Normalize<fp16>(const DataSet& dataset);
+template void
+Normalize<bf16>(const DataSet& dataset);
+
+template std::unique_ptr<fp32[]>
+CopyAndNormalizeVecs(const fp32* x, size_t rows, int32_t dim);
+template std::unique_ptr<fp16[]>
+CopyAndNormalizeVecs(const fp16* x, size_t rows, int32_t dim);
+template std::unique_ptr<bf16[]>
+CopyAndNormalizeVecs(const bf16* x, size_t rows, int32_t dim);
 }  // namespace knowhere

@@ -16,7 +16,7 @@
 #include "knowhere/config.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
-#include "knowhere/index_node.h"
+#include "knowhere/index/index_node.h"
 
 namespace knowhere {
 template <typename T1>

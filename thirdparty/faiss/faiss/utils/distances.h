@@ -17,6 +17,8 @@
 #include <faiss/impl/platform_macros.h>
 #include <faiss/utils/Heap.h>
 
+#include "knowhere/object.h"
+
 namespace faiss {
 
 struct IDSelector;
@@ -234,7 +236,7 @@ void all_inner_product(
         size_t d,
         size_t nx,
         size_t ny,
-        std::vector<std::pair<float, int64_t>>& output,
+        std::vector<knowhere::DistId>& output,
         const IDSelector* sel);
 
 /** Return the k nearest neighors of each of the nx vectors x among the ny
@@ -283,7 +285,7 @@ void all_L2sqr(
         size_t d,
         size_t nx,
         size_t ny,
-        std::vector<std::pair<float, int64_t>>& output,
+        std::vector<knowhere::DistId>& output,
         const float* y_norms,
         const IDSelector* sel);
 
@@ -305,7 +307,7 @@ void all_cosine(
         size_t d,
         size_t nx,
         size_t ny,
-        std::vector<std::pair<float, int64_t>>& output,
+        std::vector<knowhere::DistId>& output,
         const IDSelector* sel);
 
 // Knowhere-specific function
@@ -334,20 +336,12 @@ void knn_inner_products_by_idx(
         const int64_t* subset,
         size_t d,
         size_t nx,
+        size_t ny,
         size_t nsubset,
         size_t k,
         float* vals,
         int64_t* ids,
         int64_t ld_ids = -1);
-
-void knn_inner_products_by_idx(
-        const float* x,
-        const float* y,
-        const int64_t* ids,
-        size_t d,
-        size_t nx,
-        size_t ny,
-        float_minheap_array_t* res);
 
 /** Find the nearest neighbors for nx queries in a set of ny vectors
  * indexed by ids. May be useful for re-ranking a pre-selected vector list
@@ -365,21 +359,27 @@ void knn_L2sqr_by_idx(
         const int64_t* subset,
         size_t d,
         size_t nx,
+        size_t ny,
         size_t nsubset,
         size_t k,
         float* vals,
         int64_t* ids,
         int64_t ld_subset = -1);
 
-void knn_L2sqr_by_idx(
+void knn_cosine_by_idx(
         const float* x,
         const float* y,
-        const int64_t* ids,
+        const float* y_norms,
+        const int64_t* subset,
         size_t d,
         size_t nx,
         size_t ny,
-        float_maxheap_array_t* res);
-
+        size_t nsubset,
+        size_t k,
+        float* vals,
+        int64_t* ids,
+        int64_t ld_ids = -1);
+                
 /***************************************************************************
  * Range search
  ***************************************************************************/

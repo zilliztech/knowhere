@@ -5,26 +5,28 @@
 
 namespace hnswlib {
 
-static float
+template <typename DataType, typename DistanceType>
+static DistanceType
 InnerProduct(const void* pVect1, const void* pVect2, const void* qty_ptr) {
-#if 0 /* use FAISS distance calculation algorithm instead */
-    size_t qty = *((size_t*)qty_ptr);
-    float res = 0;
-    for (unsigned i = 0; i < qty; i++) {
-        res += ((float*)pVect1)[i] * ((float*)pVect2)[i];
+    if constexpr (!std::is_same_v<DataType, float>) {
+        size_t qty = *((size_t*)qty_ptr);
+        float res = 0;
+        for (unsigned i = 0; i < qty; i++) {
+            res += (DistanceType)((DataType*)pVect1)[i] * (DistanceType)((DataType*)pVect2)[i];
+        }
+        return res;
+    } else {
+        return faiss::fvec_inner_product((const float*)pVect1, (const float*)pVect2, *((size_t*)qty_ptr));
     }
-    return res;
-#else
-    return faiss::fvec_inner_product((const float*)pVect1, (const float*)pVect2, *((size_t*)qty_ptr));
-#endif
 }
 
-static float
+template <typename DataType, typename DistanceType>
+static DistanceType
 InnerProductDistance(const void* pVect1, const void* pVect2, const void* qty_ptr) {
-    return -1.0f * InnerProduct(pVect1, pVect2, qty_ptr);
+    return -1.0f * InnerProduct<DataType, DistanceType>(pVect1, pVect2, qty_ptr);
 }
 
-static float
+static inline float
 InnerProductSQ8Distance(const void* pVect1, const void* pVect2, const void* qty_ptr) {
     return -1.0f * faiss::ivec_inner_product((const int8_t*)pVect1, (const int8_t*)pVect2, *(size_t*)qty_ptr);
 }
@@ -324,15 +326,16 @@ InnerProductDistanceSIMD4ExtResiduals(const void* pVect1v, const void* pVect2v, 
 }
 #endif
 
-class InnerProductSpace : public SpaceInterface<float> {
-    DISTFUNC<float> fstdistfunc_;
-    DISTFUNC<float> fstdistfunc_sq_;
+template <typename DataType, typename DistanceType>
+class InnerProductSpace : public SpaceInterface<DistanceType> {
+    DISTFUNC<DistanceType> fstdistfunc_;
+    DISTFUNC<DistanceType> fstdistfunc_sq_;
     size_t data_size_;
     size_t dim_;
 
  public:
     InnerProductSpace(size_t dim) {
-        fstdistfunc_ = InnerProductDistance;
+        fstdistfunc_ = InnerProductDistance<DataType, DistanceType>;
         fstdistfunc_sq_ = InnerProductSQ8Distance;
 #if 0 /* use FAISS distance calculation algorithm instead */
 #if defined(USE_AVX) || defined(USE_SSE) || defined(USE_AVX512)
@@ -368,7 +371,7 @@ class InnerProductSpace : public SpaceInterface<float> {
 #endif
 #endif
         dim_ = dim;
-        data_size_ = dim * sizeof(float);
+        data_size_ = dim * sizeof(DataType);
     }
 
     size_t

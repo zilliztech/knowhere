@@ -21,9 +21,10 @@
 #include <vector>
 
 #include "catch2/generators/catch_generators.hpp"
-#include "common/range_util.h"
 #include "knowhere/binaryset.h"
 #include "knowhere/dataset.h"
+#include "knowhere/object.h"
+#include "knowhere/range_util.h"
 #include "knowhere/version.h"
 
 constexpr int64_t kSeed = 42;
@@ -48,6 +49,7 @@ GenDataSet(int rows, int dim, int seed = 42) {
 
 inline knowhere::DataSetPtr
 CopyDataSet(knowhere::DataSetPtr dataset, const int64_t copy_rows) {
+    REQUIRE(!dataset->GetIsSparse());
     auto rows = copy_rows;
     auto dim = dataset->GetDim();
     auto data = dataset->GetTensor();
@@ -72,6 +74,7 @@ GenBinDataSet(int rows, int dim, int seed = 42) {
 
 inline knowhere::DataSetPtr
 CopyBinDataSet(knowhere::DataSetPtr dataset, const int64_t copy_rows) {
+    REQUIRE(!dataset->GetIsSparse());
     auto rows = copy_rows;
     auto dim = dataset->GetDim();
     auto data = dataset->GetTensor();
@@ -126,6 +129,29 @@ GetKNNRecall(const knowhere::DataSet& ground_truth, const knowhere::DataSet& res
         matched_num += v.size();
     }
     return ((float)matched_num) / ((float)nq * res_k);
+}
+
+inline float
+GetKNNRecall(const knowhere::DataSet& ground_truth, const std::vector<std::vector<int64_t>>& result) {
+    auto nq = result.size();
+    auto gt_k = ground_truth.GetDim();
+    auto gt_ids = ground_truth.GetIds();
+
+    uint32_t matched_num = 0;
+    for (auto i = 0; i < nq; ++i) {
+        std::vector<int64_t> ids_0(gt_ids + i * gt_k, gt_ids + i * gt_k + gt_k);
+        std::vector<int64_t> ids_1 = result[i];
+
+        std::sort(ids_0.begin(), ids_0.end());
+        std::sort(ids_1.begin(), ids_1.end());
+
+        std::vector<int64_t> v(std::max(ids_0.size(), ids_1.size()));
+        std::vector<int64_t>::iterator it;
+        it = std::set_intersection(ids_0.begin(), ids_0.end(), ids_1.begin(), ids_1.end(), v.begin());
+        v.resize(it - v.begin());
+        matched_num += v.size();
+    }
+    return ((float)matched_num) / ((float)nq * gt_k);
 }
 
 //  Compare two ann-search results

@@ -23,11 +23,11 @@ include(cmake/utils/compile_flags.cmake)
 include(cmake/utils/platform_check.cmake)
 
 knowhere_option(WITH_RAFT "Build with RAFT indexes" OFF)
-if (WITH_RAFT)
-    set(CMAKE_CUDA_ARCHITECTURES RAPIDS)
-    include(cmake/libs/librapids.cmake)
-    project(knowhere CXX C CUDA)
-    include(cmake/libs/libraft.cmake)
+if(WITH_RAFT)
+  set(CMAKE_CUDA_ARCHITECTURES RAPIDS)
+  include(cmake/libs/librapids.cmake)
+  project(knowhere CXX C CUDA)
+  include(cmake/libs/libraft.cmake)
 endif()
 
 knowhere_option(WITH_UT "Build with UT test" OFF)
@@ -38,22 +38,22 @@ knowhere_option(WITH_COVERAGE "Build with coverage" OFF)
 knowhere_option(WITH_CCACHE "Build with ccache" ON)
 knowhere_option(WITH_PROFILER "Build with profiler" OFF)
 knowhere_option(WITH_FAISS_TESTS "Build with Faiss unit tests" OFF)
+knowhere_option(WITH_LIGHT "Build with light weight version" OFF)
 
-# cardinal is an enterprise vector search engine and can only be enabled for cloud environment
+# cardinal is an enterprise vector search engine and can only be enabled for
+# cloud environment
 knowhere_option(WITH_CARDINAL "Build with cardinal" OFF)
 
-# this is needed for clang on ubuntu:20.04, otherwise
-#   the linked fails with 'undefined reference' error.
-# fmt v9 was used by the time the error was encountered.
-# clang on ubuntu:22.04 seems to be unaffected.
-# gcc seems to be unaffected.
+# this is needed for clang on ubuntu:20.04, otherwise the linked fails with
+# 'undefined reference' error. fmt v9 was used by the time the error was
+# encountered. clang on ubuntu:22.04 seems to be unaffected. gcc seems to be
+# unaffected.
 add_definitions(-DFMT_HEADER_ONLY)
 
-# this is needed for clang on ubuntu:20.04, otherwise
-#   the linked fails with 'undefined reference' error.
-# fmt v9 was used by the time the error was encountered.
-# clang on ubuntu:22.04 seems to be unaffected.
-# gcc seems to be unaffected.
+# this is needed for clang on ubuntu:20.04, otherwise the linked fails with
+# 'undefined reference' error. fmt v9 was used by the time the error was
+# encountered. clang on ubuntu:22.04 seems to be unaffected. gcc seems to be
+# unaffected.
 add_definitions(-DFMT_HEADER_ONLY)
 
 if(KNOWHERE_VERSION)
@@ -73,9 +73,13 @@ if(WITH_CCACHE)
   endif()
 endif()
 
-list( APPEND CMAKE_MODULE_PATH ${CMAKE_BINARY_DIR}/)
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_BINARY_DIR}/)
 
 add_definitions(-DNOT_COMPILE_FOR_SWIG)
+
+if(WITH_LIGHT)
+  add_definitions(-DKNOWHERE_WITH_LIGHT)
+endif()
 
 include(cmake/utils/platform_check.cmake)
 include(cmake/utils/compile_flags.cmake)
@@ -96,7 +100,9 @@ find_package(fmt REQUIRED)
 find_package(opentelemetry-cpp REQUIRED)
 
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X deployment version" FORCE)
+set(CMAKE_OSX_DEPLOYMENT_TARGET
+    "10.13"
+    CACHE STRING "Minimum OS X deployment version" FORCE)
 
 if(OPENMP_FOUND)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
@@ -108,11 +114,28 @@ if(WITH_COVERAGE)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fprofile-arcs -ftest-coverage")
 endif()
 
-knowhere_file_glob(GLOB_RECURSE KNOWHERE_SRCS src/common/*.cc src/index/*.cc
-                   src/io/*.cc src/common/*.cu src/index/*.cu src/io/*.cu)
+if(NOT WITH_LIGHT)
+  knowhere_file_glob(
+    GLOB_RECURSE
+    KNOWHERE_SRCS
+    src/common/*.cc
+    src/index/*.cc
+    src/cluster/*.cc
+    src/io/*.cc
+    src/common/*.cu
+    src/index/*.cu
+    src/io/*.cu)
+endif()
+
+if(WITH_LIGHT)
+  knowhere_file_glob(GLOB_RECURSE KNOWHERE_SRCS src/common/*.cc
+                     src/index/hnsw/hnsw.cc src/io/*.cc)
+  knowhere_file_glob(GLOB_RECURSE KNOWHERE_TRACER_SRCS src/common/tracer.cc
+                     src/common/prometheus_client.cc)
+  list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_TRACER_SRCS})
+endif()
 
 set(KNOWHERE_LINKER_LIBS "")
-
 
 if(WITH_CARDINAL)
   add_definitions(-DKNOWHERE_WITH_CARDINAL)
@@ -128,13 +151,12 @@ else()
 endif()
 
 knowhere_file_glob(GLOB_RECURSE KNOWHERE_GPU_SRCS src/index/gpu/flat_gpu/*.cc
-                     src/index/gpu/ivf_gpu/*.cc)
+                   src/index/gpu/ivf_gpu/*.cc)
 list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_GPU_SRCS})
 
 if(NOT WITH_RAFT)
-  knowhere_file_glob(GLOB_RECURSE KNOWHERE_RAFT_SRCS
-                     src/common/raft/*.cu src/common/raft/*.cc
-                     src/index/gpu_raft/*.cc)
+  knowhere_file_glob(GLOB_RECURSE KNOWHERE_RAFT_SRCS src/common/raft/*.cu
+                     src/common/raft/*.cc src/index/gpu_raft/*.cc)
   list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_RAFT_SRCS})
 endif()
 
@@ -144,23 +166,37 @@ include_directories(include)
 list(APPEND KNOWHERE_LINKER_LIBS faiss)
 list(APPEND KNOWHERE_LINKER_LIBS glog::glog)
 list(APPEND KNOWHERE_LINKER_LIBS nlohmann_json::nlohmann_json)
-list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
+if(NOT WITH_LIGHT)
+  list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
+endif()
 list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt-header-only)
 list(APPEND KNOWHERE_LINKER_LIBS Folly::folly)
-list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_trace)
-list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_exporter_ostream_span)
-list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_exporter_jaeger_trace)
-list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_exporter_otlp_grpc)
-list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_exporter_otlp_http)
+if(NOT WITH_LIGHT)
+  list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_trace)
+  list(APPEND KNOWHERE_LINKER_LIBS
+       opentelemetry-cpp::opentelemetry_exporter_ostream_span)
+  list(APPEND KNOWHERE_LINKER_LIBS
+       opentelemetry-cpp::opentelemetry_exporter_jaeger_trace)
+  list(APPEND KNOWHERE_LINKER_LIBS
+       opentelemetry-cpp::opentelemetry_exporter_otlp_grpc)
+  list(APPEND KNOWHERE_LINKER_LIBS
+       opentelemetry-cpp::opentelemetry_exporter_otlp_http)
+endif()
 
 add_library(knowhere SHARED ${KNOWHERE_SRCS})
 add_dependencies(knowhere ${KNOWHERE_LINKER_LIBS})
 if(WITH_RAFT)
-  list(APPEND KNOWHERE_LINKER_LIBS raft::raft raft::compiled_static CUDA::cublas CUDA::cusparse CUDA::cusolver)
+  list(
+    APPEND
+    KNOWHERE_LINKER_LIBS
+    raft::raft
+    raft::compiled_static
+    CUDA::cublas
+    CUDA::cusparse
+    CUDA::cusolver)
 endif()
 target_link_libraries(knowhere PUBLIC ${KNOWHERE_LINKER_LIBS})
-target_include_directories(
-  knowhere PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(knowhere PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 if(WITH_UT)
   add_subdirectory(tests/ut)

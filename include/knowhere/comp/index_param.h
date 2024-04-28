@@ -52,6 +52,10 @@ constexpr const char* INDEX_SPARSE_INVERTED_INDEX = "SPARSE_INVERTED_INDEX";
 constexpr const char* INDEX_SPARSE_WAND = "SPARSE_WAND";
 }  // namespace IndexEnum
 
+namespace ClusterEnum {
+constexpr const char* CLUSTER_KMEANS = "KMEANS";
+}  // namespace ClusterEnum
+
 namespace meta {
 constexpr const char* INDEX_TYPE = "index_type";
 constexpr const char* METRIC_TYPE = "metric_type";

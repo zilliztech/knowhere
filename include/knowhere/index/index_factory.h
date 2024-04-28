@@ -16,7 +16,7 @@
 #include <string>
 #include <unordered_map>
 
-#include "knowhere/index.h"
+#include "knowhere/index/index.h"
 #include "knowhere/utils.h"
 
 namespace knowhere {

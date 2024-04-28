@@ -20,7 +20,7 @@ class JaccardSpace : public SpaceInterface<float> {
     JaccardSpace(size_t dim) {
         fstdistfunc_ = Jaccard;
         dim_ = dim;
-        data_size_ = dim / 8;
+        data_size_ = (dim + 7)/ 8;
     }
 
     size_t

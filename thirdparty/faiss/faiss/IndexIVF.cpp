@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <limits>
 #include <memory>
+#include <vector>
 
 #include <faiss/utils/hamming.h>
 #include <faiss/utils/utils.h>
@@ -27,6 +28,8 @@
 #include <faiss/impl/CodePacker.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/IDSelector.h>
+
+#include "knowhere/object.h"
 
 namespace faiss {
 
@@ -203,7 +206,8 @@ void IndexIVF::add_core(
         const float* x,
         const float* x_norms,
         const idx_t* xids,
-        const idx_t* coarse_idx) {
+        const idx_t* coarse_idx,
+        void* inverted_list_context) {
     // do some blocking to avoid excessive allocs
     idx_t bs = 65536;
     if (n > bs) {
@@ -219,7 +223,8 @@ void IndexIVF::add_core(
                     x + i0 * d,
                     (x_norms == nullptr) ? nullptr : (x_norms + i0),
                     xids ? xids + i0 : nullptr,
-                    coarse_idx + i0);
+                    coarse_idx + i0,
+                    inverted_list_context);
         }
         return;
     }
@@ -250,7 +255,11 @@ void IndexIVF::add_core(
             if (list_no >= 0 && list_no % nt == rank) {
                 idx_t id = xids ? xids[i] : ntotal + i;
                 size_t ofs = invlists->add_entry(
-                        list_no, id, flat_codes.get() + i * code_size, (x_norms == nullptr) ? nullptr : x_norms + i);
+                        list_no, 
+                        id, 
+                        flat_codes.get() + i * code_size, 
+                        (x_norms == nullptr) ? nullptr : x_norms + i,
+                        inverted_list_context);
 
                 dm_adder.add(i, list_no, ofs);
 
@@ -461,11 +470,13 @@ void IndexIVF::search_preassigned(
                      : pmode == 1 ? nprobe > 1
                                   : nprobe * n > 1);
 
+    void* inverted_list_context =
+            params ? params->inverted_list_context : nullptr;
+
 #pragma omp parallel if (do_parallel) reduction(+ : nlistv, ndis, nheap)
     {
-        InvertedListScanner* scanner =
-                get_InvertedListScanner(store_pairs, sel);
-        ScopeDeleter1<InvertedListScanner> del(scanner);
+        std::unique_ptr<InvertedListScanner> scanner(
+                get_InvertedListScanner(store_pairs, sel));
 
         /*****************************************************
          * Depending on parallel_mode, there are two possible ways
@@ -524,7 +535,7 @@ void IndexIVF::search_preassigned(
                     nlist);
 
             // don't waste time on empty lists
-            if (invlists->is_empty(key)) {
+            if (invlists->is_empty(key, inverted_list_context)) {
                 return (size_t)0;
             }
 
@@ -539,7 +550,7 @@ void IndexIVF::search_preassigned(
                     size_t list_size = 0;
 
                     std::unique_ptr<InvertedListsIterator> it(
-                            invlists->get_iterator(key));
+                            invlists->get_iterator(key, inverted_list_context));
 
                     nheap += scanner->iterate_codes(
                             it.get(), simi, idxi, k, list_size);
@@ -573,7 +584,7 @@ void IndexIVF::search_preassigned(
                                 idxi,
                                 k,
                                 scan_cnt);
-                    }                
+                    }
 
                     return scan_cnt;
                 }
@@ -677,7 +688,6 @@ void IndexIVF::search_preassigned(
 #pragma omp for schedule(dynamic)
             for (int64_t ij = 0; ij < n * nprobe; ij++) {
                 size_t i = ij / nprobe;
-                size_t j = ij % nprobe;
 
                 scanner->set_query(x + i * d);
                 init_result(local_dis.data(), local_idx.data());
@@ -779,7 +789,7 @@ void IndexIVF::range_search_preassigned(
         const IVFSearchParameters* params,
         IndexIVFStats* stats) const {
 
-    // Knowhere-specific code: 
+    // Knowhere-specific code:
     //   only "parallel_mode == 0" branch is supported.
 
     idx_t nprobe = params ? params->nprobe : this->nprobe;
@@ -810,6 +820,9 @@ void IndexIVF::range_search_preassigned(
                      : pmode == 1 ? nprobe > 1
                                   : nprobe * nx > 1);
 
+    void* inverted_list_context =
+            params ? params->inverted_list_context : nullptr;
+
 #pragma omp parallel if (do_parallel) reduction(+ : nlistv, ndis)
     {
         RangeSearchPartialResult pres(result);
@@ -831,7 +844,7 @@ void IndexIVF::range_search_preassigned(
                     ik,
                     nlist);
 
-            if (invlists->is_empty(key)) {
+            if (invlists->is_empty(key, inverted_list_context)) {
                 return;
             }
 
@@ -842,7 +855,7 @@ void IndexIVF::range_search_preassigned(
                 scanner->set_list(key, coarse_dis[i * nprobe + ik]);
                 if (invlists->use_iterator) {
                     std::unique_ptr<InvertedListsIterator> it(
-                            invlists->get_iterator(key));
+                            invlists->get_iterator(key, inverted_list_context));
 
                     scanner->iterate_codes_range(
                             it.get(), radius, qres, list_size);
@@ -889,7 +902,7 @@ void IndexIVF::range_search_preassigned(
                 // ====================================================
                 // The following piece of the code is Knowhere-specific.
                 //
-                // cbe86cf716dc1969fc716c29ccf8ea63e82a2b4c: 
+                // cbe86cf716dc1969fc716c29ccf8ea63e82a2b4c:
                 //   Adopt new strategy for faiss IVF range search
 
                 size_t prev_nres = qres.nres;
@@ -911,7 +924,7 @@ void IndexIVF::range_search_preassigned(
                     prev_nres = qres.nres;
                 }
 
-                // The end of Knowhere-specific code. 
+                // The end of Knowhere-specific code.
                 // ====================================================
             }
         } else {
@@ -948,7 +961,7 @@ void IndexIVF::range_search_preassigned(
 InvertedListScanner* IndexIVF::get_InvertedListScanner(
         bool /*store_pairs*/,
         const IDSelector* /* sel */) const {
-    return nullptr;
+    FAISS_THROW_MSG("get_InvertedListScanner not implemented");
 }
 
 void IndexIVF::reconstruct(idx_t key, float* recons) const {
@@ -1363,14 +1376,12 @@ size_t InvertedListScanner::scan_codes(
     return nup;
 }
 
-size_t InvertedListScanner::scan_codes_and_push_back(
-        size_t list_size,
-        const uint8_t* codes,
-        const float* code_norms,
-        const idx_t* ids,
-        float* distances,
-        idx_t* labels,
-        size_t& counter_back) const {
+void InvertedListScanner::scan_codes_and_return(
+                size_t list_size,
+                const uint8_t* codes,
+                const float* code_norms,
+                const idx_t* ids,
+                std::vector<knowhere::DistId>& out) const {
     FAISS_THROW_MSG("Not implemented.");
 }
 

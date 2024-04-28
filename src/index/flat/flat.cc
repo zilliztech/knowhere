@@ -10,17 +10,18 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include "common/metric.h"
-#include "common/range_util.h"
 #include "faiss/IndexBinaryFlat.h"
 #include "faiss/IndexFlat.h"
+#include "faiss/impl/AuxIndexStructures.h"
 #include "faiss/index_io.h"
 #include "index/flat/flat_config.h"
 #include "io/memory_io.h"
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/thread_pool.h"
-#include "knowhere/factory.h"
-#include "knowhere/index_node_data_mock_wrapper.h"
+#include "knowhere/index/index_factory.h"
+#include "knowhere/index/index_node_data_mock_wrapper.h"
 #include "knowhere/log.h"
+#include "knowhere/range_util.h"
 #include "knowhere/utils.h"
 
 namespace knowhere {
@@ -161,8 +162,6 @@ class FlatIndexNode : public IndexNode {
 
         std::vector<std::vector<int64_t>> result_id_array(nq);
         std::vector<std::vector<float>> result_dist_array(nq);
-        std::vector<size_t> result_size(nq);
-        std::vector<size_t> result_lims(nq + 1);
 
         try {
             std::vector<folly::Future<folly::Unit>> futs;
@@ -197,7 +196,6 @@ class FlatIndexNode : public IndexNode {
                     auto elem_cnt = res.lims[1];
                     result_dist_array[index].resize(elem_cnt);
                     result_id_array[index].resize(elem_cnt);
-                    result_size[index] = elem_cnt;
                     for (size_t j = 0; j < elem_cnt; j++) {
                         result_dist_array[index][j] = res.distances[j];
                         result_id_array[index][j] = res.labels[j];

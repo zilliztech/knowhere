@@ -53,7 +53,7 @@ struct Codec4bit_avx512 : public Codec4bit_avx {
         __m128i c16 =
                 _mm_unpacklo_epi8(_mm_set1_epi64x(c8ev), _mm_set1_epi64x(c8od));
         __m256i c8lo = _mm256_cvtepu8_epi32(c16);
-        __m256i c8hi = _mm256_cvtepu8_epi32(_mm_srli_si128(c16, 4));
+        __m256i c8hi = _mm256_cvtepu8_epi32(_mm_srli_si128(c16, 8));
         __m512i i16 = _mm512_castsi256_si512(c8lo);
         i16 = _mm512_inserti32x8(i16, c8hi, 1);
         __m512 f16 = _mm512_cvtepi32_ps(i16);
@@ -322,8 +322,8 @@ struct SimilarityL2_avx512<16> {
         accu16 = _mm512_fmadd_ps(tmp, tmp, accu16);
     }
 
-    FAISS_ALWAYS_INLINE void add_16_components_2(__m512 x, __m512 y) {
-        __m512 tmp = _mm512_sub_ps(y, x);
+    FAISS_ALWAYS_INLINE void add_16_components_2(__m512 x, __m512 y_2) {
+        __m512 tmp = _mm512_sub_ps(y_2, x);
         accu16 = _mm512_fmadd_ps(tmp, tmp, accu16);
     }
 
@@ -474,7 +474,6 @@ struct DCTemplate_avx512<Quantizer, Similarity, 16> : SQDistanceComputer {
         sim2.begin_16();
         sim3.begin_16();
 
-        FAISS_PRAGMA_IMPRECISE_LOOP
         for (size_t i = 0; i < quant.d; i += 16) {
             __m512 xi0 = quant.reconstruct_16_components(code_0, i);
             __m512 xi1 = quant.reconstruct_16_components(code_1, i);

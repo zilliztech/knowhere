@@ -284,8 +284,8 @@ struct SimilarityL2_avx<8> {
         accu8 = _mm256_fmadd_ps(tmp, tmp, accu8);
     }
 
-    FAISS_ALWAYS_INLINE void add_8_components_2(__m256 x, __m256 y) {
-        __m256 tmp = _mm256_sub_ps(y, x);
+    FAISS_ALWAYS_INLINE void add_8_components_2(__m256 x, __m256 y_2) {
+        __m256 tmp = _mm256_sub_ps(y_2, x);
         accu8 = _mm256_fmadd_ps(tmp, tmp, accu8);
     }
 
@@ -434,7 +434,6 @@ struct DCTemplate_avx<Quantizer, Similarity, 8> : SQDistanceComputer {
         sim2.begin_8();
         sim3.begin_8();
 
-        FAISS_PRAGMA_IMPRECISE_LOOP
         for (size_t i = 0; i < quant.d; i += 8) {
             __m256 xi0 = quant.reconstruct_8_components(code_0, i);
             __m256 xi1 = quant.reconstruct_8_components(code_1, i);

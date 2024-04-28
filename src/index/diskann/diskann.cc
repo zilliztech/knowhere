@@ -13,7 +13,6 @@
 
 #include <cstdint>
 
-#include "common/range_util.h"
 #include "diskann/aux_utils.h"
 #include "diskann/linux_aligned_file_reader.h"
 #include "diskann/pq_flash_index.h"
@@ -23,10 +22,11 @@
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
-#include "knowhere/factory.h"
 #include "knowhere/file_manager.h"
+#include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
 #include "knowhere/prometheus_client.h"
+#include "knowhere/range_util.h"
 #include "knowhere/utils.h"
 
 namespace knowhere {
