@@ -26,6 +26,9 @@
 #include <faiss/impl/IDSelector.h>
 #include <faiss/impl/ResultHandler.h>
 #include <faiss/utils/utils.h>
+#ifdef FAISS_WITH_DNNL
+#include <faiss/utils/onednn_utils.h>
+#endif
 
 #ifndef FINTEGER
 #define FINTEGER long
@@ -211,30 +214,59 @@ void exhaustive_inner_product_seq_impl(
     using SingleResultHandler = typename BlockResultHandler::SingleResultHandler;
     int nt = std::min(int(nx), omp_get_max_threads());
 
-#pragma omp parallel num_threads(nt)
-    {
-        SingleResultHandler resi(res);
-#pragma omp for
-        for (int64_t i = 0; i < nx; i++) {
-            const float* x_i = x + i * d;
-            resi.begin(i);
+#ifdef FAISS_WITH_DNNL
+    if (is_dnnl_enabled()) {
+        float *res_arr = NULL;
 
-            // the lambda that filters acceptable elements.
-            auto filter = [&selector](const size_t j) {
-                return selector.is_member(j);
-            };
-
-            // the lambda that applies a filtered element.
-            auto apply = [&resi](const float ip, const idx_t j) {
-                resi.add_result(ip, j);
-            };
-
-            // compute distances
-            fvec_inner_products_ny_if(x_i, y, d, ny, filter, apply);
-
-            resi.end();
+        comput_f32bf16f32_inner_product(nx, d, ny, d, const_cast<float*>(x), const_cast<float*>(y), &res_arr);
+        if (res_arr == NULL) {
+            printf("res_arr = NULL\n");
+            fflush(stderr);
+            exit(1);
         }
+
+#pragma omp parallel num_threads(nt)
+        {
+            SingleResultHandler resi(res);
+#pragma omp for
+            for (size_t i = 0; i < nx; i++) {
+                resi.begin(i);
+                for (size_t j = 0; j < ny; j++) {
+                    float ip = res_arr[i*ny + j];
+                    resi.add_result(ip , j);
+                }
+                resi.end();
+            }
+        }
+    } else {
+#endif
+#pragma omp parallel num_threads(nt)
+        {
+            SingleResultHandler resi(res);
+#pragma omp for
+            for (int64_t i = 0; i < nx; i++) {
+                const float* x_i = x + i * d;
+                resi.begin(i);
+
+                // the lambda that filters acceptable elements.
+                auto filter = [&selector](const size_t j) {
+                    return selector.is_member(j);
+                };
+
+                // the lambda that applies a filtered element.
+                auto apply = [&resi](const float ip, const idx_t j) {
+                    resi.add_result(ip, j);
+                };
+
+                // compute distances
+                fvec_inner_products_ny_if(x_i, y, d, ny, filter, apply);
+
+                resi.end();
+            }
+        }
+#ifdef FAISS_WITH_DNNL
     }
+#endif
 }
 
 template <class BlockResultHandler>
