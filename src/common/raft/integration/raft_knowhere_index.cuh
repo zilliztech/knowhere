@@ -385,6 +385,8 @@ struct raft_knowhere_index<IndexKind>::impl {
     void
     train(raft_knowhere_config const& config, data_type const* data, knowhere_indexing_type row_count,
           knowhere_indexing_type feature_count) {
+        if (device_id < 0)
+            device_id = select_device_id();
         auto scoped_device = raft::device_setter{device_id};
         auto index_params = config_to_index_params<index_kind>(config);
         if constexpr (index_kind == raft_proto::raft_index_kind::ivf_flat ||
@@ -468,6 +470,8 @@ struct raft_knowhere_index<IndexKind>::impl {
     search(raft_knowhere_config const& config, data_type const* data, knowhere_indexing_type row_count,
            knowhere_indexing_type feature_count, knowhere_bitset_data_type const* bitset_data,
            knowhere_bitset_indexing_type bitset_byte_size, knowhere_bitset_indexing_type bitset_size) const {
+        RAFT_EXPECTS(device_id >= 0,
+                     "Device id has not been selected yet. This implies that the train() method has not been called.");
         auto scoped_device = raft::device_setter{device_id};
         auto const& res = raft::device_resources_manager::get_device_resources();
         auto k = knowhere_indexing_type(config.k);
@@ -588,6 +592,7 @@ struct raft_knowhere_index<IndexKind>::impl {
     }
     void
     serialize(std::ostream& os) const {
+        RAFT_EXPECTS(device_id >= 0, "Device id has not yet been setted");
         auto scoped_device = raft::device_setter{device_id};
         auto const& res = raft::device_resources_manager::get_device_resources();
         RAFT_EXPECTS(index_, "Index has not yet been trained");
@@ -636,7 +641,7 @@ struct raft_knowhere_index<IndexKind>::impl {
 
  private:
     std::optional<raft_index_type> index_ = std::nullopt;
-    int device_id = select_device_id();
+    int device_id = -1;
     std::optional<raft::device_matrix<data_type, input_indexing_type>> device_dataset_storage = std::nullopt;
 };
 
