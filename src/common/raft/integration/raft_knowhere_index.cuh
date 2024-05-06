@@ -334,7 +334,7 @@ config_to_search_params(raft_knowhere_config const& raw_config) {
 
 inline auto const&
 get_device_resources_without_mempool() {
-    auto static res = raft::device_resources();
+    thread_local auto res = raft::device_resources();
     return res;
 }
 
@@ -632,6 +632,7 @@ struct raft_knowhere_index<IndexKind>::impl {
                     res, des_index, raft::make_const_mdspan(dataset->view()));
             }
         }
+        res.sync_stream();
         return std::make_unique<typename raft_knowhere_index<index_kind>::impl>(std::move(des_index), new_device_id,
                                                                                 std::move(dataset));
     }
