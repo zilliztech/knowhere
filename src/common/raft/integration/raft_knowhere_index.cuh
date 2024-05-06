@@ -332,6 +332,12 @@ config_to_search_params(raft_knowhere_config const& raw_config) {
     return result;
 }
 
+inline auto const&
+get_device_resources_without_mempool() {
+    auto static res = raft::device_resources();
+    return res;
+}
+
 inline auto
 select_device_id() {
     auto static device_count = []() {
@@ -391,7 +397,7 @@ struct raft_knowhere_index<IndexKind>::impl {
                       index_kind == raft_proto::raft_index_kind::ivf_pq) {
             index_params.n_lists = std::min(knowhere_indexing_type(index_params.n_lists), row_count);
         }
-        auto const& res = raft::device_resources_manager::get_device_resources();
+        auto const& res = get_device_resources_without_mempool();
         auto host_data = raft::make_host_matrix_view(data, row_count, feature_count);
         if constexpr (index_kind == raft_proto::raft_index_kind::ivf_flat) {
             device_dataset_storage =
@@ -435,7 +441,7 @@ struct raft_knowhere_index<IndexKind>::impl {
             }
         } else {
             if (index_) {
-                auto const& res = raft::device_resources_manager::get_device_resources();
+                auto const& res = get_device_resources_without_mempool();
                 raft::resource::set_workspace_to_pool_resource(res);
                 auto host_data = raft::make_host_matrix_view(data, row_count, feature_count);
                 device_dataset_storage =
@@ -589,7 +595,7 @@ struct raft_knowhere_index<IndexKind>::impl {
     void
     serialize(std::ostream& os) const {
         auto scoped_device = raft::device_setter{device_id};
-        auto const& res = raft::device_resources_manager::get_device_resources();
+        auto const& res = get_device_resources_without_mempool();
         RAFT_EXPECTS(index_, "Index has not yet been trained");
         raft_index_type::template serialize<data_type, indexing_type>(res, os, *index_);
 
@@ -605,7 +611,7 @@ struct raft_knowhere_index<IndexKind>::impl {
     auto static deserialize(std::istream& is) {
         auto new_device_id = select_device_id();
         auto scoped_device = raft::device_setter{new_device_id};
-        auto const& res = raft::device_resources_manager::get_device_resources();
+        auto const& res = get_device_resources_without_mempool();
         auto des_index = raft_index_type::template deserialize<data_type, indexing_type>(res, is);
 
         auto dataset = std::optional<raft::device_matrix<data_type, input_indexing_type>>{};
