@@ -58,8 +58,10 @@ import_array();
 %include <std_vector.i>
 %include <exception.i>
 %shared_ptr(knowhere::DataSet)
+%shared_ptr(knowhere::Binary)
 %shared_ptr(knowhere::BinarySet)
 %template(DataSetPtr) std::shared_ptr<knowhere::DataSet>;
+%template(BinaryPtr) std::shared_ptr<knowhere::Binary>;
 %template(BinarySetPtr) std::shared_ptr<knowhere::BinarySet>;
 %template(int64_float_pair) std::pair<long long int, float>;
 %include <knowhere/expected.h>
@@ -388,6 +390,29 @@ DataSet_Dim(knowhere::DataSetPtr results){
 knowhere::BinarySetPtr
 GetBinarySet() {
     return std::make_shared<knowhere::BinarySet>();
+}
+
+knowhere::BinaryPtr
+Array2Binary(uint8_t* block, int size) {
+    GILReleaser rel;
+
+    auto binary = std::make_shared<knowhere::Binary>();
+    std::shared_ptr<uint8_t[]> data_ptr(new uint8_t[size]);
+    for (int i = 0; i < size; i++) {
+        *(data_ptr.get() + i) = *(block + i);
+    }
+    binary->data = data_ptr;
+    binary->size = size;
+    return binary;
+}
+
+knowhere::BinarySetPtr
+CreateBinarySet(const std::string& name, knowhere::BinaryPtr binary) {
+    GILReleaser rel;
+
+    auto binarySet = std::make_shared<knowhere::BinarySet>();
+    binarySet->Append(name, binary);
+    return binarySet;
 }
 
 knowhere::DataSetPtr
