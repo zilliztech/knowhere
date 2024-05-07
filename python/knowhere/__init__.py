@@ -65,7 +65,7 @@ def ArrayToDataSet(arr):
     if arr.ndim == 1:
         return swigknowhere.Array2DataSetIds(arr)
     if arr.ndim == 2:
-        if arr.dtype == np.int32:
+        if arr.dtype == np.uint8:
             return swigknowhere.Array2DataSetI(arr)
         if arr.dtype == np.float32:
             return swigknowhere.Array2DataSetF(arr)
@@ -77,7 +77,7 @@ def ArrayToDataSet(arr):
             return swigknowhere.Array2DataSetBF16(arr)
     raise ValueError(
         """
-        ArrayToDataSet only support numpy array dtype float32,int32,float16 and bfloat16.
+        ArrayToDataSet only support numpy array dtype float32,uint8,float16 and bfloat16.
         """
     )
 
@@ -148,9 +148,9 @@ def GetBFloat16VectorDataSetToArray(ans):
     return data
 
 def GetBinaryVectorDataSetToArray(ans):
-    dim = int(swigknowhere.DataSet_Dim(ans) / 32)
+    dim = int(swigknowhere.DataSet_Dim(ans) / 8)
     rows = swigknowhere.DataSet_Rows(ans)
-    data = np.zeros([rows, dim]).astype(np.int32)
+    data = np.zeros([rows, dim]).astype(np.uint8)
     swigknowhere.BinaryDataSetTensor2Array(ans, data)
     return data
 
