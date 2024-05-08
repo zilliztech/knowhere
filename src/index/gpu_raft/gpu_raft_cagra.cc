@@ -27,11 +27,11 @@ namespace knowhere {
 KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_RAFT_CAGRA, GpuRaftCagraIndexNode, fp32, []() {
     int count;
     RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
-    return count * cuda_concurrent_size_per_device;
+    return 4;
 }());
 KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuRaftCagraIndexNode, fp32, []() {
     int count;
     RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
-    return count * cuda_concurrent_size_per_device;
+    return 4;
 }());
 }  // namespace knowhere
