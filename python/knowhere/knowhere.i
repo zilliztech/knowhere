@@ -73,6 +73,8 @@ import_array();
 %apply (float* IN_ARRAY2, int DIM1, int DIM2) {(float* xb, int nb, int dim)}
 %apply (int* IN_ARRAY2, int DIM1, int DIM2) {(int* xb, int nb, int dim)}
 %apply (uint8_t *IN_ARRAY1, int DIM1) {(uint8_t *block, int size)}
+%apply (uint8_t* IN_ARRAY2, int DIM1, int DIM2) {(uint8_t* xb, int nb, int dim)}
+%apply (uint8_t* INPLACE_ARRAY2, int DIM1, int DIM2) {(uint8_t *data,int rows,int dim)}
 %apply (int *IN_ARRAY1, int DIM1) {(int *lims, int len)}
 %apply (int *IN_ARRAY1, int DIM1) {(int *ids, int len)}
 %apply (float *IN_ARRAY1, int DIM1) {(float *dis, int len)}
@@ -354,11 +356,11 @@ CurrentVersion() {
 }
 
 knowhere::DataSetPtr
-Array2DataSetI(int *xb, int nb, int dim){
+Array2DataSetI(uint8_t* xb, int nb, int dim) {
     auto ds = std::make_shared<DataSet>();
     ds->SetIsOwner(false);
     ds->SetRows(nb);
-    ds->SetDim(dim*32);
+    ds->SetDim(dim*8);
     ds->SetTensor(xb);
     return ds;
 };
@@ -469,12 +471,12 @@ BFloat16DataSetTensor2Array(knowhere::DataSetPtr result, float* data, int rows, 
 }
 
 void
-BinaryDataSetTensor2Array(knowhere::DataSetPtr result, int32_t* data, int rows, int dim) {
+BinaryDataSetTensor2Array(knowhere::DataSetPtr result, uint8_t* data, int rows, int dim) {
     GILReleaser rel;
     auto data_ = result->GetTensor();
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < dim; ++j) {
-            *(data + i * dim + j) = *((int32_t*)(data_) + i * dim + j);
+            *(data + i * dim + j) = *((uint8_t*)(data_) + i * dim + j);
         }
     }
 }
