@@ -40,6 +40,13 @@
 namespace raft_knowhere {
 namespace detail {
 
+static auto
+get_thread_id() {
+    static std::atomic<std::size_t> thread_counter{};
+    thread_local std::size_t id = ++thread_counter;
+    return id;
+}
+
 // This helper struct maps the generic type of RAFT index to the specific
 // instantiation of that index used within knowhere.
 template <bool B, raft_proto::raft_index_kind IndexKind>
@@ -468,7 +475,13 @@ struct raft_knowhere_index<IndexKind>::impl {
     search(raft_knowhere_config const& config, data_type const* data, knowhere_indexing_type row_count,
            knowhere_indexing_type feature_count, knowhere_bitset_data_type const* bitset_data,
            knowhere_bitset_indexing_type bitset_byte_size, knowhere_bitset_indexing_type bitset_size) const {
+        auto log_name = std::to_string(detail::get_thread_id()) + std::string("_thread.log");
+        std::ofstream log(log_name.c_str(), std::ios::app);
+
         auto scoped_device = raft::device_setter{device_id};
+        int tmp_device;
+        cudaGetDevice(&tmp_device);
+        log << "device_id: " << device_id << " current_id: " << tmp_device;
         auto const& res = raft::device_resources_manager::get_device_resources();
         auto k = knowhere_indexing_type(config.k);
         auto search_params = config_to_search_params<index_kind>(config);
@@ -575,6 +588,14 @@ struct raft_knowhere_index<IndexKind>::impl {
         } else {
             raft::copy(res, host_ids, device_knowhere_ids);
             raft::copy(res, host_distances, device_distances);
+        }
+
+        cudaGetDevice(&tmp_device);
+        log << " after device: " << tmp_device;
+        if constexpr (index_kind == raft_proto::raft_index_kind::cagra) {
+            cudaPointerAttributes pointer_attributes{};
+            cudaPointerGetAttributes(&pointer_attributes, index_.value().get_vector_index().graph().data_handle());
+            log << " index device id: " << pointer_attributes.device << std::endl;
         }
         return std::make_tuple(ids.release(), distances.release());
     }
