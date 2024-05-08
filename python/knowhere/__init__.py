@@ -1,6 +1,6 @@
 from . import swigknowhere
 from .swigknowhere import Status
-from .swigknowhere import GetBinarySet, GetNullDataSet, GetNullBitSetView
+from .swigknowhere import CreateBinarySet, GetBinarySet, GetNullDataSet, GetNullBitSetView
 from .swigknowhere import BruteForceSearchFloat, BruteForceRangeSearchFloat
 from .swigknowhere import BruteForceSearchFP16, BruteForceRangeSearchFP16
 from .swigknowhere import BruteForceSearchBF16, BruteForceRangeSearchBF16
@@ -60,6 +60,14 @@ def Dump(binset, file_name):
 def WriteIndexToDisk(binset, index_type, data_path):
     return swigknowhere.WriteIndexToDisk(binset, index_type, data_path)
 
+def ArrayToBinary(arr):
+    if arr.dtype == np.uint8:
+        return swigknowhere.Array2Binary(arr)
+    raise ValueError(
+        """
+        ArrayToBinary only support numpy array dtype uint8.
+        """
+    )
 
 def ArrayToDataSet(arr):
     if arr.ndim == 1:
