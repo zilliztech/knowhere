@@ -479,9 +479,6 @@ struct raft_knowhere_index<IndexKind>::impl {
         std::ofstream log(log_name.c_str(), std::ios::app);
 
         auto scoped_device = raft::device_setter{device_id};
-        int tmp_device;
-        cudaGetDevice(&tmp_device);
-        log << "device_id: " << device_id << " current_id: " << tmp_device;
         auto const& res = raft::device_resources_manager::get_device_resources();
         auto k = knowhere_indexing_type(config.k);
         auto search_params = config_to_search_params<index_kind>(config);
@@ -494,10 +491,12 @@ struct raft_knowhere_index<IndexKind>::impl {
         auto device_bitset =
             std::optional<raft::core::bitset<knowhere_bitset_data_type, knowhere_bitset_indexing_type>>{};
         auto k_tmp = k;
-
+        log << "device_bitset: " << device_bitset.has_value();
         if (bitset_data != nullptr && bitset_byte_size != 0) {
             device_bitset =
                 raft::core::bitset<knowhere_bitset_data_type, knowhere_bitset_indexing_type>(res, bitset_size);
+
+            log << "size: " << device_bitset.value().size();
             raft::copy(res, device_bitset->to_mdspan(), raft::make_host_vector_view(bitset_data, bitset_byte_size));
             if constexpr (index_kind == raft_proto::raft_index_kind::brute_force) {
                 k_tmp += device_bitset->count(res);
@@ -590,8 +589,6 @@ struct raft_knowhere_index<IndexKind>::impl {
             raft::copy(res, host_distances, device_distances);
         }
 
-        cudaGetDevice(&tmp_device);
-        log << " after device: " << tmp_device;
         if constexpr (index_kind == raft_proto::raft_index_kind::cagra) {
             cudaPointerAttributes pointer_attributes{};
             cudaPointerGetAttributes(&pointer_attributes, index_.value().get_vector_index().graph().data_handle());
