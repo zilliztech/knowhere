@@ -488,27 +488,8 @@ struct raft_knowhere_index<IndexKind>::impl {
             raft::make_device_matrix<data_type, input_indexing_type>(res, row_count, feature_count);
         raft::copy(res, device_data_storage.view(), host_data);
 
-        auto device_bitset =
-            std::optional<raft::core::bitset<knowhere_bitset_data_type, knowhere_bitset_indexing_type>>{};
+        const auto device_bitset = 0;
         auto k_tmp = k;
-        log << "device_bitset: " << device_bitset.has_value();
-        if (bitset_data != nullptr && bitset_byte_size != 0) {
-            device_bitset =
-                raft::core::bitset<knowhere_bitset_data_type, knowhere_bitset_indexing_type>(res, bitset_size);
-
-            log << "size: " << device_bitset.value().size();
-            raft::copy(res, device_bitset->to_mdspan(), raft::make_host_vector_view(bitset_data, bitset_byte_size));
-            if constexpr (index_kind == raft_proto::raft_index_kind::brute_force) {
-                k_tmp += device_bitset->count(res);
-                if (k_tmp == k) {
-                    device_bitset = std::nullopt;
-                }
-                k_tmp = std::min(k_tmp, size());
-            }
-            if (device_bitset) {
-                device_bitset->flip(res);
-            }
-        }
 
         auto output_size = row_count * k;
         auto ids = std::unique_ptr<knowhere_indexing_type[]>(new knowhere_indexing_type[output_size]);
@@ -528,11 +509,7 @@ struct raft_knowhere_index<IndexKind>::impl {
                                 : std::optional<raft::device_matrix_view<const data_type, input_indexing_type>>{};
 
         if (device_bitset) {
-            raft_index_type::search(
-                res, *index_, search_params, raft::make_const_mdspan(device_data_storage.view()), device_ids,
-                device_distances, config.refine_ratio, input_indexing_type{}, dataset_view,
-                raft::neighbors::filtering::bitset_filter<knowhere_bitset_data_type, knowhere_bitset_indexing_type>{
-                    device_bitset->view()});
+            ;
         } else {
             raft_index_type::search(res, *index_, search_params, raft::make_const_mdspan(device_data_storage.view()),
                                     device_ids, device_distances, config.refine_ratio, input_indexing_type{},
