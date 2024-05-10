@@ -41,6 +41,17 @@ class KnowhereConfig {
     SetSimdType(const SimdType simd_type);
 
     /**
+     *The purpose of this interface is: part of the sealed indexes default to using bf16 as the base data to achieve
+     *higher capacity; to ensure consistency in computation between growing and sealed, it is necessary to maintain the
+     *same precision in growing calculations as in sealed.
+     */
+    static void
+    EnablePatchForComputeFP32AsBF16();
+
+    static void
+    DisablePatchForComputeFP32AsBF16();
+
+    /**
      * Set openblas threshold
      *   if nq < use_blas_threshold, calculated by omp
      *   else, calculated by openblas
