@@ -93,7 +93,7 @@ struct GpuRaftIndexNode : public IndexNode {
             auto const* data = reinterpret_cast<float const*>(dataset.GetTensor());
             try {
                 index_.train(raft_cfg, data, rows, dim);
-                index_.synchronize();
+                index_.synchronize(true);
             } catch (const std::exception& e) {
                 LOG_KNOWHERE_ERROR_ << e.what();
                 result = Status::raft_inner_error;
@@ -164,7 +164,7 @@ struct GpuRaftIndexNode : public IndexNode {
 
             try {
                 index_.serialize(os);
-                index_.synchronize();
+                index_.synchronize(true);
             } catch (const std::exception& e) {
                 LOG_KNOWHERE_ERROR_ << e.what();
                 result = Status::raft_inner_error;
@@ -249,7 +249,7 @@ struct GpuRaftIndexNode : public IndexNode {
         auto result = Status::success;
         try {
             index_ = raft_knowhere_index_type::deserialize(stream);
-            index_.synchronize();
+            index_.synchronize(true);
         } catch (const std::exception& e) {
             LOG_KNOWHERE_ERROR_ << e.what();
             result = Status::raft_inner_error;
