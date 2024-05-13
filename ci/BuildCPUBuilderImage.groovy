@@ -92,9 +92,9 @@ spec:
 
     parameters{
         string(
-            description: 'os(ubuntu20.04,centos7,ubuntu18.04)',
+            description: 'os(ubuntu22.04,ubuntu20.04,centos7,ubuntu18.04)',
             name: 'os',
-            defaultValue: 'ubuntu20.04'
+            defaultValue: 'ubuntu22.04'
         )
     }
      stages {
