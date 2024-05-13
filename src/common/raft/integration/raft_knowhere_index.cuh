@@ -333,9 +333,14 @@ config_to_search_params(raft_knowhere_config const& raw_config) {
 }
 
 inline auto const&
-get_device_resources_without_mempool() {
-    auto static res = raft::device_resources();
-    return res;
+get_device_resources_without_mempool(int device_id = raft::device_setter::get_current_device()) {
+    auto thread_local res = std::vector<raft::device_resources>([]() {
+        int device_count;
+        RAFT_CUDA_TRY(cudaGetDeviceCount(&device_count));
+        return device_count;
+    }());
+
+    return res[device_id];
 }
 
 inline auto
@@ -631,9 +636,14 @@ struct raft_knowhere_index<IndexKind>::impl {
                                                                                 std::move(dataset));
     }
     void
-    synchronize() const {
+    synchronize(bool is_without_mempool = false) const {
         auto scoped_device = raft::device_setter{device_id};
-        raft::device_resources_manager::get_device_resources().sync_stream();
+        if (is_without_mempool) {
+            get_device_resources_without_mempool().sync_stream();
+
+        } else {
+            raft::device_resources_manager::get_device_resources().sync_stream();
+        }
     }
     impl(raft_index_type&& index, int new_device_id,
          std::optional<raft::device_matrix<data_type, input_indexing_type>>&& dataset)
@@ -731,8 +741,8 @@ raft_knowhere_index<IndexKind>::deserialize(std::istream& is) {
 
 template <raft_proto::raft_index_kind IndexKind>
 void
-raft_knowhere_index<IndexKind>::synchronize() const {
-    return pimpl->synchronize();
+raft_knowhere_index<IndexKind>::synchronize(bool is_without_mempool) const {
+    return pimpl->synchronize(is_without_mempool);
 }
 
 }  // namespace raft_knowhere
