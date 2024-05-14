@@ -217,7 +217,7 @@ class HnswIndexNode : public IndexNode {
         }
         WaitAllSuccess(futs);
 
-        auto res = GenResultDataSet(nq, k, p_id.release(), p_dist.release());
+        auto res = GenResultDataSet(nq, k, std::move(p_id), std::move(p_dist));
 
         // set visit_info json string into result dataset
         if (feder_result != nullptr) {
@@ -358,15 +358,11 @@ class HnswIndexNode : public IndexNode {
         }
         WaitAllSuccess(futs);
 
-        int64_t* ids = nullptr;
-        DistType* dis = nullptr;
-        size_t* lims = nullptr;
-
         // filter range search result
-        GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius_for_filter, range_filter, dis, ids,
-                             lims);
+        auto range_search_result =
+            GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius_for_filter, range_filter);
 
-        auto res = GenResultDataSet(nq, ids, dis, lims);
+        auto res = GenResultDataSet(nq, std::move(range_search_result));
 
         // set visit_info json string into result dataset
         if (feder_result != nullptr) {
