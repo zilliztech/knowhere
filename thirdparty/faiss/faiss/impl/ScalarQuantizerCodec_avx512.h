@@ -205,6 +205,39 @@ struct QuantizerFP16_avx512<16> : public QuantizerFP16_avx<8> {
 };
 
 /*******************************************************************
+ * BF16 quantizer
+ *******************************************************************/
+
+template <int SIMDWIDTH>
+struct QuantizerBF16_avx512 {};
+
+template <>
+struct QuantizerBF16_avx512<1> : public QuantizerBF16_avx<1> {
+    QuantizerBF16_avx512(size_t d, const std::vector<float>& unused)
+            : QuantizerBF16_avx<1>(d, unused) {}
+};
+
+template <>
+struct QuantizerBF16_avx512<8> : public QuantizerBF16_avx<8> {
+    QuantizerBF16_avx512(size_t d, const std::vector<float>& trained)
+            : QuantizerBF16_avx<8>(d, trained) {}
+};
+
+template <>
+struct QuantizerBF16_avx512<16> : public QuantizerBF16_avx<8> {
+    QuantizerBF16_avx512(size_t d, const std::vector<float>& trained)
+            : QuantizerBF16_avx<8>(d, trained) {}
+
+    FAISS_ALWAYS_INLINE __m512
+    reconstruct_16_components(const uint8_t* code, int i) const {
+        __m256i code_256i = _mm256_loadu_si256((const __m256i*)(code + 2 * i));
+        __m512i code_512i = _mm512_cvtepu16_epi32(code_256i);
+        code_512i = _mm512_slli_epi32(code_512i, 16);
+        return _mm512_castsi512_ps(code_512i);
+    }
+};
+
+/*******************************************************************
  * 8bit_direct quantizer
  *******************************************************************/
 
@@ -269,6 +302,8 @@ SQuantizer* select_quantizer_1_avx512(
                     SIMDWIDTH>(d, trained);
         case QuantizerType::QT_fp16:
             return new QuantizerFP16_avx512<SIMDWIDTH>(d, trained);
+        case QuantizerType::QT_bf16:
+            return new QuantizerBF16_avx512<SIMDWIDTH>(d, trained);
         case QuantizerType::QT_8bit_direct:
             return new Quantizer8bitDirect_avx512<SIMDWIDTH>(d, trained);
     }
@@ -653,6 +688,12 @@ SQDistanceComputer* select_distance_computer_avx512(
                     Sim,
                     SIMDWIDTH>(d, trained);
 
+        case QuantizerType::QT_bf16:
+            return new DCTemplate_avx512<
+                    QuantizerBF16_avx512<SIMDWIDTH>,
+                    Sim,
+                    SIMDWIDTH>(d, trained);
+
         case QuantizerType::QT_8bit_direct:
             if (d % 16 == 0) {
                 return new DistanceComputerByte_avx512<Sim, SIMDWIDTH>(
@@ -730,6 +771,11 @@ InvertedListScanner* sel1_InvertedListScanner_avx512(
         case QuantizerType::QT_fp16:
             return sel2_InvertedListScanner_avx512<DCTemplate_avx512<
                     QuantizerFP16_avx512<SIMDWIDTH>,
+                    Similarity,
+                    SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
+        case QuantizerType::QT_bf16:
+            return sel2_InvertedListScanner_avx512<DCTemplate_avx512<
+                    QuantizerBF16_avx512<SIMDWIDTH>,
                     Similarity,
                     SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
         case QuantizerType::QT_8bit_direct:

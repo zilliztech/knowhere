@@ -160,6 +160,33 @@ struct QuantizerFP16_neon<8> : public QuantizerFP16<1> {
 };
 
 /*******************************************************************
+ * BF16 quantizer
+ *******************************************************************/
+
+template <int SIMDWIDTH>
+struct QuantizerBF16_neon {};
+
+template <>
+struct QuantizerBF16_neon<1> : public QuantizerBF16<1> {
+    QuantizerBF16_neon(size_t d, const std::vector<float>& unused)
+            : QuantizerBF16<1>(d, unused) {}
+};
+
+template <>
+struct QuantizerBF16_neon<8> : public QuantizerBF16<1> {
+    QuantizerBF16_neon(size_t d, const std::vector<float>& trained)
+            : QuantizerBF16<1>(d, trained) {}
+
+    FAISS_ALWAYS_INLINE float32x4x2_t
+    reconstruct_8_components(const uint8_t* code, int i) const {
+        uint16x4x2_t codei = vld1_u16_x2((const uint16_t*)(code + 2 * i));
+        return {vreinterpretq_f32_u32(vshlq_n_u32(vmovl_u16(codei.val[0]), 16)),
+                vreinterpretq_f32_u32(
+                        vshlq_n_u32(vmovl_u16(codei.val[1]), 16))};
+    }
+};
+
+/*******************************************************************
  * 8bit_direct quantizer
  *******************************************************************/
 
@@ -212,6 +239,8 @@ SQuantizer* select_quantizer_1_neon(
                     d, trained);
         case QuantizerType::QT_fp16:
             return new QuantizerFP16_neon<SIMDWIDTH>(d, trained);
+        case QuantizerType::QT_bf16:
+            return new QuantizerBF16_neon<SIMDWIDTH>(d, trained);
         case QuantizerType::QT_8bit_direct:
             return new Quantizer8bitDirect_neon<SIMDWIDTH>(d, trained);
     }
@@ -556,6 +585,12 @@ SQDistanceComputer* select_distance_computer_neon(
                     Sim,
                     SIMDWIDTH>(d, trained);
 
+        case QuantizerType::QT_bf16:
+            return new DCTemplate_neon<
+                    QuantizerBF16_neon<SIMDWIDTH>,
+                    Sim,
+                    SIMDWIDTH>(d, trained);
+
         case QuantizerType::QT_8bit_direct:
             if (d % 16 == 0) {
                 return new DistanceComputerByte_neon<Sim, SIMDWIDTH>(d, trained);
@@ -632,6 +667,11 @@ InvertedListScanner* sel1_InvertedListScanner_neon(
         case QuantizerType::QT_fp16:
             return sel2_InvertedListScanner_neon<DCTemplate_neon<
                     QuantizerFP16_neon<SIMDWIDTH>,
+                    Similarity,
+                    SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
+        case QuantizerType::QT_bf16:
+            return sel2_InvertedListScanner_neon<DCTemplate_neon<
+                    QuantizerBF16_neon<SIMDWIDTH>,
                     Similarity,
                     SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
         case QuantizerType::QT_8bit_direct:

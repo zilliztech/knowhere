@@ -191,6 +191,33 @@ struct QuantizerFP16_avx<8> : public QuantizerFP16<1> {
 };
 
 /*******************************************************************
+ * BF16 quantizer
+ *******************************************************************/
+
+template <int SIMDWIDTH>
+struct QuantizerBF16_avx {};
+
+template <>
+struct QuantizerBF16_avx<1> : public QuantizerBF16<1> {
+    QuantizerBF16_avx(size_t d, const std::vector<float>& unused)
+            : QuantizerBF16<1>(d, unused) {}
+};
+
+template <>
+struct QuantizerBF16_avx<8> : public QuantizerBF16<1> {
+    QuantizerBF16_avx(size_t d, const std::vector<float>& trained)
+            : QuantizerBF16<1>(d, trained) {}
+
+    FAISS_ALWAYS_INLINE __m256
+    reconstruct_8_components(const uint8_t* code, int i) const {
+        __m128i code_128i = _mm_loadu_si128((const __m128i*)(code + 2 * i));
+        __m256i code_256i = _mm256_cvtepu16_epi32(code_128i);
+        code_256i = _mm256_slli_epi32(code_256i, 16);
+        return _mm256_castsi256_ps(code_256i);
+    }
+};
+
+/*******************************************************************
  * 8bit_direct quantizer
  *******************************************************************/
 
@@ -239,6 +266,8 @@ SQuantizer* select_quantizer_1_avx(
                     d, trained);
         case QuantizerType::QT_fp16:
             return new QuantizerFP16_avx<SIMDWIDTH>(d, trained);
+        case QuantizerType::QT_bf16:
+            return new QuantizerBF16_avx<SIMDWIDTH>(d, trained);
         case QuantizerType::QT_8bit_direct:
             return new Quantizer8bitDirect_avx<SIMDWIDTH>(d, trained);
     }
@@ -581,6 +610,12 @@ SQDistanceComputer* select_distance_computer_avx(
                     Sim,
                     SIMDWIDTH>(d, trained);
 
+        case QuantizerType::QT_bf16:
+            return new DCTemplate_avx<
+                    QuantizerBF16_avx<SIMDWIDTH>,
+                    Sim,
+                    SIMDWIDTH>(d, trained);
+
         case QuantizerType::QT_8bit_direct:
             if (d % 16 == 0) {
                 return new DistanceComputerByte_avx<Sim, SIMDWIDTH>(d, trained);
@@ -657,6 +692,11 @@ InvertedListScanner* sel1_InvertedListScanner_avx(
         case QuantizerType::QT_fp16:
             return sel2_InvertedListScanner_avx<DCTemplate_avx<
                     QuantizerFP16_avx<SIMDWIDTH>,
+                    Similarity,
+                    SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
+        case QuantizerType::QT_bf16:
+            return sel2_InvertedListScanner_avx<DCTemplate_avx<
+                    QuantizerBF16_avx<SIMDWIDTH>,
                     Similarity,
                     SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
         case QuantizerType::QT_8bit_direct:
