@@ -387,7 +387,14 @@ void binary_knn_hc(
         size_t all_heap_size = thread_heap_size * thread_max_num;
         T* value = new T[all_heap_size];
         int64_t* labels = new int64_t[all_heap_size];
-        T init_value = (typeid(T) == typeid(float)) ? (1.0 / 0.0) : 0x7fffffff;
+        
+        T init_value;
+        if constexpr (std::is_same_v<T, float>) {
+            init_value = std::numeric_limits<float>::infinity();
+        } else {
+            init_value = 0x7fffffff;
+        }
+
         for (int i = 0; i < all_heap_size; i++) {
             value[i] = init_value;
             labels[i] = -1;

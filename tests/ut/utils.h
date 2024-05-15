@@ -48,6 +48,17 @@ GenDataSet(int rows, int dim, int seed = 42) {
 }
 
 inline knowhere::DataSetPtr
+GenFloatDataSet(int rows, int dim, int seed = 42) {
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<> distrib(0.0, 100.0);
+    float* ts = new float[rows * dim];
+    for (int i = 0; i < rows * dim; ++i) ts[i] = (float)distrib(rng);
+    auto ds = knowhere::GenDataSet(rows, dim, ts);
+    ds->SetIsOwner(true);
+    return ds;
+}
+
+inline knowhere::DataSetPtr
 CopyDataSet(knowhere::DataSetPtr dataset, const int64_t copy_rows) {
     REQUIRE(!dataset->GetIsSparse());
     auto rows = copy_rows;

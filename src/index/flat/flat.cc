@@ -34,7 +34,7 @@ class FlatIndexNode : public IndexNode {
             std::is_same<IndexType, faiss::IndexFlat>::value || std::is_same<IndexType, faiss::IndexBinaryFlat>::value,
             "not support");
         static_assert(std::is_same_v<DataType, fp32> || std::is_same_v<DataType, bin1>,
-                      "FlatIndexNode only support float/bianry");
+                      "FlatIndexNode only support float/binary");
         search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
     }
 

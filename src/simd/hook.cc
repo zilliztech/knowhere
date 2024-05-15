@@ -90,6 +90,70 @@ cpu_support_sse4_2() {
 }
 #endif
 
+static std::mutex patch_bf16_mutex;
+
+void
+enable_patch_for_fp32_bf16() {
+    std::lock_guard<std::mutex> lock(patch_bf16_mutex);
+#if defined(__x86_64__)
+    if (use_avx512 && cpu_support_avx512()) {
+        // Cloud branch
+        fvec_inner_product = fvec_inner_product_avx512_bf16_patch;
+        fvec_L2sqr = fvec_L2sqr_avx512_bf16_patch;
+
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_avx512_bf16_patch;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_avx512_bf16_patch;
+
+    } else if (use_avx2 && cpu_support_avx2()) {
+        fvec_inner_product = fvec_inner_product_avx_bf16_patch;
+        fvec_L2sqr = fvec_L2sqr_avx_bf16_patch;
+
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_avx_bf16_patch;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_avx_bf16_patch;
+
+    } else if (use_sse4_2 && cpu_support_sse4_2()) {
+        // The branch that can't be reached
+    } else {
+        fvec_inner_product = fvec_inner_product_ref_bf16_patch;
+        fvec_L2sqr = fvec_L2sqr_ref_bf16_patch;
+
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_ref_bf16_patch;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref_bf16_patch;
+    }
+#endif
+}
+
+void
+disable_patch_for_fp32_bf16() {
+    std::lock_guard<std::mutex> lock(patch_bf16_mutex);
+#if defined(__x86_64__)
+    if (use_avx512 && cpu_support_avx512()) {
+        // Cloud branch
+        fvec_inner_product = fvec_inner_product_avx512;
+        fvec_L2sqr = fvec_L2sqr_avx512;
+
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_avx512;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_avx512;
+
+    } else if (use_avx2 && cpu_support_avx2()) {
+        fvec_inner_product = fvec_inner_product_avx;
+        fvec_L2sqr = fvec_L2sqr_avx;
+
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_avx;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_avx;
+
+    } else if (use_sse4_2 && cpu_support_sse4_2()) {
+        // The branch that can't be reached
+    } else {
+        fvec_inner_product = fvec_inner_product_ref;
+        fvec_L2sqr = fvec_L2sqr_ref;
+
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_ref;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref;
+    }
+#endif
+}
+
 void
 fvec_hook(std::string& simd_type) {
     static std::mutex hook_mutex;

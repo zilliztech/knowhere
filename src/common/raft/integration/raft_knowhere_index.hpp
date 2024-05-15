@@ -64,7 +64,7 @@ struct raft_knowhere_index {
     static raft_knowhere_index<IndexKind>
     deserialize(std::istream& is);
     void
-    synchronize() const;
+    synchronize(bool is_without_mempool = false) const;
 
  private:
     // Use a private implementation to completely separate knowhere headers from

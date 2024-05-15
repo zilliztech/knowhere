@@ -24,6 +24,13 @@ union fp32_bits {
     float as_value;
 };
 
+__attribute__((always_inline)) inline float
+bf16_float(float f) {
+    auto u32 = fp32_bits{.as_value = f}.as_bits;
+    // Round off
+    return fp32_bits{.as_bits = (u32 + 0x8000) & 0xFFFF0000}.as_value;
+}
+
 inline float
 fp32_from_bits(const uint32_t& w) {
     return fp32_bits{.as_bits = w}.as_value;

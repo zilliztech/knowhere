@@ -95,6 +95,12 @@ cpu_support_sse4_2();
 #endif
 
 void
+enable_patch_for_fp32_bf16();
+
+void
+disable_patch_for_fp32_bf16();
+
+void
 fvec_hook(std::string&);
 
 }  // namespace faiss
