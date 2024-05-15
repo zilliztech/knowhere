@@ -26,8 +26,9 @@
 #include <faiss/impl/IDSelector.h>
 #include <faiss/impl/ResultHandler.h>
 #include <faiss/utils/utils.h>
-#ifdef FAISS_WITH_DNNL
-#include <faiss/utils/onednn_utils.h>
+
+#ifdef KNOWHERE_WITH_DNNL
+#include "simd/distances_onednn.h"
 #endif
 
 #ifndef FINTEGER
@@ -214,11 +215,13 @@ void exhaustive_inner_product_seq_impl(
     using SingleResultHandler = typename BlockResultHandler::SingleResultHandler;
     int nt = std::min(int(nx), omp_get_max_threads());
 
-#ifdef FAISS_WITH_DNNL
+#ifdef KNOWHERE_WITH_DNNL
     if (is_dnnl_enabled()) {
         float *res_arr = NULL;
 
-        comput_f32bf16f32_inner_product(nx, d, ny, d, const_cast<float*>(x), const_cast<float*>(y), &res_arr);
+        //comput_f32bf16f32_inner_product(nx, d, ny, d, const_cast<float*>(x), const_cast<float*>(y), &res_arr);
+
+        fvec_inner_product_batch(nx, d, ny, d, const_cast<float*>(x), const_cast<float*>(y), &res_arr);
         if (res_arr == NULL) {
             printf("res_arr = NULL\n");
             fflush(stderr);
@@ -264,7 +267,7 @@ void exhaustive_inner_product_seq_impl(
             resi.end();
         }
     }
-#ifdef FAISS_WITH_DNNL
+#ifdef KNOWHERE_WITH_DNNL
     }
 #endif
 }

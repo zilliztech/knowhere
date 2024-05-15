@@ -133,7 +133,9 @@ struct inner_product_desc {
 
     bool is_same(uint32_t xrow, uint32_t xcol, uint32_t yrow, uint32_t ycol,
       float* in_f32_1, float* in_f32_2) {
-      return this->xrow == xrow && this->xcol == xcol && this->yrow == yrow && this->ycol == ycol && this->in_f32_2 == in_f32_2;
+      return this->xrow == xrow && this->xcol == xcol &&
+             this->yrow == yrow && this->ycol == ycol &&
+             this->in_f32_2 == in_f32_2;
     }
 
     void init(uint32_t xrow, uint32_t xcol, uint32_t yrow, uint32_t ycol,
@@ -208,9 +210,9 @@ struct inner_product_desc {
     }
 };
 
-void comput_f32bf16f32_inner_product(uint32_t xrow, uint32_t xcol, uint32_t yrow, uint32_t ycol,
-    float* in_f32_1, float* in_f32_2, float** out_f32);
+void fvec_f32bf16f32_inner_product_onednn(uint32_t xrow, uint32_t xcol, uint32_t yrow, uint32_t ycol,
+                                          float* in_f32_1, float* in_f32_2, float** out_f32);
 
-} //namespace faiss
+} // namespace faiss
 
 extern thread_local faiss::inner_product_desc inner_product_desc_t;

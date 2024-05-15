@@ -17,9 +17,6 @@
 #include "faiss/MetricType.h"
 #include "faiss/utils/binary_distances.h"
 #include "faiss/utils/distances.h"
-#ifdef FAISS_WITH_DNNL
-#include "faiss/utils/onednn_utils.h"
-#endif
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/config.h"
@@ -29,6 +26,10 @@
 #include "knowhere/range_util.h"
 #include "knowhere/sparse_utils.h"
 #include "knowhere/utils.h"
+
+#ifdef KNOWHERE_WITH_DNNL
+#include "simd/distances_onednn.h"
+#endif
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
 #include "knowhere/tracer.h"
@@ -89,7 +90,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     auto labels = std::make_unique<int64_t[]>(nq * topk);
     auto distances = std::make_unique<float[]>(nq * topk);
 
-#ifdef FAISS_WITH_DNNL
+#ifdef KNOWHERE_WITH_DNNL
     if (faiss::is_dnnl_enabled() && (faiss_metric_type == faiss::METRIC_INNER_PRODUCT) && (is_cosine == false)) {
         BitsetViewIDSelector bw_idselector(bitset);
         faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
@@ -167,7 +168,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
         if (ret != Status::success) {
             return expected<DataSetPtr>::Err(ret, "failed to brute force search");
         }
-#ifdef FAISS_WITH_DNNL
+#ifdef KNOWHERE_WITH_DNNL
     }
 #endif
     auto res = GenResultDataSet(nq, cfg.k.value(), labels.release(), distances.release());

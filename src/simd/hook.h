@@ -74,6 +74,9 @@ extern int32_t (*ivec_inner_product)(const int8_t*, const int8_t*, size_t);
 
 extern int32_t (*ivec_L2sqr)(const int8_t*, const int8_t*, size_t);
 
+extern void (*fvec_inner_product_batch)(uint32_t xrow, uint32_t xcol, uint32_t yrow, uint32_t ycol,
+                                        float* in_f32_1, float* in_f32_2, float** out_f32);
+
 #if defined(__x86_64__)
 extern bool use_avx512;
 extern bool use_avx2;
