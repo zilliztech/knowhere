@@ -61,7 +61,7 @@ class IvfIndexNode : public IndexNode {
                           std::is_same<IndexType, faiss::IndexIVFScalarQuantizerCC>::value,
                       "not support");
         static_assert(std::is_same_v<DataType, fp32> || std::is_same_v<DataType, bin1>,
-                      "IvfIndexNode only support float/bianry");
+                      "IvfIndexNode only support float/binary");
         search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
         build_pool_ = ThreadPool::GetGlobalBuildThreadPool();
     }
