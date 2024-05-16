@@ -354,7 +354,7 @@ select_device_id() {
     auto static index_counter = std::atomic<int>{0};
     // Use round-robin assignment to distribute indexes across devices
     auto result = index_counter.fetch_add(1) % device_count;
-    return result;
+    return 5;
 }
 
 // This struct is used to connect knowhere to a RAFT index. The implementation

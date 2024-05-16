@@ -198,6 +198,16 @@ endif()
 target_link_libraries(knowhere PUBLIC ${KNOWHERE_LINKER_LIBS})
 target_include_directories(knowhere PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+
+add_executable(crash_test_a test_a.cc)
+target_link_libraries(crash_test_a knowhere)
+
+add_executable(crash_test_b test_b.cc)
+target_link_libraries(crash_test_b knowhere)
+add_dependencies(crash_test_a knowhere)
+add_dependencies(crash_test_b knowhere)
+
+
 if(WITH_UT)
   add_subdirectory(tests/ut)
 endif()
