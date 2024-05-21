@@ -13,10 +13,12 @@ RUN apt update \
            --keyserver keyserver.ubuntu.com --recv-keys F23C5A6CF475977595C89F51BA6932366A755776 \
     && echo "deb [signed-by=/usr/share/keyrings/deadsnakes.gpg] https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu \
        $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/python.list \
-    && apt install -y --no-install-recommends wget curl git g++ gcc make gfortran swig \
+    && apt install -y --no-install-recommends wget curl git make gfortran swig \
+    && apt install -y gcc-12 g++-12 \
     && apt install -y python3.11 python3.11-dev python3.11-distutils \
     && apt install -y python3-setuptools \
     && cd /usr/bin \
+    && unlink gcc && ln -s gcc-12 gcc && ln -s g++-12 g++ \
     && unlink python3 && ln -s python3.11 python3 \
     && curl -sS https://bootstrap.pypa.io/get-pip.py | python3 \
     && pip3 install wheel \
