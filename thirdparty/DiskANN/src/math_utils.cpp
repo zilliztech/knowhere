@@ -475,15 +475,19 @@ namespace kmeans {
     size_t                                init_id = int_dist(generator);
     size_t                                num_picked = 1;
 
-    picked.push_back(init_id);
-    std::memcpy(pivot_data, data + init_id * dim, dim * sizeof(float));
-
     auto dist = std::make_unique<float[]>(num_points);
 
     for (int64_t i = 0; i < (_s64) num_points; i++) {
       dist[i] =
           math_utils::calc_distance(data + i * dim, data + init_id * dim, dim);
+      if (std::isinf(dist[i])) {
+        selecting_pivots(data, num_points, dim, pivot_data, num_centers);
+        return;
+      }
     }
+
+    picked.push_back(init_id);
+    std::memcpy(pivot_data, data + init_id * dim, dim * sizeof(float));
 
     double dart_val;
     size_t tmp_pivot;
