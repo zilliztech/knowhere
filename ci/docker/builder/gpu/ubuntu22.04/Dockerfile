@@ -18,7 +18,8 @@ RUN apt update \
     && apt install -y python3.11 python3.11-dev python3.11-distutils \
     && apt install -y python3-setuptools \
     && cd /usr/bin \
-    && unlink gcc && ln -s gcc-12 gcc && ln -s g++-12 g++ \
+    && unlink gcc && ln -s gcc-12 gcc \
+    && unlink g++ && ln -s g++-12 g++ \
     && unlink python3 && ln -s python3.11 python3 \
     && curl -sS https://bootstrap.pypa.io/get-pip.py | python3 \
     && pip3 install wheel \
