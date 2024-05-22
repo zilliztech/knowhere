@@ -24,13 +24,13 @@ spec:
           topologyKey: "kubernetes.io/hostname"
   containers:
   - name: main
-    image: milvusdb/knowhere-cpu-build:amd64-ubuntu20.04-20240229-c96b383
+    image: milvusdb/knowhere-cpu-build:amd64-ubuntu22.04-20240521-0be910f7
     tty: true
     args: ["cat"]
     resources:
       requests:
-        memory: "30Gi"
-        cpu: "8"
+        memory: "8Gi"
+        cpu: "7"
       limits:
         memory: "30Gi"
         cpu: "8"
