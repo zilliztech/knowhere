@@ -28,8 +28,8 @@ pipeline {
                         sh 'ls -lah'
                         def date = sh(returnStdout: true, script: 'date +%Y%m%d').trim()
                         def gitShortCommit = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
-                        def image="milvusdb/knowhere-cpu-build:amd64-${os}-${date}-${gitShortCommit}"
-                        sh "docker build -t ${image} -f ci/docker/builder/cpu/${params.os}/Dockerfile ."
+                        def image="milvusdb/knowhere-cpu-build:arm64-${os}-${date}-${gitShortCommit}"
+                        sh "docker build -t ${image} -f ci/docker/builder/cpu/${params.os}/arm64/Dockerfile ."
                         withCredentials([usernamePassword(credentialsId: "${env.CI_DOCKER_CREDENTIAL_ID}", usernameVariable: 'CI_REGISTRY_USERNAME', passwordVariable: 'CI_REGISTRY_PASSWORD')]){
                             sh "docker login -u ${CI_REGISTRY_USERNAME} -p ${CI_REGISTRY_PASSWORD}"
                             sh "docker push ${image}"
