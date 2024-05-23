@@ -23,14 +23,14 @@ RUN wget https://github.com/Kitware/CMake/archive/refs/tags/v3.28.5.tar.gz \
     && cd CMake-3.28.5 \
     && mkdir build && cd build \
     && ../bootstrap \
-    && make -j && make install \
+    && make -j3 && make install \
     && cd .. && rm -rf CMake-3.28.5 && rm v3.28.5.tar.gz \
     && wget https://github.com/ccache/ccache/archive/refs/tags/v4.9.1.tar.gz \
     && tar xvfz v4.9.1.tar.gz \
     && cd ccache-4.9.1 \
     && mkdir build && cd build \
     && cmake -D CMAKE_BUILD_TYPE=Release .. \
-    && make -j && make install \
+    && make -j3 && make install \
     && cd .. && rm -rf ccache-4.9.1 && rm v4.9.1.tar.gz
 
 # install knowhere dependancies
