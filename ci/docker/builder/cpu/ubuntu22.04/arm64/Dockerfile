@@ -24,14 +24,14 @@ RUN wget https://github.com/Kitware/CMake/archive/refs/tags/v3.28.5.tar.gz \
     && mkdir build && cd build \
     && ../bootstrap \
     && make -j3 && make install \
-    && cd && rm -rf CMake-3.28.5 && rm v3.28.5.tar.gz \
+    && cd ../.. && rm -rf CMake-3.28.5 v3.28.5.tar.gz \
     && wget https://github.com/ccache/ccache/archive/refs/tags/v4.9.1.tar.gz \
     && tar xvfz v4.9.1.tar.gz \
     && cd ccache-4.9.1 \
     && mkdir build && cd build \
     && cmake -D CMAKE_BUILD_TYPE=Release .. \
     && make -j3 && make install \
-    && cd && rm -rf ccache-4.9.1 && rm v4.9.1.tar.gz
+    && cd ../.. && rm -rf ccache-4.9.1 v4.9.1.tar.gz
 
 # install knowhere dependancies
 RUN apt install -y libopenblas-dev libcurl4-openssl-dev libaio-dev libevent-dev lcov \
@@ -44,4 +44,4 @@ RUN git clone https://github.com/zilliztech/knowhere.git \
     && mkdir build && cd build \
     && conan install .. --build=missing -o with_ut=True -o with_diskann=True -s compiler.libcxx=libstdc++11 -s build_type=Release \
     && conan build .. \
-    && cd && rm -rf knowhere
+    && cd ../.. && rm -rf knowhere
