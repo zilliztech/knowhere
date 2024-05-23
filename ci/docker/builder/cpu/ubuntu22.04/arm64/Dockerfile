@@ -34,7 +34,8 @@ RUN wget https://github.com/Kitware/CMake/archive/refs/tags/v3.28.5.tar.gz \
     && cd ../.. && rm -rf ccache-4.9.1 v4.9.1.tar.gz
 
 # install knowhere dependancies
-RUN apt install -y libopenblas-dev libcurl4-openssl-dev libaio-dev libevent-dev lcov \
+RUN apt update \
+    && apt install -y libopenblas-dev libcurl4-openssl-dev libaio-dev libevent-dev lcov \
     && pip3 install conan==1.61.0 \
     && conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local
 
