@@ -3,7 +3,7 @@ def knowhere_wheel=''
 pipeline {
     agent {
         kubernetes {
-            inheritFrom 'default'
+            inheritFrom 'arm'
             yamlFile 'ci/pod/e2e-arm-cpu.yaml'
             defaultContainer 'main'
         }
