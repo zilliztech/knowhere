@@ -129,7 +129,7 @@ endif()
 
 if(WITH_LIGHT)
   knowhere_file_glob(GLOB_RECURSE KNOWHERE_SRCS src/common/*.cc
-                     src/index/hnsw/hnsw.cc src/io/*.cc)
+                     src/index/index_factory.cc src/index/hnsw/hnsw.cc src/io/*.cc)
   knowhere_file_glob(GLOB_RECURSE KNOWHERE_TRACER_SRCS src/common/tracer.cc
                      src/common/prometheus_client.cc)
   list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_TRACER_SRCS})
