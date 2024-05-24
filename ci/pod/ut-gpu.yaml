@@ -12,16 +12,6 @@ spec:
     - key: node-role.kubernetes.io/knowhere
       operator: Equal
       effect: NoSchedule
-  affinity:
-    podAntiAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchExpressions:
-            - key: app
-              operator: In
-              values:
-              - knowhere-e2e
-          topologyKey: "kubernetes.io/hostname"
   containers:
   - name: build
     image: milvusdb/knowhere-gpu-build:amd64-ubuntu22.04-20240523-81f70650
