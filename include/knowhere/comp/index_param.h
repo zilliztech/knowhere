@@ -136,7 +136,6 @@ constexpr const char* NN_DESCENT_NITER = "nn_descent_niter";
 constexpr const char* EFCONSTRUCTION = "efConstruction";
 constexpr const char* HNSW_M = "M";
 constexpr const char* EF = "ef";
-constexpr const char* SEED_EF = "seed_ef";
 constexpr const char* OVERVIEW_LEVELS = "overview_levels";
 
 // Sparse Params

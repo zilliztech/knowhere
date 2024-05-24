@@ -30,7 +30,6 @@ class HnswConfig : public BaseConfig {
     CFG_INT M;
     CFG_INT efConstruction;
     CFG_INT ef;
-    CFG_INT seed_ef;
     CFG_INT overview_levels;
     KNOHWERE_DECLARE_CONFIG(HnswConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(M).description("hnsw M").set_default(30).set_range(2, 2048).for_train();
@@ -44,11 +43,7 @@ class HnswConfig : public BaseConfig {
             .allow_empty_without_default()
             .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
             .for_search()
-            .for_range_search();
-        KNOWHERE_CONFIG_DECLARE_FIELD(seed_ef)
-            .description("hnsw seed_ef when using iterator")
-            .set_default(kIteratorSeedEf)
-            .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
+            .for_range_search()
             .for_iterator();
         KNOWHERE_CONFIG_DECLARE_FIELD(overview_levels)
             .description("hnsw overview levels for feder")
