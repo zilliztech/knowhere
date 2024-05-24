@@ -1,6 +1,11 @@
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV CMAKE_VERSION="v3.28.5"
+ENV CMAKE_TAR="cmake-3.28.5-linux-aarch64.tar.gz"
+ENV CCACHE_DIR="ccache-4.9.1"
+ENV CCACHE_SRC_TAR="v4.9.1.tar.gz"
+ENV BFLOAT16_WHL="bfloat16-1.4.0-cp311-cp311-linux_aarch64.whl"
 
 RUN apt update \
     && apt install -y ca-certificates apt-transport-https software-properties-common lsb-release \
@@ -17,21 +22,21 @@ RUN apt update \
     && apt remove --purge -y \
     && rm -rf /var/lib/apt/lists/*
 
-# install cmake and ccache
-RUN wget https://github.com/Kitware/CMake/archive/refs/tags/v3.28.5.tar.gz \
-    && tar xvfz v3.28.5.tar.gz \
-    && cd CMake-3.28.5 \
-    && mkdir build && cd build \
-    && ../bootstrap \
-    && make -j3 && make install \
-    && cd ../.. && rm -rf CMake-3.28.5 v3.28.5.tar.gz \
-    && wget https://github.com/ccache/ccache/archive/refs/tags/v4.9.1.tar.gz \
-    && tar xvfz v4.9.1.tar.gz \
-    && cd ccache-4.9.1 \
+# install cmake, ccache and bfloat16
+RUN cd /tmp \
+    wget https://github.com/Kitware/CMake/releases/download/${CMAKE_VERSION}/${CMAKE_TAR} \
+    && tar --strip-components=1 -xz -C /usr/local -f ${CMAKE_TAR} \
+    && rm -f ${CMAKE_TAR} \
+    && wget https://github.com/ccache/ccache/archive/refs/tags/${CCACHE_SRC_TAR} \
+    && tar xvfz ${CCACHE_SRC_TAR} \
+    && cd ${CCACHE_DIR} \
     && mkdir build && cd build \
     && cmake -D CMAKE_BUILD_TYPE=Release .. \
     && make -j3 && make install \
-    && cd ../.. && rm -rf ccache-4.9.1 v4.9.1.tar.gz
+    && cd ../.. && rm -rf ${CCACHE_DIR} ${CCACHE_SRC_TAR} \
+    && wget https://github.com/zilliztech/knowhere/releases/download/v2.3.1/${BFLOAT16_WHL} \
+    && pip3 install ${BFLOAT16_WHL} \
+    && rm -f ${BFLOAT16_WHL}
 
 # install knowhere dependancies
 RUN apt update \
