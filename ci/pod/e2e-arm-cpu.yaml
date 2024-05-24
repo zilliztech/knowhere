@@ -12,16 +12,6 @@ spec:
     - key: node-role.kubernetes.io/knowhere
       operator: Equal
       effect: NoSchedule
-  affinity:
-    podAntiAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchExpressions:
-            - key: app
-              operator: In
-              values:
-              - knowhere-e2e
-          topologyKey: "kubernetes.io/hostname"
   containers:
   - name: main
     image: milvusdb/knowhere-cpu-build:arm64-ubuntu22.04-20240523-81f70650
@@ -29,8 +19,8 @@ spec:
     args: ["cat"]
     resources:
       requests:
-        memory: "8Gi"
-        cpu: "7"
+        memory: "4Gi"
+        cpu: "1"
       limits:
         memory: "30Gi"
         cpu: "8"
