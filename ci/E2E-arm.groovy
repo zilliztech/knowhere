@@ -57,7 +57,7 @@ pipeline {
                             }
                         }
                     }
-                    checkout([$class: 'GitSCM', branches: [[name: '*/main']], extensions: [],
+                    checkout([$class: 'GitSCM', branches: [[name: '*/caiyd_downgrade_bfloat16_for_arm']], extensions: [],
                     userRemoteConfigs: [[credentialsId: 'milvus-ci', url: 'https://github.com/milvus-io/knowhere-test.git']]])
                     dir('tests'){
                       unarchive mapping: ["${knowhere_wheel}": "${knowhere_wheel}"]
