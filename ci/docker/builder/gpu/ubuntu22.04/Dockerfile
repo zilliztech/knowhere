@@ -1,10 +1,12 @@
 FROM nvidia/cuda:12.2.2-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV CMAKE_VERSION="v3.28"
+ENV CMAKE_VERSION="v3.28.5"
 ENV CMAKE_TAR="cmake-3.28.5-linux-x86_64.tar.gz"
 ENV CCACHE_VERSION="v4.9.1"
+ENV CCACHE_DIR="ccache-4.9.1-linux-x86_64"
 ENV CCACHE_TAR="ccache-4.9.1-linux-x86_64.tar.xz"
+ENV BFLOAT16_WHL="bfloat16-1.4.0-cp311-cp311-linux_x86_64.whl"
 
 RUN apt update \
     && apt install -y ca-certificates apt-transport-https software-properties-common lsb-release \
@@ -22,15 +24,18 @@ RUN apt update \
     && apt remove --purge -y \
     && rm -rf /var/lib/apt/lists/*
 
-# install cmake and ccache
+# install cmake, ccache and bfloat16
 RUN cd /tmp \
-    && wget --tries=3 --retry-connrefused "https://cmake.org/files/${CMAKE_VERSION}/${CMAKE_TAR}" \
+    && wget https://github.com/Kitware/CMake/releases/download/${CMAKE_VERSION}/${CMAKE_TAR} \
     && tar --strip-components=1 -xz -C /usr/local -f ${CMAKE_TAR} \
     && rm -f ${CMAKE_TAR} \
-    && wget --tries=3 --retry-connrefused "https://github.com/ccache/ccache/releases/download/${CCACHE_VERSION}/${CCACHE_TAR}" \
+    && wget https://github.com/ccache/ccache/releases/download/${CCACHE_VERSION}/${CCACHE_TAR} \
     && tar -xf ${CCACHE_TAR} \
-    && cp ccache-4.9.1-linux-x86_64/ccache /usr/local/bin \
-    && rm -f ${CCACHE_TAR}
+    && cp ${CCACHE_DIR}/ccache /usr/local/bin \
+    && rm -f ${CCACHE_TAR} \
+    && wget https://github.com/zilliztech/knowhere/releases/download/v2.3.1/${BFLOAT16_WHL} \
+    && pip3 install ${BFLOAT16_WHL} \
+    && rm -f ${BFLOAT16_WHL}
 
 # install knowhere dependancies
 RUN apt update \
