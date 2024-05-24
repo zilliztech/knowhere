@@ -24,7 +24,7 @@ RUN apt update \
 
 # install cmake, ccache and bfloat16
 RUN cd /tmp \
-    wget https://github.com/Kitware/CMake/releases/download/${CMAKE_VERSION}/${CMAKE_TAR} \
+    && wget https://github.com/Kitware/CMake/releases/download/${CMAKE_VERSION}/${CMAKE_TAR} \
     && tar --strip-components=1 -xz -C /usr/local -f ${CMAKE_TAR} \
     && rm -f ${CMAKE_TAR} \
     && wget https://github.com/ccache/ccache/archive/refs/tags/${CCACHE_SRC_TAR} \
