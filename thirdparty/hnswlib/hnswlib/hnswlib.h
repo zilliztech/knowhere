@@ -181,13 +181,13 @@ struct SearchParam {
 };
 
 struct IteratorWorkspace {
-    IteratorWorkspace(std::unique_ptr<int8_t[]> query_data_sq, const size_t num_elements, const size_t seed_ef,
+    IteratorWorkspace(std::unique_ptr<int8_t[]> query_data_sq, const size_t num_elements, const size_t ef,
                       const bool for_tuning, std::unique_ptr<int8_t[]> raw_query_data,
                       const knowhere::BitsetView& bitset, float accumulative_alpha)
         : query_data(query_data_sq ? (const void*)(query_data_sq.get()) : (const void*)(raw_query_data.get())),
           query_data_sq(std::move(query_data_sq)),
           visited(num_elements),
-          seed_ef(seed_ef),
+          ef(ef),
           param(std::make_unique<SearchParam>()),
           raw_query_data(std::move(raw_query_data)),
           bitset(bitset),
@@ -208,7 +208,7 @@ struct IteratorWorkspace {
     // thus creating a new visited list for every new iteration request.
     std::vector<bool> visited;
     std::vector<knowhere::DistId> dists;
-    const size_t seed_ef;
+    const size_t ef;
     std::unique_ptr<SearchParam> param;
     // though named raw_query_vector, it is normalized for cosine metric. used
     // only for refinement when quantization is enabled.

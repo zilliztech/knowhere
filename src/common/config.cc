@@ -25,7 +25,6 @@ static const std::unordered_set<std::string> ext_legal_json_keys = {"metric_type
                                                                     "M",               // HNSW param
                                                                     "efConstruction",  // HNSW param
                                                                     "ef",              // HNSW param
-                                                                    "seed_ef",         // HNSW iterator param
                                                                     "level",
                                                                     "index_type",
                                                                     "index_mode",

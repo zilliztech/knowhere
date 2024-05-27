@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   labels:
-    app: knowhere-e2e
+    beta.kubernetes.io/arch: arm64
   namespace: knowhere-ci
 spec:
   enableServiceLinks: false
@@ -12,19 +12,9 @@ spec:
     - key: node-role.kubernetes.io/knowhere
       operator: Equal
       effect: NoSchedule
-  # affinity:
-  #   podAntiAffinity:
-  #     requiredDuringSchedulingIgnoredDuringExecution:
-  #       - labelSelector:
-  #           matchExpressions:
-  #           - key: app
-  #             operator: In
-  #             values:
-  #             - knowhere-e2e
-  #         topologyKey: "kubernetes.io/hostname"
   containers:
   - name: main
-    image: milvusdb/knowhere-cpu-build:amd64-ubuntu22.04-20240524-39356db0
+    image: milvusdb/knowhere-cpu-build:arm64-ubuntu22.04-20240524-39356db0
     tty: true
     args: ["cat"]
     resources:

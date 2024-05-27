@@ -235,14 +235,14 @@ class HnswIndexNode : public IndexNode {
      public:
         iterator(const hnswlib::HierarchicalNSW<DataType, DistType, quant_type>* index, const char* query,
                  const bool transform, const BitsetView& bitset, const bool for_tuning = false,
-                 const size_t seed_ef = kIteratorSeedEf, const float refine_ratio = 0.5f)
+                 const size_t ef = kIteratorSeedEf, const float refine_ratio = 0.5f)
             : IndexIterator(transform, (hnswlib::HierarchicalNSW<DataType, DistType, quant_type>::sq_enabled &&
                                         hnswlib::HierarchicalNSW<DataType, DistType, quant_type>::has_raw_data)
                                            ? refine_ratio
                                            : 0.0f),
               index_(index),
               transform_(transform),
-              workspace_(index_->getIteratorWorkspace(query, seed_ef, for_tuning, bitset)) {
+              workspace_(index_->getIteratorWorkspace(query, ef, for_tuning, bitset)) {
         }
 
      protected:
@@ -284,6 +284,7 @@ class HnswIndexNode : public IndexNode {
         auto xq = dataset.GetTensor();
 
         auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
+        auto ef = hnsw_cfg.ef.value_or(kIteratorSeedEf);
 
         bool transform =
             (index_->metric_type_ == hnswlib::Metric::INNER_PRODUCT || index_->metric_type_ == hnswlib::Metric::COSINE);
@@ -293,13 +294,13 @@ class HnswIndexNode : public IndexNode {
         for (int i = 0; i < nq; ++i) {
             futs.emplace_back(search_pool_->push([&, i]() {
                 auto single_query = (const char*)xq + i * index_->data_size_;
-                auto it = new iterator(this->index_, single_query, transform, bitset, hnsw_cfg.for_tuning.value(),
-                                       hnsw_cfg.seed_ef.value(), hnsw_cfg.iterator_refine_ratio.value());
+                auto it = new iterator(this->index_, single_query, transform, bitset, hnsw_cfg.for_tuning.value(), ef,
+                                       hnsw_cfg.iterator_refine_ratio.value());
                 it->initialize();
                 vec[i].reset(it);
             }));
         }
-        // wait for initial search(in top layers and search for seed_ef in base layer) to finish
+        // wait for initial search(in top layers and search for ef in base layer) to finish
         WaitAllSuccess(futs);
 
         return vec;
@@ -590,15 +591,16 @@ class HnswIndexNode : public IndexNode {
     std::shared_ptr<ThreadPool> search_pool_;
 };
 
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW, HnswIndexNode, bin1);
 #ifdef KNOWHERE_WITH_CARDINAL
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW_DEPRECATED, HnswIndexNode, fp32);
 KNOWHERE_MOCK_REGISTER_GLOBAL(HNSW_DEPRECATED, HnswIndexNode, fp16);
 KNOWHERE_MOCK_REGISTER_GLOBAL(HNSW_DEPRECATED, HnswIndexNode, bf16);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW_DEPRECATED, HnswIndexNode, bin1);
 #else
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW, HnswIndexNode, fp32);
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW, HnswIndexNode, fp16);
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW, HnswIndexNode, bf16);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW, HnswIndexNode, bin1);
 #endif
 
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW_SQ8, HnswIndexNode, fp32, QuantType::SQ8);

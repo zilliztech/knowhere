@@ -64,6 +64,8 @@ export VERBOSE=1
 conan install .. --build=missing -o with_ut=True -s compiler.libcxx=libc++ -s build_type=Release
 #DEBUG CPU
 conan install .. --build=missing -o with_ut=True -s compiler.libcxx=libc++ -s build_type=Debug
+#build with conan
+conan build ..
 ```
 
 #### Running Unit Tests

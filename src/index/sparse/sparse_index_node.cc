@@ -125,7 +125,6 @@ class SparseInvertedIndexNode : public IndexNode {
                     index_->GetAllDistances(queries[i], drop_ratio_search, bitset), true));
             }));
         }
-        // wait for initial search(in top layers and search for seed_ef in base layer) to finish
         WaitAllSuccess(futs);
 
         return vec;

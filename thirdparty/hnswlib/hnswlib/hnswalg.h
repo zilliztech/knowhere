@@ -1451,7 +1451,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     };
 
     std::unique_ptr<IteratorWorkspace>
-    getIteratorWorkspace(const void* query_data, const size_t seed_ef, const bool for_tuning,
+    getIteratorWorkspace(const void* query_data, const size_t ef, const bool for_tuning,
                          const knowhere::BitsetView& bitset) const {
         auto accumulative_alpha = (bitset.count() >= (cur_element_count * kHnswSearchKnnBFFilterThreshold))
                                       ? std::numeric_limits<float>::max()
@@ -1471,7 +1471,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             encodeSQuant((data_t*)query_data_copy.get(), query_data_sq.get());
         }
 
-        return std::make_unique<IteratorWorkspace>(std::move(query_data_sq), max_elements_, seed_ef, for_tuning,
+        return std::make_unique<IteratorWorkspace>(std::move(query_data_sq), max_elements_, ef, for_tuning,
                                                    std::move(query_data_copy), bitset, accumulative_alpha);
     }
 
@@ -1489,11 +1489,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             tableint currObj = searchTopLayers(query_data, workspace->param.get()).first;
             NeighborSetDoublePopList retset;
             if (has_deletions) {
-                retset = searchBaseLayerST<true, true>(currObj, query_data, workspace->seed_ef, workspace->visited,
+                retset = searchBaseLayerST<true, true>(currObj, query_data, workspace->ef, workspace->visited,
                                                        workspace->bitset, feder_result, &workspace->to_visit,
                                                        workspace->accumulative_alpha);
             } else {
-                retset = searchBaseLayerST<false, true>(currObj, query_data, workspace->seed_ef, workspace->visited,
+                retset = searchBaseLayerST<false, true>(currObj, query_data, workspace->ef, workspace->visited,
                                                         workspace->bitset, feder_result, &workspace->to_visit,
                                                         workspace->accumulative_alpha);
             }

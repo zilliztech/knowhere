@@ -14,6 +14,7 @@ on:
       - "thirdparty/**"
       - "benchmark/**"
       - "cmake/**"
+      - "!cmake/libs/libcardinal.cmake"
       - ".github/workflows/ut.yaml"
       - "CMakeLists.txt"
       - "!**.md"
@@ -21,8 +22,8 @@ on:
 
 jobs:
   ut:
-    name: ut on ubuntu-20.04
-    runs-on: ubuntu-20.04
+    name: ut on ubuntu-22.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 90
     strategy:
       fail-fast: true
@@ -41,9 +42,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          # this run-id is got from a successful "Upload Conan Artifact" workflow run on 2024/03/18,
-          # it will be valid till 2024/06/17
-          run-id: 8322823477
+          # this run-id is got from a successful "Upload Conan Artifact" workflow run on 2024/05/24,
+          # it will be valid till 2024/08/22
+          run-id: 9217686789
           name: conan-asan
           path: downloaded
         continue-on-error: true
@@ -85,7 +86,7 @@ jobs:
   codecov:
     name: Upload Code Coverage
     needs: [ut]
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
       - name: Download code coverage results
@@ -102,7 +103,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./lcov_output.info
-          name: ubuntu-20.04-unittests
+          name: ubuntu-22.04-unittests
           fail_ci_if_error: true
       - name: Retry Upload coverage to Codecov
         if: "${{ failure() }} && github.repository == 'zilliztech/knowhere'"
@@ -111,12 +112,12 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./lcov_output.info
-          name: ubuntu-20.04-unittests
+          name: ubuntu-22.04-unittests
           fail_ci_if_error: true
 
   swig-build:
     name: python3 wheel
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -138,9 +139,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          # this run-id is got from a successful "Upload Conan Artifact" workflow run on 2024/03/18,
-          # it will be valid till 2024/06/17
-          run-id: 8322823477
+          # this run-id is got from a successful "Upload Conan Artifact" workflow run on 2024/05/24,
+          # it will be valid till 2024/08/22
+          run-id: 9217686789
           name: conan-wheel
           path: downloaded
         continue-on-error: true
