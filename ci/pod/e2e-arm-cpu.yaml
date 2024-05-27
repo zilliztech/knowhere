@@ -10,7 +10,7 @@ spec:
     app: knowhere
   tolerations:
     - key: node-role.kubernetes.io/knowhere
-      operator: Equal
+      operator: Exists
       effect: NoSchedule
   containers:
   - name: main
