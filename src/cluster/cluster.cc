@@ -23,6 +23,7 @@
 
 namespace knowhere {
 
+
 inline Status
 LoadConfig(Config* cfg, const Json& json, knowhere::PARAM_TYPE param_type, const std::string& method,
            std::string* const msg = nullptr) {
