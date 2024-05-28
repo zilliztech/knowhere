@@ -10,12 +10,13 @@ ENV BFLOAT16_WHL="bfloat16-1.4.0-cp311-cp311-linux_x86_64.whl"
 
 RUN apt update \
     && apt install -y ca-certificates apt-transport-https software-properties-common lsb-release \
-    && apt install -y --no-install-recommends wget curl git make gfortran swig \
+    && apt install -y --no-install-recommends wget curl git make gfortran gcc g++ swig \
     && apt install -y gcc-12 g++-12 \
     && apt install -y python3.11 python3.11-dev python3.11-distutils \
     && apt install -y python3-setuptools \
     && cd /usr/bin \
-    && unlink gcc && ln -s gcc-12 gcc && ln -s g++-12 g++ \
+    && unlink gcc && ln -s gcc-12 gcc \
+    && unlink g++ && ln -s g++-12 g++ \
     && unlink python3 && ln -s python3.11 python3 \
     && curl -sS https://bootstrap.pypa.io/get-pip.py | python3 \
     && export PATH=$PATH:$HOME/.local/bin \
