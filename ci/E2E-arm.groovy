@@ -45,6 +45,14 @@ pipeline {
             }
         }
         stage("Test"){
+
+            agent {
+                kubernetes {
+                    inheritFrom 'arm'
+                    yamlFile 'ci/pod/e2e-arm-cpu-on-test-stage.yaml'
+                    defaultContainer 'main'
+                }
+            }
             steps {
                 script{
                     if ("${knowhere_wheel}"==''){
