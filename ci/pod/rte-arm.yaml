@@ -9,7 +9,7 @@ spec:
     privileged: true
   tolerations:
   - key: node-role.kubernetes.io/knowhere
-    operator: Equal
+    operator: "Exists"
     effect: NoSchedule
   - key: "node-role.kubernetes.io/arm"
     operator: "Exists"
