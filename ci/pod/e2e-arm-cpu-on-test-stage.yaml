@@ -7,7 +7,7 @@ metadata:
 spec:
   enableServiceLinks: false
   nodeSelector:
-    app: knowhere
+    app: knowhere-e2e
   tolerations:
     - key: node-role.kubernetes.io/knowhere
       operator: Exists
@@ -19,8 +19,8 @@ spec:
     args: ["cat"]
     resources:
       requests:
-        memory: "4Gi"
-        cpu: "2"
+        memory: "16Gi"
+        cpu: "4"
       limits:
         memory: "30Gi"
         cpu: "8"
