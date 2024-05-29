@@ -19,8 +19,8 @@ spec:
     args: ["cat"]
     resources:
       requests:
-        memory: "16Gi"
-        cpu: "4"
+        memory: "2Gi"
+        cpu: "1"
       limits:
         memory: "30Gi"
         cpu: "8"
