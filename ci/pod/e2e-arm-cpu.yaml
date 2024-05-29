@@ -7,7 +7,7 @@ metadata:
 spec:
   enableServiceLinks: false
   nodeSelector:
-    app: knowhere
+    app: knowhere-e2e
   tolerations:
     - key: node-role.kubernetes.io/knowhere
       operator: Exists
