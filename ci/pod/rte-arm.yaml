@@ -15,7 +15,7 @@ spec:
     operator: "Exists"
     effect: "NoSchedule"
   nodeSelector:
-    app: knowhere-e2e
+    "kubernetes.io/arch": "arm64"
   enableServiceLinks: false
   containers:
   - name: main
