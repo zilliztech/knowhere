@@ -92,7 +92,7 @@ class KnowhereConan(ConanFile):
         self.requires("zlib/1.2.12")
         self.requires("double-conversion/3.2.1")
         self.requires("xz_utils/5.2.5")
-        self.requires("fmt/9.1.0")
+        # self.requires("fmt/9.1.0")
         self.requires("folly/2023.10.30.08@milvus/dev")
         self.requires("libcurl/8.2.1")
         self.requires("opentelemetry-cpp/1.8.1.1@milvus/dev")
