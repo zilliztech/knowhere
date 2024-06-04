@@ -97,7 +97,7 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
     auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::COSINE, knowhere::metric::IP);
     auto version = GenTestVersionList();
 
-    auto base_gen = [&]() {
+    auto base_gen = [=]() {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = metric;
@@ -105,7 +105,7 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         return json;
     };
 
-    auto hnsw_gen = [&base_gen]() {
+    auto hnsw_gen = [base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::HNSW_M] = 128;
         json[knowhere::indexparam::EFCONSTRUCTION] = 200;
@@ -113,14 +113,14 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         return json;
     };
 
-    auto ivfflat_gen = [&base_gen]() {
+    auto ivfflat_gen = [base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::NPROBE] = 16;
         json[knowhere::indexparam::NLIST] = 24;
         return json;
     };
 
-    auto ivfflatcc_gen = [&base_gen]() {
+    auto ivfflatcc_gen = [base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::NPROBE] = 16;
         json[knowhere::indexparam::NLIST] = 24;
@@ -252,7 +252,7 @@ TEST_CASE("Test Iterator IVFFlatCC With Newly Insert Vectors", "[float metrics] 
     auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::COSINE, knowhere::metric::IP);
     auto version = GenTestVersionList();
 
-    auto base_gen = [&]() {
+    auto base_gen = [=]() {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = metric;
@@ -260,7 +260,7 @@ TEST_CASE("Test Iterator IVFFlatCC With Newly Insert Vectors", "[float metrics] 
         return json;
     };
 
-    auto ivfflatcc_gen = [&base_gen]() {
+    auto ivfflatcc_gen = [base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::NPROBE] = 16;
         json[knowhere::indexparam::NLIST] = 24;
@@ -332,7 +332,7 @@ TEST_CASE("Test Iterator Mem Index With Binary Metrics", "[binary metrics]") {
     auto metric = GENERATE(as<std::string>{}, knowhere::metric::HAMMING, knowhere::metric::JACCARD);
     auto version = GenTestVersionList();
 
-    auto base_gen = [&]() {
+    auto base_gen = [=]() {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = metric;
@@ -340,7 +340,7 @@ TEST_CASE("Test Iterator Mem Index With Binary Metrics", "[binary metrics]") {
         return json;
     };
 
-    auto hnsw_gen = [&base_gen]() {
+    auto hnsw_gen = [base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::HNSW_M] = 128;
         json[knowhere::indexparam::EFCONSTRUCTION] = 200;
