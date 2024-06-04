@@ -213,7 +213,7 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
     }
 
     bool
-    GetIsSparse() {
+    GetIsSparse() const {
         std::unique_lock lock(mutex_);
         return this->is_sparse;
     }
