@@ -231,7 +231,7 @@ void exhaustive_inner_product_seq_impl(
             resi.begin(i);
             for (size_t j = 0; j < ny; j++) {
                 float ip = res_arr[i*ny + j];
-                resi.add_result(ip , j);
+                resi.add_result(ip, j);
             }
             resi.end();
         }

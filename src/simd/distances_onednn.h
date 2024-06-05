@@ -148,13 +148,6 @@ struct inner_product_desc {
             return;
         }
 
-        this->xrow = xrow;
-        this->xcol = xcol;
-        this->yrow = yrow;
-        this->ycol = ycol;
-        this->in_f32_1 = in_f32_1;
-        this->in_f32_2 = in_f32_2;
-
         f32_md1 = dnnl::memory::desc({xrow, xcol}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::ab);
         f32_md2 = dnnl::memory::desc({yrow, ycol}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::ab);
         f32_dst_md2 = dnnl::memory::desc({xrow, yrow}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::ab);
@@ -176,11 +169,19 @@ struct inner_product_desc {
         bf16_mem1 = dnnl::memory(inner_product_pd.src_desc(), cpu_engine);
 
         // update state for new base data
-        if (this->in_f32_2 != in_f32_2)
+        if (this->in_f32_2 != in_f32_2) {
             BaseData::getState().store(BASE_DATA_STATE::MODIFIED);
+        }
+
+        this->xrow = xrow;
+        this->xcol = xcol;
+        this->yrow = yrow;
+        this->ycol = ycol;
+        this->in_f32_1 = in_f32_1;
+        this->in_f32_2 = in_f32_2;
     }
 
-    void execut(float** out_f32) {
+    void execute(float** out_f32) {
         dnnl::reorder(f32_mem1, bf16_mem1).execute(engine_stream, f32_mem1, bf16_mem1);
         BASE_DATA_STATE expected = BASE_DATA_STATE::MODIFIED;
 
