@@ -31,7 +31,8 @@ IndexTypeAndDataTypeCheck(const std::string& index_name, VecType data_type) {
         case VecType::VECTOR_FLOAT16:
             return index_factory.HasIndex<fp16>(index_name);
         case VecType::VECTOR_SPARSE_FLOAT:
-            if (index_name != IndexEnum::INDEX_SPARSE_INVERTED_INDEX && index_name != IndexEnum::INDEX_SPARSE_WAND) {
+            if (index_name != IndexEnum::INDEX_SPARSE_INVERTED_INDEX && index_name != IndexEnum::INDEX_SPARSE_WAND &&
+                index_name != IndexEnum::INDEX_HNSW) {
                 return false;
             } else {
                 return index_factory.HasIndex<fp32>(index_name);
