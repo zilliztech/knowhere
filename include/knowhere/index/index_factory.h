@@ -28,6 +28,9 @@ class IndexFactory {
     template <typename DataType>
     const IndexFactory&
     Register(const std::string& name, std::function<Index<IndexNode>(const int32_t&, const Object&)> func);
+    template <typename DataType>
+    bool
+    HasIndex(const std::string& name);
     static IndexFactory&
     Instance();
 

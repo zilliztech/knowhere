@@ -155,4 +155,12 @@ constexpr const char* SUBSTRUCTURE = "SUBSTRUCTURE";
 constexpr const char* SUPERSTRUCTURE = "SUPERSTRUCTURE";
 }  // namespace metric
 
+enum VecType {
+    VECTOR_BINARY = 100,
+    VECTOR_FLOAT = 101,
+    VECTOR_FLOAT16 = 102,
+    VECTOR_BFLOAT16 = 103,
+    VECTOR_SPARSE_FLOAT = 104,
+};  // keep the same value as milvus proto define
+
 }  // namespace knowhere

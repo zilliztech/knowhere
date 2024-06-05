@@ -72,6 +72,14 @@ IndexFactory::Register(const std::string& name, std::function<Index<IndexNode>(c
     return *this;
 }
 
+template <typename DataType>
+bool
+IndexFactory::HasIndex(const std::string& name) {
+    auto& func_mapping_ = MapInstance();
+    auto key = GetKey<DataType>(name);
+    return (func_mapping_.find(key) != func_mapping_.end());
+}
+
 IndexFactory&
 IndexFactory::Instance() {
     static IndexFactory factory;
@@ -108,3 +116,11 @@ knowhere::IndexFactory::Register<knowhere::fp16>(
 template const knowhere::IndexFactory&
 knowhere::IndexFactory::Register<knowhere::bf16>(
     const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>);
+template bool
+knowhere::IndexFactory::HasIndex<knowhere::fp32>(const std::string&);
+template bool
+knowhere::IndexFactory::HasIndex<knowhere::bin1>(const std::string&);
+template bool
+knowhere::IndexFactory::HasIndex<knowhere::fp16>(const std::string&);
+template bool
+knowhere::IndexFactory::HasIndex<knowhere::bf16>(const std::string&);
