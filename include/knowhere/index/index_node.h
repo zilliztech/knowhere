@@ -104,13 +104,13 @@ class IndexNode : public Object {
         std::vector<std::vector<float>> result_dist_array(nq);
         const bool similarity_metric = IsMetricType(base_cfg.metric_type.value(), metric::IP) ||
                                        IsMetricType(base_cfg.metric_type.value(), metric::COSINE);
-
+        const bool has_range_filter = range_filter != defaultRangeFilter;
         auto task = [&](size_t idx) {
             auto it = its[idx];
             while (it->HasNext()) {
                 auto [id, dist] = it->Next();
                 // too close
-                if (similarity_metric ? dist > range_filter : dist < range_filter) {
+                if (has_range_filter && (similarity_metric ? dist > range_filter : dist < range_filter)) {
                     continue;
                 }
                 // too far

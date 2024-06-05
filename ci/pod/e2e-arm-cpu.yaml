@@ -7,20 +7,20 @@ metadata:
 spec:
   enableServiceLinks: false
   nodeSelector:
-    app: knowhere
+    app: knowhere-e2e
   tolerations:
     - key: node-role.kubernetes.io/knowhere
-      operator: Equal
+      operator: Exists
       effect: NoSchedule
   containers:
   - name: main
-    image: milvusdb/knowhere-cpu-build:arm64-ubuntu22.04-20240524-39356db0
+    image: milvusdb/knowhere-cpu-build:arm64-ubuntu22.04-20240528-ccc71670
     tty: true
     args: ["cat"]
     resources:
       requests:
-        memory: "16Gi"
-        cpu: "4"
+        memory: "2Gi"
+        cpu: "1"
       limits:
         memory: "30Gi"
         cpu: "8"
