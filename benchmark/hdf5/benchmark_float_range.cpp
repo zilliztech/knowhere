@@ -105,9 +105,6 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
         auto conf = cfg;
         auto radius = conf.at(knowhere::meta::RADIUS).get<float>();
 
-        knowhere::BinarySet binset;
-        index_.value().Deserialize(binset, conf);
-
         printf("\n[%0.3f s] %s | %s, radius=%.3f\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
                radius);
         printf("================================================================================\n");
@@ -307,6 +304,11 @@ TEST_F(Benchmark_float_range, TEST_DISKANN) {
     printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
     knowhere::DataSetPtr ds_ptr = nullptr;
     index_.value().Build(*ds_ptr, conf);
+
+    knowhere::BinarySet binset;
+    index_.value().Serialize(binset);
+    index_.value().Deserialize(binset, conf);
+
     test_diskann(conf);
 }
 #endif
