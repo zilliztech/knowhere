@@ -101,9 +101,6 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
     test_diskann(const knowhere::Json& cfg) {
         auto conf = cfg;
 
-        knowhere::BinarySet binset;
-        index_.value().Deserialize(binset, conf);
-
         printf("\n[%0.3f s] %s | %s \n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
         printf("================================================================================\n");
         for (auto search_list_size : SEARCH_LISTs_) {
@@ -265,6 +262,11 @@ TEST_F(Benchmark_float, TEST_DISKANN) {
     printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
     knowhere::DataSetPtr ds_ptr = nullptr;
     index_.value().Build(*ds_ptr, conf);
+
+    knowhere::BinarySet binset;
+    index_.value().Serialize(binset);
+    index_.value().Deserialize(binset, conf);
+
     test_diskann(conf);
 }
 #endif
