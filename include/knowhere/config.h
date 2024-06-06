@@ -722,6 +722,7 @@ class BaseConfig : public Config {
             .description("materialized view search info")
             .allow_empty_without_default()
             .for_search()
+            .for_iterator()
             .for_range_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(opt_fields_path)
             .description("materialized view optional fields path")
