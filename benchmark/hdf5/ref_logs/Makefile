@@ -40,7 +40,7 @@ test_float_diskann:
 
 ###################################################################################################
 # Test Knowhere float index bitset
-test_float_bitset: test_float_bitset_ivf_flat test_float_bitset_ivf_sq8 test_float_bitset_ivf_pq test_float_bitset_hnsw
+test_float_bitset: test_float_bitset_ivf_flat test_float_bitset_ivf_sq8 test_float_bitset_ivf_pq test_float_bitset_hnsw test_float_bitset_diskann
 test_float_bitset_gpu: test_float_bitset_ivf_flat test_float_bitset_ivf_pq
 
 test_float_bitset_ivf_flat:
@@ -51,10 +51,12 @@ test_float_bitset_ivf_pq:
 	./benchmark_float_bitset --gtest_filter="Benchmark_float_bitset.TEST_IVF_PQ" | tee test_float_bitset_ivf_pq.log
 test_float_bitset_hnsw:
 	./benchmark_float_bitset --gtest_filter="Benchmark_float_bitset.TEST_HNSW" | tee test_float_bitset_hnsw.log
+test_float_bitset_diskann:
+	./benchmark_float_bitset --gtest_filter="Benchmark_float_bitset.TEST_DISKANN" | tee test_float_bitset_diskann.log
 
 ###################################################################################################
 # Test Knowhere float index range
-test_float_range: test_float_range_idmap test_float_range_ivf_flat test_float_range_ivf_sq8 test_float_range_ivf_pq test_float_range_hnsw
+test_float_range: test_float_range_idmap test_float_range_ivf_flat test_float_range_ivf_sq8 test_float_range_ivf_pq test_float_range_hnsw test_float_range_diskann
 
 test_float_range_idmap:
 	./benchmark_float_range --gtest_filter="Benchmark_float_range.TEST_IDMAP" | tee test_float_range_idmap.log
@@ -66,10 +68,12 @@ test_float_range_ivf_pq:
 	./benchmark_float_range --gtest_filter="Benchmark_float_range.TEST_IVF_PQ" | tee test_float_range_ivf_pq.log
 test_float_range_hnsw:
 	./benchmark_float_range --gtest_filter="Benchmark_float_range.TEST_HNSW" | tee test_float_range_hnsw.log
+test_float_range_diskann:
+	./benchmark_float_range --gtest_filter="Benchmark_float_range.TEST_DISKANN" | tee test_float_range_diskann.log
 
 ###################################################################################################
 # Test Knowhere float index range bitset
-test_float_range_bitset: test_float_range_bitset_ivf_flat test_float_range_bitset_ivf_sq8 test_float_range_bitset_ivf_pq test_float_range_bitset_hnsw
+test_float_range_bitset: test_float_range_bitset_ivf_flat test_float_range_bitset_ivf_sq8 test_float_range_bitset_ivf_pq test_float_range_bitset_hnsw test_float_range_bitset_diskann
 
 test_float_range_bitset_ivf_flat:
 	./benchmark_float_range_bitset --gtest_filter="Benchmark_float_range_bitset.TEST_IVF_FLAT" | tee test_float_range_bitset_ivf_flat.log
@@ -79,6 +83,8 @@ test_float_range_bitset_ivf_pq:
 	./benchmark_float_range_bitset --gtest_filter="Benchmark_float_range_bitset.TEST_IVF_PQ" | tee test_float_range_bitset_ivf_pq.log
 test_float_range_bitset_hnsw:
 	./benchmark_float_range_bitset --gtest_filter="Benchmark_float_range_bitset.TEST_HNSW" | tee test_float_range_bitset_hnsw.log
+test_float_range_bitset_diskann:
+	./benchmark_float_range_bitset --gtest_filter="Benchmark_float_range_bitset.TEST_DISKANN" | tee test_float_range_bitset_diskann.log
 
 ###################################################################################################
 # Test Knowhere float index range multi

@@ -15,6 +15,7 @@
 
 #include "benchmark_knowhere.h"
 #include "knowhere/comp/knowhere_config.h"
+#include "knowhere/comp/local_file_manager.h"
 #include "knowhere/dataset.h"
 
 class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test {
@@ -98,6 +99,37 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
         printf("[%.3f s] Test '%s/%s' done\n\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
     }
 
+#ifdef KNOWHERE_WITH_DISKANN
+    void
+    test_diskann(const knowhere::Json& cfg) {
+        auto conf = cfg;
+        auto radius = conf.at(knowhere::meta::RADIUS).get<float>();
+
+        knowhere::BinarySet binset;
+        index_.value().Deserialize(binset, conf);
+
+        printf("\n[%0.3f s] %s | %s, radius=%.3f\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
+               radius);
+        printf("================================================================================\n");
+        for (auto search_list_size : SEARCH_LISTs_) {
+            conf["search_list_size"] = search_list_size;
+            for (auto nq : NQs_) {
+                auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
+                CALC_TIME_SPAN(auto result = index_.value().RangeSearch(*ds_ptr, conf, nullptr));
+                auto ids = result.value()->GetIds();
+                auto lims = result.value()->GetLims();
+                float recall = CalcRecall(ids, lims, nq);
+                float accuracy = CalcAccuracy(ids, lims, nq);
+                printf("  search_list_size = %4d, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f\n", search_list_size,
+                       nq, t_diff, recall, accuracy);
+                std::fflush(stdout);
+            }
+        }
+        printf("================================================================================\n");
+        printf("[%.3f s] Test '%s/%s' done\n\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
+    }
+#endif
+
  protected:
     void
     SetUp() override {
@@ -138,6 +170,9 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
     const std::vector<int32_t> HNSW_Ms_ = {16};
     const std::vector<int32_t> EFCONs_ = {200};
     const std::vector<int32_t> EFs_ = {16, 32, 64, 128, 256, 512};
+
+    // DISKANN index params
+    const std::vector<int32_t> SEARCH_LISTs_ = {100, 200, 400};
 };
 
 // This testcase can be used to generate HDF5 file
@@ -243,3 +278,35 @@ TEST_F(Benchmark_float_range, TEST_HNSW) {
         }
     }
 }
+
+#ifdef KNOWHERE_WITH_DISKANN
+TEST_F(Benchmark_float_range, TEST_DISKANN) {
+    index_type_ = knowhere::IndexEnum::INDEX_DISKANN;
+
+    knowhere::Json conf = cfg_;
+
+    conf["index_prefix"] = (metric_type_ == knowhere::metric::L2 ? kL2IndexPrefix : kIPIndexPrefix);
+    conf["data_path"] = kRawDataPath;
+    conf["max_degree"] = 56;
+    conf["pq_code_budget_gb"] = sizeof(float) * dim_ * nb_ * 0.125 / (1024 * 1024 * 1024);
+    conf["build_dram_budget_gb"] = 32.0;
+    conf["search_cache_budget_gb"] = 0;
+    conf["beamwidth"] = 8;
+
+    fs::create_directory(kDir);
+    fs::create_directory(kL2IndexDir);
+    fs::create_directory(kIPIndexDir);
+
+    WriteRawDataToDisk(kRawDataPath, (const float*)xb_, (const uint32_t)nb_, (const uint32_t)dim_);
+
+    std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
+    auto diskann_index_pack = knowhere::Pack(file_manager);
+
+    index_ = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
+        index_type_, knowhere::Version::GetCurrentVersion().VersionNumber(), diskann_index_pack);
+    printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
+    knowhere::DataSetPtr ds_ptr = nullptr;
+    index_.value().Build(*ds_ptr, conf);
+    test_diskann(conf);
+}
+#endif
