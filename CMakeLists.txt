@@ -96,7 +96,9 @@ include_directories(${folly_INCLUDE_DIRS})
 find_package(nlohmann_json REQUIRED)
 find_package(glog REQUIRED)
 find_package(prometheus-cpp REQUIRED)
-find_package(fmt REQUIRED)
+if(NOT WITH_RAFT)
+    find_package(fmt REQUIRED)
+endif()
 find_package(opentelemetry-cpp REQUIRED)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -129,7 +131,7 @@ endif()
 
 if(WITH_LIGHT)
   knowhere_file_glob(GLOB_RECURSE KNOWHERE_SRCS src/common/*.cc
-                     src/index/hnsw/hnsw.cc src/io/*.cc)
+                     src/index/hnsw/hnsw.cc src/io/*.cc src/index/index_factory.cc)
   knowhere_file_glob(GLOB_RECURSE KNOWHERE_TRACER_SRCS src/common/tracer.cc
                      src/common/prometheus_client.cc)
   list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_TRACER_SRCS})
