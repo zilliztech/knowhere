@@ -51,8 +51,8 @@ class Benchmark_float_range_bitset : public Benchmark_knowhere, public ::testing
                 auto lims = result.value()->GetLims();
                 float recall = CalcRecall(g_ids, g_lims, ids, lims, nq);
                 float accuracy = CalcAccuracy(g_ids, g_lims, ids, lims, nq);
-                printf("  bitset_per = %3d%%, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f\n", per, nq, t_diff,
-                       recall, accuracy);
+                printf("  bitset_per = %3d%%, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f, L@ = %.2f\n", per, nq,
+                       t_diff, recall, accuracy, lims[nq] / (float)nq);
                 std::fflush(stdout);
             }
         }
@@ -82,8 +82,8 @@ class Benchmark_float_range_bitset : public Benchmark_knowhere, public ::testing
                 auto lims = result.value()->GetLims();
                 float recall = CalcRecall(g_ids, g_lims, ids, lims, nq);
                 float accuracy = CalcAccuracy(g_ids, g_lims, ids, lims, nq);
-                printf("  bitset_per = %3d%%, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f\n", per, nq, t_diff,
-                       recall, accuracy);
+                printf("  bitset_per = %3d%%, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f, L@ = %.2f\n", per, nq,
+                       t_diff, recall, accuracy, lims[nq] / (float)nq);
                 std::fflush(stdout);
             }
         }
@@ -113,8 +113,8 @@ class Benchmark_float_range_bitset : public Benchmark_knowhere, public ::testing
                 auto lims = result.value()->GetLims();
                 float recall = CalcRecall(g_ids, g_lims, ids, lims, nq);
                 float accuracy = CalcAccuracy(g_ids, g_lims, ids, lims, nq);
-                printf("  bitset_per = %3d%%, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f\n", per, nq, t_diff,
-                       recall, accuracy);
+                printf("  bitset_per = %3d%%, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f, L@ = %.2f\n", per, nq,
+                       t_diff, recall, accuracy, lims[nq] / (float)nq);
                 std::fflush(stdout);
             }
         }
