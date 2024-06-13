@@ -37,7 +37,8 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
             CheckDistance(metric_type_, ids, distances, lims, nq);
             float recall = CalcRecall(ids, lims, nq);
             float accuracy = CalcAccuracy(ids, lims, nq);
-            printf("  nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f\n", nq, t_diff, recall, accuracy);
+            printf("  nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f, L@ = %.2f\n", nq, t_diff, recall, accuracy,
+                   lims[nq] / (float)nq);
             std::fflush(stdout);
         }
         printf("================================================================================\n");
@@ -62,8 +63,8 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
                 auto lims = result.value()->GetLims();
                 float recall = CalcRecall(ids, lims, nq);
                 float accuracy = CalcAccuracy(ids, lims, nq);
-                printf("  nprobe = %4d, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f\n", nprobe, nq, t_diff, recall,
-                       accuracy);
+                printf("  nprobe = %4d, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f, L@ = %.2f\n", nprobe, nq,
+                       t_diff, recall, accuracy, lims[nq] / (float)nq);
                 std::fflush(stdout);
             }
         }
@@ -90,8 +91,8 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
                 auto lims = result.value()->GetLims();
                 float recall = CalcRecall(ids, lims, nq);
                 float accuracy = CalcAccuracy(ids, lims, nq);
-                printf("  ef = %4d, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f\n", ef, nq, t_diff, recall,
-                       accuracy);
+                printf("  ef = %4d, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f, L@ = %.2f\n", ef, nq, t_diff,
+                       recall, accuracy, lims[nq] / (float)nq);
                 std::fflush(stdout);
             }
         }
@@ -117,8 +118,8 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
                 auto lims = result.value()->GetLims();
                 float recall = CalcRecall(ids, lims, nq);
                 float accuracy = CalcAccuracy(ids, lims, nq);
-                printf("  search_list_size = %4d, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f\n", search_list_size,
-                       nq, t_diff, recall, accuracy);
+                printf("  search_list_size = %4d, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f, L@ = %.2f\n",
+                       search_list_size, nq, t_diff, recall, accuracy, lims[nq] / (float)nq);
                 std::fflush(stdout);
             }
         }
