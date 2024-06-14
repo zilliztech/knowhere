@@ -18,27 +18,14 @@
 #include "knowhere/index/index_factory.h"
 namespace knowhere {
 namespace KnowhereCheck {
-bool
+static bool
 IndexTypeAndDataTypeCheck(const std::string& index_name, VecType data_type) {
-    auto& index_factory = IndexFactory::Instance();
-    switch (data_type) {
-        case VecType::VECTOR_BINARY:
-            return index_factory.HasIndex<bin1>(index_name);
-        case VecType::VECTOR_FLOAT:
-            return index_factory.HasIndex<fp32>(index_name);
-        case VecType::VECTOR_BFLOAT16:
-            return index_factory.HasIndex<bf16>(index_name);
-        case VecType::VECTOR_FLOAT16:
-            return index_factory.HasIndex<fp16>(index_name);
-        case VecType::VECTOR_SPARSE_FLOAT:
-            if (index_name != IndexEnum::INDEX_SPARSE_INVERTED_INDEX && index_name != IndexEnum::INDEX_SPARSE_WAND &&
-                index_name != IndexEnum::INDEX_HNSW) {
-                return false;
-            } else {
-                return index_factory.HasIndex<fp32>(index_name);
-            }
-        default:
-            return false;
+    auto& static_index_table = IndexFactory::StaticIndexTableInstance();
+    auto key = std::pair<std::string, VecType>(index_name, data_type);
+    if (static_index_table.find(key) != static_index_table.end()) {
+        return true;
+    } else {
+        return false;
     }
 }
 }  // namespace KnowhereCheck
