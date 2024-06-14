@@ -24,8 +24,18 @@ TEST_CASE("Test index and data type check", "[IndexCheckTest]") {
                                                                    knowhere::VecType::VECTOR_FLOAT) == true);
         REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck(knowhere::IndexEnum::INDEX_HNSW,
                                                                    knowhere::VecType::VECTOR_BFLOAT16) == true);
+
+#ifndef KNOWHERE_WITH_CARDINAL
+        REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck(knowhere::IndexEnum::INDEX_HNSW,
+                                                                   knowhere::VecType::VECTOR_BINARY) == false);
+        REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck(knowhere::IndexEnum::INDEX_HNSW,
+                                                                   knowhere::VecType::VECTOR_SPARSE_FLOAT) == false);
+#else
         REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck(knowhere::IndexEnum::INDEX_HNSW,
                                                                    knowhere::VecType::VECTOR_BINARY) == true);
+        REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck(knowhere::IndexEnum::INDEX_HNSW,
+                                                                   knowhere::VecType::VECTOR_SPARSE_FLOAT) == true);
+#endif
         REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck(knowhere::IndexEnum::INDEX_DISKANN,
                                                                    knowhere::VecType::VECTOR_FLOAT) == true);
         REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck(knowhere::IndexEnum::INDEX_DISKANN,
