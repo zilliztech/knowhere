@@ -81,7 +81,7 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
     // when index is mutable, it could happen that data count larger than bitset size, see
     // https://github.com/zilliztech/knowhere/issues/70
     // so something must be wrong at caller side when passed bitset size larger than data count
-    if (bitset_.size() > this->Count()) {
+    if (bitset_.size() > (size_t)this->Count()) {
         msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
                           bitset_.size(), this->Count());
         LOG_KNOWHERE_ERROR_ << msg;
@@ -132,7 +132,7 @@ Index<T>::AnnIterator(const DataSet& dataset, const Json& json, const BitsetView
     // when index is mutable, it could happen that data count larger than bitset size, see
     // https://github.com/zilliztech/knowhere/issues/70
     // so something must be wrong at caller side when passed bitset size larger than data count
-    if (bitset_.size() > this->Count()) {
+    if (bitset_.size() > (size_t)this->Count()) {
         msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
                           bitset_.size(), this->Count());
         LOG_KNOWHERE_ERROR_ << msg;
@@ -167,7 +167,7 @@ Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView
     // when index is mutable, it could happen that data count larger than bitset size, see
     // https://github.com/zilliztech/knowhere/issues/70
     // so something must be wrong at caller side when passed bitset size larger than data count
-    if (bitset_.size() > this->Count()) {
+    if (bitset_.size() > (size_t)this->Count()) {
         msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
                           bitset_.size(), this->Count());
         LOG_KNOWHERE_ERROR_ << msg;

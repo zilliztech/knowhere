@@ -286,7 +286,7 @@ uint16_t simd_partition_fuzzy_with_bounds(
         n_eq_1 = q;
         IFV printf("  override: thresh=%d n_eq_1=%ld\n", thresh, n_eq_1);
     } else {
-        assert(n_eq_1 <= n_eq);
+        assert((size_t)n_eq_1 <= n_eq);
     }
 
     size_t wp = simd_compress_array<C>(vals, ids, n, thresh, n_eq_1);

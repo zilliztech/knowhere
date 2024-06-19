@@ -355,7 +355,9 @@ class Benchmark_hdf5 : public Benchmark_base {
         auto dataspace = H5Screate_simple(2, dims, NULL);
         auto dataset = H5Dcreate2(file, dataset_name, type_id, dataspace, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         auto err = H5Dwrite(dataset, type_id, H5S_ALL, H5S_ALL, H5P_DEFAULT, data);
-        assert(err == 0);
+        if (err != 0) {
+            std::abort();
+        }
         H5Dclose(dataset);
         H5Sclose(dataspace);
     }

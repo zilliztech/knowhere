@@ -5,45 +5,35 @@
 // CHECK FOR BULK AND FRESH
 // CHECK FOR FLOAT, INT8 and UINT8
 
-#include <type_traits>
-#include <omp.h>
-#include <random>
-// #include <semaphore.h>
+#include <fcntl.h>
+#include <unordered_map>
 #include <set>
 #include <shared_mutex>
-#include <sstream>
 #include <string>
-#include "knowhere/log.h"
-#include "knowhere/comp/thread_pool.h"
+#include <type_traits>
+
+#include "boost/dynamic_bitset.hpp"
 #include "tsl/robin_set.h"
-#include "tsl/robin_map.h"
-#include <unordered_map>
 
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <time.h>
-
+#include "diskann/ann_exception.h"
 #include "diskann/common_includes.h"
+#include "diskann/index.h"
 #include "diskann/logger.h"
-#include "diskann/exceptions.h"
-#include "diskann/aligned_file_reader.h"
-#include "diskann/math_utils.h"
-#include "diskann/memory_mapper.h"
 #include "diskann/parameters.h"
 #include "diskann/partition_and_pq.h"
 #include "diskann/timer.h"
 #include "diskann/utils.h"
-#include "diskann/ann_exception.h"
+#include "knowhere/comp/thread_pool.h"
+#include "knowhere/log.h"
+
 #if defined(RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && \
     defined(DISKANN_BUILD)
 #include "gperftools/malloc_extension.h"
 #endif
-#include "boost/dynamic_bitset.hpp"
 
 #if !defined(__ARM_NEON) || !defined(__aarch64__)
 #include <xmmintrin.h>
 #endif
-#include "diskann/index.h"
 
 #define MAX_POINTS_FOR_USING_BITSET 10000000
 

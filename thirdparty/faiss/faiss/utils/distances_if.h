@@ -70,7 +70,7 @@ void buffered_if(
     // todo: maybe add a special case "ny < N" right here
 
     const size_t ny_buffer_size = (ny / BUFFER_SIZE) * BUFFER_SIZE;
-    size_t saved_j[2 * BUFFER_SIZE + N];
+    size_t saved_j[2 * BUFFER_SIZE + N] = {0};
     size_t counter = 0;
     
     for (size_t j = 0; j < ny_buffer_size; j += BUFFER_SIZE) {

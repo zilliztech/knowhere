@@ -159,7 +159,7 @@ void IndexIVFPQFastScan::encode_vectors(
         bool include_listnos) const {
     if (by_residual) {
         AlignedTable<float> residuals(n * d);
-        for (size_t i = 0; i < n; i++) {
+        for (int64_t i = 0; i < n; i++) {
             if (list_nos[i] < 0) {
                 memset(residuals.data() + i * d, 0, sizeof(residuals[0]) * d);
             } else {
@@ -236,7 +236,7 @@ void IndexIVFPQFastScan::compute_LUT(
                 pq.compute_inner_prod_tables(n, x, ip_table.get());
 
 #pragma omp parallel for if (n * nprobe > 8000)
-                for (idx_t ij = 0; ij < n * nprobe; ij++) {
+                for (size_t ij = 0; ij < n * nprobe; ij++) {
                     idx_t i = ij / nprobe;
                     float* tab = dis_tables.get() + ij * dim12;
                     idx_t cij = cq.ids[ij];
@@ -261,7 +261,7 @@ void IndexIVFPQFastScan::compute_LUT(
                 memset(biases.get(), 0, sizeof(float) * n * nprobe);
 
 #pragma omp parallel for if (n * nprobe > 8000)
-                for (idx_t ij = 0; ij < n * nprobe; ij++) {
+                for (size_t ij = 0; ij < n * nprobe; ij++) {
                     idx_t i = ij / nprobe;
                     float* xij = &xrel[ij * d];
                     idx_t cij = cq.ids[ij];
@@ -317,7 +317,7 @@ void IndexIVFPQFastScan::sa_decode(idx_t n, const uint8_t* codes, float* x)
             pq.decode(code + coarse_size, xi);
             if (by_residual) {
                 quantizer->reconstruct(list_no, residual.data());
-                for (size_t j = 0; j < d; j++) {
+                for (int j = 0; j < d; j++) {
                     xi[j] += residual[j];
                 }
             }
