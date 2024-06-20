@@ -21,12 +21,8 @@ template <typename T>
 void
 check_search(const knowhere::DataSetPtr train_ds, const knowhere::DataSetPtr query_ds, const int64_t k,
              const knowhere::MetricType metric, const knowhere::Json& conf) {
-    knowhere::DataSetPtr base(train_ds);
-    knowhere::DataSetPtr query(query_ds);
-    if constexpr (!std::is_same_v<float, T>) {
-        base = knowhere::data_type_conversion<float, T>(*train_ds);
-        query = knowhere::data_type_conversion<float, T>(*query_ds);
-    }
+    auto base = knowhere::ConvertToDataTypeIfNeeded<T>(train_ds);
+    auto query = knowhere::ConvertToDataTypeIfNeeded<T>(query_ds);
 
     auto res = knowhere::BruteForce::Search<T>(base, query, conf, nullptr);
     auto nq = query_ds->GetRows();
@@ -51,12 +47,8 @@ check_search_with_buf(const knowhere::DataSetPtr train_ds, const knowhere::DataS
     auto ids = new int64_t[nq * k];
     auto dist = new float[nq * k];
 
-    knowhere::DataSetPtr base(train_ds);
-    knowhere::DataSetPtr query(query_ds);
-    if constexpr (!std::is_same_v<float, T>) {
-        base = knowhere::data_type_conversion<float, T>(*train_ds);
-        query = knowhere::data_type_conversion<float, T>(*query_ds);
-    }
+    auto base = knowhere::ConvertToDataTypeIfNeeded<T>(train_ds);
+    auto query = knowhere::ConvertToDataTypeIfNeeded<T>(query_ds);
 
     auto res = knowhere::BruteForce::SearchWithBuf<T>(base, query, ids, dist, conf, nullptr);
     REQUIRE(res == knowhere::Status::success);
@@ -76,12 +68,8 @@ template <typename T>
 void
 check_range_search(const knowhere::DataSetPtr train_ds, const knowhere::DataSetPtr query_ds, const int64_t k,
                    const knowhere::MetricType metric, const knowhere::Json& conf) {
-    knowhere::DataSetPtr base(train_ds);
-    knowhere::DataSetPtr query(query_ds);
-    if constexpr (!std::is_same_v<float, T>) {
-        base = knowhere::data_type_conversion<float, T>(*train_ds);
-        query = knowhere::data_type_conversion<float, T>(*query_ds);
-    }
+    auto base = knowhere::ConvertToDataTypeIfNeeded<T>(train_ds);
+    auto query = knowhere::ConvertToDataTypeIfNeeded<T>(query_ds);
 
     auto res = knowhere::BruteForce::RangeSearch<T>(base, query, conf, nullptr);
     REQUIRE(res.has_value());

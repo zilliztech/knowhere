@@ -231,12 +231,10 @@ base_search() {
     knowhere::DataSetPtr knn_gt_ptr = nullptr;
     knowhere::DataSetPtr range_search_gt_ptr = nullptr;
     auto fp32_base_ds = GenDataSet(kNumRows, kDim, 30);
-    knowhere::DataSetPtr base_ds(fp32_base_ds);
-    knowhere::DataSetPtr query_ds(fp32_query_ds);
-    if (!std::is_same_v<float, DataType>) {
-        base_ds = knowhere::data_type_conversion<float, DataType>(*fp32_base_ds);
-        query_ds = knowhere::data_type_conversion<float, DataType>(*fp32_query_ds);
-    }
+
+    auto base_ds = knowhere::ConvertToDataTypeIfNeeded<DataType>(fp32_base_ds);
+    auto query_ds = knowhere::ConvertToDataTypeIfNeeded<DataType>(fp32_query_ds);
+
     {
         auto base_ptr = static_cast<const DataType*>(base_ds->GetTensor());
         WriteRawDataToDisk<DataType>(kRawDataPath, base_ptr, kNumRows, kDim);

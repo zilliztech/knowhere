@@ -127,6 +127,39 @@ data_type_conversion(const DataSet& src) {
     return des;
 }
 
+// Convert DataSet from DataType to float
+template <typename DataType>
+inline DataSetPtr
+ConvertFromDataTypeIfNeeded(const DataSetPtr ds) {
+    if constexpr (std::is_same_v<DataType, typename MockData<DataType>::type>) {
+        return ds;
+    } else {
+        return data_type_conversion<DataType, typename MockData<DataType>::type>(*ds);
+    }
+}
+
+// Convert DataSet from DataType to float
+template <typename DataType>
+inline std::shared_ptr<const DataSet>
+ConvertFromDataTypeIfNeeded(const DataSet& ds) {
+    if constexpr (std::is_same_v<DataType, typename MockData<DataType>::type>) {
+        return ds.shared_from_this();
+    } else {
+        return data_type_conversion<DataType, typename MockData<DataType>::type>(ds);
+    }
+}
+
+// Convert DataSet from float to DataType
+template <typename DataType>
+inline DataSetPtr
+ConvertToDataTypeIfNeeded(const DataSetPtr ds) {
+    if constexpr (std::is_same_v<DataType, typename MockData<DataType>::type>) {
+        return ds;
+    } else {
+        return data_type_conversion<typename MockData<DataType>::type, DataType>(*ds);
+    }
+}
+
 template <typename T>
 inline T
 round_down(const T value, const T align) {
