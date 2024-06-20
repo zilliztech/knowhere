@@ -1392,7 +1392,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
 
         std::unique_ptr<int8_t[]> query_data_sq;
-        const data_t* raw_data = (const data_t*)query_data;
+        [[maybe_unused]] const data_t* raw_data = (const data_t*)query_data;
         if constexpr (sq_enabled) {
             query_data_sq = std::make_unique<int8_t[]>(*(size_t*)dist_func_param_);
             encodeSQuant((const data_t*)query_data, query_data_sq.get());

@@ -98,7 +98,7 @@ void compute_PQ_dis_tables_dsub2(
         for (int k0 = 0; k0 < ksub; k0 += 8) {
             simd8float32 centroids[8];
             for (int k = 0; k < 8; k++) {
-                ALIGNED(32) float centroid[8];
+                ALIGNED(32) float centroid[8] = {0};
                 size_t wp = 0;
                 size_t rp = (m0 * ksub + k + k0) * 2;
                 for (int m = m0; m < m1; m++) {

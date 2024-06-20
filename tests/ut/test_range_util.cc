@@ -116,6 +116,7 @@ TEST_CASE("Test GetRangeSearchResult for HNSW/DiskANN", "[range search]") {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+#if 0
 namespace {
 void
 GenRangeSearchResult(faiss::RangeSearchResult& res, const int64_t nq, const int64_t label_min, const int64_t label_max,
@@ -157,3 +158,4 @@ CountValidRangeSearchResult(const float* distances, const size_t* lims, const in
     return valid;
 }
 }  // namespace
+#endif

@@ -1157,7 +1157,7 @@ Index* read_index(IOReader* f, int io_flags) {
         idx = idxhnsw;
     } else if (
             h == fourcc("INSf") || h == fourcc("INSp") || h == fourcc("INSs")) {
-        IndexNSG* idxnsg;
+        IndexNSG* idxnsg = nullptr;
         if (h == fourcc("INSf"))
             idxnsg = new IndexNSGFlat();
         if (h == fourcc("INSp"))

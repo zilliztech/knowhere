@@ -194,7 +194,7 @@ namespace diskann {
     if (coord_cache_buf == nullptr) {
         diskann::alloc_aligned((void **) &coord_cache_buf,
                              coord_cache_buf_len * sizeof(T), 8 * sizeof(T));
-        memset(coord_cache_buf, 0, coord_cache_buf_len * sizeof(T));
+        std::fill_n(coord_cache_buf, coord_cache_buf_len, T());
     }
 
     size_t BLOCK_SIZE = 32;
@@ -273,7 +273,7 @@ namespace diskann {
     if (coord_cache_buf == nullptr) {
         diskann::alloc_aligned((void **) &coord_cache_buf,
                              coord_cache_buf_len * sizeof(T), 8 * sizeof(T));
-        memset(coord_cache_buf, 0, coord_cache_buf_len * sizeof(T));
+        std::fill_n(coord_cache_buf, coord_cache_buf_len, T());
     }
 
     async_pool.push([&, state_controller = this->state_controller, sample_bin,
