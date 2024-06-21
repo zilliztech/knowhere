@@ -47,6 +47,8 @@ struct GpuRaftCagraConfig : public BaseConfig {
     CFG_INT hashmap_min_bitlen;
     CFG_FLOAT hashmap_max_fill_rate;
     CFG_INT nn_descent_niter;
+    CFG_BOOL adapt_for_cpu;
+    CFG_INT ef;
 
     KNOHWERE_DECLARE_CONFIG(GpuRaftCagraConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(cache_dataset_on_device)
@@ -107,6 +109,15 @@ struct GpuRaftCagraConfig : public BaseConfig {
             .description("number of iterations for NN descent")
             .set_default(20)
             .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(adapt_for_cpu)
+            .description("train on GPU search on CPU")
+            .set_default(false)
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(ef)
+            .description("hnsw ef")
+            .allow_empty_without_default()
+            .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
+            .for_search();
     }
 
     Status

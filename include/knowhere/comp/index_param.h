@@ -136,6 +136,7 @@ constexpr const char* HASHMAP_MODE = "hashmap_mode";
 constexpr const char* HASHMAP_MIN_BITLEN = "hashmap_min_bitlen";
 constexpr const char* HASHMAP_MAX_FILL_RATE = "hashmap_max_fill_rate";
 constexpr const char* NN_DESCENT_NITER = "nn_descent_niter";
+constexpr const char* ADAPT_FOR_CPU = "adapt_for_cpu";
 
 // HNSW Params
 constexpr const char* EFCONSTRUCTION = "efConstruction";
