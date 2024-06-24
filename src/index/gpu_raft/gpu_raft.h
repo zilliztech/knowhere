@@ -197,8 +197,7 @@ struct GpuRaftIndexNode : public IndexNode {
 
     Status
     DeserializeFromFile(const std::string& filename, const Config& config) {
-        auto stream = std::ifstream{filename};
-        return DeserializeFromStream(stream);
+        return Status::not_implemented;
     }
 
     std::unique_ptr<BaseConfig>
@@ -239,9 +238,9 @@ struct GpuRaftIndexNode : public IndexNode {
         }
     }
 
- private:
     using raft_knowhere_index_type = typename raft_knowhere::raft_knowhere_index<K>;
 
+ protected:
     raft_knowhere_index_type index_;
 
     Status
