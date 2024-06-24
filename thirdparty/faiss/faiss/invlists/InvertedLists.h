@@ -67,7 +67,9 @@ struct InvertedListsIterator {
 struct InvertedLists {
     size_t nlist;     ///< number of possible key values
     size_t code_size; ///< code size per vector in bytes
-    bool use_iterator;
+
+    /// request to use iterator rather than get_codes / get_ids
+    bool use_iterator = false;
 
     InvertedLists(size_t nlist, size_t code_size);
 
@@ -80,9 +82,6 @@ struct InvertedLists {
     /*************************
      *  Read only functions */
 
-    // check if the list is empty
-    bool is_empty(size_t list_no, void* inverted_list_context) const;
-
     /// get the size of a list
     virtual size_t list_size(size_t list_no) const = 0;
 
@@ -94,11 +93,6 @@ struct InvertedLists {
 
     // get the segment minimal number of a list (continuous storage can be regarded as 1-segment storage)
     virtual size_t get_segment_offset(size_t list_no, size_t segment_no) const;
-
-    /// get iterable for lists that use_iterator
-    virtual InvertedListsIterator* get_iterator(
-            size_t list_no,
-            void* inverted_list_context) const;
 
     /** get the codes for an inverted list
      * must be released by release_codes
@@ -153,6 +147,18 @@ struct InvertedLists {
     /// prepare the following lists (default does nothing)
     /// a list can be -1 hence the signed long
     virtual void prefetch_lists(const idx_t* list_nos, int nlist) const;
+
+    /*****************************************
+     * Iterator interface (with context)     */
+
+    /// check if the list is empty
+    virtual bool is_empty(size_t list_no, void* inverted_list_context = nullptr)
+            const;
+
+    /// get iterable for lists that use_iterator
+    virtual InvertedListsIterator* get_iterator(
+            size_t list_no,
+            void* inverted_list_context = nullptr) const;
 
     /*************************
      * writing functions     */
@@ -371,6 +377,9 @@ struct ArrayInvertedLists : InvertedLists {
 
     /// permute the inverted lists, map maps new_id to old_id
     void permute_invlists(const idx_t* map);
+
+    bool is_empty(size_t list_no, void* inverted_list_context = nullptr)
+            const override;
 
     ~ArrayInvertedLists() override;
 };

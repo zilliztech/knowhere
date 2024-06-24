@@ -133,6 +133,42 @@ class TestHNSW(unittest.TestCase):
         Dhnsw, Ihnsw = index.search(self.xq, 1)
         self.assertGreater(stats.ndis, len(self.xq) * index.hnsw.efSearch)
 
+    def test_io_no_storage(self):
+        d = self.xq.shape[1]
+        index = faiss.IndexHNSWFlat(d, 16)
+        index.add(self.xb)
+
+        Dref, Iref = index.search(self.xq, 5)
+
+        # test writing without storage
+        index2 = faiss.deserialize_index(
+            faiss.serialize_index(index, faiss.IO_FLAG_SKIP_STORAGE)
+        )
+        self.assertEqual(index2.storage, None)
+        self.assertRaises(
+            RuntimeError,
+            index2.search, self.xb, 1)
+
+        # make sure we can store an index with empty storage
+        index4 = faiss.deserialize_index(
+            faiss.serialize_index(index2))
+
+        # add storage afterwards
+        index.storage = faiss.clone_index(index.storage)
+        index.own_fields = True
+
+        Dnew, Inew = index.search(self.xq, 5)
+        np.testing.assert_array_equal(Dnew, Dref)
+        np.testing.assert_array_equal(Inew, Iref)
+
+        if False:
+            # test reading without storage
+            # not implemented because it is hard to skip over an index
+            index3 = faiss.deserialize_index(
+                faiss.serialize_index(index), faiss.IO_FLAG_SKIP_STORAGE
+            )
+            self.assertEquals(index3.storage, None)
+
 
 class TestNSG(unittest.TestCase):
 
@@ -209,7 +245,6 @@ class TestNSG(unittest.TestCase):
         Dnsg, Insg = index.search(self.xq, 1)
 
         recalls = (Iref == Insg).sum()
-        print('metric: {}, nb equal: {}'.format(metrics[metric], recalls))
         self.assertGreaterEqual(recalls, thresh)
         self.subtest_connectivity(index, self.xb.shape[0])
         self.subtest_io_and_clone(index, Dnsg, Insg)
@@ -230,7 +265,6 @@ class TestNSG(unittest.TestCase):
         Dnsg, Insg = index.search(self.xq, 1)
 
         recalls = (Iref == Insg).sum()
-        print('metric: {}, nb equal: {}'.format(metrics[metric], recalls))
         self.assertGreaterEqual(recalls, thresh)
         self.subtest_connectivity(index, self.xb.shape[0])
 
@@ -286,7 +320,6 @@ class TestNSG(unittest.TestCase):
         index.add(self.xb)
         Dnsg, Insg = index.search(self.xq, 1)
         recalls = (Iref == Insg).sum()
-        print('metric: {}, nb equal: {}'.format(metrics[metric], recalls))
         self.assertGreaterEqual(recalls, 475)
         self.subtest_connectivity(index, self.xb.shape[0])
 
@@ -294,7 +327,6 @@ class TestNSG(unittest.TestCase):
         index.add(self.xb)
         Dnsg, Insg = index.search(self.xq, 1)
         recalls = (Iref == Insg).sum()
-        print('metric: {}, nb equal: {}'.format(metrics[metric], recalls))
         self.assertGreaterEqual(recalls, 475)
         self.subtest_connectivity(index, self.xb.shape[0])
 
@@ -335,7 +367,6 @@ class TestNSG(unittest.TestCase):
 
         # test accuracy
         recalls = (Iref == I).sum()
-        print("IndexNSGPQ", recalls)
         self.assertGreaterEqual(recalls, 190)  # 193
 
         # test I/O
@@ -361,7 +392,6 @@ class TestNSG(unittest.TestCase):
 
         # test accuracy
         recalls = (Iref == I).sum()
-        print("IndexNSGSQ", recalls)
         self.assertGreaterEqual(recalls, 405)  # 411
 
         # test I/O
@@ -395,7 +425,6 @@ class TestNNDescent(unittest.TestCase):
 
         # test accuracy
         recalls = (Iref == I).sum()
-        print("IndexNNDescentFlat", recalls)
         self.assertGreaterEqual(recalls, 450)  # 462
 
         # do some IO tests

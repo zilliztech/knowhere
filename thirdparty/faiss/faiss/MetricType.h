@@ -39,6 +39,10 @@ enum MetricType {
     METRIC_Canberra = 20,
     METRIC_BrayCurtis = 21,
     METRIC_JensenShannon = 22,
+    /// Squared Eucliden distance, ignoring NaNs
+    METRIC_NaNEuclidean = 24,
+    /// abs(x | y): the distance to a hyperplane
+    METRIC_ABS_INNER_PRODUCT = 25,
 };
 
 /// all vector indices are this type
