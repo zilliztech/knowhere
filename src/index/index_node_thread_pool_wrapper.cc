@@ -36,12 +36,12 @@ IndexNodeThreadPoolWrapper::IndexNodeThreadPoolWrapper(std::unique_ptr<IndexNode
 }
 
 expected<DataSetPtr>
-IndexNodeThreadPoolWrapper::Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
+IndexNodeThreadPoolWrapper::Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
     return thread_pool_->push([&]() { return this->index_node_->Search(dataset, cfg, bitset); }).get();
 }
 
 expected<DataSetPtr>
-IndexNodeThreadPoolWrapper::RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
+IndexNodeThreadPoolWrapper::RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
     return thread_pool_->push([&]() { return this->index_node_->RangeSearch(dataset, cfg, bitset); }).get();
 }
 

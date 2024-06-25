@@ -31,7 +31,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
             auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
             for (auto k : TOPKs_) {
                 conf[knowhere::meta::TOPK] = k;
-                CALC_TIME_SPAN(auto result = index_.value().Search(*ds_ptr, conf, nullptr));
+                CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, nullptr));
                 auto ids = result.value()->GetIds();
                 float recall = CalcRecall(ids, nq, k);
                 printf("  nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nq, k, t_diff, recall);
@@ -56,7 +56,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
                 auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
                 for (auto k : TOPKs_) {
                     conf[knowhere::meta::TOPK] = k;
-                    CALC_TIME_SPAN(auto result = index_.value().Search(*ds_ptr, conf, nullptr));
+                    CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, nullptr));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(ids, nq, k);
                     printf("  nprobe = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nprobe, nq, k, t_diff,
@@ -84,7 +84,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
                 auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
                 for (auto k : TOPKs_) {
                     conf[knowhere::meta::TOPK] = k;
-                    CALC_TIME_SPAN(auto result = index_.value().Search(*ds_ptr, conf, nullptr));
+                    CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, nullptr));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(ids, nq, k);
                     printf("  ef = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", ef, nq, k, t_diff, recall);
@@ -109,7 +109,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
                 auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
                 for (auto k : TOPKs_) {
                     conf[knowhere::meta::TOPK] = k;
-                    CALC_TIME_SPAN(auto result = index_.value().Search(*ds_ptr, conf, nullptr));
+                    CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, nullptr));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(ids, nq, k);
                     printf("  search_list_size = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n",
@@ -261,7 +261,7 @@ TEST_F(Benchmark_float, TEST_DISKANN) {
         index_type_, knowhere::Version::GetCurrentVersion().VersionNumber(), diskann_index_pack);
     printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
     knowhere::DataSetPtr ds_ptr = nullptr;
-    index_.value().Build(*ds_ptr, conf);
+    index_.value().Build(ds_ptr, conf);
 
     knowhere::BinarySet binset;
     index_.value().Serialize(binset);

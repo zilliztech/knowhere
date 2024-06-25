@@ -30,7 +30,7 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
         printf("================================================================================\n");
         for (auto nq : NQs_) {
             knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
-            CALC_TIME_SPAN(auto result = index_.value().RangeSearch(*ds_ptr, conf, nullptr));
+            CALC_TIME_SPAN(auto result = index_.value().RangeSearch(ds_ptr, conf, nullptr));
             auto ids = result.value()->GetIds();
             auto distances = result.value()->GetDistance();
             auto lims = result.value()->GetLims();
@@ -58,7 +58,7 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
             conf[knowhere::indexparam::NPROBE] = nprobe;
             for (auto nq : NQs_) {
                 knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
-                CALC_TIME_SPAN(auto result = index_.value().RangeSearch(*ds_ptr, conf, nullptr));
+                CALC_TIME_SPAN(auto result = index_.value().RangeSearch(ds_ptr, conf, nullptr));
                 auto ids = result.value()->GetIds();
                 auto lims = result.value()->GetLims();
                 float recall = CalcRecall(ids, lims, nq);
@@ -86,7 +86,7 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
             conf[knowhere::indexparam::EF] = ef;
             for (auto nq : NQs_) {
                 knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
-                CALC_TIME_SPAN(auto result = index_.value().RangeSearch(*ds_ptr, conf, nullptr));
+                CALC_TIME_SPAN(auto result = index_.value().RangeSearch(ds_ptr, conf, nullptr));
                 auto ids = result.value()->GetIds();
                 auto lims = result.value()->GetLims();
                 float recall = CalcRecall(ids, lims, nq);
@@ -113,7 +113,7 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
             conf["search_list_size"] = search_list_size;
             for (auto nq : NQs_) {
                 auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
-                CALC_TIME_SPAN(auto result = index_.value().RangeSearch(*ds_ptr, conf, nullptr));
+                CALC_TIME_SPAN(auto result = index_.value().RangeSearch(ds_ptr, conf, nullptr));
                 auto ids = result.value()->GetIds();
                 auto lims = result.value()->GetLims();
                 float recall = CalcRecall(ids, lims, nq);
@@ -304,7 +304,7 @@ TEST_F(Benchmark_float_range, TEST_DISKANN) {
         index_type_, knowhere::Version::GetCurrentVersion().VersionNumber(), diskann_index_pack);
     printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
     knowhere::DataSetPtr ds_ptr = nullptr;
-    index_.value().Build(*ds_ptr, conf);
+    index_.value().Build(ds_ptr, conf);
 
     knowhere::BinarySet binset;
     index_.value().Serialize(binset);

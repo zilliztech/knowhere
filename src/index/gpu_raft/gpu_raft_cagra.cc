@@ -36,7 +36,7 @@ class GpuRaftCagraHybridIndexNode : public GpuRaftCagraIndexNode<DataType> {
     }
 
     Status
-    Train(const DataSet& dataset, const Config& cfg) override {
+    Train(const DataSetPtr dataset, const Config& cfg) override {
         const GpuRaftCagraConfig& cagra_cfg = static_cast<const GpuRaftCagraConfig&>(cfg);
         if (cagra_cfg.adapt_for_cpu)
             adapt_for_cpu = true;
@@ -44,11 +44,11 @@ class GpuRaftCagraHybridIndexNode : public GpuRaftCagraIndexNode<DataType> {
     }
 
     expected<DataSetPtr>
-    Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!adapt_for_cpu || hnsw_index_ == nullptr)
             return GpuRaftCagraIndexNode<DataType>::Search(dataset, cfg, bitset);
-        auto nq = dataset.GetRows();
-        auto xq = dataset.GetTensor();
+        auto nq = dataset->GetRows();
+        auto xq = dataset->GetTensor();
 
         auto cagra_cfg = static_cast<const GpuRaftCagraConfig&>(cfg);
         auto k = cagra_cfg.k.value();

@@ -66,17 +66,17 @@ class IvfIndexNode : public IndexNode {
         build_pool_ = ThreadPool::GetGlobalBuildThreadPool();
     }
     Status
-    Train(const DataSet& dataset, const Config& cfg) override;
+    Train(const DataSetPtr dataset, const Config& cfg) override;
     Status
-    Add(const DataSet& dataset, const Config& cfg) override;
+    Add(const DataSetPtr dataset, const Config& cfg) override;
     expected<DataSetPtr>
-    Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override;
+    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
     expected<DataSetPtr>
-    RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override;
-    expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
-    AnnIterator(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override;
+    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
+    expected<std::vector<IndexNode::IteratorPtr>>
+    AnnIterator(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
     expected<DataSetPtr>
-    GetVectorByIds(const DataSet& dataset) const override;
+    GetVectorByIds(const DataSetPtr dataset) const override;
     bool
     HasRawData(const std::string& metric_type) const override {
         if (!index_) {
@@ -245,7 +245,7 @@ class IvfIndexNode : public IndexNode {
     SerializeImpl(BinarySet& binset, IVFFlatTag) const;
 
     Status
-    TrainInternal(const DataSet& dataset, const Config& cfg);
+    TrainInternal(const DataSetPtr dataset, const Config& cfg);
 
     static constexpr bool
     IsQuantized() {
@@ -371,7 +371,7 @@ get_ivf_sq_quantizer_type(int code_size) {
 
 template <typename DataType, typename IndexType>
 Status
-IvfIndexNode<DataType, IndexType>::Train(const DataSet& dataset, const Config& cfg) {
+IvfIndexNode<DataType, IndexType>::Train(const DataSetPtr dataset, const Config& cfg) {
     // use build_pool_ to make sure the OMP threads spawded by index_->train etc
     // can inherit the low nice value of threads in build_pool_.
     auto tryObj = build_pool_->push([&] { return TrainInternal(dataset, cfg); }).getTry();
@@ -384,7 +384,7 @@ IvfIndexNode<DataType, IndexType>::Train(const DataSet& dataset, const Config& c
 
 template <typename DataType, typename IndexType>
 Status
-IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSet& dataset, const Config& cfg) {
+IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, const Config& cfg) {
     const BaseConfig& base_cfg = static_cast<const IvfConfig&>(cfg);
     std::unique_ptr<ThreadPool::ScopedOmpSetter> setter;
     if (base_cfg.num_build_thread.has_value()) {
@@ -409,9 +409,9 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSet& dataset, const C
         return Status::invalid_metric_type;
     }
 
-    auto rows = dataset.GetRows();
-    auto dim = dataset.GetDim();
-    auto data = dataset.GetTensor();
+    auto rows = dataset->GetRows();
+    auto dim = dataset->GetDim();
+    auto data = dataset->GetTensor();
 
     // faiss scann needs at least 16 rows since nbits=4
     constexpr int64_t SCANN_MIN_ROWS = 16;
@@ -593,13 +593,13 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSet& dataset, const C
 
 template <typename DataType, typename IndexType>
 Status
-IvfIndexNode<DataType, IndexType>::Add(const DataSet& dataset, const Config& cfg) {
+IvfIndexNode<DataType, IndexType>::Add(const DataSetPtr dataset, const Config& cfg) {
     if (!this->index_) {
         LOG_KNOWHERE_ERROR_ << "Can not add data to empty IVF index.";
         return Status::empty_index;
     }
-    auto data = dataset.GetTensor();
-    auto rows = dataset.GetRows();
+    auto data = dataset->GetTensor();
+    auto rows = dataset->GetRows();
     const BaseConfig& base_cfg = static_cast<const IvfConfig&>(cfg);
     // use build_pool_ to make sure the OMP threads spawded by index_->add
     // can inherit the low nice value of threads in build_pool_.
@@ -627,7 +627,7 @@ IvfIndexNode<DataType, IndexType>::Add(const DataSet& dataset, const Config& cfg
 
 template <typename DataType, typename IndexType>
 expected<DataSetPtr>
-IvfIndexNode<DataType, IndexType>::Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
+IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
     if (!this->index_) {
         LOG_KNOWHERE_WARNING_ << "search on empty index";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -637,9 +637,9 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSet& dataset, const Config& 
         return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
     }
 
-    auto dim = dataset.GetDim();
-    auto rows = dataset.GetRows();
-    auto data = dataset.GetTensor();
+    auto dim = dataset->GetDim();
+    auto rows = dataset->GetRows();
+    auto data = dataset->GetTensor();
 
     const IvfConfig& ivf_cfg = static_cast<const IvfConfig&>(cfg);
     bool is_cosine = IsMetricType(ivf_cfg.metric_type.value(), knowhere::metric::COSINE);
@@ -747,7 +747,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSet& dataset, const Config& 
 
 template <typename DataType, typename IndexType>
 expected<DataSetPtr>
-IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSet& dataset, const Config& cfg,
+IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, const Config& cfg,
                                                const BitsetView& bitset) const {
     if (!this->index_) {
         LOG_KNOWHERE_WARNING_ << "range search on empty index";
@@ -758,9 +758,9 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSet& dataset, const Con
         return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
     }
 
-    auto nq = dataset.GetRows();
-    auto xq = dataset.GetTensor();
-    auto dim = dataset.GetDim();
+    auto nq = dataset->GetRows();
+    auto xq = dataset->GetTensor();
+    auto dim = dataset->GetDim();
 
     const IvfConfig& ivf_cfg = static_cast<const IvfConfig&>(cfg);
     bool is_cosine = IsMetricType(ivf_cfg.metric_type.value(), knowhere::metric::COSINE);
@@ -864,31 +864,28 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSet& dataset, const Con
 }
 
 template <typename DataType, typename IndexType>
-expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
-IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSet& dataset, const Config& cfg,
+expected<std::vector<IndexNode::IteratorPtr>>
+IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, const Config& cfg,
                                                const BitsetView& bitset) const {
     if (!index_) {
         LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
-        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::empty_index,
-                                                                                "index not loaded");
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "index not loaded");
     }
     if (!index_->is_trained) {
         LOG_KNOWHERE_WARNING_ << "index not trained";
-        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::index_not_trained,
-                                                                                "index not trained");
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::index_not_trained, "index not trained");
     }
     // only support IVFFlat and IVFFlatCC;
     if constexpr (!std::is_same<faiss::IndexIVFFlatCC, IndexType>::value &&
                   !std::is_same<faiss::IndexIVFFlat, IndexType>::value) {
         LOG_KNOWHERE_WARNING_ << "Current index_type: " << Type() << ", only IVFFlat and IVFFlatCC support Iterator.";
-        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::not_implemented,
-                                                                                "index not supported");
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::not_implemented, "index not supported");
     } else {
-        auto dim = dataset.GetDim();
-        auto rows = dataset.GetRows();
-        auto data = dataset.GetTensor();
+        auto dim = dataset->GetDim();
+        auto rows = dataset->GetRows();
+        auto data = dataset->GetTensor();
 
-        auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(rows, nullptr);
+        auto vec = std::vector<IndexNode::IteratorPtr>(rows, nullptr);
 
         const IvfConfig& ivf_cfg = static_cast<const IvfConfig&>(cfg);
         bool is_cosine = IsMetricType(ivf_cfg.metric_type.value(), knowhere::metric::COSINE);
@@ -921,8 +918,7 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSet& dataset, const Con
 
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
-            return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::faiss_inner_error,
-                                                                                    e.what());
+            return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::faiss_inner_error, e.what());
         }
         return vec;
     }
@@ -930,7 +926,7 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSet& dataset, const Con
 
 template <typename DataType, typename IndexType>
 expected<DataSetPtr>
-IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSet& dataset) const {
+IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSetPtr dataset) const {
     if (!this->index_) {
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
@@ -939,8 +935,8 @@ IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSet& dataset) const 
     }
     if constexpr (std::is_same<IndexType, faiss::IndexBinaryIVF>::value) {
         auto dim = Dim();
-        auto rows = dataset.GetRows();
-        auto ids = dataset.GetIds();
+        auto rows = dataset->GetRows();
+        auto ids = dataset->GetIds();
 
         uint8_t* data = nullptr;
         try {
@@ -959,8 +955,8 @@ IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSet& dataset) const 
     } else if constexpr (std::is_same<IndexType, faiss::IndexIVFFlat>::value ||
                          std::is_same<IndexType, faiss::IndexIVFFlatCC>::value) {
         auto dim = Dim();
-        auto rows = dataset.GetRows();
-        auto ids = dataset.GetIds();
+        auto rows = dataset->GetRows();
+        auto ids = dataset->GetIds();
 
         float* data = nullptr;
         try {
@@ -983,8 +979,8 @@ IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSet& dataset) const 
             return expected<DataSetPtr>::Err(Status::not_implemented, "GetVectorByIds not implemented");
         }
         auto dim = Dim();
-        auto rows = dataset.GetRows();
-        auto ids = dataset.GetIds();
+        auto rows = dataset->GetRows();
+        auto ids = dataset->GetIds();
 
         float* data = nullptr;
         try {

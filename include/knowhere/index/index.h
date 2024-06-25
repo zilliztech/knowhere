@@ -139,25 +139,25 @@ class Index {
     }
 
     Status
-    Build(const DataSet& dataset, const Json& json);
+    Build(const DataSetPtr dataset, const Json& json);
 
     Status
-    Train(const DataSet& dataset, const Json& json);
+    Train(const DataSetPtr dataset, const Json& json);
 
     Status
-    Add(const DataSet& dataset, const Json& json);
+    Add(const DataSetPtr dataset, const Json& json);
 
     expected<DataSetPtr>
-    Search(const DataSet& dataset, const Json& json, const BitsetView& bitset) const;
+    Search(const DataSetPtr dataset, const Json& json, const BitsetView& bitset) const;
 
-    expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
-    AnnIterator(const DataSet& dataset, const Json& json, const BitsetView& bitset) const;
-
-    expected<DataSetPtr>
-    RangeSearch(const DataSet& dataset, const Json& json, const BitsetView& bitset) const;
+    expected<std::vector<IndexNode::IteratorPtr>>
+    AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetView& bitset) const;
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSet& dataset) const;
+    RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetView& bitset) const;
+
+    expected<DataSetPtr>
+    GetVectorByIds(const DataSetPtr dataset) const;
 
     bool
     HasRawData(const std::string& metric_type) const;

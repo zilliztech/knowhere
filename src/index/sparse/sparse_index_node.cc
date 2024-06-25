@@ -45,7 +45,7 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSet& dataset, const Config& config) override {
+    Train(const DataSetPtr dataset, const Config& config) override {
         auto cfg = static_cast<const SparseInvertedIndexConfig&>(config);
         if (!IsMetricType(cfg.metric_type.value(), metric::IP)) {
             LOG_KNOWHERE_ERROR_ << Type() << " only support metric_type: IP";
@@ -54,7 +54,7 @@ class SparseInvertedIndexNode : public IndexNode {
         auto drop_ratio_build = cfg.drop_ratio_build.value_or(0.0f);
         auto index = new sparse::InvertedIndex<T>();
         index->SetUseWand(use_wand);
-        index->Train(static_cast<const sparse::SparseRow<T>*>(dataset.GetTensor()), dataset.GetRows(),
+        index->Train(static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor()), dataset->GetRows(),
                      drop_ratio_build);
         if (index_ != nullptr) {
             LOG_KNOWHERE_WARNING_ << Type() << " deleting old index during train";
@@ -65,24 +65,24 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSet& dataset, const Config& config) override {
+    Add(const DataSetPtr dataset, const Config& config) override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Could not add data to empty " << Type();
             return Status::empty_index;
         }
-        return index_->Add(static_cast<const sparse::SparseRow<T>*>(dataset.GetTensor()), dataset.GetRows(),
-                           dataset.GetDim());
+        return index_->Add(static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor()), dataset->GetRows(),
+                           dataset->GetDim());
     }
 
     [[nodiscard]] expected<DataSetPtr>
-    Search(const DataSet& dataset, const Config& config, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, const Config& config, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Could not search empty " << Type();
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
         auto cfg = static_cast<const SparseInvertedIndexConfig&>(config);
-        auto nq = dataset.GetRows();
-        auto queries = static_cast<const sparse::SparseRow<T>*>(dataset.GetTensor());
+        auto nq = dataset->GetRows();
+        auto queries = static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor());
         auto k = cfg.k.value();
         auto refine_factor = cfg.refine_factor.value_or(10);
         auto drop_ratio_search = cfg.drop_ratio_search.value_or(0.0f);
@@ -103,15 +103,15 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     // TODO: for now inverted index and wand use the same impl for AnnIterator.
-    [[nodiscard]] expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
-    AnnIterator(const DataSet& dataset, const Config& config, const BitsetView& bitset) const override {
+    [[nodiscard]] expected<std::vector<IndexNode::IteratorPtr>>
+    AnnIterator(const DataSetPtr dataset, const Config& config, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
             return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::empty_index,
                                                                                     "index not loaded");
         }
-        auto nq = dataset.GetRows();
-        auto queries = static_cast<const sparse::SparseRow<T>*>(dataset.GetTensor());
+        auto nq = dataset->GetRows();
+        auto queries = static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor());
 
         auto cfg = static_cast<const SparseInvertedIndexConfig&>(config);
         auto drop_ratio_search = cfg.drop_ratio_search.value_or(0.0f);
@@ -131,13 +131,13 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     [[nodiscard]] expected<DataSetPtr>
-    GetVectorByIds(const DataSet& dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset) const override {
         if (!index_) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
-        auto rows = dataset.GetRows();
-        auto ids = dataset.GetIds();
+        auto rows = dataset->GetRows();
+        auto ids = dataset->GetIds();
 
         auto data = std::make_unique<sparse::SparseRow<T>[]>(rows);
         int64_t dim = 0;

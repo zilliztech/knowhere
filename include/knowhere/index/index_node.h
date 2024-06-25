@@ -49,19 +49,19 @@ class IndexNode : public Object {
     }
 
     virtual Status
-    Build(const DataSet& dataset, const Config& cfg) {
+    Build(const DataSetPtr dataset, const Config& cfg) {
         RETURN_IF_ERROR(Train(dataset, cfg));
         return Add(dataset, cfg);
     }
 
     virtual Status
-    Train(const DataSet& dataset, const Config& cfg) = 0;
+    Train(const DataSetPtr dataset, const Config& cfg) = 0;
 
     virtual Status
-    Add(const DataSet& dataset, const Config& cfg) = 0;
+    Add(const DataSetPtr dataset, const Config& cfg) = 0;
 
     virtual expected<DataSetPtr>
-    Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const = 0;
+    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const = 0;
 
     // not thread safe.
     class iterator {
@@ -73,9 +73,10 @@ class IndexNode : public Object {
         virtual ~iterator() {
         }
     };
+    using IteratorPtr = std::shared_ptr<iterator>;
 
-    virtual expected<std::vector<std::shared_ptr<iterator>>>
-    AnnIterator(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
+    virtual expected<std::vector<IteratorPtr>>
+    AnnIterator(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
         return expected<std::vector<std::shared_ptr<iterator>>>::Err(
             Status::not_implemented, "annIterator not supported for current index type");
     }
@@ -87,7 +88,7 @@ class IndexNode : public Object {
     // TODO: test with mock AnnIterator after we introduced mock framework into knowhere. Currently this is tested in
     // test_sparse.cc with real sparse vector index.
     virtual expected<DataSetPtr>
-    RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
+    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
         auto its_or = AnnIterator(dataset, cfg, bitset);
         if (!its_or.has_value()) {
             return expected<DataSetPtr>::Err(its_or.error(),
@@ -143,7 +144,7 @@ class IndexNode : public Object {
     }
 
     virtual expected<DataSetPtr>
-    GetVectorByIds(const DataSet& dataset) const = 0;
+    GetVectorByIds(const DataSetPtr dataset) const = 0;
 
     virtual bool
     HasRawData(const std::string& metric_type) const = 0;

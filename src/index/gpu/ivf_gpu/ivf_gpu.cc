@@ -55,15 +55,15 @@ class GpuIvfIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSet& dataset, const Config& cfg) override {
+    Train(const DataSetPtr dataset, const Config& cfg) override {
         if (index_ && index_->is_trained) {
             LOG_KNOWHERE_WARNING_ << "index is already trained";
             return Status::index_already_trained;
         }
 
-        auto rows = dataset.GetRows();
-        auto tensor = dataset.GetTensor();
-        auto dim = dataset.GetDim();
+        auto rows = dataset->GetRows();
+        auto tensor = dataset->GetTensor();
+        auto dim = dataset->GetDim();
         auto ivf_gpu_cfg = static_cast<const typename KnowhereConfigType<T>::Type&>(cfg);
 
         auto metric = Str2FaissMetricType(ivf_gpu_cfg.metric_type);
@@ -108,7 +108,7 @@ class GpuIvfIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSet& dataset, const Config& cfg) override {
+    Add(const DataSetPtr dataset, const Config& cfg) override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not add data to empty GpuIvfIndex.";
             return Status::empty_index;
@@ -117,8 +117,8 @@ class GpuIvfIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "Can not add data to not trained GpuIvfIndex.";
             return Status::index_not_trained;
         }
-        auto rows = dataset.GetRows();
-        auto tensor = dataset.GetTensor();
+        auto rows = dataset->GetRows();
+        auto tensor = dataset->GetTensor();
         try {
             ResScope rs(res_, false);
             index_->add(rows, (const float*)tensor);
@@ -130,14 +130,14 @@ class GpuIvfIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
         auto ivf_gpu_cfg = static_cast<const typename KnowhereConfigType<T>::Type&>(cfg);
 
         constexpr int64_t block_size = 2048;
-        auto rows = dataset.GetRows();
+        auto rows = dataset->GetRows();
         auto k = ivf_gpu_cfg.k;
-        auto tensor = dataset.GetTensor();
-        auto dim = dataset.GetDim();
+        auto tensor = dataset->GetTensor();
+        auto dim = dataset->GetDim();
         float* dis = new (std::nothrow) float[rows * k];
         int64_t* ids = new (std::nothrow) int64_t[rows * k];
         try {
@@ -159,12 +159,12 @@ class GpuIvfIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
+    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
         return Status::not_implemented;
     }
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSet& dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset) const override {
         return Status::not_implemented;
     }
 

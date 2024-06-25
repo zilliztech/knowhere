@@ -167,25 +167,25 @@ class IndexWrap {
     knowhere::Status
     Build(knowhere::DataSetPtr dataset, const std::string& json) {
         GILReleaser rel;
-        return idx.value().Build(*dataset, knowhere::Json::parse(json));
+        return idx.value().Build(dataset, knowhere::Json::parse(json));
     }
 
     knowhere::Status
     Train(knowhere::DataSetPtr dataset, const std::string& json) {
         GILReleaser rel;
-        return idx.value().Train(*dataset, knowhere::Json::parse(json));
+        return idx.value().Train(dataset, knowhere::Json::parse(json));
     }
 
     knowhere::Status
     Add(knowhere::DataSetPtr dataset, const std::string& json) {
         GILReleaser rel;
-        return idx.value().Add(*dataset, knowhere::Json::parse(json));
+        return idx.value().Add(dataset, knowhere::Json::parse(json));
     }
 
     knowhere::DataSetPtr
     Search(knowhere::DataSetPtr dataset, const std::string& json, const knowhere::BitsetView& bitset, knowhere::Status& status) {
         GILReleaser rel;
-        auto res = idx.value().Search(*dataset, knowhere::Json::parse(json), bitset);
+        auto res = idx.value().Search(dataset, knowhere::Json::parse(json), bitset);
         if (res.has_value()) {
             status = knowhere::Status::success;
             return res.value();
@@ -198,7 +198,7 @@ class IndexWrap {
     std::vector<AnnIteratorWrap>
     GetAnnIterator(knowhere::DataSetPtr dataset, const std::string& json, const knowhere::BitsetView& bitset, knowhere::Status& status) {
         GILReleaser rel;
-        auto res = idx.value().AnnIterator(*dataset, knowhere::Json::parse(json), bitset);
+        auto res = idx.value().AnnIterator(dataset, knowhere::Json::parse(json), bitset);
         std::vector<AnnIteratorWrap> result;
         if (!res.has_value()) {
             status = res.error();
@@ -214,7 +214,7 @@ class IndexWrap {
     knowhere::DataSetPtr
     RangeSearch(knowhere::DataSetPtr dataset, const std::string& json, const knowhere::BitsetView& bitset, knowhere::Status& status){
         GILReleaser rel;
-        auto res = idx.value().RangeSearch(*dataset, knowhere::Json::parse(json), bitset);
+        auto res = idx.value().RangeSearch(dataset, knowhere::Json::parse(json), bitset);
         if (res.has_value()) {
             status = knowhere::Status::success;
             return res.value();
@@ -227,7 +227,7 @@ class IndexWrap {
     knowhere::DataSetPtr
     GetVectorByIds(knowhere::DataSetPtr dataset, knowhere::Status& status) {
         GILReleaser rel;
-        auto res = idx.value().GetVectorByIds(*dataset);
+        auto res = idx.value().GetVectorByIds(dataset);
         if (res.has_value()) {
             status = knowhere::Status::success;
             return res.value();

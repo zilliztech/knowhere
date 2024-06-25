@@ -39,7 +39,7 @@ TEST_CASE("Test Vector Normalization", "[normalize]") {
         auto train_ds = GenDataSet(nb, dim, seed);
         auto data = (float*)train_ds->GetTensor();
 
-        knowhere::Normalize(*train_ds);
+        knowhere::Normalize(train_ds);
 
         for (size_t i = 0; i < nb; ++i) {
             float sum = 0.0;
