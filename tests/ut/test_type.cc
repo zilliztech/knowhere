@@ -108,8 +108,8 @@ check_data_type_accuracy(float accuracy) {
 
     auto fp32_base_ds = GenDataSet(nb, dim);
 
-    auto type_base_ds = knowhere::data_type_conversion<float, T>(*fp32_base_ds);
-    auto fp32_base_ds_2 = knowhere::data_type_conversion<T, float>(*type_base_ds);
+    auto type_base_ds = knowhere::ConvertToDataTypeIfNeeded<T>(fp32_base_ds);
+    auto fp32_base_ds_2 = knowhere::ConvertFromDataTypeIfNeeded<T>(type_base_ds);
 
     auto bv1 = static_cast<const float*>(fp32_base_ds->GetTensor());
     auto bv2 = static_cast<const float*>(fp32_base_ds_2->GetTensor());

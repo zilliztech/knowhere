@@ -41,12 +41,9 @@ template <typename DataType>
 expected<DataSetPtr>
 BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                    const BitsetView& bitset) {
-    DataSetPtr base(base_dataset);
-    DataSetPtr query(query_dataset);
-    if constexpr (!std::is_same_v<DataType, typename MockData<DataType>::type>) {
-        base = data_type_conversion<DataType, typename MockData<DataType>::type>(*base_dataset);
-        query = data_type_conversion<DataType, typename MockData<DataType>::type>(*query_dataset);
-    }
+    auto base = ConvertFromDataTypeIfNeeded<DataType>(base_dataset);
+    auto query = ConvertFromDataTypeIfNeeded<DataType>(query_dataset);
+
     auto xb = base->GetTensor();
     auto nb = base->GetRows();
     auto dim = base->GetDim();
@@ -168,12 +165,9 @@ template <typename DataType>
 Status
 BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids, float* dis,
                           const Json& config, const BitsetView& bitset) {
-    DataSetPtr base(base_dataset);
-    DataSetPtr query(query_dataset);
-    if constexpr (!std::is_same_v<DataType, typename MockData<DataType>::type>) {
-        base = data_type_conversion<DataType, typename MockData<DataType>::type>(*base_dataset);
-        query = data_type_conversion<DataType, typename MockData<DataType>::type>(*query_dataset);
-    }
+    auto base = ConvertFromDataTypeIfNeeded<DataType>(base_dataset);
+    auto query = ConvertFromDataTypeIfNeeded<DataType>(query_dataset);
+
     auto xb = base->GetTensor();
     auto nb = base->GetRows();
     auto dim = base->GetDim();
@@ -293,10 +287,8 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     DataSetPtr query(query_dataset);
     bool is_sparse = std::is_same<DataType, knowhere::sparse::SparseRow<float>>::value;
     if (!is_sparse) {
-        if constexpr (!std::is_same_v<DataType, typename MockData<DataType>::type>) {
-            base = data_type_conversion<DataType, typename MockData<DataType>::type>(*base_dataset);
-            query = data_type_conversion<DataType, typename MockData<DataType>::type>(*query_dataset);
-        }
+        base = ConvertFromDataTypeIfNeeded<DataType>(base_dataset);
+        query = ConvertFromDataTypeIfNeeded<DataType>(query_dataset);
     }
     auto xb = base->GetTensor();
     auto nb = base->GetRows();
@@ -557,12 +549,9 @@ template <typename DataType>
 expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
 BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                         const BitsetView& bitset) {
-    DataSetPtr base(base_dataset);
-    DataSetPtr query(query_dataset);
-    if constexpr (!std::is_same_v<DataType, typename MockData<DataType>::type>) {
-        base = data_type_conversion<DataType, typename MockData<DataType>::type>(*base_dataset);
-        query = data_type_conversion<DataType, typename MockData<DataType>::type>(*query_dataset);
-    }
+    auto base = ConvertFromDataTypeIfNeeded<DataType>(base_dataset);
+    auto query = ConvertFromDataTypeIfNeeded<DataType>(query_dataset);
+
     auto xb = base->GetTensor();
     auto nb = base->GetRows();
     auto dim = base->GetDim();
