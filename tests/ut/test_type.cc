@@ -12,6 +12,7 @@
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 #include "knowhere/comp/knowhere_config.h"
+#include "knowhere/utils.h"
 #include "simd/distances_ref.h"
 #include "simd/hook.h"
 #include "utils.h"
