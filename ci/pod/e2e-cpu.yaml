@@ -36,8 +36,8 @@ spec:
         cpu: "8"
     volumeMounts:
       - mountPath: /home/data
-        name: db-data
+        name: db-data-pvc-ci-cluster
   volumes:
-    - name: db-data
+    - name: db-data-pvc-ci-cluster
       persistentVolumeClaim:
-        claimName: db-data
+        claimName: db-data-pvc-ci-cluster
