@@ -614,8 +614,6 @@ struct raft_knowhere_index<IndexKind>::impl {
         }
     }
     auto static deserialize(std::istream& is) {
-        static std::mutex mtx;
-        std::lock_guard lock(mtx);
         auto static device_count = []() {
             auto result = 0;
             RAFT_CUDA_TRY(cudaGetDeviceCount(&result));
