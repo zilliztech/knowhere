@@ -115,8 +115,8 @@ endif()
 
 if(__AARCH64)
   knowhere_file_glob(GLOB FAISS_AVX_SRCS thirdparty/faiss/faiss/impl/*avx.cpp)
-
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX_SRCS})
+
   add_library(faiss STATIC ${FAISS_SRCS})
 
   target_compile_options(
@@ -137,8 +137,11 @@ endif()
 
 if(__PPC64)
   knowhere_file_glob(GLOB FAISS_AVX_SRCS thirdparty/faiss/faiss/impl/*avx.cpp)
-
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX_SRCS})
+
+  knowhere_file_glob(GLOB FAISS_NEON_SRCS thirdparty/faiss/faiss/impl/*neon.cpp)
+  list(REMOVE_ITEM FAISS_SRCS ${FAISS_NEON_SRCS})
+
   add_library(faiss STATIC ${FAISS_SRCS})
 
   target_compile_options(
