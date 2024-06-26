@@ -43,9 +43,9 @@ class Benchmark_float_bitset : public Benchmark_knowhere, public ::testing::Test
                 auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
                 for (auto k : TOPKs_) {
                     conf[knowhere::meta::TOPK] = k;
-                    auto g_result = golden_index_.value().Search(*ds_ptr, conf, bitset);
+                    auto g_result = golden_index_.value().Search(ds_ptr, conf, bitset);
                     auto g_ids = g_result.value()->GetIds();
-                    CALC_TIME_SPAN(auto result = index_.value().Search(*ds_ptr, conf, bitset));
+                    CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, bitset));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(g_ids, ids, nq, k);
                     printf("  bitset_per = %3d%%, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", per, nq, k, t_diff,
@@ -72,9 +72,9 @@ class Benchmark_float_bitset : public Benchmark_knowhere, public ::testing::Test
                 auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
                 for (auto k : TOPKs_) {
                     conf[knowhere::meta::TOPK] = k;
-                    auto g_result = golden_index_.value().Search(*ds_ptr, conf, bitset);
+                    auto g_result = golden_index_.value().Search(ds_ptr, conf, bitset);
                     auto g_ids = g_result.value()->GetIds();
-                    CALC_TIME_SPAN(auto result = index_.value().Search(*ds_ptr, conf, bitset));
+                    CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, bitset));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(g_ids, ids, nq, k);
                     printf("  bitset_per = %3d%%, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", per, nq, k, t_diff,
@@ -101,9 +101,9 @@ class Benchmark_float_bitset : public Benchmark_knowhere, public ::testing::Test
                 auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
                 for (auto k : TOPKs_) {
                     conf[knowhere::meta::TOPK] = k;
-                    auto g_result = golden_index_.value().Search(*ds_ptr, conf, bitset);
+                    auto g_result = golden_index_.value().Search(ds_ptr, conf, bitset);
                     auto g_ids = g_result.value()->GetIds();
-                    CALC_TIME_SPAN(auto result = index_.value().Search(*ds_ptr, conf, bitset));
+                    CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, bitset));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(g_ids, ids, nq, k);
                     printf("  bitset_per = %3d%%, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", per, nq, k, t_diff,
@@ -224,7 +224,7 @@ TEST_F(Benchmark_float_bitset, TEST_DISKANN) {
     index_ = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_type_, version, diskann_index_pack);
     printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
     knowhere::DataSetPtr ds_ptr = nullptr;
-    index_.value().Build(*ds_ptr, conf);
+    index_.value().Build(ds_ptr, conf);
 
     knowhere::BinarySet binset;
     index_.value().Serialize(binset);

@@ -27,24 +27,25 @@ class IndexNodeDataMockWrapper : public IndexNode {
     }
 
     Status
-    Build(const DataSet& dataset, const Config& cfg) override;
+    Build(const DataSetPtr dataset, const Config& cfg) override;
 
     Status
-    Train(const DataSet& dataset, const Config& cfg) override;
+    Train(const DataSetPtr dataset, const Config& cfg) override;
 
     Status
-    Add(const DataSet& dataset, const Config& cfg) override;
-    expected<DataSetPtr>
-    Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override;
+    Add(const DataSetPtr dataset, const Config& cfg) override;
 
     expected<DataSetPtr>
-    RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override;
-
-    expected<std::vector<std::shared_ptr<iterator>>>
-    AnnIterator(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override;
+    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSet& dataset) const override;
+    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
+
+    expected<std::vector<IteratorPtr>>
+    AnnIterator(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
+
+    expected<DataSetPtr>
+    GetVectorByIds(const DataSetPtr dataset) const override;
 
     bool
     HasRawData(const std::string& metric_type) const override {

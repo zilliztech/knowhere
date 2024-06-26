@@ -28,21 +28,21 @@ class GpuFlatIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSet& dataset, const Config& cfg) override {
+    Train(const DataSetPtr dataset, const Config& cfg) override {
         const GpuFlatConfig& f_cfg = static_cast<const GpuFlatConfig&>(cfg);
         auto metric = Str2FaissMetricType(f_cfg.metric_type);
         if (!metric.has_value()) {
             LOG_KNOWHERE_WARNING_ << "metric type error, " << f_cfg.metric_type;
             return metric.error();
         }
-        index_ = std::make_unique<faiss::IndexFlat>(dataset.GetDim(), metric.value());
+        index_ = std::make_unique<faiss::IndexFlat>(dataset->GetDim(), metric.value());
         return Status::success;
     }
 
     Status
-    Add(const DataSet& dataset, const Config& cfg) override {
-        const void* x = dataset.GetTensor();
-        const int64_t n = dataset.GetRows();
+    Add(const DataSetPtr dataset, const Config& cfg) override {
+        const void* x = dataset->GetTensor();
+        const int64_t n = dataset->GetRows();
         try {
             index_->add(n, (const float*)x);
             // need not copy index from CPU to GPU for IDMAP
@@ -54,15 +54,15 @@ class GpuFlatIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "index not empty, deleted old index.";
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
         const FlatConfig& f_cfg = static_cast<const FlatConfig&>(cfg);
-        auto nq = dataset.GetRows();
-        auto x = dataset.GetTensor();
+        auto nq = dataset->GetRows();
+        auto x = dataset->GetTensor();
         auto len = f_cfg.k * nq;
         int64_t* ids = nullptr;
         float* dis = nullptr;
@@ -83,16 +83,16 @@ class GpuFlatIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
+    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
         return Status::not_implemented;
     }
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSet& dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset) const override {
         DataSetPtr results = std::make_shared<DataSet>();
-        auto nq = dataset.GetRows();
-        auto dim = dataset.GetDim();
-        auto in_ids = dataset.GetIds();
+        auto nq = dataset->GetRows();
+        auto dim = dataset->GetDim();
+        auto in_ids = dataset->GetIds();
         try {
             float* xq = new (std::nothrow) float[nq * dim];
             for (int64_t i = 0; i < nq; i++) {

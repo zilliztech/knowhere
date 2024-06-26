@@ -46,7 +46,7 @@ NormalizeVecs(DataType* x, size_t rows, int32_t dim);
 
 template <typename DataType = knowhere::fp32>
 extern void
-Normalize(const DataSet& dataset);
+Normalize(const DataSetPtr dataset);
 
 template <typename DataType>
 extern std::unique_ptr<DataType[]>
@@ -135,17 +135,6 @@ ConvertFromDataTypeIfNeeded(const DataSetPtr ds) {
         return ds;
     } else {
         return data_type_conversion<DataType, typename MockData<DataType>::type>(*ds);
-    }
-}
-
-// Convert DataSet from DataType to float
-template <typename DataType>
-inline std::shared_ptr<const DataSet>
-ConvertFromDataTypeIfNeeded(const DataSet& ds) {
-    if constexpr (std::is_same_v<DataType, typename MockData<DataType>::type>) {
-        return ds.shared_from_this();
-    } else {
-        return data_type_conversion<DataType, typename MockData<DataType>::type>(ds);
     }
 }
 

@@ -113,7 +113,7 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
         } catch (...) {
             printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
             knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nb_, dim_, xb_);
-            index_.value().Build(*ds_ptr, conf);
+            index_.value().Build(ds_ptr, conf);
 
             printf("[%.3f s] Writing index file: %s\n", get_time_diff(), index_file_name.c_str());
             write_index(index_.value(), index_file_name, conf);
@@ -136,7 +136,7 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
         } catch (...) {
             printf("[%.3f s] Building golden index on %d vectors\n", get_time_diff(), nb_);
             knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nb_, dim_, xb_);
-            golden_index_.value().Build(*ds_ptr, conf);
+            golden_index_.value().Build(ds_ptr, conf);
 
             printf("[%.3f s] Writing golden index file: %s\n", get_time_diff(), golden_index_file_name.c_str());
             write_index(golden_index_.value(), golden_index_file_name, conf);

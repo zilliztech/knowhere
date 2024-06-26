@@ -49,7 +49,7 @@ class BruteForce {
                         const Json& config, const BitsetView& bitset);
 
     template <typename DataType>
-    static expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
+    static expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                 const BitsetView& bitset);
 };

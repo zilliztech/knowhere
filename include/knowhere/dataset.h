@@ -250,6 +250,7 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
     bool is_sparse = false;
 };
 using DataSetPtr = std::shared_ptr<DataSet>;
+
 inline DataSetPtr
 GenDataSet(const int64_t nb, const int64_t dim, const void* xb) {
     auto ret_ds = std::make_shared<DataSet>();

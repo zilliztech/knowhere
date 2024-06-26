@@ -29,7 +29,7 @@ class Benchmark_binary_range : public Benchmark_knowhere, public ::testing::Test
         printf("================================================================================\n");
         for (auto nq : NQs_) {
             knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
-            CALC_TIME_SPAN(auto result = index_.value().RangeSearch(*ds_ptr, conf, nullptr));
+            CALC_TIME_SPAN(auto result = index_.value().RangeSearch(ds_ptr, conf, nullptr));
             auto ids = result.value()->GetIds();
             auto distances = result.value()->GetDistance();
             auto lims = result.value()->GetLims();
@@ -56,7 +56,7 @@ class Benchmark_binary_range : public Benchmark_knowhere, public ::testing::Test
             conf[knowhere::indexparam::NPROBE] = nprobe;
             for (auto nq : NQs_) {
                 knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
-                CALC_TIME_SPAN(auto result = index_.value().RangeSearch(*ds_ptr, conf, nullptr));
+                CALC_TIME_SPAN(auto result = index_.value().RangeSearch(ds_ptr, conf, nullptr));
                 auto ids = result.value()->GetIds();
                 auto lims = result.value()->GetLims();
                 float recall = CalcRecall(ids, lims, nq);
@@ -84,7 +84,7 @@ class Benchmark_binary_range : public Benchmark_knowhere, public ::testing::Test
             conf[knowhere::indexparam::EF] = ef;
             for (auto nq : NQs_) {
                 knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
-                CALC_TIME_SPAN(auto result = index_.value().RangeSearch(*ds_ptr, conf, nullptr));
+                CALC_TIME_SPAN(auto result = index_.value().RangeSearch(ds_ptr, conf, nullptr));
                 auto ids = result.value()->GetIds();
                 auto lims = result.value()->GetLims();
                 float recall = CalcRecall(ids, lims, nq);
