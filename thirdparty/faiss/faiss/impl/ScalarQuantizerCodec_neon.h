@@ -160,6 +160,33 @@ struct QuantizerFP16_neon<8> : public QuantizerFP16<1> {
 };
 
 /*******************************************************************
+ * BF16 quantizer
+ *******************************************************************/
+
+template <int SIMDWIDTH>
+struct QuantizerBF16_neon {};
+
+template <>
+struct QuantizerBF16_neon<1> : public QuantizerBF16<1> {
+    QuantizerBF16_neon(size_t d, const std::vector<float>& unused)
+            : QuantizerBF16<1>(d, unused) {}
+};
+
+template <>
+struct QuantizerBF16_neon<8> : public QuantizerBF16<1> {
+    QuantizerBF16_neon(size_t d, const std::vector<float>& trained)
+            : QuantizerBF16<1>(d, trained) {}
+
+    FAISS_ALWAYS_INLINE float32x4x2_t
+    reconstruct_8_components(const uint8_t* code, int i) const {
+        uint16x4x2_t codei = vld1_u16_x2((const uint16_t*)(code + 2 * i));
+        return {vreinterpretq_f32_u32(vshlq_n_u32(vmovl_u16(codei.val[0]), 16)),
+                vreinterpretq_f32_u32(
+                        vshlq_n_u32(vmovl_u16(codei.val[1]), 16))};
+    }
+};
+
+/*******************************************************************
  * 8bit_direct quantizer
  *******************************************************************/
 
@@ -179,13 +206,48 @@ struct Quantizer8bitDirect_neon<8> : public Quantizer8bitDirect<1> {
 
     FAISS_ALWAYS_INLINE float32x4x2_t
     reconstruct_8_components(const uint8_t* code, int i) const {
-        float32_t result[8] = {};
-        for (size_t j = 0; j < 8; j++) {
-            result[j] = code[i + j];
-        }
-        float32x4_t res1 = vld1q_f32(result);
-        float32x4_t res2 = vld1q_f32(result + 4);
-        return {res1, res2};
+        uint8x8_t x8 = vld1_u8((const uint8_t*)(code + i));
+        uint16x8_t y8 = vmovl_u8(x8);
+        uint16x4_t y8_0 = vget_low_u16(y8);
+        uint16x4_t y8_1 = vget_high_u16(y8);
+
+        // convert uint16 -> uint32 -> fp32
+        return {vcvtq_f32_u32(vmovl_u16(y8_0)), vcvtq_f32_u32(vmovl_u16(y8_1))};
+    }
+};
+
+/*******************************************************************
+ * 8bit_direct_signed quantizer
+ *******************************************************************/
+
+template <int SIMDWIDTH>
+struct Quantizer8bitDirectSigned_neon {};
+
+template <>
+struct Quantizer8bitDirectSigned_neon<1> : public Quantizer8bitDirectSigned<1> {
+    Quantizer8bitDirectSigned_neon(size_t d, const std::vector<float>& unused)
+            : Quantizer8bitDirectSigned(d, unused) {}
+};
+
+template <>
+struct Quantizer8bitDirectSigned_neon<8> : public Quantizer8bitDirectSigned<1> {
+    Quantizer8bitDirectSigned_neon(size_t d, const std::vector<float>& trained)
+            : Quantizer8bitDirectSigned<1>(d, trained) {}
+
+    FAISS_ALWAYS_INLINE float32x4x2_t
+    reconstruct_8_components(const uint8_t* code, int i) const {
+        uint8x8_t x8 = vld1_u8((const uint8_t*)(code + i));
+        uint16x8_t y8 = vmovl_u8(x8); // convert uint8 -> uint16
+        uint16x4_t y8_0 = vget_low_u16(y8);
+        uint16x4_t y8_1 = vget_high_u16(y8);
+
+        float32x4_t z8_0 = vcvtq_f32_u32(
+                vmovl_u16(y8_0)); // convert uint16 -> uint32 -> fp32
+        float32x4_t z8_1 = vcvtq_f32_u32(vmovl_u16(y8_1));
+
+        // subtract 128 to convert into signed numbers
+        return {vsubq_f32(z8_0, vmovq_n_f32(128.0)),
+                vsubq_f32(z8_1, vmovq_n_f32(128.0))};
     }
 };
 
@@ -212,8 +274,12 @@ SQuantizer* select_quantizer_1_neon(
                     d, trained);
         case QuantizerType::QT_fp16:
             return new QuantizerFP16_neon<SIMDWIDTH>(d, trained);
+        case QuantizerType::QT_bf16:
+            return new QuantizerBF16_neon<SIMDWIDTH>(d, trained);
         case QuantizerType::QT_8bit_direct:
             return new Quantizer8bitDirect_neon<SIMDWIDTH>(d, trained);
+        case QuantizerType::QT_8bit_direct_signed:
+            return new Quantizer8bitDirectSigned_neon<SIMDWIDTH>(d, trained);
     }
     FAISS_THROW_MSG("unknown qtype");
 }
@@ -556,6 +622,12 @@ SQDistanceComputer* select_distance_computer_neon(
                     Sim,
                     SIMDWIDTH>(d, trained);
 
+        case QuantizerType::QT_bf16:
+            return new DCTemplate_neon<
+                    QuantizerBF16_neon<SIMDWIDTH>,
+                    Sim,
+                    SIMDWIDTH>(d, trained);
+
         case QuantizerType::QT_8bit_direct:
             if (d % 16 == 0) {
                 return new DistanceComputerByte_neon<Sim, SIMDWIDTH>(d, trained);
@@ -565,6 +637,12 @@ SQDistanceComputer* select_distance_computer_neon(
                         Sim,
                         SIMDWIDTH>(d, trained);
             }
+
+        case ScalarQuantizer::QT_8bit_direct_signed:
+            return new DCTemplate_neon<
+                    Quantizer8bitDirectSigned_neon<SIMDWIDTH>,
+                    Sim,
+                    SIMDWIDTH>(d, trained);
     }
     FAISS_THROW_MSG("unknown qtype");
     return nullptr;
@@ -634,6 +712,11 @@ InvertedListScanner* sel1_InvertedListScanner_neon(
                     QuantizerFP16_neon<SIMDWIDTH>,
                     Similarity,
                     SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
+        case QuantizerType::QT_bf16:
+            return sel2_InvertedListScanner_neon<DCTemplate_neon<
+                    QuantizerBF16_neon<SIMDWIDTH>,
+                    Similarity,
+                    SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
         case QuantizerType::QT_8bit_direct:
             if (sq->d % 16 == 0) {
                 return sel2_InvertedListScanner_neon<
@@ -645,6 +728,11 @@ InvertedListScanner* sel1_InvertedListScanner_neon(
                         Similarity,
                         SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
             }
+        case ScalarQuantizer::QT_8bit_direct_signed:
+            return sel2_InvertedListScanner_neon<DCTemplate_neon<
+                    Quantizer8bitDirectSigned_neon<SIMDWIDTH>,
+                    Similarity,
+                    SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
     }
 
     FAISS_THROW_MSG("unknown qtype");

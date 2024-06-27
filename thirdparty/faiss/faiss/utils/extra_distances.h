@@ -34,7 +34,6 @@ void pairwise_extra_distances(
         int64_t ldb = -1,
         int64_t ldd = -1);
 
-template <class C>
 void knn_extra_metrics(
         const float* x,
         const float* y,
@@ -43,7 +42,9 @@ void knn_extra_metrics(
         size_t ny,
         MetricType mt,
         float metric_arg,
-        HeapArray<C>* res,
+        size_t k,
+        float* distances,
+        int64_t* indexes,
         const IDSelector* sel = nullptr);
 
 /** get a DistanceComputer that refers to this type of distance and

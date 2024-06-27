@@ -100,6 +100,9 @@ class TestBinaryFlat(unittest.TestCase):
         index.add(self.xb)
         D, I = index.search(self.xq, 3)
 
+        I2 = index.assign(x=self.xq, k=3, labels=None)
+        assert np.all(I == I2)
+
         for i in range(nq):
             for j, dj in zip(I[i], D[i]):
                 ref_dis = binary_dis(self.xq[i], self.xb[j])
@@ -139,7 +142,6 @@ class TestBinaryFlat(unittest.TestCase):
                 self.assertTrue(set(range_res) <= set(I[i]))
                 nt2 += 1
             # in case of equality we have a problem with ties
-        print('nb tests', nt1, nt2)
         # nb tests is actually low...
         self.assertTrue(nt1 > 19 and nt2 > 19)
 
@@ -284,8 +286,6 @@ class TestBinaryIVF(unittest.TestCase):
         ref_index.add(xb)
         ref_D, ref_I = ref_index.search(xq, k)
 
-        print(D[0], ref_D[0])
-        print(I[0], ref_I[0])
         assert np.all(D == ref_D)
         # assert np.all(I == ref_I)  # id may be different
 
