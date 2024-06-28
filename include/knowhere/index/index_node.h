@@ -105,18 +105,30 @@ class IndexNode : public Object {
         const bool similarity_metric = IsMetricType(base_cfg.metric_type.value(), metric::IP) ||
                                        IsMetricType(base_cfg.metric_type.value(), metric::COSINE);
         const bool has_range_filter = range_filter != defaultRangeFilter;
+        constexpr size_t k_min_num_consecutive_over_radius = 16;
+        const auto range_search_level = base_cfg.range_search_level.value();
+        LOG_KNOWHERE_DEBUG_ << "range_search_level: " << range_search_level;
         auto task = [&](size_t idx) {
             auto it = its[idx];
+            size_t num_next = 0;
+            size_t num_consecutive_over_radius = 0;
             while (it->HasNext()) {
                 auto [id, dist] = it->Next();
+                num_next++;
                 // too close
                 if (has_range_filter && (similarity_metric ? dist > range_filter : dist < range_filter)) {
                     continue;
                 }
                 // too far
                 if (similarity_metric ? dist <= radius : dist >= radius) {
-                    break;
+                    num_consecutive_over_radius++;
+                    if (num_consecutive_over_radius >
+                        std::max(k_min_num_consecutive_over_radius, (size_t)(num_next * range_search_level))) {
+                        break;
+                    }
+                    continue;
                 }
+                num_consecutive_over_radius = 0;
                 result_id_array[idx].push_back(id);
                 result_dist_array[idx].push_back(dist);
             }
