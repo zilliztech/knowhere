@@ -27,7 +27,7 @@ if(WITH_RAFT)
   set(CMAKE_CUDA_ARCHITECTURES RAPIDS)
   include(cmake/libs/librapids.cmake)
   project(knowhere CXX C CUDA)
-  include(cmake/libs/libraft.cmake)
+  include(cmake/libs/libcuvs.cmake)
 endif()
 
 knowhere_option(WITH_UT "Build with UT test" OFF)
@@ -191,7 +191,7 @@ if(WITH_RAFT)
   list(
     APPEND
     KNOWHERE_LINKER_LIBS
-    raft::raft
+    cuvs::cuvs
     raft::compiled_static
     CUDA::cublas
     CUDA::cusparse
@@ -216,3 +216,4 @@ install(TARGETS knowhere
         DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR})
 install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/knowhere"
         DESTINATION "${CMAKE_INSTALL_PREFIX}/include")
+
