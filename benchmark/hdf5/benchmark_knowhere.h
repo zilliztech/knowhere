@@ -22,6 +22,14 @@
 #include "knowhere/index/index_factory.h"
 #include "knowhere/version.h"
 
+namespace fs = std::filesystem;
+std::string kDir = fs::current_path().string() + "/diskann_test";
+std::string kRawDataPath = kDir + "/raw_data";
+std::string kL2IndexDir = kDir + "/l2_index";
+std::string kIPIndexDir = kDir + "/ip_index";
+std::string kL2IndexPrefix = kL2IndexDir + "/l2";
+std::string kIPIndexPrefix = kIPIndexDir + "/ip";
+
 class Benchmark_knowhere : public Benchmark_hdf5 {
  public:
     void
@@ -105,7 +113,7 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
         } catch (...) {
             printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
             knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nb_, dim_, xb_);
-            index_.value().Build(*ds_ptr, conf);
+            index_.value().Build(ds_ptr, conf);
 
             printf("[%.3f s] Writing index file: %s\n", get_time_diff(), index_file_name.c_str());
             write_index(index_.value(), index_file_name, conf);
@@ -128,12 +136,21 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
         } catch (...) {
             printf("[%.3f s] Building golden index on %d vectors\n", get_time_diff(), nb_);
             knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nb_, dim_, xb_);
-            golden_index_.value().Build(*ds_ptr, conf);
+            golden_index_.value().Build(ds_ptr, conf);
 
             printf("[%.3f s] Writing golden index file: %s\n", get_time_diff(), golden_index_file_name.c_str());
             write_index(golden_index_.value(), golden_index_file_name, conf);
         }
         return golden_index_.value();
+    }
+
+    void
+    WriteRawDataToDisk(const std::string data_path, const float* raw_data, const uint32_t num, const uint32_t dim) {
+        std::ofstream writer(data_path.c_str(), std::ios::binary);
+        writer.write((char*)&num, sizeof(uint32_t));
+        writer.write((char*)&dim, sizeof(uint32_t));
+        writer.write((char*)raw_data, sizeof(float) * num * dim);
+        writer.close();
     }
 
  protected:

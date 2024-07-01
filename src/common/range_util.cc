@@ -13,6 +13,10 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <cstddef>
+#include <memory>
+#include <tuple>
+#include <vector>
 
 #include "knowhere/log.h"
 namespace knowhere {
@@ -41,16 +45,16 @@ FilterRangeSearchResultForOneNq(std::vector<float>& distances, std::vector<int64
     }
 }
 
-void
+RangeSearchResult
 GetRangeSearchResult(const std::vector<std::vector<float>>& result_distances,
                      const std::vector<std::vector<int64_t>>& result_labels, const bool is_ip, const int64_t nq,
-                     const float radius, const float range_filter, float*& distances, int64_t*& labels, size_t*& lims) {
+                     const float radius, const float range_filter) {
     KNOWHERE_THROW_IF_NOT_FMT(result_distances.size() == (size_t)nq, "result distances size %ld not equal to %" SCNd64,
                               result_distances.size(), nq);
     KNOWHERE_THROW_IF_NOT_FMT(result_labels.size() == (size_t)nq, "result labels size %ld not equal to %" SCNd64,
                               result_labels.size(), nq);
 
-    lims = new size_t[nq + 1];
+    auto lims = std::make_unique<size_t[]>(nq + 1);
     lims[0] = 0;
     // all distances must be in range scope
     for (int64_t i = 0; i < nq; i++) {
@@ -61,13 +65,15 @@ GetRangeSearchResult(const std::vector<std::vector<float>>& result_distances,
     LOG_KNOWHERE_DEBUG_ << "Range search: is_ip " << (is_ip ? "True" : "False") << ", radius " << radius
                         << ", range_filter " << range_filter << ", total result num " << total_valid;
 
-    distances = new float[total_valid];
-    labels = new int64_t[total_valid];
+    auto distances = std::make_unique<float[]>(total_valid);
+    auto labels = std::make_unique<int64_t[]>(total_valid);
 
     for (auto i = 0; i < nq; i++) {
-        std::copy_n(result_distances[i].data(), lims[i + 1] - lims[i], distances + lims[i]);
-        std::copy_n(result_labels[i].data(), lims[i + 1] - lims[i], labels + lims[i]);
+        std::copy_n(result_distances[i].data(), lims[i + 1] - lims[i], distances.get() + lims[i]);
+        std::copy_n(result_labels[i].data(), lims[i + 1] - lims[i], labels.get() + lims[i]);
     }
+
+    return RangeSearchResult{.distances = std::move(distances), .labels = std::move(labels), .lims = std::move(lims)};
 }
 
 }  // namespace knowhere

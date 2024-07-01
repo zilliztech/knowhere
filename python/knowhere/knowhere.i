@@ -31,6 +31,7 @@ typedef uint64_t size_t;
 #include <knowhere/index/index_factory.h>
 #include <knowhere/version.h>
 #include <knowhere/utils.h>
+#include <knowhere/sparse_utils.h>
 #include <knowhere/operands.h>
 #include <knowhere/comp/brute_force.h>
 #include <knowhere/comp/knowhere_config.h>
@@ -78,6 +79,9 @@ import_array();
 %apply (int *IN_ARRAY1, int DIM1) {(int *lims, int len)}
 %apply (int *IN_ARRAY1, int DIM1) {(int *ids, int len)}
 %apply (float *IN_ARRAY1, int DIM1) {(float *dis, int len)}
+%apply (float *IN_ARRAY1, int DIM1) {(float *data, int nb1)}
+%apply (int *IN_ARRAY1, int DIM1) {(int *ids, int nb2)}
+%apply (int64_t *IN_ARRAY1, int DIM1) {(int64_t* indptr, int nb3)}
 %apply (float* INPLACE_ARRAY2, int DIM1, int DIM2){(float *dis,int nq_1,int k_1)}
 %apply (int *INPLACE_ARRAY2, int DIM1, int DIM2){(int *ids,int nq_2,int k_2)}
 %apply (float* INPLACE_ARRAY2, int DIM1, int DIM2){(float *data,int rows,int dim)}
@@ -163,25 +167,25 @@ class IndexWrap {
     knowhere::Status
     Build(knowhere::DataSetPtr dataset, const std::string& json) {
         GILReleaser rel;
-        return idx.value().Build(*dataset, knowhere::Json::parse(json));
+        return idx.value().Build(dataset, knowhere::Json::parse(json));
     }
 
     knowhere::Status
     Train(knowhere::DataSetPtr dataset, const std::string& json) {
         GILReleaser rel;
-        return idx.value().Train(*dataset, knowhere::Json::parse(json));
+        return idx.value().Train(dataset, knowhere::Json::parse(json));
     }
 
     knowhere::Status
     Add(knowhere::DataSetPtr dataset, const std::string& json) {
         GILReleaser rel;
-        return idx.value().Add(*dataset, knowhere::Json::parse(json));
+        return idx.value().Add(dataset, knowhere::Json::parse(json));
     }
 
     knowhere::DataSetPtr
     Search(knowhere::DataSetPtr dataset, const std::string& json, const knowhere::BitsetView& bitset, knowhere::Status& status) {
         GILReleaser rel;
-        auto res = idx.value().Search(*dataset, knowhere::Json::parse(json), bitset);
+        auto res = idx.value().Search(dataset, knowhere::Json::parse(json), bitset);
         if (res.has_value()) {
             status = knowhere::Status::success;
             return res.value();
@@ -194,7 +198,7 @@ class IndexWrap {
     std::vector<AnnIteratorWrap>
     GetAnnIterator(knowhere::DataSetPtr dataset, const std::string& json, const knowhere::BitsetView& bitset, knowhere::Status& status) {
         GILReleaser rel;
-        auto res = idx.value().AnnIterator(*dataset, knowhere::Json::parse(json), bitset);
+        auto res = idx.value().AnnIterator(dataset, knowhere::Json::parse(json), bitset);
         std::vector<AnnIteratorWrap> result;
         if (!res.has_value()) {
             status = res.error();
@@ -210,7 +214,7 @@ class IndexWrap {
     knowhere::DataSetPtr
     RangeSearch(knowhere::DataSetPtr dataset, const std::string& json, const knowhere::BitsetView& bitset, knowhere::Status& status){
         GILReleaser rel;
-        auto res = idx.value().RangeSearch(*dataset, knowhere::Json::parse(json), bitset);
+        auto res = idx.value().RangeSearch(dataset, knowhere::Json::parse(json), bitset);
         if (res.has_value()) {
             status = knowhere::Status::success;
             return res.value();
@@ -223,7 +227,7 @@ class IndexWrap {
     knowhere::DataSetPtr
     GetVectorByIds(knowhere::DataSetPtr dataset, knowhere::Status& status) {
         GILReleaser rel;
-        auto res = idx.value().GetVectorByIds(*dataset);
+        auto res = idx.value().GetVectorByIds(dataset);
         if (res.has_value()) {
             status = knowhere::Status::success;
             return res.value();
@@ -353,6 +357,39 @@ Array2DataSetBF16(float* xb, int nb, int dim) {
 int32_t
 CurrentVersion() {
     return knowhere::Version::GetCurrentVersion().VersionNumber();
+}
+
+knowhere::DataSetPtr
+Array2SparseDataSet(float* data, int nb1, int* ids, int nb2, int64_t* indptr, int nb3) {
+    int rows = nb3 - 1;
+    int cols = 0;
+    for (auto i = 0; i < nb2; ++i) {
+        if (ids[i] < 0) {
+            throw std::runtime_error("sparse matrix indics wrong");
+        }
+        cols = std::max(ids[i] + 1, cols);
+    }
+    auto ds = std::make_shared<DataSet>();
+    auto tensor = std::make_unique<knowhere::sparse::SparseRow<float>[]>(rows);
+
+    for (int32_t i = 0; i < rows; ++i) {
+        int64_t start = indptr[i];
+        int64_t end = indptr[i+1];
+        if (start == end) {
+            throw std::runtime_error("sparse matrix indptr wrong");
+        }
+        knowhere::sparse::SparseRow<float> row(end - start);
+        for (auto j = start; j < end; ++j) {
+            row.set_at(j - start, ids[j], data[j]);
+        }
+        tensor[i] = std::move(row);
+    }
+    ds->SetRows(rows);
+    ds->SetDim(cols);
+    ds->SetTensor(tensor.release());
+    ds->SetIsOwner(true);
+    ds->SetIsSparse(true);
+    return ds;
 }
 
 knowhere::DataSetPtr
@@ -582,7 +619,12 @@ knowhere::DataSetPtr
 BruteForceSearch(knowhere::DataSetPtr base_dataset, knowhere::DataSetPtr query_dataset, const std::string& json,
                  const knowhere::BitsetView& bitset, knowhere::Status& status) {
     GILReleaser rel;
-    auto res = knowhere::BruteForce::Search<T>(base_dataset, query_dataset, knowhere::Json::parse(json), bitset);
+    expected<knowhere::DataSetPtr> res;
+    if (base_dataset->GetIsSparse()) {
+        res = knowhere::BruteForce::SearchSparse(base_dataset, query_dataset, knowhere::Json::parse(json), bitset);
+    } else {
+        res = knowhere::BruteForce::Search<T>(base_dataset, query_dataset, knowhere::Json::parse(json), bitset);
+    }
     if (res.has_value()) {
         status = knowhere::Status::success;
         return res.value();

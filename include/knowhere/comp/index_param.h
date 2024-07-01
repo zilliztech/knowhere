@@ -43,6 +43,11 @@ constexpr const char* INDEX_RAFT_IVFFLAT = "GPU_RAFT_IVF_FLAT";
 constexpr const char* INDEX_RAFT_IVFPQ = "GPU_RAFT_IVF_PQ";
 constexpr const char* INDEX_RAFT_CAGRA = "GPU_RAFT_CAGRA";
 
+constexpr const char* INDEX_GPU_BRUTEFORCE = "GPU_BRUTE_FORCE";
+constexpr const char* INDEX_GPU_IVFFLAT = "GPU_IVF_FLAT";
+constexpr const char* INDEX_GPU_IVFPQ = "GPU_IVF_PQ";
+constexpr const char* INDEX_GPU_CAGRA = "GPU_CAGRA";
+
 constexpr const char* INDEX_HNSW = "HNSW";
 constexpr const char* INDEX_HNSW_SQ8 = "HNSW_SQ8";
 constexpr const char* INDEX_HNSW_SQ8_REFINE = "HNSW_SQ8_REFINE";
@@ -131,6 +136,7 @@ constexpr const char* HASHMAP_MODE = "hashmap_mode";
 constexpr const char* HASHMAP_MIN_BITLEN = "hashmap_min_bitlen";
 constexpr const char* HASHMAP_MAX_FILL_RATE = "hashmap_max_fill_rate";
 constexpr const char* NN_DESCENT_NITER = "nn_descent_niter";
+constexpr const char* ADAPT_FOR_CPU = "adapt_for_cpu";
 
 // HNSW Params
 constexpr const char* EFCONSTRUCTION = "efConstruction";
@@ -154,5 +160,13 @@ constexpr const char* JACCARD = "JACCARD";
 constexpr const char* SUBSTRUCTURE = "SUBSTRUCTURE";
 constexpr const char* SUPERSTRUCTURE = "SUPERSTRUCTURE";
 }  // namespace metric
+
+enum VecType {
+    VECTOR_BINARY = 100,
+    VECTOR_FLOAT = 101,
+    VECTOR_FLOAT16 = 102,
+    VECTOR_BFLOAT16 = 103,
+    VECTOR_SPARSE_FLOAT = 104,
+};  // keep the same value as milvus proto define
 
 }  // namespace knowhere

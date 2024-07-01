@@ -39,20 +39,9 @@ struct DisPairLess {
 inline knowhere::DataSetPtr
 GenDataSet(int rows, int dim, int seed = 42) {
     std::mt19937 rng(seed);
-    std::uniform_int_distribution<> distrib(0.0, 100.0);
-    float* ts = new float[rows * dim];
-    for (int i = 0; i < rows * dim; ++i) ts[i] = (float)distrib(rng);
-    auto ds = knowhere::GenDataSet(rows, dim, ts);
-    ds->SetIsOwner(true);
-    return ds;
-}
-
-inline knowhere::DataSetPtr
-GenFloatDataSet(int rows, int dim, int seed = 42) {
-    std::mt19937 rng(seed);
     std::uniform_real_distribution<> distrib(0.0, 100.0);
     float* ts = new float[rows * dim];
-    for (int i = 0; i < rows * dim; ++i) ts[i] = (float)distrib(rng);
+    for (int i = 0; i < rows * dim; ++i) ts[i] = distrib(rng);
     auto ds = knowhere::GenDataSet(rows, dim, ts);
     ds->SetIsOwner(true);
     return ds;
@@ -149,7 +138,7 @@ GetKNNRecall(const knowhere::DataSet& ground_truth, const std::vector<std::vecto
     auto gt_ids = ground_truth.GetIds();
 
     uint32_t matched_num = 0;
-    for (auto i = 0; i < nq; ++i) {
+    for (size_t i = 0; i < nq; ++i) {
         std::vector<int64_t> ids_0(gt_ids + i * gt_k, gt_ids + i * gt_k + gt_k);
         std::vector<int64_t> ids_1 = result[i];
 

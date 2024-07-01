@@ -45,26 +45,26 @@ class DiskANNIndexNode : public IndexNode {
     }
 
     Status
-    Build(const DataSet& dataset, const Config& cfg) override;
+    Build(const DataSetPtr dataset, const Config& cfg) override;
 
     Status
-    Train(const DataSet& dataset, const Config& cfg) override {
+    Train(const DataSetPtr dataset, const Config& cfg) override {
         return Status::not_implemented;
     }
 
     Status
-    Add(const DataSet& dataset, const Config& cfg) override {
+    Add(const DataSetPtr dataset, const Config& cfg) override {
         return Status::not_implemented;
     }
 
     expected<DataSetPtr>
-    Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override;
+    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
 
     expected<DataSetPtr>
-    RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override;
+    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSet& dataset) const override;
+    GetVectorByIds(const DataSetPtr dataset) const override;
 
     bool
     HasRawData(const std::string& metric_type) const override {
@@ -255,7 +255,7 @@ CheckMetric(const std::string& diskann_metric) {
 
 template <typename DataType>
 Status
-DiskANNIndexNode<DataType>::Build(const DataSet& dataset, const Config& cfg) {
+DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, const Config& cfg) {
     assert(file_manager_ != nullptr);
     std::lock_guard<std::mutex> lock(preparation_lock_);
     auto build_conf = static_cast<const DiskANNConfig&>(cfg);
@@ -506,7 +506,7 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, const Config& c
 
 template <typename DataType>
 expected<DataSetPtr>
-DiskANNIndexNode<DataType>::Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
+DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
     if (!is_prepared_.load() || !pq_flash_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
         return expected<DataSetPtr>::Err(Status::empty_index, "DiskANN not loaded");
@@ -522,9 +522,9 @@ DiskANNIndexNode<DataType>::Search(const DataSet& dataset, const Config& cfg, co
     auto filter_ratio = static_cast<float>(search_conf.filter_threshold.value());
     auto for_tuning = static_cast<bool>(search_conf.for_tuning.value());
 
-    auto nq = dataset.GetRows();
-    auto dim = dataset.GetDim();
-    auto xq = static_cast<const DataType*>(dataset.GetTensor());
+    auto nq = dataset->GetRows();
+    auto dim = dataset->GetDim();
+    auto xq = static_cast<const DataType*>(dataset->GetTensor());
 
     feder::diskann::FederResultUniq feder_result;
     if (search_conf.trace_visit.value()) {
@@ -557,7 +557,7 @@ DiskANNIndexNode<DataType>::Search(const DataSet& dataset, const Config& cfg, co
         return expected<DataSetPtr>::Err(Status::diskann_inner_error, "some search failed");
     }
 
-    auto res = GenResultDataSet(nq, k, p_id.release(), p_dist.release());
+    auto res = GenResultDataSet(nq, k, std::move(p_id), std::move(p_dist));
 
     // set visit_info json string into result dataset
     if (feder_result != nullptr) {
@@ -572,7 +572,7 @@ DiskANNIndexNode<DataType>::Search(const DataSet& dataset, const Config& cfg, co
 
 template <typename DataType>
 expected<DataSetPtr>
-DiskANNIndexNode<DataType>::RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
+DiskANNIndexNode<DataType>::RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
     if (!is_prepared_.load() || !pq_flash_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -596,13 +596,9 @@ DiskANNIndexNode<DataType>::RangeSearch(const DataSet& dataset, const Config& cf
     bool is_ip = (pq_flash_index_->get_metric() == diskann::Metric::INNER_PRODUCT ||
                   pq_flash_index_->get_metric() == diskann::Metric::COSINE);
 
-    auto dim = dataset.GetDim();
-    auto nq = dataset.GetRows();
-    auto xq = static_cast<const DataType*>(dataset.GetTensor());
-
-    int64_t* p_id = nullptr;
-    DistType* p_dist = nullptr;
-    size_t* p_lims = nullptr;
+    auto dim = dataset->GetDim();
+    auto nq = dataset->GetRows();
+    auto xq = static_cast<const DataType*>(dataset->GetTensor());
 
     std::vector<std::vector<int64_t>> result_id_array(nq);
     std::vector<std::vector<DistType>> result_dist_array(nq);
@@ -628,9 +624,9 @@ DiskANNIndexNode<DataType>::RangeSearch(const DataSet& dataset, const Config& cf
         return expected<DataSetPtr>::Err(Status::diskann_inner_error, "some search failed");
     }
 
-    GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, search_conf.range_filter.value(),
-                         p_dist, p_id, p_lims);
-    return GenResultDataSet(nq, p_id, p_dist, p_lims);
+    auto range_search_result =
+        GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, search_conf.range_filter.value());
+    return GenResultDataSet(nq, std::move(range_search_result));
 }
 
 /*
@@ -640,14 +636,14 @@ DiskANNIndexNode<DataType>::RangeSearch(const DataSet& dataset, const Config& cf
  */
 template <typename DataType>
 expected<DataSetPtr>
-DiskANNIndexNode<DataType>::GetVectorByIds(const DataSet& dataset) const {
+DiskANNIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset) const {
     if (!is_prepared_.load() || !pq_flash_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
     auto dim = Dim();
-    auto rows = dataset.GetRows();
-    auto ids = dataset.GetIds();
+    auto rows = dataset->GetRows();
+    auto ids = dataset->GetIds();
     auto* data = new DataType[dim * rows];
     if (data == nullptr) {
         LOG_KNOWHERE_ERROR_ << "Failed to allocate memory for data.";

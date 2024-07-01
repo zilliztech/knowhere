@@ -205,6 +205,39 @@ struct QuantizerFP16_avx512<16> : public QuantizerFP16_avx<8> {
 };
 
 /*******************************************************************
+ * BF16 quantizer
+ *******************************************************************/
+
+template <int SIMDWIDTH>
+struct QuantizerBF16_avx512 {};
+
+template <>
+struct QuantizerBF16_avx512<1> : public QuantizerBF16_avx<1> {
+    QuantizerBF16_avx512(size_t d, const std::vector<float>& unused)
+            : QuantizerBF16_avx<1>(d, unused) {}
+};
+
+template <>
+struct QuantizerBF16_avx512<8> : public QuantizerBF16_avx<8> {
+    QuantizerBF16_avx512(size_t d, const std::vector<float>& trained)
+            : QuantizerBF16_avx<8>(d, trained) {}
+};
+
+template <>
+struct QuantizerBF16_avx512<16> : public QuantizerBF16_avx<8> {
+    QuantizerBF16_avx512(size_t d, const std::vector<float>& trained)
+            : QuantizerBF16_avx<8>(d, trained) {}
+
+    FAISS_ALWAYS_INLINE __m512
+    reconstruct_16_components(const uint8_t* code, int i) const {
+        __m256i code_256i = _mm256_loadu_si256((const __m256i*)(code + 2 * i));
+        __m512i code_512i = _mm512_cvtepu16_epi32(code_256i);
+        code_512i = _mm512_slli_epi32(code_512i, 16);
+        return _mm512_castsi512_ps(code_512i);
+    }
+};
+
+/*******************************************************************
  * 8bit_direct quantizer
  *******************************************************************/
 
@@ -233,6 +266,40 @@ struct Quantizer8bitDirect_avx512<16> : public Quantizer8bitDirect_avx<8> {
         __m256i x16 = _mm256_loadu_si256((__m256i*)(code + i)); // 16 * int8
         __m512i y16 = _mm512_cvtepu8_epi16(x16);                // 16 * int32
         return _mm512_cvtepi32_ps(y16);                         // 16 * float32
+    }
+};
+
+/*******************************************************************
+ * 8bit_direct_signed quantizer
+ *******************************************************************/
+
+template <int SIMDWIDTH>
+struct Quantizer8bitDirectSigned_avx512 {};
+
+template <>
+struct Quantizer8bitDirectSigned_avx512<1> : public Quantizer8bitDirectSigned_avx<1> {
+    Quantizer8bitDirectSigned_avx512(size_t d, const std::vector<float>& unused)
+            : Quantizer8bitDirectSigned_avx<1>(d, unused) {}
+};
+
+template <>
+struct Quantizer8bitDirectSigned_avx512<8> : public Quantizer8bitDirectSigned_avx<8> {
+    Quantizer8bitDirectSigned_avx512(size_t d, const std::vector<float>& trained)
+            : Quantizer8bitDirectSigned_avx<8>(d, trained) {}
+};
+
+template <>
+struct Quantizer8bitDirectSigned_avx512<16> : public Quantizer8bitDirectSigned_avx<8> {
+    Quantizer8bitDirectSigned_avx512(size_t d, const std::vector<float>& trained)
+            : Quantizer8bitDirectSigned_avx<8>(d, trained) {}
+
+    FAISS_ALWAYS_INLINE __m512
+    reconstruct_16_components(const uint8_t* code, int i) const {
+        __m256i x16 = _mm256_loadu_si256((__m256i*)(code + i)); // 16 * int8
+        __m512i y16 = _mm512_cvtepu8_epi16(x16);                // 16 * int32
+        __m512i c16 = _mm512_set1_epi32(128);
+        __m512i z16 = _mm512_sub_epi32(y16, c16); // subtract 128 from all lanes
+        return _mm512_cvtepi32_ps(z16);           // 16 * float32
     }
 };
 
@@ -269,8 +336,12 @@ SQuantizer* select_quantizer_1_avx512(
                     SIMDWIDTH>(d, trained);
         case QuantizerType::QT_fp16:
             return new QuantizerFP16_avx512<SIMDWIDTH>(d, trained);
+        case QuantizerType::QT_bf16:
+            return new QuantizerBF16_avx512<SIMDWIDTH>(d, trained);
         case QuantizerType::QT_8bit_direct:
             return new Quantizer8bitDirect_avx512<SIMDWIDTH>(d, trained);
+        case QuantizerType::QT_8bit_direct_signed:
+            return new Quantizer8bitDirectSigned_avx512<SIMDWIDTH>(d, trained);
     }
     FAISS_THROW_MSG("unknown qtype");
 }
@@ -653,6 +724,12 @@ SQDistanceComputer* select_distance_computer_avx512(
                     Sim,
                     SIMDWIDTH>(d, trained);
 
+        case QuantizerType::QT_bf16:
+            return new DCTemplate_avx512<
+                    QuantizerBF16_avx512<SIMDWIDTH>,
+                    Sim,
+                    SIMDWIDTH>(d, trained);
+
         case QuantizerType::QT_8bit_direct:
             if (d % 16 == 0) {
                 return new DistanceComputerByte_avx512<Sim, SIMDWIDTH>(
@@ -663,6 +740,12 @@ SQDistanceComputer* select_distance_computer_avx512(
                         Sim,
                         SIMDWIDTH>(d, trained);
             }
+
+        case ScalarQuantizer::QT_8bit_direct_signed:
+            return new DCTemplate_avx512<
+                    Quantizer8bitDirectSigned_avx512<SIMDWIDTH>,
+                    Sim,
+                    SIMDWIDTH>(d, trained);
     }
     FAISS_THROW_MSG("unknown qtype");
     return nullptr;
@@ -732,6 +815,11 @@ InvertedListScanner* sel1_InvertedListScanner_avx512(
                     QuantizerFP16_avx512<SIMDWIDTH>,
                     Similarity,
                     SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
+        case QuantizerType::QT_bf16:
+            return sel2_InvertedListScanner_avx512<DCTemplate_avx512<
+                    QuantizerBF16_avx512<SIMDWIDTH>,
+                    Similarity,
+                    SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
         case QuantizerType::QT_8bit_direct:
             if (sq->d % 16 == 0) {
                 return sel2_InvertedListScanner_avx512<
@@ -743,6 +831,11 @@ InvertedListScanner* sel1_InvertedListScanner_avx512(
                         Similarity,
                         SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
             }
+        case ScalarQuantizer::QT_8bit_direct_signed:
+            return sel2_InvertedListScanner_avx512<DCTemplate_avx512<
+                    Quantizer8bitDirectSigned_avx512<SIMDWIDTH>,
+                    Similarity,
+                    SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
     }
 
     FAISS_THROW_MSG("unknown qtype");

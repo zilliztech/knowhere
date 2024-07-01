@@ -89,6 +89,20 @@ def ArrayToDataSet(arr):
         """
     )
 
+# follow csr_matrix format
+# row i are stored in ``indices[indptr[i]:indptr[i+1]]`` and their
+# corresponding values are stored in ``data[indptr[i]:indptr[i+1]]
+def ArrayToSparseDataSet(data, indices, indptr):
+    if data.ndim == 1 and indices.ndim == 1 and indptr.ndim == 1:
+        assert data.shape[0] == indices.shape[0]
+        assert indptr.shape[0] > 1
+        return swigknowhere.Array2SparseDataSet(data, indices, indptr)
+    raise ValueError(
+        """
+        ArrayToSparseDataSet input type wrong.
+        """
+    )
+
 
 def DataSetToArray(ans):
     dim = swigknowhere.DataSet_Dim(ans)

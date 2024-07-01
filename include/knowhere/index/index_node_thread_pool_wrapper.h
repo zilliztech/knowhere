@@ -24,23 +24,23 @@ class IndexNodeThreadPoolWrapper : public IndexNode {
     IndexNodeThreadPoolWrapper(std::unique_ptr<IndexNode> index_node, std::shared_ptr<ThreadPool> thread_pool);
 
     Status
-    Train(const DataSet& dataset, const Config& cfg) override {
+    Train(const DataSetPtr dataset, const Config& cfg) override {
         return index_node_->Train(dataset, cfg);
     }
 
     Status
-    Add(const DataSet& dataset, const Config& cfg) override {
+    Add(const DataSetPtr dataset, const Config& cfg) override {
         return index_node_->Add(dataset, cfg);
     }
 
     expected<DataSetPtr>
-    Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override;
+    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
 
     expected<DataSetPtr>
-    RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override;
+    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSet& dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset) const override {
         return index_node_->GetVectorByIds(dataset);
     }
 

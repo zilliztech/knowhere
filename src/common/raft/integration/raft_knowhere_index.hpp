@@ -20,7 +20,6 @@
 #include "common/raft/integration/raft_knowhere_config.hpp"
 #include "common/raft/integration/type_mappers.hpp"
 #include "common/raft/proto/raft_index_kind.hpp"
-
 namespace raft_knowhere {
 
 template <raft_proto::raft_index_kind IndexKind>
@@ -44,7 +43,6 @@ struct raft_knowhere_index {
     size() const;
     std::int64_t
     dim() const;
-
     void
     train(raft_knowhere_config const&, data_type const*, knowhere_indexing_type, knowhere_indexing_type);
     void
@@ -61,6 +59,8 @@ struct raft_knowhere_index {
     get_vector_by_id() const;
     void
     serialize(std::ostream& os) const;
+    void
+    serialize_to_hnswlib(std::ostream& os) const;
     static raft_knowhere_index<IndexKind>
     deserialize(std::istream& is);
     void

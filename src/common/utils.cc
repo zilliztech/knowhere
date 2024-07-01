@@ -74,10 +74,10 @@ NormalizeVecs(DataType* x, size_t rows, int32_t dim) {
 
 template <typename DataType>
 void
-Normalize(const DataSet& dataset) {
-    auto rows = dataset.GetRows();
-    auto dim = dataset.GetDim();
-    auto data = (DataType*)dataset.GetTensor();
+Normalize(const DataSetPtr dataset) {
+    auto rows = dataset->GetRows();
+    auto dim = dataset->GetDim();
+    auto data = (DataType*)dataset->GetTensor();
 
     LOG_KNOWHERE_DEBUG_ << "vector normalize, rows " << rows << ", dim " << dim;
 
@@ -157,11 +157,11 @@ template std::vector<float>
 NormalizeVecs<bf16>(bf16* x, size_t rows, int32_t dim);
 
 template void
-Normalize<fp32>(const DataSet& dataset);
+Normalize<fp32>(const DataSetPtr dataset);
 template void
-Normalize<fp16>(const DataSet& dataset);
+Normalize<fp16>(const DataSetPtr dataset);
 template void
-Normalize<bf16>(const DataSet& dataset);
+Normalize<bf16>(const DataSetPtr dataset);
 
 template std::unique_ptr<fp32[]>
 CopyAndNormalizeVecs(const fp32* x, size_t rows, int32_t dim);

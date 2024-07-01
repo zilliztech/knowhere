@@ -31,8 +31,8 @@ IsMetricType(const std::string& str, const knowhere::MetricType& metric_type) {
 
 inline bool
 IsFlatIndex(const knowhere::IndexType& index_type) {
-    static std::vector<knowhere::IndexType> flat_index_list = {IndexEnum::INDEX_FAISS_IDMAP,
-                                                               IndexEnum::INDEX_FAISS_GPU_IDMAP};
+    static std::vector<knowhere::IndexType> flat_index_list = {
+        IndexEnum::INDEX_FAISS_IDMAP, IndexEnum::INDEX_FAISS_GPU_IDMAP, IndexEnum::INDEX_GPU_BRUTEFORCE};
     return std::find(flat_index_list.begin(), flat_index_list.end(), index_type) != flat_index_list.end();
 }
 
@@ -46,7 +46,7 @@ NormalizeVecs(DataType* x, size_t rows, int32_t dim);
 
 template <typename DataType = knowhere::fp32>
 extern void
-Normalize(const DataSet& dataset);
+Normalize(const DataSetPtr dataset);
 
 template <typename DataType>
 extern std::unique_ptr<DataType[]>
@@ -125,6 +125,28 @@ data_type_conversion(const DataSet& src) {
     des->SetTensor(des_data);
     des->SetIsOwner(true);
     return des;
+}
+
+// Convert DataSet from DataType to float
+template <typename DataType>
+inline DataSetPtr
+ConvertFromDataTypeIfNeeded(const DataSetPtr ds) {
+    if constexpr (std::is_same_v<DataType, typename MockData<DataType>::type>) {
+        return ds;
+    } else {
+        return data_type_conversion<DataType, typename MockData<DataType>::type>(*ds);
+    }
+}
+
+// Convert DataSet from float to DataType
+template <typename DataType>
+inline DataSetPtr
+ConvertToDataTypeIfNeeded(const DataSetPtr ds) {
+    if constexpr (std::is_same_v<DataType, typename MockData<DataType>::type>) {
+        return ds;
+    } else {
+        return data_type_conversion<typename MockData<DataType>::type, DataType>(*ds);
+    }
 }
 
 template <typename T>

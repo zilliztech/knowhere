@@ -17,7 +17,7 @@ if(NOT WITH_DISKANN)
 endif()
 
 if (WITH_CARDINAL)
-  knowhere_file_glob(GLOB_RECURSE CARDINAL_UNSUPPORTED_TESTS test_iterator.cc test_feder.cc test_sparse.cc)
+  knowhere_file_glob(GLOB_RECURSE CARDINAL_UNSUPPORTED_TESTS test_feder.cc)
   list(REMOVE_ITEM KNOWHERE_UT_SRCS ${CARDINAL_UNSUPPORTED_TESTS})
 else()
   knowhere_file_glob(GLOB_RECURSE KNOWHERE_CLUSTER_TESTS test_cluster.cc)

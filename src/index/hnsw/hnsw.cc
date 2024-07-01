@@ -41,9 +41,9 @@ class HnswIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSet& dataset, const Config& cfg) override {
-        auto rows = dataset.GetRows();
-        auto dim = dataset.GetDim();
+    Train(const DataSetPtr dataset, const Config& cfg) override {
+        auto rows = dataset->GetRows();
+        auto dim = dataset->GetDim();
         auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
         hnswlib::SpaceInterface<DistType>* space = nullptr;
         if constexpr (KnowhereFloatTypeCheck<DataType>::value) {
@@ -83,25 +83,25 @@ class HnswIndexNode : public IndexNode {
         }
         this->index_ = index;
         if constexpr (quant_type != QuantType::None) {
-            this->index_->trainSQuant((const DataType*)dataset.GetTensor(), rows);
+            this->index_->trainSQuant((const DataType*)dataset->GetTensor(), rows);
         }
         return Status::success;
     }
 
     Status
-    Add(const DataSet& dataset, const Config& cfg) override {
+    Add(const DataSetPtr dataset, const Config& cfg) override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not add data to empty HNSW index.";
             return Status::empty_index;
         }
 
         knowhere::TimeRecorder build_time("Building HNSW cost", 2);
-        auto rows = dataset.GetRows();
+        auto rows = dataset->GetRows();
         if (rows <= 0) {
             LOG_KNOWHERE_ERROR_ << "Can not add empty data to HNSW index.";
             return Status::empty_index;
         }
-        auto tensor = dataset.GetTensor();
+        auto tensor = dataset->GetTensor();
         auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
         bool shuffle_build = hnsw_cfg.shuffle_build.value();
 
@@ -169,13 +169,13 @@ class HnswIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "search on empty index";
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
-        auto nq = dataset.GetRows();
-        auto xq = dataset.GetTensor();
+        auto nq = dataset->GetRows();
+        auto xq = dataset->GetTensor();
 
         auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
         auto k = hnsw_cfg.k.value();
@@ -217,7 +217,7 @@ class HnswIndexNode : public IndexNode {
         }
         WaitAllSuccess(futs);
 
-        auto res = GenResultDataSet(nq, k, p_id.release(), p_dist.release());
+        auto res = GenResultDataSet(nq, k, std::move(p_id), std::move(p_dist));
 
         // set visit_info json string into result dataset
         if (feder_result != nullptr) {
@@ -273,22 +273,21 @@ class HnswIndexNode : public IndexNode {
     };
 
  public:
-    expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
-    AnnIterator(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
+    expected<std::vector<IndexNode::IteratorPtr>>
+    AnnIterator(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
-            return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::empty_index,
-                                                                                    "index not loaded");
+            return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "index not loaded");
         }
-        auto nq = dataset.GetRows();
-        auto xq = dataset.GetTensor();
+        auto nq = dataset->GetRows();
+        auto xq = dataset->GetTensor();
 
         auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
         auto ef = hnsw_cfg.ef.value_or(kIteratorSeedEf);
 
         bool transform =
             (index_->metric_type_ == hnswlib::Metric::INNER_PRODUCT || index_->metric_type_ == hnswlib::Metric::COSINE);
-        auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
+        auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
         std::vector<folly::Future<folly::Unit>> futs;
         futs.reserve(nq);
         for (int i = 0; i < nq; ++i) {
@@ -307,14 +306,14 @@ class HnswIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
+    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "range search on empty index";
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
-        auto nq = dataset.GetRows();
-        auto xq = dataset.GetTensor();
+        auto nq = dataset->GetRows();
+        auto xq = dataset->GetTensor();
 
         auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
         bool is_ip =
@@ -359,15 +358,11 @@ class HnswIndexNode : public IndexNode {
         }
         WaitAllSuccess(futs);
 
-        int64_t* ids = nullptr;
-        DistType* dis = nullptr;
-        size_t* lims = nullptr;
-
         // filter range search result
-        GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius_for_filter, range_filter, dis, ids,
-                             lims);
+        auto range_search_result =
+            GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius_for_filter, range_filter);
 
-        auto res = GenResultDataSet(nq, ids, dis, lims);
+        auto res = GenResultDataSet(nq, std::move(range_search_result));
 
         // set visit_info json string into result dataset
         if (feder_result != nullptr) {
@@ -381,14 +376,14 @@ class HnswIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSet& dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset) const override {
         if (!index_) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
         auto dim = Dim();
-        auto rows = dataset.GetRows();
-        auto ids = dataset.GetIds();
+        auto rows = dataset->GetRows();
+        auto ids = dataset->GetIds();
 
         char* data = nullptr;
         try {

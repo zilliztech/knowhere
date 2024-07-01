@@ -11,6 +11,8 @@
 
 #include "knowhere/index/index_factory.h"
 
+#include "knowhere/index/index_table.h"
+
 #ifdef KNOWHERE_WITH_RAFT
 #include <cuda_runtime_api.h>
 #endif
@@ -84,6 +86,11 @@ IndexFactory::FuncMap&
 IndexFactory::MapInstance() {
     static FuncMap func_map;
     return func_map;
+}
+IndexFactory::GlobalIndexTable&
+IndexFactory::StaticIndexTableInstance() {
+    static GlobalIndexTable static_index_table;
+    return static_index_table;
 }
 
 }  // namespace knowhere

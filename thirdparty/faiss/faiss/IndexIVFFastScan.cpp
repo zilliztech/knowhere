@@ -303,7 +303,7 @@ void IndexIVFFastScan::compute_LUT_uint8(
 
     // OMP for MSVC requires i to have signed integral type
 #pragma omp parallel for if (n > 100)
-    for (int64_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < n; i++) {
         const float* t_in = dis_tables_float.get() + i * dim123;
         const float* b_in = nullptr;
         uint8_t* t_out = dis_tables.get() + i * dim123_2;
@@ -492,7 +492,7 @@ int compute_search_nslice(
         size_t n,
         size_t nprobe) {
     int nslice;
-    if (n <= omp_get_max_threads()) {
+    if (n <= (size_t)omp_get_max_threads()) {
         nslice = n;
     } else if (index->lookup_table_is_3d()) {
         // make sure we don't make too big LUT tables
@@ -839,7 +839,7 @@ void IndexIVFFastScan::search_implem_1(
         if (single_LUT) {
             LUT = dis_tables.get() + i * dim12;
         }
-        for (idx_t j = 0; j < nprobe; j++) {
+        for (size_t j = 0; j < nprobe; j++) {
             if (!single_LUT) {
                 LUT = dis_tables.get() + (i * nprobe + j) * dim12;
             }
@@ -916,7 +916,7 @@ void IndexIVFFastScan::search_implem_2(
         if (single_LUT) {
             LUT = dis_tables.get() + i * dim12;
         }
-        for (idx_t j = 0; j < nprobe; j++) {
+        for (size_t j = 0; j < nprobe; j++) {
             if (!single_LUT) {
                 LUT = dis_tables.get() + (i * nprobe + j) * dim12;
             }
@@ -974,12 +974,6 @@ void IndexIVFFastScan::search_implem_10(
         size_t* nlist_out,
         const NormTableScaler* scaler,
         const IVFSearchParameters* params) const {
-    // const size_t nprobe = params ? params->nprobe : this->nprobe;
-    const size_t max_codes = params ? params->max_codes : this->max_codes;
-    // const IDSelector* sel = params ? params->sel : nullptr;
-    const SearchParameters* quantizer_params =
-            params ? params->quantizer_params : nullptr;
-
     size_t dim12 = ksub * M2;
     AlignedTable<uint8_t> dis_tables;
     AlignedTable<uint16_t> biases;
@@ -1003,7 +997,7 @@ void IndexIVFFastScan::search_implem_10(
         if (single_LUT) {
             LUT = dis_tables.get() + i * dim12;
         }
-        for (idx_t j = 0; j < nprobe; j++) {
+        for (size_t j = 0; j < nprobe; j++) {
             size_t ij = i * nprobe + j;
             if (!single_LUT) {
                 LUT = dis_tables.get() + ij * dim12;
@@ -1056,10 +1050,10 @@ void IndexIVFFastScan::range_search_implem_10(
         const NormTableScaler* scaler,
         const IVFSearchParameters* params) const {
     // const size_t nprobe = params ? params->nprobe : this->nprobe;
-    const size_t max_codes = params ? params->max_codes : this->max_codes;
+    // const size_t max_codes = params ? params->max_codes : this->max_codes;
     // const IDSelector* sel = params ? params->sel : nullptr;
-    const SearchParameters* quantizer_params =
-            params ? params->quantizer_params : nullptr;
+    // const SearchParameters* quantizer_params =
+    //         params ? params->quantizer_params : nullptr;
 
     const size_t max_empty_result_buckets =
             params ? params->max_empty_result_buckets : 1;
@@ -1088,7 +1082,7 @@ void IndexIVFFastScan::range_search_implem_10(
         if (single_LUT) {
             LUT = dis_tables.get() + i * dim12;
         }
-        for (idx_t j = 0; j < nprobe; j++) {
+        for (size_t j = 0; j < nprobe; j++) {
             size_t ij = i * nprobe + j;
             if (!single_LUT) {
                 LUT = dis_tables.get() + ij * dim12;
@@ -1183,7 +1177,7 @@ void IndexIVFFastScan::search_implem_12(
     {
         int ij = 0;
         for (int i = 0; i < n; i++) {
-            for (int j = 0; j < nprobe; j++) {
+            for (size_t j = 0; j < nprobe; j++) {
                 if (cq.ids[ij] >= 0) {
                     qcs.push_back(QC{i, int(cq.ids[ij]), int(j)});
                 }
@@ -1321,7 +1315,7 @@ void IndexIVFFastScan::range_search_implem_12(
     {
         int ij = 0;
         for (int i = 0; i < n; i++) {
-            for (int j = 0; j < nprobe; j++) {
+            for (size_t j = 0; j < nprobe; j++) {
                 if (cq.ids[ij] >= 0) {
                     qcs.push_back(QC{i, int(cq.ids[ij]), int(j)});
                 }
@@ -1468,7 +1462,7 @@ void IndexIVFFastScan::search_implem_14(
     {
         int ij = 0;
         for (int i = 0; i < n; i++) {
-            for (int j = 0; j < nprobe; j++) {
+            for (size_t j = 0; j < nprobe; j++) {
                 if (cq.ids[ij] >= 0) {
                     qcs.push_back(QC{i, int(cq.ids[ij]), int(j)});
                 }
@@ -1564,7 +1558,7 @@ void IndexIVFFastScan::search_implem_14(
 
         std::set<int> q_set;
 #pragma omp for schedule(dynamic)
-        for (idx_t cluster = 0; cluster < ses.size(); cluster++) {
+        for (size_t cluster = 0; cluster < ses.size(); cluster++) {
             size_t i0 = ses[cluster].start;
             size_t i1 = ses[cluster].end;
             size_t list_size = ses[cluster].list_size;

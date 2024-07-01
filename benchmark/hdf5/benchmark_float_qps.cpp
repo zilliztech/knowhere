@@ -38,7 +38,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
                 nprobe = left + (right - left) / 2;
                 conf[knowhere::indexparam::NPROBE] = nprobe;
 
-                auto result = index_.value().Search(*ds_ptr, conf, nullptr);
+                auto result = index_.value().Search(ds_ptr, conf, nullptr);
                 recall = CalcRecall(result.value()->GetIds(), nq_, topk_);
                 printf("[%0.3f s] iterate IVF param for recall %.4f: nlist=%d, nprobe=%4d, k=%d, R@=%.4f\n",
                        get_time_diff(), expected_recall, nlist, nprobe, topk_, recall);
@@ -88,7 +88,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
                 max_iterations = left + (right - left) / 2;
                 conf[knowhere::indexparam::MAX_ITERATIONS] = max_iterations;
 
-                auto result = index_.value().Search(*ds_ptr, conf, nullptr);
+                auto result = index_.value().Search(ds_ptr, conf, nullptr);
                 recall = CalcRecall(result.value()->GetIds(), nq_, topk_);
                 printf(
                     "[%0.3f s] iterate CAGRA param for recall %.4f: max_iterations=%d, k=%d, "
@@ -143,7 +143,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
                 ef = left + (right - left) / 2;
                 conf[knowhere::indexparam::EF] = ef;
 
-                auto result = index_.value().Search(*ds_ptr, conf, nullptr);
+                auto result = index_.value().Search(ds_ptr, conf, nullptr);
                 recall = CalcRecall(result.value()->GetIds(), nq_, topk_);
                 printf("[%0.3f s] iterate HNSW param for expected recall %.4f: M=%d, efc=%d, ef=%4d, k=%d, R@=%.4f\n",
                        get_time_diff(), expected_recall, M, efConstruction, ef, topk_, recall);
@@ -196,7 +196,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
                 nprobe = left + (right - left) / 2;
                 conf[knowhere::indexparam::NPROBE] = nprobe;
 
-                auto result = index_.value().Search(*ds_ptr, conf, nullptr);
+                auto result = index_.value().Search(ds_ptr, conf, nullptr);
                 recall = CalcRecall(result.value()->GetIds(), nq_, topk_);
                 printf(
                     "[%0.3f s] iterate scann param for recall %.4f: nlist=%d, nprobe=%4d, reorder_k=%d, "
@@ -241,7 +241,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
             num = std::min(num, nq_total - idx_start);
             for (int32_t i = 0; i < num; i++) {
                 knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(1, dim_, (const float*)xq_ + (idx_start + i) * dim_);
-                index_.value().Search(*ds_ptr, conf, nullptr);
+                index_.value().Search(ds_ptr, conf, nullptr);
             }
         };
 

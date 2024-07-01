@@ -88,7 +88,8 @@ class DiskANNConfig : public BaseConfig {
             .allow_empty_without_default()
             .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
             .for_train()
-            .for_search();
+            .for_search()
+            .for_iterator();
         KNOWHERE_CONFIG_DECLARE_FIELD(pq_code_budget_gb)
             .description("the size of PQ compressed representation in GB.")
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
@@ -124,7 +125,8 @@ class DiskANNConfig : public BaseConfig {
             .set_default(8)
             .set_range(1, 128)
             .for_search()
-            .for_range_search();
+            .for_range_search()
+            .for_iterator();
         KNOWHERE_CONFIG_DECLARE_FIELD(min_k)
             .description("the min l_search size used in range search.")
             .set_default(100)
@@ -139,7 +141,8 @@ class DiskANNConfig : public BaseConfig {
             .description("the threshold of filter ratio to use PQ + Refine.")
             .set_default(-1.0f)
             .set_range(-1.0f, 1.0f)
-            .for_search();
+            .for_search()
+            .for_iterator();
     }
 
     Status

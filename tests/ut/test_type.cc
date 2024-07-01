@@ -12,6 +12,7 @@
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 #include "knowhere/comp/knowhere_config.h"
+#include "knowhere/utils.h"
 #include "simd/distances_ref.h"
 #include "simd/hook.h"
 #include "utils.h"
@@ -20,8 +21,8 @@ TEST_CASE("Test bf16 patch", "[bf16 patch]") {
     const int64_t nb = 1000, nq = 10;
     const int64_t dim = 128;
 
-    const auto train_ds = GenFloatDataSet(nb, dim);
-    const auto query_ds = GenFloatDataSet(nq, dim);
+    const auto train_ds = GenDataSet(nb, dim);
+    const auto query_ds = GenDataSet(nq, dim);
 
     auto train_tensor = reinterpret_cast<const float*>(train_ds->GetTensor());
 
@@ -98,4 +99,28 @@ TEST_CASE("Test bf16 patch", "[bf16 patch]") {
         REQUIRE(l2_dist[i] == l2_dist_new[i]);
         REQUIRE(ip_dist[i] == ip_dist_new[i]);
     }
+}
+
+template <typename T>
+void
+check_data_type_accuracy(float accuracy) {
+    const int64_t nb = 100;
+    const int64_t dim = 16;
+
+    auto fp32_base_ds = GenDataSet(nb, dim);
+
+    auto type_base_ds = knowhere::ConvertToDataTypeIfNeeded<T>(fp32_base_ds);
+    auto fp32_base_ds_2 = knowhere::ConvertFromDataTypeIfNeeded<T>(type_base_ds);
+
+    auto bv1 = static_cast<const float*>(fp32_base_ds->GetTensor());
+    auto bv2 = static_cast<const float*>(fp32_base_ds_2->GetTensor());
+
+    for (int64_t i = 0; i < nb * dim; i++) {
+        REQUIRE(std::abs(bv2[i] / bv1[i] - 1.0) < accuracy);
+    }
+}
+
+TEST_CASE("Test Float16", "[fp16]") {
+    check_data_type_accuracy<knowhere::fp16>(0.001);
+    check_data_type_accuracy<knowhere::bf16>(0.01);
 }

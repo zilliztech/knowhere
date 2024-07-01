@@ -19,23 +19,6 @@
 #include "knowhere/comp/local_file_manager.h"
 #include "knowhere/dataset.h"
 
-namespace fs = std::filesystem;
-std::string kDir = fs::current_path().string() + "/diskann_test";
-std::string kRawDataPath = kDir + "/raw_data";
-std::string kL2IndexDir = kDir + "/l2_index";
-std::string kIPIndexDir = kDir + "/ip_index";
-std::string kL2IndexPrefix = kL2IndexDir + "/l2";
-std::string kIPIndexPrefix = kIPIndexDir + "/ip";
-
-void
-WriteRawDataToDisk(const std::string data_path, const float* raw_data, const uint32_t num, const uint32_t dim) {
-    std::ofstream writer(data_path.c_str(), std::ios::binary);
-    writer.write((char*)&num, sizeof(uint32_t));
-    writer.write((char*)&dim, sizeof(uint32_t));
-    writer.write((char*)raw_data, sizeof(float) * num * dim);
-    writer.close();
-}
-
 class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
  public:
     void
@@ -48,7 +31,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
             auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
             for (auto k : TOPKs_) {
                 conf[knowhere::meta::TOPK] = k;
-                CALC_TIME_SPAN(auto result = index_.value().Search(*ds_ptr, conf, nullptr));
+                CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, nullptr));
                 auto ids = result.value()->GetIds();
                 float recall = CalcRecall(ids, nq, k);
                 printf("  nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nq, k, t_diff, recall);
@@ -73,7 +56,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
                 auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
                 for (auto k : TOPKs_) {
                     conf[knowhere::meta::TOPK] = k;
-                    CALC_TIME_SPAN(auto result = index_.value().Search(*ds_ptr, conf, nullptr));
+                    CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, nullptr));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(ids, nq, k);
                     printf("  nprobe = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nprobe, nq, k, t_diff,
@@ -101,7 +84,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
                 auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
                 for (auto k : TOPKs_) {
                     conf[knowhere::meta::TOPK] = k;
-                    CALC_TIME_SPAN(auto result = index_.value().Search(*ds_ptr, conf, nullptr));
+                    CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, nullptr));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(ids, nq, k);
                     printf("  ef = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", ef, nq, k, t_diff, recall);
@@ -117,25 +100,22 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
     void
     test_diskann(const knowhere::Json& cfg) {
         auto conf = cfg;
-        conf["index_prefix"] = (metric_type_ == knowhere::metric::L2 ? kL2IndexPrefix : kIPIndexPrefix);
-        conf["search_cache_budget_gb"] = 0;
-        conf["beamwidth"] = 8;
-
-        knowhere::BinarySet binset;
-        index_.Deserialize(binset, conf);
 
         printf("\n[%0.3f s] %s | %s \n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
         printf("================================================================================\n");
-        for (auto nq : NQs_) {
-            auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
-            for (auto k : TOPKs_) {
-                conf["search_list_size"] = 2 * k;
-                conf[knowhere::meta::TOPK] = k;
-                CALC_TIME_SPAN(auto result = index_.value().Search(*ds_ptr, conf, nullptr));
-                auto ids = result.value()->GetIds();
-                float recall = CalcRecall(ids, nq, k);
-                printf("  nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nq, k, t_diff, recall);
-                std::fflush(stdout);
+        for (auto search_list_size : SEARCH_LISTs_) {
+            conf["search_list_size"] = search_list_size;
+            for (auto nq : NQs_) {
+                auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
+                for (auto k : TOPKs_) {
+                    conf[knowhere::meta::TOPK] = k;
+                    CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, nullptr));
+                    auto ids = result.value()->GetIds();
+                    float recall = CalcRecall(ids, nq, k);
+                    printf("  search_list_size = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n",
+                           search_list_size, nq, k, t_diff, recall);
+                    std::fflush(stdout);
+                }
             }
         }
         printf("================================================================================\n");
@@ -177,6 +157,9 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
     const std::vector<int32_t> HNSW_Ms_ = {16};
     const std::vector<int32_t> EFCONs_ = {200};
     const std::vector<int32_t> EFs_ = {128, 256, 512};
+
+    // DISKANN index params
+    const std::vector<int32_t> SEARCH_LISTs_ = {100, 200, 400};
 };
 
 TEST_F(Benchmark_float, TEST_IDMAP) {
@@ -260,9 +243,10 @@ TEST_F(Benchmark_float, TEST_DISKANN) {
     conf["index_prefix"] = (metric_type_ == knowhere::metric::L2 ? kL2IndexPrefix : kIPIndexPrefix);
     conf["data_path"] = kRawDataPath;
     conf["max_degree"] = 56;
-    conf["search_list_size"] = 128;
     conf["pq_code_budget_gb"] = sizeof(float) * dim_ * nb_ * 0.125 / (1024 * 1024 * 1024);
     conf["build_dram_budget_gb"] = 32.0;
+    conf["search_cache_budget_gb"] = 0;
+    conf["beamwidth"] = 8;
 
     fs::create_directory(kDir);
     fs::create_directory(kL2IndexDir);
@@ -277,7 +261,12 @@ TEST_F(Benchmark_float, TEST_DISKANN) {
         index_type_, knowhere::Version::GetCurrentVersion().VersionNumber(), diskann_index_pack);
     printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
     knowhere::DataSetPtr ds_ptr = nullptr;
-    index_.Build(*ds_ptr, conf);
+    index_.value().Build(ds_ptr, conf);
+
+    knowhere::BinarySet binset;
+    index_.value().Serialize(binset);
+    index_.value().Deserialize(binset, conf);
+
     test_diskann(conf);
 }
 #endif

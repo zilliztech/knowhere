@@ -692,7 +692,7 @@ struct RangeHandler : ResultHandlerCompare<C, with_id_map> {
 
     void begin(const float* norms) override {
         normalizers = norms;
-        for (int q = 0; q < nq; ++q) {
+        for (size_t q = 0; q < nq; ++q) {
             thresholds[q] =
                     normalizers[2 * q] * (radius - normalizers[2 * q + 1]);
         }
@@ -754,7 +754,7 @@ struct RangeHandler : ResultHandlerCompare<C, with_id_map> {
         memmove(rres.lims + 1, rres.lims, sizeof(*rres.lims) * rres.nq);
         rres.lims[0] = 0;
 
-        for (int q = 0; q < nq; q++) {
+        for (size_t q = 0; q < nq; q++) {
             float one_a = 1 / normalizers[2 * q];
             float b = normalizers[2 * q + 1];
             for (size_t i = rres.lims[q]; i < rres.lims[q + 1]; i++) {
@@ -801,7 +801,7 @@ struct PartialRangeHandler : RangeHandler<C, with_id_map> {
     // commit to partial result instead of full RangeResult
     void end() override {
         std::vector<typename RHC::Triplet> sorted_triplets(triplets.size());
-        for (int q = 0; q < nq; q++) {
+        for (size_t q = 0; q < nq; q++) {
             n_per_query[q + 1] += n_per_query[q];
         }
         shift_n_per_query();
@@ -813,7 +813,7 @@ struct PartialRangeHandler : RangeHandler<C, with_id_map> {
 
         size_t* lims = n_per_query.data();
 
-        for (int q = 0; q < nq; q++) {
+        for (size_t q = 0; q < nq; q++) {
             float one_a = 1 / normalizers[2 * q];
             float b = normalizers[2 * q + 1];
             RangeQueryResult& qres = pres.new_result(q + q0);

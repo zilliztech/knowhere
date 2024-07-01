@@ -132,6 +132,91 @@ post_filter(raft::resources const& res, filter_lambda_t const& sample_filter, in
     }
 }
 
+template <typename T, typename IdxT>
+void
+serialize_to_hnswlib(raft::resources const& res, std::ostream& os,
+                     const raft::neighbors::cagra::index<T, IdxT>& index_) {
+    size_t metric_type;
+    if (index_.metric() == raft::distance::L2Expanded) {
+        metric_type = 0;
+    } else if (index_.metric() == raft::distance::InnerProduct) {
+        metric_type = 1;
+    } else if (index_.metric() == raft::distance::CosineExpanded) {
+        metric_type = 2;
+    }
+
+    os.write(reinterpret_cast<char*>(&metric_type), sizeof(metric_type));
+    size_t data_size = index_.dim() * sizeof(float);
+    os.write(reinterpret_cast<char*>(&data_size), sizeof(data_size));
+    size_t dim = index_.dim();
+    os.write(reinterpret_cast<char*>(&dim), sizeof(dim));
+    std::size_t offset_level_0 = 0;
+    os.write(reinterpret_cast<char*>(&offset_level_0), sizeof(std::size_t));
+    std::size_t max_element = index_.size();
+    os.write(reinterpret_cast<char*>(&max_element), sizeof(std::size_t));
+    std::size_t curr_element_count = index_.size();
+    os.write(reinterpret_cast<char*>(&curr_element_count), sizeof(std::size_t));
+    auto size_data_per_element =
+        static_cast<std::size_t>(index_.graph_degree() * sizeof(IdxT) + 4 + index_.dim() * sizeof(T) + 8);
+    os.write(reinterpret_cast<char*>(&size_data_per_element), sizeof(std::size_t));
+    std::size_t label_offset = size_data_per_element - 8;
+    os.write(reinterpret_cast<char*>(&label_offset), sizeof(std::size_t));
+    auto offset_data = static_cast<std::size_t>(index_.graph_degree() * sizeof(IdxT) + 4);
+    os.write(reinterpret_cast<char*>(&offset_data), sizeof(std::size_t));
+    int max_level = 1;
+    os.write(reinterpret_cast<char*>(&max_level), sizeof(int));
+    auto entrypoint_node = static_cast<int>(index_.size() / 2);
+    os.write(reinterpret_cast<char*>(&entrypoint_node), sizeof(int));
+    auto max_M = static_cast<std::size_t>(index_.graph_degree() / 2);
+    os.write(reinterpret_cast<char*>(&max_M), sizeof(std::size_t));
+    std::size_t max_M0 = index_.graph_degree();
+    os.write(reinterpret_cast<char*>(&max_M0), sizeof(std::size_t));
+    auto M = static_cast<std::size_t>(index_.graph_degree() / 2);
+    os.write(reinterpret_cast<char*>(&M), sizeof(std::size_t));
+    double mult = 0.42424242;
+    os.write(reinterpret_cast<char*>(&mult), sizeof(double));
+    std::size_t efConstruction = 500;
+    os.write(reinterpret_cast<char*>(&efConstruction), sizeof(std::size_t));
+
+    auto dataset = index_.dataset();
+    auto host_dataset = raft::make_host_matrix<T, int64_t>(dataset.extent(0), dataset.extent(1));
+    RAFT_CUDA_TRY(cudaMemcpy2DAsync(host_dataset.data_handle(), sizeof(T) * host_dataset.extent(1),
+                                    dataset.data_handle(), sizeof(T) * dataset.stride(0),
+                                    sizeof(T) * host_dataset.extent(1), dataset.extent(0), cudaMemcpyDefault,
+                                    raft::resource::get_cuda_stream(res)));
+    raft::resource::sync_stream(res);
+
+    auto graph = index_.graph();
+    auto host_graph = raft::make_host_matrix<IdxT, int64_t, raft::row_major>(graph.extent(0), graph.extent(1));
+    raft::copy(host_graph.data_handle(), graph.data_handle(), graph.size(), raft::resource::get_cuda_stream(res));
+    raft::resource::sync_stream(res);
+
+    for (std::size_t i = 0; i < index_.size(); i++) {
+        auto graph_degree = static_cast<uint32_t>(index_.graph_degree());
+        os.write(reinterpret_cast<char*>(&graph_degree), sizeof(uint32_t));
+
+        for (std::size_t j = 0; j < index_.graph_degree(); ++j) {
+            auto graph_elem = host_graph(i, j);
+            os.write(reinterpret_cast<char*>(&graph_elem), sizeof(IdxT));
+        }
+
+        auto data_row = host_dataset.data_handle() + (index_.dim() * i);
+        for (std::size_t j = 0; j < index_.dim(); ++j) {
+            auto data_elem = host_dataset(i, j);
+            os.write(reinterpret_cast<char*>(&data_elem), sizeof(T));
+        }
+
+        os.write(reinterpret_cast<char*>(&i), sizeof(std::size_t));
+    }
+
+    for (std::size_t i = 0; i < index_.size(); i++) {
+        // zeroes
+        auto zero = 0;
+        os.write(reinterpret_cast<char*>(&zero), sizeof(int));
+    }
+    os.flush();
+}
+
 }  // namespace detail
 
 template <template <typename...> typename underlying_index_type, typename... raft_index_args>
@@ -190,7 +275,7 @@ struct raft_index {
 
     template <typename T, typename IdxT, typename InputIdxT, typename DataMdspanT>
     auto static build(raft::resources const& res, index_params_type const& index_params, DataMdspanT data) {
-        if constexpr (std::is_same_v<DataMdspanT, raft::host_matrix_view<T const, InputIdxT>>) {
+        if constexpr (std::is_same_v<DataMdspanT, raft::host_matrix_view<T const, IdxT>>) {
             if constexpr (vector_index_kind == raft_index_kind::brute_force) {
                 return raft_index<underlying_index_type, raft_index_args...>{
                     raft::neighbors::brute_force::build<T>(res, index_params, data)};
@@ -199,7 +284,7 @@ struct raft_index {
                     raft::neighbors::cagra::build<T>(res, index_params, data)};
             } else if constexpr (vector_index_kind == raft_index_kind::ivf_pq) {
                 return raft_index<underlying_index_type, raft_index_args...>{raft::neighbors::ivf_pq::build<T, IdxT>(
-                    res, index_params, data.handle(), data.extent(0), data.extent(1))};
+                    res, index_params, data.data_handle(), data.extent(0), data.extent(1))};
             } else {
                 RAFT_FAIL("IVF flat does not support construction from host data");
             }
@@ -340,6 +425,16 @@ struct raft_index {
             return raft::neighbors::ivf_pq::serialize<IdxT>(res, os, underlying_index);
         } else if constexpr (vector_index_kind == raft_index_kind::cagra) {
             return raft::neighbors::cagra::serialize<T, IdxT>(res, os, underlying_index, include_dataset);
+        }
+    }
+
+    template <typename T, typename IdxT>
+    void static serialize_to_hnswlib(raft::resources const& res, std::ostream& os,
+                                     raft_index<underlying_index_type, raft_index_args...> const& index,
+                                     bool include_dataset = true) {
+        auto const& underlying_index = index.get_vector_index();
+        if constexpr (vector_index_kind == raft_index_kind::cagra) {
+            return raft_proto::detail::serialize_to_hnswlib<T, IdxT>(res, os, underlying_index);
         }
     }
 

@@ -13,6 +13,7 @@
 #define INDEX_FACTORY_H
 
 #include <functional>
+#include <set>
 #include <string>
 #include <unordered_map>
 
@@ -30,6 +31,9 @@ class IndexFactory {
     Register(const std::string& name, std::function<Index<IndexNode>(const int32_t&, const Object&)> func);
     static IndexFactory&
     Instance();
+    typedef std::set<std::pair<std::string, VecType>> GlobalIndexTable;
+    static GlobalIndexTable&
+    StaticIndexTableInstance();
 
  private:
     struct FunMapValueBase {
@@ -73,6 +77,12 @@ class IndexFactory {
                 std::make_unique<index_node<MockData<data_type>::type>>(version, object), thread_size)); \
         },                                                                                               \
         data_type)
+#define KNOWHERE_SET_STATIC_GLOBAL_INDEX_TABLE(name, index_table)            \
+    static int name = []() -> int {                                          \
+        auto& static_index_table = IndexFactory::StaticIndexTableInstance(); \
+        static_index_table.insert(index_table.begin(), index_table.end());   \
+        return 0;                                                            \
+    }();
 }  // namespace knowhere
 
 #endif /* INDEX_FACTORY_H */

@@ -39,7 +39,7 @@ class FlatIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSet& dataset, const Config& cfg) override {
+    Train(const DataSetPtr dataset, const Config& cfg) override {
         const FlatConfig& f_cfg = static_cast<const FlatConfig&>(cfg);
 
         auto metric = Str2FaissMetricType(f_cfg.metric_type.value());
@@ -48,25 +48,25 @@ class FlatIndexNode : public IndexNode {
             return metric.error();
         }
         if constexpr (std::is_same<faiss::IndexBinaryFlat, IndexType>::value) {
-            index_ = std::make_unique<faiss::IndexBinaryFlat>(dataset.GetDim(), metric.value());
+            index_ = std::make_unique<faiss::IndexBinaryFlat>(dataset->GetDim(), metric.value());
         }
         if constexpr (std::is_same<faiss::IndexFlat, IndexType>::value) {
             bool is_cosine = IsMetricType(f_cfg.metric_type.value(), knowhere::metric::COSINE);
-            index_ = std::make_unique<faiss::IndexFlat>(dataset.GetDim(), metric.value(), is_cosine);
+            index_ = std::make_unique<faiss::IndexFlat>(dataset->GetDim(), metric.value(), is_cosine);
         }
         return Status::success;
     }
 
     Status
-    Add(const DataSet& dataset, const Config& cfg) override {
-        auto x = dataset.GetTensor();
-        auto n = dataset.GetRows();
+    Add(const DataSetPtr dataset, const Config& cfg) override {
+        auto x = dataset->GetTensor();
+        auto n = dataset->GetRows();
         index_->add(n, (const DataType*)x);
         return Status::success;
     }
 
     expected<DataSetPtr>
-    Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "search on empty index";
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -77,9 +77,9 @@ class FlatIndexNode : public IndexNode {
         bool is_cosine = IsMetricType(f_cfg.metric_type.value(), knowhere::metric::COSINE);
 
         auto k = f_cfg.k.value();
-        auto nq = dataset.GetRows();
-        auto x = dataset.GetTensor();
-        auto dim = dataset.GetDim();
+        auto nq = dataset->GetRows();
+        auto x = dataset->GetTensor();
+        auto dim = dataset->GetDim();
 
         auto len = k * nq;
         int64_t* ids = nullptr;
@@ -139,7 +139,7 @@ class FlatIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
+    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "range search on empty index";
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -148,17 +148,15 @@ class FlatIndexNode : public IndexNode {
         const FlatConfig& f_cfg = static_cast<const FlatConfig&>(cfg);
         bool is_cosine = IsMetricType(f_cfg.metric_type.value(), knowhere::metric::COSINE);
 
-        auto nq = dataset.GetRows();
-        auto xq = dataset.GetTensor();
-        auto dim = dataset.GetDim();
+        auto nq = dataset->GetRows();
+        auto xq = dataset->GetTensor();
+        auto dim = dataset->GetDim();
 
         float radius = f_cfg.radius.value();
         float range_filter = f_cfg.range_filter.value();
         bool is_ip = (index_->metric_type == faiss::METRIC_INNER_PRODUCT);
 
-        int64_t* ids = nullptr;
-        float* distances = nullptr;
-        size_t* lims = nullptr;
+        RangeSearchResult range_search_result;
 
         std::vector<std::vector<int64_t>> result_id_array(nq);
         std::vector<std::vector<float>> result_dist_array(nq);
@@ -208,21 +206,21 @@ class FlatIndexNode : public IndexNode {
             }
             // wait for the completion
             WaitAllSuccess(futs);
-            GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter, distances, ids,
-                                 lims);
+            range_search_result =
+                GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter);
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
-        return GenResultDataSet(nq, ids, distances, lims);
+        return GenResultDataSet(nq, std::move(range_search_result));
     }
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSet& dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset) const override {
         auto dim = Dim();
-        auto rows = dataset.GetRows();
-        auto ids = dataset.GetIds();
+        auto rows = dataset->GetRows();
+        auto ids = dataset->GetIds();
         if constexpr (std::is_same<IndexType, faiss::IndexFlat>::value) {
             DataType* data = nullptr;
             try {

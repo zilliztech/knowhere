@@ -155,7 +155,7 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
         auto train_ds = GenDataSet(nb, dim, seed);
-        auto res = idx.Build(*train_ds, json);
+        auto res = idx.Build(train_ds, json);
         REQUIRE(res == knowhere::Status::success);
         REQUIRE(idx.Type() == name);
 
@@ -163,9 +163,9 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
         auto query_ds = GenDataSet(nq, dim, seed);
 
         for (int i = 1; i <= times; i++) {
-            idx.Add(*build_ds, json);
+            idx.Add(build_ds, json);
             {
-                auto results = idx.Search(*query_ds, json, nullptr);
+                auto results = idx.Search(query_ds, json, nullptr);
                 REQUIRE(results.has_value());
                 auto ids = results.value()->GetIds();
                 for (int j = 0; j < nq; ++j) {
@@ -176,7 +176,7 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
                 }
             }
             {
-                auto results = idx.RangeSearch(*query_ds, json, nullptr);
+                auto results = idx.RangeSearch(query_ds, json, nullptr);
                 REQUIRE(results.has_value());
                 auto ids = results.value()->GetIds();
                 auto lims = results.value()->GetLims();
@@ -203,17 +203,17 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
         auto train_ds = GenDataSet(nb, dim, seed);
         auto query_ds = GenDataSet(nq, dim, seed);
 
-        auto flat_res = ivf.Build(*train_ds, ivf_json);
+        auto flat_res = ivf.Build(train_ds, ivf_json);
         REQUIRE(flat_res == knowhere::Status::success);
-        auto cc_res = ivf_cc.Build(*train_ds, ivf_json);
+        auto cc_res = ivf_cc.Build(train_ds, ivf_json);
         REQUIRE(cc_res == knowhere::Status::success);
 
         // test search
         {
-            auto flat_results = ivf.Search(*query_ds, ivf_json, nullptr);
+            auto flat_results = ivf.Search(query_ds, ivf_json, nullptr);
             REQUIRE(flat_results.has_value());
 
-            auto cc_results = ivf_cc.Search(*query_ds, ivf_json, nullptr);
+            auto cc_results = ivf_cc.Search(query_ds, ivf_json, nullptr);
             REQUIRE(cc_results.has_value());
 
             auto flat_ids = flat_results.value()->GetIds();
@@ -227,10 +227,10 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
         }
         // test range_search
         {
-            auto flat_results = ivf.RangeSearch(*query_ds, ivf_json, nullptr);
+            auto flat_results = ivf.RangeSearch(query_ds, ivf_json, nullptr);
             REQUIRE(flat_results.has_value());
 
-            auto cc_results = ivf_cc.RangeSearch(*query_ds, ivf_json, nullptr);
+            auto cc_results = ivf_cc.RangeSearch(query_ds, ivf_json, nullptr);
             REQUIRE(cc_results.has_value());
 
             auto flat_ids = flat_results.value()->GetIds();
@@ -259,7 +259,7 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
         knowhere::Json json = knowhere::Json::parse(cfg_json);
         json[knowhere::indexparam::RAW_DATA_STORE_PREFIX] = std::filesystem::current_path().string() + "/";
         auto train_ds = GenDataSet(nb, dim, seed);
-        auto res = idx.Build(*train_ds, json);
+        auto res = idx.Build(train_ds, json);
         REQUIRE(res == knowhere::Status::success);
         REQUIRE(idx.Type() == name);
 
@@ -282,23 +282,23 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
             }
             for (int j = 0; j < build_task_num; j++) {
                 add_task_list.push_back(
-                    std::async(std::launch::async, [&idx, &build_ds, &json] { return idx.Add(*build_ds, json); }));
+                    std::async(std::launch::async, [&idx, &build_ds, &json] { return idx.Add(build_ds, json); }));
             }
             for (int j = 0; j < search_task_num; j++) {
                 auto& query_set = search_list[j];
                 search_task_list.push_back(std::async(
-                    std::launch::async, [&idx, &query_set, &json] { return idx.Search(*query_set, json, nullptr); }));
+                    std::launch::async, [&idx, &query_set, &json] { return idx.Search(query_set, json, nullptr); }));
             }
             for (int j = 0; j < search_task_num; j++) {
                 auto& range_query_set = range_search_list[j];
                 range_search_task_list.push_back(std::async(std::launch::async, [&idx, &range_query_set, &json] {
-                    return idx.RangeSearch(*range_query_set, json, nullptr);
+                    return idx.RangeSearch(range_query_set, json, nullptr);
                 }));
             }
             for (int j = 0; j < search_task_num; j++) {
                 auto& retrieve_ids_set = retrieve_search_list[j];
                 retrieve_task_list.push_back(std::async(
-                    std::launch::async, [&idx, &retrieve_ids_set] { return idx.GetVectorByIds(*retrieve_ids_set); }));
+                    std::launch::async, [&idx, &retrieve_ids_set] { return idx.GetVectorByIds(retrieve_ids_set); }));
             }
 
             for (auto& task : add_task_list) {

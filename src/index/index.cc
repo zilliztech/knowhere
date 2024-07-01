@@ -36,7 +36,7 @@ LoadConfig(BaseConfig* cfg, const Json& json, knowhere::PARAM_TYPE param_type, c
 
 template <typename T>
 inline Status
-Index<T>::Build(const DataSet& dataset, const Json& json) {
+Index<T>::Build(const DataSetPtr dataset, const Json& json) {
     auto cfg = this->node->CreateConfig();
     RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
 
@@ -54,7 +54,7 @@ Index<T>::Build(const DataSet& dataset, const Json& json) {
 
 template <typename T>
 inline Status
-Index<T>::Train(const DataSet& dataset, const Json& json) {
+Index<T>::Train(const DataSetPtr dataset, const Json& json) {
     auto cfg = this->node->CreateConfig();
     RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Train"));
     return this->node->Train(dataset, *cfg);
@@ -62,7 +62,7 @@ Index<T>::Train(const DataSet& dataset, const Json& json) {
 
 template <typename T>
 inline Status
-Index<T>::Add(const DataSet& dataset, const Json& json) {
+Index<T>::Add(const DataSetPtr dataset, const Json& json) {
     auto cfg = this->node->CreateConfig();
     RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Add"));
     return this->node->Add(dataset, *cfg);
@@ -70,7 +70,7 @@ Index<T>::Add(const DataSet& dataset, const Json& json) {
 
 template <typename T>
 inline expected<DataSetPtr>
-Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bitset_) const {
+Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& bitset_) const {
     auto cfg = this->node->CreateConfig();
     std::string msg;
     const Status load_status = LoadConfig(cfg.get(), json, knowhere::SEARCH, "Search", &msg);
@@ -81,7 +81,7 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
     // when index is mutable, it could happen that data count larger than bitset size, see
     // https://github.com/zilliztech/knowhere/issues/70
     // so something must be wrong at caller side when passed bitset size larger than data count
-    if (bitset_.size() > this->Count()) {
+    if (bitset_.size() > (size_t)this->Count()) {
         msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
                           bitset_.size(), this->Count());
         LOG_KNOWHERE_ERROR_ << msg;
@@ -100,7 +100,7 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
         span->SetAttribute(meta::TOPK, b_cfg.k.value());
         span->SetAttribute(meta::ROWS, Count());
         span->SetAttribute(meta::DIM, Dim());
-        span->SetAttribute(meta::NQ, dataset.GetRows());
+        span->SetAttribute(meta::NQ, dataset->GetRows());
     }
 
     TimeRecorder rc("Search");
@@ -121,7 +121,7 @@ Index<T>::Search(const DataSet& dataset, const Json& json, const BitsetView& bit
 
 template <typename T>
 inline expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
-Index<T>::AnnIterator(const DataSet& dataset, const Json& json, const BitsetView& bitset_) const {
+Index<T>::AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetView& bitset_) const {
     auto cfg = this->node->CreateConfig();
     std::string msg;
     Status status = LoadConfig(cfg.get(), json, knowhere::ITERATOR, "Iterator", &msg);
@@ -132,7 +132,7 @@ Index<T>::AnnIterator(const DataSet& dataset, const Json& json, const BitsetView
     // when index is mutable, it could happen that data count larger than bitset size, see
     // https://github.com/zilliztech/knowhere/issues/70
     // so something must be wrong at caller side when passed bitset size larger than data count
-    if (bitset_.size() > this->Count()) {
+    if (bitset_.size() > (size_t)this->Count()) {
         msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
                           bitset_.size(), this->Count());
         LOG_KNOWHERE_ERROR_ << msg;
@@ -156,7 +156,7 @@ Index<T>::AnnIterator(const DataSet& dataset, const Json& json, const BitsetView
 
 template <typename T>
 inline expected<DataSetPtr>
-Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView& bitset_) const {
+Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetView& bitset_) const {
     auto cfg = this->node->CreateConfig();
     std::string msg;
     auto status = LoadConfig(cfg.get(), json, knowhere::RANGE_SEARCH, "RangeSearch", &msg);
@@ -167,7 +167,7 @@ Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView
     // when index is mutable, it could happen that data count larger than bitset size, see
     // https://github.com/zilliztech/knowhere/issues/70
     // so something must be wrong at caller side when passed bitset size larger than data count
-    if (bitset_.size() > this->Count()) {
+    if (bitset_.size() > (size_t)this->Count()) {
         msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
                           bitset_.size(), this->Count());
         LOG_KNOWHERE_ERROR_ << msg;
@@ -189,7 +189,7 @@ Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView
         }
         span->SetAttribute(meta::ROWS, Count());
         span->SetAttribute(meta::DIM, Dim());
-        span->SetAttribute(meta::NQ, dataset.GetRows());
+        span->SetAttribute(meta::NQ, dataset->GetRows());
     }
 
     TimeRecorder rc("Range Search");
@@ -209,7 +209,7 @@ Index<T>::RangeSearch(const DataSet& dataset, const Json& json, const BitsetView
 
 template <typename T>
 inline expected<DataSetPtr>
-Index<T>::GetVectorByIds(const DataSet& dataset) const {
+Index<T>::GetVectorByIds(const DataSetPtr dataset) const {
     return this->node->GetVectorByIds(dataset);
 }
 

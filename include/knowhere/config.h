@@ -634,6 +634,7 @@ class BaseConfig : public Config {
     // for similarity metrics, we search for vectors with similarity in (radius, range_filter].
     CFG_FLOAT radius;
     CFG_FLOAT range_filter;
+    CFG_FLOAT range_search_level;
     CFG_BOOL trace_visit;
     CFG_BOOL enable_mmap;
     CFG_BOOL enable_mmap_pop;
@@ -683,6 +684,11 @@ class BaseConfig : public Config {
             .set_default(defaultRangeFilter)
             .description("result filter for range search")
             .for_range_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(range_search_level)
+            .set_default(0.01f)
+            .description("control the accurancy of range search, [0.0 - 0.5], the larger the more accurate")
+            .set_range(0, 0.5)
+            .for_range_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(trace_visit)
             .set_default(false)
             .description("trace visit for feder")
@@ -722,6 +728,7 @@ class BaseConfig : public Config {
             .description("materialized view search info")
             .allow_empty_without_default()
             .for_search()
+            .for_iterator()
             .for_range_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(opt_fields_path)
             .description("materialized view optional fields path")

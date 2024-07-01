@@ -75,7 +75,7 @@ struct GpuRaftIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSet& dataset, const Config& cfg) override {
+    Train(const DataSetPtr dataset, const Config& cfg) override {
         auto result = Status::success;
         auto raft_cfg = raft_knowhere::raft_knowhere_config{};
         try {
@@ -88,9 +88,9 @@ struct GpuRaftIndexNode : public IndexNode {
             result = Status::index_already_trained;
         }
         if (result == Status::success) {
-            auto rows = dataset.GetRows();
-            auto dim = dataset.GetDim();
-            auto const* data = reinterpret_cast<float const*>(dataset.GetTensor());
+            auto rows = dataset->GetRows();
+            auto dim = dataset->GetDim();
+            auto const* data = reinterpret_cast<float const*>(dataset->GetTensor());
             try {
                 index_.train(raft_cfg, data, rows, dim);
                 index_.synchronize(true);
@@ -103,12 +103,12 @@ struct GpuRaftIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSet& dataset, const Config& cfg) override {
+    Add(const DataSetPtr dataset, const Config& cfg) override {
         return Status::success;
     }
 
     expected<DataSetPtr>
-    Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
         auto result = Status::success;
         auto raft_cfg = raft_knowhere::raft_knowhere_config{};
         auto err_msg = std::string{};
@@ -121,9 +121,9 @@ struct GpuRaftIndexNode : public IndexNode {
         }
         if (result == Status::success) {
             try {
-                auto rows = dataset.GetRows();
-                auto dim = dataset.GetDim();
-                auto const* data = reinterpret_cast<float const*>(dataset.GetTensor());
+                auto rows = dataset->GetRows();
+                auto dim = dataset->GetDim();
+                auto const* data = reinterpret_cast<float const*>(dataset->GetTensor());
                 auto search_result =
                     index_.search(raft_cfg, data, rows, dim, bitset.data(), bitset.byte_size(), bitset.size());
                 std::this_thread::yield();
@@ -139,12 +139,12 @@ struct GpuRaftIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
+    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
         return expected<DataSetPtr>::Err(Status::not_implemented, "RangeSearch not implemented");
     }
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSet& dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset) const override {
         return expected<DataSetPtr>::Err(Status::not_implemented, "GetVectorByIds not implemented");
     }
 
@@ -197,8 +197,7 @@ struct GpuRaftIndexNode : public IndexNode {
 
     Status
     DeserializeFromFile(const std::string& filename, const Config& config) {
-        auto stream = std::ifstream{filename};
-        return DeserializeFromStream(stream);
+        return Status::not_implemented;
     }
 
     std::unique_ptr<BaseConfig>
@@ -239,9 +238,9 @@ struct GpuRaftIndexNode : public IndexNode {
         }
     }
 
- private:
     using raft_knowhere_index_type = typename raft_knowhere::raft_knowhere_index<K>;
 
+ protected:
     raft_knowhere_index_type index_;
 
     Status

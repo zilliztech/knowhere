@@ -14,6 +14,7 @@
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/ScalarQuantizer.h>
 #include <faiss/impl/ScalarQuantizerOp.h>
+#include <faiss/utils/bf16.h>
 #include <faiss/utils/fp16.h>
 #include <faiss/utils/utils.h>
 
@@ -228,6 +229,37 @@ struct QuantizerFP16<1> : SQuantizer {
 };
 
 /*******************************************************************
+ * BF16 quantizer
+ *******************************************************************/
+
+template <int SIMDWIDTH>
+struct QuantizerBF16 {};
+
+template <>
+struct QuantizerBF16<1> : ScalarQuantizer::SQuantizer {
+    const size_t d;
+
+    QuantizerBF16(size_t d, const std::vector<float>& /* unused */) : d(d) {}
+
+    void encode_vector(const float* x, uint8_t* code) const final {
+        for (size_t i = 0; i < d; i++) {
+            ((uint16_t*)code)[i] = encode_bf16(x[i]);
+        }
+    }
+
+    void decode_vector(const uint8_t* code, float* x) const final {
+        for (size_t i = 0; i < d; i++) {
+            x[i] = decode_bf16(((uint16_t*)code)[i]);
+        }
+    }
+
+    FAISS_ALWAYS_INLINE float reconstruct_component(const uint8_t* code, int i)
+            const {
+        return decode_bf16(((uint16_t*)code)[i]);
+    }
+};
+
+/*******************************************************************
  * 8bit_direct quantizer
  *******************************************************************/
 
@@ -259,6 +291,38 @@ struct Quantizer8bitDirect<1> : SQuantizer {
     }
 };
 
+/*******************************************************************
+ * 8bit_direct_signed quantizer
+ *******************************************************************/
+
+template <int SIMDWIDTH>
+struct Quantizer8bitDirectSigned {};
+
+template <>
+struct Quantizer8bitDirectSigned<1> : ScalarQuantizer::SQuantizer {
+    const size_t d;
+
+    Quantizer8bitDirectSigned(size_t d, const std::vector<float>& /* unused */)
+            : d(d) {}
+
+    void encode_vector(const float* x, uint8_t* code) const final {
+        for (size_t i = 0; i < d; i++) {
+            code[i] = (uint8_t)(x[i] + 128);
+        }
+    }
+
+    void decode_vector(const uint8_t* code, float* x) const final {
+        for (size_t i = 0; i < d; i++) {
+            x[i] = code[i] - 128;
+        }
+    }
+
+    FAISS_ALWAYS_INLINE float reconstruct_component(const uint8_t* code, int i)
+            const {
+        return code[i] - 128;
+    }
+};
+
 template <int SIMDWIDTH>
 SQuantizer* select_quantizer_1(
         QuantizerType qtype,
@@ -282,8 +346,12 @@ SQuantizer* select_quantizer_1(
                     d, trained);
         case ScalarQuantizer::QT_fp16:
             return new QuantizerFP16<SIMDWIDTH>(d, trained);
+        case ScalarQuantizer::QT_bf16:
+            return new QuantizerBF16<SIMDWIDTH>(d, trained);
         case ScalarQuantizer::QT_8bit_direct:
             return new Quantizer8bitDirect<SIMDWIDTH>(d, trained);
+        case ScalarQuantizer::QT_8bit_direct_signed:
+            return new Quantizer8bitDirectSigned<SIMDWIDTH>(d, trained);
     }
     FAISS_THROW_MSG("unknown qtype");
 }
@@ -511,6 +579,10 @@ SQDistanceComputer* select_distance_computer(
             return new DCTemplate<QuantizerFP16<SIMDWIDTH>, Sim, SIMDWIDTH>(
                     d, trained);
 
+        case ScalarQuantizer::QT_bf16:
+            return new DCTemplate<QuantizerBF16<SIMDWIDTH>, Sim, SIMDWIDTH>(
+                    d, trained);
+
         case ScalarQuantizer::QT_8bit_direct:
             if (d % 16 == 0) {
                 return new DistanceComputerByte<Sim, SIMDWIDTH>(d, trained);
@@ -520,6 +592,12 @@ SQDistanceComputer* select_distance_computer(
                         Sim,
                         SIMDWIDTH>(d, trained);
             }
+
+        case ScalarQuantizer::QT_8bit_direct_signed:
+            return new DCTemplate<
+                    Quantizer8bitDirectSigned<SIMDWIDTH>,
+                    Sim,
+                    SIMDWIDTH>(d, trained);
     }
     FAISS_THROW_MSG("unknown qtype");
     return nullptr;
@@ -613,6 +691,11 @@ InvertedListScanner* sel1_InvertedListScanner(
                     QuantizerFP16<SIMDWIDTH>,
                     Similarity,
                     SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
+        case ScalarQuantizer::QT_bf16:
+            return sel2_InvertedListScanner<DCTemplate<
+                    QuantizerBF16<SIMDWIDTH>,
+                    Similarity,
+                    SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
         case ScalarQuantizer::QT_8bit_direct:
             if (sq->d % 16 == 0) {
                 return sel2_InvertedListScanner<
@@ -624,6 +707,11 @@ InvertedListScanner* sel1_InvertedListScanner(
                         Similarity,
                         SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
             }
+        case ScalarQuantizer::QT_8bit_direct_signed:
+            return sel2_InvertedListScanner<DCTemplate<
+                    Quantizer8bitDirectSigned<SIMDWIDTH>,
+                    Similarity,
+                    SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
     }
 
     FAISS_THROW_MSG("unknown qtype");

@@ -49,19 +49,19 @@ class IndexNode : public Object {
     }
 
     virtual Status
-    Build(const DataSet& dataset, const Config& cfg) {
+    Build(const DataSetPtr dataset, const Config& cfg) {
         RETURN_IF_ERROR(Train(dataset, cfg));
         return Add(dataset, cfg);
     }
 
     virtual Status
-    Train(const DataSet& dataset, const Config& cfg) = 0;
+    Train(const DataSetPtr dataset, const Config& cfg) = 0;
 
     virtual Status
-    Add(const DataSet& dataset, const Config& cfg) = 0;
+    Add(const DataSetPtr dataset, const Config& cfg) = 0;
 
     virtual expected<DataSetPtr>
-    Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const = 0;
+    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const = 0;
 
     // not thread safe.
     class iterator {
@@ -73,9 +73,10 @@ class IndexNode : public Object {
         virtual ~iterator() {
         }
     };
+    using IteratorPtr = std::shared_ptr<iterator>;
 
-    virtual expected<std::vector<std::shared_ptr<iterator>>>
-    AnnIterator(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
+    virtual expected<std::vector<IteratorPtr>>
+    AnnIterator(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
         return expected<std::vector<std::shared_ptr<iterator>>>::Err(
             Status::not_implemented, "annIterator not supported for current index type");
     }
@@ -87,7 +88,7 @@ class IndexNode : public Object {
     // TODO: test with mock AnnIterator after we introduced mock framework into knowhere. Currently this is tested in
     // test_sparse.cc with real sparse vector index.
     virtual expected<DataSetPtr>
-    RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const {
+    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
         auto its_or = AnnIterator(dataset, cfg, bitset);
         if (!its_or.has_value()) {
             return expected<DataSetPtr>::Err(its_or.error(),
@@ -105,18 +106,30 @@ class IndexNode : public Object {
         const bool similarity_metric = IsMetricType(base_cfg.metric_type.value(), metric::IP) ||
                                        IsMetricType(base_cfg.metric_type.value(), metric::COSINE);
         const bool has_range_filter = range_filter != defaultRangeFilter;
+        constexpr size_t k_min_num_consecutive_over_radius = 16;
+        const auto range_search_level = base_cfg.range_search_level.value();
+        LOG_KNOWHERE_DEBUG_ << "range_search_level: " << range_search_level;
         auto task = [&](size_t idx) {
             auto it = its[idx];
+            size_t num_next = 0;
+            size_t num_consecutive_over_radius = 0;
             while (it->HasNext()) {
                 auto [id, dist] = it->Next();
+                num_next++;
                 // too close
                 if (has_range_filter && (similarity_metric ? dist > range_filter : dist < range_filter)) {
                     continue;
                 }
                 // too far
                 if (similarity_metric ? dist <= radius : dist >= radius) {
-                    break;
+                    num_consecutive_over_radius++;
+                    if (num_consecutive_over_radius >
+                        std::max(k_min_num_consecutive_over_radius, (size_t)(num_next * range_search_level))) {
+                        break;
+                    }
+                    continue;
                 }
+                num_consecutive_over_radius = 0;
                 result_id_array[idx].push_back(id);
                 result_dist_array[idx].push_back(dist);
             }
@@ -134,16 +147,13 @@ class IndexNode : public Object {
         }
 #endif
 
-        int64_t* ids = nullptr;
-        float* dis = nullptr;
-        size_t* lims = nullptr;
-        GetRangeSearchResult(result_dist_array, result_id_array, similarity_metric, nq, radius, range_filter, dis, ids,
-                             lims);
-        return GenResultDataSet(nq, ids, dis, lims);
+        auto range_search_result =
+            GetRangeSearchResult(result_dist_array, result_id_array, similarity_metric, nq, radius, range_filter);
+        return GenResultDataSet(nq, std::move(range_search_result));
     }
 
     virtual expected<DataSetPtr>
-    GetVectorByIds(const DataSet& dataset) const = 0;
+    GetVectorByIds(const DataSetPtr dataset) const = 0;
 
     virtual bool
     HasRawData(const std::string& metric_type) const = 0;
