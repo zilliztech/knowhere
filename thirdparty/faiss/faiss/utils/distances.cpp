@@ -221,17 +221,18 @@ void exhaustive_inner_product_seq_impl(
 
         fvec_inner_product_batch(nx, d, ny, d, const_cast<float*>(x), const_cast<float*>(y), &res_arr);
         if (res_arr == NULL) {
-            printf("res_arr = NULL\n");
-            fflush(stderr);
-            exit(1);
+            FAISS_THROW_MSG("Onednn Inner Product failed, res_arr = NULL\n");
         }
 
         SingleResultHandler resi(res);
+#pragma omp for
         for (size_t i = 0; i < nx; i++) {
             resi.begin(i);
             for (size_t j = 0; j < ny; j++) {
-                float ip = res_arr[i*ny + j];
-                resi.add_result(ip, j);
+                if (selector.is_member(j)) {
+                    float ip = res_arr[i*ny + j];
+                    resi.add_result(ip, j);
+                }
             }
             resi.end();
         }
