@@ -73,11 +73,6 @@ class DiskANNConfig : public BaseConfig {
     // use PQ + Refine. Default to -1.0f, negative vlaues will use dynamic threshold calculator given topk.
     CFG_FLOAT filter_threshold;
     KNOHWERE_DECLARE_CONFIG(DiskANNConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
-            .set_default("L2")
-            .description("metric type")
-            .for_train_and_search()
-            .for_deserialize();
         KNOWHERE_CONFIG_DECLARE_FIELD(max_degree)
             .description("the degree of the graph index.")
             .set_default(48)
