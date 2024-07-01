@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include <cstddef>
+#include <memory>
 #include <vector>
 
 #include "knowhere/bitsetview.h"
@@ -26,9 +28,15 @@ void
 FilterRangeSearchResultForOneNq(std::vector<float>& distances, std::vector<int64_t>& labels, const bool is_ip,
                                 const float radius, const float range_filter);
 
-void
+struct RangeSearchResult {
+    std::unique_ptr<float[]> distances;
+    std::unique_ptr<int64_t[]> labels;
+    std::unique_ptr<size_t[]> lims;
+};
+
+RangeSearchResult
 GetRangeSearchResult(const std::vector<std::vector<float>>& result_distances,
                      const std::vector<std::vector<int64_t>>& result_labels, const bool is_ip, const int64_t nq,
-                     const float radius, const float range_filter, float*& distances, int64_t*& labels, size_t*& lims);
+                     const float radius, const float range_filter);
 
 }  // namespace knowhere

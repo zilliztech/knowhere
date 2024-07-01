@@ -150,7 +150,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     if (ret != Status::success) {
         return expected<DataSetPtr>::Err(ret, "failed to brute force search");
     }
-    auto res = GenResultDataSet(nq, cfg.k.value(), labels.release(), distances.release());
+    auto res = GenResultDataSet(nq, cfg.k.value(), std::move(labels), std::move(distances));
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     if (cfg.trace_id.has_value()) {
@@ -424,11 +424,9 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
         return expected<DataSetPtr>::Err(ret, "failed to brute force search");
     }
 
-    int64_t* ids = nullptr;
-    float* distances = nullptr;
-    size_t* lims = nullptr;
-    GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter, distances, ids, lims);
-    auto res = GenResultDataSet(nq, ids, distances, lims);
+    auto range_search_result =
+        GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter);
+    auto res = GenResultDataSet(nq, std::move(range_search_result));
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     if (cfg.trace_id.has_value()) {
@@ -542,7 +540,7 @@ BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_d
     auto distances = std::make_unique<float[]>(nq * topk);
 
     SearchSparseWithBuf(base_dataset, query_dataset, labels.get(), distances.get(), config, bitset);
-    return GenResultDataSet(nq, topk, labels.release(), distances.release());
+    return GenResultDataSet(nq, topk, std::move(labels), std::move(distances));
 }
 
 template <typename DataType>

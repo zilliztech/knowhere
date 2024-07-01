@@ -156,9 +156,7 @@ class FlatIndexNode : public IndexNode {
         float range_filter = f_cfg.range_filter.value();
         bool is_ip = (index_->metric_type == faiss::METRIC_INNER_PRODUCT);
 
-        int64_t* ids = nullptr;
-        float* distances = nullptr;
-        size_t* lims = nullptr;
+        RangeSearchResult range_search_result;
 
         std::vector<std::vector<int64_t>> result_id_array(nq);
         std::vector<std::vector<float>> result_dist_array(nq);
@@ -208,14 +206,14 @@ class FlatIndexNode : public IndexNode {
             }
             // wait for the completion
             WaitAllSuccess(futs);
-            GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter, distances, ids,
-                                 lims);
+            range_search_result =
+                GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter);
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
-        return GenResultDataSet(nq, ids, distances, lims);
+        return GenResultDataSet(nq, std::move(range_search_result));
     }
 
     expected<DataSetPtr>

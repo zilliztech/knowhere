@@ -440,9 +440,8 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, const
         index->train(rows, (const float*)data);
         // replace quantizer with a regular IndexFlat
         qzr = to_index_flat(std::move(qzr));
-        index->quantizer = qzr.get();
         // transfer ownership of qzr to index
-        qzr.release();
+        index->quantizer = qzr.release();
         index->own_fields = true;
     }
     if constexpr (std::is_same<faiss::IndexIVFFlatCC, IndexType>::value) {
@@ -461,9 +460,8 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, const
         index->train(rows, (const float*)data);
         // replace quantizer with a regular IndexFlat
         qzr = to_index_flat(std::move(qzr));
-        index->quantizer = qzr.get();
         // transfer ownership of qzr to index
-        qzr.release();
+        index->quantizer = qzr.release();
         index->own_fields = true;
         // ivfflat_cc has no serialize stage, make map at build stage
         index->make_direct_map(true, faiss::DirectMap::ConcurrentArray);
@@ -484,9 +482,8 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, const
         index->train(rows, (const float*)data);
         // replace quantizer with a regular IndexFlat
         qzr = to_index_flat(std::move(qzr));
-        index->quantizer = qzr.get();
         // transfer ownership of qzr to index
-        qzr.release();
+        index->quantizer = qzr.release();
         index->own_fields = true;
     }
     if constexpr (std::is_same<faiss::IndexScaNN, IndexType>::value) {
@@ -514,9 +511,8 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, const
         // at this moment, we still own qzr.
         // replace quantizer with a regular IndexFlat
         qzr = to_index_flat(std::move(qzr));
-        base_index->quantizer = qzr.get();
         // release qzr
-        qzr.release();
+        base_index->quantizer = qzr.release();
         base_index->own_fields = true;
         // transfer ownership of the base index
         base_index.release();
@@ -538,9 +534,8 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, const
         index->train(rows, (const float*)data);
         // replace quantizer with a regular IndexFlat
         qzr = to_index_flat(std::move(qzr));
-        index->quantizer = qzr.get();
         // transfer ownership of qzr to index
-        qzr.release();
+        index->quantizer = qzr.release();
         index->own_fields = true;
     }
     if constexpr (std::is_same<faiss::IndexBinaryIVF, IndexType>::value) {
@@ -580,9 +575,8 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, const
         index->train(rows, (const float*)data);
         // replace quantizer with a regular IndexFlat
         qzr = to_index_flat(std::move(qzr));
-        index->quantizer = qzr.get();
         // transfer ownership of qzr to index
-        qzr.release();
+        index->quantizer = qzr.release();
         index->own_fields = true;
         index->make_direct_map(true, faiss::DirectMap::ConcurrentArray);
     }
@@ -647,9 +641,8 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, const Config
     auto k = ivf_cfg.k.value();
     auto nprobe = ivf_cfg.nprobe.value();
 
-    int64_t* ids(new (std::nothrow) int64_t[rows * k]);
-    float* distances(new (std::nothrow) float[rows * k]);
-    int32_t* i_distances = reinterpret_cast<int32_t*>(distances);
+    auto ids = std::make_unique<int64_t[]>(rows * k);
+    auto distances = std::make_unique<float[]>(rows * k);
     try {
         std::vector<folly::Future<folly::Unit>> futs;
         futs.reserve(rows);
@@ -665,12 +658,15 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, const Config
                 if constexpr (std::is_same<IndexType, faiss::IndexBinaryIVF>::value) {
                     auto cur_data = (const uint8_t*)data + index * dim / 8;
 
+                    int32_t* i_distances = reinterpret_cast<int32_t*>(distances.get());
+
                     faiss::IVFSearchParameters ivf_search_params;
                     ivf_search_params.nprobe = nprobe;
                     ivf_search_params.sel = id_selector;
-                    index_->search(1, cur_data, k, i_distances + offset, ids + offset, &ivf_search_params);
+                    index_->search(1, cur_data, k, i_distances + offset, ids.get() + offset, &ivf_search_params);
 
                     if (index_->metric_type == faiss::METRIC_Hamming) {
+                        // this is an in-place conversion int32_t -> float
                         for (int64_t i = 0; i < k; i++) {
                             distances[i + offset] = static_cast<float>(i_distances[i + offset]);
                         }
@@ -697,7 +693,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, const Config
                         ivf_search_params.max_codes = 0;
                     }
 
-                    index_->search(1, cur_query, k, distances + offset, ids + offset, &ivf_search_params);
+                    index_->search(1, cur_query, k, distances.get() + offset, ids.get() + offset, &ivf_search_params);
                 } else if constexpr (std::is_same<IndexType, faiss::IndexScaNN>::value) {
                     auto cur_query = (const float*)data + index * dim;
                     const ScannConfig& scann_cfg = static_cast<const ScannConfig&>(cfg);
@@ -715,7 +711,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, const Config
                     scann_search_params.base_index_params = &base_search_params;
                     scann_search_params.reorder_k = scann_cfg.reorder_k.value();
 
-                    index_->search(1, cur_query, k, distances + offset, ids + offset, &scann_search_params);
+                    index_->search(1, cur_query, k, distances.get() + offset, ids.get() + offset, &scann_search_params);
                 } else {
                     auto cur_query = (const float*)data + index * dim;
                     if (is_cosine) {
@@ -728,20 +724,18 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, const Config
                     ivf_search_params.max_codes = 0;
                     ivf_search_params.sel = id_selector;
 
-                    index_->search(1, cur_query, k, distances + offset, ids + offset, &ivf_search_params);
+                    index_->search(1, cur_query, k, distances.get() + offset, ids.get() + offset, &ivf_search_params);
                 }
             }));
         }
         // wait for the completion
         WaitAllSuccess(futs);
     } catch (const std::exception& e) {
-        delete[] ids;
-        delete[] distances;
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
         return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
     }
 
-    auto res = GenResultDataSet(rows, k, ids, distances);
+    auto res = GenResultDataSet(rows, k, std::move(ids), std::move(distances));
     return res;
 }
 
@@ -769,9 +763,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, const C
     float range_filter = ivf_cfg.range_filter.value();
     bool is_ip = (index_->metric_type == faiss::METRIC_INNER_PRODUCT);
 
-    int64_t* ids = nullptr;
-    float* distances = nullptr;
-    size_t* lims = nullptr;
+    RangeSearchResult range_search_result;
 
     std::vector<std::vector<int64_t>> result_id_array(nq);
     std::vector<std::vector<float>> result_dist_array(nq);
@@ -854,13 +846,13 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, const C
         }
         // wait for the completion
         WaitAllSuccess(futs);
-        GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter, distances, ids, lims);
+        range_search_result = GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter);
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
         return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
     }
 
-    return GenResultDataSet(nq, ids, distances, lims);
+    return GenResultDataSet(nq, std::move(range_search_result));
 }
 
 template <typename DataType, typename IndexType>
@@ -938,17 +930,15 @@ IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSetPtr dataset) cons
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
 
-        uint8_t* data = nullptr;
         try {
-            data = new uint8_t[dim * rows / 8];
+            auto data = std::make_unique<uint8_t[]>(dim * rows / 8);
             for (int64_t i = 0; i < rows; i++) {
                 int64_t id = ids[i];
                 assert(id >= 0 && id < index_->ntotal);
-                index_->reconstruct(id, data + i * dim / 8);
+                index_->reconstruct(id, data.get() + i * dim / 8);
             }
-            return GenResultDataSet(rows, dim, data);
+            return GenResultDataSet(rows, dim, std::move(data));
         } catch (const std::exception& e) {
-            std::unique_ptr<uint8_t[]> auto_del(data);
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
@@ -958,17 +948,15 @@ IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSetPtr dataset) cons
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
 
-        float* data = nullptr;
         try {
-            data = new float[dim * rows];
+            auto data = std::make_unique<float[]>(dim * rows);
             for (int64_t i = 0; i < rows; i++) {
                 int64_t id = ids[i];
                 assert(id >= 0 && id < index_->ntotal);
-                index_->reconstruct(id, data + i * dim);
+                index_->reconstruct(id, data.get() + i * dim);
             }
-            return GenResultDataSet(rows, dim, data);
+            return GenResultDataSet(rows, dim, std::move(data));
         } catch (const std::exception& e) {
-            std::unique_ptr<float[]> auto_del(data);
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
@@ -982,17 +970,15 @@ IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSetPtr dataset) cons
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
 
-        float* data = nullptr;
         try {
-            data = new float[dim * rows];
+            auto data = std::make_unique<float[]>(dim * rows);
             for (int64_t i = 0; i < rows; i++) {
                 int64_t id = ids[i];
                 assert(id >= 0 && id < index_->ntotal);
-                index_->reconstruct(id, data + i * dim);
+                index_->reconstruct(id, data.get() + i * dim);
             }
-            return GenResultDataSet(rows, dim, data);
+            return GenResultDataSet(rows, dim, std::move(data));
         } catch (const std::exception& e) {
-            std::unique_ptr<float[]> auto_del(data);
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
@@ -1080,8 +1066,7 @@ IvfIndexNode<DataType, IndexType>::SerializeImpl(BinarySet& binset, IVFFlatTag) 
             size_t dim = index_->d;
             size_t rows = index_->ntotal;
             size_t raw_data_size = dim * rows * sizeof(float);
-            uint8_t* raw_data = new uint8_t[raw_data_size];
-            std::shared_ptr<uint8_t[]> raw_data_ptr(raw_data);
+            auto raw_data = std::make_unique<uint8_t[]>(raw_data_size);
             for (size_t i = 0; i < index_->nlist; i++) {
                 size_t list_size = index_->invlists->list_size(i);
                 const faiss::idx_t* ids = index_->invlists->get_ids(i);
@@ -1089,11 +1074,11 @@ IvfIndexNode<DataType, IndexType>::SerializeImpl(BinarySet& binset, IVFFlatTag) 
                 for (size_t j = 0; j < list_size; j++) {
                     faiss::idx_t id = ids[j];
                     const uint8_t* src = codes + j * dim * sizeof(float);
-                    uint8_t* dst = raw_data + id * dim * sizeof(float);
+                    uint8_t* dst = raw_data.get() + id * dim * sizeof(float);
                     memcpy(dst, src, dim * sizeof(float));
                 }
             }
-            binset.Append("RAW_DATA", raw_data_ptr, raw_data_size);
+            binset.Append("RAW_DATA", std::move(raw_data), raw_data_size);
             LOG_KNOWHERE_INFO_ << "append raw data for IVF_FLAT_NM, size " << raw_data_size;
         }
         return Status::success;

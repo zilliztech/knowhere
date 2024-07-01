@@ -557,7 +557,7 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, const Config& cfg, 
         return expected<DataSetPtr>::Err(Status::diskann_inner_error, "some search failed");
     }
 
-    auto res = GenResultDataSet(nq, k, p_id.release(), p_dist.release());
+    auto res = GenResultDataSet(nq, k, std::move(p_id), std::move(p_dist));
 
     // set visit_info json string into result dataset
     if (feder_result != nullptr) {
@@ -600,10 +600,6 @@ DiskANNIndexNode<DataType>::RangeSearch(const DataSetPtr dataset, const Config& 
     auto nq = dataset->GetRows();
     auto xq = static_cast<const DataType*>(dataset->GetTensor());
 
-    int64_t* p_id = nullptr;
-    DistType* p_dist = nullptr;
-    size_t* p_lims = nullptr;
-
     std::vector<std::vector<int64_t>> result_id_array(nq);
     std::vector<std::vector<DistType>> result_dist_array(nq);
 
@@ -628,9 +624,9 @@ DiskANNIndexNode<DataType>::RangeSearch(const DataSetPtr dataset, const Config& 
         return expected<DataSetPtr>::Err(Status::diskann_inner_error, "some search failed");
     }
 
-    GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, search_conf.range_filter.value(),
-                         p_dist, p_id, p_lims);
-    return GenResultDataSet(nq, p_id, p_dist, p_lims);
+    auto range_search_result =
+        GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, search_conf.range_filter.value());
+    return GenResultDataSet(nq, std::move(range_search_result));
 }
 
 /*

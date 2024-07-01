@@ -147,12 +147,9 @@ class IndexNode : public Object {
         }
 #endif
 
-        int64_t* ids = nullptr;
-        float* dis = nullptr;
-        size_t* lims = nullptr;
-        GetRangeSearchResult(result_dist_array, result_id_array, similarity_metric, nq, radius, range_filter, dis, ids,
-                             lims);
-        return GenResultDataSet(nq, ids, dis, lims);
+        auto range_search_result =
+            GetRangeSearchResult(result_dist_array, result_id_array, similarity_metric, nq, radius, range_filter);
+        return GenResultDataSet(nq, std::move(range_search_result));
     }
 
     virtual expected<DataSetPtr>
