@@ -1030,6 +1030,10 @@ template <typename DataType, typename IndexType>
 Status
 IvfIndexNode<DataType, IndexType>::SerializeImpl(BinarySet& binset, IVFBaseTag) const {
     try {
+        if (!this->index_) {
+            LOG_KNOWHERE_WARNING_ << "index can not be serialized for empty index";
+            return Status::empty_index;
+        }
         MemoryIOWriter writer;
         if constexpr (std::is_same<IndexType, faiss::IndexBinaryIVF>::value) {
             faiss::write_index_binary(index_.get(), &writer);
@@ -1049,6 +1053,10 @@ template <typename DataType, typename IndexType>
 Status
 IvfIndexNode<DataType, IndexType>::SerializeImpl(BinarySet& binset, IVFFlatTag) const {
     try {
+        if (!this->index_) {
+            LOG_KNOWHERE_WARNING_ << "index can not be serialized for empty index";
+            return Status::empty_index;
+        }
         MemoryIOWriter writer;
         LOG_KNOWHERE_INFO_ << "request version " << this->version_.VersionNumber();
         if (this->version_ <= Version::GetMinimalVersion()) {
