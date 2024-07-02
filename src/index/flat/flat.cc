@@ -117,7 +117,8 @@ class FlatIndexNode : public IndexNode {
                         faiss::SearchParameters search_params;
                         search_params.sel = id_selector;
 
-                        index_->search(1, (const uint8_t*)x + index * dim / 8, k, cur_i_dis, cur_ids, &search_params);
+                        index_->search(1, (const uint8_t*)x + index * ((dim + 7) / 8), k, cur_i_dis, cur_ids,
+                                       &search_params);
 
                         if (index_->metric_type == faiss::METRIC_Hamming) {
                             for (int64_t j = 0; j < k; j++) {
@@ -189,7 +190,8 @@ class FlatIndexNode : public IndexNode {
                         faiss::SearchParameters search_params;
                         search_params.sel = id_selector;
 
-                        index_->range_search(1, (const uint8_t*)xq + index * dim / 8, radius, &res, &search_params);
+                        index_->range_search(1, (const uint8_t*)xq + index * ((dim + 7) / 8), radius, &res,
+                                             &search_params);
                     }
                     auto elem_cnt = res.lims[1];
                     result_dist_array[index].resize(elem_cnt);
@@ -238,9 +240,9 @@ class FlatIndexNode : public IndexNode {
         if constexpr (std::is_same<IndexType, faiss::IndexBinaryFlat>::value) {
             uint8_t* data = nullptr;
             try {
-                data = new uint8_t[rows * dim / 8];
+                data = new uint8_t[rows * ((dim + 7) / 8)];
                 for (int64_t i = 0; i < rows; i++) {
-                    index_->reconstruct(ids[i], data + i * dim / 8);
+                    index_->reconstruct(ids[i], data + i * ((dim + 7) / 8));
                 }
                 return GenResultDataSet(rows, dim, data);
             } catch (const std::exception& e) {
