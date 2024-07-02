@@ -20,16 +20,16 @@ spec:
     resources:
       requests:
         nvidia.com/gpu: 1
-        memory: "30Gi"
-        cpu: "8"
+        memory: "16Gi"
+        cpu: "4"
       limits:
         nvidia.com/gpu: 1
         memory: "30Gi"
         cpu: "8"
     volumeMounts:
       - mountPath: /home/data
-        name: db-data
+        name: db-data-pvc-ci-cluster
   volumes:
-    - name: db-data
+    - name: db-data-pvc-ci-cluster
       persistentVolumeClaim:
-        claimName: db-data
+        claimName: db-data-pvc-ci-cluster
