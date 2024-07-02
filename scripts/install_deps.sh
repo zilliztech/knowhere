@@ -20,6 +20,7 @@
 set -e
 
 UNAME="$(uname -s)"
+CURRENT_DIR=$(pwd)
 
 case "${UNAME}" in
     Linux*)     MACHINE=Linux;;
@@ -77,6 +78,16 @@ if [[ "${MACHINE}" == "Linux" ]]; then
             sudo ln -s /usr/local/lib/libopenblasp-r0.3.21.so /usr/local/lib/libblas.so.3 && \
             sudo ln -s /usr/local/lib/pkgconfig/openblas.pc /usr/local/lib/pkgconfig/blas.pc
         fi
+
+        # Install Intel oneDNN
+        cd ${CURRENT_DIR} && \
+        rm -rf oneDNN-3.5-pc && \
+        wget https://github.com/oneapi-src/oneDNN/archive/refs/tags/v3.5-pc.tar.gz && \
+        tar zxvf v3.5-pc.tar.gz && cd oneDNN-3.5-pc && \
+        mkdir -p build && cd build && \
+        export CC=icx && export CXX=icpx && \
+        cmake .. && make -j8 && \
+        sudo cmake --build . --target install
     elif [[ -x "$(command -v yum)" ]]; then
         # for CentOS 7
         sudo yum install -y epel-release centos-release-scl-rh wget && \
