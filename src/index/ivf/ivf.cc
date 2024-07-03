@@ -656,7 +656,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, const Config
                 faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
 
                 if constexpr (std::is_same<IndexType, faiss::IndexBinaryIVF>::value) {
-                    auto cur_data = (const uint8_t*)data + index * dim / 8;
+                    auto cur_data = (const uint8_t*)data + index * ((dim + 7) / 8);
 
                     int32_t* i_distances = reinterpret_cast<int32_t*>(distances.get());
 
@@ -781,7 +781,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, const C
                 faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
 
                 if constexpr (std::is_same<IndexType, faiss::IndexBinaryIVF>::value) {
-                    auto cur_data = (const uint8_t*)xq + index * dim / 8;
+                    auto cur_data = (const uint8_t*)xq + index * ((dim + 7) / 8);
 
                     faiss::IVFSearchParameters ivf_search_params;
                     ivf_search_params.nprobe = index_->nlist;
@@ -931,11 +931,11 @@ IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSetPtr dataset) cons
         auto ids = dataset->GetIds();
 
         try {
-            auto data = std::make_unique<uint8_t[]>(dim * rows / 8);
+            auto data = std::make_unique<uint8_t[]>(rows * ((dim + 7) / 8));
             for (int64_t i = 0; i < rows; i++) {
                 int64_t id = ids[i];
                 assert(id >= 0 && id < index_->ntotal);
-                index_->reconstruct(id, data.get() + i * dim / 8);
+                index_->reconstruct(id, data.get() + i * ((dim + 7) / 8));
             }
             return GenResultDataSet(rows, dim, std::move(data));
         } catch (const std::exception& e) {
