@@ -626,7 +626,24 @@ struct raft_knowhere_index<IndexKind>::impl {
     }
 
     auto static deserialize(std::istream& is) {
-        auto new_device_id = select_device_id();
+        auto static device_count = []() {
+            auto result = 0;
+            RAFT_CUDA_TRY(cudaGetDeviceCount(&result));
+            RAFT_EXPECTS(result != 0, "No CUDA devices found");
+            return result;
+        }();
+        // The lazy allocation mode cannot completely eliminate uneven distribution, but it can alleviate it well.
+        int new_device_id = 0;
+        size_t free, total;
+        size_t max_free = 0;
+        for (int i = 0; i < device_count; ++i) {
+            auto scoped_device = raft::device_setter{i};
+            RAFT_CUDA_TRY(cudaMemGetInfo(&free, &total));
+            if (max_free < free) {
+                max_free = free;
+                new_device_id = i;
+            }
+        }
         auto scoped_device = raft::device_setter{new_device_id};
         auto const& res = get_device_resources_without_mempool();
         auto des_index = raft_index_type::template deserialize<data_type, indexing_type>(res, is);
