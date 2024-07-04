@@ -121,8 +121,8 @@ class SparseInvertedIndexNode : public IndexNode {
         futs.reserve(nq);
         for (int i = 0; i < nq; ++i) {
             futs.emplace_back(search_pool_->push([&, i]() {
-                vec[i].reset(new PrecomputedDistanceIterator(
-                    index_->GetAllDistances(queries[i], drop_ratio_search, bitset), true));
+                vec[i] = std::make_shared<PrecomputedDistanceIterator>(
+                    index_->GetAllDistances(queries[i], drop_ratio_search, bitset), true);
             }));
         }
         WaitAllSuccess(futs);

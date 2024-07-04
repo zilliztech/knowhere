@@ -293,10 +293,11 @@ class HnswIndexNode : public IndexNode {
         for (int i = 0; i < nq; ++i) {
             futs.emplace_back(search_pool_->push([&, i]() {
                 auto single_query = (const char*)xq + i * index_->data_size_;
-                auto it = new iterator(this->index_, single_query, transform, bitset, hnsw_cfg.for_tuning.value(), ef,
-                                       hnsw_cfg.iterator_refine_ratio.value());
+                auto it =
+                    std::make_shared<iterator>(this->index_, single_query, transform, bitset,
+                                               hnsw_cfg.for_tuning.value(), ef, hnsw_cfg.iterator_refine_ratio.value());
                 it->initialize();
-                vec[i].reset(it);
+                vec[i] = it;
             }));
         }
         // wait for initial search(in top layers and search for ef in base layer) to finish
