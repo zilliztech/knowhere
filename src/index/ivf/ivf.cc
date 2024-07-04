@@ -897,10 +897,11 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, const C
                     }
 
                     // the iterator only own the copied_norm_query.
-                    auto it = new iterator(index_.get(), cur_query, std::move(copied_norm_query), bitset, nprobe,
-                                           larger_is_closer, ivf_cfg.iterator_refine_ratio.value());
+                    auto it =
+                        std::make_shared<iterator>(index_.get(), cur_query, std::move(copied_norm_query), bitset,
+                                                   nprobe, larger_is_closer, ivf_cfg.iterator_refine_ratio.value());
                     it->initialize();
-                    vec[index].reset(it);
+                    vec[index] = it;
                 }));
             }
 
