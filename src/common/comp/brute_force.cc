@@ -37,6 +37,30 @@ namespace knowhere {
 
 class BruteForceConfig : public BaseConfig {};
 
+namespace {
+
+template <typename T>
+expected<sparse::DocValueComputer<T>>
+GetDocValueComputer(const BruteForceConfig& cfg) {
+    if (IsMetricType(cfg.metric_type.value(), metric::IP)) {
+        return sparse::GetDocValueOriginalComputer<T>();
+    } else if (IsMetricType(cfg.metric_type.value(), metric::BM25)) {
+        if (!cfg.bm25_k1.has_value() || !cfg.bm25_b.has_value() || !cfg.bm25_avgdl.has_value()) {
+            return expected<sparse::DocValueComputer<T>>::Err(
+                Status::invalid_args, "bm25_k1, bm25_b, bm25_avgdl must be set when searching for bm25 metric");
+        }
+        auto k1 = cfg.bm25_k1.value();
+        auto b = cfg.bm25_b.value();
+        auto avgdl = cfg.bm25_avgdl.value();
+        return sparse::GetDocValueBM25Computer<T>(k1, b, avgdl);
+    } else {
+        return expected<sparse::DocValueComputer<T>>::Err(Status::invalid_metric_type,
+                                                          "metric type not supported for sparse vector");
+    }
+}
+
+}  // namespace
+
 template <typename DataType>
 expected<DataSetPtr>
 BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
@@ -321,15 +345,24 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
 #endif
 
     std::string metric_str = cfg.metric_type.value();
-    auto result = Str2FaissMetricType(metric_str);
-    if (result.error() != Status::success) {
-        return expected<DataSetPtr>::Err(result.error(), result.what());
+    const bool is_bm25 = IsMetricType(metric_str, metric::BM25);
+
+    faiss::MetricType faiss_metric_type;
+    sparse::DocValueComputer<float> sparse_computer;
+    if (!is_sparse) {
+        auto result = Str2FaissMetricType(metric_str);
+        if (result.error() != Status::success) {
+            return expected<DataSetPtr>::Err(result.error(), result.what());
+        }
+        faiss_metric_type = result.value();
+    } else {
+        auto computer_or = GetDocValueComputer<float>(cfg);
+        if (!computer_or.has_value()) {
+            return expected<DataSetPtr>::Err(computer_or.error(), computer_or.what());
+        }
+        sparse_computer = computer_or.value();
     }
-    faiss::MetricType faiss_metric_type = result.value();
-    if (is_sparse && !IsMetricType(metric_str, metric::IP)) {
-        return expected<DataSetPtr>::Err(Status::invalid_metric_type,
-                                         "Invalid metric type for sparse float vector: " + metric_str);
-    }
+
     bool is_cosine = IsMetricType(metric_str, metric::COSINE);
 
     auto radius = cfg.radius.value();
@@ -352,7 +385,14 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                     if (!bitset.empty() && bitset.test(j)) {
                         continue;
                     }
-                    auto dist = cur_query->dot(xb_sparse[j]);
+                    float row_sum = 0;
+                    if (is_bm25) {
+                        for (size_t k = 0; k < xb_sparse[j].size(); ++k) {
+                            auto [d, v] = xb_sparse[j][k];
+                            row_sum += v;
+                        }
+                    }
+                    auto dist = cur_query->dot(xb_sparse[j], sparse_computer, row_sum);
                     if (dist > radius && dist <= range_filter) {
                         result_id_array[index].push_back(j);
                         result_dist_array[index].push_back(dist);
@@ -425,7 +465,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     }
 
     auto range_search_result =
-        GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter);
+        GetRangeSearchResult(result_dist_array, result_id_array, is_ip || is_bm25, nq, radius, range_filter);
     auto res = GenResultDataSet(nq, std::move(range_search_result));
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
@@ -469,15 +509,13 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
 #endif
 
     std::string metric_str = cfg.metric_type.value();
-    auto result = Str2FaissMetricType(metric_str);
-    if (result.error() != Status::success) {
-        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
-        return result.error();
+    const bool is_bm25 = IsMetricType(metric_str, metric::BM25);
+
+    auto computer_or = GetDocValueComputer<float>(cfg);
+    if (!computer_or.has_value()) {
+        return computer_or.error();
     }
-    if (!IsMetricType(metric_str, metric::IP)) {
-        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
-        return Status::invalid_metric_type;
-    }
+    auto computer = computer_or.value();
 
     int topk = cfg.k.value();
     std::fill(distances, distances + nq * topk, std::numeric_limits<float>::quiet_NaN());
@@ -500,7 +538,14 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
                 if (!bitset.empty() && bitset.test(j)) {
                     continue;
                 }
-                float dist = row.dot(base[j]);
+                float row_sum = 0;
+                if (is_bm25) {
+                    for (size_t k = 0; k < base[j].size(); ++k) {
+                        auto [d, v] = base[j][k];
+                        row_sum += v;
+                    }
+                }
+                float dist = row.dot(base[j], computer, row_sum);
                 if (dist > 0) {
                     heap.push(j, dist);
                 }
@@ -673,18 +718,13 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
     }
 #endif
 
-    auto result = Str2FaissMetricType(metric_str);
-    if (result.error() != Status::success) {
-        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << metric_str;
-        return expected<std::vector<IndexNode::IteratorPtr>>::Err(
-            result.error(), "Failed to brute force search sparse for iterator: invalid metric type " + metric_str);
+    const bool is_bm25 = IsMetricType(metric_str, metric::BM25);
+
+    auto computer_or = GetDocValueComputer<float>(cfg);
+    if (!computer_or.has_value()) {
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(computer_or.error(), computer_or.what());
     }
-    if (!IsMetricType(metric_str, metric::IP)) {
-        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << metric_str;
-        return expected<std::vector<IndexNode::IteratorPtr>>::Err(
-            Status::invalid_metric_type,
-            "Failed to brute force search sparse for iterator: invalid metric type " + metric_str);
-    }
+    auto computer = computer_or.value();
 
     auto pool = ThreadPool::GetGlobalSearchThreadPool();
     auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
@@ -699,7 +739,14 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
                     if (!bitset.empty() && bitset.test(j)) {
                         continue;
                     }
-                    auto dist = row.dot(base[j]);
+                    float row_sum = 0;
+                    if (is_bm25) {
+                        for (size_t k = 0; k < base[j].size(); ++k) {
+                            auto [d, v] = base[j][k];
+                            row_sum += v;
+                        }
+                    }
+                    auto dist = row.dot(base[j], computer, row_sum);
                     if (dist > 0) {
                         distances_ids.emplace_back(j, dist);
                     }

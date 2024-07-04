@@ -22,6 +22,7 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_FLOAT drop_ratio_build;
     CFG_FLOAT drop_ratio_search;
     CFG_INT refine_factor;
+    CFG_FLOAT wand_bm25_max_score_ratio;
     KNOHWERE_DECLARE_CONFIG(SparseInvertedIndexConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(drop_ratio_build)
             .description("drop ratio for build")
@@ -40,6 +41,25 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .set_default(10)
             .for_search()
             .for_range_search();
+        /**
+         * The term frequency part of score of BM25 is:
+         * tf * (k1 + 1) / (tf + k1 * (1 - b + b * (doc_len / avgdl)))
+         * as more documents being added to the collection, avgdl can also
+         * change. In WAND index we precompute and cache this score in order to
+         * speed up the search process, but if avgdl changes, we need to
+         * re-compute such score which is expensive. To avoid this, we upscale
+         * the max score by a ratio to compensate for avgdl changes. This will
+         * make the max score larger than the actual max score, it makes the
+         * filtering less aggressive, but guarantees the correctness.
+         * The larger the ratio, the less aggressive the filtering is.
+         */
+        KNOWHERE_CONFIG_DECLARE_FIELD(wand_bm25_max_score_ratio)
+            .set_range(1.0, 1.3)
+            .set_default(1.05)
+            .description("ratio to upscale max score to compensate for avgdl changes")
+            .for_train()
+            .for_deserialize()
+            .for_deserialize_from_file();
     }
 };  // class SparseInvertedIndexConfig
 

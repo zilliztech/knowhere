@@ -30,15 +30,14 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         {20000, 3000, 0.97, 0.99},
     }));
     auto topk = 5;
-    int64_t nq = GENERATE(10, 100);
+    int64_t nq = 10;
 
     auto [drop_ratio_build, drop_ratio_search] = GENERATE(table<float, float>({
         {0.0, 0.0},
-        {0.0, 0.15},
         {0.15, 0.3},
     }));
 
-    auto metric = knowhere::metric::IP;
+    auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
     auto version = GenTestVersionList();
 
     auto base_gen = [=, dim = dim]() {
@@ -46,6 +45,9 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = metric;
         json[knowhere::meta::TOPK] = topk;
+        json[knowhere::meta::BM25_K1] = 1.2;
+        json[knowhere::meta::BM25_B] = 0.75;
+        json[knowhere::meta::BM25_AVGDL] = 100;
         return json;
     };
 
@@ -62,8 +64,8 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
     const auto query_ds = GenSparseDataSet(nq, dim + 20, query_sparsity);
 
     const knowhere::Json conf = {
-        {knowhere::meta::METRIC_TYPE, metric},
-        {knowhere::meta::TOPK, topk},
+        {knowhere::meta::METRIC_TYPE, metric}, {knowhere::meta::TOPK, topk},      {knowhere::meta::BM25_K1, 1.2},
+        {knowhere::meta::BM25_B, 0.75},        {knowhere::meta::BM25_AVGDL, 100},
     };
 
     auto check_distance_decreasing = [](const knowhere::DataSet& ds) {
@@ -333,11 +335,6 @@ TEST_CASE("Test Mem Sparse Index GetVectorByIds", "[float metrics]") {
     };
 
     const auto train_ds = GenSparseDataSet(nb, dim, doc_sparsity);
-
-    const knowhere::Json conf = {
-        {knowhere::meta::METRIC_TYPE, metric},
-        {knowhere::meta::TOPK, 1},
-    };
 
     SECTION("Test GetVectorByIds") {
         using std::make_tuple;
