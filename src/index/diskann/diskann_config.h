@@ -84,6 +84,7 @@ class DiskANNConfig : public BaseConfig {
             .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
             .for_train()
             .for_search()
+            .for_range_search()
             .for_iterator();
         KNOWHERE_CONFIG_DECLARE_FIELD(pq_code_budget_gb)
             .description("the size of PQ compressed representation in GB.")
