@@ -18,9 +18,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <type_traits>
 #include <vector>
 
+#include "knowhere/expected.h"
 #include "knowhere/object.h"
 #include "knowhere/operands.h"
 
@@ -34,6 +36,28 @@ using label_t = int64_t;
 
 template <typename T>
 using SparseIdVal = IdVal<table_t, T>;
+
+// DocValueComputer takes a value of a doc vector and returns the a computed
+// value that can be used to multiply directly with the corresponding query
+// value. The second parameter is the document length of the database vector,
+// which is used in BM25.
+template <typename T>
+using DocValueComputer = std::function<float(const T&, const float)>;
+
+template <typename T>
+auto
+GetDocValueOriginalComputer() {
+    static DocValueComputer<T> lambda = [](const T& right, const float) -> float { return right; };
+    return lambda;
+}
+
+template <typename T>
+auto
+GetDocValueBM25Computer(float k1, float b, float avgdl) {
+    return [k1, b, avgdl](const T& tf, const float doc_len) -> float {
+        return tf * (k1 + 1) / (tf + k1 * (1 - b + b * (doc_len / avgdl)));
+    };
+}
 
 template <typename T>
 class SparseRow {
@@ -128,8 +152,12 @@ class SparseRow {
         elem->value = value;
     }
 
+    // In the case of asymetric distance functions, this should be the query
+    // and the other should be the database vector. For example using BM25, we
+    // should call query_vec.dot(doc_vec) instead of doc_vec.dot(query_vec).
+    template <typename Computer = DocValueComputer<T>>
     float
-    dot(const SparseRow<T>& other) const {
+    dot(const SparseRow<T>& other, Computer computer = GetDocValueOriginalComputer<T>(), const T other_sum = 0) const {
         float product_sum = 0.0f;
         size_t i = 0;
         size_t j = 0;
@@ -143,7 +171,7 @@ class SparseRow {
             } else if (left->index > right->index) {
                 ++j;
             } else {
-                product_sum += left->value * right->value;
+                product_sum += left->value * computer(right->value, other_sum);
                 ++i;
                 ++j;
             }

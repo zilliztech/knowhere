@@ -104,7 +104,8 @@ class IndexNode : public Object {
         std::vector<std::vector<int64_t>> result_id_array(nq);
         std::vector<std::vector<float>> result_dist_array(nq);
         const bool similarity_metric = IsMetricType(base_cfg.metric_type.value(), metric::IP) ||
-                                       IsMetricType(base_cfg.metric_type.value(), metric::COSINE);
+                                       IsMetricType(base_cfg.metric_type.value(), metric::COSINE) ||
+                                       IsMetricType(base_cfg.metric_type.value(), metric::BM25);
         const bool has_range_filter = range_filter != defaultRangeFilter;
         constexpr size_t k_min_num_consecutive_over_radius = 16;
         const auto range_search_level = base_cfg.range_search_level.value();

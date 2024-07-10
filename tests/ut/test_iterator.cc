@@ -429,7 +429,7 @@ TEST_CASE("Test Iterator BruteForce With Sparse Float Vector", "[IP metric]") {
     const int64_t nb = 1000, nq = 10;
     const int64_t dim = 4;
 
-    auto metric = knowhere::metric::IP;
+    auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
     auto version = GenTestVersionList();
 
     auto rand = GENERATE(1, 2, 3, 5);
@@ -439,6 +439,7 @@ TEST_CASE("Test Iterator BruteForce With Sparse Float Vector", "[IP metric]") {
 
     const knowhere::Json conf = {
         {knowhere::meta::METRIC_TYPE, metric}, {knowhere::meta::TOPK, nb},  // to return all vectors
+        {knowhere::meta::BM25_K1, 1.2},        {knowhere::meta::BM25_B, 0.75}, {knowhere::meta::BM25_AVGDL, 100},
     };
 
     SECTION("Test Iterator BruteForce") {

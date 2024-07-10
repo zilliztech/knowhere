@@ -91,6 +91,11 @@ constexpr const char* TRACE_FLAGS = "trace_flags";
 constexpr const char* MATERIALIZED_VIEW_SEARCH_INFO = "materialized_view_search_info";
 constexpr const char* MATERIALIZED_VIEW_OPT_FIELDS_PATH = "opt_fields_path";
 constexpr const char* MAX_EMPTY_RESULT_BUCKETS = "max_empty_result_buckets";
+constexpr const char* BM25_K1 = "bm25_k1";
+constexpr const char* BM25_B = "bm25_b";
+// average document length
+constexpr const char* BM25_AVGDL = "bm25_avgdl";
+constexpr const char* WAND_BM25_MAX_SCORE_RATIO = "wand_bm25_max_score_ratio";
 };  // namespace meta
 
 namespace indexparam {
@@ -159,6 +164,7 @@ constexpr const char* HAMMING = "HAMMING";
 constexpr const char* JACCARD = "JACCARD";
 constexpr const char* SUBSTRUCTURE = "SUBSTRUCTURE";
 constexpr const char* SUPERSTRUCTURE = "SUPERSTRUCTURE";
+constexpr const char* BM25 = "BM25";
 }  // namespace metric
 
 enum VecType {
