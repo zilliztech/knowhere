@@ -46,3 +46,19 @@ TEST_CASE("Test index and data type check", "[IndexCheckTest]") {
                                                                    knowhere::VecType::VECTOR_SPARSE_FLOAT) == false);
     }
 }
+
+TEST_CASE("Test support mmap index", "[IndexCheckTest]") {
+    SECTION("Test valid") {
+        REQUIRE(knowhere::KnowhereCheck::SuppportMmapIndexTypeCheck(knowhere::IndexEnum::INDEX_HNSW) == true);
+        REQUIRE(knowhere::KnowhereCheck::SuppportMmapIndexTypeCheck(knowhere::IndexEnum::INDEX_SPARSE_WAND) == true);
+        REQUIRE(knowhere::KnowhereCheck::SuppportMmapIndexTypeCheck(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX) ==
+                true);
+#ifndef KNOWHERE_WITH_CARDINAL
+        REQUIRE(knowhere::KnowhereCheck::SuppportMmapIndexTypeCheck(knowhere::IndexEnum::INDEX_DISKANN) == false);
+#else
+        REQUIRE(knowhere::KnowhereCheck::SuppportMmapIndexTypeCheck(knowhere::IndexEnum::INDEX_DISKANN) == true);
+#endif
+        REQUIRE(knowhere::KnowhereCheck::SuppportMmapIndexTypeCheck(knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT) ==
+                true);
+    }
+}

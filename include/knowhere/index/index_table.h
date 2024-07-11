@@ -74,6 +74,55 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     {IndexEnum::INDEX_SPARSE_INVERTED_INDEX, VecType::VECTOR_SPARSE_FLOAT},
     {IndexEnum::INDEX_SPARSE_WAND, VecType::VECTOR_SPARSE_FLOAT},
 };
-KNOWHERE_SET_STATIC_GLOBAL_INDEX_TABLE(KNOWHERE_STATIC_INDEX, legal_knowhere_index)
+
+static std::set<std::string> legal_support_mmap_knowhere_index = {
+    // binary ivf
+    IndexEnum::INDEX_FAISS_BIN_IDMAP,
+    IndexEnum::INDEX_FAISS_BIN_IVFFLAT,
+    // ivf
+    IndexEnum::INDEX_FAISS_IDMAP,
+    IndexEnum::INDEX_FAISS_IDMAP,
+    IndexEnum::INDEX_FAISS_IDMAP,
+
+    IndexEnum::INDEX_FAISS_IVFFLAT,
+    IndexEnum::INDEX_FAISS_IVFFLAT,
+    IndexEnum::INDEX_FAISS_IVFFLAT,
+
+    IndexEnum::INDEX_FAISS_IVFPQ,
+    IndexEnum::INDEX_FAISS_IVFPQ,
+    IndexEnum::INDEX_FAISS_IVFPQ,
+
+    IndexEnum::INDEX_FAISS_SCANN,
+    IndexEnum::INDEX_FAISS_SCANN,
+    IndexEnum::INDEX_FAISS_SCANN,
+
+    IndexEnum::INDEX_FAISS_IVFSQ8,
+    IndexEnum::INDEX_FAISS_IVFSQ8,
+    IndexEnum::INDEX_FAISS_IVFSQ8,
+
+    IndexEnum::INDEX_FAISS_IVFSQ_CC,
+    IndexEnum::INDEX_FAISS_IVFSQ_CC,
+    IndexEnum::INDEX_FAISS_IVFSQ_CC,
+
+    // hnsw
+    IndexEnum::INDEX_HNSW,
+    IndexEnum::INDEX_HNSW,
+    IndexEnum::INDEX_HNSW,
+
+    IndexEnum::INDEX_HNSW_SQ8,
+    IndexEnum::INDEX_HNSW_SQ8,
+    IndexEnum::INDEX_HNSW_SQ8,
+
+    IndexEnum::INDEX_HNSW_SQ8_REFINE,
+    IndexEnum::INDEX_HNSW_SQ8_REFINE,
+    IndexEnum::INDEX_HNSW_SQ8_REFINE,
+    // sparse index
+    IndexEnum::INDEX_SPARSE_INVERTED_INDEX,
+    IndexEnum::INDEX_SPARSE_WAND,
+
+};
+KNOWHERE_SET_STATIC_GLOBAL_INDEX_TABLE(0, KNOWHERE_STATIC_INDEX, legal_knowhere_index)
+KNOWHERE_SET_STATIC_GLOBAL_INDEX_TABLE(1, KNOWHERE_SUPPORT_MMAP_INDEX, legal_support_mmap_knowhere_index)
+
 }  // namespace knowhere
 #endif /* INDEX_TABLE_H */
