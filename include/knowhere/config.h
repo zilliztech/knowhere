@@ -633,6 +633,7 @@ class BaseConfig : public Config {
     // for distance metrics, we search for vectors with distance in [range_filter, radius).
     // for similarity metrics, we search for vectors with similarity in (radius, range_filter].
     CFG_FLOAT radius;
+    CFG_INT range_search_k;
     CFG_FLOAT range_filter;
     CFG_FLOAT range_search_level;
     CFG_BOOL trace_visit;
@@ -679,6 +680,11 @@ class BaseConfig : public Config {
         KNOWHERE_CONFIG_DECLARE_FIELD(radius)
             .set_default(0.0)
             .description("radius for range search")
+            .for_range_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(range_search_k)
+            .set_default(-1)
+            .description("limit the number of similar results returned by range_search. -1 means no limitations.")
+            .set_range(-1, std::numeric_limits<CFG_INT::value_type>::max())
             .for_range_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(range_filter)
             .set_default(defaultRangeFilter)
