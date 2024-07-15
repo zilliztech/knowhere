@@ -146,7 +146,7 @@ class IndexNode : public Object {
                     continue;
                 }
                 if (range_search_k > 0) {
-                    if (early_stop_further_bounds.size() < range_search_k) {
+                    if (static_cast<int32_t>(early_stop_further_bounds.size()) < range_search_k) {
                         early_stop_further_bounds.emplace(dist);
                     } else {
                         early_stop_further_bounds.pop();
