@@ -560,9 +560,9 @@ class InvertedIndex : public BaseInvertedIndex<T> {
             if constexpr (bm25) {
                 row_sum += val;
             }
-            // Skip values close enough to zero(which contributes little to
-            // the total IP score).
-            if (drop_during_build_ && fabs(val) < value_threshold_) {
+            // Skip values equals to or close enough to zero(which contributes
+            // little to the total IP score).
+            if (val == 0 || (drop_during_build_ && fabs(val) < value_threshold_)) {
                 continue;
             }
             if (inverted_lut_.find(idx) == inverted_lut_.end()) {

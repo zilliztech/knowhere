@@ -313,6 +313,29 @@ GenTestVersionList() {
     return GENERATE(as<int32_t>{}, knowhere::Version::GetCurrentVersion().VersionNumber());
 }
 
+inline knowhere::DataSetPtr
+GenSparseDataSet(const std::vector<std::map<int32_t, float>>& data, int32_t cols) {
+    int32_t rows = data.size();
+    auto tensor = std::make_unique<knowhere::sparse::SparseRow<float>[]>(rows);
+
+    for (int32_t i = 0; i < rows; ++i) {
+        if (data[i].size() == 0) {
+            continue;
+        }
+        knowhere::sparse::SparseRow<float> row(data[i].size());
+        size_t j = 0;
+        for (auto& [idx, val] : data[i]) {
+            row.set_at(j++, idx, val);
+        }
+        tensor[i] = std::move(row);
+    }
+
+    auto ds = knowhere::GenDataSet(rows, cols, tensor.release());
+    ds->SetIsOwner(true);
+    ds->SetIsSparse(true);
+    return ds;
+}
+
 // Generate a sparse dataset with given sparsity.
 inline knowhere::DataSetPtr
 GenSparseDataSet(int32_t rows, int32_t cols, float sparsity, int seed = 42) {
@@ -338,22 +361,5 @@ GenSparseDataSet(int32_t rows, int32_t cols, float sparsity, int seed = 42) {
         data[row][col] = val;
     }
 
-    auto tensor = std::make_unique<knowhere::sparse::SparseRow<float>[]>(rows);
-
-    for (int32_t i = 0; i < rows; ++i) {
-        if (data[i].size() == 0) {
-            continue;
-        }
-        knowhere::sparse::SparseRow<float> row(data[i].size());
-        size_t j = 0;
-        for (auto& [idx, val] : data[i]) {
-            row.set_at(j++, idx, val);
-        }
-        tensor[i] = std::move(row);
-    }
-
-    auto ds = knowhere::GenDataSet(rows, cols, tensor.release());
-    ds->SetIsOwner(true);
-    ds->SetIsSparse(true);
-    return ds;
+    return GenSparseDataSet(data, cols);
 }
