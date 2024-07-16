@@ -476,11 +476,11 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
 
     SECTION("Test GetVectorByIds") {
         std::vector<int64_t> ids = {0, 1, 2};
-        auto results = idx.GetVectorByIds(GenIdsDataSet(2, ids));
+        auto results = idx.GetVectorByIds(GenIdsDataSet(3, ids));
         REQUIRE(results.has_value());
         auto xb = (knowhere::sparse::SparseRow<float>*)train_ds->GetTensor();
         auto res_data = (knowhere::sparse::SparseRow<float>*)results.value()->GetTensor();
-        for (int i = 0; i < 2; ++i) {
+        for (int i = 0; i < 3; ++i) {
             const auto& truth_row = xb[i];
             const auto& res_row = res_data[i];
             REQUIRE(truth_row.size() == res_row.size());
