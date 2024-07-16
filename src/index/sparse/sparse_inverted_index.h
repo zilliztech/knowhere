@@ -81,20 +81,13 @@ class InvertedIndex : public BaseInvertedIndex<T> {
 
     expected<DocValueComputer<T>>
     GetDocValueComputer(const SparseInvertedIndexConfig& cfg) const override {
-        // if metric_type is set in config, it must match with how the index was built.
-        auto metric_type = cfg.metric_type;
+        // Now milvus doesn't require the user to set metric type in search request,
+        // and cfg.metric_type will default to L2 in that case. We should not throw
+        // error in that case. Milvus will check if the metric type(if provided in
+        // search request) matches the index metric type so here we assume the
+        // metric type will be valid.
         if constexpr (!bm25) {
-            if (metric_type.has_value() && !IsMetricType(metric_type.value(), metric::IP)) {
-                auto msg =
-                    "metric type not match, expected: " + std::string(metric::IP) + ", got: " + metric_type.value();
-                return expected<DocValueComputer<T>>::Err(Status::invalid_metric_type, msg);
-            }
             return GetDocValueOriginalComputer<T>();
-        }
-        if (metric_type.has_value() && !IsMetricType(metric_type.value(), metric::BM25)) {
-            auto msg =
-                "metric type not match, expected: " + std::string(metric::BM25) + ", got: " + metric_type.value();
-            return expected<DocValueComputer<T>>::Err(Status::invalid_metric_type, msg);
         }
         // avgdl must be supplied during search
         if (!cfg.bm25_avgdl.has_value()) {

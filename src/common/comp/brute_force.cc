@@ -42,9 +42,14 @@ namespace {
 template <typename T>
 expected<sparse::DocValueComputer<T>>
 GetDocValueComputer(const BruteForceConfig& cfg) {
+    // Now milvus doesn't require the user to set metric type in search request,
+    // and cfg.metric_type will default to L2 in that case. We should not throw
+    // error in that case. Milvus will check if the metric type(if provided in
+    // search request) matches the index metric type so here we assume the
+    // metric type will be valid.
     if (IsMetricType(cfg.metric_type.value(), metric::IP)) {
         return sparse::GetDocValueOriginalComputer<T>();
-    } else if (IsMetricType(cfg.metric_type.value(), metric::BM25)) {
+    } else {
         if (!cfg.bm25_k1.has_value() || !cfg.bm25_b.has_value() || !cfg.bm25_avgdl.has_value()) {
             return expected<sparse::DocValueComputer<T>>::Err(
                 Status::invalid_args, "bm25_k1, bm25_b, bm25_avgdl must be set when searching for bm25 metric");
@@ -53,9 +58,6 @@ GetDocValueComputer(const BruteForceConfig& cfg) {
         auto b = cfg.bm25_b.value();
         auto avgdl = cfg.bm25_avgdl.value();
         return sparse::GetDocValueBM25Computer<T>(k1, b, avgdl);
-    } else {
-        return expected<sparse::DocValueComputer<T>>::Err(Status::invalid_metric_type,
-                                                          "metric type not supported for sparse vector");
     }
 }
 
