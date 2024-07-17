@@ -95,8 +95,9 @@ DECLARE_PROMETHEUS_HISTOGRAM(load_latency, PROMETHEUS_LABEL_CARDINAL);
 DECLARE_PROMETHEUS_HISTOGRAM(search_latency, PROMETHEUS_LABEL_KNOWHERE);
 DECLARE_PROMETHEUS_HISTOGRAM(search_latency, PROMETHEUS_LABEL_CARDINAL);
 
+// cardinal uses the RangeSearch function of the parent class `IndexNode` (index_node.h).
+// both use the knowhere metric uniformly.
 DECLARE_PROMETHEUS_HISTOGRAM(range_search_latency, PROMETHEUS_LABEL_KNOWHERE);
-DECLARE_PROMETHEUS_HISTOGRAM(range_search_latency, PROMETHEUS_LABEL_CARDINAL);
 
 DECLARE_PROMETHEUS_HISTOGRAM(ann_iterator_init_latency, PROMETHEUS_LABEL_KNOWHERE);
 DECLARE_PROMETHEUS_HISTOGRAM(ann_iterator_init_latency, PROMETHEUS_LABEL_CARDINAL);
