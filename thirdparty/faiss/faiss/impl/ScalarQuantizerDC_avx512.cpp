@@ -32,7 +32,7 @@ ScalarQuantizer::SQDistanceComputer* sq_get_distance_computer_avx512(
         }
     } else {
         if (dim % 16 == 0) {
-            return select_distance_computer_avx512<SimilarityL2_avx512<16>>(
+            return select_distance_computer_avx512<SimilarityIP_avx512<16>>(
                     qtype, dim, trained);
         } else if (dim % 8 == 0) {
             return select_distance_computer_avx512<SimilarityIP_avx512<8>>(
