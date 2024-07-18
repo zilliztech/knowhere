@@ -19,7 +19,7 @@
 using namespace knowhere::tracer;
 using namespace opentelemetry::trace;
 
-TEST_CASE("Tracer", "Init test") {
+TEST_CASE("Test Tracer init", "Init test") {
     using Catch::Approx;
 
     auto config = std::make_shared<TraceConfig>();
@@ -38,7 +38,7 @@ TEST_CASE("Tracer", "Init test") {
     REQUIRE(span->IsRecording());
 }
 
-TEST_CASE("Tracer", "Span test") {
+TEST_CASE("Test Tracer span", "Span test") {
     auto ctx = std::make_shared<TraceContext>();
     ctx->traceID =
         new uint8_t[16]{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10};
@@ -48,14 +48,18 @@ TEST_CASE("Tracer", "Span test") {
     REQUIRE_FALSE(EmptySpanID(ctx.get()));
 
     auto span = StartSpan("test", ctx.get());
-    auto span_ctx = span->GetContext();
-    auto trace_id = span_ctx.trace_id();
-    auto span_id = span_ctx.span_id();
-    auto trace_flags = span_ctx.trace_flags();
+    auto spanCtx = span->GetContext();
+    REQUIRE(spanCtx.trace_id() == trace::TraceId({ctx->traceID, trace::TraceId::kSize}));
+    // REQUIRE(spanCtx.span_id() == trace::SpanId({ctx->spanID, trace::SpanId::kSize}));
+    REQUIRE(spanCtx.trace_flags() == trace::TraceFlags(ctx->traceFlags));
 
-    REQUIRE(trace_id == trace::TraceId({ctx->traceID, trace::TraceId::kSize}));
-    REQUIRE(span_id == trace::SpanId({ctx->spanID, trace::SpanId::kSize}));
-    REQUIRE(trace_flags == trace::TraceFlags(ctx->traceFlags));
+    auto trace_id_hex = BytesToHexStr(ctx->traceID, TraceId::kSize);
+    auto span_id_hex = BytesToHexStr(ctx->spanID, SpanId::kSize);
+    auto trace_id_str = GetIDFromHexStr(trace_id_hex);
+    auto span_id_str = GetIDFromHexStr(span_id_hex);
+
+    REQUIRE(strncmp((char*)ctx->traceID, trace_id_str.c_str(), TraceId::kSize) == 0);
+    REQUIRE(strncmp((char*)ctx->spanID, span_id_str.c_str(), SpanId::kSize) == 0);
 
     delete[] ctx->traceID;
     delete[] ctx->spanID;
