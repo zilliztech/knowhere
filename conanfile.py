@@ -33,6 +33,7 @@ class KnowhereConan(ConanFile):
         "with_benchmark": [True, False],
         "with_coverage": [True, False],
         "with_faiss_tests": [True, False],
+        "with_dnnl": [True, False],
     }
     default_options = {
         "shared": True,
@@ -50,6 +51,7 @@ class KnowhereConan(ConanFile):
         "boost:without_test": True,
         "fmt:header_only": True,
         "with_faiss_tests": False,
+        "with_dnnl": False,
     }
 
     exports_sources = (
@@ -164,6 +166,7 @@ class KnowhereConan(ConanFile):
         tc.variables["WITH_BENCHMARK"] = self.options.with_benchmark
         tc.variables["WITH_COVERAGE"] = self.options.with_coverage
         tc.variables["WITH_FAISS_TESTS"] = self.options.with_faiss_tests
+        tc.variables["WITH_DNNL"] = self.options.with_dnnl
         tc.generate()
 
         deps = CMakeDeps(self)
