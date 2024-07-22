@@ -12,14 +12,24 @@
 #ifndef HOOK_H
 #define HOOK_H
 
+#include <knowhere/operands.h>
+
 #include <string>
 namespace faiss {
 
 /// inner product
 extern float (*fvec_inner_product)(const float*, const float*, size_t);
 
+extern float (*fp16_vec_inner_product)(const knowhere::fp16*, const knowhere::fp16*, size_t);
+
+extern float (*bf16_vec_inner_product)(const knowhere::bf16*, const knowhere::bf16*, size_t);
+
 /// Squared L2 distance between two vectors
 extern float (*fvec_L2sqr)(const float*, const float*, size_t);
+
+extern float (*fp16_vec_L2sqr)(const knowhere::fp16*, const knowhere::fp16*, size_t);
+
+extern float (*bf16_vec_L2sqr)(const knowhere::bf16*, const knowhere::bf16*, size_t);
 
 /// L1 distance
 extern float (*fvec_L1)(const float*, const float*, size_t);

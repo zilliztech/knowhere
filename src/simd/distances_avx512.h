@@ -12,6 +12,8 @@
 #ifndef DISTANCES_AVX512_H
 #define DISTANCES_AVX512_H
 
+#include <knowhere/operands.h>
+
 #include <cstddef>
 #include <cstdint>
 
@@ -21,11 +23,23 @@ float
 fvec_L2sqr_avx512(const float* x, const float* y, size_t d);
 
 float
+fp16_vec_L2sqr_avx512(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
+
+float
+bf16_vec_L2sqr_avx512(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
+
+float
 fvec_L2sqr_avx512_bf16_patch(const float* x, const float* y, size_t d);
 
 /// inner product
 float
 fvec_inner_product_avx512(const float* x, const float* y, size_t d);
+
+float
+fp16_vec_inner_product_avx512(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
+
+float
+bf16_vec_inner_product_avx512(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
 
 float
 fvec_inner_product_avx512_bf16_patch(const float* x, const float* y, size_t d);

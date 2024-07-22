@@ -42,7 +42,12 @@ bool use_sse4_2 = true;
 bool support_pq_fast_scan = true;
 
 decltype(fvec_inner_product) fvec_inner_product = fvec_inner_product_ref;
+decltype(fp16_vec_inner_product) fp16_vec_inner_product = fp16_vec_inner_product_ref;
+decltype(bf16_vec_inner_product) bf16_vec_inner_product = bf16_vec_inner_product_ref;
 decltype(fvec_L2sqr) fvec_L2sqr = fvec_L2sqr_ref;
+decltype(fp16_vec_L2sqr) fp16_vec_L2sqr = fp16_vec_L2sqr_ref;
+decltype(bf16_vec_L2sqr) bf16_vec_L2sqr = bf16_vec_L2sqr_ref;
+
 decltype(fvec_L1) fvec_L1 = fvec_L1_ref;
 decltype(fvec_Linf) fvec_Linf = fvec_Linf_ref;
 decltype(fvec_norm_L2sqr) fvec_norm_L2sqr = fvec_norm_L2sqr_ref;
@@ -79,6 +84,12 @@ bool
 cpu_support_sse4_2() {
     InstructionSet& instruction_set_inst = InstructionSet::GetInstance();
     return (instruction_set_inst.SSE42());
+}
+
+bool
+cpu_support_f16c() {
+    InstructionSet& instruction_set_inst = InstructionSet::GetInstance();
+    return (instruction_set_inst.F16C());
 }
 #endif
 
@@ -169,6 +180,11 @@ fvec_hook(std::string& simd_type) {
         ivec_inner_product = ivec_inner_product_avx512;
         ivec_L2sqr = ivec_L2sqr_avx512;
 
+        fp16_vec_inner_product = fp16_vec_inner_product_avx512;
+        bf16_vec_inner_product = bf16_vec_inner_product_avx512;
+        fp16_vec_L2sqr = fp16_vec_L2sqr_avx512;
+        bf16_vec_L2sqr = bf16_vec_L2sqr_avx512;
+        std::cout <<"cqy: using avx 512"<<std::endl;
         simd_type = "AVX512";
         support_pq_fast_scan = true;
     } else if (use_avx2 && cpu_support_avx2()) {
@@ -189,6 +205,11 @@ fvec_hook(std::string& simd_type) {
         ivec_inner_product = ivec_inner_product_avx;
         ivec_L2sqr = ivec_L2sqr_avx;
 
+        fp16_vec_inner_product = fp16_vec_inner_product_avx;
+        bf16_vec_inner_product = bf16_vec_inner_product_avx;
+        fp16_vec_L2sqr = fp16_vec_L2sqr_avx;
+        bf16_vec_L2sqr = bf16_vec_L2sqr_avx;
+
         simd_type = "AVX2";
         support_pq_fast_scan = true;
     } else if (use_sse4_2 && cpu_support_sse4_2()) {
@@ -208,7 +229,16 @@ fvec_hook(std::string& simd_type) {
 
         ivec_inner_product = ivec_inner_product_sse;
         ivec_L2sqr = ivec_L2sqr_sse;
+        bf16_vec_inner_product = bf16_vec_inner_product_sse;
+        bf16_vec_L2sqr = bf16_vec_L2sqr_sse;
 
+        if (cpu_support_f16c()) {
+            fp16_vec_inner_product = fp16_vec_inner_product_sse;
+            fp16_vec_L2sqr = fp16_vec_L2sqr_sse;
+        } else {
+            fp16_vec_inner_product = fp16_vec_inner_product_ref;
+            fp16_vec_L2sqr = fp16_vec_L2sqr_ref;
+        }
         simd_type = "SSE4_2";
         support_pq_fast_scan = false;
     } else {
@@ -228,6 +258,11 @@ fvec_hook(std::string& simd_type) {
 
         ivec_inner_product = ivec_inner_product_ref;
         ivec_L2sqr = ivec_L2sqr_ref;
+
+        fp16_vec_inner_product = fp16_vec_inner_product_ref;
+        bf16_vec_inner_product = bf16_vec_inner_product_ref;
+        fp16_vec_L2sqr = fp16_vec_L2sqr_ref;
+        bf16_vec_L2sqr = bf16_vec_L2sqr_ref;
 
         simd_type = "GENERIC";
         support_pq_fast_scan = false;

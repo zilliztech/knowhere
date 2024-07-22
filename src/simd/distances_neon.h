@@ -12,6 +12,8 @@
 #ifndef DISTANCES_NEON_H
 #define DISTANCES_NEON_H
 
+#include <knowhere/operands.h>
+
 #include <cstdint>
 #include <cstdio>
 

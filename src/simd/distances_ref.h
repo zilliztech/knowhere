@@ -1,6 +1,8 @@
 #ifndef DISTANCES_REF_H
 #define DISTANCES_REF_H
 
+#include <knowhere/operands.h>
+
 #include <cstdint>
 #include <cstdio>
 
@@ -11,6 +13,12 @@ float
 fvec_L2sqr_ref(const float* x, const float* y, size_t d);
 
 float
+fp16_vec_L2sqr_ref(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
+
+float
+bf16_vec_L2sqr_ref(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
+
+float
 fvec_L2sqr_ref_bf16_patch(const float* x, const float* y, size_t d);
 
 /// inner product
@@ -19,6 +27,12 @@ fvec_inner_product_ref(const float* x, const float* y, size_t d);
 
 float
 fvec_inner_product_ref_bf16_patch(const float* x, const float* y, size_t d);
+
+float
+fp16_vec_inner_product_ref(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
+
+float
+bf16_vec_inner_product_ref(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
 
 /// L1 distance
 float

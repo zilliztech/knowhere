@@ -11,6 +11,7 @@
 
 #if defined(__x86_64__)
 #include "distances_sse.h"
+#include "util.h"
 
 #include <immintrin.h>
 
@@ -278,6 +279,54 @@ fvec_L2sqr_sse(const float* x, const float* y, size_t d) {
 }
 
 float
+fp16_vec_L2sqr_sse(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+    __m128 m_res = _mm_setzero_ps();
+    while (d >= 4) {
+        __m128 m_x = _mm_cvtph_ps(_mm_loadl_epi64((const __m128i_u*)x));
+        __m128 m_y = _mm_cvtph_ps(_mm_loadl_epi64((const __m128i_u*)y));
+        m_x = _mm_sub_ps(m_x, m_y);
+        m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_x));
+        x += 4;
+        y += 4;
+        d -= 4;
+    }
+    m_res = _mm_hadd_ps(m_res, m_res);
+    m_res = _mm_hadd_ps(m_res, m_res);
+    auto res =  _mm_cvtss_f32(m_res);
+    switch (d) {
+        case 3: res += (float(*x) - float(*y)) * (float(*x) - float(*y));x++;y++;d--;
+        case 2: res += (float(*x) - float(*y)) * (float(*x) - float(*y));x++;y++;d--;
+        case 1: res += (float(*x) - float(*y)) * (float(*x) - float(*y));x++;y++;d--;
+        case 0:;
+    }
+    return res;
+}
+
+float
+bf16_vec_L2sqr_sse(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+    __m128 m_res = _mm_setzero_ps();
+    while (d >= 4) {
+        __m128 m_x = _mm_bf16_to_fp32(_mm_loadl_epi64((const __m128i*)x));
+        __m128 m_y = _mm_bf16_to_fp32(_mm_loadl_epi64((const __m128i*)y));
+        m_x = _mm_sub_ps(m_x, m_y);
+        m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_x));
+        x += 4;
+        y += 4;
+        d -= 4;
+    }
+    m_res = _mm_hadd_ps(m_res, m_res);
+    m_res = _mm_hadd_ps(m_res, m_res);
+    auto res =  _mm_cvtss_f32(m_res);
+    switch (d) {
+        case 3: res += (float(*x) * float(*y));x++;y++;d--;
+        case 2: res += (float(*x) * float(*y));x++;y++;d--;
+        case 1: res += (float(*x) * float(*y));x++;y++;d--;
+        case 0:;
+    }
+    return res;
+}
+
+float
 fvec_inner_product_sse(const float* x, const float* y, size_t d) {
     __m128 mx, my;
     __m128 msum1 = _mm_setzero_ps();
@@ -301,6 +350,52 @@ fvec_inner_product_sse(const float* x, const float* y, size_t d) {
     msum1 = _mm_hadd_ps(msum1, msum1);
     msum1 = _mm_hadd_ps(msum1, msum1);
     return _mm_cvtss_f32(msum1);
+}
+
+float
+fp16_vec_inner_product_sse(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+    __m128 m_res = _mm_setzero_ps();
+    while (d >= 4) {
+        __m128 m_x = _mm_cvtph_ps(_mm_loadl_epi64((const __m128i*)x));
+        __m128 m_y = _mm_cvtph_ps(_mm_loadl_epi64((const __m128i*)y));
+        m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_y));
+        x += 4;
+        y += 4;
+        d -= 4;
+    }
+    m_res = _mm_hadd_ps(m_res, m_res);
+    m_res = _mm_hadd_ps(m_res, m_res);
+    auto res =  _mm_cvtss_f32(m_res);
+    switch (d) {
+        case 3: res += (float(*x) - float(*y)) * (float(*x) - float(*y));x++;y++;d--;
+        case 2: res += (float(*x) - float(*y)) * (float(*x) - float(*y));x++;y++;d--;
+        case 1: res += (float(*x) - float(*y)) * (float(*x) - float(*y));x++;y++;d--;
+        case 0:;
+    }
+    return res;
+}
+
+float
+bf16_vec_inner_product_sse(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+    __m128 m_res = _mm_setzero_ps();
+    while (d >= 4) {
+        __m128 m_x = _mm_bf16_to_fp32(_mm_loadl_epi64((const __m128i*)x));
+        __m128 m_y = _mm_bf16_to_fp32(_mm_loadl_epi64((const __m128i*)y));
+        m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_y));
+        x += 4;
+        y += 4;
+        d -= 4;
+    }
+    m_res = _mm_hadd_ps(m_res, m_res);
+    m_res = _mm_hadd_ps(m_res, m_res);
+    auto res =  _mm_cvtss_f32(m_res);
+    switch (d) {
+        case 3: res += (float(*x) * float(*y));x++;y++;d--;
+        case 2: res += (float(*x) * float(*y));x++;y++;d--;
+        case 1: res += (float(*x) * float(*y));x++;y++;d--;
+        case 0:;
+    }
+    return res;
 }
 
 /***************************************************************************

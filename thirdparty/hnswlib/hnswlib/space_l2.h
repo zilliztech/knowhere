@@ -26,7 +26,13 @@ NormSqr(const void* pVect1v, const void* qty_ptr) {
 template <typename DataType, typename DistanceType>
 static DistanceType
 L2Sqr(const void* pVect1v, const void* pVect2v, const void* qty_ptr) {
-    if constexpr (!std::is_same_v<DataType, float>) {
+    if constexpr (std::is_same_v<DataType, knowhere::fp16>) {
+        return faiss::fp16_vec_L2sqr((const knowhere::fp16*)pVect1v, (const knowhere::fp16*)pVect2v, *((size_t*)qty_ptr));
+    } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
+        return faiss::bf16_vec_L2sqr((const knowhere::bf16*)pVect1v, (const knowhere::bf16*)pVect2v, *((size_t*)qty_ptr));
+    } else if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
+        return faiss::fvec_L2sqr((const float*)pVect1v, (const float*)pVect2v, *((size_t*)qty_ptr));
+    } else {
         auto pVect1 = (DataType*)pVect1v;
         auto pVect2 = (DataType*)pVect2v;
         size_t qty = *((size_t*)qty_ptr);
@@ -39,8 +45,6 @@ L2Sqr(const void* pVect1v, const void* pVect2v, const void* qty_ptr) {
             res += t * t;
         }
         return (res);
-    } else {
-        return faiss::fvec_L2sqr((const float*)pVect1v, (const float*)pVect2v, *((size_t*)qty_ptr));
     }
 }
 

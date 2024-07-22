@@ -17,6 +17,7 @@
 #include <math.h>
 
 #include <cstring>
+#include <cstdint>
 
 namespace {
 union fp32_bits {
