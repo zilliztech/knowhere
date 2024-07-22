@@ -200,7 +200,8 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         for (size_t i = 0; i < rows; ++i) {
             amount += data[i].size();
         }
-        std::vector<T> vals(amount);
+        std::vector<T> vals;
+        vals.reserve(amount);
         for (size_t i = 0; i < rows; ++i) {
             for (size_t j = 0; j < data[i].size(); ++j) {
                 vals.push_back(fabs(data[i][j].val));
