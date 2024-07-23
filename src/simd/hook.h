@@ -13,13 +13,23 @@
 #define HOOK_H
 
 #include <string>
+
+#include "knowhere/operands.h"
 namespace faiss {
 
 /// inner product
 extern float (*fvec_inner_product)(const float*, const float*, size_t);
 
+extern float (*fp16_vec_inner_product)(const knowhere::fp16*, const knowhere::fp16*, size_t);
+
+extern float (*bf16_vec_inner_product)(const knowhere::bf16*, const knowhere::bf16*, size_t);
+
 /// Squared L2 distance between two vectors
 extern float (*fvec_L2sqr)(const float*, const float*, size_t);
+
+extern float (*fp16_vec_L2sqr)(const knowhere::fp16*, const knowhere::fp16*, size_t);
+
+extern float (*bf16_vec_L2sqr)(const knowhere::bf16*, const knowhere::bf16*, size_t);
 
 /// L1 distance
 extern float (*fvec_L1)(const float*, const float*, size_t);
@@ -29,6 +39,10 @@ extern float (*fvec_Linf)(const float*, const float*, size_t);
 
 /// squared norm of a vector
 extern float (*fvec_norm_L2sqr)(const float*, size_t);
+
+extern float (*fp16_vec_norm_L2sqr)(const knowhere::fp16*, size_t);
+
+extern float (*bf16_vec_norm_L2sqr)(const knowhere::bf16*, size_t);
 
 /// compute ny square L2 distance between x and a set of contiguous y vectors
 extern void (*fvec_L2sqr_ny)(float*, const float*, const float*, size_t, size_t);
@@ -89,6 +103,8 @@ bool
 cpu_support_avx2();
 bool
 cpu_support_sse4_2();
+bool
+cpu_support_f16c();
 #endif
 
 void

@@ -16,6 +16,7 @@
 #define OPERANDS_H
 #include <math.h>
 
+#include <cstdint>
 #include <cstring>
 
 namespace {

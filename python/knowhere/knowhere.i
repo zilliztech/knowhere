@@ -32,7 +32,7 @@ typedef uint64_t size_t;
 #include <knowhere/version.h>
 #include <knowhere/utils.h>
 #include <knowhere/sparse_utils.h>
-#include <knowhere/operands.h>
+#include "knowhere/operands.h"
 #include <knowhere/comp/brute_force.h>
 #include <knowhere/comp/knowhere_config.h>
 #include <knowhere/comp/local_file_manager.h>
