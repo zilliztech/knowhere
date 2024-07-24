@@ -59,6 +59,134 @@ namespace {
 
 namespace diskann {
   template<typename T>
+  IteratorWorkspace<T>::IteratorWorkspace(
+      const T *query_data, const diskann::Metric metric,
+      const uint64_t aligned_dim, const uint64_t data_dim, const float alpha,
+      const uint64_t lsearch, const uint64_t beam_width,
+      const float filter_ratio, const bool for_tuning,
+      const float max_base_norm, const knowhere::BitsetView &bitset)
+      : lsearch(lsearch), beam_width(beam_width), filter_ratio(filter_ratio),
+        metric(metric), alpha(alpha), for_tuning(for_tuning),
+        max_base_norm(max_base_norm), bitset(bitset) {
+    frontier.reserve(2 * beam_width);
+    frontier_nhoods.reserve(2 * beam_width);
+    frontier_read_reqs.reserve(2 * beam_width);
+    cached_nhoods.reserve(2 * beam_width);
+
+    // own query and query_T
+    diskann::alloc_aligned((void **) &aligned_query_T, aligned_dim * sizeof(T),
+                           8 * sizeof(T));
+    diskann::alloc_aligned((void **) &aligned_query_float,
+                           aligned_dim * sizeof(float), 8 * sizeof(float));
+    memset((void *) aligned_query_T, 0, aligned_dim * sizeof(T));
+    memset(aligned_query_float, 0, aligned_dim * sizeof(float));
+    q_dim = data_dim;
+    if (metric == diskann::Metric::INNER_PRODUCT) {
+      // query_dim need to be specially treated when using IP
+      q_dim--;
+    }
+    for (uint32_t i = 0; i < q_dim; i++) {
+      aligned_query_T[i] = query_data[i];
+      aligned_query_float[i] = (float) query_data[i];
+      query_norm += (float) query_data[i] * (float) query_data[i];
+    }
+
+    // if inner product, we also normalize the query and set the last coordinate
+    // to 0 (this is the extra coordindate used to convert MIPS to L2 search)
+    if (metric == diskann::Metric::INNER_PRODUCT ||
+        metric == diskann::Metric::COSINE) {
+      if (query_norm != 0) {
+        query_norm = std::sqrt(query_norm);
+        if (metric == diskann::Metric::INNER_PRODUCT) {
+          aligned_query_T[q_dim] = 0;
+          aligned_query_float[q_dim] = 0;
+        }
+        for (uint32_t i = 0; i < q_dim; i++) {
+          aligned_query_T[i] = (T) ((float) aligned_query_T[i] / query_norm);
+          aligned_query_float[i] /= query_norm;
+        }
+      }
+    }
+
+    visited = new tsl::robin_set<_u64>(4096);
+  }
+
+  template<typename T>
+  IteratorWorkspace<T>::~IteratorWorkspace() {
+    diskann::aligned_free((void *) aligned_query_T);
+    diskann::aligned_free((void *) aligned_query_float);
+    delete visited;
+  }
+
+  template<typename T>
+  bool IteratorWorkspace<T>::is_good_pq_enough() {
+    return good_pq_res_count - next_count >= lsearch;
+  }
+
+  template<typename T>
+  bool IteratorWorkspace<T>::has_candidates() {
+    return !candidates.empty();
+  }
+
+  template<typename T>
+  bool IteratorWorkspace<T>::should_visit_next_candidate() {
+    if (candidates.empty()) {
+      return false;
+    }
+    if (retset.empty()) {
+      return true;
+    }
+    return candidates.top().distance <= retset.top().distance;
+  }
+
+  template<typename T>
+  void IteratorWorkspace<T>::insert_to_pq(unsigned id, float dist, bool valid) {
+    candidates.emplace(id, dist);
+    if (valid) {
+      retset.emplace(id, dist);
+    }
+  }
+
+  template<typename T>
+  void IteratorWorkspace<T>::insert_to_full(unsigned id, float dist) {
+    full_retset.emplace(id, dist);
+  }
+
+  template<typename T>
+  void IteratorWorkspace<T>::pop_pq_retset() {
+    while (!should_visit_next_candidate() && !retset.empty()) {
+      retset.pop();
+      good_pq_res_count++;
+    }
+  }
+
+  template<typename T>
+  void IteratorWorkspace<T>::move_full_retset_to_backup() {
+    if (is_good_pq_enough() && !full_retset.empty()) {
+      auto &nbr = full_retset.top();
+      auto  dist = nbr.distance;
+      if (metric == diskann::Metric::INNER_PRODUCT) {
+        dist = dist / 2.0f - 1.0f;
+        if (max_base_norm != 0) {
+          dist *= (max_base_norm * query_norm);
+        }
+      }
+      backup_res.emplace_back(nbr.id, dist);
+      full_retset.pop();
+      next_count++;
+    }
+  }
+
+  template<typename T>
+  void IteratorWorkspace<T>::move_last_full_retset_to_backup() {
+    while (!full_retset.empty()) {
+      auto &nbr = full_retset.top();
+      backup_res.emplace_back(nbr.id, nbr.distance);
+      full_retset.pop();
+    }
+  }
+
+  template<typename T>
   PQFlashIndex<T>::PQFlashIndex(std::shared_ptr<AlignedFileReader> fileReader,
                                 diskann::Metric                    m)
       : reader(fileReader), metric(m) {
@@ -1380,59 +1508,6 @@ namespace diskann {
     }
   }
 
-  // range search returns results of all neighbors within distance of range.
-  // indices and distances need to be pre-allocated of size l_search and the
-  // return value is the number of matching hits.
-  template<typename T>
-  _u32 PQFlashIndex<T>::range_search(
-      const T *query1, const double range, const _u64 min_l_search,
-      const _u64 max_l_search, std::vector<_s64> &indices,
-      std::vector<float> &distances, const _u64 beam_width,
-      knowhere::BitsetView bitset_view, QueryStats *stats) {
-    _u32 res_count = 0;
-
-    bool stop_flag = false;
-
-    _u32 l_search = min_l_search;  // starting size of the candidate list
-    while (!stop_flag) {
-      if (stats != nullptr) {
-        stats->n_iters++;
-      }
-      indices.resize(l_search);
-      distances.resize(l_search);
-      for (auto &x : distances)
-        x = std::numeric_limits<float>::max();
-      this->cached_beam_search(query1, l_search, l_search, indices.data(),
-                               distances.data(), beam_width, false, stats,
-                               nullptr, bitset_view);
-      for (_u32 i = 0; i < l_search; i++) {
-        if (indices[i] == -1) {
-          res_count = i;
-          break;
-        }
-        bool in_range = (metric == diskann::Metric::INNER_PRODUCT ||
-                         metric == diskann::Metric::COSINE)
-                            ? distances[i] > (float) range
-                            : distances[i] < (float) range;
-        if (!in_range) {
-          res_count = i;
-          break;
-        }
-        if (i == l_search - 1) {
-          res_count = l_search;
-        }
-      }
-      if (res_count < (_u32) (l_search / 2.0))
-        stop_flag = true;
-      l_search = l_search * 2;
-      if (l_search > max_l_search)
-        stop_flag = true;
-    }
-    indices.resize(res_count);
-    distances.resize(res_count);
-    return res_count;
-  }
-
   template<typename T>
   inline void PQFlashIndex<T>::copy_vec_base_data(T *des, const int64_t des_idx,
                                                   void *src) {
@@ -1574,6 +1649,247 @@ namespace diskann {
   }
 
   template<typename T>
+  void PQFlashIndex<T>::getIteratorNextBatch(IteratorWorkspace<T> *workspace) {
+    if (workspace->beam_width > MAX_N_SECTOR_READS)
+      throw ANNException(
+          "Beamwidth can not be higher than MAX_N_SECTOR_READS", -1,
+          __FUNCSIG__, __FILE__, __LINE__);
+
+    if (metric == diskann::Metric::INNER_PRODUCT ||
+        metric == diskann::Metric::COSINE) {
+      if (workspace->query_norm == 0) {
+        return;
+      }
+    }
+
+    ThreadData<T> data = this->thread_data.pop();
+    while (data.scratch.sector_scratch ==
+           nullptr) {  // wait thread_data release
+      this->thread_data.wait_for_push_notify();
+      data = this->thread_data.pop();
+    }
+    data.scratch.reset();
+    auto ctx = this->reader->get_ctx();
+
+    // todo: switch to quant-bf
+
+    // sector scratch
+    char *sector_scratch = data.scratch.sector_scratch;
+    _u64 &sector_scratch_idx = data.scratch.sector_idx;
+
+    // query <-> PQ chunk centers distances
+    float *pq_dists = data.scratch.aligned_pqtable_dist_scratch;
+    pq_table.populate_chunk_distances(workspace->aligned_query_float, pq_dists);
+
+    // query <-> neighbor list
+    float *dist_scratch = data.scratch.aligned_dist_scratch;
+    _u8   *pq_coord_scratch = data.scratch.aligned_pq_coord_scratch;
+
+    // lambda to batch compute query<-> node distances in PQ space
+    auto compute_dists = [this, pq_coord_scratch, pq_dists](const unsigned *ids,
+                                                            const _u64 n_ids,
+                                                            float *dists_out) {
+      aggregate_coords(ids, n_ids, this->data.get(), this->n_chunks,
+                       pq_coord_scratch);
+      pq_dist_lookup(pq_coord_scratch, n_ids, this->n_chunks, pq_dists,
+                     dists_out);
+    };
+
+    if (!workspace->initialized) {
+      uint32_t best_medoid = 0;
+      if (workspace->for_tuning) {
+        float best_dist = (std::numeric_limits<float>::max)();
+        std::vector<SimpleNeighbor> medoid_dists;
+        for (_u64 cur_m = 0; cur_m < num_medoids; cur_m++) {
+          float cur_expanded_dist =
+              dist_cmp_float_wrap(workspace->aligned_query_float,
+                                  centroid_data + aligned_dim * cur_m,
+                                  (size_t) aligned_dim, medoids[cur_m]);
+          if (cur_expanded_dist < best_dist) {
+            best_medoid = medoids[cur_m];
+            best_dist = cur_expanded_dist;
+          }
+        }
+      }
+
+      compute_dists(&best_medoid, 1, dist_scratch);
+      bool valid =
+          workspace->bitset.empty() || !workspace->bitset.test(best_medoid);
+      workspace->insert_to_pq(best_medoid, dist_scratch[0], valid);
+      workspace->visited->insert(best_medoid);
+
+      workspace->initialized = true;
+    }
+
+    std::vector<unsigned> filtered_nbrs;
+    std::vector<bool>     filtered_nbrs_valid(this->max_degree, false);
+    filtered_nbrs.reserve(this->max_degree);
+    auto filter_nbrs = [&](_u64 nnbrs, unsigned *node_nbrs) -> size_t {
+      filtered_nbrs.clear();
+      for (_u64 m = 0; m < nnbrs; ++m) {
+        unsigned id = node_nbrs[m];
+        if (workspace->visited->find(id) != workspace->visited->end()) {
+          continue;
+        }
+        workspace->visited->insert(id);
+
+        bool valid = workspace->bitset.empty() || !workspace->bitset.test(id);
+        filtered_nbrs_valid[m] = valid;
+        if (!valid) {
+          workspace->acc_alpha += workspace->alpha;
+          if (workspace->acc_alpha < 1.0f) {
+            continue;
+          }
+          workspace->acc_alpha -= 1.0f;
+        }
+        filtered_nbrs.push_back(id);
+      }
+      return filtered_nbrs.size();
+    };
+
+    /** process_node:
+     * - add cur_node (with full_dist) to full_retset if valid
+     * - add neighbors (with pq_dist) to retset if valid
+     * - add neihgbors (with pq_dist) to candidates
+     */
+    auto process_node = [&](T *node_fp_coords_copy, auto node_id, auto n_nbr,
+                            auto *nbrs) {
+      if (workspace->bitset.empty() || !workspace->bitset.test(node_id)) {
+        float cur_expanded_dist;
+        if (!use_disk_index_pq) {
+          cur_expanded_dist =
+              dist_cmp_wrap(workspace->aligned_query_T, node_fp_coords_copy,
+                            (size_t) aligned_dim, node_id);
+        } else {
+          if (metric == diskann::Metric::INNER_PRODUCT ||
+              metric == diskann::Metric::COSINE)
+            cur_expanded_dist = disk_pq_table.inner_product(
+                workspace->aligned_query_float, (_u8 *) node_fp_coords_copy);
+          else
+            cur_expanded_dist = disk_pq_table.l2_distance(
+                workspace->aligned_query_float, (_u8 *) node_fp_coords_copy);
+        }
+        workspace->insert_to_full((unsigned) node_id, cur_expanded_dist);
+      }
+
+      auto nnbrs = filter_nbrs(n_nbr, nbrs);
+
+      // compute node_nbrs <-> query dists in PQ space
+      compute_dists(filtered_nbrs.data(), nnbrs, dist_scratch);
+
+      // add neihgbors to retset / candidates
+      for (_u64 m = 0; m < nnbrs; ++m) {
+        unsigned id = filtered_nbrs[m];
+        float    dist = dist_scratch[m];
+        bool     valid = filtered_nbrs_valid[m];
+        workspace->insert_to_pq(id, dist, valid);
+      }
+    };
+
+    while (!workspace->is_good_pq_enough() && workspace->has_candidates()) {
+      while (workspace->should_visit_next_candidate()) {
+        workspace->frontier.clear();
+        workspace->frontier_nhoods.clear();
+        workspace->frontier_read_reqs.clear();
+        workspace->cached_nhoods.clear();
+        sector_scratch_idx = 0;
+
+        // prepare to_visited nodes (num_seen);
+        size_t num_seen = 0;
+        while (workspace->has_candidates() &&
+               workspace->frontier.size() < workspace->beam_width &&
+               num_seen < workspace->beam_width) {
+          num_seen++;
+          auto cur_nbr_id = workspace->candidates.top().id;
+          workspace->candidates.pop();
+          {
+            std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
+            auto iter = nhood_cache.find(cur_nbr_id);
+            if (iter != nhood_cache.end()) {
+              workspace->cached_nhoods.push_back(
+                  std::make_pair(cur_nbr_id, iter->second));
+            } else {
+              workspace->frontier.push_back(cur_nbr_id);
+            }
+          }
+          {
+            std::shared_lock<std::shared_mutex> lock(
+                this->node_visit_counter_mtx);
+            if (this->count_visited_nodes) {
+              this->node_visit_counter[cur_nbr_id].second->fetch_add(1);
+            }
+          }
+        }
+
+        // read nboods of frontier
+        if (!workspace->frontier.empty()) {
+          for (size_t i = 0; i < workspace->frontier.size(); i++) {
+            auto                        id = workspace->frontier[i];
+            std::pair<uint32_t, char *> fnhood;
+            fnhood.first = id;
+            fnhood.second =
+                sector_scratch + sector_scratch_idx * read_len_for_node;
+            sector_scratch_idx++;
+            workspace->frontier_nhoods.push_back(fnhood);
+            workspace->frontier_read_reqs.emplace_back(
+                get_node_sector_offset(((size_t) id)), read_len_for_node,
+                fnhood.second);
+          }
+          reader->read(workspace->frontier_read_reqs,
+                       ctx);  // synchronous IO linux
+        }
+
+        // process cached nhoods
+        for (auto &cached_nhood : workspace->cached_nhoods) {
+          T *node_fp_coords_copy;
+          {
+            std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
+            auto global_cache_iter = coord_cache.find(cached_nhood.first);
+            node_fp_coords_copy = global_cache_iter->second;
+          }
+          process_node(node_fp_coords_copy, cached_nhood.first,
+                       cached_nhood.second.first, cached_nhood.second.second);
+        }
+
+        // process frontier nhoods
+        for (auto &frontier_nhood : workspace->frontier_nhoods) {
+          char *node_disk_buf =
+              get_offset_to_node(frontier_nhood.second, frontier_nhood.first);
+          unsigned *node_buf = OFFSET_TO_NODE_NHOOD(node_disk_buf);
+          T        *node_fp_coords = OFFSET_TO_NODE_COORDS(node_disk_buf);
+          T        *node_fp_coords_copy = data.scratch.coord_scratch;
+          // T *node_fp_coords_copy = workspace->coord_scratch;
+          memcpy(node_fp_coords_copy, node_fp_coords, disk_bytes_per_point);
+          process_node(node_fp_coords_copy, frontier_nhood.first, *node_buf,
+                       node_buf + 1);
+        }
+      }
+      workspace->pop_pq_retset();
+    }
+    workspace->move_full_retset_to_backup();
+
+    if (!workspace->has_candidates()) {
+      workspace->move_last_full_retset_to_backup();
+    }
+
+    // give back the memory buffer
+    this->reader->put_ctx(ctx);
+    this->thread_data.push(data);
+    this->thread_data.push_notify_all();
+  }
+
+  template<typename T>
+  std::unique_ptr<IteratorWorkspace<T>> PQFlashIndex<T>::getIteratorWorkspace(
+      const T *query_data, const uint64_t lsearch, const uint64_t beam_width,
+      const bool use_reorder_data, const float filter_ratio,
+      const bool for_tuning, const knowhere::BitsetView &bitset) {
+    float alpha = kAlpha;
+    return std::make_unique<IteratorWorkspace<T>>(
+        query_data, metric, this->aligned_dim, this->data_dim, alpha, lsearch,
+        beam_width, filter_ratio, for_tuning, this->max_base_norm, bitset);
+  }
+
+  template<typename T>
   _u64 PQFlashIndex<T>::cal_size() {
     _u64 index_mem_size = 0;
     index_mem_size += sizeof(*this);
@@ -1624,6 +1940,10 @@ namespace diskann {
       this->state_controller->cond.wait(guard);
     }
   }
+
+  template class IteratorWorkspace<float>;
+  template class IteratorWorkspace<knowhere::bf16>;
+  template class IteratorWorkspace<knowhere::fp16>;
 
   // knowhere not support uint8/int8 diskann
   // template class PQFlashIndex<_u8>;

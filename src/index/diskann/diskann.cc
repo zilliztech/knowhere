@@ -61,9 +61,6 @@ class DiskANNIndexNode : public IndexNode {
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
-
-    expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset) const override;
 
     static bool
@@ -152,7 +149,41 @@ class DiskANNIndexNode : public IndexNode {
         return knowhere::IndexEnum::INDEX_DISKANN;
     }
 
+    expected<std::vector<IndexNode::IteratorPtr>>
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
+
  private:
+    class iterator : public IndexIterator {
+     public:
+        iterator(const bool transform, const DataType* query_data, const uint64_t lsearch, const uint64_t beam_width,
+                 const bool use_reorder_data, const float filter_ratio, const bool for_tuning,
+                 const knowhere::BitsetView& bitset, diskann::PQFlashIndex<DataType>* index)
+            : IndexIterator(transform),
+              index_(index),
+              transform_(transform),
+              workspace_(index_->getIteratorWorkspace(query_data, lsearch, beam_width, use_reorder_data, filter_ratio,
+                                                      for_tuning, bitset)) {
+        }
+
+     protected:
+        void
+        next_batch(std::function<void(const std::vector<DistId>&)> batch_handler) override {
+            index_->getIteratorNextBatch(workspace_.get());
+            if (transform_) {
+                for (auto& p : workspace_->backup_res) {
+                    p.val = -p.val;
+                }
+            }
+            batch_handler(workspace_->backup_res);
+            workspace_->backup_res.clear();
+        }
+
+     private:
+        diskann::PQFlashIndex<DataType>* index_;
+        const bool transform_;
+        std::unique_ptr<diskann::IteratorWorkspace<DataType>> workspace_;
+    };
+
     bool
     LoadFile(const std::string& filename) {
         if (!file_manager_->LoadFile(filename)) {
@@ -521,6 +552,58 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
 }
 
 template <typename DataType>
+expected<std::vector<IndexNode::IteratorPtr>>
+DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
+                                        const BitsetView& bitset) const {
+    if (!is_prepared_.load() || !pq_flash_index_) {
+        LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::empty_index,
+                                                                                "DiskANN not loaded");
+    }
+
+    auto search_conf = static_cast<const DiskANNConfig&>(*cfg);
+    if (!CheckMetric(search_conf.metric_type.value())) {
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::invalid_metric_type,
+                                                                                "unsupported metric type");
+    }
+
+    constexpr uint64_t k_lsearch_iterator = 32;
+    auto lsearch = static_cast<uint64_t>(search_conf.search_list_size.value_or(k_lsearch_iterator));
+    auto beamwidth = static_cast<uint64_t>(search_conf.beamwidth.value());
+    auto filter_ratio = static_cast<float>(search_conf.filter_threshold.value());
+
+    bool use_reorder_data = false;
+    bool for_tuning = false;
+
+    auto nq = dataset->GetRows();
+    auto dim = dataset->GetDim();
+    auto xq = dataset->GetTensor();
+
+    std::vector<folly::Future<folly::Unit>> futs;
+    futs.reserve(nq);
+    auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
+    auto metric = search_conf.metric_type.value();
+    bool transform = metric != knowhere::metric::L2;
+
+    for (int i = 0; i < nq; i++) {
+        futs.emplace_back(search_pool_->push([&, id = i]() {
+            auto single_query = (DataType*)xq + id * dim;
+            auto it = std::make_shared<iterator>(transform, single_query, lsearch, beamwidth, use_reorder_data,
+                                                 filter_ratio, for_tuning, bitset, pq_flash_index_.get());
+            it->initialize();
+            vec[id] = it;
+        }));
+    }
+
+    if (TryDiskANNCall([&]() { WaitAllSuccess(futs); }) != Status::success) {
+        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::diskann_inner_error,
+                                                                                "some ann-iterator failed");
+    }
+
+    return vec;
+}
+
+template <typename DataType>
 expected<DataSetPtr>
 DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
                                    const BitsetView& bitset) const {
@@ -584,66 +667,6 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
         res->SetJsonIdSet(json_id_set.dump());
     }
     return res;
-}
-
-template <typename DataType>
-expected<DataSetPtr>
-DiskANNIndexNode<DataType>::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
-                                        const BitsetView& bitset) const {
-    if (!is_prepared_.load() || !pq_flash_index_) {
-        LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
-        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
-    }
-
-    auto search_conf = static_cast<const DiskANNConfig&>(*cfg);
-    if (!CheckMetric(search_conf.metric_type.value())) {
-        return expected<DataSetPtr>::Err(Status::invalid_metric_type,
-                                         fmt::format("unknown metric type: {}", search_conf.metric_type.value()));
-    }
-    if (search_conf.min_k.value() > search_conf.max_k.value()) {
-        LOG_KNOWHERE_ERROR_ << "min_k should be smaller than max_k";
-        return expected<DataSetPtr>::Err(Status::out_of_range_in_json, "min_k should be smaller than max_k");
-    }
-    auto beamwidth = static_cast<uint64_t>(search_conf.beamwidth.value());
-    auto min_k = static_cast<uint64_t>(search_conf.min_k.value());
-    auto max_k = static_cast<uint64_t>(search_conf.max_k.value());
-
-    auto radius = search_conf.radius.value();
-    auto range_filter = search_conf.range_filter.value();
-    bool is_ip = (pq_flash_index_->get_metric() == diskann::Metric::INNER_PRODUCT ||
-                  pq_flash_index_->get_metric() == diskann::Metric::COSINE);
-
-    auto dim = dataset->GetDim();
-    auto nq = dataset->GetRows();
-    auto xq = static_cast<const DataType*>(dataset->GetTensor());
-
-    std::vector<std::vector<int64_t>> result_id_array(nq);
-    std::vector<std::vector<DistType>> result_dist_array(nq);
-
-    std::vector<folly::Future<folly::Unit>> futures;
-    futures.reserve(nq);
-    for (int64_t row = 0; row < nq; ++row) {
-        futures.emplace_back(search_pool_->push([&, index = row]() {
-            diskann::QueryStats stats;
-            pq_flash_index_->range_search(xq + (index * dim), radius, min_k, max_k, result_id_array[index],
-                                          result_dist_array[index], beamwidth, bitset, &stats);
-#ifdef NOT_COMPILE_FOR_SWIG
-            knowhere_diskann_range_search_iters.Observe(stats.n_iters);
-#endif
-            // filter range search result
-            if (search_conf.range_filter.value() != defaultRangeFilter) {
-                FilterRangeSearchResultForOneNq(result_dist_array[index], result_id_array[index], is_ip, radius,
-                                                range_filter);
-            }
-        }));
-    }
-    if (TryDiskANNCall([&]() { WaitAllSuccess(futures); }) != Status::success) {
-        return expected<DataSetPtr>::Err(Status::diskann_inner_error, "some search failed");
-    }
-
-    auto range_search_result =
-        GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, search_conf.range_filter.value());
-    return GenResultDataSet(nq, std::move(range_search_result));
 }
 
 /*
