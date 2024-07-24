@@ -136,7 +136,76 @@ class DiskANNIndexNode : public IndexNode {
         return knowhere::IndexEnum::INDEX_DISKANN;
     }
 
+    expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
+    AnnIterator(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+        if (pq_flash_index_ == nullptr) {
+            LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
+            return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::empty_index,
+                                                                                    "index not loaded");
+        }
+        auto nq = dataset->GetRows();
+        auto dim = dataset->GetDim();
+        auto xq = dataset->GetTensor();
+        auto diskann_cfg = static_cast<const DiskANNConfig&>(cfg);
+        auto ef = diskann_cfg.search_list_size;
+
+        std::vector<folly::Future<folly::Unit>> futs;
+        futs.reserve(nq);
+        auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
+
+        for (int i = 0; i < nq; i++) {
+            futs.emplace_back(search_pool_->push([&, i]() {
+                auto single_query = (void*)xq + i * dim;
+                auto it = std::make_shared<iterator>(true, single_query, ef, diskann_cfg.beamwidth, true,
+                                                     diskann_cfg.filter_threshold, diskann_cfg.for_tuning, 
+                                                     bitset,  pq_flash_index_.get());
+                it->initialize();
+                vec[i] = it;
+            }));
+        }
+
+        WaitAllSuccess(futs);
+        return vec;
+    }
+
  private:
+    class iterator : public IndexIterator {
+     public:
+        iterator(const bool transform, void* query_data, const std::optional<int>& ef,
+                 const std::optional<int>& beam_width, const bool use_reorder_data,
+                 const std::optional<float>& filter_ratio_in, const std::optional<bool>& for_tun,
+                 const knowhere::BitsetView& bitset, diskann::PQFlashIndex<DataType>* index)
+            : IndexIterator(transform),
+              index_(index),
+              transform_(transform),
+              workspace_(index_->getIteratorWorkspace(query_data, ef.value_or(0), beam_width.value_or(0),
+                                                  use_reorder_data, filter_ratio_in.value_or(0.0f), 
+                                                  for_tun.value_or(false), bitset)) {}
+
+     protected:
+        void
+        next_batch(std::function<void(const std::vector<DistId>&)> batch_handler) override {
+            index_->getIteratorNextBatch(workspace_.get());
+            if (transform_) {
+                for (auto& p : workspace_->dists) {
+                    p.val = -p.val;
+                }
+            }
+            batch_handler(workspace_->dists);
+            workspace_->dists.clear();
+        }
+
+        float
+        raw_distance(int64_t id) override {
+            return 1;
+        }
+
+     private:
+        diskann::PQFlashIndex<DataType>* index_;
+        const bool transform_;
+        std::unique_ptr<diskann::IteratorWorkspace> workspace_;
+    };
+
     bool
     LoadFile(const std::string& filename) {
         if (!file_manager_->LoadFile(filename)) {

@@ -194,7 +194,7 @@ namespace diskann {
     if (coord_cache_buf == nullptr) {
         diskann::alloc_aligned((void **) &coord_cache_buf,
                              coord_cache_buf_len * sizeof(T), 8 * sizeof(T));
-        std::fill_n(coord_cache_buf, coord_cache_buf_len, T());
+      std::fill_n(coord_cache_buf, coord_cache_buf_len, T());
     }
 
     size_t BLOCK_SIZE = 32;
@@ -273,7 +273,7 @@ namespace diskann {
     if (coord_cache_buf == nullptr) {
         diskann::alloc_aligned((void **) &coord_cache_buf,
                              coord_cache_buf_len * sizeof(T), 8 * sizeof(T));
-        std::fill_n(coord_cache_buf, coord_cache_buf_len, T());
+      std::fill_n(coord_cache_buf, coord_cache_buf_len, T());
     }
 
     async_pool.push([&, state_controller = this->state_controller, sample_bin,
@@ -1572,6 +1572,233 @@ namespace diskann {
   template<typename T>
   diskann::Metric PQFlashIndex<T>::get_metric() const noexcept {
     return metric;
+  }
+
+  template<typename T>
+  void PQFlashIndex<T>::getIteratorNextBatch(IteratorWorkspace *workspace) {
+
+    if (workspace->Config.beam_width > MAX_N_SECTOR_READS)
+      throw ANNException(
+          "Beamwidth can not be higher than MAX_N_SECTOR_READS", -1,
+          __FUNCSIG__, __FILE__, __LINE__);
+
+    ThreadData<T> data = this->thread_data.pop();
+    while (data.scratch.sector_scratch == nullptr) {
+      this->thread_data.wait_for_push_notify();
+      data = this->thread_data.pop();
+    }
+
+
+    auto  ctx = this->reader->get_ctx();
+
+    auto         query_scratch = &(data.scratch);
+    const T     *query = data.scratch.aligned_query_T;
+    const float *query_float = data.scratch.aligned_query_float;
+
+    // pointers to buffers for data
+    T *data_buf = query_scratch->coord_scratch;
+
+    // sector scratch
+    char *sector_scratch = query_scratch->sector_scratch;
+    _u64 &sector_scratch_idx = query_scratch->sector_idx;
+
+    // query <-> PQ chunk centers distances
+    float *pq_dists = query_scratch->aligned_pqtable_dist_scratch;
+    pq_table.populate_chunk_distances(query_float, pq_dists);
+
+    // query <-> neighbor list
+    float *dist_scratch = query_scratch->aligned_dist_scratch;
+    _u8   *pq_coord_scratch = query_scratch->aligned_pq_coord_scratch;
+
+    workspace->visited = *(query_scratch->visited);
+
+    std::vector<unsigned> frontier;
+    frontier.reserve(2 * workspace->Config.beam_width);
+    std::vector<std::pair<unsigned, char *>> frontier_nhoods;
+    frontier_nhoods.reserve(2 * workspace->Config.beam_width);
+    std::vector<AlignedRead> frontier_read_reqs;
+    frontier_read_reqs.reserve(2 * workspace->Config.beam_width);
+    std::vector<std::pair<unsigned, std::pair<unsigned, unsigned *>>>
+        cached_nhoods;
+    cached_nhoods.reserve(2 * workspace->Config.beam_width);
+
+    // lambda to batch compute query<-> node distances in PQ space
+    auto compute_dists = [this, pq_coord_scratch, pq_dists](const unsigned *ids,
+                                                            const _u64 n_ids,
+                                                            float *dists_out) {
+      aggregate_coords(ids, n_ids, this->data.get(), this->n_chunks,
+                       pq_coord_scratch);
+      pq_dist_lookup(pq_coord_scratch, n_ids, this->n_chunks, pq_dists,
+                     dists_out);
+    };
+
+
+
+
+    if (!workspace->Config.initial_search_done) {
+
+      _u32 best_medoid = 0;
+      auto vec_hash = knowhere::hash_vec(query_float, data_dim);
+      // TODO::这个判断条件含义
+      if (workspace->Config.for_tuning ||
+          !lru_cache.try_get(vec_hash, best_medoid)) {
+        float best_dist = (std::numeric_limits<float>::max)();
+        std::vector<SimpleNeighbor> medoid_dists;
+        for (_u64 cur_m = 0; cur_m < num_medoids; cur_m++) {
+          float cur_expanded_dist = dist_cmp_float_wrap(
+              query_float, centroid_data + aligned_dim * cur_m,
+              (size_t) aligned_dim, medoids[cur_m]);
+          if (cur_expanded_dist < best_dist) {
+            best_medoid = medoids[cur_m];
+            best_dist = cur_expanded_dist;
+          }
+        }
+      }
+
+      compute_dists(&best_medoid, 1, dist_scratch);
+      workspace->visited.insert(best_medoid);
+      workspace->candidate.push({best_medoid, true, dist_scratch});
+      workspace->Config.initial_search_done = true;
+      return;
+    }
+
+    unsigned cmps = 0;
+    unsigned hops = 0;
+
+    std::vector<unsigned> filtered_nbrs;
+    filtered_nbrs.reserve(this->max_degree);
+    auto filter_nbrs = [&](_u64      nnbrs,
+                           unsigned *node_nbrs) -> std::pair<_u64, unsigned *> {
+      filtered_nbrs.clear();
+      for (_u64 m = 0; m < nnbrs; ++m) {
+        unsigned id = node_nbrs[m];
+        if (workspace->visited.find(id) != workspace->visited.end()) {
+          continue;
+        }
+        workspace->visited.insert(id);
+        if (!workspace->Config.bitset.empty() &&
+            workspace->Config.bitset.test(id)) {
+          workspace->accumulative_alpha += kAlpha;
+          if (workspace->accumulative_alpha < 1.0f) {
+            continue;
+          }
+          workspace->accumulative_alpha -= 1.0f;
+        }
+        cmps++;
+        filtered_nbrs.push_back(id);
+      }
+      return {filtered_nbrs.size(), filtered_nbrs.data()};
+    };
+
+    while (workspace->res.size() < workspace->Config.l_search ||
+           workspace->res.back().distance >
+               workspace->candidate.top().distance) {
+      // 终止条件：res没满 ｜｜ res最差比candidate最好要差
+      auto top = workspace->candidate.top();
+      workspace->candidate.pop();
+
+      {
+        std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
+        auto                                iter = nhood_cache.find(top.id);
+        if (iter != nhood_cache.end()) {
+          cached_nhoods.push_back(std::make_pair(top.id, iter->second));
+        } else {
+          frontier.push_back(top.id);
+        }
+      }
+      // TODO::bitview相关，筛选
+
+      // TODO::read frontier to memory
+      if (!frontier.empty()) {
+        for (_u64 i = 0; i < frontier.size(); i++) {
+          auto                    id = frontier[i];
+          std::pair<_u32, char *> fnhood;
+          fnhood.first = id;
+          fnhood.second =
+              sector_scratch + sector_scratch_idx * read_len_for_node;
+          sector_scratch_idx++;
+          frontier_nhoods.push_back(fnhood);
+          frontier_read_reqs.emplace_back(get_node_sector_offset(((size_t) id)),
+                                          read_len_for_node, fnhood.second);
+        }
+        reader->read(frontier_read_reqs, ctx);
+      }
+
+      // process all nodes
+      auto process_node = [&](T *node_fp_coords_copy, auto node_id, auto n_nbr,
+                              auto *nbrs) {
+        if (workspace->Config.bitset.empty() ||
+            !workspace->Config.bitset.test(node_id)) {
+          // lzh::如果没有被filter掉，找到距离q最近的node
+          float cur_expanded_dist;
+          if (!use_disk_index_pq) {
+            cur_expanded_dist = dist_cmp_wrap(query, node_fp_coords_copy,
+                                              (size_t) aligned_dim, node_id);
+          } else {
+            if (metric == diskann::Metric::INNER_PRODUCT ||
+                metric == diskann::Metric::COSINE)
+              cur_expanded_dist = disk_pq_table.inner_product(
+                  query_float, (_u8 *) node_fp_coords_copy);
+            else
+              cur_expanded_dist = disk_pq_table.l2_distance(
+                  query_float, (_u8 *) node_fp_coords_copy);
+          }
+
+          // lzh::以上比较了query和这个node的距离，然后放到了res集合里
+          workspace->refined_dists.push(
+              knowhere::DistId((unsigned) node_id, cur_expanded_dist));
+
+          auto [nnbrs, node_nbrs] = filter_nbrs(n_nbr, nbrs);
+          compute_dists(node_nbrs, nnbrs, dist_scratch);
+
+          for (_u64 m = 0; m < nnbrs; ++m) {
+            unsigned id = node_nbrs[m];
+            float    dist = dist_scratch[m];
+            Neighbor nn(id, dist, true);
+            workspace->candidate.push(nn);
+          }
+        }
+      };
+
+      for (auto &cached_nhood : cached_nhoods) {
+        T *node_fp_coords_copy;
+        {
+          std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
+          auto global_cache_iter = coord_cache.find(cached_nhood.first);
+          node_fp_coords_copy = global_cache_iter->second;
+        }
+        process_node(node_fp_coords_copy, cached_nhood.first,
+                     cached_nhood.second.first, cached_nhood.second.second);
+      }
+
+      for (auto &frontier_nhood : frontier_nhoods) {
+        char *node_disk_buf =
+            get_offset_to_node(frontier_nhood.second, frontier_nhood.first);
+        unsigned *node_buf = OFFSET_TO_NODE_NHOOD(node_disk_buf);
+        T        *node_fp_coords = OFFSET_TO_NODE_COORDS(node_disk_buf);
+        T        *node_fp_coords_copy = data_buf;
+        memcpy(node_fp_coords_copy, node_fp_coords, disk_bytes_per_point);
+        process_node(node_fp_coords_copy, frontier_nhood.first, *node_buf,
+                     node_buf + 1);
+      }
+
+      if (workspace->res.empty() || workspace->res.back().distance <
+                                        workspace->candidate.top().distance) {
+        workspace->res.push(workspace->candidate.top());
+      }
+    }
+  }
+
+  template<typename T>
+  std::unique_ptr<IteratorWorkspace> PQFlashIndex<T>::getIteratorWorkspace(
+      void *query_data, const _u64 ef, const _u64 beam_width,
+      const bool use_reorder_data, const float filter_ratio_in,
+      const bool for_tun, const knowhere::BitsetView &bitset) {
+    float alpha = 0.0f;
+
+    return std::make_unique<IteratorWorkspace>(
+        query_data, ef, for_tun, bitset, beam_width, alpha,
+        filter_ratio_in, use_reorder_data);
   }
 
   template<typename T>
