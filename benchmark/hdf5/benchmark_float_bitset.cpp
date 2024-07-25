@@ -29,6 +29,7 @@ constexpr float kL2KnnRecall = 0.8;
 
 class Benchmark_float_bitset : public Benchmark_knowhere, public ::testing::Test {
  public:
+    template <typename T>
     void
     test_ivf(const knowhere::Json& cfg) {
         auto conf = cfg;
@@ -41,11 +42,12 @@ class Benchmark_float_bitset : public Benchmark_knowhere, public ::testing::Test
 
             for (auto nq : NQs_) {
                 auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
+                auto query = knowhere::ConvertToDataTypeIfNeeded<T>(ds_ptr);
                 for (auto k : TOPKs_) {
                     conf[knowhere::meta::TOPK] = k;
                     auto g_result = golden_index_.value().Search(ds_ptr, conf, bitset);
                     auto g_ids = g_result.value()->GetIds();
-                    CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, bitset));
+                    CALC_TIME_SPAN(auto result = index_.value().Search(query, conf, bitset));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(g_ids, ids, nq, k);
                     printf("  bitset_per = %3d%%, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", per, nq, k, t_diff,
@@ -58,6 +60,7 @@ class Benchmark_float_bitset : public Benchmark_knowhere, public ::testing::Test
         printf("[%.3f s] Test '%s/%s' done\n\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
     }
 
+    template <typename T>
     void
     test_hnsw(const knowhere::Json& cfg) {
         auto conf = cfg;
@@ -70,11 +73,12 @@ class Benchmark_float_bitset : public Benchmark_knowhere, public ::testing::Test
 
             for (auto nq : NQs_) {
                 auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
+                auto query = knowhere::ConvertToDataTypeIfNeeded<T>(ds_ptr);
                 for (auto k : TOPKs_) {
                     conf[knowhere::meta::TOPK] = k;
                     auto g_result = golden_index_.value().Search(ds_ptr, conf, bitset);
                     auto g_ids = g_result.value()->GetIds();
-                    CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, bitset));
+                    CALC_TIME_SPAN(auto result = index_.value().Search(query, conf, bitset));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(g_ids, ids, nq, k);
                     printf("  bitset_per = %3d%%, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", per, nq, k, t_diff,
@@ -88,6 +92,7 @@ class Benchmark_float_bitset : public Benchmark_knowhere, public ::testing::Test
     }
 
 #ifdef KNOWHERE_WITH_DISKANN
+    template <typename T>
     void
     test_diskann(const knowhere::Json& cfg) {
         auto conf = cfg;
@@ -99,11 +104,12 @@ class Benchmark_float_bitset : public Benchmark_knowhere, public ::testing::Test
             knowhere::BitsetView bitset(bitset_data.data(), nb_);
             for (auto nq : NQs_) {
                 auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
+                auto query = knowhere::ConvertToDataTypeIfNeeded<T>(ds_ptr);
                 for (auto k : TOPKs_) {
                     conf[knowhere::meta::TOPK] = k;
                     auto g_result = golden_index_.value().Search(ds_ptr, conf, bitset);
                     auto g_ids = g_result.value()->GetIds();
-                    CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, bitset));
+                    CALC_TIME_SPAN(auto result = index_.value().Search(query, conf, bitset));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(g_ids, ids, nq, k);
                     printf("  bitset_per = %3d%%, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", per, nq, k, t_diff,
@@ -163,19 +169,35 @@ TEST_F(Benchmark_float_bitset, TEST_IVF_FLAT) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
 #endif
 
+#define TEST_IVF(T, X)                      \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_ivf<T>(conf);
+
+    std::string index_file_name;
     knowhere::Json conf = cfg_;
-    std::string index_file_name = get_index_name({});
-    create_index(index_file_name, conf);
-    test_ivf(conf);
+    std::vector<int32_t> params = {};
+
+    TEST_IVF(knowhere::fp32, params);
+    TEST_IVF(knowhere::fp16, params);
+    TEST_IVF(knowhere::bf16, params);
 }
 
 TEST_F(Benchmark_float_bitset, TEST_IVF_SQ8) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFSQ8;
 
+#define TEST_IVF(T, X)                      \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_ivf<T>(conf);
+
+    std::string index_file_name;
     knowhere::Json conf = cfg_;
-    std::string index_file_name = get_index_name({});
-    create_index(index_file_name, conf);
-    test_ivf(conf);
+    std::vector<int32_t> params = {};
+
+    TEST_IVF(knowhere::fp32, params);
+    TEST_IVF(knowhere::fp16, params);
+    TEST_IVF(knowhere::bf16, params);
 }
 
 TEST_F(Benchmark_float_bitset, TEST_IVF_PQ) {
@@ -185,19 +207,35 @@ TEST_F(Benchmark_float_bitset, TEST_IVF_PQ) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFPQ;
 #endif
 
+#define TEST_IVF(T, X)                      \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_ivf<T>(conf);
+
+    std::string index_file_name;
     knowhere::Json conf = cfg_;
-    std::string index_file_name = get_index_name({});
-    create_index(index_file_name, conf);
-    test_ivf(conf);
+    std::vector<int32_t> params = {};
+
+    TEST_IVF(knowhere::fp32, params);
+    TEST_IVF(knowhere::fp16, params);
+    TEST_IVF(knowhere::bf16, params);
 }
 
 TEST_F(Benchmark_float_bitset, TEST_HNSW) {
     index_type_ = knowhere::IndexEnum::INDEX_HNSW;
 
+#define TEST_HNSW(T, X)                     \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_hnsw<T>(conf);
+
+    std::string index_file_name;
     knowhere::Json conf = cfg_;
-    std::string index_file_name = get_index_name({});
-    create_index(index_file_name, conf);
-    test_hnsw(conf);
+    std::vector<int32_t> params = {};
+
+    TEST_HNSW(knowhere::fp32, params);
+    TEST_HNSW(knowhere::fp16, params);
+    TEST_HNSW(knowhere::bf16, params);
 }
 
 #ifdef KNOWHERE_WITH_DISKANN
@@ -230,6 +268,6 @@ TEST_F(Benchmark_float_bitset, TEST_DISKANN) {
     index_.value().Serialize(binset);
     index_.value().Deserialize(binset, conf);
 
-    test_diskann(conf);
+    test_diskann<knowhere::fp32>(conf);
 }
 #endif

@@ -21,6 +21,7 @@
 
 class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
  public:
+    template <typename T>
     void
     test_idmap(const knowhere::Json& cfg) {
         auto conf = cfg;
@@ -29,9 +30,10 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
         printf("================================================================================\n");
         for (auto nq : NQs_) {
             auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
+            auto query = knowhere::ConvertToDataTypeIfNeeded<T>(ds_ptr);
             for (auto k : TOPKs_) {
                 conf[knowhere::meta::TOPK] = k;
-                CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, nullptr));
+                CALC_TIME_SPAN(auto result = index_.value().Search(query, conf, nullptr));
                 auto ids = result.value()->GetIds();
                 float recall = CalcRecall(ids, nq, k);
                 printf("  nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nq, k, t_diff, recall);
@@ -42,6 +44,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
         printf("[%.3f s] Test '%s/%s' done\n\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
     }
 
+    template <typename T>
     void
     test_ivf(const knowhere::Json& cfg) {
         auto conf = cfg;
@@ -54,9 +57,10 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
             conf[knowhere::indexparam::NPROBE] = nprobe;
             for (auto nq : NQs_) {
                 auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
+                auto query = knowhere::ConvertToDataTypeIfNeeded<T>(ds_ptr);
                 for (auto k : TOPKs_) {
                     conf[knowhere::meta::TOPK] = k;
-                    CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, nullptr));
+                    CALC_TIME_SPAN(auto result = index_.value().Search(query, conf, nullptr));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(ids, nq, k);
                     printf("  nprobe = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nprobe, nq, k, t_diff,
@@ -69,6 +73,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
         printf("[%.3f s] Test '%s/%s' done\n\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
     }
 
+    template <typename T>
     void
     test_hnsw(const knowhere::Json& cfg) {
         auto conf = cfg;
@@ -82,9 +87,10 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
             conf[knowhere::indexparam::EF] = ef;
             for (auto nq : NQs_) {
                 auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
+                auto query = knowhere::ConvertToDataTypeIfNeeded<T>(ds_ptr);
                 for (auto k : TOPKs_) {
                     conf[knowhere::meta::TOPK] = k;
-                    CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, nullptr));
+                    CALC_TIME_SPAN(auto result = index_.value().Search(query, conf, nullptr));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(ids, nq, k);
                     printf("  ef = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", ef, nq, k, t_diff, recall);
@@ -97,6 +103,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
     }
 
 #ifdef KNOWHERE_WITH_DISKANN
+    template <typename T>
     void
     test_diskann(const knowhere::Json& cfg) {
         auto conf = cfg;
@@ -107,9 +114,10 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
             conf["search_list_size"] = search_list_size;
             for (auto nq : NQs_) {
                 auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
+                auto query = knowhere::ConvertToDataTypeIfNeeded<T>(ds_ptr);
                 for (auto k : TOPKs_) {
                     conf[knowhere::meta::TOPK] = k;
-                    CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, nullptr));
+                    CALC_TIME_SPAN(auto result = index_.value().Search(query, conf, nullptr));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(ids, nq, k);
                     printf("  search_list_size = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n",
@@ -165,10 +173,18 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
 TEST_F(Benchmark_float, TEST_IDMAP) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
 
+#define TEST_IDMAP(T, X)                    \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_idmap<T>(conf);
+
+    std::string index_file_name;
     knowhere::Json conf = cfg_;
-    std::string index_file_name = get_index_name({});
-    create_index(index_file_name, conf);
-    test_idmap(conf);
+    std::vector<int32_t> params = {};
+
+    TEST_IDMAP(knowhere::fp32, params);
+    TEST_IDMAP(knowhere::fp16, params);
+    TEST_IDMAP(knowhere::bf16, params);
 }
 
 TEST_F(Benchmark_float, TEST_IVF_FLAT) {
@@ -178,24 +194,40 @@ TEST_F(Benchmark_float, TEST_IVF_FLAT) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
 #endif
 
+#define TEST_IVF(T, X)                      \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_ivf<T>(conf);
+
+    std::string index_file_name;
     knowhere::Json conf = cfg_;
     for (auto nlist : NLISTs_) {
         conf[knowhere::indexparam::NLIST] = nlist;
-        std::string index_file_name = get_index_name({nlist});
-        create_index(index_file_name, conf);
-        test_ivf(conf);
+        std::vector<int32_t> params = {nlist};
+
+        TEST_IVF(knowhere::fp32, params);
+        TEST_IVF(knowhere::fp16, params);
+        TEST_IVF(knowhere::bf16, params);
     }
 }
 
 TEST_F(Benchmark_float, TEST_IVF_SQ8) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFSQ8;
 
+#define TEST_IVF(T, X)                      \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_ivf<T>(conf);
+
+    std::string index_file_name;
     knowhere::Json conf = cfg_;
     for (auto nlist : NLISTs_) {
         conf[knowhere::indexparam::NLIST] = nlist;
-        std::string index_file_name = get_index_name({nlist});
-        create_index(index_file_name, conf);
-        test_ivf(conf);
+        std::vector<int32_t> params = {nlist};
+
+        TEST_IVF(knowhere::fp32, params);
+        TEST_IVF(knowhere::fp16, params);
+        TEST_IVF(knowhere::bf16, params);
     }
 }
 
@@ -206,15 +238,23 @@ TEST_F(Benchmark_float, TEST_IVF_PQ) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFPQ;
 #endif
 
+#define TEST_IVF(T, X)                      \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_ivf<T>(conf);
+
+    std::string index_file_name;
     knowhere::Json conf = cfg_;
     conf[knowhere::indexparam::NBITS] = NBITS_;
     for (auto m : Ms_) {
         conf[knowhere::indexparam::M] = m;
         for (auto nlist : NLISTs_) {
             conf[knowhere::indexparam::NLIST] = nlist;
-            std::string index_file_name = get_index_name({nlist, m});
-            create_index(index_file_name, conf);
-            test_ivf(conf);
+            std::vector<int32_t> params = {nlist, m};
+
+            TEST_IVF(knowhere::fp32, params);
+            TEST_IVF(knowhere::fp16, params);
+            TEST_IVF(knowhere::bf16, params);
         }
     }
 }
@@ -222,14 +262,22 @@ TEST_F(Benchmark_float, TEST_IVF_PQ) {
 TEST_F(Benchmark_float, TEST_HNSW) {
     index_type_ = knowhere::IndexEnum::INDEX_HNSW;
 
+#define TEST_HNSW(T, X)                     \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_hnsw<T>(conf);
+
+    std::string index_file_name;
     knowhere::Json conf = cfg_;
     for (auto M : HNSW_Ms_) {
         conf[knowhere::indexparam::HNSW_M] = M;
         for (auto efc : EFCONs_) {
             conf[knowhere::indexparam::EFCONSTRUCTION] = efc;
-            std::string index_file_name = get_index_name({M, efc});
-            create_index(index_file_name, conf);
-            test_hnsw(conf);
+            std::vector<int32_t> params = {M, efc};
+
+            TEST_HNSW(knowhere::fp32, params);
+            TEST_HNSW(knowhere::fp16, params);
+            TEST_HNSW(knowhere::bf16, params);
         }
     }
 }
@@ -267,6 +315,6 @@ TEST_F(Benchmark_float, TEST_DISKANN) {
     index_.value().Serialize(binset);
     index_.value().Deserialize(binset, conf);
 
-    test_diskann(conf);
+    test_diskann<knowhere::fp32>(conf);
 }
 #endif

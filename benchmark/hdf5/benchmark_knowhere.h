@@ -82,38 +82,42 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
             binary_set.Append(name, data_ptr, data_size);
         }
 
-        // IVFFLAT_NM should load raw data
-        if (index_type_ == knowhere::IndexEnum::INDEX_FAISS_IVFFLAT && binary_set.GetByName("RAW_DATA") == nullptr) {
-            knowhere::BinaryPtr bin = std::make_shared<knowhere::Binary>();
-            bin->data = std::shared_ptr<uint8_t[]>((uint8_t*)xb_);
-            bin->size = dim_ * nb_ * sizeof(float);
-            binary_set.Append("RAW_DATA", bin);
-        }
         index.Deserialize(binary_set, conf);
     }
 
+    template <typename T>
     std::string
     get_index_name(const std::vector<int32_t>& params) {
         std::string params_str = "";
         for (size_t i = 0; i < params.size(); i++) {
             params_str += "_" + std::to_string(params[i]);
         }
-        return ann_test_name_ + "_" + index_type_ + params_str + ".index";
+        if constexpr (std::is_same_v<T, knowhere::fp32>) {
+            return ann_test_name_ + "_" + index_type_ + params_str + "_fp32" + ".index";
+        } else if constexpr (std::is_same_v<T, knowhere::fp16>) {
+            return ann_test_name_ + "_" + index_type_ + params_str + "_fp16" + ".index";
+        } else if constexpr (std::is_same_v<T, knowhere::bf16>) {
+            return ann_test_name_ + "_" + index_type_ + params_str + "_bf16" + ".index";
+        } else {
+            return ann_test_name_ + "_" + index_type_ + params_str + ".index";
+        }
     }
 
+    template <typename T>
     knowhere::Index<knowhere::IndexNode>
     create_index(const std::string& index_file_name, const knowhere::Json& conf) {
         auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
         printf("[%.3f s] Creating index \"%s\"\n", get_time_diff(), index_type_.c_str());
-        index_ = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_type_, version);
+        index_ = knowhere::IndexFactory::Instance().Create<T>(index_type_, version);
 
         try {
             printf("[%.3f s] Reading index file: %s\n", get_time_diff(), index_file_name.c_str());
             read_index(index_.value(), index_file_name, conf);
         } catch (...) {
             printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
-            knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nb_, dim_, xb_);
-            index_.value().Build(ds_ptr, conf);
+            auto ds_ptr = knowhere::GenDataSet(nb_, dim_, xb_);
+            auto base = knowhere::ConvertToDataTypeIfNeeded<T>(ds_ptr);
+            index_.value().Build(base, conf);
 
             printf("[%.3f s] Writing index file: %s\n", get_time_diff(), index_file_name.c_str());
             write_index(index_.value(), index_file_name, conf);

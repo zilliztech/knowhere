@@ -28,7 +28,7 @@ class Benchmark_binary_range : public Benchmark_knowhere, public ::testing::Test
                radius);
         printf("================================================================================\n");
         for (auto nq : NQs_) {
-            knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
+            auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
             CALC_TIME_SPAN(auto result = index_.value().RangeSearch(ds_ptr, conf, nullptr));
             auto ids = result.value()->GetIds();
             auto distances = result.value()->GetDistance();
@@ -55,7 +55,7 @@ class Benchmark_binary_range : public Benchmark_knowhere, public ::testing::Test
         for (auto nprobe : NPROBEs_) {
             conf[knowhere::indexparam::NPROBE] = nprobe;
             for (auto nq : NQs_) {
-                knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
+                auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
                 CALC_TIME_SPAN(auto result = index_.value().RangeSearch(ds_ptr, conf, nullptr));
                 auto ids = result.value()->GetIds();
                 auto lims = result.value()->GetLims();
@@ -83,7 +83,7 @@ class Benchmark_binary_range : public Benchmark_knowhere, public ::testing::Test
         for (auto ef : EFs_) {
             conf[knowhere::indexparam::EF] = ef;
             for (auto nq : NQs_) {
-                knowhere::DataSetPtr ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
+                auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
                 CALC_TIME_SPAN(auto result = index_.value().RangeSearch(ds_ptr, conf, nullptr));
                 auto ids = result.value()->GetIds();
                 auto lims = result.value()->GetLims();
@@ -180,8 +180,8 @@ TEST_F(Benchmark_binary_range, TEST_BINARY_IDMAP) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_BIN_IDMAP;
 
     knowhere::Json conf = cfg_;
-    std::string index_file_name = get_index_name({});
-    create_index(index_file_name, conf);
+    std::string index_file_name = get_index_name<knowhere::bin1>({});
+    create_index<knowhere::bin1>(index_file_name, conf);
     test_binary_idmap(conf);
 }
 
@@ -191,8 +191,8 @@ TEST_F(Benchmark_binary_range, TEST_BINARY_IVF_FLAT) {
     knowhere::Json conf = cfg_;
     for (auto nlist : NLISTs_) {
         conf[knowhere::indexparam::NLIST] = nlist;
-        std::string index_file_name = get_index_name({nlist});
-        create_index(index_file_name, conf);
+        std::string index_file_name = get_index_name<knowhere::bin1>({nlist});
+        create_index<knowhere::bin1>(index_file_name, conf);
         test_binary_ivf(conf);
     }
 }
@@ -205,8 +205,8 @@ TEST_F(Benchmark_binary_range, TEST_BINARY_HNSW) {
         conf[knowhere::indexparam::HNSW_M] = M;
         for (auto efc : EFCONs_) {
             conf[knowhere::indexparam::EFCONSTRUCTION] = efc;
-            std::string index_file_name = get_index_name({M, efc});
-            create_index(index_file_name, conf);
+            std::string index_file_name = get_index_name<knowhere::bin1>({M, efc});
+            create_index<knowhere::bin1>(index_file_name, conf);
             test_binary_hnsw(conf);
         }
     }
