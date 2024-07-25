@@ -18,9 +18,6 @@ namespace faiss {
 
 /** Index that stores the full vectors and performs exhaustive search */
 struct IndexFlat : IndexFlatCodes {
-    /// database vectors, size ntotal * d
-    std::vector<float> xb;
-
     explicit IndexFlat(
             idx_t d, ///< dimensionality of the input vectors
             MetricType metric = METRIC_L2,
