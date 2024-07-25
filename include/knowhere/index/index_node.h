@@ -104,8 +104,7 @@ class IndexNode : public Object {
         LOG_KNOWHERE_DEBUG_ << "range_search_k: " << range_search_k;
 
         const bool the_larger_the_closer = IsMetricType(base_cfg.metric_type.value(), metric::IP) ||
-                                           IsMetricType(base_cfg.metric_type.value(), metric::COSINE) ||
-                                           IsMetricType(base_cfg.metric_type.value(), metric::BM25);
+                                           IsMetricType(base_cfg.metric_type.value(), metric::COSINE);
         auto is_first_closer = [&the_larger_the_closer](const float dist_1, const float dist_2) {
             return the_larger_the_closer ? dist_1 > dist_2 : dist_1 < dist_2;
         };
