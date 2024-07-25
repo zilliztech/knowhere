@@ -263,8 +263,8 @@ struct Quantizer8bitDirect_avx512<16> : public Quantizer8bitDirect_avx<8> {
 
     FAISS_ALWAYS_INLINE __m512
     reconstruct_16_components(const uint8_t* code, int i) const {
-        __m256i x16 = _mm256_loadu_si256((__m256i*)(code + i)); // 16 * int8
-        __m512i y16 = _mm512_cvtepu8_epi16(x16);                // 16 * int32
+        __m128i x16 = _mm_loadu_si128((__m128i*)(code + i)); // 16 * int8
+        __m512i y16 = _mm512_cvtepu8_epi32(x16);                // 16 * int32
         return _mm512_cvtepi32_ps(y16);                         // 16 * float32
     }
 };
@@ -295,8 +295,8 @@ struct Quantizer8bitDirectSigned_avx512<16> : public Quantizer8bitDirectSigned_a
 
     FAISS_ALWAYS_INLINE __m512
     reconstruct_16_components(const uint8_t* code, int i) const {
-        __m256i x16 = _mm256_loadu_si256((__m256i*)(code + i)); // 16 * int8
-        __m512i y16 = _mm512_cvtepu8_epi16(x16);                // 16 * int32
+        __m128i x16 = _mm_loadu_si128((__m128i*)(code + i));    // 16 * int8
+        __m512i y16 = _mm512_cvtepu8_epi32(x16);                // 16 * int32
         __m512i c16 = _mm512_set1_epi32(128);
         __m512i z16 = _mm512_sub_epi32(y16, c16); // subtract 128 from all lanes
         return _mm512_cvtepi32_ps(z16);           // 16 * float32
