@@ -33,10 +33,15 @@ if(__X86_64)
   add_library(utils_avx OBJECT ${UTILS_AVX_SRC})
   add_library(utils_avx512 OBJECT ${UTILS_AVX512_SRC})
 
-  target_compile_options(utils_sse PRIVATE -msse4.2 -mpopcnt)
+  check_cxx_compiler_flag("-mf16c" COMPILER_SUPPORTS_F16C)
+  if(COMPILER_SUPPORTS_F16C)
+    target_compile_options(utils_sse PRIVATE -msse4.2 -mpopcnt -mf16c)
+  else()
+    target_compile_options(utils_sse PRIVATE -msse4.2 -mpopcnt)
+  endif()
   target_compile_options(utils_avx PRIVATE -mfma -mf16c -mavx2 -mpopcnt)
   target_compile_options(utils_avx512 PRIVATE -mfma -mf16c -mavx512f -mavx512dq
-                                              -mavx512bw -mpopcnt)
+                                              -mavx512bw -mpopcnt -mavx512vl)
 
   add_library(
     knowhere_utils STATIC

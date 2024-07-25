@@ -18,7 +18,7 @@
 #include <cassert>
 
 #include "faiss/impl/platform_macros.h"
-#include "knowhere/operands.h"
+#include "simd_util.h"
 
 namespace faiss {
 
@@ -55,6 +55,72 @@ fvec_inner_product_avx(const float* x, const float* y, size_t d) {
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
+float
+fp16_vec_inner_product_avx(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+    __m256 msum_0 = _mm256_setzero_ps();
+    __m256 msum_1 = _mm256_setzero_ps();
+    while (d >= 16) {
+        auto mx_0 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)x));
+        auto my_0 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y));
+        auto mx_1 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)(x + 8)));
+        auto my_1 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)(y + 8)));
+        msum_0 = _mm256_fmadd_ps(mx_0, my_0, msum_0);
+        msum_1 = _mm256_fmadd_ps(mx_1, my_1, msum_1);
+        x += 16;
+        y += 16;
+        d -= 16;
+    }
+    msum_0 = msum_0 + msum_1;
+    while (d >= 8) {
+        auto mx = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)x));
+        auto my = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y));
+        msum_0 = _mm256_fmadd_ps(mx, my, msum_0);
+        x += 8;
+        y += 8;
+        d -= 8;
+    }
+    if (d > 0) {
+        auto mx = _mm256_cvtph_ps(mm_masked_read_short(d, (uint16_t*)x));
+        auto my = _mm256_cvtph_ps(mm_masked_read_short(d, (uint16_t*)y));
+        msum_0 = _mm256_fmadd_ps(mx, my, msum_0);
+    }
+    auto res = _mm256_reduce_add_ps(msum_0);
+    return res;
+}
+
+float
+bf16_vec_inner_product_avx(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+    __m256 msum_0 = _mm256_setzero_ps();
+    __m256 msum_1 = _mm256_setzero_ps();
+    while (d >= 16) {
+        auto mx_0 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)x));
+        auto my_0 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y));
+        auto mx_1 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)(x + 8)));
+        auto my_1 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)(y + 8)));
+        msum_0 = _mm256_fmadd_ps(mx_0, my_0, msum_0);
+        msum_1 = _mm256_fmadd_ps(mx_1, my_1, msum_1);
+        x += 16;
+        y += 16;
+        d -= 16;
+    }
+    msum_0 = msum_0 + msum_1;
+    while (d >= 8) {
+        auto mx = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)x));
+        auto my = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y));
+        msum_0 = _mm256_fmadd_ps(mx, my, msum_0);
+        x += 8;
+        y += 8;
+        d -= 8;
+    }
+    if (d > 0) {
+        auto mx = _mm256_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)x));
+        auto my = _mm256_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)y));
+        msum_0 = _mm256_fmadd_ps(mx, my, msum_0);
+    }
+    auto res = _mm256_reduce_add_ps(msum_0);
+    return res;
+}
+
 // trust the compiler to unroll this properly
 FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
 float
@@ -83,6 +149,80 @@ fvec_L2sqr_avx(const float* x, const float* y, size_t d) {
     return res;
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
+
+float
+fp16_vec_L2sqr_avx(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+    __m256 msum_0 = _mm256_setzero_ps();
+    __m256 msum_1 = _mm256_setzero_ps();
+    while (d >= 16) {
+        auto mx_0 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)x));
+        auto my_0 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y));
+        auto mx_1 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)(x + 8)));
+        auto my_1 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)(y + 8)));
+        mx_0 = _mm256_sub_ps(mx_0, my_0);
+        mx_1 = _mm256_sub_ps(mx_1, my_1);
+        msum_0 = _mm256_fmadd_ps(mx_0, mx_0, msum_0);
+        msum_1 = _mm256_fmadd_ps(mx_1, mx_1, msum_1);
+        x += 16;
+        y += 16;
+        d -= 16;
+    }
+    msum_0 = msum_0 + msum_1;
+    while (d >= 8) {
+        auto mx = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)x));
+        auto my = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y));
+        mx = _mm256_sub_ps(mx, my);
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+        x += 8;
+        y += 8;
+        d -= 8;
+    }
+    if (d > 0) {
+        auto mx = _mm256_cvtph_ps(mm_masked_read_short(d, (uint16_t*)x));
+        auto my = _mm256_cvtph_ps(mm_masked_read_short(d, (uint16_t*)y));
+        mx = _mm256_sub_ps(mx, my);
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+    }
+    auto res = _mm256_reduce_add_ps(msum_0);
+    return res;
+}
+
+float
+bf16_vec_L2sqr_avx(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+    __m256 msum_0 = _mm256_setzero_ps();
+    __m256 msum_1 = _mm256_setzero_ps();
+    while (d >= 16) {
+        auto mx_0 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)x));
+        auto my_0 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y));
+        auto mx_1 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)(x + 8)));
+        auto my_1 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)(y + 8)));
+        mx_0 = _mm256_sub_ps(mx_0, my_0);
+        mx_1 = _mm256_sub_ps(mx_1, my_1);
+        msum_0 = _mm256_fmadd_ps(mx_0, mx_0, msum_0);
+        msum_1 = _mm256_fmadd_ps(mx_1, mx_1, msum_1);
+        x += 16;
+        y += 16;
+        d -= 16;
+    }
+    msum_0 = msum_0 + msum_1;
+    while (d >= 8) {
+        auto mx = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)x));
+        auto my = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y));
+        mx = _mm256_sub_ps(mx, my);
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+        x += 8;
+        y += 8;
+        d -= 8;
+    }
+    if (d > 0) {
+        auto mx = _mm256_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)x));
+        auto my = _mm256_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)y));
+        mx = _mm256_sub_ps(mx, my);
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+    }
+    auto res = _mm256_reduce_add_ps(msum_0);
+    return res;
+}
 
 FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
 float
@@ -321,5 +461,58 @@ ivec_L2sqr_avx(const int8_t* x, const int8_t* y, size_t d) {
     return res;
 }
 
+float
+fp16_vec_norm_L2sqr_avx(const knowhere::fp16* x, size_t d) {
+    __m256 msum_0 = _mm256_setzero_ps();
+    __m256 msum_1 = _mm256_setzero_ps();
+    while (d >= 16) {
+        auto mx_0 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)x));
+        auto mx_1 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)(x + 8)));
+        msum_0 = _mm256_fmadd_ps(mx_0, mx_0, msum_0);
+        msum_1 = _mm256_fmadd_ps(mx_1, mx_1, msum_1);
+        x += 16;
+        d -= 16;
+    }
+    msum_0 = msum_0 + msum_1;
+    while (d >= 8) {
+        auto mx = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)x));
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+        x += 8;
+        d -= 8;
+    }
+    if (d > 0) {
+        auto mx = _mm256_cvtph_ps(mm_masked_read_short(d, (uint16_t*)x));
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+    }
+    auto res = _mm256_reduce_add_ps(msum_0);
+    return res;
+}
+
+float
+bf16_vec_norm_L2sqr_avx(const knowhere::bf16* x, size_t d) {
+    __m256 msum_0 = _mm256_setzero_ps();
+    __m256 msum_1 = _mm256_setzero_ps();
+    while (d >= 16) {
+        auto mx_0 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)x));
+        auto mx_1 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)(x + 8)));
+        msum_0 = _mm256_fmadd_ps(mx_0, mx_0, msum_0);
+        msum_1 = _mm256_fmadd_ps(mx_1, mx_1, msum_1);
+        x += 16;
+        d -= 16;
+    }
+    msum_0 = msum_0 + msum_1;
+    while (d >= 8) {
+        auto mx = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)x));
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+        x += 8;
+        d -= 8;
+    }
+    if (d > 0) {
+        auto mx = _mm256_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)x));
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+    }
+    auto res = _mm256_reduce_add_ps(msum_0);
+    return res;
+}
 }  // namespace faiss
 #endif

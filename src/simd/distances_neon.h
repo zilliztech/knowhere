@@ -15,15 +15,29 @@
 #include <cstdint>
 #include <cstdio>
 
+#include "knowhere/operands.h"
+
 namespace faiss {
 
 /// Squared L2 distance between two vectors
 float
 fvec_L2sqr_neon(const float* x, const float* y, size_t d);
 
+float
+fp16_vec_L2sqr_neon(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
+
+float
+bf16_vec_L2sqr_neon(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
+
 /// inner product
 float
 fvec_inner_product_neon(const float* x, const float* y, size_t d);
+
+float
+fp16_vec_inner_product_neon(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
+
+float
+bf16_vec_inner_product_neon(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
 
 /// L1 distance
 float
@@ -36,6 +50,12 @@ fvec_Linf_neon(const float* x, const float* y, size_t d);
 /// squared norm of a vector
 float
 fvec_norm_L2sqr_neon(const float* x, size_t d);
+
+float
+fp16_vec_norm_L2sqr_neon(const knowhere::fp16* x, size_t d);
+
+float
+bf16_vec_norm_L2sqr_neon(const knowhere::bf16* x, size_t d);
 
 /// compute ny square L2 distance between x and a set of contiguous y vectors
 void

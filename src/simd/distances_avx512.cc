@@ -19,7 +19,7 @@
 #include <string>
 
 #include "faiss/impl/platform_macros.h"
-#include "knowhere/operands.h"
+#include "simd_util.h"
 
 namespace faiss {
 
@@ -54,6 +54,80 @@ fvec_inner_product_avx512(const float* x, const float* y, size_t d) {
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
+float
+fp16_vec_L2sqr_avx512(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+    __m512 m512_res = _mm512_setzero_ps();
+    __m512 m512_res_0 = _mm512_setzero_ps();
+    while (d >= 32) {
+        auto mx_0 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)x));
+        auto my_0 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)y));
+        auto mx_1 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)(x + 16)));
+        auto my_1 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)(y + 16)));
+        mx_0 = mx_0 - my_0;
+        mx_1 = mx_1 - my_1;
+        m512_res = _mm512_fmadd_ps(mx_0, mx_0, m512_res);
+        m512_res_0 = _mm512_fmadd_ps(mx_1, mx_1, m512_res_0);
+        x += 32;
+        y += 32;
+        d -= 32;
+    }
+    m512_res = m512_res + m512_res_0;
+    if (d >= 16) {
+        auto mx = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)x));
+        auto my = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)y));
+        mx = mx - my;
+        m512_res = _mm512_fmadd_ps(mx, mx, m512_res);
+        x += 16;
+        y += 16;
+        d -= 16;
+    }
+    if (d > 0) {
+        const __mmask16 mask = (1U << d) - 1U;
+        auto mx = _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(mask, x));
+        auto my = _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(mask, y));
+        mx = _mm512_sub_ps(mx, my);
+        m512_res = _mm512_fmadd_ps(mx, mx, m512_res);
+    }
+    return _mm512_reduce_add_ps(m512_res);
+}
+
+float
+bf16_vec_L2sqr_avx512(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+    __m512 m512_res = _mm512_setzero_ps();
+    __m512 m512_res_0 = _mm512_setzero_ps();
+    while (d >= 32) {
+        auto mx_0 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)x));
+        auto my_0 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)y));
+        auto mx_1 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)(x + 16)));
+        auto my_1 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)(y + 16)));
+        mx_0 = mx_0 - my_0;
+        mx_1 = mx_1 - my_1;
+        m512_res = _mm512_fmadd_ps(mx_0, mx_0, m512_res);
+        m512_res_0 = _mm512_fmadd_ps(mx_1, mx_1, m512_res_0);
+        x += 32;
+        y += 32;
+        d -= 32;
+    }
+    m512_res = m512_res + m512_res_0;
+    if (d >= 16) {
+        auto mx = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)x));
+        auto my = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)y));
+        mx = mx - my;
+        m512_res = _mm512_fmadd_ps(mx, mx, m512_res);
+        x += 16;
+        y += 16;
+        d -= 16;
+    }
+    if (d > 0) {
+        const __mmask16 mask = (1U << d) - 1U;
+        auto mx = _mm512_bf16_to_fp32(_mm256_maskz_loadu_epi16(mask, x));
+        auto my = _mm512_bf16_to_fp32(_mm256_maskz_loadu_epi16(mask, y));
+        mx = _mm512_sub_ps(mx, my);
+        m512_res = _mm512_fmadd_ps(mx, mx, m512_res);
+    }
+    return _mm512_reduce_add_ps(m512_res);
+}
+
 FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
 float
 fvec_inner_product_avx512_bf16_patch(const float* x, const float* y, size_t d) {
@@ -81,6 +155,72 @@ fvec_L2sqr_avx512(const float* x, const float* y, size_t d) {
     return res;
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
+
+float
+fp16_vec_inner_product_avx512(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+    __m512 m512_res = _mm512_setzero_ps();
+    __m512 m512_res_0 = _mm512_setzero_ps();
+    while (d >= 32) {
+        auto mx_0 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)x));
+        auto my_0 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)y));
+        auto mx_1 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)(x + 16)));
+        auto my_1 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)(y + 16)));
+        m512_res = _mm512_fmadd_ps(mx_0, my_0, m512_res);
+        m512_res_0 = _mm512_fmadd_ps(mx_1, my_1, m512_res_0);
+        x += 32;
+        y += 32;
+        d -= 32;
+    }
+    m512_res = m512_res + m512_res_0;
+    if (d >= 16) {
+        auto mx = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)x));
+        auto my = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)y));
+        m512_res = _mm512_fmadd_ps(mx, my, m512_res);
+        x += 16;
+        y += 16;
+        d -= 16;
+    }
+    if (d > 0) {
+        const __mmask16 mask = (1U << d) - 1U;
+        auto mx = _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(mask, x));
+        auto my = _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(mask, y));
+        m512_res = _mm512_fmadd_ps(mx, my, m512_res);
+    }
+    return _mm512_reduce_add_ps(m512_res);
+}
+
+float
+bf16_vec_inner_product_avx512(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+    __m512 m512_res = _mm512_setzero_ps();
+    __m512 m512_res_0 = _mm512_setzero_ps();
+    while (d >= 32) {
+        auto mx_0 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)x));
+        auto my_0 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)y));
+        auto mx_1 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)(x + 16)));
+        auto my_1 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)(y + 16)));
+        m512_res = _mm512_fmadd_ps(mx_0, my_0, m512_res);
+        m512_res_0 = _mm512_fmadd_ps(mx_1, my_1, m512_res_0);
+        x += 32;
+        y += 32;
+        d -= 32;
+    }
+    m512_res = m512_res + m512_res_0;
+    if (d >= 16) {
+        auto mx = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)x));
+        auto my = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)y));
+        m512_res = _mm512_fmadd_ps(mx, my, m512_res);
+        x += 16;
+        y += 16;
+        d -= 16;
+    }
+    if (d > 0) {
+        const __mmask16 mask = (1U << d) - 1U;
+        auto mx = _mm512_bf16_to_fp32(_mm256_maskz_loadu_epi16(mask, x));
+        auto my = _mm512_bf16_to_fp32(_mm256_maskz_loadu_epi16(mask, y));
+        m512_res = _mm512_fmadd_ps(mx, my, m512_res);
+    }
+    return _mm512_reduce_add_ps(m512_res);
+}
 
 FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
 float
@@ -345,6 +485,60 @@ ivec_L2sqr_avx512(const int8_t* x, const int8_t* y, size_t d) {
         res += tmp * tmp;
     }
     return res;
+}
+
+float
+fp16_vec_norm_L2sqr_avx512(const knowhere::fp16* x, size_t d) {
+    __m512 m512_res = _mm512_setzero_ps();
+    __m512 m512_res_0 = _mm512_setzero_ps();
+    while (d >= 32) {
+        auto mx_0 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)x));
+        auto mx_1 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)(x + 16)));
+        m512_res = _mm512_fmadd_ps(mx_0, mx_0, m512_res);
+        m512_res_0 = _mm512_fmadd_ps(mx_1, mx_1, m512_res_0);
+        x += 32;
+        d -= 32;
+    }
+    m512_res = m512_res + m512_res_0;
+    if (d >= 16) {
+        auto mx = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)x));
+        m512_res = _mm512_fmadd_ps(mx, mx, m512_res);
+        x += 16;
+        d -= 16;
+    }
+    if (d > 0) {
+        const __mmask16 mask = (1U << d) - 1U;
+        auto mx = _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(mask, x));
+        m512_res = _mm512_fmadd_ps(mx, mx, m512_res);
+    }
+    return _mm512_reduce_add_ps(m512_res);
+}
+
+float
+bf16_vec_norm_L2sqr_avx512(const knowhere::bf16* x, size_t d) {
+    __m512 m512_res = _mm512_setzero_ps();
+    __m512 m512_res_0 = _mm512_setzero_ps();
+    while (d >= 32) {
+        auto mx_0 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)x));
+        auto mx_1 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)(x + 16)));
+        m512_res = _mm512_fmadd_ps(mx_0, mx_0, m512_res);
+        m512_res_0 = _mm512_fmadd_ps(mx_1, mx_1, m512_res_0);
+        x += 32;
+        d -= 32;
+    }
+    m512_res = m512_res + m512_res_0;
+    if (d >= 16) {
+        auto mx = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)x));
+        m512_res = _mm512_fmadd_ps(mx, mx, m512_res);
+        x += 16;
+        d -= 16;
+    }
+    if (d > 0) {
+        const __mmask16 mask = (1U << d) - 1U;
+        auto mx = _mm512_bf16_to_fp32(_mm256_maskz_loadu_epi16(mask, x));
+        m512_res = _mm512_fmadd_ps(mx, mx, m512_res);
+    }
+    return _mm512_reduce_add_ps(m512_res);
 }
 
 }  // namespace faiss

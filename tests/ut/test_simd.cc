@@ -12,10 +12,32 @@
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "catch2/matchers/catch_matchers_floating_point.hpp"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_config.h"
+#include "simd/distances_ref.h"
+#include "simd/hook.h"
+#if defined(__x86_64__)
+#include "simd/distances_avx.h"
+#include "simd/distances_avx512.h"
+#include "simd/distances_sse.h"
+#endif
+
+#if defined(__ARM_NEON)
+#include "simd/distances_neon.h"
+#endif
+
 #include "utils.h"
+template <typename DataType>
+std::unique_ptr<DataType[]>
+GenRandomVector(int dim, int seed = 42) {
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<> distrib(0.0, 100.0);
+    auto x = std::make_unique<DataType[]>(dim);
+    for (int i = 0; i < dim; ++i) x[i] = (DataType)distrib(rng);
+    return x;
+}
 
 TEST_CASE("Test BruteForce Search SIMD", "[bf]") {
     using Catch::Approx;
@@ -112,4 +134,89 @@ TEST_CASE("Test PQ Search SIMD", "[pq]") {
             test_search_with_simd(m, simd_type);
         }
     }
+}
+
+TEST_CASE("Test fp16 distance", "[fp16]") {
+    using Catch::Approx;
+    auto dim = GENERATE(as<size_t>{}, 1, 2, 10, 69, 128, 141, 510, 1024);
+
+    auto x = GenRandomVector<knowhere::fp16>(dim, 11);
+    auto y = GenRandomVector<knowhere::fp16>(dim, 22);
+    auto ref_l2_dist = faiss::fp16_vec_L2sqr_ref(x.get(), y.get(), dim);
+    auto ref_ip_dist = faiss::fp16_vec_inner_product_ref(x.get(), y.get(), dim);
+    auto ref_norm_l2_dist = faiss::fp16_vec_norm_L2sqr_ref(x.get(), dim);
+#if defined(__ARM_NEON)
+    // neon
+    REQUIRE_THAT(faiss::fp16_vec_L2sqr_neon(x.get(), y.get(), dim), Catch::Matchers::WithinRel(ref_l2_dist, 0.001f));
+    REQUIRE_THAT(faiss::fp16_vec_inner_product_neon(x.get(), y.get(), dim),
+                 Catch::Matchers::WithinRel(ref_ip_dist, 0.001f));
+    REQUIRE_THAT(faiss::fp16_vec_norm_L2sqr_neon(x.get(), dim), Catch::Matchers::WithinRel(ref_norm_l2_dist, 0.001f));
+#endif
+#if defined(__x86_64__)
+    if (faiss::cpu_support_sse4_2()) {
+        REQUIRE_THAT(faiss::fp16_vec_L2sqr_sse(x.get(), y.get(), dim), Catch::Matchers::WithinRel(ref_l2_dist, 0.001f));
+        REQUIRE_THAT(faiss::fp16_vec_inner_product_sse(x.get(), y.get(), dim),
+                     Catch::Matchers::WithinRel(ref_ip_dist, 0.001f));
+        REQUIRE_THAT(faiss::fp16_vec_norm_L2sqr_sse(x.get(), dim),
+                     Catch::Matchers::WithinRel(ref_norm_l2_dist, 0.001f));
+    }
+    if (faiss::cpu_support_avx2()) {
+        REQUIRE_THAT(faiss::fp16_vec_L2sqr_avx(x.get(), y.get(), dim), Catch::Matchers::WithinRel(ref_l2_dist, 0.001f));
+        REQUIRE_THAT(faiss::fp16_vec_inner_product_avx(x.get(), y.get(), dim),
+                     Catch::Matchers::WithinRel(ref_ip_dist, 0.001f));
+        REQUIRE_THAT(faiss::fp16_vec_norm_L2sqr_avx(x.get(), dim),
+                     Catch::Matchers::WithinRel(ref_norm_l2_dist, 0.001f));
+    }
+    if (faiss::cpu_support_avx512()) {
+        REQUIRE_THAT(faiss::fp16_vec_L2sqr_avx512(x.get(), y.get(), dim),
+                     Catch::Matchers::WithinRel(ref_l2_dist, 0.001f));
+        REQUIRE_THAT(faiss::fp16_vec_inner_product_avx512(x.get(), y.get(), dim),
+                     Catch::Matchers::WithinRel(ref_ip_dist, 0.001f));
+        REQUIRE_THAT(faiss::fp16_vec_norm_L2sqr_avx512(x.get(), dim),
+                     Catch::Matchers::WithinRel(ref_norm_l2_dist, 0.001f));
+    }
+#endif
+}
+
+TEST_CASE("Test bf16 distance", "[bf16]") {
+    using Catch::Approx;
+
+    auto dim = GENERATE(as<size_t>{}, 1, 2, 10, 69, 128, 141, 510, 1024);
+
+    auto x = GenRandomVector<knowhere::bf16>(dim, 11);
+    auto y = GenRandomVector<knowhere::bf16>(dim, 22);
+    auto ref_l2_dist = faiss::bf16_vec_L2sqr_ref(x.get(), y.get(), dim);
+    auto ref_ip_dist = faiss::bf16_vec_inner_product_ref(x.get(), y.get(), dim);
+    auto ref_norm_l2_dist = faiss::bf16_vec_norm_L2sqr_ref(x.get(), dim);
+#if defined(__ARM_NEON)
+    // neon
+    REQUIRE_THAT(faiss::bf16_vec_L2sqr_neon(x.get(), y.get(), dim), Catch::Matchers::WithinRel(ref_l2_dist, 0.001f));
+    REQUIRE_THAT(faiss::bf16_vec_inner_product_neon(x.get(), y.get(), dim),
+                 Catch::Matchers::WithinRel(ref_ip_dist, 0.001f));
+    REQUIRE_THAT(faiss::bf16_vec_norm_L2sqr_neon(x.get(), dim), Catch::Matchers::WithinRel(ref_norm_l2_dist, 0.001f));
+#endif
+#if defined(__x86_64__)
+    if (faiss::cpu_support_sse4_2()) {
+        REQUIRE_THAT(faiss::bf16_vec_L2sqr_sse(x.get(), y.get(), dim), Catch::Matchers::WithinRel(ref_l2_dist, 0.001f));
+        REQUIRE_THAT(faiss::bf16_vec_inner_product_sse(x.get(), y.get(), dim),
+                     Catch::Matchers::WithinRel(ref_ip_dist, 0.001f));
+        REQUIRE_THAT(faiss::bf16_vec_norm_L2sqr_sse(x.get(), dim),
+                     Catch::Matchers::WithinRel(ref_norm_l2_dist, 0.001f));
+    }
+    if (faiss::cpu_support_avx2()) {
+        REQUIRE_THAT(faiss::bf16_vec_L2sqr_avx(x.get(), y.get(), dim), Catch::Matchers::WithinRel(ref_l2_dist, 0.001f));
+        REQUIRE_THAT(faiss::bf16_vec_inner_product_avx(x.get(), y.get(), dim),
+                     Catch::Matchers::WithinRel(ref_ip_dist, 0.001f));
+        REQUIRE_THAT(faiss::bf16_vec_norm_L2sqr_avx(x.get(), dim),
+                     Catch::Matchers::WithinRel(ref_norm_l2_dist, 0.001f));
+    }
+    if (faiss::cpu_support_avx512()) {
+        REQUIRE_THAT(faiss::bf16_vec_L2sqr_avx512(x.get(), y.get(), dim),
+                     Catch::Matchers::WithinRel(ref_l2_dist, 0.001f));
+        REQUIRE_THAT(faiss::bf16_vec_inner_product_avx512(x.get(), y.get(), dim),
+                     Catch::Matchers::WithinRel(ref_ip_dist, 0.001f));
+        REQUIRE_THAT(faiss::bf16_vec_norm_L2sqr_avx512(x.get(), dim),
+                     Catch::Matchers::WithinRel(ref_norm_l2_dist, 0.001f));
+    }
+#endif
 }
