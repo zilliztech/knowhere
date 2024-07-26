@@ -144,7 +144,7 @@ TEST_CASE("Test Feder", "[feder]") {
 
     auto version = GenTestVersionList();
 
-    auto base_gen = [&]() {
+    auto base_gen = [=]() {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = knowhere::metric::L2;
@@ -153,14 +153,14 @@ TEST_CASE("Test Feder", "[feder]") {
         return json;
     };
 
-    auto ivfflat_gen = [&base_gen]() {
+    auto ivfflat_gen = [base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::NLIST] = 16;
         json[knowhere::indexparam::NPROBE] = 4;
         return json;
     };
 
-    auto hnsw_gen = [&base_gen]() {
+    auto hnsw_gen = [base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::HNSW_M] = 8;
         json[knowhere::indexparam::EFCONSTRUCTION] = 200;
