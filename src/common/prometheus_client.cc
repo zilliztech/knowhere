@@ -73,6 +73,34 @@ DEFINE_PROMETHEUS_HISTOGRAM(queue_latency, PROMETHEUS_LABEL_CARDINAL)
 DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(exec_latency, "execute latency per request")
 DEFINE_PROMETHEUS_HISTOGRAM(exec_latency, PROMETHEUS_LABEL_CARDINAL)
 
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(graph_search_cnt, "number of graph search per request")
+DEFINE_PROMETHEUS_HISTOGRAM(graph_search_cnt, PROMETHEUS_LABEL_CARDINAL)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(ivf_search_cnt, "number of ivf search per request")
+DEFINE_PROMETHEUS_HISTOGRAM(ivf_search_cnt, PROMETHEUS_LABEL_CARDINAL)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(bf_search_cnt, "number of bf search per request")
+DEFINE_PROMETHEUS_HISTOGRAM(bf_search_cnt, PROMETHEUS_LABEL_CARDINAL)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(re_search_cnt, "number of fallback search per request")
+DEFINE_PROMETHEUS_HISTOGRAM(re_search_cnt, PROMETHEUS_LABEL_CARDINAL)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(filter_connectivity_ratio, "avg connectivity ratio set under filtering per request")
+DEFINE_PROMETHEUS_HISTOGRAM(filter_connectivity_ratio, PROMETHEUS_LABEL_CARDINAL)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(filter_mv_only_cnt, "mv only cnt per request")
+DEFINE_PROMETHEUS_HISTOGRAM(filter_mv_only_cnt, PROMETHEUS_LABEL_CARDINAL)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(filter_mv_activated_fields_cnt, "avg mv activated fields per request")
+DEFINE_PROMETHEUS_HISTOGRAM(filter_mv_activated_fields_cnt, PROMETHEUS_LABEL_CARDINAL)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(filter_mv_change_base_cnt, "mv change base cnt per request")
+DEFINE_PROMETHEUS_HISTOGRAM(filter_mv_change_base_cnt, PROMETHEUS_LABEL_CARDINAL)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(filter_mv_supplement_ep_bool_cnt,
+                                   "mv supplement ep from bitset boolean cnt per request")
+DEFINE_PROMETHEUS_HISTOGRAM(filter_mv_supplement_ep_bool_cnt, PROMETHEUS_LABEL_CARDINAL)
+
 DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(hnsw_bitset_ratio, "HNSW bitset ratio for search and range search")
 DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(hnsw_bitset_ratio, PROMETHEUS_LABEL_KNOWHERE, ratioBuckets)
 
