@@ -386,18 +386,16 @@ class HnswIndexNode : public IndexNode {
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
 
-        char* data = nullptr;
         try {
-            data = new char[index_->data_size_ * rows];
+            auto data = std::make_unique<uint8_t[]>(index_->data_size_ * rows);
             for (int64_t i = 0; i < rows; i++) {
                 int64_t id = ids[i];
                 assert(id >= 0 && id < (int64_t)index_->cur_element_count);
-                std::copy_n(index_->getDataByInternalId(id), index_->data_size_, data + i * index_->data_size_);
+                std::copy_n(index_->getDataByInternalId(id), index_->data_size_, data.get() + i * index_->data_size_);
             }
-            return GenResultDataSet(rows, dim, data);
+            return GenResultDataSet(rows, dim, std::move(data));
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
-            std::unique_ptr<char> auto_del(data);
             return expected<DataSetPtr>::Err(Status::hnsw_inner_error, e.what());
         }
     }
