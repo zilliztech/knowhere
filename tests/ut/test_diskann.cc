@@ -134,7 +134,6 @@ TEST_CASE("Invalid diskann params test", "[diskann]") {
             REQUIRE_FALSE(res.has_value());
             REQUIRE(res.error() == knowhere::Status::out_of_range_in_json);
         }
-#endif
         // min_k > max_k
         {
             test_json = test_gen();
@@ -144,6 +143,7 @@ TEST_CASE("Invalid diskann params test", "[diskann]") {
             REQUIRE_FALSE(res.has_value());
             REQUIRE(res.error() == knowhere::Status::out_of_range_in_json);
         }
+#endif
     }
     fs::remove_all(kDir);
     fs::remove(kDir);

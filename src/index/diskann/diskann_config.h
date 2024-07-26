@@ -73,11 +73,6 @@ class DiskANNConfig : public BaseConfig {
     // use PQ + Refine. Default to -1.0f, negative vlaues will use dynamic threshold calculator given topk.
     CFG_FLOAT filter_threshold;
     KNOHWERE_DECLARE_CONFIG(DiskANNConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
-            .set_default("L2")
-            .description("metric type")
-            .for_train_and_search()
-            .for_deserialize();
         KNOWHERE_CONFIG_DECLARE_FIELD(max_degree)
             .description("the degree of the graph index.")
             .set_default(48)
@@ -89,6 +84,7 @@ class DiskANNConfig : public BaseConfig {
             .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
             .for_train()
             .for_search()
+            .for_range_search()
             .for_iterator();
         KNOWHERE_CONFIG_DECLARE_FIELD(pq_code_budget_gb)
             .description("the size of PQ compressed representation in GB.")
