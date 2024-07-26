@@ -77,6 +77,106 @@ namespace diskann {
     QueryScratch<T> scratch;
   };
 
+
+  class SortedVector {
+  public:
+      explicit SortedVector(size_t max_size) : max_size(max_size) {
+        data.reserve(max_size * 2);
+      }
+
+      void push(const Neighbor& neighbor) {
+          // 使用二分查找找到插入位置
+          auto it = std::lower_bound(data.begin(), data.end(), neighbor);
+          data.insert(it, neighbor);
+          if (data.size() > max_size) {
+              data.pop_back();
+          }
+      }
+
+      Neighbor pop() {
+          if (data.empty()) {
+              throw std::out_of_range("Pop from empty vector");
+          }
+          Neighbor minElem = data.front();
+          data.erase(data.begin());
+          return minElem;
+      }
+
+      const Neighbor& front() const {
+          if (data.empty()) {
+              throw std::out_of_range("Accessing front of empty vector");
+          }
+          return data.front();
+      }
+
+      const Neighbor& back() const {
+          if (data.empty()) {
+              throw std::out_of_range("Accessing back of empty vector");
+          }
+          return data.back();
+      }
+
+      bool empty() const {
+          return data.empty();
+      }
+
+      size_t size() const {
+          return data.size();
+      }
+
+  private:
+      size_t max_size;
+      std::vector<Neighbor> data;
+  };
+
+struct config {
+    // 构造函数
+    config(void* query_data, const _u64 ef, const bool for_tun, 
+           const knowhere::BitsetView& bt, 
+           const _u64 b_width, const float filter_ratio_in, const bool use_reorder_data)
+        : query_data(query_data),
+          l_search(ef),
+          beam_width(b_width),
+          use_reorder_data(use_reorder_data), // 使用传入的值
+          bitset(bt),
+          filter_ratio_in(filter_ratio_in), // 使用传入的值
+          for_tuning(for_tun) {}
+
+    bool initial_search_done = false;
+    void* query_data;
+    const _u64 l_search; // ef
+    const _u64 beam_width;
+    const bool use_reorder_data; // 是否使用重排数据
+    knowhere::BitsetView bitset;
+    const float filter_ratio_in;
+    const bool for_tuning;
+};
+
+struct IteratorWorkspace {
+    IteratorWorkspace(void* query_data, const _u64 ef, const bool for_tun, 
+                      const knowhere::BitsetView& bt, const _u64 b_width, float alpha, 
+                      const float filter_ratio_in, const bool use_reorder_data)
+        : Config(query_data, ef, for_tun, bt, b_width, filter_ratio_in, use_reorder_data),
+          accumulative_alpha(alpha), res(ef) {}
+
+    float accumulative_alpha;
+    config Config; 
+    SortedVector res;
+    tsl::robin_set<_u64> visited; 
+    std::priority_queue<diskann::Neighbor, std::vector<diskann::Neighbor>> candidate;
+    std::vector<knowhere::DistId> dists; // 统一接口
+
+    struct cmp {
+        bool operator()(const knowhere::DistId& d1, const knowhere::DistId& d2) {
+            return d1.val > d2.val;
+        }
+    };
+    std::priority_queue<knowhere::DistId, std::vector<knowhere::DistId>, cmp> refined_dists;  // refined dist
+};
+
+
+  
+
   template<typename T>
   class PQFlashIndex {
    public:
@@ -129,6 +229,15 @@ namespace diskann {
     size_t get_num_medoids() const noexcept;
 
     diskann::Metric get_metric() const noexcept;
+
+    void getIteratorNextBatch(IteratorWorkspace* workspace);
+
+    
+    std::unique_ptr<IteratorWorkspace> getIteratorWorkspace(
+      void *query_data, const _u64 ef, const _u64 beam_width,
+      const bool use_reorder_data, const float filter_ratio_in,
+      const bool for_tun, const knowhere::BitsetView &bitset);
+
 
     _u64 cal_size();
 
