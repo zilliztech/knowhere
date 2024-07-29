@@ -38,7 +38,7 @@ class GpuRaftCagraHybridIndexNode : public GpuRaftCagraIndexNode<DataType> {
     Status
     Train(const DataSetPtr dataset, const Config& cfg) override {
         const GpuRaftCagraConfig& cagra_cfg = static_cast<const GpuRaftCagraConfig&>(cfg);
-        if (cagra_cfg.adapt_for_cpu)
+        if (cagra_cfg.adapt_for_cpu.value())
             adapt_for_cpu = true;
         return GpuRaftCagraIndexNode<DataType>::Train(dataset, cfg);
     }
@@ -109,6 +109,16 @@ class GpuRaftCagraHybridIndexNode : public GpuRaftCagraIndexNode<DataType> {
             binset.Append(std::string(this->Type()) + "_cpu", index_binary, buf.str().size());
         }
         return result;
+    }
+
+    int64_t
+    Count() const override {
+        if (!adapt_for_cpu)
+            return GpuRaftCagraIndexNode<DataType>::Count();
+        if (!hnsw_index_) {
+            return 0;
+        }
+        return hnsw_index_->cur_element_count;
     }
 
     Status
