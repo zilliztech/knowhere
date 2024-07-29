@@ -342,7 +342,7 @@ TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {
         fs::remove(kDir);
         REQUIRE_NOTHROW(fs::create_directories(kL2IndexDir));
 
-        auto base_gen = [&] {
+        auto base_gen = [=] {
             knowhere::Json json;
             json[knowhere::meta::RETRIEVE_FRIENDLY] = true;
             json["dim"] = dim;
@@ -351,7 +351,7 @@ TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {
             return json;
         };
 
-        auto build_gen = [&]() {
+        auto build_gen = [=]() {
             knowhere::Json json = base_gen();
             json["index_prefix"] = kL2IndexPrefix;
             json["data_path"] = kRawDataPath;

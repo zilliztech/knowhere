@@ -35,7 +35,7 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
     int64_t build_task_num = 1;
     int64_t search_task_num = 10;
 
-    auto base_gen = [&]() {
+    auto base_gen = [=]() {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = metric;
@@ -45,7 +45,7 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
         return json;
     };
 
-    auto ivf_gen = [&base_gen]() {
+    auto ivf_gen = [base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::NLIST] = 128;
         json[knowhere::indexparam::NPROBE] = 16;
@@ -53,14 +53,14 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
         return json;
     };
 
-    auto ivf_cc_gen = [&ivf_gen]() {
+    auto ivf_cc_gen = [ivf_gen]() {
         knowhere::Json json = ivf_gen();
         json[knowhere::meta::NUM_BUILD_THREAD] = 1;
         json[knowhere::indexparam::SSIZE] = 48;
         return json;
     };
 
-    auto ivf_sq_8_cc_gen = [&ivf_cc_gen]() {
+    auto ivf_sq_8_cc_gen = [ivf_cc_gen]() {
         knowhere::Json json = ivf_cc_gen();
         json[knowhere::indexparam::CODE_SIZE] = 8;
         return json;

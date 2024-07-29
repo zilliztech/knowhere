@@ -378,7 +378,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
                        .value();
         uint32_t nb = 1000;
         uint32_t dim = 128;
-        auto ivf_pq_gen = [&]() {
+        auto ivf_pq_gen = [=]() {
             knowhere::Json json;
             json[knowhere::meta::DIM] = dim;
             json[knowhere::meta::METRIC_TYPE] = knowhere::metric::L2;
@@ -398,7 +398,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
                        .value();
         uint32_t nb = 1000;
         uint32_t dim = 128;
-        auto ivf_pq_gen = [&]() {
+        auto ivf_pq_gen = [=]() {
             knowhere::Json json;
             json[knowhere::meta::DIM] = dim;
             json[knowhere::meta::METRIC_TYPE] = knowhere::metric::L2;

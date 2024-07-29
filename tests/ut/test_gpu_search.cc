@@ -30,7 +30,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
 
     auto version = GenTestVersionList();
 
-    auto base_gen = [&]() {
+    auto base_gen = [=]() {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = knowhere::metric::L2;
@@ -42,21 +42,21 @@ TEST_CASE("Test All GPU Index", "[search]") {
 
     auto bruteforce_gen = base_gen;
 
-    auto ivfflat_gen = [&base_gen]() {
+    auto ivfflat_gen = [base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::NLIST] = 16;
         json[knowhere::indexparam::NPROBE] = 16;
         return json;
     };
 
-    auto ivfpq_gen = [&ivfflat_gen]() {
+    auto ivfpq_gen = [ivfflat_gen]() {
         knowhere::Json json = ivfflat_gen();
         json[knowhere::indexparam::M] = 0;
         json[knowhere::indexparam::NBITS] = 8;
         return json;
     };
 
-    auto cagra_gen = [&base_gen]() {
+    auto cagra_gen = [base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE] = 128;
         json[knowhere::indexparam::GRAPH_DEGREE] = 64;

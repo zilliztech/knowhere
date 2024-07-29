@@ -40,7 +40,7 @@ TEST_CASE("Test Kmeans With Float Vector", "[float metrics]") {
     const std::string NUM_CLUSTERS = "num_clusters";
     auto topk = 1;
 
-    auto base_gen = [&]() {
+    auto base_gen = [=]() {
         knowhere::Json json;
         json[NUM_CLUSTERS] = num_clusters;
         return json;
