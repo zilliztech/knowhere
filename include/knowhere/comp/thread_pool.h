@@ -12,8 +12,8 @@
 #pragma once
 
 #include <omp.h>
-
 #ifdef __linux__
+#include <cblas.h>
 #include <sys/resource.h>
 #if __GLIBC__ == 2 && __GLIBC_MINOR__ < 30
 #include <sys/syscall.h>
@@ -230,7 +230,9 @@ class ThreadPool {
 
     class ScopedOmpSetter {
         int omp_before;
-
+#if defined(OPENBLAS_OS_LINUX)
+        int blas_thread_before;
+#endif
      public:
         explicit ScopedOmpSetter(int num_threads = 0) {
             if (build_pool_ == nullptr) {  // this should not happen in prod
@@ -239,10 +241,18 @@ class ThreadPool {
                 omp_before = build_pool_->size();
             }
 
+#if defined(OPENBLAS_OS_LINUX)
+            blas_thread_before = openblas_get_num_threads();
+            openblas_set_num_threads(1);
+#endif
+
             omp_set_num_threads(num_threads <= 0 ? omp_before : num_threads);
         }
         ~ScopedOmpSetter() {
             omp_set_num_threads(omp_before);
+#if defined(OPENBLAS_OS_LINUX)
+            openblas_set_num_threads(blas_thread_before);
+#endif
         }
     };
 
