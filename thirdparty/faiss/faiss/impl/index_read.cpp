@@ -27,6 +27,7 @@
 #include <faiss/Index2Layer.h>
 #include <faiss/IndexAdditiveQuantizer.h>
 #include <faiss/IndexAdditiveQuantizerFastScan.h>
+#include <faiss/IndexCosine.h>
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexHNSW.h>
 #include <faiss/IndexIVF.h>
@@ -685,6 +686,20 @@ Index* read_index(IOReader* f, int io_flags) {
     if (h == fourcc("null")) {
         // denotes a missing index, useful for some cases
         return nullptr;
+    } else if (h == fourcc("IxF9")) {
+        IndexFlatCosine* idxf = new IndexFlatCosine();
+        read_index_header(idxf, f);
+        idxf->code_size = idxf->d * sizeof(float);
+        READXBVECTOR(idxf->codes);
+        READVECTOR(idxf->code_norms);
+
+        // reconstruct inverse norms
+        idxf->inverse_norms_storage = L2NormsStorage::from_l2_norms(idxf->code_norms);
+
+        FAISS_THROW_IF_NOT(
+                idxf->codes.size() == idxf->ntotal * idxf->code_size);
+        // leak!
+        idx = idxf;
     } else if (
             h == fourcc("IxFI") || h == fourcc("IxF2") || h == fourcc("IxFl")) {
         IndexFlat* idxf;
@@ -1139,7 +1154,7 @@ Index* read_index(IOReader* f, int io_flags) {
         idx = idxp;
     } else if (
             h == fourcc("IHNf") || h == fourcc("IHNp") || h == fourcc("IHNs") ||
-            h == fourcc("IHN2") || h == fourcc("IHNc")) {
+            h == fourcc("IHN2") || h == fourcc("IHNc") || h == fourcc("IHN9")) {
         IndexHNSW* idxhnsw = nullptr;
         if (h == fourcc("IHNf"))
             idxhnsw = new IndexHNSWFlat();
@@ -1151,6 +1166,8 @@ Index* read_index(IOReader* f, int io_flags) {
             idxhnsw = new IndexHNSW2Level();
         if (h == fourcc("IHNc"))
             idxhnsw = new IndexHNSWCagra();
+        if (h == fourcc("IHN9"))
+            idxhnsw = new IndexHNSWFlatCosine();
         read_index_header(idxhnsw, f);
         if (h == fourcc("IHNc")) {
             READ1(idxhnsw->keep_max_size_level0);

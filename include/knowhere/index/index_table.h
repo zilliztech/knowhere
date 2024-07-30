@@ -66,6 +66,8 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     {IndexEnum::INDEX_HNSW_SQ8_REFINE, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_HNSW_SQ8_REFINE, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_HNSW_SQ8_REFINE, VecType::VECTOR_BFLOAT16},
+    // faiss hnsw
+    {IndexEnum::INDEX_FAISS_HNSW_FLAT, VecType::VECTOR_FLOAT},
     // diskann
     {IndexEnum::INDEX_DISKANN, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_DISKANN, VecType::VECTOR_FLOAT16},
