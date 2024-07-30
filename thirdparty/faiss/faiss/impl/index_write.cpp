@@ -27,6 +27,7 @@
 #include <faiss/Index2Layer.h>
 #include <faiss/IndexAdditiveQuantizer.h>
 #include <faiss/IndexAdditiveQuantizerFastScan.h>
+#include <faiss/IndexCosine.h>
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexHNSW.h>
 #include <faiss/IndexIVF.h>
@@ -559,6 +560,14 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         // eg. for a storage component of HNSW that is set to nullptr
         uint32_t h = fourcc("null");
         WRITE1(h);
+    } else if (const IndexFlatCosine* idxf = dynamic_cast<const IndexFlatCosine*>(idx)) {
+        uint32_t h = fourcc("IxF9");
+        WRITE1(h);
+        write_index_header(idx, f);
+        WRITEXBVECTOR(idxf->codes);
+        // we're storing real l2 norms, because of
+        //   backward compatibility issues. 
+        WRITEVECTOR(idxf->inverse_norms_storage.as_l2_norms());
     } else if (const IndexFlat* idxf = dynamic_cast<const IndexFlat*>(idx)) {
         uint32_t h =
                 fourcc(idxf->metric_type == METRIC_INNER_PRODUCT ? "IxFI"
@@ -948,6 +957,7 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
                 : dynamic_cast<const IndexHNSWSQ*>(idx)      ? fourcc("IHNs")
                 : dynamic_cast<const IndexHNSW2Level*>(idx)  ? fourcc("IHN2")
                 : dynamic_cast<const IndexHNSWCagra*>(idx)   ? fourcc("IHNc")
+                : dynamic_cast<const IndexHNSWFlatCosine*>(idx) ? fourcc("IHN9")
                                                              : 0;
         FAISS_THROW_IF_NOT(h != 0);
         WRITE1(h);

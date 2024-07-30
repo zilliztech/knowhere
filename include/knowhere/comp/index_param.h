@@ -53,6 +53,8 @@ constexpr const char* INDEX_HNSW_SQ8 = "HNSW_SQ8";
 constexpr const char* INDEX_HNSW_SQ8_REFINE = "HNSW_SQ8_REFINE";
 constexpr const char* INDEX_DISKANN = "DISKANN";
 
+constexpr const char* INDEX_FAISS_HNSW_FLAT = "FAISS_HNSW_FLAT";
+
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX = "SPARSE_INVERTED_INDEX";
 constexpr const char* INDEX_SPARSE_WAND = "SPARSE_WAND";
 }  // namespace IndexEnum
