@@ -220,6 +220,27 @@ private:
     }
 };
 
+class FaissHnswPqConfig : public FaissHnswConfig {
+public:
+    // number of subquantizers
+    CFG_INT m;
+    // number of bits per subquantizer
+    CFG_INT nbits;
+
+    KNOHWERE_DECLARE_CONFIG(FaissHnswPqConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(m)
+            .description("m")
+            .set_default(32)
+            .for_train()
+            .set_range(1, 65536);
+        KNOWHERE_CONFIG_DECLARE_FIELD(nbits)
+            .description("nbits")
+            .set_default(8)
+            .for_train()
+            .set_range(1, 16);
+    }
+};
+
 }  // namespace knowhere
 
 #endif /* FAISS_HNSW_CONFIG_H */

@@ -539,7 +539,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
     Status
     AddInternal(const DataSetPtr dataset, const Config&) override {
-        if (this->index == nullptr) {
+        if (index == nullptr) {
             LOG_KNOWHERE_ERROR_ << "Can not add data to an empty index.";
             return Status::empty_index;
         }
@@ -547,7 +547,9 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         auto data = dataset->GetTensor();
         auto rows = dataset->GetRows();
         try {
-            this->index->add(rows, reinterpret_cast<const float*>(data));
+            LOG_KNOWHERE_INFO_ << "Adding " << rows << " to HNSW Index";
+
+            index->add(rows, reinterpret_cast<const float*>(data));
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
             return Status::faiss_inner_error;
@@ -617,6 +619,8 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
         hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
 
         // train
+        LOG_KNOWHERE_INFO_ << "Training HNSW Index";
+
         hnsw_index->train(rows, (const float*)data);
 
         // done
@@ -624,6 +628,112 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
         return Status::success;
     }
 };
+
+
+namespace {
+
+// a supporting function
+expected<faiss::ScalarQuantizer::QuantizerType>
+get_sq_quantizer_type(const std::string& sq_type) {
+    std::map<std::string, faiss::ScalarQuantizer::QuantizerType> sq_types = {
+        {"SQ6", faiss::ScalarQuantizer::QT_6bit},
+        {"SQ8", faiss::ScalarQuantizer::QT_8bit},
+        {"FP16", faiss::ScalarQuantizer::QT_fp16},
+        {"BF16", faiss::ScalarQuantizer::QT_bf16}
+    };
+
+    // todo: tolower
+    auto itr = sq_types.find(sq_type);
+    if (itr == sq_types.cend()) {
+        return expected<faiss::ScalarQuantizer::QuantizerType>::Err(
+            Status::invalid_args, fmt::format("invalid scalar quantizer type ({})", sq_type));
+    }
+
+    return itr->second;
+}
+
+expected<bool>
+is_flat_refine(const std::optional<std::string>& refine_type) {
+    // grab a type of a refine index
+    if (!refine_type.has_value()) {
+        return true;
+    };
+    
+    // todo: tolower
+    if (refine_type.value() == "FP32" || refine_type.value() == "FLAT") {
+        return true;
+    };
+
+    // parse
+    auto refine_sq_type = get_sq_quantizer_type(refine_type.value());
+    if (!refine_sq_type.has_value()) {
+        LOG_KNOWHERE_ERROR_ << "Invalid refine type: " << refine_type.value();
+        return expected<bool>::Err(
+            Status::invalid_args, fmt::format("invalid refine type ({})", refine_type.value()));
+    }
+    
+    return false;
+}
+
+// pick a refine index
+expected<std::unique_ptr<faiss::Index>>
+pick_refine_index(const std::optional<std::string>& refine_type, std::unique_ptr<faiss::IndexHNSW>&& hnsw_index) {
+    // yes
+
+    // grab a type of a refine index
+    expected<bool> is_fp32_flat = is_flat_refine(refine_type);
+    if (!is_fp32_flat.has_value()) {
+        return expected<std::unique_ptr<faiss::Index>>::Err(
+            Status::invalid_args, "");
+    }
+
+    const bool is_fp32_flat_v = is_fp32_flat.value();
+
+    std::unique_ptr<faiss::IndexHNSW> local_hnsw_index = std::move(hnsw_index);
+
+    // either build flat or sq
+    if (is_fp32_flat_v) {
+        // build IndexFlat as a refine
+        auto refine_index = std::make_unique<faiss::IndexRefineFlat>(local_hnsw_index.get());
+        
+        // let refine_index to own everything
+        refine_index->own_fields = true;
+        local_hnsw_index.release();
+
+        // reassign
+        return refine_index;
+    } else {
+        // being IndexScalarQuantizer as a refine
+        auto refine_sq_type = get_sq_quantizer_type(refine_type.value());
+
+        // a redundant check
+        if (!refine_sq_type.has_value()) {
+            LOG_KNOWHERE_ERROR_ << "Invalid refine type: " << refine_type.value();
+            return expected<std::unique_ptr<faiss::Index>>::Err(
+                Status::invalid_args, fmt::format("invalid refine type ({})", refine_type.value()));
+        }
+
+        // create an sq
+        auto sq_refine = std::make_unique<faiss::IndexScalarQuantizer>(
+            local_hnsw_index->storage->d, 
+            refine_sq_type.value(), 
+            local_hnsw_index->storage->metric_type
+        );
+
+        auto refine_index = std::make_unique<faiss::IndexRefine>(local_hnsw_index.get(), sq_refine.get());
+
+        // let refine_index to own everything
+        refine_index->own_refine_index = true;
+        refine_index->own_fields = true;
+        local_hnsw_index.release();
+        sq_refine.release();
+
+        // reassign
+        return refine_index;
+    }
+}
+
+}  // namespace
 
 //
 template<typename DataType>
@@ -685,103 +795,208 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
         std::unique_ptr<faiss::Index> final_index;
         if (hnsw_cfg.refine.value_or(false)) {
             // yes
+            auto final_index_cnd = pick_refine_index(hnsw_cfg.refine_type, std::move(hnsw_index));
+            if (!final_index_cnd.has_value()) {
+                return Status::invalid_args;
+            } 
 
-            // grab a type of a refine index
-            bool is_fp32_flat = false;
-            if (!hnsw_cfg.refine_type.has_value()) {
-                is_fp32_flat = true;
-            } else {
-                // todo: tolower
-                if (hnsw_cfg.refine_type.value() == "FP32" || hnsw_cfg.refine_type.value() == "FLAT") {
-                    is_fp32_flat = true;
-                } else {
-                    // parse
-                    auto refine_sq_type = get_sq_quantizer_type(hnsw_cfg.refine_type.value());
-                    if (!refine_sq_type.has_value()) {
-                        LOG_KNOWHERE_ERROR_ << "Invalid refine type: " << hnsw_cfg.refine_type.value();
-                        return Status::invalid_args;
-                    }
-
-                    // recognized one, it is not fp32 flat
-                    is_fp32_flat = false;
-                }
-            }
-
-            // either build flat or sq
-            if (is_fp32_flat) {
-                // build IndexFlat as a refine
-                auto refine_index = std::make_unique<faiss::IndexRefineFlat>(hnsw_index.get());
-                
-                // let refine_index to own everything
-                refine_index->own_fields = true;
-                hnsw_index.release();
-
-                // reassign
-                final_index = std::move(refine_index);
-            } else {
-                // being IndexScalarQuantizer as a refine
-                auto refine_sq_type = get_sq_quantizer_type(hnsw_cfg.refine_type.value());
-
-                // a redundant check
-                if (!refine_sq_type.has_value()) {
-                    LOG_KNOWHERE_ERROR_ << "Invalid refine type: " << hnsw_cfg.refine_type.value();
-                    return Status::invalid_args;
-                }
-
-                // create an sq
-                auto sq_refine = std::make_unique<faiss::IndexScalarQuantizer>(
-                    dim, refine_sq_type.value(), metric.value()
-                );
-
-                auto refine_index = std::make_unique<faiss::IndexRefine>(hnsw_index.get(), sq_refine.get());
-
-                // let refine_index to own everything
-                refine_index->own_refine_index = true;
-                refine_index->own_fields = true;
-                hnsw_index.release();
-                sq_refine.release();
-
-                // reassign
-                final_index = std::move(refine_index);
-            }
+            // assign
+            final_index = std::move(final_index_cnd.value());
         } else {
             // no refine
 
-            // reassign
+            // assign
             final_index = std::move(hnsw_index);
         }
 
         // train
+        LOG_KNOWHERE_INFO_ << "Training HNSW Index";
+
         final_index->train(rows, (const float*)data);
 
         // done
         index = std::move(final_index);
         return Status::success;
     }
-
-private:
-    expected<faiss::ScalarQuantizer::QuantizerType>
-    static get_sq_quantizer_type(const std::string& sq_type) {
-        std::map<std::string, faiss::ScalarQuantizer::QuantizerType> sq_types = {
-            {"SQ6", faiss::ScalarQuantizer::QT_6bit},
-            {"SQ8", faiss::ScalarQuantizer::QT_8bit},
-            {"FP16", faiss::ScalarQuantizer::QT_fp16},
-            {"BF16", faiss::ScalarQuantizer::QT_bf16}
-        };
-
-        // todo: tolower
-        auto itr = sq_types.find(sq_type);
-        if (itr == sq_types.cend()) {
-            return expected<faiss::ScalarQuantizer::QuantizerType>::Err(
-                Status::invalid_args, fmt::format("invalid scalar quantizer type ({})", sq_type));
-        }
-
-        return itr->second;
-    }
 };
 
 
+// this index trains PQ and HNSW+FLAT separately, then constructs HNSW+PQ
+template<typename DataType>
+class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
+  public:
+    BaseFaissRegularIndexHNSWPQNode(const int32_t& version, const Object& object) :
+        BaseFaissRegularIndexHNSWNode(version, object) {}
+
+    std::unique_ptr<BaseConfig>
+    CreateConfig() const override {
+        return std::make_unique<FaissHnswPqConfig>();
+    }
+
+    std::string
+    Type() const override {
+        return knowhere::IndexEnum::INDEX_FAISS_HNSW_PQ;
+    }
+
+  protected:
+    std::unique_ptr<faiss::IndexPQ> tmp_index_pq;
+
+    Status TrainInternal(const DataSetPtr dataset, const Config& cfg) override {
+        // number of rows
+        auto rows = dataset->GetRows();
+        // dimensionality of the data
+        auto dim = dataset->GetDim();
+        // data
+        auto data = dataset->GetTensor();
+
+        // config
+        auto hnsw_cfg = static_cast<const FaissHnswPqConfig&>(cfg);
+
+        auto metric = Str2FaissMetricType(hnsw_cfg.metric_type.value());
+        if (!metric.has_value()) {
+            LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << hnsw_cfg.metric_type.value();
+            return Status::invalid_metric_type;
+        }
+
+        // create an index
+        const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
+
+        // HNSW + PQ index yields BAD recall somewhy.
+        // Let's build HNSW+FLAT index, then replace FLAT with PQ
+
+        std::unique_ptr<faiss::IndexHNSW> hnsw_index;
+        if (is_cosine) {
+            hnsw_index = std::make_unique<faiss::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
+        } else {
+            hnsw_index = std::make_unique<faiss::IndexHNSWFlat>(dim, hnsw_cfg.M.value(), metric.value());
+        }
+
+        hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
+
+        // pq
+        std::unique_ptr<faiss::IndexPQ> pq_index;
+        if (is_cosine) {
+            pq_index = std::make_unique<faiss::IndexPQCosine>(dim, hnsw_cfg.m.value(), hnsw_cfg.nbits.value());
+        } else {
+            pq_index = std::make_unique<faiss::IndexPQ>(dim, hnsw_cfg.m.value(), hnsw_cfg.nbits.value(), metric.value());
+        }
+
+
+        // should refine be used?
+        std::unique_ptr<faiss::Index> final_index;
+        if (hnsw_cfg.refine.value_or(false)) {
+            // yes
+            auto final_index_cnd = pick_refine_index(hnsw_cfg.refine_type, std::move(hnsw_index));
+            if (!final_index_cnd.has_value()) {
+                return Status::invalid_args;
+            } 
+
+            // assign
+            final_index = std::move(final_index_cnd.value());
+        } else {
+            // no refine
+
+            // assign
+            final_index = std::move(hnsw_index);
+        }
+
+        // train hnswflat
+        LOG_KNOWHERE_INFO_ << "Training HNSW Index";
+
+        final_index->train(rows, (const float*)data);
+
+        // train pq
+        LOG_KNOWHERE_INFO_ << "Training PQ Index";
+
+        pq_index->train(rows, (const float*)data);
+        pq_index->pq.compute_sdc_table();
+
+        // done
+        index = std::move(final_index);
+        tmp_index_pq = std::move(pq_index);
+        return Status::success;
+    }
+
+    Status
+    AddInternal(const DataSetPtr dataset, const Config&) override {
+        if (this->index == nullptr) {
+            LOG_KNOWHERE_ERROR_ << "Can not add data to an empty index.";
+            return Status::empty_index;
+        }
+
+        auto data = dataset->GetTensor();
+        auto rows = dataset->GetRows();
+        try {
+            // hnsw
+            LOG_KNOWHERE_INFO_ << "Adding " << rows << " to HNSW Index";
+
+            index->add(rows, reinterpret_cast<const float*>(data));
+
+            // pq
+            LOG_KNOWHERE_INFO_ << "Adding " << rows << " to PQ Index";
+
+            tmp_index_pq->add(rows, reinterpret_cast<const float*>(data));
+
+            // we're done.
+            // throw away flat and replace it with pq
+
+            // check if we have a refine available.
+            faiss::IndexHNSW* index_hnsw = nullptr;
+
+            faiss::IndexRefine* const index_refine = 
+                dynamic_cast<faiss::IndexRefine*>(index.get());
+
+            if (index_refine != nullptr) {
+                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index_refine->base_index);
+            } else {
+                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index.get());
+            }
+
+            // recreate hnswpq
+            std::unique_ptr<faiss::IndexHNSW> index_hnsw_pq; 
+
+            if (index_hnsw->storage->is_cosine) {
+                index_hnsw_pq = std::make_unique<faiss::IndexHNSWPQCosine>();
+            } else {
+                index_hnsw_pq = std::make_unique<faiss::IndexHNSWPQ>();
+            }
+
+            // C++ slicing
+            static_cast<faiss::IndexHNSW&>(*index_hnsw_pq) = 
+                std::move(static_cast<faiss::IndexHNSW&&>(*index_hnsw));
+
+            // clear out the storage
+            delete index_hnsw->storage;
+            index_hnsw->storage = nullptr;
+            index_hnsw_pq->storage = nullptr;
+
+            // replace storage
+            index_hnsw_pq->storage = tmp_index_pq.release();
+
+            // replace if refine
+            if (index_refine != nullptr) {
+                delete index_refine->base_index;
+                index_refine->base_index = index_hnsw_pq.release();
+            } else {
+                index = std::move(index_hnsw_pq);
+            }
+
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+            return Status::faiss_inner_error;
+        }
+
+        return Status::success;
+    }
+
+};
+
+
+
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_FLAT, BaseFaissRegularIndexHNSWFlatNode, fp32);
+
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_SQ, BaseFaissRegularIndexHNSWSQNode, fp32);
+
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_PQ, BaseFaissRegularIndexHNSWPQNode, fp32);
 
 }  // namespace knowhere
