@@ -973,6 +973,17 @@ Index* read_index(IOReader* f, int io_flags) {
         }
         read_InvertedLists(ivfl, f, io_flags);
         idx = ivfl;
+    } else if (h == fourcc("IxS8")) {
+        IndexScalarQuantizerCosine* idxs = new IndexScalarQuantizerCosine();
+        read_index_header(idxs, f);
+        read_ScalarQuantizer(&idxs->sq, f);
+        READVECTOR(idxs->codes);
+        idxs->code_size = idxs->sq.code_size;
+
+        // reconstruct inverse norms
+        READVECTOR(idxs->inverse_norms_storage.inverse_l2_norms);
+
+        idx = idxs;
     } else if (h == fourcc("IxSQ")) {
         IndexScalarQuantizer* idxs = new IndexScalarQuantizer();
         read_index_header(idxs, f);
@@ -1154,7 +1165,8 @@ Index* read_index(IOReader* f, int io_flags) {
         idx = idxp;
     } else if (
             h == fourcc("IHNf") || h == fourcc("IHNp") || h == fourcc("IHNs") ||
-            h == fourcc("IHN2") || h == fourcc("IHNc") || h == fourcc("IHN9")) {
+            h == fourcc("IHN2") || h == fourcc("IHNc") || h == fourcc("IHN9") ||
+            h == fourcc("IHN8")) {
         IndexHNSW* idxhnsw = nullptr;
         if (h == fourcc("IHNf"))
             idxhnsw = new IndexHNSWFlat();
@@ -1168,6 +1180,8 @@ Index* read_index(IOReader* f, int io_flags) {
             idxhnsw = new IndexHNSWCagra();
         if (h == fourcc("IHN9"))
             idxhnsw = new IndexHNSWFlatCosine();
+        if (h == fourcc("IHN8"))
+            idxhnsw = new IndexHNSWSQCosine();
         read_index_header(idxhnsw, f);
         if (h == fourcc("IHNc")) {
             READ1(idxhnsw->keep_max_size_level0);

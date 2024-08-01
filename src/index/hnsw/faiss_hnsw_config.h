@@ -39,6 +39,8 @@ class FaissHnswConfig : public BaseConfig {
     CFG_BOOL refine;
     // undefined value leads to a search without a refine
     CFG_FLOAT refine_k;
+    // type of refine
+    CFG_STRING refine_type;
 
     KNOHWERE_DECLARE_CONFIG(FaissHnswConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(M).description("hnsw M").set_default(30).set_range(2, 2048).for_train();
@@ -78,6 +80,10 @@ class FaissHnswConfig : public BaseConfig {
             .allow_empty_without_default()
             .set_range(1, std::numeric_limits<CFG_FLOAT::value_type>::max())
             .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine_type)
+            .description("the type of a refine index")
+            .allow_empty_without_default()
+            .for_train();
     }
 
     Status
@@ -107,6 +113,23 @@ class FaissHnswConfig : public BaseConfig {
         }
         return Status::success;
     }
+
+ protected:
+    bool WhetherAcceptableRefineType(const std::string& refine_type) {
+        // 'flat' is identical to 'fp32'
+        std::vector<std::string> allowed_list = {
+            "SQ8", "FP16", "BF16", "FP32", "FLAT"};
+        
+        // todo: tolower()
+
+        for (const auto& allowed : allowed_list) {
+            if (refine_type == allowed) {
+                return true;
+            }
+        }
+
+        return false;
+    }
 };
 
 class FaissHnswFlatConfig : public FaissHnswConfig {
@@ -121,13 +144,79 @@ class FaissHnswFlatConfig : public FaissHnswConfig {
 
         // check our parameters
         if (param_type == PARAM_TYPE::TRAIN) {
+            // prohibit refine
             if (refine.value_or(false)) {
-                *err_msg = "refine is not currently supported for this index";
+                *err_msg = "refine is not supported for this index";
+                LOG_KNOWHERE_ERROR_ << *err_msg;
+                return Status::invalid_value_in_json;
+            }
+
+            if (refine_type.has_value()) {
+                *err_msg = "refine is not supported for this index";
                 LOG_KNOWHERE_ERROR_ << *err_msg;
                 return Status::invalid_value_in_json;
             }
         }
         return Status::success;
+    }
+};
+
+class FaissHnswSqConfig : public FaissHnswConfig {
+public:
+    // user can use quant_type to control quantizer type.
+    // we have fp16, bf16, etc, so '8', '4' and '6' is insufficient
+    CFG_STRING sq_type;
+    KNOHWERE_DECLARE_CONFIG(FaissHnswSqConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(sq_type)
+            .set_default("SQ8")
+            .description("scalar quantizer type")
+            .for_train();
+    };
+
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        // check the base class
+        const auto base_status = FaissHnswConfig::CheckAndAdjust(param_type, err_msg);
+        if (base_status != Status::success) {
+            return base_status;
+        }
+
+        // check our parameters
+        if (param_type == PARAM_TYPE::TRAIN) {
+            auto sq_type_v = sq_type.value();
+            if (!WhetherAcceptableQuantType(sq_type_v)) {
+                *err_msg = "invalid scalar quantizer type";
+                LOG_KNOWHERE_ERROR_ << *err_msg;
+                return Status::invalid_value_in_json;
+            }
+
+            // check refine
+            if (refine_type.has_value()) {
+                if (!WhetherAcceptableRefineType(refine_type.value())) {
+                    *err_msg = "invalid refine type type";
+                    LOG_KNOWHERE_ERROR_ << *err_msg;
+                    return Status::invalid_value_in_json;
+                }
+            }
+        }
+        return Status::success;
+    }
+
+private:
+    bool WhetherAcceptableQuantType(const std::string& sq_type) {
+        // todo: add more
+        std::vector<std::string> allowed_list = {
+            "SQ6", "SQ8", "FP16", "BF16"};
+        
+        // todo: tolower()
+
+        for (const auto& allowed : allowed_list) {
+            if (sq_type == allowed) {
+                return true;
+            }
+        }
+
+        return false;
     }
 };
 
