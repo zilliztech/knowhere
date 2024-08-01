@@ -772,6 +772,16 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITE1(idxp_2->code_size);
         WRITEVECTOR(idxp_2->codes);
     } else if (
+            const IndexScalarQuantizerCosine* idxs =
+                    dynamic_cast<const IndexScalarQuantizerCosine*>(idx)) {
+        uint32_t h = fourcc("IxS8");
+        WRITE1(h);
+        write_index_header(idx, f);
+        write_ScalarQuantizer(&idxs->sq, f);
+        WRITEVECTOR(idxs->codes);
+        // inverse norms
+        WRITEVECTOR(idxs->inverse_norms_storage.inverse_l2_norms);
+    } else if (
             const IndexScalarQuantizer* idxs =
                     dynamic_cast<const IndexScalarQuantizer*>(idx)) {
         uint32_t h = fourcc("IxSQ");
@@ -952,13 +962,14 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         write_index(idxmap->index, f);
         WRITEVECTOR(idxmap->id_map);
     } else if (const IndexHNSW* idxhnsw = dynamic_cast<const IndexHNSW*>(idx)) {
-        uint32_t h = dynamic_cast<const IndexHNSWFlat*>(idx) ? fourcc("IHNf")
-                : dynamic_cast<const IndexHNSWPQ*>(idx)      ? fourcc("IHNp")
-                : dynamic_cast<const IndexHNSWSQ*>(idx)      ? fourcc("IHNs")
-                : dynamic_cast<const IndexHNSW2Level*>(idx)  ? fourcc("IHN2")
-                : dynamic_cast<const IndexHNSWCagra*>(idx)   ? fourcc("IHNc")
+        uint32_t h = dynamic_cast<const IndexHNSWFlat*>(idx)    ? fourcc("IHNf")
+                : dynamic_cast<const IndexHNSWPQ*>(idx)         ? fourcc("IHNp")
+                : dynamic_cast<const IndexHNSWSQ*>(idx)         ? fourcc("IHNs")
+                : dynamic_cast<const IndexHNSW2Level*>(idx)     ? fourcc("IHN2")
+                : dynamic_cast<const IndexHNSWCagra*>(idx)      ? fourcc("IHNc")
                 : dynamic_cast<const IndexHNSWFlatCosine*>(idx) ? fourcc("IHN9")
-                                                             : 0;
+                : dynamic_cast<const IndexHNSWSQCosine*>(idx)   ? fourcc("IHN8")
+                                                                : 0;
         FAISS_THROW_IF_NOT(h != 0);
         WRITE1(h);
         write_index_header(idxhnsw, f);

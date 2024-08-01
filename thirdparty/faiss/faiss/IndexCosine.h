@@ -100,11 +100,37 @@ struct IndexFlatCosine : IndexFlat, HasInverseL2Norms {
 };
 
 //
+struct IndexScalarQuantizerCosine : IndexScalarQuantizer, HasInverseL2Norms {
+    L2NormsStorage inverse_norms_storage;
+
+    IndexScalarQuantizerCosine(
+            int d,
+            ScalarQuantizer::QuantizerType qtype);
+
+    IndexScalarQuantizerCosine();
+
+    void add(idx_t n, const float* x) override;
+    void reset() override;
+
+    DistanceComputer* get_distance_computer() const override;
+
+    const float* get_inverse_l2_norms() const override;
+};
+
+//
 struct IndexHNSWFlatCosine : IndexHNSW {
     IndexHNSWFlatCosine();
     IndexHNSWFlatCosine(int d, int M);
 };
 
+//
+struct IndexHNSWSQCosine : IndexHNSW {
+    IndexHNSWSQCosine();
+    IndexHNSWSQCosine(
+            int d,
+            ScalarQuantizer::QuantizerType qtype,
+            int M);
+};
 
 
 }

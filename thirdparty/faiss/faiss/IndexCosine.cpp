@@ -302,6 +302,52 @@ FlatCodesDistanceComputer* IndexFlatCosine::get_FlatCodesDistanceComputer() cons
 
 //////////////////////////////////////////////////////////////////////////////////
 
+IndexScalarQuantizerCosine::IndexScalarQuantizerCosine(
+        int d,
+        ScalarQuantizer::QuantizerType qtype) 
+        : IndexScalarQuantizer(d, qtype, MetricType::METRIC_INNER_PRODUCT) {
+    is_cosine = true;
+}
+
+IndexScalarQuantizerCosine::IndexScalarQuantizerCosine() : IndexScalarQuantizer() {
+    metric_type = MetricType::METRIC_INNER_PRODUCT;
+    is_cosine = true;
+}
+
+void IndexScalarQuantizerCosine::add(idx_t n, const float* x) {
+    FAISS_THROW_IF_NOT(is_trained);
+    if (n == 0) {
+        return;
+    }
+
+    // todo aguzhva:
+    // it is a tricky situation at this moment, because IndexScalarQuantizerCosine
+    //   contains duplicate norms (one in IndexFlatCodes and one in HasInverseL2Norms).
+    //   Norms in IndexFlatCodes are going to be removed in the future.
+    IndexScalarQuantizer::add(n, x);
+    inverse_norms_storage.add(x, n, d);
+}
+
+void IndexScalarQuantizerCosine::reset() {
+    IndexScalarQuantizer::reset();
+    inverse_norms_storage.reset();
+}
+
+const float* IndexScalarQuantizerCosine::get_inverse_l2_norms() const {
+    return inverse_norms_storage.inverse_l2_norms.data();
+}
+
+DistanceComputer* IndexScalarQuantizerCosine::get_distance_computer() const {
+    return new WithCosineNormDistanceComputer(
+        this->get_inverse_l2_norms(),
+        this->d,
+        std::unique_ptr<faiss::DistanceComputer>(IndexScalarQuantizer::get_FlatCodesDistanceComputer())
+    );
+}
+
+
+//////////////////////////////////////////////////////////////////////////////////
+
 //
 IndexHNSWFlatCosine::IndexHNSWFlatCosine() {
     is_trained = true;
@@ -312,6 +358,21 @@ IndexHNSWFlatCosine::IndexHNSWFlatCosine(int d, int M) :
 {
     own_fields = true;
     is_trained = true;
+}
+
+//////////////////////////////////////////////////////////////////////////////////
+
+//
+IndexHNSWSQCosine::IndexHNSWSQCosine() = default;
+
+IndexHNSWSQCosine::IndexHNSWSQCosine(
+        int d,
+        ScalarQuantizer::QuantizerType qtype,
+        int M) : 
+    IndexHNSW(new IndexScalarQuantizerCosine(d, qtype), M) 
+{
+    is_trained = this->storage->is_trained;
+    own_fields = true;
 }
 
 
