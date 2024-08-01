@@ -591,6 +591,18 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITE1(code_size_i);
         write_VectorTransform(&idxl->rrot, f);
         WRITEVECTOR(idxl->codes);
+    } else if (const IndexPQCosine* idxp = dynamic_cast<const IndexPQCosine*>(idx)) {
+        uint32_t h = fourcc("IxP7");
+        WRITE1(h);
+        write_index_header(idx, f);
+        write_ProductQuantizer(&idxp->pq, f);
+        WRITEVECTOR(idxp->codes);
+        // search params -- maybe not useful to store?
+        WRITE1(idxp->search_type);
+        WRITE1(idxp->encode_signs);
+        WRITE1(idxp->polysemous_ht);
+        // inverse norms
+        WRITEVECTOR(idxp->inverse_norms_storage.inverse_l2_norms);
     } else if (const IndexPQ* idxp = dynamic_cast<const IndexPQ*>(idx)) {
         uint32_t h = fourcc("IxPq");
         WRITE1(h);
@@ -969,6 +981,7 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
                 : dynamic_cast<const IndexHNSWCagra*>(idx)      ? fourcc("IHNc")
                 : dynamic_cast<const IndexHNSWFlatCosine*>(idx) ? fourcc("IHN9")
                 : dynamic_cast<const IndexHNSWSQCosine*>(idx)   ? fourcc("IHN8")
+                : dynamic_cast<const IndexHNSWPQCosine*>(idx)   ? fourcc("IHN7")
                                                                 : 0;
         FAISS_THROW_IF_NOT(h != 0);
         WRITE1(h);

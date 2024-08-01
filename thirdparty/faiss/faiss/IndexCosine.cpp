@@ -349,6 +349,51 @@ DistanceComputer* IndexScalarQuantizerCosine::get_distance_computer() const {
 //////////////////////////////////////////////////////////////////////////////////
 
 //
+IndexPQCosine::IndexPQCosine(int d, size_t M, size_t nbits) : 
+    IndexPQ(d, M, nbits, MetricType::METRIC_INNER_PRODUCT) {
+    is_cosine = true;
+}
+
+IndexPQCosine::IndexPQCosine() : IndexPQ() {
+    metric_type = MetricType::METRIC_INNER_PRODUCT;
+    is_cosine = true;
+} 
+
+void IndexPQCosine::add(idx_t n, const float* x) {
+    FAISS_THROW_IF_NOT(is_trained);
+    if (n == 0) {
+        return;
+    }
+
+    // todo aguzhva:
+    // it is a tricky situation at this moment, because IndexPQCosine
+    //   contains duplicate norms (one in IndexFlatCodes and one in HasInverseL2Norms).
+    //   Norms in IndexFlatCodes are going to be removed in the future.
+    IndexPQ::add(n, x);
+    inverse_norms_storage.add(x, n, d);
+}
+
+void IndexPQCosine::reset() {
+    IndexPQ::reset();
+    inverse_norms_storage.reset();
+}
+
+const float* IndexPQCosine::get_inverse_l2_norms() const {
+    return inverse_norms_storage.inverse_l2_norms.data();
+}
+
+DistanceComputer* IndexPQCosine::get_distance_computer() const {
+    return new WithCosineNormDistanceComputer(
+        this->get_inverse_l2_norms(),
+        this->d,
+        std::unique_ptr<faiss::DistanceComputer>(IndexPQ::get_FlatCodesDistanceComputer())
+    );
+}
+
+
+//////////////////////////////////////////////////////////////////////////////////
+
+//
 IndexHNSWFlatCosine::IndexHNSWFlatCosine() {
     is_trained = true;
 }
@@ -359,6 +404,7 @@ IndexHNSWFlatCosine::IndexHNSWFlatCosine(int d, int M) :
     own_fields = true;
     is_trained = true;
 }
+
 
 //////////////////////////////////////////////////////////////////////////////////
 
@@ -373,6 +419,21 @@ IndexHNSWSQCosine::IndexHNSWSQCosine(
 {
     is_trained = this->storage->is_trained;
     own_fields = true;
+}
+
+
+//
+IndexHNSWPQCosine::IndexHNSWPQCosine() = default;
+
+IndexHNSWPQCosine::IndexHNSWPQCosine(int d, size_t pq_M, int M, size_t pq_nbits) :
+    IndexHNSW(new IndexPQCosine(d, pq_M, pq_nbits), M) 
+{
+    own_fields = true;
+}
+
+void IndexHNSWPQCosine::train(idx_t n, const float* x) {
+    IndexHNSW::train(n, x);
+    (dynamic_cast<IndexPQCosine*>(storage))->pq.compute_sdc_table();
 }
 
 

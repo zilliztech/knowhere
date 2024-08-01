@@ -752,6 +752,23 @@ Index* read_index(IOReader* f, int io_flags) {
         FAISS_THROW_IF_NOT(
                 idxl->codes.size() == idxl->ntotal * idxl->code_size);
         idx = idxl;
+    } else if (h == fourcc("IxP7")) {
+        IndexPQCosine* idxp = new IndexPQCosine();
+        read_index_header(idxp, f);
+        read_ProductQuantizer(&idxp->pq, f);
+        idxp->code_size = idxp->pq.code_size;
+        READVECTOR(idxp->codes);
+        READ1(idxp->search_type);
+        READ1(idxp->encode_signs);
+        READ1(idxp->polysemous_ht);
+        // read inverse norms
+        READVECTOR(idxp->inverse_norms_storage.inverse_l2_norms);
+
+        if (!(io_flags & IO_FLAG_PQ_SKIP_SDC_TABLE)) {
+            idxp->pq.compute_sdc_table ();
+        }
+
+        idx = idxp;
     } else if (
             h == fourcc("IxPQ") || h == fourcc("IxPo") || h == fourcc("IxPq")) {
         // IxPQ and IxPo were merged into the same IndexPQ object
@@ -1166,7 +1183,7 @@ Index* read_index(IOReader* f, int io_flags) {
     } else if (
             h == fourcc("IHNf") || h == fourcc("IHNp") || h == fourcc("IHNs") ||
             h == fourcc("IHN2") || h == fourcc("IHNc") || h == fourcc("IHN9") ||
-            h == fourcc("IHN8")) {
+            h == fourcc("IHN8") || h == fourcc("IHN7")) {
         IndexHNSW* idxhnsw = nullptr;
         if (h == fourcc("IHNf"))
             idxhnsw = new IndexHNSWFlat();
@@ -1182,6 +1199,8 @@ Index* read_index(IOReader* f, int io_flags) {
             idxhnsw = new IndexHNSWFlatCosine();
         if (h == fourcc("IHN8"))
             idxhnsw = new IndexHNSWSQCosine();
+        if (h == fourcc("IHN7"))
+            idxhnsw = new IndexHNSWPQCosine();
         read_index_header(idxhnsw, f);
         if (h == fourcc("IHNc")) {
             READ1(idxhnsw->keep_max_size_level0);

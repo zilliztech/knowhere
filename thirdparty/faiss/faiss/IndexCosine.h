@@ -13,8 +13,13 @@
 
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexHNSW.h>
+#include <faiss/IndexScalarQuantizer.h>
+#include <faiss/IndexPQ.h>
 #include <faiss/impl/DistanceComputer.h>
 
 
@@ -118,6 +123,23 @@ struct IndexScalarQuantizerCosine : IndexScalarQuantizer, HasInverseL2Norms {
 };
 
 //
+struct IndexPQCosine : IndexPQ, HasInverseL2Norms {
+    L2NormsStorage inverse_norms_storage;
+
+    IndexPQCosine(int d, size_t M, size_t nbits);
+
+    IndexPQCosine(); 
+
+    void add(idx_t n, const float* x) override;
+    void reset() override;
+
+    DistanceComputer* get_distance_computer() const override;
+
+    const float* get_inverse_l2_norms() const override;
+};
+
+
+//
 struct IndexHNSWFlatCosine : IndexHNSW {
     IndexHNSWFlatCosine();
     IndexHNSWFlatCosine(int d, int M);
@@ -130,6 +152,18 @@ struct IndexHNSWSQCosine : IndexHNSW {
             int d,
             ScalarQuantizer::QuantizerType qtype,
             int M);
+};
+
+//
+struct IndexHNSWPQCosine : IndexHNSW {
+    IndexHNSWPQCosine();
+    IndexHNSWPQCosine(
+            int d, 
+            size_t pq_M,
+            int M,
+            size_t pq_nbits);
+
+    void train(idx_t n, const float* x) override;
 };
 
 
