@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <faiss/IndexAdditiveQuantizer.h>
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexHNSW.h>
 #include <faiss/IndexScalarQuantizer.h>
@@ -138,6 +139,26 @@ struct IndexPQCosine : IndexPQ, HasInverseL2Norms {
     const float* get_inverse_l2_norms() const override;
 };
 
+//
+struct IndexProductResidualQuantizerCosine : IndexProductResidualQuantizer, HasInverseL2Norms {
+    L2NormsStorage inverse_norms_storage;
+
+    IndexProductResidualQuantizerCosine(
+            int d,          ///< dimensionality of the input vectors
+            size_t nsplits, ///< number of residual quantizers
+            size_t Msub,    ///< number of subquantizers per RQ
+            size_t nbits,   ///< number of bit per subvector index
+            AdditiveQuantizer::Search_type_t search_type = AdditiveQuantizer::ST_decompress);
+
+    IndexProductResidualQuantizerCosine();
+
+    void add(idx_t n, const float* x) override;
+    void reset() override;
+
+    DistanceComputer* get_distance_computer() const override;
+
+    const float* get_inverse_l2_norms() const override;
+};
 
 //
 struct IndexHNSWFlatCosine : IndexHNSW {
@@ -164,6 +185,32 @@ struct IndexHNSWPQCosine : IndexHNSW {
             size_t pq_nbits);
 
     void train(idx_t n, const float* x) override;
+};
+
+//
+struct IndexHNSWProductResidualQuantizer : IndexHNSW {
+    IndexHNSWProductResidualQuantizer();
+    IndexHNSWProductResidualQuantizer(
+            int d,          ///< dimensionality of the input vectors
+            size_t prq_nsplits, ///< number of residual quantizers
+            size_t prq_Msub,    ///< number of subquantizers per RQ
+            size_t prq_nbits,   ///< number of bit per subvector index
+            size_t M,        /// HNSW Param
+            MetricType metric = METRIC_L2,
+            AdditiveQuantizer::Search_type_t prq_search_type = AdditiveQuantizer::ST_decompress
+    );
+};
+
+struct IndexHNSWProductResidualQuantizerCosine : IndexHNSW {
+    IndexHNSWProductResidualQuantizerCosine();
+    IndexHNSWProductResidualQuantizerCosine(
+            int d,          ///< dimensionality of the input vectors
+            size_t prq_nsplits, ///< number of residual quantizers
+            size_t prq_Msub,    ///< number of subquantizers per RQ
+            size_t prq_nbits,   ///< number of bit per subvector index
+            size_t M,        /// HNSW Param
+            AdditiveQuantizer::Search_type_t prq_search_type = AdditiveQuantizer::ST_decompress
+    );
 };
 
 

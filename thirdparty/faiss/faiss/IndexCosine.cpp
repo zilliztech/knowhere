@@ -393,6 +393,57 @@ DistanceComputer* IndexPQCosine::get_distance_computer() const {
 
 //////////////////////////////////////////////////////////////////////////////////
 
+IndexProductResidualQuantizerCosine::IndexProductResidualQuantizerCosine(
+        int d,
+        size_t nsplits,
+        size_t Msub,
+        size_t nbits,
+        AdditiveQuantizer::Search_type_t search_type) :
+    IndexProductResidualQuantizer(d, nsplits, Msub, nbits, MetricType::METRIC_INNER_PRODUCT, search_type) {
+    is_cosine = true;
+}        
+
+
+IndexProductResidualQuantizerCosine::IndexProductResidualQuantizerCosine() :
+    IndexProductResidualQuantizer() {
+    metric_type = MetricType::METRIC_INNER_PRODUCT;
+    is_cosine = true;
+}
+
+void IndexProductResidualQuantizerCosine::add(idx_t n, const float* x) {
+    FAISS_THROW_IF_NOT(is_trained);
+    if (n == 0) {
+        return;
+    }
+
+    // todo aguzhva:
+    // it is a tricky situation at this moment, because IndexProductResidualQuantizerCosine
+    //   contains duplicate norms (one in IndexFlatCodes and one in HasInverseL2Norms).
+    //   Norms in IndexFlatCodes are going to be removed in the future.
+    IndexProductResidualQuantizer::add(n, x);
+    inverse_norms_storage.add(x, n, d);
+}
+
+void IndexProductResidualQuantizerCosine::reset() {
+    IndexProductResidualQuantizer::reset();
+    inverse_norms_storage.reset();
+}
+
+const float* IndexProductResidualQuantizerCosine::get_inverse_l2_norms() const {
+    return inverse_norms_storage.inverse_l2_norms.data();
+}
+
+DistanceComputer* IndexProductResidualQuantizerCosine::get_distance_computer() const {
+    return new WithCosineNormDistanceComputer(
+        this->get_inverse_l2_norms(),
+        this->d,
+        std::unique_ptr<faiss::DistanceComputer>(IndexProductResidualQuantizer::get_FlatCodesDistanceComputer())
+    );
+}
+
+
+//////////////////////////////////////////////////////////////////////////////////
+
 //
 IndexHNSWFlatCosine::IndexHNSWFlatCosine() {
     is_trained = true;
@@ -435,6 +486,31 @@ void IndexHNSWPQCosine::train(idx_t n, const float* x) {
     IndexHNSW::train(n, x);
     (dynamic_cast<IndexPQCosine*>(storage))->pq.compute_sdc_table();
 }
+
+//
+IndexHNSWProductResidualQuantizer::IndexHNSWProductResidualQuantizer() = default;
+
+IndexHNSWProductResidualQuantizer::IndexHNSWProductResidualQuantizer(
+        int d,
+        size_t prq_nsplits,
+        size_t prq_Msub,
+        size_t prq_nbits,
+        size_t M,
+        MetricType metric,
+        AdditiveQuantizer::Search_type_t prq_search_type
+) : IndexHNSW(new IndexProductResidualQuantizer(d, prq_nsplits, prq_Msub, prq_nbits, metric, prq_search_type), M) {}
+
+//
+IndexHNSWProductResidualQuantizerCosine::IndexHNSWProductResidualQuantizerCosine() = default;
+
+IndexHNSWProductResidualQuantizerCosine::IndexHNSWProductResidualQuantizerCosine(
+        int d,
+        size_t prq_nsplits,
+        size_t prq_Msub,
+        size_t prq_nbits,
+        size_t M,
+        AdditiveQuantizer::Search_type_t prq_search_type
+) : IndexHNSW(new IndexHNSWProductResidualQuantizerCosine(d, prq_nsplits, prq_Msub, prq_nbits, prq_search_type), M) {}
 
 
 }
