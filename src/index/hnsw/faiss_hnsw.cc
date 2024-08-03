@@ -988,9 +988,178 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
 
         return Status::success;
     }
-
 };
 
+
+// this index trains PRQ and HNSW+FLAT separately, then constructs HNSW+PRQ
+template<typename DataType>
+class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
+  public:
+    BaseFaissRegularIndexHNSWPRQNode(const int32_t& version, const Object& object) :
+        BaseFaissRegularIndexHNSWNode(version, object) {}
+
+    std::unique_ptr<BaseConfig>
+    CreateConfig() const override {
+        return std::make_unique<FaissHnswPrqConfig>();
+    }
+
+    std::string
+    Type() const override {
+        return knowhere::IndexEnum::INDEX_FAISS_HNSW_PRQ;
+    }
+
+  protected:
+    std::unique_ptr<faiss::IndexProductResidualQuantizer> tmp_index_prq;
+
+    Status TrainInternal(const DataSetPtr dataset, const Config& cfg) override {
+        // number of rows
+        auto rows = dataset->GetRows();
+        // dimensionality of the data
+        auto dim = dataset->GetDim();
+        // data
+        auto data = dataset->GetTensor();
+
+        // config
+        auto hnsw_cfg = static_cast<const FaissHnswPrqConfig&>(cfg);
+
+        auto metric = Str2FaissMetricType(hnsw_cfg.metric_type.value());
+        if (!metric.has_value()) {
+            LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << hnsw_cfg.metric_type.value();
+            return Status::invalid_metric_type;
+        }
+
+        // create an index
+        const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
+
+        // HNSW + PQ index yields BAD recall somewhy.
+        // Let's build HNSW+FLAT index, then replace FLAT with PQ
+
+        std::unique_ptr<faiss::IndexHNSW> hnsw_index;
+        if (is_cosine) {
+            hnsw_index = std::make_unique<faiss::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
+        } else {
+            hnsw_index = std::make_unique<faiss::IndexHNSWFlat>(dim, hnsw_cfg.M.value(), metric.value());
+        }
+
+        hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
+
+        // pq
+        std::unique_ptr<faiss::IndexProductResidualQuantizer> prq_index;
+        if (is_cosine) {
+            prq_index = std::make_unique<faiss::IndexProductResidualQuantizerCosine>(
+                dim, hnsw_cfg.nrq.value(), hnsw_cfg.m.value(), hnsw_cfg.nbits.value());
+        } else {
+            prq_index = std::make_unique<faiss::IndexProductResidualQuantizer>(
+                dim, hnsw_cfg.nrq.value(), hnsw_cfg.m.value(), hnsw_cfg.nbits.value(), metric.value());
+        }
+
+
+        // should refine be used?
+        std::unique_ptr<faiss::Index> final_index;
+        if (hnsw_cfg.refine.value_or(false)) {
+            // yes
+            auto final_index_cnd = pick_refine_index(hnsw_cfg.refine_type, std::move(hnsw_index));
+            if (!final_index_cnd.has_value()) {
+                return Status::invalid_args;
+            } 
+
+            // assign
+            final_index = std::move(final_index_cnd.value());
+        } else {
+            // no refine
+
+            // assign
+            final_index = std::move(hnsw_index);
+        }
+
+        // train hnswflat
+        LOG_KNOWHERE_INFO_ << "Training HNSW Index";
+
+        final_index->train(rows, (const float*)data);
+
+        // train prq
+        LOG_KNOWHERE_INFO_ << "Training ProductResidualQuantizer Index";
+
+        prq_index->train(rows, (const float*)data);
+
+        // done
+        index = std::move(final_index);
+        tmp_index_prq = std::move(prq_index);
+        return Status::success;
+    }
+
+    Status
+    AddInternal(const DataSetPtr dataset, const Config&) override {
+        if (this->index == nullptr) {
+            LOG_KNOWHERE_ERROR_ << "Can not add data to an empty index.";
+            return Status::empty_index;
+        }
+
+        auto data = dataset->GetTensor();
+        auto rows = dataset->GetRows();
+        try {
+            // hnsw
+            LOG_KNOWHERE_INFO_ << "Adding " << rows << " to HNSW Index";
+
+            index->add(rows, reinterpret_cast<const float*>(data));
+
+            // pq
+            LOG_KNOWHERE_INFO_ << "Adding " << rows << " to ProductResidualQuantizer Index";
+
+            tmp_index_prq->add(rows, reinterpret_cast<const float*>(data));
+
+            // we're done.
+            // throw away flat and replace it with prq
+
+            // check if we have a refine available.
+            faiss::IndexHNSW* index_hnsw = nullptr;
+
+            faiss::IndexRefine* const index_refine = 
+                dynamic_cast<faiss::IndexRefine*>(index.get());
+
+            if (index_refine != nullptr) {
+                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index_refine->base_index);
+            } else {
+                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index.get());
+            }
+
+            // recreate hnswprq
+            std::unique_ptr<faiss::IndexHNSW> index_hnsw_prq; 
+
+            if (index_hnsw->storage->is_cosine) {
+                index_hnsw_prq = std::make_unique<faiss::IndexHNSWProductResidualQuantizerCosine>();
+            } else {
+                index_hnsw_prq = std::make_unique<faiss::IndexHNSWProductResidualQuantizer>();
+            }
+
+            // C++ slicing
+            static_cast<faiss::IndexHNSW&>(*index_hnsw_prq) = 
+                std::move(static_cast<faiss::IndexHNSW&&>(*index_hnsw));
+
+            // clear out the storage
+            delete index_hnsw->storage;
+            index_hnsw->storage = nullptr;
+            index_hnsw_prq->storage = nullptr;
+
+            // replace storage
+            index_hnsw_prq->storage = tmp_index_prq.release();
+
+            // replace if refine
+            if (index_refine != nullptr) {
+                delete index_refine->base_index;
+                index_refine->base_index = index_hnsw_prq.release();
+            } else {
+                index = std::move(index_hnsw_prq);
+            }
+
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+            return Status::faiss_inner_error;
+        }
+
+        return Status::success;
+    }
+};
 
 
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_FLAT, BaseFaissRegularIndexHNSWFlatNode, fp32);
@@ -998,5 +1167,7 @@ KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_FLAT, BaseFaissRegularIndexHNSWFlatNo
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_SQ, BaseFaissRegularIndexHNSWSQNode, fp32);
 
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_PQ, BaseFaissRegularIndexHNSWPQNode, fp32);
+
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNode, fp32);
 
 }  // namespace knowhere

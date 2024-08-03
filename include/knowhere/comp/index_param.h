@@ -56,6 +56,7 @@ constexpr const char* INDEX_DISKANN = "DISKANN";
 constexpr const char* INDEX_FAISS_HNSW_FLAT = "FAISS_HNSW_FLAT";
 constexpr const char* INDEX_FAISS_HNSW_SQ = "FAISS_HNSW_SQ";
 constexpr const char* INDEX_FAISS_HNSW_PQ = "FAISS_HNSW_PQ";
+constexpr const char* INDEX_FAISS_HNSW_PRQ = "FAISS_HNSW_PRQ";
 
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX = "SPARSE_INVERTED_INDEX";
 constexpr const char* INDEX_SPARSE_WAND = "SPARSE_WAND";
@@ -156,6 +157,7 @@ constexpr const char* OVERVIEW_LEVELS = "overview_levels";
 
 // FAISS additional Params
 constexpr const char* SQ_TYPE = "sq_type";      // for IVF_SQ and HNSW_SQ
+constexpr const char* PRQ_NUM = "nrq";          // for PRQ, number of redisual quantizers
 
 // Sparse Params
 constexpr const char* DROP_RATIO_BUILD = "drop_ratio_build";
