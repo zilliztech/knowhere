@@ -14,7 +14,10 @@
 #include <math.h>
 #include <sys/time.h>
 
+#include <cstdint>
 #include <string>
+#include <unordered_set>
+#include <unordered_map>
 
 #define CALC_TIME_SPAN(X)       \
     double t_start = elapsed(); \
@@ -39,7 +42,7 @@ class Benchmark_base {
         }
     }
 
-    inline double
+    static inline double
     elapsed() {
         struct timeval tv;
         gettimeofday(&tv, nullptr);
@@ -86,7 +89,7 @@ class Benchmark_base {
         return (hit * 1.0f / (nq * min_k));
     }
 
-    float
+    static float
     CalcRecall(const int64_t* g_ids, const int64_t* ids, int32_t nq, int32_t k) {
         int32_t hit = 0;
         for (int32_t i = 0; i < nq; i++) {
