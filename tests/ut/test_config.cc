@@ -137,12 +137,6 @@ TEST_CASE("Test config json parse", "[config]") {
             "k": 100
         })");
 
-        const std::vector<uint8_t> trace_id_vec = {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
-                                                   0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10};
-        const std::vector<uint8_t> span_id_vec = {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef};
-        json["trace_id"] = trace_id_vec;
-        json["span_id"] = span_id_vec;
-
         knowhere::FlatConfig train_cfg;
         s = knowhere::Config::Load(train_cfg, json, knowhere::TRAIN);
         CHECK(s == knowhere::Status::success);
@@ -153,8 +147,6 @@ TEST_CASE("Test config json parse", "[config]") {
         CHECK(s == knowhere::Status::success);
         CHECK(search_cfg.metric_type.value() == "L2");
         CHECK(search_cfg.k.value() == 100);
-        CHECK(search_cfg.trace_id.value() == trace_id_vec);
-        CHECK(search_cfg.span_id.value() == span_id_vec);
     }
 
     SECTION("check ivf index config") {

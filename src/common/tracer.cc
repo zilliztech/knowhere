@@ -143,12 +143,24 @@ EmptySpanID(const TraceContext* ctx) {
     return isEmptyID(ctx->spanID, trace::SpanId::kSize);
 }
 
-tracer::TraceContext
-GetTraceCtxFromCfg(const BaseConfig* cfg) {
-    auto trace_id = cfg->trace_id.value();
-    auto span_id = cfg->span_id.value();
-    auto trace_flags = cfg->trace_flags.value();
-    return tracer::TraceContext{trace_id.data(), span_id.data(), (uint8_t)trace_flags};
+std::string
+BytesToHexStr(const uint8_t* data, size_t len) {
+    std::stringstream ss;
+    for (size_t i = 0; i < len; i++) {
+        ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(data[i]);
+    }
+    return ss.str();
+}
+
+std::string
+GetIDFromHexStr(const std::string& hexStr) {
+    std::stringstream ss;
+    for (size_t i = 0; i < (hexStr.length() / 2) * 2; i += 2) {
+        std::string byteStr = hexStr.substr(i, 2);
+        char byte = static_cast<char>(std::stoi(byteStr, nullptr, 16));
+        ss << byte;
+    }
+    return ss.str();
 }
 
 }  // namespace knowhere::tracer

@@ -641,8 +641,8 @@ class BaseConfig : public Config {
     CFG_BOOL enable_mmap_pop;
     CFG_BOOL for_tuning;
     CFG_BOOL shuffle_build;
-    CFG_BYTES trace_id;
-    CFG_BYTES span_id;
+    CFG_STRING trace_id;
+    CFG_STRING span_id;
     CFG_INT trace_flags;
     CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE materialized_view_search_info;
     CFG_STRING opt_fields_path;
