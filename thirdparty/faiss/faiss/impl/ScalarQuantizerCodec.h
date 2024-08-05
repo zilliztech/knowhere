@@ -118,11 +118,16 @@ struct Codec6bit {
  * through a codec
  *******************************************************************/
 
-template <class Codec, bool uniform, int SIMD>
+enum class QuantizerTemplateScaling {
+    UNIFORM = 0,
+    NON_UNIFORM = 1
+};
+
+template <class Codec, QuantizerTemplateScaling SCALING, int SIMD>
 struct QuantizerTemplate {};
 
 template <class Codec>
-struct QuantizerTemplate<Codec, true, 1> : SQuantizer {
+struct QuantizerTemplate<Codec, QuantizerTemplateScaling::UNIFORM, 1> : SQuantizer {
     const size_t d;
     const float vmin, vdiff;
 
@@ -160,7 +165,7 @@ struct QuantizerTemplate<Codec, true, 1> : SQuantizer {
 };
 
 template <class Codec>
-struct QuantizerTemplate<Codec, false, 1> : SQuantizer {
+struct QuantizerTemplate<Codec, QuantizerTemplateScaling::NON_UNIFORM, 1> : SQuantizer {
     const size_t d;
     const float *vmin, *vdiff;
 
@@ -330,19 +335,19 @@ SQuantizer* select_quantizer_1(
         const std::vector<float>& trained) {
     switch (qtype) {
         case ScalarQuantizer::QT_8bit:
-            return new QuantizerTemplate<Codec8bit, false, SIMDWIDTH>(
+            return new QuantizerTemplate<Codec8bit, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>(
                     d, trained);
         case ScalarQuantizer::QT_6bit:
-            return new QuantizerTemplate<Codec6bit, false, SIMDWIDTH>(
+            return new QuantizerTemplate<Codec6bit, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>(
                     d, trained);
         case ScalarQuantizer::QT_4bit:
-            return new QuantizerTemplate<Codec4bit, false, SIMDWIDTH>(
+            return new QuantizerTemplate<Codec4bit, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>(
                     d, trained);
         case ScalarQuantizer::QT_8bit_uniform:
-            return new QuantizerTemplate<Codec8bit, true, SIMDWIDTH>(
+            return new QuantizerTemplate<Codec8bit, QuantizerTemplateScaling::UNIFORM, SIMDWIDTH>(
                     d, trained);
         case ScalarQuantizer::QT_4bit_uniform:
-            return new QuantizerTemplate<Codec4bit, true, SIMDWIDTH>(
+            return new QuantizerTemplate<Codec4bit, QuantizerTemplateScaling::UNIFORM, SIMDWIDTH>(
                     d, trained);
         case ScalarQuantizer::QT_fp16:
             return new QuantizerFP16<SIMDWIDTH>(d, trained);
@@ -547,31 +552,31 @@ SQDistanceComputer* select_distance_computer(
     switch (qtype) {
         case ScalarQuantizer::QT_8bit_uniform:
             return new DCTemplate<
-                    QuantizerTemplate<Codec8bit, true, SIMDWIDTH>,
+                    QuantizerTemplate<Codec8bit, QuantizerTemplateScaling::UNIFORM, SIMDWIDTH>,
                     Sim,
                     SIMDWIDTH>(d, trained);
 
         case ScalarQuantizer::QT_4bit_uniform:
             return new DCTemplate<
-                    QuantizerTemplate<Codec4bit, true, SIMDWIDTH>,
+                    QuantizerTemplate<Codec4bit, QuantizerTemplateScaling::UNIFORM, SIMDWIDTH>,
                     Sim,
                     SIMDWIDTH>(d, trained);
 
         case ScalarQuantizer::QT_8bit:
             return new DCTemplate<
-                    QuantizerTemplate<Codec8bit, false, SIMDWIDTH>,
+                    QuantizerTemplate<Codec8bit, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>,
                     Sim,
                     SIMDWIDTH>(d, trained);
 
         case ScalarQuantizer::QT_6bit:
             return new DCTemplate<
-                    QuantizerTemplate<Codec6bit, false, SIMDWIDTH>,
+                    QuantizerTemplate<Codec6bit, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>,
                     Sim,
                     SIMDWIDTH>(d, trained);
 
         case ScalarQuantizer::QT_4bit:
             return new DCTemplate<
-                    QuantizerTemplate<Codec4bit, false, SIMDWIDTH>,
+                    QuantizerTemplate<Codec4bit, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>,
                     Sim,
                     SIMDWIDTH>(d, trained);
 
@@ -648,7 +653,7 @@ InvertedListScanner* sel2_InvertedListScanner(
     }
 }
 
-template <class Similarity, class Codec, bool uniform>
+template <class Similarity, class Codec, QuantizerTemplateScaling SCALING>
 InvertedListScanner* sel12_InvertedListScanner(
         const ScalarQuantizer* sq,
         const Index* quantizer,
@@ -656,7 +661,7 @@ InvertedListScanner* sel12_InvertedListScanner(
         const IDSelector* sel,
         bool r) {
     constexpr int SIMDWIDTH = Similarity::simdwidth;
-    using QuantizerClass = QuantizerTemplate<Codec, uniform, SIMDWIDTH>;
+    using QuantizerClass = QuantizerTemplate<Codec, SCALING, SIMDWIDTH>;
     using DCClass = DCTemplate<QuantizerClass, Similarity, SIMDWIDTH>;
     return sel2_InvertedListScanner<DCClass>(
             sq, quantizer, store_pairs, sel, r);
@@ -672,19 +677,19 @@ InvertedListScanner* sel1_InvertedListScanner(
     constexpr int SIMDWIDTH = Similarity::simdwidth;
     switch (sq->qtype) {
         case ScalarQuantizer::QT_8bit_uniform:
-            return sel12_InvertedListScanner<Similarity, Codec8bit, true>(
+            return sel12_InvertedListScanner<Similarity, Codec8bit, QuantizerTemplateScaling::UNIFORM>(
                     sq, quantizer, store_pairs, sel, r);
         case ScalarQuantizer::QT_4bit_uniform:
-            return sel12_InvertedListScanner<Similarity, Codec4bit, true>(
+            return sel12_InvertedListScanner<Similarity, Codec4bit, QuantizerTemplateScaling::UNIFORM>(
                     sq, quantizer, store_pairs, sel, r);
         case ScalarQuantizer::QT_8bit:
-            return sel12_InvertedListScanner<Similarity, Codec8bit, false>(
+            return sel12_InvertedListScanner<Similarity, Codec8bit, QuantizerTemplateScaling::NON_UNIFORM>(
                     sq, quantizer, store_pairs, sel, r);
         case ScalarQuantizer::QT_4bit:
-            return sel12_InvertedListScanner<Similarity, Codec4bit, false>(
+            return sel12_InvertedListScanner<Similarity, Codec4bit, QuantizerTemplateScaling::NON_UNIFORM>(
                     sq, quantizer, store_pairs, sel, r);
         case ScalarQuantizer::QT_6bit:
-            return sel12_InvertedListScanner<Similarity, Codec6bit, false>(
+            return sel12_InvertedListScanner<Similarity, Codec6bit, QuantizerTemplateScaling::NON_UNIFORM>(
                     sq, quantizer, store_pairs, sel, r);
         case ScalarQuantizer::QT_fp16:
             return sel2_InvertedListScanner<DCTemplate<

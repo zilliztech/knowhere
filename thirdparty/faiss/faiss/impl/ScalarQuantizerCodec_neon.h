@@ -74,21 +74,21 @@ struct Codec6bit_neon : public Codec6bit {
  * through a codec
  *******************************************************************/
 
-template <class Codec, bool uniform, int SIMD>
+template <class Codec, QuantizerTemplateScaling SCALING, int SIMD>
 struct QuantizerTemplate_neon {};
 
 template <class Codec>
-struct QuantizerTemplate_neon<Codec, true, 1>
-        : public QuantizerTemplate<Codec, true, 1> {
+struct QuantizerTemplate_neon<Codec, QuantizerTemplateScaling::UNIFORM, 1>
+        : public QuantizerTemplate<Codec, QuantizerTemplateScaling::UNIFORM, 1> {
     QuantizerTemplate_neon(size_t d, const std::vector<float>& trained)
-            : QuantizerTemplate<Codec, true, 1>(d, trained) {}
+            : QuantizerTemplate<Codec, QuantizerTemplateScaling::UNIFORM, 1>(d, trained) {}
 };
 
 template <class Codec>
-struct QuantizerTemplate_neon<Codec, true, 8>
-        : public QuantizerTemplate<Codec, true, 1> {
+struct QuantizerTemplate_neon<Codec, QuantizerTemplateScaling::UNIFORM, 8>
+        : public QuantizerTemplate<Codec, QuantizerTemplateScaling::UNIFORM, 1> {
     QuantizerTemplate_neon(size_t d, const std::vector<float>& trained)
-            : QuantizerTemplate<Codec, true, 1>(d, trained) {}
+            : QuantizerTemplate<Codec, QuantizerTemplateScaling::UNIFORM, 1>(d, trained) {}
 
     FAISS_ALWAYS_INLINE float32x4x2_t
     reconstruct_8_components(const uint8_t* code, int i) const {
@@ -107,17 +107,17 @@ struct QuantizerTemplate_neon<Codec, true, 8>
 };
 
 template <class Codec>
-struct QuantizerTemplate_neon<Codec, false, 1>
-        : public QuantizerTemplate<Codec, false, 1> {
+struct QuantizerTemplate_neon<Codec, QuantizerTemplateScaling::NON_UNIFORM, 1>
+        : public QuantizerTemplate<Codec, QuantizerTemplateScaling::NON_UNIFORM, 1> {
     QuantizerTemplate_neon(size_t d, const std::vector<float>& trained)
-            : QuantizerTemplate<Codec, false, 1>(d, trained) {}
+            : QuantizerTemplate<Codec, QuantizerTemplateScaling::NON_UNIFORM, 1>(d, trained) {}
 };
 
 template <class Codec>
-struct QuantizerTemplate_neon<Codec, false, 8>
-        : public QuantizerTemplate<Codec, false, 1> {
+struct QuantizerTemplate_neon<Codec, QuantizerTemplateScaling::NON_UNIFORM, 8>
+        : public QuantizerTemplate<Codec, QuantizerTemplateScaling::NON_UNIFORM, 1> {
     QuantizerTemplate_neon(size_t d, const std::vector<float>& trained)
-            : QuantizerTemplate<Codec, false, 1>(d, trained) {}
+            : QuantizerTemplate<Codec, QuantizerTemplateScaling::NON_UNIFORM, 1>(d, trained) {}
 
     FAISS_ALWAYS_INLINE float32x4x2_t
     reconstruct_8_components(const uint8_t* code, int i) const {
@@ -258,19 +258,19 @@ SQuantizer* select_quantizer_1_neon(
         const std::vector<float>& trained) {
     switch (qtype) {
         case QuantizerType::QT_8bit:
-            return new QuantizerTemplate_neon<Codec8bit_neon, false, SIMDWIDTH>(
+            return new QuantizerTemplate_neon<Codec8bit_neon, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>(
                     d, trained);
         case QuantizerType::QT_6bit:
-            return new QuantizerTemplate_neon<Codec6bit_neon, false, SIMDWIDTH>(
+            return new QuantizerTemplate_neon<Codec6bit_neon, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>(
                     d, trained);
         case QuantizerType::QT_4bit:
-            return new QuantizerTemplate_neon<Codec4bit_neon, false, SIMDWIDTH>(
+            return new QuantizerTemplate_neon<Codec4bit_neon, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>(
                     d, trained);
         case QuantizerType::QT_8bit_uniform:
-            return new QuantizerTemplate_neon<Codec8bit_neon, true, SIMDWIDTH>(
+            return new QuantizerTemplate_neon<Codec8bit_neon, QuantizerTemplateScaling::UNIFORM, SIMDWIDTH>(
                     d, trained);
         case QuantizerType::QT_4bit_uniform:
-            return new QuantizerTemplate_neon<Codec4bit_neon, true, SIMDWIDTH>(
+            return new QuantizerTemplate_neon<Codec4bit_neon, QuantizerTemplateScaling::UNIFORM, SIMDWIDTH>(
                     d, trained);
         case QuantizerType::QT_fp16:
             return new QuantizerFP16_neon<SIMDWIDTH>(d, trained);
@@ -588,31 +588,31 @@ SQDistanceComputer* select_distance_computer_neon(
     switch (qtype) {
         case QuantizerType::QT_8bit_uniform:
             return new DCTemplate_neon<
-                    QuantizerTemplate_neon<Codec8bit_neon, true, SIMDWIDTH>,
+                    QuantizerTemplate_neon<Codec8bit_neon, QuantizerTemplateScaling::UNIFORM, SIMDWIDTH>,
                     Sim,
                     SIMDWIDTH>(d, trained);
 
         case QuantizerType::QT_4bit_uniform:
             return new DCTemplate_neon<
-                    QuantizerTemplate_neon<Codec4bit_neon, true, SIMDWIDTH>,
+                    QuantizerTemplate_neon<Codec4bit_neon, QuantizerTemplateScaling::UNIFORM, SIMDWIDTH>,
                     Sim,
                     SIMDWIDTH>(d, trained);
 
         case QuantizerType::QT_8bit:
             return new DCTemplate_neon<
-                    QuantizerTemplate_neon<Codec8bit_neon, false, SIMDWIDTH>,
+                    QuantizerTemplate_neon<Codec8bit_neon, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>,
                     Sim,
                     SIMDWIDTH>(d, trained);
 
         case QuantizerType::QT_6bit:
             return new DCTemplate_neon<
-                    QuantizerTemplate_neon<Codec6bit_neon, false, SIMDWIDTH>,
+                    QuantizerTemplate_neon<Codec6bit_neon, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>,
                     Sim,
                     SIMDWIDTH>(d, trained);
 
         case QuantizerType::QT_4bit:
             return new DCTemplate_neon<
-                    QuantizerTemplate_neon<Codec4bit_neon, false, SIMDWIDTH>,
+                    QuantizerTemplate_neon<Codec4bit_neon, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>,
                     Sim,
                     SIMDWIDTH>(d, trained);
 
@@ -659,7 +659,7 @@ InvertedListScanner* sel2_InvertedListScanner_neon(
             sq, quantizer, store_pairs, sel, r);
 }
 
-template <class Similarity, class Codec, bool uniform>
+template <class Similarity, class Codec, QuantizerTemplateScaling SCALING>
 InvertedListScanner* sel12_InvertedListScanner_neon(
         const ScalarQuantizer* sq,
         const Index* quantizer,
@@ -667,7 +667,7 @@ InvertedListScanner* sel12_InvertedListScanner_neon(
         const IDSelector* sel,
         bool r) {
     constexpr int SIMDWIDTH = Similarity::simdwidth;
-    using QuantizerClass = QuantizerTemplate_neon<Codec, uniform, SIMDWIDTH>;
+    using QuantizerClass = QuantizerTemplate_neon<Codec, SCALING, SIMDWIDTH>;
     using DCClass = DCTemplate_neon<QuantizerClass, Similarity, SIMDWIDTH>;
     return sel2_InvertedListScanner_neon<DCClass>(
             sq, quantizer, store_pairs, sel, r);
@@ -686,27 +686,27 @@ InvertedListScanner* sel1_InvertedListScanner_neon(
             return sel12_InvertedListScanner_neon<
                     Similarity,
                     Codec8bit_neon,
-                    true>(sq, quantizer, store_pairs, sel, r);
+                    QuantizerTemplateScaling::UNIFORM>(sq, quantizer, store_pairs, sel, r);
         case QuantizerType::QT_4bit_uniform:
             return sel12_InvertedListScanner_neon<
                     Similarity,
                     Codec4bit_neon,
-                    true>(sq, quantizer, store_pairs, sel, r);
+                    QuantizerTemplateScaling::UNIFORM>(sq, quantizer, store_pairs, sel, r);
         case QuantizerType::QT_8bit:
             return sel12_InvertedListScanner_neon<
                     Similarity,
                     Codec8bit_neon,
-                    false>(sq, quantizer, store_pairs, sel, r);
+                    QuantizerTemplateScaling::NON_UNIFORM>(sq, quantizer, store_pairs, sel, r);
         case QuantizerType::QT_4bit:
             return sel12_InvertedListScanner_neon<
                     Similarity,
                     Codec4bit_neon,
-                    false>(sq, quantizer, store_pairs, sel, r);
+                    QuantizerTemplateScaling::NON_UNIFORM>(sq, quantizer, store_pairs, sel, r);
         case QuantizerType::QT_6bit:
             return sel12_InvertedListScanner_neon<
                     Similarity,
                     Codec6bit_neon,
-                    false>(sq, quantizer, store_pairs, sel, r);
+                    QuantizerTemplateScaling::NON_UNIFORM>(sq, quantizer, store_pairs, sel, r);
         case QuantizerType::QT_fp16:
             return sel2_InvertedListScanner_neon<DCTemplate_neon<
                     QuantizerFP16_neon<SIMDWIDTH>,
