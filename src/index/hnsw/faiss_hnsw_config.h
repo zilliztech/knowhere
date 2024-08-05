@@ -118,7 +118,7 @@ class FaissHnswConfig : public BaseConfig {
     bool WhetherAcceptableRefineType(const std::string& refine_type) {
         // 'flat' is identical to 'fp32'
         std::vector<std::string> allowed_list = {
-            "SQ8", "FP16", "BF16", "FP32", "FLAT"};
+            "SQ6", "SQ8", "FP16", "BF16", "FP32", "FLAT"};
         
         // todo: tolower()
 
