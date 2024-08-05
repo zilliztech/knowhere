@@ -1031,8 +1031,8 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
         // create an index
         const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
 
-        // HNSW + PQ index yields BAD recall somewhy.
-        // Let's build HNSW+FLAT index, then replace FLAT with PQ
+        // HNSW + PRQ index yields BAD recall somewhy.
+        // Let's build HNSW+FLAT index, then replace FLAT with PRQ
 
         std::unique_ptr<faiss::IndexHNSW> hnsw_index;
         if (is_cosine) {
@@ -1043,16 +1043,20 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
 
         hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
 
-        // pq
+        // prq
+        faiss::AdditiveQuantizer::Search_type_t prq_search_type = 
+            (metric.value() == faiss::MetricType::METRIC_INNER_PRODUCT) ?
+            faiss::AdditiveQuantizer::Search_type_t::ST_LUT_nonorm :
+            faiss::AdditiveQuantizer::Search_type_t::ST_norm_float;
+
         std::unique_ptr<faiss::IndexProductResidualQuantizer> prq_index;
         if (is_cosine) {
             prq_index = std::make_unique<faiss::IndexProductResidualQuantizerCosine>(
-                dim, hnsw_cfg.nrq.value(), hnsw_cfg.m.value(), hnsw_cfg.nbits.value());
+                dim, hnsw_cfg.m.value(), hnsw_cfg.nrq.value(), hnsw_cfg.nbits.value(), prq_search_type);
         } else {
             prq_index = std::make_unique<faiss::IndexProductResidualQuantizer>(
-                dim, hnsw_cfg.nrq.value(), hnsw_cfg.m.value(), hnsw_cfg.nbits.value(), metric.value());
+                dim, hnsw_cfg.m.value(), hnsw_cfg.nrq.value(), hnsw_cfg.nbits.value(), metric.value(), prq_search_type);
         }
-
 
         // should refine be used?
         std::unique_ptr<faiss::Index> final_index;
