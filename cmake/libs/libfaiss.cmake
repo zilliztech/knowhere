@@ -96,6 +96,7 @@ if(__X86_64)
             -mavx512f
             -mavx512dq
             -mavx512bw
+            -mavx512vl
             -mpopcnt>)
 
   add_library(faiss STATIC ${FAISS_SRCS})
