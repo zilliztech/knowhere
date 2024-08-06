@@ -90,13 +90,10 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
         index.Deserialize(binary_set, conf);
     }
 
-    template<typename T>
+    template <typename T>
     static std::string
-    get_index_name(
-        const std::string& ann_test_name,
-        const std::string& index_type,
-        const std::vector<int32_t>& params
-    ) {
+    get_index_name(const std::string& ann_test_name, const std::string& index_type,
+                   const std::vector<int32_t>& params) {
         std::string params_str = "";
         for (size_t i = 0; i < params.size(); i++) {
             params_str += "_" + std::to_string(params[i]);
@@ -118,45 +115,32 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
         return this->get_index_name<T>(ann_test_name_, index_type_, params);
     }
 
-    template<typename T>
+    template <typename T>
     knowhere::Index<knowhere::IndexNode>
-    create_index(
-        const std::string& index_type,
-        const std::string& index_file_name,
-        const knowhere::DataSetPtr& default_ds_ptr,
-        const knowhere::Json& conf,
-        const std::optional<std::string>& additional_name = std::nullopt
-    ) {
+    create_index(const std::string& index_type, const std::string& index_file_name,
+                 const knowhere::DataSetPtr& default_ds_ptr, const knowhere::Json& conf,
+                 const std::optional<std::string>& additional_name = std::nullopt) {
         std::string additional_name_s = additional_name.value_or("");
 
-        printf("[%.3f s] Creating %sindex \"%s\"\n",
-            get_time_diff(),
-            additional_name_s.c_str(),
-            index_type.c_str());
+        printf("[%.3f s] Creating %sindex \"%s\"\n", get_time_diff(), additional_name_s.c_str(), index_type.c_str());
 
         auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
         auto index = knowhere::IndexFactory::Instance().Create<T>(index_type, version);
 
         try {
-            printf("[%.3f s] Reading %sindex file: %s\n",
-                get_time_diff(),
-                additional_name_s.c_str(),
-                index_file_name.c_str());
+            printf("[%.3f s] Reading %sindex file: %s\n", get_time_diff(), additional_name_s.c_str(),
+                   index_file_name.c_str());
 
             read_index(index.value(), index_file_name, conf);
         } catch (...) {
-            printf("[%.3f s] Building %sindex all on %ld vectors\n",
-                get_time_diff(),
-                additional_name_s.c_str(),
-                default_ds_ptr->GetRows());
+            printf("[%.3f s] Building %sindex all on %ld vectors\n", get_time_diff(), additional_name_s.c_str(),
+                   default_ds_ptr->GetRows());
 
             auto base = knowhere::ConvertToDataTypeIfNeeded<T>(default_ds_ptr);
             index.value().Build(base, conf);
 
-            printf("[%.3f s] Writing %sindex file: %s\n",
-                get_time_diff(),
-                additional_name_s.c_str(),
-                index_file_name.c_str());
+            printf("[%.3f s] Writing %sindex file: %s\n", get_time_diff(), additional_name_s.c_str(),
+                   index_file_name.c_str());
 
             write_index(index.value(), index_file_name, conf);
         }
@@ -167,12 +151,7 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
     template <typename T>
     knowhere::Index<knowhere::IndexNode>
     create_index(const std::string& index_file_name, const knowhere::Json& conf) {
-        auto idx = this->create_index<T>(
-            index_type_,
-            index_file_name,
-            knowhere::GenDataSet(nb_, dim_, xb_),
-            conf
-        );
+        auto idx = this->create_index<T>(index_type_, index_file_name, knowhere::GenDataSet(nb_, dim_, xb_), conf);
         index_ = idx;
         return idx;
     }
@@ -182,13 +161,8 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
         golden_index_type_ = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
         std::string golden_index_file_name = ann_test_name_ + "_" + golden_index_type_ + "_GOLDEN" + ".index";
 
-        auto idx = this->create_index<knowhere::fp32>(
-            golden_index_type_,
-            golden_index_file_name,
-            knowhere::GenDataSet(nb_, dim_, xb_),
-            conf,
-            "golden "
-        );
+        auto idx = this->create_index<knowhere::fp32>(golden_index_type_, golden_index_file_name,
+                                                      knowhere::GenDataSet(nb_, dim_, xb_), conf, "golden ");
         golden_index_ = idx;
         return idx;
     }

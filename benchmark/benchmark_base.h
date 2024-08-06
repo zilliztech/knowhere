@@ -16,8 +16,8 @@
 
 #include <cstdint>
 #include <string>
-#include <unordered_set>
 #include <unordered_map>
+#include <unordered_set>
 
 #define CALC_TIME_SPAN(X)       \
     double t_start = elapsed(); \

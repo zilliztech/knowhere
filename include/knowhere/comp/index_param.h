@@ -156,8 +156,8 @@ constexpr const char* EF = "ef";
 constexpr const char* OVERVIEW_LEVELS = "overview_levels";
 
 // FAISS additional Params
-constexpr const char* SQ_TYPE = "sq_type";      // for IVF_SQ and HNSW_SQ
-constexpr const char* PRQ_NUM = "nrq";          // for PRQ, number of redisual quantizers
+constexpr const char* SQ_TYPE = "sq_type";  // for IVF_SQ and HNSW_SQ
+constexpr const char* PRQ_NUM = "nrq";      // for PRQ, number of redisual quantizers
 
 // Sparse Params
 constexpr const char* DROP_RATIO_BUILD = "drop_ratio_build";
