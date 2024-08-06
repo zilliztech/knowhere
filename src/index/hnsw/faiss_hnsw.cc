@@ -995,9 +995,6 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
             final_index = std::move(hnsw_index);
         }
 
-        // train
-        LOG_KNOWHERE_INFO_ << "Training HNSW Index";
-
         // we have to convert the data to float, unfortunately, which costs extra RAM
         auto float_ds_ptr = convert_ds_to_float(dataset, data_format);
         if (float_ds_ptr == nullptr) {
@@ -1005,10 +1002,14 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
             return Status::invalid_args;
         }
 
+        // train
+        LOG_KNOWHERE_INFO_ << "Training HNSW Index";
+
         final_index->train(rows, reinterpret_cast<const float*>(float_ds_ptr->GetTensor()));
 
         // done
         index = std::move(final_index);
+
         return Status::success;
     }
 };
@@ -1097,15 +1098,15 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
             final_index = std::move(hnsw_index);
         }
 
-        // train hnswflat
-        LOG_KNOWHERE_INFO_ << "Training HNSW Index";
-
         // we have to convert the data to float, unfortunately, which costs extra RAM
         auto float_ds_ptr = convert_ds_to_float(dataset, data_format);
         if (float_ds_ptr == nullptr) {
             LOG_KNOWHERE_ERROR_ << "Unsupported data format";
             return Status::invalid_args;
         }
+
+        // train hnswflat
+        LOG_KNOWHERE_INFO_ << "Training HNSW Index";
 
         final_index->train(rows, reinterpret_cast<const float*>(float_ds_ptr->GetTensor()));
 
@@ -1118,6 +1119,7 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
         // done
         index = std::move(final_index);
         tmp_index_pq = std::move(pq_index);
+
         return Status::success;
     }
 
@@ -1291,19 +1293,27 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
             final_index = std::move(hnsw_index);
         }
 
+        // we have to convert the data to float, unfortunately, which costs extra RAM
+        auto float_ds_ptr = convert_ds_to_float(dataset, data_format);
+        if (float_ds_ptr == nullptr) {
+            LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+            return Status::invalid_args;
+        }
+
         // train hnswflat
         LOG_KNOWHERE_INFO_ << "Training HNSW Index";
 
-        final_index->train(rows, (const float*)data);
+        final_index->train(rows, reinterpret_cast<const float*>(float_ds_ptr->GetTensor()));
 
         // train prq
         LOG_KNOWHERE_INFO_ << "Training ProductResidualQuantizer Index";
 
-        prq_index->train(rows, (const float*)data);
+        prq_index->train(rows, reinterpret_cast<const float*>(float_ds_ptr->GetTensor()));
 
         // done
         index = std::move(final_index);
         tmp_index_prq = std::move(prq_index);
+
         return Status::success;
     }
 
@@ -1320,12 +1330,18 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
             // hnsw
             LOG_KNOWHERE_INFO_ << "Adding " << rows << " to HNSW Index";
 
-            index->add(rows, reinterpret_cast<const float*>(data));
+            auto status_reg = add_to_index(index.get(), dataset, data_format);
+            if (status_reg != Status::success) {
+                return status_reg;
+            }
 
-            // pq
+            // prq
             LOG_KNOWHERE_INFO_ << "Adding " << rows << " to ProductResidualQuantizer Index";
 
-            tmp_index_prq->add(rows, reinterpret_cast<const float*>(data));
+            auto status_prq = add_to_index(tmp_index_prq.get(), dataset, data_format);
+            if (status_prq != Status::success) {
+                return status_prq;
+            }
 
             // we're done.
             // throw away flat and replace it with prq
@@ -1402,5 +1418,7 @@ KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTe
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTemplate, bf16);
 
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNodeTemplate, fp32);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNodeTemplate, fp16);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNodeTemplate, bf16);
 
 }  // namespace knowhere
