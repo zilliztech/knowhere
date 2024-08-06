@@ -349,6 +349,41 @@ DataSetPtr convert_ds_to_float(const DataSetPtr& src, DataFormatEnum data_format
     return nullptr;
 }
 
+Status add_to_index(
+    faiss::Index* const __restrict index,
+    const DataSetPtr& dataset,
+    const DataFormatEnum data_format
+) {
+    const auto* data = dataset->GetTensor();
+    const auto rows = dataset->GetRows();
+    const auto dim = dataset->GetDim();
+
+    if (data_format == DataFormatEnum::fp32) {
+        // add as is
+        index->add(rows, reinterpret_cast<const float*>(data));
+    } else {
+        // convert data into float in pieces and add to the index
+        constexpr int64_t n_tmp_rows = 65536;
+        std::vector<float> tmp(n_tmp_rows * dim);
+
+        for (int64_t irow = 0; irow < rows; irow += n_tmp_rows) {
+            const int64_t start_row = irow;
+            const int64_t end_row = std::min(rows, start_row + n_tmp_rows);
+            const int64_t count_rows = end_row - start_row;
+
+            if (!convert_rows(data, tmp.data(), data_format, start_row, count_rows, dim)) {
+                LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+                return Status::invalid_args;
+            }
+
+            // add
+            index->add(count_rows, tmp.data());
+        }
+    }
+
+    return Status::success;
+}
+
 }
 
 //
@@ -629,34 +664,15 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             return Status::empty_index;
         }
 
-        const auto* data = dataset->GetTensor();
         auto rows = dataset->GetRows();
-        auto dim = dataset->GetDim();
         try {
             LOG_KNOWHERE_INFO_ << "Adding " << rows << " to HNSW Index";
 
-            if (data_format == DataFormatEnum::fp32) {
-                // add as is
-                index->add(rows, reinterpret_cast<const float*>(data));
-            } else {
-                // convert data into float in pieces and add to the index
-                constexpr int64_t n_tmp_rows = 65536;
-                std::vector<float> tmp(n_tmp_rows * dim);
-
-                for (int64_t irow = 0; irow < rows; irow += n_tmp_rows) {
-                    const int64_t start_row = irow;
-                    const int64_t end_row = std::min(rows, start_row + n_tmp_rows);
-                    const int64_t count_rows = end_row - start_row;
-
-                    if (!convert_rows(data, tmp.data(), data_format, start_row, count_rows, dim)) {
-                        LOG_KNOWHERE_ERROR_ << "Unsupported data format";
-                        return Status::invalid_args;
-                    }
-
-                    // add
-                    index->add(count_rows, tmp.data());
-                }
+            auto status = add_to_index(index.get(), dataset, data_format);
+            if (status != Status::success) {
+                return status;
             }
+
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
             return Status::faiss_inner_error;
@@ -930,8 +946,6 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
         auto rows = dataset->GetRows();
         // dimensionality of the data
         auto dim = dataset->GetDim();
-        // data
-        auto data = dataset->GetTensor();
 
         // config
         auto hnsw_cfg = static_cast<const FaissHnswSqConfig&>(cfg);
@@ -984,7 +998,7 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
         // train
         LOG_KNOWHERE_INFO_ << "Training HNSW Index";
 
-        //we have to convert the data to float, unfortunately
+        // we have to convert the data to float, unfortunately, which costs extra RAM
         auto float_ds_ptr = convert_ds_to_float(dataset, data_format);
         if (float_ds_ptr == nullptr) {
             LOG_KNOWHERE_ERROR_ << "Unsupported data format";
@@ -1031,8 +1045,6 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
         auto rows = dataset->GetRows();
         // dimensionality of the data
         auto dim = dataset->GetDim();
-        // data
-        auto data = dataset->GetTensor();
 
         // config
         auto hnsw_cfg = static_cast<const FaissHnswPqConfig&>(cfg);
@@ -1088,12 +1100,19 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
         // train hnswflat
         LOG_KNOWHERE_INFO_ << "Training HNSW Index";
 
-        final_index->train(rows, (const float*)data);
+        // we have to convert the data to float, unfortunately, which costs extra RAM
+        auto float_ds_ptr = convert_ds_to_float(dataset, data_format);
+        if (float_ds_ptr == nullptr) {
+            LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+            return Status::invalid_args;
+        }
+
+        final_index->train(rows, reinterpret_cast<const float*>(float_ds_ptr->GetTensor()));
 
         // train pq
         LOG_KNOWHERE_INFO_ << "Training PQ Index";
 
-        pq_index->train(rows, (const float*)data);
+        pq_index->train(rows, reinterpret_cast<const float*>(float_ds_ptr->GetTensor()));
         pq_index->pq.compute_sdc_table();
 
         // done
@@ -1109,18 +1128,23 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
             return Status::empty_index;
         }
 
-        auto data = dataset->GetTensor();
         auto rows = dataset->GetRows();
         try {
             // hnsw
             LOG_KNOWHERE_INFO_ << "Adding " << rows << " to HNSW Index";
 
-            index->add(rows, reinterpret_cast<const float*>(data));
+            auto status_reg = add_to_index(index.get(), dataset, data_format);
+            if (status_reg != Status::success) {
+                return status_reg;
+            }
 
             // pq
             LOG_KNOWHERE_INFO_ << "Adding " << rows << " to PQ Index";
 
-            tmp_index_pq->add(rows, reinterpret_cast<const float*>(data));
+            auto status_pq = add_to_index(tmp_index_pq.get(), dataset, data_format);
+            if (status_pq != Status::success) {
+                return status_pq;
+            }
 
             // we're done.
             // throw away flat and replace it with pq
@@ -1374,6 +1398,8 @@ KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_SQ, BaseFaissRegularIndexHNSWSQNodeTe
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_SQ, BaseFaissRegularIndexHNSWSQNodeTemplate, bf16);
 
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTemplate, fp32);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTemplate, fp16);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTemplate, bf16);
 
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNodeTemplate, fp32);
 
