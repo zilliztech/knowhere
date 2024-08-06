@@ -121,41 +121,41 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
     template<typename T>
     knowhere::Index<knowhere::IndexNode>
     create_index(
-        const std::string& index_type, 
-        const std::string& index_file_name, 
+        const std::string& index_type,
+        const std::string& index_file_name,
         const knowhere::DataSetPtr& default_ds_ptr,
         const knowhere::Json& conf,
         const std::optional<std::string>& additional_name = std::nullopt
     ) {
         std::string additional_name_s = additional_name.value_or("");
 
-        printf("[%.3f s] Creating %sindex \"%s\"\n", 
-            get_time_diff(), 
-            additional_name_s.c_str(), 
+        printf("[%.3f s] Creating %sindex \"%s\"\n",
+            get_time_diff(),
+            additional_name_s.c_str(),
             index_type.c_str());
 
         auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
         auto index = knowhere::IndexFactory::Instance().Create<T>(index_type, version);
 
         try {
-            printf("[%.3f s] Reading %sindex file: %s\n", 
-                get_time_diff(), 
+            printf("[%.3f s] Reading %sindex file: %s\n",
+                get_time_diff(),
                 additional_name_s.c_str(),
                 index_file_name.c_str());
 
             read_index(index.value(), index_file_name, conf);
         } catch (...) {
-            printf("[%.3f s] Building %sindex all on %ld vectors\n", 
-                get_time_diff(), 
-                additional_name_s.c_str(), 
+            printf("[%.3f s] Building %sindex all on %ld vectors\n",
+                get_time_diff(),
+                additional_name_s.c_str(),
                 default_ds_ptr->GetRows());
 
             auto base = knowhere::ConvertToDataTypeIfNeeded<T>(default_ds_ptr);
             index.value().Build(base, conf);
 
-            printf("[%.3f s] Writing %sindex file: %s\n", 
-                get_time_diff(), 
-                additional_name_s.c_str(), 
+            printf("[%.3f s] Writing %sindex file: %s\n",
+                get_time_diff(),
+                additional_name_s.c_str(),
                 index_file_name.c_str());
 
             write_index(index.value(), index_file_name, conf);

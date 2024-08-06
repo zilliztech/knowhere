@@ -130,11 +130,11 @@ static std::set<std::string> legal_support_mmap_knowhere_index = {
     // faiss hnsw
     IndexEnum::INDEX_FAISS_HNSW_FLAT,
 
-    IndexEnum::INDEX_FAISS_HNSW_SQ, 
+    IndexEnum::INDEX_FAISS_HNSW_SQ,
 
-    IndexEnum::INDEX_FAISS_HNSW_PQ, 
+    IndexEnum::INDEX_FAISS_HNSW_PQ,
 
-    IndexEnum::INDEX_FAISS_HNSW_PRQ, 
+    IndexEnum::INDEX_FAISS_HNSW_PRQ,
 
     // sparse index
     IndexEnum::INDEX_SPARSE_INVERTED_INDEX,

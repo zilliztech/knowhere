@@ -81,15 +81,15 @@ public:
 
         // calc recall
         auto recall = this->CalcRecall(
-            golden_result->GetIds(), 
-            result.value()->GetIds(), 
+            golden_result->GetIds(),
+            result.value()->GetIds(),
             query_t_ds_ptr->GetRows(),
             conf[knowhere::meta::TOPK].get<size_t>()
         );
 
         auto recall_loaded = this->CalcRecall(
-            golden_result->GetIds(), 
-            result_loaded.value()->GetIds(), 
+            golden_result->GetIds(),
+            result_loaded.value()->GetIds(),
             query_t_ds_ptr->GetRows(),
             conf[knowhere::meta::TOPK].get<size_t>()
         );
@@ -106,7 +106,7 @@ protected:
         T0_ = elapsed();
         set_ann_test_name("faiss_hnsw");
 
-        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);    
+        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);
 
         cfg_[knowhere::indexparam::HNSW_M] = 16;
         cfg_[knowhere::indexparam::EFCONSTRUCTION] = 96;
@@ -119,7 +119,7 @@ protected:
 
     void CreateGoldenIndices() {
         const std::string golden_index_type = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
-        
+
         uint64_t rng_seed = 1;
         for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
             for (const int32_t dim : DIMS) {
@@ -201,7 +201,7 @@ TEST_F(Benchmark_Faiss_Hnsw, TEST_HNSWFLAT) {
                     ann_test_name_, golden_index_type, params);
 
                 auto golden_index = create_index<knowhere::fp32>(
-                    golden_index_type, 
+                    golden_index_type,
                     golden_index_file_name,
                     default_ds_ptr,
                     conf,
@@ -289,7 +289,7 @@ TEST_F(Benchmark_Faiss_Hnsw, TEST_HNSWSQ) {
                         ann_test_name_, golden_index_type, params);
 
                     auto golden_index = create_index<knowhere::fp32>(
-                        golden_index_type, 
+                        golden_index_type,
                         golden_index_file_name,
                         default_ds_ptr,
                         conf,
@@ -317,12 +317,12 @@ TEST_F(Benchmark_Faiss_Hnsw, TEST_HNSWSQ) {
                     // test refines
                     const auto& allowed_refs = SQ_ALLOWED_REFINES[SQ_TYPES[sq_type]];
                     for (size_t allowed_ref_idx = 0; allowed_ref_idx < allowed_refs.size(); allowed_ref_idx++) {
-                        auto conf_refine = conf;                        
+                        auto conf_refine = conf;
                         conf_refine["refine"] = true;
                         conf_refine["refine_k"] = 1.5;
                         conf_refine["refine_type"] = allowed_refs[allowed_ref_idx];
 
-                        std::vector<int32_t> params_refine = 
+                        std::vector<int32_t> params_refine =
                             {(int)distance_type, dim, nb, (int)sq_type, (int)allowed_ref_idx};
 
                         //
@@ -382,7 +382,7 @@ TEST_F(Benchmark_Faiss_Hnsw, TEST_HNSWPQ) {
                         ann_test_name_, golden_index_type, params);
 
                     auto golden_index = create_index<knowhere::fp32>(
-                        golden_index_type, 
+                        golden_index_type,
                         golden_index_file_name,
                         default_ds_ptr,
                         conf,
@@ -410,12 +410,12 @@ TEST_F(Benchmark_Faiss_Hnsw, TEST_HNSWPQ) {
 
                     // test refines
                     for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES.size(); allowed_ref_idx++) {
-                        auto conf_refine = conf;                        
+                        auto conf_refine = conf;
                         conf_refine["refine"] = true;
                         conf_refine["refine_k"] = 1.5;
                         conf_refine["refine_type"] = PQ_ALLOWED_REFINES[allowed_ref_idx];
 
-                        std::vector<int32_t> params_refine = 
+                        std::vector<int32_t> params_refine =
                             {(int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
 
                         //
@@ -478,7 +478,7 @@ TEST_F(Benchmark_Faiss_Hnsw, TEST_HNSWPRQ) {
                         ann_test_name_, golden_index_type, params);
 
                     auto golden_index = create_index<knowhere::fp32>(
-                        golden_index_type, 
+                        golden_index_type,
                         golden_index_file_name,
                         default_ds_ptr,
                         conf,
@@ -507,12 +507,12 @@ TEST_F(Benchmark_Faiss_Hnsw, TEST_HNSWPRQ) {
 
                     // test refines
                     for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES.size(); allowed_ref_idx++) {
-                        auto conf_refine = conf;                        
+                        auto conf_refine = conf;
                         conf_refine["refine"] = true;
                         conf_refine["refine_k"] = 1.5;
                         conf_refine["refine_type"] = PQ_ALLOWED_REFINES[allowed_ref_idx];
 
-                        std::vector<int32_t> params_refine = 
+                        std::vector<int32_t> params_refine =
                             {(int)distance_type, dim, nb, prq_m, prq_num, (int)nbits_type, (int)allowed_ref_idx};
 
                         //

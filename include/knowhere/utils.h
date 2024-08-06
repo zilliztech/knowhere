@@ -111,7 +111,7 @@ template <typename InType, typename OutType>
 inline DataSetPtr
 data_type_conversion(
     const DataSet& src,
-    const std::optional<int64_t> start = std::nullopt, 
+    const std::optional<int64_t> start = std::nullopt,
     const std::optional<int64_t> count = std::nullopt
 ) {
     auto dim = src.GetDim();
@@ -171,8 +171,8 @@ ConvertToDataTypeIfNeeded(const DataSetPtr& ds, const std::optional<int64_t> sta
         if (!start.has_value() && !count.has_value()) {
             return ds;
         }
-    } 
-        
+    }
+
     return data_type_conversion<typename MockData<DataType>::type, DataType>(*ds, start, count);
 }
 
