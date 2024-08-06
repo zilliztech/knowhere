@@ -336,6 +336,19 @@ bool convert_rows(
     }
 }
 
+//
+DataSetPtr convert_ds_to_float(const DataSetPtr& src, DataFormatEnum data_format) {
+    if (data_format == DataFormatEnum::fp32) {
+        return src;
+    } else if (data_format == DataFormatEnum::fp16) {
+        return ConvertFromDataTypeIfNeeded<knowhere::fp16>(src);
+    } else if (data_format == DataFormatEnum::bf16) {
+        return ConvertFromDataTypeIfNeeded<knowhere::bf16>(src);
+    }
+
+    return nullptr;
+}
+
 }
 
 //
@@ -616,12 +629,34 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             return Status::empty_index;
         }
 
-        auto data = dataset->GetTensor();
+        const auto* data = dataset->GetTensor();
         auto rows = dataset->GetRows();
+        auto dim = dataset->GetDim();
         try {
             LOG_KNOWHERE_INFO_ << "Adding " << rows << " to HNSW Index";
 
-            index->add(rows, reinterpret_cast<const float*>(data));
+            if (data_format == DataFormatEnum::fp32) {
+                // add as is
+                index->add(rows, reinterpret_cast<const float*>(data));
+            } else {
+                // convert data into float in pieces and add to the index
+                constexpr int64_t n_tmp_rows = 65536;
+                std::vector<float> tmp(n_tmp_rows * dim);
+
+                for (int64_t irow = 0; irow < rows; irow += n_tmp_rows) {
+                    const int64_t start_row = irow;
+                    const int64_t end_row = std::min(rows, start_row + n_tmp_rows);
+                    const int64_t count_rows = end_row - start_row;
+
+                    if (!convert_rows(data, tmp.data(), data_format, start_row, count_rows, dim)) {
+                        LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+                        return Status::invalid_args;
+                    }
+
+                    // add
+                    index->add(count_rows, tmp.data());
+                }
+            }
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
             return Status::faiss_inner_error;
@@ -725,49 +760,6 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
         index = std::move(hnsw_index);
         return Status::success;
     }
-
-    Status
-    AddInternal(const DataSetPtr dataset, const Config&) override {
-        if (index == nullptr) {
-            LOG_KNOWHERE_ERROR_ << "Can not add data to an empty index.";
-            return Status::empty_index;
-        }
-
-        const auto* data = dataset->GetTensor();
-        auto rows = dataset->GetRows();
-        auto dim = dataset->GetDim();
-        try {
-            LOG_KNOWHERE_INFO_ << "Adding " << rows << " to HNSW Index";
-
-            if (data_format == DataFormatEnum::fp32) {
-                // add as is
-                index->add(rows, reinterpret_cast<const float*>(data));
-            } else {
-                // convert data into float in pieces and add to the index
-                constexpr int64_t n_tmp_rows = 65536;
-                std::vector<float> tmp(n_tmp_rows * dim);
-
-                for (int64_t irow = 0; irow < rows; irow += n_tmp_rows) {
-                    const int64_t start_row = irow;
-                    const int64_t end_row = std::min(rows, start_row + n_tmp_rows);
-                    const int64_t count_rows = end_row - start_row;
-
-                    if (!convert_rows(data, tmp.data(), data_format, start_row, count_rows, dim)) {
-                        LOG_KNOWHERE_ERROR_ << "Unsupported data format";
-                        return Status::invalid_args;
-                    }
-
-                    // add
-                    index->add(count_rows, tmp.data());
-                }
-            }
-        } catch (const std::exception& e) {
-            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
-            return Status::faiss_inner_error;
-        }
-
-        return Status::success;
-    }
 };
 
 template <typename DataType>
@@ -826,7 +818,11 @@ is_flat_refine(const std::optional<std::string>& refine_type) {
 
 // pick a refine index
 expected<std::unique_ptr<faiss::Index>>
-pick_refine_index(const std::optional<std::string>& refine_type, std::unique_ptr<faiss::IndexHNSW>&& hnsw_index) {
+pick_refine_index(
+    const DataFormatEnum data_format,
+    const std::optional<std::string>& refine_type, 
+    std::unique_ptr<faiss::IndexHNSW>&& hnsw_index
+) {
     // yes
 
     // grab a type of a refine index
@@ -838,6 +834,34 @@ pick_refine_index(const std::optional<std::string>& refine_type, std::unique_ptr
 
     const bool is_fp32_flat_v = is_fp32_flat.value();
 
+    // check input data_format
+    if (data_format == DataFormatEnum::fp16) {
+        // make sure that we're using fp16 refine
+        auto refine_sq_type = get_sq_quantizer_type(refine_type.value());
+        if (!(refine_sq_type.has_value() && (
+            refine_sq_type.value() != faiss::ScalarQuantizer::QT_bf16 &&
+            !is_fp32_flat_v))) {
+
+            LOG_KNOWHERE_ERROR_ << "fp16 input data does not accept bf16 or fp32 as a refine index.";
+            return expected<std::unique_ptr<faiss::Index>>::Err(
+                Status::invalid_args, "fp16 input data does not accept bf16 or fp32 as a refine index.");
+        }
+    }
+
+    if (data_format == DataFormatEnum::bf16) {
+        // make sure that we're using bf16 refine
+        auto refine_sq_type = get_sq_quantizer_type(refine_type.value());
+        if (!(refine_sq_type.has_value() && (
+            refine_sq_type.value() != faiss::ScalarQuantizer::QT_fp16 &&
+            !is_fp32_flat_v))) {
+
+            LOG_KNOWHERE_ERROR_ << "bf16 input data does not accept fp16 or fp32 as a refine index.";
+            return expected<std::unique_ptr<faiss::Index>>::Err(
+                Status::invalid_args, "bf16 input data does not accept fp16 or fp32 as a refine index.");
+        }
+    }
+
+    // build
     std::unique_ptr<faiss::IndexHNSW> local_hnsw_index = std::move(hnsw_index);
 
     // either build flat or sq
@@ -943,7 +967,7 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
         std::unique_ptr<faiss::Index> final_index;
         if (hnsw_cfg.refine.value_or(false)) {
             // yes
-            auto final_index_cnd = pick_refine_index(hnsw_cfg.refine_type, std::move(hnsw_index));
+            auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
             if (!final_index_cnd.has_value()) {
                 return Status::invalid_args;
             }
@@ -960,7 +984,14 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
         // train
         LOG_KNOWHERE_INFO_ << "Training HNSW Index";
 
-        final_index->train(rows, (const float*)data);
+        //we have to convert the data to float, unfortunately
+        auto float_ds_ptr = convert_ds_to_float(dataset, data_format);
+        if (float_ds_ptr == nullptr) {
+            LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+            return Status::invalid_args;
+        }
+
+        final_index->train(rows, reinterpret_cast<const float*>(float_ds_ptr->GetTensor()));
 
         // done
         index = std::move(final_index);
@@ -1040,7 +1071,7 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
         std::unique_ptr<faiss::Index> final_index;
         if (hnsw_cfg.refine.value_or(false)) {
             // yes
-            auto final_index_cnd = pick_refine_index(hnsw_cfg.refine_type, std::move(hnsw_index));
+            auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
             if (!final_index_cnd.has_value()) {
                 return Status::invalid_args;
             }
@@ -1222,7 +1253,7 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
         std::unique_ptr<faiss::Index> final_index;
         if (hnsw_cfg.refine.value_or(false)) {
             // yes
-            auto final_index_cnd = pick_refine_index(hnsw_cfg.refine_type, std::move(hnsw_index));
+            auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
             if (!final_index_cnd.has_value()) {
                 return Status::invalid_args;
             }
@@ -1339,6 +1370,8 @@ KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_FLAT, BaseFaissRegularIndexHNSWFlatNo
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_FLAT, BaseFaissRegularIndexHNSWFlatNodeTemplate, bf16);
 
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_SQ, BaseFaissRegularIndexHNSWSQNodeTemplate, fp32);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_SQ, BaseFaissRegularIndexHNSWSQNodeTemplate, fp16);
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_SQ, BaseFaissRegularIndexHNSWSQNodeTemplate, bf16);
 
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTemplate, fp32);
 
