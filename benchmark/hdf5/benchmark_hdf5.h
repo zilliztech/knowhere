@@ -32,9 +32,8 @@ static const char* HDF5_DATASET_DISTANCES = "distances";
 static const char* HDF5_DATASET_LIMS = "lims";
 static const char* HDF5_DATASET_RADIUS = "radius";
 
-static const char* METRIC_IP_STR = "angular";
 static const char* METRIC_L2_STR = "euclidean";
-static const char* METRIC_COS_STR = "cosine";
+static const char* METRIC_COS_STR = "angular";
 static const char* METRIC_HAM_STR = "hamming";
 static const char* METRIC_JAC_STR = "jaccard";
 
@@ -78,8 +77,6 @@ class Benchmark_hdf5 : public Benchmark_base {
     set_metric_type(const std::string& str) {
         if (str == METRIC_L2_STR || str == "l2") {
             metric_type_ = "L2";
-        } else if (str == METRIC_IP_STR || str == "ip") {
-            metric_type_ = "IP";
         } else if (str == METRIC_COS_STR) {
             metric_type_ = "COSINE";
         } else if (str == METRIC_HAM_STR) {
