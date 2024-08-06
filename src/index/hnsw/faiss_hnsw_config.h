@@ -115,10 +115,10 @@ class FaissHnswConfig : public BaseConfig {
     }
 
  protected:
-    bool WhetherAcceptableRefineType(const std::string& refine_type) {
+    bool
+    WhetherAcceptableRefineType(const std::string& refine_type) {
         // 'flat' is identical to 'fp32'
-        std::vector<std::string> allowed_list = {
-            "SQ6", "SQ8", "FP16", "BF16", "FP32", "FLAT"};
+        std::vector<std::string> allowed_list = {"SQ6", "SQ8", "FP16", "BF16", "FP32", "FLAT"};
 
         // todo: tolower()
 
@@ -162,15 +162,12 @@ class FaissHnswFlatConfig : public FaissHnswConfig {
 };
 
 class FaissHnswSqConfig : public FaissHnswConfig {
-public:
+ public:
     // user can use quant_type to control quantizer type.
     // we have fp16, bf16, etc, so '8', '4' and '6' is insufficient
     CFG_STRING sq_type;
     KNOHWERE_DECLARE_CONFIG(FaissHnswSqConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(sq_type)
-            .set_default("SQ8")
-            .description("scalar quantizer type")
-            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(sq_type).set_default("SQ8").description("scalar quantizer type").for_train();
     };
 
     Status
@@ -202,11 +199,11 @@ public:
         return Status::success;
     }
 
-private:
-    bool WhetherAcceptableQuantType(const std::string& sq_type) {
+ private:
+    bool
+    WhetherAcceptableQuantType(const std::string& sq_type) {
         // todo: add more
-        std::vector<std::string> allowed_list = {
-            "SQ6", "SQ8", "FP16", "BF16"};
+        std::vector<std::string> allowed_list = {"SQ6", "SQ8", "FP16", "BF16"};
 
         // todo: tolower()
 
@@ -221,28 +218,20 @@ private:
 };
 
 class FaissHnswPqConfig : public FaissHnswConfig {
-public:
+ public:
     // number of subquantizers
     CFG_INT m;
     // number of bits per subquantizer
     CFG_INT nbits;
 
     KNOHWERE_DECLARE_CONFIG(FaissHnswPqConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(m)
-            .description("m")
-            .set_default(32)
-            .for_train()
-            .set_range(1, 65536);
-        KNOWHERE_CONFIG_DECLARE_FIELD(nbits)
-            .description("nbits")
-            .set_default(8)
-            .for_train()
-            .set_range(1, 16);
+        KNOWHERE_CONFIG_DECLARE_FIELD(m).description("m").set_default(32).for_train().set_range(1, 65536);
+        KNOWHERE_CONFIG_DECLARE_FIELD(nbits).description("nbits").set_default(8).for_train().set_range(1, 16);
     }
 };
 
 class FaissHnswPrqConfig : public FaissHnswConfig {
-public:
+ public:
     // number of subquantizer splits
     CFG_INT m;
     // number of residual quantizers
@@ -250,20 +239,9 @@ public:
     // number of bits per subquantizer
     CFG_INT nbits;
     KNOHWERE_DECLARE_CONFIG(FaissHnswPrqConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(m)
-            .description("Number of splits")
-            .set_default(2)
-            .for_train()
-            .set_range(1, 65536);
-        KNOWHERE_CONFIG_DECLARE_FIELD(nrq)
-            .description("Number of residual subquantizers")
-            .for_train()
-            .set_range(1, 64);
-        KNOWHERE_CONFIG_DECLARE_FIELD(nbits)
-            .description("nbits")
-            .set_default(8)
-            .for_train()
-            .set_range(1, 64);
+        KNOWHERE_CONFIG_DECLARE_FIELD(m).description("Number of splits").set_default(2).for_train().set_range(1, 65536);
+        KNOWHERE_CONFIG_DECLARE_FIELD(nrq).description("Number of residual subquantizers").for_train().set_range(1, 64);
+        KNOWHERE_CONFIG_DECLARE_FIELD(nbits).description("nbits").set_default(8).for_train().set_range(1, 64);
     }
 };
 

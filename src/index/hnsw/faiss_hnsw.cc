@@ -280,42 +280,34 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
 };
 
 //
-enum class DataFormatEnum {
-    fp32,
-    fp16,
-    bf16
-};
+enum class DataFormatEnum { fp32, fp16, bf16 };
 
-template<typename T>
+template <typename T>
 struct DataType2EnumHelper {};
 
-template<> struct DataType2EnumHelper<knowhere::fp32> {
+template <>
+struct DataType2EnumHelper<knowhere::fp32> {
     static constexpr DataFormatEnum value = DataFormatEnum::fp32;
 };
-template<> struct DataType2EnumHelper<knowhere::fp16> {
+template <>
+struct DataType2EnumHelper<knowhere::fp16> {
     static constexpr DataFormatEnum value = DataFormatEnum::fp16;
 };
-template<> struct DataType2EnumHelper<knowhere::bf16> {
+template <>
+struct DataType2EnumHelper<knowhere::bf16> {
     static constexpr DataFormatEnum value = DataFormatEnum::bf16;
 };
 
-template<typename T>
+template <typename T>
 static constexpr DataFormatEnum datatype_v = DataType2EnumHelper<T>::value;
-
-
 
 //
 namespace {
 
 //
-bool convert_rows(
-    const void* const __restrict src_in,
-    float* const __restrict dst,
-    const DataFormatEnum data_format,
-    const size_t start_row,
-    const size_t nrows,
-    const size_t dim
-) {
+bool
+convert_rows(const void* const __restrict src_in, float* const __restrict dst, const DataFormatEnum data_format,
+             const size_t start_row, const size_t nrows, const size_t dim) {
     if (data_format == DataFormatEnum::fp16) {
         const knowhere::fp16* const src = reinterpret_cast<const knowhere::fp16*>(src_in);
         for (size_t i = 0; i < nrows * dim; i++) {
@@ -337,7 +329,8 @@ bool convert_rows(
 }
 
 //
-DataSetPtr convert_ds_to_float(const DataSetPtr& src, DataFormatEnum data_format) {
+DataSetPtr
+convert_ds_to_float(const DataSetPtr& src, DataFormatEnum data_format) {
     if (data_format == DataFormatEnum::fp32) {
         return src;
     } else if (data_format == DataFormatEnum::fp16) {
@@ -349,11 +342,8 @@ DataSetPtr convert_ds_to_float(const DataSetPtr& src, DataFormatEnum data_format
     return nullptr;
 }
 
-Status add_to_index(
-    faiss::Index* const __restrict index,
-    const DataSetPtr& dataset,
-    const DataFormatEnum data_format
-) {
+Status
+add_to_index(faiss::Index* const __restrict index, const DataSetPtr& dataset, const DataFormatEnum data_format) {
     const auto* data = dataset->GetTensor();
     const auto rows = dataset->GetRows();
     const auto dim = dataset->GetDim();
@@ -384,7 +374,7 @@ Status add_to_index(
     return Status::success;
 }
 
-}
+}  // namespace
 
 //
 class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
@@ -469,7 +459,6 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                         cur_query = cur_query_tmp.data();
                     }
 
-
                     // set up local results
                     faiss::idx_t* const __restrict local_ids = ids.get() + k * idx;
                     float* const __restrict local_distances = distances.get() + k * idx;
@@ -541,7 +530,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                                 // yes, wrap both base and refine index
                                 knowhere::IndexWrapperCosine cosine_wrapper(
                                     index_refine->refine_index,
-                                    dynamic_cast<faiss::HasInverseL2Norms*>(index_hnsw->storage)->get_inverse_l2_norms());
+                                    dynamic_cast<faiss::HasInverseL2Norms*>(index_hnsw->storage)
+                                        ->get_inverse_l2_norms());
 
                                 // create a temporary refine index which does not own
                                 faiss::IndexRefine tmp_refine(base_wrapper, &cosine_wrapper);
@@ -632,7 +622,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     bool
     WhetherPerformBruteForceSearch(const BaseConfig& cfg, const BitsetView& bitset) const {
         constexpr float kHnswSearchKnnBFFilterThreshold = 0.93f;
-        constexpr float kHnswSearchRangeBFFilterThreshold = 0.97f;
+        // constexpr float kHnswSearchRangeBFFilterThreshold = 0.97f;
         constexpr float kHnswSearchBFTopkThreshold = 0.5f;
 
         auto k = cfg.k.value();
@@ -736,11 +726,11 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
             if (data_format == DataFormatEnum::fp32) {
                 hnsw_index = std::make_unique<faiss::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
             } else if (data_format == DataFormatEnum::fp16) {
-                hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(
-                    dim, faiss::ScalarQuantizer::QT_fp16, hnsw_cfg.M.value());
+                hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, faiss::ScalarQuantizer::QT_fp16,
+                                                                        hnsw_cfg.M.value());
             } else if (data_format == DataFormatEnum::bf16) {
-                hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(
-                    dim, faiss::ScalarQuantizer::QT_bf16, hnsw_cfg.M.value());
+                hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, faiss::ScalarQuantizer::QT_bf16,
+                                                                        hnsw_cfg.M.value());
             } else {
                 LOG_KNOWHERE_ERROR_ << "Unsupported metric type: " << hnsw_cfg.metric_type.value();
                 return Status::invalid_metric_type;
@@ -749,11 +739,11 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
             if (data_format == DataFormatEnum::fp32) {
                 hnsw_index = std::make_unique<faiss::IndexHNSWFlat>(dim, hnsw_cfg.M.value(), metric.value());
             } else if (data_format == DataFormatEnum::fp16) {
-                hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(
-                    dim, faiss::ScalarQuantizer::QT_fp16, hnsw_cfg.M.value(), metric.value());
+                hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(dim, faiss::ScalarQuantizer::QT_fp16,
+                                                                  hnsw_cfg.M.value(), metric.value());
             } else if (data_format == DataFormatEnum::bf16) {
-                hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(
-                    dim, faiss::ScalarQuantizer::QT_bf16, hnsw_cfg.M.value(), metric.value());
+                hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(dim, faiss::ScalarQuantizer::QT_bf16,
+                                                                  hnsw_cfg.M.value(), metric.value());
             } else {
                 LOG_KNOWHERE_ERROR_ << "Unsupported metric type: " << hnsw_cfg.metric_type.value();
                 return Status::invalid_metric_type;
@@ -786,18 +776,15 @@ class BaseFaissRegularIndexHNSWFlatNodeTemplate : public BaseFaissRegularIndexHN
     }
 };
 
-
 namespace {
 
 // a supporting function
 expected<faiss::ScalarQuantizer::QuantizerType>
 get_sq_quantizer_type(const std::string& sq_type) {
-    std::map<std::string, faiss::ScalarQuantizer::QuantizerType> sq_types = {
-        {"SQ6", faiss::ScalarQuantizer::QT_6bit},
-        {"SQ8", faiss::ScalarQuantizer::QT_8bit},
-        {"FP16", faiss::ScalarQuantizer::QT_fp16},
-        {"BF16", faiss::ScalarQuantizer::QT_bf16}
-    };
+    std::map<std::string, faiss::ScalarQuantizer::QuantizerType> sq_types = {{"SQ6", faiss::ScalarQuantizer::QT_6bit},
+                                                                             {"SQ8", faiss::ScalarQuantizer::QT_8bit},
+                                                                             {"FP16", faiss::ScalarQuantizer::QT_fp16},
+                                                                             {"BF16", faiss::ScalarQuantizer::QT_bf16}};
 
     // todo: tolower
     auto itr = sq_types.find(sq_type);
@@ -825,8 +812,7 @@ is_flat_refine(const std::optional<std::string>& refine_type) {
     auto refine_sq_type = get_sq_quantizer_type(refine_type.value());
     if (!refine_sq_type.has_value()) {
         LOG_KNOWHERE_ERROR_ << "Invalid refine type: " << refine_type.value();
-        return expected<bool>::Err(
-            Status::invalid_args, fmt::format("invalid refine type ({})", refine_type.value()));
+        return expected<bool>::Err(Status::invalid_args, fmt::format("invalid refine type ({})", refine_type.value()));
     }
 
     return false;
@@ -834,18 +820,14 @@ is_flat_refine(const std::optional<std::string>& refine_type) {
 
 // pick a refine index
 expected<std::unique_ptr<faiss::Index>>
-pick_refine_index(
-    const DataFormatEnum data_format,
-    const std::optional<std::string>& refine_type, 
-    std::unique_ptr<faiss::IndexHNSW>&& hnsw_index
-) {
+pick_refine_index(const DataFormatEnum data_format, const std::optional<std::string>& refine_type,
+                  std::unique_ptr<faiss::IndexHNSW>&& hnsw_index) {
     // yes
 
     // grab a type of a refine index
     expected<bool> is_fp32_flat = is_flat_refine(refine_type);
     if (!is_fp32_flat.has_value()) {
-        return expected<std::unique_ptr<faiss::Index>>::Err(
-            Status::invalid_args, "");
+        return expected<std::unique_ptr<faiss::Index>>::Err(Status::invalid_args, "");
     }
 
     const bool is_fp32_flat_v = is_fp32_flat.value();
@@ -854,10 +836,8 @@ pick_refine_index(
     if (data_format == DataFormatEnum::fp16) {
         // make sure that we're using fp16 refine
         auto refine_sq_type = get_sq_quantizer_type(refine_type.value());
-        if (!(refine_sq_type.has_value() && (
-            refine_sq_type.value() != faiss::ScalarQuantizer::QT_bf16 &&
-            !is_fp32_flat_v))) {
-
+        if (!(refine_sq_type.has_value() &&
+              (refine_sq_type.value() != faiss::ScalarQuantizer::QT_bf16 && !is_fp32_flat_v))) {
             LOG_KNOWHERE_ERROR_ << "fp16 input data does not accept bf16 or fp32 as a refine index.";
             return expected<std::unique_ptr<faiss::Index>>::Err(
                 Status::invalid_args, "fp16 input data does not accept bf16 or fp32 as a refine index.");
@@ -867,10 +847,8 @@ pick_refine_index(
     if (data_format == DataFormatEnum::bf16) {
         // make sure that we're using bf16 refine
         auto refine_sq_type = get_sq_quantizer_type(refine_type.value());
-        if (!(refine_sq_type.has_value() && (
-            refine_sq_type.value() != faiss::ScalarQuantizer::QT_fp16 &&
-            !is_fp32_flat_v))) {
-
+        if (!(refine_sq_type.has_value() &&
+              (refine_sq_type.value() != faiss::ScalarQuantizer::QT_fp16 && !is_fp32_flat_v))) {
             LOG_KNOWHERE_ERROR_ << "bf16 input data does not accept fp16 or fp32 as a refine index.";
             return expected<std::unique_ptr<faiss::Index>>::Err(
                 Status::invalid_args, "bf16 input data does not accept fp16 or fp32 as a refine index.");
@@ -904,10 +882,7 @@ pick_refine_index(
 
         // create an sq
         auto sq_refine = std::make_unique<faiss::IndexScalarQuantizer>(
-            local_hnsw_index->storage->d,
-            refine_sq_type.value(),
-            local_hnsw_index->storage->metric_type
-        );
+            local_hnsw_index->storage->d, refine_sq_type.value(), local_hnsw_index->storage->metric_type);
 
         auto refine_index = std::make_unique<faiss::IndexRefine>(local_hnsw_index.get(), sq_refine.get());
 
@@ -926,9 +901,10 @@ pick_refine_index(
 
 //
 class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
-  public:
-    BaseFaissRegularIndexHNSWSQNode(const int32_t& version, const Object& object, DataFormatEnum data_format) :
-        BaseFaissRegularIndexHNSWNode(version, object, data_format) {}
+ public:
+    BaseFaissRegularIndexHNSWSQNode(const int32_t& version, const Object& object, DataFormatEnum data_format)
+        : BaseFaissRegularIndexHNSWNode(version, object, data_format) {
+    }
 
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
@@ -940,8 +916,9 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
         return knowhere::IndexEnum::INDEX_FAISS_HNSW_SQ;
     }
 
-  protected:
-    Status TrainInternal(const DataSetPtr dataset, const Config& cfg) override {
+ protected:
+    Status
+    TrainInternal(const DataSetPtr dataset, const Config& cfg) override {
         // number of rows
         auto rows = dataset->GetRows();
         // dimensionality of the data
@@ -968,11 +945,9 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
 
         std::unique_ptr<faiss::IndexHNSW> hnsw_index;
         if (is_cosine) {
-            hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(
-                dim, sq_type.value(), hnsw_cfg.M.value());
+            hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, sq_type.value(), hnsw_cfg.M.value());
         } else {
-            hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(
-                dim, sq_type.value(), hnsw_cfg.M.value(), metric.value());
+            hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(dim, sq_type.value(), hnsw_cfg.M.value(), metric.value());
         }
 
         hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
@@ -1014,19 +989,20 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
     }
 };
 
-template<typename DataType>
+template <typename DataType>
 class BaseFaissRegularIndexHNSWSQNodeTemplate : public BaseFaissRegularIndexHNSWSQNode {
-  public:
-    BaseFaissRegularIndexHNSWSQNodeTemplate(const int32_t& version, const Object& object) :
-        BaseFaissRegularIndexHNSWSQNode(version, object, datatype_v<DataType>) {}
+ public:
+    BaseFaissRegularIndexHNSWSQNodeTemplate(const int32_t& version, const Object& object)
+        : BaseFaissRegularIndexHNSWSQNode(version, object, datatype_v<DataType>) {
+    }
 };
-
 
 // this index trains PQ and HNSW+FLAT separately, then constructs HNSW+PQ
 class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
-  public:
-    BaseFaissRegularIndexHNSWPQNode(const int32_t& version, const Object& object, DataFormatEnum data_format) :
-        BaseFaissRegularIndexHNSWNode(version, object, data_format) {}
+ public:
+    BaseFaissRegularIndexHNSWPQNode(const int32_t& version, const Object& object, DataFormatEnum data_format)
+        : BaseFaissRegularIndexHNSWNode(version, object, data_format) {
+    }
 
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
@@ -1038,10 +1014,11 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
         return knowhere::IndexEnum::INDEX_FAISS_HNSW_PQ;
     }
 
-  protected:
+ protected:
     std::unique_ptr<faiss::IndexPQ> tmp_index_pq;
 
-    Status TrainInternal(const DataSetPtr dataset, const Config& cfg) override {
+    Status
+    TrainInternal(const DataSetPtr dataset, const Config& cfg) override {
         // number of rows
         auto rows = dataset->GetRows();
         // dimensionality of the data
@@ -1076,9 +1053,9 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
         if (is_cosine) {
             pq_index = std::make_unique<faiss::IndexPQCosine>(dim, hnsw_cfg.m.value(), hnsw_cfg.nbits.value());
         } else {
-            pq_index = std::make_unique<faiss::IndexPQ>(dim, hnsw_cfg.m.value(), hnsw_cfg.nbits.value(), metric.value());
+            pq_index =
+                std::make_unique<faiss::IndexPQ>(dim, hnsw_cfg.m.value(), hnsw_cfg.nbits.value(), metric.value());
         }
-
 
         // should refine be used?
         std::unique_ptr<faiss::Index> final_index;
@@ -1154,8 +1131,7 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
             // check if we have a refine available.
             faiss::IndexHNSW* index_hnsw = nullptr;
 
-            faiss::IndexRefine* const index_refine =
-                dynamic_cast<faiss::IndexRefine*>(index.get());
+            faiss::IndexRefine* const index_refine = dynamic_cast<faiss::IndexRefine*>(index.get());
 
             if (index_refine != nullptr) {
                 index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index_refine->base_index);
@@ -1172,9 +1148,9 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
                 index_hnsw_pq = std::make_unique<faiss::IndexHNSWPQ>();
             }
 
-            // C++ slicing
-            static_cast<faiss::IndexHNSW&>(*index_hnsw_pq) =
-                std::move(static_cast<faiss::IndexHNSW&&>(*index_hnsw));
+            // C++ slicing.
+            // we can't use move, because faiss::IndexHNSW overrides a destructor.
+            static_cast<faiss::IndexHNSW&>(*index_hnsw_pq) = static_cast<faiss::IndexHNSW&>(*index_hnsw);
 
             // clear out the storage
             delete index_hnsw->storage;
@@ -1201,19 +1177,20 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
     }
 };
 
-template<typename DataType>
+template <typename DataType>
 class BaseFaissRegularIndexHNSWPQNodeTemplate : public BaseFaissRegularIndexHNSWPQNode {
-  public:
-    BaseFaissRegularIndexHNSWPQNodeTemplate(const int32_t& version, const Object& object) :
-        BaseFaissRegularIndexHNSWPQNode(version, object, datatype_v<DataType>) {}
+ public:
+    BaseFaissRegularIndexHNSWPQNodeTemplate(const int32_t& version, const Object& object)
+        : BaseFaissRegularIndexHNSWPQNode(version, object, datatype_v<DataType>) {
+    }
 };
-
 
 // this index trains PRQ and HNSW+FLAT separately, then constructs HNSW+PRQ
 class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
-  public:
-    BaseFaissRegularIndexHNSWPRQNode(const int32_t& version, const Object& object, DataFormatEnum data_format) :
-        BaseFaissRegularIndexHNSWNode(version, object, data_format) {}
+ public:
+    BaseFaissRegularIndexHNSWPRQNode(const int32_t& version, const Object& object, DataFormatEnum data_format)
+        : BaseFaissRegularIndexHNSWNode(version, object, data_format) {
+    }
 
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
@@ -1225,16 +1202,15 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
         return knowhere::IndexEnum::INDEX_FAISS_HNSW_PRQ;
     }
 
-  protected:
+ protected:
     std::unique_ptr<faiss::IndexProductResidualQuantizer> tmp_index_prq;
 
-    Status TrainInternal(const DataSetPtr dataset, const Config& cfg) override {
+    Status
+    TrainInternal(const DataSetPtr dataset, const Config& cfg) override {
         // number of rows
         auto rows = dataset->GetRows();
         // dimensionality of the data
         auto dim = dataset->GetDim();
-        // data
-        auto data = dataset->GetTensor();
 
         // config
         auto hnsw_cfg = static_cast<const FaissHnswPrqConfig&>(cfg);
@@ -1262,9 +1238,9 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
 
         // prq
         faiss::AdditiveQuantizer::Search_type_t prq_search_type =
-            (metric.value() == faiss::MetricType::METRIC_INNER_PRODUCT) ?
-            faiss::AdditiveQuantizer::Search_type_t::ST_LUT_nonorm :
-            faiss::AdditiveQuantizer::Search_type_t::ST_norm_float;
+            (metric.value() == faiss::MetricType::METRIC_INNER_PRODUCT)
+                ? faiss::AdditiveQuantizer::Search_type_t::ST_LUT_nonorm
+                : faiss::AdditiveQuantizer::Search_type_t::ST_norm_float;
 
         std::unique_ptr<faiss::IndexProductResidualQuantizer> prq_index;
         if (is_cosine) {
@@ -1324,7 +1300,6 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
             return Status::empty_index;
         }
 
-        auto data = dataset->GetTensor();
         auto rows = dataset->GetRows();
         try {
             // hnsw
@@ -1349,8 +1324,7 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
             // check if we have a refine available.
             faiss::IndexHNSW* index_hnsw = nullptr;
 
-            faiss::IndexRefine* const index_refine =
-                dynamic_cast<faiss::IndexRefine*>(index.get());
+            faiss::IndexRefine* const index_refine = dynamic_cast<faiss::IndexRefine*>(index.get());
 
             if (index_refine != nullptr) {
                 index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index_refine->base_index);
@@ -1368,8 +1342,8 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
             }
 
             // C++ slicing
-            static_cast<faiss::IndexHNSW&>(*index_hnsw_prq) =
-                std::move(static_cast<faiss::IndexHNSW&&>(*index_hnsw));
+            // we can't use move, because faiss::IndexHNSW overrides a destructor.
+            static_cast<faiss::IndexHNSW&>(*index_hnsw_prq) = static_cast<faiss::IndexHNSW&>(*index_hnsw);
 
             // clear out the storage
             delete index_hnsw->storage;
@@ -1396,13 +1370,13 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
     }
 };
 
-template<typename DataType>
+template <typename DataType>
 class BaseFaissRegularIndexHNSWPRQNodeTemplate : public BaseFaissRegularIndexHNSWPRQNode {
-  public:
-    BaseFaissRegularIndexHNSWPRQNodeTemplate(const int32_t& version, const Object& object) :
-        BaseFaissRegularIndexHNSWPRQNode(version, object, datatype_v<DataType>) {}
+ public:
+    BaseFaissRegularIndexHNSWPRQNodeTemplate(const int32_t& version, const Object& object)
+        : BaseFaissRegularIndexHNSWPRQNode(version, object, datatype_v<DataType>) {
+    }
 };
-
 
 //
 KNOWHERE_SIMPLE_REGISTER_GLOBAL(FAISS_HNSW_FLAT, BaseFaissRegularIndexHNSWFlatNodeTemplate, fp32);
