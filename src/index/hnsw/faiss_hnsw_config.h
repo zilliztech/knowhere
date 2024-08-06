@@ -119,7 +119,7 @@ class FaissHnswConfig : public BaseConfig {
         // 'flat' is identical to 'fp32'
         std::vector<std::string> allowed_list = {
             "SQ6", "SQ8", "FP16", "BF16", "FP32", "FLAT"};
-        
+
         // todo: tolower()
 
         for (const auto& allowed : allowed_list) {
@@ -207,7 +207,7 @@ private:
         // todo: add more
         std::vector<std::string> allowed_list = {
             "SQ6", "SQ8", "FP16", "BF16"};
-        
+
         // todo: tolower()
 
         for (const auto& allowed : allowed_list) {
