@@ -185,9 +185,19 @@ protected:
         { "FP16", {} }
     };
 
-
-    std::vector<std::string> PQ_ALLOWED_REFINES = {
+    // accepted refines for PQ for FP32 data type
+    std::vector<std::string> PQ_ALLOWED_REFINES_FP32 = {
         {"SQ6", "SQ8", "BF16", "FP16", "FLAT"}
+    };
+
+    // accepted refines for PQ for FP16 data type
+    std::vector<std::string> PQ_ALLOWED_REFINES_FP16 = {
+        {"SQ6", "SQ8", "FP16"}
+    };
+
+    // accepted refines for PQ for BF16 data type
+    std::vector<std::string> PQ_ALLOWED_REFINES_BF16 = {
+        {"SQ6", "SQ8", "BF16"}
     };
 };
 
@@ -438,57 +448,112 @@ TEST_F(Benchmark_Faiss_Hnsw, TEST_HNSWPQ) {
 
                     auto golden_result = golden_index.Search(query_ds_ptr, conf, nullptr);
 
-                    //
-                    printf("\n");
-                    printf("Processing HNSW,PQ%dx%d fp32 for %s distance, dim=%d, nrows=%d\n",
+                    // test fp32 candidate
+                    printf("\nProcessing HNSW,PQ%dx%d fp32 for %s distance, dim=%d, nrows=%d\n",
                         pq_m,
                         NBITS[nbits_type],
                         DISTANCE_TYPES[distance_type].c_str(),
                         dim,
                         nb);
 
-                    // test a candidate
                     test_hnsw<knowhere::fp32>(
-                        default_ds_ptr,
-                        query_ds_ptr,
-                        golden_result.value(),
-                        params,
-                        conf);
+                        default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf);
 
-                    // test refines
-                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES.size(); allowed_ref_idx++) {
+                    // test fp16 candidate
+                    printf("\nProcessing HNSW,PQ%dx%d fp16 for %s distance, dim=%d, nrows=%d\n",
+                        pq_m,
+                        NBITS[nbits_type],
+                        DISTANCE_TYPES[distance_type].c_str(),
+                        dim,
+                        nb);
+
+                    test_hnsw<knowhere::fp16>(
+                        default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf);
+
+                    // test bf16 candidate
+                    printf("\nProcessing HNSW,PQ%dx%d bf16 for %s distance, dim=%d, nrows=%d\n",
+                        pq_m,
+                        NBITS[nbits_type],
+                        DISTANCE_TYPES[distance_type].c_str(),
+                        dim,
+                        nb);
+
+                    test_hnsw<knowhere::bf16>(
+                        default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf);
+
+                    // test refines for fp32
+                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size(); allowed_ref_idx++) {
                         auto conf_refine = conf;
                         conf_refine["refine"] = true;
                         conf_refine["refine_k"] = 1.5;
-                        conf_refine["refine_type"] = PQ_ALLOWED_REFINES[allowed_ref_idx];
+                        conf_refine["refine_type"] = PQ_ALLOWED_REFINES_FP32[allowed_ref_idx];
 
                         std::vector<int32_t> params_refine =
                             {(int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
 
-                        //
-                        printf("\n");
-                        printf("Processing HNSW,PQ%dx%d with %s refine, fp32 for %s distance, dim=%d, nrows=%d\n",
+                        // test fp32 candidate
+                        printf("\nProcessing HNSW,PQ%dx%d with %s refine, fp32 for %s distance, dim=%d, nrows=%d\n",
                             pq_m,
                             NBITS[nbits_type],
-                            PQ_ALLOWED_REFINES[allowed_ref_idx].c_str(),
+                            PQ_ALLOWED_REFINES_FP32[allowed_ref_idx].c_str(),
                             DISTANCE_TYPES[distance_type].c_str(),
                             dim,
                             nb);
 
-                        // test a candidate
                         test_hnsw<knowhere::fp32>(
-                            default_ds_ptr,
-                            query_ds_ptr,
-                            golden_result.value(),
-                            params_refine,
-                            conf_refine);
+                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine, conf_refine);
+                    }
+
+                    // test refines for fp16
+                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP16.size(); allowed_ref_idx++) {
+                        auto conf_refine = conf;
+                        conf_refine["refine"] = true;
+                        conf_refine["refine_k"] = 1.5;
+                        conf_refine["refine_type"] = PQ_ALLOWED_REFINES_FP16[allowed_ref_idx];
+
+                        std::vector<int32_t> params_refine =
+                            {(int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
+
+                        // test fp16 candidate
+                        printf("\nProcessing HNSW,PQ%dx%d with %s refine, fp16 for %s distance, dim=%d, nrows=%d\n",
+                            pq_m,
+                            NBITS[nbits_type],
+                            PQ_ALLOWED_REFINES_FP16[allowed_ref_idx].c_str(),
+                            DISTANCE_TYPES[distance_type].c_str(),
+                            dim,
+                            nb);
+
+                        test_hnsw<knowhere::fp16>(
+                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine, conf_refine);
+                    }
+
+                    // test refines for bf16
+                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_BF16.size(); allowed_ref_idx++) {
+                        auto conf_refine = conf;
+                        conf_refine["refine"] = true;
+                        conf_refine["refine_k"] = 1.5;
+                        conf_refine["refine_type"] = PQ_ALLOWED_REFINES_BF16[allowed_ref_idx];
+
+                        std::vector<int32_t> params_refine =
+                            {(int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
+
+                        // test bf16 candidate
+                        printf("\nProcessing HNSW,PQ%dx%d with %s refine, bf16 for %s distance, dim=%d, nrows=%d\n",
+                            pq_m,
+                            NBITS[nbits_type],
+                            PQ_ALLOWED_REFINES_BF16[allowed_ref_idx].c_str(),
+                            DISTANCE_TYPES[distance_type].c_str(),
+                            dim,
+                            nb);
+
+                        test_hnsw<knowhere::bf16>(
+                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine, conf_refine);
                     }
                 }
             }
         }
     }
 }
-
 
 //
 TEST_F(Benchmark_Faiss_Hnsw, TEST_HNSWPRQ) {
