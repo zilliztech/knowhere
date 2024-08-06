@@ -74,21 +74,23 @@ public:
             conf
         );
 
-        auto result = index.Search(query_ds_ptr, conf, nullptr);
-        auto result_loaded = index_loaded.Search(query_ds_ptr, conf, nullptr);
+        auto query_t_ds_ptr = knowhere::ConvertToDataTypeIfNeeded<T>(query_ds_ptr);
+
+        auto result = index.Search(query_t_ds_ptr, conf, nullptr);
+        auto result_loaded = index_loaded.Search(query_t_ds_ptr, conf, nullptr);
 
         // calc recall
         auto recall = this->CalcRecall(
             golden_result->GetIds(), 
             result.value()->GetIds(), 
-            query_ds_ptr->GetRows(),
+            query_t_ds_ptr->GetRows(),
             conf[knowhere::meta::TOPK].get<size_t>()
         );
 
         auto recall_loaded = this->CalcRecall(
             golden_result->GetIds(), 
             result_loaded.value()->GetIds(), 
-            query_ds_ptr->GetRows(),
+            query_t_ds_ptr->GetRows(),
             conf[knowhere::meta::TOPK].get<size_t>()
         );
 
@@ -208,7 +210,7 @@ TEST_F(Benchmark_Faiss_Hnsw, TEST_HNSWFLAT) {
 
                 auto golden_result = golden_index.Search(query_ds_ptr, conf, nullptr);
 
-                //
+                // fp32
                 printf("\n");
                 printf("Processing HNSW,Flat fp32 for %s distance, dim=%d, nrows=%d\n",
                     DISTANCE_TYPES[distance_type].c_str(),
@@ -217,6 +219,36 @@ TEST_F(Benchmark_Faiss_Hnsw, TEST_HNSWFLAT) {
 
                 // test a candidate
                 test_hnsw<knowhere::fp32>(
+                    default_ds_ptr,
+                    query_ds_ptr,
+                    golden_result.value(),
+                    params,
+                    conf);
+
+                // fp16
+                printf("\n");
+                printf("Processing HNSW,Flat fp16 for %s distance, dim=%d, nrows=%d\n",
+                    DISTANCE_TYPES[distance_type].c_str(),
+                    dim,
+                    nb);
+
+                // test a candidate
+                test_hnsw<knowhere::fp16>(
+                    default_ds_ptr,
+                    query_ds_ptr,
+                    golden_result.value(),
+                    params,
+                    conf);
+
+                // bf32
+                printf("\n");
+                printf("Processing HNSW,Flat bf16 for %s distance, dim=%d, nrows=%d\n",
+                    DISTANCE_TYPES[distance_type].c_str(),
+                    dim,
+                    nb);
+
+                // test a candidate
+                test_hnsw<knowhere::bf16>(
                     default_ds_ptr,
                     query_ds_ptr,
                     golden_result.value(),
