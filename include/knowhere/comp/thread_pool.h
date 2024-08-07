@@ -12,8 +12,15 @@
 #pragma once
 
 #include <omp.h>
+
 #ifdef __linux__
+
+#if defined(__PPC64__) || defined(__ppc64__) || defined(__PPC64LE__) || defined(__ppc64le__) || defined(__powerpc64__)
+#include <openblas/cblas.h>
+#else
 #include <cblas.h>
+#endif
+
 #include <sys/resource.h>
 #if __GLIBC__ == 2 && __GLIBC_MINOR__ < 30
 #include <sys/syscall.h>
