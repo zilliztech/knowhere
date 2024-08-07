@@ -15,6 +15,7 @@
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 #include "knowhere/comp/index_param.h"
+#include "knowhere/comp/knowhere_check.h"
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/index/index_factory.h"
 #include "utils.h"
@@ -77,6 +78,8 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
 
         auto idx_new = knowhere::IndexFactory::Instance().Create<knowhere::bin1>(name, version).value();
         idx_new.Deserialize(bs);
+        REQUIRE(idx.HasRawData(metric_type) ==
+                knowhere::KnowhereCheck::IndexHasRawData<knowhere::bin1>(name, metric_type, version, json));
 
         auto retrieve_task = [&]() {
             auto results = idx_new.GetVectorByIds(ids_ds);
@@ -183,6 +186,8 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
         auto ids_ds = GenIdsDataSet(nb, nq);
         REQUIRE(idx.Type() == name);
         auto res = idx.Build(train_ds, json);
+        REQUIRE(idx.HasRawData(metric) ==
+                knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>(name, metric, version, json));
         if (!idx.HasRawData(metric)) {
             return;
         }

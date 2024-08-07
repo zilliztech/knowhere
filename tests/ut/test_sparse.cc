@@ -16,6 +16,7 @@
 #include "knowhere/bitsetview.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
+#include "knowhere/comp/knowhere_check.h"
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/index/index_factory.h"
 #include "utils.h"
@@ -350,6 +351,8 @@ TEST_CASE("Test Mem Sparse Index GetVectorByIds", "[float metrics]") {
         auto ids_ds = GenIdsDataSet(nb, nq);
         REQUIRE(idx.Type() == name);
         auto res = idx.Build(train_ds, json);
+        REQUIRE(idx.HasRawData(metric) ==
+                knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>(name, metric, version, json));
         if (!idx.HasRawData(metric)) {
             return;
         }

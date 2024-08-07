@@ -29,7 +29,7 @@ namespace knowhere {
 template <typename DataType, typename IndexType>
 class FlatIndexNode : public IndexNode {
  public:
-    FlatIndexNode(const int32_t version, const Object& object) : index_(nullptr) {
+    FlatIndexNode(const int32_t version, const Object& object) : IndexNode(version), index_(nullptr) {
         static_assert(
             std::is_same<IndexType, faiss::IndexFlat>::value || std::is_same<IndexType, faiss::IndexBinaryFlat>::value,
             "not support");
