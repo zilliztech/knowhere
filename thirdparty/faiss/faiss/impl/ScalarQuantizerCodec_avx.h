@@ -118,21 +118,21 @@ struct Codec6bit_avx : public Codec6bit {
  * through a codec
  *******************************************************************/
 
-template <class Codec, bool uniform, int SIMD>
+template <class Codec, QuantizerTemplateScaling SCALING, int SIMD>
 struct QuantizerTemplate_avx {};
 
 template <class Codec>
-struct QuantizerTemplate_avx<Codec, true, 1>
-        : public QuantizerTemplate<Codec, true, 1> {
+struct QuantizerTemplate_avx<Codec, QuantizerTemplateScaling::UNIFORM, 1>
+        : public QuantizerTemplate<Codec, QuantizerTemplateScaling::UNIFORM, 1> {
     QuantizerTemplate_avx(size_t d, const std::vector<float>& trained)
-            : QuantizerTemplate<Codec, true, 1>(d, trained) {}
+            : QuantizerTemplate<Codec, QuantizerTemplateScaling::UNIFORM, 1>(d, trained) {}
 };
 
 template <class Codec>
-struct QuantizerTemplate_avx<Codec, true, 8>
-        : public QuantizerTemplate<Codec, true, 1> {
+struct QuantizerTemplate_avx<Codec, QuantizerTemplateScaling::UNIFORM, 8>
+        : public QuantizerTemplate<Codec, QuantizerTemplateScaling::UNIFORM, 1> {
     QuantizerTemplate_avx(size_t d, const std::vector<float>& trained)
-            : QuantizerTemplate<Codec, true, 1>(d, trained) {}
+            : QuantizerTemplate<Codec, QuantizerTemplateScaling::UNIFORM, 1>(d, trained) {}
 
     FAISS_ALWAYS_INLINE __m256
     reconstruct_8_components(const uint8_t* code, int i) const {
@@ -143,17 +143,17 @@ struct QuantizerTemplate_avx<Codec, true, 8>
 };
 
 template <class Codec>
-struct QuantizerTemplate_avx<Codec, false, 1>
-        : public QuantizerTemplate<Codec, false, 1> {
+struct QuantizerTemplate_avx<Codec, QuantizerTemplateScaling::NON_UNIFORM, 1>
+        : public QuantizerTemplate<Codec, QuantizerTemplateScaling::NON_UNIFORM, 1> {
     QuantizerTemplate_avx(size_t d, const std::vector<float>& trained)
-            : QuantizerTemplate<Codec, false, 1>(d, trained) {}
+            : QuantizerTemplate<Codec, QuantizerTemplateScaling::NON_UNIFORM, 1>(d, trained) {}
 };
 
 template <class Codec>
-struct QuantizerTemplate_avx<Codec, false, 8>
-        : public QuantizerTemplate<Codec, false, 1> {
+struct QuantizerTemplate_avx<Codec, QuantizerTemplateScaling::NON_UNIFORM, 8>
+        : public QuantizerTemplate<Codec, QuantizerTemplateScaling::NON_UNIFORM, 1> {
     QuantizerTemplate_avx(size_t d, const std::vector<float>& trained)
-            : QuantizerTemplate<Codec, false, 1>(d, trained) {}
+            : QuantizerTemplate<Codec, QuantizerTemplateScaling::NON_UNIFORM, 1>(d, trained) {}
 
     FAISS_ALWAYS_INLINE __m256
     reconstruct_8_components(const uint8_t* code, int i) const {
@@ -278,19 +278,19 @@ SQuantizer* select_quantizer_1_avx(
         const std::vector<float>& trained) {
     switch (qtype) {
         case QuantizerType::QT_8bit:
-            return new QuantizerTemplate_avx<Codec8bit_avx, false, SIMDWIDTH>(
+            return new QuantizerTemplate_avx<Codec8bit_avx, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>(
                     d, trained);
         case QuantizerType::QT_6bit:
-            return new QuantizerTemplate_avx<Codec6bit_avx, false, SIMDWIDTH>(
+            return new QuantizerTemplate_avx<Codec6bit_avx, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>(
                     d, trained);
         case QuantizerType::QT_4bit:
-            return new QuantizerTemplate_avx<Codec4bit_avx, false, SIMDWIDTH>(
+            return new QuantizerTemplate_avx<Codec4bit_avx, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>(
                     d, trained);
         case QuantizerType::QT_8bit_uniform:
-            return new QuantizerTemplate_avx<Codec8bit_avx, true, SIMDWIDTH>(
+            return new QuantizerTemplate_avx<Codec8bit_avx, QuantizerTemplateScaling::UNIFORM, SIMDWIDTH>(
                     d, trained);
         case QuantizerType::QT_4bit_uniform:
-            return new QuantizerTemplate_avx<Codec4bit_avx, true, SIMDWIDTH>(
+            return new QuantizerTemplate_avx<Codec4bit_avx, QuantizerTemplateScaling::UNIFORM, SIMDWIDTH>(
                     d, trained);
         case QuantizerType::QT_fp16:
             return new QuantizerFP16_avx<SIMDWIDTH>(d, trained);
@@ -606,31 +606,31 @@ SQDistanceComputer* select_distance_computer_avx(
     switch (qtype) {
         case QuantizerType::QT_8bit_uniform:
             return new DCTemplate_avx<
-                    QuantizerTemplate_avx<Codec8bit_avx, true, SIMDWIDTH>,
+                    QuantizerTemplate_avx<Codec8bit_avx, QuantizerTemplateScaling::UNIFORM, SIMDWIDTH>,
                     Sim,
                     SIMDWIDTH>(d, trained);
 
         case QuantizerType::QT_4bit_uniform:
             return new DCTemplate_avx<
-                    QuantizerTemplate_avx<Codec4bit_avx, true, SIMDWIDTH>,
+                    QuantizerTemplate_avx<Codec4bit_avx, QuantizerTemplateScaling::UNIFORM, SIMDWIDTH>,
                     Sim,
                     SIMDWIDTH>(d, trained);
 
         case QuantizerType::QT_8bit:
             return new DCTemplate_avx<
-                    QuantizerTemplate_avx<Codec8bit_avx, false, SIMDWIDTH>,
+                    QuantizerTemplate_avx<Codec8bit_avx, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>,
                     Sim,
                     SIMDWIDTH>(d, trained);
 
         case QuantizerType::QT_6bit:
             return new DCTemplate_avx<
-                    QuantizerTemplate_avx<Codec6bit_avx, false, SIMDWIDTH>,
+                    QuantizerTemplate_avx<Codec6bit_avx, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>,
                     Sim,
                     SIMDWIDTH>(d, trained);
 
         case QuantizerType::QT_4bit:
             return new DCTemplate_avx<
-                    QuantizerTemplate_avx<Codec4bit_avx, false, SIMDWIDTH>,
+                    QuantizerTemplate_avx<Codec4bit_avx, QuantizerTemplateScaling::NON_UNIFORM, SIMDWIDTH>,
                     Sim,
                     SIMDWIDTH>(d, trained);
 
@@ -677,7 +677,7 @@ InvertedListScanner* sel2_InvertedListScanner_avx(
             sq, quantizer, store_pairs, sel, r);
 }
 
-template <class Similarity, class Codec, bool uniform>
+template <class Similarity, class Codec, QuantizerTemplateScaling SCALING>
 InvertedListScanner* sel12_InvertedListScanner_avx(
         const ScalarQuantizer* sq,
         const Index* quantizer,
@@ -685,7 +685,7 @@ InvertedListScanner* sel12_InvertedListScanner_avx(
         const IDSelector* sel,
         bool r) {
     constexpr int SIMDWIDTH = Similarity::simdwidth;
-    using QuantizerClass = QuantizerTemplate_avx<Codec, uniform, SIMDWIDTH>;
+    using QuantizerClass = QuantizerTemplate_avx<Codec, SCALING, SIMDWIDTH>;
     using DCClass = DCTemplate_avx<QuantizerClass, Similarity, SIMDWIDTH>;
     return sel2_InvertedListScanner_avx<DCClass>(
             sq, quantizer, store_pairs, sel, r);
@@ -704,27 +704,27 @@ InvertedListScanner* sel1_InvertedListScanner_avx(
             return sel12_InvertedListScanner_avx<
                     Similarity,
                     Codec8bit_avx,
-                    true>(sq, quantizer, store_pairs, sel, r);
+                    QuantizerTemplateScaling::UNIFORM>(sq, quantizer, store_pairs, sel, r);
         case QuantizerType::QT_4bit_uniform:
             return sel12_InvertedListScanner_avx<
                     Similarity,
                     Codec4bit_avx,
-                    true>(sq, quantizer, store_pairs, sel, r);
+                    QuantizerTemplateScaling::UNIFORM>(sq, quantizer, store_pairs, sel, r);
         case QuantizerType::QT_8bit:
             return sel12_InvertedListScanner_avx<
                     Similarity,
                     Codec8bit_avx,
-                    false>(sq, quantizer, store_pairs, sel, r);
+                    QuantizerTemplateScaling::NON_UNIFORM>(sq, quantizer, store_pairs, sel, r);
         case QuantizerType::QT_4bit:
             return sel12_InvertedListScanner_avx<
                     Similarity,
                     Codec4bit_avx,
-                    false>(sq, quantizer, store_pairs, sel, r);
+                    QuantizerTemplateScaling::NON_UNIFORM>(sq, quantizer, store_pairs, sel, r);
         case QuantizerType::QT_6bit:
             return sel12_InvertedListScanner_avx<
                     Similarity,
                     Codec6bit_avx,
-                    false>(sq, quantizer, store_pairs, sel, r);
+                    QuantizerTemplateScaling::NON_UNIFORM>(sq, quantizer, store_pairs, sel, r);
         case QuantizerType::QT_fp16:
             return sel2_InvertedListScanner_avx<DCTemplate_avx<
                     QuantizerFP16_avx<SIMDWIDTH>,

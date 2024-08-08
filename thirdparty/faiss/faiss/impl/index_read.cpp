@@ -27,6 +27,7 @@
 #include <faiss/Index2Layer.h>
 #include <faiss/IndexAdditiveQuantizer.h>
 #include <faiss/IndexAdditiveQuantizerFastScan.h>
+#include <faiss/IndexCosine.h>
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexHNSW.h>
 #include <faiss/IndexIVF.h>
@@ -685,6 +686,20 @@ Index* read_index(IOReader* f, int io_flags) {
     if (h == fourcc("null")) {
         // denotes a missing index, useful for some cases
         return nullptr;
+    } else if (h == fourcc("IxF9")) {
+        IndexFlatCosine* idxf = new IndexFlatCosine();
+        read_index_header(idxf, f);
+        idxf->code_size = idxf->d * sizeof(float);
+        READXBVECTOR(idxf->codes);
+        READVECTOR(idxf->code_norms);
+
+        // reconstruct inverse norms
+        idxf->inverse_norms_storage = L2NormsStorage::from_l2_norms(idxf->code_norms);
+
+        FAISS_THROW_IF_NOT(
+                idxf->codes.size() == idxf->ntotal * idxf->code_size);
+        // leak!
+        idx = idxf;
     } else if (
             h == fourcc("IxFI") || h == fourcc("IxF2") || h == fourcc("IxFl")) {
         IndexFlat* idxf;
@@ -737,6 +752,23 @@ Index* read_index(IOReader* f, int io_flags) {
         FAISS_THROW_IF_NOT(
                 idxl->codes.size() == idxl->ntotal * idxl->code_size);
         idx = idxl;
+    } else if (h == fourcc("IxP7")) {
+        IndexPQCosine* idxp = new IndexPQCosine();
+        read_index_header(idxp, f);
+        read_ProductQuantizer(&idxp->pq, f);
+        idxp->code_size = idxp->pq.code_size;
+        READVECTOR(idxp->codes);
+        READ1(idxp->search_type);
+        READ1(idxp->encode_signs);
+        READ1(idxp->polysemous_ht);
+        // read inverse norms
+        READVECTOR(idxp->inverse_norms_storage.inverse_l2_norms);
+
+        if (!(io_flags & IO_FLAG_PQ_SKIP_SDC_TABLE)) {
+            idxp->pq.compute_sdc_table ();
+        }
+
+        idx = idxp;
     } else if (
             h == fourcc("IxPQ") || h == fourcc("IxPo") || h == fourcc("IxPq")) {
         // IxPQ and IxPo were merged into the same IndexPQ object
@@ -781,6 +813,16 @@ Index* read_index(IOReader* f, int io_flags) {
         READ1(idxr->code_size);
         READVECTOR(idxr->codes);
         idx = idxr;
+    } else if (h == fourcc("IxP5")) {
+        auto idxpr = new IndexProductResidualQuantizerCosine();
+        read_index_header(idxpr, f);
+        read_ProductResidualQuantizer(&idxpr->prq, f, io_flags);
+        READ1(idxpr->code_size);
+        READVECTOR(idxpr->codes);
+        // read inverse norms
+        READVECTOR(idxpr->inverse_norms_storage.inverse_l2_norms);
+
+        idx = idxpr;
     } else if (h == fourcc("IxPR")) {
         auto idxpr = new IndexProductResidualQuantizer();
         read_index_header(idxpr, f);
@@ -958,6 +1000,17 @@ Index* read_index(IOReader* f, int io_flags) {
         }
         read_InvertedLists(ivfl, f, io_flags);
         idx = ivfl;
+    } else if (h == fourcc("IxS8")) {
+        IndexScalarQuantizerCosine* idxs = new IndexScalarQuantizerCosine();
+        read_index_header(idxs, f);
+        read_ScalarQuantizer(&idxs->sq, f);
+        READVECTOR(idxs->codes);
+        idxs->code_size = idxs->sq.code_size;
+
+        // reconstruct inverse norms
+        READVECTOR(idxs->inverse_norms_storage.inverse_l2_norms);
+
+        idx = idxs;
     } else if (h == fourcc("IxSQ")) {
         IndexScalarQuantizer* idxs = new IndexScalarQuantizer();
         read_index_header(idxs, f);
@@ -1139,7 +1192,9 @@ Index* read_index(IOReader* f, int io_flags) {
         idx = idxp;
     } else if (
             h == fourcc("IHNf") || h == fourcc("IHNp") || h == fourcc("IHNs") ||
-            h == fourcc("IHN2") || h == fourcc("IHNc")) {
+            h == fourcc("IHN2") || h == fourcc("IHNc") || h == fourcc("IHN9") ||
+            h == fourcc("IHN8") || h == fourcc("IHN7") || h == fourcc("IHN6") ||
+            h == fourcc("IHN5")) {
         IndexHNSW* idxhnsw = nullptr;
         if (h == fourcc("IHNf"))
             idxhnsw = new IndexHNSWFlat();
@@ -1151,6 +1206,16 @@ Index* read_index(IOReader* f, int io_flags) {
             idxhnsw = new IndexHNSW2Level();
         if (h == fourcc("IHNc"))
             idxhnsw = new IndexHNSWCagra();
+        if (h == fourcc("IHN9"))
+            idxhnsw = new IndexHNSWFlatCosine();
+        if (h == fourcc("IHN8"))
+            idxhnsw = new IndexHNSWSQCosine();
+        if (h == fourcc("IHN7"))
+            idxhnsw = new IndexHNSWPQCosine();
+        if (h == fourcc("IHN6"))
+            idxhnsw = new IndexHNSWProductResidualQuantizer();
+        if (h == fourcc("IHN5"))
+            idxhnsw = new IndexHNSWProductResidualQuantizerCosine();
         read_index_header(idxhnsw, f);
         if (h == fourcc("IHNc")) {
             READ1(idxhnsw->keep_max_size_level0);

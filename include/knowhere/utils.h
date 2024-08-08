@@ -109,18 +109,31 @@ GetKey(const std::string& name) {
 
 template <typename InType, typename OutType>
 inline DataSetPtr
-data_type_conversion(const DataSet& src) {
+data_type_conversion(const DataSet& src, const std::optional<int64_t> start = std::nullopt,
+                     const std::optional<int64_t> count = std::nullopt) {
     auto dim = src.GetDim();
     auto rows = src.GetRows();
 
-    auto des_data = new OutType[dim * rows];
-    auto src_data = (InType*)src.GetTensor();
-    for (auto i = 0; i < dim * rows; i++) {
-        des_data[i] = (OutType)src_data[i];
+    // check the acceptable range
+    int64_t start_row = start.value_or(0);
+    if (start_row < 0 || start_row >= rows) {
+        return nullptr;
+    }
+
+    int64_t count_rows = count.value_or(rows - start_row);
+    if (count_rows < 0 || start_row + count_rows > rows) {
+        return nullptr;
+    }
+
+    // map
+    auto* des_data = new OutType[dim * count_rows];
+    auto* src_data = (const InType*)src.GetTensor();
+    for (auto i = 0; i < dim * count_rows; i++) {
+        des_data[i] = (OutType)src_data[i + start_row * dim];
     }
 
     auto des = std::make_shared<DataSet>();
-    des->SetRows(rows);
+    des->SetRows(count_rows);
     des->SetDim(dim);
     des->SetTensor(des_data);
     des->SetIsOwner(true);
@@ -128,25 +141,37 @@ data_type_conversion(const DataSet& src) {
 }
 
 // Convert DataSet from DataType to float
+// * no start, no count, float -> returns the source without cloning
+// * no start, no count, no float -> returns a clone with a different type
+// * start, no count -> returns a clone that starts from a given row 'start'
+// * no start, count -> returns a clone that starts from a row 0 and has 'count' rows
+// * start, count -> returns a clone that start from a given row 'start' and has 'count' rows
+// * invalid start, count values -> returns nullptr
 template <typename DataType>
 inline DataSetPtr
-ConvertFromDataTypeIfNeeded(const DataSetPtr ds) {
+ConvertFromDataTypeIfNeeded(const DataSetPtr& ds, const std::optional<int64_t> start = std::nullopt,
+                            const std::optional<int64_t> count = std::nullopt) {
     if constexpr (std::is_same_v<DataType, typename MockData<DataType>::type>) {
-        return ds;
-    } else {
-        return data_type_conversion<DataType, typename MockData<DataType>::type>(*ds);
+        if (!start.has_value() && !count.has_value()) {
+            return ds;
+        }
     }
+
+    return data_type_conversion<DataType, typename MockData<DataType>::type>(*ds, start, count);
 }
 
 // Convert DataSet from float to DataType
 template <typename DataType>
 inline DataSetPtr
-ConvertToDataTypeIfNeeded(const DataSetPtr ds) {
+ConvertToDataTypeIfNeeded(const DataSetPtr& ds, const std::optional<int64_t> start = std::nullopt,
+                          const std::optional<int64_t> count = std::nullopt) {
     if constexpr (std::is_same_v<DataType, typename MockData<DataType>::type>) {
-        return ds;
-    } else {
-        return data_type_conversion<typename MockData<DataType>::type, DataType>(*ds);
+        if (!start.has_value() && !count.has_value()) {
+            return ds;
+        }
     }
+
+    return data_type_conversion<typename MockData<DataType>::type, DataType>(*ds, start, count);
 }
 
 template <typename T>
