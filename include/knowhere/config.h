@@ -78,13 +78,13 @@ enum PARAM_TYPE {
 
 template <>
 struct Entry<CFG_STRING> {
-    explicit Entry<CFG_STRING>(CFG_STRING* v) {
+    explicit Entry(CFG_STRING* v) {
         val = v;
         type = 0x0;
         default_val = std::nullopt;
         desc = std::nullopt;
     }
-    Entry<CFG_STRING>() {
+    Entry() {
         val = nullptr;
         type = 0x0;
         default_val = std::nullopt;
@@ -99,14 +99,14 @@ struct Entry<CFG_STRING> {
 
 template <>
 struct Entry<CFG_FLOAT> {
-    explicit Entry<CFG_FLOAT>(CFG_FLOAT* v) {
+    explicit Entry(CFG_FLOAT* v) {
         val = v;
         default_val = std::nullopt;
         type = 0x0;
         range = std::nullopt;
         desc = std::nullopt;
     }
-    Entry<CFG_FLOAT>() {
+    Entry() {
         val = nullptr;
         default_val = std::nullopt;
         type = 0x0;
@@ -124,14 +124,14 @@ struct Entry<CFG_FLOAT> {
 
 template <>
 struct Entry<CFG_INT> {
-    explicit Entry<CFG_INT>(CFG_INT* v) {
+    explicit Entry(CFG_INT* v) {
         val = v;
         default_val = std::nullopt;
         type = 0x0;
         range = std::nullopt;
         desc = std::nullopt;
     }
-    Entry<CFG_INT>() {
+    Entry() {
         val = nullptr;
         default_val = std::nullopt;
         type = 0x0;
@@ -149,14 +149,14 @@ struct Entry<CFG_INT> {
 
 template <>
 struct Entry<CFG_LIST> {
-    explicit Entry<CFG_LIST>(CFG_LIST* v) {
+    explicit Entry(CFG_LIST* v) {
         val = v;
         default_val = std::nullopt;
         type = 0x0;
         desc = std::nullopt;
     }
 
-    Entry<CFG_LIST>() {
+    Entry() {
         val = nullptr;
         default_val = std::nullopt;
         type = 0x0;
@@ -172,14 +172,14 @@ struct Entry<CFG_LIST> {
 
 template <>
 struct Entry<CFG_BOOL> {
-    explicit Entry<CFG_BOOL>(CFG_BOOL* v) {
+    explicit Entry(CFG_BOOL* v) {
         val = v;
         default_val = std::nullopt;
         type = 0x0;
         desc = std::nullopt;
     }
 
-    Entry<CFG_BOOL>() {
+    Entry() {
         val = nullptr;
         default_val = std::nullopt;
         type = 0x0;
@@ -195,14 +195,14 @@ struct Entry<CFG_BOOL> {
 
 template <>
 struct Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE> {
-    explicit Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE>(CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE* v) {
+    explicit Entry(CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE* v) {
         val = v;
         default_val = std::nullopt;
         type = 0x0;
         desc = std::nullopt;
     }
 
-    Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE>() {
+    Entry() {
         val = nullptr;
         default_val = std::nullopt;
         type = 0x0;
@@ -218,14 +218,14 @@ struct Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE> {
 
 template <>
 struct Entry<CFG_BYTES> {
-    explicit Entry<CFG_BYTES>(CFG_BYTES* v) {
+    explicit Entry(CFG_BYTES* v) {
         val = v;
         default_val = std::nullopt;
         type = 0x0;
         desc = std::nullopt;
     }
 
-    Entry<CFG_BYTES>() {
+    Entry() {
         val = nullptr;
         default_val = std::nullopt;
         type = 0x0;
