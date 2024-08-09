@@ -227,8 +227,11 @@ class IndexNode : public Object {
 // with quantization, override `raw_distance`.
 class IndexIterator : public IndexNode::iterator {
  public:
-    IndexIterator(bool larger_is_closer, float refine_ratio = 0.0f)
-        : refine_ratio_(refine_ratio), refine_(refine_ratio != 0.0f), sign_(larger_is_closer ? -1 : 1) {
+    IndexIterator(bool larger_is_closer, float refine_ratio = 0.0f, bool retain_iterator_order = false)
+        : refine_ratio_(refine_ratio),
+          refine_(refine_ratio != 0.0f),
+          retain_iterator_order_(retain_iterator_order),
+          sign_(larger_is_closer ? -1 : 1) {
     }
 
     std::pair<int64_t, float>
@@ -243,6 +246,20 @@ class IndexIterator : public IndexNode::iterator {
         auto ret = q.top();
         q.pop();
         UpdateNext();
+        if (retain_iterator_order_) {
+            while (HasNext()) {
+                auto& q = refined_res_.empty() ? res_ : refined_res_;
+                auto next_ret = q.top();
+                // with the help of `sign_`, both `res_` and `refine_res` are min-heap.
+                //   such as `COSINE`, `-dist` will be inserted to `res_` or `refine_res`.
+                // just make sure that the next value is greater than or equal to the current value.
+                if (next_ret.val >= ret.val) {
+                    break;
+                }
+                q.pop();
+                UpdateNext();
+            }
+        }
         return std::make_pair(ret.id, ret.val * sign_);
     }
 
@@ -310,6 +327,7 @@ class IndexIterator : public IndexNode::iterator {
     }
 
     bool initialized_ = false;
+    bool retain_iterator_order_ = false;
     const int64_t sign_;
 };
 
