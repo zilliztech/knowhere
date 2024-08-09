@@ -636,6 +636,7 @@ class BaseConfig : public Config {
     CFG_INT range_search_k;
     CFG_FLOAT range_filter;
     CFG_FLOAT range_search_level;
+    CFG_BOOL retain_iterator_order;
     CFG_BOOL trace_visit;
     CFG_BOOL enable_mmap;
     CFG_BOOL enable_mmap_pop;
@@ -754,6 +755,11 @@ class BaseConfig : public Config {
         KNOWHERE_CONFIG_DECLARE_FIELD(iterator_refine_ratio)
             .set_default(0.5)
             .description("refine ratio for iterator")
+            .for_iterator()
+            .for_range_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(retain_iterator_order)
+            .set_default(false)
+            .description("whether the result of iterator monotonically ordered")
             .for_iterator()
             .for_range_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(bm25_k1)
