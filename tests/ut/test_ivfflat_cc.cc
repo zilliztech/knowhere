@@ -17,6 +17,7 @@
 #include "catch2/generators/catch_generators.hpp"
 #include "faiss/invlists/InvertedLists.h"
 #include "knowhere/comp/index_param.h"
+#include "knowhere/comp/knowhere_check.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/utils.h"
 #include "utils.h"
@@ -158,6 +159,8 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
         auto res = idx.Build(train_ds, json);
         REQUIRE(res == knowhere::Status::success);
         REQUIRE(idx.Type() == name);
+        REQUIRE(idx.HasRawData(metric) ==
+                knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>(name, metric, version, json));
 
         auto& build_ds = train_ds;
         auto query_ds = GenDataSet(nq, dim, seed);

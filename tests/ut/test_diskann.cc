@@ -16,6 +16,7 @@
 #include "catch2/generators/catch_generators.hpp"
 #include "index/diskann/diskann_config.h"
 #include "knowhere/comp/brute_force.h"
+#include "knowhere/comp/knowhere_check.h"
 #include "knowhere/comp/local_file_manager.h"
 #include "knowhere/expected.h"
 #include "knowhere/index/index_factory.h"
@@ -253,13 +254,14 @@ base_search() {
         auto diskann_index_pack = knowhere::Pack(file_manager);
         knowhere::Json deserialize_json = knowhere::Json::parse(deserialize_gen().dump());
         knowhere::BinarySet binset;
+
+        auto build_json = build_gen().dump();
+        knowhere::Json json = knowhere::Json::parse(build_json);
         // build process
         {
             knowhere::DataSetPtr ds_ptr = nullptr;
             auto diskann =
                 knowhere::IndexFactory::Instance().Create<DataType>("DISKANN", version, diskann_index_pack).value();
-            auto build_json = build_gen().dump();
-            knowhere::Json json = knowhere::Json::parse(build_json);
             diskann.Build(ds_ptr, json);
             diskann.Serialize(binset);
         }
@@ -268,6 +270,8 @@ base_search() {
             auto diskann =
                 knowhere::IndexFactory::Instance().Create<DataType>("DISKANN", version, diskann_index_pack).value();
             diskann.Deserialize(binset, deserialize_json);
+            REQUIRE(diskann.HasRawData(metric_str) ==
+                    knowhere::KnowhereCheck::IndexHasRawData<DataType>("DISKANN", metric_str, version, json));
 
             auto knn_search_json = knn_search_gen().dump();
             knowhere::Json knn_json = knowhere::Json::parse(knn_search_json);
@@ -393,6 +397,11 @@ TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {
                                  .value();
                 auto ret = index.Deserialize(binset, deserialize_json);
                 REQUIRE(ret == knowhere::Status::success);
+
+                REQUIRE(diskann.HasRawData(knowhere::metric::L2) ==
+                        knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>("DISKANN", knowhere::metric::L2,
+                                                                                 version, json));
+
                 std::vector<double> ids_sizes = {1, kNumRows * 0.2, kNumRows * 0.7, kNumRows};
                 for (const auto ids_size : ids_sizes) {
                     std::cout << "Testing dim = " << dim << ", cache_size = " << cache_size
