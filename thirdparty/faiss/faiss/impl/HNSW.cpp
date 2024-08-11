@@ -381,26 +381,82 @@ void search_neighbors_to_add(
         // loop over neighbors
         size_t begin, end;
         hnsw.neighbor_range(currNode, level, &begin, &end);
-        for (size_t i = begin; i < end; i++) {
-            storage_idx_t nodeId = hnsw.neighbors[i];
-            if (nodeId < 0)
-                break;
-            if (vt.get(nodeId))
-                continue;
-            vt.set(nodeId);
 
-            float dis = qdis(nodeId);
-            NodeDistFarther evE1(dis, nodeId);
+        // // baseline version
+        // for (size_t i = begin; i < end; i++) {
+        //     storage_idx_t nodeId = hnsw.neighbors[i];
+        //     if (nodeId < 0)
+        //         break;
+        //     if (vt.get(nodeId))
+        //         continue;
+        //     vt.set(nodeId);
 
+        //     float dis = qdis(nodeId);
+        //     NodeDistFarther evE1(dis, nodeId);
+
+        //     if (results.size() < hnsw.efConstruction || results.top().d > dis) {
+        //         results.emplace(dis, nodeId);
+        //         candidates.emplace(dis, nodeId);
+        //         if (results.size() > hnsw.efConstruction) {
+        //             results.pop();
+        //         }
+        //     }
+        // }
+
+        // the following version processes 4 neighbors at a time
+        auto update_with_candidate = [&](const storage_idx_t idx, const float dis) {
             if (results.size() < hnsw.efConstruction || results.top().d > dis) {
-                results.emplace(dis, nodeId);
-                candidates.emplace(dis, nodeId);
+                results.emplace(dis, idx);
+                candidates.emplace(dis, idx);
                 if (results.size() > hnsw.efConstruction) {
                     results.pop();
                 }
             }
+        };
+        
+        int n_buffered = 0;
+        storage_idx_t buffered_ids[4];
+
+        for (size_t j = begin; j < end; j++) {
+            storage_idx_t nodeId = hnsw.neighbors[j];
+            if (nodeId < 0)
+                break;
+            if (vt.get(nodeId)) {
+                continue;
+            }
+            vt.set(nodeId);
+
+            buffered_ids[n_buffered] = nodeId;
+            n_buffered += 1;
+
+            if (n_buffered == 4) {
+                float dis[4];
+                qdis.distances_batch_4(
+                        buffered_ids[0],
+                        buffered_ids[1],
+                        buffered_ids[2],
+                        buffered_ids[3],
+                        dis[0],
+                        dis[1],
+                        dis[2],
+                        dis[3]);
+
+                for (size_t id4 = 0; id4 < 4; id4++) {
+                    update_with_candidate(buffered_ids[id4], dis[id4]);
+                }
+
+                n_buffered = 0;
+            }
         }
+
+        // process leftovers
+        for (size_t icnt = 0; icnt < n_buffered; icnt++) {
+            float dis = qdis(buffered_ids[icnt]);
+            update_with_candidate(buffered_ids[icnt], dis);
+        }
+
     }
+
     vt.advance();
 }
 
@@ -423,16 +479,65 @@ HNSWStats greedy_update_nearest(
         size_t begin, end;
         hnsw.neighbor_range(nearest, level, &begin, &end);
 
+        // // baseline version 
+        // size_t ndis = 0;
+        // for (size_t i = begin; i < end; i++) {
+        //     storage_idx_t v = hnsw.neighbors[i];
+        //     if (v < 0)
+        //         break;
+        //     ndis += 1;
+        //     float dis = qdis(v);
+        //     if (dis < d_nearest) {
+        //         nearest = v;
+        //         d_nearest = dis;
+        //     }
+        // }
+
+        // the following version processes 4 neighbors at a time
+        auto update_with_candidate = [&](const storage_idx_t idx, const float dis) {
+            if (dis < d_nearest) {
+                nearest = idx;
+                d_nearest = dis;
+            }        
+        };
+
         size_t ndis = 0;
-        for (size_t i = begin; i < end; i++, ndis++) {
-            storage_idx_t v = hnsw.neighbors[i];
+        int n_buffered = 0;
+        storage_idx_t buffered_ids[4];
+
+        for (size_t j = begin; j < end; j++) {
+            storage_idx_t v = hnsw.neighbors[j];
             if (v < 0)
                 break;
-            float dis = qdis(v);
-            if (dis < d_nearest) {
-                nearest = v;
-                d_nearest = dis;
+            ndis += 1;
+
+            buffered_ids[n_buffered] = v;
+            n_buffered += 1;
+
+            if (n_buffered == 4) {
+                float dis[4];
+                qdis.distances_batch_4(
+                        buffered_ids[0],
+                        buffered_ids[1],
+                        buffered_ids[2],
+                        buffered_ids[3],
+                        dis[0],
+                        dis[1],
+                        dis[2],
+                        dis[3]);
+
+                for (size_t id4 = 0; id4 < 4; id4++) {
+                    update_with_candidate(buffered_ids[id4], dis[id4]);
+                }
+
+                n_buffered = 0;
             }
+        }
+
+        // process leftovers
+        for (size_t icnt = 0; icnt < n_buffered; icnt++) {
+            float dis = qdis(buffered_ids[icnt]);
+            update_with_candidate(buffered_ids[icnt], dis);
         }
 
         // update stats
@@ -631,7 +736,7 @@ int search_from_candidates(
         // the following version processes 4 neighbors at a time
         size_t jmax = begin;
         for (size_t j = begin; j < end; j++) {
-            int v1 = hnsw.neighbors[j];
+            storage_idx_t v1 = hnsw.neighbors[j];
             if (v1 < 0)
                 break;
 
@@ -639,13 +744,13 @@ int search_from_candidates(
             jmax += 1;
         }
 
-        int counter = 0;
-        size_t saved_j[4];
+        int n_buffered = 0;
+        storage_idx_t buffered_ids[4];
 
         ndis += jmax - begin;
         threshold = res.threshold;
 
-        auto add_to_heap = [&](const size_t idx, const float dis) {
+        auto add_to_heap = [&](const storage_idx_t idx, const float dis) {
             if (!sel || sel->is_member(idx)) {
                 if (dis < threshold) {
                     if (res.add_result(dis, idx)) {
@@ -658,36 +763,40 @@ int search_from_candidates(
         };
 
         for (size_t j = begin; j < jmax; j++) {
-            int v1 = hnsw.neighbors[j];
+            storage_idx_t v1 = hnsw.neighbors[j];
 
-            bool vget = vt.get(v1);
+            if (vt.get(v1)) {
+                continue;
+            }
             vt.set(v1);
-            saved_j[counter] = v1;
-            counter += vget ? 0 : 1;
 
-            if (counter == 4) {
+            buffered_ids[n_buffered] = v1;
+            n_buffered += 1;
+
+            if (n_buffered == 4) {
                 float dis[4];
                 qdis.distances_batch_4(
-                        saved_j[0],
-                        saved_j[1],
-                        saved_j[2],
-                        saved_j[3],
+                        buffered_ids[0],
+                        buffered_ids[1],
+                        buffered_ids[2],
+                        buffered_ids[3],
                         dis[0],
                         dis[1],
                         dis[2],
                         dis[3]);
 
                 for (size_t id4 = 0; id4 < 4; id4++) {
-                    add_to_heap(saved_j[id4], dis[id4]);
+                    add_to_heap(buffered_ids[id4], dis[id4]);
                 }
 
-                counter = 0;
+                n_buffered = 0;
             }
         }
 
-        for (size_t icnt = 0; icnt < counter; icnt++) {
-            float dis = qdis(saved_j[icnt]);
-            add_to_heap(saved_j[icnt], dis);
+        // process leftovers
+        for (size_t icnt = 0; icnt < n_buffered; icnt++) {
+            float dis = qdis(buffered_ids[icnt]);
+            add_to_heap(buffered_ids[icnt], dis);
         }
 
         nstep++;
