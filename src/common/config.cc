@@ -11,7 +11,17 @@
 
 #include "knowhere/config.h"
 
+#include "index/diskann/diskann_config.h"
+#include "index/flat/flat_config.h"
+#include "index/gpu_raft/gpu_raft_brute_force_config.h"
+#include "index/gpu_raft/gpu_raft_cagra_config.h"
+#include "index/gpu_raft/gpu_raft_ivf_flat_config.h"
+#include "index/gpu_raft/gpu_raft_ivf_pq_config.h"
+#include "index/hnsw/hnsw_config.h"
+#include "index/ivf/ivf_config.h"
+#include "index/sparse/sparse_inverted_index_config.h"
 #include "knowhere/log.h"
+
 namespace knowhere {
 
 static const std::unordered_set<std::string> ext_legal_json_keys = {"metric_type",
@@ -108,4 +118,55 @@ Config::FormatAndCheck(const Config& cfg, Json& json, std::string* const err_msg
     }
     return Status::success;
 }
+
 }  // namespace knowhere
+
+extern "C" __attribute__((visibility("default"))) int
+CheckConfig(int index_type, char const* str, int n, int param_type);
+
+int
+CheckConfig(int index_type, const char* str, int n, int param_type) {
+    if (!str || n <= 0) {
+        return int(knowhere::Status::invalid_args);
+    }
+    knowhere::Json json = knowhere::Json::parse(str, str + n);
+    std::unique_ptr<knowhere::Config> cfg;
+
+    switch (index_type) {
+        case 0:
+            cfg = std::make_unique<knowhere::FlatConfig>();
+            break;
+        case 1:
+            cfg = std::make_unique<knowhere::DiskANNConfig>();
+            break;
+        case 2:
+            cfg = std::make_unique<knowhere::HnswConfig>();
+            break;
+        case 3:
+            cfg = std::make_unique<knowhere::IvfFlatConfig>();
+            break;
+        case 4:
+            cfg = std::make_unique<knowhere::IvfPqConfig>();
+            break;
+        case 5:
+            cfg = std::make_unique<knowhere::GpuRaftCagraConfig>();
+            break;
+        case 6:
+            cfg = std::make_unique<knowhere::GpuRaftIvfPqConfig>();
+            break;
+        case 7:
+            cfg = std::make_unique<knowhere::GpuRaftIvfFlatConfig>();
+            break;
+        case 8:
+            cfg = std::make_unique<knowhere::GpuRaftBruteForceConfig>();
+            break;
+        default:
+            return int(knowhere::Status::invalid_args);
+    }
+
+    auto res = knowhere::Config::FormatAndCheck(*cfg, json, nullptr);
+    if (res != knowhere::Status::success) {
+        return int(res);
+    }
+    return int(knowhere::Config::Load(*cfg, json, knowhere::PARAM_TYPE(param_type), nullptr));
+}
