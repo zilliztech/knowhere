@@ -17,6 +17,7 @@
 #include "knowhere/bitsetview.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
+#include "knowhere/comp/knowhere_check.h"
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
@@ -160,6 +161,12 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         knowhere::BinarySet bs;
         REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
         REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
+        // TODO: qianya (IVFSQ_CC deserialize casted from the IVFSQ directly, which will cause the hasRawData reference
+        // to an uncertain address)
+        if (name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC) {
+            REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
+                    knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>(name, metric, version, json));
+        }
 
         auto results = idx.Search(query_ds, json, nullptr);
         REQUIRE(results.has_value());
