@@ -21,7 +21,7 @@ namespace {
 
 constexpr const CFG_INT::value_type kIteratorSeedEf = 40;
 constexpr const CFG_INT::value_type kEfMinValue = 16;
-constexpr const CFG_INT::value_type kDefaultRangeSearchEf = 16;
+constexpr const CFG_INT::value_type kDefaultRangeSearchEf = 512;
 
 }  // namespace
 
