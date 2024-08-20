@@ -353,7 +353,7 @@ add_to_index(faiss::Index* const __restrict index, const DataSetPtr& dataset, co
         index->add(rows, reinterpret_cast<const float*>(data));
     } else {
         // convert data into float in pieces and add to the index
-        constexpr int64_t n_tmp_rows = 65536;
+        constexpr int64_t n_tmp_rows = 4096;
         std::vector<float> tmp(n_tmp_rows * dim);
 
         for (int64_t irow = 0; irow < rows; irow += n_tmp_rows) {
