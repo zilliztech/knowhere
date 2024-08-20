@@ -72,7 +72,7 @@ struct v2_hnsw_searcher {
 
     // a filter for disabled nodes.
     // the reference is not owned.
-    const FilterT filter;
+    const FilterT& filter;
 
     // parameter for the filtering
     const float kAlpha;
@@ -205,7 +205,7 @@ struct v2_hnsw_searcher {
 
             // is the node disabled?
             int status = knowhere::Neighbor::kValid;
-            if (!filter.allowed(v1)) {
+            if (!filter.is_member(v1)) {
                 // yes, disabled
                 status = knowhere::Neighbor::kInvalid;
 
@@ -381,7 +381,7 @@ struct v2_hnsw_searcher {
 
         // initialize retset with a single 'nearest' point
         {
-            if (!filter.allowed(nearest)) {
+            if (!filter.is_member(nearest)) {
                 retset.insert(knowhere::Neighbor(nearest, d_nearest, knowhere::Neighbor::kInvalid));
             } else {
                 retset.insert(knowhere::Neighbor(nearest, d_nearest, knowhere::Neighbor::kValid));

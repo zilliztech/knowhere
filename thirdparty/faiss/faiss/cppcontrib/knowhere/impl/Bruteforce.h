@@ -28,8 +28,8 @@ namespace knowhere {
 template<typename C, typename DistanceComputerT, typename FilterT>
 void brute_force_search_impl(
     const idx_t ntotal,
-    DistanceComputerT& qdis,
-    const FilterT filter,
+    DistanceComputerT& __restrict qdis,
+    const FilterT& __restrict filter,
     const idx_t k,
     float* __restrict distances,
     idx_t* __restrict labels
@@ -40,7 +40,7 @@ void brute_force_search_impl(
     auto max_heap = std::make_unique<std::pair<float, idx_t>[]>(k);
     idx_t n_added = 0;
     for (idx_t idx = 0; idx < ntotal; ++idx) {
-        if (filter.allowed(idx)) {
+        if (filter.is_member(idx)) {
             const float distance = qdis(idx);
             if (n_added < k) {
                 n_added += 1;

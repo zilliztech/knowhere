@@ -22,7 +22,6 @@
 #include <faiss/impl/IDSelector.h>
 
 #include <faiss/cppcontrib/knowhere/impl/Bruteforce.h>
-#include <faiss/cppcontrib/knowhere/impl/Filters.h>
 
 namespace faiss {
 namespace cppcontrib {
@@ -37,7 +36,7 @@ void IndexBruteForceWrapper::search(
         idx_t k,
         float* __restrict distances,
         idx_t* __restrict labels,
-        const SearchParameters* params
+        const SearchParameters* __restrict params
 ) const {
     FAISS_THROW_IF_NOT(k > 0);
 
@@ -57,39 +56,60 @@ void IndexBruteForceWrapper::search(
                 dis->set_query(x + i * index->d);
 
                 // allocate heap
-                idx_t* const local_ids = labels + i * index->d;
-                float* const local_distances = distances + i * index->d;
+                idx_t* const __restrict local_ids = labels + i * index->d;
+                float* const __restrict local_distances = distances + i * index->d;
 
                 // set up a filter
-                IDSelector* sel = (params == nullptr) ? nullptr : params->sel;
-
-                // template, just in case a filter type will be specialized
-                //   in order to remove virtual function call overhead.
-                using filter_type = DefaultIDSelectorFilter<IDSelector>;
-                filter_type filter(sel);
+                IDSelector* __restrict sel = (params == nullptr) ? nullptr : params->sel;
 
                 if (is_similarity_metric(index->metric_type)) {
                     using C = CMin<float, idx_t>;
 
-                    brute_force_search_impl<C, DistanceComputer, filter_type>(
-                        index->ntotal,
-                        *dis,
-                        filter,
-                        k,
-                        local_distances,
-                        local_ids
-                    );
+                    if (sel == nullptr) {
+                        // Compiler is expected to de-virtualize virtual method calls
+                        IDSelectorAll sel_all;
+                        brute_force_search_impl<C, DistanceComputer, IDSelectorAll>(
+                            index->ntotal,
+                            *dis,
+                            sel_all,
+                            k,
+                            local_distances,
+                            local_ids
+                        );
+                    } else {
+                        brute_force_search_impl<C, DistanceComputer, IDSelector>(
+                            index->ntotal,
+                            *dis,
+                            *sel,
+                            k,
+                            local_distances,
+                            local_ids
+                        );
+                    }
                 } else {
                     using C = CMax<float, idx_t>;
 
-                    brute_force_search_impl<C, DistanceComputer, filter_type>(
-                        index->ntotal,
-                        *dis,
-                        filter,
-                        k,
-                        local_distances,
-                        local_ids
-                    );
+                    if (sel == nullptr) {
+                        // Compiler is expected to de-virtualize virtual method calls
+                        IDSelectorAll sel_all;
+                        brute_force_search_impl<C, DistanceComputer, IDSelectorAll>(
+                            index->ntotal,
+                            *dis,
+                            sel_all,
+                            k,
+                            local_distances,
+                            local_ids
+                        );
+                    } else {
+                        brute_force_search_impl<C, DistanceComputer, IDSelector>(
+                            index->ntotal,
+                            *dis,
+                            *sel,
+                            k,
+                            local_distances,
+                            local_ids
+                        );
+                    }
                 }
             }
         }

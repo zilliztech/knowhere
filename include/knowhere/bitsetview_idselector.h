@@ -17,8 +17,8 @@
 
 namespace knowhere {
 
-struct BitsetViewIDSelector : faiss::IDSelector {
-    BitsetView bitset_view;
+struct BitsetViewIDSelector final : faiss::IDSelector {
+    const BitsetView bitset_view;
 
     inline BitsetViewIDSelector(BitsetView bitset_view) : bitset_view{bitset_view} {
     }

@@ -21,13 +21,27 @@
 #include <algorithm>
 #include <memory>
 
-#include "index/hnsw/impl/BitsetFilter.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/bitsetview_idselector.h"
 
 namespace knowhere {
 
 using idx_t = faiss::idx_t;
+
+// the following structure is a hack, because GCC cannot properly
+//   de-virtualize a plain BitsetViewIDSelector.
+struct BitsetViewIDSelectorWrapper final {
+    const BitsetView bitset_view;
+
+    inline BitsetViewIDSelectorWrapper(BitsetView bitset_view) : bitset_view{bitset_view} {
+    }
+
+    [[nodiscard]] inline bool
+    is_member(faiss::idx_t id) const {
+        // it is by design that bitset_view.empty() is not tested here
+        return (!bitset_view.test(id));
+    }
+};
 
 //
 IndexBruteForceWrapper::IndexBruteForceWrapper(faiss::Index* underlying_index)
@@ -36,7 +50,8 @@ IndexBruteForceWrapper::IndexBruteForceWrapper(faiss::Index* underlying_index)
 
 void
 IndexBruteForceWrapper::search(faiss::idx_t n, const float* __restrict x, faiss::idx_t k, float* __restrict distances,
-                               faiss::idx_t* __restrict labels, const faiss::SearchParameters* params) const {
+                               faiss::idx_t* __restrict labels,
+                               const faiss::SearchParameters* __restrict params) const {
     FAISS_THROW_IF_NOT(k > 0);
 
     std::unique_ptr<faiss::DistanceComputer> dis(index->get_distance_computer());
@@ -47,8 +62,8 @@ IndexBruteForceWrapper::search(faiss::idx_t n, const float* __restrict x, faiss:
         dis->set_query(x + i * index->d);
 
         // allocate heap
-        idx_t* const local_ids = labels + i * index->d;
-        float* const local_distances = distances + i * index->d;
+        idx_t* const __restrict local_ids = labels + i * index->d;
+        float* const __restrict local_distances = distances + i * index->d;
 
         // set up a filter
         faiss::IDSelector* sel = (params == nullptr) ? nullptr : params->sel;
@@ -59,20 +74,35 @@ IndexBruteForceWrapper::search(faiss::idx_t n, const float* __restrict x, faiss:
         }
 
         // try knowhere-specific filter
-        const knowhere::BitsetViewIDSelector* bw_idselector = dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
+        const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
+            dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
 
-        knowhere::BitsetFilter filter(bw_idselector->bitset_view);
+        BitsetViewIDSelectorWrapper bw_idselector_w(bw_idselector->bitset_view);
 
         if (is_similarity_metric(index->metric_type)) {
             using C = faiss::CMin<float, idx_t>;
 
-            faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer, knowhere::BitsetFilter>(
-                index->ntotal, *dis, filter, k, local_distances, local_ids);
+            if (bw_idselector == nullptr || bw_idselector->bitset_view.empty()) {
+                faiss::IDSelectorAll sel_all;
+                faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer, faiss::IDSelectorAll>(
+                    index->ntotal, *dis, sel_all, k, local_distances, local_ids);
+            } else {
+                faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer,
+                                                                     BitsetViewIDSelectorWrapper>(
+                    index->ntotal, *dis, bw_idselector_w, k, local_distances, local_ids);
+            }
         } else {
             using C = faiss::CMax<float, idx_t>;
 
-            faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer, knowhere::BitsetFilter>(
-                index->ntotal, *dis, filter, k, local_distances, local_ids);
+            if (bw_idselector == nullptr || bw_idselector->bitset_view.empty()) {
+                faiss::IDSelectorAll sel_all;
+                faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer, faiss::IDSelectorAll>(
+                    index->ntotal, *dis, sel_all, k, local_distances, local_ids);
+            } else {
+                faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer,
+                                                                     BitsetViewIDSelectorWrapper>(
+                    index->ntotal, *dis, bw_idselector_w, k, local_distances, local_ids);
+            }
         }
     }
 }

@@ -21,7 +21,6 @@
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/HNSW.h>
 
-#include <faiss/cppcontrib/knowhere/impl/Filters.h>
 #include <faiss/cppcontrib/knowhere/impl/HnswSearcher.h>
 #include <faiss/cppcontrib/knowhere/utils/Bitset.h>
 
@@ -156,29 +155,49 @@ void IndexHNSWWrapper::search(
 
                 // set up a filter
                 IDSelector* sel = (params == nullptr) ? nullptr : params->sel;
+                if (sel == nullptr) {
+                    // no filter.
+                    // It it expected that a compile will be able to 
+                    //   de-virtualize the class.
+                    IDSelectorAll sel_all;
 
-                // template, just in case a filter type will be specialized
-                //   in order to remove virtual function call overhead.
-                using filter_type = DefaultIDSelectorFilter<IDSelector>;
-                filter_type filter(sel);
+                    using searcher_type = v2_hnsw_searcher<
+                        DistanceComputer, 
+                        DummyVisitor, 
+                        Bitset, 
+                        IDSelectorAll>;
 
-                using searcher_type = v2_hnsw_searcher<
-                    DistanceComputer, 
-                    DummyVisitor, 
-                    Bitset, 
-                    filter_type>;
+                    searcher_type searcher{
+                        hnsw,
+                        *(dis.get()),
+                        graph_visitor,
+                        bitset_visited_nodes,
+                        sel_all,
+                        kAlpha,
+                        params
+                    };
 
-                searcher_type searcher{
-                    hnsw,
-                    *(dis.get()),
-                    graph_visitor,
-                    bitset_visited_nodes,
-                    filter,
-                    kAlpha,
-                    params
-                };
+                    local_stats = searcher.search(k, distances + i * k, labels + i * k);
+                } else {
+                    // there is a filter
+                    using searcher_type = v2_hnsw_searcher<
+                        DistanceComputer, 
+                        DummyVisitor, 
+                        Bitset, 
+                        IDSelector>;
 
-                local_stats = searcher.search(k, distances + i * k, labels + i * k);
+                    searcher_type searcher{
+                        hnsw,
+                        *(dis.get()),
+                        graph_visitor,
+                        bitset_visited_nodes,
+                        *sel,
+                        kAlpha,
+                        params
+                    };
+
+                    local_stats = searcher.search(k, distances + i * k, labels + i * k);
+                }
 
                 // update stats if possible
                 if (hnsw_stats != nullptr) {
