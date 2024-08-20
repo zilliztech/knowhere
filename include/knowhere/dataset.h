@@ -123,7 +123,7 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
         this->data_[meta::TENSOR] = Var(std::in_place_index<3>, tensor);
     }
 
-    template<typename T>
+    template <typename T>
     void
     SetTensor(std::unique_ptr<T[]>&& tensor) {
         std::unique_lock lock(mutex_);
@@ -321,7 +321,7 @@ GenResultDataSet(const int64_t rows, const int64_t dim, const void* tensor) {
     return ret_ds;
 }
 
-template<typename T>
+template <typename T>
 inline DataSetPtr
 GenResultDataSet(const int64_t rows, const int64_t dim, std::unique_ptr<T[]>&& tensor) {
     auto ret_ds = std::make_shared<DataSet>();

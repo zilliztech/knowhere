@@ -277,8 +277,9 @@ namespace {
 
 //
 bool
-convert_rows_to_fp32(const void* const __restrict src_in, float* const __restrict dst, const DataFormatEnum src_data_format,
-             const size_t start_row, const size_t nrows, const size_t dim) {
+convert_rows_to_fp32(const void* const __restrict src_in, float* const __restrict dst,
+                     const DataFormatEnum src_data_format, const size_t start_row, const size_t nrows,
+                     const size_t dim) {
     if (src_data_format == DataFormatEnum::fp16) {
         const knowhere::fp16* const src = reinterpret_cast<const knowhere::fp16*>(src_in);
         for (size_t i = 0; i < nrows * dim; i++) {
@@ -306,14 +307,10 @@ convert_rows_to_fp32(const void* const __restrict src_in, float* const __restric
     }
 }
 
-bool convert_rows_from_fp32(
-    const float* const __restrict src,
-    void* const __restrict dst_in,
-    const DataFormatEnum dst_data_format,
-    const size_t start_row, 
-    const size_t nrows, 
-    const size_t dim
-) {
+bool
+convert_rows_from_fp32(const float* const __restrict src, void* const __restrict dst_in,
+                       const DataFormatEnum dst_data_format, const size_t start_row, const size_t nrows,
+                       const size_t dim) {
     if (dst_data_format == DataFormatEnum::fp16) {
         knowhere::fp16* const dst = reinterpret_cast<knowhere::fp16*>(dst_in);
         for (size_t i = 0; i < nrows * dim; i++) {
@@ -652,8 +649,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
                 return GenResultDataSet(rows, dim, std::move(data));
             } else if (data_format == DataFormatEnum::fp16) {
-                auto data = std::make_unique<knowhere::fp16[]>(dim * rows);                
-                
+                auto data = std::make_unique<knowhere::fp16[]>(dim * rows);
+
                 // faiss produces fp32 data format, we need some other format.
                 // Let's create a temporary fp32 buffer for this.
                 auto tmp = std::make_unique<float[]>(dim);
@@ -663,22 +660,15 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     assert(id >= 0 && id < index->ntotal);
                     index->reconstruct(id, tmp.get());
 
-                    if (!convert_rows_from_fp32(
-                        tmp.get(),
-                        data.get(),
-                        data_format,
-                        i,
-                        1,
-                        dim)
-                    ) {
+                    if (!convert_rows_from_fp32(tmp.get(), data.get(), data_format, i, 1, dim)) {
                         return expected<DataSetPtr>::Err(Status::invalid_args, "Unsupported data format");
                     }
                 }
 
                 return GenResultDataSet(rows, dim, std::move(data));
             } else if (data_format == DataFormatEnum::bf16) {
-                auto data = std::make_unique<knowhere::bf16[]>(dim * rows);                
-                
+                auto data = std::make_unique<knowhere::bf16[]>(dim * rows);
+
                 // faiss produces fp32 data format, we need some other format.
                 // Let's create a temporary fp32 buffer for this.
                 auto tmp = std::make_unique<float[]>(dim);
@@ -688,14 +678,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     assert(id >= 0 && id < index->ntotal);
                     index->reconstruct(id, tmp.get());
 
-                    if (!convert_rows_from_fp32(
-                        tmp.get(),
-                        data.get(),
-                        data_format,
-                        i,
-                        1,
-                        dim)
-                    ) {
+                    if (!convert_rows_from_fp32(tmp.get(), data.get(), data_format, i, 1, dim)) {
                         return expected<DataSetPtr>::Err(Status::invalid_args, "Unsupported data format");
                     }
                 }
