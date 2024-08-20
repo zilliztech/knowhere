@@ -123,14 +123,9 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
         this->data_[meta::TENSOR] = Var(std::in_place_index<3>, tensor);
     }
 
+    template<typename T>
     void
-    SetTensor(std::unique_ptr<uint8_t[]>&& tensor) {
-        std::unique_lock lock(mutex_);
-        this->data_[meta::TENSOR] = Var(std::in_place_index<3>, tensor.release());
-    }
-
-    void
-    SetTensor(std::unique_ptr<float[]>&& tensor) {
+    SetTensor(std::unique_ptr<T[]>&& tensor) {
         std::unique_lock lock(mutex_);
         this->data_[meta::TENSOR] = Var(std::in_place_index<3>, tensor.release());
     }
@@ -326,18 +321,9 @@ GenResultDataSet(const int64_t rows, const int64_t dim, const void* tensor) {
     return ret_ds;
 }
 
+template<typename T>
 inline DataSetPtr
-GenResultDataSet(const int64_t rows, const int64_t dim, std::unique_ptr<uint8_t[]>&& tensor) {
-    auto ret_ds = std::make_shared<DataSet>();
-    ret_ds->SetRows(rows);
-    ret_ds->SetDim(dim);
-    ret_ds->SetTensor(std::move(tensor));
-    ret_ds->SetIsOwner(true);
-    return ret_ds;
-}
-
-inline DataSetPtr
-GenResultDataSet(const int64_t rows, const int64_t dim, std::unique_ptr<float[]>&& tensor) {
+GenResultDataSet(const int64_t rows, const int64_t dim, std::unique_ptr<T[]>&& tensor) {
     auto ret_ds = std::make_shared<DataSet>();
     ret_ds->SetRows(rows);
     ret_ds->SetDim(dim);

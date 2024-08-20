@@ -147,35 +147,6 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
         : BaseFaissIndexNode(version, object), index{nullptr} {
     }
 
-    expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override {
-        if (this->index == nullptr) {
-            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
-        }
-        if (!this->index->is_trained) {
-            return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
-        }
-
-        auto dim = Dim();
-        auto rows = dataset->GetRows();
-        auto ids = dataset->GetIds();
-
-        try {
-            auto data = std::make_unique<float[]>(dim * rows);
-
-            for (int64_t i = 0; i < rows; i++) {
-                const int64_t id = ids[i];
-                assert(id >= 0 && id < index->ntotal);
-                index->reconstruct(id, data.get() + i * dim);
-            }
-
-            return GenResultDataSet(rows, dim, std::move(data));
-        } catch (const std::exception& e) {
-            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
-            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
-        }
-    }
-
     Status
     Serialize(BinarySet& binset) const override {
         if (index == nullptr) {
@@ -306,19 +277,61 @@ namespace {
 
 //
 bool
-convert_rows(const void* const __restrict src_in, float* const __restrict dst, const DataFormatEnum data_format,
+convert_rows_to_fp32(const void* const __restrict src_in, float* const __restrict dst, const DataFormatEnum src_data_format,
              const size_t start_row, const size_t nrows, const size_t dim) {
-    if (data_format == DataFormatEnum::fp16) {
+    if (src_data_format == DataFormatEnum::fp16) {
         const knowhere::fp16* const src = reinterpret_cast<const knowhere::fp16*>(src_in);
         for (size_t i = 0; i < nrows * dim; i++) {
             dst[i] = (float)(src[i + start_row * dim]);
         }
 
         return true;
-    } else if (data_format == DataFormatEnum::bf16) {
+    } else if (src_data_format == DataFormatEnum::bf16) {
         const knowhere::bf16* const src = reinterpret_cast<const knowhere::bf16*>(src_in);
         for (size_t i = 0; i < nrows * dim; i++) {
             dst[i] = (float)(src[i + start_row * dim]);
+        }
+
+        return true;
+    } else if (src_data_format == DataFormatEnum::fp32) {
+        const knowhere::fp32* const src = reinterpret_cast<const knowhere::fp32*>(src_in);
+        for (size_t i = 0; i < nrows * dim; i++) {
+            dst[i] = src[i + start_row * dim];
+        }
+
+        return true;
+    } else {
+        // unknown
+        return false;
+    }
+}
+
+bool convert_rows_from_fp32(
+    const float* const __restrict src,
+    void* const __restrict dst_in,
+    const DataFormatEnum dst_data_format,
+    const size_t start_row, 
+    const size_t nrows, 
+    const size_t dim
+) {
+    if (dst_data_format == DataFormatEnum::fp16) {
+        knowhere::fp16* const dst = reinterpret_cast<knowhere::fp16*>(dst_in);
+        for (size_t i = 0; i < nrows * dim; i++) {
+            dst[i + start_row * dim] = (knowhere::fp16)src[i];
+        }
+
+        return true;
+    } else if (dst_data_format == DataFormatEnum::bf16) {
+        knowhere::bf16* const dst = reinterpret_cast<knowhere::bf16*>(dst_in);
+        for (size_t i = 0; i < nrows * dim; i++) {
+            dst[i + start_row * dim] = (knowhere::bf16)src[i];
+        }
+
+        return true;
+    } else if (dst_data_format == DataFormatEnum::fp32) {
+        knowhere::fp32* const dst = reinterpret_cast<knowhere::fp32*>(dst_in);
+        for (size_t i = 0; i < nrows * dim; i++) {
+            dst[i + start_row * dim] = src[i];
         }
 
         return true;
@@ -354,20 +367,20 @@ add_to_index(faiss::Index* const __restrict index, const DataSetPtr& dataset, co
     } else {
         // convert data into float in pieces and add to the index
         constexpr int64_t n_tmp_rows = 4096;
-        std::vector<float> tmp(n_tmp_rows * dim);
+        std::unique_ptr<float[]> tmp = std::make_unique<float[]>(n_tmp_rows * dim);
 
         for (int64_t irow = 0; irow < rows; irow += n_tmp_rows) {
             const int64_t start_row = irow;
             const int64_t end_row = std::min(rows, start_row + n_tmp_rows);
             const int64_t count_rows = end_row - start_row;
 
-            if (!convert_rows(data, tmp.data(), data_format, start_row, count_rows, dim)) {
+            if (!convert_rows_to_fp32(data, tmp.get(), data_format, start_row, count_rows, dim)) {
                 LOG_KNOWHERE_ERROR_ << "Unsupported data format";
                 return Status::invalid_args;
             }
 
             // add
-            index->add(count_rows, tmp.data());
+            index->add(count_rows, tmp.get());
         }
     }
 
@@ -455,7 +468,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     if (data_format == DataFormatEnum::fp32) {
                         cur_query = (const float*)data + idx * dim;
                     } else {
-                        convert_rows(data, cur_query_tmp.data(), data_format, idx, 1, dim);
+                        convert_rows_to_fp32(data, cur_query_tmp.data(), data_format, idx, 1, dim);
                         cur_query = cur_query_tmp.data();
                     }
 
@@ -611,6 +624,90 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         }
 
         return res;
+    }
+
+    expected<DataSetPtr>
+    GetVectorByIds(const DataSetPtr dataset) const override {
+        if (this->index == nullptr) {
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+        }
+        if (!this->index->is_trained) {
+            return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
+        }
+
+        auto dim = Dim();
+        auto rows = dataset->GetRows();
+        auto ids = dataset->GetIds();
+
+        try {
+            if (data_format == DataFormatEnum::fp32) {
+                // perform a direct reconstruction for fp32 data
+                auto data = std::make_unique<float[]>(dim * rows);
+
+                for (int64_t i = 0; i < rows; i++) {
+                    const int64_t id = ids[i];
+                    assert(id >= 0 && id < index->ntotal);
+                    index->reconstruct(id, data.get() + i * dim);
+                }
+
+                return GenResultDataSet(rows, dim, std::move(data));
+            } else if (data_format == DataFormatEnum::fp16) {
+                auto data = std::make_unique<knowhere::fp16[]>(dim * rows);                
+                
+                // faiss produces fp32 data format, we need some other format.
+                // Let's create a temporary fp32 buffer for this.
+                auto tmp = std::make_unique<float[]>(dim);
+
+                for (int64_t i = 0; i < rows; i++) {
+                    const int64_t id = ids[i];
+                    assert(id >= 0 && id < index->ntotal);
+                    index->reconstruct(id, tmp.get());
+
+                    if (!convert_rows_from_fp32(
+                        tmp.get(),
+                        data.get(),
+                        data_format,
+                        i,
+                        1,
+                        dim)
+                    ) {
+                        return expected<DataSetPtr>::Err(Status::invalid_args, "Unsupported data format");
+                    }
+                }
+
+                return GenResultDataSet(rows, dim, std::move(data));
+            } else if (data_format == DataFormatEnum::bf16) {
+                auto data = std::make_unique<knowhere::bf16[]>(dim * rows);                
+                
+                // faiss produces fp32 data format, we need some other format.
+                // Let's create a temporary fp32 buffer for this.
+                auto tmp = std::make_unique<float[]>(dim);
+
+                for (int64_t i = 0; i < rows; i++) {
+                    const int64_t id = ids[i];
+                    assert(id >= 0 && id < index->ntotal);
+                    index->reconstruct(id, tmp.get());
+
+                    if (!convert_rows_from_fp32(
+                        tmp.get(),
+                        data.get(),
+                        data_format,
+                        i,
+                        1,
+                        dim)
+                    ) {
+                        return expected<DataSetPtr>::Err(Status::invalid_args, "Unsupported data format");
+                    }
+                }
+
+                return GenResultDataSet(rows, dim, std::move(data));
+            } else {
+                return expected<DataSetPtr>::Err(Status::invalid_args, "Unsupported data format");
+            }
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
+        }
     }
 
  protected:
