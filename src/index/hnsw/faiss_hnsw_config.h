@@ -14,6 +14,7 @@
 
 #include "knowhere/comp/index_param.h"
 #include "knowhere/config.h"
+#include "knowhere/tolower.h"
 
 namespace knowhere {
 
@@ -118,12 +119,11 @@ class FaissHnswConfig : public BaseConfig {
     bool
     WhetherAcceptableRefineType(const std::string& refine_type) {
         // 'flat' is identical to 'fp32'
-        std::vector<std::string> allowed_list = {"SQ6", "SQ8", "FP16", "BF16", "FP32", "FLAT"};
-
-        // todo: tolower()
+        std::vector<std::string> allowed_list = {"sq6", "sq8", "fp16", "bf16", "fp32", "flat"};
+        std::string refine_type_tolower = str_to_lower(refine_type);
 
         for (const auto& allowed : allowed_list) {
-            if (refine_type == allowed) {
+            if (refine_type_tolower == allowed) {
                 return true;
             }
         }
@@ -145,13 +145,7 @@ class FaissHnswFlatConfig : public FaissHnswConfig {
         // check our parameters
         if (param_type == PARAM_TYPE::TRAIN) {
             // prohibit refine
-            if (refine.value_or(false)) {
-                *err_msg = "refine is not supported for this index";
-                LOG_KNOWHERE_ERROR_ << *err_msg;
-                return Status::invalid_value_in_json;
-            }
-
-            if (refine_type.has_value()) {
+            if (refine.value_or(false) || refine_type.has_value() || refine_k.has_value()) {
                 *err_msg = "refine is not supported for this index";
                 LOG_KNOWHERE_ERROR_ << *err_msg;
                 return Status::invalid_value_in_json;
@@ -203,12 +197,11 @@ class FaissHnswSqConfig : public FaissHnswConfig {
     bool
     WhetherAcceptableQuantType(const std::string& sq_type) {
         // todo: add more
-        std::vector<std::string> allowed_list = {"SQ6", "SQ8", "FP16", "BF16"};
-
-        // todo: tolower()
+        std::vector<std::string> allowed_list = {"sq6", "sq8", "fp16", "bf16"};
+        std::string sq_type_tolower = str_to_lower(sq_type);
 
         for (const auto& allowed : allowed_list) {
-            if (sq_type == allowed) {
+            if (sq_type_tolower == allowed) {
                 return true;
             }
         }

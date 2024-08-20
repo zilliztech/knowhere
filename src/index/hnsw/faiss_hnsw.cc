@@ -878,16 +878,17 @@ namespace {
 // a supporting function
 expected<faiss::ScalarQuantizer::QuantizerType>
 get_sq_quantizer_type(const std::string& sq_type) {
-    std::map<std::string, faiss::ScalarQuantizer::QuantizerType> sq_types = {{"SQ6", faiss::ScalarQuantizer::QT_6bit},
-                                                                             {"SQ8", faiss::ScalarQuantizer::QT_8bit},
-                                                                             {"FP16", faiss::ScalarQuantizer::QT_fp16},
-                                                                             {"BF16", faiss::ScalarQuantizer::QT_bf16}};
+    std::map<std::string, faiss::ScalarQuantizer::QuantizerType> sq_types = {{"sq6", faiss::ScalarQuantizer::QT_6bit},
+                                                                             {"sq8", faiss::ScalarQuantizer::QT_8bit},
+                                                                             {"fp16", faiss::ScalarQuantizer::QT_fp16},
+                                                                             {"bf16", faiss::ScalarQuantizer::QT_bf16}};
 
     // todo: tolower
-    auto itr = sq_types.find(sq_type);
+    auto sq_type_tolower = str_to_lower(sq_type);
+    auto itr = sq_types.find(sq_type_tolower);
     if (itr == sq_types.cend()) {
         return expected<faiss::ScalarQuantizer::QuantizerType>::Err(
-            Status::invalid_args, fmt::format("invalid scalar quantizer type ({})", sq_type));
+            Status::invalid_args, fmt::format("invalid scalar quantizer type ({})", sq_type_tolower));
     }
 
     return itr->second;
@@ -901,12 +902,13 @@ is_flat_refine(const std::optional<std::string>& refine_type) {
     };
 
     // todo: tolower
-    if (refine_type.value() == "FP32" || refine_type.value() == "FLAT") {
+    std::string refine_type_tolower = str_to_lower(refine_type.value());
+    if (refine_type_tolower == "fp32" || refine_type_tolower == "flat") {
         return true;
     };
 
     // parse
-    auto refine_sq_type = get_sq_quantizer_type(refine_type.value());
+    auto refine_sq_type = get_sq_quantizer_type(refine_type_tolower);
     if (!refine_sq_type.has_value()) {
         LOG_KNOWHERE_ERROR_ << "Invalid refine type: " << refine_type.value();
         return expected<bool>::Err(Status::invalid_args, fmt::format("invalid refine type ({})", refine_type.value()));
