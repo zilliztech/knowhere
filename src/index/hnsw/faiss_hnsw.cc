@@ -1053,7 +1053,7 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
 
         // should refine be used?
         std::unique_ptr<faiss::Index> final_index;
-        if (hnsw_cfg.refine.value_or(false)) {
+        if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
             // yes
             auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
             if (!final_index_cnd.has_value()) {
@@ -1158,7 +1158,7 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
 
         // should refine be used?
         std::unique_ptr<faiss::Index> final_index;
-        if (hnsw_cfg.refine.value_or(false)) {
+        if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
             // yes
             auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
             if (!final_index_cnd.has_value()) {
@@ -1352,7 +1352,7 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
 
         // should refine be used?
         std::unique_ptr<faiss::Index> final_index;
-        if (hnsw_cfg.refine.value_or(false)) {
+        if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
             // yes
             auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
             if (!final_index_cnd.has_value()) {
