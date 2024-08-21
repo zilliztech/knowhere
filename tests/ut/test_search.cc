@@ -122,6 +122,23 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         return json;
     };
 
+    auto ordered_rs_hnsw_gen = [=]() {
+        knowhere::Json json = hnsw_gen();
+        json[knowhere::meta::RANGE_SEARCH_K] = topk;
+        json[knowhere::meta::RETAIN_ITERATOR_ORDER] = true;
+        if (knowhere::IsMetricType(metric, knowhere::metric::L2)) {
+            json[knowhere::meta::RANGE_FILTER] = 0.0f;
+            json[knowhere::meta::RADIUS] = 1000000.0f;
+        } else if (knowhere::IsMetricType(metric, knowhere::metric::COSINE)) {
+            json[knowhere::meta::RANGE_FILTER] = 1.0f;
+            json[knowhere::meta::RADIUS] = 0.0f;
+        } else if (knowhere::IsMetricType(metric, knowhere::metric::IP)) {
+            json[knowhere::meta::RANGE_FILTER] = 1000000.0f;
+            json[knowhere::meta::RADIUS] = 0.0f;
+        }
+        return json;
+    };
+
     const auto train_ds = GenDataSet(nb, dim);
     const auto query_ds = GenDataSet(nq, dim);
 
@@ -233,6 +250,51 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             }
         }
     }
+
+#ifdef KNOWHERE_WITH_CARDINAL
+    // currently, only cardinal support iterator_retain_order
+    SECTION("TEST Range Search (iterator-based) with ordered iterator") {
+        using std::make_tuple;
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+            make_tuple(knowhere::IndexEnum::INDEX_HNSW, ordered_rs_hnsw_gen),
+        }));
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto cfg_json = gen().dump();
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+
+        CAPTURE(name, json.dump());
+        REQUIRE(idx.Type() == name);
+        REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
+
+        auto results = idx.RangeSearch(query_ds, json, nullptr);
+        REQUIRE(results.has_value());
+        auto ids = results.value()->GetIds();
+        auto lims = results.value()->GetLims();
+        auto dists = results.value()->GetDistance();
+
+        // the results count should not be more than range_search_k and top_k.
+        for (int i = 0; i < nq; ++i) {
+            int64_t size = lims[i + 1] - lims[i];
+            REQUIRE(size <= topk);
+        }
+
+        // top-k results should be same with first-k of top-2k.
+        json[knowhere::meta::RANGE_SEARCH_K] = topk * 2;
+        CAPTURE(name, json.dump());
+        auto more_results = idx.RangeSearch(query_ds, json, nullptr);
+        REQUIRE(more_results.has_value());
+        auto more_ids = more_results.value()->GetIds();
+        auto more_lims = more_results.value()->GetLims();
+        for (int i = 0; i < nq; ++i) {
+            int size = lims[i + 1] - lims[i];
+            int more_size = more_lims[i + 1] - more_lims[i];
+            REQUIRE(more_size >= size);
+            for (int j = 0; j < size; ++j) {
+                REQUIRE(ids[lims[i] + j] == more_ids[more_lims[i] + j]);
+            }
+        }
+    }
+#endif
 
     SECTION("Test Search with super large topk") {
         using std::make_tuple;

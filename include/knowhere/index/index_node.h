@@ -88,21 +88,10 @@ class IndexNode : public Object {
     // test_sparse.cc with real sparse vector index.
     virtual expected<DataSetPtr>
     RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
-        auto its_or = AnnIterator(dataset, cfg, bitset);
-        if (!its_or.has_value()) {
-            return expected<DataSetPtr>::Err(its_or.error(),
-                                             "RangeSearch failed due to AnnIterator failure: " + its_or.what());
-        }
         const auto base_cfg = static_cast<const BaseConfig&>(cfg);
         const float closer_bound = base_cfg.range_filter.value();
         const bool has_closer_bound = closer_bound != defaultRangeFilter;
-        // The `range_search_k` is used to early terminate the iterator-search.
-        //  When the number of range-valid results exceeds range_search_k, the `further_bound` will be updated.
-        //  "-1" means no early termination, `further_bound` will not be updated.
-        // Note that the number of results is not guaranteed to be exactly range_search_k, it may be more or less.
         float further_bound = base_cfg.radius.value();
-        const int32_t range_search_k = base_cfg.range_search_k.value();
-        LOG_KNOWHERE_DEBUG_ << "range_search_k: " << range_search_k;
 
         const bool the_larger_the_closer = IsMetricType(base_cfg.metric_type.value(), metric::IP) ||
                                            IsMetricType(base_cfg.metric_type.value(), metric::COSINE) ||
@@ -115,22 +104,78 @@ class IndexNode : public Object {
             return !is_first_closer(dist, further_bound);
         };
 
+        /** The `range_search_k` is used to early terminate the iterator-search.
+         * - `range_search_k < 0` means no early termination.
+         * - `range_search_k == 0` will return empty results.
+         * - Note that the number of results is not guaranteed to be exactly range_search_k, it may be more or less.
+         * */
+        const int32_t range_search_k = base_cfg.range_search_k.value();
+        LOG_KNOWHERE_DEBUG_ << "range_search_k: " << range_search_k;
+        if (range_search_k == 0) {
+            auto nq = dataset->GetRows();
+            std::vector<std::vector<int64_t>> result_id_array(nq);
+            std::vector<std::vector<float>> result_dist_array(nq);
+            auto range_search_result = GetRangeSearchResult(result_dist_array, result_id_array, the_larger_the_closer,
+                                                            nq, further_bound, closer_bound);
+            return GenResultDataSet(nq, std::move(range_search_result));
+        }
+
+        auto its_or = AnnIterator(dataset, cfg, bitset);
+        if (!its_or.has_value()) {
+            return expected<DataSetPtr>::Err(its_or.error(),
+                                             "RangeSearch failed due to AnnIterator failure: " + its_or.what());
+        }
+
         const auto its = its_or.value();
         const auto nq = its.size();
         std::vector<std::vector<int64_t>> result_id_array(nq);
         std::vector<std::vector<float>> result_dist_array(nq);
 
+        const bool retain_iterator_order = base_cfg.retain_iterator_order.value();
+        LOG_KNOWHERE_DEBUG_ << "retain_iterator_order: " << retain_iterator_order;
+
+        /**
+         * use ordered iterator (retain_iterator_order == true)
+         * - terminate iterator if next distance exceeds `further_bound`.
+         * - terminate iterator if get enough results. (`range_search_k`)
+         * */
+        auto task_with_ordered_iterator = [&](size_t idx) {
+            auto it = its[idx];
+            while (it->HasNext()) {
+                auto [id, dist] = it->Next();
+                if (has_closer_bound && too_close(dist)) {
+                    continue;
+                }
+                if (same_or_too_far(dist)) {
+                    break;
+                }
+                result_id_array[idx].push_back(id);
+                result_dist_array[idx].push_back(dist);
+                if (range_search_k >= 0 && static_cast<int32_t>(result_id_array[idx].size()) >= range_search_k) {
+                    break;
+                }
+            }
+        };
+
+        /**
+         * use default unordered iterator (retain_iterator_order == false)
+         * - terminate iterator if next distance [consecutively] exceeds `further_bound` several times.
+         * - if get enough results (`range_search_k`), update a `tighter_further_bound`, to early terminate iterator.
+         * */
         constexpr size_t k_min_num_consecutive_over_further_bound = 16;
         const auto range_search_level = base_cfg.range_search_level.value();  // from 0 to 0.5
         LOG_KNOWHERE_DEBUG_ << "range_search_level: " << range_search_level;
-
-        auto task = [&](size_t idx) {
+        auto task_with_unordered_iterator = [&](size_t idx) {
             // max-heap, use top (the current kth-furthest dist) as the further_bound if size == range_search_k
             std::priority_queue<float, std::vector<float>, decltype(is_first_closer)> early_stop_further_bounds(
                 is_first_closer);
             auto it = its[idx];
             size_t num_next = 0;
             size_t num_consecutive_over_further_bound = 0;
+            float tighter_further_bound = base_cfg.radius.value();
+            auto same_or_too_far = [&is_first_closer, &tighter_further_bound](float dist) {
+                return !is_first_closer(dist, tighter_further_bound);
+            };
             while (it->HasNext()) {
                 auto [id, dist] = it->Next();
                 num_next++;
@@ -151,7 +196,7 @@ class IndexNode : public Object {
                     } else {
                         early_stop_further_bounds.pop();
                         early_stop_further_bounds.emplace(dist);
-                        further_bound = early_stop_further_bounds.top();
+                        tighter_further_bound = early_stop_further_bounds.top();
                     }
                 }
                 num_consecutive_over_further_bound = 0;
@@ -162,13 +207,27 @@ class IndexNode : public Object {
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         std::vector<folly::Future<folly::Unit>> futs;
         futs.reserve(nq);
-        for (size_t i = 0; i < nq; i++) {
-            futs.emplace_back(ThreadPool::GetGlobalSearchThreadPool()->push([&, idx = i]() { task(idx); }));
+        if (retain_iterator_order) {
+            for (size_t i = 0; i < nq; i++) {
+                futs.emplace_back(
+                    ThreadPool::GetGlobalSearchThreadPool()->push([&, idx = i]() { task_with_ordered_iterator(idx); }));
+            }
+        } else {
+            for (size_t i = 0; i < nq; i++) {
+                futs.emplace_back(ThreadPool::GetGlobalSearchThreadPool()->push(
+                    [&, idx = i]() { task_with_unordered_iterator(idx); }));
+            }
         }
         WaitAllSuccess(futs);
 #else
-        for (size_t i = 0; i < nq; i++) {
-            task(i);
+        if (retain_iterator_order) {
+            for (size_t i = 0; i < nq; i++) {
+                task_with_ordered_iterator(i);
+            }
+        } else {
+            for (size_t i = 0; i < nq; i++) {
+                task_with_unordered_iterator(i);
+            }
         }
 #endif
 
