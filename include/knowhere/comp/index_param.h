@@ -77,6 +77,7 @@ constexpr const char* DISTANCE = "distance";
 constexpr const char* LIMS = "lims";
 constexpr const char* TOPK = "k";
 constexpr const char* RANGE_SEARCH_K = "range_search_k";
+constexpr const char* RETAIN_ITERATOR_ORDER = "retain_iterator_order";
 constexpr const char* RADIUS = "radius";
 constexpr const char* RANGE_FILTER = "range_filter";
 constexpr const char* INPUT_IDS = "input_ids";

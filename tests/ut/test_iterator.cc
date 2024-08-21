@@ -166,6 +166,49 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         REQUIRE(recall > kKnnRecallThreshold);
     }
 
+#ifdef KNOWHERE_WITH_CARDINAL
+    // currently, only cardinal support iterator_retain_order
+    SECTION("Test Search with ordered Iterator") {
+        using std::make_tuple;
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(
+            {make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen)}));
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto cfg_json = gen().dump();
+        CAPTURE(name, cfg_json);
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        // set `retain_iterator_order` to true.
+        json[knowhere::meta::RETAIN_ITERATOR_ORDER] = true;
+
+        REQUIRE(idx.Type() == name);
+        REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
+        auto its = idx.AnnIterator(query_ds, json, nullptr);
+        REQUIRE(its.has_value());
+
+        bool dist_less_better = knowhere::IsMetricType(metric, knowhere::metric::L2);
+        auto is_first_closer_or_equal = [&dist_less_better](float a, float b) {
+            return dist_less_better ? a <= b : a >= b;
+        };
+
+        // next_dist should not be closer.
+        for (int i = 0; i < nq; ++i) {
+            auto& iter = its.value()[i];
+            float last_dist;
+            if (iter->HasNext()) {
+                auto [id, dist] = iter->Next();
+                last_dist = dist;
+            } else {
+                continue;
+            }
+
+            while (iter->HasNext()) {
+                auto [id, dist] = iter->Next();
+                REQUIRE(is_first_closer_or_equal(last_dist, dist));
+                last_dist = dist;
+            }
+        }
+    }
+#endif
+
     SECTION("Test Search with Bitset using iterator") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(
