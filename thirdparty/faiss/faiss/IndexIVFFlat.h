@@ -11,7 +11,6 @@
 #define FAISS_INDEX_IVF_FLAT_H
 
 #include <stdint.h>
-#include <optional>
 #include <unordered_map>
 
 #include <faiss/IndexIVF.h>
@@ -19,23 +18,6 @@
 #include "knowhere/object.h"
 
 namespace faiss {
-struct IVFFlatIteratorWorkspace {
-    IVFFlatIteratorWorkspace(
-            const float* query_data,
-            const IVFSearchParameters* search_params)
-            : query_data(query_data), search_params(search_params) {}
-
-    const float* query_data = nullptr; // single query
-    const IVFSearchParameters* search_params = nullptr;
-    size_t nprobe = 0;
-    size_t backup_count_threshold = 0;  // count * nprobe / nlist
-    std::vector<knowhere::DistId> dists;    // should be cleared after each use
-    size_t next_visit_coarse_list_idx = 0;
-    std::unique_ptr<float[]> coarse_dis = nullptr;   // backup coarse centroids distances (heap)
-    std::unique_ptr<idx_t[]> coarse_idx = nullptr;   // backup coarse centroids ids (heap)
-    std::unique_ptr<size_t[]> coarse_list_sizes = nullptr;  // snapshot of the list_size
-};
-
 /** Inverted file with stored vectors. Here the inverted file
  * pre-selects the vectors to be searched, but they are not otherwise
  * encoded, the code array just contains the raw float entries.
@@ -82,20 +64,6 @@ struct IndexIVFFlat : IndexIVF {
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
 
     IndexIVFFlat();
-
-    std::unique_ptr<IVFFlatIteratorWorkspace> getIteratorWorkspace(
-            const float* query_data,
-            const IVFSearchParameters* ivfsearchParams) const;
-
-    // Unlike regular knn-search, the iterator does not know the size `k` of the
-    // returned result.
-    //   The iterator will maintain a heap of at least (nprobe/nlist) nodes for
-    //   iterator `Next()` operation.
-    //   When there are not enough nodes in the heap, iterator will scan the
-    //   next coarse list.
-    void getIteratorNextBatch(
-            IVFFlatIteratorWorkspace* workspace,
-            size_t current_backup_count) const;
 };
 
 struct IndexIVFFlatCC : IndexIVFFlat {

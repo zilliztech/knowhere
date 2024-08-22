@@ -94,6 +94,26 @@ struct SearchParametersIVF : SearchParameters {
 // the new convention puts the index type after SearchParameters
 using IVFSearchParameters = SearchParametersIVF;
 
+struct IVFIteratorWorkspace {
+    IVFIteratorWorkspace(
+            const float* query_data,
+            const IVFSearchParameters* search_params)
+            : query_data(query_data), search_params(search_params) {}
+
+    const float* query_data = nullptr; // single query
+    const IVFSearchParameters* search_params = nullptr;
+    size_t nprobe = 0;
+    size_t backup_count_threshold = 0;   // count * nprobe / nlist
+    std::vector<knowhere::DistId> dists; // should be cleared after each use
+    size_t next_visit_coarse_list_idx = 0;
+    std::unique_ptr<float[]> coarse_dis =
+            nullptr; // backup coarse centroids distances (heap)
+    std::unique_ptr<idx_t[]> coarse_idx =
+            nullptr; // backup coarse centroids ids (heap)
+    std::unique_ptr<size_t[]> coarse_list_sizes =
+            nullptr; // snapshot of the list_size
+};
+
 struct InvertedListScanner;
 struct IndexIVFStats;
 struct CodePacker;
@@ -224,6 +244,20 @@ struct IndexIVF : Index, IndexIVFInterface {
             size_t nlist,
             size_t code_size,
             MetricType metric = METRIC_L2);
+
+    std::unique_ptr<IVFIteratorWorkspace> getIteratorWorkspace(
+            const float* query_data,
+            const IVFSearchParameters* ivfsearchParams) const;
+
+    // Unlike regular knn-search, the iterator does not know the size `k` of the
+    // returned result.
+    //   The iterator will maintain a heap of at least (nprobe/nlist) nodes for
+    //   iterator `Next()` operation.
+    //   When there are not enough nodes in the heap, iterator will scan the
+    //   next coarse list.
+    void getIteratorNextBatch(
+            IVFIteratorWorkspace* workspace,
+            size_t current_backup_count) const;
 
     void reset() override;
 

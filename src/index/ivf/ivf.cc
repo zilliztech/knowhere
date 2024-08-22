@@ -256,14 +256,15 @@ class IvfIndexNode : public IndexNode {
     }
 
  private:
-    // only support IVFFlat and IVFFlatCC
+    // only support IVFFlat,IVFFlatCC, IVFSQ and IVFSQCC
     // iterator will own the copied_norm_query
     // TODO: iterator should copy and own query data.
+    // TODO: If SCANN support Iterator, raw_distance() function should be override.
     class iterator : public IndexIterator {
      public:
         iterator(const IndexType* index, const float* query_data, std::unique_ptr<float[]>&& copied_norm_query,
                  const BitsetView& bitset, size_t nprobe, bool larger_is_closer, const float refine_ratio = 0.5f)
-            : IndexIterator(larger_is_closer, IsQuantized() ? refine_ratio : 0.0f),
+            : IndexIterator(larger_is_closer, refine_ratio),
               index_(index),
               copied_norm_query_(std::move(copied_norm_query)) {
             if (copied_norm_query_ != nullptr) {
@@ -291,7 +292,7 @@ class IvfIndexNode : public IndexNode {
 
      private:
         const IndexType* index_ = nullptr;
-        std::unique_ptr<faiss::IVFFlatIteratorWorkspace> workspace_ = nullptr;
+        std::unique_ptr<faiss::IVFIteratorWorkspace> workspace_ = nullptr;
         std::unique_ptr<float[]> copied_norm_query_ = nullptr;
         std::unique_ptr<BitsetViewIDSelector> bw_idselector_ = nullptr;
         faiss::IVFSearchParameters ivf_search_params_;
@@ -867,10 +868,13 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, const C
         LOG_KNOWHERE_WARNING_ << "index not trained";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::index_not_trained, "index not trained");
     }
-    // only support IVFFlat and IVFFlatCC;
+    // only support IVFFlat, IVFFlatCC, IVF_SQ8 and IVF_SQ_CC;
     if constexpr (!std::is_same<faiss::IndexIVFFlatCC, IndexType>::value &&
-                  !std::is_same<faiss::IndexIVFFlat, IndexType>::value) {
-        LOG_KNOWHERE_WARNING_ << "Current index_type: " << Type() << ", only IVFFlat and IVFFlatCC support Iterator.";
+                  !std::is_same<faiss::IndexIVFFlat, IndexType>::value &&
+                  !std::is_same<faiss::IndexIVFScalarQuantizer, IndexType>::value &&
+                  !std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
+        LOG_KNOWHERE_WARNING_ << "Current index_type: " << Type()
+                              << ", only IVFFlat, IVFFlatCC, IVF_SQ8 and IVF_SQ_CC support Iterator.";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::not_implemented, "index not supported");
     } else {
         auto dim = dataset->GetDim();
@@ -884,7 +888,9 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, const C
         auto larger_is_closer = IsMetricType(ivf_cfg.metric_type.value(), knowhere::metric::IP) || is_cosine;
 
         size_t nprobe = ivf_cfg.nprobe.value();
-
+        // set iterator_refine_ratio = 0.0. If quantizer != flat, faiss:indexivf will not keep raw data;
+        // TODO: if SCANN support Iterator, iterator_refine_ratio should be set.
+        float iterator_refine_ratio = 0.0f;
         try {
             std::vector<folly::Future<folly::Unit>> futs;
             futs.reserve(rows);
@@ -897,9 +903,8 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, const C
                     }
 
                     // the iterator only own the copied_norm_query.
-                    auto it =
-                        std::make_shared<iterator>(index_.get(), cur_query, std::move(copied_norm_query), bitset,
-                                                   nprobe, larger_is_closer, ivf_cfg.iterator_refine_ratio.value());
+                    auto it = std::make_shared<iterator>(index_.get(), cur_query, std::move(copied_norm_query), bitset,
+                                                         nprobe, larger_is_closer, iterator_refine_ratio);
                     it->initialize();
                     vec[index] = it;
                 }));

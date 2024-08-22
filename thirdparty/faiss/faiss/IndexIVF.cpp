@@ -1232,6 +1232,135 @@ void IndexIVF::train_encoder(
     }
 }
 
+std::unique_ptr<IVFIteratorWorkspace> IndexIVF::getIteratorWorkspace(
+        const float* query_data,
+        const IVFSearchParameters* ivfsearchParams) const {
+    auto workspace =
+            std::make_unique<IVFIteratorWorkspace>(query_data, ivfsearchParams);
+
+    // snapshot of list_sizes;
+    auto coarse_list_sizes = std::make_unique<size_t[]>(nlist);
+    // total size of all lists
+    size_t count = 0;
+    auto max_coarse_list_size = 0;
+    for (size_t list_no = 0; list_no < nlist; ++list_no) {
+        auto list_size = invlists->list_size(list_no);
+        coarse_list_sizes[list_no] = list_size;
+        count += list_size;
+        if (list_size > max_coarse_list_size) {
+            max_coarse_list_size = list_size;
+        }
+    }
+    // compute backup_count_threshold - (nprobe / nlist) * count
+    size_t nprobe = workspace->search_params->nprobe
+            ? workspace->search_params->nprobe
+            : this->nprobe;
+    nprobe = std::min(nlist, nprobe);
+    workspace->backup_count_threshold = count * nprobe / nlist;
+    auto max_backup_count =
+            max_coarse_list_size + workspace->backup_count_threshold;
+
+    // compute distances of all centroids
+    auto coarse_idx = std::make_unique<idx_t[]>(nlist);
+    auto coarse_dis = std::make_unique<float[]>(nlist);
+    quantizer->search(
+            1,
+            workspace->query_data,
+            nlist,
+            coarse_dis.get(),
+            coarse_idx.get(),
+            workspace->search_params
+                    ? workspace->search_params->quantizer_params
+                    : nullptr);
+
+    workspace->coarse_idx = std::move(coarse_idx);
+    workspace->coarse_dis = std::move(coarse_dis);
+    workspace->coarse_list_sizes = std::move(coarse_list_sizes);
+    workspace->nprobe = nprobe;
+    workspace->dists.reserve(max_backup_count);
+
+    return workspace;
+}
+
+void IndexIVF::getIteratorNextBatch(
+        IVFIteratorWorkspace* workspace,
+        size_t current_backup_count) const {
+    workspace->dists.clear();
+
+    while (current_backup_count + workspace->dists.size() <
+                   workspace->backup_count_threshold &&
+           workspace->next_visit_coarse_list_idx < nlist) {
+        auto next_list_idx = workspace->next_visit_coarse_list_idx;
+        workspace->next_visit_coarse_list_idx++;
+
+        invlists->prefetch_lists(
+                workspace->coarse_idx.get() + next_list_idx, 1);
+        const auto list_no = workspace->coarse_idx[next_list_idx];
+        const auto coarse_list_centroid_dist =
+                workspace->coarse_dis[next_list_idx];
+
+        // max_codes is the size of the list when we started the
+        // iteration so that we won't search vectors added during the
+        // iteration(for IVFCC).
+        const auto max_codes = workspace->coarse_list_sizes
+                                       [workspace->coarse_idx[next_list_idx]];
+        if (list_no < 0) {
+            // not enough centroids for multiprobe
+            continue;
+        }
+        FAISS_THROW_IF_NOT_FMT(
+                list_no < (idx_t)nlist,
+                "Invalid list_no=%" PRId64 " nlist=%zd\n",
+                list_no,
+                nlist);
+
+        // don't waste time on empty lists
+        void* inverted_list_context = workspace->search_params
+                ? workspace->search_params->inverted_list_context
+                : nullptr;
+
+        if (invlists->is_empty(list_no, inverted_list_context)) {
+            continue;
+        }
+
+        // get scanner
+        IDSelector* sel = workspace->search_params
+                ? workspace->search_params->sel
+                : nullptr;
+        std::unique_ptr<InvertedListScanner> scanner(
+                get_InvertedListScanner(false, sel));
+        scanner->set_query(workspace->query_data);
+        scanner->set_list(list_no, coarse_list_centroid_dist);
+
+        size_t segment_num = invlists->get_segment_num(list_no);
+        size_t scan_cnt = 0;
+        for (size_t segment_idx = 0; segment_idx < segment_num; segment_idx++) {
+            size_t segment_size =
+                    invlists->get_segment_size(list_no, segment_idx);
+            size_t should_scan_size =
+                    std::min(segment_size, max_codes - scan_cnt);
+            scan_cnt += should_scan_size;
+            if (should_scan_size <= 0) {
+                break;
+            }
+            size_t segment_offset =
+                    invlists->get_segment_offset(list_no, segment_idx);
+            InvertedLists::ScopedCodes scodes(
+                    invlists, list_no, segment_offset);
+            InvertedLists::ScopedCodeNorms scode_norms(
+                    invlists, list_no, segment_offset);
+            InvertedLists::ScopedIds sids(invlists, list_no, segment_offset);
+
+            scanner->scan_codes_and_return(
+                    should_scan_size,
+                    scodes.get(),
+                    scode_norms.get(),
+                    sids.get(),
+                    workspace->dists);
+        }
+    }
+}
+
 bool check_compatible_for_merge_expensive_check = true;
 
 void IndexIVF::check_compatible_for_merge(const Index& otherIndex) const {
