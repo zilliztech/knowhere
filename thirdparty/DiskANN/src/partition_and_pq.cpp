@@ -206,7 +206,10 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
   for (uint64_t i = 0; i < num_train; i++) {
     for (uint64_t j = 0; j < dim; j++) {
       if (passed_train_data[i * dim + j] != train_data[i * dim + j])
-        LOG(ERROR) << "error in copy";
+        LOG(ERROR) << "error in copy, (" << i << ", " << j << ") "
+                   << train_data[i * dim + j] << " vs. "
+                   << passed_train_data[i * dim + j] << " (0x" << std::hex
+                   << *(int32_t*)(&train_data[i * dim + j]) << ")";
     }
   }
 
