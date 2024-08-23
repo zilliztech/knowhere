@@ -778,6 +778,9 @@ class BaseConfig : public Config {
             .for_iterator()
             .for_deserialize()
             .for_deserialize_from_file();
+        // This must be provided in any BM25 type search request.
+        // This is necessary for building/training/deserializing only if the index
+        // type is WAND.
         KNOWHERE_CONFIG_DECLARE_FIELD(bm25_avgdl)
             .allow_empty_without_default()
             .set_range(1, std::numeric_limits<CFG_FLOAT::value_type>::max())
