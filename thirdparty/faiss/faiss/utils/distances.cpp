@@ -135,7 +135,7 @@ namespace {
 // may be useful if the lion's share of samples are filtered out.
 
 struct IDSelectorAll {
-    inline bool is_member(const size_t idx) const {
+    constexpr inline bool is_member(const size_t idx) const {
         return true;
     }
 };

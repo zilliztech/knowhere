@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2023 Zilliz. All rights reserved.
+// Copyright (C) 2019-2024 Zilliz. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance
 // with the License. You may obtain a copy of the License at
@@ -11,23 +11,22 @@
 
 #pragma once
 
-#include <faiss/impl/IDSelector.h>
-
-#include "knowhere/bitsetview.h"
+#include <faiss/Index.h>
+#include <faiss/cppcontrib/knowhere/IndexWrapper.h>
+#include <faiss/impl/DistanceComputer.h>
 
 namespace knowhere {
 
-struct BitsetViewIDSelector final : faiss::IDSelector {
-    const BitsetView bitset_view;
+// overrides a distance compute function
+struct IndexWrapperCosine : public faiss::cppcontrib::knowhere::IndexWrapper {
+    // a non-owning pointer
+    const float* inverse_l2_norms;
 
-    inline BitsetViewIDSelector(BitsetView bitset_view) : bitset_view{bitset_view} {
-    }
+    // norms are external
+    IndexWrapperCosine(faiss::Index* index, const float* inverse_l2_norms_in);
 
-    inline bool
-    is_member(faiss::idx_t id) const override final {
-        // it is by design that bitset_view.empty() is not tested here
-        return (!bitset_view.test(id));
-    }
+    faiss::DistanceComputer*
+    get_distance_computer() const override;
 };
 
 }  // namespace knowhere
