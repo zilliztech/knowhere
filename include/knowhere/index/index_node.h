@@ -162,7 +162,6 @@ class IndexNode : public Object {
          * - terminate iterator if next distance [consecutively] exceeds `further_bound` several times.
          * - if get enough results (`range_search_k`), update a `tighter_further_bound`, to early terminate iterator.
          * */
-        constexpr size_t k_min_num_consecutive_over_further_bound = 16;
         const auto range_search_level = base_cfg.range_search_level.value();  // from 0 to 0.5
         LOG_KNOWHERE_DEBUG_ << "range_search_level: " << range_search_level;
         auto task_with_unordered_iterator = [&](size_t idx) {
@@ -185,7 +184,7 @@ class IndexNode : public Object {
                 if (same_or_too_far(dist)) {
                     num_consecutive_over_further_bound++;
                     if (num_consecutive_over_further_bound >
-                        std::max(k_min_num_consecutive_over_further_bound, (size_t)(num_next * range_search_level))) {
+                        static_cast<size_t>(std::ceil(num_next * range_search_level))) {
                         break;
                     }
                     continue;
