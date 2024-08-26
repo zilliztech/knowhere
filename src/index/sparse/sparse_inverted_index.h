@@ -200,6 +200,9 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         for (size_t i = 0; i < rows; ++i) {
             amount += data[i].size();
         }
+        if (amount == 0) {
+            return Status::success;
+        }
         std::vector<T> vals;
         vals.reserve(amount);
         for (size_t i = 0; i < rows; ++i) {
@@ -208,6 +211,11 @@ class InvertedIndex : public BaseInvertedIndex<T> {
             }
         }
         auto pos = vals.begin() + static_cast<size_t>(drop_ratio_build * vals.size());
+        // pos may be vals.end() if drop_ratio_build is 1.0, in that case we use
+        // the largest value as the threshold.
+        if (pos == vals.end()) {
+            pos--;
+        }
         std::nth_element(vals.begin(), pos, vals.end());
 
         std::unique_lock<std::shared_mutex> lock(mu_);
@@ -608,17 +616,12 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         std::unordered_map<size_t, T> row_sums;
 
         // below are used only for WAND index.
-        // BM25Params::avgdl is segment level average document length, used only
-        // by WAND to compute max score. Should not be used for actual score
-        // computing.
-        float avgdl;
         float max_score_ratio;
         DocValueComputer<T> wand_max_score_computer;
 
         BM25Params(float k1, float b, float avgdl, float max_score_ratio)
             : k1(k1),
               b(b),
-              avgdl(avgdl),
               max_score_ratio(max_score_ratio),
               wand_max_score_computer(GetDocValueBM25Computer<T>(k1, b, avgdl)) {
         }

@@ -390,11 +390,15 @@ TEST_CASE("Test Mem Sparse Index GetVectorByIds", "[float metrics]") {
 }
 
 TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
-    std::vector<std::map<int32_t, float>> base_data = {{{1, 1.1f}, {2, 2.2f}, {6, 3.3f}},
-                                                       // explicitly empty row
-                                                       {},
-                                                       // implicitly empty row
-                                                       {{5, 0.0f}}};
+    auto [base_data, has_first_result] = GENERATE(table<std::vector<std::map<int32_t, float>>, bool>(
+        {{std::vector<std::map<int32_t, float>>{
+              {{1, 1.1f}, {2, 2.2f}, {6, 3.3f}},
+              {},          // explicitly empty row
+              {{5, 0.0f}}  // implicitly empty row
+          },
+          true},
+         {std::vector<std::map<int32_t, float>>{{}, {}, {}}, false}}));
+
     auto dim = 7;
     const auto train_ds = GenSparseDataSet(base_data, dim);
 
@@ -402,6 +406,15 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
 
     auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
     auto version = GenTestVersionList();
+
+    auto [drop_ratio_build, drop_ratio_search] = GENERATE(table<float, float>({
+        {0.0, 0.0},
+        {0.32, 0.0},
+        {0.32, 0.6},
+        {0.0, 0.6},
+        // drop everything
+        {1.0, 0.6},
+    }));
 
     auto base_gen = [=, dim = dim]() {
         knowhere::Json json;
@@ -411,6 +424,8 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
         json[knowhere::meta::BM25_K1] = 1.2;
         json[knowhere::meta::BM25_B] = 0.75;
         json[knowhere::meta::BM25_AVGDL] = 100;
+        json[knowhere::indexparam::DROP_RATIO_BUILD] = drop_ratio_build;
+        json[knowhere::indexparam::DROP_RATIO_SEARCH] = drop_ratio_search;
         return json;
     };
 
@@ -419,11 +434,9 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
         std::make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, base_gen),
     }));
 
-    std::vector<std::map<int32_t, float>> query_data = {// q0 should find doc 0 only
-                                                        {{1, 1.1f}},
-                                                        // q1 and q2 should find no neighbor
-                                                        {{5, 1.1f}},
-                                                        {}};
+    // query data must be constructed to match base_data and has_first_result:
+    // if has_first_result is true, only q0 should find doc 0; otherwise, no query should find any neighbor.
+    std::vector<std::map<int32_t, float>> query_data = {{{1, 1.1f}}, {{5, 1.1f}}, {}};
     const auto query_ds = GenSparseDataSet(query_data, dim);
 
     auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
@@ -438,22 +451,21 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
     REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
     REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
 
-    auto check_result = [&](const knowhere::DataSet& ds) {
-        auto nq = ds.GetRows();
-        auto k = ds.GetDim();
-        auto* ids = ds.GetIds();
-        REQUIRE(ids[0] == 0);
-        for (auto i = 1; i < nq * k; ++i) {
-            REQUIRE(ids[i] == -1);
-        }
-    };
-
     const knowhere::Json conf = {
         {knowhere::meta::METRIC_TYPE, metric}, {knowhere::meta::TOPK, topk},      {knowhere::meta::BM25_K1, 1.2},
         {knowhere::meta::BM25_B, 0.75},        {knowhere::meta::BM25_AVGDL, 100},
     };
 
     SECTION("Test Search") {
+        auto check_result = [&](const knowhere::DataSet& ds) {
+            auto nq = ds.GetRows();
+            auto k = ds.GetDim();
+            auto* ids = ds.GetIds();
+            REQUIRE(ids[0] == (has_first_result ? 0 : -1));
+            for (auto i = 1; i < nq * k; ++i) {
+                REQUIRE(ids[i] == -1);
+            }
+        };
         auto bf_res = knowhere::BruteForce::SearchSparse(train_ds, query_ds, conf, nullptr);
         REQUIRE(bf_res.has_value());
         check_result(*bf_res.value());
@@ -464,6 +476,26 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
     }
 
     SECTION("Test RangeSearch") {
+        auto check_result = [&](const knowhere::DataSet& ds) {
+            auto nq = ds.GetRows();
+            auto k = ds.GetDim();
+            auto lims = ds.GetLims();
+            auto* ids = ds.GetIds();
+            if (has_first_result) {
+                REQUIRE(lims[0] == 0);
+                REQUIRE(lims[1] == 1);
+                REQUIRE(ids[0] == 0);
+                REQUIRE(lims[2] == 1);
+                REQUIRE(lims[3] == 1);
+            } else {
+                // if no result found, lims should be all 0, ids and distances should point at 0-element array instead
+                // of all -1, thus cannot be checked.
+                REQUIRE(lims[0] == 0);
+                REQUIRE(lims[1] == 0);
+                REQUIRE(lims[2] == 0);
+                REQUIRE(lims[3] == 0);
+            }
+        };
         json[knowhere::meta::RADIUS] = 0.0f;
         json[knowhere::meta::RANGE_FILTER] = 10000.0f;
 
