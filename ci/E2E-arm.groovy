@@ -64,6 +64,9 @@ pipeline {
                       sh "apt-get install -y libopenblas-dev libaio-dev libdouble-conversion-dev libevent-dev"
                       sh "pip3 install ${knowhere_wheel}"
                       sh "cat requirements.txt | xargs -n 1 pip3 install"
+                      sh "mkdir -p ann_fbin"
+                      sh "cp -r /home/data/milvus/ann_fbin/rand ./ann_fbin/"
+                      sh "cp -r /home/data/milvus/cloud_index_files ./ann_fbin/"
                       sh "pytest -v -m 'L0'"
                     }
                 }
