@@ -56,7 +56,7 @@ pipeline {
                             }
                         }
                     }
-                    checkout([$class: 'GitSCM', branches: [[name: '*/caiyd_copy_test_data_to_local']], extensions: [],
+                    checkout([$class: 'GitSCM', branches: [[name: '*/main']], extensions: [],
                     userRemoteConfigs: [[credentialsId: 'milvus-ci', url: 'https://github.com/milvus-io/knowhere-test.git']]])
                     dir('tests'){
                       unarchive mapping: ["${knowhere_wheel}": "${knowhere_wheel}"]
@@ -64,9 +64,6 @@ pipeline {
                       sh "apt-get install -y libopenblas-dev libaio-dev libdouble-conversion-dev libevent-dev"
                       sh "pip3 install ${knowhere_wheel}"
                       sh "cat requirements.txt | xargs -n 1 pip3 install"
-                      sh "mkdir -p ann_fbin"
-                      sh "cp -r /home/data/milvus/ann_fbin/rand ./ann_fbin/"
-                      sh "cp -r /home/data/milvus/cloud_index_files ./ann_fbin/"
                       sh "pytest -v -m 'L0'"
                     }
                 }
