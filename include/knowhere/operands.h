@@ -19,6 +19,8 @@
 #include <cstdint>
 #include <cstring>
 
+#include "feature.h"
+
 namespace {
 union fp32_bits {
     uint32_t as_bits;
@@ -142,6 +144,25 @@ struct bf16 {
         return fp32_from_bits(bits);
     }
 };
+
+template <typename T>
+bool
+typeCheck(uint64_t features) {
+    if constexpr (std::is_same_v<T, bin1>) {
+        return features & knowhere::feature::BINARY;
+    }
+    if constexpr (std::is_same_v<T, fp16>) {
+        return features & knowhere::feature::FP16;
+    }
+    if constexpr (std::is_same_v<T, bf16>) {
+        return features & knowhere::feature::BF16;
+    }
+    // TODO : add sparse_fp32 data type
+    if constexpr (std::is_same_v<T, fp32>) {
+        return (features & knowhere::feature::FLOAT32) || (features & knowhere::feature::SPARSE_FLOAT32);
+    }
+    return false;
+}
 
 template <typename InType, typename... Types>
 using TypeMatch = std::bool_constant<(... | std::is_same_v<InType, Types>)>;

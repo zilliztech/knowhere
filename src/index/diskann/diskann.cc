@@ -22,6 +22,7 @@
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
+#include "knowhere/feature.h"
 #include "knowhere/file_manager.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
@@ -706,12 +707,8 @@ DiskANNIndexNode<DataType>::GetCachedNodeNum(const float cache_dram_budget, cons
 }
 
 #ifdef KNOWHERE_WITH_CARDINAL
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(DISKANN_DEPRECATED, DiskANNIndexNode, fp32);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(DISKANN_DEPRECATED, DiskANNIndexNode, fp16);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(DISKANN_DEPRECATED, DiskANNIndexNode, bf16);
+KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(DISKANN_DEPRECATED, DiskANNIndexNode, knowhere::feature::DISK)
 #else
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(DISKANN, DiskANNIndexNode, fp32);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(DISKANN, DiskANNIndexNode, fp16);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(DISKANN, DiskANNIndexNode, bf16);
+KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(DISKANN, DiskANNIndexNode, knowhere::feature::DISK)
 #endif
 }  // namespace knowhere

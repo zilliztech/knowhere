@@ -47,6 +47,7 @@ struct Resource {
 DEFINE_HAS_STATIC_FUNC(StaticCreateConfig)
 DEFINE_HAS_STATIC_FUNC(StaticEstimateLoadResource)
 DEFINE_HAS_STATIC_FUNC(StaticHasRawData)
+DEFINE_HAS_STATIC_FUNC(StaticConfigCheck)
 
 template <typename DataType>
 class IndexStaticFaced {
@@ -60,6 +61,10 @@ class IndexStaticFaced {
      */
     static std::unique_ptr<BaseConfig>
     CreateConfig(const knowhere::IndexType& indexType, const knowhere::IndexVersion& version);
+
+    static knowhere::Status
+    ConfigCheck(const knowhere::IndexType& indexType, const knowhere::IndexVersion& version,
+                const knowhere::Json& params, std::string& msg);
 
     /**
      * @brief estimate the memory and disk resource usage before index loading by index params
@@ -103,6 +108,11 @@ class IndexStaticFaced {
             staticHasRawDataMap[indexType] = VecIndexNode::StaticHasRawData;
         }
 
+        if constexpr (has_static_StaticConfigCheck<VecIndexNode,
+                                                   decltype(IndexStaticFaced<DataType>::InternalConfigCheck)>::value) {
+            staticConfigCheckMap[indexType] = VecIndexNode::StaticConfigCheck;
+        }
+
         return Instance();
     }
 
@@ -117,12 +127,16 @@ class IndexStaticFaced {
     static bool
     InternalStaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version);
 
+    static knowhere::Status
+    InternalConfigCheck(const knowhere::BaseConfig& config, const IndexVersion& version, std::string& msg);
+
     static std::unique_ptr<BaseConfig>
     InternalStaticCreateConfig();
 
     std::map<std::string, std::function<decltype(InternalStaticCreateConfig)>> staticCreateConfigMap;
     std::map<std::string, std::function<decltype(InternalStaticHasRawData)>> staticHasRawDataMap;
     std::map<std::string, std::function<decltype(InternalEstimateLoadResource)>> staticEstimateLoadResourceMap;
+    std::map<std::string, std::function<decltype(InternalConfigCheck)>> staticConfigCheckMap;
 };
 
 }  // namespace knowhere

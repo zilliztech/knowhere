@@ -18,6 +18,7 @@
 #include "io/memory_io.h"
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/thread_pool.h"
+#include "knowhere/feature.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/index_node_data_mock_wrapper.h"
 #include "knowhere/log.h"
@@ -394,9 +395,17 @@ class FlatIndexNode : public IndexNode {
     std::shared_ptr<ThreadPool> search_pool_;
 };
 
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(FLAT, FlatIndexNode, fp32, faiss::IndexFlat);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(BINFLAT, FlatIndexNode, bin1, faiss::IndexBinaryFlat);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(BIN_FLAT, FlatIndexNode, bin1, faiss::IndexBinaryFlat);
-KNOWHERE_MOCK_REGISTER_GLOBAL(FLAT, FlatIndexNode, fp16, faiss::IndexFlat);
-KNOWHERE_MOCK_REGISTER_GLOBAL(FLAT, FlatIndexNode, bf16, faiss::IndexFlat);
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(FLAT, FlatIndexNode,
+                                              knowhere::feature::NO_TRAIN | knowhere::feature::KNN |
+                                                  knowhere::feature::MMAP,
+                                              faiss::IndexFlat);
+
+KNOWHERE_SIMPLE_REGISTER_DENSE_BIN_GLOBAL(BINFLAT, FlatIndexNode,
+                                          knowhere::feature::NO_TRAIN | knowhere::feature::KNN |
+                                              knowhere::feature::MMAP,
+                                          faiss::IndexBinaryFlat);
+KNOWHERE_SIMPLE_REGISTER_DENSE_BIN_GLOBAL(BIN_FLAT, FlatIndexNode,
+                                          knowhere::feature::NO_TRAIN | knowhere::feature::KNN |
+                                              knowhere::feature::MMAP,
+                                          faiss::IndexBinaryFlat);
 }  // namespace knowhere

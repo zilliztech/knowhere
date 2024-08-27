@@ -151,7 +151,7 @@ class GpuRaftCagraHybridIndexNode : public GpuRaftCagraIndexNode<DataType> {
     }
 
     Status
-    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config>) {
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config>) override {
         return Status::not_implemented;
     }
 
@@ -160,14 +160,16 @@ class GpuRaftCagraHybridIndexNode : public GpuRaftCagraIndexNode<DataType> {
     std::unique_ptr<hnswlib::HierarchicalNSW<DataType, float, hnswlib::None>> hnsw_index_ = nullptr;
 };
 
-KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_RAFT_CAGRA, GpuRaftCagraHybridIndexNode, fp32, []() {
-    int count;
-    RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
-    return count * cuda_concurrent_size_per_device;
-}());
-KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuRaftCagraHybridIndexNode, fp32, []() {
-    int count;
-    RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
-    return count * cuda_concurrent_size_per_device;
-}());
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_RAFT_CAGRA, GpuRaftCagraHybridIndexNode, fp32,
+                                          knowhere::feature::GPU_ANN_FLOAT_INDEX, []() {
+                                              int count;
+                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
+                                              return count * cuda_concurrent_size_per_device;
+                                          }());
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuRaftCagraHybridIndexNode, fp32,
+                                          knowhere::feature::GPU_ANN_FLOAT_INDEX, []() {
+                                              int count;
+                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
+                                              return count * cuda_concurrent_size_per_device;
+                                          }());
 }  // namespace knowhere

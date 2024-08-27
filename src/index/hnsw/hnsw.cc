@@ -22,6 +22,7 @@
 #include "knowhere/comp/time_recorder.h"
 #include "knowhere/config.h"
 #include "knowhere/expected.h"
+#include "knowhere/feature.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/index_node_data_mock_wrapper.h"
 #include "knowhere/log.h"
@@ -84,6 +85,33 @@ class HnswIndexNode : public IndexNode {
         this->index_ = index;
         if constexpr (quant_type != QuantType::None) {
             this->index_->trainSQuant((const DataType*)dataset->GetTensor(), rows);
+        }
+        return Status::success;
+    }
+
+    static Status
+    StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {
+        auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
+
+        if (paramType == PARAM_TYPE::TRAIN) {
+            if constexpr (KnowhereFloatTypeCheck<DataType>::value) {
+                if (IsMetricType(hnsw_cfg.metric_type.value(), metric::L2) ||
+                    IsMetricType(hnsw_cfg.metric_type.value(), metric::IP) ||
+                    IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE)) {
+                } else {
+                    msg = "metric type " + hnsw_cfg.metric_type.value() +
+                          " not found or not supported, supported: [L2 IP COSINE]";
+                    return Status::invalid_metric_type;
+                }
+            } else {
+                if (IsMetricType(hnsw_cfg.metric_type.value(), metric::HAMMING) ||
+                    IsMetricType(hnsw_cfg.metric_type.value(), metric::JACCARD)) {
+                } else {
+                    msg = "metric type " + hnsw_cfg.metric_type.value() +
+                          " not found or not supported, supported: [HAMMING JACCARD]";
+                    return Status::invalid_metric_type;
+                }
+            }
         }
         return Status::success;
     }
@@ -595,21 +623,13 @@ class HnswIndexNode : public IndexNode {
 };
 
 #ifdef KNOWHERE_WITH_CARDINAL
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW_DEPRECATED, HnswIndexNode, fp32);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW_DEPRECATED, HnswIndexNode, fp16);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW_DEPRECATED, HnswIndexNode, bf16);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW_DEPRECATED, HnswIndexNode, bin1);
+KNOWHERE_SIMPLE_REGISTER_DENSE_ALL_GLOBAL(HNSW_DEPRECATED, HnswIndexNode,
+                                          knowhere::feature::MMAP | knowhere::feature::MV)
 #else
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW, HnswIndexNode, fp32);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW, HnswIndexNode, fp16);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW, HnswIndexNode, bf16);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW, HnswIndexNode, bin1);
+KNOWHERE_SIMPLE_REGISTER_DENSE_ALL_GLOBAL(HNSW, HnswIndexNode, knowhere::feature::MMAP | knowhere::feature::MV)
 #endif
 
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW_SQ8, HnswIndexNode, fp32, QuantType::SQ8);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW_SQ8_REFINE, HnswIndexNode, fp32, QuantType::SQ8Refine);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW_SQ8, HnswIndexNode, fp16, QuantType::SQ8);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW_SQ8_REFINE, HnswIndexNode, fp16, QuantType::SQ8Refine);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW_SQ8, HnswIndexNode, bf16, QuantType::SQ8);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(HNSW_SQ8_REFINE, HnswIndexNode, bf16, QuantType::SQ8Refine);
+KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_SQ8, HnswIndexNode, knowhere::feature::MMAP, QuantType::SQ8)
+KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_SQ8_REFINE, HnswIndexNode, knowhere::feature::MMAP,
+                                                QuantType::SQ8Refine)
 }  // namespace knowhere

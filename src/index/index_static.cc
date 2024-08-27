@@ -45,6 +45,25 @@ IndexStaticFaced<DataType>::CreateConfig(const IndexType& indexType, const Index
 }
 
 template <typename DataType>
+knowhere::Status
+IndexStaticFaced<DataType>::ConfigCheck(const IndexType& indexType, const IndexVersion& version, const Json& params,
+                                        std::string& msg) {
+    auto cfg = IndexStaticFaced<DataType>::CreateConfig(indexType, version);
+
+    const Status status = LoadStaticConfig(cfg.get(), params, knowhere::PARAM_TYPE::TRAIN, "ConfigCheck", &msg);
+    if (status != Status::success) {
+        LOG_KNOWHERE_ERROR_ << "Load Config failed, msg = " << msg;
+        return status;
+    }
+
+    if (Instance().staticConfigCheckMap.find(indexType) != Instance().staticConfigCheckMap.end()) {
+        return Instance().staticConfigCheckMap[indexType](*cfg, version, msg);
+    }
+
+    return knowhere::Status::success;
+}
+
+template <typename DataType>
 expected<Resource>
 IndexStaticFaced<DataType>::EstimateLoadResource(const knowhere::IndexType& indexType,
                                                  const knowhere::IndexVersion& version, const float file_size,
@@ -121,6 +140,13 @@ template <typename DataType>
 std::unique_ptr<BaseConfig>
 IndexStaticFaced<DataType>::InternalStaticCreateConfig() {
     return std::unique_ptr<BaseConfig>();
+}
+
+template <typename DataType>
+knowhere::Status
+IndexStaticFaced<DataType>::InternalConfigCheck(const BaseConfig& config, const IndexVersion& version,
+                                                std::string& msg) {
+    return knowhere::Status::success;
 }
 
 template class IndexStaticFaced<knowhere::fp32>;

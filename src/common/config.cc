@@ -20,6 +20,7 @@
 #include "index/hnsw/hnsw_config.h"
 #include "index/ivf/ivf_config.h"
 #include "index/sparse/sparse_inverted_index_config.h"
+#include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
 
 namespace knowhere {
@@ -86,12 +87,26 @@ Config::FormatAndCheck(const Config& cfg, Json& json, std::string* const err_msg
             if (json.find(it.first) != json.end() && json[it.first].is_string()) {
                 if (std::get_if<Entry<CFG_INT>>(&var)) {
                     std::string::size_type sz;
-                    auto value_str = json[it.first].get<std::string>();
-                    CFG_INT::value_type v = std::stoi(value_str.c_str(), &sz);
-                    if (sz < value_str.length()) {
-                        KNOWHERE_THROW_MSG(std::string("wrong data type in json ") + value_str);
+                    auto key_str = it.first;
+                    auto value_str = json[key_str].get<std::string>();
+                    try {
+                        long long v = std::stoll(value_str, &sz);
+                        if (sz < value_str.length()) {
+                            KNOWHERE_THROW_MSG("wrong data type in json, key: '" + key_str + "', value: '" + value_str +
+                                               "'");
+                        }
+                        if (v < std::numeric_limits<CFG_INT::value_type>::min() ||
+                            v > std::numeric_limits<CFG_INT::value_type>::max()) {
+                            *err_msg = "integer value out of range, key: '" + key_str + "', value: '" + value_str + "'";
+                            return knowhere::Status::invalid_value_in_json;
+                        }
+                        json[key_str] = static_cast<CFG_INT::value_type>(v);
+                    } catch (const std::out_of_range&) {
+                        *err_msg = "integer value out of range, key: '" + key_str + "', value: '" + value_str + "'";
+                        return knowhere::Status::invalid_value_in_json;
+                    } catch (const std::invalid_argument&) {
+                        KNOWHERE_THROW_MSG("invalid integer value, key: '" + key_str + "', value: '" + value_str + "'");
                     }
-                    json[it.first] = v;
                 }
                 if (std::get_if<Entry<CFG_FLOAT>>(&var)) {
                     CFG_FLOAT::value_type v = std::stof(json[it.first].get<std::string>().c_str());
@@ -119,53 +134,3 @@ Config::FormatAndCheck(const Config& cfg, Json& json, std::string* const err_msg
 }
 
 }  // namespace knowhere
-
-extern "C" __attribute__((visibility("default"))) int
-CheckConfig(int index_type, char const* str, int n, int param_type);
-
-int
-CheckConfig(int index_type, const char* str, int n, int param_type) {
-    if (!str || n <= 0) {
-        return int(knowhere::Status::invalid_args);
-    }
-    knowhere::Json json = knowhere::Json::parse(str, str + n);
-    std::unique_ptr<knowhere::Config> cfg;
-
-    switch (index_type) {
-        case 0:
-            cfg = std::make_unique<knowhere::FlatConfig>();
-            break;
-        case 1:
-            cfg = std::make_unique<knowhere::DiskANNConfig>();
-            break;
-        case 2:
-            cfg = std::make_unique<knowhere::HnswConfig>();
-            break;
-        case 3:
-            cfg = std::make_unique<knowhere::IvfFlatConfig>();
-            break;
-        case 4:
-            cfg = std::make_unique<knowhere::IvfPqConfig>();
-            break;
-        case 5:
-            cfg = std::make_unique<knowhere::GpuRaftCagraConfig>();
-            break;
-        case 6:
-            cfg = std::make_unique<knowhere::GpuRaftIvfPqConfig>();
-            break;
-        case 7:
-            cfg = std::make_unique<knowhere::GpuRaftIvfFlatConfig>();
-            break;
-        case 8:
-            cfg = std::make_unique<knowhere::GpuRaftBruteForceConfig>();
-            break;
-        default:
-            return int(knowhere::Status::invalid_args);
-    }
-
-    auto res = knowhere::Config::FormatAndCheck(*cfg, json, nullptr);
-    if (res != knowhere::Status::success) {
-        return int(res);
-    }
-    return int(knowhere::Config::Load(*cfg, json, knowhere::PARAM_TYPE(param_type), nullptr));
-}

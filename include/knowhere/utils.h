@@ -14,6 +14,7 @@
 #include <strings.h>
 
 #include <algorithm>
+#include <map>
 #include <vector>
 
 #include "knowhere/binaryset.h"

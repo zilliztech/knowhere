@@ -33,6 +33,8 @@ class DiskANNConfig : public BaseConfig {
     // complexity. Plz set this value larger than the max_degree unless you need to build indices really quickly and can
     // somewhat compromise on quality.
     CFG_INT search_list_size;
+
+    CFG_FLOAT pq_code_budget_gb_ratio;
     // Limit the size of the PQ code after the raw vector has been PQ-encoded. PQ code is a (pq_code_budget_gb * 1024 *
     // 1024 * 1024) / row_num)-dimensional uint8 vector. If pq_code_budget_gb is too large, it will be adjusted to the
     // size of dim*row_num.
@@ -50,6 +52,9 @@ class DiskANNConfig : public BaseConfig {
     // This is the flag to enable fast build, in which we will not build vamana graph by full 2 round. This can
     // accelerate index build ~30% with an ~1% recall regression.
     CFG_BOOL accelerate_build;
+
+    CFG_FLOAT search_cache_budget_gb_ratio;
+
     // While serving the index, the entire graph is stored on SSD. For faster search performance, you can cache a few
     // frequently accessed nodes in memory.
     CFG_FLOAT search_cache_budget_gb;
@@ -86,12 +91,19 @@ class DiskANNConfig : public BaseConfig {
             .for_search()
             .for_range_search()
             .for_iterator();
+        KNOWHERE_CONFIG_DECLARE_FIELD(pq_code_budget_gb_ratio)
+            .description("the size of PQ compared with vector field data")
+            .set_default(0)
+            .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
+            .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(pq_code_budget_gb)
             .description("the size of PQ compressed representation in GB.")
+            .set_default(0)
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(build_dram_budget_gb)
             .description("limit on the memory allowed for building the index in GB.")
+            .set_default(0)
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(disk_pq_dims)
@@ -102,6 +114,12 @@ class DiskANNConfig : public BaseConfig {
             .description("a flag to enbale fast build.")
             .set_default(false)
             .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(search_cache_budget_gb_ratio)
+            .description("the size of cached nodes compared with vector field data")
+            .set_default(0)
+            .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
+            .for_train()
+            .for_deserialize();
         KNOWHERE_CONFIG_DECLARE_FIELD(search_cache_budget_gb)
             .description("the size of cached nodes in GB.")
             .set_default(0)
@@ -148,6 +166,10 @@ class DiskANNConfig : public BaseConfig {
                 if (!search_list_size.has_value()) {
                     search_list_size = kDefaultSearchListSizeForBuild;
                 }
+                pq_code_budget_gb =
+                    std::max(pq_code_budget_gb.value(), pq_code_budget_gb_ratio.value() * vec_field_size_gb.value());
+                search_cache_budget_gb = std::max(search_cache_budget_gb.value(),
+                                                  search_cache_budget_gb_ratio.value() * vec_field_size_gb.value());
                 break;
             }
             case PARAM_TYPE::SEARCH: {
