@@ -71,7 +71,7 @@ struct GpuRaftCagraConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(max_queries).description("maximum batch size").set_default(0).for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(build_algo)
             .description("algorithm used to build knn graph")
-            .set_default("IVF_PQ")
+            .set_default("NN_DESCENT")
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(search_algo)
             .description("algorithm used for search")

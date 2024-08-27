@@ -57,7 +57,7 @@ class BaseFlatIndexNode : public IndexNode {
     }
 
     expected<std::vector<IndexNode::IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const {
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
         LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::AnnIterator()";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::not_implemented,
                                                                   "BaseFlatIndexNode::AnnIterator() not implemented");
@@ -139,7 +139,7 @@ TEST_CASE("Test index node") {
     BinarySet binset;
 
     SECTION("Test IndexNode") {
-        KNOWHERE_SIMPLE_REGISTER_GLOBAL(BASE_FLAT, BaseFlatIndexNode, fp32);
+        KNOWHERE_SIMPLE_REGISTER_GLOBAL(BASE_FLAT, BaseFlatIndexNode, fp32, knowhere::feature::FLOAT32);
         auto index = IndexFactory::Instance().Create<fp32>("BASE_FLAT", version).value();
         REQUIRE(index.Build(ds, {}) == Status::success);
         REQUIRE(index.Train(ds, {}) == Status::success);
@@ -160,7 +160,7 @@ TEST_CASE("Test index node") {
     }
 
     SECTION("Test IndexNodeDataMockWrapper") {
-        KNOWHERE_MOCK_REGISTER_GLOBAL(BASE_FLAT_MOCK, BaseFlatIndexNode, fp16);
+        KNOWHERE_MOCK_REGISTER_GLOBAL(BASE_FLAT_MOCK, BaseFlatIndexNode, fp16, knowhere::feature::FP16);
         auto index = IndexFactory::Instance().Create<fp16>("BASE_FLAT_MOCK", version).value();
         REQUIRE(index.Build(ds, {}) == Status::success);
         REQUIRE(index.Train(ds, {}) == Status::success);
@@ -181,7 +181,8 @@ TEST_CASE("Test index node") {
     }
 
     SECTION("Test IndexNodeThreadPoolWrapper") {
-        KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(BASE_FLAT_THREAD, BaseFlatIndexNode, fp32, 4);
+        KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(BASE_FLAT_THREAD, BaseFlatIndexNode, fp32, knowhere::feature::FLOAT32,
+                                                  4);
         auto index = IndexFactory::Instance().Create<fp32>("BASE_FLAT_THREAD", version).value();
         REQUIRE(index.Build(ds, {}) == Status::success);
         REQUIRE(index.Train(ds, {}) == Status::success);

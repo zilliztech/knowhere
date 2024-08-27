@@ -501,12 +501,15 @@ const float defaultRangeFilter = 1.0f / 0.0;
 
 class BaseConfig : public Config {
  public:
+    CFG_INT dim;  // just used for config verify
     CFG_STRING metric_type;
     CFG_INT k;
     CFG_INT num_build_thread;
     CFG_BOOL retrieve_friendly;
     CFG_STRING data_path;
     CFG_STRING index_prefix;
+
+    CFG_FLOAT vec_field_size_gb;
     // for distance metrics, we search for vectors with distance in [range_filter, radius).
     // for similarity metrics, we search for vectors with similarity in (radius, range_filter].
     CFG_FLOAT radius;
@@ -536,6 +539,7 @@ class BaseConfig : public Config {
     CFG_FLOAT bm25_b;
     CFG_FLOAT bm25_avgdl;
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(dim).allow_empty_without_default().description("vector dim").for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
             .set_default("L2")
             .description("metric type")
@@ -558,6 +562,10 @@ class BaseConfig : public Config {
             .allow_empty_without_default()
             .for_train()
             .for_deserialize();
+        KNOWHERE_CONFIG_DECLARE_FIELD(vec_field_size_gb)
+            .description("vector filed size in GB.")
+            .set_default(0)
+            .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(k)
             .set_default(10)
             .description("search for top k similar vector.")

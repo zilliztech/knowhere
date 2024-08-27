@@ -27,6 +27,7 @@
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
+#include "knowhere/feature.h"
 #include "knowhere/feder/IVFFlat.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/index_node_data_mock_wrapper.h"
@@ -77,6 +78,33 @@ class IvfIndexNode : public IndexNode {
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset) const override;
+
+    static Status
+    StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {
+        auto ivf_cfg = static_cast<const IvfConfig&>(cfg);
+
+        if (paramType == PARAM_TYPE::TRAIN) {
+            if constexpr (KnowhereFloatTypeCheck<DataType>::value) {
+                if (IsMetricType(ivf_cfg.metric_type.value(), metric::L2) ||
+                    IsMetricType(ivf_cfg.metric_type.value(), metric::IP) ||
+                    IsMetricType(ivf_cfg.metric_type.value(), metric::COSINE)) {
+                } else {
+                    msg = "metric type " + ivf_cfg.metric_type.value() +
+                          " not found or not supported, supported: [L2 IP COSINE]";
+                    return Status::invalid_metric_type;
+                }
+            } else {
+                if (IsMetricType(ivf_cfg.metric_type.value(), metric::HAMMING) ||
+                    IsMetricType(ivf_cfg.metric_type.value(), metric::JACCARD)) {
+                } else {
+                    msg = "metric type " + ivf_cfg.metric_type.value() +
+                          " not found or not supported, supported: [HAMMING JACCARD]";
+                    return Status::invalid_metric_type;
+                }
+            }
+        }
+        return Status::success;
+    }
 
     static bool
     CommonHasRawData() {
@@ -1202,39 +1230,24 @@ IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filena
     return Status::success;
 }
 // bin1
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(IVFBIN, IvfIndexNode, bin1, faiss::IndexBinaryIVF);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(BIN_IVF_FLAT, IvfIndexNode, bin1, faiss::IndexBinaryIVF);
-// fp32
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(IVFFLAT, IvfIndexNode, fp32, faiss::IndexIVFFlat);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(IVF_FLAT, IvfIndexNode, fp32, faiss::IndexIVFFlat);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(IVFFLATCC, IvfIndexNode, fp32, faiss::IndexIVFFlatCC);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(IVF_FLAT_CC, IvfIndexNode, fp32, faiss::IndexIVFFlatCC);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(SCANN, IvfIndexNode, fp32, faiss::IndexScaNN);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(IVFPQ, IvfIndexNode, fp32, faiss::IndexIVFPQ);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(IVF_PQ, IvfIndexNode, fp32, faiss::IndexIVFPQ);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(IVFSQ, IvfIndexNode, fp32, faiss::IndexIVFScalarQuantizer);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(IVF_SQ8, IvfIndexNode, fp32, faiss::IndexIVFScalarQuantizer);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(IVF_SQ_CC, IvfIndexNode, fp32, faiss::IndexIVFScalarQuantizerCC);
-// fp16
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVFFLAT, IvfIndexNode, fp16, faiss::IndexIVFFlat);
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_FLAT, IvfIndexNode, fp16, faiss::IndexIVFFlat);
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVFFLATCC, IvfIndexNode, fp16, faiss::IndexIVFFlatCC);
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_FLAT_CC, IvfIndexNode, fp16, faiss::IndexIVFFlatCC);
-KNOWHERE_MOCK_REGISTER_GLOBAL(SCANN, IvfIndexNode, fp16, faiss::IndexScaNN);
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVFPQ, IvfIndexNode, fp16, faiss::IndexIVFPQ);
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_PQ, IvfIndexNode, fp16, faiss::IndexIVFPQ);
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVFSQ, IvfIndexNode, fp16, faiss::IndexIVFScalarQuantizer);
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_SQ8, IvfIndexNode, fp16, faiss::IndexIVFScalarQuantizer);
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_SQ_CC, IvfIndexNode, fp16, faiss::IndexIVFScalarQuantizerCC);
-// bf16
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVFFLAT, IvfIndexNode, bf16, faiss::IndexIVFFlat);
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_FLAT, IvfIndexNode, bf16, faiss::IndexIVFFlat);
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVFFLATCC, IvfIndexNode, bf16, faiss::IndexIVFFlatCC);
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_FLAT_CC, IvfIndexNode, bf16, faiss::IndexIVFFlatCC);
-KNOWHERE_MOCK_REGISTER_GLOBAL(SCANN, IvfIndexNode, bf16, faiss::IndexScaNN);
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVFPQ, IvfIndexNode, bf16, faiss::IndexIVFPQ);
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_PQ, IvfIndexNode, bf16, faiss::IndexIVFPQ);
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVFSQ, IvfIndexNode, bf16, faiss::IndexIVFScalarQuantizer);
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_SQ8, IvfIndexNode, bf16, faiss::IndexIVFScalarQuantizer);
-KNOWHERE_MOCK_REGISTER_GLOBAL(IVF_SQ_CC, IvfIndexNode, bf16, faiss::IndexIVFScalarQuantizerCC);
+KNOWHERE_SIMPLE_REGISTER_DENSE_BIN_GLOBAL(IVFBIN, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexBinaryIVF)
+KNOWHERE_SIMPLE_REGISTER_DENSE_BIN_GLOBAL(BIN_IVF_FLAT, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexBinaryIVF)
+
+// float
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVFFLAT, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexIVFFlat)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_FLAT, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexIVFFlat)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVFFLATCC, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexIVFFlatCC)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_FLAT_CC, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexIVFFlatCC)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(SCANN, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexScaNN)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVFPQ, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexIVFPQ)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_PQ, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexIVFPQ)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVFSQ, IvfIndexNode, knowhere::feature::MMAP,
+                                              faiss::IndexIVFScalarQuantizer)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_SQ, IvfIndexNode, knowhere::feature::MMAP,
+                                              faiss::IndexIVFScalarQuantizer)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_SQ8, IvfIndexNode, knowhere::feature::MMAP,
+                                              faiss::IndexIVFScalarQuantizer)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_SQ_CC, IvfIndexNode, knowhere::feature::MMAP,
+                                              faiss::IndexIVFScalarQuantizerCC)
+
 }  // namespace knowhere

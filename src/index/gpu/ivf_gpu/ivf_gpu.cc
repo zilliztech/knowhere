@@ -277,8 +277,5 @@ class GpuIvfIndexNode : public IndexNode {
     mutable ResWPtr res_;
     std::unique_ptr<faiss::Index> index_;
 };
-
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(GPU_FAISS_IVF_FLAT, GpuIvfIndexNode, fp32, faiss::IndexIVFFlat);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(GPU_FAISS_IVF_PQ, GpuIvfIndexNode, fp32, faiss::IndexIVFPQ);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(GPU_FAISS_IVF_SQ8, GpuIvfIndexNode, fp32, faiss::IndexIVFScalarQuantizer);
+// GPU_FAISS_IVF_FLAT/GPU_FAISS_IVF_PQ/GPU_FAISS_IVF_SQ8 is deprecated
 }  // namespace knowhere
