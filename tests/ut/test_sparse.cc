@@ -416,7 +416,7 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
         {1.0, 0.6},
     }));
 
-    auto base_gen = [=, dim = dim]() {
+    auto base_gen = [=, dim = dim, drop_ratio_build = drop_ratio_build, drop_ratio_search = drop_ratio_search]() {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = metric;
@@ -457,7 +457,7 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
     };
 
     SECTION("Test Search") {
-        auto check_result = [&](const knowhere::DataSet& ds) {
+        auto check_result = [&, has_first_result = has_first_result](const knowhere::DataSet& ds) {
             auto nq = ds.GetRows();
             auto k = ds.GetDim();
             auto* ids = ds.GetIds();
@@ -476,9 +476,7 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
     }
 
     SECTION("Test RangeSearch") {
-        auto check_result = [&](const knowhere::DataSet& ds) {
-            auto nq = ds.GetRows();
-            auto k = ds.GetDim();
+        auto check_result = [&, has_first_result = has_first_result](const knowhere::DataSet& ds) {
             auto lims = ds.GetLims();
             auto* ids = ds.GetIds();
             if (has_first_result) {
