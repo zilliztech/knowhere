@@ -132,11 +132,6 @@ class Benchmark_hdf5 : public Benchmark_base {
             assert(dim * 32 == dim_ || !"train dataset has incorrect dimension");
         }
 
-        // if (metric_str_ == METRIC_IP_STR) {
-        //     printf("[%.3f s] Normalizing train dataset \n", get_time_diff());
-        //     normalize((float*)xb_, nb_, dim_);
-        // }
-
         /* load test data */
         printf("[%.3f s] Loading test data\n", get_time_diff());
         if (!is_binary) {
@@ -146,11 +141,6 @@ class Benchmark_hdf5 : public Benchmark_base {
             xq_ = hdf5_read(ann_file_name, HDF5_DATASET_TEST, H5T_INTEGER, dim, nq_);
             assert(dim * 32 == dim_ || !"test dataset has incorrect dimension");
         }
-
-        // if (metric_str_ == METRIC_IP_STR) {
-        //     printf("[%.3f s] Normalizing test dataset \n", get_time_diff());
-        //     normalize((float*)xq_, nq_, dim_);
-        // }
 
         /* load ground-truth data */
         int32_t gt_nq;
@@ -180,11 +170,6 @@ class Benchmark_hdf5 : public Benchmark_base {
             assert(dim * 32 == dim_ || !"train dataset has incorrect dimension");
         }
 
-        // if (metric_str_ == METRIC_IP_STR) {
-        //     printf("[%.3f s] Normalizing train dataset \n", get_time_diff());
-        //     normalize((float*)xb_, nb_, dim_);
-        // }
-
         /* load test data */
         printf("[%.3f s] Loading test data\n", get_time_diff());
         if (!is_binary) {
@@ -194,11 +179,6 @@ class Benchmark_hdf5 : public Benchmark_base {
             xq_ = hdf5_read(ann_file_name, HDF5_DATASET_TEST, H5T_INTEGER, dim, nq_);
             assert(dim * 32 == dim_ || !"test dataset has incorrect dimension");
         }
-
-        // if (metric_str_ == METRIC_IP_STR) {
-        //     printf("[%.3f s] Normalizing test dataset \n", get_time_diff());
-        //     normalize((float*)xq_, nq_, dim_);
-        // }
 
         /* load ground-truth data */
         int32_t cols, rows;
@@ -234,11 +214,6 @@ class Benchmark_hdf5 : public Benchmark_base {
             assert(dim * 32 == dim_ || !"train dataset has incorrect dimension");
         }
 
-        // if (metric_str_ == METRIC_IP_STR) {
-        //     printf("[%.3f s] Normalizing train dataset \n", get_time_diff());
-        //     normalize((float*)xb_, nb_, dim_);
-        // }
-
         /* load test data */
         printf("[%.3f s] Loading test data\n", get_time_diff());
         if (!is_binary) {
@@ -248,11 +223,6 @@ class Benchmark_hdf5 : public Benchmark_base {
             xq_ = hdf5_read(ann_file_name, HDF5_DATASET_TEST, H5T_INTEGER, dim, nq_);
             assert(dim * 32 == dim_ || !"test dataset has incorrect dimension");
         }
-
-        // if (metric_str_ == METRIC_IP_STR) {
-        //     printf("[%.3f s] Normalizing test dataset \n", get_time_diff());
-        //     normalize((float*)xq_, nq_, dim_);
-        // }
 
         /* load ground-truth data */
         int32_t cols, rows;
