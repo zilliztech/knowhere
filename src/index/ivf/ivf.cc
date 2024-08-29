@@ -400,7 +400,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, const
     if constexpr (std::is_same_v<faiss::IndexIVFPQ, IndexType> ||
                   std::is_same_v<faiss::IndexIVFScalarQuantizer, IndexType>) {
         if (is_cosine) {
-            Normalize(dataset);
+            NormalizeDataset<DataType>(dataset);
         }
     }
 
