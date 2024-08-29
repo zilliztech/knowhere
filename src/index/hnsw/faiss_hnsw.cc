@@ -384,6 +384,41 @@ add_to_index(faiss::Index* const __restrict index, const DataSetPtr& dataset, co
     return Status::success;
 }
 
+// IndexFlat and IndexFlatCosine contain raw fp32 data
+// IndexScalarQuantizer and IndexScalarQuantizerCosine may contain rar bf16 and fp16 data
+//
+// returns nullopt if an input index does not contain raw bf16, fp16 or fp32 data
+std::optional<DataFormatEnum>
+get_index_data_format(const faiss::Index* index) {
+    // empty
+    if (index == nullptr) {
+        return std::nullopt;
+    }
+
+    // is it flat?
+    // note: IndexFlatCosine preserves the original data, no cosine norm is applied
+    auto index_flat = dynamic_cast<const faiss::IndexFlat*>(index);
+    if (index_flat != nullptr) {
+        return DataFormatEnum::fp32;
+    }
+
+    // is it sq?
+    // note: IndexScalarQuantizerCosine preserves the original data, no cosine norm is appliesd
+    auto index_sq = dynamic_cast<const faiss::IndexScalarQuantizer*>(index);
+    if (index_sq != nullptr) {
+        if (index_sq->sq.qtype == faiss::ScalarQuantizer::QT_bf16) {
+            return DataFormatEnum::bf16;
+        } else if (index_sq->sq.qtype == faiss::ScalarQuantizer::QT_fp16) {
+            return DataFormatEnum::fp16;
+        } else {
+            return std::nullopt;
+        }
+    }
+
+    // some other index
+    return std::nullopt;
+}
+
 }  // namespace
 
 //
@@ -395,28 +430,93 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
     bool
     HasRawData(const std::string& metric_type) const override {
+        if (this->index == nullptr) {
+            return false;
+        }
+
+        // check whether there is an index to reconstruct a raw data from
+        return (GetIndexToReconstructRawDataFrom() != nullptr);
+    }
+
+    expected<DataSetPtr>
+    GetVectorByIds(const DataSetPtr dataset) const override {
         if (index == nullptr) {
-            return false;
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+        }
+        if (!index->is_trained) {
+            return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
         }
 
-        // check whether we use a refined index
-        const faiss::IndexRefine* const index_refine = dynamic_cast<const faiss::IndexRefine*>(index.get());
-        if (index_refine == nullptr) {
-            return false;
+        // an index that is used for reconstruction
+        const faiss::Index* index_to_reconstruct_from = GetIndexToReconstructRawDataFrom();
+
+        // check whether raw data is available
+        if (index_to_reconstruct_from == nullptr) {
+            return expected<DataSetPtr>::Err(
+                Status::invalid_index_error,
+                "The index does not contain a raw data, cannot proceed with GetVectorByIds");
         }
 
-        // check whether the refine index is IndexFlat
-        // todo: SQfp16 is good for fp16 data type
-        // todo: SQbf16 is good for bf16 data type
-        const faiss::IndexFlat* const index_refine_flat =
-            dynamic_cast<const faiss::IndexFlat*>(index_refine->refine_index);
-        if (index_refine_flat == nullptr) {
-            // we might be using a different refine index
-            return false;
-        }
+        // perform reconstruction
+        auto dim = Dim();
+        auto rows = dataset->GetRows();
+        auto ids = dataset->GetIds();
 
-        // yes, we're using IndexRefine with a Flat index
-        return true;
+        try {
+            if (data_format == DataFormatEnum::fp32) {
+                // perform a direct reconstruction for fp32 data
+                auto data = std::make_unique<float[]>(dim * rows);
+
+                for (int64_t i = 0; i < rows; i++) {
+                    const int64_t id = ids[i];
+                    assert(id >= 0 && id < index->ntotal);
+                    index_to_reconstruct_from->reconstruct(id, data.get() + i * dim);
+                }
+
+                return GenResultDataSet(rows, dim, std::move(data));
+            } else if (data_format == DataFormatEnum::fp16) {
+                auto data = std::make_unique<knowhere::fp16[]>(dim * rows);
+
+                // faiss produces fp32 data format, we need some other format.
+                // Let's create a temporary fp32 buffer for this.
+                auto tmp = std::make_unique<float[]>(dim);
+
+                for (int64_t i = 0; i < rows; i++) {
+                    const int64_t id = ids[i];
+                    assert(id >= 0 && id < index->ntotal);
+                    index_to_reconstruct_from->reconstruct(id, tmp.get());
+
+                    if (!convert_rows_from_fp32(tmp.get(), data.get(), data_format, i, 1, dim)) {
+                        return expected<DataSetPtr>::Err(Status::invalid_args, "Unsupported data format");
+                    }
+                }
+
+                return GenResultDataSet(rows, dim, std::move(data));
+            } else if (data_format == DataFormatEnum::bf16) {
+                auto data = std::make_unique<knowhere::bf16[]>(dim * rows);
+
+                // faiss produces fp32 data format, we need some other format.
+                // Let's create a temporary fp32 buffer for this.
+                auto tmp = std::make_unique<float[]>(dim);
+
+                for (int64_t i = 0; i < rows; i++) {
+                    const int64_t id = ids[i];
+                    assert(id >= 0 && id < index->ntotal);
+                    index_to_reconstruct_from->reconstruct(id, tmp.get());
+
+                    if (!convert_rows_from_fp32(tmp.get(), data.get(), data_format, i, 1, dim)) {
+                        return expected<DataSetPtr>::Err(Status::invalid_args, "Unsupported data format");
+                    }
+                }
+
+                return GenResultDataSet(rows, dim, std::move(data));
+            } else {
+                return expected<DataSetPtr>::Err(Status::invalid_args, "Unsupported data format");
+            }
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
+        }
     }
 
     expected<DataSetPtr>
@@ -623,76 +723,6 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         return res;
     }
 
-    expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override {
-        if (this->index == nullptr) {
-            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
-        }
-        if (!this->index->is_trained) {
-            return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
-        }
-
-        auto dim = Dim();
-        auto rows = dataset->GetRows();
-        auto ids = dataset->GetIds();
-
-        try {
-            if (data_format == DataFormatEnum::fp32) {
-                // perform a direct reconstruction for fp32 data
-                auto data = std::make_unique<float[]>(dim * rows);
-
-                for (int64_t i = 0; i < rows; i++) {
-                    const int64_t id = ids[i];
-                    assert(id >= 0 && id < index->ntotal);
-                    index->reconstruct(id, data.get() + i * dim);
-                }
-
-                return GenResultDataSet(rows, dim, std::move(data));
-            } else if (data_format == DataFormatEnum::fp16) {
-                auto data = std::make_unique<knowhere::fp16[]>(dim * rows);
-
-                // faiss produces fp32 data format, we need some other format.
-                // Let's create a temporary fp32 buffer for this.
-                auto tmp = std::make_unique<float[]>(dim);
-
-                for (int64_t i = 0; i < rows; i++) {
-                    const int64_t id = ids[i];
-                    assert(id >= 0 && id < index->ntotal);
-                    index->reconstruct(id, tmp.get());
-
-                    if (!convert_rows_from_fp32(tmp.get(), data.get(), data_format, i, 1, dim)) {
-                        return expected<DataSetPtr>::Err(Status::invalid_args, "Unsupported data format");
-                    }
-                }
-
-                return GenResultDataSet(rows, dim, std::move(data));
-            } else if (data_format == DataFormatEnum::bf16) {
-                auto data = std::make_unique<knowhere::bf16[]>(dim * rows);
-
-                // faiss produces fp32 data format, we need some other format.
-                // Let's create a temporary fp32 buffer for this.
-                auto tmp = std::make_unique<float[]>(dim);
-
-                for (int64_t i = 0; i < rows; i++) {
-                    const int64_t id = ids[i];
-                    assert(id >= 0 && id < index->ntotal);
-                    index->reconstruct(id, tmp.get());
-
-                    if (!convert_rows_from_fp32(tmp.get(), data.get(), data_format, i, 1, dim)) {
-                        return expected<DataSetPtr>::Err(Status::invalid_args, "Unsupported data format");
-                    }
-                }
-
-                return GenResultDataSet(rows, dim, std::move(data));
-            } else {
-                return expected<DataSetPtr>::Err(Status::invalid_args, "Unsupported data format");
-            }
-        } catch (const std::exception& e) {
-            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
-            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
-        }
-    }
-
  protected:
     DataFormatEnum data_format;
 
@@ -750,6 +780,50 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         return Status::success;
     }
+
+    const faiss::Index*
+    GetIndexToReconstructRawDataFrom() const {
+        if (index == nullptr) {
+            return nullptr;
+        }
+
+        // an index that is used for reconstruction
+        const faiss::Index* index_to_reconstruct_from = nullptr;
+
+        // check whether our index uses refine
+        auto index_refine = dynamic_cast<const faiss::IndexRefine*>(index.get());
+        if (index_refine == nullptr) {
+            // non-refined index
+
+            // cast as IndexHNSW
+            auto index_hnsw = dynamic_cast<const faiss::IndexHNSW*>(index.get());
+            if (index_hnsw == nullptr) {
+                // this is unexpected, we expect IndexHNSW
+                return nullptr;
+            }
+
+            // storage index is the one that holds the raw data
+            auto index_data_format = get_index_data_format(index_hnsw->storage);
+
+            // make sure that its data format matches our input format
+            if (index_data_format.has_value() && index_data_format.value() == data_format) {
+                index_to_reconstruct_from = index_hnsw->storage;
+            }
+        } else {
+            // refined index
+
+            // refine index holds the raw data
+            auto index_data_format = get_index_data_format(index_refine->refine_index);
+
+            // make sure that its data format matches our input format
+            if (index_data_format.has_value() && index_data_format.value() == data_format) {
+                index_to_reconstruct_from = index_refine->refine_index;
+            }
+        }
+
+        // done
+        return index_to_reconstruct_from;
+    }
 };
 
 //
@@ -757,16 +831,6 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
  public:
     BaseFaissRegularIndexHNSWFlatNode(const int32_t& version, const Object& object, DataFormatEnum data_format)
         : BaseFaissRegularIndexHNSWNode(version, object, data_format) {
-    }
-
-    bool
-    HasRawData(const std::string& metric_type) const override {
-        if (index == nullptr) {
-            return false;
-        }
-
-        // yes, a flat index has it
-        return true;
     }
 
     std::unique_ptr<BaseConfig>
