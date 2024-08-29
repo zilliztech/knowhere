@@ -34,27 +34,20 @@ template <typename DataType>
 float
 NormalizeVec(DataType* x, int32_t d) {
     float norm_l2_sqr = 0.0;
-    for (auto i = 0; i < d; i++) {
-        norm_l2_sqr += (float)x[i] * (float)x[i];
+    if constexpr (std::is_same_v<DataType, fp32>) {
+        norm_l2_sqr = faiss::fvec_norm_L2sqr(x, d);
+    } else if constexpr (std::is_same_v<DataType, fp16>) {
+        norm_l2_sqr = faiss::fp16_vec_norm_L2sqr(x, d);
+    } else if constexpr (std::is_same_v<DataType, bf16>) {
+        norm_l2_sqr = faiss::bf16_vec_norm_L2sqr(x, d);
+    } else {
+        LOG_KNOWHERE_DEBUG_ << "unknown datatype";
     }
+
     if (norm_l2_sqr > 0 && std::abs(1.0f - norm_l2_sqr) > FloatAccuracy) {
         float norm_l2 = std::sqrt(norm_l2_sqr);
         for (int32_t i = 0; i < d; i++) {
             x[i] = (DataType)((float)x[i] / norm_l2);
-        }
-        return norm_l2;
-    }
-    return 1.0f;
-}
-
-template <>
-float
-NormalizeVec(float* x, int32_t d) {
-    float norm_l2_sqr = faiss::fvec_norm_L2sqr(x, d);
-    if (norm_l2_sqr > 0 && std::abs(1.0f - norm_l2_sqr) > FloatAccuracy) {
-        float norm_l2 = std::sqrt(norm_l2_sqr);
-        for (int32_t i = 0; i < d; i++) {
-            x[i] = x[i] / norm_l2;
         }
         return norm_l2;
     }
@@ -144,6 +137,8 @@ UseDiskLoad(const std::string& index_type, const int32_t& version) {
 #endif
 }
 
+template float
+NormalizeVec<fp32>(fp32* x, int32_t d);
 template float
 NormalizeVec<fp16>(fp16* x, int32_t d);
 template float
