@@ -48,18 +48,62 @@ class IndexNode : public Object {
     IndexNode(const IndexNode&& other) : version_(other.version_) {
     }
 
+    /**
+     * @brief Builds the index using the provided dataset and configuration.
+     *
+     * Mostly, this method combines the `Train` and `Add` steps to create the index structure, but it can be overridden
+     * if the index doesn't support Train-Add pattern, such as immutable indexes like DiskANN.
+     *
+     * @param dataset Dataset to build the index from.
+     * @param cfg
+     * @return Status.
+     *
+     * @note Indexes need to be ready to search after `Build` is called. TODO:@liliu-z DiskANN is an exception and need
+     * to be revisited.
+     */
     virtual Status
     Build(const DataSetPtr dataset, const Config& cfg) {
         RETURN_IF_ERROR(Train(dataset, cfg));
         return Add(dataset, cfg);
     }
 
+    /**
+     * @brief Trains the index model using the provided dataset and configuration.
+     *
+     * @param dataset Dataset used to train the index.
+     * @param cfg
+     * @return Status.
+     *
+     * @note This interface is only available for growable indexes. For immutable indexes like DiskANN, this method
+     * should return an error.
+     */
     virtual Status
     Train(const DataSetPtr dataset, const Config& cfg) = 0;
 
+    /**
+     * @brief Adds data to the trained index.
+     *
+     * @param dataset Dataset to add to the index.
+     * @param cfg
+     * @return Status
+     *
+     * @note
+     * 1. This interface is only available for growable indexes. For immutable indexes like DiskANN, this method
+     * should return an error.
+     * 2. This method need to be thread safe when called with search methods like @see Search, @see RangeSearch and @see
+     * AnnIterator.
+     */
     virtual Status
     Add(const DataSetPtr dataset, const Config& cfg) = 0;
 
+    /**
+     * @brief Performs a search operation on the index.
+     *
+     * @param dataset Query vectors.
+     * @param cfg
+     * @param bitset A BitsetView object for filtering results.
+     * @return An expected<> object containing the search results or an error.
+     */
     virtual expected<DataSetPtr>
     Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const = 0;
 
@@ -81,13 +125,23 @@ class IndexNode : public Object {
             Status::not_implemented, "annIterator not supported for current index type");
     }
 
-    // Default range search implementation based on iterator. Assumes the iterator will buffer an expanded range and
-    // return the closest elements on each Next() call.
-    //
-    // TODO: test with mock AnnIterator after we introduced mock framework into knowhere. Currently this is tested in
-    // test_sparse.cc with real sparse vector index.
+    /**
+     * @brief Performs a range search operation on the index.
+     *
+     * This method provides a default implementation of range search based on the `AnnIterator`, assuming the iterator
+     * will buffer an expanded range and return the closest elements on each Next() call. It can be overridden by
+     * derived classes for more efficient implementations.
+     *
+     * @param dataset Query vectors.
+     * @param cfg
+     * @param bitset A BitsetView object for filtering results.
+     * @return An expected<> object containing the range search results or an error.
+     */
     virtual expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
+    RangeSearch(const DataSetPtr dataset, const Config& cfg,
+                const BitsetView& bitset) const {  // TODO: @alwayslove2013 test with mock AnnIterator after we
+                                                   // introduced mock framework into knowhere. Currently this is tested
+                                                   // in test_sparse.cc with real sparse vector index.
         const auto base_cfg = static_cast<const BaseConfig&>(cfg);
         const float closer_bound = base_cfg.range_filter.value();
         const bool has_closer_bound = closer_bound != defaultRangeFilter;
@@ -235,9 +289,27 @@ class IndexNode : public Object {
         return GenResultDataSet(nq, std::move(range_search_result));
     }
 
+    /**
+     * @brief Retrieves raw vectors by their IDs from the index.
+     *
+     * @param dataset Dataset containing the IDs of the vectors to retrieve.
+     * @return An expected<> object containing the retrieved vectors or an error.
+     *
+     * @note
+     * 1. This method may return an error if the index does not contain raw data. The returned raw data must be exactly
+     * the same as the input data when we do @see Add or @see Build. For example, if the datatype is BF16, then we need
+     * to return a dataset with BF16 vectors.
+     * 2. It doesn't guarantee the index contains raw data, so it's better to check with @see HasRawData() before
+     */
     virtual expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset) const = 0;
 
+    /**
+     * @brief Checks if the index contains raw vector data.
+     *
+     * @param metric_type The metric type used in the index.
+     * @return true if the index contains raw data, false otherwise.
+     */
     virtual bool
     HasRawData(const std::string& metric_type) const = 0;
 
@@ -246,27 +318,77 @@ class IndexNode : public Object {
         return false;
     }
 
+    /**
+     * @unused Milvus is not using this method, so it cannot guarantee all indexes implement this method.
+     *
+     * This is for Feder, and we can ignore it for now.
+     */
     virtual expected<DataSetPtr>
     GetIndexMeta(const Config& cfg) const = 0;
 
+    /**
+     * @brief Serializes the index to a binary set.
+     *
+     * @param binset The BinarySet to store the serialized index.
+     * @return Status indicating success or failure of the serialization.
+     */
     virtual Status
     Serialize(BinarySet& binset) const = 0;
 
+    /**
+     * @brief Deserializes the index from a binary set.
+     *
+     * @param binset The BinarySet containing the serialized index.
+     * @param config
+     * @return Status indicating success or failure of the deserialization.
+     *
+     * @note
+     * 1. The index should be ready to search after deserialization.
+     * 2. For immutable indexes, the path for now if Build->Serialize->Deserialize->Search.
+     */
     virtual Status
     Deserialize(const BinarySet& binset, const Config& config) = 0;
 
+    /**
+     * @brief Deserializes the index from a file.
+     *
+     * This method is mostly used for mmap deserialization. However, it has some conflicts with the FileManager that we
+     * used to deserialize DiskANN. TODO: @liliu-z some redesign is needed here.
+     *
+     * @param filename Path to the file containing the serialized index.
+     * @param config
+     * @return Status indicating success or failure of the deserialization.
+     */
     virtual Status
     DeserializeFromFile(const std::string& filename, const Config& config) = 0;
 
     virtual std::unique_ptr<BaseConfig>
     CreateConfig() const = 0;
 
+    /**
+     * @brief Gets the dimensionality of the vectors in the index.
+     *
+     * @return The number of dimensions as an int64_t.
+     */
     virtual int64_t
     Dim() const = 0;
 
+    /**
+     * @unused Milvus is not using this method, so it cannot guarantee all indexes implement this method.
+     *
+     * @brief Gets the memory usage of the index in bytes.
+     *
+     * @return The size of the index as an int64_t.
+     * @note This method doesn't have to be very accurate.
+     */
     virtual int64_t
     Size() const = 0;
 
+    /**
+     * @brief Gets the number of vectors in the index.
+     *
+     * @return The count of vectors as an int64_t.
+     */
     virtual int64_t
     Count() const = 0;
 
