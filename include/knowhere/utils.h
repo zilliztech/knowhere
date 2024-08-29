@@ -44,13 +44,13 @@ template <typename DataType>
 extern std::vector<float>
 NormalizeVecs(DataType* x, size_t rows, int32_t dim);
 
-template <typename DataType = knowhere::fp32>
-extern void
-Normalize(const DataSetPtr dataset);
-
 template <typename DataType>
 extern std::unique_ptr<DataType[]>
 CopyAndNormalizeVecs(const DataType* x, size_t rows, int32_t dim);
+
+template <typename DataType>
+extern void
+NormalizeDataset(const DataSetPtr dataset);
 
 constexpr inline uint64_t seed = 0xc70f6907UL;
 

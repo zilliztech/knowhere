@@ -41,7 +41,7 @@ NormalizeVec(DataType* x, int32_t d) {
     } else if constexpr (std::is_same_v<DataType, bf16>) {
         norm_l2_sqr = faiss::bf16_vec_norm_L2sqr(x, d);
     } else {
-        LOG_KNOWHERE_DEBUG_ << "unknown datatype";
+        LOG_KNOWHERE_ERROR_ << "unknown datatype";
     }
 
     if (norm_l2_sqr > 0 && std::abs(1.0f - norm_l2_sqr) > FloatAccuracy) {
@@ -65,20 +65,6 @@ NormalizeVecs(DataType* x, size_t rows, int32_t dim) {
     return norms;
 }
 
-template <typename DataType>
-void
-Normalize(const DataSetPtr dataset) {
-    auto rows = dataset->GetRows();
-    auto dim = dataset->GetDim();
-    auto data = (DataType*)dataset->GetTensor();
-
-    LOG_KNOWHERE_DEBUG_ << "vector normalize, rows " << rows << ", dim " << dim;
-
-    for (int32_t i = 0; i < rows; i++) {
-        NormalizeVec(data + i * dim, dim);
-    }
-}
-
 // copy and return normalized vectors
 template <typename DataType>
 std::unique_ptr<DataType[]>
@@ -87,6 +73,20 @@ CopyAndNormalizeVecs(const DataType* x, size_t rows, int32_t dim) {
     std::copy_n(x, rows * dim, x_normalized.get());
     NormalizeVecs(x_normalized.get(), rows, dim);
     return x_normalized;
+}
+
+template <typename DataType>
+void
+NormalizeDataset(const DataSetPtr dataset) {
+    auto rows = dataset->GetRows();
+    auto dim = dataset->GetDim();
+    auto data = (DataType*)dataset->GetTensor();
+
+    LOG_KNOWHERE_DEBUG_ << "vector normalize, rows " << rows << ", dim " << dim;
+
+    for (int32_t i = 0; i < rows; i++) {
+        NormalizeVec<DataType>(data + i * dim, dim);
+    }
 }
 
 void
@@ -151,17 +151,18 @@ NormalizeVecs<fp16>(fp16* x, size_t rows, int32_t dim);
 template std::vector<float>
 NormalizeVecs<bf16>(bf16* x, size_t rows, int32_t dim);
 
-template void
-Normalize<fp32>(const DataSetPtr dataset);
-template void
-Normalize<fp16>(const DataSetPtr dataset);
-template void
-Normalize<bf16>(const DataSetPtr dataset);
-
 template std::unique_ptr<fp32[]>
 CopyAndNormalizeVecs(const fp32* x, size_t rows, int32_t dim);
 template std::unique_ptr<fp16[]>
 CopyAndNormalizeVecs(const fp16* x, size_t rows, int32_t dim);
 template std::unique_ptr<bf16[]>
 CopyAndNormalizeVecs(const bf16* x, size_t rows, int32_t dim);
+
+template void
+NormalizeDataset<fp32>(const DataSetPtr dataset);
+template void
+NormalizeDataset<fp16>(const DataSetPtr dataset);
+template void
+NormalizeDataset<bf16>(const DataSetPtr dataset);
+
 }  // namespace knowhere
