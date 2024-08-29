@@ -692,6 +692,11 @@ namespace diskann {
 
     for (auto& norm : norms) {
       norm = std::sqrt(norm);
+      // handle all-0 vectors
+      if (norm == 0.0) {
+        LOG(INFO) << "all-0 vector, set norm to 1.0";
+        norm = 1.0;
+      }
     }
 
     in_reader.seekg(2 * sizeof(_u32), std::ios::beg);

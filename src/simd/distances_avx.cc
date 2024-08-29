@@ -485,7 +485,7 @@ fp16_vec_norm_L2sqr_avx(const knowhere::fp16* x, size_t d) {
         msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
     }
     auto res = _mm256_reduce_add_ps(msum_0);
-    return res;
+    return (res == 0.0 ? 1.0 : res);
 }
 
 float
@@ -512,7 +512,7 @@ bf16_vec_norm_L2sqr_avx(const knowhere::bf16* x, size_t d) {
         msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
     }
     auto res = _mm256_reduce_add_ps(msum_0);
-    return res;
+    return (res == 0.0 ? 1.0 : res);
 }
 }  // namespace faiss
 #endif

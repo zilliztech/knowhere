@@ -127,7 +127,7 @@ fvec_norm_L2sqr_ref(const float* x, size_t d) {
     for (i = 0; i < d; i++) {
         res += x[i] * x[i];
     }
-    return res;
+    return (res == 0.0 ? 1.0 : res);
 }
 
 float
@@ -137,7 +137,7 @@ fp16_vec_norm_L2sqr_ref(const knowhere::fp16* x, size_t d) {
     for (i = 0; i < d; i++) {
         res += (float)x[i] * (float)x[i];
     }
-    return res;
+    return (res == 0.0 ? 1.0 : res);
 }
 
 float
@@ -147,7 +147,7 @@ bf16_vec_norm_L2sqr_ref(const knowhere::bf16* x, size_t d) {
     for (i = 0; i < d; i++) {
         res += (float)x[i] * (float)x[i];
     }
-    return res;
+    return (res == 0.0 ? 1.0 : res);
 }
 
 void

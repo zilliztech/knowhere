@@ -511,7 +511,8 @@ fp16_vec_norm_L2sqr_avx512(const knowhere::fp16* x, size_t d) {
         auto mx = _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(mask, x));
         m512_res = _mm512_fmadd_ps(mx, mx, m512_res);
     }
-    return _mm512_reduce_add_ps(m512_res);
+    float res = _mm512_reduce_add_ps(m512_res);
+    return (res == 0.0 ? 1.0 : res);
 }
 
 float
@@ -538,7 +539,8 @@ bf16_vec_norm_L2sqr_avx512(const knowhere::bf16* x, size_t d) {
         auto mx = _mm512_bf16_to_fp32(_mm256_maskz_loadu_epi16(mask, x));
         m512_res = _mm512_fmadd_ps(mx, mx, m512_res);
     }
-    return _mm512_reduce_add_ps(m512_res);
+    float res = _mm512_reduce_add_ps(m512_res);
+    return (res == 0.0 ? 1.0 : res);
 }
 
 }  // namespace faiss

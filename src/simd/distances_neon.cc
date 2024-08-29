@@ -647,7 +647,8 @@ fvec_norm_L2sqr_neon(const float* x, size_t d) {
 
     sum_ = vaddq_f32(sum_, vmulq_f32(res_x, res_x));
 
-    return vaddvq_f32(sum_);
+    float ret = vaddvq_f32(sum_);
+    return (ret == 0.0 ? 1.0 : ret);
 }
 
 float
@@ -697,7 +698,8 @@ fp16_vec_norm_L2sqr_neon(const knowhere::fp16* x, size_t d) {
         float32x4_t x_f32 = vcvt_f32_f16(res_x);
         res.val[0] = vmlaq_f32(res.val[0], x_f32, x_f32);
     }
-    return vaddvq_f32(res.val[0]);
+    float ret = vaddvq_f32(res.val[0]);
+    return (ret == 0.0 ? 1.0 : ret);
 }
 
 float
@@ -749,7 +751,8 @@ bf16_vec_norm_L2sqr_neon(const knowhere::bf16* x, size_t d) {
 
         res.val[0] = vmlaq_f32(res.val[0], x_fp32, x_fp32);
     }
-    return vaddvq_f32(res.val[0]);
+    float ret = vaddvq_f32(res.val[0]);
+    return (ret == 0.0 ? 1.0 : ret);
 }
 
 void
