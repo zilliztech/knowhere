@@ -460,11 +460,11 @@ void exhaustive_cosine_seq_impl(
 
             // the lambda that applies a filtered element.
             auto apply = [&resi, y, y_norms, d](const float ip, const idx_t j) {
-                const float norm =
+                float norm =
                     (y_norms != nullptr) ? 
                         y_norms[j] : 
                         sqrtf(fvec_norm_L2sqr(y + j * d, d));
-                
+                norm = (norm == 0.0 ? 1.0 : norm);
                 resi.add_result(ip / norm, j);
             };
 
@@ -719,9 +719,10 @@ void exhaustive_cosine_blas(
 
                 for (size_t j = j0; j < j1; j++) {
                     float ip = *ip_line;
-                    float dis = (y_norms_in != nullptr) ? ip / y_norms_in[j]
-                                                        : ip / y_norms[j];
-                    *ip_line = dis;
+                    float norm = (y_norms_in != nullptr) ? y_norms_in[j]
+                                                         : y_norms[j];
+                    norm = (norm == 0.0 ? 1.0 : norm);
+                    *ip_line = ip / norm;
                     ip_line++;
                 }
             }
@@ -1448,10 +1449,11 @@ void knn_cosine_by_idx(
                 break;
             }
             float ip = fvec_inner_product(x_, y + d * idsi[j], d);
-            const float norm =
+            float norm =
                 (y_norms != nullptr) ? 
                     y_norms[idsi[j]] : 
                     sqrtf(fvec_norm_L2sqr(y + d * idsi[j], d));
+            norm = (norm == 0.0 ? 1.0 : norm);
             ip /= norm;
 
             if (ip > simi[0]) {
