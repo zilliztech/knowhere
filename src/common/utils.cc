@@ -41,7 +41,7 @@ NormalizeVec(DataType* x, int32_t d) {
     } else if constexpr (std::is_same_v<DataType, bf16>) {
         norm_l2_sqr = faiss::bf16_vec_norm_L2sqr(x, d);
     } else {
-        LOG_KNOWHERE_ERROR_ << "unknown datatype";
+        KNOWHERE_THROW_MSG("Unknown Datatype");
     }
 
     if (norm_l2_sqr > 0 && std::abs(1.0f - norm_l2_sqr) > FloatAccuracy) {
