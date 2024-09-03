@@ -447,6 +447,7 @@ DistanceComputer* IndexProductResidualQuantizerCosine::get_distance_computer() c
 //
 IndexHNSWFlatCosine::IndexHNSWFlatCosine() {
     is_trained = true;
+    is_cosine = true;
 }
 
 IndexHNSWFlatCosine::IndexHNSWFlatCosine(int d, int M) :
@@ -454,13 +455,16 @@ IndexHNSWFlatCosine::IndexHNSWFlatCosine(int d, int M) :
 {
     own_fields = true;
     is_trained = true;
+    is_cosine = true;
 }
 
 
 //////////////////////////////////////////////////////////////////////////////////
 
 //
-IndexHNSWSQCosine::IndexHNSWSQCosine() = default;
+IndexHNSWSQCosine::IndexHNSWSQCosine() {
+    is_cosine = true;    
+}
 
 IndexHNSWSQCosine::IndexHNSWSQCosine(
         int d,
@@ -470,16 +474,20 @@ IndexHNSWSQCosine::IndexHNSWSQCosine(
 {
     is_trained = this->storage->is_trained;
     own_fields = true;
+    is_cosine = true;
 }
 
 
 //
-IndexHNSWPQCosine::IndexHNSWPQCosine() = default;
+IndexHNSWPQCosine::IndexHNSWPQCosine() {
+    is_cosine = true;
+}
 
 IndexHNSWPQCosine::IndexHNSWPQCosine(int d, size_t pq_M, int M, size_t pq_nbits) :
     IndexHNSW(new IndexPQCosine(d, pq_M, pq_nbits), M) 
 {
     own_fields = true;
+    is_cosine = true;
 }
 
 void IndexHNSWPQCosine::train(idx_t n, const float* x) {
@@ -501,7 +509,9 @@ IndexHNSWProductResidualQuantizer::IndexHNSWProductResidualQuantizer(
 ) : IndexHNSW(new IndexProductResidualQuantizer(d, prq_nsplits, prq_Msub, prq_nbits, metric, prq_search_type), M) {}
 
 //
-IndexHNSWProductResidualQuantizerCosine::IndexHNSWProductResidualQuantizerCosine() = default;
+IndexHNSWProductResidualQuantizerCosine::IndexHNSWProductResidualQuantizerCosine() {
+    is_cosine = true;    
+}
 
 IndexHNSWProductResidualQuantizerCosine::IndexHNSWProductResidualQuantizerCosine(
         int d,
@@ -510,7 +520,9 @@ IndexHNSWProductResidualQuantizerCosine::IndexHNSWProductResidualQuantizerCosine
         size_t prq_nbits,
         size_t M,
         AdditiveQuantizer::Search_type_t prq_search_type
-) : IndexHNSW(new IndexHNSWProductResidualQuantizerCosine(d, prq_nsplits, prq_Msub, prq_nbits, prq_search_type), M) {}
+) : IndexHNSW(new IndexHNSWProductResidualQuantizerCosine(d, prq_nsplits, prq_Msub, prq_nbits, prq_search_type), M) {
+    is_cosine = true;
+}
 
 
 }

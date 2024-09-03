@@ -421,8 +421,10 @@ class IndexNode : public Object {
 };
 
 // Common superclass for iterators that expand search range as needed. Subclasses need
-// to override `next_batch` which will add expanded vectors to the results. For indexes
-// with quantization, override `raw_distance`.
+//   to override `next_batch` which will add expanded vectors to the results. For indexes
+//   with quantization, override `raw_distance`.
+// Internally, this structure uses the same priority queue class, but may multiply all
+//   incoming distances to (-1) value in order to turn max priority queue into a min one.
 class IndexIterator : public IndexNode::iterator {
  public:
     IndexIterator(bool larger_is_closer, float refine_ratio = 0.0f, bool retain_iterator_order = false)

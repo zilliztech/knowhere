@@ -321,6 +321,34 @@ struct v2_hnsw_searcher {
         return stats;
     }
 
+    // traverse down to the level 0
+    faiss::HNSWStats greedy_search_top_levels(
+        storage_idx_t& nearest,
+        float& d_nearest
+    ) {
+        faiss::HNSWStats stats;
+
+        // iterate through upper levels
+        for (int level = hnsw.max_level; level >= 1; level--) {
+            // update the visitor
+            graph_visitor.visit_level(level);
+
+            // alter the value of 'nearest'
+            faiss::HNSWStats local_stats = greedy_update_nearest(
+                level,
+                nearest,
+                d_nearest
+            );
+
+            // update stats
+            if (track_hnsw_stats) {
+                stats.combine(local_stats);
+            }
+        }
+
+        return stats;
+    }
+
     // perform the search.
     faiss::HNSWStats search(
         const idx_t k,
@@ -353,21 +381,11 @@ struct v2_hnsw_searcher {
         float d_nearest = qdis(nearest);
 
         // iterate through upper levels
-        for (int level = hnsw.max_level; level >= 1; level--) {
-            // update the visitor
-            graph_visitor.visit_level(level);
+        auto bottom_levels_stats = greedy_search_top_levels(nearest, d_nearest);
 
-            // alter the value of 'nearest'
-            faiss::HNSWStats local_stats = greedy_update_nearest(
-                level,
-                nearest,
-                d_nearest
-            );
-
-            // update stats
-            if (track_hnsw_stats) {
-                stats.combine(local_stats);
-            }
+        // update stats
+        if (track_hnsw_stats) {
+            stats.combine(bottom_levels_stats);
         }
 
         // level 0 search
