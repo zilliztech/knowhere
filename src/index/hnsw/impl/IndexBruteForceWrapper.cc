@@ -17,6 +17,7 @@
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/DistanceComputer.h>
 #include <faiss/impl/FaissAssert.h>
+#include <faiss/impl/ResultHandler.h>
 
 #include <algorithm>
 #include <memory>
@@ -103,6 +104,64 @@ IndexBruteForceWrapper::search(faiss::idx_t n, const float* __restrict x, faiss:
                                                                      BitsetViewIDSelectorWrapper>(
                     index->ntotal, *dis, bw_idselector_w, k, local_distances, local_ids);
             }
+        }
+    }
+}
+
+void
+IndexBruteForceWrapper::range_search(faiss::idx_t n, const float* x, float radius, faiss::RangeSearchResult* result,
+                                     const faiss::SearchParameters* params) const {
+    using RH_min = faiss::RangeSearchBlockResultHandler<faiss::CMax<float, int64_t>>;
+    using RH_max = faiss::RangeSearchBlockResultHandler<faiss::CMin<float, int64_t>>;
+    RH_min bres_min(result, radius);
+    RH_max bres_max(result, radius);
+
+    std::unique_ptr<faiss::DistanceComputer> dis(index->get_distance_computer());
+
+    // no parallelism by design
+    for (idx_t i = 0; i < n; i++) {
+        // prepare the query
+        dis->set_query(x + i * index->d);
+
+        // set up a filter
+        faiss::IDSelector* __restrict sel = (params == nullptr) ? nullptr : params->sel;
+
+        if (is_similarity_metric(index->metric_type)) {
+            typename RH_max::SingleResultHandler res_max(bres_max);
+            res_max.begin(i);
+
+            if (sel == nullptr) {
+                // Compiler is expected to de-virtualize virtual method calls
+                faiss::IDSelectorAll sel_all;
+
+                faiss::cppcontrib::knowhere::brute_force_range_search_impl<
+                    typename RH_max::SingleResultHandler, faiss::DistanceComputer, faiss::IDSelectorAll>(
+                    index->ntotal, *dis, sel_all, res_max);
+            } else {
+                faiss::cppcontrib::knowhere::brute_force_range_search_impl<typename RH_max::SingleResultHandler,
+                                                                           faiss::DistanceComputer, faiss::IDSelector>(
+                    index->ntotal, *dis, *sel, res_max);
+            }
+
+            res_max.end();
+        } else {
+            typename RH_min::SingleResultHandler res_min(bres_min);
+            res_min.begin(i);
+
+            if (sel == nullptr) {
+                // Compiler is expected to de-virtualize virtual method calls
+                faiss::IDSelectorAll sel_all;
+
+                faiss::cppcontrib::knowhere::brute_force_range_search_impl<
+                    typename RH_min::SingleResultHandler, faiss::DistanceComputer, faiss::IDSelectorAll>(
+                    index->ntotal, *dis, sel_all, res_min);
+            } else {
+                faiss::cppcontrib::knowhere::brute_force_range_search_impl<typename RH_min::SingleResultHandler,
+                                                                           faiss::DistanceComputer, faiss::IDSelector>(
+                    index->ntotal, *dis, *sel, res_min);
+            }
+
+            res_min.end();
         }
     }
 }

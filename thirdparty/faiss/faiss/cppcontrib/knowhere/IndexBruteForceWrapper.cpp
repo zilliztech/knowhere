@@ -20,6 +20,7 @@
 #include <faiss/impl/DistanceComputer.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/IDSelector.h>
+#include <faiss/impl/ResultHandler.h>
 
 #include <faiss/cppcontrib/knowhere/impl/Bruteforce.h>
 
@@ -48,7 +49,7 @@ void IndexBruteForceWrapper::search(
 
 #pragma omp parallel if (i1 - i0 > 1)
         {
-            std::unique_ptr<faiss::DistanceComputer> dis(index->get_distance_computer());
+            std::unique_ptr<DistanceComputer> dis(index->get_distance_computer());
 
 #pragma omp for schedule(guided)
             for (idx_t i = i0; i < i1; i++) {
@@ -110,6 +111,93 @@ void IndexBruteForceWrapper::search(
                             local_ids
                         );
                     }
+                }
+            }
+        }
+
+        InterruptCallback::check();
+    }
+}
+
+void IndexBruteForceWrapper::range_search(
+        idx_t n, 
+        const float* __restrict x, 
+        float radius, 
+        RangeSearchResult* __restrict result, 
+        const SearchParameters* __restrict params
+) const {
+    using RH_min = RangeSearchBlockResultHandler<CMax<float, int64_t>>;
+    using RH_max = RangeSearchBlockResultHandler<CMin<float, int64_t>>;
+    RH_min bres_min(result, radius);
+    RH_max bres_max(result, radius);
+
+    idx_t check_period = InterruptCallback::get_period_hint(
+            index->d * index->ntotal);
+
+    for (idx_t i0 = 0; i0 < n; i0 += check_period) {
+        idx_t i1 = std::min(i0 + check_period, n);
+
+#pragma omp parallel if (i1 - i0 > 1)
+        {
+            std::unique_ptr<DistanceComputer> dis(index->get_distance_computer());
+
+            typename RH_min::SingleResultHandler res_min(bres_min);
+            typename RH_max::SingleResultHandler res_max(bres_max);
+
+#pragma omp for schedule(guided)
+            for (idx_t i = i0; i < i1; i++) {
+                // prepare the query
+                dis->set_query(x + i * index->d);
+
+                // set up a filter
+                IDSelector* __restrict sel = (params == nullptr) ? nullptr : params->sel;
+
+                if (is_similarity_metric(index->metric_type)) {
+                    res_max.begin(i);
+
+                    if (sel == nullptr) {
+                        // Compiler is expected to de-virtualize virtual method calls
+                        IDSelectorAll sel_all;
+
+                        brute_force_range_search_impl<typename RH_max::SingleResultHandler, DistanceComputer, IDSelectorAll>(
+                            index->ntotal,
+                            *dis,
+                            sel_all,
+                            res_max
+                        );
+                    } else {
+                        brute_force_range_search_impl<typename RH_max::SingleResultHandler, DistanceComputer, IDSelector>(
+                            index->ntotal,
+                            *dis,
+                            *sel,
+                            res_max
+                        );
+                    }
+
+                    res_max.end();
+                } else {
+                    res_min.begin(i);
+
+                    if (sel == nullptr) {
+                        // Compiler is expected to de-virtualize virtual method calls
+                        IDSelectorAll sel_all;
+
+                        brute_force_range_search_impl<typename RH_min::SingleResultHandler, DistanceComputer, IDSelectorAll>(
+                            index->ntotal,
+                            *dis,
+                            sel_all,
+                            res_min
+                        );
+                    } else {
+                        brute_force_range_search_impl<typename RH_min::SingleResultHandler, DistanceComputer, IDSelector>(
+                            index->ntotal,
+                            *dis,
+                            *sel,
+                            res_min
+                        );
+                    }
+
+                    res_min.end();
                 }
             }
         }

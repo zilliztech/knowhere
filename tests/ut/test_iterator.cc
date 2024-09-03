@@ -109,7 +109,7 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::HNSW_M] = 128;
         json[knowhere::indexparam::EFCONSTRUCTION] = 200;
-        json[knowhere::indexparam::EF] = 64;
+        json[knowhere::indexparam::EF] = 80;
         return json;
     };
 

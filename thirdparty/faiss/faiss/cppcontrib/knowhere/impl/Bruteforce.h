@@ -18,6 +18,7 @@
 #include <utility>
 
 #include <faiss/MetricType.h>
+#include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/utils/Heap.h>
 
 namespace faiss {
@@ -64,6 +65,22 @@ void brute_force_search_impl(
         for (idx_t idx = len; idx < k; idx++) {
             labels[idx] = -1;
             distances[idx] = C::neutral();
+        }
+    }
+}
+
+// C is CMax<> or CMin<>
+template<typename ResultHandlerT, typename DistanceComputerT, typename FilterT>
+void brute_force_range_search_impl(
+    const idx_t ntotal,
+    DistanceComputerT& __restrict qdis,
+    const FilterT& __restrict filter,
+    ResultHandlerT& __restrict rres
+) {
+    for (idx_t idx = 0; idx < ntotal; ++idx) {
+        if (filter.is_member(idx)) {
+            const float distance = qdis(idx);
+            rres.add_result(distance, idx);
         }
     }
 }

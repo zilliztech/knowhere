@@ -226,6 +226,151 @@ void IndexHNSWWrapper::search(
     }
 }
 
+
+void IndexHNSWWrapper::range_search(
+    idx_t n, 
+    const float* x, 
+    float radius_in, 
+    RangeSearchResult* result,
+    const SearchParameters* params_in
+) const {
+    const IndexHNSW* index_hnsw = dynamic_cast<const IndexHNSW*>(index);
+    FAISS_THROW_IF_NOT(index_hnsw);
+
+    FAISS_THROW_IF_NOT_MSG(index_hnsw->storage, "No storage index");
+
+    // check if the graph is empty
+    if (index_hnsw->hnsw.entry_point == -1) {
+        return;
+    }
+
+    // check parameters
+    const SearchParametersHNSWWrapper* params = nullptr;
+    const HNSW& hnsw = index_hnsw->hnsw;
+
+    float kAlpha = 0.0f;
+    int efSearch = hnsw.efSearch;
+    if (params_in) {
+        params = dynamic_cast<const SearchParametersHNSWWrapper*>(params_in);
+        FAISS_THROW_IF_NOT_MSG(params, "params type invalid");
+
+        kAlpha = params->kAlpha;
+        efSearch = params->efSearch;
+    }
+
+    // set up hnsw_stats
+    HNSWStats* __restrict const hnsw_stats = (params == nullptr) ? nullptr : params->hnsw_stats;
+
+    //
+    size_t n1 = 0;
+    size_t n2 = 0;
+    size_t ndis = 0;
+    size_t nhops = 0;
+
+    // radius
+    float radius = radius_in;
+    if (is_similarity_metric(this->metric_type)) {
+        radius *= (-1);
+    }
+
+    // initialize a ResultHandler
+    using RH_min = RangeSearchBlockResultHandler<CMax<float, int64_t>>;
+    RH_min bres_min(result, radius);
+
+    // no parallelism by design
+    idx_t check_period = InterruptCallback::get_period_hint(
+            hnsw.max_level * index->d * efSearch);
+
+    for (idx_t i0 = 0; i0 < n; i0 += check_period) {
+        idx_t i1 = std::min(i0 + check_period, n);
+
+#pragma omp parallel if (i1 - i0 > 1)
+        {
+            //
+            Bitset bitset_visited_nodes = Bitset::create_uninitialized(index->ntotal);
+
+            // create a distance computer
+            std::unique_ptr<DistanceComputer> dis(storage_distance_computer(index_hnsw->storage));
+
+#pragma omp for reduction(+ : n1, n2, ndis, nhops) schedule(guided)
+            for (idx_t i = i0; i < i1; i++) {
+                typename RH_min::SingleResultHandler res_min(bres_min);
+                res_min.begin(i);
+
+                // prepare the query
+                dis->set_query(x + i * index->d);
+
+                // prepare the table of visited elements
+                bitset_visited_nodes.clear();
+
+                // future results
+                HNSWStats local_stats;
+
+                // set up a filter
+                IDSelector* sel = (params == nullptr) ? nullptr : params->sel;
+
+                if (sel == nullptr) {
+                    IDSelectorAll sel_all;
+                    DummyVisitor graph_visitor;
+
+                    using searcher_type = v2_hnsw_searcher<DistanceComputer, DummyVisitor, Bitset, IDSelectorAll>;
+
+                    searcher_type searcher(
+                        hnsw,
+                        *(dis.get()), 
+                        graph_visitor, 
+                        bitset_visited_nodes,
+                        sel_all,
+                        kAlpha,
+                        params);
+
+                    local_stats = searcher.range_search(radius, &res_min);
+                } else {
+                    DummyVisitor graph_visitor;
+
+                    using searcher_type = v2_hnsw_searcher<DistanceComputer, DummyVisitor, Bitset, IDSelector>;
+
+                    searcher_type searcher{
+                        hnsw,
+                        *(dis.get()), 
+                        graph_visitor, 
+                        bitset_visited_nodes,
+                        *sel,
+                        kAlpha,
+                        params};
+
+                    local_stats = searcher.range_search(radius, &res_min);
+                }
+
+                // update stats if possible
+                if (hnsw_stats != nullptr) {
+                    n1 += local_stats.n1;
+                    n2 += local_stats.n2;
+                    ndis += local_stats.ndis;
+                    nhops += local_stats.nhops;
+                }
+
+                //
+                res_min.end();
+            }
+        }
+    }
+
+    // update stats if possible
+    if (hnsw_stats != nullptr) {
+        hnsw_stats->combine({n1, n2, ndis, nhops});
+    }
+
+    // done, update the results, if needed
+    if (is_similarity_metric(this->metric_type)) {
+        // we need to revert the negated distances
+        for (size_t i = 0; i < result->lims[result->nq]; i++) {
+            result->distances[i] = -result->distances[i];
+        }
+    }
+}
+
+
 }
 }
 }

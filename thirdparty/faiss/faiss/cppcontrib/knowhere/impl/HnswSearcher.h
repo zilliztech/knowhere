@@ -17,6 +17,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <queue>
 
 // Faiss-specific headers
 #include <faiss/Index.h>
@@ -25,6 +26,7 @@
 #include <faiss/impl/DistanceComputer.h>
 #include <faiss/impl/FaissException.h>
 #include <faiss/impl/HNSW.h>
+#include <faiss/impl/ResultHandler.h>
 #include <faiss/utils/ordered_key_value.h>
 
 // Knowhere-specific headers
@@ -368,7 +370,7 @@ struct v2_hnsw_searcher {
         // greedy search on upper levels?
         if (hnsw.upper_beam != 1) {
             FAISS_THROW_MSG("Not implemented");
-            return {};
+            return stats;
         }
 
         // yes.
@@ -411,6 +413,8 @@ struct v2_hnsw_searcher {
         // perform the search of the level 0.
         faiss::HNSWStats local_stats = search_on_a_level(retset, 0);
 
+        // todo: switch to brute-force in case of (retset.size() < k)
+
         // populate the result
         const idx_t len = std::min((idx_t)retset.size(), k);
         for (idx_t i = 0; i < len; i++) {
@@ -424,6 +428,129 @@ struct v2_hnsw_searcher {
         }
 
         // done
+        return stats;
+    }
+
+    faiss::HNSWStats range_search(
+        const float radius,
+        typename faiss::RangeSearchBlockResultHandler<faiss::CMax<float, int64_t>>::SingleResultHandler* const __restrict rres
+    ) {
+        faiss::HNSWStats stats;
+        
+        // is the graph empty?
+        if (hnsw.entry_point == -1) {
+            return stats;
+        }
+
+        // grab some needed parameters
+        const int efSearch = params ? params->efSearch : hnsw.efSearch;
+        
+        // greedy search on upper levels?
+        if (hnsw.upper_beam != 1) {
+            FAISS_THROW_MSG("Not implemented");
+            return stats;
+        }
+
+        // yes.
+        // greedy search on upper levels.
+
+        // todo: first, check LRU cache
+
+        // initialize the starting point.
+        storage_idx_t nearest = hnsw.entry_point;
+        float d_nearest = qdis(nearest);
+
+        // iterate through upper levels
+        auto bottom_levels_stats = greedy_search_top_levels(nearest, d_nearest);
+
+        // update stats
+        if (track_hnsw_stats) {
+            stats.combine(bottom_levels_stats);
+        }
+
+        // level 0 search
+
+        // update the visitor
+        graph_visitor.visit_level(0);
+
+        // initialize the container for candidates
+        const idx_t n_candidates = efSearch;
+        knowhere::NeighborSetDoublePopList retset(n_candidates);
+
+        // initialize retset with a single 'nearest' point
+        {
+            if (!filter.is_member(nearest)) {
+                retset.insert(knowhere::Neighbor(nearest, d_nearest, knowhere::Neighbor::kInvalid));
+            } else {
+                retset.insert(knowhere::Neighbor(nearest, d_nearest, knowhere::Neighbor::kValid));
+            }
+
+            visited_nodes[nearest] = true;
+        }
+
+        // perform the search of the level 0.
+        faiss::HNSWStats local_stats = search_on_a_level(retset, 0);
+        
+        // update stats
+        if (track_hnsw_stats) {
+            stats.combine(local_stats);
+        }
+
+        // select candidates that match our criteria
+        faiss::HNSWStats pick_stats;
+
+        visited_nodes.clear();
+
+        std::queue<std::pair<float, int64_t>> radius_queue;
+        for (size_t i = retset.size(); (i--) > 0;) {
+            const auto candidate = retset[i];
+            if (candidate.distance < radius) {
+                radius_queue.push({ candidate.distance, candidate.id });
+                rres->add_result(candidate.distance, candidate.id);
+
+                visited_nodes[candidate.id] = true;
+            }
+        }
+
+        while (!radius_queue.empty()) {
+            auto current = radius_queue.front();
+            radius_queue.pop();
+
+            size_t id_begin = 0;
+            size_t id_end = 0;
+            hnsw.neighbor_range(current.second, 0, &id_begin, &id_end);
+
+            for (size_t id = id_begin; id < id_end; id++) {
+                const auto ngb = hnsw.neighbors[id];
+                if (ngb == -1) {
+                    break;
+                }
+
+                if (visited_nodes[ngb]) {
+                    continue;
+                }
+
+                visited_nodes[ngb] = true;
+
+                if (filter.is_member(ngb)) {
+                    const float dis = qdis(ngb);
+                    if (dis < radius) {
+                        radius_queue.push({ dis, ngb });
+                        rres->add_result(dis, ngb);
+                    }
+
+                    if (track_hnsw_stats) {
+                        pick_stats.ndis += 1;
+                    }
+                }
+            }
+        }
+
+        // update stats
+        if (track_hnsw_stats) {
+            stats.combine(pick_stats);
+        }
+
         return stats;
     }
 };

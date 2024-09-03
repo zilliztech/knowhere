@@ -217,6 +217,12 @@ GetRangeSearchRecall(const knowhere::DataSet& gt, const knowhere::DataSet& resul
     auto res_lims_p = result.GetLims();
     auto gt_ids_p = gt.GetIds();
     auto gt_lims_p = gt.GetLims();
+
+    // check if both gt and result are empty
+    if (gt_lims_p[nq] == 0 && res_lims_p[nq] == 0) {
+        return 1;
+    }
+
     uint32_t ninter = 0;
     for (uint32_t i = 0; i < nq; ++i) {
         std::set<int64_t> inter;

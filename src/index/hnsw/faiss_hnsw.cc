@@ -35,6 +35,7 @@
 #include "index/hnsw/impl/DummyVisitor.h"
 #include "index/hnsw/impl/FederVisitor.h"
 #include "index/hnsw/impl/IndexBruteForceWrapper.h"
+#include "index/hnsw/impl/IndexConditionalWrapper.h"
 #include "index/hnsw/impl/IndexHNSWWrapper.h"
 #include "index/hnsw/impl/IndexWrapperCosine.h"
 #include "io/memory_io.h"
@@ -55,14 +56,6 @@
 #endif
 
 namespace knowhere {
-
-namespace {
-
-constexpr float kHnswSearchKnnBFFilterThreshold = 0.93f;
-// constexpr float kHnswSearchRangeBFFilterThreshold = 0.97f;
-constexpr float kHnswSearchBFTopkThreshold = 0.5f;
-
-}  // namespace
 
 //
 class BaseFaissIndexNode : public IndexNode {
@@ -505,9 +498,10 @@ class FaissHnswIterator : public IndexIterator {
                       const float refine_ratio = 0.5f)
         : IndexIterator(larger_is_closer, refine_ratio), index{index_in} {
         //
-        workspace.accumulated_alpha = (bitset_in.count() >= (index->ntotal * kHnswSearchKnnBFFilterThreshold))
-                                          ? std::numeric_limits<float>::max()
-                                          : 1.0f;
+        workspace.accumulated_alpha =
+            (bitset_in.count() >= (index->ntotal * HnswSearchThresholds::kHnswSearchKnnBFFilterThreshold))
+                ? std::numeric_limits<float>::max()
+                : 1.0f;
 
         // set up a visitor
         workspace.graph_visitor = DummyVisitor();
@@ -847,9 +841,6 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         const auto hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
         const auto k = hnsw_cfg.k.value();
-        const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), knowhere::metric::COSINE);
-
-        const bool whether_bf_search = WhetherPerformBruteForceSearch(hnsw_cfg, bitset);
 
         feder::hnsw::FederResultUniq feder_result;
         if (hnsw_cfg.trace_visit.value()) {
@@ -859,160 +850,84 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             feder_result = std::make_unique<feder::hnsw::FederResult>();
         }
 
+        // check for brute-force search
+        auto whether_bf_search = WhetherPerformBruteForceSearch(index.get(), hnsw_cfg, bitset);
+
+        if (!whether_bf_search.has_value()) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "k parameter is missing");
+        }
+
+        // set up an index wrapper
+        auto [index_wrapper, is_refined] =
+            create_conditional_hnsw_wrapper(index.get(), hnsw_cfg, whether_bf_search.value_or(false));
+
+        if (index_wrapper == nullptr) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
+        }
+
+        faiss::Index* index_wrapper_ptr = index_wrapper.get();
+
+        // set up faiss search parameters
+        knowhere::SearchParametersHNSWWrapper hnsw_search_params;
+        if (hnsw_cfg.ef.has_value()) {
+            hnsw_search_params.efSearch = hnsw_cfg.ef.value();
+        }
+
+        // do not collect HNSW stats
+        hnsw_search_params.hnsw_stats = nullptr;
+        // set up feder
+        hnsw_search_params.feder = feder_result.get();
+        // set up kAlpha
+        hnsw_search_params.kAlpha = bitset.filter_ratio() * 0.7f;
+
+        // set up a selector
+        BitsetViewIDSelector bw_idselector(bitset);
+        faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+
+        hnsw_search_params.sel = id_selector;
+
+        // run
         auto ids = std::make_unique<faiss::idx_t[]>(rows * k);
         auto distances = std::make_unique<float[]>(rows * k);
+
         try {
             std::vector<folly::Future<folly::Unit>> futs;
             futs.reserve(rows);
+
             for (int64_t i = 0; i < rows; ++i) {
-                futs.emplace_back(search_pool->push([&, idx = i] {
-                    // 1 thread per element
-                    ThreadPool::ScopedSearchOmpSetter setter(1);
+                futs.emplace_back(
+                    search_pool->push([&, idx = i, is_refined = is_refined, index_wrapper_ptr = index_wrapper_ptr] {
+                        // 1 thread per element
+                        ThreadPool::ScopedSearchOmpSetter setter(1);
 
-                    // set up a query
-                    // const float* cur_query = (const float*)data + idx * dim;
+                        // set up a query
+                        const float* cur_query = nullptr;
 
-                    const float* cur_query = nullptr;
-
-                    std::vector<float> cur_query_tmp(dim);
-                    if (data_format == DataFormatEnum::fp32) {
-                        cur_query = (const float*)data + idx * dim;
-                    } else {
-                        convert_rows_to_fp32(data, cur_query_tmp.data(), data_format, idx, 1, dim);
-                        cur_query = cur_query_tmp.data();
-                    }
-
-                    // set up local results
-                    faiss::idx_t* const __restrict local_ids = ids.get() + k * idx;
-                    float* const __restrict local_distances = distances.get() + k * idx;
-
-                    // set up faiss search parameters
-                    knowhere::SearchParametersHNSWWrapper hnsw_search_params;
-                    if (hnsw_cfg.ef.has_value()) {
-                        hnsw_search_params.efSearch = hnsw_cfg.ef.value();
-                    }
-                    // do not collect HNSW stats
-                    hnsw_search_params.hnsw_stats = nullptr;
-                    // set up feder
-                    hnsw_search_params.feder = feder_result.get();
-                    // set up kAlpha
-                    hnsw_search_params.kAlpha = bitset.filter_ratio() * 0.7f;
-
-                    // set up a selector
-                    BitsetViewIDSelector bw_idselector(bitset);
-                    faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
-
-                    hnsw_search_params.sel = id_selector;
-
-                    // use knowhere-based search by default
-                    const bool override_faiss_search = hnsw_cfg.override_faiss_search.value_or(true);
-
-                    // check if we have a refine available.
-                    faiss::IndexRefine* const index_refine = dynamic_cast<faiss::IndexRefine*>(index.get());
-
-                    if (index_refine != nullptr) {
-                        // yes, it is possible to refine results.
-
-                        // cast a base index to IndexHNSW-based index
-                        faiss::IndexHNSW* const index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index_refine->base_index);
-
-                        if (index_hnsw == nullptr) {
-                            // this is unexpected
-                            throw std::runtime_error("Expecting faiss::IndexHNSW");
-                        }
-
-                        // pick a wrapper for hnsw which does not own indices
-                        knowhere::IndexHNSWWrapper wrapper_hnsw_search(index_hnsw);
-                        knowhere::IndexBruteForceWrapper wrapper_bf(index_hnsw);
-
-                        faiss::Index* base_wrapper = nullptr;
-                        if (!override_faiss_search) {
-                            // use the original index, no wrappers
-                            base_wrapper = index_hnsw;
-                        } else if (whether_bf_search) {
-                            // use brute-force wrapper
-                            base_wrapper = &wrapper_bf;
+                        std::vector<float> cur_query_tmp(dim);
+                        if (data_format == DataFormatEnum::fp32) {
+                            cur_query = (const float*)data + idx * dim;
                         } else {
-                            // use hnsw-search wrapper
-                            base_wrapper = &wrapper_hnsw_search;
+                            convert_rows_to_fp32(data, cur_query_tmp.data(), data_format, idx, 1, dim);
+                            cur_query = cur_query_tmp.data();
                         }
 
-                        // check if used wants a refined result
-                        if (hnsw_cfg.refine_k.has_value()) {
-                            // yes, a user wants to perform a refine
+                        // set up local results
+                        faiss::idx_t* const __restrict local_ids = ids.get() + k * idx;
+                        float* const __restrict local_distances = distances.get() + k * idx;
 
-                            // set up search parameters
+                        // perform the search
+                        if (is_refined) {
                             faiss::IndexRefineSearchParameters refine_params;
-                            refine_params.k_factor = hnsw_cfg.refine_k.value();
+                            refine_params.k_factor = hnsw_cfg.refine_k.value_or(1);
                             // a refine procedure itself does not need to care about filtering
                             refine_params.sel = nullptr;
                             refine_params.base_index_params = &hnsw_search_params;
 
-                            // is it a cosine index?
-                            if (index_hnsw->storage->is_cosine && is_cosine) {
-                                // yes, wrap both base and refine index
-                                knowhere::IndexWrapperCosine cosine_wrapper(
-                                    index_refine->refine_index,
-                                    dynamic_cast<faiss::HasInverseL2Norms*>(index_hnsw->storage)
-                                        ->get_inverse_l2_norms());
-
-                                // create a temporary refine index which does not own
-                                faiss::IndexRefine tmp_refine(base_wrapper, &cosine_wrapper);
-
-                                // perform a search
-                                tmp_refine.search(1, cur_query, k, local_distances, local_ids, &refine_params);
-                            } else {
-                                // no, wrap base index only.
-
-                                // create a temporary refine index which does not own
-                                faiss::IndexRefine tmp_refine(base_wrapper, index_refine->refine_index);
-
-                                // perform a search
-                                tmp_refine.search(1, cur_query, k, local_distances, local_ids, &refine_params);
-                            }
+                            index_wrapper_ptr->search(1, cur_query, k, local_distances, local_ids, &refine_params);
                         } else {
-                            // no, a user wants to skip a refine
-
-                            // perform a search
-                            base_wrapper->search(1, cur_query, k, local_distances, local_ids, &hnsw_search_params);
+                            index_wrapper_ptr->search(1, cur_query, k, local_distances, local_ids, &hnsw_search_params);
                         }
-                    } else {
-                        // there's no refining available
-
-                        // check if refine is required
-                        if (hnsw_cfg.refine_k.has_value()) {
-                            // this is not possible, throw an error
-                            throw std::runtime_error("Refine is not provided by the index.");
-                        }
-
-                        // cast to IndexHNSW-based index
-                        faiss::IndexHNSW* const index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index.get());
-
-                        if (index_hnsw == nullptr) {
-                            // this is unexpected
-                            throw std::runtime_error("Expecting faiss::IndexHNSW");
-                        }
-
-                        // pick a wrapper for hnsw which does not own indices
-                        knowhere::IndexHNSWWrapper wrapper_hnsw_search(index_hnsw);
-                        knowhere::IndexBruteForceWrapper wrapper_bf(index_hnsw);
-
-                        faiss::Index* wrapper = nullptr;
-                        if (!override_faiss_search) {
-                            // use the original index, no wrappers
-                            wrapper = index_hnsw;
-                        } else if (whether_bf_search) {
-                            // use brute-force wrapper
-                            wrapper = &wrapper_bf;
-                        } else {
-                            // use hnsw-search wrapper
-                            wrapper = &wrapper_hnsw_search;
-                        }
-
-                        // perform a search
-                        wrapper->search(1, cur_query, k, local_distances, local_ids, &hnsw_search_params);
-                    }
-                }));
+                    }));
             }
 
             // wait for the completion
@@ -1036,35 +951,145 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         return res;
     }
 
+    expected<DataSetPtr>
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+        if (this->index == nullptr) {
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+        }
+        if (!this->index->is_trained) {
+            return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
+        }
+
+        const auto dim = dataset->GetDim();
+        const auto rows = dataset->GetRows();
+        const auto* data = dataset->GetTensor();
+
+        const auto hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
+
+        const bool is_similarity_metric = faiss::is_similarity_metric(index->metric_type);
+
+        const float radius = hnsw_cfg.radius.value();
+        const float range_filter = hnsw_cfg.range_filter.value();
+
+        feder::hnsw::FederResultUniq feder_result;
+        if (hnsw_cfg.trace_visit.value()) {
+            if (rows != 1) {
+                return expected<DataSetPtr>::Err(Status::invalid_args, "a single query vector is required");
+            }
+            feder_result = std::make_unique<feder::hnsw::FederResult>();
+        }
+
+        // check for brute-force search
+        auto whether_bf_search = WhetherPerformBruteForceRangeSearch(index.get(), hnsw_cfg, bitset);
+
+        if (!whether_bf_search.has_value()) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "ef parameter is missing");
+        }
+
+        // set up an index wrapper
+        auto [index_wrapper, is_refined] =
+            create_conditional_hnsw_wrapper(index.get(), hnsw_cfg, whether_bf_search.value_or(false));
+
+        if (index_wrapper == nullptr) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
+        }
+
+        faiss::Index* index_wrapper_ptr = index_wrapper.get();
+
+        // set up faiss search parameters
+        knowhere::SearchParametersHNSWWrapper hnsw_search_params;
+
+        if (hnsw_cfg.ef.has_value()) {
+            hnsw_search_params.efSearch = hnsw_cfg.ef.value();
+        }
+
+        // do not collect HNSW stats
+        hnsw_search_params.hnsw_stats = nullptr;
+        // set up feder
+        hnsw_search_params.feder = feder_result.get();
+        // set up kAlpha
+        hnsw_search_params.kAlpha = bitset.filter_ratio() * 0.7f;
+
+        // set up a selector
+        BitsetViewIDSelector bw_idselector(bitset);
+        faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+
+        hnsw_search_params.sel = id_selector;
+
+        ////////////////////////////////////////////////////////////////
+        // run
+        std::vector<std::vector<int64_t>> result_id_array(rows);
+        std::vector<std::vector<float>> result_dist_array(rows);
+
+        std::vector<folly::Future<folly::Unit>> futs;
+        futs.reserve(rows);
+
+        // a sequential version
+        for (int64_t i = 0; i < rows; ++i) {
+            // const int64_t idx = i;
+            // {
+
+            futs.emplace_back(
+                search_pool->push([&, idx = i, is_refined = is_refined, index_wrapper_ptr = index_wrapper_ptr] {
+                    // 1 thread per element
+                    ThreadPool::ScopedSearchOmpSetter setter(1);
+
+                    // set up a query
+                    const float* cur_query = nullptr;
+
+                    std::vector<float> cur_query_tmp(dim);
+                    if (data_format == DataFormatEnum::fp32) {
+                        cur_query = (const float*)data + idx * dim;
+                    } else {
+                        convert_rows_to_fp32(data, cur_query_tmp.data(), data_format, idx, 1, dim);
+                        cur_query = cur_query_tmp.data();
+                    }
+
+                    // initialize a buffer
+                    faiss::RangeSearchResult res(1);
+
+                    // perform the search
+                    if (is_refined) {
+                        faiss::IndexRefineSearchParameters refine_params;
+                        refine_params.k_factor = hnsw_cfg.refine_k.value_or(1);
+                        // a refine procedure itself does not need to care about filtering
+                        refine_params.sel = nullptr;
+                        refine_params.base_index_params = &hnsw_search_params;
+
+                        index_wrapper_ptr->range_search(1, cur_query, radius, &res, &refine_params);
+                    } else {
+                        index_wrapper_ptr->range_search(1, cur_query, radius, &res, &hnsw_search_params);
+                    }
+
+                    // post-process
+                    const size_t elem_cnt = res.lims[1];
+                    result_dist_array[idx].resize(elem_cnt);
+                    result_id_array[idx].resize(elem_cnt);
+
+                    for (size_t j = 0; j < elem_cnt; j++) {
+                        result_dist_array[idx][j] = res.distances[j];
+                        result_id_array[idx][j] = res.labels[j];
+                    }
+
+                    if (hnsw_cfg.range_filter.value() != defaultRangeFilter) {
+                        FilterRangeSearchResultForOneNq(result_dist_array[idx], result_id_array[idx],
+                                                        is_similarity_metric, radius, range_filter);
+                    }
+                }));
+        }
+
+        // wait for the completion
+        WaitAllSuccess(futs);
+
+        //
+        RangeSearchResult range_search_result =
+            GetRangeSearchResult(result_dist_array, result_id_array, is_similarity_metric, rows, radius, range_filter);
+
+        return GenResultDataSet(rows, std::move(range_search_result));
+    }
+
  protected:
     DataFormatEnum data_format;
-
-    // Decides whether a brute force should be used instead of a regular HNSW search.
-    // This may be applicable in case of very large topk values or
-    //   extremely high filtering levels.
-    bool
-    WhetherPerformBruteForceSearch(const BaseConfig& cfg, const BitsetView& bitset) const {
-        auto k = cfg.k.value();
-
-        if (k >= (index->ntotal * kHnswSearchBFTopkThreshold)) {
-            return true;
-        }
-
-        if (!bitset.empty()) {
-            const size_t filtered_out_num = bitset.count();
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-            double ratio = ((double)filtered_out_num) / bitset.size();
-            knowhere::knowhere_hnsw_bitset_ratio.Observe(ratio);
-#endif
-            if (filtered_out_num >= (index->ntotal * kHnswSearchKnnBFFilterThreshold) ||
-                k >= (index->ntotal - filtered_out_num) * kHnswSearchBFTopkThreshold) {
-                return true;
-            }
-        }
-
-        // the default value
-        return false;
-    }
 
     Status
     AddInternal(const DataSetPtr dataset, const Config&) override {
@@ -1211,68 +1236,6 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::faiss_inner_error, e.what());
         }
         return vec;
-
-        /*
-                // serial code for debugging
-                for (int64_t idx = 0; idx < n_queries; idx++) {
-                    // The query data is always cloned
-                    std::unique_ptr<uint8_t[]> cur_query;
-
-                    if (data_format == DataFormatEnum::fp32) {
-                        cur_query = std::make_unique<uint8_t[]>(dim * sizeof(float));
-                        std::copy_n(
-                            reinterpret_cast<const uint8_t*>(
-                                reinterpret_cast<const float*>(data) + idx * dim),
-                            dim * sizeof(float),
-                            cur_query.get()
-                        );
-                    } else if (data_format == DataFormatEnum::fp16) {
-                        cur_query = std::make_unique<uint8_t[]>(dim * sizeof(knowhere::fp16));
-                        std::copy_n(
-                            reinterpret_cast<const uint8_t*>(
-                                reinterpret_cast<const knowhere::fp16*>(data) + idx * dim),
-                            dim * sizeof(knowhere::fp16),
-                            cur_query.get()
-                        );
-                    } else if (data_format == DataFormatEnum::bf16) {
-                        cur_query = std::make_unique<uint8_t[]>(dim * sizeof(knowhere::bf16));
-                        std::copy_n(
-                            reinterpret_cast<const uint8_t*>(
-                                reinterpret_cast<const knowhere::bf16*>(data) + idx * dim),
-                            dim * sizeof(knowhere::bf16),
-                            cur_query.get()
-                        );
-                    } else {
-                        // invalid one
-                        throw;
-                    }
-
-                    //
-                    const float iterator_refine_ratio =
-                        (dynamic_cast<const faiss::IndexRefine*>(index.get()) != nullptr)
-                            ? hnsw_cfg.iterator_refine_ratio.value_or(0.5)
-                            : 0;
-
-                    // create an iterator and initialize it
-                    auto it = std::make_shared<FaissHnswIterator>(
-                        index,
-                        std::move(cur_query),
-                        bitset,
-                        ef,
-                        larger_is_closer,
-                        // // refine is not needed for flat
-                        // hnsw_cfg.iterator_refine_ratio.value_or(0.5f)
-                        iterator_refine_ratio
-                    );
-
-                    it->initialize();
-
-                    // store
-                    vec[idx] = it;
-                }
-
-                return vec;
-        */
     }
 };
 
