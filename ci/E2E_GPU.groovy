@@ -3,6 +3,7 @@ def knowhere_wheel=''
 pipeline {
     agent {
         kubernetes {
+            cloud "new_ci_idc"
             inheritFrom 'default'
             yamlFile 'ci/pod/e2e-gpu.yaml'
             defaultContainer 'main'
