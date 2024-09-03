@@ -1236,7 +1236,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         if constexpr (has_raw_data) {
             memcpy(getDataByInternalId(cur_c), data_point, data_size_);
             if (metric_type_ == Metric::COSINE) {
-                data_norm_l2_[cur_c] = std::sqrt(NormSqr<data_t, dist_t>(data_point, dist_func_param_));
+                float norm = NormSqr<data_t, dist_t>(data_point, dist_func_param_);
+                data_norm_l2_[cur_c] = (norm == 0.0 ? 1.0 : std::sqrt(norm));
             }
         }
         if constexpr (sq_enabled) {

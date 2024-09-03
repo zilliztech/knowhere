@@ -2990,6 +2990,7 @@ namespace diskann {
     for (unsigned i = 0; i < _nd; i++) {
       char *cur_node_offset = _opt_graph + i * _node_size;
       float cur_norm = norm_l2sqr(_data + i * _aligned_dim, _aligned_dim);
+      cur_norm = (cur_norm == 0.0 ? 1.0 : cur_norm);
       std::memcpy(cur_node_offset, &cur_norm, sizeof(float));
       std::memcpy(cur_node_offset + sizeof(float), _data + i * _aligned_dim,
                   _data_len - sizeof(float));

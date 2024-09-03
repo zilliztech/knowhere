@@ -691,7 +691,7 @@ namespace diskann {
     }
 
     for (auto& norm : norms) {
-      norm = std::sqrt(norm);
+      norm = (norm == 0.0 ? 1.0 : std::sqrt(norm));
     }
 
     in_reader.seekg(2 * sizeof(_u32), std::ios::beg);
