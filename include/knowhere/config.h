@@ -46,20 +46,12 @@ typedef nlohmann::json Json;
 #define CFG_FLOAT std::optional<float>
 #endif
 
-#ifndef CFG_LIST
-#define CFG_LIST std::optional<std::list<int>>
-#endif
-
 #ifndef CFG_BOOL
 #define CFG_BOOL std::optional<bool>
 #endif
 
 #ifndef CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE
-#define CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE std::optional<MaterializedViewSearchInfo>
-#endif
-
-#ifndef CFG_BYTES
-#define CFG_BYTES std::optional<std::vector<uint8_t>>
+#define CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE std::optional<knowhere::MaterializedViewSearchInfo>
 #endif
 
 template <typename T>
@@ -148,29 +140,6 @@ struct Entry<CFG_INT> {
 };
 
 template <>
-struct Entry<CFG_LIST> {
-    explicit Entry(CFG_LIST* v) {
-        val = v;
-        default_val = std::nullopt;
-        type = 0x0;
-        desc = std::nullopt;
-    }
-
-    Entry() {
-        val = nullptr;
-        default_val = std::nullopt;
-        type = 0x0;
-        desc = std::nullopt;
-    }
-
-    CFG_LIST* val;
-    std::optional<CFG_LIST::value_type> default_val;
-    uint32_t type;
-    std::optional<std::string> desc;
-    bool allow_empty_without_default = false;
-};
-
-template <>
 struct Entry<CFG_BOOL> {
     explicit Entry(CFG_BOOL* v) {
         val = v;
@@ -211,29 +180,6 @@ struct Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE> {
 
     CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE* val;
     std::optional<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE::value_type> default_val;
-    uint32_t type;
-    std::optional<std::string> desc;
-    bool allow_empty_without_default = false;
-};
-
-template <>
-struct Entry<CFG_BYTES> {
-    explicit Entry(CFG_BYTES* v) {
-        val = v;
-        default_val = std::nullopt;
-        type = 0x0;
-        desc = std::nullopt;
-    }
-
-    Entry() {
-        val = nullptr;
-        default_val = std::nullopt;
-        type = 0x0;
-        desc = std::nullopt;
-    }
-
-    CFG_BYTES* val;
-    std::optional<CFG_BYTES::value_type> default_val;
     uint32_t type;
     std::optional<std::string> desc;
     bool allow_empty_without_default = false;
@@ -336,6 +282,12 @@ class Config {
 
     static Status
     Load(Config& cfg, const Json& json, PARAM_TYPE type, std::string* const err_msg = nullptr) {
+        auto show_err_msg = [&](std::string& msg) {
+            LOG_KNOWHERE_ERROR_ << msg;
+            if (err_msg) {
+                *err_msg = msg;
+            }
+        };
         for (const auto& it : cfg.__DICT__) {
             const auto& var = it.second;
 
@@ -343,47 +295,43 @@ class Config {
                 if (!(type & ptr->type)) {
                     continue;
                 }
-                if (json.find(it.first) == json.end() && !ptr->default_val.has_value()) {
-                    if (ptr->allow_empty_without_default) {
+                if (json.find(it.first) == json.end()) {
+                    if (!ptr->default_val.has_value()) {
+                        if (ptr->allow_empty_without_default) {
+                            continue;
+                        }
+                        std::string msg = "param '" + it.first + "' not exist in json";
+                        show_err_msg(msg);
+                        return Status::invalid_param_in_json;
+                    } else {
+                        *ptr->val = ptr->default_val;
                         continue;
                     }
-                    LOG_KNOWHERE_ERROR_ << "Invalid param [" << it.first << "] in json.";
-                    if (err_msg) {
-                        *err_msg = std::string("invalid param ") + it.first;
-                    }
-                    return Status::invalid_param_in_json;
-                }
-                if (json.find(it.first) == json.end()) {
-                    *ptr->val = ptr->default_val;
-                    continue;
                 }
                 if (!json[it.first].is_number_integer()) {
-                    LOG_KNOWHERE_ERROR_ << "Type conflict in json: param [" << it.first << "] should be integer.";
-                    if (err_msg) {
-                        *err_msg = std::string("param ") + it.first + " should be integer";
-                    }
+                    std::string msg = "Type conflict in json: param '" + it.first + "' (" + to_string(json[it.first]) +
+                                      ") should be integer";
+                    show_err_msg(msg);
                     return Status::type_conflict_in_json;
                 }
                 if (ptr->range.has_value()) {
                     if (json[it.first].get<long>() > std::numeric_limits<CFG_INT::value_type>::max()) {
-                        LOG_KNOWHERE_ERROR_ << "Arithmetic overflow: param [" << it.first << "] should be at most "
-                                            << std::numeric_limits<CFG_INT::value_type>::max();
-                        if (err_msg) {
-                            *err_msg = std::string("param ") + it.first + " should be at most 2147483647";
-                        }
+                        std::string msg = "Arithmetic overflow: param '" + it.first + "' (" +
+                                          to_string(json[it.first]) + ") should not bigger than " +
+                                          std::to_string(std::numeric_limits<CFG_INT::value_type>::max());
+                        show_err_msg(msg);
                         return Status::arithmetic_overflow;
                     }
                     CFG_INT::value_type v = json[it.first];
-                    if (ptr->range.value().first <= v && v <= ptr->range.value().second) {
+                    auto range_val = ptr->range.value();
+                    if (range_val.first <= v && v <= range_val.second) {
                         *ptr->val = v;
                     } else {
-                        LOG_KNOWHERE_ERROR_ << "Out of range in json: param [" << it.first << "] should be in ["
-                                            << ptr->range.value().first << ", " << ptr->range.value().second << "].";
-                        if (err_msg) {
-                            *err_msg = std::string("param ") + it.first + " out of range " + "[ " +
-                                       std::to_string(ptr->range.value().first) + "," +
-                                       std::to_string(ptr->range.value().second) + " ]";
-                        }
+                        std::string msg = "Out of range in json: param '" + it.first + "' (" +
+                                          to_string(json[it.first]) + ") should be in range [" +
+                                          std::to_string(range_val.first) + ", " + std::to_string(range_val.second) +
+                                          "]";
+                        show_err_msg(msg);
                         return Status::out_of_range_in_json;
                     }
                 } else {
@@ -395,51 +343,43 @@ class Config {
                 if (!(type & ptr->type)) {
                     continue;
                 }
-                if (json.find(it.first) == json.end() && !ptr->default_val.has_value()) {
-                    if (ptr->allow_empty_without_default) {
+                if (json.find(it.first) == json.end()) {
+                    if (!ptr->default_val.has_value()) {
+                        if (ptr->allow_empty_without_default) {
+                            continue;
+                        }
+                        std::string msg = "param '" + it.first + "' not exist in json";
+                        show_err_msg(msg);
+                        return Status::invalid_param_in_json;
+                    } else {
+                        *ptr->val = ptr->default_val;
                         continue;
                     }
-                    LOG_KNOWHERE_ERROR_ << "Invalid param [" << it.first << "] in json.";
-                    if (err_msg) {
-                        *err_msg = std::string("invalid param ") + it.first;
-                    }
-
-                    return Status::invalid_param_in_json;
-                }
-                if (json.find(it.first) == json.end()) {
-                    *ptr->val = ptr->default_val;
-                    continue;
                 }
                 if (!json[it.first].is_number()) {
-                    LOG_KNOWHERE_ERROR_ << "Type conflict in json: param [" << it.first << "] should be a number.";
-                    if (err_msg) {
-                        *err_msg = std::string("param ") + it.first + " should be a number";
-                    }
-
+                    std::string msg = "Type conflict in json: param '" + it.first + "' (" + to_string(json[it.first]) +
+                                      ") should be a number";
+                    show_err_msg(msg);
                     return Status::type_conflict_in_json;
                 }
                 if (ptr->range.has_value()) {
                     if (json[it.first].get<double>() > std::numeric_limits<CFG_FLOAT::value_type>::max()) {
-                        LOG_KNOWHERE_ERROR_ << "Arithmetic overflow: param [" << it.first << "] should be at most "
-                                            << std::numeric_limits<CFG_FLOAT::value_type>::max();
-                        if (err_msg) {
-                            *err_msg = std::string("param ") + it.first + " should be at most 3.402823e+38";
-                        }
-
+                        std::string msg = "Arithmetic overflow: param '" + it.first + "' (" +
+                                          to_string(json[it.first]) + ") should not bigger than " +
+                                          std::to_string(std::numeric_limits<CFG_FLOAT::value_type>::max());
+                        show_err_msg(msg);
                         return Status::arithmetic_overflow;
                     }
                     CFG_FLOAT::value_type v = json[it.first];
-                    if (ptr->range.value().first <= v && v <= ptr->range.value().second) {
+                    auto range_val = ptr->range.value();
+                    if (range_val.first <= v && v <= range_val.second) {
                         *ptr->val = v;
                     } else {
-                        LOG_KNOWHERE_ERROR_ << "Out of range in json: param [" << it.first << "] should be in ["
-                                            << ptr->range.value().first << ", " << ptr->range.value().second << "].";
-                        if (err_msg) {
-                            *err_msg = std::string("param ") + it.first + " out of range " + "[ " +
-                                       std::to_string(ptr->range.value().first) + "," +
-                                       std::to_string(ptr->range.value().second) + " ]";
-                        }
-
+                        std::string msg = "Out of range in json: param '" + it.first + "' (" +
+                                          to_string(json[it.first]) + ") should be in range [" +
+                                          std::to_string(range_val.first) + ", " + std::to_string(range_val.second) +
+                                          "]";
+                        show_err_msg(msg);
                         return Status::out_of_range_in_json;
                     }
                 } else {
@@ -451,88 +391,49 @@ class Config {
                 if (!(type & ptr->type)) {
                     continue;
                 }
-                if (json.find(it.first) == json.end() && !ptr->default_val.has_value()) {
-                    if (ptr->allow_empty_without_default) {
+                if (json.find(it.first) == json.end()) {
+                    if (!ptr->default_val.has_value()) {
+                        if (ptr->allow_empty_without_default) {
+                            continue;
+                        }
+                        std::string msg = "param [" + it.first + "] not exist in json";
+                        show_err_msg(msg);
+                        return Status::invalid_param_in_json;
+                    } else {
+                        *ptr->val = ptr->default_val;
                         continue;
                     }
-                    LOG_KNOWHERE_ERROR_ << "Invalid param [" << it.first << "] in json.";
-                    if (err_msg) {
-                        *err_msg = std::string("invalid param ") + it.first;
-                    }
-                    return Status::invalid_param_in_json;
-                }
-                if (json.find(it.first) == json.end()) {
-                    *ptr->val = ptr->default_val;
-                    continue;
                 }
                 if (!json[it.first].is_string()) {
-                    LOG_KNOWHERE_ERROR_ << "Type conflict in json: param [" << it.first << "] should be a string.";
-                    if (err_msg) {
-                        *err_msg = std::string("param ") + it.first + " should be a string";
-                    }
+                    std::string msg = "Type conflict in json: param '" + it.first + "' (" + to_string(json[it.first]) +
+                                      ") should be a string";
+                    show_err_msg(msg);
                     return Status::type_conflict_in_json;
                 }
                 *ptr->val = json[it.first];
-            }
-
-            if (const Entry<CFG_LIST>* ptr = std::get_if<Entry<CFG_LIST>>(&var)) {
-                if (!(type & ptr->type)) {
-                    continue;
-                }
-                if (json.find(it.first) == json.end() && !ptr->default_val.has_value()) {
-                    if (ptr->allow_empty_without_default) {
-                        continue;
-                    }
-                    LOG_KNOWHERE_ERROR_ << "Invalid param [" << it.first << "] in json.";
-                    if (err_msg) {
-                        *err_msg = std::string("invalid param ") + it.first;
-                    }
-
-                    return Status::invalid_param_in_json;
-                }
-                if (json.find(it.first) == json.end()) {
-                    *ptr->val = ptr->default_val;
-                    continue;
-                }
-                if (!json[it.first].is_array()) {
-                    LOG_KNOWHERE_ERROR_ << "Type conflict in json: param [" << it.first << "] should be an array.";
-                    if (err_msg) {
-                        *err_msg = std::string("param ") + it.first + " should be an array";
-                    }
-
-                    return Status::type_conflict_in_json;
-                }
-                *ptr->val = CFG_LIST::value_type();
-                for (auto&& i : json[it.first]) {
-                    ptr->val->value().push_back(i);
-                }
             }
 
             if (const Entry<CFG_BOOL>* ptr = std::get_if<Entry<CFG_BOOL>>(&var)) {
                 if (!(type & ptr->type)) {
                     continue;
                 }
-                if (json.find(it.first) == json.end() && !ptr->default_val.has_value()) {
-                    if (ptr->allow_empty_without_default) {
+                if (json.find(it.first) == json.end()) {
+                    if (!ptr->default_val.has_value()) {
+                        if (ptr->allow_empty_without_default) {
+                            continue;
+                        }
+                        std::string msg = "param '" + it.first + "' not exist in json";
+                        show_err_msg(msg);
+                        return Status::invalid_param_in_json;
+                    } else {
+                        *ptr->val = ptr->default_val;
                         continue;
                     }
-                    LOG_KNOWHERE_ERROR_ << "Invalid param [" << it.first << "] in json.";
-                    if (err_msg) {
-                        *err_msg = std::string("invalid param ") + it.first;
-                    }
-
-                    return Status::invalid_param_in_json;
-                }
-                if (json.find(it.first) == json.end()) {
-                    *ptr->val = ptr->default_val;
-                    continue;
                 }
                 if (!json[it.first].is_boolean()) {
-                    LOG_KNOWHERE_ERROR_ << "Type conflict in json: param [" << it.first << "] should be a boolean.";
-                    if (err_msg) {
-                        *err_msg = std::string("param ") + it.first + " should be a boolean";
-                    }
-
+                    std::string msg = "Type conflict in json: param '" + it.first + "' (" + to_string(json[it.first]) +
+                                      ") should be a boolean";
+                    show_err_msg(msg);
                     return Status::type_conflict_in_json;
                 }
                 *ptr->val = json[it.first];
@@ -543,52 +444,20 @@ class Config {
                 if (!(type & ptr->type)) {
                     continue;
                 }
-                if (json.find(it.first) == json.end() && !ptr->default_val.has_value()) {
-                    if (ptr->allow_empty_without_default) {
+                if (json.find(it.first) == json.end()) {
+                    if (!ptr->default_val.has_value()) {
+                        if (ptr->allow_empty_without_default) {
+                            continue;
+                        }
+                        std::string msg = "param '" + it.first + "' not exist in json";
+                        show_err_msg(msg);
+                        return Status::invalid_param_in_json;
+                    } else {
+                        *ptr->val = ptr->default_val;
                         continue;
                     }
-                    LOG_KNOWHERE_ERROR_ << "Invalid param [" << it.first << "] in json.";
-                    if (err_msg) {
-                        *err_msg = std::string("invalid param ") + it.first;
-                    }
-                    return Status::invalid_param_in_json;
-                }
-                if (json.find(it.first) == json.end()) {
-                    *ptr->val = ptr->default_val;
-                    continue;
                 }
                 *ptr->val = json[it.first];
-            }
-
-            if (const Entry<CFG_BYTES>* ptr = std::get_if<Entry<CFG_BYTES>>(&var)) {
-                if (!(type & ptr->type)) {
-                    continue;
-                }
-                if (json.find(it.first) == json.end() && !ptr->default_val.has_value()) {
-                    if (ptr->allow_empty_without_default) {
-                        continue;
-                    }
-                    LOG_KNOWHERE_ERROR_ << "Invalid param [" << it.first << "] in json.";
-                    if (err_msg) {
-                        *err_msg = std::string("invalid param ") + it.first;
-                    }
-                    return Status::invalid_param_in_json;
-                }
-                if (json.find(it.first) == json.end()) {
-                    *ptr->val = ptr->default_val;
-                    continue;
-                }
-                if (!json[it.first].is_array()) {
-                    LOG_KNOWHERE_ERROR_ << "Type conflict in json: param [" << it.first << "] should be an array.";
-                    if (err_msg) {
-                        *err_msg = std::string("param ") + it.first + " should be an array";
-                    }
-                    return Status::type_conflict_in_json;
-                }
-                *ptr->val = CFG_BYTES::value_type();
-                for (auto&& i : json[it.first]) {
-                    ptr->val->value().push_back(i);
-                }
             }
         }
 
@@ -602,8 +471,8 @@ class Config {
     virtual ~Config() {
     }
 
-    using VarEntry = std::variant<Entry<CFG_STRING>, Entry<CFG_FLOAT>, Entry<CFG_INT>, Entry<CFG_LIST>, Entry<CFG_BOOL>,
-                                  Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE>, Entry<CFG_BYTES>>;
+    using VarEntry = std::variant<Entry<CFG_STRING>, Entry<CFG_FLOAT>, Entry<CFG_INT>, Entry<CFG_BOOL>,
+                                  Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE>>;
     std::unordered_map<std::string, VarEntry> __DICT__;
 
  protected:
@@ -615,9 +484,10 @@ class Config {
 
 #define KNOHWERE_DECLARE_CONFIG(CONFIG) CONFIG()
 
-#define KNOWHERE_CONFIG_DECLARE_FIELD(PARAM)                                                             \
-    __DICT__[#PARAM] = knowhere::Config::VarEntry(std::in_place_type<Entry<decltype(PARAM)>>, &PARAM);   \
-    EntryAccess<decltype(PARAM)> PARAM##_access(std::get_if<Entry<decltype(PARAM)>>(&__DICT__[#PARAM])); \
+#define KNOWHERE_CONFIG_DECLARE_FIELD(PARAM)                                                                     \
+    __DICT__[#PARAM] = knowhere::Config::VarEntry(std::in_place_type<knowhere::Entry<decltype(PARAM)>>, &PARAM); \
+    knowhere::EntryAccess<decltype(PARAM)> PARAM##_access(                                                       \
+        std::get_if<knowhere::Entry<decltype(PARAM)>>(&__DICT__[#PARAM]));                                       \
     PARAM##_access
 
 const float defaultRangeFilter = 1.0f / 0.0;

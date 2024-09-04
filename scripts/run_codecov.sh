@@ -60,7 +60,7 @@ fi
 
 # run unittest
 for test in `ls ${KNOWHERE_UNITTEST_DIR}/*test*`; do
-    echo "Running unittest: ${KNOWHERE_UNITTEST_DIR}/$test"
+    echo "Running unittest: $test"
     # run unittest
     ${test}
     if [ $? -ne 0 ]; then
