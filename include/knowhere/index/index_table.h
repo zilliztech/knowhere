@@ -21,7 +21,8 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     // binary ivf
     {IndexEnum::INDEX_FAISS_BIN_IDMAP, VecType::VECTOR_BINARY},
     {IndexEnum::INDEX_FAISS_BIN_IVFFLAT, VecType::VECTOR_BINARY},
-    // ivf
+
+    // faiss index
     {IndexEnum::INDEX_FAISS_IDMAP, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_FAISS_IDMAP, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_FAISS_IDMAP, VecType::VECTOR_BFLOAT16},
@@ -49,11 +50,13 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     {IndexEnum::INDEX_FAISS_IVFSQ_CC, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_FAISS_IVFSQ_CC, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_FAISS_IVFSQ_CC, VecType::VECTOR_BFLOAT16},
+
     // gpu index
     {IndexEnum::INDEX_GPU_BRUTEFORCE, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_GPU_IVFFLAT, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_GPU_IVFPQ, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_GPU_CAGRA, VecType::VECTOR_FLOAT},
+
     // hnsw
     {IndexEnum::INDEX_HNSW, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_HNSW, VecType::VECTOR_FLOAT16},
@@ -66,6 +69,7 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     {IndexEnum::INDEX_HNSW_SQ8_REFINE, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_HNSW_SQ8_REFINE, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_HNSW_SQ8_REFINE, VecType::VECTOR_BFLOAT16},
+
     // faiss hnsw
     {IndexEnum::INDEX_FAISS_HNSW_FLAT, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_FAISS_HNSW_FLAT, VecType::VECTOR_FLOAT16},
@@ -82,10 +86,12 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     {IndexEnum::INDEX_FAISS_HNSW_PRQ, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_FAISS_HNSW_PRQ, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_FAISS_HNSW_PRQ, VecType::VECTOR_BFLOAT16},
+
     // diskann
     {IndexEnum::INDEX_DISKANN, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_DISKANN, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_DISKANN, VecType::VECTOR_BFLOAT16},
+
     // sparse index
     {IndexEnum::INDEX_SPARSE_INVERTED_INDEX, VecType::VECTOR_SPARSE_FLOAT},
     {IndexEnum::INDEX_SPARSE_WAND, VecType::VECTOR_SPARSE_FLOAT},
@@ -95,51 +101,24 @@ static std::set<std::string> legal_support_mmap_knowhere_index = {
     // binary ivf
     IndexEnum::INDEX_FAISS_BIN_IDMAP,
     IndexEnum::INDEX_FAISS_BIN_IVFFLAT,
-    // ivf
+
+    // faiss index
     IndexEnum::INDEX_FAISS_IDMAP,
-    IndexEnum::INDEX_FAISS_IDMAP,
-    IndexEnum::INDEX_FAISS_IDMAP,
-
     IndexEnum::INDEX_FAISS_IVFFLAT,
-    IndexEnum::INDEX_FAISS_IVFFLAT,
-    IndexEnum::INDEX_FAISS_IVFFLAT,
-
     IndexEnum::INDEX_FAISS_IVFPQ,
-    IndexEnum::INDEX_FAISS_IVFPQ,
-    IndexEnum::INDEX_FAISS_IVFPQ,
-
     IndexEnum::INDEX_FAISS_SCANN,
-    IndexEnum::INDEX_FAISS_SCANN,
-    IndexEnum::INDEX_FAISS_SCANN,
-
     IndexEnum::INDEX_FAISS_IVFSQ8,
-    IndexEnum::INDEX_FAISS_IVFSQ8,
-    IndexEnum::INDEX_FAISS_IVFSQ8,
-
-    IndexEnum::INDEX_FAISS_IVFSQ_CC,
-    IndexEnum::INDEX_FAISS_IVFSQ_CC,
     IndexEnum::INDEX_FAISS_IVFSQ_CC,
 
     // hnsw
     IndexEnum::INDEX_HNSW,
-    IndexEnum::INDEX_HNSW,
-    IndexEnum::INDEX_HNSW,
-
     IndexEnum::INDEX_HNSW_SQ8,
-    IndexEnum::INDEX_HNSW_SQ8,
-    IndexEnum::INDEX_HNSW_SQ8,
-
-    IndexEnum::INDEX_HNSW_SQ8_REFINE,
-    IndexEnum::INDEX_HNSW_SQ8_REFINE,
     IndexEnum::INDEX_HNSW_SQ8_REFINE,
 
     // faiss hnsw
     IndexEnum::INDEX_FAISS_HNSW_FLAT,
-
     IndexEnum::INDEX_FAISS_HNSW_SQ,
-
     IndexEnum::INDEX_FAISS_HNSW_PQ,
-
     IndexEnum::INDEX_FAISS_HNSW_PRQ,
 
     // sparse index
