@@ -11,6 +11,8 @@
 
 #include <algorithm>
 #include <catch2/catch_test_macros.hpp>
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <limits>
@@ -363,3 +365,23 @@ GenSparseDataSet(int32_t rows, int32_t cols, float sparsity, int seed = 42) {
 
     return GenSparseDataSet(data, cols);
 }
+
+// a timer
+struct StopWatch {
+    using timepoint_t = std::chrono::time_point<std::chrono::steady_clock>;
+
+    timepoint_t Start;
+
+    //
+    StopWatch() {
+        Start = std::chrono::steady_clock::now();
+    }
+
+    //
+    double
+    elapsed() const {
+        const auto now = std::chrono::steady_clock::now();
+        std::chrono::duration<double> elapsed = now - Start;
+        return elapsed.count();
+    }
+};
