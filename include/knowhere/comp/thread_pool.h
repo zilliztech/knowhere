@@ -112,7 +112,7 @@ class ThreadPool {
             [func = std::forward<Func>(func), &args...](auto&&) mutable { return func(std::forward<Args>(args)...); });
     }
 
-    [[nodiscard]] int32_t
+    [[nodiscard]] size_t
     size() const noexcept {
         return pool_.numThreads();
     }
@@ -197,6 +197,11 @@ class ThreadPool {
         }
     }
 
+    static size_t
+    GetGlobalBuildThreadPoolSize() {
+        return (build_pool_ == nullptr ? 0 : build_pool_->size());
+    }
+
     static void
     SetGlobalSearchThreadPoolSize(uint32_t num_threads) {
         if (search_pool_ == nullptr) {
@@ -207,6 +212,11 @@ class ThreadPool {
             LOG_KNOWHERE_INFO_ << "Global search thread pool size has already been set to " << search_pool_->size();
             return;
         }
+    }
+
+    static size_t
+    GetGlobalSearchThreadPoolSize() {
+        return (search_pool_ == nullptr ? 0 : search_pool_->size());
     }
 
     static size_t

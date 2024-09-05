@@ -151,9 +151,19 @@ KnowhereConfig::SetBuildThreadPoolSize(size_t num_threads) {
     knowhere::ThreadPool::SetGlobalBuildThreadPoolSize(num_threads);
 }
 
+size_t
+KnowhereConfig::GetBuildThreadPoolSize() {
+    return knowhere::ThreadPool::GetGlobalBuildThreadPoolSize();
+}
+
 void
 KnowhereConfig::SetSearchThreadPoolSize(size_t num_threads) {
     knowhere::ThreadPool::SetGlobalSearchThreadPoolSize(num_threads);
+}
+
+size_t
+KnowhereConfig::GetSearchThreadPoolSize() {
+    return knowhere::ThreadPool::GetGlobalSearchThreadPoolSize();
 }
 
 void
