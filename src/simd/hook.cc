@@ -240,15 +240,10 @@ fvec_hook(std::string& simd_type) {
         bf16_vec_L2sqr = bf16_vec_L2sqr_sse;
         bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_sse;
 
-        if (cpu_support_f16c()) {
-            fp16_vec_inner_product = fp16_vec_inner_product_sse;
-            fp16_vec_L2sqr = fp16_vec_L2sqr_sse;
-            fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_sse;
-        } else {
-            fp16_vec_inner_product = fp16_vec_inner_product_ref;
-            fp16_vec_L2sqr = fp16_vec_L2sqr_ref;
-            fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_ref;
-        }
+        fp16_vec_inner_product = fp16_vec_inner_product_ref;
+        fp16_vec_L2sqr = fp16_vec_L2sqr_ref;
+        fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_ref;
+
         simd_type = "SSE4_2";
         support_pq_fast_scan = false;
     } else {

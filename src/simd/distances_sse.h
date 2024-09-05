@@ -23,17 +23,11 @@ float
 fvec_L2sqr_sse(const float* x, const float* y, size_t d);
 
 float
-fp16_vec_L2sqr_sse(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
-
-float
 bf16_vec_L2sqr_sse(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
 
 /// inner product
 float
 fvec_inner_product_sse(const float* x, const float* y, size_t d);
-
-float
-fp16_vec_inner_product_sse(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
 
 float
 bf16_vec_inner_product_sse(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
@@ -48,9 +42,6 @@ fvec_Linf_sse(const float* x, const float* y, size_t d);
 
 float
 fvec_norm_L2sqr_sse(const float* x, size_t d);
-
-float
-fp16_vec_norm_L2sqr_sse(const knowhere::fp16* x, size_t d);
 
 float
 bf16_vec_norm_L2sqr_sse(const knowhere::bf16* x, size_t d);
