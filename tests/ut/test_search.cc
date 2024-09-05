@@ -21,6 +21,7 @@
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
+#include "simd/hook.h"
 #include "utils.h"
 
 namespace {
@@ -166,7 +167,15 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8, hnsw_gen),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8_REFINE, hnsw_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+        if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN) {
+            // need to check cpu model for scann
+            if (!faiss::support_pq_fast_scan) {
+                REQUIRE(idx_expected.error() == knowhere::Status::invalid_index_error);
+                return;
+            }
+        }
+        auto idx = idx_expected.value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -218,7 +227,15 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8, hnsw_gen),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8_REFINE, hnsw_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+        if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN) {
+            // need to check cpu model for scann
+            if (!faiss::support_pq_fast_scan) {
+                REQUIRE(idx_expected.error() == knowhere::Status::invalid_index_error);
+                return;
+            }
+        }
+        auto idx = idx_expected.value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -426,7 +443,15 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8_REFINE, hnsw_gen),
         }));
 
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+        if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN) {
+            // need to check cpu model for scann
+            if (!faiss::support_pq_fast_scan) {
+                REQUIRE(idx_expected.error() == knowhere::Status::invalid_index_error);
+                return;
+            }
+        }
+        auto idx = idx_expected.value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);

@@ -18,6 +18,7 @@
 #include "knowhere/comp/knowhere_check.h"
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/index/index_factory.h"
+#include "simd/hook.h"
 #include "utils.h"
 TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
     using Catch::Approx;
@@ -177,7 +178,16 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+
+        auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+        if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN) {
+            // need to check cpu model for scann
+            if (!faiss::support_pq_fast_scan) {
+                REQUIRE(idx_expected.error() == knowhere::Status::invalid_index_error);
+                return;
+            }
+        }
+        auto idx = idx_expected.value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);

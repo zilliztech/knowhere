@@ -12,6 +12,7 @@
 #include "knowhere/index/index_factory.h"
 
 #include "knowhere/index/index_table.h"
+#include "simd/hook.h"
 
 #ifdef KNOWHERE_WITH_RAFT
 #include <cuda_runtime_api.h>
@@ -59,6 +60,11 @@ IndexFactory::Create(const std::string& name, const int32_t& version, const Obje
         return expected<Index<IndexNode>>::Err(Status::cuda_runtime_error, "gpu not available");
     }
 #endif
+    if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && !faiss::support_pq_fast_scan) {
+        LOG_KNOWHERE_ERROR_ << "SCANN index is not supported on the current CPU model";
+        return expected<Index<IndexNode>>::Err(Status::invalid_index_error,
+                                               "SCANN index is not supported on the current CPU model");
+    }
 
     return fun_map_v->fun_value(version, object);
 }
