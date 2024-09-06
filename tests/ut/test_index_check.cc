@@ -153,7 +153,7 @@ TEST_CASE("Test support mmap index", "[IndexCheckTest]") {
         CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_SPARSE_WAND));
 
 #ifdef KNOWHERE_WITH_CARDINAL
-        CHECK(KnowhereCheck::SuppportMmapIndexTypeCheck(IndexEnum::INDEX_DISKANN));
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_DISKANN));
 #else
         CHECK_FALSE(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_DISKANN));
 #endif
