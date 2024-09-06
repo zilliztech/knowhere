@@ -66,24 +66,6 @@ fvec_norm_L2sqr_sse(const float* x, size_t d) {
 }
 
 float
-fp16_vec_norm_L2sqr_sse(const knowhere::fp16* x, size_t d) {
-    __m128 m_res = _mm_setzero_ps();
-    while (d >= 4) {
-        __m128 m_x = _mm_cvtph_ps(_mm_loadl_epi64((const __m128i_u*)x));
-        m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_x));
-        x += 4;
-        d -= 4;
-    }
-    if (d > 0) {
-        __m128 m_x = _mm_cvtph_ps(mm_masked_read_short(d, (uint16_t*)x));
-        m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_x));
-    }
-    m_res = _mm_hadd_ps(m_res, m_res);
-    m_res = _mm_hadd_ps(m_res, m_res);
-    return _mm_cvtss_f32(m_res);
-}
-
-float
 bf16_vec_norm_L2sqr_sse(const knowhere::bf16* x, size_t d) {
     __m128 m_res = _mm_setzero_ps();
     while (d >= 4) {
@@ -316,29 +298,6 @@ fvec_L2sqr_sse(const float* x, const float* y, size_t d) {
 }
 
 float
-fp16_vec_L2sqr_sse(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
-    __m128 m_res = _mm_setzero_ps();
-    while (d >= 4) {
-        __m128 m_x = _mm_cvtph_ps(_mm_loadl_epi64((const __m128i_u*)x));
-        __m128 m_y = _mm_cvtph_ps(_mm_loadl_epi64((const __m128i_u*)y));
-        m_x = _mm_sub_ps(m_x, m_y);
-        m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_x));
-        x += 4;
-        y += 4;
-        d -= 4;
-    }
-    if (d > 0) {
-        __m128 m_x = _mm_cvtph_ps(mm_masked_read_short(d, (uint16_t*)x));
-        __m128 m_y = _mm_cvtph_ps(mm_masked_read_short(d, (uint16_t*)y));
-        m_x = _mm_sub_ps(m_x, m_y);
-        m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_x));
-    }
-    m_res = _mm_hadd_ps(m_res, m_res);
-    m_res = _mm_hadd_ps(m_res, m_res);
-    return _mm_cvtss_f32(m_res);
-}
-
-float
 bf16_vec_L2sqr_sse(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
     __m128 m_res = _mm_setzero_ps();
     while (d >= 4) {
@@ -385,27 +344,6 @@ fvec_inner_product_sse(const float* x, const float* y, size_t d) {
     msum1 = _mm_hadd_ps(msum1, msum1);
     msum1 = _mm_hadd_ps(msum1, msum1);
     return _mm_cvtss_f32(msum1);
-}
-
-float
-fp16_vec_inner_product_sse(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
-    __m128 m_res = _mm_setzero_ps();
-    while (d >= 4) {
-        __m128 m_x = _mm_cvtph_ps(_mm_loadl_epi64((const __m128i*)x));
-        __m128 m_y = _mm_cvtph_ps(_mm_loadl_epi64((const __m128i*)y));
-        m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_y));
-        x += 4;
-        y += 4;
-        d -= 4;
-    }
-    if (d > 0) {
-        __m128 m_x = _mm_cvtph_ps(mm_masked_read_short(d, (uint16_t*)x));
-        __m128 m_y = _mm_cvtph_ps(mm_masked_read_short(d, (uint16_t*)y));
-        m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_y));
-    }
-    m_res = _mm_hadd_ps(m_res, m_res);
-    m_res = _mm_hadd_ps(m_res, m_res);
-    return _mm_cvtss_f32(m_res);
 }
 
 float

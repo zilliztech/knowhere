@@ -153,13 +153,6 @@ TEST_CASE("Test fp16 distance", "[fp16]") {
     REQUIRE_THAT(faiss::fp16_vec_norm_L2sqr_neon(x.get(), dim), Catch::Matchers::WithinRel(ref_norm_l2_dist, 0.001f));
 #endif
 #if defined(__x86_64__)
-    if (faiss::cpu_support_sse4_2()) {
-        REQUIRE_THAT(faiss::fp16_vec_L2sqr_sse(x.get(), y.get(), dim), Catch::Matchers::WithinRel(ref_l2_dist, 0.001f));
-        REQUIRE_THAT(faiss::fp16_vec_inner_product_sse(x.get(), y.get(), dim),
-                     Catch::Matchers::WithinRel(ref_ip_dist, 0.001f));
-        REQUIRE_THAT(faiss::fp16_vec_norm_L2sqr_sse(x.get(), dim),
-                     Catch::Matchers::WithinRel(ref_norm_l2_dist, 0.001f));
-    }
     if (faiss::cpu_support_avx2()) {
         REQUIRE_THAT(faiss::fp16_vec_L2sqr_avx(x.get(), y.get(), dim), Catch::Matchers::WithinRel(ref_l2_dist, 0.001f));
         REQUIRE_THAT(faiss::fp16_vec_inner_product_avx(x.get(), y.get(), dim),
