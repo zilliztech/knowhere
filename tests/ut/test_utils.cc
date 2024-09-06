@@ -133,6 +133,57 @@ TEST_CASE("Test DiskLoad") {
 #endif
 }
 
+TEST_CASE("Test ThreadPool") {
+    SECTION("Build thread pool") {
+        knowhere::ThreadPool::InitGlobalBuildThreadPool(0);
+        auto prev_build_thread_num = knowhere::ThreadPool::GetGlobalBuildThreadPoolSize();
+        knowhere::ThreadPool::InitGlobalBuildThreadPool(prev_build_thread_num);
+
+        knowhere::ThreadPool::SetGlobalBuildThreadPoolSize(2);
+        REQUIRE(knowhere::ThreadPool::GetGlobalBuildThreadPoolSize() == 2);
+        knowhere::ThreadPool::SetGlobalBuildThreadPoolSize(4);
+        REQUIRE(knowhere::ThreadPool::GetGlobalBuildThreadPoolSize() == 4);
+        knowhere::ThreadPool::SetGlobalBuildThreadPoolSize(0);
+        REQUIRE(knowhere::ThreadPool::GetGlobalBuildThreadPoolSize() == 4);
+
+        REQUIRE(knowhere::ThreadPool::GetBuildThreadPoolPendingTaskCount() == 0);
+
+        if (prev_build_thread_num > 0) {
+            knowhere::ThreadPool::SetGlobalBuildThreadPoolSize(prev_build_thread_num);
+        }
+    }
+
+    SECTION("Search thread pool") {
+        knowhere::ThreadPool::InitGlobalSearchThreadPool(0);
+        auto prev_search_thread_num = knowhere::ThreadPool::GetGlobalSearchThreadPoolSize();
+        knowhere::ThreadPool::InitGlobalSearchThreadPool(prev_search_thread_num);
+
+        knowhere::ThreadPool::SetGlobalSearchThreadPoolSize(2);
+        REQUIRE(knowhere::ThreadPool::GetGlobalSearchThreadPoolSize() == 2);
+        knowhere::ThreadPool::SetGlobalSearchThreadPoolSize(4);
+        REQUIRE(knowhere::ThreadPool::GetGlobalSearchThreadPoolSize() == 4);
+        knowhere::ThreadPool::SetGlobalSearchThreadPoolSize(0);
+        REQUIRE(knowhere::ThreadPool::GetGlobalSearchThreadPoolSize() == 4);
+
+        REQUIRE(knowhere::ThreadPool::GetSearchThreadPoolPendingTaskCount() == 0);
+
+        if (prev_search_thread_num > 0) {
+            knowhere::ThreadPool::SetGlobalSearchThreadPoolSize(prev_search_thread_num);
+        }
+    }
+
+    SECTION("ScopedOmpSetter") {
+        int prev_num_threads = omp_get_max_threads();
+        {
+            knowhere::ThreadPool::ScopedOmpSetter setter(2 * prev_num_threads);
+            REQUIRE(omp_get_max_threads() == 2 * prev_num_threads);
+#ifdef OPENBLAS_OS_LINUX
+            REQUIRE(openblas_get_num_threads() == 2 * prev_num_threads);
+#endif
+        }
+    }
+}
+
 TEST_CASE("Test WaitAllSuccess with folly::Unit futures") {
     auto pool = knowhere::ThreadPool::GetGlobalSearchThreadPool();
     std::vector<folly::Future<folly::Unit>> futures;

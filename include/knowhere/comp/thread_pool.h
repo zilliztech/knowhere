@@ -247,7 +247,7 @@ class ThreadPool {
 
     class ScopedOmpSetter {
         int omp_before;
-#if defined(OPENBLAS_OS_LINUX)
+#ifdef OPENBLAS_OS_LINUX
         int blas_thread_before;
 #endif
      public:
@@ -258,16 +258,16 @@ class ThreadPool {
                 omp_before = build_pool_->size();
             }
 
-#if defined(OPENBLAS_OS_LINUX)
+#ifdef OPENBLAS_OS_LINUX
             blas_thread_before = openblas_get_num_threads();
-            openblas_set_num_threads(1);
+            openblas_set_num_threads(num_threads <= 0 ? blas_thread_before : num_threads);
 #endif
 
             omp_set_num_threads(num_threads <= 0 ? omp_before : num_threads);
         }
         ~ScopedOmpSetter() {
             omp_set_num_threads(omp_before);
-#if defined(OPENBLAS_OS_LINUX)
+#ifdef OPENBLAS_OS_LINUX
             openblas_set_num_threads(blas_thread_before);
 #endif
         }
