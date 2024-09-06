@@ -18,47 +18,263 @@
 #include "knowhere/comp/knowhere_check.h"
 #include "knowhere/index/index_factory.h"
 
+using namespace knowhere;
+
+// knowhere/index/index_table.h
 TEST_CASE("Test index and data type check", "[IndexCheckTest]") {
     SECTION("Test valid") {
-        REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck(knowhere::IndexEnum::INDEX_HNSW,
-                                                                   knowhere::VecType::VECTOR_FLOAT) == true);
-        REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck(knowhere::IndexEnum::INDEX_HNSW,
-                                                                   knowhere::VecType::VECTOR_BFLOAT16) == true);
+        // binary index
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_BIN_IDMAP, VecType::VECTOR_BINARY));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_BIN_IVFFLAT, VecType::VECTOR_BINARY));
 
-#ifndef KNOWHERE_WITH_CARDINAL
-        REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck(knowhere::IndexEnum::INDEX_HNSW,
-                                                                   knowhere::VecType::VECTOR_BINARY) == false);
-        REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck(knowhere::IndexEnum::INDEX_HNSW,
-                                                                   knowhere::VecType::VECTOR_SPARSE_FLOAT) == false);
+        // faiss index
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IDMAP, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IDMAP, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IDMAP, VecType::VECTOR_BFLOAT16));
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IVFFLAT, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IVFFLAT, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IVFFLAT, VecType::VECTOR_BFLOAT16));
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IVFFLAT_CC, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IVFFLAT_CC, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IVFFLAT_CC, VecType::VECTOR_BFLOAT16));
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IVFPQ, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IVFPQ, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IVFPQ, VecType::VECTOR_BFLOAT16));
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_SCANN, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_SCANN, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_SCANN, VecType::VECTOR_BFLOAT16));
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IVFSQ8, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IVFSQ8, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IVFSQ8, VecType::VECTOR_BFLOAT16));
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IVFSQ_CC, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IVFSQ_CC, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_IVFSQ_CC, VecType::VECTOR_BFLOAT16));
+
+        // gpu index
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_BRUTEFORCE, VecType::VECTOR_FLOAT));
+        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_BRUTEFORCE, VecType::VECTOR_FLOAT16));
+        CHECK_FALSE(
+            KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_BRUTEFORCE, VecType::VECTOR_BFLOAT16));
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFFLAT, VecType::VECTOR_FLOAT));
+        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFFLAT, VecType::VECTOR_FLOAT16));
+        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFFLAT, VecType::VECTOR_BFLOAT16));
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFPQ, VecType::VECTOR_FLOAT));
+        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFPQ, VecType::VECTOR_FLOAT16));
+        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFPQ, VecType::VECTOR_BFLOAT16));
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_CAGRA, VecType::VECTOR_FLOAT));
+        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_CAGRA, VecType::VECTOR_FLOAT16));
+        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_CAGRA, VecType::VECTOR_BFLOAT16));
+
+        // HNSW
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_BFLOAT16));
+
+#ifdef KNOWHERE_WITH_CARDINAL
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_BINARY));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_SPARSE_FLOAT));
 #else
-        REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck(knowhere::IndexEnum::INDEX_HNSW,
-                                                                   knowhere::VecType::VECTOR_BINARY) == true);
-        REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck(knowhere::IndexEnum::INDEX_HNSW,
-                                                                   knowhere::VecType::VECTOR_SPARSE_FLOAT) == true);
+        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_BINARY));
+        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_SPARSE_FLOAT));
 #endif
-        REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck(knowhere::IndexEnum::INDEX_DISKANN,
-                                                                   knowhere::VecType::VECTOR_FLOAT) == true);
-        REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck(knowhere::IndexEnum::INDEX_DISKANN,
-                                                                   knowhere::VecType::VECTOR_FLOAT16) == true);
-        REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck(knowhere::IndexEnum::INDEX_DISKANN,
-                                                                   knowhere::VecType::VECTOR_BINARY) == false);
-        REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck(knowhere::IndexEnum::INDEX_DISKANN,
-                                                                   knowhere::VecType::VECTOR_SPARSE_FLOAT) == false);
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ8, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ8, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ8, VecType::VECTOR_BFLOAT16));
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ8_REFINE, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ8_REFINE, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ8_REFINE, VecType::VECTOR_BFLOAT16));
+
+        // faiss hnsw
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_FLAT, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_FLAT, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_FLAT, VecType::VECTOR_BFLOAT16));
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_SQ, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_SQ, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_SQ, VecType::VECTOR_BFLOAT16));
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_PQ, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_PQ, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_PQ, VecType::VECTOR_BFLOAT16));
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_PRQ, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_PRQ, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_PRQ, VecType::VECTOR_BFLOAT16));
+
+        // diskann
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_DISKANN, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_DISKANN, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_DISKANN, VecType::VECTOR_BFLOAT16));
+
+        // sparse index
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_SPARSE_INVERTED_INDEX,
+                                                       VecType::VECTOR_SPARSE_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_SPARSE_WAND, VecType::VECTOR_SPARSE_FLOAT));
     }
 }
 
 TEST_CASE("Test support mmap index", "[IndexCheckTest]") {
     SECTION("Test valid") {
-        REQUIRE(knowhere::KnowhereCheck::SuppportMmapIndexTypeCheck(knowhere::IndexEnum::INDEX_HNSW) == true);
-        REQUIRE(knowhere::KnowhereCheck::SuppportMmapIndexTypeCheck(knowhere::IndexEnum::INDEX_SPARSE_WAND) == true);
-        REQUIRE(knowhere::KnowhereCheck::SuppportMmapIndexTypeCheck(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX) ==
-                true);
-#ifndef KNOWHERE_WITH_CARDINAL
-        REQUIRE(knowhere::KnowhereCheck::SuppportMmapIndexTypeCheck(knowhere::IndexEnum::INDEX_DISKANN) == false);
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_FAISS_BIN_IDMAP));
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_FAISS_BIN_IVFFLAT));
+
+        // faiss index
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_FAISS_IDMAP));
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_FAISS_IVFFLAT));
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_FAISS_IVFPQ));
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_FAISS_SCANN));
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_FAISS_IVFSQ8));
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_FAISS_IVFSQ_CC));
+
+        // hnsw
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_HNSW));
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_HNSW_SQ8));
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_HNSW_SQ8_REFINE));
+
+        // faiss hnsw
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_FAISS_HNSW_FLAT));
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_FAISS_HNSW_SQ));
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_FAISS_HNSW_PQ));
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_FAISS_HNSW_PRQ));
+
+        // sparse index
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_SPARSE_INVERTED_INDEX));
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_SPARSE_WAND));
+
+#ifdef KNOWHERE_WITH_CARDINAL
+        CHECK(KnowhereCheck::SuppportMmapIndexTypeCheck(IndexEnum::INDEX_DISKANN));
 #else
-        REQUIRE(knowhere::KnowhereCheck::SuppportMmapIndexTypeCheck(knowhere::IndexEnum::INDEX_DISKANN) == true);
+        CHECK_FALSE(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_DISKANN));
 #endif
-        REQUIRE(knowhere::KnowhereCheck::SuppportMmapIndexTypeCheck(knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT) ==
-                true);
+    }
+}
+
+TEST_CASE("Test index has raw data", "[IndexHasRawData]") {
+    SECTION("Normal test") {
+        auto ver = Version::GetCurrentVersion().VersionNumber();
+
+        // binary index
+        CHECK(KnowhereCheck::IndexHasRawData<bin1>(IndexEnum::INDEX_FAISS_BIN_IDMAP, metric::HAMMING, ver, {}));
+        CHECK(KnowhereCheck::IndexHasRawData<bin1>(IndexEnum::INDEX_FAISS_BIN_IDMAP, metric::JACCARD, ver, {}));
+
+        CHECK(KnowhereCheck::IndexHasRawData<bin1>(IndexEnum::INDEX_FAISS_BIN_IVFFLAT, metric::HAMMING, ver, {}));
+        CHECK(KnowhereCheck::IndexHasRawData<bin1>(IndexEnum::INDEX_FAISS_BIN_IVFFLAT, metric::JACCARD, ver, {}));
+
+        // faiss index
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IDMAP, metric::L2, ver, {}));
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IDMAP, metric::IP, ver, {}));
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IDMAP, metric::COSINE, ver, {}));
+
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IVFFLAT, metric::L2, ver, {}));
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IVFFLAT, metric::IP, ver, {}));
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IVFFLAT, metric::COSINE, ver, {}));
+
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IVFFLAT_CC, metric::L2, ver, {}));
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IVFFLAT_CC, metric::IP, ver, {}));
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IVFFLAT_CC, metric::COSINE, ver, {}));
+
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IVFPQ, metric::L2, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IVFPQ, metric::IP, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IVFPQ, metric::COSINE, ver, {}));
+
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_SCANN, metric::L2, ver, {}));
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_SCANN, metric::IP, ver, {}));
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_SCANN, metric::COSINE, ver, {}));
+
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IVFSQ8, metric::L2, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IVFSQ8, metric::IP, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IVFSQ8, metric::COSINE, ver, {}));
+
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IVFSQ_CC, metric::L2, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IVFSQ_CC, metric::IP, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IVFSQ_CC, metric::COSINE, ver, {}));
+
+        // HNSW
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_HNSW, metric::L2, ver, {}));
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_HNSW, metric::IP, ver, {}));
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_HNSW, metric::COSINE, ver, {}));
+
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_HNSW_SQ8, metric::L2, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_HNSW_SQ8, metric::IP, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_HNSW_SQ8, metric::COSINE, ver, {}));
+
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_HNSW_SQ8_REFINE, metric::L2, ver, {}));
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_HNSW_SQ8_REFINE, metric::IP, ver, {}));
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_HNSW_SQ8_REFINE, metric::COSINE, ver, {}));
+
+        // faiss HNSW
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_HNSW_FLAT, metric::L2, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_HNSW_FLAT, metric::IP, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_HNSW_FLAT, metric::COSINE, ver, {}));
+
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_HNSW_SQ, metric::L2, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_HNSW_SQ, metric::IP, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_HNSW_SQ, metric::COSINE, ver, {}));
+
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_HNSW_PQ, metric::L2, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_HNSW_PQ, metric::IP, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_HNSW_PQ, metric::COSINE, ver, {}));
+
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_HNSW_PRQ, metric::L2, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_HNSW_PRQ, metric::IP, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_HNSW_PRQ, metric::COSINE, ver, {}));
+
+        // diskann
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_DISKANN, metric::L2, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_DISKANN, metric::IP, ver, {}));
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_DISKANN, metric::COSINE, ver, {}));
+
+        // gpu index
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_GPU_BRUTEFORCE, metric::L2, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_GPU_BRUTEFORCE, metric::IP, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_GPU_BRUTEFORCE, metric::COSINE, ver, {}));
+
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_GPU_IVFFLAT, metric::L2, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_GPU_IVFFLAT, metric::IP, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_GPU_IVFFLAT, metric::COSINE, ver, {}));
+
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_GPU_IVFPQ, metric::L2, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_GPU_IVFPQ, metric::IP, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_GPU_IVFPQ, metric::COSINE, ver, {}));
+
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_GPU_CAGRA, metric::L2, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_GPU_CAGRA, metric::IP, ver, {}));
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_GPU_CAGRA, metric::COSINE, ver, {}));
+
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, metric::IP, ver, {}));
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_SPARSE_WAND, metric::IP, ver, {}));
+    }
+
+    SECTION("Special test") {
+        auto min_ver = Version::GetMinimalVersion().VersionNumber();
+        auto ver = Version::GetCurrentVersion().VersionNumber();
+
+        knowhere::Json json = {
+            {indexparam::WITH_RAW_DATA, true},
+        };
+
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IDMAP, metric::COSINE, min_ver, {}));
+
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_SCANN, metric::L2, ver, json));
+
+        json[indexparam::WITH_RAW_DATA] = false;
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_SCANN, metric::L2, ver, json));
+        json[indexparam::WITH_RAW_DATA] = "true";
+        CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_SCANN, metric::L2, ver, json));
+        json[indexparam::WITH_RAW_DATA] = "false";
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_SCANN, metric::L2, ver, json));
+        json[indexparam::WITH_RAW_DATA] = 1;
+        CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_SCANN, metric::L2, ver, json));
     }
 }

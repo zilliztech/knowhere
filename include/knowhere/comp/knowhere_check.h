@@ -34,7 +34,7 @@ IndexTypeAndDataTypeCheck(const std::string& index_name, VecType data_type) {
 }
 
 static bool
-SuppportMmapIndexTypeCheck(const std::string& index_name) {
+SupportMmapIndexTypeCheck(const std::string& index_name) {
     auto& mmap_index_table = std::get<1>(IndexFactory::StaticIndexTableInstance());
     if (mmap_index_table.find(index_name) != mmap_index_table.end()) {
         return true;
@@ -44,18 +44,18 @@ SuppportMmapIndexTypeCheck(const std::string& index_name) {
 }
 
 inline bool
-CheckBooleanInJson(const knowhere::Json& json, std::string key, bool target) {
+CheckBooleanInJson(const knowhere::Json& json, std::string key) {
     if (json.find(key) == json.end()) {
-        return false;
+        return true;
     }
     if (json[key].is_boolean()) {
-        return json[key] == target;
+        return json[key];
     }
     if (json[key].is_string()) {
-        if (target) {
-            return json[key] == "true";
+        if (json[key] == "true") {
+            return true;
         } else {
-            return json[key] == "false";
+            return false;
         }
     }
     return false;
@@ -74,16 +74,16 @@ IndexHasRawData(const knowhere::IndexType& indexType, const knowhere::MetricType
     static std::set<knowhere::IndexType> no_raw_data_index_set = {
         IndexEnum::INDEX_FAISS_IVFPQ,     IndexEnum::INDEX_FAISS_IVFSQ8,      IndexEnum::INDEX_HNSW_SQ8,
         IndexEnum::INDEX_FAISS_GPU_IDMAP, IndexEnum::INDEX_FAISS_GPU_IVFFLAT, IndexEnum::INDEX_FAISS_GPU_IVFSQ8,
-        IndexEnum::INDEX_FAISS_GPU_IVFPQ, IndexEnum::INDEX_RAFT_CAGRA,        IndexEnum::INDEX_GPU_CAGRA,
-        IndexEnum::INDEX_RAFT_IVFFLAT,    IndexEnum::INDEX_GPU_IVFFLAT,       IndexEnum::INDEX_RAFT_IVFPQ,
-        IndexEnum::INDEX_GPU_IVFPQ,
+        IndexEnum::INDEX_FAISS_GPU_IVFPQ, IndexEnum::INDEX_GPU_BRUTEFORCE,    IndexEnum::INDEX_GPU_IVFFLAT,
+        IndexEnum::INDEX_GPU_IVFPQ,       IndexEnum::INDEX_GPU_CAGRA,         IndexEnum::INDEX_RAFT_BRUTEFORCE,
+        IndexEnum::INDEX_RAFT_IVFFLAT,    IndexEnum::INDEX_RAFT_IVFPQ,        IndexEnum::INDEX_RAFT_CAGRA,
     };
 
     static std::set<knowhere::IndexType> no_raw_data_index_alias_set = {"IVFPQ", "IVFSQ"};
 
     static std::set<knowhere::IndexType> conditional_hold_raw_data_index_set = {
-        IndexEnum::INDEX_HNSW,           IndexEnum::INDEX_DISKANN,     IndexEnum::INDEX_FAISS_SCANN,
-        IndexEnum::INDEX_FAISS_IVFSQ_CC, IndexEnum::INDEX_FAISS_IDMAP,
+        IndexEnum::INDEX_FAISS_IDMAP, IndexEnum::INDEX_FAISS_SCANN, IndexEnum::INDEX_FAISS_IVFSQ_CC,
+        IndexEnum::INDEX_HNSW,        IndexEnum::INDEX_DISKANN,
     };
 
     if (has_raw_data_index_set.find(indexType) != has_raw_data_index_set.end() ||
@@ -110,7 +110,7 @@ IndexHasRawData(const knowhere::IndexType& indexType, const knowhere::MetricType
             return IsMetricType(metricType, metric::L2) || IsMetricType(metricType, metric::COSINE);
 #endif
         } else if (indexType == IndexEnum::INDEX_FAISS_SCANN) {
-            return !CheckBooleanInJson(params, indexparam::WITH_RAW_DATA, false);
+            return CheckBooleanInJson(params, indexparam::WITH_RAW_DATA);
             // INDEX_FAISS_IVFSQ_CC is not online yet
         } else if (indexType == IndexEnum::INDEX_FAISS_IVFSQ_CC) {
             return params.find(indexparam::RAW_DATA_STORE_PREFIX) != params.end();
