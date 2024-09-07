@@ -201,9 +201,11 @@ TEST_CASE("Test index has raw data", "[IndexHasRawData]") {
         CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_IVFSQ_CC, metric::COSINE, ver, {}));
 
         // HNSW
+#ifndef KNOWHERE_WITH_CARDINAL
         CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_HNSW, metric::L2, ver, {}));
         CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_HNSW, metric::IP, ver, {}));
         CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_HNSW, metric::COSINE, ver, {}));
+#endif
 
         CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_HNSW_SQ8, metric::L2, ver, {}));
         CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_HNSW_SQ8, metric::IP, ver, {}));
@@ -231,10 +233,11 @@ TEST_CASE("Test index has raw data", "[IndexHasRawData]") {
         CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_FAISS_HNSW_PRQ, metric::COSINE, ver, {}));
 
         // diskann
+#ifndef KNOWHERE_WITH_CARDINAL
         CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_DISKANN, metric::L2, ver, {}));
         CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_DISKANN, metric::IP, ver, {}));
         CHECK(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_DISKANN, metric::COSINE, ver, {}));
-
+#endif
         // gpu index
         CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_GPU_BRUTEFORCE, metric::L2, ver, {}));
         CHECK_FALSE(KnowhereCheck::IndexHasRawData<fp32>(IndexEnum::INDEX_GPU_BRUTEFORCE, metric::IP, ver, {}));
