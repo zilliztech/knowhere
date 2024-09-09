@@ -19,11 +19,11 @@ spec:
     args: ["cat"]
     resources:
       requests:
-        memory: "2Gi"
-        cpu: "1"
+        memory: "16Gi"
+        cpu: "4"
       limits:
-        memory: "30Gi"
-        cpu: "8"
+        memory: "16Gi"
+        cpu: "4"
     volumeMounts:
       - mountPath: /home/data
         name: db-data
