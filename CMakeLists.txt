@@ -103,7 +103,7 @@ find_package(opentelemetry-cpp REQUIRED)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_OSX_DEPLOYMENT_TARGET
-    "10.13"
+    "10.15"
     CACHE STRING "Minimum OS X deployment version" FORCE)
 
 if(OPENMP_FOUND)
