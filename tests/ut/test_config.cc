@@ -11,16 +11,11 @@
 
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "index/diskann/diskann_config.h"
 #include "index/flat/flat_config.h"
 #include "index/hnsw/hnsw_config.h"
 #include "index/ivf/ivf_config.h"
 #include "knowhere/config.h"
-#ifdef KNOWHERE_WITH_DISKANN
-#include "index/diskann/diskann_config.h"
-#endif
-#ifdef KNOWHERE_WITH_RAFT
-#include "index/gpu_raft/gpu_raft_cagra_config.h"
-#endif
 
 TEST_CASE("Test config json parse", "[config]") {
     knowhere::Status s;
@@ -49,22 +44,14 @@ TEST_CASE("Test config json parse", "[config]") {
             })",
                                          R"({
                 "12-s": 19878
-            })");
-        knowhere::BaseConfig test_config;
-        knowhere::Json test_json = knowhere::Json::parse(invalid_json_str);
-        s = knowhere::Config::FormatAndCheck(test_config, test_json);
-        CHECK(s == knowhere::Status::success);
-    }
-
-    SECTION("check invalid json values") {
-        auto invalid_json_str = GENERATE(as<std::string>{},
+            })",
                                          R"({
                 "k": "100.12"
             })");
         knowhere::BaseConfig test_config;
         knowhere::Json test_json = knowhere::Json::parse(invalid_json_str);
         s = knowhere::Config::FormatAndCheck(test_config, test_json);
-        CHECK(s == knowhere::Status::invalid_value_in_json);
+        CHECK(s != knowhere::Status::success);
     }
 
     SECTION("Check the json for the specific index") {
@@ -96,39 +83,10 @@ TEST_CASE("Test config json parse", "[config]") {
         })");
         knowhere::HnswConfig hnsw_config;
         s = knowhere::Config::FormatAndCheck(hnsw_config, large_build_json);
-        CHECK(s == knowhere::Status::success);
-#ifdef KNOWHERE_WITH_DISKANN
+        CHECK(s == knowhere::Status::invalid_param_in_json);
         knowhere::DiskANNConfig diskann_config;
         s = knowhere::Config::FormatAndCheck(diskann_config, large_build_json);
         CHECK(s == knowhere::Status::success);
-#endif
-    }
-
-    SECTION("check materialized view config") {
-        knowhere::Json json = knowhere::Json::parse(R"({
-            "opt_fields_path": "/tmp/test",
-            "materialized_view_search_info": {
-                "field_id_to_touched_categories_cnt": [[1,2]],
-                "is_pure_and": false,
-                "has_not": true
-            }
-        })");
-        knowhere::Status s;
-        knowhere::BaseConfig train_cfg;
-        s = knowhere::Config::Load(train_cfg, json, knowhere::TRAIN);
-        CHECK(s == knowhere::Status::success);
-        CHECK(train_cfg.opt_fields_path.value() == "/tmp/test");
-        CHECK(train_cfg.materialized_view_search_info.has_value() == false);
-
-        knowhere::BaseConfig search_config;
-        s = knowhere::Config::Load(search_config, json, knowhere::SEARCH);
-        CHECK(s == knowhere::Status::success);
-        CHECK(search_config.opt_fields_path.has_value() == false);
-        auto mv = search_config.materialized_view_search_info.value();
-        CHECK(mv.field_id_to_touched_categories_cnt.size() == 1);
-        CHECK(mv.field_id_to_touched_categories_cnt[1] == 2);
-        CHECK(mv.is_pure_and == false);
-        CHECK(mv.has_not == true);
     }
 
     SECTION("check flat index config") {
@@ -136,7 +94,6 @@ TEST_CASE("Test config json parse", "[config]") {
             "metric_type": "L2",
             "k": 100
         })");
-
         knowhere::FlatConfig train_cfg;
         s = knowhere::Config::Load(train_cfg, json, knowhere::TRAIN);
         CHECK(s == knowhere::Status::success);
@@ -218,6 +175,7 @@ TEST_CASE("Test config json parse", "[config]") {
             invalid_value_json = json;
             invalid_value_json["ef"] = 99;
             s = knowhere::Config::Load(wrong_cfg, invalid_value_json, knowhere::SEARCH);
+            s = wrong_cfg.CheckAndAdjustForSearch(&err_msg);
             CHECK(s == knowhere::Status::out_of_range_in_json);
         }
 
@@ -231,6 +189,7 @@ TEST_CASE("Test config json parse", "[config]") {
         {
             knowhere::HnswConfig search_cfg;
             s = knowhere::Config::Load(search_cfg, json, knowhere::SEARCH);
+            s = search_cfg.CheckAndAdjustForSearch(&err_msg);
             CHECK(s == knowhere::Status::success);
         }
 
@@ -239,6 +198,7 @@ TEST_CASE("Test config json parse", "[config]") {
             auto search_json = json;
             search_json.erase("ef");
             s = knowhere::Config::Load(search_cfg, search_json, knowhere::SEARCH);
+            s = search_cfg.CheckAndAdjustForSearch(&err_msg);
             CHECK(s == knowhere::Status::success);
             CHECK_EQ(100, search_cfg.ef.value());
         }
@@ -249,6 +209,7 @@ TEST_CASE("Test config json parse", "[config]") {
             search_json.erase("ef");
             search_json["k"] = 10;
             s = knowhere::Config::Load(search_cfg, search_json, knowhere::SEARCH);
+            s = search_cfg.CheckAndAdjustForSearch(&err_msg);
             CHECK(s == knowhere::Status::success);
             CHECK_EQ(16, search_cfg.ef.value());
         }
@@ -266,7 +227,7 @@ TEST_CASE("Test config json parse", "[config]") {
         CHECK(range_cfg.trace_visit.value() == true);
         CHECK(range_cfg.overview_levels.value() == 3);
     }
-#ifdef KNOWHERE_WITH_DISKANN
+
     SECTION("check diskann index config") {
         knowhere::Json json = knowhere::Json::parse(R"({
             "metric_type": "L2",
@@ -283,6 +244,8 @@ TEST_CASE("Test config json parse", "[config]") {
             knowhere::DiskANNConfig train_cfg;
             s = knowhere::Config::Load(train_cfg, json, knowhere::TRAIN);
             CHECK(s == knowhere::Status::success);
+            s = train_cfg.CheckAndAdjustForBuild();
+            CHECK(s == knowhere::Status::success);
             CHECK_EQ(128, train_cfg.search_list_size.value());
             CHECK_EQ("L2", train_cfg.metric_type.value());
         }
@@ -290,6 +253,8 @@ TEST_CASE("Test config json parse", "[config]") {
         {
             knowhere::DiskANNConfig search_cfg;
             s = knowhere::Config::Load(search_cfg, json, knowhere::SEARCH);
+            CHECK(s == knowhere::Status::success);
+            s = search_cfg.CheckAndAdjustForSearch(&err_msg);
             CHECK(s == knowhere::Status::success);
             CHECK_EQ("L2", search_cfg.metric_type.value());
             CHECK_EQ(100, search_cfg.k.value());
@@ -302,6 +267,8 @@ TEST_CASE("Test config json parse", "[config]") {
             search_json["k"] = 2;
             s = knowhere::Config::Load(search_cfg, search_json, knowhere::SEARCH);
             CHECK(s == knowhere::Status::success);
+            s = search_cfg.CheckAndAdjustForSearch(&err_msg);
+            CHECK(s == knowhere::Status::success);
             CHECK_EQ(16, search_cfg.search_list_size.value());
         }
 
@@ -310,6 +277,7 @@ TEST_CASE("Test config json parse", "[config]") {
             auto search_json = json;
             search_json["search_list_size"] = 99;
             s = knowhere::Config::Load(search_cfg, search_json, knowhere::SEARCH);
+            s = search_cfg.CheckAndAdjustForSearch(&err_msg);
             CHECK(s == knowhere::Status::out_of_range_in_json);
         }
 
@@ -324,576 +292,5 @@ TEST_CASE("Test config json parse", "[config]") {
         s = knowhere::Config::Load(feder_cfg, json, knowhere::FEDER);
         CHECK(s == knowhere::Status::success);
         CHECK(range_cfg.trace_visit.value() == true);
-    }
-#endif
-#ifdef KNOWHERE_WITH_RAFT
-    SECTION("check cagra index config") {
-        knowhere::Json json = knowhere::Json::parse(R"({
-            "metric_type": "L2",
-            "k": 100
-        })");
-
-        {
-            // search without params
-            knowhere::GpuRaftCagraConfig cagra_config;
-            s = knowhere::Config::Load(cagra_config, json, knowhere::SEARCH);
-            CHECK(s == knowhere::Status::success);
-        }
-
-        {
-            // search only with legal search_width
-            knowhere::GpuRaftCagraConfig cagra_config;
-            auto tmp_json = json;
-            tmp_json["search_width"] = 4;
-            s = knowhere::Config::Load(cagra_config, tmp_json, knowhere::SEARCH);
-            CHECK(s == knowhere::Status::success);
-        }
-
-        {
-            // search only with illegal search_width with default itopk
-            knowhere::GpuRaftCagraConfig cagra_config;
-            auto tmp_json = json;
-            tmp_json["search_width"] = 2;
-            s = knowhere::Config::Load(cagra_config, tmp_json, knowhere::SEARCH);
-            CHECK(s == knowhere::Status::success);
-        }
-
-        {
-            // search only with legal itopk
-            knowhere::GpuRaftCagraConfig cagra_config;
-            auto tmp_json = json;
-            tmp_json["itopk_size"] = 120;
-            s = knowhere::Config::Load(cagra_config, tmp_json, knowhere::SEARCH);
-            CHECK(s == knowhere::Status::success);
-        }
-
-        {
-            // search only with illegal itopk and default search_width
-            knowhere::GpuRaftCagraConfig cagra_config;
-            auto tmp_json = json;
-            tmp_json["itopk_size"] = 30;
-            s = knowhere::Config::Load(cagra_config, tmp_json, knowhere::SEARCH);
-            CHECK(s == knowhere::Status::success);
-        }
-
-        {
-            // search only with illegal itopk and search width
-            knowhere::GpuRaftCagraConfig cagra_config;
-            auto tmp_json = json;
-            tmp_json["itopk_size"] = 30;
-            tmp_json["search_width"] = 3;
-            s = knowhere::Config::Load(cagra_config, tmp_json, knowhere::SEARCH);
-            CHECK(s == knowhere::Status::out_of_range_in_json);
-        }
-
-        {
-            // search only with legal itopk and search width
-            knowhere::GpuRaftCagraConfig cagra_config;
-            auto tmp_json = json;
-            tmp_json["itopk_size"] = 97;
-            tmp_json["search_width"] = 2;
-            s = knowhere::Config::Load(cagra_config, tmp_json, knowhere::SEARCH);
-            CHECK(s == knowhere::Status::success);
-        }
-
-        {
-            // search only with legal itopk and search width
-            knowhere::GpuRaftCagraConfig cagra_config;
-            auto tmp_json = json;
-            tmp_json["itopk_size"] = 30;
-            tmp_json["search_width"] = 4;
-            s = knowhere::Config::Load(cagra_config, tmp_json, knowhere::SEARCH);
-            CHECK(s == knowhere::Status::success);
-        }
-    }
-
-#endif
-}
-
-TEST_CASE("Test config load", "[BOOL]") {
-    knowhere::Status s;
-    std::string err_msg;
-
-    SECTION("check bool") {
-        class TestConfig : public knowhere::Config {
-         public:
-            CFG_BOOL bool_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
-                KNOWHERE_CONFIG_DECLARE_FIELD(bool_val).description("bool field for test").for_train_and_search();
-            }
-        };
-
-        TestConfig test_cfg;
-        knowhere::Json json;
-
-        json = knowhere::Json::parse(R"({})");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::invalid_param_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "bool_val": "a"
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::type_conflict_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "bool_val": true
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-        CHECK(test_cfg.bool_val.value() == true);
-    }
-
-    SECTION("check bool allow empty") {
-        class TestConfig : public knowhere::Config {
-         public:
-            CFG_BOOL bool_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
-                KNOWHERE_CONFIG_DECLARE_FIELD(bool_val)
-                    .description("bool field for test")
-                    .allow_empty_without_default()
-                    .for_train_and_search();
-            }
-        };
-
-        TestConfig test_cfg;
-        knowhere::Json json;
-
-        json = knowhere::Json::parse(R"({})");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-
-        json = knowhere::Json::parse(R"({
-            "bool_val": "a"
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::type_conflict_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "bool_val": true
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-        CHECK(test_cfg.bool_val.value() == true);
-    }
-
-    SECTION("check bool with default") {
-        class TestConfig : public knowhere::Config {
-         public:
-            CFG_BOOL bool_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
-                KNOWHERE_CONFIG_DECLARE_FIELD(bool_val)
-                    .description("bool field for test")
-                    .set_default(true)
-                    .for_train_and_search();
-            }
-        };
-
-        TestConfig test_cfg;
-        knowhere::Json json;
-
-        json = knowhere::Json::parse(R"({})");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-        CHECK(test_cfg.bool_val.value() == true);
-
-        json = knowhere::Json::parse(R"({
-            "bool_val": "a"
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::type_conflict_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "bool_val": false
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-        CHECK(test_cfg.bool_val.value() == false);
-    }
-}
-
-TEST_CASE("Test config load", "[INT]") {
-    knowhere::Status s;
-    std::string err_msg;
-
-    SECTION("check int") {
-        class TestConfig : public knowhere::Config {
-         public:
-            CFG_INT int_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
-                KNOWHERE_CONFIG_DECLARE_FIELD(int_val).description("int field for test").for_train_and_search();
-            }
-        };
-
-        TestConfig test_cfg;
-        knowhere::Json json;
-
-        json = knowhere::Json::parse(R"({})");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::invalid_param_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "int_val": "a"
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::type_conflict_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "int_val": 10
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-        CHECK(test_cfg.int_val.value() == 10);
-    }
-
-    SECTION("check int allow empty") {
-        class TestConfig : public knowhere::Config {
-         public:
-            CFG_INT int_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
-                KNOWHERE_CONFIG_DECLARE_FIELD(int_val)
-                    .description("int field for test")
-                    .allow_empty_without_default()
-                    .for_train_and_search();
-            }
-        };
-
-        TestConfig test_cfg;
-        knowhere::Json json;
-
-        json = knowhere::Json::parse(R"({})");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-
-        json = knowhere::Json::parse(R"({
-            "int_val": "a"
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::type_conflict_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "int_val": 10
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-        CHECK(test_cfg.int_val.value() == 10);
-    }
-
-    SECTION("check int in range") {
-        class TestConfig : public knowhere::Config {
-         public:
-            CFG_INT int_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
-                KNOWHERE_CONFIG_DECLARE_FIELD(int_val)
-                    .description("int field for test")
-                    .set_default(2)
-                    .for_train_and_search()
-                    .set_range(1, 100);
-            }
-        };
-
-        TestConfig test_cfg;
-        knowhere::Json json;
-
-        json = knowhere::Json::parse(R"({})");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-        CHECK(test_cfg.int_val.value() == 2);
-
-        json = knowhere::Json::parse(R"({
-            "int_val": "a"
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::type_conflict_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "int_val": 4294967296
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::arithmetic_overflow);
-
-        json = knowhere::Json::parse(R"({
-            "int_val": 123
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::out_of_range_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "int_val": 10
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-        CHECK(test_cfg.int_val.value() == 10);
-    }
-}
-
-TEST_CASE("Test config load", "[FLOAT]") {
-    knowhere::Status s;
-    std::string err_msg;
-
-    SECTION("check float") {
-        class TestConfig : public knowhere::Config {
-         public:
-            CFG_FLOAT float_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
-                KNOWHERE_CONFIG_DECLARE_FIELD(float_val).description("float field for test").for_train_and_search();
-            }
-        };
-
-        TestConfig test_cfg;
-        knowhere::Json json;
-
-        json = knowhere::Json::parse(R"({})");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::invalid_param_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "float_val": "a"
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::type_conflict_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "float_val": 10
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-        CHECK(test_cfg.float_val.value() == 10.0);
-    }
-
-    SECTION("check float allow empty") {
-        class TestConfig : public knowhere::Config {
-         public:
-            CFG_FLOAT float_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
-                KNOWHERE_CONFIG_DECLARE_FIELD(float_val)
-                    .description("float field for test")
-                    .allow_empty_without_default()
-                    .for_train_and_search();
-            }
-        };
-
-        TestConfig test_cfg;
-        knowhere::Json json;
-
-        json = knowhere::Json::parse(R"({})");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-
-        json = knowhere::Json::parse(R"({
-            "float_val": "a"
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::type_conflict_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "float_val": 10
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-        CHECK(test_cfg.float_val.value() == 10.0);
-    }
-
-    SECTION("check float in range") {
-        class TestConfig : public knowhere::Config {
-         public:
-            CFG_FLOAT float_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
-                KNOWHERE_CONFIG_DECLARE_FIELD(float_val)
-                    .description("float field for test")
-                    .set_default(2.0)
-                    .for_train_and_search()
-                    .set_range(1.0, 100.0);
-            }
-        };
-
-        TestConfig test_cfg;
-        knowhere::Json json;
-
-        json = knowhere::Json::parse(R"({})");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-        CHECK(test_cfg.float_val.value() == 2.0);
-
-        json = knowhere::Json::parse(R"({
-            "float_val": "a"
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::type_conflict_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "float_val": 1e+40
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::arithmetic_overflow);
-
-        json = knowhere::Json::parse(R"({
-            "float_val": 123
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::out_of_range_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "float_val": 10
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-        CHECK(test_cfg.float_val.value() == 10);
-    }
-}
-
-TEST_CASE("Test config load", "[STRING]") {
-    knowhere::Status s;
-    std::string err_msg;
-
-    SECTION("check string") {
-        class TestConfig : public knowhere::Config {
-         public:
-            CFG_STRING str_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
-                KNOWHERE_CONFIG_DECLARE_FIELD(str_val).description("string field for test").for_train_and_search();
-            }
-        };
-
-        TestConfig test_cfg;
-        knowhere::Json json;
-
-        json = knowhere::Json::parse(R"({})");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::invalid_param_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "str_val": 1
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::type_conflict_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "str_val": "abc"
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-        CHECK(test_cfg.str_val.value() == "abc");
-    }
-
-    SECTION("check string allow empty") {
-        class TestConfig : public knowhere::Config {
-         public:
-            CFG_STRING str_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
-                KNOWHERE_CONFIG_DECLARE_FIELD(str_val)
-                    .description("string field for test")
-                    .allow_empty_without_default()
-                    .for_train_and_search();
-            }
-        };
-
-        TestConfig test_cfg;
-        knowhere::Json json;
-
-        json = knowhere::Json::parse(R"({})");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-
-        json = knowhere::Json::parse(R"({
-            "str_val": 1
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::type_conflict_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "str_val": "abc"
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-        CHECK(test_cfg.str_val.value() == "abc");
-    }
-
-    SECTION("check string with default") {
-        class TestConfig : public knowhere::Config {
-         public:
-            CFG_STRING str_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
-                KNOWHERE_CONFIG_DECLARE_FIELD(str_val)
-                    .description("string field for test")
-                    .set_default("knowhere")
-                    .for_train_and_search();
-            }
-        };
-
-        TestConfig test_cfg;
-        knowhere::Json json;
-
-        json = knowhere::Json::parse(R"({})");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-        CHECK(test_cfg.str_val.value() == "knowhere");
-
-        json = knowhere::Json::parse(R"({
-            "str_val": 1
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::type_conflict_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "str_val": "abc"
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-        CHECK(test_cfg.str_val.value() == "abc");
-    }
-}
-
-TEST_CASE("Test config load", "[MATERIALIZED_VIEW_SEARCH_INFO]") {
-    knowhere::Status s;
-    std::string err_msg;
-
-    SECTION("check string") {
-        class TestConfig : public knowhere::Config {
-         public:
-            CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE info_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
-                KNOWHERE_CONFIG_DECLARE_FIELD(info_val).description("info field for test").for_train_and_search();
-            }
-        };
-
-        TestConfig test_cfg;
-        knowhere::Json json;
-
-        json = knowhere::Json::parse(R"({})");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::invalid_param_in_json);
-
-        json = knowhere::Json::parse(R"({
-            "info_val": ""
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-    }
-
-    SECTION("check string allow empty") {
-        class TestConfig : public knowhere::Config {
-         public:
-            CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE info_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
-                KNOWHERE_CONFIG_DECLARE_FIELD(info_val)
-                    .description("info field for test")
-                    .allow_empty_without_default()
-                    .for_train_and_search();
-            }
-        };
-
-        TestConfig test_cfg;
-        knowhere::Json json;
-
-        json = knowhere::Json::parse(R"({})");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
-
-        json = knowhere::Json::parse(R"({
-            "info_val": ""
-        })");
-        s = knowhere::Config::Load(test_cfg, json, knowhere::TRAIN, &err_msg);
-        CHECK(s == knowhere::Status::success);
     }
 }

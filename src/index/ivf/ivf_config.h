@@ -20,9 +20,6 @@ class IvfConfig : public BaseConfig {
  public:
     CFG_INT nlist;
     CFG_INT nprobe;
-    CFG_BOOL use_elkan;
-    CFG_BOOL ensure_topk_full;  // only take affect on temp index(IVF_FLAT_CC) now
-    CFG_INT max_empty_result_buckets;
     KNOHWERE_DECLARE_CONFIG(IvfConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(nlist)
             .set_default(128)
@@ -33,20 +30,6 @@ class IvfConfig : public BaseConfig {
             .set_default(8)
             .description("number of probes at query time.")
             .for_search()
-            .for_iterator()
-            .set_range(1, 65536);
-        KNOWHERE_CONFIG_DECLARE_FIELD(use_elkan)
-            .set_default(true)
-            .description("whether to use elkan algorithm")
-            .for_train();
-        KNOWHERE_CONFIG_DECLARE_FIELD(ensure_topk_full)
-            .set_default(true)
-            .description("whether to make sure topk results full")
-            .for_search();
-        KNOWHERE_CONFIG_DECLARE_FIELD(max_empty_result_buckets)
-            .set_default(2)
-            .description("the maximum of continuous buckets with empty result")
-            .for_range_search()
             .set_range(1, 65536);
     }
 };
@@ -70,7 +53,7 @@ class IvfPqConfig : public IvfConfig {
     CFG_INT m;
     CFG_INT nbits;
     KNOHWERE_DECLARE_CONFIG(IvfPqConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(m).description("m").set_default(32).for_train().set_range(1, 65536);
+        KNOWHERE_CONFIG_DECLARE_FIELD(m).description("m").set_default(4).for_train().set_range(1, 65536);
         KNOWHERE_CONFIG_DECLARE_FIELD(nbits).description("nbits").set_default(8).for_train().set_range(1, 64);
     }
 };
@@ -91,36 +74,41 @@ class ScannConfig : public IvfFlatConfig {
             .for_train();
     }
 
-    Status
-    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
-        switch (param_type) {
-            case PARAM_TYPE::SEARCH: {
-                if (!faiss::support_pq_fast_scan) {
-                    LOG_KNOWHERE_ERROR_ << "SCANN index is not supported on the current CPU model, avx2 support is "
-                                           "needed for x86 arch.";
-                    return Status::invalid_instruction_set;
-                }
-                if (!reorder_k.has_value()) {
-                    reorder_k = k.value();
-                } else if (reorder_k.value() < k.value()) {
-                    if (!err_msg) {
-                        err_msg = new std::string();
-                    }
-                    *err_msg = "reorder_k(" + std::to_string(reorder_k.value()) + ") should be larger than k(" +
-                               std::to_string(k.value()) + ")";
-                    LOG_KNOWHERE_ERROR_ << *err_msg;
-                    return Status::out_of_range_in_json;
-                }
-                break;
-            }
-            default: {
-                if (!faiss::support_pq_fast_scan) {
-                    LOG_KNOWHERE_ERROR_ << "SCANN index is not supported on the current CPU model, avx2 support is "
-                                           "needed for x86 arch.";
-                    return Status::invalid_instruction_set;
-                }
-                break;
-            }
+    inline Status
+    CheckAndAdjustForSearch(std::string* err_msg) override {
+        if (!faiss::support_pq_fast_scan) {
+            *err_msg = "SCANN index is not supported on the current CPU model, avx2 support is needed for x86 arch.";
+            LOG_KNOWHERE_ERROR_ << *err_msg;
+            return Status::invalid_instruction_set;
+        }
+        if (!reorder_k.has_value()) {
+            reorder_k = k.value();
+        } else if (reorder_k.value() < k.value()) {
+            *err_msg = "reorder_k(" + std::to_string(reorder_k.value()) + ") should be larger than k(" +
+                       std::to_string(k.value()) + ")";
+            LOG_KNOWHERE_ERROR_ << *err_msg;
+            return Status::out_of_range_in_json;
+        }
+
+        return Status::success;
+    }
+
+    inline Status
+    CheckAndAdjustForRangeSearch(std::string* err_msg) override {
+        if (!faiss::support_pq_fast_scan) {
+            *err_msg = "SCANN index is not supported on the current CPU model, avx2 support is needed for x86 arch.";
+            LOG_KNOWHERE_ERROR_ << *err_msg;
+            return Status::invalid_instruction_set;
+        }
+        return Status::success;
+    }
+
+    inline Status
+    CheckAndAdjustForBuild() override {
+        if (!faiss::support_pq_fast_scan) {
+            LOG_KNOWHERE_ERROR_
+                << "SCANN index is not supported on the current CPU model, avx2 support is needed for x86 arch.";
+            return Status::invalid_instruction_set;
         }
         return Status::success;
     }
@@ -129,41 +117,6 @@ class ScannConfig : public IvfFlatConfig {
 class IvfSqConfig : public IvfConfig {};
 
 class IvfBinConfig : public IvfConfig {};
-
-class IvfSqCcConfig : public IvfFlatCcConfig {
- public:
-    // user can use code size to control ivf_sq_cc quntizer type
-    CFG_INT code_size;
-    // IVF_SQ_CC holds all vectors in file when raw_data_store_prefix has value;
-    // cc index is a just-in-time index, raw data is avaliable after training if raw_data_store_prefix has value.
-    // ivf sq cc index will not keep raw data after using binaryset to create a new ivf sq cc index.
-    CFG_STRING raw_data_store_prefix;
-    KNOHWERE_DECLARE_CONFIG(IvfSqCcConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(code_size)
-            .set_default(8)
-            .description("code size, range in [4, 6, 8 and 16]")
-            .for_train();
-        KNOWHERE_CONFIG_DECLARE_FIELD(raw_data_store_prefix)
-            .description("Raw data will be set in this prefix path")
-            .for_train()
-            .allow_empty_without_default();
-    };
-    Status
-    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
-        if (param_type == PARAM_TYPE::TRAIN) {
-            auto code_size_v = code_size.value();
-            auto legal_code_size_list = std::vector<int>{4, 6, 8, 16};
-            if (std::find(legal_code_size_list.begin(), legal_code_size_list.end(), code_size_v) ==
-                legal_code_size_list.end()) {
-                *err_msg =
-                    "compress a vector into (code_size * dim)/8 bytes, code size value should be in 4, 6, 8 and 16";
-                LOG_KNOWHERE_ERROR_ << *err_msg;
-                return Status::invalid_value_in_json;
-            }
-        }
-        return Status::success;
-    }
-};
 
 }  // namespace knowhere
 

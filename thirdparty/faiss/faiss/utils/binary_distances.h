@@ -18,15 +18,13 @@
 #include <faiss/MetricType.h>
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/utils/Heap.h>
+#include <knowhere/bitsetview.h>
 #include <stdint.h>
 
 /* The binary distance type */
 typedef float tadis_t;
 
 namespace faiss {
-
-struct IDSelector;
-
 /**
  * Calculate the number of bit 1
  */
@@ -103,7 +101,7 @@ void binary_knn_mc(
         size_t ncodes,
         float* distances,
         int64_t* labels,
-        const IDSelector* sel = nullptr);
+        const BitsetView bitset = nullptr);
 
 /** Return the k smallest distances for a set of binary query vectors,
  * using a heap.
@@ -122,7 +120,7 @@ void binary_knn_hc(
         const uint8_t* b,
         size_t nb,
         size_t ncodes,
-        const IDSelector* sel = nullptr);
+        const BitsetView bitset = nullptr);
 
 template <class C, typename T>
 void binary_range_search(
@@ -134,7 +132,7 @@ void binary_range_search(
         T radius,
         size_t code_size,
         RangeSearchResult* res,
-        const IDSelector* sel = nullptr);
+        const BitsetView bitset = nullptr);
 
 } // namespace faiss
 

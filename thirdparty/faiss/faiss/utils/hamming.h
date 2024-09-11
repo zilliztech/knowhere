@@ -19,7 +19,6 @@
  * - memory usage
  * - cache-misses when dealing with large volumes of data (fewer bits is better)
  *
- * hamdis_t is defined in utils/hamming_distance/common.h
  */
 
 #ifndef FAISS_hamming_h
@@ -27,18 +26,16 @@
 
 #include <stdint.h>
 
+#include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/platform_macros.h>
 #include <faiss/utils/Heap.h>
+#include <knowhere/bitsetview.h>
 
-// Low-level Hamming distance computations and hamdis_t.
-#include <faiss/utils/hamming_distance/hamdis-inl.h>
-
-#include <faiss/utils/approx_topk/mode.h>
+/* The Hamming distance type */
+typedef int32_t hamdis_t;
 
 namespace faiss {
-
-struct IDSelector;
-
+extern uint8_t lookup8bit[256];
 /**************************************************
  * General bit vector functions
  **************************************************/
@@ -104,6 +101,10 @@ struct BitstringReader {
 
 FAISS_API extern size_t hamming_batch_size;
 
+inline int popcount64(uint64_t x) {
+    return __builtin_popcountl(x);
+}
+
 /** Compute a set of Hamming distances between na and nb binary vectors
  *
  * @param  a             size na * nbytespercode
@@ -126,18 +127,14 @@ void hammings(
  * @param nb      number of database vectors
  * @param ncodes  size of the binary codes (bytes)
  * @param ordered if != 0: order the results by decreasing distance
- *                (may be bottleneck for k/n > 0.01)
- * @param approx_topk_mode allows to use approximate top-k facilities
- *                         to speedup heap
- */
+ *                (may be bottleneck for k/n > 0.01) */
 void hammings_knn_hc(
         int_maxheap_array_t* ha,
         const uint8_t* a,
         const uint8_t* b,
         size_t nb,
         size_t ncodes,
-        int ordered,
-        ApproxTopK_mode_t approx_topk_mode = ApproxTopK_mode_t::EXACT_TOPK);
+        int ordered);
 
 /* Legacy alias to hammings_knn_hc. */
 void hammings_knn(
@@ -178,8 +175,9 @@ void hamming_range_search(
         size_t nb,
         int radius,
         size_t ncodes,
-        RangeSearchResult* result,
-        const IDSelector* sel = nullptr);
+        std::vector<faiss::RangeSearchPartialResult*>& result,
+        size_t buffer_size,
+        const BitsetView bitset = nullptr);
 
 /* Counting the number of matches or of cross-matches (without returning them)
    For use with function that assume pre-allocated memory */
@@ -215,75 +213,9 @@ void crosshamming_count_thres(
 /* compute the Hamming distances between two codewords of nwords*64 bits */
 hamdis_t hamming(const uint64_t* bs1, const uint64_t* bs2, size_t nwords);
 
-/** generalized Hamming distances (= count number of code bytes that
-    are the same) */
-void generalized_hammings_knn_hc(
-        int_maxheap_array_t* ha,
-        const uint8_t* a,
-        const uint8_t* b,
-        size_t nb,
-        size_t code_size,
-        int ordered = true);
-
-/** Pack a set of n codes of size M * nbit
- *
- * @param n           number of codes to pack
- * @param M           number of elementary codes per code
- * @param nbit        number of bits per elementary code
- * @param unpacked    input unpacked codes, size (n, M)
- * @param packed      output packed codes, size (n, code_size)
- * @param code_size   should be >= ceil(M * nbit / 8)
- */
-void pack_bitstrings(
-        size_t n,
-        size_t M,
-        int nbit,
-        const int32_t* unpacked,
-        uint8_t* packed,
-        size_t code_size);
-
-/** Pack a set of n codes of variable sizes
- *
- * @param nbit       number of bits per entry (size M)
- */
-void pack_bitstrings(
-        size_t n,
-        size_t M,
-        const int32_t* nbits,
-        const int32_t* unpacked,
-        uint8_t* packed,
-        size_t code_size);
-
-/** Unpack a set of n codes of size M * nbit
- *
- * @param n           number of codes to pack
- * @param M           number of elementary codes per code
- * @param nbit        number of bits per elementary code
- * @param unpacked    input unpacked codes, size (n, M)
- * @param packed      output packed codes, size (n, code_size)
- * @param code_size   should be >= ceil(M * nbit / 8)
- */
-void unpack_bitstrings(
-        size_t n,
-        size_t M,
-        int nbit,
-        const uint8_t* packed,
-        size_t code_size,
-        int32_t* unpacked);
-
-/** Unpack a set of n codes of variable sizes
- *
- * @param nbit       number of bits per entry (size M)
- */
-void unpack_bitstrings(
-        size_t n,
-        size_t M,
-        const int32_t* nbits,
-        const uint8_t* packed,
-        size_t code_size,
-        int32_t* unpacked);
-
 } // namespace faiss
+
+// inlined definitions of HammingComputerXX and GenHammingComputerXX
 
 #include <faiss/utils/hamming-inl.h>
 

@@ -14,8 +14,6 @@
 
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissAssert.h>
-#include <faiss/impl/IDSelector.h>
-#include <faiss/invlists/BlockInvertedLists.h>
 
 namespace faiss {
 
@@ -81,7 +79,7 @@ void DirectMap::clear() {
     hashtable.clear();
 }
 
-idx_t DirectMap::get(idx_t key) const {
+DirectMap::idx_t DirectMap::get(idx_t key) const {
     if (type == Array) {
         FAISS_THROW_IF_NOT_MSG(key >= 0 && key < array.size(), "invalid key");
         idx_t lo = array[key];
@@ -179,12 +177,8 @@ size_t DirectMap::remove_ids(const IDSelector& sel, InvertedLists* invlists) {
     std::vector<idx_t> toremove(nlist);
 
     size_t nremove = 0;
-    BlockInvertedLists* block_invlists =
-            dynamic_cast<BlockInvertedLists*>(invlists);
+
     if (type == NoMap) {
-        if (block_invlists != nullptr) {
-            return block_invlists->remove_ids(sel);
-        }
         // exhaustive scan of IVF
 #pragma omp parallel for
         for (idx_t i = 0; i < nlist; i++) {
@@ -213,9 +207,6 @@ size_t DirectMap::remove_ids(const IDSelector& sel, InvertedLists* invlists) {
             }
         }
     } else if (type == Hashtable) {
-        FAISS_THROW_IF_MSG(
-                block_invlists,
-                "remove with hashtable is not supported with BlockInvertedLists");
         const IDSelectorArray* sela =
                 dynamic_cast<const IDSelectorArray*>(&sel);
         FAISS_THROW_IF_NOT_MSG(

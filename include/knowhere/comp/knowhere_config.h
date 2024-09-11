@@ -41,17 +41,6 @@ class KnowhereConfig {
     SetSimdType(const SimdType simd_type);
 
     /**
-     *The purpose of this interface is: part of the sealed indexes default to using bf16 as the base data to achieve
-     *higher capacity; to ensure consistency in computation between growing and sealed, it is necessary to maintain the
-     *same precision in growing calculations as in sealed.
-     */
-    static void
-    EnablePatchForComputeFP32AsBF16();
-
-    static void
-    DisablePatchForComputeFP32AsBF16();
-
-    /**
      * Set openblas threshold
      *   if nq < use_blas_threshold, calculated by omp
      *   else, calculated by openblas
@@ -97,13 +86,9 @@ class KnowhereConfig {
 
     static void
     SetBuildThreadPoolSize(size_t num_threads);
-    static size_t
-    GetBuildThreadPoolSize();
 
     static void
     SetSearchThreadPoolSize(size_t num_threads);
-    static size_t
-    GetSearchThreadPoolSize();
 
     /**
      * init GPU Resource
@@ -122,12 +107,6 @@ class KnowhereConfig {
     */
     static void
     SetRaftMemPool(size_t init_size, size_t max_size);
-
-    /**
-     * Initialize RAFT with defaults
-     */
-    static void
-    SetRaftMemPool();
 };
 
 }  // namespace knowhere

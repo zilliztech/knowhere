@@ -8,11 +8,9 @@
 /** In this file are the implementations of extra metrics beyond L2
  *  and inner product */
 
-#include <cmath>
 #include <type_traits>
 
 #include <faiss/FaissHook.h>
-#include <faiss/MetricType.h>
 #include <faiss/utils/distances.h>
 
 namespace faiss {
@@ -21,13 +19,12 @@ template <MetricType mt>
 struct VectorDistance {
     size_t d;
     float metric_arg;
-    static constexpr bool is_similarity = is_similarity_metric(mt);
 
     inline float operator()(const float* x, const float* y) const;
 
     // heap template to use for this type of metric
     using C = typename std::conditional<
-            is_similarity_metric(mt),
+            mt == METRIC_INNER_PRODUCT,
             CMin<float, int64_t>,
             CMax<float, int64_t>>::type;
 };
@@ -123,48 +120,19 @@ template <>
 inline float VectorDistance<METRIC_Jaccard>::operator()(
         const float* x,
         const float* y) const {
-    // todo aguzhva: knowhere implementation is different,
-    //   compare ones
-
-    // WARNING: this distance is defined only for positive input vectors.
-    // Providing vectors with negative values would lead to incorrect results.
     float accu_num = 0, accu_den = 0;
+    const float EPSILON = 0.000001;
     for (size_t i = 0; i < d; i++) {
-        accu_num += fmin(x[i], y[i]);
-        accu_den += fmax(x[i], y[i]);
-    }
-    return accu_num / accu_den;
-}
-
-template <>
-inline float VectorDistance<METRIC_NaNEuclidean>::operator()(
-        const float* x,
-        const float* y) const {
-    // https://scikit-learn.org/stable/modules/generated/sklearn.metrics.pairwise.nan_euclidean_distances.html
-    float accu = 0;
-    size_t present = 0;
-    for (size_t i = 0; i < d; i++) {
-        if (!std::isnan(x[i]) && !std::isnan(y[i])) {
-            float diff = x[i] - y[i];
-            accu += diff * diff;
-            present++;
+        float xi = x[i], yi = y[i];
+        if (fabs (xi - yi) < EPSILON) {
+            accu_num += xi;
+            accu_den += xi;
+        } else {
+            accu_den += xi;
+            accu_den += yi;
         }
     }
-    if (present == 0) {
-        return NAN;
-    }
-    return float(d) / float(present) * accu;
-}
-
-template <>
-inline float VectorDistance<METRIC_ABS_INNER_PRODUCT>::operator()(
-        const float* x,
-        const float* y) const {
-    float accu = 0;
-    for (size_t i = 0; i < d; i++) {
-        accu += fabs(x[i] * y[i]);
-    }
-    return accu;
+    return 1 - accu_num / accu_den;
 }
 
 } // namespace faiss

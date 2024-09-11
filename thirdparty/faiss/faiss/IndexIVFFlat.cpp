@@ -15,19 +15,14 @@
 #include <cinttypes>
 #include <cstdio>
 
-#include "knowhere/object.h"
 #include "knowhere/utils.h"
-#include "knowhere/bitsetview_idselector.h"
 
 #include <faiss/IndexFlat.h>
 
 #include <faiss/FaissHook.h>
 #include <faiss/impl/AuxIndexStructures.h>
-#include <faiss/impl/IDSelector.h>
-
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/utils/distances.h>
-#include <faiss/utils/distances_if.h>
 #include <faiss/utils/utils.h>
 
 namespace faiss {
@@ -45,8 +40,6 @@ IndexIVFFlat::IndexIVFFlat(
         : IndexIVF(quantizer, d, nlist, sizeof(float) * d, metric) {
     this->is_cosine = is_cosine;
     code_size = sizeof(float) * d;
-    by_residual = false;
-
     replace_invlists(new ArrayInvertedLists(nlist, code_size, is_cosine), true);
 }
 
@@ -83,21 +76,14 @@ void IndexIVFFlat::add_with_ids(idx_t n, const float* x, const idx_t* xids) {
     }
 }
 
-
-IndexIVFFlat::IndexIVFFlat() {
-    by_residual = false;
-}
-
 void IndexIVFFlat::add_core(
         idx_t n,
         const float* x,
         const float* x_norms,
         const idx_t* xids,
-        const idx_t* coarse_idx,
-        void* inverted_list_context) {
+        const idx_t* coarse_idx) {
     FAISS_THROW_IF_NOT(is_trained);
     FAISS_THROW_IF_NOT(coarse_idx);
-    FAISS_THROW_IF_NOT(!by_residual);
     assert(invlists);
     direct_map.check_can_add(xids);
 
@@ -119,7 +105,7 @@ void IndexIVFFlat::add_core(
                 const float* xi = x + i * d;
                 const float* xi_normal = (x_norms == nullptr) ? nullptr : (x_norms + i);
                 size_t offset = invlists->add_entry(
-                        list_no, id, (const uint8_t*)xi, xi_normal, inverted_list_context);
+                        list_no, id, (const uint8_t*)xi, xi_normal);
                 dm_adder.add(i, list_no, offset);
                 n_add++;
             } else if (rank == 0 && list_no == -1) {
@@ -143,7 +129,6 @@ void IndexIVFFlat::encode_vectors(
         const idx_t* list_nos,
         uint8_t* codes,
         bool include_listnos) const {
-    FAISS_THROW_IF_NOT(!by_residual);
     if (!include_listnos) {
         memcpy(codes, x, code_size * n);
     } else {
@@ -173,228 +158,12 @@ void IndexIVFFlat::sa_decode(idx_t n, const uint8_t* bytes, float* x) const {
 
 namespace {
 
-/*
-// Baseline implementation that is kept for the reference.
-template <MetricType metric, class C, bool use_sel>
+template <MetricType metric, class C>
 struct IVFFlatScanner : InvertedListScanner {
     size_t d;
 
-    IVFFlatScanner(size_t d, bool store_pairs, const IDSelector* sel)
-            : InvertedListScanner(store_pairs, sel), d(d) {}
-
-    const float* xi;
-    void set_query(const float* query) override {
-        this->xi = query;
-    }
-
-    void set_list(idx_t list_no, float coarse_dis) override {
-        this->list_no = list_no;
-    }
-
-    float distance_to_code(const uint8_t* code) const override {
-        const float* yj = (float*)code;
-        float dis = metric == METRIC_INNER_PRODUCT
-                ? fvec_inner_product(xi, yj, d)
-                : fvec_L2sqr(xi, yj, d);
-        return dis;
-    }
-
-    size_t scan_codes(
-            size_t list_size,
-            const uint8_t* codes,
-            const float* code_norms,
-            const idx_t* ids,
-            float* simi,
-            idx_t* idxi,
-            size_t k) const override {
-        const float* list_vecs = (const float*)codes;
-        size_t nup = 0;
-        for (size_t j = 0; j < list_size; j++) {
-            const float* yj = list_vecs + d * j;
-            if (use_sel && !sel->is_member(ids[j])) {
-                continue;
-            }
-            float dis = metric == METRIC_INNER_PRODUCT
-                    ? fvec_inner_product(xi, yj, d)
-                    : fvec_L2sqr(xi, yj, d);
-            if (code_norms) {
-                dis /= code_norms[j];
-            }
-            if (C::cmp(simi[0], dis)) {
-                int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                heap_replace_top<C>(k, simi, idxi, dis, id);
-                nup++;
-            }
-        }
-        return nup;
-    }
-
-    void scan_codes_range(
-            size_t list_size,
-            const uint8_t* codes,
-            const float* code_norms,
-            const idx_t* ids,
-            float radius,
-            RangeQueryResult& res) const override {
-        const float* list_vecs = (const float*)codes;
-        for (size_t j = 0; j < list_size; j++) {
-            const float* yj = list_vecs + d * j;
-            if (use_sel && !sel->is_member(ids[j])) {
-                continue;
-            }
-            float dis = metric == METRIC_INNER_PRODUCT
-                    ? fvec_inner_product(xi, yj, d)
-                    : fvec_L2sqr(xi, yj, d);
-            if (code_norms) {
-                dis /= code_norms[j];
-            }
-            if (C::cmp(radius, dis)) {
-                int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                res.add(dis, id);
-            }
-        }
-    }
-};
-*/
-
-template <MetricType metric, class C, bool use_sel>
-struct IVFFlatScanner : InvertedListScanner {
-    size_t d;
-
-    IVFFlatScanner(size_t d, bool store_pairs, const IDSelector* sel)
-            : InvertedListScanner(store_pairs, sel), d(d) {
-        keep_max = is_similarity_metric(metric);
-    }
-
-    const float* xi;
-    void set_query(const float* query) override {
-        this->xi = query;
-    }
-
-    void set_list(idx_t list_no, float coarse_dis) override {
-        this->list_no = list_no;
-    }
-
-    float distance_to_code(const uint8_t* code) const override {
-        const float* yj = (float*)code;
-        float dis = metric == METRIC_INNER_PRODUCT
-                ? fvec_inner_product(xi, yj, d)
-                : fvec_L2sqr(xi, yj, d);
-        return dis;
-    }
-
-    size_t scan_codes(
-            size_t list_size,
-            const uint8_t* codes,
-            const float* code_norms,
-            const idx_t* ids,
-            float* simi,
-            idx_t* idxi,
-            size_t k,
-            size_t& scan_cnt) const override {
-        const float* list_vecs = (const float*)codes;
-        size_t nup = 0;
-
-        // the lambda that filters acceptable elements.
-        auto filter =
-            [&](const size_t j) { return (!use_sel || sel->is_member(ids[j])); };
-
-        // the lambda that applies a valid element.
-        auto apply =
-            [&](const float dis_in, const size_t j) {
-                const float dis = (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]);
-                scan_cnt++;
-                if (C::cmp(simi[0], dis)) {
-                    const int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                    heap_replace_top<C>(k, simi, idxi, dis, id);
-                    nup++;
-                }
-            };
-
-        if constexpr (metric == METRIC_INNER_PRODUCT) {
-            fvec_inner_products_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
-        }
-        else {
-            fvec_L2sqr_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
-        }
-
-        return nup;
-    }
-
-    void scan_codes_and_return(
-            size_t list_size,
-            const uint8_t* codes,
-            const float* code_norms,
-            const idx_t* ids,
-            std::vector<knowhere::DistId>& out) const override {
-        const float* list_vecs = (const float*)codes;
-
-        // the lambda that filters acceptable elements.
-        auto filter = [&](const size_t j) {
-            return (!use_sel || sel->is_member(ids[j]));
-        };
-        // the lambda that applies a valid element.
-        auto apply = [&](const float dis_in, const size_t j) {
-            const float dis =
-                    (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]);
-            out.emplace_back(ids[j], dis);
-        };
-        if constexpr (metric == METRIC_INNER_PRODUCT) {
-            fvec_inner_products_ny_if(
-                    xi, list_vecs, d, list_size, filter, apply);
-        } else {
-            fvec_L2sqr_ny_if(xi, list_vecs, d, list_size, filter, apply);
-        }
-    }
-
-    void scan_codes_range(
-            size_t list_size,
-            const uint8_t* codes,
-            const float* code_norms,
-            const idx_t* ids,
-            float radius,
-            RangeQueryResult& res) const override {
-        const float* list_vecs = (const float*)codes;
-
-        // the lambda that filters acceptable elements.
-        auto filter =
-            [&](const size_t j) { return (!use_sel || sel->is_member(ids[j])); };
-
-        // the lambda that applies a filtered element.
-        auto apply =
-            [&](const float dis_in, const size_t j) {
-                const float dis = (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]);
-                if (C::cmp(radius, dis)) {
-                    int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                    res.add(dis, id);
-                }
-            };
-
-        if constexpr (metric == METRIC_INNER_PRODUCT) {
-            fvec_inner_products_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
-        }
-        else {
-            fvec_L2sqr_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
-        }
-    }
-};
-
-// a custom version for Knowhere
-template <MetricType metric, class C, bool use_sel>
-struct IVFFlatBitsetViewScanner : InvertedListScanner {
-    size_t d;
-    knowhere::BitsetView bitset;
-
-    IVFFlatBitsetViewScanner(size_t d, bool store_pairs, const IDSelector* sel)
-            : InvertedListScanner(store_pairs, sel), d(d) {
-        const auto* bitsetview_sel = dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
-        FAISS_ASSERT_MSG((bitsetview_sel != nullptr), "Unsupported scanner for IVFFlatBitsetViewScanner");
-
-        bitset = bitsetview_sel->bitset_view;
+    IVFFlatScanner(size_t d, bool store_pairs) : d(d) {
+        this->store_pairs = store_pairs;
     }
 
     const float* xi;
@@ -416,151 +185,75 @@ struct IVFFlatBitsetViewScanner : InvertedListScanner {
 
     size_t scan_codes(
             size_t list_size,
-            const uint8_t* __restrict codes,
-            const float* __restrict code_norms,
-            const idx_t* __restrict ids,
-            float* __restrict simi,
-            idx_t* __restrict idxi,
-            size_t k,
-            size_t& scan_cnt) const override {
-        const float* list_vecs = (const float*)codes;
-        size_t nup = 0;
-
-        // the lambda that filters acceptable elements.
-        auto filter =
-            [&](const size_t j) { return (!use_sel || !bitset.test(ids[j])); };
-
-        // the lambda that applies a valid element.
-        auto apply =
-            [&](const float dis_in, const size_t j) {
-                const float dis = (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]);
-                scan_cnt++;
-                if (C::cmp(simi[0], dis)) {
-                    const int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                    heap_replace_top<C>(k, simi, idxi, dis, id);
-                    nup++;
-                }
-            };
-
-        if constexpr (metric == METRIC_INNER_PRODUCT) {
-            fvec_inner_products_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
-        }
-        else {
-            fvec_L2sqr_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
-        }
-
-        return nup;
-    }
-
-    void scan_codes_and_return(
-            size_t list_size,
             const uint8_t* codes,
             const float* code_norms,
             const idx_t* ids,
-            std::vector<knowhere::DistId>& out) const override {
+            float* simi,
+            idx_t* idxi,
+            size_t k,
+            const BitsetView bitset) const override {
         const float* list_vecs = (const float*)codes;
-
-        // the lambda that filters acceptable elements.
-        auto filter = [&](const size_t j) {
-            return (!use_sel || !bitset.test(ids[j]));
-        };
-        // the lambda that applies a valid element.
-        auto apply = [&](const float dis_in, const size_t j) {
-            const float dis =
-                    (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]);
-            out.emplace_back(ids[j], dis);
-        };
-        if constexpr (metric == METRIC_INNER_PRODUCT) {
-            fvec_inner_products_ny_if(
-                    xi, list_vecs, d, list_size, filter, apply);
-        } else {
-            fvec_L2sqr_ny_if(xi, list_vecs, d, list_size, filter, apply);
+        size_t nup = 0;
+        for (size_t j = 0; j < list_size; j++) {
+            if (bitset.empty() || !bitset.test(ids[j])) {
+                const float* yj = list_vecs + d * j;
+                float dis = metric == METRIC_INNER_PRODUCT
+                        ? fvec_inner_product(xi, yj, d)
+                        : fvec_L2sqr(xi, yj, d);
+                if (code_norms) {
+                    dis /= code_norms[j];
+                }
+                if (C::cmp(simi[0], dis)) {
+                    int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
+                    heap_replace_top<C>(k, simi, idxi, dis, id);
+                    nup++;
+                }
+            }
         }
+        return nup;
     }
 
     void scan_codes_range(
             size_t list_size,
-            const uint8_t* __restrict codes,
-            const float* __restrict code_norms,
-            const idx_t* __restrict ids,
+            const uint8_t* codes,
+            const float* code_norms,
+            const idx_t* ids,
             float radius,
-            RangeQueryResult& res) const override {
+            RangeQueryResult& res,
+            const BitsetView bitset) const override {
         const float* list_vecs = (const float*)codes;
-
-        // the lambda that filters acceptable elements.
-        auto filter =
-            [&](const size_t j) { return (!use_sel || !bitset.test(ids[j])); };
-
-        // the lambda that applies a filtered element.
-        auto apply =
-            [&](const float dis_in, const size_t j) {
-                const float dis = (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]);
+        for (size_t j = 0; j < list_size; j++) {
+            if (bitset.empty() || !bitset.test(ids[j])) {
+                const float* yj = list_vecs + d * j;
+                float dis = metric == METRIC_INNER_PRODUCT
+                        ? fvec_inner_product(xi, yj, d)
+                        : fvec_L2sqr(xi, yj, d);
+                if (code_norms) {
+                    dis /= code_norms[j];
+                }
                 if (C::cmp(radius, dis)) {
                     int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
                     res.add(dis, id);
                 }
-            };
-
-        if constexpr (metric == METRIC_INNER_PRODUCT) {
-            fvec_inner_products_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
-        }
-        else {
-            fvec_L2sqr_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
+            }
         }
     }
 };
 
-template <bool use_sel>
-InvertedListScanner* get_InvertedListScanner1(
-        const IndexIVFFlat* ivf,
-        bool store_pairs,
-        const IDSelector* sel) {
-    // A specialized version for Knowhere.
-    //   It is needed to get rid of virtual function calls, because sel
-    //   can filter out 99% of samples, so the cost of virtual function calls
-    //   becomes noticeable compared to distance computations.
-    if (const auto* bitsetview_sel = dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel)) {
-        if (ivf->metric_type == METRIC_INNER_PRODUCT) {
-            return new IVFFlatBitsetViewScanner<
-                    METRIC_INNER_PRODUCT,
-                    CMin<float, int64_t>,
-                    use_sel>(ivf->d, store_pairs, sel);
-        } else if (ivf->metric_type == METRIC_L2) {
-            return new IVFFlatBitsetViewScanner<METRIC_L2, CMax<float, int64_t>, use_sel>(
-                    ivf->d, store_pairs, sel);
-        } else {
-            FAISS_THROW_MSG("metric type not supported");
-        }
-    }
-
-    // default faiss version
-    if (ivf->metric_type == METRIC_INNER_PRODUCT) {
-        return new IVFFlatScanner<
-                METRIC_INNER_PRODUCT,
-                CMin<float, int64_t>,
-                use_sel>(ivf->d, store_pairs, sel);
-    } else if (ivf->metric_type == METRIC_L2) {
-        return new IVFFlatScanner<METRIC_L2, CMax<float, int64_t>, use_sel>(
-                ivf->d, store_pairs, sel);
-    } else {
-        FAISS_THROW_MSG("metric type not supported");
-    }
-}
-
 } // anonymous namespace
 
 InvertedListScanner* IndexIVFFlat::get_InvertedListScanner(
-        bool store_pairs,
-        const IDSelector* sel) const {
-    if (sel) {
-        return get_InvertedListScanner1<true>(this, store_pairs, sel);
+        bool store_pairs) const {
+    if (metric_type == METRIC_INNER_PRODUCT) {
+        return new IVFFlatScanner<METRIC_INNER_PRODUCT, CMin<float, int64_t>>(
+                d, store_pairs);
+    } else if (metric_type == METRIC_L2) {
+        return new IVFFlatScanner<METRIC_L2, CMax<float, int64_t>>(
+                d, store_pairs);
     } else {
-        return get_InvertedListScanner1<false>(this, store_pairs, sel);
+        FAISS_THROW_MSG("metric type not supported");
     }
+    return nullptr;
 }
 
 void IndexIVFFlat::reconstruct_from_offset(
@@ -580,8 +273,6 @@ IndexIVFFlatCC::IndexIVFFlatCC(
         : IndexIVFFlat(quantizer, d, nlist, metric, is_cosine) {
     replace_invlists(new ConcurrentArrayInvertedLists(nlist, code_size, ssize, is_cosine), true);
 }
-
-IndexIVFFlatCC::IndexIVFFlatCC() {}
 
 /*****************************************
  * IndexIVFFlatDedup implementation
@@ -698,7 +389,8 @@ void IndexIVFFlatDedup::search_preassigned(
         idx_t* labels,
         bool store_pairs,
         const IVFSearchParameters* params,
-        IndexIVFStats* stats) const {
+        IndexIVFStats* stats,
+        const BitsetView bitset) const {
     FAISS_THROW_IF_NOT_MSG(
             !store_pairs, "store_pairs not supported in IVFDedup");
 
@@ -822,7 +514,7 @@ void IndexIVFFlatDedup::range_search(
         const float*,
         float,
         RangeSearchResult*,
-        const SearchParameters*) const {
+        const BitsetView) const {
     FAISS_THROW_MSG("not implemented");
 }
 

@@ -7,7 +7,6 @@
 
 #pragma once
 
-#include <faiss/IndexFastScan.h>
 #include <faiss/IndexPQ.h>
 #include <faiss/impl/ProductQuantizer.h>
 #include <faiss/utils/AlignedTable.h>
@@ -26,8 +25,26 @@ namespace faiss {
  * 15: no qbs with reservoir accumulator
  */
 
-struct IndexPQFastScan : IndexFastScan {
+struct IndexPQFastScan : Index {
     ProductQuantizer pq;
+
+    // implementation to select
+    int implem = 0;
+    // skip some parts of the computation (for timing)
+    int skip = 0;
+
+    // size of the kernel
+    int bbs;     // set at build time
+    int qbs = 0; // query block size 0 = use default
+
+    // packed version of the codes
+    size_t ntotal2;
+    size_t M2;
+
+    AlignedTable<uint8_t> codes;
+
+    // this is for testing purposes only (set when initialized by IndexPQ)
+    const uint8_t* orig_codes = nullptr;
 
     IndexPQFastScan(
             int d,
@@ -36,27 +53,62 @@ struct IndexPQFastScan : IndexFastScan {
             MetricType metric = METRIC_L2,
             int bbs = 32);
 
-    IndexPQFastScan() = default;
+    IndexPQFastScan();
 
     /// build from an existing IndexPQ
     explicit IndexPQFastScan(const IndexPQ& orig, int bbs = 32);
 
     void train(idx_t n, const float* x) override;
+    void add(idx_t n, const float* x) override;
+    void reset() override;
+    void search(
+            idx_t n,
+            const float* x,
+            idx_t k,
+            float* distances,
+            idx_t* labels,
+            const BitsetView bitset = nullptr) const override;
 
-    void compute_codes(uint8_t* codes, idx_t n, const float* x) const override;
+    // called by search function
+    void compute_quantized_LUT(
+            idx_t n,
+            const float* x,
+            uint8_t* lut,
+            float* normalizers) const;
 
-    void compute_float_LUT(float* lut, idx_t n, const float* x) const override;
+    template <bool is_max>
+    void search_dispatch_implem(
+            idx_t n,
+            const float* x,
+            idx_t k,
+            float* distances,
+            idx_t* labels) const;
 
-    /** Decode a set of vectors.
-     *
-     *  NOTE: The codes in the IndexPQFastScan object are non-contiguous.
-     *        But this method requires a contiguous representation.
-     *
-     * @param n       number of vectors
-     * @param bytes   input encoded vectors, size n * code_size
-     * @param x       output vectors, size n * d
-     */
-    void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
+    template <class C>
+    void search_implem_2(
+            idx_t n,
+            const float* x,
+            idx_t k,
+            float* distances,
+            idx_t* labels) const;
+
+    template <class C>
+    void search_implem_12(
+            idx_t n,
+            const float* x,
+            idx_t k,
+            float* distances,
+            idx_t* labels,
+            int impl) const;
+
+    template <class C>
+    void search_implem_14(
+            idx_t n,
+            const float* x,
+            idx_t k,
+            float* distances,
+            idx_t* labels,
+            int impl) const;
 };
 
 } // namespace faiss

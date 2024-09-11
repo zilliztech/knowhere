@@ -12,16 +12,12 @@
 #pragma once
 
 #include <stdint.h>
-#include <vector>
 
 #include <faiss/impl/platform_macros.h>
 #include <faiss/utils/Heap.h>
-
-#include "knowhere/object.h"
-
+#include <knowhere/bitsetview.h>
+using knowhere::BitsetView;
 namespace faiss {
-
-struct IDSelector;
 
 /*********************************************************
  * Optimized distance/norm/inner prod computations
@@ -108,16 +104,8 @@ void fvec_sub(size_t d, const float* a, const float* b, float* c);
  * Compute a subset of  distances
  ***************************************************************************/
 
-/** compute the inner product between x and a subset y of ny vectors defined by
- * ids
- *
- * ip(i, j) = inner_product(x(i, :), y(ids(i, j), :))
- *
- * @param ip    output array, size nx * ny
- * @param x     first-term vector, size nx * d
- * @param y     second-term vector, size (max(ids) + 1) * d
- * @param ids   ids to sample from y, size nx * ny
- */
+/* compute the inner product between x and a subset y of ny vectors,
+  whose indices are given by idy.  */
 void fvec_inner_products_by_idx(
         float* ip,
         const float* x,
@@ -127,16 +115,7 @@ void fvec_inner_products_by_idx(
         size_t nx,
         size_t ny);
 
-/** compute the squared L2 distances between x and a subset y of ny vectors
- * defined by ids
- *
- * dis(i, j) = inner_product(x(i, :), y(ids(i, j), :))
- *
- * @param dis   output array, size nx * ny
- * @param x     first-term vector, size nx * d
- * @param y     second-term vector, size (max(ids) + 1) * d
- * @param ids   ids to sample from y, size nx * ny
- */
+/* same but for a subset in y indexed by idsy (ny vectors in total) */
 void fvec_L2sqr_by_idx(
         float* dis,
         const float* x,
@@ -163,14 +142,7 @@ void pairwise_indexed_L2sqr(
         const int64_t* iy,
         float* dis);
 
-/** compute dis[j] = inner_product(x[ix[j]], y[iy[j]]) forall j=0..n-1
- *
- * @param x  size (max(ix) + 1, d)
- * @param y  size (max(iy) + 1, d)
- * @param ix size n
- * @param iy size n
- * @param dis size n
- */
+/* same for inner product */
 void pairwise_indexed_inner_product(
         size_t d,
         size_t n,
@@ -196,11 +168,11 @@ FAISS_API extern int distance_compute_blas_database_bs;
 FAISS_API extern int distance_compute_min_k_reservoir;
 
 /** Return the k nearest neighors of each of the nx vectors x among the ny
- *  vector y, w.r.t to max inner product.
+ *  vector y, w.r.t to max inner product
  *
  * @param x    query vectors, size nx * d
  * @param y    database vectors, size ny * d
- * @param res  result heap structure, which also provides k. Sorted on output
+ * @param res  result array, which also provides k. Sorted on output
  */
 void knn_inner_product(
         const float* x,
@@ -209,43 +181,10 @@ void knn_inner_product(
         size_t nx,
         size_t ny,
         float_minheap_array_t* res,
-        const IDSelector* sel = nullptr);
+        const BitsetView bitset = nullptr);
 
-/**  Return the k nearest neighors of each of the nx vectors x among the ny
- *  vector y, for the inner product metric.
- *
- * @param x    query vectors, size nx * d
- * @param y    database vectors, size ny * d
- * @param distances  output distances, size nq * k
- * @param indexes    output vector ids, size nq * k
- */
-void knn_inner_product(
-        const float* x,
-        const float* y,
-        size_t d,
-        size_t nx,
-        size_t ny,
-        size_t k,
-        float* distances,
-        int64_t* indexes,
-        const IDSelector* sel = nullptr);
-
-void all_inner_product(
-        const float* x,
-        const float* y,
-        size_t d,
-        size_t nx,
-        size_t ny,
-        std::vector<knowhere::DistId>& output,
-        const IDSelector* sel);
-
-/** Return the k nearest neighors of each of the nx vectors x among the ny
- *  vector y, for the L2 distance
- * @param x    query vectors, size nx * d
- * @param y    database vectors, size ny * d
- * @param res  result heap strcture, which also provides k. Sorted on output
- * @param y_norm2    (optional) norms for the y vectors (nullptr or size ny)
- * @param sel  search in this subset of vectors
+/** Same as knn_inner_product, for the L2 distance
+ *  @param y_norm2    norms for the y vectors (nullptr or size ny)
  */
 void knn_L2sqr(
         const float* x,
@@ -255,41 +194,8 @@ void knn_L2sqr(
         size_t ny,
         float_maxheap_array_t* res,
         const float* y_norm2 = nullptr,
-        const IDSelector* sel = nullptr);
+        const BitsetView bitset = nullptr);
 
-/**  Return the k nearest neighors of each of the nx vectors x among the ny
- *  vector y, for the L2 distance
- *
- * @param x    query vectors, size nx * d
- * @param y    database vectors, size ny * d
- * @param distances  output distances, size nq * k
- * @param indexes    output vector ids, size nq * k
- * @param y_norm2    (optional) norms for the y vectors (nullptr or size ny)
- * @param sel  search in this subset of vectors
- */
-void knn_L2sqr(
-        const float* x,
-        const float* y,
-        size_t d,
-        size_t nx,
-        size_t ny,
-        size_t k,
-        float* distances,
-        int64_t* indexes,
-        const float* y_norm2 = nullptr,
-        const IDSelector* sel = nullptr);
-
-void all_L2sqr(
-        const float* x,
-        const float* y,
-        size_t d,
-        size_t nx,
-        size_t ny,
-        std::vector<knowhere::DistId>& output,
-        const float* y_norms,
-        const IDSelector* sel);
-
-// Knowhere-specific function
 void knn_cosine(
         const float* x,
         const float* y,
@@ -298,19 +204,8 @@ void knn_cosine(
         size_t nx,
         size_t ny,
         float_minheap_array_t* ha,
-        const IDSelector* sel = nullptr);
+        const BitsetView bitset);
 
-void all_cosine(
-        const float* x,
-        const float* y,
-        const float* y_norms,
-        size_t d,
-        size_t nx,
-        size_t ny,
-        std::vector<knowhere::DistId>& output,
-        const IDSelector* sel);
-
-// Knowhere-specific function
 void knn_jaccard(
         const float* x,
         const float* y,
@@ -318,68 +213,29 @@ void knn_jaccard(
         size_t nx,
         size_t ny,
         float_maxheap_array_t* res,
-        const IDSelector* sel = nullptr);
+        const BitsetView bitset = nullptr);
 
-/** Find the max inner product neighbors for nx queries in a set of ny vectors
+/* Find the nearest neighbors for nx queries in a set of ny vectors
  * indexed by ids. May be useful for re-ranking a pre-selected vector list
- *
- * @param x    query vectors, size nx * d
- * @param y    database vectors, size (max(ids) + 1) * d
- * @param ids  subset of database vectors to consider, size (nx, nsubset)
- * @param res  result structure
- * @param ld_ids stride for the ids array. -1: use nsubset, 0: all queries
- * process the same subset
  */
 void knn_inner_products_by_idx(
         const float* x,
         const float* y,
-        const int64_t* subset,
+        const int64_t* ids,
         size_t d,
         size_t nx,
         size_t ny,
-        size_t nsubset,
-        size_t k,
-        float* vals,
-        int64_t* ids,
-        int64_t ld_ids = -1);
+        float_minheap_array_t* res);
 
-/** Find the nearest neighbors for nx queries in a set of ny vectors
- * indexed by ids. May be useful for re-ranking a pre-selected vector list
- *
- * @param x    query vectors, size nx * d
- * @param y    database vectors, size (max(ids) + 1) * d
- * @param subset subset of database vectors to consider, size (nx, nsubset)
- * @param res  rIDesult structure
- * @param ld_subset stride for the subset array. -1: use nsubset, 0: all queries
- * process the same subset
- */
 void knn_L2sqr_by_idx(
         const float* x,
         const float* y,
-        const int64_t* subset,
+        const int64_t* ids,
         size_t d,
         size_t nx,
         size_t ny,
-        size_t nsubset,
-        size_t k,
-        float* vals,
-        int64_t* ids,
-        int64_t ld_subset = -1);
+        float_maxheap_array_t* res);
 
-void knn_cosine_by_idx(
-        const float* x,
-        const float* y,
-        const float* y_norms,
-        const int64_t* subset,
-        size_t d,
-        size_t nx,
-        size_t ny,
-        size_t nsubset,
-        size_t k,
-        float* vals,
-        int64_t* ids,
-        int64_t ld_ids = -1);
-                
 /***************************************************************************
  * Range search
  ***************************************************************************/
@@ -403,7 +259,7 @@ void range_search_L2sqr(
         size_t ny,
         float radius,
         RangeSearchResult* result,
-        const IDSelector* sel = nullptr);
+        const BitsetView bitset = nullptr);
 
 /// same as range_search_L2sqr for the inner product similarity
 void range_search_inner_product(
@@ -414,9 +270,8 @@ void range_search_inner_product(
         size_t ny,
         float radius,
         RangeSearchResult* result,
-        const IDSelector* sel = nullptr);
+        const BitsetView bitset = nullptr);
 
-// Knowhere-specific function
 void range_search_cosine(
         const float* x,
         const float* y,
@@ -426,7 +281,7 @@ void range_search_cosine(
         size_t ny,
         float radius,
         RangeSearchResult* result,
-        const IDSelector* sel = nullptr);
+        const BitsetView bitset = nullptr);
 
 /***************************************************************************
  * PQ tables computations
@@ -448,12 +303,10 @@ void compute_PQ_dis_tables_dsub2(
 
 /** Return the nearest neighbors of each of the nx vectors x among the ny
  *
- * @param x          query vectors, size nx * d
- * @param y          database vectors, size ny * d
- * @param ids        result array ids
- * @param val        result array value
- * @param tmp_buffer tmporary memory for symmetric matrix data
- * @param sym_dim    dimension of symmetric matrix
+ * @param x    query vectors, size nx * d
+ * @param y    database vectors, size ny * d
+ * @param ids  result array ids
+ * @param val  result array value
  */
 void elkan_L2_sse(
         const float* x,
@@ -462,9 +315,7 @@ void elkan_L2_sse(
         size_t nx,
         size_t ny,
         int64_t* ids,
-        float* val,
-        float* tmp_buffer,
-        size_t sym_dim);
+        float* val);
 
 /***************************************************************************
  * Templatized versions of distance functions

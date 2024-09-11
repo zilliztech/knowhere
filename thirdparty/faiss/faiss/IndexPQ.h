@@ -46,14 +46,14 @@ struct IndexPQ : IndexFlatCodes {
             idx_t k,
             float* distances,
             idx_t* labels,
-            const SearchParameters* params = nullptr) const override;
+            const BitsetView bitset = nullptr) const override;
 
     /* The standalone codec interface */
     void sa_encode(idx_t n, const float* x, uint8_t* bytes) const override;
 
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
 
-    FlatCodesDistanceComputer* get_FlatCodesDistanceComputer() const override;
+    DistanceComputer* get_distance_computer() const override;
 
     /******************************************************
      * Polysemous codes implementation
@@ -88,9 +88,7 @@ struct IndexPQ : IndexFlatCodes {
             const float* x,
             idx_t k,
             float* distances,
-            idx_t* labels,
-            int polysemous_ht,
-            bool generalized_hamming) const;
+            idx_t* labels) const;
 
     /// prepare query for a polysemous search, but instead of
     /// computing the result, just get the histogram of Hamming
@@ -111,13 +109,9 @@ struct IndexPQ : IndexFlatCodes {
      */
     void hamming_distance_table(idx_t n, const float* x, int32_t* dis) const;
 
-    size_t cal_size() const;
-};
-
-/// override search parameters from the class
-struct SearchParametersPQ : SearchParameters {
-    IndexPQ::Search_type_t search_type;
-    int polysemous_ht;
+    size_t cal_size() {
+        return codes.size() * sizeof(uint8_t) + pq.cal_size();
+    }
 };
 
 /// statistics are robust to internal threading, but not if
@@ -154,7 +148,7 @@ struct MultiIndexQuantizer : Index {
             idx_t k,
             float* distances,
             idx_t* labels,
-            const SearchParameters* params = nullptr) const override;
+            const BitsetView bitset = nullptr) const override;
 
     /// add and reset will crash at runtime
     void add(idx_t n, const float* x) override;
@@ -164,9 +158,6 @@ struct MultiIndexQuantizer : Index {
 
     void reconstruct(idx_t key, float* recons) const override;
 };
-
-// block size used in MultiIndexQuantizer::search
-FAISS_API extern int multi_index_quantizer_search_bs;
 
 /** MultiIndexQuantizer where the PQ assignmnet is performed by sub-indexes
  */
@@ -191,7 +182,7 @@ struct MultiIndexQuantizer2 : MultiIndexQuantizer {
             idx_t k,
             float* distances,
             idx_t* labels,
-            const SearchParameters* params = nullptr) const override;
+            const BitsetView bitset = nullptr) const override;
 };
 
 } // namespace faiss

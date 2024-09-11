@@ -189,6 +189,7 @@ class TestNyFuncs(unittest.TestCase):
         for d in 1, 2, 4, 8, 12, 16:
             x = rs.rand(d).astype('float32')
             for ny in 128, 129, 130:
+                print("d=%d ny=%d" % (d, ny))
                 y = rs.rand(ny, d).astype('float32')
                 ref = ((x - y) ** 2).sum(1)
                 new = np.zeros(ny, dtype='float32')
@@ -203,6 +204,7 @@ class TestNyFuncs(unittest.TestCase):
         for d in 1, 2, 4, 8, 12, 16:
             x = rs.rand(d).astype('float32')
             for ny in 128, 129, 130:
+                print("d=%d ny=%d" % (d, ny))
                 y = rs.rand(ny, d).astype('float32')
                 ref = (x * y).sum(1)
                 new = np.zeros(ny, dtype='float32')
@@ -218,6 +220,7 @@ class TestMatrixStats(unittest.TestCase):
         m = rs.rand(40, 20).astype('float32')
         m[5:10] = 0
         comments = faiss.MatrixStats(m).comments
+        print(comments)
         assert 'has 5 copies' in comments
         assert '5 null vectors' in comments
 
@@ -226,6 +229,7 @@ class TestMatrixStats(unittest.TestCase):
         m = rs.rand(40, 20).astype('float32')
         m[::2] = m[1::2]
         comments = faiss.MatrixStats(m).comments
+        print(comments)
         assert '20 vectors are distinct' in comments
 
     def test_dead_dims(self):
@@ -233,6 +237,7 @@ class TestMatrixStats(unittest.TestCase):
         m = rs.rand(40, 20).astype('float32')
         m[:, 5:10] = 0
         comments = faiss.MatrixStats(m).comments
+        print(comments)
         assert '5 dimensions are constant' in comments
 
     def test_rogue_means(self):
@@ -240,6 +245,7 @@ class TestMatrixStats(unittest.TestCase):
         m = rs.rand(40, 20).astype('float32')
         m[:, 5:10] += 12345
         comments = faiss.MatrixStats(m).comments
+        print(comments)
         assert '5 dimensions are too large wrt. their variance' in comments
 
     def test_normalized(self):
@@ -247,15 +253,8 @@ class TestMatrixStats(unittest.TestCase):
         m = rs.rand(40, 20).astype('float32')
         faiss.normalize_L2(m)
         comments = faiss.MatrixStats(m).comments
+        print(comments)
         assert 'vectors are normalized' in comments
-
-    def test_hash(self):
-        cc = []
-        for _ in range(2):
-            rs = np.random.RandomState(123)
-            m = rs.rand(40, 20).astype('float32')
-            cc.append(faiss.MatrixStats(m).hash_value)
-        self.assertTrue(cc[0] == cc[1])
 
 
 class TestScalarQuantizer(unittest.TestCase):
@@ -293,6 +292,7 @@ class TestScalarQuantizer(unittest.TestCase):
                 D, I = index.search(x[3:], 1)
 
                 # assert D[0, 0] == Dref[0, 0]
+                # print(D[0, 0], ((x[3] - x[2]) ** 2).sum())
                 assert D[0, 0] == ((x[3] - x[2]) ** 2).sum()
 
     def test_6bit_equiv(self):
@@ -305,6 +305,8 @@ class TestScalarQuantizer(unittest.TestCase):
             index = faiss.IndexScalarQuantizer(
                 d, faiss.ScalarQuantizer.QT_6bit)
             index.train(trainset)
+
+            print('cs=', index.code_size)
 
             x = rs.randint(64, size=(100, d)).astype('float32')
 
@@ -320,33 +322,8 @@ class TestScalarQuantizer(unittest.TestCase):
             for i in range(20):
                 for j in range(10):
                     dis = ((y[i] - x2[I[i, j]]) ** 2).sum()
+                    # print(dis, D[i, j])
                     assert abs(D[i, j] - dis) / dis < 1e-5
-
-    def test_reconstruct(self):
-        self.do_reconstruct(True)
-
-    def test_reconstruct_no_residual(self):
-        self.do_reconstruct(False)
-
-    def do_reconstruct(self, by_residual):
-        d = 32
-        xt, xb, xq = get_dataset_2(d, 100, 5, 5)
-
-        index = faiss.index_factory(d, "IVF10,SQ8")
-        index.by_residual = by_residual
-        index.train(xt)
-        index.add(xb)
-        index.nprobe = 10
-        D, I = index.search(xq, 4)
-        xb2 = index.reconstruct_n(0, index.ntotal)
-        for i in range(5):
-            for j in range(4):
-                self.assertAlmostEqual(
-                    ((xq[i] - xb2[I[i, j]]) ** 2).sum(),
-                    D[i, j],
-                    places=4
-                )
-
 
 class TestRandom(unittest.TestCase):
 
@@ -360,25 +337,8 @@ class TestRandom(unittest.TestCase):
         x = faiss.randint(20000, vmax=100)
         assert np.all(x >= 0) and np.all(x < 100)
         c = np.bincount(x, minlength=100)
+        print(c)
         assert c.max() - c.min() < 50 * 2
-
-    def test_rand_vector(self):
-        """ test if the smooth_vectors function is reasonably compressible with
-        a small PQ """
-        x = faiss.rand_smooth_vectors(1300, 32)
-        xt = x[:1000]
-        xb = x[1000:1200]
-        xq = x[1200:]
-        _, gt = faiss.knn(xq, xb, 10)
-        index = faiss.IndexPQ(32, 4, 4)
-        index.train(xt)
-        index.add(xb)
-        D, I = index.search(xq, 10)
-        ninter = faiss.eval_intersection(I, gt)
-        # 445 for SyntheticDataset
-        self.assertGreater(ninter, 420)
-        self.assertLess(ninter, 460)
-
 
 
 class TestPairwiseDis(unittest.TestCase):
@@ -461,6 +421,7 @@ class TestSWIGWrap(unittest.TestCase):
         """ tests swig_ptr and rev_swig_ptr for this type of array """
         a = np.arange(12).astype(dtype)
         ptr = faiss.swig_ptr(a)
+        print(ptr)
         a2 = faiss.rev_swig_ptr(ptr, 12)
         np.testing.assert_array_equal(a, a2)
 
@@ -534,24 +495,8 @@ class TestNNDescentKNNG(unittest.TestCase):
                         recalls += 1
                         break
         recall = 1.0 * recalls / (nb * K)
+        print('Metric: {}, knng accuracy: {}'.format(metric_names[metric], recall))
         assert recall > 0.99
-
-    def test_small_nndescent(self):
-        """ building a too small graph used to crash, make sure it raises
-        an exception instead.
-        TODO: build the exact knn graph for small cases
-        """
-        d = 32
-        K = 10
-        index = faiss.IndexNNDescentFlat(d, K, faiss.METRIC_L2)
-        index.nndescent.S = 10
-        index.nndescent.R = 32
-        index.nndescent.L = K + 20
-        index.nndescent.iter = 5
-        index.verbose = True
-
-        xb = np.zeros((78, d), dtype='float32')
-        self.assertRaises(RuntimeError, index.add, xb)
 
 
 class TestResultHeap(unittest.TestCase):
@@ -584,154 +529,3 @@ class TestResultHeap(unittest.TestCase):
 
         np.testing.assert_equal(all_rh[1].D, all_rh[3].D)
         np.testing.assert_equal(all_rh[1].I, all_rh[3].I)
-
-
-class TestReconstructBatch(unittest.TestCase):
-
-    def test_indexflat(self):
-        index = faiss.IndexFlatL2(32)
-        x = faiss.randn((100, 32), 1234)
-        index.add(x)
-
-        subset = [4, 7, 45]
-        np.testing.assert_equal(x[subset], index.reconstruct_batch(subset))
-
-    def test_exception(self):
-        index = faiss.index_factory(32, "IVF2,Flat")
-        x = faiss.randn((100, 32), 1234)
-        index.train(x)
-        index.add(x)
-
-        # make sure it raises an exception even if it enters the openmp for
-        subset = np.zeros(1200, dtype=int)
-        self.assertRaises(
-            RuntimeError,
-            lambda : index.reconstruct_batch(subset),
-        )
-
-
-class TestBucketSort(unittest.TestCase):
-
-    def do_test_bucket_sort(self, nt):
-        rs = np.random.RandomState(123)
-        tab = rs.randint(100, size=1000, dtype='int64')
-        lims, perm = faiss.bucket_sort(tab, nt=nt)
-        for i in range(max(tab) + 1):
-            assert np.all(tab[perm[lims[i]: lims[i + 1]]] == i)
-
-    def test_bucket_sort(self):
-        self.do_test_bucket_sort(0)
-
-    def test_bucket_sort_parallel(self):
-        self.do_test_bucket_sort(4)
-
-    def do_test_bucket_sort_inplace(
-            self, nt, nrow=500, ncol=20, nbucket=300, repro=False,
-            dtype='int32'):
-        rs = np.random.RandomState(123)
-        tab = rs.randint(nbucket, size=(nrow, ncol), dtype=dtype)
-
-        tab2 = tab.copy()
-        faiss.cvar.bucket_sort_verbose
-        faiss.cvar.bucket_sort_verbose = 1
-
-        lims = faiss.matrix_bucket_sort_inplace(tab2, nt=nt)
-        tab2 = tab2.ravel()
-
-        for b in range(nbucket):
-            rows, _ = np.where(tab == b)
-            rows.sort()
-            tab2[lims[b]:lims[b + 1]].sort()
-            rows = set(rows)
-            self.assertEqual(rows, set(tab2[lims[b]:lims[b + 1]]))
-
-    def test_bucket_sort_inplace(self):
-        self.do_test_bucket_sort_inplace(0)
-
-    def test_bucket_sort_inplace_parallel(self):
-        self.do_test_bucket_sort_inplace(4)
-
-    def test_bucket_sort_inplace_parallel_fewcol(self):
-        self.do_test_bucket_sort_inplace(4, ncol=3)
-
-    def test_bucket_sort_inplace_parallel_fewbucket(self):
-        self.do_test_bucket_sort_inplace(4, nbucket=5)
-
-    def test_bucket_sort_inplace_int64(self):
-        self.do_test_bucket_sort_inplace(0, dtype='int64')
-
-    def test_bucket_sort_inplace_parallel_int64(self):
-        self.do_test_bucket_sort_inplace(4, dtype='int64')
-
-class TestMergeKNNResults(unittest.TestCase):
-
-    def do_test(self, ismax, dtype):
-        rs = np.random.RandomState()
-        n, k, nshard = 10, 5, 3
-        all_ids = rs.randint(100000, size=(nshard, n, k)).astype('int64')
-        all_dis = rs.rand(nshard, n, k)
-        if dtype == 'int32':
-            all_dis = (all_dis * 1000000).astype("int32")
-        else:
-            all_dis = all_dis.astype(dtype)
-        for i in range(nshard):
-            for j in range(n):
-                all_dis[i, j].sort()
-                if ismax:
-                    all_dis[i, j] = all_dis[i, j][::-1]
-        Dref = np.zeros((n, k), dtype=dtype)
-        Iref = np.zeros((n, k), dtype='int64')
-
-        for i in range(n):
-            dis = all_dis[:, i, :].ravel()
-            ids = all_ids[:, i, :].ravel()
-            o = dis.argsort()
-            if ismax:
-                o = o[::-1]
-            Dref[i] = dis[o[:k]]
-            Iref[i] = ids[o[:k]]
-
-        Dnew, Inew = faiss.merge_knn_results(all_dis, all_ids, keep_max=ismax)
-        np.testing.assert_array_equal(Dnew, Dref)
-        np.testing.assert_array_equal(Inew, Iref)
-
-    def test_min_float(self):
-        self.do_test(ismax=False, dtype='float32')
-
-    def test_max_int(self):
-        self.do_test(ismax=True, dtype='int32')
-
-    def test_max_float(self):
-        self.do_test(ismax=True, dtype='float32')
-
-
-class TestMapInt64ToInt64(unittest.TestCase):
-
-    def do_test(self, capacity, n):
-        """ test that we are able to lookup """
-        rs = np.random.RandomState(123)
-        # make sure we have unique values
-        keys = np.unique(rs.choice(2 ** 29, size=n).astype("int64"))
-        rs.shuffle(keys)
-        n = keys.size
-        vals = rs.choice(2 ** 30, size=n).astype('int64')
-        tab = faiss.MapInt64ToInt64(capacity)
-        tab.add(keys, vals)
-
-        # lookup and check
-        vals2 = tab.lookup(keys)
-        np.testing.assert_array_equal(vals, vals2)
-
-        # make a few keys that we know are not there
-        mask = rs.rand(n) < 0.3
-        keys[mask] = rs.choice(2 ** 29, size=n)[mask] + 2 ** 29
-        vals2 = tab.lookup(keys)
-        np.testing.assert_array_equal(-1, vals2[mask])
-        np.testing.assert_array_equal(vals[~mask], vals2[~mask])
-
-    def test_small(self):
-        self.do_test(16384, 10000)
-
-    def xx_test_large(self):
-        # don't run by default because it's slow
-        self.do_test(2 ** 21, 10 ** 6)

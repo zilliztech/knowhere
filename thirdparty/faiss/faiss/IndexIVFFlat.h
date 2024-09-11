@@ -15,9 +15,8 @@
 
 #include <faiss/IndexIVF.h>
 
-#include "knowhere/object.h"
-
 namespace faiss {
+
 /** Inverted file with stored vectors. Here the inverted file
  * pre-selects the vectors to be searched, but they are not otherwise
  * encoded, the code array just contains the raw float entries.
@@ -32,9 +31,6 @@ struct IndexIVFFlat : IndexIVF {
 
     void restore_codes(const uint8_t* raw_data, const size_t raw_size);
 
-    // Be careful with overriding this function, because
-    //   renormalized x may be used inside.
-    // Overridden by IndexIVFFlatDedup.
     void train(idx_t n, const float* x) override;
 
     void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
@@ -44,8 +40,7 @@ struct IndexIVFFlat : IndexIVF {
             const float* x,
             const float* x_norms,
             const idx_t* xids,
-            const idx_t* precomputed_idx,
-            void* inverted_list_context = nullptr) override;
+            const idx_t* precomputed_idx) override;
 
     void encode_vectors(
             idx_t n,
@@ -55,15 +50,14 @@ struct IndexIVFFlat : IndexIVF {
             bool include_listnos = false) const override;
 
     InvertedListScanner* get_InvertedListScanner(
-            bool store_pairs,
-            const IDSelector* sel) const override;
+            bool store_pairs) const override;
 
     void reconstruct_from_offset(int64_t list_no, int64_t offset, float* recons)
             const override;
 
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
 
-    IndexIVFFlat();
+    IndexIVFFlat() {}
 };
 
 struct IndexIVFFlatCC : IndexIVFFlat {
@@ -75,7 +69,7 @@ struct IndexIVFFlatCC : IndexIVFFlat {
             MetricType = METRIC_L2,
             bool is_cosine = false);
 
-    IndexIVFFlatCC();
+    IndexIVFFlatCC() {}
 };
 
 struct IndexIVFFlatDedup : IndexIVFFlat {
@@ -106,7 +100,8 @@ struct IndexIVFFlatDedup : IndexIVFFlat {
             idx_t* labels,
             bool store_pairs,
             const IVFSearchParameters* params = nullptr,
-            IndexIVFStats* stats = nullptr) const override;
+            IndexIVFStats* stats = nullptr,
+            const BitsetView bitset = nullptr) const override;
 
     size_t remove_ids(const IDSelector& sel) override;
 
@@ -116,7 +111,7 @@ struct IndexIVFFlatDedup : IndexIVFFlat {
             const float* x,
             float radius,
             RangeSearchResult* result,
-            const SearchParameters* params = nullptr) const override;
+            const BitsetView bitset = nullptr) const override;
 
     /// not implemented
     void update_vectors(int nv, const idx_t* idx, const float* v) override;

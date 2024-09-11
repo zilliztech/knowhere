@@ -48,7 +48,7 @@ struct IndexBinaryHNSW : IndexBinary {
             idx_t k,
             int32_t* distances,
             idx_t* labels,
-            const SearchParameters* params = nullptr) const override;
+            const BitsetView bitset = nullptr) const override;
 
     void reconstruct(idx_t key, uint8_t* recons) const override;
 

@@ -21,8 +21,11 @@
 namespace faiss {
 
 /**
- * Flat index built on a scalar quantizer.
+ * The uniform quantizer has a range [vmin, vmax]. The range can be
+ * the same for all dimensions (uniform) or specific per dimension
+ * (default).
  */
+
 struct IndexScalarQuantizer : IndexFlatCodes {
     /// Used to encode the vectors
     ScalarQuantizer sq;
@@ -35,7 +38,7 @@ struct IndexScalarQuantizer : IndexFlatCodes {
      */
     IndexScalarQuantizer(
             int d,
-            ScalarQuantizer::QuantizerType qtype,
+            QuantizerType qtype,
             MetricType metric = METRIC_L2);
 
     IndexScalarQuantizer();
@@ -48,16 +51,18 @@ struct IndexScalarQuantizer : IndexFlatCodes {
             idx_t k,
             float* distances,
             idx_t* labels,
-            const SearchParameters* params = nullptr) const override;
+            const BitsetView bitset = nullptr) const override;
 
-    FlatCodesDistanceComputer* get_FlatCodesDistanceComputer() const override;
+    DistanceComputer* get_distance_computer() const override;
 
     /* standalone codec interface */
     void sa_encode(idx_t n, const float* x, uint8_t* bytes) const override;
 
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
 
-    size_t cal_size() const;
+    size_t cal_size() {
+        return codes.size() * sizeof(uint8_t) + sizeof(size_t) + sq.cal_size();
+    }
 };
 
 /** An IVF implementation where the components of the residuals are
@@ -68,20 +73,19 @@ struct IndexScalarQuantizer : IndexFlatCodes {
 
 struct IndexIVFScalarQuantizer : IndexIVF {
     ScalarQuantizer sq;
+    bool by_residual;
 
     IndexIVFScalarQuantizer(
             Index* quantizer,
             size_t d,
             size_t nlist,
-            ScalarQuantizer::QuantizerType qtype,
+            QuantizerType qtype,
             MetricType metric = METRIC_L2,
-            bool by_residual = true);
+            bool encode_residual = true);
 
     IndexIVFScalarQuantizer();
 
-    void train_encoder(idx_t n, const float* x, const idx_t* assign) override;
-
-    idx_t train_encoder_num_vectors() const override;
+    void train_residual(idx_t n, const float* x) override;
 
     void encode_vectors(
             idx_t n,
@@ -95,12 +99,10 @@ struct IndexIVFScalarQuantizer : IndexIVF {
             const float* x,
             const float* x_norms,
             const idx_t* xids,
-            const idx_t* precomputed_idx,
-            void* inverted_list_context = nullptr) override;
+            const idx_t* precomputed_idx) override;
 
     InvertedListScanner* get_InvertedListScanner(
-            bool store_pairs,
-            const IDSelector* sel) const override;
+            bool store_pairs) const override;
 
     void reconstruct_from_offset(int64_t list_no, int64_t offset, float* recons)
             const override;

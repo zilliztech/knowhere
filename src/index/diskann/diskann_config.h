@@ -28,14 +28,13 @@ class DiskANNConfig : public BaseConfig {
     // This is the degree of the graph index, typically between 60 and 150. Larger R will result in larger indices and
     // longer indexing times, but better search quality.
     CFG_INT max_degree;
-    // The size of the search list during the index build or (knn/range) search. Typical values are between 75 to 200.
+    // The size of the search list during the index build or (knn/ange) search. Typical values are between 75 to 200.
     // Larger values will take more time to build but result in indices that provide higher recall for the same search
     // complexity. Plz set this value larger than the max_degree unless you need to build indices really quickly and can
     // somewhat compromise on quality.
     CFG_INT search_list_size;
-    // Limit the size of the PQ code after the raw vector has been PQ-encoded. PQ code is a (pq_code_budget_gb * 1024 *
-    // 1024 * 1024) / row_num)-dimensional uint8 vector. If pq_code_budget_gb is too large, it will be adjusted to the
-    // size of dim*row_num.
+    // Limit the size of the PQ code after the raw vector has been PQ-encoded. PQ code is (a search_list_size / row_num
+    // )-dimensional uint8 vector. If pq_code_budget_gb is too large, it will be adjusted to the size of dim*row_num.
     CFG_FLOAT pq_code_budget_gb;
     // Limit on the memory allowed for building the index in GB. If you specify a value less than what is required to
     // build the index in one pass, the index is built using a divide and conquer approach so that sub-graphs will fit
@@ -68,11 +67,19 @@ class DiskANNConfig : public BaseConfig {
     CFG_INT min_k;
     // DiskANN uses TopK search to simulate range search by double the K in every round. This is the largest K.
     CFG_INT max_k;
+    // DiskANN uses TopK search to simulate range search, this is the ratio of search list size and k. With larger
+    // ratio, the accuracy will get higher but throughput will get affected.
+    CFG_FLOAT search_list_and_k_ratio;
     // The threshold which determines when to switch to PQ + Refine strategy based on the number of bits set. The
     // value should be in range of [0.0, 1.0] which means when greater or equal to x% of the bits are set,
     // use PQ + Refine. Default to -1.0f, negative vlaues will use dynamic threshold calculator given topk.
     CFG_FLOAT filter_threshold;
     KNOHWERE_DECLARE_CONFIG(DiskANNConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
+            .set_default("L2")
+            .description("metric type")
+            .for_train_and_search()
+            .for_deserialize();
         KNOWHERE_CONFIG_DECLARE_FIELD(max_degree)
             .description("the degree of the graph index.")
             .set_default(48)
@@ -83,9 +90,7 @@ class DiskANNConfig : public BaseConfig {
             .allow_empty_without_default()
             .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
             .for_train()
-            .for_search()
-            .for_range_search()
-            .for_iterator();
+            .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(pq_code_budget_gb)
             .description("the size of PQ compressed representation in GB.")
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
@@ -121,8 +126,7 @@ class DiskANNConfig : public BaseConfig {
             .set_default(8)
             .set_range(1, 128)
             .for_search()
-            .for_range_search()
-            .for_iterator();
+            .for_range_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(min_k)
             .description("the min l_search size used in range search.")
             .set_default(100)
@@ -130,39 +134,39 @@ class DiskANNConfig : public BaseConfig {
             .for_range_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(max_k)
             .description("the max l_search size used in range search.")
-            .set_default(std::numeric_limits<CFG_INT::value_type>::max())
+            .set_default(10000)
             .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
+            .for_range_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(search_list_and_k_ratio)
+            .description("the ratio of search list size and k.")
+            .set_default(2.0)
+            .set_range(1.0, 5.0)
             .for_range_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(filter_threshold)
             .description("the threshold of filter ratio to use PQ + Refine.")
             .set_default(-1.0f)
             .set_range(-1.0f, 1.0f)
-            .for_search()
-            .for_iterator();
+            .for_search();
     }
 
-    Status
-    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
-        switch (param_type) {
-            case PARAM_TYPE::TRAIN: {
-                if (!search_list_size.has_value()) {
-                    search_list_size = kDefaultSearchListSizeForBuild;
-                }
-                break;
-            }
-            case PARAM_TYPE::SEARCH: {
-                if (!search_list_size.has_value()) {
-                    search_list_size = std::max(k.value(), kSearchListSizeMinValue);
-                } else if (k.value() > search_list_size.value()) {
-                    *err_msg = "search_list_size(" + std::to_string(search_list_size.value()) +
-                               ") should be larger than k(" + std::to_string(k.value()) + ")";
-                    LOG_KNOWHERE_ERROR_ << *err_msg;
-                    return Status::out_of_range_in_json;
-                }
-                break;
-            }
-            default:
-                break;
+    inline Status
+    CheckAndAdjustForSearch(std::string* err_msg) override {
+        if (!search_list_size.has_value()) {
+            search_list_size = std::max(k.value(), kSearchListSizeMinValue);
+        } else if (k.value() > search_list_size.value()) {
+            *err_msg = "search_list_size(" + std::to_string(search_list_size.value()) + ") should be larger than k(" +
+                       std::to_string(k.value()) + ")";
+            LOG_KNOWHERE_ERROR_ << *err_msg;
+            return Status::out_of_range_in_json;
+        }
+
+        return Status::success;
+    }
+
+    inline Status
+    CheckAndAdjustForBuild() override {
+        if (!search_list_size.has_value()) {
+            search_list_size = kDefaultSearchListSizeForBuild;
         }
         return Status::success;
     }

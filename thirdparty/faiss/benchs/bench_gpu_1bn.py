@@ -13,7 +13,7 @@ import sys
 import faiss
 import re
 
-from multiprocessing.pool import ThreadPool
+from multiprocessing.dummy import Pool as ThreadPool
 from datasets import ivecs_read
 
 ####################################################################

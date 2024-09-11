@@ -6,7 +6,7 @@
 import os
 import faiss
 import argparse
-from multiprocessing.pool import ThreadPool
+from multiprocessing.dummy import Pool as ThreadPool
 
 if __name__ == '__main__':
 

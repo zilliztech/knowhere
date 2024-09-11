@@ -11,46 +11,23 @@
 
 #ifndef BRUTE_FORCE_H
 #define BRUTE_FORCE_H
-
-#include <memory>
-#include <vector>
-
 #include "knowhere/bitsetview.h"
 #include "knowhere/dataset.h"
-#include "knowhere/index/index_factory.h"
-#include "knowhere/index/index_node.h"
-#include "knowhere/operands.h"
+#include "knowhere/factory.h"
 
 namespace knowhere {
 
 class BruteForce {
  public:
-    template <typename DataType>
     static expected<DataSetPtr>
     Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config, const BitsetView& bitset);
 
-    template <typename DataType>
     static Status
     SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids, float* dis,
                   const Json& config, const BitsetView& bitset);
 
-    template <typename DataType>
     static expected<DataSetPtr>
     RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                const BitsetView& bitset);
-
-    // Perform row oriented sparse vector brute force search.
-    static expected<DataSetPtr>
-    SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                 const BitsetView& bitset);
-
-    static Status
-    SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, sparse::label_t* ids, float* dis,
-                        const Json& config, const BitsetView& bitset);
-
-    template <typename DataType>
-    static expected<std::vector<IndexNode::IteratorPtr>>
-    AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                 const BitsetView& bitset);
 };
 

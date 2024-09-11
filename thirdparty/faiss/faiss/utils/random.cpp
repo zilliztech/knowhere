@@ -9,23 +9,6 @@
 
 #include <faiss/utils/random.h>
 
-extern "C" {
-int sgemm_(
-        const char* transa,
-        const char* transb,
-        FINTEGER* m,
-        FINTEGER* n,
-        FINTEGER* k,
-        const float* alpha,
-        const float* a,
-        FINTEGER* lda,
-        const float* b,
-        FINTEGER* ldb,
-        float* beta,
-        float* c,
-        FINTEGER* ldc);
-}
-
 namespace faiss {
 
 /**************************************************
@@ -52,37 +35,6 @@ float RandomGenerator::rand_float() {
 
 double RandomGenerator::rand_double() {
     return mt() / double(mt.max());
-}
-
-SplitMix64RandomGenerator::SplitMix64RandomGenerator(int64_t seed)
-        : state{static_cast<uint64_t>(seed)} {}
-
-int SplitMix64RandomGenerator::rand_int() {
-    return next() & 0x7fffffff;
-}
-
-int64_t SplitMix64RandomGenerator::rand_int64() {
-    uint64_t value = next();
-    return static_cast<int64_t>(value & 0x7fffffffffffffffULL);
-}
-
-int SplitMix64RandomGenerator::rand_int(int max) {
-    return next() % max;
-}
-
-float SplitMix64RandomGenerator::rand_float() {
-    return next() / float(std::numeric_limits<uint64_t>::max());
-}
-
-double SplitMix64RandomGenerator::rand_double() {
-    return next() / double(std::numeric_limits<uint64_t>::max());
-}
-
-uint64_t SplitMix64RandomGenerator::next() {
-    uint64_t z = (state += 0x9e3779b97f4a7c15ULL);
-    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
-    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
-    return z ^ (z >> 31);
 }
 
 /***********************************************************************
@@ -193,18 +145,6 @@ void rand_perm(int* perm, size_t n, int64_t seed) {
     }
 }
 
-void rand_perm_splitmix64(int* perm, size_t n, int64_t seed) {
-    for (size_t i = 0; i < n; i++)
-        perm[i] = i;
-
-    SplitMix64RandomGenerator rng(seed);
-
-    for (size_t i = 0; i + 1 < n; i++) {
-        int i2 = i + rng.rand_int(n - i);
-        std::swap(perm[i], perm[i2]);
-    }
-}
-
 void byte_rand(uint8_t* x, size_t n, int64_t seed) {
     // only try to parallelize on large enough arrays
     const size_t nblock = n < 1024 ? 1 : 1024;
@@ -222,42 +162,6 @@ void byte_rand(uint8_t* x, size_t n, int64_t seed) {
         size_t i;
         for (i = istart; i < iend; i++)
             x[i] = rng.rand_int64();
-    }
-}
-
-void rand_smooth_vectors(size_t n, size_t d, float* x, int64_t seed) {
-    size_t d1 = 10;
-    std::vector<float> x1(n * d1);
-    float_randn(x1.data(), x1.size(), seed);
-    std::vector<float> rot(d1 * d);
-    float_rand(rot.data(), rot.size(), seed + 1);
-
-    { //
-        FINTEGER di = d, d1i = d1, ni = n;
-        float one = 1.0, zero = 0.0;
-        sgemm_("Not transposed",
-               "Not transposed", // natural order
-               &di,
-               &ni,
-               &d1i,
-               &one,
-               rot.data(),
-               &di, // rotation matrix
-               x1.data(),
-               &d1i, // second term
-               &zero,
-               x,
-               &di);
-    }
-
-    std::vector<float> scales(d);
-    float_rand(scales.data(), d, seed + 2);
-
-#pragma omp parallel for if (n * d > 10000)
-    for (int64_t i = 0; i < n; i++) {
-        for (size_t j = 0; j < d; j++) {
-            x[i * d + j] = sinf(x[i * d + j] * (scales[j] * 4 + 0.1));
-        }
     }
 }
 

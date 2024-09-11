@@ -58,6 +58,8 @@ class TestRange(unittest.TestCase):
 
         Lref, Dref, Iref = index_ref.range_search(xq, radius)
 
+        print("nb res: ", Lref[-1])
+
         index = faiss.IndexBinaryHash(d, 10)
         index.add(xb)
         # index.display()
@@ -78,6 +80,8 @@ class TestRange(unittest.TestCase):
                 self.assertTrue(snew <= set(ref))
             nfound.append(Lnew[-1])
             ndis.append(stats.ndis)
+        print('nfound=', nfound)
+        print('ndis=', ndis)
         nfound = np.array(nfound)
         self.assertTrue(nfound[-1] == Lref[-1])
         self.assertTrue(np.all(nfound[1:] >= nfound[:-1]))
@@ -95,6 +99,8 @@ class TestRange(unittest.TestCase):
         radius = 55
 
         Lref, Dref, Iref = index_ref.range_search(xq, radius)
+
+        print("nb res: ", Lref[-1])
 
         nfound = []
         ndis = []
@@ -117,6 +123,8 @@ class TestRange(unittest.TestCase):
                 self.assertTrue(snew <= set(ref))
             nfound.append(Lnew[-1])
             ndis.append(stats.ndis)
+        print('nfound=', nfound)
+        print('ndis=', ndis)
         nfound = np.array(nfound)
         # self.assertTrue(nfound[-1] == Lref[-1])
         self.assertTrue(np.all(nfound[1:] >= nfound[:-1]))
@@ -155,6 +163,7 @@ class TestKnn(unittest.TestCase):
                     # no duplicates
                     self.assertTrue(len(new) == len(snew))
                     nf += len(set(ref) & snew)
+                print('nfound', nh, nbit, nf)
                 nfound[(nh, nbit)] = nf
             self.assertGreater(nfound[(nh, 4)], nfound[(nh, 7)])
 
@@ -166,6 +175,7 @@ class TestKnn(unittest.TestCase):
             np.testing.assert_array_equal(Inew, I2)
             np.testing.assert_array_equal(Dnew, D2)
 
+        print('nfound=', nfound)
         self.assertGreater(3, abs(nfound[(0, 7)] - nfound[(1, 7)]))
         self.assertGreater(nfound[(3, 7)], nfound[(1, 7)])
         self.assertGreater(nfound[(5, 7)], nfound[(3, 7)])

@@ -11,8 +11,6 @@
 
 #include <algorithm>
 #include <catch2/catch_test_macros.hpp>
-#include <chrono>
-#include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <limits>
@@ -23,10 +21,9 @@
 #include <vector>
 
 #include "catch2/generators/catch_generators.hpp"
+#include "common/range_util.h"
 #include "knowhere/binaryset.h"
 #include "knowhere/dataset.h"
-#include "knowhere/object.h"
-#include "knowhere/range_util.h"
 #include "knowhere/version.h"
 
 constexpr int64_t kSeed = 42;
@@ -41,9 +38,9 @@ struct DisPairLess {
 inline knowhere::DataSetPtr
 GenDataSet(int rows, int dim, int seed = 42) {
     std::mt19937 rng(seed);
-    std::uniform_real_distribution<> distrib(0.0, 100.0);
+    std::uniform_int_distribution<> distrib(0.0, 100.0);
     float* ts = new float[rows * dim];
-    for (int i = 0; i < rows * dim; ++i) ts[i] = distrib(rng);
+    for (int i = 0; i < rows * dim; ++i) ts[i] = (float)distrib(rng);
     auto ds = knowhere::GenDataSet(rows, dim, ts);
     ds->SetIsOwner(true);
     return ds;
@@ -51,7 +48,6 @@ GenDataSet(int rows, int dim, int seed = 42) {
 
 inline knowhere::DataSetPtr
 CopyDataSet(knowhere::DataSetPtr dataset, const int64_t copy_rows) {
-    REQUIRE(!dataset->GetIsSparse());
     auto rows = copy_rows;
     auto dim = dataset->GetDim();
     auto data = dataset->GetTensor();
@@ -76,7 +72,6 @@ GenBinDataSet(int rows, int dim, int seed = 42) {
 
 inline knowhere::DataSetPtr
 CopyBinDataSet(knowhere::DataSetPtr dataset, const int64_t copy_rows) {
-    REQUIRE(!dataset->GetIsSparse());
     auto rows = copy_rows;
     auto dim = dataset->GetDim();
     auto data = dataset->GetTensor();
@@ -131,83 +126,6 @@ GetKNNRecall(const knowhere::DataSet& ground_truth, const knowhere::DataSet& res
         matched_num += v.size();
     }
     return ((float)matched_num) / ((float)nq * res_k);
-}
-
-inline float
-GetKNNRecall(const knowhere::DataSet& ground_truth, const std::vector<std::vector<int64_t>>& result) {
-    auto nq = result.size();
-    auto gt_k = ground_truth.GetDim();
-    auto gt_ids = ground_truth.GetIds();
-
-    uint32_t matched_num = 0;
-    for (size_t i = 0; i < nq; ++i) {
-        std::vector<int64_t> ids_0(gt_ids + i * gt_k, gt_ids + i * gt_k + gt_k);
-        std::vector<int64_t> ids_1 = result[i];
-
-        std::sort(ids_0.begin(), ids_0.end());
-        std::sort(ids_1.begin(), ids_1.end());
-
-        std::vector<int64_t> v(std::max(ids_0.size(), ids_1.size()));
-        std::vector<int64_t>::iterator it;
-        it = std::set_intersection(ids_0.begin(), ids_0.end(), ids_1.begin(), ids_1.end(), v.begin());
-        v.resize(it - v.begin());
-        matched_num += v.size();
-    }
-    return ((float)matched_num) / ((float)nq * gt_k);
-}
-
-//  Compare two ann-search results
-//      "ground_truth" here is just used as a baseline value for comparison. It is not real groundtruth and the knn
-//  results may be worse, we can call the compare results as "relative-recall".
-//      when the k-th distance of gt is worth, define the recall as 1.0f
-//      when the k-th distance of gt is better, define the recall as (intersection_count / size)
-inline float
-GetKNNRelativeRecall(const knowhere::DataSet& ground_truth, const knowhere::DataSet& result, bool dist_less_better) {
-    REQUIRE(ground_truth.GetDim() >= result.GetDim());
-
-    auto nq = result.GetRows();
-    auto gt_k = ground_truth.GetDim();
-    auto res_k = result.GetDim();
-    auto gt_ids = ground_truth.GetIds();
-    auto res_ids = result.GetIds();
-    auto gt_dists = ground_truth.GetDistance();
-    auto res_dists = result.GetDistance();
-
-    double acc_recall = 0;
-    for (auto i = 0; i < nq; ++i) {
-        // Results may be insufficient, less than k
-        int64_t valid_gt_count = 0;
-        while (valid_gt_count < gt_k && gt_ids[i * gt_k + valid_gt_count] >= 0) {
-            valid_gt_count++;
-        }
-
-        if (valid_gt_count == 0) {
-            acc_recall += 1.0;
-            continue;
-        }
-
-        bool gt_better = dist_less_better
-                             ? gt_dists[i * gt_k + valid_gt_count - 1] < res_dists[i * res_k + valid_gt_count - 1]
-                             : gt_dists[i * gt_k + valid_gt_count - 1] > res_dists[i * res_k + valid_gt_count - 1];
-
-        if (gt_better) {
-            std::vector<int64_t> ids_0(gt_ids + i * gt_k, gt_ids + i * gt_k + valid_gt_count);
-            std::vector<int64_t> ids_1(res_ids + i * res_k, res_ids + i * res_k + valid_gt_count);
-
-            std::sort(ids_0.begin(), ids_0.end());
-            std::sort(ids_1.begin(), ids_1.end());
-
-            std::vector<int64_t> v(std::max(ids_0.size(), ids_1.size()));
-            std::vector<int64_t>::iterator it;
-            it = std::set_intersection(ids_0.begin(), ids_0.end(), ids_1.begin(), ids_1.end(), v.begin());
-            v.resize(it - v.begin());
-
-            acc_recall += double(v.size()) / valid_gt_count;
-        } else {
-            acc_recall += 1.0;
-        }
-    }
-    return acc_recall / nq;
 }
 
 inline float
@@ -314,74 +232,3 @@ inline auto
 GenTestVersionList() {
     return GENERATE(as<int32_t>{}, knowhere::Version::GetCurrentVersion().VersionNumber());
 }
-
-inline knowhere::DataSetPtr
-GenSparseDataSet(const std::vector<std::map<int32_t, float>>& data, int32_t cols) {
-    int32_t rows = data.size();
-    auto tensor = std::make_unique<knowhere::sparse::SparseRow<float>[]>(rows);
-
-    for (int32_t i = 0; i < rows; ++i) {
-        if (data[i].size() == 0) {
-            continue;
-        }
-        knowhere::sparse::SparseRow<float> row(data[i].size());
-        size_t j = 0;
-        for (auto& [idx, val] : data[i]) {
-            row.set_at(j++, idx, val);
-        }
-        tensor[i] = std::move(row);
-    }
-
-    auto ds = knowhere::GenDataSet(rows, cols, tensor.release());
-    ds->SetIsOwner(true);
-    ds->SetIsSparse(true);
-    return ds;
-}
-
-// Generate a sparse dataset with given sparsity.
-inline knowhere::DataSetPtr
-GenSparseDataSet(int32_t rows, int32_t cols, float sparsity, int seed = 42) {
-    int32_t num_elements = static_cast<int32_t>(rows * cols * (1.0f - sparsity));
-
-    std::mt19937 rng(seed);
-    auto real_distrib = std::uniform_real_distribution<float>(0, 1);
-    auto row_distrib = std::uniform_int_distribution<int32_t>(0, rows - 1);
-    auto col_distrib = std::uniform_int_distribution<int32_t>(0, cols - 1);
-
-    std::vector<std::map<int32_t, float>> data(rows);
-
-    for (int32_t i = 0; i < num_elements; ++i) {
-        auto row = row_distrib(rng);
-        while (data[row].size() == (size_t)cols) {
-            row = row_distrib(rng);
-        }
-        auto col = col_distrib(rng);
-        while (data[row].find(col) != data[row].end()) {
-            col = col_distrib(rng);
-        }
-        auto val = real_distrib(rng);
-        data[row][col] = val;
-    }
-
-    return GenSparseDataSet(data, cols);
-}
-
-// a timer
-struct StopWatch {
-    using timepoint_t = std::chrono::time_point<std::chrono::steady_clock>;
-
-    timepoint_t Start;
-
-    //
-    StopWatch() {
-        Start = std::chrono::steady_clock::now();
-    }
-
-    //
-    double
-    elapsed() const {
-        const auto now = std::chrono::steady_clock::now();
-        std::chrono::duration<double> elapsed = now - Start;
-        return elapsed.count();
-    }
-};

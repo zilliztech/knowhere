@@ -5,13 +5,6 @@
 
 namespace faiss {
 
-struct IndexScaNNSearchParameters : SearchParameters {
-    size_t reorder_k = 1;
-    SearchParameters* base_index_params = nullptr;  // non-owning
-
-    virtual ~IndexScaNNSearchParameters() = default;
-};
-
 struct IndexScaNN : IndexRefine {
     explicit IndexScaNN(Index* base_index);
     IndexScaNN(Index* base_index, const float* xb);
@@ -30,20 +23,22 @@ struct IndexScaNN : IndexRefine {
 
     int64_t size();
 
-    void search(
+    void search_thread_safe(
             idx_t n,
             const float* x,
             idx_t k,
             float* distances,
             idx_t* labels,
-            const SearchParameters* params = nullptr) const override;
+            const size_t nprobe,
+            const size_t reorder_k,
+            const BitsetView bitset = nullptr) const;
 
-    void range_search(
+    void range_search_thread_safe(
             idx_t n,
             const float* x,
             float radius,
             RangeSearchResult* result,
-            const SearchParameters* params = nullptr) const override;
+            const BitsetView bitset = nullptr) const;
 };
 
 } // namespace faiss

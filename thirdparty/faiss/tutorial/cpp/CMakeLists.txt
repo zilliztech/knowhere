@@ -19,14 +19,23 @@ target_link_libraries(4-GPU PRIVATE faiss)
 add_executable(5-Multiple-GPUs EXCLUDE_FROM_ALL 5-Multiple-GPUs.cpp)
 target_link_libraries(5-Multiple-GPUs PRIVATE faiss)
 
-add_executable(6-HNSW EXCLUDE_FROM_ALL 6-HNSW.cpp)
-target_link_libraries(6-HNSW PRIVATE faiss)
+add_executable(5-GPU EXCLUDE_FROM_ALL 5-GPU.cpp)
+target_link_libraries(5-GPU PRIVATE faiss)
 
-add_executable(7-PQFastScan EXCLUDE_FROM_ALL 7-PQFastScan.cpp)
-target_link_libraries(7-PQFastScan PRIVATE faiss)
+add_executable(6-GPU EXCLUDE_FROM_ALL 6-GPU.cpp)
+target_link_libraries(6-GPU PRIVATE faiss)
 
-add_executable(8-PQFastScanRefine EXCLUDE_FROM_ALL 8-PQFastScanRefine.cpp)
-target_link_libraries(8-PQFastScanRefine PRIVATE faiss)
+add_executable(6-RUN EXCLUDE_FROM_ALL 6-RUN.cpp)
+target_link_libraries(6-RUN PRIVATE faiss)
 
-add_executable(9-RefineComparison EXCLUDE_FROM_ALL 9-RefineComparison.cpp)
-target_link_libraries(9-RefineComparison PRIVATE faiss)
+add_executable(7-GPU EXCLUDE_FROM_ALL 7-GPU.cpp)
+target_link_libraries(7-GPU PRIVATE faiss)
+
+add_executable(8-GPU EXCLUDE_FROM_ALL 8-GPU.cpp)
+target_link_libraries(8-GPU PRIVATE faiss)
+
+add_executable(9-BinaryFlat EXCLUDE_FROM_ALL 9-BinaryFlat.cpp)
+target_link_libraries(9-BinaryFlat PRIVATE faiss)
+
+add_executable(tutorial_faiss_test EXCLUDE_FROM_ALL tutorial_faiss_test.cpp)
+target_link_libraries(tutorial_faiss_test PRIVATE faiss)

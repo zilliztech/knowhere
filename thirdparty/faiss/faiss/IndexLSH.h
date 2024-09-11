@@ -50,7 +50,7 @@ struct IndexLSH : IndexFlatCodes {
             idx_t k,
             float* distances,
             idx_t* labels,
-            const SearchParameters* params = nullptr) const override;
+            const BitsetView bitset = nullptr) const override;
 
     /// transfer the thresholds to a pre-processing stage (and unset
     /// train_thresholds)

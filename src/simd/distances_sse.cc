@@ -18,7 +18,6 @@
 #include <cstdint>
 
 #include "distances_ref.h"
-#include "simd_util.h"
 
 namespace faiss {
 
@@ -63,25 +62,6 @@ fvec_norm_L2sqr_sse(const float* x, size_t d) {
     msum1 = _mm_hadd_ps(msum1, msum1);
     msum1 = _mm_hadd_ps(msum1, msum1);
     return _mm_cvtss_f32(msum1);
-}
-
-float
-bf16_vec_norm_L2sqr_sse(const knowhere::bf16* x, size_t d) {
-    __m128 m_res = _mm_setzero_ps();
-    while (d >= 4) {
-        __m128 m_x = _mm_bf16_to_fp32(_mm_loadl_epi64((const __m128i*)x));
-        m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_x));
-        x += 4;
-        d -= 4;
-    }
-    if (d > 0) {
-        __m128 m_x = _mm_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)x));
-        m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_x));
-    }
-    m_res = _mm_hadd_ps(m_res, m_res);
-    m_res = _mm_hadd_ps(m_res, m_res);
-    return _mm_cvtss_f32(m_res);
-    ;
 }
 
 namespace {
@@ -298,29 +278,6 @@ fvec_L2sqr_sse(const float* x, const float* y, size_t d) {
 }
 
 float
-bf16_vec_L2sqr_sse(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
-    __m128 m_res = _mm_setzero_ps();
-    while (d >= 4) {
-        __m128 m_x = _mm_bf16_to_fp32(_mm_loadl_epi64((const __m128i*)x));
-        __m128 m_y = _mm_bf16_to_fp32(_mm_loadl_epi64((const __m128i*)y));
-        m_x = _mm_sub_ps(m_x, m_y);
-        m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_x));
-        x += 4;
-        y += 4;
-        d -= 4;
-    }
-    if (d > 0) {
-        __m128 m_x = _mm_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)x));
-        __m128 m_y = _mm_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)y));
-        m_x = _mm_sub_ps(m_x, m_y);
-        m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_x));
-    }
-    m_res = _mm_hadd_ps(m_res, m_res);
-    m_res = _mm_hadd_ps(m_res, m_res);
-    return _mm_cvtss_f32(m_res);
-}
-
-float
 fvec_inner_product_sse(const float* x, const float* y, size_t d) {
     __m128 mx, my;
     __m128 msum1 = _mm_setzero_ps();
@@ -344,27 +301,6 @@ fvec_inner_product_sse(const float* x, const float* y, size_t d) {
     msum1 = _mm_hadd_ps(msum1, msum1);
     msum1 = _mm_hadd_ps(msum1, msum1);
     return _mm_cvtss_f32(msum1);
-}
-
-float
-bf16_vec_inner_product_sse(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
-    __m128 m_res = _mm_setzero_ps();
-    while (d >= 4) {
-        __m128 m_x = _mm_bf16_to_fp32(_mm_loadl_epi64((const __m128i*)x));
-        __m128 m_y = _mm_bf16_to_fp32(_mm_loadl_epi64((const __m128i*)y));
-        m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_y));
-        x += 4;
-        y += 4;
-        d -= 4;
-    }
-    if (d > 0) {
-        __m128 m_x = _mm_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)x));
-        __m128 m_y = _mm_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)y));
-        m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_y));
-    }
-    m_res = _mm_hadd_ps(m_res, m_res);
-    m_res = _mm_hadd_ps(m_res, m_res);
-    return _mm_cvtss_f32(m_res);
 }
 
 /***************************************************************************
@@ -439,29 +375,6 @@ fvec_madd_and_argmin_sse(size_t n, const float* a, float bf, const float* b, flo
         // vmin4 = _mm_min_ps (vmin4, vc4);
     }
     return _mm_cvtsi128_si32(imin4);
-}
-
-// trust the compiler to unroll this properly
-int32_t
-ivec_inner_product_sse(const int8_t* x, const int8_t* y, size_t d) {
-    size_t i;
-    int32_t res = 0;
-    for (i = 0; i < d; i++) {
-        res += (int32_t)x[i] * y[i];
-    }
-    return res;
-}
-
-// trust the compiler to unroll this properly
-int32_t
-ivec_L2sqr_sse(const int8_t* x, const int8_t* y, size_t d) {
-    size_t i;
-    int32_t res = 0;
-    for (i = 0; i < d; i++) {
-        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
-        res += tmp * tmp;
-    }
-    return res;
 }
 
 }  // namespace faiss

@@ -32,7 +32,6 @@
 #include <faiss/IndexPreTransform.h>
 #include <faiss/IndexRefine.h>
 #include <faiss/IndexScalarQuantizer.h>
-#include <faiss/IndexShardsIVF.h>
 #include <faiss/MetaIndexes.h>
 #include <faiss/VectorTransform.h>
 
@@ -152,10 +151,12 @@ bool OperatingPoints::add(
             return false;
         }
     }
-    // remove non-optimal points from array
-    for (int i = a.size() - 1; i > 0; --i) {
-        if (a[i].t < a[i - 1].t) {
-            a.erase(a.begin() + (i - 1));
+    { // remove non-optimal points from array
+        int i = a.size() - 1;
+        while (i > 0) {
+            if (a[i].t < a[i - 1].t)
+                a.erase(a.begin() + (i - 1));
+            i--;
         }
     }
     return true;
@@ -284,8 +285,6 @@ std::string ParameterSpace::combination_name(size_t cno) const {
     char buf[1000], *wp = buf;
     *wp = 0;
     for (int i = 0; i < parameter_ranges.size(); i++) {
-        FAISS_THROW_IF_NOT_MSG(
-                buf + 1000 - wp >= 0, "Overflow detected in snprintf");
         const ParameterRange& pr = parameter_ranges[i];
         size_t j = cno % pr.values.size();
         cno /= pr.values.size();
@@ -334,7 +333,7 @@ ParameterRange& ParameterSpace::add_range(const std::string& name) {
             return pr;
         }
     }
-    parameter_ranges.emplace_back();
+    parameter_ranges.push_back(ParameterRange());
     parameter_ranges.back().name = name;
     return parameter_ranges.back();
 }
@@ -355,7 +354,7 @@ void ParameterSpace::initialize(const Index* index) {
         index = ix->index;
     }
 
-    if (DC(IndexIVFInterface)) {
+    if (DC(IndexIVF)) {
         {
             ParameterRange& pr = add_range("nprobe");
             for (int i = 0; i < 13; i++) {
@@ -462,16 +461,6 @@ void ParameterSpace::set_index_parameter(
         set_index_parameter(ix->index, name, val);
         return;
     }
-    if (DC(IndexShardsIVF)) {
-        // special handling because the nprobe is set at the sub-class level
-        // but other params are set on the class itself
-        if (name.find("quantizer_") == 0 && name != "nprobe" &&
-            name != "quantizer_nprobe") {
-            std::string sub_name = name.substr(strlen("quantizer_"));
-            set_index_parameter(ix->quantizer, sub_name, val);
-            return;
-        }
-    }
     if (DC(ThreadedIndex<Index>)) {
         // call on all sub-indexes
         auto fn = [this, name, val](int /* no */, Index* subIndex) {
@@ -531,19 +520,6 @@ void ParameterSpace::set_index_parameter(
         if (DC(IndexIVF)) {
             ix->max_codes = std::isfinite(val) ? size_t(val) : 0;
             return;
-        }
-    }
-
-    if (name == "efConstruction") {
-        if (DC(IndexHNSW)) {
-            ix->hnsw.efConstruction = int(val);
-            return;
-        }
-        if (DC(IndexIVF)) {
-            if (IndexHNSW* cq = dynamic_cast<IndexHNSW*>(ix->quantizer)) {
-                cq->hnsw.efConstruction = int(val);
-                return;
-            }
         }
     }
 
@@ -619,7 +595,7 @@ void ParameterSpace::explore(
     if (n_experiments == 0) {
         for (size_t cno = 0; cno < n_comb; cno++) {
             set_index_parameters(index, cno);
-            std::vector<idx_t> I(nq * crit.nnn);
+            std::vector<Index::idx_t> I(nq * crit.nnn);
             std::vector<float> D(nq * crit.nnn);
 
             double t0 = getmillisecs();
@@ -688,7 +664,7 @@ void ParameterSpace::explore(
         }
 
         set_index_parameters(index, cno);
-        std::vector<idx_t> I(nq * crit.nnn);
+        std::vector<Index::idx_t> I(nq * crit.nnn);
         std::vector<float> D(nq * crit.nnn);
 
         double t0 = getmillisecs();
@@ -699,7 +675,7 @@ void ParameterSpace::explore(
         do {
             if (thread_over_batches) {
 #pragma omp parallel for
-                for (idx_t q0 = 0; q0 < nq; q0 += batchsize) {
+                for (Index::idx_t q0 = 0; q0 < nq; q0 += batchsize) {
                     size_t q1 = q0 + batchsize;
                     if (q1 > nq)
                         q1 = nq;

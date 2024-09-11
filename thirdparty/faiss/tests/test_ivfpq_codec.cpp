@@ -13,12 +13,11 @@
 
 #include <gtest/gtest.h>
 
+#include <faiss/FaissHook.h>
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexIVFPQ.h>
 #include <faiss/utils/distances.h>
 #include <faiss/utils/utils.h>
-
-#include "simd/hook.h"
 
 namespace {
 
@@ -36,7 +35,7 @@ double eval_codec_error(long ncentroids, long m, const std::vector<float>& v) {
 
     // encode and decode to compute reconstruction error
 
-    std::vector<faiss::idx_t> keys(nb);
+    std::vector<faiss::Index::idx_t> keys(nb);
     std::vector<uint8_t> codes(nb * m);
     index.encode_multiple(nb, keys.data(), v.data(), codes.data(), true);
 

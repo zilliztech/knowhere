@@ -9,15 +9,11 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
-#include <chrono>
-#include <thread>
 #include <vector>
 
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
-#include "knowhere/comp/thread_pool.h"
 #include "knowhere/comp/time_recorder.h"
-#include "knowhere/expected.h"
 #include "knowhere/heap.h"
 #include "knowhere/utils.h"
 #include "knowhere/version.h"
@@ -39,7 +35,7 @@ TEST_CASE("Test Vector Normalization", "[normalize]") {
         auto train_ds = GenDataSet(nb, dim, seed);
         auto data = (float*)train_ds->GetTensor();
 
-        knowhere::NormalizeDataset<knowhere::fp32>(train_ds);
+        knowhere::Normalize(*train_ds);
 
         for (size_t i = 0; i < nb; ++i) {
             float sum = 0.0;
@@ -112,7 +108,6 @@ TEST_CASE("Test Time Recorder") {
     }
     auto span = tr.ElapseFromBegin("done");
     REQUIRE(span > 0);
-    REQUIRE(sum > 0);
 }
 
 TEST_CASE("Test Version") {
@@ -124,142 +119,6 @@ TEST_CASE("Test Version") {
 TEST_CASE("Test DiskLoad") {
     REQUIRE(knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_DISKANN,
                                   knowhere::Version::GetCurrentVersion().VersionNumber()));
-#ifdef KNOWHERE_WITH_CARDINAL
-    REQUIRE(
-        knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_HNSW, knowhere::Version::GetCurrentVersion().VersionNumber()));
-#else
     REQUIRE(!knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_HNSW,
                                    knowhere::Version::GetCurrentVersion().VersionNumber()));
-#endif
-}
-
-TEST_CASE("Test ThreadPool") {
-    SECTION("Build thread pool") {
-        knowhere::ThreadPool::InitGlobalBuildThreadPool(0);
-        auto prev_build_thread_num = knowhere::ThreadPool::GetGlobalBuildThreadPoolSize();
-        knowhere::ThreadPool::InitGlobalBuildThreadPool(prev_build_thread_num);
-
-        knowhere::ThreadPool::SetGlobalBuildThreadPoolSize(2);
-        REQUIRE(knowhere::ThreadPool::GetGlobalBuildThreadPoolSize() == 2);
-        knowhere::ThreadPool::SetGlobalBuildThreadPoolSize(4);
-        REQUIRE(knowhere::ThreadPool::GetGlobalBuildThreadPoolSize() == 4);
-        knowhere::ThreadPool::SetGlobalBuildThreadPoolSize(0);
-        REQUIRE(knowhere::ThreadPool::GetGlobalBuildThreadPoolSize() == 4);
-
-        REQUIRE(knowhere::ThreadPool::GetBuildThreadPoolPendingTaskCount() == 0);
-
-        if (prev_build_thread_num > 0) {
-            knowhere::ThreadPool::SetGlobalBuildThreadPoolSize(prev_build_thread_num);
-        }
-    }
-
-    SECTION("Search thread pool") {
-        knowhere::ThreadPool::InitGlobalSearchThreadPool(0);
-        auto prev_search_thread_num = knowhere::ThreadPool::GetGlobalSearchThreadPoolSize();
-        knowhere::ThreadPool::InitGlobalSearchThreadPool(prev_search_thread_num);
-
-        knowhere::ThreadPool::SetGlobalSearchThreadPoolSize(2);
-        REQUIRE(knowhere::ThreadPool::GetGlobalSearchThreadPoolSize() == 2);
-        knowhere::ThreadPool::SetGlobalSearchThreadPoolSize(4);
-        REQUIRE(knowhere::ThreadPool::GetGlobalSearchThreadPoolSize() == 4);
-        knowhere::ThreadPool::SetGlobalSearchThreadPoolSize(0);
-        REQUIRE(knowhere::ThreadPool::GetGlobalSearchThreadPoolSize() == 4);
-
-        REQUIRE(knowhere::ThreadPool::GetSearchThreadPoolPendingTaskCount() == 0);
-
-        if (prev_search_thread_num > 0) {
-            knowhere::ThreadPool::SetGlobalSearchThreadPoolSize(prev_search_thread_num);
-        }
-    }
-
-    SECTION("ScopedOmpSetter") {
-        int prev_num_threads = omp_get_max_threads();
-        {
-            knowhere::ThreadPool::ScopedOmpSetter setter(2 * prev_num_threads);
-            REQUIRE(omp_get_max_threads() == 2 * prev_num_threads);
-#ifdef OPENBLAS_OS_LINUX
-            REQUIRE(openblas_get_num_threads() == 2 * prev_num_threads);
-#endif
-        }
-    }
-}
-
-TEST_CASE("Test WaitAllSuccess with folly::Unit futures") {
-    auto pool = knowhere::ThreadPool::GetGlobalSearchThreadPool();
-    std::vector<folly::Future<folly::Unit>> futures;
-
-    SECTION("All futures succeed") {
-        for (size_t i = 0; i < 10; ++i) {
-            futures.emplace_back(pool->push([]() { return folly::Unit(); }));
-        }
-        REQUIRE(knowhere::WaitAllSuccess(futures) == knowhere::Status::success);
-    }
-
-    SECTION("One future throws an exception") {
-        for (size_t i = 0; i < 10; ++i) {
-            futures.emplace_back(pool->push([i]() {
-                if (i == 5) {
-                    throw std::runtime_error("Task failed");
-                }
-                return folly::Unit();
-            }));
-        }
-        REQUIRE_THROWS_AS(knowhere::WaitAllSuccess(futures), std::runtime_error);
-    }
-
-    SECTION("WaitAllSuccess should wait until all tasks finish even if any throws exception") {
-        std::atomic<int> externalValue{0};
-
-        futures.emplace_back(pool->push([&]() {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-            REQUIRE(externalValue.load() == 1);
-            externalValue.store(2);
-            return folly::Unit();
-        }));
-
-        futures.emplace_back(pool->push([&]() {
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            externalValue.store(1);
-            throw std::runtime_error("Task failed");
-        }));
-
-        REQUIRE_THROWS_AS(knowhere::WaitAllSuccess(futures), std::runtime_error);
-        REQUIRE(externalValue.load() == 2);
-    }
-}
-
-TEST_CASE("Test WaitAllSuccess with knowhere::Status futures") {
-    auto pool = knowhere::ThreadPool::GetGlobalSearchThreadPool();
-    std::vector<folly::Future<knowhere::Status>> futures;
-
-    SECTION("All futures succeed with Status::success") {
-        for (size_t i = 0; i < 10; ++i) {
-            futures.emplace_back(pool->push([]() { return knowhere::Status::success; }));
-        }
-        REQUIRE(knowhere::WaitAllSuccess(futures) == knowhere::Status::success);
-    }
-
-    SECTION("One future returns Status::invalid_args") {
-        for (size_t i = 0; i < 10; ++i) {
-            futures.emplace_back(pool->push([i]() {
-                if (i == 5) {
-                    return knowhere::Status::invalid_args;
-                }
-                return knowhere::Status::success;
-            }));
-        }
-        REQUIRE(knowhere::WaitAllSuccess(futures) == knowhere::Status::invalid_args);
-    }
-
-    SECTION("One future throws an exception") {
-        for (size_t i = 0; i < 10; ++i) {
-            futures.emplace_back(pool->push([i]() {
-                if (i == 5) {
-                    throw std::runtime_error("Task failed");
-                }
-                return knowhere::Status::success;
-            }));
-        }
-        REQUIRE_THROWS_AS(knowhere::WaitAllSuccess(futures), std::runtime_error);
-    }
 }

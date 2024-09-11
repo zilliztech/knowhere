@@ -25,7 +25,7 @@
 #include "index/ivf_gpu/ivf_gpu_config.h"
 #include "io/memory_io.h"
 #include "knowhere/comp/index_param.h"
-#include "knowhere/index/index_factory.h"
+#include "knowhere/factory.h"
 #include "knowhere/log.h"
 
 namespace knowhere {
@@ -55,20 +55,20 @@ class GpuIvfIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSetPtr dataset, const Config& cfg) override {
+    Train(const DataSet& dataset, const Config& cfg) override {
         if (index_ && index_->is_trained) {
             LOG_KNOWHERE_WARNING_ << "index is already trained";
             return Status::index_already_trained;
         }
 
-        auto rows = dataset->GetRows();
-        auto tensor = dataset->GetTensor();
-        auto dim = dataset->GetDim();
+        auto rows = dataset.GetRows();
+        auto tensor = dataset.GetTensor();
+        auto dim = dataset.GetDim();
         auto ivf_gpu_cfg = static_cast<const typename KnowhereConfigType<T>::Type&>(cfg);
 
         auto metric = Str2FaissMetricType(ivf_gpu_cfg.metric_type);
         if (!metric.has_value()) {
-            LOG_KNOWHERE_ERROR_ << "unsupported metric type: " << ivf_gpu_cfg.metric_type;
+            LOG_KNOWHERE_WARNING_ << "please check metric value: " << ivf_gpu_cfg.metric_type;
             return metric.error();
         }
 
@@ -108,7 +108,7 @@ class GpuIvfIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSetPtr dataset, const Config& cfg) override {
+    Add(const DataSet& dataset, const Config& cfg) override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not add data to empty GpuIvfIndex.";
             return Status::empty_index;
@@ -117,8 +117,8 @@ class GpuIvfIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "Can not add data to not trained GpuIvfIndex.";
             return Status::index_not_trained;
         }
-        auto rows = dataset->GetRows();
-        auto tensor = dataset->GetTensor();
+        auto rows = dataset.GetRows();
+        auto tensor = dataset.GetTensor();
         try {
             ResScope rs(res_, false);
             index_->add(rows, (const float*)tensor);
@@ -130,14 +130,14 @@ class GpuIvfIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+    Search(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
         auto ivf_gpu_cfg = static_cast<const typename KnowhereConfigType<T>::Type&>(cfg);
 
         constexpr int64_t block_size = 2048;
-        auto rows = dataset->GetRows();
+        auto rows = dataset.GetRows();
         auto k = ivf_gpu_cfg.k;
-        auto tensor = dataset->GetTensor();
-        auto dim = dataset->GetDim();
+        auto tensor = dataset.GetTensor();
+        auto dim = dataset.GetDim();
         float* dis = new (std::nothrow) float[rows * k];
         int64_t* ids = new (std::nothrow) int64_t[rows * k];
         try {
@@ -159,12 +159,12 @@ class GpuIvfIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+    RangeSearch(const DataSet& dataset, const Config& cfg, const BitsetView& bitset) const override {
         return Status::not_implemented;
     }
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override {
+    GetVectorByIds(const DataSet& dataset) const override {
         return Status::not_implemented;
     }
 
@@ -273,7 +273,14 @@ class GpuIvfIndexNode : public IndexNode {
     std::unique_ptr<faiss::Index> index_;
 };
 
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(GPU_FAISS_IVF_FLAT, GpuIvfIndexNode, fp32, faiss::IndexIVFFlat);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(GPU_FAISS_IVF_PQ, GpuIvfIndexNode, fp32, faiss::IndexIVFPQ);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(GPU_FAISS_IVF_SQ8, GpuIvfIndexNode, fp32, faiss::IndexIVFScalarQuantizer);
+KNOWHERE_REGISTER_GLOBAL(GPU_FAISS_IVF_FLAT, [](const int32_t& version, const Object& object) {
+    return Index<GpuIvfIndexNode<faiss::IndexIVFFlat>>::Create(version, object);
+});
+KNOWHERE_REGISTER_GLOBAL(GPU_FAISS_IVF_PQ, [](const int32_t& version, const Object& object) {
+    return Index<GpuIvfIndexNode<faiss::IndexIVFPQ>>::Create(version, object);
+});
+KNOWHERE_REGISTER_GLOBAL(GPU_FAISS_IVF_SQ8, [](const int32_t& version, const Object& object) {
+    return Index<GpuIvfIndexNode<faiss::IndexIVFScalarQuantizer>>::Create(version, object);
+});
+
 }  // namespace knowhere

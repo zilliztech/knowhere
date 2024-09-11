@@ -14,9 +14,9 @@ namespace faiss {
  * ScalarQuantizer Distance Computer
  ********************************************************************/
 
-ScalarQuantizer::SQDistanceComputer* sq_get_distance_computer_avx512(
+SQDistanceComputer* sq_get_distance_computer_avx512(
         MetricType metric,
-        ScalarQuantizer::QuantizerType qtype,
+        QuantizerType qtype,
         size_t dim,
         const std::vector<float>& trained) {
     if (metric == METRIC_L2) {
@@ -32,7 +32,7 @@ ScalarQuantizer::SQDistanceComputer* sq_get_distance_computer_avx512(
         }
     } else {
         if (dim % 16 == 0) {
-            return select_distance_computer_avx512<SimilarityIP_avx512<16>>(
+            return select_distance_computer_avx512<SimilarityL2_avx512<16>>(
                     qtype, dim, trained);
         } else if (dim % 8 == 0) {
             return select_distance_computer_avx512<SimilarityIP_avx512<8>>(
@@ -44,8 +44,8 @@ ScalarQuantizer::SQDistanceComputer* sq_get_distance_computer_avx512(
     }
 }
 
-ScalarQuantizer::SQuantizer* sq_select_quantizer_avx512(
-        ScalarQuantizer::QuantizerType qtype,
+Quantizer* sq_select_quantizer_avx512(
+        QuantizerType qtype,
         size_t dim,
         const std::vector<float>& trained) {
     if (dim % 16 == 0) {
@@ -63,17 +63,16 @@ InvertedListScanner* sq_select_inverted_list_scanner_avx512(
         const Index* quantizer,
         size_t dim,
         bool store_pairs,
-        const IDSelector* sel,
         bool by_residual) {
     if (dim % 16 == 0) {
         return sel0_InvertedListScanner_avx512<16>(
-                mt, sq, quantizer, store_pairs, sel, by_residual);
+                mt, sq, quantizer, store_pairs, by_residual);
     } else if (dim % 8 == 0) {
         return sel0_InvertedListScanner_avx512<8>(
-                mt, sq, quantizer, store_pairs, sel, by_residual);
+                mt, sq, quantizer, store_pairs, by_residual);
     } else {
         return sel0_InvertedListScanner_avx512<1>(
-                mt, sq, quantizer, store_pairs, sel, by_residual);
+                mt, sq, quantizer, store_pairs, by_residual);
     }
 }
 

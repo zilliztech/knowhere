@@ -23,11 +23,10 @@
 #ifdef KNOWHERE_WITH_GPU
 #include "index/gpu/gpu_res_mgr.h"
 #endif
-#ifdef KNOWHERE_WITH_RAFT
-#include "common/raft/integration/raft_initialization.hpp"
-#include "cuda_runtime_api.h"
-#endif
 #include "simd/hook.h"
+#ifdef KNOWHERE_WITH_RAFT
+#include "common/raft/raft_utils.h"
+#endif
 
 namespace knowhere {
 
@@ -91,18 +90,6 @@ KnowhereConfig::SetSimdType(const SimdType simd_type) {
 }
 
 void
-KnowhereConfig::EnablePatchForComputeFP32AsBF16() {
-    LOG_KNOWHERE_INFO_ << "Enable patch for compute fp32 as bf16";
-    faiss::enable_patch_for_fp32_bf16();
-}
-
-void
-KnowhereConfig::DisablePatchForComputeFP32AsBF16() {
-    LOG_KNOWHERE_INFO_ << "Disable patch for compute fp32 as bf16";
-    faiss::disable_patch_for_fp32_bf16();
-}
-
-void
 KnowhereConfig::SetBlasThreshold(const int64_t use_blas_threshold) {
     LOG_KNOWHERE_INFO_ << "Set faiss::distance_compute_blas_threshold to " << use_blas_threshold;
     faiss::distance_compute_blas_threshold = static_cast<int>(use_blas_threshold);
@@ -148,29 +135,18 @@ KnowhereConfig::SetAioContextPool(size_t num_ctx) {
 
 void
 KnowhereConfig::SetBuildThreadPoolSize(size_t num_threads) {
-    knowhere::ThreadPool::SetGlobalBuildThreadPoolSize(num_threads);
-}
-
-size_t
-KnowhereConfig::GetBuildThreadPoolSize() {
-    return knowhere::ThreadPool::GetGlobalBuildThreadPoolSize();
+    knowhere::ThreadPool::InitGlobalBuildThreadPool(num_threads);
 }
 
 void
 KnowhereConfig::SetSearchThreadPoolSize(size_t num_threads) {
-    knowhere::ThreadPool::SetGlobalSearchThreadPoolSize(num_threads);
-}
-
-size_t
-KnowhereConfig::GetSearchThreadPoolSize() {
-    return knowhere::ThreadPool::GetGlobalSearchThreadPoolSize();
+    knowhere::ThreadPool::InitGlobalSearchThreadPool(num_threads);
 }
 
 void
 KnowhereConfig::InitGPUResource(int64_t gpu_id, int64_t res_num) {
 #ifdef KNOWHERE_WITH_GPU
     LOG_KNOWHERE_INFO_ << "init GPU resource for gpu id " << gpu_id << ", resource num " << res_num;
-
     knowhere::GPUParams gpu_params(res_num);
     knowhere::GPUResMgr::GetInstance().InitDevice(gpu_id, gpu_params);
     knowhere::GPUResMgr::GetInstance().Init();
@@ -184,36 +160,10 @@ KnowhereConfig::FreeGPUResource() {
     knowhere::GPUResMgr::GetInstance().Free();
 #endif
 }
-
 void
 KnowhereConfig::SetRaftMemPool(size_t init_size, size_t max_size) {
 #ifdef KNOWHERE_WITH_RAFT
-    int count = 0;
-    auto status = cudaGetDeviceCount(&count);
-    if (status != cudaSuccess) {
-        LOG_KNOWHERE_INFO_ << cudaGetErrorString(status);
-        return;
-    }
-    if (count < 1) {
-        LOG_KNOWHERE_INFO_ << "GPU not available";
-        return;
-    }
-
-    auto config = raft_knowhere::raft_configuration{};
-    config.init_mem_pool_size_mb = init_size;
-    config.max_mem_pool_size_mb = max_size;
-    // This should probably be a separate configuration option, but fine for now
-    config.max_workspace_size_mb = max_size;
-    raft_knowhere::initialize_raft(config);
-#endif
-}
-
-void
-KnowhereConfig::SetRaftMemPool() {
-    // Overload for default values
-#ifdef KNOWHERE_WITH_RAFT
-    auto config = raft_knowhere::raft_configuration{};
-    raft_knowhere::initialize_raft(config);
+    raft_utils::set_mem_pool_size(init_size, max_size);
 #endif
 }
 

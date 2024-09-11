@@ -11,7 +11,6 @@
 #ifndef FAISS_DISTANCES_C_H
 #define FAISS_DISTANCES_C_H
 
-#include <stdint.h>
 #include <stdlib.h>
 
 #ifdef __cplusplus

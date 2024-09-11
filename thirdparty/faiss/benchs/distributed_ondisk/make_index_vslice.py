@@ -8,7 +8,7 @@ import time
 import numpy as np
 import faiss
 import argparse
-from multiprocessing.pool import ThreadPool
+from multiprocessing.dummy import Pool as ThreadPool
 
 def ivecs_mmap(fname):
     a = np.memmap(fname, dtype='int32', mode='r')

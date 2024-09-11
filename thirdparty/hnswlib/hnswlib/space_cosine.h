@@ -5,44 +5,26 @@
 
 namespace hnswlib {
 
-template <typename DataType, typename DistanceType>
-static DistanceType
+static float
 Cosine(const void* pVect1, const void* pVect2, const void* qty_ptr) {
-    if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-        return faiss::fvec_inner_product((const DataType*)pVect1, (const DataType*)pVect2, *((size_t*)qty_ptr));
-    } else if constexpr (std::is_same_v<DataType, knowhere::fp16>) {
-        return faiss::fp16_vec_inner_product((const DataType*)pVect1, (const DataType*)pVect2, *((size_t*)qty_ptr));
-    } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
-        return faiss::bf16_vec_inner_product((const DataType*)pVect1, (const DataType*)pVect2, *((size_t*)qty_ptr));
-    } else {
-        throw std::runtime_error("Unknown Datatype\n");
-    }
+    return faiss::fvec_inner_product((const float*)pVect1, (const float*)pVect2, *((size_t*)qty_ptr));
 }
 
-template <typename DataType, typename DistanceType>
-static DistanceType
+static float
 CosineDistance(const void* pVect1, const void* pVect2, const void* qty_ptr) {
-    return -1.0f * Cosine<DataType, DistanceType>(pVect1, pVect2, qty_ptr);
+    return -1.0f * Cosine(pVect1, pVect2, qty_ptr);
 }
 
-static inline float
-CosineSQ8Distance(const void* pVect1, const void* pVect2, const void* qty_ptr) {
-    return -1.0f * faiss::ivec_inner_product((const int8_t*)pVect1, (const int8_t*)pVect2, *(size_t*)qty_ptr);
-}
-
-template <typename DataType, typename DistanceType>
-class CosineSpace : public SpaceInterface<DistanceType> {
-    DISTFUNC<DistanceType> fstdistfunc_;
-    DISTFUNC<float> fstdistfunc_sq_;
+class CosineSpace : public SpaceInterface<float> {
+    DISTFUNC<float> fstdistfunc_;
     size_t data_size_;
     size_t dim_;
 
  public:
     CosineSpace(size_t dim) {
-        fstdistfunc_ = CosineDistance<DataType, DistanceType>;
-        fstdistfunc_sq_ = CosineSQ8Distance;
+        fstdistfunc_ = CosineDistance;
         dim_ = dim;
-        data_size_ = dim * sizeof(DataType);
+        data_size_ = dim * sizeof(float);
     }
 
     size_t
@@ -50,14 +32,9 @@ class CosineSpace : public SpaceInterface<DistanceType> {
         return data_size_;
     }
 
-    DISTFUNC<DistanceType>
+    DISTFUNC<float>
     get_dist_func() {
         return fstdistfunc_;
-    }
-
-    DISTFUNC<float>
-    get_dist_func_sq() {
-        return fstdistfunc_sq_;
     }
 
     void*

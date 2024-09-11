@@ -25,6 +25,7 @@ struct IndexNNDescent : Index {
     using storage_idx_t = NNDescent::storage_idx_t;
 
     /// Faiss results are 64-bit
+    using idx_t = Index::idx_t;
 
     // the link strcuture
     NNDescent nndescent;
@@ -53,7 +54,7 @@ struct IndexNNDescent : Index {
             idx_t k,
             float* distances,
             idx_t* labels,
-            const SearchParameters* params = nullptr) const override;
+            const BitsetView bitset = nullptr) const override;
 
     void reconstruct(idx_t key, float* recons) const override;
 

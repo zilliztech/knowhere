@@ -12,21 +12,7 @@
 #pragma once
 
 #include <omp.h>
-
-#ifdef __linux__
-
-#if defined(__PPC64__) || defined(__ppc64__) || defined(__PPC64LE__) || defined(__ppc64le__) || defined(__powerpc64__)
-#include <openblas/cblas.h>
-#else
-#include <cblas.h>
-#endif
-
 #include <sys/resource.h>
-#if __GLIBC__ == 2 && __GLIBC_MINOR__ < 30
-#include <sys/syscall.h>
-#define gettid() syscall(SYS_gettid)
-#endif
-#endif
 
 #include <cerrno>
 #include <cstring>
@@ -35,16 +21,12 @@
 #include <utility>
 
 #include "folly/executors/CPUThreadPoolExecutor.h"
-#include "folly/executors/task_queue/UnboundedBlockingQueue.h"
 #include "folly/futures/Future.h"
-#include "knowhere/expected.h"
 #include "knowhere/log.h"
 
 namespace knowhere {
 
 class ThreadPool {
- public:
-    enum class QueueType { LIFO, FIFO };
 #ifdef __linux__
  private:
     class LowPriorityThreadFactory : public folly::NamedThreadFactory {
@@ -65,33 +47,23 @@ class ThreadPool {
     };
 
  public:
-    explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix, QueueType queueT = QueueType::LIFO)
-        : pool_(queueT == QueueType::LIFO
-                    ? folly::CPUThreadPoolExecutor(
-                          num_threads,
-                          std::make_unique<folly::LifoSemMPMCQueue<folly::CPUThreadPoolExecutor::CPUTask,
-                                                                   folly::QueueBehaviorIfFull::BLOCK>>(
-                              num_threads * kTaskQueueFactor),
-                          std::make_shared<LowPriorityThreadFactory>(thread_name_prefix))
-                    : folly::CPUThreadPoolExecutor(
-                          num_threads,
-                          std::make_unique<folly::UnboundedBlockingQueue<folly::CPUThreadPoolExecutor::CPUTask>>(),
-                          std::make_shared<LowPriorityThreadFactory>(thread_name_prefix))) {
+    explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix)
+        : pool_(folly::CPUThreadPoolExecutor(
+              num_threads,
+              std::make_unique<
+                  folly::LifoSemMPMCQueue<folly::CPUThreadPoolExecutor::CPUTask, folly::QueueBehaviorIfFull::BLOCK>>(
+                  num_threads * kTaskQueueFactor),
+              std::make_shared<LowPriorityThreadFactory>(thread_name_prefix))) {
     }
 #else
  public:
-    explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix, QueueType queueT = QueueType::LIFO)
-        : pool_(queueT == QueueType::LIFO
-                    ? folly::CPUThreadPoolExecutor(
-                          num_threads,
-                          std::make_unique<folly::LifoSemMPMCQueue<folly::CPUThreadPoolExecutor::CPUTask,
-                                                                   folly::QueueBehaviorIfFull::BLOCK>>(
-                              num_threads * kTaskQueueFactor),
-                          std::make_shared<folly::NamedThreadFactory>(thread_name_prefix))
-                    : folly::CPUThreadPoolExecutor(
-                          num_threads,
-                          std::make_unique<folly::UnboundedBlockingQueue<folly::CPUThreadPoolExecutor::CPUTask>>(),
-                          std::make_shared<folly::NamedThreadFactory>(thread_name_prefix))) {
+    explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix)
+        : pool_(folly::CPUThreadPoolExecutor(
+              num_threads,
+              std::make_unique<
+                  folly::LifoSemMPMCQueue<folly::CPUThreadPoolExecutor::CPUTask, folly::QueueBehaviorIfFull::BLOCK>>(
+                  num_threads * kTaskQueueFactor),
+              std::make_shared<folly::NamedThreadFactory>(thread_name_prefix))) {
     }
 #endif
 
@@ -112,195 +84,102 @@ class ThreadPool {
             [func = std::forward<Func>(func), &args...](auto&&) mutable { return func(std::forward<Args>(args)...); });
     }
 
-    [[nodiscard]] size_t
+    [[nodiscard]] int32_t
     size() const noexcept {
         return pool_.numThreads();
     }
 
-    size_t
-    GetPendingTaskCount() {
-        return pool_.getPendingTaskCount();
-    }
-
-    void
-    SetNumThreads(uint32_t num_threads) {
-        if (num_threads == 0) {
-            LOG_KNOWHERE_ERROR_ << "set number of threads can not be 0";
-            return;
-        } else {
-            // setNumThreads() adjust the relevant variables instead of changing the number of threads directly;
-            // If numThreads < active threads, reduce number of running threads.
-            pool_.setNumThreads(num_threads);
+    /**
+     * @brief Set the threads number to the global build thread pool of knowhere
+     *
+     * @param num_threads
+     */
+    static void
+    InitThreadPool(uint32_t num_threads, uint32_t& thread_pool_size) {
+        if (num_threads <= 0) {
+            LOG_KNOWHERE_ERROR_ << "num_threads should be bigger than 0";
             return;
         }
-    }
 
-    static ThreadPool
-    CreateFIFO(uint32_t num_threads, const std::string& thread_name_prefix) {
-        return ThreadPool(num_threads, thread_name_prefix, QueueType::FIFO);
-    }
-
-    static ThreadPool
-    CreateLIFO(uint32_t num_threads, const std::string& thread_name_prefix) {
-        return ThreadPool(num_threads, thread_name_prefix, QueueType::LIFO);
+        if (thread_pool_size == 0) {
+            std::lock_guard<std::mutex> lock(global_thread_pool_mutex_);
+            if (thread_pool_size == 0) {
+                thread_pool_size = num_threads;
+                return;
+            }
+        }
     }
 
     static void
     InitGlobalBuildThreadPool(uint32_t num_threads) {
-        if (num_threads <= 0) {
-            LOG_KNOWHERE_ERROR_ << "num_threads should be bigger than 0";
-            return;
-        }
-
-        if (build_pool_ == nullptr) {
-            std::lock_guard<std::mutex> lock(build_pool_mutex_);
-            if (build_pool_ == nullptr) {
-                build_pool_ = std::make_shared<ThreadPool>(num_threads, "knowhere_build");
-                LOG_KNOWHERE_INFO_ << "Init global build thread pool with size " << num_threads;
-                return;
-            }
-        } else {
-            LOG_KNOWHERE_INFO_ << "Global build thread pool size has already been initialized to "
-                               << build_pool_->size();
-        }
+        InitThreadPool(num_threads, global_build_thread_pool_size_);
+        LOG_KNOWHERE_WARNING_ << "Global Build ThreadPool has already been initialized with threads num: "
+                              << global_build_thread_pool_size_;
     }
 
+    /**
+     * @brief Set the threads number to the global search thread pool of knowhere
+     *
+     * @param num_threads
+     */
     static void
     InitGlobalSearchThreadPool(uint32_t num_threads) {
-        if (num_threads <= 0) {
-            LOG_KNOWHERE_ERROR_ << "num_threads should be bigger than 0";
-            return;
-        }
-
-        if (search_pool_ == nullptr) {
-            std::lock_guard<std::mutex> lock(search_pool_mutex_);
-            if (search_pool_ == nullptr) {
-                search_pool_ = std::make_shared<ThreadPool>(num_threads, "knowhere_search");
-                LOG_KNOWHERE_INFO_ << "Init global search thread pool with size " << num_threads;
-                return;
-            }
-        } else {
-            LOG_KNOWHERE_INFO_ << "Global search thread pool size has already been initialized to "
-                               << search_pool_->size();
-        }
+        InitThreadPool(num_threads, global_search_thread_pool_size_);
+        LOG_KNOWHERE_WARNING_ << "Global Search ThreadPool has already been initialized with threads num: "
+                              << global_search_thread_pool_size_;
     }
 
-    static void
-    SetGlobalBuildThreadPoolSize(uint32_t num_threads) {
-        if (build_pool_ == nullptr) {
-            InitGlobalBuildThreadPool(num_threads);
-            return;
-        } else {
-            build_pool_->SetNumThreads(num_threads);
-            LOG_KNOWHERE_INFO_ << "Global build thread pool size has already been set to " << build_pool_->size();
-            return;
-        }
-    }
-
-    static size_t
-    GetGlobalBuildThreadPoolSize() {
-        return (build_pool_ == nullptr ? 0 : build_pool_->size());
-    }
-
-    static void
-    SetGlobalSearchThreadPoolSize(uint32_t num_threads) {
-        if (search_pool_ == nullptr) {
-            InitGlobalSearchThreadPool(num_threads);
-            return;
-        } else {
-            search_pool_->SetNumThreads(num_threads);
-            LOG_KNOWHERE_INFO_ << "Global search thread pool size has already been set to " << search_pool_->size();
-            return;
-        }
-    }
-
-    static size_t
-    GetGlobalSearchThreadPoolSize() {
-        return (search_pool_ == nullptr ? 0 : search_pool_->size());
-    }
-
-    static size_t
-    GetSearchThreadPoolPendingTaskCount() {
-        return ThreadPool::GetGlobalSearchThreadPool()->GetPendingTaskCount();
-    }
-
-    static size_t
-    GetBuildThreadPoolPendingTaskCount() {
-        return ThreadPool::GetGlobalBuildThreadPool()->GetPendingTaskCount();
-    }
+    /**
+     * @brief Get the global thread pool of knowhere.
+     *
+     * @return ThreadPool&
+     */
 
     static std::shared_ptr<ThreadPool>
     GetGlobalBuildThreadPool() {
-        if (build_pool_ == nullptr) {
-            InitGlobalBuildThreadPool(std::thread::hardware_concurrency());
+        if (global_build_thread_pool_size_ == 0) {
+            InitThreadPool(std::thread::hardware_concurrency(), global_build_thread_pool_size_);
+            LOG_KNOWHERE_WARNING_ << "Global Build ThreadPool has not been initialized yet, init it with threads num: "
+                                  << global_build_thread_pool_size_;
         }
-        return build_pool_;
+        static auto pool = std::make_shared<ThreadPool>(global_build_thread_pool_size_, "Knowhere_Build");
+        return pool;
     }
 
     static std::shared_ptr<ThreadPool>
     GetGlobalSearchThreadPool() {
-        if (search_pool_ == nullptr) {
-            InitGlobalSearchThreadPool(std::thread::hardware_concurrency());
+        if (global_search_thread_pool_size_ == 0) {
+            InitThreadPool(std::thread::hardware_concurrency(), global_search_thread_pool_size_);
+            LOG_KNOWHERE_WARNING_ << "Global Search ThreadPool has not been initialized yet, init it with threads num: "
+                                  << global_search_thread_pool_size_;
         }
-        return search_pool_;
+        static auto pool = std::make_shared<ThreadPool>(global_search_thread_pool_size_, "Knowhere_Search");
+        return pool;
     }
 
     class ScopedOmpSetter {
         int omp_before;
-#ifdef OPENBLAS_OS_LINUX
-        int blas_thread_before;
-#endif
+
      public:
         explicit ScopedOmpSetter(int num_threads = 0) {
-            if (build_pool_ == nullptr) {  // this should not happen in prod
+            if (global_build_thread_pool_size_ == 0) {  // this should not happen in prod
                 omp_before = omp_get_max_threads();
             } else {
-                omp_before = build_pool_->size();
+                omp_before = global_build_thread_pool_size_;
             }
-
-#ifdef OPENBLAS_OS_LINUX
-            blas_thread_before = openblas_get_num_threads();
-            openblas_set_num_threads(num_threads <= 0 ? blas_thread_before : num_threads);
-#endif
 
             omp_set_num_threads(num_threads <= 0 ? omp_before : num_threads);
         }
         ~ScopedOmpSetter() {
             omp_set_num_threads(omp_before);
-#ifdef OPENBLAS_OS_LINUX
-            openblas_set_num_threads(blas_thread_before);
-#endif
         }
     };
 
  private:
     folly::CPUThreadPoolExecutor pool_;
-
-    inline static std::mutex build_pool_mutex_;
-    inline static std::shared_ptr<ThreadPool> build_pool_ = nullptr;
-
-    inline static std::mutex search_pool_mutex_;
-    inline static std::shared_ptr<ThreadPool> search_pool_ = nullptr;
-
+    inline static uint32_t global_build_thread_pool_size_ = 0;
+    inline static uint32_t global_search_thread_pool_size_ = 0;
+    inline static std::mutex global_thread_pool_mutex_;
     constexpr static size_t kTaskQueueFactor = 16;
 };
-
-// T is either folly::Unit or Status
-template <typename T>
-inline Status
-WaitAllSuccess(std::vector<folly::Future<T>>& futures) {
-    static_assert(std::is_same<T, folly::Unit>::value || std::is_same<T, Status>::value,
-                  "WaitAllSuccess can only be used with folly::Unit or knowhere::Status");
-    auto allFuts = folly::collectAll(futures.begin(), futures.end()).get();
-    for (const auto& result : allFuts) {
-        result.throwUnlessValue();
-        if constexpr (!std::is_same_v<T, folly::Unit>) {
-            if (result.value() != Status::success) {
-                return result.value();
-            }
-        }
-    }
-    return Status::success;
-}
-
 }  // namespace knowhere

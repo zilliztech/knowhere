@@ -13,8 +13,7 @@
 #include <vector>
 
 #include <faiss/IndexBinary.h>
-
-#include <faiss/utils/approx_topk/mode.h>
+#include <faiss/impl/AuxIndexStructures.h>
 
 namespace faiss {
 
@@ -30,9 +29,6 @@ struct IndexBinaryFlat : IndexBinary {
 
     size_t query_batch_size = 32;
 
-    // // todo aguzhva: disabled for Knowhere at this moment
-    // ApproxTopK_mode_t approx_topk_mode = ApproxTopK_mode_t::EXACT_TOPK;
-
     explicit IndexBinaryFlat(idx_t d);
 
     IndexBinaryFlat(idx_t d, MetricType metric);
@@ -47,14 +43,14 @@ struct IndexBinaryFlat : IndexBinary {
             idx_t k,
             int32_t* distances,
             idx_t* labels,
-            const SearchParameters* params = nullptr) const override;
+            const BitsetView bitset = nullptr) const override;
 
     void range_search(
             idx_t n,
             const uint8_t* x,
             float radius,
             RangeSearchResult* result,
-            const SearchParameters* params = nullptr) const override;
+            const BitsetView bitset = nullptr) const override;
 
     void reconstruct(idx_t key, uint8_t* recons) const override;
 

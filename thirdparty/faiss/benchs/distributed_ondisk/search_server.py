@@ -3,13 +3,12 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import os
 import time
-
-from faiss.contrib import rpc
-
+import rpc
 import combined_index
-import argparse
 
+import argparse
 
 
 ############################################################
@@ -64,7 +63,7 @@ if __name__ == '__main__':
 # Client implementation
 ############################################################
 
-from multiprocessing.pool import ThreadPool
+from multiprocessing.dummy import Pool as ThreadPool
 import faiss
 import numpy as np
 

@@ -20,20 +20,11 @@
 #endif
 
 #include <faiss/FaissHook.h>
-#include <faiss/IndexIVF.h>
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissAssert.h>
-#include <faiss/impl/IDSelector.h>
-#include <faiss/utils/fp16.h>
 #include <faiss/utils/utils.h>
 
-#include <faiss/impl/ScalarQuantizerOp.h>
-
 namespace faiss {
-
-using QuantizerType = ScalarQuantizer::QuantizerType;
-using RangeStat = ScalarQuantizer::RangeStat;
-using SQDistanceComputer = ScalarQuantizer::SQDistanceComputer;
 
 /*******************************************************************
  * ScalarQuantizer implementation
@@ -64,35 +55,39 @@ using SQDistanceComputer = ScalarQuantizer::SQDistanceComputer;
  ********************************************************************/
 
 ScalarQuantizer::ScalarQuantizer(size_t d, QuantizerType qtype)
-        : Quantizer(d), qtype(qtype) {
+        : qtype(qtype),
+          rangestat(RangeStat::RS_minmax),
+          rangestat_arg(0),
+          d(d) {
     set_derived_sizes();
 }
 
-ScalarQuantizer::ScalarQuantizer() {}
+ScalarQuantizer::ScalarQuantizer()
+        : qtype(QuantizerType::QT_8bit),
+          rangestat(RangeStat::RS_minmax),
+          rangestat_arg(0),
+          d(0),
+          bits(0),
+          code_size(0) {}
 
 void ScalarQuantizer::set_derived_sizes() {
     switch (qtype) {
-        case QT_8bit:
-        case QT_8bit_uniform:
-        case QT_8bit_direct:
-        case QT_8bit_direct_signed:
+        case QuantizerType::QT_8bit:
+        case QuantizerType::QT_8bit_uniform:
+        case QuantizerType::QT_8bit_direct:
             code_size = d;
             bits = 8;
             break;
-        case QT_4bit:
-        case QT_4bit_uniform:
+        case QuantizerType::QT_4bit:
+        case QuantizerType::QT_4bit_uniform:
             code_size = (d + 1) / 2;
             bits = 4;
             break;
-        case QT_6bit:
+        case QuantizerType::QT_6bit:
             code_size = (d * 6 + 7) / 8;
             bits = 6;
             break;
-        case QT_fp16:
-            code_size = d * 2;
-            bits = 16;
-            break;
-        case QT_bf16:
+        case QuantizerType::QT_fp16:
             code_size = d * 2;
             bits = 16;
             break;
@@ -100,16 +95,16 @@ void ScalarQuantizer::set_derived_sizes() {
 }
 
 void ScalarQuantizer::train(size_t n, const float* x) {
-    int bit_per_dim = qtype == QT_4bit_uniform ? 4
-            : qtype == QT_4bit                 ? 4
-            : qtype == QT_6bit                 ? 6
-            : qtype == QT_8bit_uniform         ? 8
-            : qtype == QT_8bit                 ? 8
-                                               : -1;
+    int bit_per_dim = qtype == QuantizerType::QT_4bit_uniform ? 4
+            : qtype == QuantizerType::QT_4bit                 ? 4
+            : qtype == QuantizerType::QT_6bit                 ? 6
+            : qtype == QuantizerType::QT_8bit_uniform         ? 8
+            : qtype == QuantizerType::QT_8bit                 ? 8
+                                                              : -1;
 
     switch (qtype) {
-        case QT_4bit_uniform:
-        case QT_8bit_uniform:
+        case QuantizerType::QT_4bit_uniform:
+        case QuantizerType::QT_8bit_uniform:
             train_Uniform(
                     rangestat,
                     rangestat_arg,
@@ -118,9 +113,9 @@ void ScalarQuantizer::train(size_t n, const float* x) {
                     x,
                     trained);
             break;
-        case QT_4bit:
-        case QT_8bit:
-        case QT_6bit:
+        case QuantizerType::QT_4bit:
+        case QuantizerType::QT_8bit:
+        case QuantizerType::QT_6bit:
             train_NonUniform(
                     rangestat,
                     rangestat_arg,
@@ -130,23 +125,42 @@ void ScalarQuantizer::train(size_t n, const float* x) {
                     x,
                     trained);
             break;
-        case QT_fp16:
-        case QT_8bit_direct:
-        case QT_bf16:
-        case QT_8bit_direct_signed:
+        case QuantizerType::QT_fp16:
+        case QuantizerType::QT_8bit_direct:
             // no training necessary
             break;
     }
 }
 
-ScalarQuantizer::SQuantizer* ScalarQuantizer::select_quantizer() const {
-    /* use hook to decide use AVX512 or not */
-    return sq_sel_quantizer(qtype, d, trained);
+void ScalarQuantizer::train_residual(
+        size_t n,
+        const float* x,
+        Index* quantizer,
+        bool by_residual,
+        bool verbose) {
+    const float* x_in = x;
+
+    // 100k points more than enough
+    x = fvecs_maybe_subsample(d, (size_t*)&n, 100000, x, verbose, 1234);
+
+    ScopeDeleter<float> del_x(x_in == x ? nullptr : x);
+
+    if (by_residual) {
+        std::vector<Index::idx_t> idx(n);
+        quantizer->assign(n, x, idx.data());
+
+        std::vector<float> residuals(n * d);
+        quantizer->compute_residual_n(n, x, residuals.data(), idx.data());
+
+        train(n, residuals.data());
+    } else {
+        train(n, x);
+    }
 }
 
 void ScalarQuantizer::compute_codes(const float* x, uint8_t* codes, size_t n)
         const {
-    std::unique_ptr<SQuantizer> squant(select_quantizer());
+    std::unique_ptr<Quantizer> squant(select_quantizer());
 
     memset(codes, 0, code_size * n);
 #pragma omp parallel for
@@ -155,11 +169,22 @@ void ScalarQuantizer::compute_codes(const float* x, uint8_t* codes, size_t n)
 }
 
 void ScalarQuantizer::decode(const uint8_t* codes, float* x, size_t n) const {
-    std::unique_ptr<SQuantizer> squant(select_quantizer());
+    std::unique_ptr<Quantizer> squant(select_quantizer());
 
 #pragma omp parallel for
     for (int64_t i = 0; i < n; i++)
         squant->decode_vector(codes + i * code_size, x + i * d);
+}
+
+/*******************************************************************
+ * IndexScalarQuantizer/IndexIVFScalarQuantizer scanner object
+ *
+ * It is an InvertedListScanner, but is designed to work with
+ * IndexScalarQuantizer as well.
+ ********************************************************************/
+Quantizer* ScalarQuantizer::select_quantizer() const {
+    /* use hook to decide use AVX512 or not */
+    return sq_sel_quantizer(qtype, d, trained);
 }
 
 SQDistanceComputer* ScalarQuantizer::get_distance_computer(
@@ -169,26 +194,14 @@ SQDistanceComputer* ScalarQuantizer::get_distance_computer(
     return sq_get_distance_computer(metric, qtype, d, trained);
 }
 
-size_t ScalarQuantizer::cal_size() const {
-    return sizeof(*this) + trained.size() * sizeof(float);
-}
-
-/*******************************************************************
- * IndexScalarQuantizer/IndexIVFScalarQuantizer scanner object
- *
- * It is an InvertedListScanner, but is designed to work with
- * IndexScalarQuantizer as well.
- ********************************************************************/
-
 InvertedListScanner* ScalarQuantizer::select_InvertedListScanner(
         MetricType mt,
         const Index* quantizer,
         bool store_pairs,
-        const IDSelector* sel,
         bool by_residual) const {
     /* use hook to decide use AVX512 or not */
     return sq_sel_inv_list_scanner(mt, this, quantizer, d, store_pairs,
-                                   sel, by_residual);
+                                   by_residual);
 }
 
 } // namespace faiss

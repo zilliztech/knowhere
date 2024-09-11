@@ -12,7 +12,6 @@
 #include <cinttypes>
 #include <cstdio>
 #include <memory>
-#include <unordered_set>
 
 #include <faiss/utils/hamming.h>
 #include <faiss/utils/utils.h>
@@ -108,6 +107,8 @@ struct FlipEnumerator {
     }
 };
 
+using idx_t = Index::idx_t;
+
 struct RangeSearchResults {
     float radius;
     RangeQueryResult& qres;
@@ -166,7 +167,7 @@ void search_single_query_template(
         } else {
             const uint8_t* codes = il.vecs.data();
             for (size_t i = 0; i < nv; i++) {
-                auto dis = hc.compute(codes);
+                int dis = hc.compute(codes);
                 res.add(dis, il.ids[i]);
                 codes += code_size;
             }
@@ -176,14 +177,6 @@ void search_single_query_template(
     } while (fe.next());
 }
 
-struct Run_search_single_query {
-    using T = void;
-    template <class HammingComputer, class... Types>
-    T f(Types... args) {
-        search_single_query_template<HammingComputer>(args...);
-    }
-};
-
 template <class SearchResults>
 void search_single_query(
         const IndexBinaryHash& index,
@@ -192,9 +185,29 @@ void search_single_query(
         size_t& n0,
         size_t& nlist,
         size_t& ndis) {
-    Run_search_single_query r;
-    dispatch_HammingComputer(
-            index.code_size, r, index, q, res, n0, nlist, ndis);
+#define HC(name) \
+    search_single_query_template<name>(index, q, res, n0, nlist, ndis);
+    switch (index.code_size) {
+        case 4:
+            HC(HammingComputer4);
+            break;
+        case 8:
+            HC(HammingComputer8);
+            break;
+        case 16:
+            HC(HammingComputer16);
+            break;
+        case 20:
+            HC(HammingComputer20);
+            break;
+        case 32:
+            HC(HammingComputer32);
+            break;
+        default:
+            HC(HammingComputerDefault);
+            break;
+    }
+#undef HC
 }
 
 } // anonymous namespace
@@ -204,9 +217,7 @@ void IndexBinaryHash::range_search(
         const uint8_t* x,
         float radius,
         RangeSearchResult* result,
-        const SearchParameters* params) const {
-    FAISS_THROW_IF_NOT_MSG(
-            !params, "search params not supported for this index");
+        const BitsetView bitset) const {
     size_t nlist = 0, ndis = 0, n0 = 0;
 
 #pragma omp parallel if (n > 100) reduction(+ : ndis, n0, nlist)
@@ -235,9 +246,7 @@ void IndexBinaryHash::search(
         idx_t k,
         int32_t* distances,
         idx_t* labels,
-        const SearchParameters* params) const {
-    FAISS_THROW_IF_NOT_MSG(
-            !params, "search params not supported for this index");
+        const BitsetView bitset) const {
     FAISS_THROW_IF_NOT(k > 0);
 
     using HeapForL2 = CMax<int32_t, idx_t>;
@@ -337,28 +346,21 @@ namespace {
 
 template <class HammingComputer, class SearchResults>
 static void verify_shortlist(
-        const IndexBinaryFlat* index,
+        const IndexBinaryFlat& index,
         const uint8_t* q,
-        const std::unordered_set<idx_t>& shortlist,
+        const std::unordered_set<Index::idx_t>& shortlist,
         SearchResults& res) {
-    size_t code_size = index->code_size;
+    size_t code_size = index.code_size;
+    size_t nlist = 0, ndis = 0, n0 = 0;
 
     HammingComputer hc(q, code_size);
-    const uint8_t* codes = index->xb.data();
+    const uint8_t* codes = index.xb.data();
 
     for (auto i : shortlist) {
-        auto dis = hc.compute(codes + i * code_size);
+        int dis = hc.compute(codes + i * code_size);
         res.add(dis, i);
     }
 }
-
-struct Run_verify_shortlist {
-    using T = void;
-    template <class HammingComputer, class... Types>
-    void f(Types... args) {
-        verify_shortlist<HammingComputer>(args...);
-    }
-};
 
 template <class SearchResults>
 void search_1_query_multihash(
@@ -400,9 +402,29 @@ void search_1_query_multihash(
     ndis += shortlist.size();
 
     // verify shortlist
-    Run_verify_shortlist r;
-    dispatch_HammingComputer(
-            index.code_size, r, index.storage, xi, shortlist, res);
+
+#define HC(name) verify_shortlist<name>(*index.storage, xi, shortlist, res)
+    switch (index.code_size) {
+        case 4:
+            HC(HammingComputer4);
+            break;
+        case 8:
+            HC(HammingComputer8);
+            break;
+        case 16:
+            HC(HammingComputer16);
+            break;
+        case 20:
+            HC(HammingComputer20);
+            break;
+        case 32:
+            HC(HammingComputer32);
+            break;
+        default:
+            HC(HammingComputerDefault);
+            break;
+    }
+#undef HC
 }
 
 } // anonymous namespace
@@ -412,9 +434,7 @@ void IndexBinaryMultiHash::range_search(
         const uint8_t* x,
         float radius,
         RangeSearchResult* result,
-        const SearchParameters* params) const {
-    FAISS_THROW_IF_NOT_MSG(
-            !params, "search params not supported for this index");
+        const BitsetView bitset) const {
     size_t nlist = 0, ndis = 0, n0 = 0;
 
 #pragma omp parallel if (n > 100) reduction(+ : ndis, n0, nlist)
@@ -443,9 +463,7 @@ void IndexBinaryMultiHash::search(
         idx_t k,
         int32_t* distances,
         idx_t* labels,
-        const SearchParameters* params) const {
-    FAISS_THROW_IF_NOT_MSG(
-            !params, "search params not supported for this index");
+        const BitsetView bitset) const {
     FAISS_THROW_IF_NOT(k > 0);
 
     using HeapForL2 = CMax<int32_t, idx_t>;

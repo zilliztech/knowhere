@@ -40,11 +40,6 @@ enum class Status {
     raft_inner_error = 18,
     invalid_binary_set = 19,
     invalid_instruction_set = 20,
-    cardinal_inner_error = 21,
-    cuda_runtime_error = 22,
-    invalid_index_error = 23,
-    invalid_cluster_error = 24,
-    cluster_inner_error = 25,
 };
 
 inline std::string
@@ -88,12 +83,6 @@ Status2String(knowhere::Status status) {
             return "invalid binary set";
         case knowhere::Status::invalid_instruction_set:
             return "the current index is not supported on the current CPU model";
-        case knowhere::Status::cardinal_inner_error:
-            return "cardinal inner error";
-        case knowhere::Status::invalid_cluster_error:
-            return "invalid cluster type";
-        case knowhere::Status::cluster_inner_error:
-            return "cluster inner error";
         default:
             return "unexpected status";
     }
@@ -108,13 +97,13 @@ class expected {
 
     expected(const expected<T>&) = default;
 
-    expected(expected<T>&&) = default;
+    expected(expected<T>&&) noexcept = default;
 
     expected&
     operator=(const expected<T>&) = default;
 
     expected&
-    operator=(expected<T>&&) = default;
+    operator=(expected<T>&&) noexcept = default;
 
     bool
     has_value() const {
@@ -128,11 +117,6 @@ class expected {
 
     const T&
     value() const {
-        assert(val.has_value() == true);
-        return val.value();
-    }
-    T&
-    value() {
         assert(val.has_value() == true);
         return val.value();
     }

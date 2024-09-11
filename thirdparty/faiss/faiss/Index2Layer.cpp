@@ -10,10 +10,10 @@
 #include <faiss/Index2Layer.h>
 
 #include <faiss/impl/platform_macros.h>
+#include <stdint.h>
 #include <cassert>
 #include <cinttypes>
 #include <cmath>
-#include <cstdint>
 #include <cstdio>
 
 #ifdef __SSE3__
@@ -24,7 +24,6 @@
 
 #include <faiss/FaissHook.h>
 #include <faiss/IndexIVFPQ.h>
-
 #include <faiss/IndexFlat.h>
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissAssert.h>
@@ -48,7 +47,7 @@ Index2Layer::Index2Layer(
           pq(quantizer->d, M, nbit) {
     is_trained = false;
     for (int nbyte = 0; nbyte < 7; nbyte++) {
-        if (((size_t)1 << (8 * nbyte)) >= nlist) {
+        if ((1L << (8 * nbyte)) >= nlist) {
             code_size_1 = nbyte;
             break;
         }
@@ -61,7 +60,7 @@ Index2Layer::Index2Layer() {
     code_size = code_size_1 = code_size_2 = 0;
 }
 
-Index2Layer::~Index2Layer() = default;
+Index2Layer::~Index2Layer() {}
 
 void Index2Layer::train(idx_t n, const float* x) {
     if (verbose) {
@@ -84,7 +83,7 @@ void Index2Layer::train(idx_t n, const float* x) {
             verbose,
             pq.cp.seed);
 
-    std::unique_ptr<const float[]> del_x(x_in == x ? nullptr : x);
+    ScopeDeleter<float> del_x(x_in == x ? nullptr : x);
 
     std::vector<idx_t> assign(n); // assignement to coarse centroids
     q1.quantizer->assign(n, x, assign.data());
@@ -113,7 +112,7 @@ void Index2Layer::search(
         idx_t /*k*/,
         float* /*distances*/,
         idx_t* /*labels*/,
-        const SearchParameters* /* params */) const {
+        const BitsetView /*bitset*/) const {
     FAISS_THROW_MSG("not implemented");
 }
 
@@ -133,10 +132,6 @@ void Index2Layer::transfer_to_IVFPQ(IndexIVFPQ& other) const {
     }
 
     other.ntotal = ntotal;
-}
-
-size_t Index2Layer::cal_size() const {
-    return sizeof(*this) + codes.size() * sizeof(uint8_t) + pq.cal_size();
 }
 
 namespace {
@@ -184,7 +179,7 @@ struct DistanceXPQ4 : Distance2Level {
     float operator()(idx_t i) override {
 #ifdef __SSE3__
         const uint8_t* code = storage.codes.data() + i * storage.code_size;
-        idx_t key = 0;
+        long key = 0;
         memcpy(&key, code, storage.code_size_1);
         code += storage.code_size_1;
 
@@ -230,7 +225,7 @@ struct Distance2xXPQ4 : Distance2Level {
 
     float operator()(idx_t i) override {
         const uint8_t* code = storage.codes.data() + i * storage.code_size;
-        int64_t key01 = 0;
+        long key01 = 0;
         memcpy(&key01, code, storage.code_size_1);
         code += storage.code_size_1;
 #ifdef __SSE3__
@@ -242,7 +237,7 @@ struct Distance2xXPQ4 : Distance2Level {
         __m128 accu = _mm_setzero_ps();
 
         for (int mi_m = 0; mi_m < 2; mi_m++) {
-            int64_t l1_idx = key01 & (((int64_t)1 << mi_nbits) - 1);
+            long l1_idx = key01 & ((1L << mi_nbits) - 1);
             const __m128* pq_l1 = pq_l1_t + M_2 * l1_idx;
 
             for (int m = 0; m < M_2; m++) {
@@ -288,13 +283,10 @@ DistanceComputer* Index2Layer::get_distance_computer() const {
 
 /* The standalone codec interface */
 
-// block size used in Index2Layer::sa_encode
-int index2layer_sa_encode_bs = 32768;
-
 void Index2Layer::sa_encode(idx_t n, const float* x, uint8_t* bytes) const {
     FAISS_THROW_IF_NOT(is_trained);
 
-    idx_t bs = index2layer_sa_encode_bs;
+    idx_t bs = 32768;
     if (n > bs) {
         for (idx_t i0 = 0; i0 < n; i0 += bs) {
             idx_t i1 = std::min(i0 + bs, n);

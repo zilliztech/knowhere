@@ -4,15 +4,20 @@
 #include <cstring>
 #include <iostream>
 
+#ifdef EXEC_ENV_OLS
+#include "ANNLoggingImpl.hpp"
+#endif
+
 #include "diskann/logger_impl.h"
+#include "diskann/windows_customizations.h"
 
 namespace diskann {
 
-  ANNStreamBuf coutBuff(stdout);
-  ANNStreamBuf cerrBuff(stderr);
+  DISKANN_DLLEXPORT ANNStreamBuf coutBuff(stdout);
+  DISKANN_DLLEXPORT ANNStreamBuf cerrBuff(stderr);
 
-  std::basic_ostream<char> cout(&coutBuff);
-  std::basic_ostream<char> cerr(&cerrBuff);
+  DISKANN_DLLEXPORT std::basic_ostream<char> cout(&coutBuff);
+  DISKANN_DLLEXPORT std::basic_ostream<char> cerr(&cerrBuff);
 
   ANNStreamBuf::ANNStreamBuf(FILE* fp) {
     if (fp == nullptr) {
@@ -26,15 +31,20 @@ namespace diskann {
     _fp = fp;
     _logLevel = (_fp == stdout) ? ANNIndex::LogLevel::LL_Info
                                 : ANNIndex::LogLevel::LL_Error;
-    _buf = std::make_unique<char[]>(BUFFER_SIZE);
+#ifdef EXEC_ENV_OLS
+    _buf = new char[BUFFER_SIZE + 1];  // See comment in the header
+#else
+    _buf = new char[BUFFER_SIZE];  // See comment in the header
+#endif
 
-    std::memset(_buf.get(), 0, (BUFFER_SIZE) * sizeof(char));
-    setp(_buf.get(), _buf.get() + BUFFER_SIZE);
+    std::memset(_buf, 0, (BUFFER_SIZE) * sizeof(char));
+    setp(_buf, _buf + BUFFER_SIZE);
   }
 
   ANNStreamBuf::~ANNStreamBuf() {
     sync();
     _fp = nullptr;  // we'll not close because we can't.
+    delete[] _buf;
   }
 
   int ANNStreamBuf::overflow(int c) {
@@ -65,8 +75,13 @@ namespace diskann {
     return num;
   }
   void ANNStreamBuf::logImpl(char* str, int num) {
+#ifdef EXEC_ENV_OLS
+    str[num] = '\0';  // Safe. See the c'tor.
+    DiskANNLogging(_logLevel, str);
+#else
     fwrite(str, sizeof(char), num, _fp);
     fflush(_fp);
+#endif
   }
 
 }  // namespace diskann

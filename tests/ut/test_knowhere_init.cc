@@ -19,9 +19,6 @@
 TEST_CASE("Knowhere global config", "[init]") {
     knowhere::KnowhereConfig::ShowVersion();
 
-    knowhere::KnowhereConfig::EnablePatchForComputeFP32AsBF16();
-    knowhere::KnowhereConfig::DisablePatchForComputeFP32AsBF16();
-
     int64_t blas_threshold = 16384;
     knowhere::KnowhereConfig::SetBlasThreshold(blas_threshold);
     REQUIRE(knowhere::KnowhereConfig::GetBlasThreshold() == blas_threshold);
@@ -33,27 +30,13 @@ TEST_CASE("Knowhere global config", "[init]") {
     knowhere::KnowhereConfig::SetClusteringType(knowhere::KnowhereConfig::ClusteringType::K_MEANS_PLUS_PLUS);
     knowhere::KnowhereConfig::SetClusteringType(knowhere::KnowhereConfig::ClusteringType::K_MEANS);
 
-    size_t prev_build_thread_num = knowhere::KnowhereConfig::GetBuildThreadPoolSize();
-    knowhere::KnowhereConfig::SetBuildThreadPoolSize(8);
-    REQUIRE(knowhere::KnowhereConfig::GetBuildThreadPoolSize() == 8);
-    if (prev_build_thread_num > 0) {
-        knowhere::KnowhereConfig::SetBuildThreadPoolSize(prev_build_thread_num);
-    }
-
-    size_t prev_search_thread_num = knowhere::KnowhereConfig::GetSearchThreadPoolSize();
-    knowhere::KnowhereConfig::SetSearchThreadPoolSize(8);
-    REQUIRE(knowhere::KnowhereConfig::GetSearchThreadPoolSize() == 8);
-    if (prev_search_thread_num > 0) {
-        knowhere::KnowhereConfig::SetSearchThreadPoolSize(prev_search_thread_num);
-    }
-
 #ifdef KNOWHERE_WITH_DISKANN
     REQUIRE_FALSE(knowhere::KnowhereConfig::SetAioContextPool(0));
     REQUIRE(knowhere::KnowhereConfig::SetAioContextPool(16));
 #endif
 
 #ifdef KNOWHERE_WITH_RAFT
-    knowhere::KnowhereConfig::SetRaftMemPool(1LL << 10, 2LL << 10);
+    knowhere::KnowhereConfig::SetRaftMemPool(1LL << 30, 2LL << 30);
 #endif
 }
 

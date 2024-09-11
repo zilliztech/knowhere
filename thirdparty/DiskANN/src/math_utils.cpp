@@ -2,7 +2,6 @@
 // Licensed under the MIT license.
 
 #include <limits>
-#include <memory>
 #include <unordered_set>
 #include <malloc.h>
 #include <diskann/math_utils.h>
@@ -39,7 +38,7 @@ namespace math_utils {
   // compute l2-squared norms of data stored in row major num_points * dim,
   // needs
   // to be pre-allocated
-  void compute_vecs_l2sq(float* vecs_l2sq, const float* data, const size_t num_points,
+  void compute_vecs_l2sq(float* vecs_l2sq, float* data, const size_t num_points,
                          const size_t dim) {
     for (int64_t n_iter = 0; n_iter < (_s64) num_points; n_iter++) {
       vecs_l2sq[n_iter] =
@@ -147,8 +146,8 @@ namespace math_utils {
       return;
     }
 
-    auto ones_a = std::make_unique<float[]>(num_centers);
-    auto ones_b = std::make_unique<float[]>(num_points);
+    float* ones_a = new float[num_centers];
+    float* ones_b = new float[num_points];
 
     for (size_t i = 0; i < num_centers; i++) {
       ones_a[i] = 1.0;
@@ -161,9 +160,9 @@ namespace math_utils {
     FINTEGER m = num_points, n = num_centers, finteger_one = 1,
              finteger_dim = dim;
     sgemm_(kNoTranspose, kTranspose, &m, &n, &finteger_one, &one, docs_l2sq,
-           &finteger_one, ones_a.get(), &finteger_one, &zero, dist_matrix, &n);
+           &finteger_one, ones_a, &finteger_one, &zero, dist_matrix, &n);
 
-    sgemm_(kNoTranspose, kTranspose, &m, &n, &finteger_one, &one, ones_b.get(),
+    sgemm_(kNoTranspose, kTranspose, &m, &n, &finteger_one, &one, ones_b,
            &finteger_one, centers_l2sq, &finteger_one, &one, dist_matrix, &n);
 
     sgemm_(kNoTranspose, kTranspose, &m, &n, &finteger_dim, &minus_two, data,
@@ -195,6 +194,8 @@ namespace math_utils {
         }
       }
     }
+    delete[] ones_a;
+    delete[] ones_b;
   }
 
   // Given data in num_points * new_dim row major
@@ -207,11 +208,11 @@ namespace math_utils {
   // indices is an empty vector. Additionally, if pts_norms_squared is not null,
   // then it will assume that point norms are pre-computed and use those values
 
-  void compute_closest_centers(const float* data, size_t num_points, size_t dim,
-                               const float* pivot_data, size_t num_centers,
-                               size_t k, uint32_t* closest_centers_ivf,
-                               std::vector<size_t>*      inverted_index,
-                               float* pts_norms_squared) {
+  void compute_closest_centers(float* data, size_t num_points, size_t dim,
+                               float* pivot_data, size_t num_centers, size_t k,
+                               uint32_t*            closest_centers_ivf,
+                               std::vector<size_t>* inverted_index,
+                               float*               pts_norms_squared) {
     if (k > num_centers) {
       diskann::cout << "ERROR: k (" << k << ") > num_center(" << num_centers
                     << ")" << std::endl;
@@ -220,12 +221,9 @@ namespace math_utils {
 
     bool is_norm_given_for_pts = (pts_norms_squared != NULL);
 
-    auto pivs_norms_squared = std::make_unique<float>(num_centers);
-    std::unique_ptr<float[]> pts_norms_squared_deleter = nullptr;
-    if (!is_norm_given_for_pts) {
-      pts_norms_squared_deleter = std::make_unique<float[]>(num_points);
-      pts_norms_squared = pts_norms_squared_deleter.get();
-    }
+    float* pivs_norms_squared = new float[num_centers];
+    if (!is_norm_given_for_pts)
+      pts_norms_squared = new float[num_points];
 
     size_t PAR_BLOCK_SIZE = num_points;
     size_t N_BLOCKS = (num_points % PAR_BLOCK_SIZE) == 0
@@ -234,21 +232,21 @@ namespace math_utils {
 
     if (!is_norm_given_for_pts)
       math_utils::compute_vecs_l2sq(pts_norms_squared, data, num_points, dim);
-    math_utils::compute_vecs_l2sq(pivs_norms_squared.get(), pivot_data, num_centers,
+    math_utils::compute_vecs_l2sq(pivs_norms_squared, pivot_data, num_centers,
                                   dim);
-    auto closest_centers = std::make_unique<uint32_t[]>(PAR_BLOCK_SIZE * k);
-    auto distance_matrix = std::make_unique<float[]>(num_centers * PAR_BLOCK_SIZE);
+    uint32_t* closest_centers = new uint32_t[PAR_BLOCK_SIZE * k];
+    float*    distance_matrix = new float[num_centers * PAR_BLOCK_SIZE];
 
     for (size_t cur_blk = 0; cur_blk < N_BLOCKS; cur_blk++) {
-      const float* data_cur_blk = data + cur_blk * PAR_BLOCK_SIZE * dim;
+      float* data_cur_blk = data + cur_blk * PAR_BLOCK_SIZE * dim;
       size_t num_pts_blk =
           std::min(PAR_BLOCK_SIZE, num_points - cur_blk * PAR_BLOCK_SIZE);
       float* pts_norms_blk = pts_norms_squared + cur_blk * PAR_BLOCK_SIZE;
 
       math_utils::compute_closest_centers_in_block(
           data_cur_blk, num_pts_blk, dim, pivot_data, num_centers,
-          pts_norms_blk, pivs_norms_squared.get(), closest_centers.get(),
-          distance_matrix.get(), k);
+          pts_norms_blk, pivs_norms_squared, closest_centers, distance_matrix,
+          k);
 
       int64_t blk_st = cur_blk * PAR_BLOCK_SIZE;
       int64_t blk_ed =
@@ -266,6 +264,11 @@ namespace math_utils {
         }
       }
     }
+    delete[] closest_centers;
+    delete[] distance_matrix;
+    delete[] pivs_norms_squared;
+    if (!is_norm_given_for_pts)
+      delete[] pts_norms_squared;
   }
 
   // if to_subtract is 1, will subtract nearest center from each row. Else will
@@ -303,21 +306,20 @@ namespace kmeans {
   // closest_centers == NULL, will allocate memory and return. Similarly, if
   // closest_docs == NULL, will allocate memory and return.
 
-  float lloyds_iter(const float* data, size_t num_points, size_t dim,
-                    float* centers, size_t num_centers,
-                    std::unique_ptr<std::vector<size_t>[]>& closest_docs,
-                    std::unique_ptr<uint32_t[]>&          closest_center) {
+  float lloyds_iter(float* data, size_t num_points, size_t dim, float* centers,
+                    size_t num_centers, std::vector<size_t>* closest_docs,
+                    uint32_t*& closest_center) {
     bool compute_residual = true;
     // Timer timer;
 
     bool ret_closest_center = true;
     bool ret_closest_docs = true;
-    if (closest_center == nullptr) {
-      closest_center = std::make_unique<uint32_t[]>(num_points);
+    if (closest_center == NULL) {
+      closest_center = new uint32_t[num_points];
       ret_closest_center = false;
     }
-    if (closest_docs == nullptr) {
-      closest_docs = std::make_unique<std::vector<size_t>[]>(num_centers);
+    if (closest_docs == NULL) {
+      closest_docs = new std::vector<size_t>[num_centers];
       ret_closest_docs = false;
     } else {
       for (size_t c = 0; c < num_centers; ++c)
@@ -325,18 +327,18 @@ namespace kmeans {
     }
 
     math_utils::elkan_L2(data, centers, dim, num_points, num_centers,
-                         closest_center.get());
+                         closest_center);
     for (size_t i = 0; i < num_points; ++i) {
       closest_docs[closest_center[i]].push_back(i);
     }
 
     for (int64_t c = 0; c < (_s64) num_centers; ++c) {
       float*  center = centers + (size_t) c * (size_t) dim;
-      auto cluster_sum = std::make_unique<double[]>(dim);
+      double* cluster_sum = new double[dim];
       for (size_t i = 0; i < dim; i++)
         cluster_sum[i] = 0.0;
       for (size_t i = 0; i < closest_docs[c].size(); i++) {
-        const float* current = data + ((closest_docs[c][i]) * dim);
+        float* current = data + ((closest_docs[c][i]) * dim);
         for (size_t j = 0; j < dim; j++) {
           cluster_sum[j] += (double) current[j];
         }
@@ -346,6 +348,7 @@ namespace kmeans {
           center[i] =
               (float) (cluster_sum[i] / ((double) closest_docs[c].size()));
       }
+      delete[] cluster_sum;
     }
 
     float residual = 0.0;
@@ -368,10 +371,10 @@ namespace kmeans {
     }
 
     if (!ret_closest_docs) {
-      closest_docs.reset();
+      delete[] closest_docs;
     }
     if (!ret_closest_center) {
-      closest_center.reset();
+      delete[] closest_center;
     }
     return residual;
   }
@@ -383,21 +386,20 @@ namespace kmeans {
   // vector<size_t> [num_centers], and closest_center = new size_t[num_points]
   // Final centers are output in centers as row major num_centers * dim
   //
-  float run_lloyds(const float* data, size_t num_points, size_t dim,
-                   float* centers, const size_t num_centers,
-                   const size_t max_reps, std::vector<size_t>* closest_docs,
-                   uint32_t* closest_center) {
+  float run_lloyds(float* data, size_t num_points, size_t dim, float* centers,
+                   const size_t num_centers, const size_t max_reps,
+                   std::vector<size_t>* closest_docs,
+                   uint32_t*            closest_center) {
     float residual = std::numeric_limits<float>::max();
-
-    std::unique_ptr<std::vector<size_t>[]> closest_docs_deleter = nullptr;
-    std::unique_ptr<uint32_t[]> closest_center_deleter = nullptr;
-    if (closest_docs == nullptr) {
-      closest_docs_deleter = std::make_unique<std::vector<size_t>[]>(num_centers);
-      closest_docs = closest_docs_deleter.get();
+    bool  ret_closest_docs = true;
+    bool  ret_closest_center = true;
+    if (closest_docs == NULL) {
+      closest_docs = new std::vector<size_t>[num_centers];
+      ret_closest_docs = false;
     }
-    if (closest_center == nullptr) {
-      closest_center_deleter  = std::make_unique<uint32_t[]>(num_points);
-      closest_center = closest_center_deleter.get();
+    if (closest_center == NULL) {
+      closest_center = new uint32_t[num_points];
+      ret_closest_center = false;
     }
 
     float old_residual;
@@ -406,7 +408,7 @@ namespace kmeans {
       old_residual = residual;
 
       residual = lloyds_iter(data, num_points, dim, centers, num_centers,
-                             closest_docs_deleter, closest_center_deleter);
+                             closest_docs, closest_center);
 
       LOG_KNOWHERE_DEBUG_ << "Lloyd's iter " << i
                           << "  dist_sq residual: " << residual;
@@ -419,14 +421,20 @@ namespace kmeans {
         break;
       }
     }
+    if (!ret_closest_docs)
+      delete[] closest_docs;
+    if (!ret_closest_center)
+      delete[] closest_center;
     return residual;
   }
 
   // assumes memory allocated for pivot_data as new
   // float[num_centers*dim]
   // and select randomly num_centers points as pivots
-  void selecting_pivots(const float* data, size_t num_points, size_t dim,
+  void selecting_pivots(float* data, size_t num_points, size_t dim,
                         float* pivot_data, size_t num_centers) {
+    //	pivot_data = new float[num_centers * dim];
+
     std::unordered_set<size_t> picked;
     std::random_device         rd;
     auto                       x = rd();
@@ -448,7 +456,7 @@ namespace kmeans {
     }
   }
 
-  void kmeanspp_selecting_pivots(const float* data, size_t num_points, size_t dim,
+  void kmeanspp_selecting_pivots(float* data, size_t num_points, size_t dim,
                                  float* pivot_data, size_t num_centers) {
     if (num_points > 1 << 23) {
       diskann::cout << "ERROR: n_pts " << num_points
@@ -475,19 +483,15 @@ namespace kmeans {
     size_t                                init_id = int_dist(generator);
     size_t                                num_picked = 1;
 
-    auto dist = std::make_unique<float[]>(num_points);
+    picked.push_back(init_id);
+    std::memcpy(pivot_data, data + init_id * dim, dim * sizeof(float));
+
+    float* dist = new float[num_points];
 
     for (int64_t i = 0; i < (_s64) num_points; i++) {
       dist[i] =
           math_utils::calc_distance(data + i * dim, data + init_id * dim, dim);
-      if (std::isinf(dist[i])) {
-        selecting_pivots(data, num_points, dim, pivot_data, num_centers);
-        return;
-      }
     }
-
-    picked.push_back(init_id);
-    std::memcpy(pivot_data, data + init_id * dim, dim * sizeof(float));
 
     double dart_val;
     size_t tmp_pivot;
@@ -533,6 +537,7 @@ namespace kmeans {
     }
     stream << "done.";
     LOG_KNOWHERE_DEBUG_ << stream.str();
+    delete[] dist;
   }
 
 }  // namespace kmeans

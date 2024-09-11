@@ -14,22 +14,12 @@
  * functions.
  */
 
-#if defined(__AVX512F__)
-
-#include <faiss/utils/simdlib_avx2.h>
-#include <faiss/utils/simdlib_avx512.h>
-
-#elif defined(__AVX2__)
+#ifdef __AVX2__
 
 #include <faiss/utils/simdlib_avx2.h>
 
 #elif defined(__aarch64__)
-
 #include <faiss/utils/simdlib_neon.h>
-
-#elif defined(__PPC64__)
-
-#include <faiss/utils/simdlib_ppc64.h>
 
 #else
 

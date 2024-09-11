@@ -1,28 +1,20 @@
 knowhere_file_glob(
   GLOB FAISS_SRCS thirdparty/faiss/faiss/*.cpp
   thirdparty/faiss/faiss/impl/*.cpp thirdparty/faiss/faiss/invlists/*.cpp
-  thirdparty/faiss/faiss/utils/*.cpp
-  thirdparty/faiss/faiss/cppcontrib/knowhere/*.cpp)
+  thirdparty/faiss/faiss/utils/*.cpp)
 
 knowhere_file_glob(GLOB FAISS_AVX512_SRCS
                    thirdparty/faiss/faiss/impl/*avx512.cpp)
 
-knowhere_file_glob(
-  GLOB
-  FAISS_AVX2_SRCS
-  thirdparty/faiss/faiss/impl/*avx.cpp
-  thirdparty/faiss/faiss/impl/pq4_fast_scan_search_1.cpp
-  thirdparty/faiss/faiss/impl/pq4_fast_scan_search_qbs.cpp
-  thirdparty/faiss/faiss/utils/partitioning_avx2.cpp
-  thirdparty/faiss/faiss/IndexPQFastScan.cpp
-  thirdparty/faiss/faiss/IndexIVFFastScan.cpp
-  thirdparty/faiss/faiss/IndexIVFPQFastScan.cpp)
+knowhere_file_glob(GLOB FAISS_AVX2_SRCS
+                   thirdparty/faiss/faiss/impl/*avx.cpp
+                   thirdparty/faiss/faiss/impl/pq4_fast_scan_search_1.cpp
+                   thirdparty/faiss/faiss/impl/pq4_fast_scan_search_qbs.cpp
+                   thirdparty/faiss/faiss/utils/partitioning_avx2.cpp
+                   thirdparty/faiss/faiss/IndexPQFastScan.cpp
+                   thirdparty/faiss/faiss/IndexIVFPQFastScan.cpp)
 
 list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX512_SRCS})
-
-# disable RHNSW
-knowhere_file_glob(GLOB FAISS_RHNSW_SRCS thirdparty/faiss/faiss/impl/RHNSW.cpp)
-list(REMOVE_ITEM FAISS_SRCS ${FAISS_RHNSW_SRCS})
 
 if(__X86_64)
   set(UTILS_SRC src/simd/distances_ref.cc src/simd/hook.cc)
@@ -37,7 +29,7 @@ if(__X86_64)
   target_compile_options(utils_sse PRIVATE -msse4.2 -mpopcnt)
   target_compile_options(utils_avx PRIVATE -mfma -mf16c -mavx2 -mpopcnt)
   target_compile_options(utils_avx512 PRIVATE -mfma -mf16c -mavx512f -mavx512dq
-                                              -mavx512bw -mpopcnt -mavx512vl)
+                                              -mavx512bw -mpopcnt)
 
   add_library(
     knowhere_utils STATIC
@@ -47,20 +39,10 @@ if(__X86_64)
 endif()
 
 if(__AARCH64)
-  set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc
-                src/simd/distances_neon.cc)
+  set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc src/simd/distances_neon.cc)
   add_library(knowhere_utils STATIC ${UTILS_SRC})
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
 endif()
-
-# ToDo: Add distances_vsx.cc for powerpc64 SIMD acceleration
-if(__PPC64)
-  set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc)
-  add_library(knowhere_utils STATIC ${UTILS_SRC})
-  target_link_libraries(knowhere_utils PUBLIC glog::glog)
-endif()
-
-find_package(LAPACK REQUIRED)
 
 if(LINUX)
   set(BLA_VENDOR OpenBLAS)
@@ -71,16 +53,24 @@ if(APPLE)
 endif()
 
 find_package(BLAS REQUIRED)
+if(LINUX)
+  set(BLA_VENDOR "")
+endif()
+
+find_package(LAPACK REQUIRED)
 
 if(__X86_64)
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX2_SRCS})
 
-  knowhere_file_glob(GLOB FAISS_NEON_SRCS thirdparty/faiss/faiss/impl/*neon.cpp)
-  list(REMOVE_ITEM FAISS_SRCS ${FAISS_NEON_SRCS})
-
   add_library(faiss_avx2 OBJECT ${FAISS_AVX2_SRCS})
-  target_compile_options(faiss_avx2 PRIVATE $<$<COMPILE_LANGUAGE:CXX>: -msse4.2
-                                            -mavx2 -mfma -mf16c -mpopcnt>)
+  target_compile_options(
+    faiss_avx2
+    PRIVATE $<$<COMPILE_LANGUAGE:CXX>:
+            -msse4.2
+            -mavx2
+            -mfma
+            -mf16c
+            -mpopcnt>)
   add_library(faiss_avx512 OBJECT ${FAISS_AVX512_SRCS})
   target_compile_options(
     faiss_avx512
@@ -92,7 +82,6 @@ if(__X86_64)
             -mavx512f
             -mavx512dq
             -mavx512bw
-            -mavx512vl
             -mpopcnt>)
 
   add_library(faiss STATIC ${FAISS_SRCS})
@@ -117,40 +106,13 @@ endif()
 
 if(__AARCH64)
   knowhere_file_glob(GLOB FAISS_AVX_SRCS thirdparty/faiss/faiss/impl/*avx.cpp)
-  list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX_SRCS})
 
+  list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX_SRCS})
   add_library(faiss STATIC ${FAISS_SRCS})
 
   target_compile_options(
     faiss
     PRIVATE $<$<COMPILE_LANGUAGE:CXX>:
-            -Wno-sign-compare
-            -Wno-unused-variable
-            -Wno-reorder
-            -Wno-unused-local-typedefs
-            -Wno-unused-function
-            -Wno-strict-aliasing>)
-
-  add_dependencies(faiss knowhere_utils)
-  target_link_libraries(faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES}
-                                     ${LAPACK_LIBRARIES} knowhere_utils)
-  target_compile_definitions(faiss PRIVATE FINTEGER=int)
-endif()
-
-if(__PPC64)
-  knowhere_file_glob(GLOB FAISS_AVX_SRCS thirdparty/faiss/faiss/impl/*avx.cpp)
-  list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX_SRCS})
-
-  knowhere_file_glob(GLOB FAISS_NEON_SRCS thirdparty/faiss/faiss/impl/*neon.cpp)
-  list(REMOVE_ITEM FAISS_SRCS ${FAISS_NEON_SRCS})
-
-  add_library(faiss STATIC ${FAISS_SRCS})
-
-  target_compile_options(
-    faiss
-    PRIVATE $<$<COMPILE_LANGUAGE:CXX>:
-            -mcpu=native
-            -mvsx
             -Wno-sign-compare
             -Wno-unused-variable
             -Wno-reorder

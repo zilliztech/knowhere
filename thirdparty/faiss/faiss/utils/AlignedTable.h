@@ -98,9 +98,7 @@ struct AlignedTableTightAlloc {
     AlignedTableTightAlloc<T, A>& operator=(
             const AlignedTableTightAlloc<T, A>& other) {
         resize(other.numel);
-        if (numel > 0) {
-            memcpy(ptr, other.ptr, sizeof(T) * numel);
-        }
+        memcpy(ptr, other.ptr, sizeof(T) * numel);
         return *this;
     }
 

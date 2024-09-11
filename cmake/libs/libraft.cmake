@@ -14,13 +14,22 @@
 # the License.
 
 add_definitions(-DKNOWHERE_WITH_RAFT)
-add_definitions(-DRAFT_EXPLICIT_INSTANTIATE_ONLY)
-set(RAFT_VERSION "${RAPIDS_VERSION}")
-set(RAFT_FORK "milvus-io")
-set(RAFT_PINNED_TAG "branch-24.04")
+include(cmake/utils/fetch_rapids.cmake)
+include(rapids-cmake)
+include(rapids-cpm)
+include(rapids-cuda)
+include(rapids-export)
+include(rapids-find)
 
-rapids_find_package(CUDAToolkit REQUIRED BUILD_EXPORT_SET knowhere-exports
-                    INSTALL_EXPORT_SET knowhere-exports)
+rapids_cpm_init()
+
+set(CMAKE_CUDA_FLAGS
+    "${CMAKE_CUDA_FLAGS} --expt-extended-lambda --expt-relaxed-constexpr")
+
+set(RAPIDS_VERSION 23.04)
+set(RAFT_VERSION "${RAPIDS_VERSION}")
+set(RAFT_FORK "rapidsai")
+set(RAFT_PINNED_TAG "branch-${RAPIDS_VERSION}")
 
 function(find_and_configure_raft)
   set(oneValueArgs VERSION FORK PINNED_TAG)
@@ -36,7 +45,7 @@ function(find_and_configure_raft)
     GLOBAL_TARGETS
     raft::raft
     COMPONENTS
-    compiled_static
+    ${RAFT_COMPONENTS}
     CPM_ARGS
     GIT_REPOSITORY
     https://github.com/${PKG_FORK}/raft.git
@@ -45,26 +54,18 @@ function(find_and_configure_raft)
     SOURCE_SUBDIR
     cpp
     OPTIONS
-    "RAFT_COMPILE_LIBRARY ON"
     "BUILD_TESTS OFF"
     "BUILD_BENCH OFF"
     "RAFT_USE_FAISS_STATIC OFF") # Turn this on to build FAISS into your binary
 
-  if(raft_ADDED)
-    message(VERBOSE "KNOWHERE: Using RAFT located in ${raft_SOURCE_DIR}")
-  else()
-    message(VERBOSE "KNOWHERE: Using RAFT located in ${raft_DIR}")
-  endif()
+    if(raft_ADDED)
+        message(VERBOSE "KNOWHERE: Using RAFT located in ${raft_SOURCE_DIR}")
+    else()
+        message(VERBOSE "KNOWHERE: Using RAFT located in ${raft_DIR}")
+    endif()
 endfunction()
 
 # Change pinned tag here to test a commit in CI To use a different RAFT locally,
 # set the CMake variable CPM_raft_SOURCE=/path/to/local/raft
-find_and_configure_raft(
-  VERSION
-  ${RAFT_VERSION}.00
-  FORK
-  ${RAFT_FORK}
-  PINNED_TAG
-  ${RAFT_PINNED_TAG}
-  COMPILE_LIBRARY
-  OFF)
+find_and_configure_raft(VERSION ${RAFT_VERSION}.00 FORK ${RAFT_FORK} PINNED_TAG
+                        ${RAFT_PINNED_TAG} COMPILE_LIBRARY OFF)

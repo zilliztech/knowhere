@@ -5,7 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-/** Implementation of k-means clustering with many variants. */
+// -*- c++ -*-
 
 #ifndef FAISS_CLUSTERING_H
 #define FAISS_CLUSTERING_H
@@ -35,44 +35,25 @@ extern double early_stop_threshold;
  * constructor of the Clustering object.
  */
 struct ClusteringParameters {
-    /// number of clustering iterations
-    int niter = 25;
-    /// redo clustering this many times and keep the clusters with the best
-    /// objective
-    int nredo = 1;
+    int niter; ///< clustering iterations
+    int nredo; ///< redo clustering this many times and keep best
 
-    bool verbose = false;
-    /// whether to normalize centroids after each iteration (useful for inner
-    /// product clustering)
-    bool spherical = false;
-    /// round centroids coordinates to integer after each iteration?
-    bool int_centroids = false;
-    /// re-train index after each iteration?
-    bool update_index = false;
+    bool verbose;
+    bool spherical;        ///< do we want normalized centroids?
+    bool int_centroids;    ///< round centroids coordinates to integer
+    bool update_index;     ///< re-train index after each iteration?
+    bool frozen_centroids; ///< use the centroids provided as input and do not
+                           ///< change them during iterations
 
-    /// Use the subset of centroids provided as input and do not change them
-    /// during iterations
-    bool frozen_centroids = false;
-    /// If fewer than this number of training vectors per centroid are provided,
-    /// writes a warning. Note that fewer than 1 point per centroid raises an
-    /// exception.
-    int min_points_per_centroid = 39;
-    /// to limit size of dataset, otherwise the training set is subsampled
-    int max_points_per_centroid = 256;
-    /// seed for the random number generator.
-    /// negative values lead to seeding an internal rng with
-    /// std::high_resolution_clock.
-    int seed = 1234;
+    int min_points_per_centroid; ///< otherwise you get a warning
+    int max_points_per_centroid; ///< to limit size of dataset
 
-    /// when the training set is encoded, batch size of the codec decoder
-    size_t decode_block_size = 32768;
+    int seed; ///< seed for the random number generator
 
-    /// whether to check for NaNs in an input data
-    bool check_input_data_for_NaNs = true;
+    size_t decode_block_size; ///< how many vectors at a time to decode
 
-    /// Whether to use splitmix64-based random number generator for subsampling,
-    /// which is faster, but may pick duplicate points.
-    bool use_faster_subsampling = false;
+    /// sets reasonable defaults
+    ClusteringParameters();
 };
 
 struct ClusteringIterationStats {
@@ -96,6 +77,7 @@ struct ClusteringIterationStats {
  *
  */
 struct Clustering : ClusteringParameters {
+    typedef Index::idx_t idx_t;
     size_t d; ///< dimension of the vectors
     size_t k; ///< nb of centroids
 
@@ -158,7 +140,7 @@ struct Clustering : ClusteringParameters {
      * to decode the input vectors.
      *
      * @param codec      codec used to decode the vectors (nullptr =
-     *                   vectors are in fact floats)
+     *                   vectors are in fact floats)     *
      */
     void train_encoded(
             idx_t nx,
@@ -217,6 +199,7 @@ struct ProgressiveDimIndexFactory {
  * https://arxiv.org/abs/1509.05195
  */
 struct ProgressiveDimClustering : ProgressiveDimClusteringParameters {
+    using idx_t = Index::idx_t;
     size_t d; ///< dimension of the vectors
     size_t k; ///< nb of centroids
 

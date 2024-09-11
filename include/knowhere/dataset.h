@@ -21,12 +21,10 @@
 #include <variant>
 
 #include "comp/index_param.h"
-#include "knowhere/range_util.h"
-#include "knowhere/sparse_utils.h"
 
 namespace knowhere {
 
-class DataSet : public std::enable_shared_from_this<const DataSet> {
+class DataSet {
  public:
     typedef std::variant<const float*, const size_t*, const int64_t*, const void*, int64_t, std::string, std::any> Var;
     DataSet() = default;
@@ -56,11 +54,7 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
             {
                 auto ptr = std::get_if<3>(&x.second);
                 if (ptr != nullptr) {
-                    if (is_sparse) {
-                        delete[](sparse::SparseRow<float>*)(*ptr);
-                    } else {
-                        delete[](char*)(*ptr);
-                    }
+                    delete[](char*)(*ptr);
                 }
             }
         }
@@ -73,21 +67,9 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
     }
 
     void
-    SetDistance(std::unique_ptr<float[]>&& dis) {
-        std::unique_lock lock(mutex_);
-        this->data_[meta::DISTANCE] = Var(std::in_place_index<0>, dis.release());
-    }
-
-    void
     SetLims(const size_t* lims) {
         std::unique_lock lock(mutex_);
         this->data_[meta::LIMS] = Var(std::in_place_index<1>, lims);
-    }
-
-    void
-    SetLims(std::unique_ptr<size_t[]>&& lims) {
-        std::unique_lock lock(mutex_);
-        this->data_[meta::LIMS] = Var(std::in_place_index<1>, lims.release());
     }
 
     void
@@ -97,37 +79,9 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
     }
 
     void
-    SetIds(std::unique_ptr<long int[]>&& ids) {
-        static_assert(sizeof(long int) == sizeof(int64_t));
-
-        std::unique_lock lock(mutex_);
-        this->data_[meta::IDS] = Var(std::in_place_index<2>, reinterpret_cast<int64_t*>(ids.release()));
-    }
-
-    void
-    SetIds(std::unique_ptr<long long int[]>&& ids) {
-        static_assert(sizeof(long long int) == sizeof(int64_t));
-
-        std::unique_lock lock(mutex_);
-        this->data_[meta::IDS] = Var(std::in_place_index<2>, reinterpret_cast<int64_t*>(ids.release()));
-    }
-
-    /**
-     * For dense float vector, tensor is a rows * dim float array
-     * For sparse float vector, tensor is pointer to sparse::Sparse<float>*
-     * and values in each row should be sorted by column id.
-     */
-    void
     SetTensor(const void* tensor) {
         std::unique_lock lock(mutex_);
         this->data_[meta::TENSOR] = Var(std::in_place_index<3>, tensor);
-    }
-
-    template <typename T>
-    void
-    SetTensor(std::unique_ptr<T[]>&& tensor) {
-        std::unique_lock lock(mutex_);
-        this->data_[meta::TENSOR] = Var(std::in_place_index<3>, tensor.release());
     }
 
     void
@@ -248,18 +202,6 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
         this->is_owner = is_owner;
     }
 
-    bool
-    GetIsSparse() const {
-        std::unique_lock lock(mutex_);
-        return this->is_sparse;
-    }
-
-    void
-    SetIsSparse(bool is_sparse) {
-        std::unique_lock lock(mutex_);
-        this->is_sparse = is_sparse;
-    }
-
     // deprecated API
     template <typename T>
     void
@@ -283,7 +225,6 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
     mutable std::shared_mutex mutex_;
     std::map<std::string, Var> data_;
     bool is_owner = true;
-    bool is_sparse = false;
 };
 using DataSetPtr = std::shared_ptr<DataSet>;
 
@@ -297,16 +238,13 @@ GenDataSet(const int64_t nb, const int64_t dim, const void* xb) {
     return ret_ds;
 }
 
-// swig won't compile when using int64_t* or size_t* as parameter
-inline DataSetPtr
 #ifdef NOT_COMPILE_FOR_SWIG
+// TOOD: python wheel build error for this API, need check
+inline DataSetPtr
 GenIdsDataSet(const int64_t rows, const int64_t* ids) {
-#else
-GenIdsDataSet(const int64_t rows, const void* ids) {
-#endif
     auto ret_ds = std::make_shared<DataSet>();
     ret_ds->SetRows(rows);
-    ret_ds->SetIds((const int64_t*)ids);
+    ret_ds->SetIds(ids);
     ret_ds->SetIsOwner(false);
     return ret_ds;
 }
@@ -321,84 +259,24 @@ GenResultDataSet(const int64_t rows, const int64_t dim, const void* tensor) {
     return ret_ds;
 }
 
-template <typename T>
 inline DataSetPtr
-GenResultDataSet(const int64_t rows, const int64_t dim, std::unique_ptr<T[]>&& tensor) {
-    auto ret_ds = std::make_shared<DataSet>();
-    ret_ds->SetRows(rows);
-    ret_ds->SetDim(dim);
-    ret_ds->SetTensor(std::move(tensor));
-    ret_ds->SetIsOwner(true);
-    return ret_ds;
-}
-
-inline DataSetPtr
-#ifdef NOT_COMPILE_FOR_SWIG
 GenResultDataSet(const int64_t nq, const int64_t topk, const int64_t* ids, const float* distance) {
-#else
-GenResultDataSet(const int64_t nq, const int64_t topk, const void* ids, const float* distance) {
-#endif
-    static_assert(sizeof(int64_t) == sizeof(long long int));
-
     auto ret_ds = std::make_shared<DataSet>();
     ret_ds->SetRows(nq);
     ret_ds->SetDim(topk);
-    ret_ds->SetIds((const int64_t*)ids);
+    ret_ds->SetIds(ids);
     ret_ds->SetDistance(distance);
     ret_ds->SetIsOwner(true);
     return ret_ds;
 }
 
 inline DataSetPtr
-GenResultDataSet(const int64_t nq, const int64_t topk, std::unique_ptr<long int[]>&& ids,
-                 std::unique_ptr<float[]>&& distance) {
-    static_assert(sizeof(int64_t) == sizeof(long int));
-
-    auto ret_ds = std::make_shared<DataSet>();
-    ret_ds->SetRows(nq);
-    ret_ds->SetDim(topk);
-    ret_ds->SetIds(std::move(ids));
-    ret_ds->SetDistance(std::move(distance));
-    ret_ds->SetIsOwner(true);
-    return ret_ds;
-}
-
-inline DataSetPtr
-GenResultDataSet(const int64_t nq, const int64_t topk, std::unique_ptr<long long int[]>&& ids,
-                 std::unique_ptr<float[]>&& distance) {
-    static_assert(sizeof(int64_t) == sizeof(long long int));
-
-    auto ret_ds = std::make_shared<DataSet>();
-    ret_ds->SetRows(nq);
-    ret_ds->SetDim(topk);
-    ret_ds->SetIds(std::move(ids));
-    ret_ds->SetDistance(std::move(distance));
-    ret_ds->SetIsOwner(true);
-    return ret_ds;
-}
-
-inline DataSetPtr
-#ifdef NOT_COMPILE_FOR_SWIG
 GenResultDataSet(const int64_t nq, const int64_t* ids, const float* distance, const size_t* lims) {
-#else
-GenResultDataSet(const int64_t nq, const void* ids, const float* distance, const void* lims) {
-#endif
     auto ret_ds = std::make_shared<DataSet>();
     ret_ds->SetRows(nq);
-    ret_ds->SetIds((const int64_t*)ids);
+    ret_ds->SetIds(ids);
     ret_ds->SetDistance(distance);
-    ret_ds->SetLims((const size_t*)lims);
-    ret_ds->SetIsOwner(true);
-    return ret_ds;
-}
-
-inline DataSetPtr
-GenResultDataSet(const int64_t nq, RangeSearchResult&& range_search_result) {
-    auto ret_ds = std::make_shared<DataSet>();
-    ret_ds->SetRows(nq);
-    ret_ds->SetIds(std::move(range_search_result.labels));
-    ret_ds->SetDistance(std::move(range_search_result.distances));
-    ret_ds->SetLims(std::move(range_search_result.lims));
+    ret_ds->SetLims(lims);
     ret_ds->SetIsOwner(true);
     return ret_ds;
 }
@@ -411,6 +289,7 @@ GenResultDataSet(const std::string& json_info, const std::string& json_id_set) {
     ret_ds->SetIsOwner(true);
     return ret_ds;
 }
+#endif
 
 }  // namespace knowhere
 #endif /* DATASET_H */

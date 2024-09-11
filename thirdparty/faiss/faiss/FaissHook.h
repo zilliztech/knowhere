@@ -9,18 +9,13 @@
 #include <faiss/impl/ScalarQuantizer.h>
 #include "simd/hook.h"
 namespace faiss {
-
-// todo aguzhva: replace FaissHook.h with simd/hook.h
-
-struct IDSelector;
-
-typedef ScalarQuantizer::SQDistanceComputer* (*sq_get_distance_computer_func_ptr)(
+typedef SQDistanceComputer* (*sq_get_distance_computer_func_ptr)(
         MetricType,
-        ScalarQuantizer::QuantizerType,
+        QuantizerType,
         size_t,
         const std::vector<float>&);
-typedef ScalarQuantizer::SQuantizer* (*sq_sel_quantizer_func_ptr)(
-        ScalarQuantizer::QuantizerType,
+typedef Quantizer* (*sq_sel_quantizer_func_ptr)(
+        QuantizerType,
         size_t,
         const std::vector<float>&);
 typedef InvertedListScanner* (*sq_sel_inv_list_scanner_func_ptr)(
@@ -29,7 +24,6 @@ typedef InvertedListScanner* (*sq_sel_inv_list_scanner_func_ptr)(
         const Index*,
         size_t,
         bool,
-        const IDSelector*,
         bool);
 
 extern sq_get_distance_computer_func_ptr sq_get_distance_computer;

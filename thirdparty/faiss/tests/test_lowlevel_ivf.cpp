@@ -29,6 +29,8 @@ using namespace faiss;
 
 namespace {
 
+typedef Index::idx_t idx_t;
+
 // dimension of the vectors to index
 int d = 32;
 
@@ -176,15 +178,14 @@ void test_lowlevel_access(const char* index_key, MetricType metric) {
 
             // here we get the inverted lists from the InvertedLists
             // object but they could come from anywhere
-            size_t scan_cnt = 0;
+
             scanner->scan_codes(
                     il->list_size(list_no),
                     InvertedLists::ScopedCodes(il, list_no).get(),
                     InvertedLists::ScopedIds(il, list_no).get(),
                     D.data(),
                     I.data(),
-                    k,
-                    scan_cnt);
+                    k);
 
             if (j == 0) {
                 // all results so far come from list_no, so let's check if
@@ -198,7 +199,7 @@ void test_lowlevel_access(const char* index_key, MetricType metric) {
                     float computed_D = scanner->distance_to_code(
                             codes.data() + vno * il->code_size);
 
-                    EXPECT_FLOAT_EQ(computed_D, D[jj]);
+                    EXPECT_EQ(computed_D, D[jj]);
                 }
             }
         }
@@ -339,15 +340,14 @@ void test_lowlevel_access_binary(const char* index_key) {
 
             // here we get the inverted lists from the InvertedLists
             // object but they could come from anywhere
-            size_t scan_cnt = 0;
+
             scanner->scan_codes(
                     il->list_size(list_no),
                     InvertedLists::ScopedCodes(il, list_no).get(),
                     InvertedLists::ScopedIds(il, list_no).get(),
                     D.data(),
                     I.data(),
-                    k,
-                    scan_cnt);
+                    k);
 
             if (j == 0) {
                 // all results so far come from list_no, so let's check if
@@ -502,15 +502,13 @@ void test_threaded_search(const char* index_key, MetricType metric) {
                     continue;
                 scanner->set_list(list_no, q_dis[i * nprobe + j]);
 
-                size_t scan_cnt = 0;
                 scanner->scan_codes(
                         il->list_size(list_no),
                         InvertedLists::ScopedCodes(il, list_no).get(),
                         InvertedLists::ScopedIds(il, list_no).get(),
                         local_D,
                         local_I,
-                        k,
-                        scan_cnt);
+                        k);
             }
         };
 

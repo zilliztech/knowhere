@@ -17,11 +17,7 @@
 
 #include <faiss/utils/binary_distances.h>
 
-#include <faiss/utils/hamming_distance/common.h>
-
 namespace faiss {
-
-// todo aguzhva: upgrade code
 
 struct JaccardComputer8 {
     uint64_t a0;

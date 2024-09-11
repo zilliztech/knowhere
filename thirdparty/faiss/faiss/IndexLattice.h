@@ -55,8 +55,7 @@ struct IndexLattice : Index {
             idx_t k,
             float* distances,
             idx_t* labels,
-            const SearchParameters* params = nullptr) const override;
-
+            const BitsetView bitset = nullptr) const override;
     void reset() override;
 };
 

@@ -24,7 +24,6 @@
 #include "diskann/partition_and_pq.h"
 #include "diskann/percentile_stats.h"
 #include "diskann/pq_flash_index.h"
-#include "knowhere/comp/thread_pool.h"
 #include "tsl/robin_set.h"
 
 #include "diskann/utils.h"
@@ -68,18 +67,18 @@ namespace diskann {
     }
 
     size_t num_blocks = DIV_ROUND_UP(fsize, read_blk_size);
-    auto dump = std::make_unique<char[]>(read_blk_size);
+    char  *dump = new char[read_blk_size];
     for (_u64 i = 0; i < num_blocks; i++) {
       size_t cur_block_size = read_blk_size > fsize - (i * read_blk_size)
                                   ? fsize - (i * read_blk_size)
                                   : read_blk_size;
-      reader.read(dump.get(), cur_block_size);
-      writer.write(dump.get(), cur_block_size);
+      reader.read(dump, cur_block_size);
+      writer.write(dump, cur_block_size);
     }
-    dump.reset();
     //    reader.close();
     //    writer.close();
 
+    delete[] dump;
     std::vector<_u64> new_meta;
     for (_u64 i = 0; i < nr; i++)
       new_meta.push_back(metadata[i]);
@@ -227,8 +226,7 @@ namespace diskann {
     diskann::alloc_aligned(((void **) &warmup),
                            warmup_num * warmup_aligned_dim * sizeof(T),
                            8 * sizeof(T));
-    std::memset((void *) warmup, 0,
-                warmup_num * warmup_aligned_dim * sizeof(T));
+    std::memset(warmup, 0, warmup_num * warmup_aligned_dim * sizeof(T));
     std::random_device              rd;
     std::mt19937                    gen(rd());
     std::uniform_int_distribution<> dis(-128, 127);
@@ -240,6 +238,41 @@ namespace diskann {
     diskann::cout << "..done" << std::endl;
     return warmup;
   }
+
+#ifdef EXEC_ENV_OLS
+  template<typename T>
+  T *load_warmup(MemoryMappedFiles &files, const std::string &cache_warmup_file,
+                 uint64_t &warmup_num, uint64_t warmup_dim,
+                 uint64_t warmup_aligned_dim) {
+    T       *warmup = nullptr;
+    uint64_t file_dim, file_aligned_dim;
+
+    if (files.fileExists(cache_warmup_file)) {
+      diskann::load_aligned_bin<T>(files, cache_warmup_file, warmup, warmup_num,
+                                   file_dim, file_aligned_dim);
+      diskann::cout << "In the warmup file: " << cache_warmup_file
+                    << " File dim: " << file_dim
+                    << " File aligned dim: " << file_aligned_dim
+                    << " Expected dim: " << warmup_dim
+                    << " Expected aligned dim: " << warmup_aligned_dim
+                    << std::endl;
+
+      if (file_dim != warmup_dim || file_aligned_dim != warmup_aligned_dim) {
+        std::stringstream stream;
+        stream << "Mismatched dimensions in sample file. file_dim = "
+               << file_dim << " file_aligned_dim: " << file_aligned_dim
+               << " index_dim: " << warmup_dim
+               << " index_aligned_dim: " << warmup_aligned_dim << std::endl;
+        diskann::cerr << stream.str();
+        throw diskann::ANNException(stream.str(), -1);
+      }
+    } else {
+      warmup =
+          generateRandomWarmup<T>(warmup_num, warmup_dim, warmup_aligned_dim);
+    }
+    return warmup;
+  }
+#endif
 
   template<typename T>
   T *load_warmup(const std::string &cache_warmup_file, uint64_t &warmup_num,
@@ -476,7 +509,7 @@ namespace diskann {
   template<typename T>
   std::unique_ptr<diskann::Index<T>> build_merged_vamana_index(
       std::string base_file, bool ip_prepared, diskann::Metric compareMetric,
-      unsigned L, unsigned R, bool accelerate_build, bool shuffle_build, double sampling_rate,
+      unsigned L, unsigned R, bool accelerate_build, double sampling_rate,
       double ram_budget, std::string mem_index_path, std::string medoids_file,
       std::string centroids_file) {
     size_t base_num, base_dim;
@@ -498,7 +531,6 @@ namespace diskann {
       paras.Set<bool>("saturate_graph", 1);
       paras.Set<std::string>("save_path", mem_index_path);
       paras.Set<bool>("accelerate_build", accelerate_build);
-      paras.Set<bool>("shuffle_build", shuffle_build);
 
       std::unique_ptr<diskann::Index<T>> _pvamanaIndex =
           std::unique_ptr<diskann::Index<T>>(new diskann::Index<T>(
@@ -602,7 +634,7 @@ namespace diskann {
     }
 
     _u64 sample_num, sample_dim;
-    std::unique_ptr<T[]> samples;
+    T   *samples = nullptr;
     if (file_exists(sample_file)) {
       diskann::load_bin<T>(sample_file, samples, sample_num, sample_dim);
     } else {
@@ -622,7 +654,7 @@ namespace diskann {
       num_nodes_to_cache = points_num;
     }
 
-    std::unique_ptr<uint8_t[]> pq_code;
+    uint8_t                   *pq_code = nullptr;
     diskann::FixedChunkPQTable pq_table;
     uint64_t                   pq_chunks, pq_npts = 0;
     if (file_exists(pq_pivots_path) && file_exists(pq_compressed_code_path)) {
@@ -658,7 +690,7 @@ namespace diskann {
         }
         auto aligned_dim = ROUND_UP(query_dim, 8);
 
-        auto   query_float = std::make_unique<float[]>(aligned_dim);
+        auto   query_float = std::unique_ptr<float[]>(new float[aligned_dim]);
         double query_norm_dw = 0.0;
         for (uint32_t d = 0; d < old_dim; d++) {
           query_float[d] = static_cast<float>(samples[index * old_dim + d]);
@@ -686,8 +718,7 @@ namespace diskann {
         auto compute_dists = [&, scratch_ids, pq_table_dists](
                                  const unsigned *ids, const _u64 n_ids,
                                  float *dists_out) {
-          aggregate_coords(ids, n_ids, pq_code.get(), pq_chunks,
-                           scratch_ids.get());
+          aggregate_coords(ids, n_ids, pq_code, pq_chunks, scratch_ids.get());
           pq_dist_lookup(scratch_ids.get(), n_ids, pq_chunks,
                          pq_table_dists.get(), dists_out);
         };
@@ -748,7 +779,9 @@ namespace diskann {
       }));
     }
 
-    knowhere::WaitAllSuccess(futures);
+    for (auto &future : futures) {
+      future.wait();
+    }
 
     std::sort(node_count_list.begin(), node_count_list.end(),
               [](std::pair<_u32, _u32> &a, std::pair<_u32, _u32> &b) {
@@ -761,6 +794,11 @@ namespace diskann {
     }
 
     save_bin<uint32_t>(cache_file, node_list.data(), num_nodes_to_cache, 1);
+
+    if (samples != nullptr)
+      delete[] samples;
+    if (pq_code != nullptr)
+      delete[] pq_code;
   }
 
   // General purpose support for DiskANN interface
@@ -782,7 +820,7 @@ namespace diskann {
     while (!stop_flag) {
       std::vector<int64_t> tuning_sample_result_ids_64(tuning_sample_num, 0);
       std::vector<float>   tuning_sample_result_dists(tuning_sample_num, 0);
-      auto stats = std::make_unique<diskann::QueryStats[]>(tuning_sample_num);
+      diskann::QueryStats *stats = new diskann::QueryStats[tuning_sample_num];
 
       std::vector<folly::Future<folly::Unit>> futures;
       futures.reserve(tuning_sample_num);
@@ -793,21 +831,23 @@ namespace diskann {
               tuning_sample + (index * tuning_sample_aligned_dim), 1, L,
               tuning_sample_result_ids_64.data() + (index * 1),
               tuning_sample_result_dists.data() + (index * 1), cur_bw, false,
-              stats.get() + index);
+              stats + index);
         }));
       }
-      knowhere::WaitAllSuccess(futures);
+      for (auto &future : futures) {
+        future.wait();
+      }
       auto e = std::chrono::high_resolution_clock::now();
       std::chrono::duration<double> diff = e - s;
       double                        qps =
           (1.0f * (float) tuning_sample_num) / (1.0f * (float) diff.count());
 
       double lat_999 = diskann::get_percentile_stats<float>(
-          stats.get(), tuning_sample_num, 0.999f,
+          stats, tuning_sample_num, 0.999f,
           [](const diskann::QueryStats &stats) { return stats.total_us; });
 
       double mean_latency = diskann::get_mean_stats<float>(
-          stats.get(), tuning_sample_num,
+          stats, tuning_sample_num,
           [](const diskann::QueryStats &stats) { return stats.total_us; });
 
       if (qps > max_qps && lat_999 < (15000) + mean_latency * 2) {
@@ -819,6 +859,8 @@ namespace diskann {
       }
       if (cur_bw > 64)
         stop_flag = true;
+
+      delete[] stats;
     }
     return best_bw;
   }
@@ -1063,7 +1105,7 @@ namespace diskann {
 
   template<typename T>
   int build_disk_index(const BuildConfig &config) {
-    if (!knowhere::KnowhereFloatTypeCheck<T>::value &&
+    if (!std::is_same<T, float>::value &&
         (config.compare_metric == diskann::Metric::INNER_PRODUCT ||
          config.compare_metric == diskann::Metric::COSINE)) {
       std::stringstream stream;
@@ -1173,7 +1215,7 @@ namespace diskann {
                        << num_pq_chunks << " bytes per vector.";
 
     size_t train_size, train_dim;
-    std::unique_ptr<float[]> train_data = nullptr;
+    float *train_data;
 
     double p_val = ((double) MAX_PQ_TRAINING_SET_SIZE / (double) points_num);
     // generates random sample and sets it to train_data and updates
@@ -1187,7 +1229,7 @@ namespace diskann {
 
       LOG_KNOWHERE_DEBUG_ << "Compressing base for disk-PQ into "
                           << disk_pq_dims << " chunks ";
-      generate_pq_pivots(train_data.get(), train_size, (uint32_t) dim, 256,
+      generate_pq_pivots(train_data, train_size, (uint32_t) dim, 256,
                          (uint32_t) disk_pq_dims, NUM_KMEANS_REPS,
                          disk_pq_pivots_path, false);
       if (config.compare_metric == diskann::Metric::INNER_PRODUCT ||
@@ -1209,19 +1251,19 @@ namespace diskann {
       make_zero_mean = false;
 
     auto pq_s = std::chrono::high_resolution_clock::now();
-
-    LOG_KNOWHERE_INFO_ << "Generating PQ pivots";
-    generate_pq_pivots(train_data.get(), train_size, (uint32_t) dim, 256,
+    generate_pq_pivots(train_data, train_size, (uint32_t) dim, 256,
                        (uint32_t) num_pq_chunks, NUM_KMEANS_REPS,
                        pq_pivots_path, make_zero_mean);
 
-    LOG_KNOWHERE_INFO_ << "Encoding PQ data";
     generate_pq_data_from_pivots<T>(data_file_to_use.c_str(), 256,
                                     (uint32_t) num_pq_chunks, pq_pivots_path,
                                     pq_compressed_vectors_path);
     auto pq_e = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> pq_diff = pq_e - pq_s;
     LOG_KNOWHERE_INFO_ << "Training PQ codes cost: " << pq_diff.count() << "s";
+    delete[] train_data;
+
+    train_data = nullptr;
 // Gopal. Splitting diskann_dll into separate DLLs for search and build.
 // This code should only be available in the "build" DLL.
 #if defined(RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && \
@@ -1232,7 +1274,7 @@ namespace diskann {
     auto graph_s = std::chrono::high_resolution_clock::now();
     auto vamana_index = diskann::build_merged_vamana_index<T>(
         data_file_to_use.c_str(), ip_prepared, diskann::Metric::L2, L, R,
-        config.accelerate_build, config.shuffle_build, p_val, indexing_ram_budget, mem_index_path,
+        config.accelerate_build, p_val, indexing_ram_budget, mem_index_path,
         medoids_path, centroids_path);
     auto graph_e = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> graph_diff = graph_e - graph_s;
@@ -1290,132 +1332,101 @@ namespace diskann {
     return 0;
   }
 
-  template void create_disk_layout<int8_t>(const std::string base_file,
-                                           const std::string mem_index_file,
-                                           const std::string output_file,
-                                           const std::string reorder_data_file);
-  template void create_disk_layout<uint8_t>(
+  template DISKANN_DLLEXPORT void create_disk_layout<int8_t>(
       const std::string base_file, const std::string mem_index_file,
       const std::string output_file, const std::string reorder_data_file);
-  template void create_disk_layout<float>(const std::string base_file,
-                                          const std::string mem_index_file,
-                                          const std::string output_file,
-                                          const std::string reorder_data_file);
-  template void create_disk_layout<knowhere::fp16>(
+  template DISKANN_DLLEXPORT void create_disk_layout<uint8_t>(
       const std::string base_file, const std::string mem_index_file,
       const std::string output_file, const std::string reorder_data_file);
-  template void create_disk_layout<knowhere::bf16>(
+  template DISKANN_DLLEXPORT void create_disk_layout<float>(
       const std::string base_file, const std::string mem_index_file,
       const std::string output_file, const std::string reorder_data_file);
 
-  template int8_t  *load_warmup<int8_t>(const std::string &cache_warmup_file,
-                                       uint64_t          &warmup_num,
-                                       uint64_t           warmup_dim,
-                                       uint64_t           warmup_aligned_dim);
-  template uint8_t *load_warmup<uint8_t>(const std::string &cache_warmup_file,
-                                         uint64_t          &warmup_num,
-                                         uint64_t           warmup_dim,
-                                         uint64_t           warmup_aligned_dim);
-  template float   *load_warmup<float>(const std::string &cache_warmup_file,
-                                     uint64_t &warmup_num, uint64_t warmup_dim,
-                                     uint64_t warmup_aligned_dim);
-  template knowhere::fp16 *load_warmup<knowhere::fp16>(
+  template DISKANN_DLLEXPORT int8_t *load_warmup<int8_t>(
       const std::string &cache_warmup_file, uint64_t &warmup_num,
       uint64_t warmup_dim, uint64_t warmup_aligned_dim);
-  template knowhere::bf16 *load_warmup<knowhere::bf16>(
+  template DISKANN_DLLEXPORT uint8_t *load_warmup<uint8_t>(
+      const std::string &cache_warmup_file, uint64_t &warmup_num,
+      uint64_t warmup_dim, uint64_t warmup_aligned_dim);
+  template DISKANN_DLLEXPORT float *load_warmup<float>(
       const std::string &cache_warmup_file, uint64_t &warmup_num,
       uint64_t warmup_dim, uint64_t warmup_aligned_dim);
 
-  // knowhere not support uint8/int8 diskann
-  // template uint32_t optimize_beamwidth<int8_t>(
-  //     std::unique_ptr<diskann::PQFlashIndex<int8_t>> &pFlashIndex,
-  //     int8_t *tuning_sample, _u64 tuning_sample_num,
-  //     _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
-  //     uint32_t start_bw);
-  // template uint32_t optimize_beamwidth<uint8_t>(
-  //     std::unique_ptr<diskann::PQFlashIndex<uint8_t>> &pFlashIndex,
-  //     uint8_t *tuning_sample, _u64 tuning_sample_num,
-  //     _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
-  //     uint32_t start_bw);
-  template uint32_t optimize_beamwidth<float>(
+#ifdef EXEC_ENV_OLS
+  template DISKANN_DLLEXPORT int8_t *load_warmup<int8_t>(
+      MemoryMappedFiles &files, const std::string &cache_warmup_file,
+      uint64_t &warmup_num, uint64_t warmup_dim, uint64_t warmup_aligned_dim);
+  template DISKANN_DLLEXPORT uint8_t *load_warmup<uint8_t>(
+      MemoryMappedFiles &files, const std::string &cache_warmup_file,
+      uint64_t &warmup_num, uint64_t warmup_dim, uint64_t warmup_aligned_dim);
+  template DISKANN_DLLEXPORT float *load_warmup<float>(
+      MemoryMappedFiles &files, const std::string &cache_warmup_file,
+      uint64_t &warmup_num, uint64_t warmup_dim, uint64_t warmup_aligned_dim);
+#endif
+
+  template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<int8_t>(
+      std::unique_ptr<diskann::PQFlashIndex<int8_t>> &pFlashIndex,
+      int8_t *tuning_sample, _u64 tuning_sample_num,
+      _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
+      uint32_t start_bw);
+  template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<uint8_t>(
+      std::unique_ptr<diskann::PQFlashIndex<uint8_t>> &pFlashIndex,
+      uint8_t *tuning_sample, _u64 tuning_sample_num,
+      _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
+      uint32_t start_bw);
+  template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<float>(
       std::unique_ptr<diskann::PQFlashIndex<float>> &pFlashIndex,
       float *tuning_sample, _u64 tuning_sample_num,
       _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
       uint32_t start_bw);
-  template uint32_t optimize_beamwidth<knowhere::fp16>(
-      std::unique_ptr<diskann::PQFlashIndex<knowhere::fp16>> &pFlashIndex,
-      knowhere::fp16 *tuning_sample, _u64 tuning_sample_num,
-      _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
-      uint32_t start_bw);
-  template uint32_t optimize_beamwidth<knowhere::bf16>(
-      std::unique_ptr<diskann::PQFlashIndex<knowhere::bf16>> &pFlashIndex,
-      knowhere::bf16 *tuning_sample, _u64 tuning_sample_num,
-      _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
-      uint32_t start_bw);
 
-  // not support build uint8/int8 diskindex in knowhere
-  // template int build_disk_index<int8_t>(const BuildConfig &config);
-  // template int build_disk_index<uint8_t>(const BuildConfig &config);
-  template int build_disk_index<float>(const BuildConfig &config);
-  template int build_disk_index<knowhere::fp16>(const BuildConfig &config);
-  template int build_disk_index<knowhere::bf16>(const BuildConfig &config);
+  template DISKANN_DLLEXPORT int build_disk_index<int8_t>(
+      const BuildConfig &config);
+  template DISKANN_DLLEXPORT int build_disk_index<uint8_t>(
+      const BuildConfig &config);
+  template DISKANN_DLLEXPORT int build_disk_index<float>(
+      const BuildConfig &config);
 
-  template std::unique_ptr<diskann::Index<int8_t>>
-  build_merged_vamana_index<int8_t>(
-      std::string base_file, bool ip_prepared, diskann::Metric compareMetric,
-      unsigned L, unsigned R, bool accelerate_build, bool shuffle_build,
-      double sampling_rate, double ram_budget, std::string mem_index_path,
-      std::string medoids_path, std::string centroids_file);
-  template std::unique_ptr<diskann::Index<float>>
-  build_merged_vamana_index<float>(
-      std::string base_file, bool ip_prepared, diskann::Metric compareMetric,
-      unsigned L, unsigned R, bool accelerate_build, bool shuffle_build,
-      double sampling_rate, double ram_budget, std::string mem_index_path,
-      std::string medoids_path, std::string centroids_file);
-  template std::unique_ptr<diskann::Index<uint8_t>>
-  build_merged_vamana_index<uint8_t>(
-      std::string base_file, bool ip_prepared, diskann::Metric compareMetric,
-      unsigned L, unsigned R, bool accelerate_build, bool shuffle_build,
-      double sampling_rate, double ram_budget, std::string mem_index_path,
-      std::string medoids_path, std::string centroids_file);
-  template std::unique_ptr<diskann::Index<knowhere::fp16>>
-  build_merged_vamana_index<knowhere::fp16>(
-      std::string base_file, bool ip_prepared, diskann::Metric compareMetric,
-      unsigned L, unsigned R, bool accelerate_build, bool shuffle_build,
-      double sampling_rate, double ram_budget, std::string mem_index_path,
-      std::string medoids_path, std::string centroids_file);
-  template std::unique_ptr<diskann::Index<knowhere::bf16>>
-  build_merged_vamana_index<knowhere::bf16>(
-      std::string base_file, bool ip_prepared, diskann::Metric compareMetric,
-      unsigned L, unsigned R, bool accelerate_build, bool shuffle_build,
-      double sampling_rate, double ram_budget, std::string mem_index_path,
-      std::string medoids_path, std::string centroids_file);
+  template DISKANN_DLLEXPORT std::unique_ptr<diskann::Index<int8_t>>
+  build_merged_vamana_index<int8_t>(std::string base_file, bool ip_prepared,
+                                    diskann::Metric compareMetric, unsigned L,
+                                    unsigned R, bool accelerate_build,
+                                    double sampling_rate, double ram_budget,
+                                    std::string mem_index_path,
+                                    std::string medoids_path,
+                                    std::string centroids_file);
+  template DISKANN_DLLEXPORT std::unique_ptr<diskann::Index<float>>
+  build_merged_vamana_index<float>(std::string base_file, bool ip_prepared,
+                                   diskann::Metric compareMetric, unsigned L,
+                                   unsigned R, bool accelerate_build,
+                                   double sampling_rate, double ram_budget,
+                                   std::string mem_index_path,
+                                   std::string medoids_path,
+                                   std::string centroids_file);
+  template DISKANN_DLLEXPORT std::unique_ptr<diskann::Index<uint8_t>>
+  build_merged_vamana_index<uint8_t>(std::string base_file, bool ip_prepared,
+                                     diskann::Metric compareMetric, unsigned L,
+                                     unsigned R, bool accelerate_build,
+                                     double sampling_rate, double ram_budget,
+                                     std::string mem_index_path,
+                                     std::string medoids_path,
+                                     std::string centroids_file);
 
-  template void generate_cache_list_from_graph_with_pq<int8_t>(
+  template DISKANN_DLLEXPORT void
+  generate_cache_list_from_graph_with_pq<int8_t>(
       _u64 num_nodes_to_cache, unsigned R, const diskann::Metric compare_metric,
       const std::string &sample_file, const std::string &pq_pivots_path,
       const std::string &pq_compressed_code_path, const unsigned entry_point,
       const std::vector<std::vector<unsigned>> &graph,
       const std::string                        &cache_file);
-  template void generate_cache_list_from_graph_with_pq<float>(
+  template DISKANN_DLLEXPORT void generate_cache_list_from_graph_with_pq<float>(
       _u64 num_nodes_to_cache, unsigned R, const diskann::Metric compare_metric,
       const std::string &sample_file, const std::string &pq_pivots_path,
       const std::string &pq_compressed_code_path, const unsigned entry_point,
       const std::vector<std::vector<unsigned>> &graph,
       const std::string                        &cache_file);
-  template void generate_cache_list_from_graph_with_pq<uint8_t>(
-      _u64 num_nodes_to_cache, unsigned R, const diskann::Metric compare_metric,
-      const std::string &sample_file, const std::string &pq_pivots_path,
-      const std::string &pq_compressed_code_path, const unsigned entry_point,
-      const std::vector<std::vector<unsigned>> &graph,
-      const std::string                        &cache_file);
-  template void generate_cache_list_from_graph_with_pq<knowhere::fp16>(
-      _u64 num_nodes_to_cache, unsigned R, const diskann::Metric compare_metric,
-      const std::string &sample_file, const std::string &pq_pivots_path,
-      const std::string &pq_compressed_code_path, const unsigned entry_point,
-      const std::vector<std::vector<unsigned>> &graph,
-      const std::string                        &cache_file);
-  template void generate_cache_list_from_graph_with_pq<knowhere::bf16>(
+  template DISKANN_DLLEXPORT void
+  generate_cache_list_from_graph_with_pq<uint8_t>(
       _u64 num_nodes_to_cache, unsigned R, const diskann::Metric compare_metric,
       const std::string &sample_file, const std::string &pq_pivots_path,
       const std::string &pq_compressed_code_path, const unsigned entry_point,

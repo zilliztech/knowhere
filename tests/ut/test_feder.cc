@@ -16,10 +16,10 @@
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/config.h"
+#include "knowhere/factory.h"
 #include "knowhere/feder/DiskANN.h"
 #include "knowhere/feder/HNSW.h"
 #include "knowhere/feder/IVFFlat.h"
-#include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
 #include "utils.h"
 
@@ -144,7 +144,7 @@ TEST_CASE("Test Feder", "[feder]") {
 
     auto version = GenTestVersionList();
 
-    auto base_gen = [=]() {
+    auto base_gen = [&]() {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = knowhere::metric::L2;
@@ -153,14 +153,14 @@ TEST_CASE("Test Feder", "[feder]") {
         return json;
     };
 
-    auto ivfflat_gen = [base_gen]() {
+    auto ivfflat_gen = [&base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::NLIST] = 16;
         json[knowhere::indexparam::NPROBE] = 4;
         return json;
     };
 
-    auto hnsw_gen = [base_gen]() {
+    auto hnsw_gen = [&base_gen]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::HNSW_M] = 8;
         json[knowhere::indexparam::EFCONSTRUCTION] = 200;
@@ -173,39 +173,39 @@ TEST_CASE("Test Feder", "[feder]") {
     const auto query_ds = GenDataSet(nq, dim, seed);
 
     const knowhere::Json conf = base_gen();
-    auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
+    auto gt = knowhere::BruteForce::Search(train_ds, query_ds, conf, nullptr);
 
     SECTION("Test HNSW Feder") {
         auto name = knowhere::IndexEnum::INDEX_HNSW;
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         REQUIRE(idx.Type() == name);
 
         auto json = hnsw_gen();
-        auto res = idx.Build(train_ds, json);
+        auto res = idx.Build(*train_ds, json);
         REQUIRE(res == knowhere::Status::success);
 
         auto res1 = idx.GetIndexMeta(json);
         REQUIRE(res1.has_value());
         CheckHnswMeta(res1.value(), nb, json);
 
-        auto res2 = idx.Search(query_ds, json, nullptr);
+        auto res2 = idx.Search(*query_ds, json, nullptr);
         REQUIRE(res2.has_value());
         CheckHnswVisitInfo(res2.value(), nb);
 
         json[knowhere::meta::RADIUS] = 160000;
         json[knowhere::meta::RANGE_FILTER] = 0;
-        auto res3 = idx.RangeSearch(query_ds, json, nullptr);
+        auto res3 = idx.RangeSearch(*query_ds, json, nullptr);
         REQUIRE(res3.has_value());
         CheckHnswVisitInfo(res3.value(), nb);
     }
 
     SECTION("Test IVF_FLAT Feder") {
         auto name = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto idx = knowhere::IndexFactory::Instance().Create(name, version);
         REQUIRE(idx.Type() == name);
 
         auto json = ivfflat_gen();
-        auto res = idx.Build(train_ds, json);
+        auto res = idx.Build(*train_ds, json);
         REQUIRE(res == knowhere::Status::success);
 
         auto res1 = idx.GetIndexMeta(json);

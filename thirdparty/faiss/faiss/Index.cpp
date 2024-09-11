@@ -10,9 +10,7 @@
 #include <faiss/Index.h>
 
 #include <faiss/FaissHook.h>
-
 #include <faiss/impl/AuxIndexStructures.h>
-#include <faiss/impl/DistanceComputer.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/utils/distances.h>
 
@@ -20,7 +18,7 @@
 
 namespace faiss {
 
-Index::~Index() = default;
+Index::~Index() {}
 
 void Index::train(idx_t /*n*/, const float* /*x*/) {
     // does nothing by default
@@ -31,13 +29,17 @@ void Index::range_search(
         const float*,
         float,
         RangeSearchResult*,
-        const SearchParameters* params) const {
+        const BitsetView) const {
     FAISS_THROW_MSG("range search not implemented");
 }
 
-void Index::assign(idx_t n, const float* x, idx_t* labels, idx_t k) const {
-    std::vector<float> distances(n * k);
-    search(n, x, k, distances.data(), labels);
+void Index::assign(idx_t n, const float* x, idx_t* labels, float* distances)
+        const {
+    float* dis_inner = (distances == nullptr) ? new float[n] : distances;
+    search(n, x, 1, dis_inner, labels);
+    if (distances == nullptr) {
+        delete[] dis_inner;
+    }
 }
 
 void Index::add_with_ids(
@@ -56,25 +58,7 @@ void Index::reconstruct(idx_t, float*) const {
     FAISS_THROW_MSG("reconstruct not implemented for this type of index");
 }
 
-void Index::reconstruct_batch(idx_t n, const idx_t* keys, float* recons) const {
-    std::mutex exception_mutex;
-    std::string exception_string;
-#pragma omp parallel for if (n > 1000)
-    for (idx_t i = 0; i < n; i++) {
-        try {
-            reconstruct(keys[i], &recons[i * d]);
-        } catch (const std::exception& e) {
-            std::lock_guard<std::mutex> lock(exception_mutex);
-            exception_string = e.what();
-        }
-    }
-    if (!exception_string.empty()) {
-        FAISS_THROW_MSG(exception_string.c_str());
-    }
-}
-
 void Index::reconstruct_n(idx_t i0, idx_t ni, float* recons) const {
-#pragma omp parallel for if (ni > 1000)
     for (idx_t i = 0; i < ni; i++) {
         reconstruct(i0 + i, recons + i * d);
     }
@@ -86,11 +70,10 @@ void Index::search_and_reconstruct(
         idx_t k,
         float* distances,
         idx_t* labels,
-        float* recons,
-        const SearchParameters* params) const {
+        float* recons) const {
     FAISS_THROW_IF_NOT(k > 0);
 
-    search(n, x, k, distances, labels, params);
+    search(n, x, k, distances, labels);
     for (idx_t i = 0; i < n; ++i) {
         for (idx_t j = 0; j < k; ++j) {
             idx_t ij = i * k + j;
@@ -174,14 +157,6 @@ DistanceComputer* Index::get_distance_computer() const {
     } else {
         FAISS_THROW_MSG("get_distance_computer() not implemented");
     }
-}
-
-void Index::merge_from(Index& /* otherIndex */, idx_t /* add_id */) {
-    FAISS_THROW_MSG("merge_from() not implemented");
-}
-
-void Index::check_compatible_for_merge(const Index& /* otherIndex */) const {
-    FAISS_THROW_MSG("check_compatible_for_merge() not implemented");
 }
 
 } // namespace faiss

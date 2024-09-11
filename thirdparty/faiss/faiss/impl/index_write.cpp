@@ -5,6 +5,8 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+// -*- c++ -*-
+
 #include <faiss/index_io.h>
 
 #include <faiss/impl/io.h>
@@ -26,28 +28,22 @@
 
 #include <faiss/Index2Layer.h>
 #include <faiss/IndexAdditiveQuantizer.h>
-#include <faiss/IndexAdditiveQuantizerFastScan.h>
-#include <faiss/IndexCosine.h>
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexHNSW.h>
 #include <faiss/IndexIVF.h>
 #include <faiss/IndexIVFAdditiveQuantizer.h>
-#include <faiss/IndexIVFAdditiveQuantizerFastScan.h>
 #include <faiss/IndexIVFFlat.h>
-#include <faiss/IndexIVFIndependentQuantizer.h>
 #include <faiss/IndexIVFPQ.h>
 #include <faiss/IndexIVFPQFastScan.h>
 #include <faiss/IndexIVFPQR.h>
 #include <faiss/IndexIVFSpectralHash.h>
 #include <faiss/IndexLSH.h>
 #include <faiss/IndexLattice.h>
-#include <faiss/IndexNNDescent.h>
 #include <faiss/IndexNSG.h>
 #include <faiss/IndexPQ.h>
 #include <faiss/IndexPQFastScan.h>
 #include <faiss/IndexPreTransform.h>
 #include <faiss/IndexRefine.h>
-#include <faiss/IndexRowwiseMinMax.h>
 #include <faiss/IndexScalarQuantizer.h>
 #include <faiss/IndexScaNN.h>
 #include <faiss/MetaIndexes.h>
@@ -94,9 +90,9 @@ static void write_index_header(const Index* idx, IOWriter* f) {
     WRITE1(dummy8);
     uint32_t dummy32 = 0;
     WRITE1(dummy32);
-    idx_t dummy = 0;
+    Index::idx_t dummy = 0;
     WRITE1(dummy);
-    
+
     WRITE1(idx->is_trained);
     WRITE1(idx->metric_type);
     if (idx->metric_type > 1) {
@@ -184,15 +180,8 @@ static void write_AdditiveQuantizer(const AdditiveQuantizer* aq, IOWriter* f) {
     WRITE1(aq->norm_min);
     WRITE1(aq->norm_max);
     if (aq->search_type == AdditiveQuantizer::ST_norm_cqint8 ||
-        aq->search_type == AdditiveQuantizer::ST_norm_cqint4 ||
-        aq->search_type == AdditiveQuantizer::ST_norm_lsq2x4 ||
-        aq->search_type == AdditiveQuantizer::ST_norm_rq2x4) {
+        aq->search_type == AdditiveQuantizer::ST_norm_cqint4) {
         WRITEXBVECTOR(aq->qnorm.codes);
-    }
-
-    if (aq->search_type == AdditiveQuantizer::ST_norm_lsq2x4 ||
-        aq->search_type == AdditiveQuantizer::ST_norm_rq2x4) {
-        WRITEVECTOR(aq->norm_tabs);
     }
 }
 
@@ -217,33 +206,6 @@ static void write_LocalSearchQuantizer(
     WRITE1(lsq->random_seed);
     WRITE1(lsq->nperts);
     WRITE1(lsq->update_codebooks_with_double);
-}
-
-static void write_ProductAdditiveQuantizer(
-        const ProductAdditiveQuantizer* paq,
-        IOWriter* f) {
-    write_AdditiveQuantizer(paq, f);
-    WRITE1(paq->nsplits);
-}
-
-static void write_ProductResidualQuantizer(
-        const ProductResidualQuantizer* prq,
-        IOWriter* f) {
-    write_ProductAdditiveQuantizer(prq, f);
-    for (const auto aq : prq->quantizers) {
-        auto rq = dynamic_cast<const ResidualQuantizer*>(aq);
-        write_ResidualQuantizer(rq, f);
-    }
-}
-
-static void write_ProductLocalSearchQuantizer(
-        const ProductLocalSearchQuantizer* plsq,
-        IOWriter* f) {
-    write_ProductAdditiveQuantizer(plsq, f);
-    for (const auto aq : plsq->quantizers) {
-        auto lsq = dynamic_cast<const LocalSearchQuantizer*>(aq);
-        write_LocalSearchQuantizer(lsq, f);
-    }
 }
 
 static void write_ScalarQuantizer(const ScalarQuantizer* ivsc, IOWriter* f) {
@@ -508,27 +470,13 @@ static void write_NSG(const NSG* nsg, IOWriter* f) {
     }
 }
 
-static void write_NNDescent(const NNDescent* nnd, IOWriter* f) {
-    WRITE1(nnd->ntotal);
-    WRITE1(nnd->d);
-    WRITE1(nnd->K);
-    WRITE1(nnd->S);
-    WRITE1(nnd->R);
-    WRITE1(nnd->L);
-    WRITE1(nnd->iter);
-    WRITE1(nnd->search_L);
-    WRITE1(nnd->random_seed);
-    WRITE1(nnd->has_built);
-
-    WRITEVECTOR(nnd->final_graph);
-}
-
 static void write_direct_map(const DirectMap* dm, IOWriter* f) {
     char maintain_direct_map =
             (char)dm->type; // for backwards compatibility with bool
     WRITE1(maintain_direct_map);
     WRITEVECTOR(dm->array);
     if (dm->type == DirectMap::Hashtable) {
+        using idx_t = Index::idx_t;
         std::vector<std::pair<idx_t, idx_t>> v;
         const std::unordered_map<idx_t, idx_t>& map = dm->hashtable;
         v.resize(map.size());
@@ -549,26 +497,12 @@ static void write_ivf_header(const IndexIVF* ivf, IOWriter* f) {
     write_index_header(ivf, f);
     WRITE1(ivf->nlist);
     WRITE1(ivf->nprobe);
-    // subclasses write by_residual (some of them support only one setting of
-    // by_residual).
     write_index(ivf->quantizer, f);
     write_direct_map(&ivf->direct_map, f);
 }
 
-void write_index(const Index* idx, IOWriter* f, int io_flags) {
-    if (idx == nullptr) {
-        // eg. for a storage component of HNSW that is set to nullptr
-        uint32_t h = fourcc("null");
-        WRITE1(h);
-    } else if (const IndexFlatCosine* idxf = dynamic_cast<const IndexFlatCosine*>(idx)) {
-        uint32_t h = fourcc("IxF9");
-        WRITE1(h);
-        write_index_header(idx, f);
-        WRITEXBVECTOR(idxf->codes);
-        // we're storing real l2 norms, because of
-        //   backward compatibility issues. 
-        WRITEVECTOR(idxf->inverse_norms_storage.as_l2_norms());
-    } else if (const IndexFlat* idxf = dynamic_cast<const IndexFlat*>(idx)) {
+void write_index(const Index* idx, IOWriter* f) {
+    if (const IndexFlat* idxf = dynamic_cast<const IndexFlat*>(idx)) {
         uint32_t h =
                 fourcc(idxf->metric_type == METRIC_INNER_PRODUCT ? "IxFI"
                                : idxf->metric_type == METRIC_L2  ? "IxF2"
@@ -591,18 +525,6 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITE1(code_size_i);
         write_VectorTransform(&idxl->rrot, f);
         WRITEVECTOR(idxl->codes);
-    } else if (const IndexPQCosine* idxp = dynamic_cast<const IndexPQCosine*>(idx)) {
-        uint32_t h = fourcc("IxP7");
-        WRITE1(h);
-        write_index_header(idx, f);
-        write_ProductQuantizer(&idxp->pq, f);
-        WRITEVECTOR(idxp->codes);
-        // search params -- maybe not useful to store?
-        WRITE1(idxp->search_type);
-        WRITE1(idxp->encode_signs);
-        WRITE1(idxp->polysemous_ht);
-        // inverse norms
-        WRITEVECTOR(idxp->inverse_norms_storage.inverse_l2_norms);
     } else if (const IndexPQ* idxp = dynamic_cast<const IndexPQ*>(idx)) {
         uint32_t h = fourcc("IxPq");
         WRITE1(h);
@@ -623,187 +545,34 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITE1(idxr->code_size);
         WRITEVECTOR(idxr->codes);
     } else if (
-            auto* idxr_2 =
-                    dynamic_cast<const IndexLocalSearchQuantizer*>(idx)) {
+            auto* idxr = dynamic_cast<const IndexLocalSearchQuantizer*>(idx)) {
         uint32_t h = fourcc("IxLS");
         WRITE1(h);
         write_index_header(idx, f);
-        write_LocalSearchQuantizer(&idxr_2->lsq, f);
-        WRITE1(idxr_2->code_size);
-        WRITEVECTOR(idxr_2->codes);
+        write_LocalSearchQuantizer(&idxr->lsq, f);
+        WRITE1(idxr->code_size);
+        WRITEVECTOR(idxr->codes);
     } else if (
-            const IndexProductResidualQuantizerCosine* idxpr =
-                    dynamic_cast<const IndexProductResidualQuantizerCosine*>(idx)) {
-        uint32_t h = fourcc("IxP5");
-        WRITE1(h);
-        write_index_header(idx, f);
-        write_ProductResidualQuantizer(&idxpr->prq, f);
-        WRITE1(idxpr->code_size);
-        WRITEVECTOR(idxpr->codes);
-        // inverse norms
-        WRITEVECTOR(idxpr->inverse_norms_storage.inverse_l2_norms);
-    } else if (
-            const IndexProductResidualQuantizer* idxpr =
-                    dynamic_cast<const IndexProductResidualQuantizer*>(idx)) {
-        uint32_t h = fourcc("IxPR");
-        WRITE1(h);
-        write_index_header(idx, f);
-        write_ProductResidualQuantizer(&idxpr->prq, f);
-        WRITE1(idxpr->code_size);
-        WRITEVECTOR(idxpr->codes);
-    } else if (
-            const IndexProductLocalSearchQuantizer* idxpl =
-                    dynamic_cast<const IndexProductLocalSearchQuantizer*>(
-                            idx)) {
-        uint32_t h = fourcc("IxPL");
-        WRITE1(h);
-        write_index_header(idx, f);
-        write_ProductLocalSearchQuantizer(&idxpl->plsq, f);
-        WRITE1(idxpl->code_size);
-        WRITEVECTOR(idxpl->codes);
-    } else if (
-            auto* idxaqfs =
-                    dynamic_cast<const IndexAdditiveQuantizerFastScan*>(idx)) {
-        auto idxlsqfs =
-                dynamic_cast<const IndexLocalSearchQuantizerFastScan*>(idx);
-        auto idxrqfs = dynamic_cast<const IndexResidualQuantizerFastScan*>(idx);
-        auto idxplsqfs =
-                dynamic_cast<const IndexProductLocalSearchQuantizerFastScan*>(
-                        idx);
-        auto idxprqfs =
-                dynamic_cast<const IndexProductResidualQuantizerFastScan*>(idx);
-        FAISS_THROW_IF_NOT(idxlsqfs || idxrqfs || idxplsqfs || idxprqfs);
-
-        if (idxlsqfs) {
-            uint32_t h = fourcc("ILfs");
-            WRITE1(h);
-        } else if (idxrqfs) {
-            uint32_t h = fourcc("IRfs");
-            WRITE1(h);
-        } else if (idxplsqfs) {
-            uint32_t h = fourcc("IPLf");
-            WRITE1(h);
-        } else if (idxprqfs) {
-            uint32_t h = fourcc("IPRf");
-            WRITE1(h);
-        }
-
-        write_index_header(idxaqfs, f);
-
-        if (idxlsqfs) {
-            write_LocalSearchQuantizer(&idxlsqfs->lsq, f);
-        } else if (idxrqfs) {
-            write_ResidualQuantizer(&idxrqfs->rq, f);
-        } else if (idxplsqfs) {
-            write_ProductLocalSearchQuantizer(&idxplsqfs->plsq, f);
-        } else if (idxprqfs) {
-            write_ProductResidualQuantizer(&idxprqfs->prq, f);
-        }
-        WRITE1(idxaqfs->implem);
-        WRITE1(idxaqfs->bbs);
-        WRITE1(idxaqfs->qbs);
-
-        WRITE1(idxaqfs->M);
-        WRITE1(idxaqfs->nbits);
-        WRITE1(idxaqfs->ksub);
-        WRITE1(idxaqfs->code_size);
-        WRITE1(idxaqfs->ntotal2);
-        WRITE1(idxaqfs->M2);
-
-        WRITE1(idxaqfs->rescale_norm);
-        WRITE1(idxaqfs->norm_scale);
-        WRITE1(idxaqfs->max_train_points);
-
-        WRITEVECTOR(idxaqfs->codes);
-    } else if (
-            auto* ivaqfs =
-                    dynamic_cast<const IndexIVFAdditiveQuantizerFastScan*>(
-                            idx)) {
-        auto ivlsqfs =
-                dynamic_cast<const IndexIVFLocalSearchQuantizerFastScan*>(idx);
-        auto ivrqfs =
-                dynamic_cast<const IndexIVFResidualQuantizerFastScan*>(idx);
-        auto ivplsqfs = dynamic_cast<
-                const IndexIVFProductLocalSearchQuantizerFastScan*>(idx);
-        auto ivprqfs =
-                dynamic_cast<const IndexIVFProductResidualQuantizerFastScan*>(
-                        idx);
-        FAISS_THROW_IF_NOT(ivlsqfs || ivrqfs || ivplsqfs || ivprqfs);
-
-        if (ivlsqfs) {
-            uint32_t h = fourcc("IVLf");
-            WRITE1(h);
-        } else if (ivrqfs) {
-            uint32_t h = fourcc("IVRf");
-            WRITE1(h);
-        } else if (ivplsqfs) {
-            uint32_t h = fourcc("NPLf"); // N means IV ...
-            WRITE1(h);
-        } else {
-            uint32_t h = fourcc("NPRf");
-            WRITE1(h);
-        }
-
-        write_ivf_header(ivaqfs, f);
-
-        if (ivlsqfs) {
-            write_LocalSearchQuantizer(&ivlsqfs->lsq, f);
-        } else if (ivrqfs) {
-            write_ResidualQuantizer(&ivrqfs->rq, f);
-        } else if (ivplsqfs) {
-            write_ProductLocalSearchQuantizer(&ivplsqfs->plsq, f);
-        } else {
-            write_ProductResidualQuantizer(&ivprqfs->prq, f);
-        }
-
-        WRITE1(ivaqfs->by_residual);
-        WRITE1(ivaqfs->implem);
-        WRITE1(ivaqfs->bbs);
-        WRITE1(ivaqfs->qbs);
-
-        WRITE1(ivaqfs->M);
-        WRITE1(ivaqfs->nbits);
-        WRITE1(ivaqfs->ksub);
-        WRITE1(ivaqfs->code_size);
-        WRITE1(ivaqfs->qbs2);
-        WRITE1(ivaqfs->M2);
-
-        WRITE1(ivaqfs->rescale_norm);
-        WRITE1(ivaqfs->norm_scale);
-        WRITE1(ivaqfs->max_train_points);
-
-        write_InvertedLists(ivaqfs->invlists, f);
-    } else if (
-            const ResidualCoarseQuantizer* idxr_2 =
+            const ResidualCoarseQuantizer* idxr =
                     dynamic_cast<const ResidualCoarseQuantizer*>(idx)) {
         uint32_t h = fourcc("ImRQ");
         WRITE1(h);
         write_index_header(idx, f);
-        write_ResidualQuantizer(&idxr_2->rq, f);
-        WRITE1(idxr_2->beam_factor);
+        write_ResidualQuantizer(&idxr->rq, f);
+        WRITE1(idxr->beam_factor);
     } else if (
-            const Index2Layer* idxp_2 = dynamic_cast<const Index2Layer*>(idx)) {
+            const Index2Layer* idxp = dynamic_cast<const Index2Layer*>(idx)) {
         uint32_t h = fourcc("Ix2L");
         WRITE1(h);
         write_index_header(idx, f);
-        write_index(idxp_2->q1.quantizer, f);
-        WRITE1(idxp_2->q1.nlist);
-        WRITE1(idxp_2->q1.quantizer_trains_alone);
-        write_ProductQuantizer(&idxp_2->pq, f);
-        WRITE1(idxp_2->code_size_1);
-        WRITE1(idxp_2->code_size_2);
-        WRITE1(idxp_2->code_size);
-        WRITEVECTOR(idxp_2->codes);
-    } else if (
-            const IndexScalarQuantizerCosine* idxs =
-                    dynamic_cast<const IndexScalarQuantizerCosine*>(idx)) {
-        uint32_t h = fourcc("IxS8");
-        WRITE1(h);
-        write_index_header(idx, f);
-        write_ScalarQuantizer(&idxs->sq, f);
-        WRITEVECTOR(idxs->codes);
-        // inverse norms
-        WRITEVECTOR(idxs->inverse_norms_storage.inverse_l2_norms);
+        write_index(idxp->q1.quantizer, f);
+        WRITE1(idxp->q1.nlist);
+        WRITE1(idxp->q1.quantizer_trains_alone);
+        write_ProductQuantizer(&idxp->pq, f);
+        WRITE1(idxp->code_size_1);
+        WRITE1(idxp->code_size_2);
+        WRITE1(idxp->code_size);
+        WRITEVECTOR(idxp->codes);
     } else if (
             const IndexScalarQuantizer* idxs =
                     dynamic_cast<const IndexScalarQuantizer*>(idx)) {
@@ -813,16 +582,15 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         write_ScalarQuantizer(&idxs->sq, f);
         WRITEVECTOR(idxs->codes);
     } else if (
-            const IndexLattice* idxl_2 =
-                    dynamic_cast<const IndexLattice*>(idx)) {
+            const IndexLattice* idxl = dynamic_cast<const IndexLattice*>(idx)) {
         uint32_t h = fourcc("IxLa");
         WRITE1(h);
-        WRITE1(idxl_2->d);
-        WRITE1(idxl_2->nsq);
-        WRITE1(idxl_2->scale_nbit);
-        WRITE1(idxl_2->zn_sphere_codec.r2);
+        WRITE1(idxl->d);
+        WRITE1(idxl->nsq);
+        WRITE1(idxl->scale_nbit);
+        WRITE1(idxl->zn_sphere_codec.r2);
         write_index_header(idx, f);
-        WRITEVECTOR(idxl_2->trained);
+        WRITEVECTOR(idxl->trained);
     } else if (
             const IndexIVFFlatDedup* ivfl =
                     dynamic_cast<const IndexIVFFlatDedup*>(idx)) {
@@ -830,7 +598,7 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITE1(h);
         write_ivf_header(ivfl, f);
         {
-            std::vector<idx_t> tab(2 * ivfl->instances.size());
+            std::vector<Index::idx_t> tab(2 * ivfl->instances.size());
             long i = 0;
             for (auto it = ivfl->instances.begin(); it != ivfl->instances.end();
                  ++it) {
@@ -846,12 +614,11 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         write_ivf_header(ivfl, f);
         write_InvertedLists(ivfl->invlists, f);
     } else if (
-            const IndexIVFFlat* ivfl_2 =
-                    dynamic_cast<const IndexIVFFlat*>(idx)) {
+            const IndexIVFFlat* ivfl = dynamic_cast<const IndexIVFFlat*>(idx)) {
         uint32_t h = fourcc("IwFl");
         WRITE1(h);
-        write_ivf_header(ivfl_2, f);
-        write_InvertedLists(ivfl_2->invlists, f);
+        write_ivf_header(ivfl, f);
+        write_InvertedLists(ivfl->invlists, f);
     } else if (
             const IndexIVFScalarQuantizer* ivsc =
                     dynamic_cast<const IndexIVFScalarQuantizer*>(idx)) {
@@ -864,33 +631,14 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         write_InvertedLists(ivsc->invlists, f);
     } else if (auto iva = dynamic_cast<const IndexIVFAdditiveQuantizer*>(idx)) {
         bool is_LSQ = dynamic_cast<const IndexIVFLocalSearchQuantizer*>(iva);
-        bool is_RQ = dynamic_cast<const IndexIVFResidualQuantizer*>(iva);
-        bool is_PLSQ =
-                dynamic_cast<const IndexIVFProductLocalSearchQuantizer*>(iva);
-        uint32_t h;
-        if (is_LSQ) {
-            h = fourcc("IwLS");
-        } else if (is_RQ) {
-            h = fourcc("IwRQ");
-        } else if (is_PLSQ) {
-            h = fourcc("IwPL");
-        } else {
-            h = fourcc("IwPR");
-        }
-
+        uint32_t h = fourcc(is_LSQ ? "IwLS" : "IwRQ");
         WRITE1(h);
         write_ivf_header(iva, f);
         WRITE1(iva->code_size);
         if (is_LSQ) {
             write_LocalSearchQuantizer((LocalSearchQuantizer*)iva->aq, f);
-        } else if (is_RQ) {
-            write_ResidualQuantizer((ResidualQuantizer*)iva->aq, f);
-        } else if (is_PLSQ) {
-            write_ProductLocalSearchQuantizer(
-                    (ProductLocalSearchQuantizer*)iva->aq, f);
         } else {
-            write_ProductResidualQuantizer(
-                    (ProductResidualQuantizer*)iva->aq, f);
+            write_ResidualQuantizer((ResidualQuantizer*)iva->aq, f);
         }
         WRITE1(iva->by_residual);
         WRITE1(iva->use_precomputed_table);
@@ -922,22 +670,7 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
             WRITEVECTOR(ivfpqr->refine_codes);
             WRITE1(ivfpqr->k_factor);
         }
-    } else if (
-            auto* indep =
-                    dynamic_cast<const IndexIVFIndependentQuantizer*>(idx)) {
-        uint32_t h = fourcc("IwIQ");
-        WRITE1(h);
-        write_index_header(indep, f);
-        write_index(indep->quantizer, f);
-        bool has_vt = indep->vt != nullptr;
-        WRITE1(has_vt);
-        if (has_vt) {
-            write_VectorTransform(indep->vt, f);
-        }
-        write_index(indep->index_ivf, f);
-        if (auto index_ivfpq = dynamic_cast<IndexIVFPQ*>(indep->index_ivf)) {
-            WRITE1(index_ivfpq->use_precomputed_table);
-        }
+
     } else if (
             const IndexPreTransform* ixpt =
                     dynamic_cast<const IndexPreTransform*>(idx)) {
@@ -985,38 +718,19 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         write_index(idxmap->index, f);
         WRITEVECTOR(idxmap->id_map);
     } else if (const IndexHNSW* idxhnsw = dynamic_cast<const IndexHNSW*>(idx)) {
-        uint32_t h = dynamic_cast<const IndexHNSWFlat*>(idx)    ? fourcc("IHNf")
-                : dynamic_cast<const IndexHNSWPQ*>(idx)         ? fourcc("IHNp")
-                : dynamic_cast<const IndexHNSWSQ*>(idx)         ? fourcc("IHNs")
-                : dynamic_cast<const IndexHNSW2Level*>(idx)     ? fourcc("IHN2")
-                : dynamic_cast<const IndexHNSWCagra*>(idx)      ? fourcc("IHNc")
-                : dynamic_cast<const IndexHNSWFlatCosine*>(idx) ? fourcc("IHN9")
-                : dynamic_cast<const IndexHNSWSQCosine*>(idx)   ? fourcc("IHN8")
-                : dynamic_cast<const IndexHNSWPQCosine*>(idx)   ? fourcc("IHN7")
-                : dynamic_cast<const IndexHNSWProductResidualQuantizer*>(idx)   ? fourcc("IHN6")
-                : dynamic_cast<const IndexHNSWProductResidualQuantizerCosine*>(idx)   ? fourcc("IHN5")
-                                                                : 0;
+        uint32_t h = dynamic_cast<const IndexHNSWFlat*>(idx) ? fourcc("IHNf")
+                : dynamic_cast<const IndexHNSWPQ*>(idx)      ? fourcc("IHNp")
+                : dynamic_cast<const IndexHNSWSQ*>(idx)      ? fourcc("IHNs")
+                : dynamic_cast<const IndexHNSW2Level*>(idx)  ? fourcc("IHN2")
+                                                             : 0;
         FAISS_THROW_IF_NOT(h != 0);
         WRITE1(h);
         write_index_header(idxhnsw, f);
-        if (h == fourcc("IHNc")) {
-            WRITE1(idxhnsw->keep_max_size_level0);
-            auto idx_hnsw_cagra = dynamic_cast<const IndexHNSWCagra*>(idxhnsw);
-            WRITE1(idx_hnsw_cagra->base_level_only);
-            WRITE1(idx_hnsw_cagra->num_base_level_search_entrypoints);
-        }
         write_HNSW(&idxhnsw->hnsw, f);
-        if (io_flags & IO_FLAG_SKIP_STORAGE) {
-            uint32_t n4 = fourcc("null");
-            WRITE1(n4);
-        } else {
-            write_index(idxhnsw->storage, f);
-        }
+        write_index(idxhnsw->storage, f);
     } else if (const IndexNSG* idxnsg = dynamic_cast<const IndexNSG*>(idx)) {
-        uint32_t h = dynamic_cast<const IndexNSGFlat*>(idx) ? fourcc("INSf")
-                : dynamic_cast<const IndexNSGPQ*>(idx)      ? fourcc("INSp")
-                : dynamic_cast<const IndexNSGSQ*>(idx)      ? fourcc("INSs")
-                                                            : 0;
+        uint32_t h =
+                dynamic_cast<const IndexNSGFlat*>(idx) ? fourcc("INSf") : 0;
         FAISS_THROW_IF_NOT(h != 0);
         WRITE1(h);
         write_index_header(idxnsg, f);
@@ -1028,17 +742,6 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITE1(idxnsg->nndescent_iter);
         write_NSG(&idxnsg->nsg, f);
         write_index(idxnsg->storage, f);
-    } else if (
-            const IndexNNDescent* idxnnd =
-                    dynamic_cast<const IndexNNDescent*>(idx)) {
-        auto idxnndflat = dynamic_cast<const IndexNNDescentFlat*>(idx);
-        FAISS_THROW_IF_NOT(idxnndflat != nullptr);
-        uint32_t h = fourcc("INNf");
-        FAISS_THROW_IF_NOT(h != 0);
-        WRITE1(h);
-        write_index_header(idxnnd, f);
-        write_NNDescent(&idxnnd->nndescent, f);
-        write_index(idxnnd->storage, f);
     } else if (
             const IndexPQFastScan* idxpqfs =
                     dynamic_cast<const IndexPQFastScan*>(idx)) {
@@ -1053,53 +756,36 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITE1(idxpqfs->M2);
         WRITEVECTOR(idxpqfs->codes);
     } else if (
-            const IndexIVFPQFastScan* ivpq_2 =
+            const IndexIVFPQFastScan* ivpq =
                     dynamic_cast<const IndexIVFPQFastScan*>(idx)) {
         uint32_t h = fourcc("IwPf");
         WRITE1(h);
-        write_ivf_header(ivpq_2, f);
-        WRITE1(ivpq_2->by_residual);
-        WRITE1(ivpq_2->code_size);
-        WRITE1(ivpq_2->bbs);
-        WRITE1(ivpq_2->M2);
-        WRITE1(ivpq_2->implem);
-        WRITE1(ivpq_2->qbs2);
-        WRITE1(ivpq_2->is_cosine);
-        if (ivpq_2->is_cosine) {
-            WRITEVECTOR(ivpq_2->norms);
+        write_ivf_header(ivpq, f);
+        WRITE1(ivpq->by_residual);
+        WRITE1(ivpq->code_size);
+        WRITE1(ivpq->bbs);
+        WRITE1(ivpq->M2);
+        WRITE1(ivpq->implem);
+        WRITE1(ivpq->qbs2);
+        WRITE1(ivpq->is_cosine_);
+        if (ivpq->is_cosine_) {
+            WRITEVECTOR(ivpq->norms);
         }
-        write_ProductQuantizer(&ivpq_2->pq, f);
-        write_InvertedLists(ivpq_2->invlists, f);
-    } else if (
-            const IndexRowwiseMinMax* imm =
-                    dynamic_cast<const IndexRowwiseMinMax*>(idx)) {
-        // IndexRowwiseMinmaxFloat
-        uint32_t h = fourcc("IRMf");
-        WRITE1(h);
-        write_index_header(imm, f);
-        write_index(imm->index, f);
-    } else if (
-            const IndexRowwiseMinMaxFP16* imm_2 =
-                    dynamic_cast<const IndexRowwiseMinMaxFP16*>(idx)) {
-        // IndexRowwiseMinmaxHalf
-        uint32_t h = fourcc("IRMh");
-        WRITE1(h);
-        write_index_header(imm_2, f);
-        write_index(imm_2->index, f);
+        write_ProductQuantizer(&ivpq->pq, f);
+        write_InvertedLists(ivpq->invlists, f);
     } else {
         FAISS_THROW_MSG("don't know how to serialize this type of index");
     }
 }
 
-
-void write_index(const Index* idx, FILE* f, int io_flags) {
+void write_index(const Index* idx, FILE* f) {
     FileIOWriter writer(f);
-    write_index(idx, &writer, io_flags);
+    write_index(idx, &writer);
 }
 
-void write_index(const Index* idx, const char* fname, int io_flags) {
+void write_index(const Index* idx, const char* fname) {
     FileIOWriter writer(fname);
-    write_index(idx, &writer, io_flags);
+    write_index(idx, &writer);
 }
 
 // write index for offset-only index
@@ -1182,7 +868,7 @@ static void write_binary_multi_hash_map(
         size_t ntotal,
         IOWriter* f) {
     int id_bits = 0;
-    while ((ntotal > ((idx_t)1 << id_bits))) {
+    while ((ntotal > ((Index::idx_t)1 << id_bits))) {
         id_bits++;
     }
     WRITE1(id_bits);

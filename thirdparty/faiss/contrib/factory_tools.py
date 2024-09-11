@@ -56,8 +56,6 @@ def get_code_size(d, indexkey):
         return (d * 6 + 7) // 8
     elif indexkey == 'SQfp16':
         return d * 2
-    elif indexkey == 'SQbf16':
-        return d * 2
 
     mo = re.match('PCAR?(\\d+),(.*)$', indexkey)
     if mo:
@@ -74,9 +72,6 @@ def get_code_size(d, indexkey):
     raise RuntimeError("cannot parse " + indexkey)
 
 
-def get_hnsw_M(index):
-    return index.hnsw.cum_nneighbor_per_level.at(1) // 2
-
 
 def reverse_index_factory(index):
     """
@@ -85,48 +80,21 @@ def reverse_index_factory(index):
     index = faiss.downcast_index(index)
     if isinstance(index, faiss.IndexFlat):
         return "Flat"
-    elif isinstance(index, faiss.IndexIVF):
+    if isinstance(index, faiss.IndexIVF):
         quantizer = faiss.downcast_index(index.quantizer)
 
         if isinstance(quantizer, faiss.IndexFlat):
-            prefix = f"IVF{index.nlist}"
+            prefix = "IVF%d" % index.nlist
         elif isinstance(quantizer, faiss.MultiIndexQuantizer):
-            prefix = f"IMI{quantizer.pq.M}x{quantizer.pq.nbits}"
+            prefix = "IMI%dx%d" % (quantizer.pq.M, quantizer.pq.nbit)
         elif isinstance(quantizer, faiss.IndexHNSW):
-            prefix = f"IVF{index.nlist}_HNSW{get_hnsw_M(quantizer)}"
+            prefix = "IVF%d_HNSW%d" % (index.nlist, quantizer.hnsw.M)
         else:
-            prefix = f"IVF{index.nlist}({reverse_index_factory(quantizer)})"
+            prefix = "IVF%d(%s)" % (index.nlist, reverse_index_factory(quantizer))
 
         if isinstance(index, faiss.IndexIVFFlat):
             return prefix + ",Flat"
         if isinstance(index, faiss.IndexIVFScalarQuantizer):
             return prefix + ",SQ8"
-        if isinstance(index, faiss.IndexIVFPQ):
-            return prefix + f",PQ{index.pq.M}x{index.pq.nbits}"
-
-    elif isinstance(index, faiss.IndexPreTransform):
-        assert index.chain.size() == 1
-        vt = faiss.downcast_VectorTransform(index.chain.at(0))
-        if isinstance(vt, faiss.OPQMatrix):
-            return f"OPQ{vt.M}_{vt.d_out},{reverse_index_factory(index.index)}"
-
-    elif isinstance(index, faiss.IndexHNSW):
-        return f"HNSW{get_hnsw_M(index)}"
-
-    elif isinstance(index, faiss.IndexRefine):
-        return f"{reverse_index_factory(index.base_index)},Refine({reverse_index_factory(index.refine_index)})"
-
-    elif isinstance(index, faiss.IndexPQFastScan):
-        return f"PQ{index.pq.M}x{index.pq.nbits}fs"
-
-    elif isinstance(index, faiss.IndexScalarQuantizer):
-        sqtypes = {
-            faiss.ScalarQuantizer.QT_8bit: "8",
-            faiss.ScalarQuantizer.QT_4bit: "4",
-            faiss.ScalarQuantizer.QT_6bit: "6",
-            faiss.ScalarQuantizer.QT_fp16: "fp16",
-            faiss.ScalarQuantizer.QT_bf16: "bf16",
-        }
-        return f"SQ{sqtypes[index.sq.qtype]}"
 
     raise NotImplementedError()

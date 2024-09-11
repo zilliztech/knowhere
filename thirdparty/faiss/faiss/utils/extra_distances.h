@@ -13,13 +13,10 @@
 #include <stdint.h>
 
 #include <faiss/Index.h>
-
 #include <faiss/utils/Heap.h>
+#include <knowhere/bitsetview.h>
 
 namespace faiss {
-
-struct FlatCodesDistanceComputer;
-struct IDSelector;
 
 void pairwise_extra_distances(
         int64_t d,
@@ -42,14 +39,12 @@ void knn_extra_metrics(
         size_t ny,
         MetricType mt,
         float metric_arg,
-        size_t k,
-        float* distances,
-        int64_t* indexes,
-        const IDSelector* sel = nullptr);
+        float_maxheap_array_t* res,
+        const BitsetView bitset = nullptr);
 
 /** get a DistanceComputer that refers to this type of distance and
  *  indexes a flat array of size nb */
-FlatCodesDistanceComputer* get_extra_distance_computer(
+DistanceComputer* get_extra_distance_computer(
         size_t d,
         MetricType mt,
         float metric_arg,

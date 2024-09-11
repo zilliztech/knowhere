@@ -20,7 +20,7 @@ class HammingSpace : public SpaceInterface<float> {
     HammingSpace(size_t dim) {
         fstdistfunc_ = Hamming;
         dim_ = dim;
-        data_size_ = (dim + 7)/ 8;
+        data_size_ = dim / 8;
     }
 
     size_t

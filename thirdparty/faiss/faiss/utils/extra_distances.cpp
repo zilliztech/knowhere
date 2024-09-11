@@ -14,9 +14,7 @@
 #include <cmath>
 
 #include <faiss/impl/AuxIndexStructures.h>
-#include <faiss/impl/DistanceComputer.h>
 #include <faiss/impl/FaissAssert.h>
-#include <faiss/impl/IDSelector.h>
 #include <faiss/utils/utils.h>
 
 namespace faiss {
@@ -58,12 +56,10 @@ void knn_extra_metrics_template(
         const float* y,
         size_t nx,
         size_t ny,
-        size_t k,
-        float* distances,
-        int64_t* labels,
-        const IDSelector* sel = nullptr) {
+        float_maxheap_array_t* res,
+        const BitsetView bitset) {
+    size_t k = res->k;
     size_t d = vd.d;
-    using C = typename VD::C;
     size_t check_period = InterruptCallback::get_period_hint(ny * d);
     check_period *= omp_get_max_threads();
 
@@ -75,41 +71,39 @@ void knn_extra_metrics_template(
             const float* x_i = x + i * d;
             const float* y_j = y;
             size_t j;
-            float* simi = distances + k * i;
-            int64_t* idxi = labels + k * i;
+            float* simi = res->get_val(i);
+            int64_t* idxi = res->get_ids(i);
 
-            // maxheap_heapify(k, simi, idxi);
-            heap_heapify<C>(k, simi, idxi);
+            maxheap_heapify(k, simi, idxi);
             for (j = 0; j < ny; j++) {
-                if (!sel || sel->is_member(j)) {
+                if (bitset.empty() || !bitset.test(j)) {
                     float disij = vd(x_i, y_j);
 
-                    if (C::cmp(simi[0], disij)) {
-                        heap_replace_top<C>(k, simi, idxi, disij, j);
+                    if (disij < simi[0]) {
+                        maxheap_replace_top(k, simi, idxi, disij, j);
                     }
                 }
                 y_j += d;
             }
-            // maxheap_reorder(k, simi, idxi);
-            heap_reorder<C>(k, simi, idxi);
+            maxheap_reorder(k, simi, idxi);
         }
         InterruptCallback::check();
     }
 }
 
 template <class VD>
-struct ExtraDistanceComputer : FlatCodesDistanceComputer {
+struct ExtraDistanceComputer : DistanceComputer {
     VD vd;
-    idx_t nb;
+    Index::idx_t nb;
     const float* q;
     const float* b;
 
-    float symmetric_dis(idx_t i, idx_t j) final {
-        return vd(b + j * vd.d, b + i * vd.d);
+    float operator()(idx_t i) override {
+        return vd(q, b + i * vd.d);
     }
 
-    float distance_to_code(const uint8_t* code) final {
-        return vd(q, (float*)code);
+    float symmetric_dis(idx_t i, idx_t j) override {
+        return vd(b + j * vd.d, b + i * vd.d);
     }
 
     ExtraDistanceComputer(
@@ -117,11 +111,7 @@ struct ExtraDistanceComputer : FlatCodesDistanceComputer {
             const float* xb,
             size_t nb,
             const float* q = nullptr)
-            : FlatCodesDistanceComputer((uint8_t*)xb, vd.d * sizeof(float)),
-              vd(vd),
-              nb(nb),
-              q(q),
-              b(xb) {}
+            : vd(vd), nb(nb), q(q), b(xb) {}
 
     void set_query(const float* x) override {
         q = x;
@@ -167,8 +157,6 @@ void pairwise_extra_distances(
         HANDLE_VAR(JensenShannon);
         HANDLE_VAR(Lp);
         HANDLE_VAR(Jaccard);
-        HANDLE_VAR(NaNEuclidean);
-        HANDLE_VAR(ABS_INNER_PRODUCT);
 #undef HANDLE_VAR
         default:
             FAISS_THROW_MSG("metric type not implemented");
@@ -183,16 +171,14 @@ void knn_extra_metrics(
         size_t ny,
         MetricType mt,
         float metric_arg,
-        size_t k,
-        float* distances,
-        int64_t* indexes,
-        const IDSelector* sel) {
+        float_maxheap_array_t* res,
+        const BitsetView bitset) {
     switch (mt) {
-#define HANDLE_VAR(kw)                                                              \
-    case METRIC_##kw: {                                                             \
-        VectorDistance<METRIC_##kw> vd = {(size_t)d, metric_arg};                   \
-        knn_extra_metrics_template(vd, x, y, nx, ny, k, distances, indexes, sel);   \
-        break;                                                                      \
+#define HANDLE_VAR(kw)                                            \
+    case METRIC_##kw: {                                           \
+        VectorDistance<METRIC_##kw> vd = {(size_t)d, metric_arg}; \
+        knn_extra_metrics_template(vd, x, y, nx, ny, res, bitset);\
+        break;                                                    \
     }
         HANDLE_VAR(L2);
         HANDLE_VAR(L1);
@@ -202,15 +188,13 @@ void knn_extra_metrics(
         HANDLE_VAR(JensenShannon);
         HANDLE_VAR(Lp);
         HANDLE_VAR(Jaccard);
-        HANDLE_VAR(NaNEuclidean);
-        HANDLE_VAR(ABS_INNER_PRODUCT);
 #undef HANDLE_VAR
         default:
             FAISS_THROW_MSG("metric type not implemented");
     }
 }
 
-FlatCodesDistanceComputer* get_extra_distance_computer(
+DistanceComputer* get_extra_distance_computer(
         size_t d,
         MetricType mt,
         float metric_arg,
@@ -231,8 +215,6 @@ FlatCodesDistanceComputer* get_extra_distance_computer(
         HANDLE_VAR(JensenShannon);
         HANDLE_VAR(Lp);
         HANDLE_VAR(Jaccard);
-        HANDLE_VAR(NaNEuclidean);
-        HANDLE_VAR(ABS_INNER_PRODUCT);
 #undef HANDLE_VAR
         default:
             FAISS_THROW_MSG("metric type not implemented");

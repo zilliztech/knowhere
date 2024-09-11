@@ -1,6 +1,5 @@
 #include <cstdint>
 namespace faiss {
-// todo aguzhva: this is duplicated in utils/hamming_distance/common.h
 uint8_t lookup8bit[256] = {
         /*  0 */ 0, /*  1 */ 1, /*  2 */ 1, /*  3 */ 2,
         /*  4 */ 1, /*  5 */ 2, /*  6 */ 2, /*  7 */ 3,

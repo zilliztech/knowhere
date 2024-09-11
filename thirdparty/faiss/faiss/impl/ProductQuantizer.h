@@ -15,29 +15,31 @@
 #include <vector>
 
 #include <faiss/Clustering.h>
-#include <faiss/impl/Quantizer.h>
-#include <faiss/impl/platform_macros.h>
 #include <faiss/utils/Heap.h>
 
 namespace faiss {
 
 /** Product Quantizer. Implemented only for METRIC_L2 */
-struct ProductQuantizer : Quantizer {
+struct ProductQuantizer {
+    using idx_t = Index::idx_t;
+
+    size_t d;     ///< size of the input vectors
     size_t M;     ///< number of subquantizers
     size_t nbits; ///< number of bits per quantization index
 
     // values derived from the above
-    size_t dsub;  ///< dimensionality of each subvector
-    size_t ksub;  ///< number of centroids for each subquantizer
-    bool verbose; ///< verbose during training?
+    size_t dsub;      ///< dimensionality of each subvector
+    size_t code_size; ///< bytes per indexed vector
+    size_t ksub;      ///< number of centroids for each subquantizer
+    bool verbose;     ///< verbose during training?
 
     /// initialization
     enum train_type_t {
         Train_default,
         Train_hot_start,     ///< the centroids are already initialized
-        Train_shared,        ///< share dictionary across PQ segments
-        Train_hypercube,     ///< initialize centroids with nbits-D hypercube
-        Train_hypercube_pca, ///< initialize centroids with nbits-D hypercube
+        Train_shared,        ///< share dictionary accross PQ segments
+        Train_hypercube,     ///< intialize centroids with nbits-D hypercube
+        Train_hypercube_pca, ///< intialize centroids with nbits-D hypercube
     };
     train_type_t train_type;
 
@@ -47,17 +49,8 @@ struct ProductQuantizer : Quantizer {
     /// d / M)
     Index* assign_index;
 
-    /// Centroid table, size M * ksub * dsub.
-    /// Layout: (M, ksub, dsub)
+    /// Centroid table, size M * ksub * dsub
     std::vector<float> centroids;
-
-    /// Transposed centroid table, size M * ksub * dsub.
-    /// Layout: (dsub, M, ksub)
-    std::vector<float> transposed_centroids;
-
-    /// Squared lengths of centroids, size M * ksub
-    /// Layout: (M, ksub)
-    std::vector<float> centroids_sq_lengths;
 
     /// return the centroids associated with subvector m
     float* get_centroids(size_t m, size_t i) {
@@ -69,7 +62,7 @@ struct ProductQuantizer : Quantizer {
 
     // Train the product quantizer on a set of points. A clustering
     // can be set on input to define non-default clustering parameters
-    void train(size_t n, const float* x) override;
+    void train(int n, const float* x);
 
     ProductQuantizer(
             size_t d,      /* dimensionality of the input vectors */
@@ -88,7 +81,7 @@ struct ProductQuantizer : Quantizer {
     void compute_code(const float* x, uint8_t* code) const;
 
     /// same as compute_code for several vectors
-    void compute_codes(const float* x, uint8_t* codes, size_t n) const override;
+    void compute_codes(const float* x, uint8_t* codes, size_t n) const;
 
     /// speed up code assignment using assign_index
     /// (non-const because the index is changed)
@@ -99,7 +92,7 @@ struct ProductQuantizer : Quantizer {
 
     /// decode a vector from a given code (or n vectors if third argument)
     void decode(const uint8_t* code, float* x) const;
-    void decode(const uint8_t* code, float* x, size_t n) const override;
+    void decode(const uint8_t* code, float* x, size_t n) const;
 
     /// If we happen to have the distance tables precomputed, this is
     /// more efficient to compute the codes.
@@ -173,18 +166,10 @@ struct ProductQuantizer : Quantizer {
             float_maxheap_array_t* res,
             bool init_finalize_heap = true) const;
 
-    /// Sync transposed centroids with regular centroids. This call
-    /// is needed if centroids were edited directly.
-    void sync_transposed_centroids();
-
-    /// Clear transposed centroids table so ones are no longer used.
-    void clear_transposed_centroids();
-
-    size_t cal_size() const;
+    size_t cal_size() {
+        return sizeof(*this) + centroids.size() * sizeof(float);
+    }
 };
-
-// block size used in ProductQuantizer::compute_codes
-FAISS_API extern int product_quantizer_compute_codes_bs;
 
 /*************************************************
  * Objects to encode / decode strings of bits

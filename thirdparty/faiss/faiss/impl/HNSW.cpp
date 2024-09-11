@@ -5,25 +5,13 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+// -*- c++ -*-
+
 #include <faiss/impl/HNSW.h>
 
-#include <cstddef>
 #include <string>
 
 #include <faiss/impl/AuxIndexStructures.h>
-#include <faiss/impl/DistanceComputer.h>
-#include <faiss/impl/IDSelector.h>
-#include <faiss/impl/ResultHandler.h>
-#include <faiss/utils/prefetch.h>
-
-#include <faiss/impl/platform_macros.h>
-
-#ifdef __AVX2__
-#include <immintrin.h>
-
-#include <limits>
-#include <type_traits>
-#endif
 
 namespace faiss {
 
@@ -57,6 +45,11 @@ void HNSW::neighbor_range(idx_t no, int layer_no, size_t* begin, size_t* end)
 
 HNSW::HNSW(int M) : rng(12345) {
     set_default_probas(M, 1.0 / log(M));
+    max_level = -1;
+    entry_point = -1;
+    efSearch = 16;
+    efConstruction = 40;
+    upper_beam = 1;
     offsets.push_back(0);
 }
 
@@ -111,8 +104,8 @@ void HNSW::print_neighbor_stats(int level) const {
            level,
            nb_neighbors(level));
     size_t tot_neigh = 0, tot_common = 0, tot_reciprocal = 0, n_node = 0;
-#pragma omp parallel for reduction(+ : tot_neigh) reduction(+ : tot_common) \
-        reduction(+ : tot_reciprocal) reduction(+ : n_node)
+#pragma omp parallel for reduction(+: tot_neigh) reduction(+: tot_common) \
+  reduction(+: tot_reciprocal) reduction(+: n_node)
     for (int i = 0; i < levels.size(); i++) {
         if (levels[i] > level) {
             n_node++;
@@ -216,13 +209,13 @@ int HNSW::prepare_level_tab(size_t n, bool preset_levels) {
         if (pt_level > max_level)
             max_level = pt_level;
         offsets.push_back(offsets.back() + cum_nb_neighbors(pt_level + 1));
+        neighbors.resize(offsets.back(), -1);
     }
-    neighbors.resize(offsets.back(), -1);
 
     return max_level;
 }
 
-/** Enumerate vertices from nearest to farthest from query, keep a
+/** Enumerate vertices from farthest to nearest from query, keep a
  * neighbor only if there is no previous neighbor that is closer to
  * that vertex than the query.
  */
@@ -230,14 +223,7 @@ void HNSW::shrink_neighbor_list(
         DistanceComputer& qdis,
         std::priority_queue<NodeDistFarther>& input,
         std::vector<NodeDistFarther>& output,
-        int max_size,
-        bool keep_max_size_level0) {
-    // This prevents number of neighbors at
-    // level 0 from being shrunk to less than 2 * M.
-    // This is essential in making sure
-    // `faiss::gpu::GpuIndexCagra::copyFrom(IndexHNSWCagra*)` is functional
-    std::vector<NodeDistFarther> outsiders;
-
+        int max_size) {
     while (input.size() > 0) {
         NodeDistFarther v1 = input.top();
         input.pop();
@@ -258,14 +244,7 @@ void HNSW::shrink_neighbor_list(
             if (output.size() >= max_size) {
                 return;
             }
-        } else if (keep_max_size_level0) {
-            outsiders.push_back(v1);
         }
-    }
-    size_t idx = 0;
-    while (keep_max_size_level0 && (output.size() < max_size) &&
-           (idx < outsiders.size())) {
-        output.push_back(outsiders[idx++]);
     }
 }
 
@@ -283,8 +262,7 @@ using NodeDistFarther = HNSW::NodeDistFarther;
 void shrink_neighbor_list(
         DistanceComputer& qdis,
         std::priority_queue<NodeDistCloser>& resultSet1,
-        int max_size,
-        bool keep_max_size_level0 = false) {
+        int max_size) {
     if (resultSet1.size() < max_size) {
         return;
     }
@@ -296,8 +274,7 @@ void shrink_neighbor_list(
         resultSet1.pop();
     }
 
-    HNSW::shrink_neighbor_list(
-            qdis, resultSet, returnlist, max_size, keep_max_size_level0);
+    HNSW::shrink_neighbor_list(qdis, resultSet, returnlist, max_size);
 
     for (NodeDistFarther curen2 : returnlist) {
         resultSet1.emplace(curen2.d, curen2.id);
@@ -311,8 +288,7 @@ void add_link(
         DistanceComputer& qdis,
         storage_idx_t src,
         storage_idx_t dest,
-        int level,
-        bool keep_max_size_level0 = false) {
+        int level) {
     size_t begin, end;
     hnsw.neighbor_range(src, level, &begin, &end);
     if (hnsw.neighbors[end - 1] == -1) {
@@ -337,7 +313,7 @@ void add_link(
         resultSet.emplace(qdis.symmetric_dis(src, neigh), neigh);
     }
 
-    shrink_neighbor_list(qdis, resultSet, end - begin, keep_max_size_level0);
+    shrink_neighbor_list(qdis, resultSet, end - begin);
 
     // ...and back
     size_t i = begin;
@@ -381,82 +357,26 @@ void search_neighbors_to_add(
         // loop over neighbors
         size_t begin, end;
         hnsw.neighbor_range(currNode, level, &begin, &end);
+        for (size_t i = begin; i < end; i++) {
+            storage_idx_t nodeId = hnsw.neighbors[i];
+            if (nodeId < 0)
+                break;
+            if (vt.get(nodeId))
+                continue;
+            vt.set(nodeId);
 
-        // // baseline version
-        // for (size_t i = begin; i < end; i++) {
-        //     storage_idx_t nodeId = hnsw.neighbors[i];
-        //     if (nodeId < 0)
-        //         break;
-        //     if (vt.get(nodeId))
-        //         continue;
-        //     vt.set(nodeId);
+            float dis = qdis(nodeId);
+            NodeDistFarther evE1(dis, nodeId);
 
-        //     float dis = qdis(nodeId);
-        //     NodeDistFarther evE1(dis, nodeId);
-
-        //     if (results.size() < hnsw.efConstruction || results.top().d > dis) {
-        //         results.emplace(dis, nodeId);
-        //         candidates.emplace(dis, nodeId);
-        //         if (results.size() > hnsw.efConstruction) {
-        //             results.pop();
-        //         }
-        //     }
-        // }
-
-        // the following version processes 4 neighbors at a time
-        auto update_with_candidate = [&](const storage_idx_t idx, const float dis) {
             if (results.size() < hnsw.efConstruction || results.top().d > dis) {
-                results.emplace(dis, idx);
-                candidates.emplace(dis, idx);
+                results.emplace(dis, nodeId);
+                candidates.emplace(dis, nodeId);
                 if (results.size() > hnsw.efConstruction) {
                     results.pop();
                 }
             }
-        };
-        
-        int n_buffered = 0;
-        storage_idx_t buffered_ids[4];
-
-        for (size_t j = begin; j < end; j++) {
-            storage_idx_t nodeId = hnsw.neighbors[j];
-            if (nodeId < 0)
-                break;
-            if (vt.get(nodeId)) {
-                continue;
-            }
-            vt.set(nodeId);
-
-            buffered_ids[n_buffered] = nodeId;
-            n_buffered += 1;
-
-            if (n_buffered == 4) {
-                float dis[4];
-                qdis.distances_batch_4(
-                        buffered_ids[0],
-                        buffered_ids[1],
-                        buffered_ids[2],
-                        buffered_ids[3],
-                        dis[0],
-                        dis[1],
-                        dis[2],
-                        dis[3]);
-
-                for (size_t id4 = 0; id4 < 4; id4++) {
-                    update_with_candidate(buffered_ids[id4], dis[id4]);
-                }
-
-                n_buffered = 0;
-            }
         }
-
-        // process leftovers
-        for (size_t icnt = 0; icnt < n_buffered; icnt++) {
-            float dis = qdis(buffered_ids[icnt]);
-            update_with_candidate(buffered_ids[icnt], dis);
-        }
-
     }
-
     vt.advance();
 }
 
@@ -465,87 +385,29 @@ void search_neighbors_to_add(
  **************************************************************/
 
 /// greedily update a nearest vector at a given level
-HNSWStats greedy_update_nearest(
+void greedy_update_nearest(
         const HNSW& hnsw,
         DistanceComputer& qdis,
         int level,
         storage_idx_t& nearest,
         float& d_nearest) {
-    HNSWStats stats;
-
     for (;;) {
         storage_idx_t prev_nearest = nearest;
 
         size_t begin, end;
         hnsw.neighbor_range(nearest, level, &begin, &end);
-
-        // // baseline version 
-        // size_t ndis = 0;
-        // for (size_t i = begin; i < end; i++) {
-        //     storage_idx_t v = hnsw.neighbors[i];
-        //     if (v < 0)
-        //         break;
-        //     ndis += 1;
-        //     float dis = qdis(v);
-        //     if (dis < d_nearest) {
-        //         nearest = v;
-        //         d_nearest = dis;
-        //     }
-        // }
-
-        // the following version processes 4 neighbors at a time
-        auto update_with_candidate = [&](const storage_idx_t idx, const float dis) {
-            if (dis < d_nearest) {
-                nearest = idx;
-                d_nearest = dis;
-            }        
-        };
-
-        size_t ndis = 0;
-        int n_buffered = 0;
-        storage_idx_t buffered_ids[4];
-
-        for (size_t j = begin; j < end; j++) {
-            storage_idx_t v = hnsw.neighbors[j];
+        for (size_t i = begin; i < end; i++) {
+            storage_idx_t v = hnsw.neighbors[i];
             if (v < 0)
                 break;
-            ndis += 1;
-
-            buffered_ids[n_buffered] = v;
-            n_buffered += 1;
-
-            if (n_buffered == 4) {
-                float dis[4];
-                qdis.distances_batch_4(
-                        buffered_ids[0],
-                        buffered_ids[1],
-                        buffered_ids[2],
-                        buffered_ids[3],
-                        dis[0],
-                        dis[1],
-                        dis[2],
-                        dis[3]);
-
-                for (size_t id4 = 0; id4 < 4; id4++) {
-                    update_with_candidate(buffered_ids[id4], dis[id4]);
-                }
-
-                n_buffered = 0;
+            float dis = qdis(v);
+            if (dis < d_nearest) {
+                nearest = v;
+                d_nearest = dis;
             }
         }
-
-        // process leftovers
-        for (size_t icnt = 0; icnt < n_buffered; icnt++) {
-            float dis = qdis(buffered_ids[icnt]);
-            update_with_candidate(buffered_ids[icnt], dis);
-        }
-
-        // update stats
-        stats.ndis += ndis;
-        stats.nhops += 1;
-
         if (nearest == prev_nearest) {
-            return stats;
+            return;
         }
     }
 }
@@ -561,8 +423,7 @@ void HNSW::add_links_starting_from(
         float d_nearest,
         int level,
         omp_lock_t* locks,
-        VisitedTable& vt,
-        bool keep_max_size_level0) {
+        VisitedTable& vt) {
     std::priority_queue<NodeDistCloser> link_targets;
 
     search_neighbors_to_add(
@@ -571,13 +432,13 @@ void HNSW::add_links_starting_from(
     // but we can afford only this many neighbors
     int M = nb_neighbors(level);
 
-    ::faiss::shrink_neighbor_list(ptdis, link_targets, M, keep_max_size_level0);
+    ::faiss::shrink_neighbor_list(ptdis, link_targets, M);
 
     std::vector<storage_idx_t> neighbors;
     neighbors.reserve(link_targets.size());
     while (!link_targets.empty()) {
         storage_idx_t other_id = link_targets.top().id;
-        add_link(*this, ptdis, pt_id, other_id, level, keep_max_size_level0);
+        add_link(*this, ptdis, pt_id, other_id, level);
         neighbors.push_back(other_id);
         link_targets.pop();
     }
@@ -585,7 +446,7 @@ void HNSW::add_links_starting_from(
     omp_unset_lock(&locks[pt_id]);
     for (storage_idx_t other_id : neighbors) {
         omp_set_lock(&locks[other_id]);
-        add_link(*this, ptdis, other_id, pt_id, level, keep_max_size_level0);
+        add_link(*this, ptdis, other_id, pt_id, level);
         omp_unset_lock(&locks[other_id]);
     }
     omp_set_lock(&locks[pt_id]);
@@ -600,8 +461,7 @@ void HNSW::add_with_locks(
         int pt_level,
         int pt_id,
         std::vector<omp_lock_t>& locks,
-        VisitedTable& vt,
-        bool keep_max_size_level0) {
+        VisitedTable& vt) {
     //  greedy search on upper levels
 
     storage_idx_t nearest;
@@ -630,14 +490,7 @@ void HNSW::add_with_locks(
 
     for (; level >= 0; level--) {
         add_links_starting_from(
-                ptdis,
-                pt_id,
-                nearest,
-                d_nearest,
-                level,
-                locks.data(),
-                vt,
-                keep_max_size_level0);
+                ptdis, pt_id, nearest, d_nearest, level, locks.data(), vt);
     }
 
     omp_unset_lock(&locks[pt_id]);
@@ -648,50 +501,33 @@ void HNSW::add_with_locks(
     }
 }
 
-/**************************************************************
- * Searching
- **************************************************************/
-
-namespace {
-using MinimaxHeap = HNSW::MinimaxHeap;
-using Node = HNSW::Node;
-using C = HNSW::C;
 /** Do a BFS on the candidates list */
 
-int search_from_candidates(
-        const HNSW& hnsw,
+int HNSW::search_from_candidates(
         DistanceComputer& qdis,
-        ResultHandler<C>& res,
+        int k,
+        idx_t* I,
+        float* D,
         MinimaxHeap& candidates,
         VisitedTable& vt,
         HNSWStats& stats,
         int level,
-        int nres_in = 0,
-        const SearchParametersHNSW* params = nullptr) {
+        int nres_in) const {
     int nres = nres_in;
     int ndis = 0;
-
-    // can be overridden by search params
-    bool do_dis_check = params ? params->check_relative_distance
-                               : hnsw.check_relative_distance;
-    int efSearch = params ? params->efSearch : hnsw.efSearch;
-    const IDSelector* sel = params ? params->sel : nullptr;
-
-    C::T threshold = res.threshold;
     for (int i = 0; i < candidates.size(); i++) {
         idx_t v1 = candidates.ids[i];
         float d = candidates.dis[i];
         FAISS_ASSERT(v1 >= 0);
-        if (!sel || sel->is_member(v1)) {
-            if (d < threshold) {
-                if (res.add_result(d, v1)) {
-                    threshold = res.threshold;
-                }
-            }
+        if (nres < k) {
+            faiss::maxheap_push(++nres, D, I, d, v1);
+        } else if (d < D[0]) {
+            faiss::maxheap_replace_top(nres, D, I, d, v1);
         }
         vt.set(v1);
     }
 
+    bool do_dis_check = check_relative_distance;
     int nstep = 0;
 
     while (candidates.size() > 0) {
@@ -710,93 +546,24 @@ int search_from_candidates(
         }
 
         size_t begin, end;
-        hnsw.neighbor_range(v0, level, &begin, &end);
+        neighbor_range(v0, level, &begin, &end);
 
-        // // baseline version
-        // for (size_t j = begin; j < end; j++) {
-        //     int v1 = hnsw.neighbors[j];
-        //     if (v1 < 0)
-        //         break;
-        //     if (vt.get(v1)) {
-        //         continue;
-        //     }
-        //     vt.set(v1);
-        //     ndis++;
-        //     float d = qdis(v1);
-        //     if (!sel || sel->is_member(v1)) {
-        //         if (nres < k) {
-        //             faiss::maxheap_push(++nres, D, I, d, v1);
-        //         } else if (d < D[0]) {
-        //             faiss::maxheap_replace_top(nres, D, I, d, v1);
-        //         }
-        //     }
-        //     candidates.push(v1, d);
-        // }
-
-        // the following version processes 4 neighbors at a time
-        size_t jmax = begin;
         for (size_t j = begin; j < end; j++) {
-            storage_idx_t v1 = hnsw.neighbors[j];
+            int v1 = neighbors[j];
             if (v1 < 0)
                 break;
-
-            prefetch_L2(vt.visited.data() + v1);
-            jmax += 1;
-        }
-
-        int n_buffered = 0;
-        storage_idx_t buffered_ids[4];
-
-        ndis += jmax - begin;
-        threshold = res.threshold;
-
-        auto add_to_heap = [&](const storage_idx_t idx, const float dis) {
-            if (!sel || sel->is_member(idx)) {
-                if (dis < threshold) {
-                    if (res.add_result(dis, idx)) {
-                        threshold = res.threshold;
-                        nres += 1;
-                    }
-                }
-            }
-            candidates.push(idx, dis);
-        };
-
-        for (size_t j = begin; j < jmax; j++) {
-            storage_idx_t v1 = hnsw.neighbors[j];
-
             if (vt.get(v1)) {
                 continue;
             }
             vt.set(v1);
-
-            buffered_ids[n_buffered] = v1;
-            n_buffered += 1;
-
-            if (n_buffered == 4) {
-                float dis[4];
-                qdis.distances_batch_4(
-                        buffered_ids[0],
-                        buffered_ids[1],
-                        buffered_ids[2],
-                        buffered_ids[3],
-                        dis[0],
-                        dis[1],
-                        dis[2],
-                        dis[3]);
-
-                for (size_t id4 = 0; id4 < 4; id4++) {
-                    add_to_heap(buffered_ids[id4], dis[id4]);
-                }
-
-                n_buffered = 0;
+            ndis++;
+            float d = qdis(v1);
+            if (nres < k) {
+                faiss::maxheap_push(++nres, D, I, d, v1);
+            } else if (d < D[0]) {
+                faiss::maxheap_replace_top(nres, D, I, d, v1);
             }
-        }
-
-        // process leftovers
-        for (size_t icnt = 0; icnt < n_buffered; icnt++) {
-            float dis = qdis(buffered_ids[icnt]);
-            add_to_heap(buffered_ids[icnt], dis);
+            candidates.push(v1, d);
         }
 
         nstep++;
@@ -810,20 +577,22 @@ int search_from_candidates(
         if (candidates.size() == 0) {
             stats.n2++;
         }
-        stats.ndis += ndis;
-        stats.nhops += nstep;
+        stats.n3 += ndis;
     }
 
     return nres;
 }
 
-std::priority_queue<HNSW::Node> search_from_candidate_unbounded(
-        const HNSW& hnsw,
+/**************************************************************
+ * Searching
+ **************************************************************/
+
+std::priority_queue<HNSW::Node> HNSW::search_from_candidate_unbounded(
         const Node& node,
         DistanceComputer& qdis,
         int ef,
         VisitedTable* vt,
-        HNSWStats& stats) {
+        HNSWStats& stats) const {
     int ndis = 0;
     std::priority_queue<Node> top_candidates;
     std::priority_queue<Node, std::vector<Node>, std::greater<Node>> candidates;
@@ -845,129 +614,50 @@ std::priority_queue<HNSW::Node> search_from_candidate_unbounded(
         candidates.pop();
 
         size_t begin, end;
-        hnsw.neighbor_range(v0, 0, &begin, &end);
+        neighbor_range(v0, 0, &begin, &end);
 
-        // // baseline version
-        // for (size_t j = begin; j < end; ++j) {
-        //     int v1 = hnsw.neighbors[j];
-        //
-        //     if (v1 < 0) {
-        //         break;
-        //     }
-        //     if (vt->get(v1)) {
-        //         continue;
-        //     }
-        //
-        //     vt->set(v1);
-        //
-        //     float d1 = qdis(v1);
-        //     ++ndis;
-        //
-        //     if (top_candidates.top().first > d1 ||
-        //         top_candidates.size() < ef) {
-        //         candidates.emplace(d1, v1);
-        //         top_candidates.emplace(d1, v1);
-        //
-        //         if (top_candidates.size() > ef) {
-        //             top_candidates.pop();
-        //         }
-        //     }
-        // }
+        for (size_t j = begin; j < end; ++j) {
+            int v1 = neighbors[j];
 
-        // the following version processes 4 neighbors at a time
-        size_t jmax = begin;
-        for (size_t j = begin; j < end; j++) {
-            int v1 = hnsw.neighbors[j];
-            if (v1 < 0)
+            if (v1 < 0) {
                 break;
+            }
+            if (vt->get(v1)) {
+                continue;
+            }
 
-            prefetch_L2(vt->visited.data() + v1);
-            jmax += 1;
-        }
+            vt->set(v1);
 
-        int counter = 0;
-        size_t saved_j[4];
+            float d1 = qdis(v1);
+            ++ndis;
 
-        ndis += jmax - begin;
-
-        auto add_to_heap = [&](const size_t idx, const float dis) {
-            if (top_candidates.top().first > dis ||
-                top_candidates.size() < ef) {
-                candidates.emplace(dis, idx);
-                top_candidates.emplace(dis, idx);
+            if (top_candidates.top().first > d1 || top_candidates.size() < ef) {
+                candidates.emplace(d1, v1);
+                top_candidates.emplace(d1, v1);
 
                 if (top_candidates.size() > ef) {
                     top_candidates.pop();
                 }
             }
-        };
-
-        for (size_t j = begin; j < jmax; j++) {
-            int v1 = hnsw.neighbors[j];
-
-            bool vget = vt->get(v1);
-            vt->set(v1);
-            saved_j[counter] = v1;
-            counter += vget ? 0 : 1;
-
-            if (counter == 4) {
-                float dis[4];
-                qdis.distances_batch_4(
-                        saved_j[0],
-                        saved_j[1],
-                        saved_j[2],
-                        saved_j[3],
-                        dis[0],
-                        dis[1],
-                        dis[2],
-                        dis[3]);
-
-                for (size_t id4 = 0; id4 < 4; id4++) {
-                    add_to_heap(saved_j[id4], dis[id4]);
-                }
-
-                counter = 0;
-            }
         }
-
-        for (size_t icnt = 0; icnt < counter; icnt++) {
-            float dis = qdis(saved_j[icnt]);
-            add_to_heap(saved_j[icnt], dis);
-        }
-
-        stats.nhops += 1;
     }
 
     ++stats.n1;
     if (candidates.size() == 0) {
         ++stats.n2;
     }
-    stats.ndis += ndis;
+    stats.n3 += ndis;
 
     return top_candidates;
 }
 
-// just used as a lower bound for the minmaxheap, but it is set for heap search
-int extract_k_from_ResultHandler(ResultHandler<C>& res) {
-    using RH = HeapBlockResultHandler<C>;
-    if (auto hres = dynamic_cast<RH::SingleResultHandler*>(&res)) {
-        return hres->k;
-    }
-    return 1;
-}
-
-} // anonymous namespace
-
 HNSWStats HNSW::search(
         DistanceComputer& qdis,
-        ResultHandler<C>& res,
-        VisitedTable& vt,
-        const SearchParametersHNSW* params) const {
+        int k,
+        idx_t* I,
+        float* D,
+        VisitedTable& vt) const {
     HNSWStats stats;
-    if (entry_point == -1) {
-        return stats;
-    }
-    int k = extract_k_from_ResultHandler(res);
 
     if (upper_beam == 1) {
         //  greedy search on upper levels
@@ -975,38 +665,31 @@ HNSWStats HNSW::search(
         float d_nearest = qdis(nearest);
 
         for (int level = max_level; level >= 1; level--) {
-            HNSWStats local_stats = greedy_update_nearest(
-                    *this, qdis, level, nearest, d_nearest);
-            stats.combine(local_stats);
+            greedy_update_nearest(*this, qdis, level, nearest, d_nearest);
         }
 
-        int ef = std::max(params ? params->efSearch : efSearch, k);
-        if (search_bounded_queue) { // this is the most common branch
+        int ef = std::max(efSearch, k);
+        if (search_bounded_queue) {
             MinimaxHeap candidates(ef);
 
             candidates.push(nearest, d_nearest);
 
-            search_from_candidates(
-                    *this, qdis, res, candidates, vt, stats, 0, 0, params);
+            search_from_candidates(qdis, k, I, D, candidates, vt, stats, 0);
         } else {
             std::priority_queue<Node> top_candidates =
                     search_from_candidate_unbounded(
-                            *this,
-                            Node(d_nearest, nearest),
-                            qdis,
-                            ef,
-                            &vt,
-                            stats);
+                            Node(d_nearest, nearest), qdis, ef, &vt, stats);
 
             while (top_candidates.size() > k) {
                 top_candidates.pop();
             }
 
+            int nres = 0;
             while (!top_candidates.empty()) {
                 float d;
                 storage_idx_t label;
                 std::tie(d, label) = top_candidates.top();
-                res.add_result(d, label);
+                faiss::maxheap_push(++nres, D, I, d, label);
                 top_candidates.pop();
             }
         }
@@ -1019,10 +702,6 @@ HNSWStats HNSW::search(
 
         std::vector<idx_t> I_to_next(candidates_size);
         std::vector<float> D_to_next(candidates_size);
-
-        HeapBlockResultHandler<C> block_resh(
-                1, D_to_next.data(), I_to_next.data(), candidates_size);
-        HeapBlockResultHandler<C>::SingleResultHandler resh(block_resh);
 
         int nres = 1;
         I_to_next[0] = entry_point;
@@ -1039,24 +718,17 @@ HNSWStats HNSW::search(
 
             if (level == 0) {
                 nres = search_from_candidates(
-                        *this, qdis, res, candidates, vt, stats, 0);
-                nres = std::min(nres, candidates_size);
+                        qdis, k, I, D, candidates, vt, stats, 0);
             } else {
-                const auto nres_prev = nres;
-
-                resh.begin(0);
                 nres = search_from_candidates(
-                        *this, qdis, resh, candidates, vt, stats, level);
-                nres = std::min(nres, candidates_size);
-                resh.end();
-
-                // if the search on a particular level produces no improvements,
-                //   then we need to repopulate candidates.
-                // search_from_candidates() will always damage candidates
-                //   by doing 1 pop_min().
-                if (nres == 0) {
-                    nres = nres_prev;
-                }
+                        qdis,
+                        candidates_size,
+                        I_to_next.data(),
+                        D_to_next.data(),
+                        candidates,
+                        vt,
+                        stats,
+                        level);
             }
             vt.advance();
         }
@@ -1065,112 +737,12 @@ HNSWStats HNSW::search(
     return stats;
 }
 
-void HNSW::search_level_0(
-        DistanceComputer& qdis,
-        ResultHandler<C>& res,
-        idx_t nprobe,
-        const storage_idx_t* nearest_i,
-        const float* nearest_d,
-        int search_type,
-        HNSWStats& search_stats,
-        VisitedTable& vt,
-        const SearchParametersHNSW* params) const {
-    const HNSW& hnsw = *this;
-    auto efSearch = params ? params->efSearch : hnsw.efSearch;
-    int k = extract_k_from_ResultHandler(res);
-
-    if (search_type == 1) {
-        int nres = 0;
-
-        for (int j = 0; j < nprobe; j++) {
-            storage_idx_t cj = nearest_i[j];
-
-            if (cj < 0)
-                break;
-
-            if (vt.get(cj))
-                continue;
-
-            int candidates_size = std::max(efSearch, k);
-            MinimaxHeap candidates(candidates_size);
-
-            candidates.push(cj, nearest_d[j]);
-
-            nres = search_from_candidates(
-                    hnsw,
-                    qdis,
-                    res,
-                    candidates,
-                    vt,
-                    search_stats,
-                    0,
-                    nres,
-                    params);
-            nres = std::min(nres, candidates_size);
-        }
-    } else if (search_type == 2) {
-        int candidates_size = std::max(efSearch, int(k));
-        candidates_size = std::max(candidates_size, int(nprobe));
-
-        MinimaxHeap candidates(candidates_size);
-        for (int j = 0; j < nprobe; j++) {
-            storage_idx_t cj = nearest_i[j];
-
-            if (cj < 0)
-                break;
-            candidates.push(cj, nearest_d[j]);
-        }
-
-        search_from_candidates(
-                hnsw, qdis, res, candidates, vt, search_stats, 0, 0, params);
-    }
-}
-
-void HNSW::permute_entries(const idx_t* map) {
-    // remap levels
-    storage_idx_t ntotal = levels.size();
-    std::vector<storage_idx_t> imap(ntotal); // inverse mapping
-    // map: new index -> old index
-    // imap: old index -> new index
-    for (int i = 0; i < ntotal; i++) {
-        assert(map[i] >= 0 && map[i] < ntotal);
-        imap[map[i]] = i;
-    }
-    if (entry_point != -1) {
-        entry_point = imap[entry_point];
-    }
-    std::vector<int> new_levels(ntotal);
-    std::vector<size_t> new_offsets(ntotal + 1);
-    std::vector<storage_idx_t> new_neighbors(neighbors.size());
-    size_t no = 0;
-    for (int i = 0; i < ntotal; i++) {
-        storage_idx_t o = map[i]; // corresponding "old" index
-        new_levels[i] = levels[o];
-        for (size_t j = offsets[o]; j < offsets[o + 1]; j++) {
-            storage_idx_t neigh = neighbors[j];
-            new_neighbors[no++] = neigh >= 0 ? imap[neigh] : neigh;
-        }
-        new_offsets[i + 1] = no;
-    }
-    assert(new_offsets[ntotal] == offsets[ntotal]);
-    // swap everyone
-    std::swap(levels, new_levels);
-    std::swap(offsets, new_offsets);
-    std::swap(neighbors, new_neighbors);
-}
-
-/**************************************************************
- * MinimaxHeap
- **************************************************************/
-
 void HNSW::MinimaxHeap::push(storage_idx_t i, float v) {
     if (k == n) {
         if (v >= dis[0])
             return;
-        if (ids[0] != -1) {
-            --nvalid;
-        }
         faiss::heap_pop<HC>(k--, dis.data(), ids.data());
+        --nvalid;
     }
     faiss::heap_push<HC>(++k, dis.data(), ids.data(), v, i);
     ++nvalid;
@@ -1188,197 +760,17 @@ void HNSW::MinimaxHeap::clear() {
     nvalid = k = 0;
 }
 
-#ifdef __AVX512F__
-
-int HNSW::MinimaxHeap::pop_min(float* vmin_out) {
-    assert(k > 0);
-    static_assert(
-            std::is_same<storage_idx_t, int32_t>::value,
-            "This code expects storage_idx_t to be int32_t");
-
-    int32_t min_idx = -1;
-    float min_dis = std::numeric_limits<float>::infinity();
-
-    __m512i min_indices = _mm512_set1_epi32(-1);
-    __m512 min_distances =
-            _mm512_set1_ps(std::numeric_limits<float>::infinity());
-    __m512i current_indices = _mm512_setr_epi32(
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-    __m512i offset = _mm512_set1_epi32(16);
-
-    // The following loop tracks the rightmost index with the min distance.
-    // -1 index values are ignored.
-    const int k16 = (k / 16) * 16;
-    for (size_t iii = 0; iii < k16; iii += 16) {
-        __m512i indices =
-                _mm512_loadu_si512((const __m512i*)(ids.data() + iii));
-        __m512 distances = _mm512_loadu_ps(dis.data() + iii);
-
-        // This mask filters out -1 values among indices.
-        __mmask16 m1mask =
-                _mm512_cmpgt_epi32_mask(_mm512_setzero_si512(), indices);
-
-        __mmask16 dmask =
-                _mm512_cmp_ps_mask(min_distances, distances, _CMP_LT_OS);
-        __mmask16 finalmask = m1mask | dmask;
-
-        const __m512i min_indices_new = _mm512_mask_blend_epi32(
-                finalmask, current_indices, min_indices);
-        const __m512 min_distances_new =
-                _mm512_mask_blend_ps(finalmask, distances, min_distances);
-
-        min_indices = min_indices_new;
-        min_distances = min_distances_new;
-
-        current_indices = _mm512_add_epi32(current_indices, offset);
-    }
-
-    // leftovers
-    if (k16 != k) {
-        const __mmask16 kmask = (1 << (k - k16)) - 1;
-
-        __m512i indices = _mm512_mask_loadu_epi32(
-                _mm512_set1_epi32(-1), kmask, ids.data() + k16);
-        __m512 distances = _mm512_maskz_loadu_ps(kmask, dis.data() + k16);
-
-        // This mask filters out -1 values among indices.
-        __mmask16 m1mask =
-                _mm512_cmpgt_epi32_mask(_mm512_setzero_si512(), indices);
-
-        __mmask16 dmask =
-                _mm512_cmp_ps_mask(min_distances, distances, _CMP_LT_OS);
-        __mmask16 finalmask = m1mask | dmask;
-
-        const __m512i min_indices_new = _mm512_mask_blend_epi32(
-                finalmask, current_indices, min_indices);
-        const __m512 min_distances_new =
-                _mm512_mask_blend_ps(finalmask, distances, min_distances);
-
-        min_indices = min_indices_new;
-        min_distances = min_distances_new;
-    }
-
-    // grab min distance
-    min_dis = _mm512_reduce_min_ps(min_distances);
-    // blend
-    __mmask16 mindmask =
-            _mm512_cmpeq_ps_mask(min_distances, _mm512_set1_ps(min_dis));
-    // pick the max one
-    min_idx = _mm512_mask_reduce_max_epi32(mindmask, min_indices);
-
-    if (min_idx == -1) {
-        return -1;
-    }
-
-    if (vmin_out) {
-        *vmin_out = min_dis;
-    }
-    int ret = ids[min_idx];
-    ids[min_idx] = -1;
-    --nvalid;
-    return ret;
-}
-
-#elif __AVX2__
-
-int HNSW::MinimaxHeap::pop_min(float* vmin_out) {
-    assert(k > 0);
-    static_assert(
-            std::is_same<storage_idx_t, int32_t>::value,
-            "This code expects storage_idx_t to be int32_t");
-
-    int32_t min_idx = -1;
-    float min_dis = std::numeric_limits<float>::infinity();
-
-    size_t iii = 0;
-
-    __m256i min_indices = _mm256_setr_epi32(-1, -1, -1, -1, -1, -1, -1, -1);
-    __m256 min_distances =
-            _mm256_set1_ps(std::numeric_limits<float>::infinity());
-    __m256i current_indices = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
-    __m256i offset = _mm256_set1_epi32(8);
-
-    // The baseline version is available in non-AVX2 branch.
-
-    // The following loop tracks the rightmost index with the min distance.
-    // -1 index values are ignored.
-    const int k8 = (k / 8) * 8;
-    for (; iii < k8; iii += 8) {
-        __m256i indices =
-                _mm256_loadu_si256((const __m256i*)(ids.data() + iii));
-        __m256 distances = _mm256_loadu_ps(dis.data() + iii);
-
-        // This mask filters out -1 values among indices.
-        __m256i m1mask = _mm256_cmpgt_epi32(_mm256_setzero_si256(), indices);
-
-        __m256i dmask = _mm256_castps_si256(
-                _mm256_cmp_ps(min_distances, distances, _CMP_LT_OS));
-        __m256 finalmask = _mm256_castsi256_ps(_mm256_or_si256(m1mask, dmask));
-
-        const __m256i min_indices_new = _mm256_castps_si256(_mm256_blendv_ps(
-                _mm256_castsi256_ps(current_indices),
-                _mm256_castsi256_ps(min_indices),
-                finalmask));
-
-        const __m256 min_distances_new =
-                _mm256_blendv_ps(distances, min_distances, finalmask);
-
-        min_indices = min_indices_new;
-        min_distances = min_distances_new;
-
-        current_indices = _mm256_add_epi32(current_indices, offset);
-    }
-
-    // Vectorizing is doable, but is not practical
-    int32_t vidx8[8];
-    float vdis8[8];
-    _mm256_storeu_ps(vdis8, min_distances);
-    _mm256_storeu_si256((__m256i*)vidx8, min_indices);
-
-    for (size_t j = 0; j < 8; j++) {
-        if (min_dis > vdis8[j] || (min_dis == vdis8[j] && min_idx < vidx8[j])) {
-            min_idx = vidx8[j];
-            min_dis = vdis8[j];
-        }
-    }
-
-    // process last values. Vectorizing is doable, but is not practical
-    for (; iii < k; iii++) {
-        if (ids[iii] != -1 && dis[iii] <= min_dis) {
-            min_dis = dis[iii];
-            min_idx = iii;
-        }
-    }
-
-    if (min_idx == -1) {
-        return -1;
-    }
-
-    if (vmin_out) {
-        *vmin_out = min_dis;
-    }
-    int ret = ids[min_idx];
-    ids[min_idx] = -1;
-    --nvalid;
-    return ret;
-}
-
-#else
-
-// baseline non-vectorized version
 int HNSW::MinimaxHeap::pop_min(float* vmin_out) {
     assert(k > 0);
     // returns min. This is an O(n) operation
     int i = k - 1;
     while (i >= 0) {
-        if (ids[i] != -1) {
+        if (ids[i] != -1)
             break;
-        }
         i--;
     }
-    if (i == -1) {
+    if (i == -1)
         return -1;
-    }
     int imin = i;
     float vmin = dis[i];
     i--;
@@ -1389,16 +781,14 @@ int HNSW::MinimaxHeap::pop_min(float* vmin_out) {
         }
         i--;
     }
-    if (vmin_out) {
+    if (vmin_out)
         *vmin_out = vmin;
-    }
     int ret = ids[imin];
     ids[imin] = -1;
     --nvalid;
 
     return ret;
 }
-#endif
 
 int HNSW::MinimaxHeap::count_below(float thresh) {
     int n_below = 0;

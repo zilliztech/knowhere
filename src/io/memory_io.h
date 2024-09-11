@@ -136,16 +136,6 @@ struct MemoryIOReader : public faiss::IOReader {
         return rp_;
     }
 
-    // returns the new tellg() result.
-    size_t
-    advance(size_t size) {
-        rp_ += size;
-        if (rp_ > total_) {
-            rp_ = total_;
-        }
-        return rp_;
-    }
-
     void
     reset() {
         rp_ = 0;
