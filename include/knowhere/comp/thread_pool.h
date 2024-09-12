@@ -251,7 +251,10 @@ class ThreadPool {
         int blas_thread_before;
 #endif
      public:
-        explicit ScopedOmpSetter(int num_threads = 0) {
+        explicit ScopedOmpSetter(int num_threads = 1) {
+            if (num_threads <= 0) {
+                return;
+            }
             if (build_pool_ == nullptr) {  // this should not happen in prod
                 omp_before = omp_get_max_threads();
             } else {
@@ -260,10 +263,10 @@ class ThreadPool {
 
 #ifdef OPENBLAS_OS_LINUX
             blas_thread_before = openblas_get_num_threads();
-            openblas_set_num_threads(num_threads <= 0 ? blas_thread_before : num_threads);
+            openblas_set_num_threads(num_threads);
 #endif
 
-            omp_set_num_threads(num_threads <= 0 ? omp_before : num_threads);
+            omp_set_num_threads(num_threads);
         }
         ~ScopedOmpSetter() {
             omp_set_num_threads(omp_before);
