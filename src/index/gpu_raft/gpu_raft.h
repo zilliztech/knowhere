@@ -200,9 +200,14 @@ struct GpuRaftIndexNode : public IndexNode {
         return Status::not_implemented;
     }
 
+    static std::unique_ptr<BaseConfig>
+    StaticCreateConfig() {
+        return std::make_unique<knowhere_config_type>();
+    }
+
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
-        return std::make_unique<knowhere_config_type>();
+        return StaticCreateConfig();
     }
 
     expected<DataSetPtr>

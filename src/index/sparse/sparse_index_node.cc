@@ -245,9 +245,14 @@ class SparseInvertedIndexNode : public IndexNode {
         return index_->Load(map_reader, true);
     }
 
+    static std::unique_ptr<BaseConfig>
+    StaticCreateConfig() {
+        return std::make_unique<SparseInvertedIndexConfig>();
+    }
+
     [[nodiscard]] std::unique_ptr<BaseConfig>
     CreateConfig() const override {
-        return std::make_unique<SparseInvertedIndexConfig>();
+        return StaticCreateConfig();
     }
 
     // note that the Dim of a sparse vector index may change as new vectors are added

@@ -100,8 +100,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
         auto res = idx.Build(train_ds, json);
         REQUIRE(res == knowhere::Status::success);
         REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
-                knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>(name, json[knowhere::meta::METRIC_TYPE],
-                                                                         version, json));
+                IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
         auto results = idx.Search(query_ds, json, nullptr);
         REQUIRE(results.has_value());
         auto ids = results.value()->GetIds();
@@ -131,8 +130,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
         auto res = idx.Build(train_ds, json);
         REQUIRE(res == knowhere::Status::success);
         REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
-                knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>(name, json[knowhere::meta::METRIC_TYPE],
-                                                                         version, json));
+                IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
         std::vector<std::function<std::vector<uint8_t>(size_t, size_t)>> gen_bitset_funcs = {
             GenerateBitsetWithFirstTbitsSet, GenerateBitsetWithRandomTbitsSet};
         const auto bitset_percentages = {0.4f, 0.98f};
@@ -173,8 +171,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
         auto res = idx.Build(train_ds, json);
         REQUIRE(res == knowhere::Status::success);
         REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
-                knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>(name, json[knowhere::meta::METRIC_TYPE],
-                                                                         version, json));
+                IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
         const auto topk_values = {// Tuple with [TopKValue, Threshold]
                                   make_tuple(5, 0.85f), make_tuple(25, 0.85f), make_tuple(100, 0.85f)};
 
@@ -213,8 +210,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
         auto idx_ = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         idx_.Deserialize(bs);
         REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
-                knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>(name, json[knowhere::meta::METRIC_TYPE],
-                                                                         version, json));
+                IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
         auto results = idx_.Search(query_ds, json, nullptr);
         REQUIRE(results.has_value());
         auto ids = results.value()->GetIds();
@@ -242,8 +238,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
         auto res = idx.Build(train_ds, json);
         REQUIRE(res == knowhere::Status::success);
         REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
-                knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>(name, json[knowhere::meta::METRIC_TYPE],
-                                                                         version, json));
+                IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
         std::vector<uint8_t> bitset_data(2);
         bitset_data[0] = 0b10100010;
         bitset_data[1] = 0b00100011;

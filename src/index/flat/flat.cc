@@ -253,6 +253,22 @@ class FlatIndexNode : public IndexNode {
         }
     }
 
+    static bool
+    StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
+        if constexpr (std::is_same<IndexType, faiss::IndexFlat>::value) {
+            const FlatConfig& f_cfg = static_cast<const FlatConfig&>(config);
+            if (knowhere::Version(version) <= Version::GetMinimalVersion()) {
+                return !IsMetricType(f_cfg.metric_type.value(), metric::COSINE);
+            } else {
+                return true;
+            }
+        }
+
+        if constexpr (std::is_same<IndexType, faiss::IndexBinaryFlat>::value) {
+            return true;
+        }
+    }
+
     bool
     HasRawData(const std::string& metric_type) const override {
         if constexpr (std::is_same<IndexType, faiss::IndexFlat>::value) {
@@ -338,9 +354,14 @@ class FlatIndexNode : public IndexNode {
         return Status::success;
     }
 
+    static std::unique_ptr<BaseConfig>
+    StaticCreateConfig() {
+        return std::make_unique<FlatConfig>();
+    }
+
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
-        return std::make_unique<FlatConfig>();
+        return StaticCreateConfig();
     }
 
     int64_t

@@ -121,6 +121,11 @@ class expected {
         return val.has_value();
     }
 
+    bool
+    unexpected() {
+        return err != knowhere::Status::success;
+    }
+
     Status
     error() const {
         return err;

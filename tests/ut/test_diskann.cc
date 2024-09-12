@@ -271,7 +271,7 @@ base_search() {
                 knowhere::IndexFactory::Instance().Create<DataType>("DISKANN", version, diskann_index_pack).value();
             diskann.Deserialize(binset, deserialize_json);
             REQUIRE(diskann.HasRawData(metric_str) ==
-                    knowhere::KnowhereCheck::IndexHasRawData<DataType>("DISKANN", metric_str, version, json));
+                    knowhere::IndexStaticFaced<DataType>::HasRawData("DISKANN", version, json));
 
             auto knn_search_json = knn_search_gen().dump();
             knowhere::Json knn_json = knowhere::Json::parse(knn_search_json);
@@ -399,8 +399,7 @@ TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {
                 REQUIRE(ret == knowhere::Status::success);
 
                 REQUIRE(diskann.HasRawData(knowhere::metric::L2) ==
-                        knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>("DISKANN", knowhere::metric::L2,
-                                                                                 version, json));
+                        knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData("DISKANN", version, json));
 
                 std::vector<double> ids_sizes = {1, kNumRows * 0.2, kNumRows * 0.7, kNumRows};
                 for (const auto ids_size : ids_sizes) {

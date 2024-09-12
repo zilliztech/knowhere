@@ -351,8 +351,7 @@ TEST_CASE("Test Mem Sparse Index GetVectorByIds", "[float metrics]") {
         auto ids_ds = GenIdsDataSet(nb, nq);
         REQUIRE(idx.Type() == name);
         auto res = idx.Build(train_ds, json);
-        REQUIRE(idx.HasRawData(metric) ==
-                knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>(name, metric, version, json));
+        REQUIRE(idx.HasRawData(metric) == knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
         if (!idx.HasRawData(metric)) {
             return;
         }

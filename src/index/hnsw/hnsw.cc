@@ -400,8 +400,13 @@ class HnswIndexNode : public IndexNode {
         }
     }
 
+    static bool
+    StaticHasRawData(const knowhere::BaseConfig& /*config*/, const IndexVersion& version) {
+        return quant_type == QuantType::None || quant_type == QuantType::SQ8Refine;
+    }
+
     bool
-    HasRawData(const std::string& metric_type) const override {
+    HasRawData(const std::string& /*metric_type*/) const override {
         return quant_type == QuantType::None || quant_type == QuantType::SQ8Refine;
     }
 
@@ -496,9 +501,14 @@ class HnswIndexNode : public IndexNode {
         return Status::success;
     }
 
+    static std::unique_ptr<BaseConfig>
+    StaticCreateConfig() {
+        return std::make_unique<HnswConfig>();
+    }
+
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
-        return std::make_unique<HnswConfig>();
+        return StaticCreateConfig();
     }
 
     int64_t

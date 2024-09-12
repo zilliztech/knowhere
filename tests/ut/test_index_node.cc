@@ -100,6 +100,12 @@ class BaseFlatIndexNode : public IndexNode {
         return Status::success;
     }
 
+    static std::unique_ptr<BaseConfig>
+    StaticCreateConfig() {
+        LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::StaticCreateConfig()";
+        return std::make_unique<BaseConfig>();
+    }
+
     virtual std::unique_ptr<BaseConfig>
     CreateConfig() const override {
         LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::CreateConfig()";
