@@ -51,7 +51,7 @@ if [[ "${MACHINE}" == "Linux" ]]; then
         # So we only pre-install openblas in Unittest, and compile openblas-0.3.19 when release.
         if [[ "${INSTALL_OPENBLAS}" == "true" ]]
           then
-            sudo apt install -y libopenblas-dev
+            sudo apt install -y libopenblas-openmp-dev
           else
             wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | sudo tee \
             /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null \
