@@ -33,31 +33,31 @@ class BaseFlatIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSetPtr dataset, const Config& cfg) override {
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
         LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::Train()";
         return Status::success;
     }
 
     Status
-    Add(const DataSetPtr dataset, const Config& cfg) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
         LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::Add()";
         return Status::success;
     }
 
     virtual expected<DataSetPtr>
-    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
         LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::Search()";
         return expected<DataSetPtr>::Err(Status::not_implemented, "BaseFlatIndexNode::Search() not implemented");
     }
 
     virtual expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
         LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::RangeSearch()";
         return expected<DataSetPtr>::Err(Status::not_implemented, "BaseFlatIndexNode::RangeSearch() not implemented");
     }
 
     expected<std::vector<IndexNode::IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const {
         LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::AnnIterator()";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::not_implemented,
                                                                   "BaseFlatIndexNode::AnnIterator() not implemented");
@@ -77,7 +77,7 @@ class BaseFlatIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override {
+    GetIndexMeta(std::unique_ptr<Config> cfg) const override {
         LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::GetIndexMeta()";
         return expected<DataSetPtr>::Err(Status::not_implemented, "BaseFlatIndexNode::GetIndexMeta() not implemented");
     }
@@ -89,13 +89,13 @@ class BaseFlatIndexNode : public IndexNode {
     }
 
     virtual Status
-    Deserialize(const BinarySet& binset, const Config& config) override {
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config> config) override {
         LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::Deserialize()";
         return Status::success;
     }
 
     virtual Status
-    DeserializeFromFile(const std::string& filename, const Config& config) override {
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> config) override {
         LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::DeserializeFromFile()";
         return Status::success;
     }

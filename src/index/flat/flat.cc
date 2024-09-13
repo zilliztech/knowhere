@@ -39,8 +39,8 @@ class FlatIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSetPtr dataset, const Config& cfg) override {
-        const FlatConfig& f_cfg = static_cast<const FlatConfig&>(cfg);
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+        const FlatConfig& f_cfg = static_cast<const FlatConfig&>(*cfg);
 
         auto metric = Str2FaissMetricType(f_cfg.metric_type.value());
         if (!metric.has_value()) {
@@ -58,7 +58,7 @@ class FlatIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSetPtr dataset, const Config& cfg) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config>) override {
         auto x = dataset->GetTensor();
         auto n = dataset->GetRows();
         index_->add(n, (const DataType*)x);
@@ -66,14 +66,14 @@ class FlatIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "search on empty index";
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
         DataSetPtr results = std::make_shared<DataSet>();
-        const FlatConfig& f_cfg = static_cast<const FlatConfig&>(cfg);
+        const FlatConfig& f_cfg = static_cast<const FlatConfig&>(*cfg);
         bool is_cosine = IsMetricType(f_cfg.metric_type.value(), knowhere::metric::COSINE);
 
         auto k = f_cfg.k.value();
@@ -140,13 +140,13 @@ class FlatIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "range search on empty index";
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
-        const FlatConfig& f_cfg = static_cast<const FlatConfig&>(cfg);
+        const FlatConfig& f_cfg = static_cast<const FlatConfig&>(*cfg);
         bool is_cosine = IsMetricType(f_cfg.metric_type.value(), knowhere::metric::COSINE);
 
         auto nq = dataset->GetRows();
@@ -268,7 +268,7 @@ class FlatIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override {
+    GetIndexMeta(std::unique_ptr<Config>) const override {
         return expected<DataSetPtr>::Err(Status::not_implemented, "GetIndexMeta not implemented");
     }
 
@@ -296,7 +296,7 @@ class FlatIndexNode : public IndexNode {
     }
 
     Status
-    Deserialize(const BinarySet& binset, const Config& config) override {
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config>) override {
         std::vector<std::string> names = {"IVF",        // compatible with knowhere-1.x
                                           "BinaryIVF",  // compatible with knowhere-1.x
                                           Type()};
@@ -319,11 +319,11 @@ class FlatIndexNode : public IndexNode {
     }
 
     Status
-    DeserializeFromFile(const std::string& filename, const Config& config) override {
-        auto cfg = static_cast<const knowhere::BaseConfig&>(config);
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> cfg) override {
+        auto flat_cfg = static_cast<const knowhere::BaseConfig&>(*cfg);
 
         int io_flags = 0;
-        if (cfg.enable_mmap.value()) {
+        if (flat_cfg.enable_mmap.value()) {
             io_flags |= faiss::IO_FLAG_MMAP;
         }
 

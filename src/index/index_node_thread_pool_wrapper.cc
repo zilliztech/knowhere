@@ -36,13 +36,15 @@ IndexNodeThreadPoolWrapper::IndexNodeThreadPoolWrapper(std::unique_ptr<IndexNode
 }
 
 expected<DataSetPtr>
-IndexNodeThreadPoolWrapper::Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
-    return thread_pool_->push([&]() { return this->index_node_->Search(dataset, cfg, bitset); }).get();
+IndexNodeThreadPoolWrapper::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
+                                   const BitsetView& bitset) const {
+    return thread_pool_->push([&]() { return this->index_node_->Search(dataset, std::move(cfg), bitset); }).get();
 }
 
 expected<DataSetPtr>
-IndexNodeThreadPoolWrapper::RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
-    return thread_pool_->push([&]() { return this->index_node_->RangeSearch(dataset, cfg, bitset); }).get();
+IndexNodeThreadPoolWrapper::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
+                                        const BitsetView& bitset) const {
+    return thread_pool_->push([&]() { return this->index_node_->RangeSearch(dataset, std::move(cfg), bitset); }).get();
 }
 
 }  // namespace knowhere

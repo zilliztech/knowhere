@@ -59,9 +59,9 @@ class BaseFaissIndexNode : public IndexNode {
 
     //
     Status
-    Train(const DataSetPtr dataset, const Config& cfg) override {
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
         // config
-        const BaseConfig& base_cfg = static_cast<const FaissHnswConfig&>(cfg);
+        const BaseConfig& base_cfg = static_cast<const FaissHnswConfig&>(*cfg);
 
         // use build_pool_ to make sure the OMP threads spawned by index_->train etc
         // can inherit the low nice value of threads in build_pool_.
@@ -75,7 +75,7 @@ class BaseFaissIndexNode : public IndexNode {
                                   setter = std::make_unique<ThreadPool::ScopedOmpSetter>();
                               }
 
-                              return TrainInternal(dataset, cfg);
+                              return TrainInternal(dataset, *cfg);
                           })
                           .getTry();
 
@@ -88,8 +88,8 @@ class BaseFaissIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSetPtr dataset, const Config& cfg) override {
-        const BaseConfig& base_cfg = static_cast<const FaissHnswConfig&>(cfg);
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+        const BaseConfig& base_cfg = static_cast<const FaissHnswConfig&>(*cfg);
 
         // use build_pool_ to make sure the OMP threads spawned by index_->train etc
         // can inherit the low nice value of threads in build_pool_.
@@ -103,7 +103,7 @@ class BaseFaissIndexNode : public IndexNode {
                                   setter = std::make_unique<ThreadPool::ScopedOmpSetter>();
                               }
 
-                              return AddInternal(dataset, cfg);
+                              return AddInternal(dataset, *cfg);
                           })
                           .getTry();
 
@@ -122,7 +122,7 @@ class BaseFaissIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override {
+    GetIndexMeta(std::unique_ptr<Config> cfg) const override {
         // todo
         return expected<DataSetPtr>::Err(Status::not_implemented, "GetIndexMeta not implemented");
     }
@@ -168,7 +168,7 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
     }
 
     Status
-    Deserialize(const BinarySet& binset, const Config& config) override {
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config> config) override {
         auto binary = binset.GetByName(Type());
         if (binary == nullptr) {
             LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
@@ -188,8 +188,8 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
     }
 
     Status
-    DeserializeFromFile(const std::string& filename, const Config& config) override {
-        auto cfg = static_cast<const knowhere::BaseConfig&>(config);
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> config) override {
+        auto cfg = static_cast<const knowhere::BaseConfig&>(*config);
 
         int io_flags = 0;
         if (cfg.enable_mmap.value()) {
@@ -520,7 +520,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
         if (this->index == nullptr) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
@@ -532,7 +532,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         const auto rows = dataset->GetRows();
         const auto* data = dataset->GetTensor();
 
-        const auto hnsw_cfg = static_cast<const FaissHnswConfig&>(cfg);
+        const auto hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
         const auto k = hnsw_cfg.k.value();
         const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), knowhere::metric::COSINE);
 

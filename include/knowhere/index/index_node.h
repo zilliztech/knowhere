@@ -60,11 +60,15 @@ class IndexNode : public Object {
      *
      * @note Indexes need to be ready to search after `Build` is called. TODO:@liliu-z DiskANN is an exception and need
      * to be revisited.
+     * @note Providing support for the async interface is possible.Since the config object needs to be held in a future
+     * or lambda function, a smart pointer is required to delay its release.
+     * @note Since the build interface aggregates calls to both the train and add interfaces, `unique_ptr` cannot be
+     * shared, so `shared_ptr` is used instead.
      */
     virtual Status
-    Build(const DataSetPtr dataset, const Config& cfg) {
+    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
         RETURN_IF_ERROR(Train(dataset, cfg));
-        return Add(dataset, cfg);
+        return Add(dataset, std::move(cfg));
     }
 
     /**
@@ -76,9 +80,13 @@ class IndexNode : public Object {
      *
      * @note This interface is only available for growable indexes. For immutable indexes like DiskANN, this method
      * should return an error.
+     * @note Providing support for the async interface is possible.Since the config object needs to be held in a future
+     * or lambda function, a smart pointer is required to delay its release.
+     * @note Since the build interface aggregates calls to both the train and add interfaces, `unique_ptr` cannot be
+     * shared, so `shared_ptr` is used instead.
      */
     virtual Status
-    Train(const DataSetPtr dataset, const Config& cfg) = 0;
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) = 0;
 
     /**
      * @brief Adds data to the trained index.
@@ -92,9 +100,13 @@ class IndexNode : public Object {
      * should return an error.
      * 2. This method need to be thread safe when called with search methods like @see Search, @see RangeSearch and @see
      * AnnIterator.
+     * @note Providing support for the async interface is possible.Since the config object needs to be held in a future
+     * or lambda function, a smart pointer is required to delay its release.
+     * @note Since the build interface aggregates calls to both the train and add interfaces, `unique_ptr` cannot be
+     * shared, so `shared_ptr` is used instead.
      */
     virtual Status
-    Add(const DataSetPtr dataset, const Config& cfg) = 0;
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) = 0;
 
     /**
      * @brief Performs a search operation on the index.
@@ -103,9 +115,11 @@ class IndexNode : public Object {
      * @param cfg
      * @param bitset A BitsetView object for filtering results.
      * @return An expected<> object containing the search results or an error.
+     * @note Since the config object needs to be held in a future or lambda function, a smart pointer is required to
+     * delay its release.
      */
     virtual expected<DataSetPtr>
-    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const = 0;
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const = 0;
 
     // not thread safe.
     class iterator {
@@ -120,7 +134,7 @@ class IndexNode : public Object {
     using IteratorPtr = std::shared_ptr<iterator>;
 
     virtual expected<std::vector<IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const {
         return expected<std::vector<std::shared_ptr<iterator>>>::Err(
             Status::not_implemented, "annIterator not supported for current index type");
     }
@@ -136,13 +150,15 @@ class IndexNode : public Object {
      * @param cfg
      * @param bitset A BitsetView object for filtering results.
      * @return An expected<> object containing the range search results or an error.
+     * @note Since the config object needs to be held in a future or lambda function, a smart pointer is required to
+     * delay its release.
      */
     virtual expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, const Config& cfg,
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
                 const BitsetView& bitset) const {  // TODO: @alwayslove2013 test with mock AnnIterator after we
                                                    // introduced mock framework into knowhere. Currently this is tested
                                                    // in test_sparse.cc with real sparse vector index.
-        const auto base_cfg = static_cast<const BaseConfig&>(cfg);
+        const auto base_cfg = static_cast<const BaseConfig&>(*cfg);
         const float closer_bound = base_cfg.range_filter.value();
         const bool has_closer_bound = closer_bound != defaultRangeFilter;
         float further_bound = base_cfg.radius.value();
@@ -174,7 +190,7 @@ class IndexNode : public Object {
             return GenResultDataSet(nq, std::move(range_search_result));
         }
 
-        auto its_or = AnnIterator(dataset, cfg, bitset);
+        auto its_or = AnnIterator(dataset, std::move(cfg), bitset);
         if (!its_or.has_value()) {
             return expected<DataSetPtr>::Err(its_or.error(),
                                              "RangeSearch failed due to AnnIterator failure: " + its_or.what());
@@ -324,7 +340,7 @@ class IndexNode : public Object {
      * This is for Feder, and we can ignore it for now.
      */
     virtual expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const = 0;
+    GetIndexMeta(std::unique_ptr<Config> cfg) const = 0;
 
     /**
      * @brief Serializes the index to a binary set.
@@ -345,9 +361,11 @@ class IndexNode : public Object {
      * @note
      * 1. The index should be ready to search after deserialization.
      * 2. For immutable indexes, the path for now if Build->Serialize->Deserialize->Search.
+     * 3. Since the config object needs to be held in a future or lambda function, a smart pointer is required to delay
+     * its release.
      */
     virtual Status
-    Deserialize(const BinarySet& binset, const Config& config) = 0;
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config> config) = 0;
 
     /**
      * @brief Deserializes the index from a file.
@@ -360,7 +378,7 @@ class IndexNode : public Object {
      * @return Status indicating success or failure of the deserialization.
      */
     virtual Status
-    DeserializeFromFile(const std::string& filename, const Config& config) = 0;
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> config) = 0;
 
     virtual std::unique_ptr<BaseConfig>
     CreateConfig() const = 0;
@@ -465,7 +483,7 @@ class IndexIterator : public IndexNode::iterator {
     next_batch(std::function<void(const std::vector<DistId>&)> batch_handler) = 0;
     // will be called only if refine_ratio_ is not 0.
     virtual float
-    raw_distance(int64_t id) {
+    raw_distance(int64_t) {
         if (!refine_) {
             throw std::runtime_error("raw_distance should not be called for indexes without quantization");
         }

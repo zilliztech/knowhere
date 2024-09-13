@@ -75,11 +75,11 @@ struct GpuRaftIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSetPtr dataset, const Config& cfg) override {
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
         auto result = Status::success;
         auto raft_cfg = raft_knowhere::raft_knowhere_config{};
         try {
-            raft_cfg = to_raft_knowhere_config(static_cast<const knowhere_config_type&>(cfg));
+            raft_cfg = to_raft_knowhere_config(static_cast<const knowhere_config_type&>(*cfg));
         } catch (const std::exception& e) {
             LOG_KNOWHERE_ERROR_ << e.what();
             result = Status::invalid_args;
@@ -103,17 +103,17 @@ struct GpuRaftIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSetPtr dataset, const Config& cfg) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
         return Status::success;
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
         auto result = Status::success;
         auto raft_cfg = raft_knowhere::raft_knowhere_config{};
         auto err_msg = std::string{};
         try {
-            raft_cfg = to_raft_knowhere_config(static_cast<const knowhere_config_type&>(cfg));
+            raft_cfg = to_raft_knowhere_config(static_cast<const knowhere_config_type&>(*cfg));
         } catch (const std::exception& e) {
             err_msg = std::string{e.what()};
             LOG_KNOWHERE_ERROR_ << e.what();
@@ -139,7 +139,7 @@ struct GpuRaftIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
         return expected<DataSetPtr>::Err(Status::not_implemented, "RangeSearch not implemented");
     }
 
@@ -180,7 +180,7 @@ struct GpuRaftIndexNode : public IndexNode {
     }
 
     Status
-    Deserialize(const BinarySet& binset, const Config& config) override {
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config>) override {
         auto result = Status::success;
         std::stringbuf buf;
         auto binary = binset.GetByName(this->Type());
@@ -196,7 +196,7 @@ struct GpuRaftIndexNode : public IndexNode {
     }
 
     Status
-    DeserializeFromFile(const std::string& filename, const Config& config) {
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config>) {
         return Status::not_implemented;
     }
 
@@ -206,7 +206,7 @@ struct GpuRaftIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override {
+    GetIndexMeta(std::unique_ptr<Config> cfg) const override {
         return expected<DataSetPtr>::Err(Status::not_implemented, "GetIndexMeta not implemented");
     }
 

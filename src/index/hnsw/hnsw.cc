@@ -41,10 +41,10 @@ class HnswIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSetPtr dataset, const Config& cfg) override {
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
         auto rows = dataset->GetRows();
         auto dim = dataset->GetDim();
-        auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
+        auto hnsw_cfg = static_cast<const HnswConfig&>(*cfg);
         hnswlib::SpaceInterface<DistType>* space = nullptr;
         if constexpr (KnowhereFloatTypeCheck<DataType>::value) {
             if (IsMetricType(hnsw_cfg.metric_type.value(), metric::L2)) {
@@ -89,7 +89,7 @@ class HnswIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSetPtr dataset, const Config& cfg) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not add data to empty HNSW index.";
             return Status::empty_index;
@@ -102,7 +102,7 @@ class HnswIndexNode : public IndexNode {
             return Status::empty_index;
         }
         auto tensor = dataset->GetTensor();
-        auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
+        auto hnsw_cfg = static_cast<const HnswConfig&>(*cfg);
         bool shuffle_build = hnsw_cfg.shuffle_build.value();
 
         std::atomic<uint64_t> counter{0};
@@ -169,7 +169,7 @@ class HnswIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "search on empty index";
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -177,7 +177,7 @@ class HnswIndexNode : public IndexNode {
         auto nq = dataset->GetRows();
         auto xq = dataset->GetTensor();
 
-        auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
+        auto hnsw_cfg = static_cast<const HnswConfig&>(*cfg);
         auto k = hnsw_cfg.k.value();
 
         feder::hnsw::FederResultUniq feder_result;
@@ -274,7 +274,7 @@ class HnswIndexNode : public IndexNode {
 
  public:
     expected<std::vector<IndexNode::IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
             return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "index not loaded");
@@ -282,7 +282,7 @@ class HnswIndexNode : public IndexNode {
         auto nq = dataset->GetRows();
         auto xq = dataset->GetTensor();
 
-        auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
+        auto hnsw_cfg = static_cast<const HnswConfig&>(*cfg);
         auto ef = hnsw_cfg.ef.value_or(kIteratorSeedEf);
 
         bool transform =
@@ -307,7 +307,7 @@ class HnswIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "range search on empty index";
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -316,7 +316,7 @@ class HnswIndexNode : public IndexNode {
         auto nq = dataset->GetRows();
         auto xq = dataset->GetTensor();
 
-        auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
+        auto hnsw_cfg = static_cast<const HnswConfig&>(*cfg);
         bool is_ip =
             (index_->metric_type_ == hnswlib::Metric::INNER_PRODUCT || index_->metric_type_ == hnswlib::Metric::COSINE);
         DistType range_filter = hnsw_cfg.range_filter.value();
@@ -406,13 +406,13 @@ class HnswIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override {
+    GetIndexMeta(std::unique_ptr<Config> cfg) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "get index meta on empty index";
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
-        auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
+        auto hnsw_cfg = static_cast<const HnswConfig&>(*cfg);
         auto overview_levels = hnsw_cfg.overview_levels.value();
         feder::hnsw::HNSWMeta meta(index_->ef_construction_, index_->M_, index_->cur_element_count, index_->maxlevel_,
                                    index_->enterpoint_node_, overview_levels);
@@ -453,7 +453,7 @@ class HnswIndexNode : public IndexNode {
     }
 
     Status
-    Deserialize(const BinarySet& binset, const Config& config) override {
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config>) override {
         if (index_) {
             delete index_;
         }
@@ -481,14 +481,14 @@ class HnswIndexNode : public IndexNode {
     }
 
     Status
-    DeserializeFromFile(const std::string& filename, const Config& config) override {
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> cfg) override {
         if (index_) {
             delete index_;
         }
         try {
             hnswlib::SpaceInterface<DistType>* space = nullptr;
             index_ = new (std::nothrow) hnswlib::HierarchicalNSW<DataType, DistType, quant_type>(space);
-            index_->loadIndex(filename, config);
+            index_->loadIndex(filename, *cfg);
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
             return Status::hnsw_inner_error;

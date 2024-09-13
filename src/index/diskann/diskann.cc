@@ -45,23 +45,23 @@ class DiskANNIndexNode : public IndexNode {
     }
 
     Status
-    Build(const DataSetPtr dataset, const Config& cfg) override;
+    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override;
 
     Status
-    Train(const DataSetPtr dataset, const Config& cfg) override {
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
         return Status::not_implemented;
     }
 
     Status
-    Add(const DataSetPtr dataset, const Config& cfg) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
         return Status::not_implemented;
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
 
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset) const override;
@@ -72,7 +72,7 @@ class DiskANNIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override;
+    GetIndexMeta(std::unique_ptr<Config> cfg) const override;
 
     Status
     Serialize(BinarySet& binset) const override {
@@ -81,10 +81,10 @@ class DiskANNIndexNode : public IndexNode {
     }
 
     Status
-    Deserialize(const BinarySet& binset, const Config& cfg) override;
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) override;
 
     Status
-    DeserializeFromFile(const std::string& filename, const Config& config) override {
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> config) override {
         LOG_KNOWHERE_ERROR_ << "DiskANN doesn't support Deserialization from file.";
         return Status::not_implemented;
     }
@@ -255,10 +255,10 @@ CheckMetric(const std::string& diskann_metric) {
 
 template <typename DataType>
 Status
-DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, const Config& cfg) {
+DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
     assert(file_manager_ != nullptr);
     std::lock_guard<std::mutex> lock(preparation_lock_);
-    auto build_conf = static_cast<const DiskANNConfig&>(cfg);
+    auto build_conf = static_cast<const DiskANNConfig&>(*cfg);
     if (!CheckMetric(build_conf.metric_type.value())) {
         LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << build_conf.metric_type.value();
         return Status::invalid_metric_type;
@@ -337,9 +337,9 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, const Config& cfg) {
 
 template <typename DataType>
 Status
-DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, const Config& cfg) {
+DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) {
     std::lock_guard<std::mutex> lock(preparation_lock_);
-    auto prep_conf = static_cast<const DiskANNConfig&>(cfg);
+    auto prep_conf = static_cast<const DiskANNConfig&>(*cfg);
     if (!CheckMetric(prep_conf.metric_type.value())) {
         return Status::invalid_metric_type;
     }
@@ -506,13 +506,14 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, const Config& c
 
 template <typename DataType>
 expected<DataSetPtr>
-DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
+DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
+                                   const BitsetView& bitset) const {
     if (!is_prepared_.load() || !pq_flash_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
         return expected<DataSetPtr>::Err(Status::empty_index, "DiskANN not loaded");
     }
 
-    auto search_conf = static_cast<const DiskANNConfig&>(cfg);
+    auto search_conf = static_cast<const DiskANNConfig&>(*cfg);
     if (!CheckMetric(search_conf.metric_type.value())) {
         return expected<DataSetPtr>::Err(Status::invalid_metric_type, "unsupported metric type");
     }
@@ -572,13 +573,14 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, const Config& cfg, 
 
 template <typename DataType>
 expected<DataSetPtr>
-DiskANNIndexNode<DataType>::RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
+DiskANNIndexNode<DataType>::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
+                                        const BitsetView& bitset) const {
     if (!is_prepared_.load() || !pq_flash_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
 
-    auto search_conf = static_cast<const DiskANNConfig&>(cfg);
+    auto search_conf = static_cast<const DiskANNConfig&>(*cfg);
     if (!CheckMetric(search_conf.metric_type.value())) {
         return expected<DataSetPtr>::Err(Status::invalid_metric_type,
                                          fmt::format("unknown metric type: {}", search_conf.metric_type.value()));
@@ -660,12 +662,12 @@ DiskANNIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset) const {
 
 template <typename DataType>
 expected<DataSetPtr>
-DiskANNIndexNode<DataType>::GetIndexMeta(const Config& cfg) const {
+DiskANNIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
     std::vector<int64_t> entry_points;
     for (size_t i = 0; i < pq_flash_index_->get_num_medoids(); i++) {
         entry_points.push_back(pq_flash_index_->get_medoids()[i]);
     }
-    auto diskann_conf = static_cast<const DiskANNConfig&>(cfg);
+    auto diskann_conf = static_cast<const DiskANNConfig&>(*cfg);
     feder::diskann::DiskANNMeta meta(diskann_conf.data_path.value(), diskann_conf.max_degree.value(),
                                      diskann_conf.search_list_size.value(), diskann_conf.pq_code_budget_gb.value(),
                                      diskann_conf.build_dram_budget_gb.value(), diskann_conf.disk_pq_dims.value(),

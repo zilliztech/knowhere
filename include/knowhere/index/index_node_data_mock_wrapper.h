@@ -27,22 +27,22 @@ class IndexNodeDataMockWrapper : public IndexNode {
     }
 
     Status
-    Build(const DataSetPtr dataset, const Config& cfg) override;
+    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override;
 
     Status
-    Train(const DataSetPtr dataset, const Config& cfg) override;
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override;
 
     Status
-    Add(const DataSetPtr dataset, const Config& cfg) override;
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override;
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
 
     expected<std::vector<IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
 
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset) const override;
@@ -53,8 +53,8 @@ class IndexNodeDataMockWrapper : public IndexNode {
     }
 
     expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override {
-        return index_node_->GetIndexMeta(cfg);
+    GetIndexMeta(std::unique_ptr<Config> cfg) const override {
+        return index_node_->GetIndexMeta(std::move(cfg));
     }
 
     Status
@@ -63,13 +63,13 @@ class IndexNodeDataMockWrapper : public IndexNode {
     }
 
     Status
-    Deserialize(const BinarySet& binset, const Config& config) override {
-        return index_node_->Deserialize(binset, config);
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) override {
+        return index_node_->Deserialize(binset, std::move(cfg));
     }
 
     Status
-    DeserializeFromFile(const std::string& filename, const Config& config) override {
-        return index_node_->DeserializeFromFile(filename, config);
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> cfg) override {
+        return index_node_->DeserializeFromFile(filename, std::move(cfg));
     }
 
     std::unique_ptr<BaseConfig>

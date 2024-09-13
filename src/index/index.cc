@@ -42,12 +42,12 @@ Index<T>::Build(const DataSetPtr dataset, const Json& json) {
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     TimeRecorder rc("Build index", 2);
-    auto res = this->node->Build(dataset, *cfg);
+    auto res = this->node->Build(dataset, std::move(cfg));
     auto time = rc.ElapseFromBegin("done");
     time *= 0.000001;  // convert to s
     knowhere_build_latency.Observe(time);
 #else
-    auto res = this->node->Build(dataset, *cfg);
+    auto res = this->node->Build(dataset, std::move(cfg));
 #endif
     return res;
 }
@@ -57,7 +57,7 @@ inline Status
 Index<T>::Train(const DataSetPtr dataset, const Json& json) {
     auto cfg = this->node->CreateConfig();
     RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Train"));
-    return this->node->Train(dataset, *cfg);
+    return this->node->Train(dataset, std::move(cfg));
 }
 
 template <typename T>
@@ -65,7 +65,7 @@ inline Status
 Index<T>::Add(const DataSetPtr dataset, const Json& json) {
     auto cfg = this->node->CreateConfig();
     RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Add"));
-    return this->node->Add(dataset, *cfg);
+    return this->node->Add(dataset, std::move(cfg));
 }
 
 template <typename T>
@@ -107,17 +107,19 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
     }
 
     TimeRecorder rc("Search");
-    auto res = this->node->Search(dataset, *cfg, bitset);
+    bool has_trace_id = b_cfg.trace_id.has_value();
+    auto k = cfg->k.value();
+    auto res = this->node->Search(dataset, std::move(cfg), bitset);
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
     knowhere_search_latency.Observe(time);
-    knowhere_search_topk.Observe(cfg->k.value());
+    knowhere_search_topk.Observe(k);
 
-    if (b_cfg.trace_id.has_value()) {
+    if (has_trace_id) {
         span->End();
     }
 #else
-    auto res = this->node->Search(dataset, *cfg, bitset);
+    auto res = this->node->Search(dataset, std::move(cfg), bitset);
 #endif
     return res;
 }
@@ -147,12 +149,12 @@ Index<T>::AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetVi
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // note that this time includes only the initial search phase of iterator.
     TimeRecorder rc("AnnIterator");
-    auto res = this->node->AnnIterator(dataset, *cfg, bitset);
+    auto res = this->node->AnnIterator(dataset, std::move(cfg), bitset);
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
     knowhere_search_latency.Observe(time);
 #else
-    auto res = this->node->AnnIterator(dataset, *cfg, bitset);
+    auto res = this->node->AnnIterator(dataset, std::move(cfg), bitset);
 #endif
     return res;
 }
@@ -199,16 +201,17 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
     }
 
     TimeRecorder rc("Range Search");
-    auto res = this->node->RangeSearch(dataset, *cfg, bitset);
+    bool has_trace_id = b_cfg.trace_id.has_value();
+    auto res = this->node->RangeSearch(dataset, std::move(cfg), bitset);
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
     knowhere_range_search_latency.Observe(time);
 
-    if (b_cfg.trace_id.has_value()) {
+    if (has_trace_id) {
         span->End();
     }
 #else
-    auto res = this->node->RangeSearch(dataset, *cfg, bitset);
+    auto res = this->node->RangeSearch(dataset, std::move(cfg), bitset);
 #endif
     return res;
 }
@@ -240,7 +243,7 @@ Index<T>::GetIndexMeta(const Json& json) const {
     if (status != Status::success) {
         return expected<DataSetPtr>::Err(status, msg);
     }
-    return this->node->GetIndexMeta(*cfg);
+    return this->node->GetIndexMeta(std::move(cfg));
 }
 
 template <typename T>
@@ -268,12 +271,12 @@ Index<T>::Deserialize(const BinarySet& binset, const Json& json) {
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     TimeRecorder rc("Load index", 2);
-    res = this->node->Deserialize(binset, *cfg);
+    res = this->node->Deserialize(binset, std::move(cfg));
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
     knowhere_load_latency.Observe(time);
 #else
-    res = this->node->Deserialize(binset, *cfg);
+    res = this->node->Deserialize(binset, std::move(cfg));
 #endif
     return res;
 }
@@ -297,12 +300,12 @@ Index<T>::DeserializeFromFile(const std::string& filename, const Json& json) {
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     TimeRecorder rc("Load index from file", 2);
-    res = this->node->DeserializeFromFile(filename, *cfg);
+    res = this->node->DeserializeFromFile(filename, std::move(cfg));
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
     knowhere_load_latency.Observe(time);
 #else
-    res = this->node->DeserializeFromFile(filename, *cfg);
+    res = this->node->DeserializeFromFile(filename, std::move(cfg));
 #endif
     return res;
 }

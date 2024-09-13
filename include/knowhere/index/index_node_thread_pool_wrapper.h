@@ -24,20 +24,20 @@ class IndexNodeThreadPoolWrapper : public IndexNode {
     IndexNodeThreadPoolWrapper(std::unique_ptr<IndexNode> index_node, std::shared_ptr<ThreadPool> thread_pool);
 
     Status
-    Train(const DataSetPtr dataset, const Config& cfg) override {
-        return index_node_->Train(dataset, cfg);
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+        return index_node_->Train(dataset, std::move(cfg));
     }
 
     Status
-    Add(const DataSetPtr dataset, const Config& cfg) override {
-        return index_node_->Add(dataset, cfg);
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+        return index_node_->Add(dataset, std::move(cfg));
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
 
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset) const override {
@@ -50,8 +50,8 @@ class IndexNodeThreadPoolWrapper : public IndexNode {
     }
 
     expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override {
-        return index_node_->GetIndexMeta(cfg);
+    GetIndexMeta(std::unique_ptr<Config> cfg) const override {
+        return index_node_->GetIndexMeta(std::move(cfg));
     }
 
     Status
@@ -60,13 +60,13 @@ class IndexNodeThreadPoolWrapper : public IndexNode {
     }
 
     Status
-    Deserialize(const BinarySet& binset, const Config& config) override {
-        return index_node_->Deserialize(binset, config);
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) override {
+        return index_node_->Deserialize(binset, std::move(cfg));
     }
 
     Status
-    DeserializeFromFile(const std::string& filename, const Config& config) override {
-        return index_node_->DeserializeFromFile(filename, config);
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> cfg) override {
+        return index_node_->DeserializeFromFile(filename, move(cfg));
     }
 
     std::unique_ptr<BaseConfig>
