@@ -35,7 +35,7 @@ if [[ "${MACHINE}" == "Linux" ]]; then
         apt install -y sudo
         # for Ubuntu 18.04
         release_num=$(lsb_release -r --short)
-        sudo apt install -y libcurl4-openssl-dev libaio libaio-devel libopenblas-dev
+        sudo apt install -y libcurl4-openssl-dev libaio libaio-devel libopenblas-openmp-dev
         pip3 install conan==1.61.0
     elif [[ -x "$(command -v yum)" ]]; then
         yum install -y sudo
