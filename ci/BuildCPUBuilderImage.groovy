@@ -10,6 +10,7 @@ pipeline {
             //     command 'sleep'
             //     args 'infinity'
             // }
+            cloud 'new_ci_idc'
             inheritFrom 'default'
             yaml '''
 apiVersion: v1
@@ -33,7 +34,7 @@ spec:
             - key: app
               operator: In
               values:
-              - knowhere-e2e
+              - knowhere
           topologyKey: "kubernetes.io/hostname"
   enableServiceLinks: false
   containers:
