@@ -44,8 +44,8 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSetPtr dataset, const Config& config) override {
-        auto cfg = static_cast<const SparseInvertedIndexConfig&>(config);
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> config) override {
+        auto cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
         if (!IsMetricType(cfg.metric_type.value(), metric::IP) &&
             !IsMetricType(cfg.metric_type.value(), metric::BM25)) {
             LOG_KNOWHERE_ERROR_ << Type() << " only support metric_type IP or BM25";
@@ -68,7 +68,7 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSetPtr dataset, const Config& config) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> config) override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Could not add data to empty " << Type();
             return Status::empty_index;
@@ -78,12 +78,12 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     [[nodiscard]] expected<DataSetPtr>
-    Search(const DataSetPtr dataset, const Config& config, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Could not search empty " << Type();
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
-        auto cfg = static_cast<const SparseInvertedIndexConfig&>(config);
+        auto cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
         auto computer_or = index_->GetDocValueComputer(cfg);
         if (!computer_or.has_value()) {
             return expected<DataSetPtr>::Err(computer_or.error(), computer_or.what());
@@ -112,7 +112,7 @@ class SparseInvertedIndexNode : public IndexNode {
 
     // TODO: for now inverted index and wand use the same impl for AnnIterator.
     [[nodiscard]] expected<std::vector<IndexNode::IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, const Config& config, const BitsetView& bitset) const override {
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
             return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::empty_index,
@@ -121,7 +121,7 @@ class SparseInvertedIndexNode : public IndexNode {
         auto nq = dataset->GetRows();
         auto queries = static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor());
 
-        auto cfg = static_cast<const SparseInvertedIndexConfig&>(config);
+        auto cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
         auto computer_or = index_->GetDocValueComputer(cfg);
         if (!computer_or.has_value()) {
             return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(computer_or.error(),
@@ -175,7 +175,7 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     [[nodiscard]] expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override {
+    GetIndexMeta(std::unique_ptr<Config> cfg) const override {
         throw std::runtime_error("GetIndexMeta not supported for current index type");
     }
 
@@ -193,12 +193,12 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     Status
-    Deserialize(const BinarySet& binset, const Config& config) override {
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config> config) override {
         if (index_ != nullptr) {
             LOG_KNOWHERE_WARNING_ << Type() << " has already been created, deleting old";
             DeleteExistingIndex();
         }
-        auto cfg = static_cast<const knowhere::SparseInvertedIndexConfig&>(config);
+        auto cfg = static_cast<const knowhere::SparseInvertedIndexConfig&>(*config);
         auto binary = binset.GetByName(Type());
         if (binary == nullptr) {
             LOG_KNOWHERE_ERROR_ << "Invalid BinarySet.";
@@ -214,12 +214,12 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     Status
-    DeserializeFromFile(const std::string& filename, const Config& config) override {
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> config) override {
         if (index_ != nullptr) {
             LOG_KNOWHERE_WARNING_ << Type() << " has already been created, deleting old";
             DeleteExistingIndex();
         }
-        auto cfg = static_cast<const knowhere::SparseInvertedIndexConfig&>(config);
+        auto cfg = static_cast<const knowhere::SparseInvertedIndexConfig&>(*config);
         auto reader = knowhere::FileReader(filename);
         map_size_ = reader.size();
         int map_flags = MAP_SHARED;

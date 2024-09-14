@@ -22,47 +22,47 @@ namespace knowhere {
 
 template <typename DataType>
 Status
-IndexNodeDataMockWrapper<DataType>::Build(const DataSetPtr dataset, const Config& cfg) {
+IndexNodeDataMockWrapper<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
     auto ds_ptr = ConvertFromDataTypeIfNeeded<DataType>(dataset);
-    return index_node_->Build(ds_ptr, cfg);
+    return index_node_->Build(ds_ptr, std::move(cfg));
 }
 
 template <typename DataType>
 Status
-IndexNodeDataMockWrapper<DataType>::Train(const DataSetPtr dataset, const Config& cfg) {
+IndexNodeDataMockWrapper<DataType>::Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
     auto ds_ptr = ConvertFromDataTypeIfNeeded<DataType>(dataset);
-    return index_node_->Train(ds_ptr, cfg);
+    return index_node_->Train(ds_ptr, std::move(cfg));
 }
 
 template <typename DataType>
 Status
-IndexNodeDataMockWrapper<DataType>::Add(const DataSetPtr dataset, const Config& cfg) {
+IndexNodeDataMockWrapper<DataType>::Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
     auto ds_ptr = ConvertFromDataTypeIfNeeded<DataType>(dataset);
-    return index_node_->Add(ds_ptr, cfg);
+    return index_node_->Add(ds_ptr, std::move(cfg));
 }
 
 template <typename DataType>
 expected<DataSetPtr>
-IndexNodeDataMockWrapper<DataType>::Search(const DataSetPtr dataset, const Config& cfg,
+IndexNodeDataMockWrapper<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
                                            const BitsetView& bitset) const {
     auto ds_ptr = ConvertFromDataTypeIfNeeded<DataType>(dataset);
-    return index_node_->Search(ds_ptr, cfg, bitset);
+    return index_node_->Search(ds_ptr, std::move(cfg), bitset);
 }
 
 template <typename DataType>
 expected<DataSetPtr>
-IndexNodeDataMockWrapper<DataType>::RangeSearch(const DataSetPtr dataset, const Config& cfg,
+IndexNodeDataMockWrapper<DataType>::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
                                                 const BitsetView& bitset) const {
     auto ds_ptr = ConvertFromDataTypeIfNeeded<DataType>(dataset);
-    return index_node_->RangeSearch(ds_ptr, cfg, bitset);
+    return index_node_->RangeSearch(ds_ptr, std::move(cfg), bitset);
 }
 
 template <typename DataType>
 expected<std::vector<IndexNode::IteratorPtr>>
-IndexNodeDataMockWrapper<DataType>::AnnIterator(const DataSetPtr dataset, const Config& cfg,
+IndexNodeDataMockWrapper<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
                                                 const BitsetView& bitset) const {
     auto ds_ptr = ConvertFromDataTypeIfNeeded<DataType>(dataset);
-    return index_node_->AnnIterator(ds_ptr, cfg, bitset);
+    return index_node_->AnnIterator(ds_ptr, std::move(cfg), bitset);
 }
 
 template <typename DataType>

@@ -36,21 +36,21 @@ class GpuRaftCagraHybridIndexNode : public GpuRaftCagraIndexNode<DataType> {
     }
 
     Status
-    Train(const DataSetPtr dataset, const Config& cfg) override {
-        const GpuRaftCagraConfig& cagra_cfg = static_cast<const GpuRaftCagraConfig&>(cfg);
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+        const GpuRaftCagraConfig& cagra_cfg = static_cast<const GpuRaftCagraConfig&>(*cfg);
         if (cagra_cfg.adapt_for_cpu.value())
             adapt_for_cpu = true;
         return GpuRaftCagraIndexNode<DataType>::Train(dataset, cfg);
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
         if (!adapt_for_cpu || hnsw_index_ == nullptr)
-            return GpuRaftCagraIndexNode<DataType>::Search(dataset, cfg, bitset);
+            return GpuRaftCagraIndexNode<DataType>::Search(dataset, std::move(cfg), bitset);
         auto nq = dataset->GetRows();
         auto xq = dataset->GetTensor();
 
-        auto cagra_cfg = static_cast<const GpuRaftCagraConfig&>(cfg);
+        auto cagra_cfg = static_cast<const GpuRaftCagraConfig&>(*cfg);
         auto k = cagra_cfg.k.value();
 
         auto p_id = std::make_unique<int64_t[]>(k * nq);
@@ -122,7 +122,7 @@ class GpuRaftCagraHybridIndexNode : public GpuRaftCagraIndexNode<DataType> {
     }
 
     Status
-    Deserialize(const BinarySet& binset, const Config& config) override {
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) override {
         if (binset.Contains(std::string(this->Type()) + "_cpu")) {
             this->adapt_for_cpu = true;
             auto binary = binset.GetByName(std::string(this->Type() + "_cpu"));
@@ -147,11 +147,11 @@ class GpuRaftCagraHybridIndexNode : public GpuRaftCagraIndexNode<DataType> {
             return Status::success;
         }
 
-        return GpuRaftCagraIndexNode<DataType>::Deserialize(binset, config);
+        return GpuRaftCagraIndexNode<DataType>::Deserialize(binset, std::move(cfg));
     }
 
     Status
-    DeserializeFromFile(const std::string& filename, const Config& config) {
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config>) {
         return Status::not_implemented;
     }
 

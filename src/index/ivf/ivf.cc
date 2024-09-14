@@ -66,15 +66,15 @@ class IvfIndexNode : public IndexNode {
         build_pool_ = ThreadPool::GetGlobalBuildThreadPool();
     }
     Status
-    Train(const DataSetPtr dataset, const Config& cfg) override;
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override;
     Status
-    Add(const DataSetPtr dataset, const Config& cfg) override;
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override;
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
     expected<std::vector<IndexNode::IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override;
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset) const override;
     bool
@@ -105,17 +105,17 @@ class IvfIndexNode : public IndexNode {
         }
     }
     expected<DataSetPtr>
-    GetIndexMeta(const Config& cfg) const override {
-        return this->GetIndexMetaImpl(cfg, typename IndexDispatch<IndexType>::Tag{});
+    GetIndexMeta(std::unique_ptr<Config> cfg) const override {
+        return this->GetIndexMetaImpl(std::move(cfg), typename IndexDispatch<IndexType>::Tag{});
     }
     Status
     Serialize(BinarySet& binset) const override {
         return this->SerializeImpl(binset, typename IndexDispatch<IndexType>::Tag{});
     }
     Status
-    Deserialize(const BinarySet& binset, const Config& config) override;
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) override;
     Status
-    DeserializeFromFile(const std::string& filename, const Config& config) override;
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> cfg) override;
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
         if constexpr (std::is_same<faiss::IndexIVFFlat, IndexType>::value) {
@@ -232,11 +232,11 @@ class IvfIndexNode : public IndexNode {
 
  private:
     expected<DataSetPtr>
-    GetIndexMetaImpl(const Config& cfg, IVFBaseTag) const {
+    GetIndexMetaImpl(std::unique_ptr<Config> cfg, IVFBaseTag) const {
         return expected<DataSetPtr>::Err(Status::not_implemented, "GetIndexMeta not implemented");
     }
     expected<DataSetPtr>
-    GetIndexMetaImpl(const Config& cfg, IVFFlatTag) const;
+    GetIndexMetaImpl(std::unique_ptr<Config> cfg, IVFFlatTag) const;
 
     Status
     SerializeImpl(BinarySet& binset, IVFBaseTag) const;
@@ -245,7 +245,7 @@ class IvfIndexNode : public IndexNode {
     SerializeImpl(BinarySet& binset, IVFFlatTag) const;
 
     Status
-    TrainInternal(const DataSetPtr dataset, const Config& cfg);
+    TrainInternal(const DataSetPtr dataset, std::shared_ptr<Config> cfg);
 
     static constexpr bool
     IsQuantized() {
@@ -372,10 +372,10 @@ get_ivf_sq_quantizer_type(int code_size) {
 
 template <typename DataType, typename IndexType>
 Status
-IvfIndexNode<DataType, IndexType>::Train(const DataSetPtr dataset, const Config& cfg) {
+IvfIndexNode<DataType, IndexType>::Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
     // use build_pool_ to make sure the OMP threads spawded by index_->train etc
     // can inherit the low nice value of threads in build_pool_.
-    auto tryObj = build_pool_->push([&] { return TrainInternal(dataset, cfg); }).getTry();
+    auto tryObj = build_pool_->push([&] { return TrainInternal(dataset, std::move(cfg)); }).getTry();
     if (tryObj.hasValue()) {
         return tryObj.value();
     }
@@ -385,8 +385,8 @@ IvfIndexNode<DataType, IndexType>::Train(const DataSetPtr dataset, const Config&
 
 template <typename DataType, typename IndexType>
 Status
-IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, const Config& cfg) {
-    const BaseConfig& base_cfg = static_cast<const IvfConfig&>(cfg);
+IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
+    const BaseConfig& base_cfg = static_cast<const IvfConfig&>(*cfg);
     std::unique_ptr<ThreadPool::ScopedOmpSetter> setter;
     if (base_cfg.num_build_thread.has_value()) {
         setter = std::make_unique<ThreadPool::ScopedOmpSetter>(base_cfg.num_build_thread.value());
@@ -427,7 +427,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, const
     // if cfg.use_elkan is used, then we'll use a temporary instance of
     //  IndexFlatElkan for the training.
     if constexpr (std::is_same<faiss::IndexIVFFlat, IndexType>::value) {
-        const IvfFlatConfig& ivf_flat_cfg = static_cast<const IvfFlatConfig&>(cfg);
+        const IvfFlatConfig& ivf_flat_cfg = static_cast<const IvfFlatConfig&>(*cfg);
         auto nlist = MatchNlist(rows, ivf_flat_cfg.nlist.value());
 
         const bool use_elkan = ivf_flat_cfg.use_elkan.value_or(true);
@@ -446,7 +446,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, const
         index->own_fields = true;
     }
     if constexpr (std::is_same<faiss::IndexIVFFlatCC, IndexType>::value) {
-        const IvfFlatCcConfig& ivf_flat_cc_cfg = static_cast<const IvfFlatCcConfig&>(cfg);
+        const IvfFlatCcConfig& ivf_flat_cc_cfg = static_cast<const IvfFlatCcConfig&>(*cfg);
         auto nlist = MatchNlist(rows, ivf_flat_cc_cfg.nlist.value());
 
         const bool use_elkan = ivf_flat_cc_cfg.use_elkan.value_or(true);
@@ -468,7 +468,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, const
         index->make_direct_map(true, faiss::DirectMap::ConcurrentArray);
     }
     if constexpr (std::is_same<faiss::IndexIVFPQ, IndexType>::value) {
-        const IvfPqConfig& ivf_pq_cfg = static_cast<const IvfPqConfig&>(cfg);
+        const IvfPqConfig& ivf_pq_cfg = static_cast<const IvfPqConfig&>(*cfg);
         auto nlist = MatchNlist(rows, ivf_pq_cfg.nlist.value());
         auto nbits = MatchNbits(rows, ivf_pq_cfg.nbits.value());
 
@@ -488,7 +488,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, const
         index->own_fields = true;
     }
     if constexpr (std::is_same<faiss::IndexScaNN, IndexType>::value) {
-        const ScannConfig& scann_cfg = static_cast<const ScannConfig&>(cfg);
+        const ScannConfig& scann_cfg = static_cast<const ScannConfig&>(*cfg);
         auto nlist = MatchNlist(rows, scann_cfg.nlist.value());
         bool is_cosine = base_cfg.metric_type.value() == metric::COSINE;
 
@@ -520,7 +520,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, const
         index->own_fields = true;
     }
     if constexpr (std::is_same<faiss::IndexIVFScalarQuantizer, IndexType>::value) {
-        const IvfSqConfig& ivf_sq_cfg = static_cast<const IvfSqConfig&>(cfg);
+        const IvfSqConfig& ivf_sq_cfg = static_cast<const IvfSqConfig&>(*cfg);
         auto nlist = MatchNlist(rows, ivf_sq_cfg.nlist.value());
 
         const bool use_elkan = ivf_sq_cfg.use_elkan.value_or(true);
@@ -540,7 +540,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, const
         index->own_fields = true;
     }
     if constexpr (std::is_same<faiss::IndexBinaryIVF, IndexType>::value) {
-        const IvfBinConfig& ivf_bin_cfg = static_cast<const IvfBinConfig&>(cfg);
+        const IvfBinConfig& ivf_bin_cfg = static_cast<const IvfBinConfig&>(*cfg);
         auto nlist = MatchNlist(rows, ivf_bin_cfg.nlist.value());
 
         // create quantizer
@@ -554,7 +554,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, const
         index->own_fields = true;
     }
     if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
-        const IvfSqCcConfig& ivf_sq_cc_cfg = static_cast<const IvfSqCcConfig&>(cfg);
+        const IvfSqCcConfig& ivf_sq_cc_cfg = static_cast<const IvfSqCcConfig&>(*cfg);
         auto nlist = MatchNlist(rows, ivf_sq_cc_cfg.nlist.value());
         auto ssize = ivf_sq_cc_cfg.ssize.value();
 
@@ -588,14 +588,14 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, const
 
 template <typename DataType, typename IndexType>
 Status
-IvfIndexNode<DataType, IndexType>::Add(const DataSetPtr dataset, const Config& cfg) {
+IvfIndexNode<DataType, IndexType>::Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
     if (!this->index_) {
         LOG_KNOWHERE_ERROR_ << "Can not add data to empty IVF index.";
         return Status::empty_index;
     }
     auto data = dataset->GetTensor();
     auto rows = dataset->GetRows();
-    const BaseConfig& base_cfg = static_cast<const IvfConfig&>(cfg);
+    const BaseConfig& base_cfg = static_cast<const IvfConfig&>(*cfg);
     // use build_pool_ to make sure the OMP threads spawded by index_->add
     // can inherit the low nice value of threads in build_pool_.
     auto tryObj = build_pool_
@@ -622,7 +622,8 @@ IvfIndexNode<DataType, IndexType>::Add(const DataSetPtr dataset, const Config& c
 
 template <typename DataType, typename IndexType>
 expected<DataSetPtr>
-IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const {
+IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
+                                          const BitsetView& bitset) const {
     if (!this->index_) {
         LOG_KNOWHERE_WARNING_ << "search on empty index";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -636,7 +637,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, const Config
     auto rows = dataset->GetRows();
     auto data = dataset->GetTensor();
 
-    const IvfConfig& ivf_cfg = static_cast<const IvfConfig&>(cfg);
+    const IvfConfig& ivf_cfg = static_cast<const IvfConfig&>(*cfg);
     bool is_cosine = IsMetricType(ivf_cfg.metric_type.value(), knowhere::metric::COSINE);
 
     auto k = ivf_cfg.k.value();
@@ -697,7 +698,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, const Config
                     index_->search(1, cur_query, k, distances.get() + offset, ids.get() + offset, &ivf_search_params);
                 } else if constexpr (std::is_same<IndexType, faiss::IndexScaNN>::value) {
                     auto cur_query = (const float*)data + index * dim;
-                    const ScannConfig& scann_cfg = static_cast<const ScannConfig&>(cfg);
+                    const ScannConfig& scann_cfg = static_cast<const ScannConfig&>(*cfg);
                     if (is_cosine) {
                         copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         cur_query = copied_query.get();
@@ -742,7 +743,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, const Config
 
 template <typename DataType, typename IndexType>
 expected<DataSetPtr>
-IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, const Config& cfg,
+IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
                                                const BitsetView& bitset) const {
     if (!this->index_) {
         LOG_KNOWHERE_WARNING_ << "range search on empty index";
@@ -757,7 +758,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, const C
     auto xq = dataset->GetTensor();
     auto dim = dataset->GetDim();
 
-    const IvfConfig& ivf_cfg = static_cast<const IvfConfig&>(cfg);
+    const IvfConfig& ivf_cfg = static_cast<const IvfConfig&>(*cfg);
     bool is_cosine = IsMetricType(ivf_cfg.metric_type.value(), knowhere::metric::COSINE);
 
     float radius = ivf_cfg.radius.value();
@@ -858,7 +859,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, const C
 
 template <typename DataType, typename IndexType>
 expected<std::vector<IndexNode::IteratorPtr>>
-IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, const Config& cfg,
+IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
                                                const BitsetView& bitset) const {
     if (!index_) {
         LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
@@ -883,7 +884,7 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, const C
 
         auto vec = std::vector<IndexNode::IteratorPtr>(rows, nullptr);
 
-        const IvfConfig& ivf_cfg = static_cast<const IvfConfig&>(cfg);
+        const IvfConfig& ivf_cfg = static_cast<const IvfConfig&>(*cfg);
         bool is_cosine = IsMetricType(ivf_cfg.metric_type.value(), knowhere::metric::COSINE);
         auto larger_is_closer = IsMetricType(ivf_cfg.metric_type.value(), knowhere::metric::IP) || is_cosine;
 
@@ -995,7 +996,7 @@ IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSetPtr dataset) cons
 
 template <typename DataType, typename IndexType>
 expected<DataSetPtr>
-IvfIndexNode<DataType, IndexType>::GetIndexMetaImpl(const Config& config, IVFFlatTag) const {
+IvfIndexNode<DataType, IndexType>::GetIndexMetaImpl(std::unique_ptr<Config>, IVFFlatTag) const {
     if (!index_) {
         LOG_KNOWHERE_WARNING_ << "get index meta on empty index";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -1104,7 +1105,7 @@ IvfIndexNode<DataType, IndexType>::SerializeImpl(BinarySet& binset, IVFFlatTag) 
 
 template <typename DataType, typename IndexType>
 Status
-IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, const Config& config) {
+IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) {
     std::vector<std::string> names = {"IVF",        // compatible with knowhere-1.x
                                       "BinaryIVF",  // compatible with knowhere-1.x
                                       Type()};
@@ -1119,7 +1120,7 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, const Co
         if constexpr (std::is_same<IndexType, faiss::IndexIVFFlat>::value) {
             if (this->version_ <= Version::GetMinimalVersion()) {
                 auto raw_binary = binset.GetByName("RAW_DATA");
-                const BaseConfig& base_cfg = static_cast<const BaseConfig&>(config);
+                const BaseConfig& base_cfg = static_cast<const BaseConfig&>(*cfg);
                 ConvertIVFFlat(binset, base_cfg.metric_type.value(), raw_binary->data.get(), raw_binary->size);
                 // after conversion, binary size and data will be updated
                 reader.data_ = binary->data.get();
@@ -1133,7 +1134,7 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, const Co
         }
         if constexpr (!std::is_same_v<IndexType, faiss::IndexScaNN> &&
                       !std::is_same_v<IndexType, faiss::IndexIVFScalarQuantizerCC>) {
-            const BaseConfig& base_cfg = static_cast<const BaseConfig&>(config);
+            const BaseConfig& base_cfg = static_cast<const BaseConfig&>(*cfg);
             if (HasRawData(base_cfg.metric_type.value())) {
                 index_->make_direct_map(true);
             }
@@ -1147,8 +1148,8 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, const Co
 
 template <typename DataType, typename IndexType>
 Status
-IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filename, const Config& config) {
-    auto cfg = static_cast<const knowhere::BaseConfig&>(config);
+IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> config) {
+    auto cfg = static_cast<const knowhere::BaseConfig&>(*config);
 
     int io_flags = 0;
     if (cfg.enable_mmap.value()) {
@@ -1161,7 +1162,7 @@ IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filena
             index_.reset(static_cast<IndexType*>(faiss::read_index(filename.data(), io_flags)));
         }
         if constexpr (!std::is_same_v<IndexType, faiss::IndexScaNN>) {
-            const BaseConfig& base_cfg = static_cast<const BaseConfig&>(config);
+            const BaseConfig& base_cfg = static_cast<const BaseConfig&>(*config);
             if (HasRawData(base_cfg.metric_type.value())) {
                 index_->make_direct_map(true);
             }

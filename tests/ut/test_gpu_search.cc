@@ -97,12 +97,12 @@ TEST_CASE("Test All GPU Index", "[search]") {
         auto train_ds = GenDataSet(nb, dim, seed);
         auto query_ds = GenDataSet(nq, dim, seed);
         REQUIRE(idx.Type() == name);
-        auto res = idx.Build(*train_ds, json);
+        auto res = idx.Build(train_ds, json);
         REQUIRE(res == knowhere::Status::success);
         REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
                 knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>(name, json[knowhere::meta::METRIC_TYPE],
                                                                          version, json));
-        auto results = idx.Search(*query_ds, json, nullptr);
+        auto results = idx.Search(query_ds, json, nullptr);
         REQUIRE(results.has_value());
         auto ids = results.value()->GetIds();
         // Due to issues with the filtering of invalid values, index 0 is temporarily not being checked.
@@ -128,7 +128,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
         auto train_ds = GenDataSet(nb, dim, seed);
         auto query_ds = GenDataSet(nq, dim, seed);
         REQUIRE(idx.Type() == name);
-        auto res = idx.Build(*train_ds, json);
+        auto res = idx.Build(train_ds, json);
         REQUIRE(res == knowhere::Status::success);
         REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
                 knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>(name, json[knowhere::meta::METRIC_TYPE],
@@ -140,7 +140,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
             for (const auto& gen_func : gen_bitset_funcs) {
                 auto bitset_data = gen_func(nb, percentage * nb);
                 knowhere::BitsetView bitset(bitset_data.data(), nb);
-                auto results = idx.Search(*query_ds, json, bitset);
+                auto results = idx.Search(query_ds, json, bitset);
                 REQUIRE(results.has_value());
                 auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, json, bitset);
                 float recall = GetKNNRecall(*gt.value(), *results.value());
@@ -170,7 +170,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
         auto train_ds = GenDataSet(nb, dim, seed);
         auto query_ds = GenDataSet(nq, dim, seed);
         REQUIRE(idx.Type() == name);
-        auto res = idx.Build(*train_ds, json);
+        auto res = idx.Build(train_ds, json);
         REQUIRE(res == knowhere::Status::success);
         REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
                 knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>(name, json[knowhere::meta::METRIC_TYPE],
@@ -180,7 +180,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
 
         for (const auto& topKTuple : topk_values) {
             json[knowhere::meta::TOPK] = std::get<0>(topKTuple);
-            auto results = idx.Search(*query_ds, json, nullptr);
+            auto results = idx.Search(query_ds, json, nullptr);
             REQUIRE(results.has_value());
             auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, json, nullptr);
             float recall = GetKNNRecall(*gt.value(), *results.value());
@@ -206,7 +206,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
         auto train_ds = GenDataSet(nb, dim, seed);
         auto query_ds = GenDataSet(nq, dim, seed);
         REQUIRE(idx.Type() == name);
-        auto res = idx.Build(*train_ds, json);
+        auto res = idx.Build(train_ds, json);
         REQUIRE(res == knowhere::Status::success);
         knowhere::BinarySet bs;
         idx.Serialize(bs);
@@ -215,7 +215,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
         REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
                 knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>(name, json[knowhere::meta::METRIC_TYPE],
                                                                          version, json));
-        auto results = idx_.Search(*query_ds, json, nullptr);
+        auto results = idx_.Search(query_ds, json, nullptr);
         REQUIRE(results.has_value());
         auto ids = results.value()->GetIds();
         // Due to issues with the filtering of invalid values, index 0 is temporarily not being checked.
@@ -239,7 +239,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
         knowhere::Json json = knowhere::Json::parse(cfg_json);
         auto train_ds = GenDataSet(rows, dim, seed);
         REQUIRE(idx.Type() == name);
-        auto res = idx.Build(*train_ds, json);
+        auto res = idx.Build(train_ds, json);
         REQUIRE(res == knowhere::Status::success);
         REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
                 knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>(name, json[knowhere::meta::METRIC_TYPE],
@@ -248,7 +248,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
         bitset_data[0] = 0b10100010;
         bitset_data[1] = 0b00100011;
         knowhere::BitsetView bitset(bitset_data.data(), rows);
-        auto results = idx.Search(*train_ds, json, bitset);
+        auto results = idx.Search(train_ds, json, bitset);
         REQUIRE(results.has_value());
         auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, train_ds, json, bitset);
         float recall = GetKNNRecall(*gt.value(), *results.value());
