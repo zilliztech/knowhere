@@ -17,8 +17,8 @@ apiVersion: v1
 kind: Pod
 metadata:
   labels:
-    app: milvus-build
-  namespace: jenkins
+    app: knowhere-build
+  namespace: knowhere-ci
 spec:
   nodeSelector:
     app: knowhere
