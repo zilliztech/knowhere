@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: knowhere-e2e
+  namespace: knowhere-ci
+spec:
+  enableServiceLinks: false
+  nodeSelector:
+    node.kubernetes.io/cpu-feature.sse: true
+  tolerations:
+    - key: cpu-feature
+      operator: Equal
+      value: "sse"
+      effect: NoSchedule
+  # affinity:
+  #   podAntiAffinity:
+  #     requiredDuringSchedulingIgnoredDuringExecution:
+  #       - labelSelector:
+  #           matchExpressions:
+  #           - key: app
+  #             operator: In
+  #             values:
+  #             - knowhere-e2e
+  #         topologyKey: "kubernetes.io/hostname"
+  containers:
+  - name: main
+    image: milvusdb/knowhere-cpu-build:amd64-ubuntu22.04-20240528-ccc71670
+    tty: true
+    args: ["cat"]
+    # resources:
+    #   requests:
+    #     memory: "16Gi"
+    #     cpu: "4"
+    #   limits:
+    #     memory: "16Gi"
+    #     cpu: "4"
+    volumeMounts:
+      - mountPath: /home/data
+        name: db-data
+  volumes:
+    - name: db-data
+      persistentVolumeClaim:
+        claimName: db-data
