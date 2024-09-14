@@ -10,6 +10,7 @@ pipeline {
             //     command 'sleep'
             //     args 'infinity'
             // }
+            cloud 'new_ci_idc'
             inheritFrom 'default'
             yaml '''
 apiVersion: v1
