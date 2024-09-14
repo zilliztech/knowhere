@@ -26,16 +26,6 @@ spec:
     - key: node-role.kubernetes.io/knowhere
       operator: Equal
       effect: NoSchedule
-  affinity:
-    podAntiAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchExpressions:
-            - key: app
-              operator: In
-              values:
-              - knowhere-e2e
-          topologyKey: "kubernetes.io/hostname"
   enableServiceLinks: false
   containers:
   - name: main
