@@ -56,12 +56,12 @@ initTelemetry(const TraceConfig& cfg) {
         opts.endpoint = cfg.jaegerURL;
         exporter = jaeger::JaegerExporterFactory::Create(opts);
         LOG_KNOWHERE_INFO_ << "init jaeger exporter, endpoint: " << opts.endpoint;
-    } else if (cfg.exporter == "otlp") {
-        auto opts = otlp::OtlpGrpcExporterOptions{};
-        opts.endpoint = cfg.otlpEndpoint;
-        opts.use_ssl_credentials = cfg.oltpSecure;
-        exporter = otlp::OtlpGrpcExporterFactory::Create(opts);
-        LOG_KNOWHERE_INFO_ << "init otlp exporter, endpoint: " << opts.endpoint;
+        // } else if (cfg.exporter == "otlp") {
+        //     auto opts = otlp::OtlpGrpcExporterOptions{};
+        //     opts.endpoint = cfg.otlpEndpoint;
+        //     opts.use_ssl_credentials = cfg.oltpSecure;
+        //     exporter = otlp::OtlpGrpcExporterFactory::Create(opts);
+        //     LOG_KNOWHERE_INFO_ << "init otlp exporter, endpoint: " << opts.endpoint;
     } else {
         LOG_KNOWHERE_INFO_ << "Empty Trace";
         enable_trace = false;

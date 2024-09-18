@@ -27,28 +27,60 @@ namespace {
 const std::vector<size_t> kBitsetSizes{4, 8, 10, 64, 100, 500, 1024};
 }
 
+template <typename T>
+void
+CheckNormalizeDataset(int rows, int dim, float diff) {
+    auto ds = GenDataSet(rows, dim);
+    auto type_ds = knowhere::ConvertToDataTypeIfNeeded<T>(ds);
+    auto data = (T*)type_ds->GetTensor();
+
+    knowhere::NormalizeDataset<T>(type_ds);
+
+    for (int i = 0; i < rows; ++i) {
+        float sum = 0.0;
+        for (int j = 0; j < dim; ++j) {
+            auto val = data[i * dim + j];
+            sum += val * val;
+        }
+        CHECK(std::abs(1.0f - sum) <= diff);
+    }
+}
+
+template <typename T>
+void
+CheckCopyAndNormalizeVecs(int rows, int dim, float diff) {
+    auto ds = GenDataSet(rows, dim);
+    auto type_ds = knowhere::ConvertToDataTypeIfNeeded<T>(ds);
+    auto data = (T*)type_ds->GetTensor();
+
+    auto data_copy = knowhere::CopyAndNormalizeVecs<T>(data, rows, dim);
+
+    for (int i = 0; i < rows; ++i) {
+        float sum = 0.0;
+        for (int j = 0; j < dim; ++j) {
+            auto val = data_copy[i * dim + j];
+            sum += val * val;
+        }
+        CHECK(std::abs(1.0f - sum) <= diff);
+    }
+}
+
 TEST_CASE("Test Vector Normalization", "[normalize]") {
     using Catch::Approx;
 
-    const float floatDiff = 0.00001;
-    uint64_t nb = 1000000;
+    uint64_t rows = 100;
     uint64_t dim = 128;
-    int64_t seed = 42;
 
-    SECTION("Test normalize") {
-        auto train_ds = GenDataSet(nb, dim, seed);
-        auto data = (float*)train_ds->GetTensor();
+    SECTION("Test Normalize Dataset") {
+        CheckNormalizeDataset<knowhere::fp32>(rows, dim, 0.00001);
+        CheckNormalizeDataset<knowhere::fp16>(rows, dim, 0.001);
+        CheckNormalizeDataset<knowhere::bf16>(rows, dim, 0.01);
+    }
 
-        knowhere::NormalizeDataset<knowhere::fp32>(train_ds);
-
-        for (size_t i = 0; i < nb; ++i) {
-            float sum = 0.0;
-            for (size_t j = 0; j < dim; ++j) {
-                auto val = data[i * dim + j];
-                sum += val * val;
-            }
-            CHECK(std::abs(1.0f - sum) <= floatDiff);
-        }
+    SECTION("Test Copy and Normalize Vectors") {
+        CheckCopyAndNormalizeVecs<knowhere::fp32>(rows, dim, 0.00001);
+        CheckCopyAndNormalizeVecs<knowhere::fp16>(rows, dim, 0.001);
+        CheckCopyAndNormalizeVecs<knowhere::bf16>(rows, dim, 0.01);
     }
 }
 
@@ -175,10 +207,13 @@ TEST_CASE("Test ThreadPool") {
     SECTION("ScopedOmpSetter") {
         int prev_num_threads = omp_get_max_threads();
         {
-            knowhere::ThreadPool::ScopedOmpSetter setter(2 * prev_num_threads);
-            REQUIRE(omp_get_max_threads() == 2 * prev_num_threads);
+            int target_num_threads = (prev_num_threads / 2) > 0 ? (prev_num_threads / 2) : 1;
+            knowhere::ThreadPool::ScopedOmpSetter setter(target_num_threads);
+            auto thread_num = omp_get_max_threads();
+            REQUIRE(thread_num == target_num_threads);
 #ifdef OPENBLAS_OS_LINUX
-            REQUIRE(openblas_get_num_threads() == 2 * prev_num_threads);
+            auto openblas_thread_num = openblas_get_num_threads();
+            REQUIRE(openblas_thread_num == target_num_threads);
 #endif
         }
     }

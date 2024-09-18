@@ -84,9 +84,7 @@ NormalizeDataset(const DataSetPtr dataset) {
 
     LOG_KNOWHERE_DEBUG_ << "vector normalize, rows " << rows << ", dim " << dim;
 
-    for (int32_t i = 0; i < rows; i++) {
-        NormalizeVec<DataType>(data + i * dim, dim);
-    }
+    NormalizeVecs<DataType>(data, rows, dim);
 }
 
 void

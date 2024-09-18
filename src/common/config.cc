@@ -90,7 +90,7 @@ Config::FormatAndCheck(const Config& cfg, Json& json, std::string* const err_msg
                     auto value_str = json[it.first].get<std::string>();
                     CFG_INT::value_type v = std::stoi(value_str.c_str(), &sz);
                     if (sz < value_str.length()) {
-                        throw KnowhereException(std::string("wrong data type in json ") + value_str);
+                        KNOWHERE_THROW_MSG(std::string("wrong data type in json ") + value_str);
                     }
                     json[it.first] = v;
                 }
