@@ -168,6 +168,9 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         readBinaryPOD(reader, value_threshold_);
 
         raw_data_.reserve(rows);
+        if constexpr (bm25) {
+            bm25_params_->row_sums.resize(rows);
+        }
 
         for (int64_t i = 0; i < rows; ++i) {
             size_t count;
@@ -237,6 +240,9 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         }
 
         raw_data_.insert(raw_data_.end(), data, data + rows);
+        if constexpr (bm25) {
+            bm25_params_->row_sums.resize(current_rows + rows);
+        }
         for (size_t i = 0; i < rows; ++i) {
             add_row_to_index(data[i], current_rows + i);
         }
@@ -368,9 +374,9 @@ class InvertedIndex : public BaseInvertedIndex<T> {
             // TODO: improve with SIMD
             auto& lut = lut_it->second;
             for (size_t j = 0; j < lut.size(); j++) {
-                auto [idx, val] = lut[j];
-                T val_sum = bm25 ? bm25_params_->row_sums.at(idx) : 0;
-                scores[idx] += v * computer(val, val_sum);
+                auto [doc_id, val] = lut[j];
+                T val_sum = bm25 ? bm25_params_->row_sums.at(doc_id) : 0;
+                scores[doc_id] += v * computer(val, val_sum);
             }
         }
         return scores;
@@ -590,7 +596,7 @@ class InvertedIndex : public BaseInvertedIndex<T> {
             }
         }
         if constexpr (bm25) {
-            bm25_params_->row_sums[id] = row_sum;
+            bm25_params_->row_sums.at(id) = row_sum;
         }
     }
 
@@ -613,7 +619,7 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         float b;
         // row_sums is used to cache the sum of values of each row, which
         // corresponds to the document length of each doc in the BM25 formula.
-        std::unordered_map<size_t, T> row_sums;
+        std::vector<T> row_sums;
 
         // below are used only for WAND index.
         float max_score_ratio;
