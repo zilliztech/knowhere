@@ -16,9 +16,6 @@
 
 #include "knowhere/comp/index_param.h"
 #include "knowhere/index/index_factory.h"
-#ifdef KNOWHERE_WITH_CARDINAL
-#include "cardinal/cardinal_utils.h"
-#endif
 
 namespace knowhere {
 namespace KnowhereCheck {
@@ -41,92 +38,6 @@ SupportMmapIndexTypeCheck(const std::string& index_name) {
     } else {
         return false;
     }
-}
-
-inline bool
-CheckBooleanInJson(const knowhere::Json& json, std::string key) {
-    if (json.find(key) == json.end()) {
-        return true;
-    }
-    if (json[key].is_boolean()) {
-        return json[key];
-    }
-    if (json[key].is_string()) {
-        if (json[key] == "true") {
-            return true;
-        } else {
-            return false;
-        }
-    }
-    return false;
-}
-
-template <typename DataType>
-bool
-IndexHasRawData(const knowhere::IndexType& indexType, const knowhere::MetricType& metricType,
-                const knowhere::IndexVersion& version, const knowhere::Json& params) {
-    static std::set<knowhere::IndexType> has_raw_data_index_set = {
-        IndexEnum::INDEX_FAISS_BIN_IDMAP,  IndexEnum::INDEX_FAISS_BIN_IVFFLAT, IndexEnum::INDEX_FAISS_IVFFLAT,
-        IndexEnum::INDEX_FAISS_IVFFLAT_CC, IndexEnum::INDEX_HNSW_SQ8_REFINE,   IndexEnum::INDEX_SPARSE_INVERTED_INDEX,
-        IndexEnum::INDEX_SPARSE_WAND};
-    static std::set<knowhere::IndexType> has_raw_data_index_alias_set = {"IVFBIN", "BINFLAT", "IVFFLAT", "IVFFLATCC"};
-
-    static std::set<knowhere::IndexType> no_raw_data_index_set = {
-        IndexEnum::INDEX_FAISS_IVFPQ,     IndexEnum::INDEX_FAISS_IVFSQ8,      IndexEnum::INDEX_HNSW_SQ8,
-        IndexEnum::INDEX_FAISS_GPU_IDMAP, IndexEnum::INDEX_FAISS_GPU_IVFFLAT, IndexEnum::INDEX_FAISS_GPU_IVFSQ8,
-        IndexEnum::INDEX_FAISS_GPU_IVFPQ, IndexEnum::INDEX_GPU_BRUTEFORCE,    IndexEnum::INDEX_GPU_IVFFLAT,
-        IndexEnum::INDEX_GPU_IVFPQ,       IndexEnum::INDEX_GPU_CAGRA,         IndexEnum::INDEX_RAFT_BRUTEFORCE,
-        IndexEnum::INDEX_RAFT_IVFFLAT,    IndexEnum::INDEX_RAFT_IVFPQ,        IndexEnum::INDEX_RAFT_CAGRA,
-    };
-
-    static std::set<knowhere::IndexType> no_raw_data_index_alias_set = {"IVFPQ", "IVFSQ"};
-
-    static std::set<knowhere::IndexType> conditional_hold_raw_data_index_set = {
-        IndexEnum::INDEX_FAISS_IDMAP, IndexEnum::INDEX_FAISS_SCANN, IndexEnum::INDEX_FAISS_IVFSQ_CC,
-        IndexEnum::INDEX_HNSW,        IndexEnum::INDEX_DISKANN,
-    };
-
-    if (has_raw_data_index_set.find(indexType) != has_raw_data_index_set.end() ||
-        has_raw_data_index_alias_set.find(indexType) != has_raw_data_index_alias_set.end()) {
-        return true;
-    }
-
-    if (no_raw_data_index_set.find(indexType) != no_raw_data_index_set.end() ||
-        no_raw_data_index_alias_set.find(indexType) != no_raw_data_index_alias_set.end()) {
-        return false;
-    }
-
-    if (conditional_hold_raw_data_index_set.find(indexType) != conditional_hold_raw_data_index_set.end()) {
-        if (indexType == IndexEnum::INDEX_HNSW) {
-#ifdef KNOWHERE_WITH_CARDINAL
-            return IndexHoldRawData<DataType>(indexType, metricType, version, params);
-#else
-            return true;
-#endif
-        } else if (indexType == IndexEnum::INDEX_DISKANN) {
-#ifdef KNOWHERE_WITH_CARDINAL
-            return IndexHoldRawData<DataType>(indexType, metricType, version, params);
-#else
-            return IsMetricType(metricType, metric::L2) || IsMetricType(metricType, metric::COSINE);
-#endif
-        } else if (indexType == IndexEnum::INDEX_FAISS_SCANN) {
-            return CheckBooleanInJson(params, indexparam::WITH_RAW_DATA);
-            // INDEX_FAISS_IVFSQ_CC is not online yet
-        } else if (indexType == IndexEnum::INDEX_FAISS_IVFSQ_CC) {
-            return params.find(indexparam::RAW_DATA_STORE_PREFIX) != params.end();
-        } else if (indexType == IndexEnum::INDEX_FAISS_IDMAP) {
-            if (knowhere::Version(version) <= Version::GetMinimalVersion()) {
-                return !IsMetricType(metricType, metric::COSINE);
-            } else {
-                return true;
-            }
-        } else {
-            LOG_KNOWHERE_ERROR_ << "unhandled index type : " << indexType;
-        }
-    } else {
-        LOG_KNOWHERE_ERROR_ << "unknown index type : " << indexType;
-    }
-    return false;
 }
 
 }  // namespace KnowhereCheck

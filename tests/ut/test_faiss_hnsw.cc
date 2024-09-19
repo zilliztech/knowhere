@@ -297,6 +297,8 @@ test_hnsw(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::DataSetPtr
     // test HasRawData()
     auto metric_type = conf[knowhere::meta::METRIC_TYPE];
     REQUIRE(index_loaded.HasRawData(metric_type) == expected_raw_data);
+    REQUIRE(knowhere::IndexStaticFaced<T>::HasRawData(
+                index_type, knowhere::Version::GetCurrentVersion().VersionNumber(), conf) == expected_raw_data);
 
     // test GetVectorByIds()
     if (expected_raw_data) {

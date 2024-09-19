@@ -88,6 +88,7 @@ class ScannConfig : public IvfFlatConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(with_raw_data)
             .description("with raw data in index")
             .set_default(true)
+            .for_static()
             .for_train();
     }
 
@@ -146,6 +147,7 @@ class IvfSqCcConfig : public IvfFlatCcConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(raw_data_store_prefix)
             .description("Raw data will be set in this prefix path")
             .for_train()
+            .for_static()
             .allow_empty_without_default();
     };
     Status

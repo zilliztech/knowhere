@@ -75,7 +75,8 @@ class FaissHnswConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(refine)
             .description("whether the refine is used during the train")
             .set_default(false)
-            .for_train();
+            .for_train()
+            .for_static();
         KNOWHERE_CONFIG_DECLARE_FIELD(refine_k)
             .description("refine k")
             .allow_empty_without_default()
@@ -84,7 +85,8 @@ class FaissHnswConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(refine_type)
             .description("the type of a refine index")
             .allow_empty_without_default()
-            .for_train();
+            .for_train()
+            .for_static();
     }
 
     Status
@@ -161,7 +163,11 @@ class FaissHnswSqConfig : public FaissHnswConfig {
     // we have fp16, bf16, etc, so '8', '4' and '6' is insufficient
     CFG_STRING sq_type;
     KNOHWERE_DECLARE_CONFIG(FaissHnswSqConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(sq_type).set_default("SQ8").description("scalar quantizer type").for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(sq_type)
+            .set_default("SQ8")
+            .description("scalar quantizer type")
+            .for_train()
+            .for_static();
     };
 
     Status

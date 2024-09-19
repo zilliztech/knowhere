@@ -159,8 +159,7 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
         auto res = idx.Build(train_ds, json);
         REQUIRE(res == knowhere::Status::success);
         REQUIRE(idx.Type() == name);
-        REQUIRE(idx.HasRawData(metric) ==
-                knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>(name, metric, version, json));
+        REQUIRE(idx.HasRawData(metric) == knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
 
         auto& build_ds = train_ds;
         auto query_ds = GenDataSet(nq, dim, seed);

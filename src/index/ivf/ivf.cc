@@ -77,11 +77,9 @@ class IvfIndexNode : public IndexNode {
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset) const override;
-    bool
-    HasRawData(const std::string& metric_type) const override {
-        if (!index_) {
-            return false;
-        }
+
+    static bool
+    CommonHasRawData() {
         if constexpr (std::is_same<faiss::IndexIVFFlat, IndexType>::value) {
             return true;
         }
@@ -91,18 +89,40 @@ class IvfIndexNode : public IndexNode {
         if constexpr (std::is_same<faiss::IndexIVFPQ, IndexType>::value) {
             return false;
         }
-        if constexpr (std::is_same<faiss::IndexScaNN, IndexType>::value) {
-            return index_->with_raw_data();
-        }
         if constexpr (std::is_same<faiss::IndexIVFScalarQuantizer, IndexType>::value) {
             return false;
         }
         if constexpr (std::is_same<faiss::IndexBinaryIVF, IndexType>::value) {
             return true;
         }
+        return false;
+    }
+
+    static bool
+    StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
+        if constexpr (std::is_same<faiss::IndexScaNN, IndexType>::value) {
+            const ScannConfig& scann_cfg = static_cast<const ScannConfig&>(config);
+            return scann_cfg.with_raw_data.has_value() && scann_cfg.with_raw_data.value();
+        }
+        if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
+            const IvfSqCcConfig& ivfsqcc_cfg = static_cast<const IvfSqCcConfig&>(config);
+            return ivfsqcc_cfg.raw_data_store_prefix.has_value();
+        }
+        return CommonHasRawData();
+    }
+
+    bool
+    HasRawData(const std::string& metric_type) const override {
+        if (!index_) {
+            return false;
+        }
+        if constexpr (std::is_same<faiss::IndexScaNN, IndexType>::value) {
+            return index_->with_raw_data();
+        }
         if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
             return index_->with_raw_data();
         }
+        return CommonHasRawData();
     }
     expected<DataSetPtr>
     GetIndexMeta(std::unique_ptr<Config> cfg) const override {
@@ -116,8 +136,9 @@ class IvfIndexNode : public IndexNode {
     Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) override;
     Status
     DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> cfg) override;
-    std::unique_ptr<BaseConfig>
-    CreateConfig() const override {
+
+    static std::unique_ptr<BaseConfig>
+    StaticCreateConfig() {
         if constexpr (std::is_same<faiss::IndexIVFFlat, IndexType>::value) {
             return std::make_unique<IvfFlatConfig>();
         }
@@ -140,6 +161,12 @@ class IvfIndexNode : public IndexNode {
             return std::make_unique<IvfSqCcConfig>();
         }
     };
+
+    std::unique_ptr<BaseConfig>
+    CreateConfig() const override {
+        return StaticCreateConfig();
+    };
+
     int64_t
     Dim() const override {
         if (!index_) {

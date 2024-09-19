@@ -229,9 +229,14 @@ class GpuIvfIndexNode : public IndexNode {
         return Status::not_implemented;
     }
 
+    static std::unique_ptr<BaseConfig>
+    StaticCreateConfig() {
+        return std::make_unique<typename KnowhereConfigType<T>::Type>();
+    }
+
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
-        return std::make_unique<typename KnowhereConfigType<T>::Type>();
+        return StaticCreateConfig();
     }
 
     int64_t

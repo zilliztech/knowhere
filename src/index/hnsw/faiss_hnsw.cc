@@ -1285,9 +1285,14 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
         : BaseFaissRegularIndexHNSWNode(version, object, data_format) {
     }
 
+    static std::unique_ptr<BaseConfig>
+    StaticCreateConfig() {
+        return std::make_unique<FaissHnswFlatConfig>();
+    }
+
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
-        return std::make_unique<FaissHnswFlatConfig>();
+        return StaticCreateConfig();
     }
 
     std::string
@@ -1370,6 +1375,11 @@ class BaseFaissRegularIndexHNSWFlatNodeTemplate : public BaseFaissRegularIndexHN
     BaseFaissRegularIndexHNSWFlatNodeTemplate(const int32_t& version, const Object& object)
         : BaseFaissRegularIndexHNSWFlatNode(version, object, datatype_v<DataType>) {
     }
+
+    static bool
+    StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
+        return true;
+    }
 };
 
 namespace {
@@ -1449,6 +1459,40 @@ is_flat_refine(const std::optional<std::string>& refine_type) {
         return expected<bool>::Err(Status::invalid_args, fmt::format("invalid refine type ({})", refine_type.value()));
     }
 
+    return false;
+}
+
+bool
+has_lossless_quant(const expected<faiss::ScalarQuantizer::QuantizerType>& quant_type, DataFormatEnum dataFormat) {
+    if (!quant_type.has_value()) {
+        return false;
+    }
+
+    auto quant = quant_type.value();
+    switch (dataFormat) {
+        case DataFormatEnum::fp32:
+            return false;
+        case DataFormatEnum::fp16:
+            return quant == faiss::ScalarQuantizer::QuantizerType::QT_fp16;
+        case DataFormatEnum::bf16:
+            return quant == faiss::ScalarQuantizer::QuantizerType::QT_bf16;
+        default:
+            return false;
+    }
+}
+
+bool
+has_lossless_refine_index(const FaissHnswConfig& hnsw_cfg, DataFormatEnum dataFormat) {
+    bool has_refine = hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value();
+    if (has_refine) {
+        expected<bool> flat_refine = is_flat_refine(hnsw_cfg.refine_type);
+        if (flat_refine.has_value() && flat_refine.value()) {
+            return true;
+        }
+
+        auto sq_refine_type = get_sq_quantizer_type(hnsw_cfg.refine_type.value());
+        return has_lossless_quant(sq_refine_type, dataFormat);
+    }
     return false;
 }
 
@@ -1540,9 +1584,14 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
         : BaseFaissRegularIndexHNSWNode(version, object, data_format) {
     }
 
+    static std::unique_ptr<BaseConfig>
+    StaticCreateConfig() {
+        return std::make_unique<FaissHnswSqConfig>();
+    }
+
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
-        return std::make_unique<FaissHnswSqConfig>();
+        return StaticCreateConfig();
     }
 
     std::string
@@ -1629,6 +1678,18 @@ class BaseFaissRegularIndexHNSWSQNodeTemplate : public BaseFaissRegularIndexHNSW
     BaseFaissRegularIndexHNSWSQNodeTemplate(const int32_t& version, const Object& object)
         : BaseFaissRegularIndexHNSWSQNode(version, object, datatype_v<DataType>) {
     }
+
+    static bool
+    StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
+        auto hnsw_sq_cfg = static_cast<const FaissHnswSqConfig&>(config);
+
+        auto sq_type = get_sq_quantizer_type(hnsw_sq_cfg.sq_type.value());
+        if (has_lossless_quant(sq_type, datatype_v<DataType>)) {
+            return true;
+        }
+
+        return has_lossless_refine_index(hnsw_sq_cfg, datatype_v<DataType>);
+    }
 };
 
 // this index trains PQ and HNSW+FLAT separately, then constructs HNSW+PQ
@@ -1638,9 +1699,14 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
         : BaseFaissRegularIndexHNSWNode(version, object, data_format) {
     }
 
+    static std::unique_ptr<BaseConfig>
+    StaticCreateConfig() {
+        return std::make_unique<FaissHnswPqConfig>();
+    }
+
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
-        return std::make_unique<FaissHnswPqConfig>();
+        return StaticCreateConfig();
     }
 
     std::string
@@ -1817,6 +1883,12 @@ class BaseFaissRegularIndexHNSWPQNodeTemplate : public BaseFaissRegularIndexHNSW
     BaseFaissRegularIndexHNSWPQNodeTemplate(const int32_t& version, const Object& object)
         : BaseFaissRegularIndexHNSWPQNode(version, object, datatype_v<DataType>) {
     }
+
+    static bool
+    StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
+        auto hnsw_cfg = static_cast<const FaissHnswConfig&>(config);
+        return has_lossless_refine_index(hnsw_cfg, datatype_v<DataType>);
+    }
 };
 
 // this index trains PRQ and HNSW+FLAT separately, then constructs HNSW+PRQ
@@ -1826,9 +1898,14 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
         : BaseFaissRegularIndexHNSWNode(version, object, data_format) {
     }
 
+    static std::unique_ptr<BaseConfig>
+    StaticCreateConfig() {
+        return std::make_unique<FaissHnswPrqConfig>();
+    }
+
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
-        return std::make_unique<FaissHnswPrqConfig>();
+        return StaticCreateConfig();
     }
 
     std::string
@@ -2009,6 +2086,12 @@ class BaseFaissRegularIndexHNSWPRQNodeTemplate : public BaseFaissRegularIndexHNS
  public:
     BaseFaissRegularIndexHNSWPRQNodeTemplate(const int32_t& version, const Object& object)
         : BaseFaissRegularIndexHNSWPRQNode(version, object, datatype_v<DataType>) {
+    }
+
+    static bool
+    StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
+        auto hnsw_cfg = static_cast<const FaissHnswConfig&>(config);
+        return has_lossless_refine_index(hnsw_cfg, datatype_v<DataType>);
     }
 };
 

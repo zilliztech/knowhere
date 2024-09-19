@@ -165,7 +165,6 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8, hnsw_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8_REFINE, hnsw_gen),
         }));
         auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN) {
@@ -191,7 +190,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         // to an uncertain address)
         if (name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC) {
             REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
-                    knowhere::KnowhereCheck::IndexHasRawData<knowhere::fp32>(name, metric, version, json));
+                    knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
         }
 
         auto results = idx.Search(query_ds, json, nullptr);

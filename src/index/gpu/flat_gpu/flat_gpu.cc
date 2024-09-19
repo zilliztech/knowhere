@@ -160,9 +160,14 @@ class GpuFlatIndexNode : public IndexNode {
         return Status::not_implemented;
     }
 
+    static std::unique_ptr<BaseConfig>
+    StaticCreateConfig() {
+        return std::make_unique<GpuFlatConfig>();
+    }
+
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
-        return std::make_unique<GpuFlatConfig>();
+        return StaticCreateConfig();
     }
 
     int64_t
