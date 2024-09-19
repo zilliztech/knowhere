@@ -255,12 +255,8 @@ class ThreadPool {
             if (num_threads <= 0) {
                 return;
             }
-            if (build_pool_ == nullptr) {  // this should not happen in prod
-                omp_before = omp_get_max_threads();
-            } else {
-                omp_before = build_pool_->size();
-            }
 
+            omp_before = (build_pool_ ? build_pool_->size() : omp_get_max_threads());
 #ifdef OPENBLAS_OS_LINUX
             blas_thread_before = openblas_get_num_threads();
             openblas_set_num_threads(num_threads);

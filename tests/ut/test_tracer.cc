@@ -9,6 +9,8 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License
 
+#include <unistd.h>
+
 #include <memory>
 
 #include "catch2/catch_approx.hpp"
@@ -22,20 +24,35 @@ using namespace opentelemetry::trace;
 TEST_CASE("Test Tracer init", "Init test") {
     using Catch::Approx;
 
-    auto config = std::make_shared<TraceConfig>();
-    config->exporter = "stdout";
-    config->nodeID = 1;
-    initTelemetry(*config);
-    auto span = StartSpan("test");
-    REQUIRE(span->IsRecording());
+    SECTION("check stdout") {
+        auto config = std::make_shared<TraceConfig>();
+        config->exporter = "stdout";
+        config->nodeID = 1;
+        initTelemetry(*config);
+        auto span = StartSpan("test");
+        REQUIRE(span->IsRecording());
 
-    config = std::make_shared<TraceConfig>();
-    config->exporter = "jaeger";
-    config->jaegerURL = "http://localhost:14268/api/traces";
-    config->nodeID = 1;
-    initTelemetry(*config);
-    span = StartSpan("test");
-    REQUIRE(span->IsRecording());
+        SetRootSpan(span);
+        AddEvent("sleep");
+        usleep(20000);
+        CloseRootSpan();
+    }
+
+    SECTION("check jaeger") {
+        auto config = std::make_shared<TraceConfig>();
+        config->exporter = "jaeger";
+        // use default jaeger collector port for test
+        config->jaegerURL = "http://localhost:14268/api/traces";
+        config->nodeID = 1;
+        initTelemetry(*config);
+        auto span = StartSpan("test");
+        REQUIRE(span->IsRecording());
+
+        SetRootSpan(span);
+        AddEvent("sleep");
+        usleep(20000);
+        CloseRootSpan();
+    }
 }
 
 TEST_CASE("Test Tracer span", "Span test") {

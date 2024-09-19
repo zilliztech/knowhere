@@ -897,3 +897,61 @@ TEST_CASE("Test config load", "[MATERIALIZED_VIEW_SEARCH_INFO]") {
         CHECK(s == knowhere::Status::success);
     }
 }
+
+TEST_CASE("Test config", "[FormatAndCheck]") {
+    knowhere::Status s;
+    std::string err_msg;
+
+    SECTION("check config with string type values") {
+        class TestConfig : public knowhere::Config {
+         public:
+            CFG_INT int_val;
+            CFG_FLOAT float_val;
+            CFG_BOOL true_val;
+            CFG_BOOL false_val;
+            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+                KNOWHERE_CONFIG_DECLARE_FIELD(int_val).for_train_and_search();
+                KNOWHERE_CONFIG_DECLARE_FIELD(float_val).for_train_and_search();
+                KNOWHERE_CONFIG_DECLARE_FIELD(true_val).for_train_and_search();
+                KNOWHERE_CONFIG_DECLARE_FIELD(false_val).for_train_and_search();
+            }
+        };
+
+        TestConfig test_cfg;
+        knowhere::Json json;
+
+        json = knowhere::Json::parse(R"({
+            "int_val": "123",
+            "float_val": "1.23",
+            "true_val": "true",
+            "false_val": "false"
+        })");
+        s = knowhere::Config::FormatAndCheck(test_cfg, json, &err_msg);
+        CHECK(s == knowhere::Status::success);
+        s = knowhere::Config::Load(test_cfg, json, knowhere::SEARCH, &err_msg);
+        CHECK(s == knowhere::Status::success);
+        CHECK(test_cfg.int_val.value() == 123);
+        CHECK_LT(std::abs(test_cfg.float_val.value() - 1.23), 0.00001);
+        CHECK(test_cfg.true_val.value() == true);
+        CHECK(test_cfg.false_val.value() == false);
+    }
+
+    SECTION("check config with invalid string type int value") {
+        class TestConfig : public knowhere::Config {
+         public:
+            CFG_INT int_val;
+            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+                KNOWHERE_CONFIG_DECLARE_FIELD(int_val).for_train_and_search();
+            }
+        };
+
+        TestConfig test_cfg;
+        knowhere::Json json;
+
+        json = knowhere::Json::parse(R"({
+            "int_val": "12.3"
+        })");
+        s = knowhere::Config::FormatAndCheck(test_cfg, json, &err_msg);
+        CHECK(s == knowhere::Status::invalid_value_in_json);
+    }
+}
