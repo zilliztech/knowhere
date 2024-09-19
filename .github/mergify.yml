@@ -167,6 +167,7 @@ pull_request_rules:
       - 'status-success=analyzer'
       - 'status-success=python3 wheel'
       - "status-success=e2e"
+      - "status-success=e2e(arm)"
       - "status-success=e2e-sse"
       - "status-success=e2e-gpu"
       - "status-success=ut-gpu"
@@ -187,6 +188,7 @@ pull_request_rules:
       - 'status-success=analyzer'
       - 'status-success=python3 wheel'
       - "status-success=e2e"
+      - "status-success=e2e(arm)"
       - "status-success=e2e-sse"
     actions:
       label:
@@ -202,6 +204,7 @@ pull_request_rules:
       - 'status-success=pre-commit'
       - 'status-success=analyzer'
       - "status-success=e2e"
+      - "status-success=e2e(arm)"
       - "status-success=e2e-sse"
     actions:
       label:
@@ -253,6 +256,7 @@ pull_request_rules:
         - "status-success!=analyzer"
         - "status-success!=python3 wheel"
         - "status-success!=e2e"
+        - "status-success!=e2e(arm)"
         - "status-success!=e2e-sse"
       - files~=^(?=.*((\.(h|cpp)|CMakeLists.txt))).*$
     actions:
@@ -271,6 +275,7 @@ pull_request_rules:
         - "status-success!=analyzer"
         - "status-success!=python3 wheel"
         - "status-success!=e2e"
+        - "status-success!=e2e(arm)"
         - "status-success!=e2e-sse"
         - "status-success!=e2e-gpu"
         - "status-success!=ut-gpu"
