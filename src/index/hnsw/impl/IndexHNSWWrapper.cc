@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <memory>
 
+#include "index/hnsw/impl/DummyVisitor.h"
 #include "index/hnsw/impl/FederVisitor.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/bitsetview_idselector.h"
@@ -51,21 +52,6 @@ storage_distance_computer(const faiss::Index* storage) {
         return storage->get_distance_computer();
     }
 }
-
-// a visitor that does nothing
-struct DummyVisitor {
-    using storage_idx_t = faiss::HNSW::storage_idx_t;
-
-    void
-    visit_level(const int level) {
-        // does nothing
-    }
-
-    void
-    visit_edge(const int level, const storage_idx_t node_from, const storage_idx_t node_to, const float distance) {
-        // does nothing
-    }
-};
 
 }  // namespace
 

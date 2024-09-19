@@ -9,10 +9,15 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <faiss/cppcontrib/knowhere/impl/CountSizeIOWriter.h>
+#include <faiss/cppcontrib/knowhere/impl/HnswSearcher.h>
+#include <faiss/cppcontrib/knowhere/utils/Bitset.h>
 #include <faiss/utils/Heap.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -27,6 +32,8 @@
 #include "faiss/impl/ScalarQuantizer.h"
 #include "faiss/index_io.h"
 #include "index/hnsw/faiss_hnsw_config.h"
+#include "index/hnsw/impl/DummyVisitor.h"
+#include "index/hnsw/impl/FederVisitor.h"
 #include "index/hnsw/impl/IndexBruteForceWrapper.h"
 #include "index/hnsw/impl/IndexHNSWWrapper.h"
 #include "index/hnsw/impl/IndexWrapperCosine.h"
@@ -48,6 +55,14 @@
 #endif
 
 namespace knowhere {
+
+namespace {
+
+constexpr float kHnswSearchKnnBFFilterThreshold = 0.93f;
+// constexpr float kHnswSearchRangeBFFilterThreshold = 0.97f;
+constexpr float kHnswSearchBFTopkThreshold = 0.5f;
+
+}  // namespace
 
 //
 class BaseFaissIndexNode : public IndexNode {
@@ -113,12 +128,6 @@ class BaseFaissIndexNode : public IndexNode {
         }
 
         return tryObj.value();
-    }
-
-    int64_t
-    Size() const override {
-        // todo
-        return 0;
     }
 
     expected<DataSetPtr>
@@ -227,8 +236,24 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
         return index->ntotal;
     }
 
+    int64_t
+    Size() const override {
+        if (index == nullptr) {
+            return 0;
+        }
+
+        // a temporary yet expensive workaround
+        faiss::cppcontrib::knowhere::CountSizeIOWriter writer;
+        faiss::write_index(index.get(), &writer);
+
+        // todo
+        return writer.total_size;
+    }
+
  protected:
-    std::unique_ptr<faiss::Index> index;
+    // it is std::shared_ptr, not std::unique_ptr, because it can be
+    //    shared with FaissHnswIterator
+    std::shared_ptr<faiss::Index> index;
 
     Status
     AddInternal(const DataSetPtr dataset, const Config&) override {
@@ -419,7 +444,297 @@ get_index_data_format(const faiss::Index* index) {
     return std::nullopt;
 }
 
+// cloned from IndexHNSW.cpp
+faiss::DistanceComputer*
+storage_distance_computer(const faiss::Index* storage) {
+    if (faiss::is_similarity_metric(storage->metric_type)) {
+        return new faiss::NegativeDistanceComputer(storage->get_distance_computer());
+    } else {
+        return storage->get_distance_computer();
+    }
+}
+
 }  // namespace
+
+// Contains an iterator state
+struct FaissHnswIteratorWorkspace {
+    // hnsw.
+    // this pointer is not owned.
+    const faiss::HNSW* hnsw = nullptr;
+
+    // nodes that we've already visited
+    faiss::cppcontrib::knowhere::Bitset visited_nodes;
+
+    // Computes distances.
+    //   This needs to be wrapped with a sign change.
+    std::unique_ptr<faiss::DistanceComputer> qdis;
+    // Computes refine distances (if refine is available).
+    //   This DOES NOT need to be wrapped with a sign change
+    std::unique_ptr<faiss::DistanceComputer> qdis_refine;
+
+    // for filtering out nodes
+    BitsetView bitset;
+
+    // accumulated alpha
+    float accumulated_alpha = 0;
+
+    // visitor
+    DummyVisitor graph_visitor;
+
+    // faiss hnsw search params (such as ef)
+    faiss::SearchParametersHNSW search_params;
+
+    // the query
+    std::unique_ptr<uint8_t[]> query;
+
+    // whether the initial search is done or not.
+    // basically, upon initialization, we need to traverse to the largest
+    //   hnsw layer.
+    bool initial_search_done = false;
+
+    // accumulated elements
+    std::vector<DistId> dists;
+
+    // TODO test for memory usage of this heap and add a metric monitoring it.
+    faiss::cppcontrib::knowhere::IteratorMinHeap to_visit;
+};
+
+// Contains an iterator logic
+class FaissHnswIterator : public IndexIterator {
+ public:
+    FaissHnswIterator(const std::shared_ptr<faiss::Index>& index_in, std::unique_ptr<uint8_t[]>&& query_in,
+                      const BitsetView& bitset_in, const int32_t ef_in, bool larger_is_closer,
+                      const float refine_ratio = 0.5f)
+        : IndexIterator(larger_is_closer, refine_ratio), index{index_in} {
+        //
+        workspace.accumulated_alpha = (bitset_in.count() >= (index->ntotal * kHnswSearchKnnBFFilterThreshold))
+                                          ? std::numeric_limits<float>::max()
+                                          : 1.0f;
+
+        // set up a visitor
+        workspace.graph_visitor = DummyVisitor();
+
+        // A note about the sign of the result.
+        // Our infra is build on structures that track elements with min distance.
+        //   So, we multiply distances to (-1) if we need to track max distance,
+        //   such as COSINE or IP distances. And, of course, we'll need to multiply
+        //   to (-1) again after we're done.
+
+        // TODO: upgrade to refine options && cosine
+        const faiss::IndexRefine* index_refine = dynamic_cast<const faiss::IndexRefine*>(index.get());
+        if (index_refine != nullptr) {
+            const faiss::IndexHNSW* index_hnsw = dynamic_cast<const faiss::IndexHNSW*>(index_refine->base_index);
+            if (index_hnsw == nullptr) {
+                // todo: turn constructor into a factory method
+                throw;
+            }
+
+            workspace.hnsw = &index_hnsw->hnsw;
+
+            // wrap a sign, if needed
+            workspace.qdis = std::unique_ptr<faiss::DistanceComputer>(storage_distance_computer(index_hnsw));
+
+            // a tricky point here.
+            // Basically, if out hnsw index's storage is HasInverseL2Norms, then
+            //   this is a cosine index. But because refine always keeps original
+            //   data, then we need to use a wrapper over a distance computer
+            const faiss::HasInverseL2Norms* has_l2_norms =
+                dynamic_cast<const faiss::HasInverseL2Norms*>(index_hnsw->storage);
+            if (has_l2_norms != nullptr) {
+                // add a cosine wrapper over it
+                // DO NOT WRAP A SIGN, by design
+                workspace.qdis_refine =
+                    std::unique_ptr<faiss::DistanceComputer>(new faiss::WithCosineNormDistanceComputer(
+                        has_l2_norms->get_inverse_l2_norms(), index->d,
+                        std::unique_ptr<faiss::DistanceComputer>(index_refine->refine_index->get_distance_computer())));
+            } else {
+                // use it as is
+                // DO NOT WRAP A SIGN, by design
+                workspace.qdis_refine =
+                    std::unique_ptr<faiss::DistanceComputer>(index_refine->refine_index->get_distance_computer());
+            }
+        } else {
+            const faiss::IndexHNSW* index_hnsw = dynamic_cast<const faiss::IndexHNSW*>(index.get());
+            if (index_hnsw == nullptr) {
+                // todo: turn constructor into a factory method
+                throw;
+            }
+
+            workspace.hnsw = &index_hnsw->hnsw;
+
+            // wrap a sign, if needed
+            workspace.qdis = std::unique_ptr<faiss::DistanceComputer>(storage_distance_computer(index_hnsw));
+        }
+
+        // set query
+        workspace.qdis->set_query(reinterpret_cast<const float*>(query_in.get()));
+
+        if (workspace.qdis_refine != nullptr) {
+            workspace.qdis_refine->set_query(reinterpret_cast<const float*>(query_in.get()));
+        }
+
+        // set up a buffer that tracks visited points
+        workspace.visited_nodes = faiss::cppcontrib::knowhere::Bitset::create_cleared(index->ntotal);
+
+        workspace.search_params.efSearch = ef_in;
+        // no need to set this one, use bitsetview directly
+        workspace.search_params.sel = nullptr;
+
+        // set up a bitset for filtering database points that we traverse
+        workspace.bitset = bitset_in;
+
+        // initial search starts as 'not done'
+        workspace.initial_search_done = false;
+
+        // save a query
+        workspace.query = std::move(query_in);
+    }
+
+ protected:
+    template <typename FilterT>
+    void
+    next_batch(std::function<void(const std::vector<DistId>&)> batch_handler, FilterT& filter) {
+        //
+        using searcher_type =
+            faiss::cppcontrib::knowhere::v2_hnsw_searcher<faiss::DistanceComputer, DummyVisitor,
+                                                          faiss::cppcontrib::knowhere::Bitset, FilterT>;
+
+        using storage_idx_t = typename searcher_type::storage_idx_t;
+        using idx_t = typename searcher_type::idx_t;
+
+        searcher_type searcher(*workspace.hnsw, *workspace.qdis, workspace.graph_visitor, workspace.visited_nodes,
+                               filter, 1.0f, &workspace.search_params);
+
+        // whether to track hnsw stats
+        constexpr bool track_hnsw_stats = true;
+
+        // accumulate elements for a new batch?
+        if (!workspace.initial_search_done) {
+            // yes
+            faiss::HNSWStats stats;
+
+            // is the graph empty?
+            if (searcher.hnsw.entry_point != -1) {
+                // not empty
+
+                // perform a search starting from the initial point
+                storage_idx_t nearest = searcher.hnsw.entry_point;
+                float d_nearest = searcher.qdis(nearest);
+
+                // iterate through upper levels
+                faiss::HNSWStats bottom_levels_stats = searcher.greedy_search_top_levels(nearest, d_nearest);
+
+                // update stats
+                if (track_hnsw_stats) {
+                    stats.combine(bottom_levels_stats);
+                }
+
+                //
+                searcher.graph_visitor.visit_level(0);
+
+                // initialize the container for candidates
+                const idx_t n_candidates = workspace.search_params.efSearch;
+                faiss::cppcontrib::knowhere::NeighborSetDoublePopList retset(n_candidates);
+
+                // initialize retset with a single 'nearest' point
+                {
+                    if (!searcher.filter.is_member(nearest)) {
+                        retset.insert(faiss::cppcontrib::knowhere::Neighbor(
+                            nearest, d_nearest, faiss::cppcontrib::knowhere::Neighbor::kInvalid));
+                    } else {
+                        retset.insert(faiss::cppcontrib::knowhere::Neighbor(
+                            nearest, d_nearest, faiss::cppcontrib::knowhere::Neighbor::kValid));
+                    }
+
+                    searcher.visited_nodes[nearest] = true;
+                }
+
+                // perform the search of the level 0.
+                faiss::HNSWStats local_stats =
+                    searcher.search_on_a_level(retset, 0, &workspace.to_visit, workspace.accumulated_alpha);
+                if (track_hnsw_stats) {
+                    stats.combine(local_stats);
+                }
+
+                // populate the result
+                workspace.dists.reserve(retset.size());
+                for (size_t i = 0; i < retset.size(); i++) {
+                    workspace.dists.emplace_back(retset[i].id, retset[i].distance);
+                }
+            }
+
+            workspace.initial_search_done = true;
+        } else {
+            // the initial batch is accumulated
+
+            workspace.dists.clear();
+
+            // TODO: currently each time iterator.Next() is called, we return 1 result but adds more than 1 results to
+            // to_visit. Consider limit the size of visit by searching 1 step only after several Next() calls. Careful:
+            // how does such strategy affect the correctness of the search?
+            faiss::cppcontrib::knowhere::IteratorMinHeap* to_visit_ptr = &workspace.to_visit;
+
+            while (!to_visit_ptr->empty()) {
+                auto top = to_visit_ptr->top();
+                to_visit_ptr->pop();
+
+                auto add_search_candidate = [to_visit_ptr](auto neighbor) {
+                    to_visit_ptr->push(neighbor);
+                    return true;
+                };
+
+                searcher.evaluate_single_node(top.id, 0, workspace.accumulated_alpha, add_search_candidate);
+
+                if (searcher.filter.is_member(top.id)) {
+                    workspace.dists.emplace_back(top.id, top.distance);
+                    break;
+                }
+            }
+        }
+
+        // Multiply distances to (-1) in case of IP and COSINE distances,
+        //   because workspace.qdis() does so.
+        // We need to ensure that we pass positive distances into batch_handler(),
+        //   thus we need to negate the sign from workspace.qdis().
+        if (faiss::is_similarity_metric(index->metric_type)) {
+            for (auto& p : workspace.dists) {
+                p.val = -p.val;
+            }
+        }
+
+        // pass back to the handler
+        batch_handler(workspace.dists);
+
+        // clear the current batch of processed elements
+        workspace.dists.clear();
+    }
+
+    void
+    next_batch(std::function<void(const std::vector<DistId>&)> batch_handler) override {
+        if (workspace.bitset.empty()) {
+            using filter_type = faiss::IDSelectorAll;
+            filter_type sel;
+
+            next_batch(batch_handler, sel);
+        } else {
+            using filter_type = knowhere::BitsetViewIDSelector;
+            filter_type sel(workspace.bitset);
+
+            next_batch(batch_handler, sel);
+        }
+    }
+
+    float
+    raw_distance(int64_t id) override {
+        const float refined_distance = workspace.qdis_refine->operator()(id);
+        return refined_distance;
+    }
+
+ private:
+    std::shared_ptr<faiss::Index> index;
+
+    FaissHnswIteratorWorkspace workspace;
+};
 
 //
 class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
@@ -731,10 +1046,6 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     //   extremely high filtering levels.
     bool
     WhetherPerformBruteForceSearch(const BaseConfig& cfg, const BitsetView& bitset) const {
-        constexpr float kHnswSearchKnnBFFilterThreshold = 0.93f;
-        // constexpr float kHnswSearchRangeBFFilterThreshold = 0.97f;
-        constexpr float kHnswSearchBFTopkThreshold = 0.5f;
-
         auto k = cfg.k.value();
 
         if (k >= (index->ntotal * kHnswSearchBFTopkThreshold)) {
@@ -823,6 +1134,147 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         // done
         return index_to_reconstruct_from;
+    }
+
+ public:
+    //
+    expected<std::vector<IndexNode::IteratorPtr>>
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+        if (index == nullptr) {
+            LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
+            return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "index not loaded");
+        }
+
+        // parse parameters
+        const auto dim = dataset->GetDim();
+        const auto n_queries = dataset->GetRows();
+        const auto data = dataset->GetTensor();
+
+        auto vec = std::vector<IndexNode::IteratorPtr>(n_queries, nullptr);
+
+        const FaissHnswConfig& hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
+        const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), knowhere::metric::COSINE);
+        const bool larger_is_closer = (IsMetricType(hnsw_cfg.metric_type.value(), knowhere::metric::IP) || is_cosine);
+
+        const auto ef = hnsw_cfg.ef.value_or(kIteratorSeedEf);
+
+        try {
+            std::vector<folly::Future<folly::Unit>> futs;
+            futs.reserve(n_queries);
+            for (int64_t i = 0; i < n_queries; i++) {
+                futs.emplace_back(search_pool->push([&, idx = i] {
+                    // The query data is always cloned
+                    std::unique_ptr<uint8_t[]> cur_query;
+
+                    if (data_format == DataFormatEnum::fp32) {
+                        cur_query = std::make_unique<uint8_t[]>(dim * sizeof(float));
+                        std::copy_n(reinterpret_cast<const uint8_t*>(reinterpret_cast<const float*>(data) + idx * dim),
+                                    dim * sizeof(float), cur_query.get());
+                    } else if (data_format == DataFormatEnum::fp16) {
+                        cur_query = std::make_unique<uint8_t[]>(dim * sizeof(knowhere::fp16));
+                        std::copy_n(
+                            reinterpret_cast<const uint8_t*>(reinterpret_cast<const knowhere::fp16*>(data) + idx * dim),
+                            dim * sizeof(knowhere::fp16), cur_query.get());
+                    } else if (data_format == DataFormatEnum::bf16) {
+                        cur_query = std::make_unique<uint8_t[]>(dim * sizeof(knowhere::bf16));
+                        std::copy_n(
+                            reinterpret_cast<const uint8_t*>(reinterpret_cast<const knowhere::bf16*>(data) + idx * dim),
+                            dim * sizeof(knowhere::bf16), cur_query.get());
+                    } else {
+                        // invalid one
+                        throw;
+                    }
+
+                    //
+                    const float iterator_refine_ratio =
+                        (dynamic_cast<const faiss::IndexRefine*>(index.get()) != nullptr)
+                            ? hnsw_cfg.iterator_refine_ratio.value_or(0.5)
+                            : 0;
+
+                    // create an iterator and initialize it
+                    auto it =
+                        std::make_shared<FaissHnswIterator>(index, std::move(cur_query), bitset, ef, larger_is_closer,
+                                                            // // refine is not needed for flat
+                                                            // hnsw_cfg.iterator_refine_ratio.value_or(0.5f)
+                                                            iterator_refine_ratio);
+
+                    it->initialize();
+
+                    // store
+                    vec[idx] = it;
+                }));
+            }
+
+            // wait for the completion
+            WaitAllSuccess(futs);
+
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+            return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::faiss_inner_error, e.what());
+        }
+        return vec;
+
+        /*
+                // serial code for debugging
+                for (int64_t idx = 0; idx < n_queries; idx++) {
+                    // The query data is always cloned
+                    std::unique_ptr<uint8_t[]> cur_query;
+
+                    if (data_format == DataFormatEnum::fp32) {
+                        cur_query = std::make_unique<uint8_t[]>(dim * sizeof(float));
+                        std::copy_n(
+                            reinterpret_cast<const uint8_t*>(
+                                reinterpret_cast<const float*>(data) + idx * dim),
+                            dim * sizeof(float),
+                            cur_query.get()
+                        );
+                    } else if (data_format == DataFormatEnum::fp16) {
+                        cur_query = std::make_unique<uint8_t[]>(dim * sizeof(knowhere::fp16));
+                        std::copy_n(
+                            reinterpret_cast<const uint8_t*>(
+                                reinterpret_cast<const knowhere::fp16*>(data) + idx * dim),
+                            dim * sizeof(knowhere::fp16),
+                            cur_query.get()
+                        );
+                    } else if (data_format == DataFormatEnum::bf16) {
+                        cur_query = std::make_unique<uint8_t[]>(dim * sizeof(knowhere::bf16));
+                        std::copy_n(
+                            reinterpret_cast<const uint8_t*>(
+                                reinterpret_cast<const knowhere::bf16*>(data) + idx * dim),
+                            dim * sizeof(knowhere::bf16),
+                            cur_query.get()
+                        );
+                    } else {
+                        // invalid one
+                        throw;
+                    }
+
+                    //
+                    const float iterator_refine_ratio =
+                        (dynamic_cast<const faiss::IndexRefine*>(index.get()) != nullptr)
+                            ? hnsw_cfg.iterator_refine_ratio.value_or(0.5)
+                            : 0;
+
+                    // create an iterator and initialize it
+                    auto it = std::make_shared<FaissHnswIterator>(
+                        index,
+                        std::move(cur_query),
+                        bitset,
+                        ef,
+                        larger_is_closer,
+                        // // refine is not needed for flat
+                        // hnsw_cfg.iterator_refine_ratio.value_or(0.5f)
+                        iterator_refine_ratio
+                    );
+
+                    it->initialize();
+
+                    // store
+                    vec[idx] = it;
+                }
+
+                return vec;
+        */
     }
 };
 
@@ -940,6 +1392,42 @@ get_sq_quantizer_type(const std::string& sq_type) {
 
     return itr->second;
 }
+
+/*
+// checks whether an index contains a refiner, suitable for a given data format
+std::optional<bool> whether_refine_is_datatype(
+    const faiss::Index* index,
+    const DataFormatEnum data_format
+) {
+    if (index == nullptr) {
+        return {};
+    }
+
+    const faiss::IndexRefine* const index_refine = dynamic_cast<const faiss::IndexRefine*>(index);
+    if (index_refine == nullptr) {
+        return false;
+    }
+
+    switch(data_format) {
+        case DataFormatEnum::fp32:
+            return (dynamic_cast<const faiss::IndexFlat*>(index_refine->refine_index) != nullptr);
+        case DataFormatEnum::fp16:
+            {
+                const auto* const index_sq = dynamic_cast<const
+faiss::IndexScalarQuantizer*>(index_refine->refine_index); return (index_sq != nullptr && index_sq->sq.qtype ==
+faiss::ScalarQuantizer::QT_fp16);
+            }
+        case DataFormatEnum::bf16:
+            {
+                const auto* const index_sq = dynamic_cast<const
+faiss::IndexScalarQuantizer*>(index_refine->refine_index); return (index_sq != nullptr && index_sq->sq.qtype ==
+faiss::ScalarQuantizer::QT_bf16);
+            }
+        default:
+            return {};
+    }
+}
+*/
 
 expected<bool>
 is_flat_refine(const std::optional<std::string>& refine_type) {
