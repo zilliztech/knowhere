@@ -92,6 +92,7 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
+    // LCOV_EXCL_START
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (b_cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(b_cfg.trace_id.value());
@@ -105,6 +106,7 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
         span->SetAttribute(meta::DIM, Dim());
         span->SetAttribute(meta::NQ, dataset->GetRows());
     }
+    // LCOV_EXCL_STOP
 
     TimeRecorder rc("Search");
     bool has_trace_id = b_cfg.trace_id.has_value();
@@ -115,9 +117,11 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
     knowhere_search_latency.Observe(time);
     knowhere_search_topk.Observe(k);
 
+    // LCOV_EXCL_START
     if (has_trace_id) {
         span->End();
     }
+    // LCOV_EXCL_STOP
 #else
     auto res = this->node->Search(dataset, std::move(cfg), bitset);
 #endif
@@ -183,6 +187,7 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
+    // LCOV_EXCL_START
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (b_cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(b_cfg.trace_id.value());
@@ -199,6 +204,7 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
         span->SetAttribute(meta::DIM, Dim());
         span->SetAttribute(meta::NQ, dataset->GetRows());
     }
+    // LCOV_EXCL_STOP
 
     TimeRecorder rc("Range Search");
     bool has_trace_id = b_cfg.trace_id.has_value();
@@ -207,9 +213,11 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
     time *= 0.001;  // convert to ms
     knowhere_range_search_latency.Observe(time);
 
+    // LCOV_EXCL_START
     if (has_trace_id) {
         span->End();
     }
+    // LCOV_EXCL_STOP
 #else
     auto res = this->node->RangeSearch(dataset, std::move(cfg), bitset);
 #endif
