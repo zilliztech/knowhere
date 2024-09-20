@@ -674,7 +674,25 @@ void OnDiskInvertedLists::set_all_lists_sizes(const size_t* sizes) {
     for (size_t i = 0; i < nlist; i++) {
         lists[i].offset = ofs;
         lists[i].capacity = lists[i].size = sizes[i];
-        ofs += sizes[i] * (sizeof(idx_t) + code_size);
+        if (this->with_norm) {
+            ofs += sizes[i] * (sizeof(idx_t) + code_size + sizeof(float));
+        } else {
+            ofs += sizes[i] * (sizeof(idx_t) + code_size);
+        }
+    }
+}
+
+const float* OnDiskInvertedLists::get_code_norms(
+        size_t list_no,
+        size_t /*offset*/) const {
+    if (with_norm) {
+        if (lists[list_no].offset == INVALID_OFFSET) {
+            return nullptr;
+        }
+        return (const float*)(ptr + lists[list_no].offset +
+                            (code_size + sizeof(idx_t)) * lists[list_no].capacity);
+    } else {
+        return nullptr;
     }
 }
 
@@ -761,7 +779,7 @@ InvertedLists* OnDiskInvertedListsIOHook::read(IOReader* f, int io_flags)
 /** read from a ArrayInvertedLists into this invertedlist type */
 InvertedLists* OnDiskInvertedListsIOHook::read_ArrayInvertedLists(
         IOReader* f,
-        int /* io_flags */,
+        int io_flags,
         size_t nlist,
         size_t code_size,
         const std::vector<size_t>& sizes) const {
@@ -769,6 +787,7 @@ InvertedLists* OnDiskInvertedListsIOHook::read_ArrayInvertedLists(
     ails->nlist = nlist;
     ails->code_size = code_size;
     ails->read_only = true;
+    ails->with_norm = io_flags & IO_FLAG_WITH_NORM;
     ails->lists.resize(nlist);
 
     FileIOReader* reader = dynamic_cast<FileIOReader*>(f);
@@ -798,7 +817,11 @@ InvertedLists* OnDiskInvertedListsIOHook::read_ArrayInvertedLists(
         OnDiskInvertedLists::List& l = ails->lists[i];
         l.size = l.capacity = sizes[i];
         l.offset = o;
-        o += l.size * (sizeof(idx_t) + ails->code_size);
+        if (ails->with_norm) {
+            o += l.size * (sizeof(idx_t) + ails->code_size + sizeof(float));
+        } else {
+            o += l.size * (sizeof(idx_t) + ails->code_size);
+        }
     }
     // resume normal reading of file
     fseek(fdesc, o, SEEK_SET);

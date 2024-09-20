@@ -27,6 +27,7 @@
 namespace {
 constexpr float kKnnRecallThreshold = 0.6f;
 constexpr float kBruteForceRecallThreshold = 0.95f;
+constexpr const char* kMmapIndexPath = "/tmp/knowhere_dense_mmap_index_test";
 }  // namespace
 
 TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
@@ -166,48 +167,80 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ8, hnsw_gen),
         }));
-        auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
-        if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN) {
-            // need to check cpu model for scann
-            if (!faiss::support_pq_fast_scan) {
-                REQUIRE(idx_expected.error() == knowhere::Status::invalid_index_error);
-                return;
-            }
-        }
-        auto idx = idx_expected.value();
-        auto cfg_json = gen().dump();
-        CAPTURE(name, cfg_json);
-        knowhere::Json json = knowhere::Json::parse(cfg_json);
-        REQUIRE(idx.Type() == name);
-        REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
-        REQUIRE(idx.Size() > 0);
-        REQUIRE(idx.Count() == nb);
-
         knowhere::BinarySet bs;
-        REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
-        REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
-        // TODO: qianya (IVFSQ_CC deserialize casted from the IVFSQ directly, which will cause the hasRawData reference
-        // to an uncertain address)
-        if (name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC) {
-            REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
-                    knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
-        }
-
-        auto results = idx.Search(query_ds, json, nullptr);
-        REQUIRE(results.has_value());
-        float recall = GetKNNRecall(*gt.value(), *results.value());
-        bool scann_without_raw_data =
-            (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && scann_gen2().dump() == cfg_json);
-        if (name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ && !scann_without_raw_data) {
-            REQUIRE(recall > kKnnRecallThreshold);
-        }
-
-        if (metric == knowhere::metric::COSINE) {
-            if (name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ8 && name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ &&
-                name != knowhere::IndexEnum::INDEX_HNSW_SQ8 && name != knowhere::IndexEnum::INDEX_HNSW_SQ8_REFINE &&
-                name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC && !scann_without_raw_data) {
-                REQUIRE(CheckDistanceInScope(*results.value(), topk, -1.00001, 1.00001));
+        // build process
+        {
+            auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+            if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN) {
+                // need to check cpu model for scann
+                if (!faiss::support_pq_fast_scan) {
+                    REQUIRE(idx_expected.error() == knowhere::Status::invalid_index_error);
+                    return;
+                }
             }
+            auto idx = idx_expected.value();
+            auto cfg_json = gen().dump();
+            CAPTURE(name, cfg_json);
+            knowhere::Json json = knowhere::Json::parse(cfg_json);
+            REQUIRE(idx.Type() == name);
+            REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
+            REQUIRE(idx.Size() > 0);
+            REQUIRE(idx.Count() == nb);
+
+            REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
+        }
+        // search process
+        auto load_with_mmap = GENERATE(as<bool>{}, true, false);
+        {
+            auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+            auto idx = idx_expected.value();
+            auto cfg_json = gen().dump();
+            CAPTURE(name, cfg_json);
+            knowhere::Json json = knowhere::Json::parse(cfg_json);
+            // TODO: qianya(DeserializeFromFile need raw data path. Next pr will remove raw data in ivf sq cc index, and
+            // use a knowhere struct to maintain raw data)
+            if (load_with_mmap && knowhere::KnowhereCheck::SupportMmapIndexTypeCheck(name) &&
+                name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC) {
+                auto binary = bs.GetByName(idx.Type());
+                auto data = binary->data.get();
+                auto size = binary->size;
+                std::remove(kMmapIndexPath);
+                std::ofstream out(kMmapIndexPath, std::ios::binary);
+                out.write((const char*)data, size);
+                out.close();
+                json["enable_mmap"] = true;
+                REQUIRE(idx.DeserializeFromFile(kMmapIndexPath, json) == knowhere::Status::success);
+            } else {
+                REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
+            }
+
+            // TODO: qianya (IVFSQ_CC deserialize casted from the IVFSQ directly, which will cause the hasRawData
+            // reference to an uncertain address)
+            if (name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC) {
+                REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
+                        knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
+            }
+
+            auto results = idx.Search(query_ds, json, nullptr);
+            REQUIRE(results.has_value());
+            float recall = GetKNNRecall(*gt.value(), *results.value());
+            bool scann_without_raw_data =
+                (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && scann_gen2().dump() == cfg_json);
+            if (name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ && !scann_without_raw_data) {
+                REQUIRE(recall > kKnnRecallThreshold);
+            }
+
+            if (metric == knowhere::metric::COSINE) {
+                if (name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ8 && name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ &&
+                    name != knowhere::IndexEnum::INDEX_HNSW_SQ8 && name != knowhere::IndexEnum::INDEX_HNSW_SQ8_REFINE &&
+                    name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC && !scann_without_raw_data) {
+                    REQUIRE(CheckDistanceInScope(*results.value(), topk, -1.00001, 1.00001));
+                }
+            }
+        }
+        if (load_with_mmap && knowhere::KnowhereCheck::SupportMmapIndexTypeCheck(name) &&
+            name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC) {
+            std::remove(kMmapIndexPath);
         }
     }
 

@@ -77,6 +77,7 @@ struct OnDiskInvertedLists : InvertedLists {
     size_t totsize;
     uint8_t* ptr;   // mmap base pointer
     bool read_only; /// are inverted lists mapped read-only
+    bool with_norm = false;
 
     OnDiskInvertedLists(size_t nlist, size_t code_size, const char* filename);
 
@@ -138,6 +139,8 @@ struct OnDiskInvertedLists : InvertedLists {
 
     // empty constructor for the I/O functions
     OnDiskInvertedLists();
+
+    const float* get_code_norms(size_t list_no, size_t offset) const override;
 };
 
 struct OnDiskInvertedListsIOHook : InvertedListsIOHook {
