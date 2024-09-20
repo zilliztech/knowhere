@@ -83,6 +83,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+    // LCOV_EXCL_START
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
@@ -96,6 +97,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
         span->SetAttribute(meta::DIM, dim);
         span->SetAttribute(meta::NQ, nq);
     }
+    // LCOV_EXCL_STOP
 #endif
 
     std::string metric_str = cfg.metric_type.value();
@@ -180,9 +182,11 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     auto res = GenResultDataSet(nq, cfg.k.value(), std::move(labels), std::move(distances));
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+    // LCOV_EXCL_START
     if (cfg.trace_id.has_value()) {
         span->End();
     }
+    // LCOV_EXCL_STOP
 #endif
 
     return res;
@@ -206,6 +210,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     RETURN_IF_ERROR(Config::Load(cfg, config, knowhere::SEARCH));
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+    // LCOV_EXCL_START
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
@@ -219,6 +224,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
         span->SetAttribute(meta::DIM, dim);
         span->SetAttribute(meta::NQ, nq);
     }
+    // LCOV_EXCL_STOP
 #endif
 
     std::string metric_str = cfg.metric_type.value();
@@ -299,9 +305,11 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     RETURN_IF_ERROR(WaitAllSuccess(futs));
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+    // LCOV_EXCL_START
     if (cfg.trace_id.has_value()) {
         span->End();
     }
+    // LCOV_EXCL_STOP
 #endif
 
     return Status::success;
@@ -335,6 +343,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+    // LCOV_EXCL_START
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
@@ -351,6 +360,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
         span->SetAttribute(meta::DIM, dim);
         span->SetAttribute(meta::NQ, nq);
     }
+    // LCOV_EXCL_STOP
 #endif
 
     std::string metric_str = cfg.metric_type.value();
@@ -478,9 +488,11 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     auto res = GenResultDataSet(nq, std::move(range_search_result));
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+    // LCOV_EXCL_START
     if (cfg.trace_id.has_value()) {
         span->End();
     }
+    // LCOV_EXCL_STOP
 #endif
 
     return res;
@@ -505,6 +517,7 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
     }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+    // LCOV_EXCL_START
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
@@ -518,6 +531,7 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
         span->SetAttribute(meta::DIM, dim);
         span->SetAttribute(meta::NQ, nq);
     }
+    // LCOV_EXCL_STOP
 #endif
 
     std::string metric_str = cfg.metric_type.value();
@@ -573,9 +587,11 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
     WaitAllSuccess(futs);
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+    // LCOV_EXCL_START
     if (cfg.trace_id.has_value()) {
         span->End();
     }
+    // LCOV_EXCL_STOP
 #endif
 
     return Status::success;
@@ -626,6 +642,7 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
     }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+    // LCOV_EXCL_START
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
@@ -638,6 +655,7 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
         span->SetAttribute(meta::DIM, dim);
         span->SetAttribute(meta::NQ, nq);
     }
+    // LCOV_EXCL_STOP
 #endif
     faiss::MetricType faiss_metric_type = result.value();
     bool is_cosine = IsMetricType(metric_str, metric::COSINE);
@@ -691,9 +709,11 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
     }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+    // LCOV_EXCL_START
     if (cfg.trace_id.has_value()) {
         span->End();
     }
+    // LCOV_EXCL_STOP
 #endif
     return vec;
 }
@@ -722,6 +742,7 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
     std::string metric_str = cfg.metric_type.value();
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+    // LCOV_EXCL_START
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
@@ -734,6 +755,7 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
         span->SetAttribute(meta::DIM, dim);
         span->SetAttribute(meta::NQ, nq);
     }
+    // LCOV_EXCL_STOP
 #endif
 
     const bool is_bm25 = IsMetricType(metric_str, metric::BM25);
@@ -776,9 +798,11 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
     WaitAllSuccess(futs);
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+    // LCOV_EXCL_START
     if (cfg.trace_id.has_value()) {
         span->End();
     }
+    // LCOV_EXCL_STOP
 #endif
 
     return vec;
