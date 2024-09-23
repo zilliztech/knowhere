@@ -27,6 +27,9 @@
 #include "knowhere/index/index_factory.h"
 #include "knowhere/version.h"
 
+static const size_t default_build_thread_num = 8;
+static const size_t default_search_thread_num = 8;
+
 namespace fs = std::filesystem;
 std::string kDir = fs::current_path().string() + "/diskann_test";
 std::string kRawDataPath = kDir + "/raw_data";

@@ -277,7 +277,10 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         load_hdf5_data<false>();
 
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
-        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AUTO);
+        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);
+        knowhere::KnowhereConfig::SetBuildThreadPoolSize(default_build_thread_num);
+        knowhere::KnowhereConfig::SetSearchThreadPoolSize(default_search_thread_num);
+        printf("faiss::distance_compute_blas_threshold: %ld\n", knowhere::KnowhereConfig::GetBlasThreshold());
 #ifdef KNOWHERE_WITH_GPU
         knowhere::KnowhereConfig::InitGPUResource(GPU_DEVICE_ID, 2);
         cfg_[knowhere::meta::DEVICE_ID] = GPU_DEVICE_ID;

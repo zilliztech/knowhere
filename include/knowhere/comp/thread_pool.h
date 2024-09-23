@@ -245,30 +245,39 @@ class ThreadPool {
         return search_pool_;
     }
 
-    class ScopedOmpSetter {
+    class ScopedBuildOmpSetter {
         int omp_before;
 #ifdef OPENBLAS_OS_LINUX
         int blas_thread_before;
 #endif
      public:
-        explicit ScopedOmpSetter(int num_threads = 1) {
-            if (num_threads <= 0) {
-                return;
-            }
-
+        explicit ScopedBuildOmpSetter(int num_threads = 0) {
             omp_before = (build_pool_ ? build_pool_->size() : omp_get_max_threads());
 #ifdef OPENBLAS_OS_LINUX
+            // to avoid thread spawn when IVF_PQ build
             blas_thread_before = openblas_get_num_threads();
-            openblas_set_num_threads(num_threads);
+            openblas_set_num_threads(1);
 #endif
-
-            omp_set_num_threads(num_threads);
+            omp_set_num_threads(num_threads <= 0 ? omp_before : num_threads);
         }
-        ~ScopedOmpSetter() {
+        ~ScopedBuildOmpSetter() {
             omp_set_num_threads(omp_before);
 #ifdef OPENBLAS_OS_LINUX
             openblas_set_num_threads(blas_thread_before);
 #endif
+        }
+    };
+
+    class ScopedSearchOmpSetter {
+        int omp_before;
+
+     public:
+        explicit ScopedSearchOmpSetter(int num_threads = 1) {
+            omp_before = (search_pool_ ? search_pool_->size() : omp_get_max_threads());
+            omp_set_num_threads(num_threads <= 0 ? omp_before : num_threads);
+        }
+        ~ScopedSearchOmpSetter() {
+            omp_set_num_threads(omp_before);
         }
     };
 

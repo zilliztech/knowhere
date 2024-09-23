@@ -91,7 +91,7 @@ class FlatIndexNode : public IndexNode {
             futs.reserve(nq);
             for (int i = 0; i < nq; ++i) {
                 futs.emplace_back(search_pool_->push([&, index = i] {
-                    ThreadPool::ScopedOmpSetter setter(1);
+                    ThreadPool::ScopedSearchOmpSetter setter(1);
                     auto cur_ids = ids + k * index;
                     auto cur_dis = distances + k * index;
 
@@ -167,7 +167,7 @@ class FlatIndexNode : public IndexNode {
             futs.reserve(nq);
             for (int i = 0; i < nq; ++i) {
                 futs.emplace_back(search_pool_->push([&, index = i] {
-                    ThreadPool::ScopedOmpSetter setter(1);
+                    ThreadPool::ScopedSearchOmpSetter setter(1);
                     faiss::RangeSearchResult res(1);
 
                     BitsetViewIDSelector bw_idselector(bitset);

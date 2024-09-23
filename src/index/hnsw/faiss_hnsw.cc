@@ -80,19 +80,18 @@ class BaseFaissIndexNode : public IndexNode {
 
         // use build_pool_ to make sure the OMP threads spawned by index_->train etc
         // can inherit the low nice value of threads in build_pool_.
-        auto tryObj = build_pool
-                          ->push([&] {
-                              std::unique_ptr<ThreadPool::ScopedOmpSetter> setter;
-                              if (base_cfg.num_build_thread.has_value()) {
-                                  setter =
-                                      std::make_unique<ThreadPool::ScopedOmpSetter>(base_cfg.num_build_thread.value());
-                              } else {
-                                  setter = std::make_unique<ThreadPool::ScopedOmpSetter>();
-                              }
-
-                              return TrainInternal(dataset, *cfg);
-                          })
-                          .getTry();
+        auto tryObj =
+            build_pool
+                ->push([&] {
+                    std::unique_ptr<ThreadPool::ScopedBuildOmpSetter> setter;
+                    if (base_cfg.num_build_thread.has_value()) {
+                        setter = std::make_unique<ThreadPool::ScopedBuildOmpSetter>(base_cfg.num_build_thread.value());
+                    } else {
+                        setter = std::make_unique<ThreadPool::ScopedBuildOmpSetter>();
+                    }
+                    return TrainInternal(dataset, *cfg);
+                })
+                .getTry();
 
         if (!tryObj.hasValue()) {
             LOG_KNOWHERE_WARNING_ << "faiss internal error: " << tryObj.exception().what();
@@ -108,19 +107,18 @@ class BaseFaissIndexNode : public IndexNode {
 
         // use build_pool_ to make sure the OMP threads spawned by index_->train etc
         // can inherit the low nice value of threads in build_pool_.
-        auto tryObj = build_pool
-                          ->push([&] {
-                              std::unique_ptr<ThreadPool::ScopedOmpSetter> setter;
-                              if (base_cfg.num_build_thread.has_value()) {
-                                  setter =
-                                      std::make_unique<ThreadPool::ScopedOmpSetter>(base_cfg.num_build_thread.value());
-                              } else {
-                                  setter = std::make_unique<ThreadPool::ScopedOmpSetter>();
-                              }
-
-                              return AddInternal(dataset, *cfg);
-                          })
-                          .getTry();
+        auto tryObj =
+            build_pool
+                ->push([&] {
+                    std::unique_ptr<ThreadPool::ScopedBuildOmpSetter> setter;
+                    if (base_cfg.num_build_thread.has_value()) {
+                        setter = std::make_unique<ThreadPool::ScopedBuildOmpSetter>(base_cfg.num_build_thread.value());
+                    } else {
+                        setter = std::make_unique<ThreadPool::ScopedBuildOmpSetter>();
+                    }
+                    return AddInternal(dataset, *cfg);
+                })
+                .getTry();
 
         if (!tryObj.hasValue()) {
             LOG_KNOWHERE_WARNING_ << "faiss internal error: " << tryObj.exception().what();
@@ -869,7 +867,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             for (int64_t i = 0; i < rows; ++i) {
                 futs.emplace_back(search_pool->push([&, idx = i] {
                     // 1 thread per element
-                    ThreadPool::ScopedOmpSetter setter(1);
+                    ThreadPool::ScopedSearchOmpSetter setter(1);
 
                     // set up a query
                     // const float* cur_query = (const float*)data + idx * dim;

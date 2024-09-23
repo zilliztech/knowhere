@@ -105,6 +105,8 @@ class Benchmark_binary : public Benchmark_knowhere, public ::testing::Test {
 
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
         knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);
+        knowhere::KnowhereConfig::SetBuildThreadPoolSize(default_build_thread_num);
+        knowhere::KnowhereConfig::SetSearchThreadPoolSize(default_search_thread_num);
         printf("faiss::distance_compute_blas_threshold: %ld\n", knowhere::KnowhereConfig::GetBlasThreshold());
     }
 

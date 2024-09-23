@@ -117,7 +117,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     futs.reserve(nq);
     for (int i = 0; i < nq; ++i) {
         futs.emplace_back(pool->push([&, index = i, labels_ptr = labels.get(), distances_ptr = distances.get()] {
-            ThreadPool::ScopedOmpSetter setter(1);
+            ThreadPool::ScopedSearchOmpSetter setter(1);
             auto cur_labels = labels_ptr + topk * index;
             auto cur_distances = distances_ptr + topk * index;
 
@@ -244,7 +244,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     futs.reserve(nq);
     for (int i = 0; i < nq; ++i) {
         futs.emplace_back(pool->push([&, index = i] {
-            ThreadPool::ScopedOmpSetter setter(1);
+            ThreadPool::ScopedSearchOmpSetter setter(1);
             auto cur_labels = labels + topk * index;
             auto cur_distances = distances + topk * index;
 
@@ -420,7 +420,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                 return Status::success;
             }
             // else not sparse:
-            ThreadPool::ScopedOmpSetter setter(1);
+            ThreadPool::ScopedSearchOmpSetter setter(1);
             faiss::RangeSearchResult res(1);
 
             BitsetViewIDSelector bw_idselector(bitset);
@@ -667,7 +667,7 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
 
     for (int i = 0; i < nq; ++i) {
         futs.emplace_back(pool->push([&, index = i] {
-            ThreadPool::ScopedOmpSetter setter(1);
+            ThreadPool::ScopedSearchOmpSetter setter(1);
 
             BitsetViewIDSelector bw_idselector(bitset);
             faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
