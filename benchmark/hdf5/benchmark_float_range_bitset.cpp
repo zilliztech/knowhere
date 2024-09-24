@@ -140,6 +140,8 @@ class Benchmark_float_range_bitset : public Benchmark_knowhere, public ::testing
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
         cfg_[knowhere::meta::RADIUS] = *gt_radius_;
         knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);
+        knowhere::KnowhereConfig::SetBuildThreadPoolSize(default_build_thread_num);
+        knowhere::KnowhereConfig::SetSearchThreadPoolSize(default_search_thread_num);
         printf("faiss::distance_compute_blas_threshold: %ld\n", knowhere::KnowhereConfig::GetBlasThreshold());
 
         create_golden_index(cfg_);

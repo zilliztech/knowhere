@@ -29,7 +29,7 @@ ExecOverSearchThreadPool(std::vector<std::function<void()>>& tasks) {
     futures.reserve(tasks.size());
     for (auto&& t : tasks) {
         futures.emplace_back(pool->push([&t]() {
-            ThreadPool::ScopedOmpSetter setter(1);
+            ThreadPool::ScopedSearchOmpSetter setter(1);
             t();
         }));
     }
@@ -44,7 +44,7 @@ ExecOverBuildThreadPool(std::vector<std::function<void()>>& tasks) {
     futures.reserve(tasks.size());
     for (auto&& t : tasks) {
         futures.emplace_back(pool->push([&t]() {
-            ThreadPool::ScopedOmpSetter setter(1);
+            ThreadPool::ScopedBuildOmpSetter setter(1);
             t();
         }));
     }
@@ -72,9 +72,14 @@ GetBuildThreadPoolSize() {
     return ThreadPool::GetGlobalBuildThreadPool()->size();
 }
 
-std::unique_ptr<ThreadPool::ScopedOmpSetter>
-CreateScopeOmpSetter(int num_threads) {
-    return std::make_unique<ThreadPool::ScopedOmpSetter>(num_threads);
+std::unique_ptr<ThreadPool::ScopedBuildOmpSetter>
+CreateScopeBuildOmpSetter(int num_threads) {
+    return std::make_unique<ThreadPool::ScopedBuildOmpSetter>(num_threads);
+}
+
+std::unique_ptr<ThreadPool::ScopedSearchOmpSetter>
+CreateScopeSearchOmpSetter(int num_threads) {
+    return std::make_unique<ThreadPool::ScopedSearchOmpSetter>(num_threads);
 }
 
 }  // namespace knowhere

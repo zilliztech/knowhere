@@ -204,18 +204,28 @@ TEST_CASE("Test ThreadPool") {
         }
     }
 
-    SECTION("ScopedOmpSetter") {
-        int prev_num_threads = omp_get_max_threads();
+    SECTION("ScopedBuildOmpSetter") {
+        int prev_num_threads = knowhere::ThreadPool::GetGlobalBuildThreadPoolSize();
         {
             int target_num_threads = (prev_num_threads / 2) > 0 ? (prev_num_threads / 2) : 1;
-            knowhere::ThreadPool::ScopedOmpSetter setter(target_num_threads);
-            auto thread_num = omp_get_max_threads();
-            REQUIRE(thread_num == target_num_threads);
-#ifdef OPENBLAS_OS_LINUX
-            auto openblas_thread_num = openblas_get_num_threads();
-            REQUIRE(openblas_thread_num == target_num_threads);
-#endif
+            knowhere::ThreadPool::ScopedBuildOmpSetter setter(target_num_threads);
+            auto thread_num_1 = omp_get_max_threads();
+            REQUIRE(thread_num_1 == target_num_threads);
         }
+        auto thread_num_2 = omp_get_max_threads();
+        REQUIRE(thread_num_2 == prev_num_threads);
+    }
+
+    SECTION("ScopedSearchOmpSetter") {
+        int prev_num_threads = knowhere::ThreadPool::GetGlobalSearchThreadPoolSize();
+        {
+            int target_num_threads = (prev_num_threads / 2) > 0 ? (prev_num_threads / 2) : 1;
+            knowhere::ThreadPool::ScopedSearchOmpSetter setter(target_num_threads);
+            auto thread_num_1 = omp_get_max_threads();
+            REQUIRE(thread_num_1 == target_num_threads);
+        }
+        auto thread_num_2 = omp_get_max_threads();
+        REQUIRE(thread_num_2 == prev_num_threads);
     }
 }
 

@@ -414,11 +414,11 @@ template <typename DataType, typename IndexType>
 Status
 IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
     const BaseConfig& base_cfg = static_cast<const IvfConfig&>(*cfg);
-    std::unique_ptr<ThreadPool::ScopedOmpSetter> setter;
+    std::unique_ptr<ThreadPool::ScopedBuildOmpSetter> setter;
     if (base_cfg.num_build_thread.has_value()) {
-        setter = std::make_unique<ThreadPool::ScopedOmpSetter>(base_cfg.num_build_thread.value());
+        setter = std::make_unique<ThreadPool::ScopedBuildOmpSetter>(base_cfg.num_build_thread.value());
     } else {
-        setter = std::make_unique<ThreadPool::ScopedOmpSetter>();
+        setter = std::make_unique<ThreadPool::ScopedBuildOmpSetter>();
     }
 
     bool is_cosine = IsMetricType(base_cfg.metric_type.value(), knowhere::metric::COSINE);
@@ -627,11 +627,12 @@ IvfIndexNode<DataType, IndexType>::Add(const DataSetPtr dataset, std::shared_ptr
     // can inherit the low nice value of threads in build_pool_.
     auto tryObj = build_pool_
                       ->push([&] {
-                          std::unique_ptr<ThreadPool::ScopedOmpSetter> setter;
+                          std::unique_ptr<ThreadPool::ScopedBuildOmpSetter> setter;
                           if (base_cfg.num_build_thread.has_value()) {
-                              setter = std::make_unique<ThreadPool::ScopedOmpSetter>(base_cfg.num_build_thread.value());
+                              setter =
+                                  std::make_unique<ThreadPool::ScopedBuildOmpSetter>(base_cfg.num_build_thread.value());
                           } else {
-                              setter = std::make_unique<ThreadPool::ScopedOmpSetter>();
+                              setter = std::make_unique<ThreadPool::ScopedBuildOmpSetter>();
                           }
                           if constexpr (std::is_same<faiss::IndexBinaryIVF, IndexType>::value) {
                               index_->add(rows, (const uint8_t*)data);
@@ -677,7 +678,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
         futs.reserve(rows);
         for (int i = 0; i < rows; ++i) {
             futs.emplace_back(search_pool_->push([&, index = i] {
-                ThreadPool::ScopedOmpSetter setter(1);
+                ThreadPool::ScopedSearchOmpSetter setter(1);
                 auto offset = k * index;
                 std::unique_ptr<float[]> copied_query = nullptr;
 
@@ -802,7 +803,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
         futs.reserve(nq);
         for (int i = 0; i < nq; ++i) {
             futs.emplace_back(search_pool_->push([&, index = i] {
-                ThreadPool::ScopedOmpSetter setter(1);
+                ThreadPool::ScopedSearchOmpSetter setter(1);
                 faiss::RangeSearchResult res(1);
                 std::unique_ptr<float[]> copied_query = nullptr;
 

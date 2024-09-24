@@ -24,6 +24,7 @@ test_binary_range_hnsw:
 # Test Knowhere float index
 test_float: test_float_idmap test_float_ivf_flat test_float_ivf_sq8 test_float_ivf_pq test_float_hnsw test_float_diskann
 test_float_gpu: test_float_ivf_flat test_float_ivf_pq
+test_float_ivf: test_float_ivf_flat test_float_ivf_pq
 
 test_float_idmap:
 	./benchmark_float --gtest_filter="Benchmark_float.TEST_IDMAP" | tee test_float_idmap.log
