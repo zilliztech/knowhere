@@ -72,10 +72,10 @@ IndexStaticFaced<DataType>::InternalEstimateLoadResource(const float file_size, 
     Resource resource;
     if (config.enable_mmap.has_value() && config.enable_mmap.value()) {
         resource.diskCost = file_size;
-        resource.memoryCost = file_size * 0.1f;
+        resource.memoryCost = 0.0f;
     } else {
         resource.diskCost = 0;
-        resource.memoryCost = 1.1f * file_size;
+        resource.memoryCost = 1.0f * file_size;
     }
     return resource;
 }
