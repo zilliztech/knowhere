@@ -185,11 +185,13 @@ fvec_hook(std::string& simd_type) {
         ivec_L2sqr = ivec_L2sqr_avx512;
 
         fp16_vec_inner_product = fp16_vec_inner_product_avx512;
-        bf16_vec_inner_product = bf16_vec_inner_product_avx512;
         fp16_vec_L2sqr = fp16_vec_L2sqr_avx512;
-        bf16_vec_L2sqr = bf16_vec_L2sqr_avx512;
         fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_avx512;
+
+        bf16_vec_inner_product = bf16_vec_inner_product_avx512;
+        bf16_vec_L2sqr = bf16_vec_L2sqr_avx512;
         bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_avx512;
+
         simd_type = "AVX512";
         support_pq_fast_scan = true;
     } else if (use_avx2 && cpu_support_avx2()) {
@@ -211,10 +213,11 @@ fvec_hook(std::string& simd_type) {
         ivec_L2sqr = ivec_L2sqr_avx;
 
         fp16_vec_inner_product = fp16_vec_inner_product_avx;
-        bf16_vec_inner_product = bf16_vec_inner_product_avx;
         fp16_vec_L2sqr = fp16_vec_L2sqr_avx;
-        bf16_vec_L2sqr = bf16_vec_L2sqr_avx;
         fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_avx;
+
+        bf16_vec_inner_product = bf16_vec_inner_product_avx;
+        bf16_vec_L2sqr = bf16_vec_L2sqr_avx;
         bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_avx;
 
         simd_type = "AVX2";
@@ -236,13 +239,14 @@ fvec_hook(std::string& simd_type) {
 
         ivec_inner_product = ivec_inner_product_sse;
         ivec_L2sqr = ivec_L2sqr_sse;
-        bf16_vec_inner_product = bf16_vec_inner_product_sse;
-        bf16_vec_L2sqr = bf16_vec_L2sqr_sse;
-        bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_sse;
 
         fp16_vec_inner_product = fp16_vec_inner_product_ref;
         fp16_vec_L2sqr = fp16_vec_L2sqr_ref;
         fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_ref;
+
+        bf16_vec_inner_product = bf16_vec_inner_product_sse;
+        bf16_vec_L2sqr = bf16_vec_L2sqr_sse;
+        bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_sse;
 
         simd_type = "SSE4_2";
         support_pq_fast_scan = false;
@@ -265,10 +269,11 @@ fvec_hook(std::string& simd_type) {
         ivec_L2sqr = ivec_L2sqr_ref;
 
         fp16_vec_inner_product = fp16_vec_inner_product_ref;
-        bf16_vec_inner_product = bf16_vec_inner_product_ref;
         fp16_vec_L2sqr = fp16_vec_L2sqr_ref;
-        bf16_vec_L2sqr = bf16_vec_L2sqr_ref;
         fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_ref;
+
+        bf16_vec_inner_product = bf16_vec_inner_product_ref;
+        bf16_vec_L2sqr = bf16_vec_L2sqr_ref;
         bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_ref;
 
         simd_type = "GENERIC";
@@ -290,11 +295,13 @@ fvec_hook(std::string& simd_type) {
 
     ivec_inner_product = ivec_inner_product_neon;
     ivec_L2sqr = ivec_L2sqr_neon;
+
     fp16_vec_inner_product = fp16_vec_inner_product_neon;
-    bf16_vec_inner_product = bf16_vec_inner_product_neon;
     fp16_vec_L2sqr = fp16_vec_L2sqr_neon;
-    bf16_vec_L2sqr = bf16_vec_L2sqr_neon;
     fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_neon;
+
+    bf16_vec_inner_product = bf16_vec_inner_product_neon;
+    bf16_vec_L2sqr = bf16_vec_L2sqr_neon;
     bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_neon;
 
     simd_type = "NEON";
