@@ -47,6 +47,15 @@ void IndexWrapper::search(
     index->search(n, x, k, distances, labels, params);
 }
 
+void IndexWrapper::range_search(
+        idx_t n,
+        const float* x,
+        float radius,
+        RangeSearchResult* result,
+        const SearchParameters* params) const {
+    index->range_search(n, x, radius, result, params);
+}
+
 void IndexWrapper::reset() {
     index->reset();
     this->ntotal = 0;

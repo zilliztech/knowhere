@@ -32,6 +32,15 @@ struct IndexBruteForceWrapper : IndexWrapper {
             idx_t* labels,
             const SearchParameters* params
     ) const override;
+
+    /// entry point for range search
+    void range_search(
+            idx_t n, 
+            const float* x, 
+            float radius, 
+            RangeSearchResult* result, 
+            const SearchParameters* params
+    ) const override;
 };
 
 }

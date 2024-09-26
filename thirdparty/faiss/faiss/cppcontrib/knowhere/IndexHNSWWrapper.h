@@ -23,9 +23,9 @@ namespace cppcontrib {
 namespace knowhere {
 
 // Custom parameters for IndexHNSW.
-struct SearchParametersHNSWWrapper : public faiss::SearchParametersHNSW {
+struct SearchParametersHNSWWrapper : public SearchParametersHNSW {
     // Stats will be updated if the object pointer is provided.
-    faiss::HNSWStats* hnsw_stats = nullptr;
+    HNSWStats* hnsw_stats = nullptr;
     // filtering parameter. A floating point value within [0.0f, 1.0f range]
     float kAlpha = 0.0f;
 
@@ -38,7 +38,7 @@ struct SearchParametersHNSWWrapper : public faiss::SearchParametersHNSW {
 
 // override a search() procedure for IndexHNSW.
 struct IndexHNSWWrapper : IndexWrapper {
-    IndexHNSWWrapper(faiss::IndexHNSW* underlying_index);
+    IndexHNSWWrapper(IndexHNSW* underlying_index);
 
     /// entry point for search
     void search(
@@ -48,6 +48,15 @@ struct IndexHNSWWrapper : IndexWrapper {
             float* distances,
             idx_t* labels,
             const SearchParameters* params = nullptr
+    ) const override;
+
+    /// entry point for range search
+    void range_search(
+            idx_t n, 
+            const float* x, 
+            float radius, 
+            RangeSearchResult* result, 
+            const SearchParameters* params
     ) const override;
 };
 

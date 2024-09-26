@@ -39,6 +39,13 @@ struct IndexWrapper : Index {
             idx_t* labels,
             const SearchParameters* params = nullptr) const override;
 
+    void range_search(
+            idx_t n,
+            const float* x,
+            float radius,
+            RangeSearchResult* result,
+            const SearchParameters* params = nullptr) const override;
+
     void reset() override;
 
     void merge_from(Index& otherIndex, idx_t add_id = 0) override;

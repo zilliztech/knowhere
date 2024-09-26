@@ -46,6 +46,11 @@ struct IndexHNSWWrapper : public faiss::cppcontrib::knowhere::IndexWrapper {
     void
     search(faiss::idx_t n, const float* x, faiss::idx_t k, float* distances, faiss::idx_t* labels,
            const faiss::SearchParameters* params) const override;
+
+    /// entry point for range search
+    void
+    range_search(faiss::idx_t n, const float* x, float radius, faiss::RangeSearchResult* result,
+                 const faiss::SearchParameters* params) const override;
 };
 
 }  // namespace knowhere
