@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <folly/executors/thread_factory/NamedThreadFactory.h>
 #include <omp.h>
 
 #ifdef __linux__
@@ -47,51 +48,68 @@ class ThreadPool {
     enum class QueueType { LIFO, FIFO };
 #ifdef __linux__
  private:
-    class LowPriorityThreadFactory : public folly::NamedThreadFactory {
+    class CustomPriorityThreadFactory : public folly::NamedThreadFactory {
      public:
         using folly::NamedThreadFactory::NamedThreadFactory;
         std::thread
         newThread(folly::Func&& func) override {
             return folly::NamedThreadFactory::newThread([&, func = std::move(func)]() mutable {
-                if (setpriority(PRIO_PROCESS, gettid(), 19) != 0) {
-                    LOG_KNOWHERE_ERROR_ << "Failed to set priority of knowhere thread. Error is: "
-                                        << std::strerror(errno);
+                if (setpriority(PRIO_PROCESS, gettid(), thread_priority_) != 0) {
+                    // fallback to 19 priority due to SYS_NICE compatiblity
+                    // it is designed that the thread pool shall have lower priority than normal
+                    // in case of heartbeat thread starving
+                    if (setpriority(PRIO_PROCESS, gettid(), 19) != 0) {
+                        LOG_KNOWHERE_ERROR_ << "Failed to set priority of knowhere thread. Error is: "
+                                            << std::strerror(errno);
+                    } else {
+                        LOG_KNOWHERE_WARNING_ << "Successfully set fallback priority of knowhere thread.";
+                    }
                 } else {
                     LOG_KNOWHERE_INFO_ << "Successfully set priority of knowhere thread.";
                 }
                 func();
             });
         }
+
+        explicit CustomPriorityThreadFactory(const std::string& thread_name_prefix, int thread_priority)
+            : folly::NamedThreadFactory(thread_name_prefix), thread_priority_(thread_priority) {
+            assert(thread_priority_ >= -20 && thread_priority_ < 20);
+        }
+
+     private:
+        int thread_priority_;
     };
 
  public:
-    explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix, QueueType queueT = QueueType::LIFO)
+    explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix, QueueType queueT = QueueType::LIFO,
+                        int thread_priority = 10)
         : pool_(queueT == QueueType::LIFO
                     ? folly::CPUThreadPoolExecutor(
                           num_threads,
                           std::make_unique<folly::LifoSemMPMCQueue<folly::CPUThreadPoolExecutor::CPUTask,
                                                                    folly::QueueBehaviorIfFull::BLOCK>>(
                               num_threads * kTaskQueueFactor),
-                          std::make_shared<LowPriorityThreadFactory>(thread_name_prefix))
+                          std::make_shared<CustomPriorityThreadFactory>(thread_name_prefix, thread_priority))
                     : folly::CPUThreadPoolExecutor(
                           num_threads,
                           std::make_unique<folly::UnboundedBlockingQueue<folly::CPUThreadPoolExecutor::CPUTask>>(),
-                          std::make_shared<LowPriorityThreadFactory>(thread_name_prefix))) {
+                          std::make_shared<CustomPriorityThreadFactory>(thread_name_prefix, thread_priority))) {
     }
 #else
  public:
-    explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix, QueueType queueT = QueueType::LIFO)
+    explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix, QueueType queueT = QueueType::LIFO,
+                        int thread_priority = 10)
         : pool_(queueT == QueueType::LIFO
                     ? folly::CPUThreadPoolExecutor(
                           num_threads,
                           std::make_unique<folly::LifoSemMPMCQueue<folly::CPUThreadPoolExecutor::CPUTask,
                                                                    folly::QueueBehaviorIfFull::BLOCK>>(
                               num_threads * kTaskQueueFactor),
-                          std::make_shared<folly::NamedThreadFactory>(thread_name_prefix))
+                          std::make_shared<folly::NamedThreadFactory>(thread_name_prefix, thread_priority))
                     : folly::CPUThreadPoolExecutor(
                           num_threads,
                           std::make_unique<folly::UnboundedBlockingQueue<folly::CPUThreadPoolExecutor::CPUTask>>(),
-                          std::make_shared<folly::NamedThreadFactory>(thread_name_prefix))) {
+                          std::make_shared<folly::NamedThreadFactory>(thread_name_prefix, thread_priority))) {
     }
 #endif
 
