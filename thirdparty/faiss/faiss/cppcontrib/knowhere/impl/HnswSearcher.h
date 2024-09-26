@@ -1,13 +1,16 @@
 // Copyright (C) 2019-2024 Zilliz. All rights reserved.
 //
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance
-// with the License. You may obtain a copy of the License at
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at
 //
 // http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software distributed under the License
-// is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
-// or implied. See the License for the specific language governing permissions and limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
 
 #pragma once
 
@@ -32,7 +35,6 @@
 // Knowhere-specific headers
 #include <faiss/cppcontrib/knowhere/impl/Neighbor.h>
 
-
 namespace faiss {
 namespace cppcontrib {
 namespace knowhere {
@@ -42,7 +44,7 @@ namespace {
 // whether to track statistics
 constexpr bool track_hnsw_stats = true;
 
-}
+} // namespace
 
 // Accomodates all the search logic and variables.
 /// * DistanceComputerT is responsible for computing distances
@@ -51,7 +53,11 @@ constexpr bool track_hnsw_stats = true;
 /// * FilterT is resposible for filtering unneeded nodes
 /// Interfaces of all templates are tweaked to accept standard Faiss structures
 ///   with dynamic dispatching. Custom Knowhere structures are also accepted.
-template<typename DistanceComputerT, typename GraphVisitorT, typename VisitedT, typename FilterT>
+template <
+        typename DistanceComputerT,
+        typename GraphVisitorT,
+        typename VisitedT,
+        typename FilterT>
 struct v2_hnsw_searcher {
     using storage_idx_t = faiss::HNSW::storage_idx_t;
     using idx_t = faiss::idx_t;
@@ -85,33 +91,32 @@ struct v2_hnsw_searcher {
 
     //
     v2_hnsw_searcher(
-        const faiss::HNSW& hnsw_,
-        DistanceComputerT& qdis_,
-        GraphVisitorT& graph_visitor_,
-        VisitedT& visited_nodes_,
-        const FilterT& filter_,
-        const float kAlpha_,
-        const faiss::SearchParametersHNSW* params_) : 
-        hnsw{hnsw_}, 
-        qdis{qdis_}, 
-        graph_visitor{graph_visitor_},
-        visited_nodes{visited_nodes_},
-        filter{filter_},
-        kAlpha{kAlpha_},
-        params{params_} {}
+            const faiss::HNSW& hnsw_,
+            DistanceComputerT& qdis_,
+            GraphVisitorT& graph_visitor_,
+            VisitedT& visited_nodes_,
+            const FilterT& filter_,
+            const float kAlpha_,
+            const faiss::SearchParametersHNSW* params_)
+            : hnsw{hnsw_},
+              qdis{qdis_},
+              graph_visitor{graph_visitor_},
+              visited_nodes{visited_nodes_},
+              filter{filter_},
+              kAlpha{kAlpha_},
+              params{params_} {}
 
     v2_hnsw_searcher(const v2_hnsw_searcher&) = delete;
     v2_hnsw_searcher(v2_hnsw_searcher&&) = delete;
-    v2_hnsw_searcher& operator =(const v2_hnsw_searcher&) = delete;
-    v2_hnsw_searcher& operator =(v2_hnsw_searcher&&) = delete;
+    v2_hnsw_searcher& operator=(const v2_hnsw_searcher&) = delete;
+    v2_hnsw_searcher& operator=(v2_hnsw_searcher&&) = delete;
 
     // greedily update a nearest vector at a given level.
     // * the update starts from the value in 'nearest'.
     faiss::HNSWStats greedy_update_nearest(
-        const int level,
-        storage_idx_t& nearest,
-        float& d_nearest
-    ) {
+            const int level,
+            storage_idx_t& nearest,
+            float& d_nearest) {
         faiss::HNSWStats stats;
 
         for (;;) {
@@ -128,7 +133,7 @@ struct v2_hnsw_searcher {
                 if (v < 0) {
                     break;
                 }
-            
+
                 // qdis.prefetch(v);
                 count += 1;
             }
@@ -164,13 +169,12 @@ struct v2_hnsw_searcher {
     }
 
     // no loops, just check neighbors of a single node.
-    template<typename FuncAddCandidate>
+    template <typename FuncAddCandidate>
     faiss::HNSWStats evaluate_single_node(
-        const idx_t node_id,
-        const int level,
-        float& accumulated_alpha,
-        FuncAddCandidate func_add_candidate
-    ) {
+            const idx_t node_id,
+            const int level,
+            float& accumulated_alpha,
+            FuncAddCandidate func_add_candidate) {
         // // unused
         // bool do_dis_check = params ? params->check_relative_distance
         //                            : hnsw.check_relative_distance;
@@ -183,13 +187,13 @@ struct v2_hnsw_searcher {
 
         // todo: add prefetch
         size_t counter = 0;
-        size_t saved_indices[4];       
-        int saved_statuses[4]; 
+        size_t saved_indices[4];
+        int saved_statuses[4];
 
         size_t ndis = 0;
         for (size_t j = begin; j < end; j++) {
             const storage_idx_t v1 = hnsw.neighbors[j];
-            
+
             if (v1 < 0) {
                 // no more neighbors
                 break;
@@ -241,15 +245,17 @@ struct v2_hnsw_searcher {
 
                 for (size_t id4 = 0; id4 < 4; id4++) {
                     // record a traversed edge
-                    graph_visitor.visit_edge(level, node_id, saved_indices[id4], dis[id4]);
+                    graph_visitor.visit_edge(
+                            level, node_id, saved_indices[id4], dis[id4]);
 
                     // add a record of visited nodes
-                    knowhere::Neighbor nn(saved_indices[id4], dis[id4], saved_statuses[id4]);
+                    knowhere::Neighbor nn(
+                            saved_indices[id4], dis[id4], saved_statuses[id4]);
                     if (func_add_candidate(nn)) {
-        #if defined(USE_PREFETCH)
+#if defined(USE_PREFETCH)
                         // TODO
                         // _mm_prefetch(get_linklist0(v), _MM_HINT_T0);
-        #endif
+#endif
                     }
                 }
 
@@ -288,14 +294,13 @@ struct v2_hnsw_searcher {
     // perform the search on a given level.
     // it is assumed that retset is initialized and contains the initial nodes.
     faiss::HNSWStats search_on_a_level(
-        knowhere::NeighborSetDoublePopList& retset,
-        const int level,
-        knowhere::IteratorMinHeap* const __restrict disqualified = nullptr,
-        const float initial_accumulated_alpha = 1.0f
-    ) {
+            knowhere::NeighborSetDoublePopList& retset,
+            const int level,
+            knowhere::IteratorMinHeap* const __restrict disqualified = nullptr,
+            const float initial_accumulated_alpha = 1.0f) {
         faiss::HNSWStats stats;
 
-        // 
+        //
         float accumulated_alpha = initial_accumulated_alpha;
 
         // what to do with a accepted candidate
@@ -310,8 +315,10 @@ struct v2_hnsw_searcher {
 
             // analyze its neighbors
             faiss::HNSWStats local_stats = evaluate_single_node(
-                neighbor.id, level, accumulated_alpha, add_search_candidate 
-            );
+                    neighbor.id,
+                    level,
+                    accumulated_alpha,
+                    add_search_candidate);
 
             // update stats
             if (track_hnsw_stats) {
@@ -325,9 +332,8 @@ struct v2_hnsw_searcher {
 
     // traverse down to the level 0
     faiss::HNSWStats greedy_search_top_levels(
-        storage_idx_t& nearest,
-        float& d_nearest
-    ) {
+            storage_idx_t& nearest,
+            float& d_nearest) {
         faiss::HNSWStats stats;
 
         // iterate through upper levels
@@ -336,11 +342,8 @@ struct v2_hnsw_searcher {
             graph_visitor.visit_level(level);
 
             // alter the value of 'nearest'
-            faiss::HNSWStats local_stats = greedy_update_nearest(
-                level,
-                nearest,
-                d_nearest
-            );
+            faiss::HNSWStats local_stats =
+                    greedy_update_nearest(level, nearest, d_nearest);
 
             // update stats
             if (track_hnsw_stats) {
@@ -353,12 +356,11 @@ struct v2_hnsw_searcher {
 
     // perform the search.
     faiss::HNSWStats search(
-        const idx_t k,
-        float* __restrict distances,
-        idx_t* __restrict labels
-    ) {
+            const idx_t k,
+            float* __restrict distances,
+            idx_t* __restrict labels) {
         faiss::HNSWStats stats;
-        
+
         // is the graph empty?
         if (hnsw.entry_point == -1) {
             return stats;
@@ -366,7 +368,7 @@ struct v2_hnsw_searcher {
 
         // grab some needed parameters
         const int efSearch = params ? params->efSearch : hnsw.efSearch;
-        
+
         // greedy search on upper levels?
         if (hnsw.upper_beam != 1) {
             FAISS_THROW_MSG("Not implemented");
@@ -375,8 +377,6 @@ struct v2_hnsw_searcher {
 
         // yes.
         // greedy search on upper levels.
-
-        // todo: first, check LRU cache
 
         // initialize the starting point.
         storage_idx_t nearest = hnsw.entry_point;
@@ -402,9 +402,11 @@ struct v2_hnsw_searcher {
         // initialize retset with a single 'nearest' point
         {
             if (!filter.is_member(nearest)) {
-                retset.insert(knowhere::Neighbor(nearest, d_nearest, knowhere::Neighbor::kInvalid));
+                retset.insert(knowhere::Neighbor(
+                        nearest, d_nearest, knowhere::Neighbor::kInvalid));
             } else {
-                retset.insert(knowhere::Neighbor(nearest, d_nearest, knowhere::Neighbor::kValid));
+                retset.insert(knowhere::Neighbor(
+                        nearest, d_nearest, knowhere::Neighbor::kValid));
             }
 
             visited_nodes[nearest] = true;
@@ -432,11 +434,12 @@ struct v2_hnsw_searcher {
     }
 
     faiss::HNSWStats range_search(
-        const float radius,
-        typename faiss::RangeSearchBlockResultHandler<faiss::CMax<float, int64_t>>::SingleResultHandler* const __restrict rres
-    ) {
+            const float radius,
+            typename faiss::RangeSearchBlockResultHandler<
+                    faiss::CMax<float, int64_t>>::
+                    SingleResultHandler* const __restrict rres) {
         faiss::HNSWStats stats;
-        
+
         // is the graph empty?
         if (hnsw.entry_point == -1) {
             return stats;
@@ -444,7 +447,7 @@ struct v2_hnsw_searcher {
 
         // grab some needed parameters
         const int efSearch = params ? params->efSearch : hnsw.efSearch;
-        
+
         // greedy search on upper levels?
         if (hnsw.upper_beam != 1) {
             FAISS_THROW_MSG("Not implemented");
@@ -453,8 +456,6 @@ struct v2_hnsw_searcher {
 
         // yes.
         // greedy search on upper levels.
-
-        // todo: first, check LRU cache
 
         // initialize the starting point.
         storage_idx_t nearest = hnsw.entry_point;
@@ -480,9 +481,11 @@ struct v2_hnsw_searcher {
         // initialize retset with a single 'nearest' point
         {
             if (!filter.is_member(nearest)) {
-                retset.insert(knowhere::Neighbor(nearest, d_nearest, knowhere::Neighbor::kInvalid));
+                retset.insert(knowhere::Neighbor(
+                        nearest, d_nearest, knowhere::Neighbor::kInvalid));
             } else {
-                retset.insert(knowhere::Neighbor(nearest, d_nearest, knowhere::Neighbor::kValid));
+                retset.insert(knowhere::Neighbor(
+                        nearest, d_nearest, knowhere::Neighbor::kValid));
             }
 
             visited_nodes[nearest] = true;
@@ -490,7 +493,7 @@ struct v2_hnsw_searcher {
 
         // perform the search of the level 0.
         faiss::HNSWStats local_stats = search_on_a_level(retset, 0);
-        
+
         // update stats
         if (track_hnsw_stats) {
             stats.combine(local_stats);
@@ -505,7 +508,7 @@ struct v2_hnsw_searcher {
         for (size_t i = retset.size(); (i--) > 0;) {
             const auto candidate = retset[i];
             if (candidate.distance < radius) {
-                radius_queue.push({ candidate.distance, candidate.id });
+                radius_queue.push({candidate.distance, candidate.id});
                 rres->add_result(candidate.distance, candidate.id);
 
                 visited_nodes[candidate.id] = true;
@@ -535,7 +538,7 @@ struct v2_hnsw_searcher {
                 if (filter.is_member(ngb)) {
                     const float dis = qdis(ngb);
                     if (dis < radius) {
-                        radius_queue.push({ dis, ngb });
+                        radius_queue.push({dis, ngb});
                         rres->add_result(dis, ngb);
                     }
 
@@ -555,6 +558,6 @@ struct v2_hnsw_searcher {
     }
 };
 
-}
-}
-}
+} // namespace knowhere
+} // namespace cppcontrib
+} // namespace faiss

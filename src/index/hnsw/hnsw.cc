@@ -191,7 +191,7 @@ class HnswIndexNode : public IndexNode {
         auto p_id = std::make_unique<int64_t[]>(k * nq);
         auto p_dist = std::make_unique<DistType[]>(k * nq);
 
-        hnswlib::SearchParam param{(size_t)hnsw_cfg.ef.value(), hnsw_cfg.for_tuning.value()};
+        hnswlib::SearchParam param{(size_t)hnsw_cfg.ef.value()};
         bool transform =
             (index_->metric_type_ == hnswlib::Metric::INNER_PRODUCT || index_->metric_type_ == hnswlib::Metric::COSINE);
 
@@ -234,15 +234,15 @@ class HnswIndexNode : public IndexNode {
     class iterator : public IndexIterator {
      public:
         iterator(const hnswlib::HierarchicalNSW<DataType, DistType, quant_type>* index, const char* query,
-                 const bool transform, const BitsetView& bitset, const bool for_tuning = false,
-                 const size_t ef = kIteratorSeedEf, const float refine_ratio = 0.5f)
+                 const bool transform, const BitsetView& bitset, const size_t ef = kIteratorSeedEf,
+                 const float refine_ratio = 0.5f)
             : IndexIterator(transform, (hnswlib::HierarchicalNSW<DataType, DistType, quant_type>::sq_enabled &&
                                         hnswlib::HierarchicalNSW<DataType, DistType, quant_type>::has_raw_data)
                                            ? refine_ratio
                                            : 0.0f),
               index_(index),
               transform_(transform),
-              workspace_(index_->getIteratorWorkspace(query, ef, for_tuning, bitset)) {
+              workspace_(index_->getIteratorWorkspace(query, ef, bitset)) {
         }
 
      protected:
@@ -293,9 +293,8 @@ class HnswIndexNode : public IndexNode {
         for (int i = 0; i < nq; ++i) {
             futs.emplace_back(search_pool_->push([&, i]() {
                 auto single_query = (const char*)xq + i * index_->data_size_;
-                auto it =
-                    std::make_shared<iterator>(this->index_, single_query, transform, bitset,
-                                               hnsw_cfg.for_tuning.value(), ef, hnsw_cfg.iterator_refine_ratio.value());
+                auto it = std::make_shared<iterator>(this->index_, single_query, transform, bitset, ef,
+                                                     hnsw_cfg.iterator_refine_ratio.value());
                 it->initialize();
                 vec[i] = it;
             }));

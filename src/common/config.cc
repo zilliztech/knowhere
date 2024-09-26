@@ -58,7 +58,6 @@ static const std::unordered_set<std::string> ext_legal_json_keys = {"metric_type
                                                                     "num_threads",
                                                                     "round_decimal",
                                                                     "offset",
-                                                                    "for_tuning",
                                                                     "index_engine_version",
                                                                     "reorder_k"};
 

@@ -6,7 +6,6 @@
 #include <cstdio>
 #include <stdexcept>
 
-#include "common/lru_cache.h"
 #include "io/file_io.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/operands.h"
@@ -247,8 +246,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     size_t map_size_;
 
     float alpha_ = 0.0f;
-
-    mutable knowhere::lru_cache<uint64_t, tableint> lru_cache;
 
     // Symmetric quantization to encode each element value from [-alpha, alpha] to [-127, 127]
     void
@@ -1334,58 +1331,57 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         } else {
             vec_hash = knowhere::hash_vec((const float*)query_data, *(size_t*)dist_func_param_);
         }
-        // for tuning, do not use cache
-        if ((param && param->for_tuning) || !lru_cache.try_get(vec_hash, currObj)) {
-            dist_t curdist = calcDistance(query_data, enterpoint_node_);
 
-            if (base_layer_only) {
-                for (int i = 0; i < num_seeds; i++) {
-                    tableint obj = i * (max_elements_ / num_seeds);
-                    dist_t dist = fstdistfunc_(query_data, getDataByInternalId(obj), dist_func_param_);
-                    if (dist < curdist) {
-                        curdist = dist;
-                        currObj = obj;
-                    }
+        dist_t curdist = calcDistance(query_data, enterpoint_node_);
+
+        if (base_layer_only) {
+            for (int i = 0; i < num_seeds; i++) {
+                tableint obj = i * (max_elements_ / num_seeds);
+                dist_t dist = fstdistfunc_(query_data, getDataByInternalId(obj), dist_func_param_);
+                if (dist < curdist) {
+                    curdist = dist;
+                    currObj = obj;
                 }
-            } else {
-                for (int level = maxlevel_; level > 0; level--) {
-                    bool changed = true;
-                    if (feder_result != nullptr) {
-                        feder_result->visit_info_.AddLevelVisitRecord(level);
+            }
+        } else {
+            for (int level = maxlevel_; level > 0; level--) {
+                bool changed = true;
+                if (feder_result != nullptr) {
+                    feder_result->visit_info_.AddLevelVisitRecord(level);
+                }
+                while (changed) {
+                    changed = false;
+                    unsigned int* data;
+
+                    data = (unsigned int*)get_linklist(currObj, level);
+                    int size = getListCount(data);
+                    metric_hops++;
+                    metric_distance_computations += size;
+                    tableint* datal = (tableint*)(data + 1);
+                    for (int i = 0; i < size; ++i) {
+                        prefetchData(datal[i]);
                     }
-                    while (changed) {
-                        changed = false;
-                        unsigned int* data;
-
-                        data = (unsigned int*)get_linklist(currObj, level);
-                        int size = getListCount(data);
-                        metric_hops++;
-                        metric_distance_computations += size;
-                        tableint* datal = (tableint*)(data + 1);
-                        for (int i = 0; i < size; ++i) {
-                            prefetchData(datal[i]);
+                    for (int i = 0; i < size; i++) {
+                        tableint cand = datal[i];
+                        if (cand < 0 || cand > max_elements_)
+                            throw std::runtime_error("cand error");
+                        dist_t d = calcDistance(query_data, cand);
+                        if (feder_result != nullptr) {
+                            feder_result->visit_info_.AddVisitRecord(level, currObj, cand, d);
+                            feder_result->id_set_.insert(currObj);
+                            feder_result->id_set_.insert(cand);
                         }
-                        for (int i = 0; i < size; i++) {
-                            tableint cand = datal[i];
-                            if (cand < 0 || cand > max_elements_)
-                                throw std::runtime_error("cand error");
-                            dist_t d = calcDistance(query_data, cand);
-                            if (feder_result != nullptr) {
-                                feder_result->visit_info_.AddVisitRecord(level, currObj, cand, d);
-                                feder_result->id_set_.insert(currObj);
-                                feder_result->id_set_.insert(cand);
-                            }
 
-                            if (d < curdist) {
-                                curdist = d;
-                                currObj = cand;
-                                changed = true;
-                            }
+                        if (d < curdist) {
+                            curdist = d;
+                            currObj = cand;
+                            changed = true;
                         }
                     }
                 }
             }
         }
+
         return {currObj, vec_hash};
     }
 
@@ -1462,15 +1458,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 result.emplace_back(retset[i].distance, (labeltype)retset[i].id);
             }
         }
-        if (len > 0) {
-            lru_cache.put(vec_hash, result[0].second);
-        }
         return result;
     };
 
     std::unique_ptr<IteratorWorkspace>
-    getIteratorWorkspace(const void* query_data, const size_t ef, const bool for_tuning,
-                         const knowhere::BitsetView& bitset) const {
+    getIteratorWorkspace(const void* query_data, const size_t ef, const knowhere::BitsetView& bitset) const {
         auto accumulative_alpha = (bitset.count() >= (cur_element_count * kHnswSearchKnnBFFilterThreshold))
                                       ? std::numeric_limits<float>::max()
                                       : 1.0f;
@@ -1489,7 +1481,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             encodeSQuant((data_t*)query_data_copy.get(), query_data_sq.get());
         }
 
-        return std::make_unique<IteratorWorkspace>(std::move(query_data_sq), max_elements_, ef, for_tuning,
+        return std::make_unique<IteratorWorkspace>(std::move(query_data_sq), max_elements_, ef,
                                                    std::move(query_data_copy), bitset, accumulative_alpha);
     }
 
@@ -1617,8 +1609,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         if (retset.size() == 0) {
             return {};
-        } else {
-            lru_cache.put(vec_hash, retset[0].id);
         }
 
         return getNeighboursWithinRadius(retset, query_data, radius, bitset);

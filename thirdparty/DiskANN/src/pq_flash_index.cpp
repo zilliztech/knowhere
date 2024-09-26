@@ -48,7 +48,8 @@
   ((((_u64) (id)) % nvecs_per_sector) * data_dim * sizeof(float))
 
 namespace {
-  static auto async_pool = knowhere::ThreadPool::CreateFIFO(1, "DiskANN_Async_Cache_Making");
+  static auto async_pool =
+      knowhere::ThreadPool::CreateFIFO(1, "DiskANN_Async_Cache_Making");
 
   constexpr _u64  kRefineBeamWidthFactor = 2;
   constexpr _u64  kBruteForceTopkRefineExpansionFactor = 2;
@@ -187,14 +188,15 @@ namespace diskann {
     if (nhood_cache_buf == nullptr) {
       nhood_cache_buf =
           std::make_unique<unsigned[]>(num_cached_nodes * (max_degree + 1));
-      memset(nhood_cache_buf.get(), 0, num_cached_nodes * (max_degree + 1) * sizeof(unsigned));
+      memset(nhood_cache_buf.get(), 0,
+             num_cached_nodes * (max_degree + 1) * sizeof(unsigned));
     }
 
     _u64 coord_cache_buf_len = num_cached_nodes * aligned_dim;
     if (coord_cache_buf == nullptr) {
-        diskann::alloc_aligned((void **) &coord_cache_buf,
+      diskann::alloc_aligned((void **) &coord_cache_buf,
                              coord_cache_buf_len * sizeof(T), 8 * sizeof(T));
-        std::fill_n(coord_cache_buf, coord_cache_buf_len, T());
+      std::fill_n(coord_cache_buf, coord_cache_buf_len, T());
     }
 
     size_t BLOCK_SIZE = 32;
@@ -266,14 +268,15 @@ namespace diskann {
     if (nhood_cache_buf == nullptr) {
       nhood_cache_buf =
           std::make_unique<unsigned[]>(num_nodes_to_cache * (max_degree + 1));
-      memset(nhood_cache_buf.get(), 0, num_nodes_to_cache * (max_degree + 1) * sizeof(unsigned));
+      memset(nhood_cache_buf.get(), 0,
+             num_nodes_to_cache * (max_degree + 1) * sizeof(unsigned));
     }
 
     _u64 coord_cache_buf_len = num_nodes_to_cache * aligned_dim;
     if (coord_cache_buf == nullptr) {
-        diskann::alloc_aligned((void **) &coord_cache_buf,
+      diskann::alloc_aligned((void **) &coord_cache_buf,
                              coord_cache_buf_len * sizeof(T), 8 * sizeof(T));
-        std::fill_n(coord_cache_buf, coord_cache_buf_len, T());
+      std::fill_n(coord_cache_buf, coord_cache_buf_len, T());
     }
 
     async_pool.push([&, state_controller = this->state_controller, sample_bin,
@@ -732,7 +735,7 @@ namespace diskann {
       }
     } else {
       num_medoids = 1;
-      medoids =  std::make_unique<uint32_t[]>(1);
+      medoids = std::make_unique<uint32_t[]>(1);
       medoids[0] = (_u32) (medoid_id_on_file);
       use_medoids_data_as_centroids();
     }
@@ -741,7 +744,7 @@ namespace diskann {
         get_disk_index_max_base_norm_file(std::string(disk_index_file));
 
     if (file_exists(norm_file) && metric == diskann::Metric::INNER_PRODUCT) {
-      _u64   dumr, dumc;
+      _u64                     dumr, dumc;
       std::unique_ptr<float[]> norm_val = nullptr;
       diskann::load_bin<float>(norm_file, norm_val, dumr, dumc);
       this->max_base_norm = norm_val[0];
@@ -835,8 +838,8 @@ namespace diskann {
 
       if (pq_batch_ids.size() == pq_batch_size || id == num_points - 1) {
         const size_t sz = pq_batch_ids.size();
-        aggregate_coords(pq_batch_ids.data(), sz, this->data.get(), this->n_chunks,
-                         pq_coord_scratch);
+        aggregate_coords(pq_batch_ids.data(), sz, this->data.get(),
+                         this->n_chunks, pq_coord_scratch);
         pq_dist_lookup(pq_coord_scratch, sz, this->n_chunks, pq_dists,
                        dist_scratch);
         for (size_t i = 0; i < sz; ++i) {
@@ -946,8 +949,7 @@ namespace diskann {
       const T *query1, const _u64 k_search, const _u64 l_search, _s64 *indices,
       float *distances, const _u64 beam_width, const bool use_reorder_data,
       QueryStats *stats, const knowhere::feder::diskann::FederResultUniq &feder,
-      knowhere::BitsetView bitset_view, const float filter_ratio_in,
-      const bool for_tuning) {
+      knowhere::BitsetView bitset_view, const float filter_ratio_in) {
     if (beam_width > MAX_N_SECTOR_READS)
       throw ANNException("Beamwidth can not be higher than MAX_N_SECTOR_READS",
                          -1, __FUNCSIG__, __FILE__, __LINE__);
@@ -1056,17 +1058,17 @@ namespace diskann {
     auto vec_hash = knowhere::hash_vec(query_float, data_dim);
     _u32 best_medoid = 0;
     // for tuning, do not use cache
-    if (for_tuning || !lru_cache.try_get(vec_hash, best_medoid)) {
-      float best_dist = (std::numeric_limits<float>::max)();
-      std::vector<SimpleNeighbor> medoid_dists;
-      for (_u64 cur_m = 0; cur_m < num_medoids; cur_m++) {
-        float cur_expanded_dist = dist_cmp_float_wrap(
-            query_float, centroid_data + aligned_dim * cur_m,
-            (size_t) aligned_dim, medoids[cur_m]);
-        if (cur_expanded_dist < best_dist) {
-          best_medoid = medoids[cur_m];
-          best_dist = cur_expanded_dist;
-        }
+
+    float best_dist = (std::numeric_limits<float>::max)();
+
+    std::vector<SimpleNeighbor> medoid_dists;
+    for (_u64 cur_m = 0; cur_m < num_medoids; cur_m++) {
+      float cur_expanded_dist =
+          dist_cmp_float_wrap(query_float, centroid_data + aligned_dim * cur_m,
+                              (size_t) aligned_dim, medoids[cur_m]);
+      if (cur_expanded_dist < best_dist) {
+        best_medoid = medoids[cur_m];
+        best_dist = cur_expanded_dist;
       }
     }
 
@@ -1363,9 +1365,6 @@ namespace diskann {
           distances[i] = -distances[i];
         }
       }
-    }
-    if (k_search > 0 && indices[0] != -1) {
-      lru_cache.put(vec_hash, indices[0]);
     }
 
     this->thread_data.push(data);
