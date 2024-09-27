@@ -10,7 +10,6 @@
 #include <sstream>
 #include <stack>
 #include <string>
-#include "common/lru_cache.h"
 #include "tsl/robin_map.h"
 #include "tsl/robin_set.h"
 
@@ -104,7 +103,7 @@ namespace diskann {
         const bool use_reorder_data = false, QueryStats *stats = nullptr,
         const knowhere::feder::diskann::FederResultUniq &feder = nullptr,
         knowhere::BitsetView                             bitset_view = nullptr,
-        const float filter_ratio = -1.0f, const bool for_tuning = false);
+        const float                                      filter_ratio = -1.0f);
 
     _u32 range_search(const T *query1, const double range,
                       const _u64 min_l_search, const _u64 max_l_search,
@@ -226,8 +225,8 @@ namespace diskann {
     // chunk_size = chunk size of each dimension chunk
     // pq_tables = float* [[2^8 * [chunk_size]] * n_chunks]
     std::unique_ptr<_u8[]> data = nullptr;
-    _u64              n_chunks;
-    FixedChunkPQTable pq_table;
+    _u64                   n_chunks;
+    FixedChunkPQTable      pq_table;
 
     // distance comparator
     DISTFUN<T>     dist_cmp;
@@ -286,7 +285,5 @@ namespace diskann {
     std::atomic<bool>              count_visited_nodes = false;
     bool                           reorder_data_exists = false;
     _u64                           reoreder_data_offset = 0;
-
-    mutable knowhere::lru_cache<uint64_t, uint32_t> lru_cache;
   };
 }  // namespace diskann
