@@ -34,8 +34,6 @@ class FaissHnswConfig : public BaseConfig {
     CFG_INT seed_ef;
     CFG_INT overview_levels;
 
-    // use a knowhere search rather than a default faiss search
-    CFG_BOOL override_faiss_search;
     // whether an index is built with a refine support
     CFG_BOOL refine;
     // undefined value leads to a search without a refine
@@ -66,12 +64,6 @@ class FaissHnswConfig : public BaseConfig {
             .set_default(3)
             .set_range(1, 5)
             .for_feder();
-        // this is a mostly debugging field
-        // todo: remove at later stages
-        KNOWHERE_CONFIG_DECLARE_FIELD(override_faiss_search)
-            .description("use knowhere-based search rather than faiss-based search")
-            .set_default(true)
-            .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(refine)
             .description("whether the refine is used during the train")
             .set_default(false)

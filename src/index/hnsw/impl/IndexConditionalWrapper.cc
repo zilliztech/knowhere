@@ -99,10 +99,6 @@ std::tuple<std::unique_ptr<faiss::Index>, bool>
 create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw_cfg, const bool whether_bf_search) {
     const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), knowhere::metric::COSINE);
 
-    // use knowhere-based search by default
-    const bool override_faiss_search = hnsw_cfg.override_faiss_search.value_or(true);
-    // const bool override_faiss_search = false;
-
     // check if we have a refine available.
     faiss::IndexRefine* const index_refine = dynamic_cast<faiss::IndexRefine*>(index);
 
@@ -121,10 +117,7 @@ create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw
         //   an original index
         std::unique_ptr<faiss::Index> base_wrapper;
 
-        if (!override_faiss_search) {
-            // use the original index
-            base_wrapper = std::make_unique<faiss::cppcontrib::knowhere::IndexWrapper>(index_hnsw);
-        } else if (whether_bf_search) {
+        if (whether_bf_search) {
             // use brute-force wrapper
             base_wrapper = std::make_unique<knowhere::IndexBruteForceWrapper>(index_hnsw);
         } else {
@@ -192,10 +185,7 @@ create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw
         // select a wrapper index for search
         std::unique_ptr<faiss::Index> base_wrapper;
 
-        if (!override_faiss_search) {
-            // use the original index
-            base_wrapper = std::make_unique<faiss::cppcontrib::knowhere::IndexWrapper>(index_hnsw);
-        } else if (whether_bf_search) {
+        if (whether_bf_search) {
             // use brute-force wrapper
             base_wrapper = std::make_unique<knowhere::IndexBruteForceWrapper>(index_hnsw);
         } else {
