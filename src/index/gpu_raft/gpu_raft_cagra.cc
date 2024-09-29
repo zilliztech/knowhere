@@ -56,7 +56,7 @@ class GpuRaftCagraHybridIndexNode : public GpuRaftCagraIndexNode<DataType> {
         auto p_id = std::make_unique<int64_t[]>(k * nq);
         auto p_dist = std::make_unique<DistType[]>(k * nq);
 
-        hnswlib::SearchParam param{(size_t)cagra_cfg.ef.value(), false};
+        hnswlib::SearchParam param{(size_t)cagra_cfg.ef.value()};
         bool transform = (hnsw_index_->metric_type_ == hnswlib::Metric::INNER_PRODUCT ||
                           hnsw_index_->metric_type_ == hnswlib::Metric::COSINE);
 
