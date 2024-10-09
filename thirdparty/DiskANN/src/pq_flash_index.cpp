@@ -96,6 +96,7 @@ namespace diskann {
     if (metric == diskann::Metric::INNER_PRODUCT ||
         metric == diskann::Metric::COSINE) {
       if (query_norm != 0) {
+        not_l2_but_zero = false;
         query_norm = std::sqrt(query_norm);
         if (metric == diskann::Metric::INNER_PRODUCT) {
           aligned_query_T[q_dim] = 0;
@@ -105,6 +106,10 @@ namespace diskann {
           aligned_query_T[i] = (T) ((float) aligned_query_T[i] / query_norm);
           aligned_query_float[i] /= query_norm;
         }
+      } else {
+        // if true, `workspace next batch` will be skipped.
+        // so that iterator will return nothing, iterator.HasNext() will be false.
+        not_l2_but_zero = true;
       }
     }
 
@@ -1651,15 +1656,12 @@ namespace diskann {
   template<typename T>
   void PQFlashIndex<T>::getIteratorNextBatch(IteratorWorkspace<T> *workspace) {
     if (workspace->beam_width > MAX_N_SECTOR_READS)
-      throw ANNException(
-          "Beamwidth can not be higher than MAX_N_SECTOR_READS", -1,
-          __FUNCSIG__, __FILE__, __LINE__);
+      throw ANNException("Beamwidth can not be higher than MAX_N_SECTOR_READS",
+                         -1, __FUNCSIG__, __FILE__, __LINE__);
 
-    if (metric == diskann::Metric::INNER_PRODUCT ||
-        metric == diskann::Metric::COSINE) {
-      if (workspace->query_norm == 0) {
-        return;
-      }
+    // if metric is cosine or ip, and the query is zero vector, iterator will return nothing.
+    if (workspace->not_l2_but_zero) {
+      return;
     }
 
     ThreadData<T> data = this->thread_data.pop();

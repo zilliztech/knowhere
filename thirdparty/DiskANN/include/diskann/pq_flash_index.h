@@ -142,6 +142,7 @@ namespace diskann {
     tsl::robin_set<_u64>      *visited = nullptr;
     float                      query_norm = 0.0f;
     float                      max_base_norm = 0.0f;
+    bool                       not_l2_but_zero = false; // (cosine or ip) and query_norm == 0.
     std::vector<unsigned>      frontier;
     std::vector<AlignedRead>   frontier_read_reqs;
     const knowhere::BitsetView bitset;
