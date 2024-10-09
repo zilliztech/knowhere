@@ -97,6 +97,7 @@ class ThreadPool {
     }
 #else
  public:
+    // `thread_priority` is linux only, the param is kept here to make signature same between linux & mac one
     explicit ThreadPool(uint32_t num_threads, const std::string& thread_name_prefix, QueueType queueT = QueueType::LIFO,
                         int thread_priority = 10)
         : pool_(queueT == QueueType::LIFO
@@ -105,11 +106,11 @@ class ThreadPool {
                           std::make_unique<folly::LifoSemMPMCQueue<folly::CPUThreadPoolExecutor::CPUTask,
                                                                    folly::QueueBehaviorIfFull::BLOCK>>(
                               num_threads * kTaskQueueFactor),
-                          std::make_shared<folly::NamedThreadFactory>(thread_name_prefix, thread_priority))
+                          std::make_shared<folly::NamedThreadFactory>(thread_name_prefix))
                     : folly::CPUThreadPoolExecutor(
                           num_threads,
                           std::make_unique<folly::UnboundedBlockingQueue<folly::CPUThreadPoolExecutor::CPUTask>>(),
-                          std::make_shared<folly::NamedThreadFactory>(thread_name_prefix, thread_priority))) {
+                          std::make_shared<folly::NamedThreadFactory>(thread_name_prefix))) {
     }
 #endif
 
