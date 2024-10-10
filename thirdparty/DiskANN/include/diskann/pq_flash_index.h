@@ -76,6 +76,101 @@ namespace diskann {
     QueryScratch<T> scratch;
   };
 
+  /** Algorithm Introduction for diskann-iterator
+   * First, two unbounded min-heaps are maintained: `retset` and `candidates`,
+   * sorted by *pq_dist*. (Similar to the navigation search path of hnswlib-hnsw
+   * with ef=1.)
+   *
+   * When visiting candidates, another unbounded minimum heap, `full_retset`, is
+   * maintained to collect all *full_dist* along the paths.
+   * Each `iterator->next` is called, `candidates` are continually visited until
+   * the optimal candidates are farther than the optimal retset.
+   * "candidates.top.pq_dist < retset.top.pq_dist"
+   *
+   * Once the condition is met, we consider the `retset` to have reached its
+   * current optimal state, and we stop visiting new candidates. The top element
+   * of `full_retset` is returned as the final result. At this point, the top of
+   * `retset` has also completed its task and will be directly popped.
+   *
+   * It is important to note that "ef=1" is clearly insufficient in terms of
+   * accuracy. To address this, the `lsearch` parameter is provided, which
+   * allows the `workspace` to effectively make an *additional* `lsearch`
+   * iterations each time `iterator->next` is called. Specifically, this means
+   * "good_pq_res_count - next_count >= lsearch".
+   * The additional results will be sorted and saved by the upper-level
+   * `iterator.res_` through `next_batch` func with `backup_res`.
+   */
+  template<typename T>
+  struct IteratorWorkspace {
+    IteratorWorkspace(const T *query_data, const diskann::Metric metric,
+                      const uint64_t aligned_dim, const uint64_t data_dim,
+                      const float alpha, const uint64_t lsearch,
+                      const uint64_t beam_width, const float filter_ratio,
+                      const float                 max_base_norm,
+                      const knowhere::BitsetView &bitset);
+
+    ~IteratorWorkspace();
+
+    bool is_good_pq_enough();
+
+    bool has_candidates();
+
+    bool should_visit_next_candidate();
+
+    void insert_to_pq(unsigned id, float dist, bool valid);
+
+    void insert_to_full(unsigned id, float dist);
+
+    void pop_pq_retset();
+
+    void move_full_retset_to_backup();
+
+    void move_last_full_retset_to_backup();
+
+    uint64_t q_dim = 0;
+    uint64_t lsearch = 0;
+    uint64_t beam_width = 0;
+    float    filter_ratio = 0;
+    Metric   metric = Metric::L2;
+    float    alpha = 0;
+    float    acc_alpha = 0;
+    bool     initialized = false;
+
+    T                    *aligned_query_T = nullptr;
+    float                *aligned_query_float = nullptr;
+    tsl::robin_set<_u64> *visited = nullptr;
+    float                 query_norm = 0.0f;
+    float                 max_base_norm = 0.0f;
+    bool not_l2_but_zero = false;  // (cosine or ip) and query_norm == 0.
+    std::vector<unsigned>      frontier;
+    std::vector<AlignedRead>   frontier_read_reqs;
+    const knowhere::BitsetView bitset;
+
+    std::vector<std::pair<unsigned, char *>> frontier_nhoods;
+    std::vector<std::pair<unsigned, std::pair<unsigned, unsigned *>>>
+        cached_nhoods;
+
+    struct MinHeapCompareForSimpleNeighbor {
+      bool operator()(const SimpleNeighbor &a, const SimpleNeighbor &b) {
+        return a.distance > b.distance;
+      }
+    };
+    std::priority_queue<SimpleNeighbor, std::vector<SimpleNeighbor>,
+                        MinHeapCompareForSimpleNeighbor>
+        full_retset;
+    std::priority_queue<SimpleNeighbor, std::vector<SimpleNeighbor>,
+                        MinHeapCompareForSimpleNeighbor>
+        retset;
+    std::priority_queue<SimpleNeighbor, std::vector<SimpleNeighbor>,
+                        MinHeapCompareForSimpleNeighbor>
+        candidates;
+
+    size_t good_pq_res_count = 0;
+    size_t next_count = 0;
+
+    std::vector<knowhere::DistId> backup_res;
+  };
+
   template<typename T>
   class PQFlashIndex {
    public:
@@ -105,13 +200,6 @@ namespace diskann {
         knowhere::BitsetView                             bitset_view = nullptr,
         const float                                      filter_ratio = -1.0f);
 
-    _u32 range_search(const T *query1, const double range,
-                      const _u64 min_l_search, const _u64 max_l_search,
-                      std::vector<_s64> &indices, std::vector<float> &distances,
-                      const _u64           beam_width,
-                      knowhere::BitsetView bitset_view = nullptr,
-                      QueryStats          *stats = nullptr);
-
     void get_vector_by_ids(const int64_t *ids, const int64_t n,
                            T *const output_data);
 
@@ -128,6 +216,12 @@ namespace diskann {
     size_t get_num_medoids() const noexcept;
 
     diskann::Metric get_metric() const noexcept;
+
+    void getIteratorNextBatch(IteratorWorkspace<T> *workspace);
+
+    std::unique_ptr<IteratorWorkspace<T>> getIteratorWorkspace(
+        const T *query_data, const uint64_t lsearch, const uint64_t beam_width,
+        const float filter_ratio, const knowhere::BitsetView &bitset);
 
     _u64 cal_size();
 

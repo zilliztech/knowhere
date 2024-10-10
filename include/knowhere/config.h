@@ -517,7 +517,6 @@ class BaseConfig : public Config {
     CFG_BOOL trace_visit;
     CFG_BOOL enable_mmap;
     CFG_BOOL enable_mmap_pop;
-    CFG_BOOL for_tuning;
     CFG_BOOL shuffle_build;
     CFG_STRING trace_id;
     CFG_STRING span_id;
@@ -602,7 +601,6 @@ class BaseConfig : public Config {
             .description("enable map_populate option for mmap")
             .for_deserialize()
             .for_deserialize_from_file();
-        KNOWHERE_CONFIG_DECLARE_FIELD(for_tuning).set_default(false).description("for tuning").for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(shuffle_build)
             .set_default(true)
             .description("shuffle ids before index building")

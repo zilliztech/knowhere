@@ -135,15 +135,6 @@ TEST_CASE("Invalid diskann params test", "[diskann]") {
             REQUIRE_FALSE(res.has_value());
             REQUIRE(res.error() == knowhere::Status::out_of_range_in_json);
         }
-        // min_k > max_k
-        {
-            test_json = test_gen();
-            test_json["min_k"] = 10000;
-            test_json["max_k"] = 100;
-            auto res = diskann.RangeSearch(query_ds, test_json, nullptr);
-            REQUIRE_FALSE(res.has_value());
-            REQUIRE(res.error() == knowhere::Status::out_of_range_in_json);
-        }
 #endif
     }
     fs::remove_all(kDir);
@@ -223,8 +214,6 @@ base_search() {
         knowhere::Json json = base_gen();
         json["index_prefix"] = metric_dir_map[metric_str];
         json["beamwidth"] = 8;
-        json["min_k"] = 10;
-        json["max_k"] = 8000;
         return json;
     };
 
