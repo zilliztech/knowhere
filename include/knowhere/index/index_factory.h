@@ -29,10 +29,15 @@ class IndexFactory {
     Create(const std::string& name, const int32_t& version, const Object& object = nullptr);
     template <typename DataType>
     const IndexFactory&
-    Register(const std::string& name, std::function<Index<IndexNode>(const int32_t&, const Object&)> func);
+    Register(const std::string& name, std::function<Index<IndexNode>(const int32_t&, const Object&)> func,
+             const uint64_t features);
     static IndexFactory&
     Instance();
     typedef std::tuple<std::set<std::pair<std::string, VecType>>, std::set<std::string>> GlobalIndexTable;
+    bool
+    FeatureCheck(const std::string& name, uint64_t feature) const;
+    static const std::map<std::string, uint64_t>&
+    GetIndexFeatures();
     static GlobalIndexTable&
     StaticIndexTableInstance();
 
@@ -48,10 +53,21 @@ class IndexFactory {
         std::function<T1(const int32_t&, const Object&)> fun_value;
     };
     typedef std::map<std::string, std::unique_ptr<FunMapValueBase>> FuncMap;
+    typedef std::map<std::string, uint64_t> FeatureMap;
     IndexFactory();
     static FuncMap&
     MapInstance();
+    static FeatureMap&
+    FeatureMapInstance();
 };
+
+#define KNOWHERE_CONCAT(x, y) index_factory_ref_##x##y
+#define KNOWHERE_REGISTER_GLOBAL(name, func, data_type, condition, features) \
+    const IndexFactory& KNOWHERE_CONCAT(name, data_type) =                   \
+        condition ? IndexFactory::Instance().Register<data_type>(#name, func, features) : IndexFactory::Instance();
+
+#define KNOWHERE_REGISTER_FUNC_GLOBAL(name, func, data_type, features) \
+    KNOWHERE_REGISTER_GLOBAL(name, func, data_type, typeCheck<data_type>(features), features)
 
 #define KNOWHERE_FACTOR_CONCAT(x, y) index_factory_ref_##x##y
 #define KNOWHERE_STATIC_CONCAT(x, y) index_static_ref_##x##y
@@ -60,18 +76,15 @@ class IndexFactory {
     const IndexStaticFaced<data_type>& KNOWHERE_STATIC_CONCAT(name, data_type) = \
         IndexStaticFaced<data_type>::Instance().RegisterStaticFunc<index_node<data_type, ##__VA_ARGS__>>(#name);
 
-#define KNOWHERE_REGISTER_GLOBAL(name, func, data_type)           \
-    const IndexFactory& KNOWHERE_FACTOR_CONCAT(name, data_type) = \
-        IndexFactory::Instance().Register<data_type>(#name, func)
-
-#define KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, data_type, ...)                             \
+#define KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, data_type, features, ...)                   \
     KNOWHERE_REGISTER_STATIC(name, index_node, data_type, ##__VA_ARGS__)                              \
     KNOWHERE_REGISTER_GLOBAL(                                                                         \
         name,                                                                                         \
         (static_cast<Index<index_node<data_type, ##__VA_ARGS__>> (*)(const int32_t&, const Object&)>( \
             &Index<index_node<data_type, ##__VA_ARGS__>>::Create)),                                   \
-        data_type)
-#define KNOWHERE_MOCK_REGISTER_GLOBAL(name, index_node, data_type, ...)                                    \
+        data_type, typeCheck<data_type>(features), features)
+
+#define KNOWHERE_MOCK_REGISTER_GLOBAL(name, index_node, data_type, features, ...)                          \
     KNOWHERE_REGISTER_STATIC(name, index_node, data_type, ##__VA_ARGS__)                                   \
     KNOWHERE_REGISTER_GLOBAL(                                                                              \
         name,                                                                                              \
@@ -79,8 +92,51 @@ class IndexFactory {
             return (Index<IndexNodeDataMockWrapper<data_type>>::Create(                                    \
                 std::make_unique<index_node<MockData<data_type>::type, ##__VA_ARGS__>>(version, object))); \
         },                                                                                                 \
-        data_type)
-#define KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(name, index_node, data_type, thread_size)              \
+        data_type, typeCheck<data_type>(features), features)
+
+#define KNOWHERE_SIMPLE_REGISTER_ALL_GLOBAL(name, index_node, features, ...)                                          \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, bin1, (features | knowhere::feature::ALL_TYPE), ##__VA_ARGS__); \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, bf16, (features | knowhere::feature::ALL_TYPE), ##__VA_ARGS__); \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp16, (features | knowhere::feature::ALL_TYPE), ##__VA_ARGS__); \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp32, (features | knowhere::feature::ALL_TYPE), ##__VA_ARGS__);
+
+#define KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(name, index_node, features, ...)                       \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp32, (features | knowhere::feature::SPARSE_FLOAT32), \
+                                    ##__VA_ARGS__);
+
+#define KNOWHERE_SIMPLE_REGISTER_DENSE_ALL_GLOBAL(name, index_node, features, ...)                          \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, bin1, (features | knowhere::feature::ALL_DENSE_TYPE), \
+                                    ##__VA_ARGS__);                                                         \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, bf16, (features | knowhere::feature::ALL_DENSE_TYPE), \
+                                    ##__VA_ARGS__);                                                         \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp16, (features | knowhere::feature::ALL_DENSE_TYPE), \
+                                    ##__VA_ARGS__);                                                         \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp32, (features | knowhere::feature::ALL_DENSE_TYPE), \
+                                    ##__VA_ARGS__);
+
+#define KNOWHERE_SIMPLE_REGISTER_DENSE_BIN_GLOBAL(name, index_node, features, ...) \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, bin1, (features | knowhere::feature::BINARY), ##__VA_ARGS__);
+
+#define KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT32_GLOBAL(name, index_node, features, ...) \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp32, (features | knowhere::feature::FLOAT32), ##__VA_ARGS__);
+
+#define KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(name, index_node, features, ...)                          \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, bf16, (features | knowhere::feature::ALL_DENSE_FLOAT_TYPE), \
+                                    ##__VA_ARGS__);                                                               \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp16, (features | knowhere::feature::ALL_DENSE_FLOAT_TYPE), \
+                                    ##__VA_ARGS__);                                                               \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp32, (features | knowhere::feature::ALL_DENSE_FLOAT_TYPE), \
+                                    ##__VA_ARGS__);
+
+#define KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(name, index_node, features, ...)                            \
+    KNOWHERE_MOCK_REGISTER_GLOBAL(name, index_node, bf16, (features | knowhere::feature::ALL_DENSE_FLOAT_TYPE),   \
+                                  ##__VA_ARGS__);                                                                 \
+    KNOWHERE_MOCK_REGISTER_GLOBAL(name, index_node, fp16, (features | knowhere::feature::ALL_DENSE_FLOAT_TYPE),   \
+                                  ##__VA_ARGS__);                                                                 \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp32, (features | knowhere::feature::ALL_DENSE_FLOAT_TYPE), \
+                                    ##__VA_ARGS__);
+
+#define KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(name, index_node, data_type, features, thread_size)    \
     KNOWHERE_REGISTER_STATIC(name, index_node, data_type)                                                \
     KNOWHERE_REGISTER_GLOBAL(                                                                            \
         name,                                                                                            \
@@ -88,7 +144,7 @@ class IndexFactory {
             return (Index<IndexNodeThreadPoolWrapper>::Create(                                           \
                 std::make_unique<index_node<MockData<data_type>::type>>(version, object), thread_size)); \
         },                                                                                               \
-        data_type)
+        data_type, typeCheck<data_type>(features), features)
 #define KNOWHERE_SET_STATIC_GLOBAL_INDEX_TABLE(table_index, name, index_table)                      \
     static int name = []() -> int {                                                                 \
         auto& static_index_table = std::get<table_index>(IndexFactory::StaticIndexTableInstance()); \

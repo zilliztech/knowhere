@@ -25,6 +25,7 @@
 
 namespace knowhere {
 KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_RAFT_IVF_PQ, GpuRaftIvfPqIndexNode, fp32,
+                                          knowhere::feature::GPU_ANN_FLOAT_INDEX,
                                           []() {
                                               int count;
                                               RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
@@ -33,6 +34,7 @@ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_RAFT_IVF_PQ, GpuRaftIvfPqIndexNode
 
 );
 KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_IVF_PQ, GpuRaftIvfPqIndexNode, fp32,
+                                          knowhere::feature::GPU_ANN_FLOAT_INDEX,
                                           []() {
                                               int count;
                                               RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
