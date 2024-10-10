@@ -106,7 +106,7 @@ namespace diskann {
                       const uint64_t aligned_dim, const uint64_t data_dim,
                       const float alpha, const uint64_t lsearch,
                       const uint64_t beam_width, const float filter_ratio,
-                      const bool for_tuning, const float max_base_norm,
+                      const float                 max_base_norm,
                       const knowhere::BitsetView &bitset);
 
     ~IteratorWorkspace();
@@ -134,15 +134,14 @@ namespace diskann {
     Metric   metric = Metric::L2;
     float    alpha = 0;
     float    acc_alpha = 0;
-    bool     for_tuning = false;
     bool     initialized = false;
 
-    T                         *aligned_query_T = nullptr;
-    float                     *aligned_query_float = nullptr;
-    tsl::robin_set<_u64>      *visited = nullptr;
-    float                      query_norm = 0.0f;
-    float                      max_base_norm = 0.0f;
-    bool                       not_l2_but_zero = false; // (cosine or ip) and query_norm == 0.
+    T                    *aligned_query_T = nullptr;
+    float                *aligned_query_float = nullptr;
+    tsl::robin_set<_u64> *visited = nullptr;
+    float                 query_norm = 0.0f;
+    float                 max_base_norm = 0.0f;
+    bool not_l2_but_zero = false;  // (cosine or ip) and query_norm == 0.
     std::vector<unsigned>      frontier;
     std::vector<AlignedRead>   frontier_read_reqs;
     const knowhere::BitsetView bitset;
@@ -222,8 +221,7 @@ namespace diskann {
 
     std::unique_ptr<IteratorWorkspace<T>> getIteratorWorkspace(
         const T *query_data, const uint64_t lsearch, const uint64_t beam_width,
-        const bool use_reorder_data, const float filter_ratio,
-        const bool for_tuning, const knowhere::BitsetView &bitset);
+        const float filter_ratio, const knowhere::BitsetView &bitset);
 
     _u64 cal_size();
 

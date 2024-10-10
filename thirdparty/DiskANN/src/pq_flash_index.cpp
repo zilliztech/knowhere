@@ -63,11 +63,11 @@ namespace diskann {
       const T *query_data, const diskann::Metric metric,
       const uint64_t aligned_dim, const uint64_t data_dim, const float alpha,
       const uint64_t lsearch, const uint64_t beam_width,
-      const float filter_ratio, const bool for_tuning,
-      const float max_base_norm, const knowhere::BitsetView &bitset)
+      const float filter_ratio, const float max_base_norm,
+      const knowhere::BitsetView &bitset)
       : lsearch(lsearch), beam_width(beam_width), filter_ratio(filter_ratio),
-        metric(metric), alpha(alpha), for_tuning(for_tuning),
-        max_base_norm(max_base_norm), bitset(bitset) {
+        metric(metric), alpha(alpha), max_base_norm(max_base_norm),
+        bitset(bitset) {
     frontier.reserve(2 * beam_width);
     frontier_nhoods.reserve(2 * beam_width);
     frontier_read_reqs.reserve(2 * beam_width);
@@ -1699,21 +1699,17 @@ namespace diskann {
 
     if (!workspace->initialized) {
       uint32_t best_medoid = 0;
-      if (workspace->for_tuning) {
-        float best_dist = (std::numeric_limits<float>::max)();
-        std::vector<SimpleNeighbor> medoid_dists;
-        for (_u64 cur_m = 0; cur_m < num_medoids; cur_m++) {
-          float cur_expanded_dist =
-              dist_cmp_float_wrap(workspace->aligned_query_float,
-                                  centroid_data + aligned_dim * cur_m,
-                                  (size_t) aligned_dim, medoids[cur_m]);
-          if (cur_expanded_dist < best_dist) {
-            best_medoid = medoids[cur_m];
-            best_dist = cur_expanded_dist;
-          }
+      float    best_dist = (std::numeric_limits<float>::max)();
+      std::vector<SimpleNeighbor> medoid_dists;
+      for (size_t cur_m = 0; cur_m < num_medoids; cur_m++) {
+        float cur_expanded_dist = dist_cmp_float_wrap(
+            workspace->aligned_query_float, centroid_data + aligned_dim * cur_m,
+            (size_t) aligned_dim, medoids[cur_m]);
+        if (cur_expanded_dist < best_dist) {
+          best_medoid = medoids[cur_m];
+          best_dist = cur_expanded_dist;
         }
       }
-
       compute_dists(&best_medoid, 1, dist_scratch);
       bool valid =
           workspace->bitset.empty() || !workspace->bitset.test(best_medoid);
@@ -1883,12 +1879,11 @@ namespace diskann {
   template<typename T>
   std::unique_ptr<IteratorWorkspace<T>> PQFlashIndex<T>::getIteratorWorkspace(
       const T *query_data, const uint64_t lsearch, const uint64_t beam_width,
-      const bool use_reorder_data, const float filter_ratio,
-      const bool for_tuning, const knowhere::BitsetView &bitset) {
+      const float filter_ratio, const knowhere::BitsetView &bitset) {
     float alpha = kAlpha;
     return std::make_unique<IteratorWorkspace<T>>(
         query_data, metric, this->aligned_dim, this->data_dim, alpha, lsearch,
-        beam_width, filter_ratio, for_tuning, this->max_base_norm, bitset);
+        beam_width, filter_ratio, this->max_base_norm, bitset);
   }
 
   template<typename T>

@@ -156,13 +156,11 @@ class DiskANNIndexNode : public IndexNode {
     class iterator : public IndexIterator {
      public:
         iterator(const bool transform, const DataType* query_data, const uint64_t lsearch, const uint64_t beam_width,
-                 const bool use_reorder_data, const float filter_ratio, const bool for_tuning,
-                 const knowhere::BitsetView& bitset, diskann::PQFlashIndex<DataType>* index)
+                 const float filter_ratio, const knowhere::BitsetView& bitset, diskann::PQFlashIndex<DataType>* index)
             : IndexIterator(transform),
               index_(index),
               transform_(transform),
-              workspace_(index_->getIteratorWorkspace(query_data, lsearch, beam_width, use_reorder_data, filter_ratio,
-                                                      for_tuning, bitset)) {
+              workspace_(index_->getIteratorWorkspace(query_data, lsearch, beam_width, filter_ratio, bitset)) {
         }
 
      protected:
@@ -572,9 +570,6 @@ DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_pt
     auto beamwidth = static_cast<uint64_t>(search_conf.beamwidth.value());
     auto filter_ratio = static_cast<float>(search_conf.filter_threshold.value());
 
-    bool use_reorder_data = false;
-    bool for_tuning = false;
-
     auto nq = dataset->GetRows();
     auto dim = dataset->GetDim();
     auto xq = dataset->GetTensor();
@@ -588,8 +583,8 @@ DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_pt
     for (int i = 0; i < nq; i++) {
         futs.emplace_back(search_pool_->push([&, id = i]() {
             auto single_query = (DataType*)xq + id * dim;
-            auto it = std::make_shared<iterator>(transform, single_query, lsearch, beamwidth, use_reorder_data,
-                                                 filter_ratio, for_tuning, bitset, pq_flash_index_.get());
+            auto it = std::make_shared<iterator>(transform, single_query, lsearch, beamwidth, filter_ratio, bitset,
+                                                 pq_flash_index_.get());
             it->initialize();
             vec[id] = it;
         }));
