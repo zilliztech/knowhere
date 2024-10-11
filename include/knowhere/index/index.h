@@ -17,8 +17,9 @@
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/index/index_node.h"
-
+#include "knowhere/index/interrupt.h"
 namespace knowhere {
+
 template <typename T1>
 class Index {
  public:
@@ -140,6 +141,15 @@ class Index {
 
     Status
     Build(const DataSetPtr dataset, const Json& json);
+
+#ifdef KNOWHERE_WITH_CARDINAL
+    const std::shared_ptr<Interrupt>
+    BuildAsync(const DataSetPtr dataset, const Json& json,
+               const std::chrono::seconds timeout = std::chrono::seconds::max());
+#else
+    const std::shared_ptr<Interrupt>
+    BuildAsync(const DataSetPtr dataset, const Json& json);
+#endif
 
     Status
     Train(const DataSetPtr dataset, const Json& json);

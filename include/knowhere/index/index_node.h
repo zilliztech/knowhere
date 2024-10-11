@@ -34,6 +34,8 @@
 
 namespace knowhere {
 
+class Interrupt;
+
 class IndexNode : public Object {
  public:
     IndexNode(const int32_t ver) : version_(ver) {
@@ -70,6 +72,16 @@ class IndexNode : public Object {
         RETURN_IF_ERROR(Train(dataset, cfg));
         return Add(dataset, std::move(cfg));
     }
+
+/*
+ *@ @brief Builds the index using the provided dataset,configuration and handle.
+ */
+#ifdef KNOWHERE_WITH_CARDINAL
+    virtual Status
+    BuildAsync(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const Interrupt* = nullptr) {
+        return Build(dataset, std::move(cfg));
+    }
+#endif
 
     /**
      * @brief Trains the index model using the provided dataset and configuration.

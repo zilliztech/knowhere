@@ -17,6 +17,7 @@ typedef uint64_t size_t;
 %ignore knowhere::IndexNode;
 %ignore knowhere::Index;
 %ignore knowhere::expected;
+%ignore knowhere::Interrupt;
 %{
 #include <stdint.h>
 #include <memory>

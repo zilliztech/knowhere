@@ -12,6 +12,8 @@
 #include "knowhere/index/index.h"
 
 #include "fmt/format.h"
+#include "folly/futures/Future.h"
+#include "knowhere/comp/thread_pool.h"
 #include "knowhere/comp/time_recorder.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
@@ -33,6 +35,40 @@ LoadConfig(BaseConfig* cfg, const Json& json, knowhere::PARAM_TYPE param_type, c
     RETURN_IF_ERROR(res);
     return Config::Load(*cfg, json_, param_type, msg);
 }
+
+#ifdef KNOWHERE_WITH_CARDINAL
+template <typename T>
+inline const std::shared_ptr<Interrupt>
+Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chrono::seconds timeout) {
+    auto pool = ThreadPool::GetGlobalBuildThreadPool();
+    auto interrupt = std::make_shared<Interrupt>(timeout);
+    interrupt->Set(pool->push([this, dataset, &json, &interrupt]() {
+        auto cfg = this->node->CreateConfig();
+        RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
+
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        TimeRecorder rc("BuildAsync index ", 2);
+        auto res = this->node->BuildAsync(dataset, std::move(cfg), interrupt.get());
+        auto time = rc.ElapseFromBegin("done");
+        time *= 0.000001;  // convert to s
+        knowhere_build_latency.Observe(time);
+#else
+        auto res = this->node->BuildAsync(dataset, std::move(cfg), Interrupt.get());
+#endif
+        return res;
+    }));
+    return interrupt;
+}
+#else
+template <typename T>
+inline const std::shared_ptr<Interrupt>
+Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json) {
+    auto pool = ThreadPool::GetGlobalBuildThreadPool();
+    auto interrupt = std::make_shared<Interrupt>();
+    interrupt->Set(pool->push([this, &dataset, &json]() { return this->Build(dataset, json); }));
+    return interrupt;
+}
+#endif
 
 template <typename T>
 inline Status
