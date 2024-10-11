@@ -52,7 +52,7 @@ class Interrupt {
     std::chrono::seconds timeout;
     mutable std::atomic_bool flag = false;
 #endif
-    std::unique_ptr<folly::Future<Status>> future = nullptr;
+    std::unique_ptr<folly::Future<Status>> future;
 };
 }  // namespace knowhere
 #endif /* INTERRUPT_H */
