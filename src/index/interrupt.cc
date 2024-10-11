@@ -11,6 +11,7 @@
 
 #include "knowhere/index/interrupt.h"
 
+#include "folly/futures/Future.h"
 namespace knowhere {
 #ifdef KNOWHERE_WITH_CARDINAL
 Interrupt::Interrupt(const std::chrono::seconds& timeout) : start(std::chrono::steady_clock::now()), timeout(timeout) {

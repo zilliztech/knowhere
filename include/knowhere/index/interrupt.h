@@ -14,8 +14,11 @@
 #include <chrono>
 #include <memory>
 
-#include "folly/futures/Future.h"
 #include "knowhere/expected.h"
+namespace folly {
+template <typename T>
+class Future;
+}
 
 namespace knowhere {
 class Interrupt {
