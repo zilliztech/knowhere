@@ -53,4 +53,7 @@ Interrupt::Set(folly::Future<Status>&& future) {
     this->future = std::make_unique<folly::Future<Status>>(std::move(future));
 }
 
+Interrupt::~Interrupt() {
+}
+
 }  // namespace knowhere

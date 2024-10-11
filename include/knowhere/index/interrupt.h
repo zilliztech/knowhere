@@ -18,7 +18,7 @@
 namespace folly {
 template <typename T>
 class Future;
-}
+}  // namespace folly
 
 namespace knowhere {
 class Interrupt {
@@ -43,6 +43,8 @@ class Interrupt {
 
     void
     Set(folly::Future<Status>&& future);
+
+    ~Interrupt();
 
  private:
 #ifdef KNOWHERE_WITH_CARDINAL
