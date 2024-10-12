@@ -89,6 +89,33 @@ class HnswIndexNode : public IndexNode {
         return Status::success;
     }
 
+    static Status
+    StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {
+        auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
+
+        if (paramType == PARAM_TYPE::TRAIN) {
+            if constexpr (KnowhereFloatTypeCheck<DataType>::value) {
+                if (IsMetricType(hnsw_cfg.metric_type.value(), metric::L2) ||
+                    IsMetricType(hnsw_cfg.metric_type.value(), metric::IP) ||
+                    IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE)) {
+                } else {
+                    msg = "metric type " + hnsw_cfg.metric_type.value() +
+                          " not found or not supported, supported: [L2 IP COSINE]";
+                    return Status::invalid_metric_type;
+                }
+            } else {
+                if (IsMetricType(hnsw_cfg.metric_type.value(), metric::HAMMING) ||
+                    IsMetricType(hnsw_cfg.metric_type.value(), metric::JACCARD)) {
+                } else {
+                    msg = "metric type " + hnsw_cfg.metric_type.value() +
+                          " not found or not supported, supported: [HAMMING JACCARD]";
+                    return Status::invalid_metric_type;
+                }
+            }
+        }
+        return Status::success;
+    }
+
     Status
     Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
         if (!index_) {

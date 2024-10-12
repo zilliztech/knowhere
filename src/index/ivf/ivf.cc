@@ -79,6 +79,33 @@ class IvfIndexNode : public IndexNode {
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset) const override;
 
+    static Status
+    StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {
+        auto ivf_cfg = static_cast<const IvfConfig&>(cfg);
+
+        if (paramType == PARAM_TYPE::TRAIN) {
+            if constexpr (KnowhereFloatTypeCheck<DataType>::value) {
+                if (IsMetricType(ivf_cfg.metric_type.value(), metric::L2) ||
+                    IsMetricType(ivf_cfg.metric_type.value(), metric::IP) ||
+                    IsMetricType(ivf_cfg.metric_type.value(), metric::COSINE)) {
+                } else {
+                    msg = "metric type " + ivf_cfg.metric_type.value() +
+                          " not found or not supported, supported: [L2 IP COSINE]";
+                    return Status::invalid_metric_type;
+                }
+            } else {
+                if (IsMetricType(ivf_cfg.metric_type.value(), metric::HAMMING) ||
+                    IsMetricType(ivf_cfg.metric_type.value(), metric::JACCARD)) {
+                } else {
+                    msg = "metric type " + ivf_cfg.metric_type.value() +
+                          " not found or not supported, supported: [HAMMING JACCARD]";
+                    return Status::invalid_metric_type;
+                }
+            }
+        }
+        return Status::success;
+    }
+
     static bool
     CommonHasRawData() {
         if constexpr (std::is_same<faiss::IndexIVFFlat, IndexType>::value) {
