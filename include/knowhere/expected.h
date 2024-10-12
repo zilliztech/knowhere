@@ -45,6 +45,7 @@ enum class Status {
     invalid_index_error = 23,
     invalid_cluster_error = 24,
     cluster_inner_error = 25,
+    timeout = 26,
 };
 
 inline std::string
