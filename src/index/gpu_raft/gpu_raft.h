@@ -196,7 +196,7 @@ struct GpuRaftIndexNode : public IndexNode {
     }
 
     Status
-    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config>) {
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config>) override {
         return Status::not_implemented;
     }
 

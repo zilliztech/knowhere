@@ -203,8 +203,10 @@ class Index {
         if (node == nullptr)
             return;
         node->DecRef();
-        if (!node->Ref())
+        if (!node->Ref()) {
             delete node;
+            node = nullptr;
+        }
     }
 
  private:

@@ -19,6 +19,7 @@
 #include "knowhere/config.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
+#include "knowhere/feature.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/index_node.h"
 #include "knowhere/log.h"
@@ -320,7 +321,8 @@ class SparseInvertedIndexNode : public IndexNode {
     size_t map_size_ = 0;
 };  // class SparseInvertedIndexNode
 
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(SPARSE_INVERTED_INDEX, SparseInvertedIndexNode, fp32, /*use_wand=*/false);
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(SPARSE_WAND, SparseInvertedIndexNode, fp32, /*use_wand=*/true);
-
+KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_INVERTED_INDEX, SparseInvertedIndexNode, knowhere::feature::MMAP,
+                                             /*use_wand=*/false)
+KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_WAND, SparseInvertedIndexNode, knowhere::feature::MMAP,
+                                             /*use_wand=*/true)
 }  // namespace knowhere
