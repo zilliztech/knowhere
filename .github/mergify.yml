@@ -168,7 +168,6 @@ pull_request_rules:
       - 'status-success=python3 wheel'
       - "status-success=e2e"
       - "status-success=e2e(arm)"
-      - "status-success=e2e-sse"
       - "status-success=e2e-gpu"
       - "status-success=ut-gpu"
     actions:
@@ -189,7 +188,6 @@ pull_request_rules:
       - 'status-success=python3 wheel'
       - "status-success=e2e"
       - "status-success=e2e(arm)"
-      - "status-success=e2e-sse"
     actions:
       label:
         add:
@@ -205,7 +203,6 @@ pull_request_rules:
       - 'status-success=analyzer'
       - "status-success=e2e"
       - "status-success=e2e(arm)"
-      - "status-success=e2e-sse"
     actions:
       label:
         add:
@@ -257,7 +254,6 @@ pull_request_rules:
         - "status-success!=python3 wheel"
         - "status-success!=e2e"
         - "status-success!=e2e(arm)"
-        - "status-success!=e2e-sse"
       - files~=^(?=.*((\.(h|cpp)|CMakeLists.txt))).*$
     actions:
       label:
@@ -276,7 +272,6 @@ pull_request_rules:
         - "status-success!=python3 wheel"
         - "status-success!=e2e"
         - "status-success!=e2e(arm)"
-        - "status-success!=e2e-sse"
         - "status-success!=e2e-gpu"
         - "status-success!=ut-gpu"
       - files~=^(?=src/index/ivf_raft/)
