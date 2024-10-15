@@ -71,12 +71,21 @@ IndexFactory::Create(const std::string& name, const int32_t& version, const Obje
 
 template <typename DataType>
 const IndexFactory&
-IndexFactory::Register(const std::string& name, std::function<Index<IndexNode>(const int32_t&, const Object&)> func) {
+IndexFactory::Register(const std::string& name, std::function<Index<IndexNode>(const int32_t&, const Object&)> func,
+                       const uint64_t features) {
     static_assert(KnowhereDataTypeCheck<DataType>::value == true);
     auto& func_mapping_ = MapInstance();
     auto key = GetKey<DataType>(name);
     assert(func_mapping_.find(key) == func_mapping_.end());
     func_mapping_[key] = std::make_unique<FunMapValue<Index<IndexNode>>>(func);
+    auto& feature_mapping_ = FeatureMapInstance();
+    // Index feature use the raw name
+    if (feature_mapping_.find(name) == feature_mapping_.end()) {
+        feature_mapping_[name] = features;
+    } else {
+        // All data types should have the same features; please try to avoid breaking this rule.
+        feature_mapping_[name] = feature_mapping_[name] & features;
+    }
     return *this;
 }
 
@@ -93,10 +102,29 @@ IndexFactory::MapInstance() {
     static FuncMap func_map;
     return func_map;
 }
+
+IndexFactory::FeatureMap&
+IndexFactory::FeatureMapInstance() {
+    static FeatureMap featureMap;
+    return featureMap;
+}
+
 IndexFactory::GlobalIndexTable&
 IndexFactory::StaticIndexTableInstance() {
     static GlobalIndexTable static_index_table;
     return static_index_table;
+}
+
+bool
+IndexFactory::FeatureCheck(const std::string& name, uint64_t feature) const {
+    auto& feature_mapping_ = IndexFactory::FeatureMapInstance();
+    assert(feature_mapping_.find(name) != feature_mapping_.end());
+    return (feature_mapping_[name] & feature) == feature;
+}
+
+const std::map<std::string, uint64_t>&
+IndexFactory::GetIndexFeatures() {
+    return FeatureMapInstance();
 }
 
 }  // namespace knowhere
@@ -111,13 +139,17 @@ template knowhere::expected<knowhere::Index<knowhere::IndexNode>>
 knowhere::IndexFactory::Create<knowhere::bf16>(const std::string&, const int32_t&, const Object&);
 template const knowhere::IndexFactory&
 knowhere::IndexFactory::Register<knowhere::fp32>(
-    const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>);
+    const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>,
+    const uint64_t);
 template const knowhere::IndexFactory&
 knowhere::IndexFactory::Register<knowhere::bin1>(
-    const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>);
+    const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>,
+    const uint64_t);
 template const knowhere::IndexFactory&
 knowhere::IndexFactory::Register<knowhere::fp16>(
-    const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>);
+    const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>,
+    const uint64_t);
 template const knowhere::IndexFactory&
 knowhere::IndexFactory::Register<knowhere::bf16>(
-    const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>);
+    const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>,
+    const uint64_t);

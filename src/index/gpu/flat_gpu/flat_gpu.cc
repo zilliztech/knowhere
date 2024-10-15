@@ -194,6 +194,5 @@ class GpuFlatIndexNode : public IndexNode {
     mutable ResWPtr res_;
     std::unique_ptr<faiss::Index> index_;
 };
-
-KNOWHERE_SIMPLE_REGISTER_GLOBAL(GPU_FAISS_FLAT, GpuFlatIndexNode, fp32);
+// GPU_FAISS_FLAT is deprecated
 }  // namespace knowhere
