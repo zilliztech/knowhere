@@ -15,12 +15,49 @@
 #include "index/hnsw/hnsw_config.h"
 #include "index/ivf/ivf_config.h"
 #include "knowhere/config.h"
+#include "knowhere/index/index_factory.h"
+#include "knowhere/version.h"
 #ifdef KNOWHERE_WITH_DISKANN
 #include "index/diskann/diskann_config.h"
 #endif
 #ifdef KNOWHERE_WITH_RAFT
 #include "index/gpu_raft/gpu_raft_cagra_config.h"
 #endif
+
+void
+checkBuildConfig(knowhere::IndexType indexType, knowhere::Json& json) {
+    std::string msg;
+    if (knowhere::IndexFactory::Instance().FeatureCheck(indexType, knowhere::feature::BINARY)) {
+        CHECK(knowhere::IndexStaticFaced<knowhere::bin1>::ConfigCheck(
+                  indexType, knowhere::Version::GetCurrentVersion().VersionNumber(), json, msg) ==
+              knowhere::Status::success);
+        CHECK(msg.empty());
+    }
+    if (knowhere::IndexFactory::Instance().FeatureCheck(indexType, knowhere::feature::FLOAT32)) {
+        CHECK(knowhere::IndexStaticFaced<float>::ConfigCheck(indexType,
+                                                             knowhere::Version::GetCurrentVersion().VersionNumber(),
+                                                             json, msg) == knowhere::Status::success);
+        CHECK(msg.empty());
+    }
+    if (knowhere::IndexFactory::Instance().FeatureCheck(indexType, knowhere::feature::BF16)) {
+        CHECK(knowhere::IndexStaticFaced<knowhere::bf16>::ConfigCheck(
+                  indexType, knowhere::Version::GetCurrentVersion().VersionNumber(), json, msg) ==
+              knowhere::Status::success);
+        CHECK(msg.empty());
+    }
+    if (knowhere::IndexFactory::Instance().FeatureCheck(indexType, knowhere::feature::FP16)) {
+        CHECK(knowhere::IndexStaticFaced<knowhere::fp16>::ConfigCheck(
+                  indexType, knowhere::Version::GetCurrentVersion().VersionNumber(), json, msg) ==
+              knowhere::Status::success);
+        CHECK(msg.empty());
+    }
+    if (knowhere::IndexFactory::Instance().FeatureCheck(indexType, knowhere::feature::SPARSE_FLOAT32)) {
+        CHECK(knowhere::IndexStaticFaced<float>::ConfigCheck(indexType,
+                                                             knowhere::Version::GetCurrentVersion().VersionNumber(),
+                                                             json, msg) == knowhere::Status::success);
+        CHECK(msg.empty());
+    }
+}
 
 TEST_CASE("Test config json parse", "[config]") {
     knowhere::Status s;
@@ -96,9 +133,15 @@ TEST_CASE("Test config json parse", "[config]") {
         })");
         knowhere::HnswConfig hnsw_config;
         s = knowhere::Config::FormatAndCheck(hnsw_config, large_build_json);
+
+        checkBuildConfig(knowhere::IndexEnum::INDEX_HNSW, large_build_json);
+
         CHECK(s == knowhere::Status::success);
 #ifdef KNOWHERE_WITH_DISKANN
         knowhere::DiskANNConfig diskann_config;
+
+        checkBuildConfig(knowhere::IndexEnum::INDEX_DISKANN, large_build_json);
+
         s = knowhere::Config::FormatAndCheck(diskann_config, large_build_json);
         CHECK(s == knowhere::Status::success);
 #endif
@@ -137,6 +180,7 @@ TEST_CASE("Test config json parse", "[config]") {
             "k": 100
         })");
 
+        checkBuildConfig(knowhere::IndexEnum::INDEX_FAISS_IDMAP, json);
         knowhere::FlatConfig train_cfg;
         s = knowhere::Config::Load(train_cfg, json, knowhere::TRAIN);
         CHECK(s == knowhere::Status::success);
@@ -160,6 +204,7 @@ TEST_CASE("Test config json parse", "[config]") {
             "trace_visit": true
         })");
         knowhere::IvfFlatConfig train_cfg;
+        checkBuildConfig(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, json);
         s = knowhere::Config::Load(train_cfg, json, knowhere::TRAIN);
         CHECK(s == knowhere::Status::success);
         CHECK(train_cfg.metric_type.value() == "L2");
@@ -202,6 +247,7 @@ TEST_CASE("Test config json parse", "[config]") {
             knowhere::HnswConfig wrong_cfg;
             auto invalid_value_json = json;
             invalid_value_json["efConstruction"] = 100.10;
+            checkBuildConfig(knowhere::IndexEnum::INDEX_HNSW, json);
             s = knowhere::Config::Load(wrong_cfg, invalid_value_json, knowhere::TRAIN);
             CHECK(s == knowhere::Status::type_conflict_in_json);
 
@@ -281,6 +327,7 @@ TEST_CASE("Test config json parse", "[config]") {
         })");
         {
             knowhere::DiskANNConfig train_cfg;
+            checkBuildConfig(knowhere::IndexEnum::INDEX_DISKANN, json);
             s = knowhere::Config::Load(train_cfg, json, knowhere::TRAIN);
             CHECK(s == knowhere::Status::success);
             CHECK_EQ(128, train_cfg.search_list_size.value());

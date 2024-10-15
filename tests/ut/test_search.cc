@@ -510,12 +510,13 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             json[knowhere::meta::METRIC_TYPE] = knowhere::metric::L2;
             json[knowhere::meta::TOPK] = 10;
             json[knowhere::indexparam::M] = 15;
+            json[knowhere::indexparam::NLIST] = 128;
             json[knowhere::indexparam::NBITS] = 8;
             return json;
         };
         auto train_ds = GenDataSet(nb, dim);
         auto res = idx.Build(train_ds, ivf_pq_gen());
-        REQUIRE(res == knowhere::Status::faiss_inner_error);
+        REQUIRE(res == knowhere::Status::invalid_args);
     }
 
     SECTION("Test IVFPQ with invalid params") {
@@ -529,6 +530,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             json[knowhere::meta::DIM] = dim;
             json[knowhere::meta::METRIC_TYPE] = knowhere::metric::L2;
             json[knowhere::meta::TOPK] = 10;
+            json[knowhere::indexparam::NLIST] = 128;
             json[knowhere::indexparam::CODE_SIZE] = 7;
             return json;
         };
@@ -760,7 +762,7 @@ TEST_CASE("Test Mem Index With Binary Vector", "[bool metrics]") {
         if (name == knowhere::IndexEnum::INDEX_FAISS_BIN_IDMAP) {
             REQUIRE(res == knowhere::Status::success);
         } else {
-            REQUIRE(res == knowhere::Status::faiss_inner_error);
+            REQUIRE(res == knowhere::Status::invalid_metric_type);
             return;
         }
         auto results = idx.Search(query_ds, json, nullptr);

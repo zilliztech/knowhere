@@ -501,6 +501,7 @@ const float defaultRangeFilter = 1.0f / 0.0;
 
 class BaseConfig : public Config {
  public:
+    CFG_INT dim;  // just used for config verify
     CFG_STRING metric_type;
     CFG_INT k;
     CFG_INT num_build_thread;
@@ -535,6 +536,7 @@ class BaseConfig : public Config {
     CFG_FLOAT bm25_b;
     CFG_FLOAT bm25_avgdl;
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(dim).allow_empty_without_default().description("vector dim").for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
             .set_default("L2")
             .description("metric type")
