@@ -64,6 +64,52 @@ WriteRawDataToDisk(const std::string data_path, const DataType* raw_data, const 
 }
 
 }  // namespace
+TEST_CASE("Valid diskann build params test", "[diskann]") {
+    int rows_num = 1000000;
+    auto version = GenTestVersionList();
+
+    auto ratio = GENERATE(as<float>{}, 0.01, 0.1, 0.125);
+
+    float pq_code_budget_gb = sizeof(float) * kDim * rows_num * 0.125 / (1024 * 1024 * 1024);
+    float search_cache_budget_gb = sizeof(float) * kDim * rows_num * 0.05 / (1024 * 1024 * 1024);
+
+    auto test_gen = [&]() {
+        knowhere::Json json;
+        json["dim"] = kDim;
+        json["metric_type"] = "L2";
+        json["k"] = 100;
+        json["index_prefix"] = kL2IndexPrefix;
+        json["data_path"] = kRawDataPath;
+        json["max_degree"] = 24;
+        json["search_list_size"] = 64;
+        json["vec_field_size_gb"] = 1.0;
+        json["pq_code_budget_gb_ratio"] = ratio;
+        json["pq_code_budget_gb"] = pq_code_budget_gb;
+        json["build_dram_budget_gb"] = 32.0;
+        json["search_cache_budget_gb_ratio"] = ratio;
+        json["search_cache_budget_gb"] = search_cache_budget_gb;
+        json["beamwidth"] = 8;
+        json["min_k"] = 10;
+        json["max_k"] = 8000;
+        return json;
+    };
+
+    SECTION("Dynamic param check") {
+        knowhere::Json test_json = test_gen();
+
+        auto cfg = knowhere::IndexStaticFaced<float>::CreateConfig(knowhere::IndexEnum::INDEX_DISKANN, version);
+        knowhere::Json json_(test_json);
+        std::string msg;
+        auto res = knowhere::Config::FormatAndCheck(*cfg, json_, &msg);
+        REQUIRE(res == knowhere::Status::success);
+        res = knowhere::Config::Load(*cfg, json_, knowhere::PARAM_TYPE::TRAIN, &msg);
+        REQUIRE(res == knowhere::Status::success);
+
+        knowhere::DiskANNConfig diskCfg = static_cast<const knowhere::DiskANNConfig&>(*cfg);
+        REQUIRE(diskCfg.pq_code_budget_gb == std::max(pq_code_budget_gb, 1.0f * ratio));
+        REQUIRE(diskCfg.search_cache_budget_gb == std::max(search_cache_budget_gb, 1.0f * ratio));
+    }
+}
 
 TEST_CASE("Invalid diskann params test", "[diskann]") {
     fs::remove_all(kDir);

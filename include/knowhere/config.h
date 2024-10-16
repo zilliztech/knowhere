@@ -508,6 +508,8 @@ class BaseConfig : public Config {
     CFG_BOOL retrieve_friendly;
     CFG_STRING data_path;
     CFG_STRING index_prefix;
+    // the size of the raw vector data
+    CFG_FLOAT vec_field_size_gb;
     // for distance metrics, we search for vectors with distance in [range_filter, radius).
     // for similarity metrics, we search for vectors with similarity in (radius, range_filter].
     CFG_FLOAT radius;
@@ -559,6 +561,10 @@ class BaseConfig : public Config {
             .allow_empty_without_default()
             .for_train()
             .for_deserialize();
+        KNOWHERE_CONFIG_DECLARE_FIELD(vec_field_size_gb)
+            .description("the size (in GB) of the raw vector data.")
+            .set_default(0)
+            .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(k)
             .set_default(10)
             .description("search for top k similar vector.")
