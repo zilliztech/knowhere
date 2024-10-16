@@ -42,7 +42,7 @@ inline const std::shared_ptr<Interrupt>
 Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chrono::seconds timeout) {
     auto pool = ThreadPool::GetGlobalBuildThreadPool();
     auto interrupt = std::make_shared<Interrupt>(timeout);
-    interrupt->Set(pool->push([this, dataset, &json, &interrupt]() {
+    interrupt->Set(pool->push([this, dataset, json, interrupt]() {
         auto cfg = this->node->CreateConfig();
         RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
 
@@ -65,7 +65,7 @@ inline const std::shared_ptr<Interrupt>
 Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json) {
     auto pool = ThreadPool::GetGlobalBuildThreadPool();
     auto interrupt = std::make_shared<Interrupt>();
-    interrupt->Set(pool->push([this, &dataset, &json]() { return this->Build(dataset, json); }));
+    interrupt->Set(pool->push([this, dataset, json]() { return this->Build(dataset, json); }));
     return interrupt;
 }
 #endif
