@@ -35,34 +35,21 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
             return;
         }
         for (auto&& x : this->data_) {
-            {
-                auto ptr = std::get_if<0>(&x.second);
-                if (ptr != nullptr) {
-                    delete[] * ptr;
-                }
-            }
-            {
-                auto ptr = std::get_if<1>(&x.second);
-                if (ptr != nullptr) {
-                    delete[] * ptr;
-                }
-            }
-            {
-                auto ptr = std::get_if<2>(&x.second);
-                if (ptr != nullptr) {
-                    delete[] * ptr;
-                }
-            }
-            {
-                auto ptr = std::get_if<3>(&x.second);
-                if (ptr != nullptr) {
-                    if (is_sparse) {
-                        delete[](sparse::SparseRow<float>*)(*ptr);
-                    } else {
-                        delete[](char*)(*ptr);
+            std::visit(
+                [](auto&& arg) {
+                    using T = std::decay_t<decltype(arg)>;
+                    if constexpr (std::is_same_v<T, const float*> || std::is_same_v<T, const size_t*> ||
+                                  std::is_same_v<T, const int64_t*>) {
+                        if (arg != nullptr) {
+                            delete[] arg;
+                        }
+                    } else if constexpr (std::is_same_v<T, const void*>) {
+                        if (arg != nullptr) {
+                            delete[](char*)(arg);
+                        }
                     }
-                }
-            }
+                },
+                x.second);
         }
     }
 
