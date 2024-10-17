@@ -146,7 +146,7 @@ class FaissHnswFlatConfig : public FaissHnswConfig {
                     *err_msg = "refine is not supported for this index";
                     LOG_KNOWHERE_ERROR_ << *err_msg;
                 }
-                return Status::invalid_value_in_json;
+                return Status::invalid_args;
             }
         }
         return Status::success;
@@ -182,7 +182,7 @@ class FaissHnswSqConfig : public FaissHnswConfig {
                     *err_msg = "invalid scalar quantizer type";
                     LOG_KNOWHERE_ERROR_ << *err_msg;
                 }
-                return Status::invalid_value_in_json;
+                return Status::invalid_args;
             }
 
             // check refine
@@ -192,7 +192,7 @@ class FaissHnswSqConfig : public FaissHnswConfig {
                         *err_msg = "invalid refine type type";
                         LOG_KNOWHERE_ERROR_ << *err_msg;
                     }
-                    return Status::invalid_value_in_json;
+                    return Status::invalid_args;
                 }
             }
         }
@@ -225,7 +225,30 @@ class FaissHnswPqConfig : public FaissHnswConfig {
 
     KNOHWERE_DECLARE_CONFIG(FaissHnswPqConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(m).description("m").set_default(32).for_train().set_range(1, 65536);
-        KNOWHERE_CONFIG_DECLARE_FIELD(nbits).description("nbits").set_default(8).for_train().set_range(1, 16);
+        // FAISS rejects nbits > 24, because it is not practical
+        KNOWHERE_CONFIG_DECLARE_FIELD(nbits).description("nbits").set_default(8).for_train().set_range(1, 24);
+    }
+
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        switch (param_type) {
+            case PARAM_TYPE::TRAIN: {
+                if (dim.has_value() && m.has_value()) {
+                    int vec_dim = dim.value();
+                    int param_m = m.value();
+                    if (vec_dim % param_m != 0) {
+                        if (err_msg != nullptr) {
+                            *err_msg =
+                                "The dimension of the vector (dim) should be a multiple of the number of subquantizers "
+                                "(m). Dimension: " +
+                                std::to_string(vec_dim) + ", m: " + std::to_string(param_m);
+                        }
+                        return Status::invalid_args;
+                    }
+                }
+            }
+        }
+        return Status::success;
     }
 };
 
@@ -239,8 +262,36 @@ class FaissHnswPrqConfig : public FaissHnswConfig {
     CFG_INT nbits;
     KNOHWERE_DECLARE_CONFIG(FaissHnswPrqConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(m).description("Number of splits").set_default(2).for_train().set_range(1, 65536);
-        KNOWHERE_CONFIG_DECLARE_FIELD(nrq).description("Number of residual subquantizers").for_train().set_range(1, 64);
-        KNOWHERE_CONFIG_DECLARE_FIELD(nbits).description("nbits").set_default(8).for_train().set_range(1, 64);
+        // I'm not sure whether nrq > 16 is practical
+        KNOWHERE_CONFIG_DECLARE_FIELD(nrq)
+            .description("Number of residual subquantizers")
+            .set_default(2)
+            .for_train()
+            .set_range(1, 16);
+        // FAISS rejects nbits > 24, because it is not practical
+        KNOWHERE_CONFIG_DECLARE_FIELD(nbits).description("nbits").set_default(8).for_train().set_range(1, 24);
+    }
+
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        switch (param_type) {
+            case PARAM_TYPE::TRAIN: {
+                if (dim.has_value() && m.has_value()) {
+                    int vec_dim = dim.value();
+                    int param_m = m.value();
+                    if (vec_dim % param_m != 0) {
+                        if (err_msg != nullptr) {
+                            *err_msg =
+                                "The dimension of a vector (dim) should be a multiple of the number of subquantizers "
+                                "(m). Dimension: " +
+                                std::to_string(vec_dim) + ", m: " + std::to_string(param_m);
+                        }
+                        return Status::invalid_args;
+                    }
+                }
+            }
+        }
+        return Status::success;
     }
 };
 
