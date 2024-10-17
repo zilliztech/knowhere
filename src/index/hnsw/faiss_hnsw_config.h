@@ -231,7 +231,11 @@ class FaissHnswPrqConfig : public FaissHnswConfig {
     CFG_INT nbits;
     KNOHWERE_DECLARE_CONFIG(FaissHnswPrqConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(m).description("Number of splits").set_default(2).for_train().set_range(1, 65536);
-        KNOWHERE_CONFIG_DECLARE_FIELD(nrq).description("Number of residual subquantizers").for_train().set_range(1, 64);
+        KNOWHERE_CONFIG_DECLARE_FIELD(nrq)
+            .description("Number of residual subquantizers")
+            .set_default(2)
+            .for_train()
+            .set_range(1, 64);
         KNOWHERE_CONFIG_DECLARE_FIELD(nbits).description("nbits").set_default(8).for_train().set_range(1, 64);
     }
 };
