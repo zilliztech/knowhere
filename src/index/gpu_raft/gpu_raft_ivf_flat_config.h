@@ -64,7 +64,9 @@ struct GpuRaftIvfFlatConfig : public IvfFlatConfig {
             constexpr std::array<std::string_view, 2> legal_metric_list{"L2", "IP"};
             std::string metric = metric_type.value();
             if (std::find(legal_metric_list.begin(), legal_metric_list.end(), metric) == legal_metric_list.end()) {
-                *err_msg = "metric type " + metric + " not found or not supported, supported: [L2 IP]";
+                if (err_msg) {
+                    *err_msg = "metric type " + metric + " not found or not supported, supported: [L2 IP]";
+                }
                 return Status::invalid_metric_type;
             }
         }

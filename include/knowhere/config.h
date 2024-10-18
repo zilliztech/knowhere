@@ -38,6 +38,10 @@ typedef nlohmann::json Json;
 #define CFG_INT std::optional<int32_t>
 #endif
 
+#ifndef CFG_INT64
+#define CFG_INT64 std::optional<int64_t>
+#endif
+
 #ifndef CFG_STRING
 #define CFG_STRING std::optional<std::string>
 #endif
@@ -136,6 +140,31 @@ struct Entry<CFG_INT> {
     std::optional<CFG_INT::value_type> default_val;
     uint32_t type;
     std::optional<std::pair<CFG_INT::value_type, CFG_INT::value_type>> range;
+    std::optional<std::string> desc;
+    bool allow_empty_without_default = false;
+};
+
+template <>
+struct Entry<CFG_INT64> {
+    explicit Entry(CFG_INT64* v) {
+        val = v;
+        default_val = std::nullopt;
+        type = 0x0;
+        range = std::nullopt;
+        desc = std::nullopt;
+    }
+    Entry() {
+        val = nullptr;
+        default_val = std::nullopt;
+        type = 0x0;
+        range = std::nullopt;
+        desc = std::nullopt;
+    }
+
+    CFG_INT64* val;
+    std::optional<CFG_INT64::value_type> default_val;
+    uint32_t type;
+    std::optional<std::pair<CFG_INT64::value_type, CFG_INT64::value_type>> range;
     std::optional<std::string> desc;
     bool allow_empty_without_default = false;
 };
@@ -317,12 +346,12 @@ class Config {
                 }
                 if (!json[it.first].is_number_integer()) {
                     std::string msg = "Type conflict in json: param '" + it.first + "' (" + to_string(json[it.first]) +
-                                      ") should be integer";
+                                      ") should be integer(64bit)";
                     show_err_msg(msg);
                     return Status::type_conflict_in_json;
                 }
                 if (ptr->range.has_value()) {
-                    if (json[it.first].get<long>() > std::numeric_limits<CFG_INT::value_type>::max()) {
+                    if (json[it.first].get<int64_t>() > std::numeric_limits<CFG_INT::value_type>::max()) {
                         std::string msg = "Arithmetic overflow: param '" + it.first + "' (" +
                                           to_string(json[it.first]) + ") should not bigger than " +
                                           std::to_string(std::numeric_limits<CFG_INT::value_type>::max());
@@ -330,6 +359,54 @@ class Config {
                         return Status::arithmetic_overflow;
                     }
                     CFG_INT::value_type v = json[it.first];
+                    auto range_val = ptr->range.value();
+                    if (range_val.first <= v && v <= range_val.second) {
+                        *ptr->val = v;
+                    } else {
+                        std::string msg = "Out of range in json: param '" + it.first + "' (" +
+                                          to_string(json[it.first]) + ") should be in range [" +
+                                          std::to_string(range_val.first) + ", " + std::to_string(range_val.second) +
+                                          "]";
+                        show_err_msg(msg);
+                        return Status::out_of_range_in_json;
+                    }
+                } else {
+                    *ptr->val = json[it.first];
+                }
+            }
+
+            if (const Entry<CFG_INT64>* ptr = std::get_if<Entry<CFG_INT64>>(&var)) {
+                if (!(type & ptr->type)) {
+                    continue;
+                }
+                if (json.find(it.first) == json.end()) {
+                    if (!ptr->default_val.has_value()) {
+                        if (ptr->allow_empty_without_default) {
+                            continue;
+                        }
+                        std::string msg = "param '" + it.first + "' not exist in json";
+                        show_err_msg(msg);
+                        return Status::invalid_param_in_json;
+                    } else {
+                        *ptr->val = ptr->default_val;
+                        continue;
+                    }
+                }
+                if (!json[it.first].is_number_integer()) {
+                    std::string msg = "Type conflict in json: param '" + it.first + "' (" + to_string(json[it.first]) +
+                                      ") should be unsigned integer";
+                    show_err_msg(msg);
+                    return Status::type_conflict_in_json;
+                }
+                if (ptr->range.has_value()) {
+                    if (json[it.first].get<int64_t>() > std::numeric_limits<CFG_INT64::value_type>::max()) {
+                        std::string msg = "Arithmetic overflow: param '" + it.first + "' (" +
+                                          to_string(json[it.first]) + ") should not bigger than " +
+                                          std::to_string(std::numeric_limits<CFG_INT64::value_type>::max());
+                        show_err_msg(msg);
+                        return Status::arithmetic_overflow;
+                    }
+                    CFG_INT64::value_type v = json[it.first];
                     auto range_val = ptr->range.value();
                     if (range_val.first <= v && v <= range_val.second) {
                         *ptr->val = v;
@@ -478,8 +555,8 @@ class Config {
     virtual ~Config() {
     }
 
-    using VarEntry = std::variant<Entry<CFG_STRING>, Entry<CFG_FLOAT>, Entry<CFG_INT>, Entry<CFG_BOOL>,
-                                  Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE>>;
+    using VarEntry = std::variant<Entry<CFG_STRING>, Entry<CFG_FLOAT>, Entry<CFG_INT>, Entry<CFG_INT64>,
+                                  Entry<CFG_BOOL>, Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE>>;
     std::unordered_map<std::string, VarEntry> __DICT__;
 
  protected:
@@ -501,7 +578,7 @@ const float defaultRangeFilter = 1.0f / 0.0;
 
 class BaseConfig : public Config {
  public:
-    CFG_INT dim;  // just used for config verify
+    CFG_INT64 dim;  // just used for config verify
     CFG_STRING metric_type;
     CFG_INT k;
     CFG_INT num_build_thread;

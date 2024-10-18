@@ -129,8 +129,10 @@ struct GpuRaftCagraConfig : public BaseConfig {
 
             if (search_width.has_value()) {
                 if (std::max(itopk_size.value(), kAlignFactor * search_width.value()) < k.value()) {
-                    *err_msg = "max((itopk_size + 31)// 32, search_width) * 32< topk";
-                    LOG_KNOWHERE_ERROR_ << *err_msg;
+                    if (err_msg) {
+                        *err_msg = "max((itopk_size + 31)// 32, search_width) * 32< topk";
+                        LOG_KNOWHERE_ERROR_ << *err_msg;
+                    }
                     return Status::out_of_range_in_json;
                 }
             } else {

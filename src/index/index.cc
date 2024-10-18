@@ -92,7 +92,8 @@ template <typename T>
 inline Status
 Index<T>::Train(const DataSetPtr dataset, const Json& json) {
     auto cfg = this->node->CreateConfig();
-    RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Train"));
+    std::string msg;
+    RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Train", &msg));
     return this->node->Train(dataset, std::move(cfg));
 }
 
@@ -100,7 +101,8 @@ template <typename T>
 inline Status
 Index<T>::Add(const DataSetPtr dataset, const Json& json) {
     auto cfg = this->node->CreateConfig();
-    RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Add"));
+    std::string msg;
+    RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Add", &msg));
     return this->node->Add(dataset, std::move(cfg));
 }
 

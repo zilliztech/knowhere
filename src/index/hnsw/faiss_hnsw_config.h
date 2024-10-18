@@ -89,9 +89,11 @@ class FaissHnswConfig : public BaseConfig {
                 if (!ef.has_value()) {
                     ef = std::max(k.value(), kEfMinValue);
                 } else if (k.value() > ef.value()) {
-                    *err_msg = "ef(" + std::to_string(ef.value()) + ") should be larger than k(" +
-                               std::to_string(k.value()) + ")";
-                    LOG_KNOWHERE_ERROR_ << *err_msg;
+                    if (err_msg) {
+                        *err_msg = "ef(" + std::to_string(ef.value()) + ") should be larger than k(" +
+                                   std::to_string(k.value()) + ")";
+                        LOG_KNOWHERE_ERROR_ << *err_msg;
+                    }
                     return Status::out_of_range_in_json;
                 }
                 break;
@@ -140,8 +142,10 @@ class FaissHnswFlatConfig : public FaissHnswConfig {
         if (param_type == PARAM_TYPE::TRAIN) {
             // prohibit refine
             if (refine.value_or(false) || refine_type.has_value() || refine_k.has_value()) {
-                *err_msg = "refine is not supported for this index";
-                LOG_KNOWHERE_ERROR_ << *err_msg;
+                if (err_msg) {
+                    *err_msg = "refine is not supported for this index";
+                    LOG_KNOWHERE_ERROR_ << *err_msg;
+                }
                 return Status::invalid_value_in_json;
             }
         }
@@ -174,16 +178,20 @@ class FaissHnswSqConfig : public FaissHnswConfig {
         if (param_type == PARAM_TYPE::TRAIN) {
             auto sq_type_v = sq_type.value();
             if (!WhetherAcceptableQuantType(sq_type_v)) {
-                *err_msg = "invalid scalar quantizer type";
-                LOG_KNOWHERE_ERROR_ << *err_msg;
+                if (err_msg) {
+                    *err_msg = "invalid scalar quantizer type";
+                    LOG_KNOWHERE_ERROR_ << *err_msg;
+                }
                 return Status::invalid_value_in_json;
             }
 
             // check refine
             if (refine_type.has_value()) {
                 if (!WhetherAcceptableRefineType(refine_type.value())) {
-                    *err_msg = "invalid refine type type";
-                    LOG_KNOWHERE_ERROR_ << *err_msg;
+                    if (err_msg) {
+                        *err_msg = "invalid refine type type";
+                        LOG_KNOWHERE_ERROR_ << *err_msg;
+                    }
                     return Status::invalid_value_in_json;
                 }
             }

@@ -59,9 +59,11 @@ class HnswConfig : public BaseConfig {
                 if (!ef.has_value()) {
                     ef = std::max(k.value(), kEfMinValue);
                 } else if (k.value() > ef.value()) {
-                    *err_msg = "ef(" + std::to_string(ef.value()) + ") should be larger than k(" +
-                               std::to_string(k.value()) + ")";
-                    LOG_KNOWHERE_ERROR_ << *err_msg;
+                    if (err_msg) {
+                        *err_msg = "ef(" + std::to_string(ef.value()) + ") should be larger than k(" +
+                                   std::to_string(k.value()) + ")";
+                        LOG_KNOWHERE_ERROR_ << *err_msg;
+                    }
                     return Status::out_of_range_in_json;
                 }
                 break;
