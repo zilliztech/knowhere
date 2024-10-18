@@ -289,15 +289,9 @@ class IvfIndexNode : public IndexNode {
     // TODO: If SCANN support Iterator, raw_distance() function should be override.
     class iterator : public IndexIterator {
      public:
-        iterator(const IndexType* index, const float* query_data, std::unique_ptr<float[]>&& copied_norm_query,
-                 const BitsetView& bitset, size_t nprobe, bool larger_is_closer, const float refine_ratio = 0.5f)
-            : IndexIterator(larger_is_closer, refine_ratio),
-              index_(index),
-              copied_norm_query_(std::move(copied_norm_query)) {
-            if (copied_norm_query_ != nullptr) {
-                query_data = copied_norm_query_.get();
-            }
-
+        iterator(const IndexType* index, std::unique_ptr<float[]>&& copied_query, const BitsetView& bitset,
+                 size_t nprobe, bool larger_is_closer, const float refine_ratio = 0.5f)
+            : IndexIterator(larger_is_closer, refine_ratio), index_(index), copied_query_(std::move(copied_query)) {
             if (!bitset.empty()) {
                 bw_idselector_ = std::make_unique<BitsetViewIDSelector>(bitset);
                 ivf_search_params_.sel = bw_idselector_.get();
@@ -306,7 +300,7 @@ class IvfIndexNode : public IndexNode {
             ivf_search_params_.nprobe = nprobe;
             ivf_search_params_.max_codes = 0;
 
-            workspace_ = index_->getIteratorWorkspace(query_data, &ivf_search_params_);
+            workspace_ = index_->getIteratorWorkspace(copied_query_.get(), &ivf_search_params_);
         }
 
      protected:
@@ -320,7 +314,7 @@ class IvfIndexNode : public IndexNode {
      private:
         const IndexType* index_ = nullptr;
         std::unique_ptr<faiss::IVFIteratorWorkspace> workspace_ = nullptr;
-        std::unique_ptr<float[]> copied_norm_query_ = nullptr;
+        std::unique_ptr<float[]> copied_query_ = nullptr;
         std::unique_ptr<BitsetViewIDSelector> bw_idselector_ = nullptr;
         faiss::IVFSearchParameters ivf_search_params_;
     };
@@ -926,14 +920,18 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::un
             for (int i = 0; i < rows; ++i) {
                 futs.emplace_back(search_pool_->push([&, index = i] {
                     auto cur_query = (const float*)data + index * dim;
-                    std::unique_ptr<float[]> copied_norm_query = nullptr;
+                    // if cosine, need normalize
+                    std::unique_ptr<float[]> copied_query = nullptr;
                     if (is_cosine) {
-                        copied_norm_query = CopyAndNormalizeVecs(cur_query, 1, dim);
+                        copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
+                    } else {
+                        copied_query = std::make_unique<float[]>(dim);
+                        std::copy_n(cur_query, dim, copied_query.get());
                     }
 
-                    // the iterator only own the copied_norm_query.
-                    auto it = std::make_shared<iterator>(index_.get(), cur_query, std::move(copied_norm_query), bitset,
-                                                         nprobe, larger_is_closer, iterator_refine_ratio);
+                    // iterator only own the copied_query.
+                    auto it = std::make_shared<iterator>(index_.get(), std::move(copied_query), bitset, nprobe,
+                                                         larger_is_closer, iterator_refine_ratio);
                     it->initialize();
                     vec[index] = it;
                 }));
