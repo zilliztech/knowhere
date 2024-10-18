@@ -78,9 +78,11 @@ class IvfPqConfig : public IvfConfig {
                     int vec_dim = dim.value();
                     int param_m = m.value();
                     if (vec_dim % param_m != 0) {
-                        *err_msg =
-                            "dimension must be able to be divided by `m`, dimension: " + std::to_string(vec_dim) +
-                            ", m: " + std::to_string(param_m);
+                        if (err_msg) {
+                            *err_msg =
+                                "dimension must be able to be divided by `m`, dimension: " + std::to_string(vec_dim) +
+                                ", m: " + std::to_string(param_m);
+                        }
                         return Status::invalid_args;
                     }
                 }
@@ -115,7 +117,10 @@ class ScannConfig : public IvfFlatConfig {
                 if (dim.has_value()) {
                     int vec_dim = dim.value();
                     if (vec_dim % 2 != 0) {
-                        *err_msg = "dimension must be able to be divided by 2, dimension:" + std::to_string(vec_dim);
+                        if (err_msg) {
+                            *err_msg =
+                                "dimension must be able to be divided by 2, dimension:" + std::to_string(vec_dim);
+                        }
                         return Status::invalid_args;
                     }
                 }
@@ -161,7 +166,9 @@ class IvfBinConfig : public IvfConfig {
             constexpr std::array<std::string_view, 2> legal_metric_list{"HAMMING", "JACCARD"};
             std::string metric = metric_type.value();
             if (std::find(legal_metric_list.begin(), legal_metric_list.end(), metric) == legal_metric_list.end()) {
-                *err_msg = "metric type " + metric + " not found or not supported, supported: [HAMMING JACCARD]";
+                if (err_msg) {
+                    *err_msg = "metric type " + metric + " not found or not supported, supported: [HAMMING JACCARD]";
+                }
                 return Status::invalid_metric_type;
             }
         }
@@ -195,9 +202,11 @@ class IvfSqCcConfig : public IvfFlatCcConfig {
             auto legal_code_size_list = std::vector<int>{4, 6, 8, 16};
             if (std::find(legal_code_size_list.begin(), legal_code_size_list.end(), code_size_v) ==
                 legal_code_size_list.end()) {
-                *err_msg =
-                    "compress a vector into (code_size * dim)/8 bytes, code size value should be in 4, 6, 8 and 16";
-                LOG_KNOWHERE_ERROR_ << *err_msg;
+                if (err_msg) {
+                    *err_msg =
+                        "compress a vector into (code_size * dim)/8 bytes, code size value should be in 4, 6, 8 and 16";
+                    LOG_KNOWHERE_ERROR_ << *err_msg;
+                }
                 return Status::invalid_value_in_json;
             }
         }
