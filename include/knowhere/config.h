@@ -346,7 +346,7 @@ class Config {
                 }
                 if (!json[it.first].is_number_integer()) {
                     std::string msg = "Type conflict in json: param '" + it.first + "' (" + to_string(json[it.first]) +
-                                      ") should be integer(64bit)";
+                                      ") should be integer";
                     show_err_msg(msg);
                     return Status::type_conflict_in_json;
                 }
@@ -394,7 +394,7 @@ class Config {
                 }
                 if (!json[it.first].is_number_integer()) {
                     std::string msg = "Type conflict in json: param '" + it.first + "' (" + to_string(json[it.first]) +
-                                      ") should be unsigned integer";
+                                      ") should be long integer";
                     show_err_msg(msg);
                     return Status::type_conflict_in_json;
                 }
