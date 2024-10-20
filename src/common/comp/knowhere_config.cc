@@ -186,7 +186,7 @@ KnowhereConfig::FreeGPUResource() {
 }
 
 void
-KnowhereConfig::SetRaftMemPool(size_t init_size, size_t max_size) {
+SetRaftMemPoolImpl(std::optional<size_t> init_size, std::optional<size_t> max_size) {
 #ifdef KNOWHERE_WITH_RAFT
     int count = 0;
     auto status = cudaGetDeviceCount(&count);
@@ -209,11 +209,17 @@ KnowhereConfig::SetRaftMemPool(size_t init_size, size_t max_size) {
 }
 
 void
+KnowhereConfig::SetRaftMemPool(size_t init_size, size_t max_size) {
+#ifdef KNOWHERE_WITH_RAFT
+    SetRaftMemPoolImpl(init_size, max_size);
+#endif
+}
+
+void
 KnowhereConfig::SetRaftMemPool() {
     // Overload for default values
 #ifdef KNOWHERE_WITH_RAFT
-    auto config = raft_knowhere::raft_configuration{};
-    raft_knowhere::initialize_raft(config);
+    SetRaftMemPoolImpl(std::nullopt, std::nullopt);
 #endif
 }
 
