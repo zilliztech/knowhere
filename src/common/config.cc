@@ -113,6 +113,36 @@ Config::FormatAndCheck(const Config& cfg, Json& json, std::string* const err_msg
                         KNOWHERE_THROW_MSG("invalid integer value, key: '" + key_str + "', value: '" + value_str + "'");
                     }
                 }
+                if (std::get_if<Entry<CFG_INT64>>(&var)) {
+                    std::string::size_type sz;
+                    auto key_str = it.first;
+                    auto value_str = json[key_str].get<std::string>();
+                    try {
+                        int64_t v = std::stoll(value_str, &sz);
+                        if (sz < value_str.length()) {
+                            KNOWHERE_THROW_MSG("wrong data type in json, key: '" + key_str + "', value: '" + value_str +
+                                               "'");
+                        }
+                        if (v < std::numeric_limits<CFG_INT64::value_type>::min() ||
+                            v > std::numeric_limits<CFG_INT64::value_type>::max()) {
+                            if (err_msg) {
+                                *err_msg = "long integer value out of range, key: '" + key_str + "', value: '" +
+                                           value_str + "'";
+                            }
+                            return knowhere::Status::invalid_value_in_json;
+                        }
+                        json[key_str] = static_cast<CFG_INT64::value_type>(v);
+                    } catch (const std::out_of_range&) {
+                        if (err_msg) {
+                            *err_msg =
+                                "long integer value out of range, key: '" + key_str + "', value: '" + value_str + "'";
+                        }
+                        return knowhere::Status::invalid_value_in_json;
+                    } catch (const std::invalid_argument&) {
+                        KNOWHERE_THROW_MSG("invalid long integer value, key: '" + key_str + "', value: '" + value_str +
+                                           "'");
+                    }
+                }
                 if (std::get_if<Entry<CFG_FLOAT>>(&var)) {
                     CFG_FLOAT::value_type v = std::stof(json[it.first].get<std::string>().c_str());
                     json[it.first] = v;

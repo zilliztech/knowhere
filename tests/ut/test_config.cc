@@ -94,12 +94,15 @@ TEST_CASE("Test config json parse", "[config]") {
     }
 
     SECTION("check int64 json values") {
-        auto unsigned_int_json_str = GENERATE(as<std::string>{},
-                                              R"({
+        auto long_int_json_str = GENERATE(as<std::string>{},
+                                          R"({
                 "dim": 10000000000
+            })",
+                                          R"({
+                "dim": "10000000000"
             })");
         knowhere::BaseConfig test_config;
-        knowhere::Json test_json = knowhere::Json::parse(unsigned_int_json_str);
+        knowhere::Json test_json = knowhere::Json::parse(long_int_json_str);
         s = knowhere::Config::FormatAndCheck(test_config, test_json);
         CHECK(s == knowhere::Status::success);
         s = knowhere::Config::Load(test_config, test_json, knowhere::TRAIN);
