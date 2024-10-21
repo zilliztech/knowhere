@@ -29,6 +29,10 @@
 #include "instruction_set.h"
 #endif
 
+#if defined(__powerpc64__)
+#include "distances_powerpc.h"
+#endif
+
 #include "distances_ref.h"
 #include "knowhere/log.h"
 namespace faiss {
@@ -311,19 +315,27 @@ fvec_hook(std::string& simd_type) {
 
 // ToDo MG: include VSX intrinsics via distances_vsx once _ref tests succeed
 #if defined(__powerpc64__)
-    fvec_inner_product = fvec_inner_product_ref;
-    fvec_L2sqr = fvec_L2sqr_ref;
-    fvec_L1 = fvec_L1_ref;
-    fvec_Linf = fvec_Linf_ref;
+    fvec_inner_product = fvec_inner_product_ref_ppc;
+    fvec_L2sqr = fvec_L2sqr_ref_ppc;
+    // new mappings
+    fvec_L2sqr_ny_nearest = fvec_L2sqr_ny_nearest_ref_ppc;
+    fvec_L2sqr_ny_nearest_y_transposed
+        = fvec_L2sqr_ny_nearest_y_transposed_ref_ppc;
+    fvec_L2sqr_ny_transposed = fvec_L2sqr_ny_transposed_ref_ppc;
+    fvec_inner_product_batch_4 = fvec_inner_product_batch_4_ref_ppc;
+    fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref_ppc;
 
-    fvec_norm_L2sqr = fvec_norm_L2sqr_ref;
-    fvec_L2sqr_ny = fvec_L2sqr_ny_ref;
-    fvec_inner_products_ny = fvec_inner_products_ny_ref;
-    fvec_madd = fvec_madd_ref;
-    fvec_madd_and_argmin = fvec_madd_and_argmin_ref;
+    fvec_L1 = fvec_L1_ref_ppc;
+    fvec_Linf = fvec_Linf_ref_ppc;
 
-    ivec_inner_product = ivec_inner_product_ref;
-    ivec_L2sqr = ivec_L2sqr_ref;
+    fvec_norm_L2sqr = fvec_norm_L2sqr_ref_ppc;
+    fvec_L2sqr_ny = fvec_L2sqr_ny_ref_ppc;
+    fvec_inner_products_ny = fvec_inner_products_ny_ref_ppc;
+    fvec_madd = fvec_madd_ref_ppc;
+    fvec_madd_and_argmin = fvec_madd_and_argmin_ref_ppc;
+
+    ivec_inner_product = ivec_inner_product_ref_ppc;
+    ivec_L2sqr = ivec_L2sqr_ref_ppc;
 
     simd_type = "GENERIC";
     support_pq_fast_scan = false;
