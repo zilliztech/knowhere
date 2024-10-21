@@ -67,7 +67,8 @@ class IvfPqConfig : public IvfConfig {
     CFG_INT nbits;
     KNOHWERE_DECLARE_CONFIG(IvfPqConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(m).description("m").for_train().set_range(1, 65536);
-        KNOWHERE_CONFIG_DECLARE_FIELD(nbits).description("nbits").set_default(8).for_train().set_range(1, 64);
+        // FAISS rejects nbits > 24, because it is not practical
+        KNOWHERE_CONFIG_DECLARE_FIELD(nbits).description("nbits").set_default(8).for_train().set_range(1, 24);
     }
 
     Status
@@ -80,8 +81,9 @@ class IvfPqConfig : public IvfConfig {
                     if (vec_dim % param_m != 0) {
                         if (err_msg) {
                             *err_msg =
-                                "dimension must be able to be divided by `m`, dimension: " + std::to_string(vec_dim) +
-                                ", m: " + std::to_string(param_m);
+                                "The dimension of a vector (dim) should be a multiple of the number of subquantizers "
+                                "(m). Dimension: " +
+                                std::to_string(vec_dim) + ", m: " + std::to_string(param_m);
                         }
                         return Status::invalid_args;
                     }
@@ -118,8 +120,8 @@ class ScannConfig : public IvfFlatConfig {
                     int vec_dim = dim.value();
                     if (vec_dim % 2 != 0) {
                         if (err_msg) {
-                            *err_msg =
-                                "dimension must be able to be divided by 2, dimension:" + std::to_string(vec_dim);
+                            *err_msg = "The dimension of a vector (dim) should be a multiple of 2. Dimension:" +
+                                       std::to_string(vec_dim);
                         }
                         return Status::invalid_args;
                     }
