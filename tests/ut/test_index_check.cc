@@ -192,7 +192,7 @@ TEST_CASE("Test index has raw data", "[IndexHasRawData]") {
         CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_PRQ, ver, {}));
 
         // diskann
-#ifndef KNOWHERE_WITH_CARDINAL
+#ifdef KNOWHERE_WITH_DISKANN
         CHECK(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_DISKANN, ver,
                                                            knowhere::Json::parse(R"({"metric_type": "L2"})")));
         CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_DISKANN, ver,
