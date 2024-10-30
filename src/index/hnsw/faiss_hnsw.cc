@@ -476,7 +476,7 @@ struct FaissHnswIteratorWorkspace {
     faiss::SearchParametersHNSW search_params;
 
     // the query
-    std::unique_ptr<uint8_t[]> query;
+    std::unique_ptr<float[]> query;
 
     // whether the initial search is done or not.
     // basically, upon initialization, we need to traverse to the largest
@@ -493,7 +493,7 @@ struct FaissHnswIteratorWorkspace {
 // Contains an iterator logic
 class FaissHnswIterator : public IndexIterator {
  public:
-    FaissHnswIterator(const std::shared_ptr<faiss::Index>& index_in, std::unique_ptr<uint8_t[]>&& query_in,
+    FaissHnswIterator(const std::shared_ptr<faiss::Index>& index_in, std::unique_ptr<float[]>&& query_in,
                       const BitsetView& bitset_in, const int32_t ef_in, bool larger_is_closer,
                       const float refine_ratio = 0.5f)
         : IndexIterator(larger_is_closer, refine_ratio), index{index_in} {
@@ -559,10 +559,10 @@ class FaissHnswIterator : public IndexIterator {
         }
 
         // set query
-        workspace.qdis->set_query(reinterpret_cast<const float*>(query_in.get()));
+        workspace.qdis->set_query(query_in.get());
 
         if (workspace.qdis_refine != nullptr) {
-            workspace.qdis_refine->set_query(reinterpret_cast<const float*>(query_in.get()));
+            workspace.qdis_refine->set_query(query_in.get());
         }
 
         // set up a buffer that tracks visited points
@@ -1168,6 +1168,12 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "index not loaded");
         }
 
+        if (data_format != DataFormatEnum::fp32 && data_format != DataFormatEnum::fp16 &&
+            data_format != DataFormatEnum::bf16) {
+            LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+            return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::invalid_args, "unsupported data format");
+        }
+
         // parse parameters
         const auto dim = dataset->GetDim();
         const auto n_queries = dataset->GetRows();
@@ -1187,24 +1193,14 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             for (int64_t i = 0; i < n_queries; i++) {
                 futs.emplace_back(search_pool->push([&, idx = i] {
                     // The query data is always cloned
-                    std::unique_ptr<uint8_t[]> cur_query;
+                    std::unique_ptr<float[]> cur_query = std::make_unique<float[]>(dim);
 
                     if (data_format == DataFormatEnum::fp32) {
-                        cur_query = std::make_unique<uint8_t[]>(dim * sizeof(float));
-                        std::copy_n(reinterpret_cast<const uint8_t*>(reinterpret_cast<const float*>(data) + idx * dim),
-                                    dim * sizeof(float), cur_query.get());
-                    } else if (data_format == DataFormatEnum::fp16) {
-                        cur_query = std::make_unique<uint8_t[]>(dim * sizeof(knowhere::fp16));
-                        std::copy_n(
-                            reinterpret_cast<const uint8_t*>(reinterpret_cast<const knowhere::fp16*>(data) + idx * dim),
-                            dim * sizeof(knowhere::fp16), cur_query.get());
-                    } else if (data_format == DataFormatEnum::bf16) {
-                        cur_query = std::make_unique<uint8_t[]>(dim * sizeof(knowhere::bf16));
-                        std::copy_n(
-                            reinterpret_cast<const uint8_t*>(reinterpret_cast<const knowhere::bf16*>(data) + idx * dim),
-                            dim * sizeof(knowhere::bf16), cur_query.get());
+                        std::copy_n(reinterpret_cast<const float*>(data) + idx * dim, dim, cur_query.get());
+                    } else if (data_format == DataFormatEnum::fp16 || data_format == DataFormatEnum::bf16) {
+                        convert_rows_to_fp32(data, cur_query.get(), data_format, idx, 1, dim);
                     } else {
-                        // invalid one
+                        // invalid one. Should not be triggered, bcz input parameters are validated
                         throw;
                     }
 
