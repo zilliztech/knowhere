@@ -102,20 +102,22 @@ post_filter(raft::resources const& res, filter_lambda_t const& sample_filter, in
     // below, but I am not sure whether or not that would be a net benefit. This
     // deserves some benchmarking unless pre-filtering gets in before we revisit
     // this.
-    thrust::for_each(raft::resource::get_thrust_policy(res),
-                     thrust::make_zip_iterator(
-                         thrust::make_tuple(counter, mdspan_begin(index_mdspan), mdspan_begin(distance_mdspan))),
-                     thrust::make_zip_iterator(thrust::make_tuple(
-                         counter + index_mdspan.size(), mdspan_end(index_mdspan), mdspan_end(distance_mdspan))),
-                     [=] __device__(auto& index_id_distance) {
-                         auto index = thrust::get<0>(index_id_distance);
-                         auto& id = thrust::get<1>(index_id_distance);
-                         auto& distance = thrust::get<2>(index_id_distance);
-                         if (!sample_filter(index / index_mdspan.extent(1), id)) {
-                             id = std::numeric_limits<std::remove_reference_t<decltype(id)>>::max();
-                             distance = std::numeric_limits<std::remove_reference_t<decltype(distance)>>::max();
-                         }
-                     });
+    thrust::for_each(
+        raft::resource::get_thrust_policy(res),
+        thrust::make_zip_iterator(
+            thrust::make_tuple(counter, mdspan_begin(index_mdspan), mdspan_begin(distance_mdspan))),
+        thrust::make_zip_iterator(
+            thrust::make_tuple(counter + index_mdspan.size(), mdspan_end(index_mdspan), mdspan_end(distance_mdspan))),
+        [=] __device__(const thrust::tuple<decltype(index_mdspan.extent(0)), typename index_mdspan_t::element_type&,
+                                           typename distance_mdspan_t::element_type&>& index_id_distance) {
+            auto index = thrust::get<0>(index_id_distance);
+            auto& id = thrust::get<1>(index_id_distance);
+            auto& distance = thrust::get<2>(index_id_distance);
+            if (!sample_filter(index / index_mdspan.extent(1), id)) {
+                id = std::numeric_limits<std::remove_reference_t<decltype(id)>>::max();
+                distance = std::numeric_limits<std::remove_reference_t<decltype(distance)>>::max();
+            }
+        });
     for (auto i = 0; i < index_mdspan.extent(0); ++i) {
         auto id_row_begin = mdspan_begin_row(index_mdspan, i);
         auto id_row_end = mdspan_end_row(index_mdspan, i);
@@ -285,8 +287,9 @@ struct raft_index {
             } else if constexpr (vector_index_kind == raft_index_kind::ivf_pq) {
                 return raft_index<underlying_index_type, raft_index_args...>{raft::neighbors::ivf_pq::build<T, IdxT>(
                     res, index_params, data.data_handle(), data.extent(0), data.extent(1))};
-            } else {
-                RAFT_FAIL("IVF flat does not support construction from host data");
+            } else if constexpr (vector_index_kind == raft_index_kind::ivf_flat) {
+                return raft_index<underlying_index_type, raft_index_args...>{
+                    raft::neighbors::ivf_flat::build<T, IdxT>(res, index_params, data)};
             }
         } else {
             if constexpr (vector_index_kind == raft_index_kind::brute_force) {

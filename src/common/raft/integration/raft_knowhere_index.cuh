@@ -404,28 +404,16 @@ struct raft_knowhere_index<IndexKind>::impl {
         }
         auto const& res = get_device_resources_without_mempool();
         auto host_data = raft::make_host_matrix_view(data, row_count, feature_count);
-        if constexpr (index_kind == raft_proto::raft_index_kind::ivf_flat) {
+        if (config.cache_dataset_on_device) {
             device_dataset_storage =
                 raft::make_device_matrix<data_type, input_indexing_type>(res, row_count, feature_count);
             auto device_data = device_dataset_storage->view();
             raft::copy(res, device_data, host_data);
             index_ = raft_index_type::template build<data_type, indexing_type, input_indexing_type>(
                 res, index_params, raft::make_const_mdspan(device_data));
-            if (!config.cache_dataset_on_device) {
-                device_dataset_storage = std::nullopt;
-            }
         } else {
-            if (config.cache_dataset_on_device) {
-                device_dataset_storage =
-                    raft::make_device_matrix<data_type, input_indexing_type>(res, row_count, feature_count);
-                auto device_data = device_dataset_storage->view();
-                raft::copy(res, device_data, host_data);
-                index_ = raft_index_type::template build<data_type, indexing_type, input_indexing_type>(
-                    res, index_params, raft::make_const_mdspan(device_data));
-            } else {
-                index_ = raft_index_type::template build<data_type, indexing_type, input_indexing_type>(
-                    res, index_params, raft::make_const_mdspan(host_data));
-            }
+            index_ = raft_index_type::template build<data_type, indexing_type, input_indexing_type>(
+                res, index_params, raft::make_const_mdspan(host_data));
         }
     }
 
@@ -447,7 +435,6 @@ struct raft_knowhere_index<IndexKind>::impl {
         } else {
             if (index_) {
                 auto const& res = get_device_resources_without_mempool();
-                raft::resource::set_workspace_to_pool_resource(res);
                 auto host_data = raft::make_host_matrix_view(data, row_count, feature_count);
                 device_dataset_storage =
                     raft::make_device_matrix<data_type, input_indexing_type>(res, row_count, feature_count);
@@ -488,11 +475,9 @@ struct raft_knowhere_index<IndexKind>::impl {
         auto device_data_storage =
             raft::make_device_matrix<data_type, input_indexing_type>(res, row_count, feature_count);
         raft::copy(res, device_data_storage.view(), host_data);
-
         auto device_bitset =
             std::optional<raft::core::bitset<knowhere_bitset_data_type, knowhere_bitset_indexing_type>>{};
         auto k_tmp = k;
-
         if (bitset_data != nullptr && bitset_byte_size != 0) {
             device_bitset =
                 raft::core::bitset<knowhere_bitset_data_type, knowhere_bitset_indexing_type>(res, bitset_size);
