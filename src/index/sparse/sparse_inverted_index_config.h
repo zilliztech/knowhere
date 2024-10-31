@@ -27,12 +27,12 @@ class SparseInvertedIndexConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(drop_ratio_build)
             .description("drop ratio for build")
             .set_default(0.0f)
-            .set_range(0.0f, 1.0f)
+            .set_range(0.0f, 1.0f, true, false)
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(drop_ratio_search)
             .description("drop ratio for search")
             .set_default(0.0f)
-            .set_range(0.0f, 1.0f)
+            .set_range(0.0f, 1.0f, true, false)
             .for_search()
             .for_range_search()
             .for_iterator();
