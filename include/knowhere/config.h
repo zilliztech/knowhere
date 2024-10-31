@@ -59,6 +59,32 @@ typedef nlohmann::json Json;
 #endif
 
 template <typename T>
+struct Range {
+    T left;
+    T right;
+    bool include_left;
+    bool include_right;
+
+    Range(T left, T right, bool includeLeft, bool includeRight)
+        : left(left), right(right), include_left(includeLeft), include_right(includeRight) {
+    }
+
+    bool
+    within(T val) {
+        bool left_range_check = left < val || (include_left && left <= val);
+        bool right_range_check = val < right || (include_right && val <= right);
+        return left_range_check && right_range_check;
+    }
+
+    std::string
+    to_string() {
+        std::string left_mark = include_left ? "[" : "(";
+        std::string right_mark = include_right ? "]" : ")";
+        return left_mark + std::to_string(left) + ", " + std::to_string(right) + right_mark;
+    }
+};
+
+template <typename T>
 struct Entry {};
 
 enum PARAM_TYPE {
@@ -114,7 +140,7 @@ struct Entry<CFG_FLOAT> {
     CFG_FLOAT* val;
     std::optional<CFG_FLOAT::value_type> default_val;
     uint32_t type;
-    std::optional<std::pair<CFG_FLOAT::value_type, CFG_FLOAT::value_type>> range;
+    std::optional<Range<CFG_FLOAT::value_type>> range;
     std::optional<std::string> desc;
     bool allow_empty_without_default = false;
 };
@@ -139,7 +165,7 @@ struct Entry<CFG_INT> {
     CFG_INT* val;
     std::optional<CFG_INT::value_type> default_val;
     uint32_t type;
-    std::optional<std::pair<CFG_INT::value_type, CFG_INT::value_type>> range;
+    std::optional<Range<CFG_INT::value_type>> range;
     std::optional<std::string> desc;
     bool allow_empty_without_default = false;
 };
@@ -164,7 +190,7 @@ struct Entry<CFG_INT64> {
     CFG_INT64* val;
     std::optional<CFG_INT64::value_type> default_val;
     uint32_t type;
-    std::optional<std::pair<CFG_INT64::value_type, CFG_INT64::value_type>> range;
+    std::optional<Range<CFG_INT64::value_type>> range;
     std::optional<std::string> desc;
     bool allow_empty_without_default = false;
 };
@@ -228,8 +254,8 @@ class EntryAccess {
     }
 
     EntryAccess&
-    set_range(typename T::value_type a, typename T::value_type b) {
-        entry->range = std::make_pair(a, b);
+    set_range(typename T::value_type a, typename T::value_type b, bool include_left = true, bool include_right = true) {
+        entry->range = Range<typename T::value_type>(a, b, include_left, include_right);
         return *this;
     }
 
@@ -360,13 +386,11 @@ class Config {
                     }
                     CFG_INT::value_type v = json[it.first];
                     auto range_val = ptr->range.value();
-                    if (range_val.first <= v && v <= range_val.second) {
+                    if (range_val.within(v)) {
                         *ptr->val = v;
                     } else {
                         std::string msg = "Out of range in json: param '" + it.first + "' (" +
-                                          to_string(json[it.first]) + ") should be in range [" +
-                                          std::to_string(range_val.first) + ", " + std::to_string(range_val.second) +
-                                          "]";
+                                          to_string(json[it.first]) + ") should be in range " + range_val.to_string();
                         show_err_msg(msg);
                         return Status::out_of_range_in_json;
                     }
@@ -408,13 +432,11 @@ class Config {
                     }
                     CFG_INT64::value_type v = json[it.first];
                     auto range_val = ptr->range.value();
-                    if (range_val.first <= v && v <= range_val.second) {
+                    if (range_val.within(v)) {
                         *ptr->val = v;
                     } else {
                         std::string msg = "Out of range in json: param '" + it.first + "' (" +
-                                          to_string(json[it.first]) + ") should be in range [" +
-                                          std::to_string(range_val.first) + ", " + std::to_string(range_val.second) +
-                                          "]";
+                                          to_string(json[it.first]) + ") should be in range " + range_val.to_string();
                         show_err_msg(msg);
                         return Status::out_of_range_in_json;
                     }
@@ -456,13 +478,11 @@ class Config {
                     }
                     CFG_FLOAT::value_type v = json[it.first];
                     auto range_val = ptr->range.value();
-                    if (range_val.first <= v && v <= range_val.second) {
+                    if (range_val.within(v)) {
                         *ptr->val = v;
                     } else {
                         std::string msg = "Out of range in json: param '" + it.first + "' (" +
-                                          to_string(json[it.first]) + ") should be in range [" +
-                                          std::to_string(range_val.first) + ", " + std::to_string(range_val.second) +
-                                          "]";
+                                          to_string(json[it.first]) + ") should be in range " + range_val.to_string();
                         show_err_msg(msg);
                         return Status::out_of_range_in_json;
                     }

@@ -411,8 +411,6 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
         {0.32, 0.0},
         {0.32, 0.6},
         {0.0, 0.6},
-        // drop everything
-        {1.0, 0.6},
     }));
 
     auto base_gen = [=, dim = dim, drop_ratio_build = drop_ratio_build, drop_ratio_search = drop_ratio_search]() {
