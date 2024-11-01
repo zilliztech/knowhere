@@ -14,12 +14,12 @@
 #include "index/flat/flat_config.h"
 #include "index/hnsw/hnsw_config.h"
 #include "index/ivf/ivf_config.h"
+#include "index/sparse/sparse_inverted_index_config.h"
 #include "knowhere/config.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/version.h"
 #ifdef KNOWHERE_WITH_DISKANN
 #include "index/diskann/diskann_config.h"
-#include "index/sparse/sparse_inverted_index_config.h"
 #endif
 #ifdef KNOWHERE_WITH_RAFT
 #include "index/gpu_raft/gpu_raft_cagra_config.h"
