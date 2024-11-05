@@ -45,9 +45,6 @@ struct raft_knowhere_index {
     dim() const;
     void
     train(raft_knowhere_config const&, data_type const*, knowhere_indexing_type, knowhere_indexing_type);
-    void
-    add(data_type const* data, knowhere_indexing_type row_count, knowhere_indexing_type feature_count,
-        knowhere_indexing_type const* new_ids = nullptr);
     std::tuple<knowhere_indexing_type*, knowhere_data_type*>
     search(raft_knowhere_config const& config, data_type const* data, knowhere_indexing_type row_count,
            knowhere_indexing_type feature_count, knowhere_bitset_data_type const* bitset_data = nullptr,
