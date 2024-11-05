@@ -53,7 +53,7 @@ class SparseInvertedIndexNode : public IndexNode {
             return Status::invalid_metric_type;
         }
         auto drop_ratio_build = cfg.drop_ratio_build.value_or(0.0f);
-        auto index_or = CreateIndex(cfg);
+        auto index_or = CreateIndex</*mmapped=*/false>(cfg);
         if (!index_or.has_value()) {
             return index_or.error();
         }
@@ -206,12 +206,12 @@ class SparseInvertedIndexNode : public IndexNode {
             return Status::invalid_binary_set;
         }
         MemoryIOReader reader(binary->data.get(), binary->size);
-        auto index_or = CreateIndex(cfg);
+        auto index_or = CreateIndex</*mmapped=*/false>(cfg);
         if (!index_or.has_value()) {
             return index_or.error();
         }
         index_ = index_or.value();
-        return index_->Load(reader, false);
+        return index_->Load(reader);
     }
 
     Status
@@ -237,13 +237,13 @@ class SparseInvertedIndexNode : public IndexNode {
         if (madvise(map_, map_size_, MADV_RANDOM) != 0) {
             LOG_KNOWHERE_WARNING_ << "Failed to madvise file: " << strerror(errno);
         }
-        auto index_or = CreateIndex(cfg);
+        auto index_or = CreateIndex</*mmapped=*/true>(cfg);
         if (!index_or.has_value()) {
             return index_or.error();
         }
         index_ = index_or.value();
         MemoryIOReader map_reader((uint8_t*)map_, map_size_);
-        return index_->Load(map_reader, true);
+        return index_->Load(map_reader, map_flags);
     }
 
     static std::unique_ptr<BaseConfig>
@@ -278,10 +278,11 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
  private:
+    template <bool mmapped>
     expected<sparse::BaseInvertedIndex<T>*>
     CreateIndex(const SparseInvertedIndexConfig& cfg) const {
         if (IsMetricType(cfg.metric_type.value(), metric::BM25)) {
-            auto idx = new sparse::InvertedIndex<T, use_wand, true>();
+            auto idx = new sparse::InvertedIndex<T, use_wand, true, mmapped>();
             if (!cfg.bm25_k1.has_value() || !cfg.bm25_b.has_value() || !cfg.bm25_avgdl.has_value()) {
                 return expected<sparse::BaseInvertedIndex<T>*>::Err(
                     Status::invalid_args, "BM25 parameters k1, b, and avgdl must be set when building/loading");
@@ -293,7 +294,7 @@ class SparseInvertedIndexNode : public IndexNode {
             idx->SetBM25Params(k1, b, avgdl, max_score_ratio);
             return idx;
         } else {
-            return new sparse::InvertedIndex<T, use_wand, false>();
+            return new sparse::InvertedIndex<T, use_wand, false, mmapped>();
         }
     }
 

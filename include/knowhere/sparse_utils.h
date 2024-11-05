@@ -274,4 +274,82 @@ class MaxMinHeap {
     std::vector<SparseIdVal<T>> pool_;
 };  // class MaxMinHeap
 
+// A std::vector like container but uses fixed size free memory(typically from
+// mmap) as backing store and can only be appended at the end.
+//
+// Must be initialized with a valid pointer to memory when used. The memory must be
+// valid during the lifetime of this object. After initialization, GrowableVectorView will
+// have space for mmap_element_count_ elements, none of which are initialized.
+//
+// Currently only used in sparse InvertedIndex. Move to other places if needed.
+template <typename T>
+class GrowableVectorView {
+ public:
+    using value_type = T;
+    using size_type = size_t;
+
+    GrowableVectorView() = default;
+
+    void
+    initialize(void* data, size_type byte_size) {
+        if (byte_size % sizeof(T) != 0) {
+            throw std::invalid_argument("GrowableVectorView byte_size must be a multiple of element size");
+        }
+        mmap_data_ = data;
+        mmap_byte_size_ = byte_size;
+        mmap_element_count_ = 0;
+    }
+
+    size_type
+    capacity() const {
+        return mmap_byte_size_ / sizeof(T);
+    }
+
+    size_type
+    size() const {
+        return mmap_element_count_;
+    }
+
+    template <typename... Args>
+    T&
+    emplace_back(Args&&... args) {
+        if (size() == capacity()) {
+            throw std::out_of_range("emplace_back on a full GrowableVectorView");
+        }
+        auto* elem = reinterpret_cast<T*>(mmap_data_) + mmap_element_count_++;
+        return *new (elem) T(std::forward<Args>(args)...);
+    }
+
+    T&
+    operator[](size_type i) {
+        return reinterpret_cast<T*>(mmap_data_)[i];
+    }
+
+    const T&
+    operator[](size_type i) const {
+        return reinterpret_cast<const T*>(mmap_data_)[i];
+    }
+
+    T&
+    at(size_type i) {
+        if (i >= mmap_element_count_) {
+            throw std::out_of_range("GrowableVectorView index out of range");
+        }
+        return reinterpret_cast<T*>(mmap_data_)[i];
+    }
+
+    const T&
+    at(size_type i) const {
+        if (i >= mmap_element_count_) {
+            throw std::out_of_range("GrowableVectorView index out of range");
+        }
+        return reinterpret_cast<const T*>(mmap_data_)[i];
+    }
+
+ private:
+    void* mmap_data_ = nullptr;
+    size_type mmap_byte_size_ = 0;
+    size_type mmap_element_count_ = 0;
+};
+
 }  // namespace knowhere::sparse
