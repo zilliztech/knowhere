@@ -48,6 +48,7 @@ enum class Status {
     timeout = 26,
     internal_error = 27,
     invalid_serialized_index_type = 28,
+    sparse_inner_error = 29,
 };
 
 inline std::string
@@ -101,6 +102,8 @@ Status2String(knowhere::Status status) {
             return "internal error (something that must not have happened at all)";
         case knowhere::Status::invalid_serialized_index_type:
             return "the serialized index type is not recognized";
+        case knowhere::Status::sparse_inner_error:
+            return "sparse index inner error";
         default:
             return "unexpected status";
     }
