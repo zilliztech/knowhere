@@ -27,7 +27,7 @@ struct GpuRaftBruteForceConfig : public BaseConfig {
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
         if (param_type == PARAM_TYPE::TRAIN) {
-            constexpr std::array<std::string_view, 2> legal_metric_list{"L2", "IP"};
+            constexpr std::array<std::string_view, 3> legal_metric_list{"L2", "IP", "COSINE"};
             std::string metric = metric_type.value();
             if (std::find(legal_metric_list.begin(), legal_metric_list.end(), metric) == legal_metric_list.end()) {
                 if (err_msg) {
