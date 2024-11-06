@@ -22,6 +22,8 @@ namespace faiss {
 /// Squared L2 distance between two vectors
 float
 fvec_L2sqr_neon(const float* x, const float* y, size_t d);
+float
+fvec_L2sqr_neon_bf16_patch(const float* x, const float* y, size_t d);
 
 float
 fp16_vec_L2sqr_neon(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
@@ -32,6 +34,8 @@ bf16_vec_L2sqr_neon(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
 /// inner product
 float
 fvec_inner_product_neon(const float* x, const float* y, size_t d);
+float
+fvec_inner_product_neon_bf16_patch(const float* x, const float* y, size_t d);
 
 float
 fp16_vec_inner_product_neon(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
@@ -76,6 +80,27 @@ ivec_inner_product_neon(const int8_t* x, const int8_t* y, size_t d);
 
 int32_t
 ivec_L2sqr_neon(const int8_t* x, const int8_t* y, size_t d);
+
+/// Special version of inner product that computes 4 distances
+/// between x and yi, which is performance oriented.
+void
+fvec_inner_product_batch_4_neon(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
+                                const size_t dim, float& dis0, float& dis1, float& dis2, float& dis3);
+
+void
+fvec_inner_product_batch_4_neon_bf16_patch(const float* x, const float* y0, const float* y1, const float* y2,
+                                           const float* y3, const size_t dim, float& dis0, float& dis1, float& dis2,
+                                           float& dis3);
+
+/// Special version of L2sqr that computes 4 distances
+/// between x and yi, which is performance oriented.
+void
+fvec_L2sqr_batch_4_neon(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
+                        const size_t dim, float& dis0, float& dis1, float& dis2, float& dis3);
+
+void
+fvec_L2sqr_batch_4_neon_bf16_patch(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
+                                   const size_t dim, float& dis0, float& dis1, float& dis2, float& dis3);
 
 }  // namespace faiss
 
