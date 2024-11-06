@@ -128,6 +128,15 @@ enable_patch_for_fp32_bf16() {
         fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref_bf16_patch;
     }
 #endif
+#if defined(__ARM_NEON)
+
+    fvec_inner_product = fvec_inner_product_neon_bf16_patch;
+    fvec_L2sqr = fvec_L2sqr_neon_bf16_patch;
+
+    fvec_inner_product_batch_4 = fvec_inner_product_batch_4_neon_bf16_patch;
+    fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_neon_bf16_patch;
+
+#endif
 }
 
 void
@@ -303,6 +312,9 @@ fvec_hook(std::string& simd_type) {
     bf16_vec_inner_product = bf16_vec_inner_product_neon;
     bf16_vec_L2sqr = bf16_vec_L2sqr_neon;
     bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_neon;
+
+    fvec_inner_product_batch_4 = fvec_inner_product_batch_4_neon;
+    fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_neon;
 
     simd_type = "NEON";
     support_pq_fast_scan = true;
