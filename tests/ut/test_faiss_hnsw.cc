@@ -1811,3 +1811,78 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
         }
     }
 }
+
+TEST_CASE("hnswlib to FAISS HNSW for HNSW_FLAT", "Check search fallback") {
+    // the goal is the following. We train and save the index using hnswlib,
+    //   but load as faiss
+
+    const std::vector<std::string> DISTANCE_TYPES = {"L2", "IP", "COSINE"};
+
+    const size_t DIM = 16;
+
+    const int32_t NB = 256;
+    const int32_t NQ = 16;
+    const int32_t TOPK = 16;
+
+    // create base json config
+    knowhere::Json default_conf;
+
+    default_conf[knowhere::indexparam::HNSW_M] = 16;
+    default_conf[knowhere::indexparam::EFCONSTRUCTION] = 96;
+    default_conf[knowhere::indexparam::EF] = 64;
+    default_conf[knowhere::meta::TOPK] = TOPK;
+
+    //
+    const std::string hnswlib_index_type = knowhere::IndexEnum::INDEX_HNSW;
+    const std::string faiss_index_type = knowhere::IndexEnum::INDEX_FAISS_HNSW_FLAT;
+
+    //
+    const auto dim = DIM;
+    const auto nb = NB;
+
+    //
+    auto query_ds_ptr = GenDataSet(nb, dim, 123);
+
+    // create indices
+    for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
+        knowhere::Json conf = default_conf;
+        conf[knowhere::meta::METRIC_TYPE] = DISTANCE_TYPES[distance_type];
+        conf[knowhere::meta::DIM] = dim;
+        conf[knowhere::meta::ROWS] = nb;
+        conf[knowhere::meta::INDEX_TYPE] = hnswlib_index_type;
+
+        //
+        std::vector<int32_t> hnswlib_params = {(int)distance_type, dim, nb};
+
+        // generate a default dataset
+        const uint64_t rng_seed = get_params_hash(hnswlib_params);
+        auto default_ds_ptr = GenDataSet(nb, dim, rng_seed);
+
+        // create or load an hnswlib
+        std::string hnswlib_index_file_name =
+            get_index_name<knowhere::fp32>(ann_test_name_, hnswlib_index_type, hnswlib_params);
+
+        auto hnswlib_index =
+            create_index<knowhere::fp32>(hnswlib_index_type, hnswlib_index_file_name, default_ds_ptr, conf, "hnswlib ");
+
+        // perform an hnswlib search
+        auto hnswlib_result = hnswlib_index.Search(query_ds_ptr, conf, nullptr);
+        REQUIRE(hnswlib_result.has_value());
+
+        // create an alternative conf for faiss
+        knowhere::Json faiss_conf = conf;
+        faiss_conf[knowhere::meta::INDEX_TYPE] = faiss_index_type;
+
+        // load index back, but as a faiss index
+        auto faiss_index = create_index<knowhere::fp32>(faiss_index_type, hnswlib_index_file_name, default_ds_ptr,
+                                                        faiss_conf, "hnswlib ");
+
+        // perform a faiss search
+        auto faiss_result = faiss_index.Search(query_ds_ptr, faiss_conf, nullptr);
+        REQUIRE(faiss_result.has_value());
+
+        // validate
+        auto recall = GetKNNRecall(*hnswlib_result.value(), *faiss_result.value());
+        REQUIRE(recall == 1);
+    }
+}

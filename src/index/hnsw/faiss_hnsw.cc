@@ -32,6 +32,7 @@
 #include "faiss/impl/ScalarQuantizer.h"
 #include "faiss/index_io.h"
 #include "index/hnsw/faiss_hnsw_config.h"
+#include "index/hnsw/hnsw.h"
 #include "index/hnsw/impl/DummyVisitor.h"
 #include "index/hnsw/impl/FederVisitor.h"
 #include "index/hnsw/impl/IndexBruteForceWrapper.h"
@@ -140,6 +141,20 @@ class BaseFaissIndexNode : public IndexNode {
     AddInternal(const DataSetPtr dataset, const Config& cfg) = 0;
 };
 
+// returns true if the text of FaissException is about non-recognizing fourcc
+static inline bool
+is_faiss_fourcc_error(const char* what) {
+    if (what == nullptr) {
+        return false;
+    }
+
+    std::string error_msg(what);
+
+    // check if this is fourCC problem
+    return (error_msg.find("Index type") != std::string::npos) &&
+           (error_msg.find("not recognized") != std::string::npos);
+}
+
 //
 class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
  public:
@@ -180,8 +195,13 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
             auto read_index = std::unique_ptr<faiss::Index>(faiss::read_index(&reader));
             index.reset(read_index.release());
         } catch (const std::exception& e) {
-            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
-            return Status::faiss_inner_error;
+            if (is_faiss_fourcc_error(e.what())) {
+                LOG_KNOWHERE_WARNING_ << "faiss does not recognize the input index: " << e.what();
+                return Status::invalid_serialized_index_type;
+            } else {
+                LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+                return Status::faiss_inner_error;
+            }
         }
 
         return Status::success;
@@ -200,8 +220,13 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
             auto read_index = std::unique_ptr<faiss::Index>(faiss::read_index(filename.data(), io_flags));
             index.reset(read_index.release());
         } catch (const std::exception& e) {
-            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
-            return Status::faiss_inner_error;
+            if (is_faiss_fourcc_error(e.what())) {
+                LOG_KNOWHERE_WARNING_ << "faiss does not recognize the input index: " << e.what();
+                return Status::invalid_serialized_index_type;
+            } else {
+                LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+                return Status::faiss_inner_error;
+            }
         }
 
         return Status::success;
@@ -1339,6 +1364,217 @@ class BaseFaissRegularIndexHNSWFlatNodeTemplate : public BaseFaissRegularIndexHN
     }
 };
 
+// this is a regular node that can be initialized as some existing index type,
+//   but a deserialization may override its search behavior.
+// It is a concrete implementation's responsibility to initialize BaseIndex and
+//   FallbackSearchIndex properly.
+class IndexNodeWithSearchFallback : public IndexNode {
+ public:
+    IndexNodeWithSearchFallback(const int32_t& version, const Object& object) {
+        use_base_index = true;
+    }
+
+    Status
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+        return base_index->Train(dataset, cfg);
+    }
+
+    Status
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+        return base_index->Add(dataset, cfg);
+    }
+
+    expected<DataSetPtr>
+    GetIndexMeta(std::unique_ptr<Config> cfg) const override {
+        if (use_base_index) {
+            return base_index->GetIndexMeta(std::move(cfg));
+        } else {
+            return fallback_search_index->GetIndexMeta(std::move(cfg));
+        }
+    }
+
+    Status
+    Serialize(BinarySet& binset) const override {
+        return base_index->Serialize(binset);
+    }
+
+    int64_t
+    Dim() const override {
+        if (use_base_index) {
+            return base_index->Dim();
+        } else {
+            return fallback_search_index->Dim();
+        }
+    }
+
+    int64_t
+    Count() const override {
+        if (use_base_index) {
+            return base_index->Count();
+        } else {
+            return fallback_search_index->Count();
+        }
+    }
+
+    int64_t
+    Size() const override {
+        if (use_base_index) {
+            return base_index->Size();
+        } else {
+            return fallback_search_index->Size();
+        }
+    }
+
+    std::string
+    Type() const override {
+        return base_index->Type();
+    }
+
+    bool
+    HasRawData(const std::string& metric_type) const override {
+        if (use_base_index) {
+            return base_index->HasRawData(metric_type);
+        } else {
+            return fallback_search_index->HasRawData(metric_type);
+        }
+    }
+
+    expected<DataSetPtr>
+    GetVectorByIds(const DataSetPtr dataset) const override {
+        if (use_base_index) {
+            return base_index->GetVectorByIds(dataset);
+        } else {
+            return fallback_search_index->GetVectorByIds(dataset);
+        }
+    }
+
+    expected<DataSetPtr>
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+        if (use_base_index) {
+            return base_index->Search(dataset, std::move(cfg), bitset);
+        } else {
+            return fallback_search_index->Search(dataset, std::move(cfg), bitset);
+        }
+    }
+
+    expected<DataSetPtr>
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+        if (use_base_index) {
+            return base_index->RangeSearch(dataset, std::move(cfg), bitset);
+        } else {
+            return fallback_search_index->RangeSearch(dataset, std::move(cfg), bitset);
+        }
+    }
+
+    expected<std::vector<IndexNode::IteratorPtr>>
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+        if (use_base_index) {
+            return base_index->AnnIterator(dataset, std::move(cfg), bitset);
+        } else {
+            return fallback_search_index->AnnIterator(dataset, std::move(cfg), bitset);
+        }
+    }
+
+ protected:
+    bool use_base_index = true;
+    std::unique_ptr<IndexNode> base_index;
+    std::unique_ptr<IndexNode> fallback_search_index;
+};
+
+class BaseFaissRegular2HnswlibIndexNode : public IndexNodeWithSearchFallback {
+ public:
+    BaseFaissRegular2HnswlibIndexNode(const int32_t& version, const Object& object)
+        : IndexNodeWithSearchFallback(version, object) {
+    }
+
+    Status
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config> config) override {
+        // is the name for a base index?
+        BinaryPtr binary = binset.GetByName(base_index->Type());
+        if (binary != nullptr) {
+            auto base_status = base_index->Deserialize(binset, config);
+            if (base_status == Status::success) {
+                // switch to a base index
+                use_base_index = true;
+            }
+
+            if (base_status != Status::invalid_serialized_index_type) {
+                return base_status;
+            }
+
+            // we go ahead if base_index returned Status::invalid_serialized_index_type
+        }
+
+        // ok, try to deserialize as a fallback one
+        BinaryPtr binary_fallback = binset.GetByName(fallback_search_index->Type());
+        if (binary_fallback != nullptr) {
+            LOG_KNOWHERE_INFO_ << "The provided data does not look like a FAISS index. Falling back to hnswlib index.";
+            auto fallback_status = fallback_search_index->Deserialize(binset, config);
+            if (fallback_status == Status::success) {
+                // switch to a fallback index
+                use_base_index = false;
+            }
+
+            return fallback_status;
+        }
+
+        // unknown index
+        LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
+        return Status::invalid_binary_set;
+    };
+
+    Status
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> config) override {
+        auto base_status = base_index->DeserializeFromFile(filename, config);
+        if (base_status == Status::success) {
+            // switch to a base index
+            use_base_index = true;
+        }
+
+        if (base_status != Status::invalid_serialized_index_type) {
+            return base_status;
+        }
+
+        // we go ahead if base_index returned Status::invalid_serialized_index_type
+
+        // ok, try to deserialize as a fallback one
+        LOG_KNOWHERE_INFO_ << "The provided data does not look like a FAISS index. Falling back to hnswlib index.";
+        auto fallback_status = fallback_search_index->DeserializeFromFile(filename, config);
+        if (fallback_status == Status::success) {
+            // switch to a fallback index
+            use_base_index = false;
+        }
+
+        return fallback_status;
+    }
+};
+
+template <typename DataType>
+class BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback : public BaseFaissRegular2HnswlibIndexNode {
+ public:
+    BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback(const int32_t& version, const Object& object)
+        : BaseFaissRegular2HnswlibIndexNode(version, object) {
+        // initialize underlying nodes
+        base_index = std::make_unique<BaseFaissRegularIndexHNSWFlatNodeTemplate<DataType>>(version, object);
+        fallback_search_index = std::make_unique<HnswIndexNode<DataType, hnswlib::QuantType::None>>(version, object);
+    }
+
+    static bool
+    StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
+        return true;
+    }
+
+    static std::unique_ptr<BaseConfig>
+    StaticCreateConfig() {
+        return std::make_unique<FaissHnswFlatConfig>();
+    }
+
+    std::unique_ptr<BaseConfig>
+    CreateConfig() const override {
+        return StaticCreateConfig();
+    }
+};
+
 namespace {
 
 // a supporting function
@@ -2053,7 +2289,8 @@ class BaseFaissRegularIndexHNSWPRQNodeTemplate : public BaseFaissRegularIndexHNS
 };
 
 //
-KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(FAISS_HNSW_FLAT, BaseFaissRegularIndexHNSWFlatNodeTemplate,
+KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(FAISS_HNSW_FLAT,
+                                                BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback,
                                                 knowhere::feature::MMAP)
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(FAISS_HNSW_SQ, BaseFaissRegularIndexHNSWSQNodeTemplate,
                                                 knowhere::feature::MMAP)
