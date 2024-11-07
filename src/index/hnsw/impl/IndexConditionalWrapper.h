@@ -42,8 +42,12 @@ std::optional<bool>
 WhetherPerformBruteForceRangeSearch(const faiss::Index* index, const FaissHnswConfig& cfg, const BitsetView& bitset);
 
 // first return arg: returns nullptr in case of invalid index
-// second return arg: returns whether an index does refine
+// second return arg: returns whether an index does the refine
+//
+// `whether_to_enable_refine` allows to enable the refine for the search if the
+//    index was trained with the refine.
 std::tuple<std::unique_ptr<faiss::Index>, bool>
-create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw_cfg, const bool whether_bf_search);
+create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw_cfg, const bool whether_bf_search,
+                                const bool whether_to_enable_refine);
 
 }  // namespace knowhere

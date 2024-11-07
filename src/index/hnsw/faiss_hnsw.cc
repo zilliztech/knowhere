@@ -551,24 +551,32 @@ class FaissHnswIterator : public IndexIterator {
             // wrap a sign, if needed
             workspace.qdis = std::unique_ptr<faiss::DistanceComputer>(storage_distance_computer(index_hnsw));
 
-            // a tricky point here.
-            // Basically, if out hnsw index's storage is HasInverseL2Norms, then
-            //   this is a cosine index. But because refine always keeps original
-            //   data, then we need to use a wrapper over a distance computer
-            const faiss::HasInverseL2Norms* has_l2_norms =
-                dynamic_cast<const faiss::HasInverseL2Norms*>(index_hnsw->storage);
-            if (has_l2_norms != nullptr) {
-                // add a cosine wrapper over it
-                // DO NOT WRAP A SIGN, by design
-                workspace.qdis_refine =
-                    std::unique_ptr<faiss::DistanceComputer>(new faiss::WithCosineNormDistanceComputer(
-                        has_l2_norms->get_inverse_l2_norms(), index->d,
-                        std::unique_ptr<faiss::DistanceComputer>(index_refine->refine_index->get_distance_computer())));
+            if (refine_ratio != 0) {
+                // the refine is needed
+
+                // a tricky point here.
+                // Basically, if out hnsw index's storage is HasInverseL2Norms, then
+                //   this is a cosine index. But because refine always keeps original
+                //   data, then we need to use a wrapper over a distance computer
+                const faiss::HasInverseL2Norms* has_l2_norms =
+                    dynamic_cast<const faiss::HasInverseL2Norms*>(index_hnsw->storage);
+                if (has_l2_norms != nullptr) {
+                    // add a cosine wrapper over it
+                    // DO NOT WRAP A SIGN, by design
+                    workspace.qdis_refine =
+                        std::unique_ptr<faiss::DistanceComputer>(new faiss::WithCosineNormDistanceComputer(
+                            has_l2_norms->get_inverse_l2_norms(), index->d,
+                            std::unique_ptr<faiss::DistanceComputer>(
+                                index_refine->refine_index->get_distance_computer())));
+                } else {
+                    // use it as is
+                    // DO NOT WRAP A SIGN, by design
+                    workspace.qdis_refine =
+                        std::unique_ptr<faiss::DistanceComputer>(index_refine->refine_index->get_distance_computer());
+                }
             } else {
-                // use it as is
-                // DO NOT WRAP A SIGN, by design
-                workspace.qdis_refine =
-                    std::unique_ptr<faiss::DistanceComputer>(index_refine->refine_index->get_distance_computer());
+                // the refine is not needed
+                workspace.qdis_refine = nullptr;
             }
         } else {
             const faiss::IndexHNSW* index_hnsw = dynamic_cast<const faiss::IndexHNSW*>(index.get());
@@ -882,9 +890,12 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             return expected<DataSetPtr>::Err(Status::invalid_args, "k parameter is missing");
         }
 
+        // whether a user wants a refine
+        const bool whether_to_enable_refine = hnsw_cfg.refine_k.has_value();
+
         // set up an index wrapper
-        auto [index_wrapper, is_refined] =
-            create_conditional_hnsw_wrapper(index.get(), hnsw_cfg, whether_bf_search.value_or(false));
+        auto [index_wrapper, is_refined] = create_conditional_hnsw_wrapper(
+            index.get(), hnsw_cfg, whether_bf_search.value_or(false), whether_to_enable_refine);
 
         if (index_wrapper == nullptr) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
@@ -1011,9 +1022,12 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             return expected<DataSetPtr>::Err(Status::invalid_args, "ef parameter is missing");
         }
 
+        // whether a user wants a refine
+        const bool whether_to_enable_refine = true;
+
         // set up an index wrapper
-        auto [index_wrapper, is_refined] =
-            create_conditional_hnsw_wrapper(index.get(), hnsw_cfg, whether_bf_search.value_or(false));
+        auto [index_wrapper, is_refined] = create_conditional_hnsw_wrapper(
+            index.get(), hnsw_cfg, whether_bf_search.value_or(false), whether_to_enable_refine);
 
         if (index_wrapper == nullptr) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
@@ -1229,11 +1243,10 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                         throw;
                     }
 
-                    //
+                    const bool should_use_refine = (dynamic_cast<const faiss::IndexRefine*>(index.get()) != nullptr);
+
                     const float iterator_refine_ratio =
-                        (dynamic_cast<const faiss::IndexRefine*>(index.get()) != nullptr)
-                            ? hnsw_cfg.iterator_refine_ratio.value_or(0.5)
-                            : 0;
+                        should_use_refine ? hnsw_cfg.iterator_refine_ratio.value_or(0.5) : 0;
 
                     // create an iterator and initialize it
                     auto it =

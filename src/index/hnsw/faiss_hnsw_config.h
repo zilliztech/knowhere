@@ -43,7 +43,7 @@ class FaissHnswConfig : public BaseHnswConfig {
             .for_static();
         KNOWHERE_CONFIG_DECLARE_FIELD(refine_k)
             .description("refine k")
-            .allow_empty_without_default()
+            .set_default(1)
             .set_range(1, std::numeric_limits<CFG_FLOAT::value_type>::max())
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(refine_type)
@@ -83,7 +83,7 @@ class FaissHnswFlatConfig : public FaissHnswConfig {
         // check our parameters
         if (param_type == PARAM_TYPE::TRAIN) {
             // prohibit refine
-            if (refine.value_or(false) || refine_type.has_value() || refine_k.has_value()) {
+            if (refine.value_or(false) || refine_type.has_value()) {
                 if (err_msg) {
                     *err_msg = "refine is not supported for this index";
                     LOG_KNOWHERE_ERROR_ << *err_msg;
@@ -189,6 +189,8 @@ class FaissHnswPqConfig : public FaissHnswConfig {
                     }
                 }
             }
+            default:
+                break;
         }
         return Status::success;
     }
@@ -232,6 +234,8 @@ class FaissHnswPrqConfig : public FaissHnswConfig {
                     }
                 }
             }
+            default:
+                break;
         }
         return Status::success;
     }
