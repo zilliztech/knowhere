@@ -12,27 +12,16 @@
 #ifndef FAISS_HNSW_CONFIG_H
 #define FAISS_HNSW_CONFIG_H
 
+#include "index/hnsw/base_hnsw_config.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/config.h"
 #include "knowhere/tolower.h"
 
 namespace knowhere {
 
-namespace {
-
-constexpr const CFG_INT::value_type kIteratorSeedEf = 40;
-constexpr const CFG_INT::value_type kEfMinValue = 16;
-constexpr const CFG_INT::value_type kDefaultRangeSearchEf = 512;
-
-}  // namespace
-
-class FaissHnswConfig : public BaseConfig {
+class FaissHnswConfig : public BaseHnswConfig {
  public:
-    CFG_INT M;
-    CFG_INT efConstruction;
-    CFG_INT ef;
     CFG_INT seed_ef;
-    CFG_INT overview_levels;
 
     // whether an index is built with a refine support
     CFG_BOOL refine;
@@ -42,28 +31,11 @@ class FaissHnswConfig : public BaseConfig {
     CFG_STRING refine_type;
 
     KNOHWERE_DECLARE_CONFIG(FaissHnswConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(M).description("hnsw M").set_default(30).set_range(2, 2048).for_train();
-        KNOWHERE_CONFIG_DECLARE_FIELD(efConstruction)
-            .description("hnsw efConstruction")
-            .set_default(360)
-            .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
-            .for_train();
-        KNOWHERE_CONFIG_DECLARE_FIELD(ef)
-            .description("hnsw ef")
-            .allow_empty_without_default()
-            .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
-            .for_search()
-            .for_range_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(seed_ef)
             .description("hnsw seed_ef when using iterator")
             .set_default(kIteratorSeedEf)
             .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
             .for_iterator();
-        KNOWHERE_CONFIG_DECLARE_FIELD(overview_levels)
-            .description("hnsw overview levels for feder")
-            .set_default(3)
-            .set_range(1, 5)
-            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(refine)
             .description("whether the refine is used during the train")
             .set_default(false)
@@ -79,36 +51,6 @@ class FaissHnswConfig : public BaseConfig {
             .allow_empty_without_default()
             .for_train()
             .for_static();
-    }
-
-    Status
-    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
-        switch (param_type) {
-            case PARAM_TYPE::SEARCH: {
-                // validate ef
-                if (!ef.has_value()) {
-                    ef = std::max(k.value(), kEfMinValue);
-                } else if (k.value() > ef.value()) {
-                    if (err_msg) {
-                        *err_msg = "ef(" + std::to_string(ef.value()) + ") should be larger than k(" +
-                                   std::to_string(k.value()) + ")";
-                        LOG_KNOWHERE_ERROR_ << *err_msg;
-                    }
-                    return Status::out_of_range_in_json;
-                }
-                break;
-            }
-            case PARAM_TYPE::RANGE_SEARCH: {
-                if (!ef.has_value()) {
-                    // if ef is not set by user, set it to default
-                    ef = kDefaultRangeSearchEf;
-                }
-                break;
-            }
-            default:
-                break;
-        }
-        return Status::success;
     }
 
  protected:
