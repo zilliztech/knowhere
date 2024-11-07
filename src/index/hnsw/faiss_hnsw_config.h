@@ -189,6 +189,8 @@ class FaissHnswPqConfig : public FaissHnswConfig {
                     }
                 }
             }
+            default:
+                break;
         }
         return Status::success;
     }
@@ -232,6 +234,8 @@ class FaissHnswPrqConfig : public FaissHnswConfig {
                     }
                 }
             }
+            default:
+                break;
         }
         return Status::success;
     }
