@@ -1279,7 +1279,7 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
 
     std::string
     Type() const override {
-        return knowhere::IndexEnum::INDEX_FAISS_HNSW_FLAT;
+        return knowhere::IndexEnum::INDEX_HNSW;
     }
 
  protected:
@@ -1789,7 +1789,7 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
 
     std::string
     Type() const override {
-        return knowhere::IndexEnum::INDEX_FAISS_HNSW_SQ;
+        return knowhere::IndexEnum::INDEX_HNSW_SQ;
     }
 
  protected:
@@ -1904,7 +1904,7 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
 
     std::string
     Type() const override {
-        return knowhere::IndexEnum::INDEX_FAISS_HNSW_PQ;
+        return knowhere::IndexEnum::INDEX_HNSW_PQ;
     }
 
  protected:
@@ -2103,7 +2103,7 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
 
     std::string
     Type() const override {
-        return knowhere::IndexEnum::INDEX_FAISS_HNSW_PRQ;
+        return knowhere::IndexEnum::INDEX_HNSW_PRQ;
     }
 
  protected:
@@ -2288,15 +2288,21 @@ class BaseFaissRegularIndexHNSWPRQNodeTemplate : public BaseFaissRegularIndexHNS
     }
 };
 
-//
-KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(FAISS_HNSW_FLAT,
+// MV is only for compatibility
+#ifdef KNOWHERE_WITH_CARDINAL
+KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_DEPRECATED,
                                                 BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback,
+                                                knowhere::feature::MMAP | knowhere::feature::MV)
+#else
+KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW, BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback,
+                                                knowhere::feature::MMAP | knowhere::feature::MV)
+#endif
+
+KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_SQ, BaseFaissRegularIndexHNSWSQNodeTemplate,
                                                 knowhere::feature::MMAP)
-KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(FAISS_HNSW_SQ, BaseFaissRegularIndexHNSWSQNodeTemplate,
+KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTemplate,
                                                 knowhere::feature::MMAP)
-KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(FAISS_HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTemplate,
-                                                knowhere::feature::MMAP)
-KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(FAISS_HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNodeTemplate,
+KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNodeTemplate,
                                                 knowhere::feature::MMAP)
 
 }  // namespace knowhere

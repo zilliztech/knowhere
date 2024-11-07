@@ -49,14 +49,11 @@ constexpr const char* INDEX_GPU_IVFPQ = "GPU_IVF_PQ";
 constexpr const char* INDEX_GPU_CAGRA = "GPU_CAGRA";
 
 constexpr const char* INDEX_HNSW = "HNSW";
-constexpr const char* INDEX_HNSW_SQ8 = "HNSW_SQ8";
-constexpr const char* INDEX_HNSW_SQ8_REFINE = "HNSW_SQ8_REFINE";
-constexpr const char* INDEX_DISKANN = "DISKANN";
+constexpr const char* INDEX_HNSW_SQ = "HNSW_SQ";
+constexpr const char* INDEX_HNSW_PQ = "HNSW_PQ";
+constexpr const char* INDEX_HNSW_PRQ = "HNSW_PRQ";
 
-constexpr const char* INDEX_FAISS_HNSW_FLAT = "FAISS_HNSW_FLAT";
-constexpr const char* INDEX_FAISS_HNSW_SQ = "FAISS_HNSW_SQ";
-constexpr const char* INDEX_FAISS_HNSW_PQ = "FAISS_HNSW_PQ";
-constexpr const char* INDEX_FAISS_HNSW_PRQ = "FAISS_HNSW_PRQ";
+constexpr const char* INDEX_DISKANN = "DISKANN";
 
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX = "SPARSE_INVERTED_INDEX";
 constexpr const char* INDEX_SPARSE_WAND = "SPARSE_WAND";

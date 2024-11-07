@@ -87,30 +87,17 @@ TEST_CASE("Test index and data type check", "[IndexCheckTest]") {
         CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_SPARSE_FLOAT));
 #endif
 
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ8, VecType::VECTOR_FLOAT));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ8, VecType::VECTOR_FLOAT16));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ8, VecType::VECTOR_BFLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ, VecType::VECTOR_BFLOAT16));
 
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ8_REFINE, VecType::VECTOR_FLOAT));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ8_REFINE, VecType::VECTOR_FLOAT16));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ8_REFINE, VecType::VECTOR_BFLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_PQ, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_PQ, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_PQ, VecType::VECTOR_BFLOAT16));
 
-        // faiss hnsw
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_FLAT, VecType::VECTOR_FLOAT));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_FLAT, VecType::VECTOR_FLOAT16));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_FLAT, VecType::VECTOR_BFLOAT16));
-
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_SQ, VecType::VECTOR_FLOAT));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_SQ, VecType::VECTOR_FLOAT16));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_SQ, VecType::VECTOR_BFLOAT16));
-
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_PQ, VecType::VECTOR_FLOAT));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_PQ, VecType::VECTOR_FLOAT16));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_PQ, VecType::VECTOR_BFLOAT16));
-
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_PRQ, VecType::VECTOR_FLOAT));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_PRQ, VecType::VECTOR_FLOAT16));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_FAISS_HNSW_PRQ, VecType::VECTOR_BFLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_PRQ, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_PRQ, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_PRQ, VecType::VECTOR_BFLOAT16));
 
         // diskann
         CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_DISKANN, VecType::VECTOR_FLOAT));
@@ -139,14 +126,9 @@ TEST_CASE("Test support mmap index", "[IndexCheckTest]") {
 
         // hnsw
         CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_HNSW));
-        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_HNSW_SQ8));
-        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_HNSW_SQ8_REFINE));
-
-        // faiss hnsw
-        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_FAISS_HNSW_FLAT));
-        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_FAISS_HNSW_SQ));
-        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_FAISS_HNSW_PQ));
-        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_FAISS_HNSW_PRQ));
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_HNSW_SQ));
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_HNSW_PQ));
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_HNSW_PRQ));
 
         // sparse index
         CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_SPARSE_INVERTED_INDEX));
@@ -182,14 +164,11 @@ TEST_CASE("Test index has raw data", "[IndexHasRawData]") {
         CHECK(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_HNSW, ver, {}));
 #endif
 
-        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_HNSW_SQ8, ver, {}));
-        CHECK(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_HNSW_SQ8_REFINE, ver, {}));
-
         // faiss HNSW
-        CHECK(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_FLAT, ver, {}));
-        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_SQ, ver, {}));
-        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_PQ, ver, {}));
-        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_PRQ, ver, {}));
+        CHECK(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_HNSW, ver, {}));
+        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_HNSW_SQ, ver, {}));
+        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_HNSW_PQ, ver, {}));
+        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_HNSW_PRQ, ver, {}));
 
         // diskann
 #ifdef KNOWHERE_WITH_DISKANN
@@ -237,24 +216,24 @@ TEST_CASE("Test index has raw data", "[IndexHasRawData]") {
         CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_SCANN, ver, json));
 
         knowhere::Json faiss_hnsw_cfg = {{"refine", true}, {"refine_type", "bf16"}};
-        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_SQ, ver, faiss_hnsw_cfg));
-        CHECK(knowhere::IndexStaticFaced<bf16>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_SQ, ver, faiss_hnsw_cfg));
-        CHECK_FALSE(knowhere::IndexStaticFaced<fp16>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_SQ, ver, faiss_hnsw_cfg));
+        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_HNSW_SQ, ver, faiss_hnsw_cfg));
+        CHECK(knowhere::IndexStaticFaced<bf16>::HasRawData(IndexEnum::INDEX_HNSW_SQ, ver, faiss_hnsw_cfg));
+        CHECK_FALSE(knowhere::IndexStaticFaced<fp16>::HasRawData(IndexEnum::INDEX_HNSW_SQ, ver, faiss_hnsw_cfg));
 
         faiss_hnsw_cfg["refine_type"] = "fp16";
-        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_SQ, ver, faiss_hnsw_cfg));
-        CHECK_FALSE(knowhere::IndexStaticFaced<bf16>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_SQ, ver, faiss_hnsw_cfg));
-        CHECK(knowhere::IndexStaticFaced<fp16>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_SQ, ver, faiss_hnsw_cfg));
+        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_HNSW_SQ, ver, faiss_hnsw_cfg));
+        CHECK_FALSE(knowhere::IndexStaticFaced<bf16>::HasRawData(IndexEnum::INDEX_HNSW_SQ, ver, faiss_hnsw_cfg));
+        CHECK(knowhere::IndexStaticFaced<fp16>::HasRawData(IndexEnum::INDEX_HNSW_SQ, ver, faiss_hnsw_cfg));
 
         faiss_hnsw_cfg["refine_type"] = "sq8";
-        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_SQ, ver, faiss_hnsw_cfg));
-        CHECK_FALSE(knowhere::IndexStaticFaced<bf16>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_SQ, ver, faiss_hnsw_cfg));
-        CHECK_FALSE(knowhere::IndexStaticFaced<fp16>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_SQ, ver, faiss_hnsw_cfg));
+        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_HNSW_SQ, ver, faiss_hnsw_cfg));
+        CHECK_FALSE(knowhere::IndexStaticFaced<bf16>::HasRawData(IndexEnum::INDEX_HNSW_SQ, ver, faiss_hnsw_cfg));
+        CHECK_FALSE(knowhere::IndexStaticFaced<fp16>::HasRawData(IndexEnum::INDEX_HNSW_SQ, ver, faiss_hnsw_cfg));
 
         faiss_hnsw_cfg["refine_type"] = "sq6";
-        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_SQ, ver, faiss_hnsw_cfg));
-        CHECK_FALSE(knowhere::IndexStaticFaced<bf16>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_SQ, ver, faiss_hnsw_cfg));
-        CHECK_FALSE(knowhere::IndexStaticFaced<fp16>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_SQ, ver, faiss_hnsw_cfg));
+        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_HNSW_SQ, ver, faiss_hnsw_cfg));
+        CHECK_FALSE(knowhere::IndexStaticFaced<bf16>::HasRawData(IndexEnum::INDEX_HNSW_SQ, ver, faiss_hnsw_cfg));
+        CHECK_FALSE(knowhere::IndexStaticFaced<fp16>::HasRawData(IndexEnum::INDEX_HNSW_SQ, ver, faiss_hnsw_cfg));
     }
 }
 
@@ -276,13 +255,14 @@ TEST_CASE("Test index feature check", "[IndexFeatureCheck]") {
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_RAFT_IVFPQ, knowhere::feature::MMAP));
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_RAFT_CAGRA, knowhere::feature::MMAP));
 #endif
-
+#ifdef KNOWHERE_WITH_DISKANN
 #ifdef KNOWHERE_WITH_CARDINAL
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_DISKANN, knowhere::feature::MMAP));
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_DISKANN, knowhere::feature::DISK));
 #else
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_DISKANN, knowhere::feature::MMAP));
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_DISKANN, knowhere::feature::DISK));
+#endif
 #endif
 
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_FAISS_IDMAP, knowhere::feature::DISK));
@@ -352,10 +332,10 @@ TEST_CASE("Test index feature check", "[IndexFeatureCheck]") {
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW, knowhere::feature::FLOAT32));
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW, knowhere::feature::FP16));
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW, knowhere::feature::BF16));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW, knowhere::feature::BINARY));
 
         // HNSW Index
 #ifdef KNOWHERE_WITH_CARDINAL
+        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW, knowhere::feature::BINARY));
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW, knowhere::feature::SPARSE_FLOAT32));
 #else
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW, knowhere::feature::SPARSE_FLOAT32));
@@ -475,12 +455,12 @@ TEST_CASE("Test index feature check", "[IndexFeatureCheck]") {
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_FAISS_SCANN, knowhere::feature::MV));
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_FAISS_BIN_IDMAP, knowhere::feature::MV));
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_FAISS_BIN_IVFFLAT, knowhere::feature::MV));
-        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW_SQ8, knowhere::feature::MV));
-        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW_SQ8_REFINE, knowhere::feature::MV));
-        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_FAISS_HNSW_FLAT, knowhere::feature::MV));
-        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_FAISS_HNSW_SQ, knowhere::feature::MV));
-        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_FAISS_HNSW_PQ, knowhere::feature::MV));
-        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_FAISS_HNSW_PRQ, knowhere::feature::MV));
+        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW_SQ, knowhere::feature::MV));
+        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW_SQ, knowhere::feature::MV));
+        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW, knowhere::feature::MV));
+        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW_SQ, knowhere::feature::MV));
+        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW_PQ, knowhere::feature::MV));
+        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW_PRQ, knowhere::feature::MV));
         REQUIRE_FALSE(
             IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, knowhere::feature::MV));
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SPARSE_WAND, knowhere::feature::MV));
