@@ -464,7 +464,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
     //   is parallelized on its own
 
     SECTION("FLAT") {
-        const std::string& index_type = knowhere::IndexEnum::INDEX_FAISS_HNSW_FLAT;
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW;
         const std::string& golden_index_type = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
 
         for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
@@ -539,7 +539,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
     }
 
     SECTION("SQ") {
-        const std::string& index_type = knowhere::IndexEnum::INDEX_FAISS_HNSW_SQ;
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW_SQ;
         const std::string& golden_index_type = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
 
         for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
@@ -714,7 +714,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
     }
 
     SECTION("PQ") {
-        const std::string& index_type = knowhere::IndexEnum::INDEX_FAISS_HNSW_PQ;
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW_PQ;
         const std::string& golden_index_type = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
 
         for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
@@ -881,7 +881,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
     }
 
     SECTION("PRQ") {
-        const std::string& index_type = knowhere::IndexEnum::INDEX_FAISS_HNSW_PRQ;
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW_PRQ;
         const std::string& golden_index_type = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
 
         for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
@@ -1150,7 +1150,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
     //   is parallelized on its own
 
     SECTION("FLAT") {
-        const std::string& index_type = knowhere::IndexEnum::INDEX_FAISS_HNSW_FLAT;
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW;
         // const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW;
         const std::string& golden_index_type = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
 
@@ -1246,7 +1246,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
     }
 
     SECTION("SQ") {
-        const std::string& index_type = knowhere::IndexEnum::INDEX_FAISS_HNSW_SQ;
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW_SQ;
         const std::string& golden_index_type = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
 
         for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
@@ -1435,7 +1435,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
     }
 
     SECTION("PQ") {
-        const std::string& index_type = knowhere::IndexEnum::INDEX_FAISS_HNSW_PQ;
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW_PQ;
         const std::string& golden_index_type = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
 
         for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
@@ -1619,7 +1619,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
     }
 
     SECTION("PRQ") {
-        const std::string& index_type = knowhere::IndexEnum::INDEX_FAISS_HNSW_PRQ;
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW_PRQ;
         const std::string& golden_index_type = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
 
         for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
@@ -1834,7 +1834,7 @@ TEST_CASE("hnswlib to FAISS HNSW for HNSW_FLAT", "Check search fallback") {
 
     //
     const std::string hnswlib_index_type = knowhere::IndexEnum::INDEX_HNSW;
-    const std::string faiss_index_type = knowhere::IndexEnum::INDEX_FAISS_HNSW_FLAT;
+    const std::string faiss_index_type = knowhere::IndexEnum::INDEX_HNSW;
 
     //
     const auto dim = DIM;

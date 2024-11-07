@@ -62,30 +62,17 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     {IndexEnum::INDEX_HNSW, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_HNSW, VecType::VECTOR_BFLOAT16},
 
-    {IndexEnum::INDEX_HNSW_SQ8, VecType::VECTOR_FLOAT},
-    {IndexEnum::INDEX_HNSW_SQ8, VecType::VECTOR_FLOAT16},
-    {IndexEnum::INDEX_HNSW_SQ8, VecType::VECTOR_BFLOAT16},
+    {IndexEnum::INDEX_HNSW_SQ, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_HNSW_SQ, VecType::VECTOR_FLOAT16},
+    {IndexEnum::INDEX_HNSW_SQ, VecType::VECTOR_BFLOAT16},
 
-    {IndexEnum::INDEX_HNSW_SQ8_REFINE, VecType::VECTOR_FLOAT},
-    {IndexEnum::INDEX_HNSW_SQ8_REFINE, VecType::VECTOR_FLOAT16},
-    {IndexEnum::INDEX_HNSW_SQ8_REFINE, VecType::VECTOR_BFLOAT16},
+    {IndexEnum::INDEX_HNSW_PQ, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_HNSW_PQ, VecType::VECTOR_FLOAT16},
+    {IndexEnum::INDEX_HNSW_PQ, VecType::VECTOR_BFLOAT16},
 
-    // faiss hnsw
-    {IndexEnum::INDEX_FAISS_HNSW_FLAT, VecType::VECTOR_FLOAT},
-    {IndexEnum::INDEX_FAISS_HNSW_FLAT, VecType::VECTOR_FLOAT16},
-    {IndexEnum::INDEX_FAISS_HNSW_FLAT, VecType::VECTOR_BFLOAT16},
-
-    {IndexEnum::INDEX_FAISS_HNSW_SQ, VecType::VECTOR_FLOAT},
-    {IndexEnum::INDEX_FAISS_HNSW_SQ, VecType::VECTOR_FLOAT16},
-    {IndexEnum::INDEX_FAISS_HNSW_SQ, VecType::VECTOR_BFLOAT16},
-
-    {IndexEnum::INDEX_FAISS_HNSW_PQ, VecType::VECTOR_FLOAT},
-    {IndexEnum::INDEX_FAISS_HNSW_PQ, VecType::VECTOR_FLOAT16},
-    {IndexEnum::INDEX_FAISS_HNSW_PQ, VecType::VECTOR_BFLOAT16},
-
-    {IndexEnum::INDEX_FAISS_HNSW_PRQ, VecType::VECTOR_FLOAT},
-    {IndexEnum::INDEX_FAISS_HNSW_PRQ, VecType::VECTOR_FLOAT16},
-    {IndexEnum::INDEX_FAISS_HNSW_PRQ, VecType::VECTOR_BFLOAT16},
+    {IndexEnum::INDEX_HNSW_PRQ, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_HNSW_PRQ, VecType::VECTOR_FLOAT16},
+    {IndexEnum::INDEX_HNSW_PRQ, VecType::VECTOR_BFLOAT16},
 
     // diskann
     {IndexEnum::INDEX_DISKANN, VecType::VECTOR_FLOAT},
@@ -112,14 +99,9 @@ static std::set<std::string> legal_support_mmap_knowhere_index = {
 
     // hnsw
     IndexEnum::INDEX_HNSW,
-    IndexEnum::INDEX_HNSW_SQ8,
-    IndexEnum::INDEX_HNSW_SQ8_REFINE,
-
-    // faiss hnsw
-    IndexEnum::INDEX_FAISS_HNSW_FLAT,
-    IndexEnum::INDEX_FAISS_HNSW_SQ,
-    IndexEnum::INDEX_FAISS_HNSW_PQ,
-    IndexEnum::INDEX_FAISS_HNSW_PRQ,
+    IndexEnum::INDEX_HNSW_SQ,
+    IndexEnum::INDEX_HNSW_PQ,
+    IndexEnum::INDEX_HNSW_PRQ,
 
     // sparse index
     IndexEnum::INDEX_SPARSE_INVERTED_INDEX,

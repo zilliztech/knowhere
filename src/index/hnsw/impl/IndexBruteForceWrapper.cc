@@ -69,16 +69,9 @@ IndexBruteForceWrapper::search(faiss::idx_t n, const float* __restrict x, faiss:
         // set up a filter
         faiss::IDSelector* sel = (params == nullptr) ? nullptr : params->sel;
 
-        // sel is assumed to be non-null
-        if (sel == nullptr) {
-            throw;
-        }
-
         // try knowhere-specific filter
         const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
             dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
-
-        BitsetViewIDSelectorWrapper bw_idselector_w(bw_idselector->bitset_view);
 
         if (is_similarity_metric(index->metric_type)) {
             using C = faiss::CMin<float, idx_t>;
@@ -88,6 +81,8 @@ IndexBruteForceWrapper::search(faiss::idx_t n, const float* __restrict x, faiss:
                 faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer, faiss::IDSelectorAll>(
                     index->ntotal, *dis, sel_all, k, local_distances, local_ids);
             } else {
+                BitsetViewIDSelectorWrapper bw_idselector_w(bw_idselector->bitset_view);
+
                 faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer,
                                                                      BitsetViewIDSelectorWrapper>(
                     index->ntotal, *dis, bw_idselector_w, k, local_distances, local_ids);
@@ -100,6 +95,8 @@ IndexBruteForceWrapper::search(faiss::idx_t n, const float* __restrict x, faiss:
                 faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer, faiss::IDSelectorAll>(
                     index->ntotal, *dis, sel_all, k, local_distances, local_ids);
             } else {
+                BitsetViewIDSelectorWrapper bw_idselector_w(bw_idselector->bitset_view);
+
                 faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer,
                                                                      BitsetViewIDSelectorWrapper>(
                     index->ntotal, *dis, bw_idselector_w, k, local_distances, local_ids);

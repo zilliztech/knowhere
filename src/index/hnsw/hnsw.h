@@ -565,14 +565,7 @@ class HnswIndexNode : public IndexNode {
 
     std::string
     Type() const override {
-        if constexpr (quant_type == QuantType::SQ8) {
-            return knowhere::IndexEnum::INDEX_HNSW_SQ8;
-        } else if constexpr (quant_type == QuantType::SQ8Refine) {
-            return knowhere::IndexEnum::INDEX_HNSW_SQ8_REFINE;
-
-        } else {
-            return knowhere::IndexEnum::INDEX_HNSW;
-        }
+        return knowhere::IndexEnum::INDEX_HNSW;
     }
 
     ~HnswIndexNode() override {

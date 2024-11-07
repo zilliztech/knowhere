@@ -175,29 +175,30 @@ TEST_CASE("Test Feder", "[feder]") {
     const knowhere::Json conf = base_gen();
     auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
 
-    SECTION("Test HNSW Feder") {
-        auto name = knowhere::IndexEnum::INDEX_HNSW;
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
-        REQUIRE(idx.Type() == name);
-
-        auto json = hnsw_gen();
-        auto res = idx.Build(train_ds, json);
-        REQUIRE(res == knowhere::Status::success);
-
-        auto res1 = idx.GetIndexMeta(json);
-        REQUIRE(res1.has_value());
-        CheckHnswMeta(res1.value(), nb, json);
-
-        auto res2 = idx.Search(query_ds, json, nullptr);
-        REQUIRE(res2.has_value());
-        CheckHnswVisitInfo(res2.value(), nb);
-
-        json[knowhere::meta::RADIUS] = 160000;
-        json[knowhere::meta::RANGE_FILTER] = 0;
-        auto res3 = idx.RangeSearch(query_ds, json, nullptr);
-        REQUIRE(res3.has_value());
-        CheckHnswVisitInfo(res3.value(), nb);
-    }
+    //    Feder is deprecated, and faiss hnsw does not implement it
+    //    SECTION("Test HNSW Feder") {
+    //        auto name = knowhere::IndexEnum::INDEX_HNSW;
+    //        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+    //        REQUIRE(idx.Type() == name);
+    //
+    //        auto json = hnsw_gen();
+    //        auto res = idx.Build(train_ds, json);
+    //        REQUIRE(res == knowhere::Status::success);
+    //
+    //        auto res1 = idx.GetIndexMeta(json);
+    //        REQUIRE(res1.has_value());
+    //        CheckHnswMeta(res1.value(), nb, json);
+    //
+    //        auto res2 = idx.Search(query_ds, json, nullptr);
+    //        REQUIRE(res2.has_value());
+    //        CheckHnswVisitInfo(res2.value(), nb);
+    //
+    //        json[knowhere::meta::RADIUS] = 160000;
+    //        json[knowhere::meta::RANGE_FILTER] = 0;
+    //        auto res3 = idx.RangeSearch(query_ds, json, nullptr);
+    //        REQUIRE(res3.has_value());
+    //        CheckHnswVisitInfo(res3.value(), nb);
+    //    }
 
     SECTION("Test IVF_FLAT Feder") {
         auto name = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
