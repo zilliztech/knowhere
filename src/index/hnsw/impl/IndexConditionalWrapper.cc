@@ -94,9 +94,13 @@ WhetherPerformBruteForceRangeSearch(const faiss::Index* index, const FaissHnswCo
     return false;
 }
 
-// returns nullptr in case of invalid index
+// returns nullptr in case of invalid index.
+//
+// `whether_to_enable_refine` allows to enable the refine for the search if the
+//    index was trained with the refine.
 std::tuple<std::unique_ptr<faiss::Index>, bool>
-create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw_cfg, const bool whether_bf_search) {
+create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw_cfg, const bool whether_bf_search,
+                                const bool whether_to_enable_refine) {
     const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), knowhere::metric::COSINE);
 
     // check if we have a refine available.
@@ -126,7 +130,7 @@ create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw
         }
 
         // check if a user wants a refined result
-        if (hnsw_cfg.refine_k.has_value()) {
+        if (whether_to_enable_refine) {
             // yes, a user wants to perform a refine
 
             // thus, we need to define a new refine index and pass
