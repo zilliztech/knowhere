@@ -89,6 +89,8 @@ class IvfPqConfig : public IvfConfig {
                     }
                 }
             }
+            default:
+                break;
         }
         return Status::success;
     }

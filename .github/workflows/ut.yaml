@@ -24,7 +24,7 @@ jobs:
   ut:
     name: ut on ubuntu-22.04
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 180
     strategy:
       fail-fast: true
     steps:

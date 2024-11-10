@@ -43,6 +43,8 @@ constexpr uint64_t MV = 1UL << 20;
 // This flag indicates that the index need disk during search stage
 constexpr uint64_t DISK = 1UL << 21;
 
+constexpr uint64_t NONE = 0UL;
+
 constexpr uint64_t ALL_TYPE = BINARY | FLOAT32 | FP16 | BF16 | SPARSE_FLOAT32;
 constexpr uint64_t ALL_DENSE_TYPE = BINARY | FLOAT32 | FP16 | BF16;
 constexpr uint64_t ALL_DENSE_FLOAT_TYPE = FLOAT32 | FP16 | BF16;
