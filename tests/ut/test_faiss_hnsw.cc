@@ -245,7 +245,7 @@ template <typename T>
 void
 test_hnsw(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::DataSetPtr& query_ds_ptr,
           const knowhere::DataSetPtr& golden_result, const std::vector<int32_t>& index_params,
-          const knowhere::Json& conf, const knowhere::BitsetView bitset_view, bool expected_raw_data) {
+          const knowhere::Json& conf, const knowhere::BitsetView bitset_view) {
     const std::string index_type = conf[knowhere::meta::INDEX_TYPE].get<std::string>();
 
     // load indices
@@ -282,10 +282,12 @@ test_hnsw(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::DataSetPtr
 
     // test HasRawData()
     auto metric_type = conf[knowhere::meta::METRIC_TYPE];
-    REQUIRE(index_loaded.HasRawData(metric_type) == expected_raw_data);
+    REQUIRE(index_loaded.HasRawData(metric_type) ==
+            knowhere::IndexStaticFaced<T>::HasRawData(index_type,
+                                                      knowhere::Version::GetCurrentVersion().VersionNumber(), conf));
 
     // test GetVectorByIds()
-    if (expected_raw_data) {
+    if (index_loaded.HasRawData(metric_type)) {
         const auto rows = default_t_ds_ptr->GetRows();
 
         int64_t* ids = new int64_t[rows];
@@ -308,7 +310,7 @@ template <typename T>
 void
 test_hnsw_range(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::DataSetPtr& query_ds_ptr,
                 const knowhere::DataSetPtr& golden_result, const std::vector<int32_t>& index_params,
-                const knowhere::Json& conf, const knowhere::BitsetView bitset_view, bool expected_raw_data) {
+                const knowhere::Json& conf, const knowhere::BitsetView bitset_view) {
     const std::string index_type = conf[knowhere::meta::INDEX_TYPE].get<std::string>();
 
     // load indices
@@ -348,12 +350,12 @@ test_hnsw_range(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::Data
 
     // test HasRawData()
     auto metric_type = conf[knowhere::meta::METRIC_TYPE];
-    REQUIRE(index_loaded.HasRawData(metric_type) == expected_raw_data);
-    REQUIRE(knowhere::IndexStaticFaced<T>::HasRawData(
-                index_type, knowhere::Version::GetCurrentVersion().VersionNumber(), conf) == expected_raw_data);
+    REQUIRE(index_loaded.HasRawData(metric_type) ==
+            knowhere::IndexStaticFaced<T>::HasRawData(index_type,
+                                                      knowhere::Version::GetCurrentVersion().VersionNumber(), conf));
 
     // test GetVectorByIds()
-    if (expected_raw_data) {
+    if (index_loaded.HasRawData(metric_type)) {
         const auto rows = default_t_ds_ptr->GetRows();
 
         int64_t* ids = new int64_t[rows];
@@ -515,7 +517,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                             DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
 
                         test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                  bitset_view, true);
+                                                  bitset_view);
 
                         // fp16 candidate
                         printf(
@@ -523,7 +525,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                             DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
 
                         test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                  bitset_view, true);
+                                                  bitset_view);
 
                         // bf32 candidate
                         printf(
@@ -531,7 +533,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                             DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
 
                         test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                  bitset_view, true);
+                                                  bitset_view);
                     }
                 }
             }
@@ -601,7 +603,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                                 int(bitset_rate * 100));
 
                             test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view, false);
+                                                      bitset_view);
 
                             // fp16 candidate
                             printf(
@@ -611,7 +613,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                                 int(bitset_rate * 100));
 
                             test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view, sq_type == "FP16");
+                                                      bitset_view);
 
                             // bf16 candidate
                             printf(
@@ -621,7 +623,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                                 int(bitset_rate * 100));
 
                             test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view, sq_type == "BF16");
+                                                      bitset_view);
 
                             // test refines for FP32
                             {
@@ -646,8 +648,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                                         dim, nb, int(bitset_rate * 100));
 
                                     test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                              params_refine, conf_refine, bitset_view,
-                                                              allowed_ref == "FLAT");
+                                                              params_refine, conf_refine, bitset_view);
                                 }
                             }
 
@@ -674,8 +675,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                                         dim, nb, int(bitset_rate * 100));
 
                                     test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                              params_refine, conf_refine, bitset_view,
-                                                              allowed_ref == "FP16");
+                                                              params_refine, conf_refine, bitset_view);
                                 }
                             }
 
@@ -702,8 +702,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                                         dim, nb, int(bitset_rate * 100));
 
                                     test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                              params_refine, conf_refine, bitset_view,
-                                                              allowed_ref == "BF16");
+                                                              params_refine, conf_refine, bitset_view);
                                 }
                             }
                         }
@@ -777,7 +776,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                                 int(bitset_rate * 100));
 
                             test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view, false);
+                                                      bitset_view);
 
                             // test fp16 candidate
                             printf(
@@ -787,7 +786,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                                 int(bitset_rate * 100));
 
                             test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view, false);
+                                                      bitset_view);
 
                             // test bf16 candidate
                             printf(
@@ -797,7 +796,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                                 int(bitset_rate * 100));
 
                             test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view, false);
+                                                      bitset_view);
 
                             // test refines for fp32
                             for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
@@ -820,8 +819,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                                     dim, nb, int(bitset_rate * 100));
 
                                 test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                          params_refine, conf_refine, bitset_view,
-                                                          allowed_ref == "FLAT");
+                                                          params_refine, conf_refine, bitset_view);
                             }
 
                             // test refines for fp16
@@ -845,8 +843,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                                     dim, nb, int(bitset_rate * 100));
 
                                 test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                          params_refine, conf_refine, bitset_view,
-                                                          allowed_ref == "FP16");
+                                                          params_refine, conf_refine, bitset_view);
                             }
 
                             // test refines for bf16
@@ -870,8 +867,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                                     dim, nb, int(bitset_rate * 100));
 
                                 test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                          params_refine, conf_refine, bitset_view,
-                                                          allowed_ref == "BF16");
+                                                          params_refine, conf_refine, bitset_view);
                             }
                         }
                     }
@@ -946,7 +942,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                                 int(bitset_rate * 100));
 
                             test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view, false);
+                                                      bitset_view);
 
                             // test fp16 candidate
                             printf(
@@ -956,7 +952,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                                 int(bitset_rate * 100));
 
                             test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view, false);
+                                                      bitset_view);
 
                             // test bf16 candidate
                             printf(
@@ -966,7 +962,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                                 int(bitset_rate * 100));
 
                             test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view, false);
+                                                      bitset_view);
 
                             // test fp32 refines
                             for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
@@ -990,8 +986,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
                                 // test a candidate
                                 test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                          params_refine, conf_refine, bitset_view,
-                                                          allowed_ref == "FLAT");
+                                                          params_refine, conf_refine, bitset_view);
                             }
 
                             // test fp16 refines
@@ -1016,8 +1011,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
                                 // test a candidate
                                 test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                          params_refine, conf_refine, bitset_view,
-                                                          allowed_ref == "FP16");
+                                                          params_refine, conf_refine, bitset_view);
                             }
 
                             // test bf16 refines
@@ -1042,8 +1036,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
                                 // test a candidate
                                 test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                          params_refine, conf_refine, bitset_view,
-                                                          allowed_ref == "BF16");
+                                                          params_refine, conf_refine, bitset_view);
                             }
                         }
                     }
@@ -1217,7 +1210,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                 int(bitset_rate * 100));
 
                             test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(), params,
-                                                            conf, bitset_view, true);
+                                                            conf, bitset_view);
 
                             // fp16 candidate
                             printf(
@@ -1227,7 +1220,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                 int(bitset_rate * 100));
 
                             test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params,
-                                                            conf, bitset_view, true);
+                                                            conf, bitset_view);
 
                             // bf32 candidate
                             printf(
@@ -1237,7 +1230,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                 int(bitset_rate * 100));
 
                             test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params,
-                                                            conf, bitset_view, true);
+                                                            conf, bitset_view);
                         }
                     }
                 }
@@ -1321,7 +1314,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                     range_filter, int(bitset_rate * 100));
 
                                 test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view, false);
+                                                                params, conf, bitset_view);
 
                                 // fp16 candidate
                                 printf(
@@ -1331,7 +1324,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                     range_filter, int(bitset_rate * 100));
 
                                 test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view, sq_type == "FP16");
+                                                                params, conf, bitset_view);
 
                                 // bf16 candidate
                                 printf(
@@ -1341,7 +1334,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                     range_filter, int(bitset_rate * 100));
 
                                 test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view, sq_type == "BF16");
+                                                                params, conf, bitset_view);
 
                                 // test refines for FP32
                                 {
@@ -1365,9 +1358,9 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                             sq_type.c_str(), allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
                                             dim, nb, radius, range_filter, int(bitset_rate * 100));
 
-                                        test_hnsw_range<knowhere::fp32>(
-                                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
-                                            conf_refine, bitset_view, allowed_ref == "FLAT");
+                                        test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
+                                                                        golden_result.value(), params_refine,
+                                                                        conf_refine, bitset_view);
                                     }
                                 }
 
@@ -1393,9 +1386,9 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                             sq_type.c_str(), allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
                                             dim, nb, radius, range_filter, int(bitset_rate * 100));
 
-                                        test_hnsw_range<knowhere::fp16>(
-                                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
-                                            conf_refine, bitset_view, allowed_ref == "FP16");
+                                        test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr,
+                                                                        golden_result.value(), params_refine,
+                                                                        conf_refine, bitset_view);
                                     }
                                 }
 
@@ -1421,9 +1414,9 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                             sq_type.c_str(), allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
                                             dim, nb, radius, range_filter, int(bitset_rate * 100));
 
-                                        test_hnsw_range<knowhere::bf16>(
-                                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
-                                            conf_refine, bitset_view, allowed_ref == "BF16");
+                                        test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr,
+                                                                        golden_result.value(), params_refine,
+                                                                        conf_refine, bitset_view);
                                     }
                                 }
                             }
@@ -1511,7 +1504,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                     range_filter, int(bitset_rate * 100));
 
                                 test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view, false);
+                                                                params, conf, bitset_view);
 
                                 // test fp16 candidate
                                 printf(
@@ -1521,7 +1514,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                     range_filter, int(bitset_rate * 100));
 
                                 test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view, false);
+                                                                params, conf, bitset_view);
 
                                 // test bf16 candidate
                                 printf(
@@ -1531,7 +1524,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                     range_filter, int(bitset_rate * 100));
 
                                 test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view, false);
+                                                                params, conf, bitset_view);
 
                                 // test refines for fp32
                                 for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
@@ -1555,8 +1548,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                         int(bitset_rate * 100));
 
                                     test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                    params_refine, conf_refine, bitset_view,
-                                                                    allowed_ref == "FLAT");
+                                                                    params_refine, conf_refine, bitset_view);
                                 }
 
                                 // test refines for fp16
@@ -1581,8 +1573,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                         int(bitset_rate * 100));
 
                                     test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                    params_refine, conf_refine, bitset_view,
-                                                                    allowed_ref == "FP16");
+                                                                    params_refine, conf_refine, bitset_view);
                                 }
 
                                 // test refines for bf16
@@ -1607,8 +1598,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                         int(bitset_rate * 100));
 
                                     test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                    params_refine, conf_refine, bitset_view,
-                                                                    allowed_ref == "BF16");
+                                                                    params_refine, conf_refine, bitset_view);
                                 }
                             }
                         }
@@ -1698,7 +1688,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                     radius, range_filter, int(bitset_rate * 100));
 
                                 test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view, false);
+                                                                params, conf, bitset_view);
 
                                 // test fp16 candidate
                                 printf(
@@ -1708,7 +1698,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                     radius, range_filter, int(bitset_rate * 100));
 
                                 test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view, false);
+                                                                params, conf, bitset_view);
 
                                 // test bf16 candidate
                                 printf(
@@ -1718,7 +1708,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                     radius, range_filter, int(bitset_rate * 100));
 
                                 test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view, false);
+                                                                params, conf, bitset_view);
 
                                 // test fp32 refines
                                 for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
@@ -1744,8 +1734,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
                                     // test a candidate
                                     test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                    params_refine, conf_refine, bitset_view,
-                                                                    allowed_ref == "FLAT");
+                                                                    params_refine, conf_refine, bitset_view);
                                 }
 
                                 // test fp16 refines
@@ -1772,8 +1761,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
                                     // test a candidate
                                     test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                    params_refine, conf_refine, bitset_view,
-                                                                    allowed_ref == "FP16");
+                                                                    params_refine, conf_refine, bitset_view);
                                 }
 
                                 // test bf16 refines
@@ -1800,8 +1788,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
                                     // test a candidate
                                     test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                    params_refine, conf_refine, bitset_view,
-                                                                    allowed_ref == "BF16");
+                                                                    params_refine, conf_refine, bitset_view);
                                 }
                             }
                         }
