@@ -21,6 +21,17 @@
 #include "knowhere/index/index_factory.h"
 #include "utils.h"
 
+void
+WriteBinaryToFile(const std::string& filename, const knowhere::BinaryPtr binary) {
+    auto data = binary->data.get();
+    auto size = binary->size;
+    // if tmp_file already exists, remove it
+    std::remove(filename.c_str());
+    std::ofstream out(filename, std::ios::binary);
+    out.write((const char*)data, size);
+    out.close();
+}
+
 TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
     auto [nb, dim, doc_sparsity, query_sparsity] = GENERATE(table<int32_t, int32_t, float, float>({
         // 300 dim, avg doc nnz 12, avg query nnz 9
@@ -122,14 +133,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
             knowhere::BinarySet bs;
             REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
             if (use_mmap) {
-                auto binary = bs.GetByName(idx.Type());
-                auto data = binary->data.get();
-                auto size = binary->size;
-                // if tmp_file already exists, remove it
-                std::remove(tmp_file);
-                std::ofstream out(tmp_file, std::ios::binary);
-                out.write((const char*)data, size);
-                out.close();
+                WriteBinaryToFile(tmp_file, bs.GetByName(idx.Type()));
                 REQUIRE(idx.DeserializeFromFile(tmp_file, json) == knowhere::Status::success);
             } else {
                 REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
@@ -343,47 +347,61 @@ TEST_CASE("Test Mem Sparse Index GetVectorByIds", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
-        auto cfg_json = gen().dump();
-        CAPTURE(name, cfg_json);
-        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        auto use_mmap = GENERATE(true, false);
+        auto tmp_file = "/tmp/knowhere_sparse_inverted_index_test";
+        {
+            auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+            auto cfg_json = gen().dump();
+            CAPTURE(name, cfg_json);
+            knowhere::Json json = knowhere::Json::parse(cfg_json);
 
-        auto ids_ds = GenIdsDataSet(nb, nq);
-        REQUIRE(idx.Type() == name);
-        auto res = idx.Build(train_ds, json);
-        REQUIRE(idx.HasRawData(metric) == knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
-        if (!idx.HasRawData(metric)) {
-            return;
-        }
-        REQUIRE(res == knowhere::Status::success);
-        knowhere::BinarySet bs;
-        idx.Serialize(bs);
-
-        auto idx_new = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
-        idx_new.Deserialize(bs);
-
-        auto retrieve_task = [&]() {
-            auto results = idx_new.GetVectorByIds(ids_ds);
-            REQUIRE(results.has_value());
-            auto xb = (knowhere::sparse::SparseRow<float>*)train_ds->GetTensor();
-            auto res_data = (knowhere::sparse::SparseRow<float>*)results.value()->GetTensor();
-            for (int i = 0; i < nq; ++i) {
-                const auto id = ids_ds->GetIds()[i];
-                const auto& truth_row = xb[id];
-                const auto& res_row = res_data[i];
-                REQUIRE(truth_row.size() == res_row.size());
-                for (size_t j = 0; j < truth_row.size(); ++j) {
-                    REQUIRE(truth_row[j] == res_row[j]);
-                }
+            auto ids_ds = GenIdsDataSet(nb, nq);
+            REQUIRE(idx.Type() == name);
+            auto res = idx.Build(train_ds, json);
+            REQUIRE(idx.HasRawData(metric) ==
+                    knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
+            if (!idx.HasRawData(metric)) {
+                return;
             }
-        };
+            REQUIRE(res == knowhere::Status::success);
+            knowhere::BinarySet bs;
+            idx.Serialize(bs);
 
-        std::vector<std::future<void>> retrieve_task_list;
-        for (int i = 0; i < 20; i++) {
-            retrieve_task_list.push_back(std::async(std::launch::async, [&] { return retrieve_task(); }));
+            auto idx_new = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+            if (use_mmap) {
+                WriteBinaryToFile(tmp_file, bs.GetByName(idx.Type()));
+                REQUIRE(idx_new.DeserializeFromFile(tmp_file, json) == knowhere::Status::success);
+            } else {
+                REQUIRE(idx_new.Deserialize(bs, json) == knowhere::Status::success);
+            }
+
+            auto retrieve_task = [&]() {
+                auto results = idx_new.GetVectorByIds(ids_ds);
+                REQUIRE(results.has_value());
+                auto xb = (knowhere::sparse::SparseRow<float>*)train_ds->GetTensor();
+                auto res_data = (knowhere::sparse::SparseRow<float>*)results.value()->GetTensor();
+                for (int i = 0; i < nq; ++i) {
+                    const auto id = ids_ds->GetIds()[i];
+                    const auto& truth_row = xb[id];
+                    const auto& res_row = res_data[i];
+                    REQUIRE(truth_row.size() == res_row.size());
+                    for (size_t j = 0; j < truth_row.size(); ++j) {
+                        REQUIRE(truth_row[j] == res_row[j]);
+                    }
+                }
+            };
+
+            std::vector<std::future<void>> retrieve_task_list;
+            for (int i = 0; i < 20; i++) {
+                retrieve_task_list.push_back(std::async(std::launch::async, [&] { return retrieve_task(); }));
+            }
+            for (auto& task : retrieve_task_list) {
+                task.wait();
+            }
+            // idx/idx_new to destroy and munmap
         }
-        for (auto& task : retrieve_task_list) {
-            task.wait();
+        if (use_mmap) {
+            REQUIRE(std::remove(tmp_file) == 0);
         }
     }
 }
@@ -446,7 +464,16 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
 
     knowhere::BinarySet bs;
     REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
-    REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
+
+    auto use_mmap = GENERATE(false);
+    auto tmp_file = "/tmp/knowhere_sparse_inverted_index_test";
+
+    if (use_mmap) {
+        WriteBinaryToFile(tmp_file, bs.GetByName(idx.Type()));
+        REQUIRE(idx.DeserializeFromFile(tmp_file, json) == knowhere::Status::success);
+    } else {
+        REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
+    }
 
     const knowhere::Json conf = {
         {knowhere::meta::METRIC_TYPE, metric}, {knowhere::meta::TOPK, topk},      {knowhere::meta::BM25_K1, 1.2},

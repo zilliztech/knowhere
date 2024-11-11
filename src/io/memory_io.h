@@ -150,6 +150,16 @@ struct MemoryIOReader : public faiss::IOReader {
     reset() {
         rp_ = 0;
     }
+
+    void
+    seekg(size_t pos) {
+        rp_ = pos;
+    }
+
+    size_t
+    remaining() const {
+        return total_ - rp_;
+    }
 };
 
 }  // namespace knowhere
