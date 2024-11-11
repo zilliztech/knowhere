@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <future>
+#include <thread>
 
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
@@ -544,6 +545,123 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
             for (size_t j = 0; j < truth_row.size(); ++j) {
                 REQUIRE(truth_row[j] == res_row[j]);
             }
+        }
+    }
+}
+
+TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
+    std::atomic<int32_t> value_base(0);
+    // each time a new batch of vectors are generated, the base value is increased by 1.
+    // also the sparse vectors are all full, so newly generated vectors are guaranteed
+    // to have larger IP than old vectors.
+    auto doc_vector_gen = [&](int32_t nb, int32_t dim) {
+        auto base = value_base.fetch_add(1);
+        std::vector<std::map<int32_t, float>> data(nb);
+        for (int32_t i = 0; i < nb; ++i) {
+            for (int32_t j = 0; j < dim; ++j) {
+                data[i][j] = base + static_cast<float>(rand()) / RAND_MAX * 0.8 + 0.1;
+            }
+        }
+        return GenSparseDataSet(data, dim);
+    };
+
+    auto nb = 1000;
+    auto dim = 30;
+    auto topk = 50;
+    int64_t nq = 100;
+
+    auto query_ds = doc_vector_gen(nq, dim);
+
+    // drop ratio build is not supported in CC index
+    auto drop_ratio_build = 0.0;
+    auto drop_ratio_search = GENERATE(0.0, 0.3);
+
+    auto metric = GENERATE(knowhere::metric::IP);
+    auto version = GenTestVersionList();
+
+    auto base_gen = [=, dim = dim]() {
+        knowhere::Json json;
+        json[knowhere::meta::DIM] = dim;
+        json[knowhere::meta::METRIC_TYPE] = metric;
+        json[knowhere::meta::TOPK] = topk;
+        json[knowhere::meta::BM25_K1] = 1.2;
+        json[knowhere::meta::BM25_B] = 0.75;
+        json[knowhere::meta::BM25_AVGDL] = 100;
+        return json;
+    };
+
+    auto sparse_inverted_index_gen = [base_gen, drop_ratio_build = drop_ratio_build,
+                                      drop_ratio_search = drop_ratio_search]() {
+        knowhere::Json json = base_gen();
+        json[knowhere::indexparam::DROP_RATIO_BUILD] = drop_ratio_build;
+        json[knowhere::indexparam::DROP_RATIO_SEARCH] = drop_ratio_search;
+        return json;
+    };
+
+    const knowhere::Json conf = {
+        {knowhere::meta::METRIC_TYPE, metric}, {knowhere::meta::TOPK, topk},      {knowhere::meta::BM25_K1, 1.2},
+        {knowhere::meta::BM25_B, 0.75},        {knowhere::meta::BM25_AVGDL, 100},
+    };
+
+    // since all newly inserted vectors are guaranteed to have larger IP than old vectors,
+    // the result ids of each search requests shoule be from the same batch of inserted vectors.
+    auto check_result = [&](const knowhere::DataSet& ds) {
+        auto nq = ds.GetRows();
+        auto k = ds.GetDim();
+        auto* ids = ds.GetIds();
+        auto expected_id_base = ids[0] / nb;
+        for (auto i = 0; i < nq; ++i) {
+            for (auto j = 0; j < k; ++j) {
+                auto base = ids[i * k + j] / nb;
+                REQUIRE(base == expected_id_base);
+            }
+        }
+    };
+
+    auto test_time = 10;
+
+    SECTION("Test Search") {
+        using std::make_tuple;
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC, sparse_inverted_index_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND_CC, sparse_inverted_index_gen),
+        }));
+
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto cfg_json = gen().dump();
+        CAPTURE(name, cfg_json);
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        REQUIRE(idx.Type() == name);
+        // build the index with some initial data
+        REQUIRE(idx.Build(doc_vector_gen(nb, dim), json) == knowhere::Status::success);
+
+        auto add_task = [&]() {
+            auto start = std::chrono::steady_clock::now();
+            while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count() <
+                   test_time) {
+                auto doc_ds = doc_vector_gen(nb, dim);
+                auto res = idx.Add(doc_ds, json);
+                REQUIRE(res == knowhere::Status::success);
+            }
+        };
+
+        auto search_task = [&]() {
+            auto start = std::chrono::steady_clock::now();
+            while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count() <
+                   test_time) {
+                auto results = idx.Search(query_ds, json, nullptr);
+                REQUIRE(results.has_value());
+                check_result(*results.value());
+            }
+        };
+
+        std::vector<std::future<void>> task_list;
+        for (int thread = 0; thread < 5; thread++) {
+            task_list.push_back(std::async(std::launch::async, search_task));
+        }
+        task_list.push_back(std::async(std::launch::async, add_task));
+        for (auto& task : task_list) {
+            task.wait();
         }
     }
 }
