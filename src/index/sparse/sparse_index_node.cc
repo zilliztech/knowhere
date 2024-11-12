@@ -254,7 +254,8 @@ class SparseInvertedIndexNode : public IndexNode {
         }
         index_ = index_or.value();
         MemoryIOReader map_reader((uint8_t*)map_, map_size_);
-        return index_->Load(map_reader, map_flags);
+        auto supplement_target_filename = filename + ".knowhere_sparse_index_supplement";
+        return index_->Load(map_reader, map_flags, supplement_target_filename);
     }
 
     static std::unique_ptr<BaseConfig>
