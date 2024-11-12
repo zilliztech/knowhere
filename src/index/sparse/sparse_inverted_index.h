@@ -44,7 +44,7 @@ class BaseInvertedIndex {
     // supplement_target_filename: when in mmap mode, we need an extra file to store the mmaped index data structure.
     // this file will be created during loading and deleted in the destructor.
     virtual Status
-    Load(MemoryIOReader& reader, int map_flags = MAP_PRIVATE, const std::string& supplement_target_filename = "") = 0;
+    Load(MemoryIOReader& reader, int map_flags = MAP_SHARED, const std::string& supplement_target_filename = "") = 0;
 
     virtual Status
     Train(const SparseRow<T>* data, size_t rows, float drop_ratio_build) = 0;
@@ -178,7 +178,7 @@ class InvertedIndex : public BaseInvertedIndex<T> {
     }
 
     Status
-    Load(MemoryIOReader& reader, int map_flags = MAP_PRIVATE,
+    Load(MemoryIOReader& reader, int map_flags = MAP_SHARED,
          const std::string& supplement_target_filename = "") override {
         std::unique_lock<std::shared_mutex> lock(mu_);
         int64_t rows;
@@ -280,11 +280,12 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         // until the file descriptor is closed in the destructor.
         std::filesystem::remove(supplement_target_filename);
 
-        // clear MAP_SHARED flag as we will not share it with other processes.
-        map_flags &= ~MAP_SHARED;
+        // clear MAP_PRIVATE flag: we need to write to this mmapped memory/file,
+        // MAP_PRIVATE triggers copy-on-write and uses extra anonymous memory.
+        map_flags &= ~MAP_PRIVATE;
+        map_flags |= MAP_SHARED;
 
-        map_ = static_cast<char*>(
-            mmap(nullptr, map_byte_size_, PROT_READ | PROT_WRITE, map_flags | MAP_PRIVATE, map_fd_, 0));
+        map_ = static_cast<char*>(mmap(nullptr, map_byte_size_, PROT_READ | PROT_WRITE, map_flags, map_fd_, 0));
         if (map_ == MAP_FAILED) {
             LOG_KNOWHERE_ERROR_ << "Failed to create mmap when loading sparse InvertedIndex: " << strerror(errno)
                                 << ", size: " << map_byte_size_ << " on file: " << supplement_target_filename;
