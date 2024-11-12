@@ -188,6 +188,17 @@ class FaissHnswPqConfig : public FaissHnswConfig {
                         return Status::invalid_args;
                     }
                 }
+
+                // check refine
+                if (refine_type.has_value()) {
+                    if (!WhetherAcceptableRefineType(refine_type.value())) {
+                        if (err_msg) {
+                            *err_msg = "invalid refine type type";
+                            LOG_KNOWHERE_ERROR_ << *err_msg;
+                        }
+                        return Status::invalid_args;
+                    }
+                }
             }
             default:
                 break;
@@ -229,6 +240,16 @@ class FaissHnswPrqConfig : public FaissHnswConfig {
                                 "The dimension of a vector (dim) should be a multiple of the number of subquantizers "
                                 "(m). Dimension: " +
                                 std::to_string(vec_dim) + ", m: " + std::to_string(param_m);
+                        }
+                        return Status::invalid_args;
+                    }
+                }
+                // check refine
+                if (refine_type.has_value()) {
+                    if (!WhetherAcceptableRefineType(refine_type.value())) {
+                        if (err_msg) {
+                            *err_msg = "invalid refine type type";
+                            LOG_KNOWHERE_ERROR_ << *err_msg;
                         }
                         return Status::invalid_args;
                     }
