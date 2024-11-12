@@ -12,9 +12,13 @@
 #ifndef SPARSE_INVERTED_INDEX_H
 #define SPARSE_INVERTED_INDEX_H
 
+#include <fcntl.h>
 #include <sys/mman.h>
+#include <unistd.h>
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <queue>
 #include <unordered_map>
@@ -37,8 +41,10 @@ class BaseInvertedIndex {
     virtual Status
     Save(MemoryIOWriter& writer) = 0;
 
+    // supplement_target_filename: when in mmap mode, we need an extra file to store the mmaped index data structure.
+    // this file will be created during loading and deleted in the destructor.
     virtual Status
-    Load(MemoryIOReader& reader, int map_flags = MAP_PRIVATE) = 0;
+    Load(MemoryIOReader& reader, int map_flags = MAP_PRIVATE, const std::string& supplement_target_filename = "") = 0;
 
     virtual Status
     Train(const SparseRow<T>* data, size_t rows, float drop_ratio_build) = 0;
@@ -85,6 +91,11 @@ class InvertedIndex : public BaseInvertedIndex<T> {
                 }
                 map_ = nullptr;
                 map_byte_size_ = 0;
+            }
+            if (map_fd_ != -1) {
+                // closing the file descriptor will also cause the file to be deleted.
+                close(map_fd_);
+                map_fd_ = -1;
             }
         }
     }
@@ -167,7 +178,8 @@ class InvertedIndex : public BaseInvertedIndex<T> {
     }
 
     Status
-    Load(MemoryIOReader& reader, int map_flags = MAP_PRIVATE) override {
+    Load(MemoryIOReader& reader, int map_flags = MAP_PRIVATE,
+         const std::string& supplement_target_filename = "") override {
         std::unique_lock<std::shared_mutex> lock(mu_);
         int64_t rows;
         readBinaryPOD(reader, rows);
@@ -182,7 +194,7 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         }
 
         if constexpr (mmapped) {
-            RETURN_IF_ERROR(PrepareMmap(reader, rows, map_flags));
+            RETURN_IF_ERROR(PrepareMmap(reader, rows, map_flags, supplement_target_filename));
         } else {
             raw_data_.reserve(rows);
             if constexpr (bm25) {
@@ -209,7 +221,7 @@ class InvertedIndex : public BaseInvertedIndex<T> {
 
     // memory in reader must be guaranteed to be valid during the lifetime of this object.
     Status
-    PrepareMmap(MemoryIOReader& reader, size_t rows, int map_flags) {
+    PrepareMmap(MemoryIOReader& reader, size_t rows, int map_flags, const std::string& supplement_target_filename) {
         const auto initial_reader_location = reader.tellg();
         const auto nnz = (reader.remaining() - (rows * sizeof(size_t))) / SparseRow<T>::element_size();
 
@@ -250,15 +262,32 @@ class InvertedIndex : public BaseInvertedIndex<T> {
             map_byte_size_ += row_sums_byte_size;
         }
 
-        // clear MAP_SHARED flag as we want to create an anonymous mmap and will not share it with other processes.
+        std::ofstream temp_file(supplement_target_filename, std::ios::binary | std::ios::trunc);
+        if (!temp_file) {
+            LOG_KNOWHERE_ERROR_ << "Failed to create mmap file when loading sparse InvertedIndex: " << strerror(errno);
+            return Status::disk_file_error;
+        }
+        temp_file.close();
+
+        std::filesystem::resize_file(supplement_target_filename, map_byte_size_);
+
+        map_fd_ = open(supplement_target_filename.c_str(), O_RDWR);
+        if (map_fd_ == -1) {
+            LOG_KNOWHERE_ERROR_ << "Failed to open mmap file when loading sparse InvertedIndex: " << strerror(errno);
+            return Status::disk_file_error;
+        }
+        // file will disappear in the filesystem immediately but the actual file will not be deleted
+        // until the file descriptor is closed in the destructor.
+        std::filesystem::remove(supplement_target_filename);
+
+        // clear MAP_SHARED flag as we will not share it with other processes.
         map_flags &= ~MAP_SHARED;
 
-        // anonymous mmap guarantees that the memory to be zero-initialized.
         map_ = static_cast<char*>(
-            mmap(nullptr, map_byte_size_, PROT_READ | PROT_WRITE, map_flags | MAP_ANON | MAP_PRIVATE, -1, 0));
+            mmap(nullptr, map_byte_size_, PROT_READ | PROT_WRITE, map_flags | MAP_PRIVATE, map_fd_, 0));
         if (map_ == MAP_FAILED) {
-            LOG_KNOWHERE_ERROR_ << "Failed to create anonymous mmap when loading sparse InvertedIndex: "
-                                << strerror(errno) << ", size: " << map_byte_size_;
+            LOG_KNOWHERE_ERROR_ << "Failed to create mmap when loading sparse InvertedIndex: " << strerror(errno)
+                                << ", size: " << map_byte_size_ << " on file: " << supplement_target_filename;
             return Status::disk_file_error;
         }
         if (madvise(map_, map_byte_size_, MADV_RANDOM) != 0) {
@@ -750,6 +779,7 @@ class InvertedIndex : public BaseInvertedIndex<T> {
 
     char* map_ = nullptr;
     size_t map_byte_size_ = 0;
+    int map_fd_ = -1;
 
     struct BM25Params {
         float k1;
