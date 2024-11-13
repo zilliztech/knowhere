@@ -12,6 +12,7 @@
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "faiss/utils/Heap.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/utils.h"
@@ -194,5 +195,51 @@ TEST_CASE("Test Brute Force", "[binary vector]") {
             REQUIRE(ids[i] == i);
             REQUIRE(dist[i] == 0);
         }
+    }
+}
+
+TEST_CASE("Test Brute Force with input ids", "[float vector]") {
+    using Catch::Approx;
+    const int64_t nb = 1000;
+    const int64_t nq = 1;
+    const int64_t dim = 128;
+    const int64_t k = 10;
+    const knowhere::Json conf = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::METRIC_TYPE, "L2"},
+        {knowhere::meta::TOPK, k},
+    };
+    std::vector<int64_t> block_prefix = {0, 333, 500, 555, 1000};
+
+    // generate filter id and data
+    auto filter_bits = GenerateBitsetWithRandomTbitsSet(nb, 100);
+    knowhere::BitsetView bitset(filter_bits.data(), nb);
+
+    const auto total_train_ds = GenDataSet(nb, dim);
+    const auto query_ds = GenDataSet(nq, dim);
+
+    std::vector<float> dis(nq * k, std::numeric_limits<float>::quiet_NaN());
+    std::vector<int64_t> ids(nq * k, -1);
+    faiss::float_maxheap_array_t heaps{nq, k, ids.data(), dis.data()};
+    heaps.heapify();
+    for (auto i = 0; i < block_prefix.size() - 1; i++) {
+        auto begin_id = block_prefix[i];
+        auto end_id = block_prefix[i + 1];
+        auto blk_rows = end_id - begin_id;
+        auto tensor = (const float*)total_train_ds->GetTensor() + dim * begin_id;
+        auto blk_train_ds = knowhere::GenDataSet(blk_rows, dim, tensor, begin_id);
+        auto partial_v = knowhere::BruteForce::Search<knowhere::fp32>(blk_train_ds, query_ds, conf, bitset);
+        REQUIRE(partial_v.has_value());
+        auto partial_res = partial_v.value();
+        heaps.addn_with_ids(k, partial_res->GetDistance(), partial_res->GetIds(), k, 0, nq);
+    }
+    heaps.reorder();
+
+    auto gt = knowhere::BruteForce::Search<knowhere::fp32>(total_train_ds, query_ds, conf, bitset);
+    auto gt_ids = gt.value()->GetIds();
+    auto gt_dis = gt.value()->GetDistance();
+    for (auto i = 0; i < nq * k; i++) {
+        REQUIRE(gt_ids[i] == ids[i]);
+        REQUIRE(gt_dis[i] == dis[i]);
     }
 }

@@ -85,6 +85,7 @@ constexpr const char* RETAIN_ITERATOR_ORDER = "retain_iterator_order";
 constexpr const char* RADIUS = "radius";
 constexpr const char* RANGE_FILTER = "range_filter";
 constexpr const char* INPUT_IDS = "input_ids";
+constexpr const char* INPUT_BEG_ID = "input_begin_id";
 constexpr const char* OUTPUT_TENSOR = "output_tensor";
 constexpr const char* DEVICE_ID = "gpu_id";
 constexpr const char* NUM_BUILD_THREAD = "num_build_thread";
