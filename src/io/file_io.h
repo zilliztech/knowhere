@@ -14,11 +14,12 @@
 #include <unistd.h>
 
 #include <stdexcept>
+#include <string>
 
 namespace knowhere {
 struct FileReader {
     FileReader(const std::string& filename, bool auto_remove = false) {
-        fd_ = open(filename.data(), O_RDONLY);
+        fd_ = open(filename.c_str(), O_RDONLY);
         if (fd_ < 0) {
             throw std::runtime_error("Cannot open file");
         }
@@ -27,7 +28,7 @@ struct FileReader {
         lseek(fd_, 0, SEEK_SET);
 
         if (auto_remove) {
-            unlink(filename.data());
+            unlink(filename.c_str());
         }
     }
 
