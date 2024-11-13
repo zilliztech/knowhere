@@ -122,6 +122,47 @@ class SparseInvertedIndexNode : public IndexNode {
         return GenResultDataSet(nq, k, p_id.release(), p_dist.release());
     }
 
+ private:
+    class RefineIterator : public IndexIterator {
+     public:
+        RefineIterator(const sparse::BaseInvertedIndex<T>* index, sparse::SparseRow<T>&& query,
+                       std::shared_ptr<PrecomputedDistanceIterator> precomputed_it,
+                       const sparse::DocValueComputer<T>& computer, const float refine_ratio = 0.5f)
+            : IndexIterator(true, refine_ratio),
+              index_(index),
+              query_(std::move(query)),
+              computer_(computer),
+              precomputed_it_(precomputed_it) {
+        }
+
+     protected:
+        // returns n_rows / 10 DistId for the first time to create a large enough window for refinement.
+        void
+        next_batch(std::function<void(const std::vector<DistId>&)> batch_handler) override {
+            std::vector<DistId> dists;
+            size_t num = first_return_ ? (std::max(index_->n_rows() / 10, static_cast<size_t>(20))) : 1;
+            first_return_ = false;
+            for (size_t i = 0; i < num && precomputed_it_->HasNext(); ++i) {
+                auto [id, dist] = precomputed_it_->Next();
+                dists.emplace_back(id, dist);
+            }
+            batch_handler(dists);
+        }
+
+        float
+        raw_distance(int64_t id) override {
+            return index_->GetRawDistance(id, query_, computer_);
+        }
+
+     private:
+        const sparse::BaseInvertedIndex<T>* index_;
+        sparse::SparseRow<T> query_;
+        const sparse::DocValueComputer<T> computer_;
+        std::shared_ptr<PrecomputedDistanceIterator> precomputed_it_;
+        bool first_return_ = true;
+    };
+
+ public:
     // TODO: for now inverted index and wand use the same impl for AnnIterator.
     [[nodiscard]] expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset) const override {
@@ -142,13 +183,23 @@ class SparseInvertedIndexNode : public IndexNode {
         auto computer = computer_or.value();
         auto drop_ratio_search = cfg.drop_ratio_search.value_or(0.0f);
 
+        const bool approximated = index_->IsApproximated() || drop_ratio_search > 0;
+
         auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
         std::vector<folly::Future<folly::Unit>> futs;
         futs.reserve(nq);
         for (int i = 0; i < nq; ++i) {
             futs.emplace_back(search_pool_->push([&, i]() {
-                vec[i] = std::make_shared<PrecomputedDistanceIterator>(
+                auto it = std::make_shared<PrecomputedDistanceIterator>(
                     index_->GetAllDistances(queries[i], drop_ratio_search, bitset, computer), true);
+                if (!approximated || queries[i].size() == 0) {
+                    vec[i] = it;
+                } else {
+                    sparse::SparseRow<T> query_copy(queries[i]);
+                    auto refine_it = std::make_shared<RefineIterator>(index_, std::move(query_copy), it, computer);
+                    refine_it->initialize();
+                    vec[i] = std::move(refine_it);
+                }
             }));
         }
         WaitAllSuccess(futs);
@@ -372,6 +423,11 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
         ReadPermission permission(*this);
+        // Always uses PrecomputedDistanceIterator for SparseInvertedIndexNodeCC:
+        // If we want to use RefineIterator, it needs to get another ReadPermission when calling
+        // index_->GetRawDistance(). If an Add task is added in between, there will be a deadlock.
+        auto config = static_cast<const knowhere::SparseInvertedIndexConfig&>(*cfg);
+        config.drop_ratio_search = 0.0f;
         return SparseInvertedIndexNode<T, use_wand>::AnnIterator(dataset, std::move(cfg), bitset);
     }
 

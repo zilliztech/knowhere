@@ -60,11 +60,17 @@ class BaseInvertedIndex {
     GetAllDistances(const SparseRow<T>& query, float drop_ratio_search, const BitsetView& bitset,
                     const DocValueComputer<T>& computer) const = 0;
 
+    virtual float
+    GetRawDistance(const label_t id, const SparseRow<T>& query, const DocValueComputer<T>& computer) const = 0;
+
     virtual void
     GetVectorById(const label_t id, SparseRow<T>& output) const = 0;
 
     virtual expected<DocValueComputer<T>>
     GetDocValueComputer(const SparseInvertedIndexConfig& cfg) const = 0;
+
+    virtual bool
+    IsApproximated() const = 0;
 
     [[nodiscard]] virtual size_t
     size() const = 0;
@@ -435,6 +441,7 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         }
     }
 
+    // Returned distances are inaccurate based on the drop_ratio.
     std::vector<float>
     GetAllDistances(const SparseRow<T>& query, float drop_ratio_search, const BitsetView& bitset,
                     const DocValueComputer<T>& computer) const override {
@@ -457,6 +464,12 @@ class InvertedIndex : public BaseInvertedIndex<T> {
             distances[i] = 0.0f;
         }
         return distances;
+    }
+
+    float
+    GetRawDistance(const label_t id, const SparseRow<T>& query, const DocValueComputer<T>& computer) const override {
+        T doc_sum = bm25 ? bm25_params_->row_sums.at(id) : 0;
+        return query.dot(raw_data_[id], computer, doc_sum);
     }
 
     void
@@ -500,6 +513,11 @@ class InvertedIndex : public BaseInvertedIndex<T> {
     n_cols() const override {
         std::shared_lock<std::shared_mutex> lock(mu_);
         return n_cols_internal();
+    }
+
+    [[nodiscard]] virtual bool
+    IsApproximated() const override {
+        return drop_during_build_;
     }
 
  private:
