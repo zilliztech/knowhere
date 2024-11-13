@@ -84,11 +84,8 @@ class FaissHnswFlatConfig : public FaissHnswConfig {
         if (param_type == PARAM_TYPE::TRAIN) {
             // prohibit refine
             if (refine.value_or(false) || refine_type.has_value()) {
-                if (err_msg) {
-                    *err_msg = "refine is not supported for this index";
-                    LOG_KNOWHERE_ERROR_ << *err_msg;
-                }
-                return Status::invalid_args;
+                std::string msg = "refine is not supported for this index";
+                return HandleError(err_msg, msg, Status::invalid_args);
             }
         }
         return Status::success;
@@ -120,21 +117,15 @@ class FaissHnswSqConfig : public FaissHnswConfig {
         if (param_type == PARAM_TYPE::TRAIN) {
             auto sq_type_v = sq_type.value();
             if (!WhetherAcceptableQuantType(sq_type_v)) {
-                if (err_msg) {
-                    *err_msg = "invalid scalar quantizer type";
-                    LOG_KNOWHERE_ERROR_ << *err_msg;
-                }
-                return Status::invalid_args;
+                std::string msg = "invalid scalar quantizer type";
+                return HandleError(err_msg, msg, Status::invalid_args);
             }
 
             // check refine
             if (refine_type.has_value()) {
                 if (!WhetherAcceptableRefineType(refine_type.value())) {
-                    if (err_msg) {
-                        *err_msg = "invalid refine type type";
-                        LOG_KNOWHERE_ERROR_ << *err_msg;
-                    }
-                    return Status::invalid_args;
+                    std::string msg = "invalid refine type type";
+                    return HandleError(err_msg, msg, Status::invalid_args);
                 }
             }
         }
@@ -179,13 +170,11 @@ class FaissHnswPqConfig : public FaissHnswConfig {
                     int vec_dim = dim.value();
                     int param_m = m.value();
                     if (vec_dim % param_m != 0) {
-                        if (err_msg != nullptr) {
-                            *err_msg =
-                                "The dimension of the vector (dim) should be a multiple of the number of subquantizers "
-                                "(m). Dimension: " +
-                                std::to_string(vec_dim) + ", m: " + std::to_string(param_m);
-                        }
-                        return Status::invalid_args;
+                        std::string msg =
+                            "The dimension of the vector (dim) should be a multiple of the number of subquantizers "
+                            "(m). Dimension: " +
+                            std::to_string(vec_dim) + ", m: " + std::to_string(param_m);
+                        return HandleError(err_msg, msg, Status::invalid_args);
                     }
                 }
             }
@@ -224,13 +213,11 @@ class FaissHnswPrqConfig : public FaissHnswConfig {
                     int vec_dim = dim.value();
                     int param_m = m.value();
                     if (vec_dim % param_m != 0) {
-                        if (err_msg != nullptr) {
-                            *err_msg =
-                                "The dimension of a vector (dim) should be a multiple of the number of subquantizers "
-                                "(m). Dimension: " +
-                                std::to_string(vec_dim) + ", m: " + std::to_string(param_m);
-                        }
-                        return Status::invalid_args;
+                        std::string msg =
+                            "The dimension of a vector (dim) should be a multiple of the number of subquantizers "
+                            "(m). Dimension: " +
+                            std::to_string(vec_dim) + ", m: " + std::to_string(param_m);
+                        return HandleError(err_msg, msg, Status::invalid_args);
                     }
                 }
             }

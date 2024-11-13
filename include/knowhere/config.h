@@ -344,12 +344,6 @@ class Config {
 
     static Status
     Load(Config& cfg, const Json& json, PARAM_TYPE type, std::string* const err_msg = nullptr) {
-        auto show_err_msg = [&](std::string& msg) {
-            LOG_KNOWHERE_ERROR_ << msg;
-            if (err_msg) {
-                *err_msg = msg;
-            }
-        };
         for (const auto& it : cfg.__DICT__) {
             const auto& var = it.second;
 
@@ -363,8 +357,7 @@ class Config {
                             continue;
                         }
                         std::string msg = "param '" + it.first + "' not exist in json";
-                        show_err_msg(msg);
-                        return Status::invalid_param_in_json;
+                        return HandleError(err_msg, msg, Status::invalid_param_in_json);
                     } else {
                         *ptr->val = ptr->default_val;
                         continue;
@@ -373,16 +366,14 @@ class Config {
                 if (!json[it.first].is_number_integer()) {
                     std::string msg = "Type conflict in json: param '" + it.first + "' (" + to_string(json[it.first]) +
                                       ") should be integer";
-                    show_err_msg(msg);
-                    return Status::type_conflict_in_json;
+                    return HandleError(err_msg, msg, Status::type_conflict_in_json);
                 }
                 if (ptr->range.has_value()) {
                     if (json[it.first].get<int64_t>() > std::numeric_limits<CFG_INT::value_type>::max()) {
                         std::string msg = "Arithmetic overflow: param '" + it.first + "' (" +
                                           to_string(json[it.first]) + ") should not bigger than " +
                                           std::to_string(std::numeric_limits<CFG_INT::value_type>::max());
-                        show_err_msg(msg);
-                        return Status::arithmetic_overflow;
+                        return HandleError(err_msg, msg, Status::arithmetic_overflow);
                     }
                     CFG_INT::value_type v = json[it.first];
                     auto range_val = ptr->range.value();
@@ -391,8 +382,7 @@ class Config {
                     } else {
                         std::string msg = "Out of range in json: param '" + it.first + "' (" +
                                           to_string(json[it.first]) + ") should be in range " + range_val.to_string();
-                        show_err_msg(msg);
-                        return Status::out_of_range_in_json;
+                        return HandleError(err_msg, msg, Status::out_of_range_in_json);
                     }
                 } else {
                     *ptr->val = json[it.first];
@@ -409,8 +399,7 @@ class Config {
                             continue;
                         }
                         std::string msg = "param '" + it.first + "' not exist in json";
-                        show_err_msg(msg);
-                        return Status::invalid_param_in_json;
+                        return HandleError(err_msg, msg, Status::invalid_param_in_json);
                     } else {
                         *ptr->val = ptr->default_val;
                         continue;
@@ -419,16 +408,14 @@ class Config {
                 if (!json[it.first].is_number_integer()) {
                     std::string msg = "Type conflict in json: param '" + it.first + "' (" + to_string(json[it.first]) +
                                       ") should be long integer";
-                    show_err_msg(msg);
-                    return Status::type_conflict_in_json;
+                    return HandleError(err_msg, msg, Status::type_conflict_in_json);
                 }
                 if (ptr->range.has_value()) {
                     if (json[it.first].get<int64_t>() > std::numeric_limits<CFG_INT64::value_type>::max()) {
                         std::string msg = "Arithmetic overflow: param '" + it.first + "' (" +
                                           to_string(json[it.first]) + ") should not bigger than " +
                                           std::to_string(std::numeric_limits<CFG_INT64::value_type>::max());
-                        show_err_msg(msg);
-                        return Status::arithmetic_overflow;
+                        return HandleError(err_msg, msg, Status::arithmetic_overflow);
                     }
                     CFG_INT64::value_type v = json[it.first];
                     auto range_val = ptr->range.value();
@@ -437,8 +424,7 @@ class Config {
                     } else {
                         std::string msg = "Out of range in json: param '" + it.first + "' (" +
                                           to_string(json[it.first]) + ") should be in range " + range_val.to_string();
-                        show_err_msg(msg);
-                        return Status::out_of_range_in_json;
+                        return HandleError(err_msg, msg, Status::out_of_range_in_json);
                     }
                 } else {
                     *ptr->val = json[it.first];
@@ -455,8 +441,7 @@ class Config {
                             continue;
                         }
                         std::string msg = "param '" + it.first + "' not exist in json";
-                        show_err_msg(msg);
-                        return Status::invalid_param_in_json;
+                        return HandleError(err_msg, msg, Status::invalid_param_in_json);
                     } else {
                         *ptr->val = ptr->default_val;
                         continue;
@@ -465,16 +450,14 @@ class Config {
                 if (!json[it.first].is_number()) {
                     std::string msg = "Type conflict in json: param '" + it.first + "' (" + to_string(json[it.first]) +
                                       ") should be a number";
-                    show_err_msg(msg);
-                    return Status::type_conflict_in_json;
+                    return HandleError(err_msg, msg, Status::type_conflict_in_json);
                 }
                 if (ptr->range.has_value()) {
                     if (json[it.first].get<double>() > std::numeric_limits<CFG_FLOAT::value_type>::max()) {
                         std::string msg = "Arithmetic overflow: param '" + it.first + "' (" +
                                           to_string(json[it.first]) + ") should not bigger than " +
                                           std::to_string(std::numeric_limits<CFG_FLOAT::value_type>::max());
-                        show_err_msg(msg);
-                        return Status::arithmetic_overflow;
+                        return HandleError(err_msg, msg, Status::arithmetic_overflow);
                     }
                     CFG_FLOAT::value_type v = json[it.first];
                     auto range_val = ptr->range.value();
@@ -483,8 +466,7 @@ class Config {
                     } else {
                         std::string msg = "Out of range in json: param '" + it.first + "' (" +
                                           to_string(json[it.first]) + ") should be in range " + range_val.to_string();
-                        show_err_msg(msg);
-                        return Status::out_of_range_in_json;
+                        return HandleError(err_msg, msg, Status::out_of_range_in_json);
                     }
                 } else {
                     *ptr->val = json[it.first];
@@ -501,8 +483,7 @@ class Config {
                             continue;
                         }
                         std::string msg = "param [" + it.first + "] not exist in json";
-                        show_err_msg(msg);
-                        return Status::invalid_param_in_json;
+                        return HandleError(err_msg, msg, Status::invalid_param_in_json);
                     } else {
                         *ptr->val = ptr->default_val;
                         continue;
@@ -511,8 +492,7 @@ class Config {
                 if (!json[it.first].is_string()) {
                     std::string msg = "Type conflict in json: param '" + it.first + "' (" + to_string(json[it.first]) +
                                       ") should be a string";
-                    show_err_msg(msg);
-                    return Status::type_conflict_in_json;
+                    return HandleError(err_msg, msg, Status::type_conflict_in_json);
                 }
                 *ptr->val = json[it.first];
             }
@@ -527,8 +507,7 @@ class Config {
                             continue;
                         }
                         std::string msg = "param '" + it.first + "' not exist in json";
-                        show_err_msg(msg);
-                        return Status::invalid_param_in_json;
+                        return HandleError(err_msg, msg, Status::invalid_param_in_json);
                     } else {
                         *ptr->val = ptr->default_val;
                         continue;
@@ -537,8 +516,7 @@ class Config {
                 if (!json[it.first].is_boolean()) {
                     std::string msg = "Type conflict in json: param '" + it.first + "' (" + to_string(json[it.first]) +
                                       ") should be a boolean";
-                    show_err_msg(msg);
-                    return Status::type_conflict_in_json;
+                    return HandleError(err_msg, msg, Status::type_conflict_in_json);
                 }
                 *ptr->val = json[it.first];
             }
@@ -554,8 +532,7 @@ class Config {
                             continue;
                         }
                         std::string msg = "param '" + it.first + "' not exist in json";
-                        show_err_msg(msg);
-                        return Status::invalid_param_in_json;
+                        return HandleError(err_msg, msg, Status::invalid_param_in_json);
                     } else {
                         *ptr->val = ptr->default_val;
                         continue;
@@ -583,6 +560,15 @@ class Config {
     inline virtual Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* const err_msg) {
         return Status::success;
+    }
+
+    static knowhere::Status
+    HandleError(std::string* error_msg, const std::string& msg, const knowhere::Status& status) {
+        if (error_msg) {
+            *error_msg = msg;
+        }
+        LOG_KNOWHERE_ERROR_ << msg;
+        return status;
     }
 };
 
