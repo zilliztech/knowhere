@@ -151,9 +151,10 @@ struct IDSelectorHelper {
 struct BitsetViewSelectorHelper {
     // todo aguzhva: use avx gather instruction
     const knowhere::BitsetView bitset;
+    const size_t id_offset = 0;
 
     inline bool is_member(const size_t idx) const {
-        return !bitset.test(idx);
+        return !bitset.test(idx + id_offset);
     }
 };
 
@@ -254,8 +255,9 @@ void exhaustive_inner_product_seq(
     if (const auto* bitsetview_sel = dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel)) {
         // A specialized case for Knowhere
         auto bitset = bitsetview_sel->bitset_view;
+        auto id_offset = bitsetview_sel->id_offset;
         if (!bitset.empty()) {
-            BitsetViewSelectorHelper bitset_helper{bitset};
+            BitsetViewSelectorHelper bitset_helper{bitset, id_offset};
             exhaustive_inner_product_seq_impl<BlockResultHandler, BitsetViewSelectorHelper>(
                 x, y, d, nx, ny, res, bitset_helper);
             return;
@@ -368,8 +370,9 @@ void exhaustive_L2sqr_seq(
     if (const auto* bitsetview_sel = dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel)) {
         // A specialized case for Knowhere
         auto bitset = bitsetview_sel->bitset_view;
+        auto id_offset = bitsetview_sel->id_offset;
         if (!bitset.empty()) {
-            BitsetViewSelectorHelper bitset_helper{bitset};
+            BitsetViewSelectorHelper bitset_helper{bitset, id_offset};
             exhaustive_L2sqr_seq_impl<BlockResultHandler, BitsetViewSelectorHelper>(
                 x, y, d, nx, ny, res, bitset_helper);
             return;
@@ -494,8 +497,9 @@ void exhaustive_cosine_seq(
     if (const auto* bitsetview_sel = dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel)) {
         // A specialized case for Knowhere
         auto bitset = bitsetview_sel->bitset_view;
+        auto id_offset = bitsetview_sel->id_offset;
         if (!bitset.empty()) {
-            BitsetViewSelectorHelper bitset_helper{bitset};
+            BitsetViewSelectorHelper bitset_helper{bitset, id_offset};
             exhaustive_cosine_seq_impl<BlockResultHandler, BitsetViewSelectorHelper>(
                 x, y, y_norms, d, nx, ny, res, bitset_helper);
             return;

@@ -201,7 +201,7 @@ TEST_CASE("Test Brute Force", "[binary vector]") {
 TEST_CASE("Test Brute Force with input ids", "[float vector]") {
     using Catch::Approx;
     const int64_t nb = 1000;
-    const int64_t nq = 1;
+    const int64_t nq = 10;
     const int64_t dim = 128;
     const int64_t k = 10;
     const knowhere::Json conf = {
@@ -209,7 +209,7 @@ TEST_CASE("Test Brute Force with input ids", "[float vector]") {
         {knowhere::meta::METRIC_TYPE, "L2"},
         {knowhere::meta::TOPK, k},
     };
-    std::vector<int64_t> block_prefix = {0, 333, 500, 555, 1000};
+    std::vector<int64_t> block_prefix = {0, 111, 333, 500, 555, 666, 888, 1000};
 
     // generate filter id and data
     auto filter_bits = GenerateBitsetWithRandomTbitsSet(nb, 100);
