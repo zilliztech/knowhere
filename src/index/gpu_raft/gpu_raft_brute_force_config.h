@@ -30,10 +30,8 @@ struct GpuRaftBruteForceConfig : public BaseConfig {
             constexpr std::array<std::string_view, 3> legal_metric_list{"L2", "IP", "COSINE"};
             std::string metric = metric_type.value();
             if (std::find(legal_metric_list.begin(), legal_metric_list.end(), metric) == legal_metric_list.end()) {
-                if (err_msg) {
-                    *err_msg = "metric type " + metric + " not found or not supported, supported: [L2 IP]";
-                }
-                return Status::invalid_metric_type;
+                std::string msg = "metric type " + metric + " not found or not supported, supported: [L2 IP]";
+                return HandleError(err_msg, msg, Status::invalid_metric_type);
             }
         }
         return Status::success;

@@ -97,20 +97,18 @@ Config::FormatAndCheck(const Config& cfg, Json& json, std::string* const err_msg
                         }
                         if (v < std::numeric_limits<CFG_INT::value_type>::min() ||
                             v > std::numeric_limits<CFG_INT::value_type>::max()) {
-                            if (err_msg) {
-                                *err_msg =
-                                    "integer value out of range, key: '" + key_str + "', value: '" + value_str + "'";
-                            }
-                            return knowhere::Status::invalid_value_in_json;
+                            std::string msg =
+                                "integer value out of range, key: '" + key_str + "', value: '" + value_str + "'";
+                            return HandleError(err_msg, msg, Status::invalid_value_in_json);
                         }
                         json[key_str] = static_cast<CFG_INT::value_type>(v);
                     } catch (const std::out_of_range&) {
-                        if (err_msg) {
-                            *err_msg = "integer value out of range, key: '" + key_str + "', value: '" + value_str + "'";
-                        }
-                        return knowhere::Status::invalid_value_in_json;
+                        std::string msg =
+                            "integer value out of range, key: '" + key_str + "', value: '" + value_str + "'";
+                        return HandleError(err_msg, msg, Status::invalid_value_in_json);
                     } catch (const std::invalid_argument&) {
-                        KNOWHERE_THROW_MSG("invalid integer value, key: '" + key_str + "', value: '" + value_str + "'");
+                        std::string msg = "invalid integer value, key: '" + key_str + "', value: '" + value_str + "'";
+                        return HandleError(err_msg, msg, Status::invalid_value_in_json);
                     }
                 }
                 if (std::get_if<Entry<CFG_INT64>>(&var)) {
@@ -125,29 +123,36 @@ Config::FormatAndCheck(const Config& cfg, Json& json, std::string* const err_msg
                         }
                         if (v < std::numeric_limits<CFG_INT64::value_type>::min() ||
                             v > std::numeric_limits<CFG_INT64::value_type>::max()) {
-                            if (err_msg) {
-                                *err_msg = "long integer value out of range, key: '" + key_str + "', value: '" +
-                                           value_str + "'";
-                            }
-                            return knowhere::Status::invalid_value_in_json;
+                            std::string msg =
+                                "long integer value out of range, key: '" + key_str + "', value: '" + value_str + "'";
+                            return HandleError(err_msg, msg, Status::invalid_value_in_json);
                         }
                         json[key_str] = static_cast<CFG_INT64::value_type>(v);
                     } catch (const std::out_of_range&) {
-                        if (err_msg) {
-                            *err_msg =
-                                "long integer value out of range, key: '" + key_str + "', value: '" + value_str + "'";
-                        }
-                        return knowhere::Status::invalid_value_in_json;
+                        std::string msg =
+                            "long integer value out of range, key: '" + key_str + "', value: '" + value_str + "'";
+                        return HandleError(err_msg, msg, Status::invalid_value_in_json);
                     } catch (const std::invalid_argument&) {
-                        KNOWHERE_THROW_MSG("invalid long integer value, key: '" + key_str + "', value: '" + value_str +
-                                           "'");
+                        std::string msg =
+                            "invalid long integer value, key: '" + key_str + "', value: '" + value_str + "'";
+                        return HandleError(err_msg, msg, Status::invalid_value_in_json);
                     }
                 }
                 if (std::get_if<Entry<CFG_FLOAT>>(&var)) {
-                    CFG_FLOAT::value_type v = std::stof(json[it.first].get<std::string>().c_str());
-                    json[it.first] = v;
+                    auto key_str = it.first;
+                    auto value_str = json[key_str].get<std::string>();
+                    try {
+                        CFG_FLOAT::value_type v = std::stof(json[it.first].get<std::string>().c_str());
+                        json[it.first] = v;
+                    } catch (const std::out_of_range&) {
+                        std::string msg =
+                            "float value out of range, key: '" + key_str + "', value: '" + value_str + "'";
+                        return HandleError(err_msg, msg, Status::invalid_value_in_json);
+                    } catch (const std::invalid_argument&) {
+                        std::string msg = "invalid float value, key: '" + key_str + "', value: '" + value_str + "'";
+                        return HandleError(err_msg, msg, Status::invalid_value_in_json);
+                    }
                 }
-
                 if (std::get_if<Entry<CFG_BOOL>>(&var)) {
                     if (json[it.first] == "true") {
                         json[it.first] = true;
@@ -159,11 +164,7 @@ Config::FormatAndCheck(const Config& cfg, Json& json, std::string* const err_msg
             }
         }
     } catch (std::exception& e) {
-        LOG_KNOWHERE_ERROR_ << e.what();
-        if (err_msg) {
-            *err_msg = e.what();
-        }
-        return Status::invalid_value_in_json;
+        return HandleError(err_msg, e.what(), Status::invalid_value_in_json);
     }
     return Status::success;
 }

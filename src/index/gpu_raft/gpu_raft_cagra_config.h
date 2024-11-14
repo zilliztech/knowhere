@@ -126,10 +126,8 @@ struct GpuRaftCagraConfig : public BaseConfig {
             constexpr std::array<std::string_view, 3> legal_metric_list{"L2", "IP", "COSINE"};
             std::string metric = metric_type.value();
             if (std::find(legal_metric_list.begin(), legal_metric_list.end(), metric) == legal_metric_list.end()) {
-                if (err_msg) {
-                    *err_msg = "metric type " + metric + " not found or not supported, supported: [L2 IP COSINE]";
-                }
-                return Status::invalid_metric_type;
+                std::string msg = "metric type " + metric + " not found or not supported, supported: [L2 IP COSINE]";
+                return HandleError(err_msg, msg, Status::invalid_metric_type);
             }
         }
 
@@ -140,11 +138,8 @@ struct GpuRaftCagraConfig : public BaseConfig {
 
             if (search_width.has_value()) {
                 if (std::max(itopk_size.value(), kAlignFactor * search_width.value()) < k.value()) {
-                    if (err_msg) {
-                        *err_msg = "max((itopk_size + 31)// 32, search_width) * 32< topk";
-                        LOG_KNOWHERE_ERROR_ << *err_msg;
-                    }
-                    return Status::out_of_range_in_json;
+                    std::string msg = "max((itopk_size + 31)// 32, search_width) * 32< topk";
+                    return HandleError(err_msg, msg, Status::out_of_range_in_json);
                 }
             } else {
                 search_width = std::max((k.value() - 1) / kAlignFactor + 1, kSearchWidth);
