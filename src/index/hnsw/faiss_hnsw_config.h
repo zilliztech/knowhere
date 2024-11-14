@@ -124,7 +124,8 @@ class FaissHnswSqConfig : public FaissHnswConfig {
             // check refine
             if (refine_type.has_value()) {
                 if (!WhetherAcceptableRefineType(refine_type.value())) {
-                    std::string msg = "invalid refine type type";
+                    std::string msg =
+                        "invalid refine type : " + refine_type.value() + ", optional types are [sq6, sq8, fp16, bf16]";
                     return HandleError(err_msg, msg, Status::invalid_args);
                 }
             }
@@ -181,11 +182,9 @@ class FaissHnswPqConfig : public FaissHnswConfig {
                 // check refine
                 if (refine_type.has_value()) {
                     if (!WhetherAcceptableRefineType(refine_type.value())) {
-                        if (err_msg) {
-                            *err_msg = "invalid refine type type";
-                            LOG_KNOWHERE_ERROR_ << *err_msg;
-                        }
-                        return Status::invalid_args;
+                        std::string msg = "invalid refine type : " + refine_type.value() +
+                                          ", optional types are [sq6, sq8, fp16, bf16, fp32, flat]";
+                        return HandleError(err_msg, msg, Status::invalid_args);
                     }
                 }
             }
@@ -234,11 +233,9 @@ class FaissHnswPrqConfig : public FaissHnswConfig {
                 // check refine
                 if (refine_type.has_value()) {
                     if (!WhetherAcceptableRefineType(refine_type.value())) {
-                        if (err_msg) {
-                            *err_msg = "invalid refine type type";
-                            LOG_KNOWHERE_ERROR_ << *err_msg;
-                        }
-                        return Status::invalid_args;
+                        std::string msg = "invalid refine type : " + refine_type.value() +
+                                          ", optional types are [sq6, sq8, fp16, bf16, fp32, flat]";
+                        return HandleError(err_msg, msg, Status::invalid_args);
                     }
                 }
             }
