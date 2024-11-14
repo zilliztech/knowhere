@@ -34,6 +34,8 @@
 namespace knowhere {
 
 /* knowhere wrapper API to call faiss brute force search for all metric types */
+/* If the ids of base_dataset does not start from 0, the BF functions will filter based on the real ids and return the
+ * real ids.*/
 
 class BruteForceConfig : public BaseConfig {};
 
@@ -70,6 +72,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
 
     auto xb = base->GetTensor();
     auto nb = base->GetRows();
+    auto xb_id_offset = base->GetTensorBeginId();
     auto dim = base->GetDim();
 
     auto xq = query->GetTensor();
@@ -121,7 +124,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
             auto cur_labels = labels_ptr + topk * index;
             auto cur_distances = distances_ptr + topk * index;
 
-            BitsetViewIDSelector bw_idselector(bitset);
+            BitsetViewIDSelector bw_idselector(bitset, xb_id_offset);
             faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
 
             switch (faiss_metric_type) {
@@ -179,6 +182,11 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     if (ret != Status::success) {
         return expected<DataSetPtr>::Err(ret, "failed to brute force search");
     }
+    if (xb_id_offset != 0) {
+        for (auto i = 0; i < nq * topk; i++) {
+            labels[i] = labels[i] == -1 ? -1 : labels[i] + xb_id_offset;
+        }
+    }
     auto res = GenResultDataSet(nq, cfg.k.value(), std::move(labels), std::move(distances));
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
@@ -202,6 +210,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     auto xb = base->GetTensor();
     auto nb = base->GetRows();
     auto dim = base->GetDim();
+    auto xb_id_offset = base->GetTensorBeginId();
 
     auto xq = query->GetTensor();
     auto nq = query->GetRows();
@@ -248,7 +257,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
             auto cur_labels = labels + topk * index;
             auto cur_distances = distances + topk * index;
 
-            BitsetViewIDSelector bw_idselector(bitset);
+            BitsetViewIDSelector bw_idselector(bitset, xb_id_offset);
             faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
 
             switch (faiss_metric_type) {
@@ -311,6 +320,11 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     }
     // LCOV_EXCL_STOP
 #endif
+    if (xb_id_offset != 0) {
+        for (auto i = 0; i < nq * topk; i++) {
+            labels[i] = labels[i] == -1 ? -1 : labels[i] + xb_id_offset;
+        }
+    }
 
     return Status::success;
 }
@@ -331,6 +345,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     auto xb = base->GetTensor();
     auto nb = base->GetRows();
     auto dim = base->GetDim();
+    auto xb_id_offset = base->GetTensorBeginId();
 
     auto xq = query->GetTensor();
     auto nq = query->GetRows();
@@ -423,7 +438,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
             ThreadPool::ScopedSearchOmpSetter setter(1);
             faiss::RangeSearchResult res(1);
 
-            BitsetViewIDSelector bw_idselector(bitset);
+            BitsetViewIDSelector bw_idselector(bitset, xb_id_offset);
             faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
 
             switch (faiss_metric_type) {
@@ -469,7 +484,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
             result_id_array[index].resize(elem_cnt);
             for (size_t j = 0; j < elem_cnt; j++) {
                 result_dist_array[index][j] = res.distances[j];
-                result_id_array[index][j] = res.labels[j];
+                result_id_array[index][j] = res.labels[j] + xb_id_offset;
             }
             if (cfg.range_filter.value() != defaultRangeFilter) {
                 FilterRangeSearchResultForOneNq(result_dist_array[index], result_id_array[index], is_ip, radius,
@@ -504,6 +519,7 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
     auto base = static_cast<const sparse::SparseRow<float>*>(base_dataset->GetTensor());
     auto rows = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
+    auto xb_id_offset = base_dataset->GetTensorBeginId();
 
     auto xq = static_cast<const sparse::SparseRow<float>*>(query_dataset->GetTensor());
     auto nq = query_dataset->GetRows();
@@ -561,7 +577,8 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
             }
             sparse::MaxMinHeap<float> heap(topk);
             for (int64_t j = 0; j < rows; ++j) {
-                if (!bitset.empty() && bitset.test(j)) {
+                auto x_id = j + xb_id_offset;
+                if (!bitset.empty() && bitset.test(x_id)) {
                     continue;
                 }
                 float row_sum = 0;
@@ -573,7 +590,7 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
                 }
                 float dist = row.dot(base[j], computer, row_sum);
                 if (dist > 0) {
-                    heap.push(j, dist);
+                    heap.push(x_id, dist);
                 }
             }
             int result_size = heap.size();
@@ -626,6 +643,7 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
     auto xb = base->GetTensor();
     auto nb = base->GetRows();
     auto dim = base->GetDim();
+    auto xb_id_offset = base->GetTensorBeginId();
 
     auto xq = query->GetTensor();
     auto nq = query->GetRows();
@@ -669,7 +687,7 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
         futs.emplace_back(pool->push([&, index = i] {
             ThreadPool::ScopedSearchOmpSetter setter(1);
 
-            BitsetViewIDSelector bw_idselector(bitset);
+            BitsetViewIDSelector bw_idselector(bitset, xb_id_offset);
             faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
             auto larger_is_closer = faiss::is_similarity_metric(faiss_metric_type) || is_cosine;
             auto max_dis = larger_is_closer ? std::numeric_limits<float>::lowest() : std::numeric_limits<float>::max();
@@ -695,6 +713,11 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                 default: {
                     LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
                     return Status::invalid_metric_type;
+                }
+            }
+            if (xb_id_offset != 0) {
+                for (auto& distances_id : distances_ids) {
+                    distances_id.id = distances_id.id == -1 ? -1 : distances_id.id + xb_id_offset;
                 }
             }
             vec[index] = std::make_shared<PrecomputedDistanceIterator>(std::move(distances_ids), larger_is_closer);
@@ -726,6 +749,7 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
     auto base = static_cast<const sparse::SparseRow<float>*>(base_dataset->GetTensor());
     auto rows = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
+    auto xb_id_offset = base_dataset->GetTensorBeginId();
 
     auto xq = static_cast<const sparse::SparseRow<float>*>(query_dataset->GetTensor());
     auto nq = query_dataset->GetRows();
@@ -776,7 +800,8 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
             std::vector<DistId> distances_ids;
             if (row.size() > 0) {
                 for (int64_t j = 0; j < rows; ++j) {
-                    if (!bitset.empty() && bitset.test(j)) {
+                    auto xb_id = j + xb_id_offset;
+                    if (!bitset.empty() && bitset.test(xb_id)) {
                         continue;
                     }
                     float row_sum = 0;
@@ -788,7 +813,7 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
                     }
                     auto dist = row.dot(base[j], computer, row_sum);
                     if (dist > 0) {
-                        distances_ids.emplace_back(j, dist);
+                        distances_ids.emplace_back(xb_id, dist);
                     }
                 }
             }

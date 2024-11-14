@@ -143,6 +143,12 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
     }
 
     void
+    SetTensorBeginId(const int64_t offset) {
+        std::unique_lock lock(mutex_);
+        this->data_[meta::INPUT_BEG_ID] = Var(std::in_place_index<4>, offset);
+    }
+
+    void
     SetJsonInfo(const std::string& info) {
         std::unique_lock lock(mutex_);
         this->data_[meta::JSON_INFO] = Var(std::in_place_index<5>, info);
@@ -260,6 +266,17 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
         this->is_sparse = is_sparse;
     }
 
+    int64_t
+    GetTensorBeginId() const {
+        std::shared_lock lock(mutex_);
+        auto it = this->data_.find(meta::INPUT_BEG_ID);
+        if (it != this->data_.end()) {
+            int64_t res = *std::get_if<4>(&it->second);
+            return res;
+        }
+        return 0;
+    }
+
     // deprecated API
     template <typename T>
     void
@@ -288,12 +305,13 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
 using DataSetPtr = std::shared_ptr<DataSet>;
 
 inline DataSetPtr
-GenDataSet(const int64_t nb, const int64_t dim, const void* xb) {
+GenDataSet(const int64_t nb, const int64_t dim, const void* xb, const int64_t beg_id = 0) {
     auto ret_ds = std::make_shared<DataSet>();
     ret_ds->SetRows(nb);
     ret_ds->SetDim(dim);
     ret_ds->SetTensor(xb);
     ret_ds->SetIsOwner(false);
+    ret_ds->SetTensorBeginId(beg_id);
     return ret_ds;
 }
 
