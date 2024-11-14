@@ -60,11 +60,17 @@ class BaseInvertedIndex {
     GetAllDistances(const SparseRow<T>& query, float drop_ratio_search, const BitsetView& bitset,
                     const DocValueComputer<T>& computer) const = 0;
 
+    virtual float
+    GetRawDistance(const label_t id, const SparseRow<T>& query, const DocValueComputer<T>& computer) const = 0;
+
     virtual void
     GetVectorById(const label_t id, SparseRow<T>& output) const = 0;
 
     virtual expected<DocValueComputer<T>>
     GetDocValueComputer(const SparseInvertedIndexConfig& cfg) const = 0;
+
+    virtual bool
+    IsApproximated() const = 0;
 
     [[nodiscard]] virtual size_t
     size() const = 0;
@@ -162,7 +168,6 @@ class InvertedIndex : public BaseInvertedIndex<T> {
          *
          * Data are densely packed in serialized bytes and no padding is added.
          */
-        std::shared_lock<std::shared_mutex> lock(mu_);
         writeBinaryPOD(writer, n_rows_internal());
         writeBinaryPOD(writer, n_cols_internal());
         writeBinaryPOD(writer, value_threshold_);
@@ -180,7 +185,6 @@ class InvertedIndex : public BaseInvertedIndex<T> {
     Status
     Load(MemoryIOReader& reader, int map_flags = MAP_SHARED,
          const std::string& supplement_target_filename = "") override {
-        std::unique_lock<std::shared_mutex> lock(mu_);
         int64_t rows;
         readBinaryPOD(reader, rows);
         // previous versions used the signness of rows to indicate whether to
@@ -364,7 +368,6 @@ class InvertedIndex : public BaseInvertedIndex<T> {
             }
             std::nth_element(vals.begin(), pos, vals.end());
 
-            std::unique_lock<std::shared_mutex> lock(mu_);
             value_threshold_ = *pos;
             drop_during_build_ = true;
             return Status::success;
@@ -376,7 +379,6 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         if constexpr (mmapped) {
             throw std::invalid_argument("mmapped InvertedIndex does not support Add");
         } else {
-            std::unique_lock<std::shared_mutex> lock(mu_);
             auto current_rows = n_rows_internal();
             if (current_rows > 0 && drop_during_build_) {
                 LOG_KNOWHERE_ERROR_ << "Not allowed to add data to a built index with drop_ratio_build > 0.";
@@ -415,7 +417,6 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         std::nth_element(values.begin(), pos, values.end());
         auto q_threshold = *pos;
 
-        std::shared_lock<std::shared_mutex> lock(mu_);
         // if no data was dropped during both build and search, no refinement is
         // needed.
         if (!drop_during_build_ && drop_ratio_search == 0) {
@@ -435,6 +436,7 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         }
     }
 
+    // Returned distances are inaccurate based on the drop_ratio.
     std::vector<float>
     GetAllDistances(const SparseRow<T>& query, float drop_ratio_search, const BitsetView& bitset,
                     const DocValueComputer<T>& computer) const override {
@@ -448,7 +450,6 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         auto pos = values.begin() + static_cast<size_t>(drop_ratio_search * values.size());
         std::nth_element(values.begin(), pos, values.end());
         auto q_threshold = *pos;
-        std::shared_lock<std::shared_mutex> lock(mu_);
         auto distances = compute_all_distances(query, q_threshold, computer);
         for (size_t i = 0; i < distances.size(); ++i) {
             if (bitset.empty() || !bitset.test(i)) {
@@ -459,6 +460,12 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         return distances;
     }
 
+    float
+    GetRawDistance(const label_t id, const SparseRow<T>& query, const DocValueComputer<T>& computer) const override {
+        T doc_sum = bm25 ? bm25_params_->row_sums.at(id) : 0;
+        return query.dot(raw_data_[id], computer, doc_sum);
+    }
+
     void
     GetVectorById(const label_t id, SparseRow<T>& output) const override {
         output = raw_data_[id];
@@ -466,7 +473,6 @@ class InvertedIndex : public BaseInvertedIndex<T> {
 
     [[nodiscard]] size_t
     size() const override {
-        std::shared_lock<std::shared_mutex> lock(mu_);
         size_t res = sizeof(*this);
         for (size_t i = 0; i < raw_data_.size(); ++i) {
             res += raw_data_[i].memory_usage();
@@ -492,14 +498,17 @@ class InvertedIndex : public BaseInvertedIndex<T> {
 
     [[nodiscard]] size_t
     n_rows() const override {
-        std::shared_lock<std::shared_mutex> lock(mu_);
         return n_rows_internal();
     }
 
     [[nodiscard]] size_t
     n_cols() const override {
-        std::shared_lock<std::shared_mutex> lock(mu_);
         return n_cols_internal();
+    }
+
+    [[nodiscard]] virtual bool
+    IsApproximated() const override {
+        return drop_during_build_;
     }
 
  private:
@@ -764,7 +773,6 @@ class InvertedIndex : public BaseInvertedIndex<T> {
 
     // reserve, [], size, emplace_back
     Vector<SparseRow<T>> raw_data_;
-    mutable std::shared_mutex mu_;
 
     Vector<Vector<SparseIdVal<T>>> inverted_lut_;
     // If we want to drop small values during build, we must first train the
