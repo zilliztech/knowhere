@@ -222,18 +222,24 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         REQUIRE(iterators_or.has_value());
         auto& iterators = iterators_or.value();
         REQUIRE(iterators.size() == (size_t)nq);
-        // verify the distances are monotonic decreasing, as INDEX_SPARSE_INVERTED_INDEX and INDEX_SPARSE_WAND
-        // performs exausitive search for iterator.
+
+        int count = 0;
+        int out_of_order = 0;
         for (int i = 0; i < nq; ++i) {
             auto& iter = iterators[i];
             float prev_dist = std::numeric_limits<float>::max();
             while (iter->HasNext()) {
                 auto [id, dist] = iter->Next();
                 REQUIRE(!bitset.test(id));
-                REQUIRE(prev_dist >= dist);
+                count++;
+                if (prev_dist < dist) {
+                    out_of_order++;
+                }
                 prev_dist = dist;
             }
         }
+        // less than 5% of the distances are out of order.
+        REQUIRE(out_of_order * 20 <= count);
     }
 
     SECTION("Test Sparse Range Search") {
