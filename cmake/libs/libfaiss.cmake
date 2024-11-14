@@ -55,7 +55,7 @@ endif()
 
 # ToDo: Add distances_vsx.cc for powerpc64 SIMD acceleration
 if(__PPC64)
-  set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc)
+  set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc src/simd/distances_powerpc.cc)
   add_library(knowhere_utils STATIC ${UTILS_SRC})
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
 endif()
