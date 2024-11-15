@@ -462,6 +462,43 @@ ivec_L2sqr_avx(const int8_t* x, const int8_t* y, size_t d) {
 }
 
 float
+fvec_norm_L2sqr_avx(const float* x, size_t d) {
+    __m256 msum_0 = _mm256_setzero_ps();
+    __m256 msum_1 = _mm256_setzero_ps();
+    while (d >= 16) {
+        auto mx_0 = _mm256_loadu_ps(x);
+        auto mx_1 = _mm256_loadu_ps(x + 8);
+        msum_0 = _mm256_fmadd_ps(mx_0, mx_0, msum_0);
+        msum_1 = _mm256_fmadd_ps(mx_1, mx_1, msum_1);
+        x += 16;
+        d -= 16;
+    }
+    msum_0 = msum_0 + msum_1;
+    if (d >= 8) {
+        auto mx = _mm256_loadu_ps(x);
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+        x += 8;
+        d -= 8;
+    }
+    if (d > 0) {
+        __m128 rest_0 = _mm_setzero_ps();
+        __m128 rest_1 = _mm_setzero_ps();
+        if (d >= 4) {
+            rest_0 = _mm_loadu_ps(x);
+            x += 4;
+            d -= 4;
+        }
+        if (d >= 0) {
+            rest_1 = masked_read(d, x);
+        }
+        auto mx = _mm256_set_m128(rest_0, rest_1);
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+    }
+    auto res = _mm256_reduce_add_ps(msum_0);
+    return res;
+}
+
+float
 fp16_vec_norm_L2sqr_avx(const knowhere::fp16* x, size_t d) {
     __m256 msum_0 = _mm256_setzero_ps();
     __m256 msum_1 = _mm256_setzero_ps();
