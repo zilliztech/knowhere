@@ -488,6 +488,33 @@ ivec_L2sqr_avx512(const int8_t* x, const int8_t* y, size_t d) {
 }
 
 float
+fvec_norm_L2sqr_avx512(const float* x, size_t d) {
+    __m512 m512_res = _mm512_setzero_ps();
+    __m512 m512_res_0 = _mm512_setzero_ps();
+    while (d >= 32) {
+        auto mx_0 = _mm512_loadu_ps(x);
+        auto mx_1 = _mm512_loadu_ps(x + 16);
+        m512_res = _mm512_fmadd_ps(mx_0, mx_0, m512_res);
+        m512_res_0 = _mm512_fmadd_ps(mx_1, mx_1, m512_res_0);
+        x += 32;
+        d -= 32;
+    }
+    m512_res = m512_res + m512_res_0;
+    if (d >= 16) {
+        auto mx = _mm512_loadu_ps(x);
+        m512_res = _mm512_fmadd_ps(mx, mx, m512_res);
+        x += 16;
+        d -= 16;
+    }
+    if (d > 0) {
+        const __mmask16 mask = (1U << d) - 1U;
+        auto mx = _mm512_maskz_loadu_ps(mask, x);
+        m512_res = _mm512_fmadd_ps(mx, mx, m512_res);
+    }
+    return _mm512_reduce_add_ps(m512_res);
+}
+
+float
 fp16_vec_norm_L2sqr_avx512(const knowhere::fp16* x, size_t d) {
     __m512 m512_res = _mm512_setzero_ps();
     __m512 m512_res_0 = _mm512_setzero_ps();

@@ -114,7 +114,12 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     int topk = cfg.k.value();
     auto labels = std::make_unique<int64_t[]>(nq * topk);
     auto distances = std::make_unique<float[]>(nq * topk);
-
+    std::unique_ptr<float[]> norms = nullptr;
+    if (is_cosine) {
+        ThreadPool::ScopedSearchOmpSetter setter(1);
+        norms = std::make_unique<float[]>(nb);
+        faiss::fvec_norms_L2(norms.get(), (float*)xb, dim, nb);
+    }
     auto pool = ThreadPool::GetGlobalSearchThreadPool();
     std::vector<folly::Future<Status>> futs;
     futs.reserve(nq);
@@ -139,7 +144,8 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
                     faiss::float_minheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
                     if (is_cosine) {
                         auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                        faiss::knn_cosine(copied_query.get(), (const float*)xb, nullptr, dim, 1, nb, &buf, id_selector);
+                        faiss::knn_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1, nb, &buf,
+                                          id_selector);
                     } else {
                         faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, &buf, id_selector);
                     }
@@ -248,6 +254,13 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     auto labels = ids;
     auto distances = dis;
 
+    std::unique_ptr<float[]> norms = nullptr;
+    if (is_cosine) {
+        ThreadPool::ScopedSearchOmpSetter setter(1);
+        norms = std::make_unique<float[]>(nb);
+        faiss::fvec_norms_L2(norms.get(), (float*)xb, dim, nb);
+    }
+
     auto pool = ThreadPool::GetGlobalSearchThreadPool();
     std::vector<folly::Future<Status>> futs;
     futs.reserve(nq);
@@ -272,7 +285,8 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                     faiss::float_minheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
                     if (is_cosine) {
                         auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                        faiss::knn_cosine(copied_query.get(), (const float*)xb, nullptr, dim, 1, nb, &buf, id_selector);
+                        faiss::knn_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1, nb, &buf,
+                                          id_selector);
                     } else {
                         faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, &buf, id_selector);
                     }
@@ -408,6 +422,13 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     std::vector<std::vector<int64_t>> result_id_array(nq);
     std::vector<std::vector<float>> result_dist_array(nq);
 
+    std::unique_ptr<float[]> norms = nullptr;
+    if (is_cosine) {
+        ThreadPool::ScopedSearchOmpSetter setter(1);
+        norms = std::make_unique<float[]>(nb);
+        faiss::fvec_norms_L2(norms.get(), (float*)xb, dim, nb);
+    }
+
     std::vector<folly::Future<Status>> futs;
     futs.reserve(nq);
     for (int i = 0; i < nq; ++i) {
@@ -452,8 +473,8 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                     auto cur_query = (const float*)xq + dim * index;
                     if (is_cosine) {
                         auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                        faiss::range_search_cosine(copied_query.get(), (const float*)xb, nullptr, dim, 1, nb, radius,
-                                                   &res, id_selector);
+                        faiss::range_search_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1, nb,
+                                                   radius, &res, id_selector);
                     } else {
                         faiss::range_search_inner_product(cur_query, (const float*)xb, dim, 1, nb, radius, &res,
                                                           id_selector);
@@ -678,6 +699,13 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
     faiss::MetricType faiss_metric_type = result.value();
     bool is_cosine = IsMetricType(metric_str, metric::COSINE);
 
+    std::unique_ptr<float[]> norms = nullptr;
+    if (is_cosine) {
+        ThreadPool::ScopedSearchOmpSetter setter(1);
+        norms = std::make_unique<float[]>(nb);
+        faiss::fvec_norms_L2(norms.get(), (float*)xb, dim, nb);
+    }
+
     auto pool = ThreadPool::GetGlobalSearchThreadPool();
     auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
     std::vector<folly::Future<Status>> futs;
@@ -703,7 +731,7 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                     auto cur_query = (const float*)xq + dim * index;
                     if (is_cosine) {
                         auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                        faiss::all_cosine(copied_query.get(), (const float*)xb, nullptr, dim, 1, nb, distances_ids,
+                        faiss::all_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1, nb, distances_ids,
                                           id_selector);
                     } else {
                         faiss::all_inner_product(cur_query, (const float*)xb, dim, 1, nb, distances_ids, id_selector);
