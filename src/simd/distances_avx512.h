@@ -79,6 +79,9 @@ int32_t
 ivec_L2sqr_avx512(const int8_t* x, const int8_t* y, size_t d);
 
 float
+fvec_norm_L2sqr_avx512(const float* x, size_t d);
+
+float
 fp16_vec_norm_L2sqr_avx512(const knowhere::fp16* x, size_t d);
 
 float

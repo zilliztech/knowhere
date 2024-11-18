@@ -192,6 +192,7 @@ TEST_CASE("Test index has raw data", "[IndexHasRawData]") {
         CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_HNSW_PRQ, ver, {}));
 
         // diskann
+#ifdef KNOWHERE_WITH_DISKANN
 #ifndef KNOWHERE_WITH_CARDINAL
         CHECK(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_DISKANN, ver,
                                                            knowhere::Json::parse(R"({"metric_type": "L2"})")));
@@ -199,6 +200,7 @@ TEST_CASE("Test index has raw data", "[IndexHasRawData]") {
                                                                  knowhere::Json::parse(R"({"metric_type": "IP"})")));
         CHECK(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_DISKANN, ver,
                                                            knowhere::Json::parse(R"({"metric_type": "COSINE"})")));
+#endif
 #endif
         // gpu index
 

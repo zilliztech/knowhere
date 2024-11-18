@@ -29,6 +29,10 @@
 #include "instruction_set.h"
 #endif
 
+#if defined(__powerpc64__)
+#include "distances_powerpc.h"
+#endif
+
 #include "distances_ref.h"
 #include "knowhere/log.h"
 namespace faiss {
@@ -128,6 +132,15 @@ enable_patch_for_fp32_bf16() {
         fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref_bf16_patch;
     }
 #endif
+#if defined(__ARM_NEON)
+
+    fvec_inner_product = fvec_inner_product_neon_bf16_patch;
+    fvec_L2sqr = fvec_L2sqr_neon_bf16_patch;
+
+    fvec_inner_product_batch_4 = fvec_inner_product_batch_4_neon_bf16_patch;
+    fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_neon_bf16_patch;
+
+#endif
 }
 
 void
@@ -172,7 +185,7 @@ fvec_hook(std::string& simd_type) {
         fvec_L1 = fvec_L1_avx512;
         fvec_Linf = fvec_Linf_avx512;
 
-        fvec_norm_L2sqr = fvec_norm_L2sqr_sse;
+        fvec_norm_L2sqr = fvec_norm_L2sqr_avx512;
         fvec_L2sqr_ny = fvec_L2sqr_ny_sse;
         fvec_inner_products_ny = fvec_inner_products_ny_sse;
         fvec_madd = fvec_madd_avx512;
@@ -200,7 +213,7 @@ fvec_hook(std::string& simd_type) {
         fvec_L1 = fvec_L1_avx;
         fvec_Linf = fvec_Linf_avx;
 
-        fvec_norm_L2sqr = fvec_norm_L2sqr_sse;
+        fvec_norm_L2sqr = fvec_norm_L2sqr_avx;
         fvec_L2sqr_ny = fvec_L2sqr_ny_sse;
         fvec_inner_products_ny = fvec_inner_products_ny_sse;
         fvec_madd = fvec_madd_avx;
@@ -304,6 +317,9 @@ fvec_hook(std::string& simd_type) {
     bf16_vec_L2sqr = bf16_vec_L2sqr_neon;
     bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_neon;
 
+    fvec_inner_product_batch_4 = fvec_inner_product_batch_4_neon;
+    fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_neon;
+
     simd_type = "NEON";
     support_pq_fast_scan = true;
 
@@ -311,19 +327,25 @@ fvec_hook(std::string& simd_type) {
 
 // ToDo MG: include VSX intrinsics via distances_vsx once _ref tests succeed
 #if defined(__powerpc64__)
-    fvec_inner_product = fvec_inner_product_ref;
-    fvec_L2sqr = fvec_L2sqr_ref;
-    fvec_L1 = fvec_L1_ref;
-    fvec_Linf = fvec_Linf_ref;
+    fvec_inner_product = fvec_inner_product_ppc;
+    fvec_L1 = fvec_L1_ppc;
+    fvec_Linf = fvec_Linf_ppc;
 
-    fvec_norm_L2sqr = fvec_norm_L2sqr_ref;
-    fvec_L2sqr_ny = fvec_L2sqr_ny_ref;
-    fvec_inner_products_ny = fvec_inner_products_ny_ref;
-    fvec_madd = fvec_madd_ref;
-    fvec_madd_and_argmin = fvec_madd_and_argmin_ref;
+    fvec_L2sqr = fvec_L2sqr_ppc;
+    fvec_L2sqr_ny_nearest = fvec_L2sqr_ny_nearest_ppc;
+    fvec_L2sqr_ny_transposed = fvec_L2sqr_ny_transposed_ppc;
+    fvec_inner_products_ny = fvec_inner_products_ny_ppc;
+    fvec_inner_product_batch_4 = fvec_inner_product_batch_4_ppc;
+    fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ppc;
 
-    ivec_inner_product = ivec_inner_product_ref;
-    ivec_L2sqr = ivec_L2sqr_ref;
+    fvec_norm_L2sqr = fvec_norm_L2sqr_ppc;
+    fvec_L2sqr_ny = fvec_L2sqr_ny_ppc;
+    fvec_inner_products_ny = fvec_inner_products_ny_ppc;
+    fvec_madd = fvec_madd_ppc;
+    fvec_madd_and_argmin = fvec_madd_and_argmin_ppc;
+
+    ivec_inner_product = ivec_inner_product_ppc;
+    ivec_L2sqr = ivec_L2sqr_ppc;
 
     simd_type = "GENERIC";
     support_pq_fast_scan = false;

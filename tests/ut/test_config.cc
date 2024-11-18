@@ -14,6 +14,7 @@
 #include "index/flat/flat_config.h"
 #include "index/hnsw/hnsw_config.h"
 #include "index/ivf/ivf_config.h"
+#include "index/sparse/sparse_inverted_index_config.h"
 #include "knowhere/config.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/version.h"
@@ -108,6 +109,31 @@ TEST_CASE("Test config json parse", "[config]") {
         s = knowhere::Config::Load(test_config, test_json, knowhere::TRAIN);
         CHECK(s == knowhere::Status::success);
         CHECK(test_config.dim.value() == 10000000000L);
+    }
+
+    SECTION("check range data values") {
+        auto sparse_valid = GENERATE(as<std::string>{},
+                                     R"({
+                "drop_ratio_build": 0.0
+            })");
+        knowhere::BaseConfig test_config;
+        knowhere::Json test_json = knowhere::Json::parse(sparse_valid);
+        s = knowhere::Config::FormatAndCheck(test_config, test_json);
+        CHECK(s == knowhere::Status::success);
+        s = knowhere::Config::Load(test_config, test_json, knowhere::TRAIN);
+        CHECK(s == knowhere::Status::success);
+
+        auto sparse_invalid = GENERATE(as<std::string>{},
+                                       R"({
+                "drop_ratio_build": 1.0
+            })");
+
+        knowhere::SparseInvertedIndexConfig test_invalid_config;
+        knowhere::Json test_invalid_json = knowhere::Json::parse(sparse_invalid);
+        s = knowhere::Config::FormatAndCheck(test_invalid_config, test_invalid_json);
+        CHECK(s == knowhere::Status::success);
+        s = knowhere::Config::Load(test_invalid_config, test_invalid_json, knowhere::TRAIN);
+        CHECK(s == knowhere::Status::out_of_range_in_json);
     }
 
     SECTION("check invalid json values") {

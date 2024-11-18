@@ -30,14 +30,16 @@ namespace knowhere {
 
 // Inverted Index impl for sparse vectors. May optionally use WAND algorithm to speed up search.
 //
-// Not overriding RangeSerach, will use the default implementation in IndexNode.
+// Not overriding RangeSearch, will use the default implementation in IndexNode.
+//
+// Thread safety: not thread safe.
 template <typename T, bool use_wand>
 class SparseInvertedIndexNode : public IndexNode {
     static_assert(std::is_same_v<T, fp32>, "SparseInvertedIndexNode only support float");
 
  public:
     explicit SparseInvertedIndexNode(const int32_t& /*version*/, const Object& /*object*/)
-        : search_pool_(ThreadPool::GetGlobalSearchThreadPool()) {
+        : search_pool_(ThreadPool::GetGlobalSearchThreadPool()), build_pool_(ThreadPool::GetGlobalBuildThreadPool()) {
     }
 
     ~SparseInvertedIndexNode() override {
@@ -53,7 +55,7 @@ class SparseInvertedIndexNode : public IndexNode {
             return Status::invalid_metric_type;
         }
         auto drop_ratio_build = cfg.drop_ratio_build.value_or(0.0f);
-        auto index_or = CreateIndex(cfg);
+        auto index_or = CreateIndex</*mmapped=*/false>(cfg);
         if (!index_or.has_value()) {
             return index_or.error();
         }
@@ -74,8 +76,17 @@ class SparseInvertedIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "Could not add data to empty " << Type();
             return Status::empty_index;
         }
-        return index_->Add(static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor()), dataset->GetRows(),
-                           dataset->GetDim());
+        auto tryObj = build_pool_
+                          ->push([&] {
+                              return index_->Add(static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor()),
+                                                 dataset->GetRows(), dataset->GetDim());
+                          })
+                          .getTry();
+        if (!tryObj.hasValue()) {
+            LOG_KNOWHERE_WARNING_ << "failed to add data to index " << Type() << ": " << tryObj.exception().what();
+            return Status::sparse_inner_error;
+        }
+        return tryObj.value();
     }
 
     [[nodiscard]] expected<DataSetPtr>
@@ -111,6 +122,47 @@ class SparseInvertedIndexNode : public IndexNode {
         return GenResultDataSet(nq, k, p_id.release(), p_dist.release());
     }
 
+ private:
+    class RefineIterator : public IndexIterator {
+     public:
+        RefineIterator(const sparse::BaseInvertedIndex<T>* index, sparse::SparseRow<T>&& query,
+                       std::shared_ptr<PrecomputedDistanceIterator> precomputed_it,
+                       const sparse::DocValueComputer<T>& computer, const float refine_ratio = 0.5f)
+            : IndexIterator(true, refine_ratio),
+              index_(index),
+              query_(std::move(query)),
+              computer_(computer),
+              precomputed_it_(precomputed_it) {
+        }
+
+     protected:
+        // returns n_rows / 10 DistId for the first time to create a large enough window for refinement.
+        void
+        next_batch(std::function<void(const std::vector<DistId>&)> batch_handler) override {
+            std::vector<DistId> dists;
+            size_t num = first_return_ ? (std::max(index_->n_rows() / 10, static_cast<size_t>(20))) : 1;
+            first_return_ = false;
+            for (size_t i = 0; i < num && precomputed_it_->HasNext(); ++i) {
+                auto [id, dist] = precomputed_it_->Next();
+                dists.emplace_back(id, dist);
+            }
+            batch_handler(dists);
+        }
+
+        float
+        raw_distance(int64_t id) override {
+            return index_->GetRawDistance(id, query_, computer_);
+        }
+
+     private:
+        const sparse::BaseInvertedIndex<T>* index_;
+        sparse::SparseRow<T> query_;
+        const sparse::DocValueComputer<T> computer_;
+        std::shared_ptr<PrecomputedDistanceIterator> precomputed_it_;
+        bool first_return_ = true;
+    };
+
+ public:
     // TODO: for now inverted index and wand use the same impl for AnnIterator.
     [[nodiscard]] expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset) const override {
@@ -131,13 +183,23 @@ class SparseInvertedIndexNode : public IndexNode {
         auto computer = computer_or.value();
         auto drop_ratio_search = cfg.drop_ratio_search.value_or(0.0f);
 
+        const bool approximated = index_->IsApproximated() || drop_ratio_search > 0;
+
         auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
         std::vector<folly::Future<folly::Unit>> futs;
         futs.reserve(nq);
         for (int i = 0; i < nq; ++i) {
             futs.emplace_back(search_pool_->push([&, i]() {
-                vec[i] = std::make_shared<PrecomputedDistanceIterator>(
+                auto it = std::make_shared<PrecomputedDistanceIterator>(
                     index_->GetAllDistances(queries[i], drop_ratio_search, bitset, computer), true);
+                if (!approximated || queries[i].size() == 0) {
+                    vec[i] = it;
+                } else {
+                    sparse::SparseRow<T> query_copy(queries[i]);
+                    auto refine_it = std::make_shared<RefineIterator>(index_, std::move(query_copy), it, computer);
+                    refine_it->initialize();
+                    vec[i] = std::move(refine_it);
+                }
             }));
         }
         WaitAllSuccess(futs);
@@ -206,12 +268,12 @@ class SparseInvertedIndexNode : public IndexNode {
             return Status::invalid_binary_set;
         }
         MemoryIOReader reader(binary->data.get(), binary->size);
-        auto index_or = CreateIndex(cfg);
+        auto index_or = CreateIndex</*mmapped=*/false>(cfg);
         if (!index_or.has_value()) {
             return index_or.error();
         }
         index_ = index_or.value();
-        return index_->Load(reader, false);
+        return index_->Load(reader);
     }
 
     Status
@@ -237,13 +299,14 @@ class SparseInvertedIndexNode : public IndexNode {
         if (madvise(map_, map_size_, MADV_RANDOM) != 0) {
             LOG_KNOWHERE_WARNING_ << "Failed to madvise file: " << strerror(errno);
         }
-        auto index_or = CreateIndex(cfg);
+        auto index_or = CreateIndex</*mmapped=*/true>(cfg);
         if (!index_or.has_value()) {
             return index_or.error();
         }
         index_ = index_or.value();
         MemoryIOReader map_reader((uint8_t*)map_, map_size_);
-        return index_->Load(map_reader, true);
+        auto supplement_target_filename = filename + ".knowhere_sparse_index_supplement";
+        return index_->Load(map_reader, map_flags, supplement_target_filename);
     }
 
     static std::unique_ptr<BaseConfig>
@@ -278,10 +341,11 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
  private:
+    template <bool mmapped>
     expected<sparse::BaseInvertedIndex<T>*>
     CreateIndex(const SparseInvertedIndexConfig& cfg) const {
         if (IsMetricType(cfg.metric_type.value(), metric::BM25)) {
-            auto idx = new sparse::InvertedIndex<T, use_wand, true>();
+            auto idx = new sparse::InvertedIndex<T, use_wand, true, mmapped>();
             if (!cfg.bm25_k1.has_value() || !cfg.bm25_b.has_value() || !cfg.bm25_avgdl.has_value()) {
                 return expected<sparse::BaseInvertedIndex<T>*>::Err(
                     Status::invalid_args, "BM25 parameters k1, b, and avgdl must be set when building/loading");
@@ -293,7 +357,7 @@ class SparseInvertedIndexNode : public IndexNode {
             idx->SetBM25Params(k1, b, avgdl, max_score_ratio);
             return idx;
         } else {
-            return new sparse::InvertedIndex<T, use_wand, false>();
+            return new sparse::InvertedIndex<T, use_wand, false, mmapped>();
         }
     }
 
@@ -315,14 +379,132 @@ class SparseInvertedIndexNode : public IndexNode {
 
     sparse::BaseInvertedIndex<T>* index_{};
     std::shared_ptr<ThreadPool> search_pool_;
+    std::shared_ptr<ThreadPool> build_pool_;
 
     // if map_ is not nullptr, it means the index is mmapped from disk.
     char* map_ = nullptr;
     size_t map_size_ = 0;
 };  // class SparseInvertedIndexNode
 
+// Concurrent version of SparseInvertedIndexNode
+//
+// Thread safety: only the overridden methods are allowed to be called concurrently.
+template <typename T, bool use_wand>
+class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
+ public:
+    explicit SparseInvertedIndexNodeCC(const int32_t& version, const Object& object)
+        : SparseInvertedIndexNode<T, use_wand>(version, object) {
+    }
+
+    Status
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+        std::unique_lock<std::mutex> lock(mutex_);
+        uint64_t task_id = next_task_id_++;
+        add_tasks_.push(task_id);
+
+        // add task is allowed to run only after all search tasks that come before it have finished.
+        cv_.wait(lock, [this, task_id]() { return current_task_id_ == task_id && active_readers_ == 0; });
+
+        auto res = SparseInvertedIndexNode<T, use_wand>::Add(dataset, cfg);
+
+        add_tasks_.pop();
+        current_task_id_++;
+        lock.unlock();
+        cv_.notify_all();
+        return res;
+    }
+
+    expected<DataSetPtr>
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+        ReadPermission permission(*this);
+        return SparseInvertedIndexNode<T, use_wand>::Search(dataset, std::move(cfg), bitset);
+    }
+
+    expected<std::vector<IndexNode::IteratorPtr>>
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+        ReadPermission permission(*this);
+        // Always uses PrecomputedDistanceIterator for SparseInvertedIndexNodeCC:
+        // If we want to use RefineIterator, it needs to get another ReadPermission when calling
+        // index_->GetRawDistance(). If an Add task is added in between, there will be a deadlock.
+        auto config = static_cast<const knowhere::SparseInvertedIndexConfig&>(*cfg);
+        config.drop_ratio_search = 0.0f;
+        return SparseInvertedIndexNode<T, use_wand>::AnnIterator(dataset, std::move(cfg), bitset);
+    }
+
+    expected<DataSetPtr>
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+        ReadPermission permission(*this);
+        return SparseInvertedIndexNode<T, use_wand>::RangeSearch(dataset, std::move(cfg), bitset);
+    }
+
+    expected<DataSetPtr>
+    GetVectorByIds(const DataSetPtr dataset) const override {
+        ReadPermission permission(*this);
+        return SparseInvertedIndexNode<T, use_wand>::GetVectorByIds(dataset);
+    }
+
+    int64_t
+    Dim() const override {
+        ReadPermission permission(*this);
+        return SparseInvertedIndexNode<T, use_wand>::Dim();
+    }
+
+    int64_t
+    Size() const override {
+        ReadPermission permission(*this);
+        return SparseInvertedIndexNode<T, use_wand>::Size();
+    }
+
+    int64_t
+    Count() const override {
+        ReadPermission permission(*this);
+        return SparseInvertedIndexNode<T, use_wand>::Count();
+    }
+
+    std::string
+    Type() const override {
+        return use_wand ? knowhere::IndexEnum::INDEX_SPARSE_WAND_CC
+                        : knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC;
+    }
+
+ private:
+    struct ReadPermission {
+        ReadPermission(const SparseInvertedIndexNodeCC& node) : node_(node) {
+            std::unique_lock<std::mutex> lock(node_.mutex_);
+            uint64_t task_id = node_.next_task_id_++;
+            // read task may execute only after all add tasks that come before it have finished.
+            if (!node_.add_tasks_.empty() && task_id > node_.add_tasks_.front()) {
+                node_.cv_.wait(
+                    lock, [this, task_id]() { return node_.add_tasks_.empty() || task_id < node_.add_tasks_.front(); });
+            }
+            // read task is allowed to run, block all add tasks
+            node_.active_readers_++;
+        }
+
+        ~ReadPermission() {
+            std::unique_lock<std::mutex> lock(node_.mutex_);
+            node_.active_readers_--;
+            node_.current_task_id_++;
+            node_.cv_.notify_all();
+        }
+        const SparseInvertedIndexNodeCC& node_;
+    };
+
+    mutable std::mutex mutex_;
+    mutable std::condition_variable cv_;
+    mutable int64_t active_readers_ = 0;
+    mutable std::queue<uint64_t> add_tasks_;
+    mutable uint64_t next_task_id_ = 0;
+    mutable uint64_t current_task_id_ = 0;
+};  // class SparseInvertedIndexNodeCC
+
 KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_INVERTED_INDEX, SparseInvertedIndexNode, knowhere::feature::MMAP,
                                              /*use_wand=*/false)
 KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_WAND, SparseInvertedIndexNode, knowhere::feature::MMAP,
+                                             /*use_wand=*/true)
+KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_INVERTED_INDEX_CC, SparseInvertedIndexNodeCC,
+                                             knowhere::feature::MMAP,
+                                             /*use_wand=*/false)
+KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_WAND_CC, SparseInvertedIndexNodeCC, knowhere::feature::MMAP,
                                              /*use_wand=*/true)
 }  // namespace knowhere

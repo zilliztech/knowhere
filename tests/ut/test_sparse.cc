@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <future>
+#include <thread>
 
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
@@ -20,6 +21,17 @@
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/index/index_factory.h"
 #include "utils.h"
+
+void
+WriteBinaryToFile(const std::string& filename, const knowhere::BinaryPtr binary) {
+    auto data = binary->data.get();
+    auto size = binary->size;
+    // if tmp_file already exists, remove it
+    std::remove(filename.c_str());
+    std::ofstream out(filename, std::ios::binary);
+    out.write((const char*)data, size);
+    out.close();
+}
 
 TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
     auto [nb, dim, doc_sparsity, query_sparsity] = GENERATE(table<int32_t, int32_t, float, float>({
@@ -122,14 +134,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
             knowhere::BinarySet bs;
             REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
             if (use_mmap) {
-                auto binary = bs.GetByName(idx.Type());
-                auto data = binary->data.get();
-                auto size = binary->size;
-                // if tmp_file already exists, remove it
-                std::remove(tmp_file);
-                std::ofstream out(tmp_file, std::ios::binary);
-                out.write((const char*)data, size);
-                out.close();
+                WriteBinaryToFile(tmp_file, bs.GetByName(idx.Type()));
                 REQUIRE(idx.DeserializeFromFile(tmp_file, json) == knowhere::Status::success);
             } else {
                 REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
@@ -217,18 +222,24 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         REQUIRE(iterators_or.has_value());
         auto& iterators = iterators_or.value();
         REQUIRE(iterators.size() == (size_t)nq);
-        // verify the distances are monotonic decreasing, as INDEX_SPARSE_INVERTED_INDEX and INDEX_SPARSE_WAND
-        // performs exausitive search for iterator.
+
+        int count = 0;
+        int out_of_order = 0;
         for (int i = 0; i < nq; ++i) {
             auto& iter = iterators[i];
             float prev_dist = std::numeric_limits<float>::max();
             while (iter->HasNext()) {
                 auto [id, dist] = iter->Next();
                 REQUIRE(!bitset.test(id));
-                REQUIRE(prev_dist >= dist);
+                count++;
+                if (prev_dist < dist) {
+                    out_of_order++;
+                }
                 prev_dist = dist;
             }
         }
+        // less than 5% of the distances are out of order.
+        REQUIRE(out_of_order * 20 <= count);
     }
 
     SECTION("Test Sparse Range Search") {
@@ -343,47 +354,61 @@ TEST_CASE("Test Mem Sparse Index GetVectorByIds", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
-        auto cfg_json = gen().dump();
-        CAPTURE(name, cfg_json);
-        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        auto use_mmap = GENERATE(true, false);
+        auto tmp_file = "/tmp/knowhere_sparse_inverted_index_test";
+        {
+            auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+            auto cfg_json = gen().dump();
+            CAPTURE(name, cfg_json);
+            knowhere::Json json = knowhere::Json::parse(cfg_json);
 
-        auto ids_ds = GenIdsDataSet(nb, nq);
-        REQUIRE(idx.Type() == name);
-        auto res = idx.Build(train_ds, json);
-        REQUIRE(idx.HasRawData(metric) == knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
-        if (!idx.HasRawData(metric)) {
-            return;
-        }
-        REQUIRE(res == knowhere::Status::success);
-        knowhere::BinarySet bs;
-        idx.Serialize(bs);
-
-        auto idx_new = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
-        idx_new.Deserialize(bs);
-
-        auto retrieve_task = [&]() {
-            auto results = idx_new.GetVectorByIds(ids_ds);
-            REQUIRE(results.has_value());
-            auto xb = (knowhere::sparse::SparseRow<float>*)train_ds->GetTensor();
-            auto res_data = (knowhere::sparse::SparseRow<float>*)results.value()->GetTensor();
-            for (int i = 0; i < nq; ++i) {
-                const auto id = ids_ds->GetIds()[i];
-                const auto& truth_row = xb[id];
-                const auto& res_row = res_data[i];
-                REQUIRE(truth_row.size() == res_row.size());
-                for (size_t j = 0; j < truth_row.size(); ++j) {
-                    REQUIRE(truth_row[j] == res_row[j]);
-                }
+            auto ids_ds = GenIdsDataSet(nb, nq);
+            REQUIRE(idx.Type() == name);
+            auto res = idx.Build(train_ds, json);
+            REQUIRE(idx.HasRawData(metric) ==
+                    knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
+            if (!idx.HasRawData(metric)) {
+                return;
             }
-        };
+            REQUIRE(res == knowhere::Status::success);
+            knowhere::BinarySet bs;
+            idx.Serialize(bs);
 
-        std::vector<std::future<void>> retrieve_task_list;
-        for (int i = 0; i < 20; i++) {
-            retrieve_task_list.push_back(std::async(std::launch::async, [&] { return retrieve_task(); }));
+            auto idx_new = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+            if (use_mmap) {
+                WriteBinaryToFile(tmp_file, bs.GetByName(idx.Type()));
+                REQUIRE(idx_new.DeserializeFromFile(tmp_file, json) == knowhere::Status::success);
+            } else {
+                REQUIRE(idx_new.Deserialize(bs, json) == knowhere::Status::success);
+            }
+
+            auto retrieve_task = [&]() {
+                auto results = idx_new.GetVectorByIds(ids_ds);
+                REQUIRE(results.has_value());
+                auto xb = (knowhere::sparse::SparseRow<float>*)train_ds->GetTensor();
+                auto res_data = (knowhere::sparse::SparseRow<float>*)results.value()->GetTensor();
+                for (int i = 0; i < nq; ++i) {
+                    const auto id = ids_ds->GetIds()[i];
+                    const auto& truth_row = xb[id];
+                    const auto& res_row = res_data[i];
+                    REQUIRE(truth_row.size() == res_row.size());
+                    for (size_t j = 0; j < truth_row.size(); ++j) {
+                        REQUIRE(truth_row[j] == res_row[j]);
+                    }
+                }
+            };
+
+            std::vector<std::future<void>> retrieve_task_list;
+            for (int i = 0; i < 20; i++) {
+                retrieve_task_list.push_back(std::async(std::launch::async, [&] { return retrieve_task(); }));
+            }
+            for (auto& task : retrieve_task_list) {
+                task.wait();
+            }
+            // idx/idx_new to destroy and munmap
         }
-        for (auto& task : retrieve_task_list) {
-            task.wait();
+        if (use_mmap) {
+            REQUIRE(std::remove(tmp_file) == 0);
         }
     }
 }
@@ -411,8 +436,6 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
         {0.32, 0.0},
         {0.32, 0.6},
         {0.0, 0.6},
-        // drop everything
-        {1.0, 0.6},
     }));
 
     auto base_gen = [=, dim = dim, drop_ratio_build = drop_ratio_build, drop_ratio_search = drop_ratio_search]() {
@@ -448,7 +471,16 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
 
     knowhere::BinarySet bs;
     REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
-    REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
+
+    auto use_mmap = GENERATE(false);
+    auto tmp_file = "/tmp/knowhere_sparse_inverted_index_test";
+
+    if (use_mmap) {
+        WriteBinaryToFile(tmp_file, bs.GetByName(idx.Type()));
+        REQUIRE(idx.DeserializeFromFile(tmp_file, json) == knowhere::Status::success);
+    } else {
+        REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
+    }
 
     const knowhere::Json conf = {
         {knowhere::meta::METRIC_TYPE, metric}, {knowhere::meta::TOPK, topk},      {knowhere::meta::BM25_K1, 1.2},
@@ -519,6 +551,123 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
             for (size_t j = 0; j < truth_row.size(); ++j) {
                 REQUIRE(truth_row[j] == res_row[j]);
             }
+        }
+    }
+}
+
+TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
+    std::atomic<int32_t> value_base(0);
+    // each time a new batch of vectors are generated, the base value is increased by 1.
+    // also the sparse vectors are all full, so newly generated vectors are guaranteed
+    // to have larger IP than old vectors.
+    auto doc_vector_gen = [&](int32_t nb, int32_t dim) {
+        auto base = value_base.fetch_add(1);
+        std::vector<std::map<int32_t, float>> data(nb);
+        for (int32_t i = 0; i < nb; ++i) {
+            for (int32_t j = 0; j < dim; ++j) {
+                data[i][j] = base + static_cast<float>(rand()) / RAND_MAX * 0.8 + 0.1;
+            }
+        }
+        return GenSparseDataSet(data, dim);
+    };
+
+    auto nb = 1000;
+    auto dim = 30;
+    auto topk = 50;
+    int64_t nq = 100;
+
+    auto query_ds = doc_vector_gen(nq, dim);
+
+    // drop ratio build is not supported in CC index
+    auto drop_ratio_build = 0.0;
+    auto drop_ratio_search = GENERATE(0.0, 0.3);
+
+    auto metric = GENERATE(knowhere::metric::IP);
+    auto version = GenTestVersionList();
+
+    auto base_gen = [=, dim = dim]() {
+        knowhere::Json json;
+        json[knowhere::meta::DIM] = dim;
+        json[knowhere::meta::METRIC_TYPE] = metric;
+        json[knowhere::meta::TOPK] = topk;
+        json[knowhere::meta::BM25_K1] = 1.2;
+        json[knowhere::meta::BM25_B] = 0.75;
+        json[knowhere::meta::BM25_AVGDL] = 100;
+        return json;
+    };
+
+    auto sparse_inverted_index_gen = [base_gen, drop_ratio_build = drop_ratio_build,
+                                      drop_ratio_search = drop_ratio_search]() {
+        knowhere::Json json = base_gen();
+        json[knowhere::indexparam::DROP_RATIO_BUILD] = drop_ratio_build;
+        json[knowhere::indexparam::DROP_RATIO_SEARCH] = drop_ratio_search;
+        return json;
+    };
+
+    const knowhere::Json conf = {
+        {knowhere::meta::METRIC_TYPE, metric}, {knowhere::meta::TOPK, topk},      {knowhere::meta::BM25_K1, 1.2},
+        {knowhere::meta::BM25_B, 0.75},        {knowhere::meta::BM25_AVGDL, 100},
+    };
+
+    // since all newly inserted vectors are guaranteed to have larger IP than old vectors,
+    // the result ids of each search requests shoule be from the same batch of inserted vectors.
+    auto check_result = [&](const knowhere::DataSet& ds) {
+        auto nq = ds.GetRows();
+        auto k = ds.GetDim();
+        auto* ids = ds.GetIds();
+        auto expected_id_base = ids[0] / nb;
+        for (auto i = 0; i < nq; ++i) {
+            for (auto j = 0; j < k; ++j) {
+                auto base = ids[i * k + j] / nb;
+                REQUIRE(base == expected_id_base);
+            }
+        }
+    };
+
+    auto test_time = 10;
+
+    SECTION("Test Search") {
+        using std::make_tuple;
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC, sparse_inverted_index_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND_CC, sparse_inverted_index_gen),
+        }));
+
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto cfg_json = gen().dump();
+        CAPTURE(name, cfg_json);
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        REQUIRE(idx.Type() == name);
+        // build the index with some initial data
+        REQUIRE(idx.Build(doc_vector_gen(nb, dim), json) == knowhere::Status::success);
+
+        auto add_task = [&]() {
+            auto start = std::chrono::steady_clock::now();
+            while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count() <
+                   test_time) {
+                auto doc_ds = doc_vector_gen(nb, dim);
+                auto res = idx.Add(doc_ds, json);
+                REQUIRE(res == knowhere::Status::success);
+            }
+        };
+
+        auto search_task = [&]() {
+            auto start = std::chrono::steady_clock::now();
+            while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count() <
+                   test_time) {
+                auto results = idx.Search(query_ds, json, nullptr);
+                REQUIRE(results.has_value());
+                check_result(*results.value());
+            }
+        };
+
+        std::vector<std::future<void>> task_list;
+        for (int thread = 0; thread < 5; thread++) {
+            task_list.push_back(std::async(std::launch::async, search_task));
+        }
+        task_list.push_back(std::async(std::launch::async, add_task));
+        for (auto& task : task_list) {
+            task.wait();
         }
     }
 }
