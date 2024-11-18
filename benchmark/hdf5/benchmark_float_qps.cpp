@@ -17,12 +17,33 @@
 #include "benchmark_knowhere.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_config.h"
+#include "knowhere/comp/local_file_manager.h"
 #include "knowhere/dataset.h"
 
 const int32_t GPU_DEVICE_ID = 0;
 
 class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
  public:
+    template <typename T>
+    void
+    test_idmap(const knowhere::Json& cfg) {
+        auto conf = cfg;
+
+        float expected_recall = 1.0f;
+        conf[knowhere::meta::TOPK] = topk_;
+
+        printf("\n[%0.3f s] %s | %s | k=%d, R@=%.4f\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
+               topk_, expected_recall);
+        printf("================================================================================\n");
+        for (auto thread_num : THREAD_NUMs_) {
+            CALC_TIME_SPAN(task<T>(conf, thread_num, nq_));
+            printf("  thread_num = %2d, elapse = %6.3fs, VPS = %.3f\n", thread_num, TDIFF_, nq_ / TDIFF_);
+            std::fflush(stdout);
+        }
+        printf("================================================================================\n");
+        printf("[%.3f s] Test '%s/%s' done\n\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
+    }
+
     template <typename T>
     void
     test_ivf(const knowhere::Json& cfg) {
@@ -67,7 +88,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
                 CALC_TIME_SPAN(task<T>(conf, thread_num, nq_));
-                printf("  thread_num = %2d, elapse = %6.3fs, VPS = %.3f\n", thread_num, t_diff, nq_ / t_diff);
+                printf("  thread_num = %2d, elapse = %6.3fs, VPS = %.3f\n", thread_num, TDIFF_, nq_ / TDIFF_);
                 std::fflush(stdout);
             }
             printf("================================================================================\n");
@@ -75,8 +96,9 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         }
     }
 
+    template <typename T>
     void
-    test_cagra(const knowhere::Json& cfg) {
+    test_raft_cagra(const knowhere::Json& cfg) {
         auto conf = cfg;
 
         auto find_smallest_max_iters = [&](float expected_recall) -> int32_t {
@@ -92,10 +114,8 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
 
                 auto result = index_.value().Search(ds_ptr, conf, nullptr);
                 recall = CalcRecall(result.value()->GetIds(), nq_, topk_);
-                printf(
-                    "[%0.3f s] iterate CAGRA param for recall %.4f: max_iterations=%d, k=%d, "
-                    "R@=%.4f\n",
-                    get_time_diff(), expected_recall, max_iterations, topk_, recall);
+                printf("[%0.3f s] iterate CAGRA param for recall %.4f: max_iterations=%d, k=%d, R@=%.4f\n",
+                       get_time_diff(), expected_recall, max_iterations, topk_, recall);
                 std::fflush(stdout);
                 if (std::abs(recall - expected_recall) <= 0.0001) {
                     return max_iterations;
@@ -114,14 +134,12 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
             conf[knowhere::meta::TOPK] = topk_;
             conf[knowhere::indexparam::MAX_ITERATIONS] = find_smallest_max_iters(expected_recall);
 
-            printf(
-                "\n[%0.3f s] %s | %s | k=%d, "
-                "R@=%.4f\n",
-                get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(), topk_, expected_recall);
+            printf("\n[%0.3f s] %s | %s | k=%d, R@=%.4f\n", get_time_diff(), ann_test_name_.c_str(),
+                   index_type_.c_str(), topk_, expected_recall);
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
-                CALC_TIME_SPAN(task<knowhere::fp32>(conf, thread_num, nq_));
-                printf("  thread_num = %2d, elapse = %6.3fs, VPS = %.3f\n", thread_num, t_diff, nq_ / t_diff);
+                CALC_TIME_SPAN(task<T>(conf, thread_num, nq_));
+                printf("  thread_num = %2d, elapse = %6.3fs, VPS = %.3f\n", thread_num, TDIFF_, nq_ / TDIFF_);
                 std::fflush(stdout);
             }
             printf("================================================================================\n");
@@ -174,7 +192,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
                 CALC_TIME_SPAN(task<T>(conf, thread_num, nq_));
-                printf("  thread_num = %2d, elapse = %6.3fs, VPS = %.3f\n", thread_num, t_diff, nq_ / t_diff);
+                printf("  thread_num = %2d, elapse = %6.3fs, VPS = %.3f\n", thread_num, TDIFF_, nq_ / TDIFF_);
                 std::fflush(stdout);
             }
             printf("================================================================================\n");
@@ -232,7 +250,59 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
                 CALC_TIME_SPAN(task<T>(conf, thread_num, nq_));
-                printf("  thread_num = %2d, elapse = %6.3fs, VPS = %.3f\n", thread_num, t_diff, nq_ / t_diff);
+                printf("  thread_num = %2d, elapse = %6.3fs, VPS = %.3f\n", thread_num, TDIFF_, nq_ / TDIFF_);
+                std::fflush(stdout);
+            }
+            printf("================================================================================\n");
+            printf("[%.3f s] Test '%s/%s' done\n\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
+        }
+    }
+
+    template <typename T>
+    void
+    test_diskann(const knowhere::Json& cfg) {
+        auto conf = cfg;
+
+        auto find_smallest_search_list_size = [&](float expected_recall) -> int32_t {
+            conf[knowhere::meta::TOPK] = topk_;
+            auto ds_ptr = knowhere::GenDataSet(nq_, dim_, xq_);
+            auto query = knowhere::ConvertToDataTypeIfNeeded<T>(ds_ptr);
+
+            int32_t left = topk_, right = 512, search_list_size;
+            float recall;
+            while (left <= right) {
+                search_list_size = left + (right - left) / 2;
+                conf[knowhere::indexparam::SEARCH_LIST_SIZE] = search_list_size;
+
+                auto result = index_.value().Search(ds_ptr, conf, nullptr);
+                recall = CalcRecall(result.value()->GetIds(), nq_, topk_);
+                printf(
+                    "[%0.3f s] iterate DISKANN param for expected recall %.4f: search_list_size=%4d, k=%d, R@=%.4f\n",
+                    get_time_diff(), expected_recall, search_list_size, topk_, recall);
+                std::fflush(stdout);
+                if (std::abs(recall - expected_recall) <= 0.0001) {
+                    return search_list_size;
+                }
+                if (recall < expected_recall) {
+                    left = search_list_size + 1;
+                } else {
+                    right = search_list_size - 1;
+                }
+            }
+            return left;
+        };
+
+        for (auto expected_recall : EXPECTED_RECALLs_) {
+            auto search_list_size = find_smallest_search_list_size(expected_recall);
+            conf[knowhere::indexparam::SEARCH_LIST_SIZE] = search_list_size;
+            conf[knowhere::meta::TOPK] = topk_;
+
+            printf("\n[%0.3f s] %s | %s | search_list_size=%d, k=%d, R@=%.4f\n", get_time_diff(),
+                   ann_test_name_.c_str(), index_type_.c_str(), search_list_size, topk_, expected_recall);
+            printf("================================================================================\n");
+            for (auto thread_num : THREAD_NUMs_) {
+                CALC_TIME_SPAN(task<T>(conf, thread_num, nq_));
+                printf("  thread_num = %2d, elapse = %6.3fs, VPS = %.3f\n", thread_num, TDIFF_, nq_ / TDIFF_);
                 std::fflush(stdout);
             }
             printf("================================================================================\n");
@@ -319,17 +389,29 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
     const std::vector<bool> SCANN_WITH_RAW_DATA = {true};
 
     // CAGRA index params
-    const std::vector<int32_t> GRAPH_DEGREE_ = {32, 64};
+    const std::vector<int32_t> GRAPH_DEGREEs_ = {8, 16, 32};
+    const std::vector<int32_t> ITOPK_SIZEs_ = {128, 192, 256};
 };
 
+TEST_F(Benchmark_float_qps, TEST_IDMAP) {
+    index_type_ = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
+
+#define TEST_IDMAP(T, X)                    \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_idmap<T>(conf);
+
+    std::string index_file_name;
+    knowhere::Json conf = cfg_;
+    std::vector<int32_t> params = {};
+
+    TEST_IDMAP(knowhere::fp32, params);
+    TEST_IDMAP(knowhere::fp16, params);
+    TEST_IDMAP(knowhere::bf16, params);
+}
+
 TEST_F(Benchmark_float_qps, TEST_IVF_FLAT) {
-#ifdef KNOWHERE_WITH_GPU
-    index_type_ = knowhere::IndexEnum::INDEX_FAISS_GPU_IVFFLAT;
-#elif KNOWHERE_WITH_RAFT
-    index_type_ = knowhere::IndexEnum::INDEX_RAFT_IVFFLAT;
-#else
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
-#endif
 
 #define TEST_IVF(T, X)                      \
     index_file_name = get_index_name<T>(X); \
@@ -349,11 +431,7 @@ TEST_F(Benchmark_float_qps, TEST_IVF_FLAT) {
 }
 
 TEST_F(Benchmark_float_qps, TEST_IVF_SQ8) {
-#ifdef KNOWHERE_WITH_GPU
-    index_type_ = knowhere::IndexEnum::INDEX_FAISS_GPU_IVFSQ8;
-#else
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFSQ8;
-#endif
 
 #define TEST_IVF(T, X)                      \
     index_file_name = get_index_name<T>(X); \
@@ -373,13 +451,7 @@ TEST_F(Benchmark_float_qps, TEST_IVF_SQ8) {
 }
 
 TEST_F(Benchmark_float_qps, TEST_IVF_PQ) {
-#ifdef KNOWHERE_WITH_GPU
-    index_type_ = knowhere::IndexEnum::INDEX_FAISS_GPU_IVFPQ;
-#elif KNOWHERE_WITH_RAFT
-    index_type_ = knowhere::IndexEnum::INDEX_RAFT_IVFPQ;
-#else
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFPQ;
-#endif
 
 #define TEST_IVF(T, X)                      \
     index_file_name = get_index_name<T>(X); \
@@ -454,15 +526,115 @@ TEST_F(Benchmark_float_qps, TEST_SCANN) {
     }
 }
 
-TEST_F(Benchmark_float_qps, TEST_CAGRA) {
-    index_type_ = knowhere::IndexEnum::INDEX_RAFT_CAGRA;
+#ifdef KNOWHERE_WITH_DISKANN
+TEST_F(Benchmark_float_qps, TEST_DISKANN) {
+    index_type_ = knowhere::IndexEnum::INDEX_DISKANN;
+
     knowhere::Json conf = cfg_;
-    for (auto gd : GRAPH_DEGREE_) {
-        conf[knowhere::indexparam::GRAPH_DEGREE] = gd;
-        conf[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE] = gd;
-        conf[knowhere::indexparam::MAX_ITERATIONS] = 64;
-        std::string index_file_name = get_index_name<knowhere::fp32>({gd});
-        create_index<knowhere::fp32>(index_file_name, conf);
-        test_cagra(conf);
+
+    conf[knowhere::meta::INDEX_PREFIX] = (metric_type_ == knowhere::metric::L2 ? kL2IndexPrefix : kIPIndexPrefix);
+    conf[knowhere::meta::DATA_PATH] = kRawDataPath;
+    conf[knowhere::indexparam::MAX_DEGREE] = 56;
+    conf[knowhere::indexparam::PQ_CODE_BUDGET_GB] = sizeof(float) * dim_ * nb_ * 0.125 / (1024 * 1024 * 1024);
+    conf[knowhere::indexparam::BUILD_DRAM_BUDGET_GB] = 32.0;
+    conf[knowhere::indexparam::SEARCH_CACHE_BUDGET_GB] = 0;
+    conf[knowhere::indexparam::BEAMWIDTH] = 8;
+
+    fs::create_directory(kDir);
+    fs::create_directory(kL2IndexDir);
+    fs::create_directory(kIPIndexDir);
+
+    WriteRawDataToDisk(kRawDataPath, (const float*)xb_, (const uint32_t)nb_, (const uint32_t)dim_);
+
+    std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
+    auto diskann_index_pack = knowhere::Pack(file_manager);
+
+    index_ = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
+        index_type_, knowhere::Version::GetCurrentVersion().VersionNumber(), diskann_index_pack);
+    printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
+    knowhere::DataSetPtr ds_ptr = nullptr;
+    index_.value().Build(ds_ptr, conf);
+
+    knowhere::BinarySet binset;
+    index_.value().Serialize(binset);
+    index_.value().Deserialize(binset, conf);
+
+    test_diskann<knowhere::fp32>(conf);
+}
+#endif
+
+#ifdef KNOWHERE_WITH_RAFT
+TEST_F(Benchmark_float_qps, TEST_RAFT_BRUTE_FORCE) {
+    index_type_ = knowhere::IndexEnum::INDEX_RAFT_BRUTEFORCE;
+
+#define TEST_RAFT_BF(T, X)                  \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_idmap<T>(conf);
+
+    std::string index_file_name;
+    knowhere::Json conf = cfg_;
+    std::vector<int32_t> params = {};
+
+    TEST_RAFT_BF(knowhere::fp32, params);
+}
+
+TEST_F(Benchmark_float_qps, TEST_RAFT_IVF_FLAT) {
+    index_type_ = knowhere::IndexEnum::INDEX_RAFT_IVFFLAT;
+
+#define TEST_RAFT_IVF(T, X)                 \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_ivf<T>(conf);
+
+    std::string index_file_name;
+    knowhere::Json conf = cfg_;
+    for (auto nlist : NLISTs_) {
+        conf[knowhere::indexparam::NLIST] = nlist;
+        std::vector<int32_t> params = {nlist};
+
+        TEST_RAFT_IVF(knowhere::fp32, params);
     }
 }
+
+TEST_F(Benchmark_float_qps, TEST_RAFT_IVF_PQ) {
+    index_type_ = knowhere::IndexEnum::INDEX_RAFT_IVFPQ;
+
+#define TEST_RAFT_IVF(T, X)                 \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_ivf<T>(conf);
+
+    std::string index_file_name;
+    knowhere::Json conf = cfg_;
+    conf[knowhere::indexparam::NBITS] = NBITS_;
+    for (auto m : Ms_) {
+        conf[knowhere::indexparam::M] = m;
+        for (auto nlist : NLISTs_) {
+            conf[knowhere::indexparam::NLIST] = nlist;
+            std::vector<int32_t> params = {nlist, m};
+
+            TEST_RAFT_IVF(knowhere::fp32, params);
+        }
+    }
+}
+
+TEST_F(Benchmark_float_qps, TEST_RAFT_CAGRA) {
+    index_type_ = knowhere::IndexEnum::INDEX_RAFT_CAGRA;
+
+#define TEST_RAFT_CAGRA(T, X)               \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_raft_cagra<T>(conf);
+
+    std::string index_file_name;
+    knowhere::Json conf = cfg_;
+
+    for (auto graph_degree : GRAPH_DEGREEs_) {
+        conf[knowhere::indexparam::GRAPH_DEGREE] = graph_degree;
+        conf[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE] = graph_degree;
+        std::vector<int32_t> params = {graph_degree};
+        TEST_RAFT_CAGRA(knowhere::fp32, params);
+    }
+}
+#endif

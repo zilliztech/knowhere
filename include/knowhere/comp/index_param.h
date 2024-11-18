@@ -118,9 +118,11 @@ constexpr const char* WITH_RAW_DATA = "with_raw_data";
 constexpr const char* ENSURE_TOPK_FULL = "ensure_topk_full";
 constexpr const char* CODE_SIZE = "code_size";
 constexpr const char* RAW_DATA_STORE_PREFIX = "raw_data_store_prefix";
+
 // RAFT Params
 constexpr const char* REFINE_RATIO = "refine_ratio";
 constexpr const char* CACHE_DATASET_ON_DEVICE = "cache_dataset_on_device";
+
 // RAFT-specific IVF Params
 constexpr const char* KMEANS_N_ITERS = "kmeans_n_iters";
 constexpr const char* KMEANS_TRAINSET_FRACTION = "kmeans_trainset_fraction";
@@ -155,6 +157,14 @@ constexpr const char* EFCONSTRUCTION = "efConstruction";
 constexpr const char* HNSW_M = "M";
 constexpr const char* EF = "ef";
 constexpr const char* OVERVIEW_LEVELS = "overview_levels";
+
+// DISKANN Params
+constexpr const char* MAX_DEGREE = "max_degree";
+constexpr const char* PQ_CODE_BUDGET_GB = "pq_code_budget_gb";
+constexpr const char* BUILD_DRAM_BUDGET_GB = "build_dram_budget_gb";
+constexpr const char* BEAMWIDTH = "beamwidth";
+constexpr const char* SEARCH_CACHE_BUDGET_GB = "search_cache_budget_gb";
+constexpr const char* SEARCH_LIST_SIZE = "search_list_size";
 
 // FAISS additional Params
 constexpr const char* SQ_TYPE = "sq_type";  // for IVF_SQ and HNSW_SQ

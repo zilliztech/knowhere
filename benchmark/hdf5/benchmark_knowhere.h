@@ -140,10 +140,11 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
                    default_ds_ptr->GetRows());
 
             auto base = knowhere::ConvertToDataTypeIfNeeded<T>(default_ds_ptr);
-            index.value().Build(base, conf);
+            CALC_TIME_SPAN(index.value().Build(base, conf));
 
             printf("[%.3f s] Writing %sindex file: %s\n", get_time_diff(), additional_name_s.c_str(),
                    index_file_name.c_str());
+            printf("Build index %s time: %.3fs \n", index.value().Type().c_str(), TDIFF_);
 
             write_index(index.value(), index_file_name, conf);
         }
