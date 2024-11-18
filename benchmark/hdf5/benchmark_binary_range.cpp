@@ -36,7 +36,7 @@ class Benchmark_binary_range : public Benchmark_knowhere, public ::testing::Test
             CheckDistance(metric_type_, ids, distances, lims, nq);
             float recall = CalcRecall(ids, lims, nq);
             float accuracy = CalcAccuracy(ids, lims, nq);
-            printf("  nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f\n", nq, t_diff, recall, accuracy);
+            printf("  nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f\n", nq, TDIFF_, recall, accuracy);
             std::fflush(stdout);
         }
         printf("================================================================================\n");
@@ -61,7 +61,7 @@ class Benchmark_binary_range : public Benchmark_knowhere, public ::testing::Test
                 auto lims = result.value()->GetLims();
                 float recall = CalcRecall(ids, lims, nq);
                 float accuracy = CalcAccuracy(ids, lims, nq);
-                printf("  nprobe = %4d, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f\n", nprobe, nq, t_diff, recall,
+                printf("  nprobe = %4d, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f\n", nprobe, nq, TDIFF_, recall,
                        accuracy);
                 std::fflush(stdout);
             }
@@ -89,7 +89,7 @@ class Benchmark_binary_range : public Benchmark_knowhere, public ::testing::Test
                 auto lims = result.value()->GetLims();
                 float recall = CalcRecall(ids, lims, nq);
                 float accuracy = CalcAccuracy(ids, lims, nq);
-                printf("  ef = %4d, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f\n", ef, nq, t_diff, recall,
+                printf("  ef = %4d, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f\n", ef, nq, TDIFF_, recall,
                        accuracy);
                 std::fflush(stdout);
             }

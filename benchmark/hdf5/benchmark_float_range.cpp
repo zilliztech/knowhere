@@ -39,7 +39,7 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
             CheckDistance(metric_type_, ids, distances, lims, nq);
             float recall = CalcRecall(ids, lims, nq);
             float accuracy = CalcAccuracy(ids, lims, nq);
-            printf("  nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f, L@ = %.2f\n", nq, t_diff, recall, accuracy,
+            printf("  nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f, L@ = %.2f\n", nq, TDIFF_, recall, accuracy,
                    lims[nq] / (float)nq);
             std::fflush(stdout);
         }
@@ -68,7 +68,7 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
                 float recall = CalcRecall(ids, lims, nq);
                 float accuracy = CalcAccuracy(ids, lims, nq);
                 printf("  nprobe = %4d, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f, L@ = %.2f\n", nprobe, nq,
-                       t_diff, recall, accuracy, lims[nq] / (float)nq);
+                       TDIFF_, recall, accuracy, lims[nq] / (float)nq);
                 std::fflush(stdout);
             }
         }
@@ -97,7 +97,7 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
                 auto lims = result.value()->GetLims();
                 float recall = CalcRecall(ids, lims, nq);
                 float accuracy = CalcAccuracy(ids, lims, nq);
-                printf("  ef = %4d, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f, L@ = %.2f\n", ef, nq, t_diff,
+                printf("  ef = %4d, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f, L@ = %.2f\n", ef, nq, TDIFF_,
                        recall, accuracy, lims[nq] / (float)nq);
                 std::fflush(stdout);
             }
@@ -127,7 +127,7 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
                 float recall = CalcRecall(ids, lims, nq);
                 float accuracy = CalcAccuracy(ids, lims, nq);
                 printf("  search_list_size = %4d, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f, L@ = %.2f\n",
-                       search_list_size, nq, t_diff, recall, accuracy, lims[nq] / (float)nq);
+                       search_list_size, nq, TDIFF_, recall, accuracy, lims[nq] / (float)nq);
                 std::fflush(stdout);
             }
         }
@@ -333,13 +333,13 @@ TEST_F(Benchmark_float_range, TEST_DISKANN) {
 
     knowhere::Json conf = cfg_;
 
-    conf["index_prefix"] = (metric_type_ == knowhere::metric::L2 ? kL2IndexPrefix : kIPIndexPrefix);
-    conf["data_path"] = kRawDataPath;
-    conf["max_degree"] = 56;
-    conf["pq_code_budget_gb"] = sizeof(float) * dim_ * nb_ * 0.125 / (1024 * 1024 * 1024);
-    conf["build_dram_budget_gb"] = 32.0;
-    conf["search_cache_budget_gb"] = 0;
-    conf["beamwidth"] = 8;
+    conf[knowhere::meta::INDEX_PREFIX] = (metric_type_ == knowhere::metric::L2 ? kL2IndexPrefix : kIPIndexPrefix);
+    conf[knowhere::meta::DATA_PATH] = kRawDataPath;
+    conf[knowhere::indexparam::MAX_DEGREE] = 56;
+    conf[knowhere::indexparam::PQ_CODE_BUDGET_GB] = sizeof(float) * dim_ * nb_ * 0.125 / (1024 * 1024 * 1024);
+    conf[knowhere::indexparam::BUILD_DRAM_BUDGET_GB] = 32.0;
+    conf[knowhere::indexparam::SEARCH_CACHE_BUDGET_GB] = 0;
+    conf[knowhere::indexparam::BEAMWIDTH] = 8;
 
     fs::create_directory(kDir);
     fs::create_directory(kL2IndexDir);

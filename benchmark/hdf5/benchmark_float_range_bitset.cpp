@@ -54,7 +54,7 @@ class Benchmark_float_range_bitset : public Benchmark_knowhere, public ::testing
                 float recall = CalcRecall(g_ids, g_lims, ids, lims, nq);
                 float accuracy = CalcAccuracy(g_ids, g_lims, ids, lims, nq);
                 printf("  bitset_per = %3d%%, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f, L@ = %.2f\n", per, nq,
-                       t_diff, recall, accuracy, lims[nq] / (float)nq);
+                       TDIFF_, recall, accuracy, lims[nq] / (float)nq);
                 std::fflush(stdout);
             }
         }
@@ -87,7 +87,7 @@ class Benchmark_float_range_bitset : public Benchmark_knowhere, public ::testing
                 float recall = CalcRecall(g_ids, g_lims, ids, lims, nq);
                 float accuracy = CalcAccuracy(g_ids, g_lims, ids, lims, nq);
                 printf("  bitset_per = %3d%%, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f, L@ = %.2f\n", per, nq,
-                       t_diff, recall, accuracy, lims[nq] / (float)nq);
+                       TDIFF_, recall, accuracy, lims[nq] / (float)nq);
                 std::fflush(stdout);
             }
         }
@@ -120,7 +120,7 @@ class Benchmark_float_range_bitset : public Benchmark_knowhere, public ::testing
                 float recall = CalcRecall(g_ids, g_lims, ids, lims, nq);
                 float accuracy = CalcAccuracy(g_ids, g_lims, ids, lims, nq);
                 printf("  bitset_per = %3d%%, nq = %4d, elapse = %6.3fs, R@ = %.4f, A@ = %.4f, L@ = %.2f\n", per, nq,
-                       t_diff, recall, accuracy, lims[nq] / (float)nq);
+                       TDIFF_, recall, accuracy, lims[nq] / (float)nq);
                 std::fflush(stdout);
             }
         }
@@ -245,10 +245,13 @@ TEST_F(Benchmark_float_range_bitset, TEST_DISKANN) {
 
     knowhere::Json conf = cfg_;
 
-    conf["index_prefix"] = (metric_type_ == knowhere::metric::L2 ? kL2IndexPrefix : kIPIndexPrefix);
-    conf["data_path"] = kRawDataPath;
-    conf["pq_code_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
-    conf["build_dram_budget_gb"] = 32.0;
+    conf[knowhere::meta::INDEX_PREFIX] = (metric_type_ == knowhere::metric::L2 ? kL2IndexPrefix : kIPIndexPrefix);
+    conf[knowhere::meta::DATA_PATH] = kRawDataPath;
+    conf[knowhere::indexparam::MAX_DEGREE] = 56;
+    conf[knowhere::indexparam::PQ_CODE_BUDGET_GB] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
+    conf[knowhere::indexparam::BUILD_DRAM_BUDGET_GB] = 32.0;
+    conf[knowhere::indexparam::SEARCH_CACHE_BUDGET_GB] = 0;
+    conf[knowhere::indexparam::BEAMWIDTH] = 8;
 
     fs::create_directory(kDir);
     fs::create_directory(kL2IndexDir);

@@ -33,7 +33,7 @@ class Benchmark_binary : public Benchmark_knowhere, public ::testing::Test {
                 CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, nullptr));
                 auto ids = result.value()->GetIds();
                 float recall = CalcRecall(ids, nq, k);
-                printf("  nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nq, k, t_diff, recall);
+                printf("  nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nq, k, TDIFF_, recall);
                 std::fflush(stdout);
             }
         }
@@ -58,7 +58,7 @@ class Benchmark_binary : public Benchmark_knowhere, public ::testing::Test {
                     CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, nullptr));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(ids, nq, k);
-                    printf("  nprobe = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nprobe, nq, k, t_diff,
+                    printf("  nprobe = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nprobe, nq, k, TDIFF_,
                            recall);
                     std::fflush(stdout);
                 }
@@ -86,7 +86,7 @@ class Benchmark_binary : public Benchmark_knowhere, public ::testing::Test {
                     CALC_TIME_SPAN(auto result = index_.value().Search(ds_ptr, conf, nullptr));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(ids, nq, k);
-                    printf("  ef = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", ef, nq, k, t_diff, recall);
+                    printf("  ef = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", ef, nq, k, TDIFF_, recall);
                     std::fflush(stdout);
                 }
             }

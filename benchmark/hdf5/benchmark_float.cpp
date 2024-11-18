@@ -36,7 +36,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
                 CALC_TIME_SPAN(auto result = index_.value().Search(query, conf, nullptr));
                 auto ids = result.value()->GetIds();
                 float recall = CalcRecall(ids, nq, k);
-                printf("  nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nq, k, t_diff, recall);
+                printf("  nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nq, k, TDIFF_, recall);
                 std::fflush(stdout);
             }
         }
@@ -63,7 +63,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
                     CALC_TIME_SPAN(auto result = index_.value().Search(query, conf, nullptr));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(ids, nq, k);
-                    printf("  nprobe = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nprobe, nq, k, t_diff,
+                    printf("  nprobe = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nprobe, nq, k, TDIFF_,
                            recall);
                     std::fflush(stdout);
                 }
@@ -93,7 +93,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
                     CALC_TIME_SPAN(auto result = index_.value().Search(query, conf, nullptr));
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(ids, nq, k);
-                    printf("  ef = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", ef, nq, k, t_diff, recall);
+                    printf("  ef = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", ef, nq, k, TDIFF_, recall);
                     std::fflush(stdout);
                 }
             }
@@ -121,7 +121,36 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
                     auto ids = result.value()->GetIds();
                     float recall = CalcRecall(ids, nq, k);
                     printf("  search_list_size = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n",
-                           search_list_size, nq, k, t_diff, recall);
+                           search_list_size, nq, k, TDIFF_, recall);
+                    std::fflush(stdout);
+                }
+            }
+        }
+        printf("================================================================================\n");
+        printf("[%.3f s] Test '%s/%s' done\n\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
+    }
+#endif
+
+#ifdef KNOWHERE_WITH_RAFT
+    template <typename T>
+    void
+    test_raft_cagra(const knowhere::Json& cfg) {
+        auto conf = cfg;
+
+        printf("\n[%0.3f s] %s | %s \n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
+        printf("================================================================================\n");
+        for (auto itopk_size : ITOPK_SIZEs_) {
+            conf[knowhere::indexparam::ITOPK_SIZE] = itopk_size;
+            for (auto nq : NQs_) {
+                auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
+                auto query = knowhere::ConvertToDataTypeIfNeeded<T>(ds_ptr);
+                for (auto k : TOPKs_) {
+                    conf[knowhere::meta::TOPK] = k;
+                    CALC_TIME_SPAN(auto result = index_.value().Search(query, conf, nullptr));
+                    auto ids = result.value()->GetIds();
+                    float recall = CalcRecall(ids, nq, k);
+                    printf("  itopk_size = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", itopk_size, nq, k,
+                           TDIFF_, recall);
                     std::fflush(stdout);
                 }
             }
@@ -144,6 +173,10 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
         knowhere::KnowhereConfig::SetBuildThreadPoolSize(default_build_thread_num);
         knowhere::KnowhereConfig::SetSearchThreadPoolSize(default_search_thread_num);
         printf("faiss::distance_compute_blas_threshold: %ld\n", knowhere::KnowhereConfig::GetBlasThreshold());
+
+#ifdef KNOWHERE_WITH_RAFT
+        knowhere::KnowhereConfig::SetRaftMemPool();
+#endif
     }
 
     void
@@ -170,6 +203,10 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
 
     // DISKANN index params
     const std::vector<int32_t> SEARCH_LISTs_ = {100, 200, 400};
+
+    // RAFT cagra index params
+    const std::vector<int32_t> GRAPH_DEGREEs_ = {8, 16, 32};
+    const std::vector<int32_t> ITOPK_SIZEs_ = {128, 192, 256};
 };
 
 TEST_F(Benchmark_float, TEST_IDMAP) {
@@ -190,11 +227,7 @@ TEST_F(Benchmark_float, TEST_IDMAP) {
 }
 
 TEST_F(Benchmark_float, TEST_IVF_FLAT) {
-#ifdef KNOWHERE_WITH_RAFT
-    index_type_ = knowhere::IndexEnum::INDEX_RAFT_IVFFLAT;
-#else
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
-#endif
 
 #define TEST_IVF(T, X)                      \
     index_file_name = get_index_name<T>(X); \
@@ -234,11 +267,7 @@ TEST_F(Benchmark_float, TEST_IVF_SQ8) {
 }
 
 TEST_F(Benchmark_float, TEST_IVF_PQ) {
-#ifdef KNOWHERE_WITH_RAFT
-    index_type_ = knowhere::IndexEnum::INDEX_RAFT_IVFPQ;
-#else
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFPQ;
-#endif
 
 #define TEST_IVF(T, X)                      \
     index_file_name = get_index_name<T>(X); \
@@ -290,13 +319,13 @@ TEST_F(Benchmark_float, TEST_DISKANN) {
 
     knowhere::Json conf = cfg_;
 
-    conf["index_prefix"] = (metric_type_ == knowhere::metric::L2 ? kL2IndexPrefix : kIPIndexPrefix);
-    conf["data_path"] = kRawDataPath;
-    conf["max_degree"] = 56;
-    conf["pq_code_budget_gb"] = sizeof(float) * dim_ * nb_ * 0.125 / (1024 * 1024 * 1024);
-    conf["build_dram_budget_gb"] = 32.0;
-    conf["search_cache_budget_gb"] = 0;
-    conf["beamwidth"] = 8;
+    conf[knowhere::meta::INDEX_PREFIX] = (metric_type_ == knowhere::metric::L2 ? kL2IndexPrefix : kIPIndexPrefix);
+    conf[knowhere::meta::DATA_PATH] = kRawDataPath;
+    conf[knowhere::indexparam::MAX_DEGREE] = 56;
+    conf[knowhere::indexparam::PQ_CODE_BUDGET_GB] = sizeof(float) * dim_ * nb_ * 0.125 / (1024 * 1024 * 1024);
+    conf[knowhere::indexparam::BUILD_DRAM_BUDGET_GB] = 32.0;
+    conf[knowhere::indexparam::SEARCH_CACHE_BUDGET_GB] = 0;
+    conf[knowhere::indexparam::BEAMWIDTH] = 8;
 
     fs::create_directory(kDir);
     fs::create_directory(kL2IndexDir);
@@ -318,5 +347,81 @@ TEST_F(Benchmark_float, TEST_DISKANN) {
     index_.value().Deserialize(binset, conf);
 
     test_diskann<knowhere::fp32>(conf);
+}
+#endif
+
+#ifdef KNOWHERE_WITH_RAFT
+TEST_F(Benchmark_float, TEST_RAFT_BRUTE_FORCE) {
+    index_type_ = knowhere::IndexEnum::INDEX_RAFT_BRUTEFORCE;
+
+#define TEST_RAFT_BF(T, X)                  \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_idmap<T>(conf);
+
+    std::string index_file_name;
+    knowhere::Json conf = cfg_;
+    std::vector<int32_t> params = {};
+
+    TEST_RAFT_BF(knowhere::fp32, params);
+}
+
+TEST_F(Benchmark_float, TEST_RAFT_IVF_FLAT) {
+    index_type_ = knowhere::IndexEnum::INDEX_RAFT_IVFFLAT;
+
+#define TEST_RAFT_IVF(T, X)                 \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_ivf<T>(conf);
+
+    std::string index_file_name;
+    knowhere::Json conf = cfg_;
+    for (auto nlist : NLISTs_) {
+        conf[knowhere::indexparam::NLIST] = nlist;
+        std::vector<int32_t> params = {nlist};
+
+        TEST_RAFT_IVF(knowhere::fp32, params);
+    }
+}
+
+TEST_F(Benchmark_float, TEST_RAFT_IVF_PQ) {
+    index_type_ = knowhere::IndexEnum::INDEX_RAFT_IVFPQ;
+
+#define TEST_RAFT_IVF(T, X)                 \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_ivf<T>(conf);
+
+    std::string index_file_name;
+    knowhere::Json conf = cfg_;
+    conf[knowhere::indexparam::NBITS] = NBITS_;
+    for (auto m : Ms_) {
+        conf[knowhere::indexparam::M] = m;
+        for (auto nlist : NLISTs_) {
+            conf[knowhere::indexparam::NLIST] = nlist;
+            std::vector<int32_t> params = {nlist, m};
+
+            TEST_RAFT_IVF(knowhere::fp32, params);
+        }
+    }
+}
+
+TEST_F(Benchmark_float, TEST_RAFT_CAGRA) {
+    index_type_ = knowhere::IndexEnum::INDEX_RAFT_CAGRA;
+
+#define TEST_RAFT_CAGRA(T, X)               \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_raft_cagra<T>(conf);
+
+    std::string index_file_name;
+    knowhere::Json conf = cfg_;
+
+    for (auto graph_degree : GRAPH_DEGREEs_) {
+        conf[knowhere::indexparam::GRAPH_DEGREE] = graph_degree;
+        conf[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE] = graph_degree;
+        std::vector<int32_t> params = {graph_degree};
+        TEST_RAFT_CAGRA(knowhere::fp32, params);
+    }
 }
 #endif
