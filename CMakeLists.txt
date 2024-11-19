@@ -99,8 +99,9 @@ find_package(prometheus-cpp REQUIRED)
 if(NOT WITH_RAFT)
     find_package(fmt REQUIRED)
 endif()
-find_package(opentelemetry-cpp REQUIRED)
-
+if(NOT WITH_LIGHT)
+    find_package(opentelemetry-cpp REQUIRED)
+endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_OSX_DEPLOYMENT_TARGET
     "10.15"
