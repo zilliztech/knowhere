@@ -60,7 +60,6 @@ if(__PPC64)
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
 endif()
 
-find_package(LAPACK REQUIRED)
 
 if(LINUX)
   set(BLA_VENDOR OpenBLAS)
@@ -70,8 +69,12 @@ if(APPLE)
   set(BLA_VENDOR Apple)
 endif()
 
-find_package(BLAS REQUIRED)
-
+if(CMAKE_SYSTEM_NAME STREQUAL "Android" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+    find_package(OpenBLAS REQUIRED)
+    set(BLAS_LIBRARIES OpenBLAS::OpenBLAS)
+else()
+    find_package(BLAS REQUIRED)
+endif()
 if(__X86_64)
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX2_SRCS})
 
@@ -110,7 +113,7 @@ if(__X86_64)
             -Wno-unused-function
             -Wno-strict-aliasing>)
   target_link_libraries(
-    faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
+    faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES}
                  faiss_avx2 faiss_avx512 knowhere_utils)
   target_compile_definitions(faiss PRIVATE FINTEGER=int)
 endif()
@@ -133,7 +136,7 @@ if(__AARCH64)
 
   add_dependencies(faiss knowhere_utils)
   target_link_libraries(faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES}
-                                     ${LAPACK_LIBRARIES} knowhere_utils)
+                                     knowhere_utils)
   target_compile_definitions(faiss PRIVATE FINTEGER=int)
 endif()
 
@@ -160,6 +163,6 @@ if(__PPC64)
 
   add_dependencies(faiss knowhere_utils)
   target_link_libraries(faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES}
-                                     ${LAPACK_LIBRARIES} knowhere_utils)
+                                      knowhere_utils)
   target_compile_definitions(faiss PRIVATE FINTEGER=int)
 endif()

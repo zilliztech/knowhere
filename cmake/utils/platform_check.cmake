@@ -12,4 +12,9 @@ macro(detect_target_arch)
   endif()
 endmacro()
 
-detect_target_arch()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Android" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+    set(__AARCH64 1)
+else()
+    detect_target_arch()
+endif()
