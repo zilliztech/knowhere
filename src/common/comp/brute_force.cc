@@ -539,7 +539,6 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
                                 float* distances, const Json& config, const BitsetView& bitset) {
     auto base = static_cast<const sparse::SparseRow<float>*>(base_dataset->GetTensor());
     auto rows = base_dataset->GetRows();
-    auto dim = base_dataset->GetDim();
     auto xb_id_offset = base_dataset->GetTensorBeginId();
 
     auto xq = static_cast<const sparse::SparseRow<float>*>(query_dataset->GetTensor());
@@ -555,6 +554,7 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
+    auto dim = base_dataset->GetDim();
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
@@ -776,7 +776,6 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
                                                             const BitsetView& bitset) {
     auto base = static_cast<const sparse::SparseRow<float>*>(base_dataset->GetTensor());
     auto rows = base_dataset->GetRows();
-    auto dim = base_dataset->GetDim();
     auto xb_id_offset = base_dataset->GetTensorBeginId();
 
     auto xq = static_cast<const sparse::SparseRow<float>*>(query_dataset->GetTensor());
@@ -795,6 +794,7 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
+    auto dim = base_dataset->GetDim();
     std::shared_ptr<tracer::trace::Span> span = nullptr;
     if (cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());

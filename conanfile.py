@@ -33,6 +33,7 @@ class KnowhereConan(ConanFile):
         "with_benchmark": [True, False],
         "with_coverage": [True, False],
         "with_faiss_tests": [True, False],
+        "with_light": [True, False],
     }
     default_options = {
         "shared": True,
@@ -50,6 +51,7 @@ class KnowhereConan(ConanFile):
         "boost:without_test": True,
         "fmt:header_only": True,
         "with_faiss_tests": False,
+        "with_light": False,
     }
 
     exports_sources = (
@@ -95,7 +97,8 @@ class KnowhereConan(ConanFile):
         self.requires("fmt/9.1.0")
         self.requires("folly/2023.10.30.08@milvus/dev")
         self.requires("libcurl/8.2.1")
-        self.requires("opentelemetry-cpp/1.8.1.1@milvus/dev")
+        if not self.options.with_light:
+            self.requires("opentelemetry-cpp/1.8.1.1@milvus/dev")
         if self.settings.os != "Macos":
             self.requires("libunwind/1.7.2")
         if self.options.with_ut:
@@ -164,6 +167,7 @@ class KnowhereConan(ConanFile):
         tc.variables["WITH_BENCHMARK"] = self.options.with_benchmark
         tc.variables["WITH_COVERAGE"] = self.options.with_coverage
         tc.variables["WITH_FAISS_TESTS"] = self.options.with_faiss_tests
+        tc.variables["WITH_LIGHT"] = self.options.with_light
         tc.generate()
 
         deps = CMakeDeps(self)
