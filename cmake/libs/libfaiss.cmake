@@ -47,9 +47,18 @@ if(__X86_64)
 endif()
 
 if(__AARCH64)
-  set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc
-                src/simd/distances_neon.cc)
-  add_library(knowhere_utils STATIC ${UTILS_SRC})
+  set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc)
+
+  # Add separate utils for NEON and SVE
+  add_library(utils_neon OBJECT src/simd/distances_neon.cc)
+  add_library(utils_sve OBJECT src/simd/distances_sve.cc)
+
+  target_compile_options(utils_neon PRIVATE -march=armv8-a+simd)
+  target_compile_options(utils_sve PRIVATE -march=armv8-a+sve)
+
+  add_library(
+    knowhere_utils STATIC
+    ${UTILS_SRC} $<TARGET_OBJECTS:utils_neon> $<TARGET_OBJECTS:utils_sve>)
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
 endif()
 

@@ -224,6 +224,40 @@ if(WITH_FAISS_TESTS)
   add_subdirectory(tests/faiss)
 endif()
 
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+
+    # Find ARM SVE headers
+    find_path(ARM_SVE_DIR arm_sve.h PATHS
+        /usr/lib/gcc/aarch64-linux-gnu/*/include
+        /usr/lib/llvm-*/lib/clang/*/include
+        /usr/include
+        /usr/local/include
+        NO_DEFAULT_PATH
+    )
+    if(ARM_SVE_DIR)
+        include_directories(SYSTEM ${ARM_SVE_DIR})
+        message(STATUS "ARM SVE headers found at: ${ARM_SVE_DIR}")
+    else()
+        message(WARNING "ARM SVE headers not found!")
+    endif()
+
+    # Find ARM NEON headers
+    find_path(ARM_NEON_DIR arm_neon.h PATHS
+        /usr/lib/gcc/aarch64-linux-gnu/*/include
+        /usr/lib/llvm-*/lib/clang/*/include
+        /usr/include
+        /usr/local/include
+        NO_DEFAULT_PATH
+    )
+    if(ARM_NEON_DIR)
+        include_directories(SYSTEM ${ARM_NEON_DIR})
+        message(STATUS "ARM NEON headers found at: ${ARM_NEON_DIR}")
+    else()
+        message(WARNING "ARM NEON headers not found!")
+    endif()
+
+endif()
+
 install(TARGETS knowhere
         DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR})
 install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/knowhere"
