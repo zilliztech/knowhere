@@ -26,8 +26,17 @@
 #include "distances_neon.h"
 #endif
 
+#if defined(__ARM_FEATURE_SVE)
+#include "distances_sve.h"
+#endif
+
 #if defined(__powerpc64__)
 #include "distances_powerpc.h"
+#endif
+
+#if defined(__aarch64__)
+#include <asm/hwcap.h>
+#include <sys/auxv.h>
 #endif
 
 #include "distances_ref.h"
@@ -117,6 +126,14 @@ cpu_support_f16c() {
 }
 #endif
 
+#if defined(__aarch64__)
+bool
+supports_sve() {
+    unsigned long hwcap = getauxval(AT_HWCAP);
+    return (hwcap & HWCAP_SVE) != 0;
+}
+#endif
+
 static std::mutex patch_bf16_mutex;
 
 void
@@ -146,12 +163,19 @@ enable_patch_for_fp32_bf16() {
         fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_bf16_patch_ref;
     }
 #endif
-#if defined(__ARM_NEON)
+
+#if defined(__aarch64__)
+
+#if defined(__ARM_NEON) && !defined(__ARM_FEATURE_SVE)
+
     fvec_inner_product = fvec_inner_product_bf16_patch_neon;
     fvec_inner_product_batch_4 = fvec_inner_product_batch_4_bf16_patch_neon;
 
     fvec_L2sqr = fvec_L2sqr_bf16_patch_neon;
     fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_bf16_patch_neon;
+
+#endif
+
 #endif
 }
 
@@ -378,43 +402,82 @@ fvec_hook(std::string& simd_type) {
     }
 #endif
 
+#if defined(__aarch64__)
+    if (supports_sve()) {
+#if defined(__ARM_FEATURE_SVE)
+        // ToDo: Enable remaining functions on SVE
+        fvec_L2sqr = fvec_L2sqr_sve;
+        fvec_L1 = fvec_L1_sve;
+        fvec_Linf = fvec_Linf_sve;
+        fvec_norm_L2sqr = fvec_norm_L2sqr_sve;
+        fvec_madd = fvec_madd_sve;
+        fvec_madd_and_argmin = fvec_madd_and_argmin_sve;
+
+        fvec_inner_product = fvec_inner_product_neon;
+        fvec_L2sqr_ny = fvec_L2sqr_ny_neon;
+        fvec_inner_products_ny = fvec_inner_products_ny_neon;
+
+        ivec_inner_product = ivec_inner_product_neon;
+        ivec_L2sqr = ivec_L2sqr_neon;
+
+        // fp16
+        fp16_vec_inner_product = fp16_vec_inner_product_neon;
+        fp16_vec_L2sqr = fp16_vec_L2sqr_neon;
+        fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_neon;
+
+        // bf16
+        bf16_vec_inner_product = bf16_vec_inner_product_neon;
+        bf16_vec_L2sqr = bf16_vec_L2sqr_neon;
+        bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_neon;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_sve;
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_sve;
+
+        simd_type = "SVE";
+        support_pq_fast_scan = true;
+#endif
+    } else {
 #if defined(__ARM_NEON)
-    fvec_inner_product = fvec_inner_product_neon;
-    fvec_L2sqr = fvec_L2sqr_neon;
-    fvec_L1 = fvec_L1_neon;
-    fvec_Linf = fvec_Linf_neon;
+        // NEON functions
+        fvec_inner_product = fvec_inner_product_neon;
+        fvec_L2sqr = fvec_L2sqr_neon;
+        fvec_L1 = fvec_L1_neon;
+        fvec_Linf = fvec_Linf_neon;
+        fvec_norm_L2sqr = fvec_norm_L2sqr_neon;
+        fvec_L2sqr_ny = fvec_L2sqr_ny_neon;
+        fvec_inner_products_ny = fvec_inner_products_ny_neon;
+        fvec_madd = fvec_madd_neon;
+        fvec_madd_and_argmin = fvec_madd_and_argmin_neon;
 
-    fvec_norm_L2sqr = fvec_norm_L2sqr_neon;
-    fvec_L2sqr_ny = fvec_L2sqr_ny_neon;
-    fvec_inner_products_ny = fvec_inner_products_ny_neon;
-    fvec_madd = fvec_madd_neon;
-    fvec_madd_and_argmin = fvec_madd_and_argmin_neon;
+        ivec_inner_product = ivec_inner_product_neon;
+        ivec_L2sqr = ivec_L2sqr_neon;
 
-    fvec_inner_product_batch_4 = fvec_inner_product_batch_4_neon;
-    fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_neon;
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_neon;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_neon;
 
-    ivec_inner_product = ivec_inner_product_neon;
-    ivec_L2sqr = ivec_L2sqr_neon;
+        ivec_inner_product = ivec_inner_product_neon;
+        ivec_L2sqr = ivec_L2sqr_neon;
 
-    // fp16
-    fp16_vec_inner_product = fp16_vec_inner_product_neon;
-    fp16_vec_L2sqr = fp16_vec_L2sqr_neon;
-    fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_neon;
+        // fp16
+        fp16_vec_inner_product = fp16_vec_inner_product_neon;
+        fp16_vec_L2sqr = fp16_vec_L2sqr_neon;
+        fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_neon;
 
-    fp16_vec_inner_product_batch_4 = fp16_vec_inner_product_batch_4_neon;
-    fp16_vec_L2sqr_batch_4 = fp16_vec_L2sqr_batch_4_neon;
+        fp16_vec_inner_product_batch_4 = fp16_vec_inner_product_batch_4_neon;
+        fp16_vec_L2sqr_batch_4 = fp16_vec_L2sqr_batch_4_neon;
 
-    // bf16
-    bf16_vec_inner_product = bf16_vec_inner_product_neon;
-    bf16_vec_L2sqr = bf16_vec_L2sqr_neon;
-    bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_neon;
+        // bf16
+        bf16_vec_inner_product = bf16_vec_inner_product_neon;
+        bf16_vec_L2sqr = bf16_vec_L2sqr_neon;
+        bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_neon;
 
-    bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_neon;
-    bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_neon;
+        bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_neon;
+        bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_neon;
 
-    //
-    simd_type = "NEON";
-    support_pq_fast_scan = true;
+        //
+        simd_type = "NEON";
+        support_pq_fast_scan = true;
+#endif
+    }
 #endif
 
 // ToDo MG: include VSX intrinsics via distances_vsx once _ref tests succeed
