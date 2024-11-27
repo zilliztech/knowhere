@@ -47,9 +47,10 @@ if(__X86_64)
 endif()
 
 if(__AARCH64)
-  set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc
-                src/simd/distances_neon.cc)
+  set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc 
+                src/simd/distances_neon.cc src/simd/distances_sve.cc)
   add_library(knowhere_utils STATIC ${UTILS_SRC})
+  target_compile_options(knowhere_utils PRIVATE -march=armv8-a+sve)
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
 endif()
 
