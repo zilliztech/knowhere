@@ -16,6 +16,7 @@ RUN apt update \
     && cd /usr/bin \
     && unlink gcc && ln -s gcc-12 gcc \
     && unlink g++ && ln -s g++-12 g++ \
+    && rm -rf /usr/lib/gcc/aarch64-linux-gnu/11 \ #Installed by default on ubuntu22.04, need to remove to fetch latest SVE header.
     && unlink python3 && ln -s python3.11 python3 \
     && curl -sS https://bootstrap.pypa.io/get-pip.py | python3 \
     && export PATH=$PATH:$HOME/.local/bin \
