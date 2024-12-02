@@ -45,12 +45,16 @@ class KnowhereConan(ConanFile):
         "with_profiler": False,
         "with_ut": False,
         "glog:with_gflags": True,
+        "gtest:build_gmock": False,
         "prometheus-cpp:with_pull": False,
         "with_benchmark": False,
         "with_coverage": False,
+        "boost:without_locale": False,
         "boost:without_test": True,
+        "boost:without_stacktrace": True,
         "fmt:header_only": True,
         "with_faiss_tests": False,
+        "libcurl:with_ssl": False,
         "with_light": False,
     }
 
@@ -80,6 +84,8 @@ class KnowhereConan(ConanFile):
     def config_options(self):
         if self.settings.os == "Windows":
             self.options.rm_safe("fPIC")
+        if self.options.with_light:
+            self.options["boost"].without_locale = True
 
     def configure(self):
         if self.options.shared:
@@ -87,19 +93,22 @@ class KnowhereConan(ConanFile):
 
     def requirements(self):
         self.requires("boost/1.83.0")
-        self.requires("glog/0.4.0")
+        self.requires("glog/0.6.0")
         self.requires("nlohmann_json/3.11.2")
         self.requires("openssl/1.1.1t")
         self.requires("prometheus-cpp/1.1.0")
         self.requires("zlib/1.2.12")
         self.requires("double-conversion/3.2.1")
         self.requires("xz_utils/5.2.5")
+        self.requires("protobuf/3.21.4")
         self.requires("fmt/9.1.0")
-        self.requires("folly/2023.10.30.08@milvus/dev")
+        self.requires("folly/2023.10.30.09@milvus/dev")
         self.requires("libcurl/8.2.1")
+        if self.settings.os == "Android":
+            self.requires("openblas/0.3.27")
         if not self.options.with_light:
             self.requires("opentelemetry-cpp/1.8.1.1@milvus/dev")
-        if self.settings.os != "Macos":
+        if self.settings.os not in ["Macos", "Android"]:
             self.requires("libunwind/1.7.2")
         if self.options.with_ut:
             self.requires("catch2/3.3.1")
