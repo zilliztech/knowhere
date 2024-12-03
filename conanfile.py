@@ -44,6 +44,7 @@ class KnowhereConan(ConanFile):
         "with_cardinal": False,
         "with_profiler": False,
         "with_ut": False,
+        "glog:shared": True,
         "glog:with_gflags": True,
         "gtest:build_gmock": False,
         "prometheus-cpp:with_pull": False,
