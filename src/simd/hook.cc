@@ -18,6 +18,10 @@
 
 #include "faiss/FaissHook.h"
 
+#if defined(__ARM_FEATURE_SVE)
+#include "distances_sve.h"
+#endif
+
 #if defined(__ARM_NEON)
 #include "distances_neon.h"
 #endif
@@ -132,13 +136,17 @@ enable_patch_for_fp32_bf16() {
         fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref_bf16_patch;
     }
 #endif
-#if defined(__ARM_NEON)
 
-    fvec_inner_product = fvec_inner_product_neon_bf16_patch;
+#if defined(__aarch64__)
+
+#if defined(__ARM_NEON) && !defined(__ARM_FEATURE_SVE)
+
     fvec_L2sqr = fvec_L2sqr_neon_bf16_patch;
-
-    fvec_inner_product_batch_4 = fvec_inner_product_batch_4_neon_bf16_patch;
     fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_neon_bf16_patch;
+    fvec_inner_product = fvec_inner_product_neon_bf16_patch;
+    fvec_inner_product_batch_4 = fvec_inner_product_batch_4_neon_bf16_patch;
+
+#endif
 
 #endif
 }
@@ -294,12 +302,42 @@ fvec_hook(std::string& simd_type) {
     }
 #endif
 
-#if defined(__ARM_NEON)
+#if defined(__aarch64__)
+
+#if defined(__ARM_FEATURE_SVE)
+    // ToDo: Enable remaining functions on SVE
+
+    fvec_L2sqr = fvec_L2sqr_sve;
+    fvec_L1 = fvec_L1_sve;
+    fvec_Linf = fvec_Linf_sve;
+    fvec_norm_L2sqr = fvec_norm_L2sqr_sve;
+    fvec_madd = fvec_madd_sve;
+    fvec_madd_and_argmin = fvec_madd_and_argmin_sve;
+
+    fvec_inner_product = fvec_inner_product_neon;
+    fvec_L2sqr_ny = fvec_L2sqr_ny_neon;
+    fvec_inner_products_ny = fvec_inner_products_ny_neon;
+
+    ivec_inner_product = ivec_inner_product_neon;
+    ivec_L2sqr = ivec_L2sqr_neon;
+
+    fp16_vec_inner_product = fp16_vec_inner_product_neon;
+    fp16_vec_L2sqr = fp16_vec_L2sqr_neon;
+    fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_neon;
+
+    bf16_vec_inner_product = bf16_vec_inner_product_neon;
+    bf16_vec_L2sqr = bf16_vec_L2sqr_neon;
+    bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_neon;
+    fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_sve;
+    simd_type = "SVE";
+    support_pq_fast_scan = true;
+
+#elif defined(__ARM_NEON)
+    // NEON functions
     fvec_inner_product = fvec_inner_product_neon;
     fvec_L2sqr = fvec_L2sqr_neon;
     fvec_L1 = fvec_L1_neon;
     fvec_Linf = fvec_Linf_neon;
-
     fvec_norm_L2sqr = fvec_norm_L2sqr_neon;
     fvec_L2sqr_ny = fvec_L2sqr_ny_neon;
     fvec_inner_products_ny = fvec_inner_products_ny_neon;
@@ -322,6 +360,8 @@ fvec_hook(std::string& simd_type) {
 
     simd_type = "NEON";
     support_pq_fast_scan = true;
+
+#endif
 
 #endif
 
