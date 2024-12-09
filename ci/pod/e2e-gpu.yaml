@@ -14,7 +14,7 @@ spec:
       effect: NoSchedule
   containers:
   - name: main
-    image: milvusdb/knowhere-gpu-build:amd64-ubuntu22.04-20240914-814ecaa4
+    image: milvusdb/knowhere-gpu-build:amd64-ubuntu22.04-20241209-4e3a54dc
     tty: true
     args: ["cat"]
     resources:
