@@ -24,7 +24,7 @@ spec:
   #         topologyKey: "kubernetes.io/hostname"
   containers:
   - name: main
-    image: milvusdb/knowhere-cpu-build:amd64-ubuntu22.04-20240914-814ecaa4
+    image: milvusdb/knowhere-cpu-build:amd64-ubuntu22.04-20241209-4e3a54dc
     tty: true
     args: ["cat"]
     resources:
