@@ -343,6 +343,102 @@ fvec_L2sqr_batch_4_ref_bf16_patch(const float* x, const float* y0, const float* 
     dis3 = d3;
 }
 
+void
+fp16_vec_inner_product_batch_4_ref(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
+                                   const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0,
+                                   float& dis1, float& dis2, float& dis3) {
+    float d0 = 0;
+    float d1 = 0;
+    float d2 = 0;
+    float d3 = 0;
+    for (size_t i = 0; i < d; ++i) {
+        auto x_i = (float)x[i];
+        d0 += x_i * (float)y0[i];
+        d1 += x_i * (float)y1[i];
+        d2 += x_i * (float)y2[i];
+        d3 += x_i * (float)y3[i];
+    }
+
+    dis0 = d0;
+    dis1 = d1;
+    dis2 = d2;
+    dis3 = d3;
+}
+
+void
+bf16_vec_inner_product_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
+                                   const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
+                                   float& dis1, float& dis2, float& dis3) {
+    float d0 = 0;
+    float d1 = 0;
+    float d2 = 0;
+    float d3 = 0;
+    for (size_t i = 0; i < d; ++i) {
+        auto x_i = (float)x[i];
+        d0 += x_i * (float)y0[i];
+        d1 += x_i * (float)y1[i];
+        d2 += x_i * (float)y2[i];
+        d3 += x_i * (float)y3[i];
+    }
+
+    dis0 = d0;
+    dis1 = d1;
+    dis2 = d2;
+    dis3 = d3;
+}
+
+void
+fp16_vec_L2sqr_batch_4_ref(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
+                           const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0, float& dis1,
+                           float& dis2, float& dis3) {
+    float d0 = 0;
+    float d1 = 0;
+    float d2 = 0;
+    float d3 = 0;
+    for (size_t i = 0; i < d; ++i) {
+        auto x_i = (float)x[i];
+        const float q0 = x_i - (float)y0[i];
+        const float q1 = x_i - (float)y1[i];
+        const float q2 = x_i - (float)y2[i];
+        const float q3 = x_i - (float)y3[i];
+        d0 += q0 * q0;
+        d1 += q1 * q1;
+        d2 += q2 * q2;
+        d3 += q3 * q3;
+    }
+
+    dis0 = d0;
+    dis1 = d1;
+    dis2 = d2;
+    dis3 = d3;
+}
+
+void
+bf16_vec_L2sqr_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
+                           const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0, float& dis1,
+                           float& dis2, float& dis3) {
+    float d0 = 0;
+    float d1 = 0;
+    float d2 = 0;
+    float d3 = 0;
+    for (size_t i = 0; i < d; ++i) {
+        auto x_i = (float)x[i];
+        const float q0 = x_i - (float)y0[i];
+        const float q1 = x_i - (float)y1[i];
+        const float q2 = x_i - (float)y2[i];
+        const float q3 = x_i - (float)y3[i];
+        d0 += q0 * q0;
+        d1 += q1 * q1;
+        d2 += q2 * q2;
+        d3 += q3 * q3;
+    }
+
+    dis0 = d0;
+    dis1 = d1;
+    dis2 = d2;
+    dis3 = d3;
+}
+
 int32_t
 ivec_inner_product_ref(const int8_t* x, const int8_t* y, size_t d) {
     size_t i;

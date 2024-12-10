@@ -66,12 +66,32 @@ fvec_inner_product_batch_4_avx_bf16_patch(const float* x, const float* y0, const
                                           float& dis3);
 
 void
+fp16_vec_inner_product_batch_4_avx(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
+                                   const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0,
+                                   float& dis1, float& dis2, float& dis3);
+
+void
+bf16_vec_inner_product_batch_4_avx(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
+                                   const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
+                                   float& dis1, float& dis2, float& dis3);
+
+void
 fvec_L2sqr_batch_4_avx(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
                        const size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
 
 void
 fvec_L2sqr_batch_4_avx_bf16_patch(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
                                   const size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
+
+void
+fp16_vec_L2sqr_batch_4_avx(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
+                           const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0, float& dis1,
+                           float& dis2, float& dis3);
+
+void
+bf16_vec_L2sqr_batch_4_avx(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
+                           const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0, float& dis1,
+                           float& dis2, float& dis3);
 
 int32_t
 ivec_inner_product_avx(const int8_t* x, const int8_t* y, size_t d);
