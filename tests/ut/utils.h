@@ -239,6 +239,14 @@ GetRangeSearchRecall(const knowhere::DataSet& gt, const knowhere::DataSet& resul
     return (1 + precision) * recall / 2;
 }
 
+inline float
+GetRelativeLoss(float gt_res, float res) {
+    if (gt_res == 0.0 || std::abs(gt_res) < 0.000001) {
+        return gt_res;
+    }
+    return std::abs((gt_res - res) / gt_res);
+}
+
 inline bool
 CheckDistanceInScope(const knowhere::DataSet& result, int topk, float low_bound, float high_bound) {
     auto ids = result.GetDistance();

@@ -16,6 +16,7 @@
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/utils.h"
+#include "simd/hook.h"
 #include "utils.h"
 
 template <typename T>
@@ -86,6 +87,61 @@ check_range_search(const knowhere::DataSetPtr train_ds, const knowhere::DataSetP
         } else {
             REQUIRE(std::abs(dist[i] - 1.0) < 0.00001);
         }
+    }
+}
+
+template <typename T>
+void
+check_search_with_out_ids(const uint64_t nb, const uint64_t nq, const uint64_t dim, const int64_t k,
+                          const knowhere::MetricType metric, const knowhere::Json& conf) {
+    auto total_train_ds = knowhere::ConvertToDataTypeIfNeeded<T>(GenDataSet(nb, dim));
+    auto query_ds = knowhere::ConvertToDataTypeIfNeeded<T>(GenDataSet(nq, dim));
+    std::vector<int64_t> block_prefix = {0, 111, 333, 500, 555, 666, 888, 1000};
+
+    // generate filter id and data
+    auto filter_bits = GenerateBitsetWithRandomTbitsSet(nb, 100);
+    knowhere::BitsetView bitset(filter_bits.data(), nb);
+
+    std::vector<float> dis(nq * k, std::numeric_limits<float>::quiet_NaN());
+    std::vector<int64_t> ids(nq * k, -1);
+    if (metric == knowhere::metric::L2) {
+        faiss::float_maxheap_array_t heaps{nq, k, ids.data(), dis.data()};
+        heaps.heapify();
+        for (auto i = 0; i < block_prefix.size() - 1; i++) {
+            auto begin_id = block_prefix[i];
+            auto end_id = block_prefix[i + 1];
+            auto blk_rows = end_id - begin_id;
+            auto tensor = (const T*)total_train_ds->GetTensor() + dim * begin_id;
+            auto blk_train_ds = knowhere::GenDataSet(blk_rows, dim, tensor, begin_id);
+            auto partial_v = knowhere::BruteForce::Search<T>(blk_train_ds, query_ds, conf, bitset);
+            REQUIRE(partial_v.has_value());
+            auto partial_res = partial_v.value();
+            heaps.addn_with_ids(k, partial_res->GetDistance(), partial_res->GetIds(), k, 0, nq);
+        }
+        heaps.reorder();
+    } else {
+        faiss::float_minheap_array_t heaps{nq, k, ids.data(), dis.data()};
+        heaps.heapify();
+        for (auto i = 0; i < block_prefix.size() - 1; i++) {
+            auto begin_id = block_prefix[i];
+            auto end_id = block_prefix[i + 1];
+            auto blk_rows = end_id - begin_id;
+            auto tensor = (const T*)total_train_ds->GetTensor() + dim * begin_id;
+            auto blk_train_ds = knowhere::GenDataSet(blk_rows, dim, tensor, begin_id);
+            auto partial_v = knowhere::BruteForce::Search<T>(blk_train_ds, query_ds, conf, bitset);
+            REQUIRE(partial_v.has_value());
+            auto partial_res = partial_v.value();
+            heaps.addn_with_ids(k, partial_res->GetDistance(), partial_res->GetIds(), k, 0, nq);
+        }
+        heaps.reorder();
+    }
+
+    auto gt = knowhere::BruteForce::Search<T>(total_train_ds, query_ds, conf, bitset);
+    auto gt_ids = gt.value()->GetIds();
+    const float* gt_dis = gt.value()->GetDistance();
+    for (auto i = 0; i < nq * k; i++) {
+        REQUIRE(gt_ids[i] == ids[i]);
+        REQUIRE(GetRelativeLoss(gt_dis[i], dis[i]) < 0.00001);
     }
 }
 
@@ -204,42 +260,13 @@ TEST_CASE("Test Brute Force with input ids", "[float vector]") {
     const int64_t nq = 10;
     const int64_t dim = 128;
     const int64_t k = 10;
+    auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::IP, knowhere::metric::COSINE);
     const knowhere::Json conf = {
         {knowhere::meta::DIM, dim},
-        {knowhere::meta::METRIC_TYPE, "L2"},
+        {knowhere::meta::METRIC_TYPE, metric},
         {knowhere::meta::TOPK, k},
     };
-    std::vector<int64_t> block_prefix = {0, 111, 333, 500, 555, 666, 888, 1000};
-
-    // generate filter id and data
-    auto filter_bits = GenerateBitsetWithRandomTbitsSet(nb, 100);
-    knowhere::BitsetView bitset(filter_bits.data(), nb);
-
-    const auto total_train_ds = GenDataSet(nb, dim);
-    const auto query_ds = GenDataSet(nq, dim);
-
-    std::vector<float> dis(nq * k, std::numeric_limits<float>::quiet_NaN());
-    std::vector<int64_t> ids(nq * k, -1);
-    faiss::float_maxheap_array_t heaps{nq, k, ids.data(), dis.data()};
-    heaps.heapify();
-    for (auto i = 0; i < block_prefix.size() - 1; i++) {
-        auto begin_id = block_prefix[i];
-        auto end_id = block_prefix[i + 1];
-        auto blk_rows = end_id - begin_id;
-        auto tensor = (const float*)total_train_ds->GetTensor() + dim * begin_id;
-        auto blk_train_ds = knowhere::GenDataSet(blk_rows, dim, tensor, begin_id);
-        auto partial_v = knowhere::BruteForce::Search<knowhere::fp32>(blk_train_ds, query_ds, conf, bitset);
-        REQUIRE(partial_v.has_value());
-        auto partial_res = partial_v.value();
-        heaps.addn_with_ids(k, partial_res->GetDistance(), partial_res->GetIds(), k, 0, nq);
-    }
-    heaps.reorder();
-
-    auto gt = knowhere::BruteForce::Search<knowhere::fp32>(total_train_ds, query_ds, conf, bitset);
-    auto gt_ids = gt.value()->GetIds();
-    auto gt_dis = gt.value()->GetDistance();
-    for (auto i = 0; i < nq * k; i++) {
-        REQUIRE(gt_ids[i] == ids[i]);
-        REQUIRE(gt_dis[i] == dis[i]);
-    }
+    check_search_with_out_ids<knowhere::fp32>(nb, nq, dim, k, metric, conf);
+    check_search_with_out_ids<knowhere::fp16>(nb, nq, dim, k, metric, conf);
+    check_search_with_out_ids<knowhere::bf16>(nb, nq, dim, k, metric, conf);
 }
