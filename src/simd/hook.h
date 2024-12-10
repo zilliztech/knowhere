@@ -78,11 +78,27 @@ extern int (*fvec_madd_and_argmin)(size_t, const float*, float, const float*, fl
 extern void (*fvec_inner_product_batch_4)(const float*, const float*, const float*, const float*, const float*,
                                           const size_t, float&, float&, float&, float&);
 
+extern void (*fp16_vec_inner_product_batch_4)(const knowhere::fp16*, const knowhere::fp16*, const knowhere::fp16*,
+                                              const knowhere::fp16*, const knowhere::fp16*, const size_t, float&,
+                                              float&, float&, float&);
+
+extern void (*bf16_vec_inner_product_batch_4)(const knowhere::bf16*, const knowhere::bf16*, const knowhere::bf16*,
+                                              const knowhere::bf16*, const knowhere::bf16*, const size_t, float&,
+                                              float&, float&, float&);
+
 /// Special version of L2sqr that computes 4 distances
 /// between x and yi, which is performance oriented.
 /// todo aguzhva: bring non-ref versions
 extern void (*fvec_L2sqr_batch_4)(const float*, const float*, const float*, const float*, const float*, const size_t,
                                   float&, float&, float&, float&);
+
+extern void (*fp16_vec_L2sqr_batch_4)(const knowhere::fp16*, const knowhere::fp16*, const knowhere::fp16*,
+                                      const knowhere::fp16*, const knowhere::fp16*, const size_t, float&, float&,
+                                      float&, float&);
+
+extern void (*bf16_vec_L2sqr_batch_4)(const knowhere::bf16*, const knowhere::bf16*, const knowhere::bf16*,
+                                      const knowhere::bf16*, const knowhere::bf16*, const size_t, float&, float&,
+                                      float&, float&);
 
 extern int32_t (*ivec_inner_product)(const int8_t*, const int8_t*, size_t);
 

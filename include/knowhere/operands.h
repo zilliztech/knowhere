@@ -170,6 +170,8 @@ template <typename InType>
 using KnowhereDataTypeCheck = TypeMatch<InType, bin1, fp16, fp32, bf16>;
 template <typename InType>
 using KnowhereFloatTypeCheck = TypeMatch<InType, fp16, fp32, bf16>;
+template <typename InType>
+using KnowhereHalfPrecisionFloatPointTypeCheck = TypeMatch<InType, fp16, bf16>;
 
 template <typename T>
 struct MockData {
