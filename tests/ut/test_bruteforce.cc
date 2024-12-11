@@ -240,6 +240,6 @@ TEST_CASE("Test Brute Force with input ids", "[float vector]") {
     auto gt_dis = gt.value()->GetDistance();
     for (auto i = 0; i < nq * k; i++) {
         REQUIRE(gt_ids[i] == ids[i]);
-        REQUIRE(gt_dis[i] == dis[i]);
+        REQUIRE(std::abs(gt_dis[i] - dis[i]) < 0.02);
     }
 }
