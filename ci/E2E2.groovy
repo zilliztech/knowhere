@@ -31,6 +31,7 @@ pipeline {
                         // sh "conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local"
                         sh "cmake --version"
                         sh "mkdir build"
+                        sh "sleep 36000"
                         sh "cd build/ && conan install .. --build=missing -o with_diskann=True -s compiler.libcxx=libstdc++11 && conan build .."
                         sh "cd python && VERSION=${version} python3 setup.py bdist_wheel"
                         dir('python/dist'){
