@@ -197,16 +197,16 @@ TEST_CASE("Test distance") {
 
             faiss::fvec_inner_product_batch_4(x.get(), y0.get(), y1.get(), y2.get(), y3.get(), dim, dis0, dis1, dis2,
                                               dis3);
-            REQUIRE_THAT(dis0, Catch::Matchers::WithinRel(ref_ip_0, batch_tolerance));
-            REQUIRE_THAT(dis1, Catch::Matchers::WithinRel(ref_ip_1, batch_tolerance));
-            REQUIRE_THAT(dis2, Catch::Matchers::WithinRel(ref_ip_2, batch_tolerance));
-            REQUIRE_THAT(dis3, Catch::Matchers::WithinRel(ref_ip_3, batch_tolerance));
+            REQUIRE(GetRelativeLoss(dis0, ref_ip_0) < batch_tolerance);
+            REQUIRE(GetRelativeLoss(dis1, ref_ip_1) < batch_tolerance);
+            REQUIRE(GetRelativeLoss(dis2, ref_ip_2) < batch_tolerance);
+            REQUIRE(GetRelativeLoss(dis3, ref_ip_3) < batch_tolerance);
 
             faiss::fvec_L2sqr_batch_4(x.get(), y0.get(), y1.get(), y2.get(), y3.get(), dim, dis0, dis1, dis2, dis3);
-            REQUIRE_THAT(dis0, Catch::Matchers::WithinRel(ref_l2_0, batch_tolerance));
-            REQUIRE_THAT(dis1, Catch::Matchers::WithinRel(ref_l2_1, batch_tolerance));
-            REQUIRE_THAT(dis2, Catch::Matchers::WithinRel(ref_l2_2, batch_tolerance));
-            REQUIRE_THAT(dis3, Catch::Matchers::WithinRel(ref_l2_3, batch_tolerance));
+            REQUIRE(GetRelativeLoss(dis0, ref_l2_0) < batch_tolerance);
+            REQUIRE(GetRelativeLoss(dis1, ref_l2_1) < batch_tolerance);
+            REQUIRE(GetRelativeLoss(dis2, ref_l2_2) < batch_tolerance);
+            REQUIRE(GetRelativeLoss(dis3, ref_l2_3) < batch_tolerance);
         };
 
         tolerance = 0.02f;
@@ -219,5 +219,56 @@ TEST_CASE("Test distance") {
         batch_tolerance = 0.0002f;
         knowhere::KnowhereConfig::DisablePatchForComputeFP32AsBF16();
         run_test();
+    }
+
+    SECTION("test batch_4 distance calculation of bf16/fp16") {
+        auto fp16_ds = GenRandomVector<knowhere::fp16>(dim, 5, 100);
+        auto bf16_ds = GenRandomVector<knowhere::bf16>(dim, 5, 100);
+        std::vector<knowhere::fp16*> fp16_data{fp16_ds.get(), fp16_ds.get() + dim, fp16_ds.get() + 2 * dim,
+                                               fp16_ds.get() + 3 * dim, fp16_ds.get() + 4 * dim};
+        std::vector<knowhere::bf16*> bf16_data{bf16_ds.get(), bf16_ds.get() + dim, bf16_ds.get() + 2 * dim,
+                                               bf16_ds.get() + 3 * dim, bf16_ds.get() + 4 * dim};
+        std::array<knowhere::fp32, 4> fp16_l2_dis_gt, fp16_ip_dis_gt, bf16_l2_dis_gt, bf16_ip_dis_gt;
+
+        faiss::fp16_vec_inner_product_batch_4_ref(fp16_data[0], fp16_data[1], fp16_data[2], fp16_data[3], fp16_data[4],
+                                                  dim, fp16_ip_dis_gt[0], fp16_ip_dis_gt[1], fp16_ip_dis_gt[2],
+                                                  fp16_ip_dis_gt[3]);
+        faiss::fp16_vec_L2sqr_batch_4_ref(fp16_data[0], fp16_data[1], fp16_data[2], fp16_data[3], fp16_data[4], dim,
+                                          fp16_l2_dis_gt[0], fp16_l2_dis_gt[1], fp16_l2_dis_gt[2], fp16_l2_dis_gt[3]);
+        faiss::bf16_vec_inner_product_batch_4_ref(bf16_data[0], bf16_data[1], bf16_data[2], bf16_data[3], bf16_data[4],
+                                                  dim, bf16_ip_dis_gt[0], bf16_ip_dis_gt[1], bf16_ip_dis_gt[2],
+                                                  bf16_ip_dis_gt[3]);
+        faiss::bf16_vec_L2sqr_batch_4_ref(bf16_data[0], bf16_data[1], bf16_data[2], bf16_data[3], bf16_data[4], dim,
+                                          bf16_l2_dis_gt[0], bf16_l2_dis_gt[1], bf16_l2_dis_gt[2], bf16_l2_dis_gt[3]);
+
+        std::array<knowhere::fp32, 4> fp16_l2_dis, fp16_ip_dis, bf16_l2_dis, bf16_ip_dis;
+        faiss::fp16_vec_inner_product_batch_4(fp16_data[0], fp16_data[1], fp16_data[2], fp16_data[3], fp16_data[4], dim,
+                                              fp16_ip_dis[0], fp16_ip_dis[1], fp16_ip_dis[2], fp16_ip_dis[3]);
+        faiss::fp16_vec_L2sqr_batch_4(fp16_data[0], fp16_data[1], fp16_data[2], fp16_data[3], fp16_data[4], dim,
+                                      fp16_l2_dis[0], fp16_l2_dis[1], fp16_l2_dis[2], fp16_l2_dis[3]);
+        faiss::bf16_vec_inner_product_batch_4(bf16_data[0], bf16_data[1], bf16_data[2], bf16_data[3], bf16_data[4], dim,
+                                              bf16_ip_dis[0], bf16_ip_dis[1], bf16_ip_dis[2], bf16_ip_dis[3]);
+        faiss::bf16_vec_L2sqr_batch_4(bf16_data[0], bf16_data[1], bf16_data[2], bf16_data[3], bf16_data[4], dim,
+                                      bf16_l2_dis[0], bf16_l2_dis[1], bf16_l2_dis[2], bf16_l2_dis[3]);
+        const float tolerance = 0.00001f;
+        REQUIRE_THAT(fp16_ip_dis[0], Catch::Matchers::WithinRel(fp16_ip_dis_gt[0], tolerance));
+        REQUIRE_THAT(fp16_ip_dis[1], Catch::Matchers::WithinRel(fp16_ip_dis_gt[1], tolerance));
+        REQUIRE_THAT(fp16_ip_dis[2], Catch::Matchers::WithinRel(fp16_ip_dis_gt[2], tolerance));
+        REQUIRE_THAT(fp16_ip_dis[3], Catch::Matchers::WithinRel(fp16_ip_dis_gt[3], tolerance));
+
+        REQUIRE_THAT(fp16_l2_dis[0], Catch::Matchers::WithinRel(fp16_l2_dis_gt[0], tolerance));
+        REQUIRE_THAT(fp16_l2_dis[1], Catch::Matchers::WithinRel(fp16_l2_dis_gt[1], tolerance));
+        REQUIRE_THAT(fp16_l2_dis[2], Catch::Matchers::WithinRel(fp16_l2_dis_gt[2], tolerance));
+        REQUIRE_THAT(fp16_l2_dis[3], Catch::Matchers::WithinRel(fp16_l2_dis_gt[3], tolerance));
+
+        REQUIRE_THAT(bf16_ip_dis[0], Catch::Matchers::WithinRel(bf16_ip_dis_gt[0], tolerance));
+        REQUIRE_THAT(bf16_ip_dis[1], Catch::Matchers::WithinRel(bf16_ip_dis_gt[1], tolerance));
+        REQUIRE_THAT(bf16_ip_dis[2], Catch::Matchers::WithinRel(bf16_ip_dis_gt[2], tolerance));
+        REQUIRE_THAT(bf16_ip_dis[3], Catch::Matchers::WithinRel(bf16_ip_dis_gt[3], tolerance));
+
+        REQUIRE_THAT(bf16_l2_dis[0], Catch::Matchers::WithinRel(bf16_l2_dis_gt[0], tolerance));
+        REQUIRE_THAT(bf16_l2_dis[1], Catch::Matchers::WithinRel(bf16_l2_dis_gt[1], tolerance));
+        REQUIRE_THAT(bf16_l2_dis[2], Catch::Matchers::WithinRel(bf16_l2_dis_gt[2], tolerance));
+        REQUIRE_THAT(bf16_l2_dis[3], Catch::Matchers::WithinRel(bf16_l2_dis_gt[3], tolerance));
     }
 }
