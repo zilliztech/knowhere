@@ -61,18 +61,22 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     {IndexEnum::INDEX_HNSW, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_HNSW, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_HNSW, VecType::VECTOR_BFLOAT16},
+    {IndexEnum::INDEX_HNSW, VecType::VECTOR_INT8},
 
     {IndexEnum::INDEX_HNSW_SQ, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_HNSW_SQ, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_HNSW_SQ, VecType::VECTOR_BFLOAT16},
+    {IndexEnum::INDEX_HNSW_SQ, VecType::VECTOR_INT8},
 
     {IndexEnum::INDEX_HNSW_PQ, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_HNSW_PQ, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_HNSW_PQ, VecType::VECTOR_BFLOAT16},
+    {IndexEnum::INDEX_HNSW_PQ, VecType::VECTOR_INT8},
 
     {IndexEnum::INDEX_HNSW_PRQ, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_HNSW_PRQ, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_HNSW_PRQ, VecType::VECTOR_BFLOAT16},
+    {IndexEnum::INDEX_HNSW_PRQ, VecType::VECTOR_INT8},
 
     // diskann
     {IndexEnum::INDEX_DISKANN, VecType::VECTOR_FLOAT},

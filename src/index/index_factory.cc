@@ -137,6 +137,8 @@ template knowhere::expected<knowhere::Index<knowhere::IndexNode>>
 knowhere::IndexFactory::Create<knowhere::fp16>(const std::string&, const int32_t&, const Object&);
 template knowhere::expected<knowhere::Index<knowhere::IndexNode>>
 knowhere::IndexFactory::Create<knowhere::bf16>(const std::string&, const int32_t&, const Object&);
+template knowhere::expected<knowhere::Index<knowhere::IndexNode>>
+knowhere::IndexFactory::Create<knowhere::int8>(const std::string&, const int32_t&, const Object&);
 template const knowhere::IndexFactory&
 knowhere::IndexFactory::Register<knowhere::fp32>(
     const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>,
@@ -151,5 +153,9 @@ knowhere::IndexFactory::Register<knowhere::fp16>(
     const uint64_t);
 template const knowhere::IndexFactory&
 knowhere::IndexFactory::Register<knowhere::bf16>(
+    const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>,
+    const uint64_t);
+template const knowhere::IndexFactory&
+knowhere::IndexFactory::Register<knowhere::int8>(
     const std::string&, std::function<knowhere::Index<knowhere::IndexNode>(const int32_t&, const Object&)>,
     const uint64_t);

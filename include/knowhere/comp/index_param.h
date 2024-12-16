@@ -194,6 +194,7 @@ enum VecType {
     VECTOR_FLOAT16 = 102,
     VECTOR_BFLOAT16 = 103,
     VECTOR_SPARSE_FLOAT = 104,
+    VECTOR_INT8 = 105,
 };  // keep the same value as milvus proto define
 
 }  // namespace knowhere

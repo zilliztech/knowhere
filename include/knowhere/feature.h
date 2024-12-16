@@ -27,6 +27,8 @@ constexpr uint64_t FP16 = 1UL << 2;
 constexpr uint64_t BF16 = 1UL << 3;
 // vector datatype support : sparse_float32
 constexpr uint64_t SPARSE_FLOAT32 = 1UL << 4;
+// vector datatype support : int8
+constexpr uint64_t INT8 = 1UL << 5;
 
 // This flag indicates that there is no need to create any index structure (build stage can be skipped)
 constexpr uint64_t NO_TRAIN = 1UL << 16;
@@ -45,8 +47,8 @@ constexpr uint64_t DISK = 1UL << 21;
 
 constexpr uint64_t NONE = 0UL;
 
-constexpr uint64_t ALL_TYPE = BINARY | FLOAT32 | FP16 | BF16 | SPARSE_FLOAT32;
-constexpr uint64_t ALL_DENSE_TYPE = BINARY | FLOAT32 | FP16 | BF16;
+constexpr uint64_t ALL_TYPE = BINARY | FLOAT32 | FP16 | BF16 | SPARSE_FLOAT32 | INT8;
+constexpr uint64_t ALL_DENSE_TYPE = BINARY | FLOAT32 | FP16 | BF16 | INT8;
 constexpr uint64_t ALL_DENSE_FLOAT_TYPE = FLOAT32 | FP16 | BF16;
 
 constexpr uint64_t NO_TRAIN_INDEX = NO_TRAIN;

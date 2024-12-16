@@ -104,6 +104,8 @@ GetKey(const std::string& name) {
         return name + std::string("_bf16");
     } else if (std::is_same_v<DataType, bin1>) {
         return name + std::string("_bin1");
+    } else if (std::is_same_v<DataType, int8>) {
+        return name + std::string("_int8");
     }
 }
 
