@@ -1188,7 +1188,7 @@ namespace diskann {
 
     std::vector<Neighbor> full_retset;
     full_retset.reserve(4096);
-    auto vec_hash = knowhere::hash_vec(query_float, data_dim);
+    // auto vec_hash = knowhere::hash_vec(query_float, data_dim);
     _u32 best_medoid = 0;
     // for tuning, do not use cache
 

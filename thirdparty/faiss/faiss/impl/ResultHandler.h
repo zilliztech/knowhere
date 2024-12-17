@@ -576,7 +576,7 @@ struct RangeSearchBlockResultHandler : BlockResultHandler<C> {
         // it is a bit tricky to find the poper PartialResult structure
         // because the inner loop is on db not on queries.
 
-        if (pr < j0s.size() && j0 == j0s[pr]) {
+        if ((size_t)pr < j0s.size() && j0 == j0s[pr]) {
             pres = partial_results[pr];
             pr++;
         } else if (j0 == 0 && j0s.size() > 0) {

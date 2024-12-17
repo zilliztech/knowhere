@@ -1808,7 +1808,7 @@ TEST_CASE("hnswlib to FAISS HNSW for HNSW_FLAT", "Check search fallback") {
     const size_t DIM = 16;
 
     const int32_t NB = 256;
-    const int32_t NQ = 16;
+    // const int32_t NQ = 16;
     const int32_t TOPK = 16;
 
     // create base json config

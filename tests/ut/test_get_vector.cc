@@ -45,6 +45,7 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
         return json;
     };
 
+#ifdef KNOWHERE_WITH_CARDINAL
     auto bin_hnsw_gen = [base_bin_gen]() {
         knowhere::Json json = base_bin_gen();
         json[knowhere::indexparam::HNSW_M] = 128;
@@ -52,6 +53,7 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
         json[knowhere::indexparam::EF] = 64;
         return json;
     };
+#endif
 
     auto bin_flat_gen = base_bin_gen;
 
