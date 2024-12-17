@@ -84,7 +84,7 @@ IndexFactory::Register(const std::string& name, std::function<Index<IndexNode>(c
         feature_mapping_[name] = features;
     } else {
         // All data types should have the same features; please try to avoid breaking this rule.
-        feature_mapping_[name] = feature_mapping_[name] & features;
+        feature_mapping_[name] |= features;
     }
     return *this;
 }
