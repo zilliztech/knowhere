@@ -329,14 +329,21 @@ class IvfIndexNode : public IndexNode {
             ivf_search_params_.max_codes = 0;
 
             workspace_ = index_->getIteratorWorkspace(copied_query_.get(), &ivf_search_params_);
+
+            search_pool = ThreadPool::GetGlobalSearchThreadPool();
         }
 
      protected:
         void
         next_batch(std::function<void(const std::vector<DistId>&)> batch_handler) override {
-            index_->getIteratorNextBatch(workspace_.get(), res_.size());
-            batch_handler(workspace_->dists);
-            workspace_->dists.clear();
+            std::vector<folly::Future<folly::Unit>> futs;
+            futs.emplace_back(search_pool->push([&] {
+                ThreadPool::ScopedSearchOmpSetter setter(1);
+                index_->getIteratorNextBatch(workspace_.get(), res_.size());
+                batch_handler(workspace_->dists);
+                workspace_->dists.clear();
+            }));
+            WaitAllSuccess(futs);
         }
 
      private:
@@ -345,6 +352,7 @@ class IvfIndexNode : public IndexNode {
         std::unique_ptr<float[]> copied_query_ = nullptr;
         std::unique_ptr<BitsetViewIDSelector> bw_idselector_ = nullptr;
         faiss::IVFSearchParameters ivf_search_params_;
+        std::shared_ptr<ThreadPool> search_pool;
     };
 
     std::unique_ptr<IndexType> index_;
@@ -943,31 +951,23 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::un
         // TODO: if SCANN support Iterator, iterator_refine_ratio should be set.
         float iterator_refine_ratio = 0.0f;
         try {
-            std::vector<folly::Future<folly::Unit>> futs;
-            futs.reserve(rows);
             for (int i = 0; i < rows; ++i) {
-                futs.emplace_back(search_pool_->push([&, index = i] {
-                    auto cur_query = (const float*)data + index * dim;
-                    // if cosine, need normalize
-                    std::unique_ptr<float[]> copied_query = nullptr;
-                    if (is_cosine) {
-                        copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                    } else {
-                        copied_query = std::make_unique<float[]>(dim);
-                        std::copy_n(cur_query, dim, copied_query.get());
-                    }
+                auto cur_query = (const float*)data + i * dim;
+                // if cosine, need normalize
+                std::unique_ptr<float[]> copied_query = nullptr;
+                if (is_cosine) {
+                    copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
+                } else {
+                    copied_query = std::make_unique<float[]>(dim);
+                    std::copy_n(cur_query, dim, copied_query.get());
+                }
 
-                    // iterator only own the copied_query.
-                    auto it = std::make_shared<iterator>(index_.get(), std::move(copied_query), bitset, nprobe,
-                                                         larger_is_closer, iterator_refine_ratio);
-                    it->initialize();
-                    vec[index] = it;
-                }));
+                // iterator only own the copied_query.
+                auto it = std::make_shared<iterator>(index_.get(), std::move(copied_query), bitset, nprobe,
+                                                     larger_is_closer, iterator_refine_ratio);
+                it->initialize();
+                vec[i] = it;
             }
-
-            // wait for the completion
-            // initial search - scan at least (nprobe/nlist)% codes
-            WaitAllSuccess(futs);
 
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
