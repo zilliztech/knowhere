@@ -36,7 +36,11 @@ template class HnswIndexNode<knowhere::fp32, hnswlib::QuantType::None>;
 template class HnswIndexNode<knowhere::fp16, hnswlib::QuantType::None>;
 template class HnswIndexNode<knowhere::bf16, hnswlib::QuantType::None>;
 
-KNOWHERE_SIMPLE_REGISTER_DENSE_ALL_GLOBAL(HNSWLIB_DEPRECATED, HnswIndexNode,
-                                          knowhere::feature::MMAP | knowhere::feature::MV)
+#ifdef KNOWHERE_WITH_CARDINAL
+KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_DEPRECATED, HnswIndexNode,
+                                                knowhere::feature::MMAP | knowhere::feature::MV)
+#else
+KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW, HnswIndexNode, knowhere::feature::MMAP | knowhere::feature::MV)
+#endif
 
 }  // namespace knowhere

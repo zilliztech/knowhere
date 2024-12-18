@@ -2272,21 +2272,21 @@ class BaseFaissRegularIndexHNSWPRQNodeTemplate : public BaseFaissRegularIndexHNS
     }
 };
 
-// MV is only for compatibility
-#ifdef KNOWHERE_WITH_CARDINAL
-KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_DEPRECATED,
-                                                BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback,
-                                                knowhere::feature::MMAP | knowhere::feature::MV)
-#else
-KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW, BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback,
-                                                knowhere::feature::MMAP | knowhere::feature::MV)
-#endif
+//// MV is only for compatibility
+// #ifdef KNOWHERE_WITH_CARDINAL
+// KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_DEPRECATED,
+//                                                 BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback,
+//                                                 knowhere::feature::MMAP | knowhere::feature::MV)
+// #else
+// KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW, BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback,
+//                                                 knowhere::feature::MMAP | knowhere::feature::MV)
+// #endif
 
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_SQ, BaseFaissRegularIndexHNSWSQNodeTemplate,
-                                                knowhere::feature::MMAP)
+                                                knowhere::feature::NONE)
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTemplate,
-                                                knowhere::feature::MMAP)
+                                                knowhere::feature::NONE)
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNodeTemplate,
-                                                knowhere::feature::MMAP)
+                                                knowhere::feature::NONE)
 
 }  // namespace knowhere
