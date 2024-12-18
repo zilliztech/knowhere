@@ -37,7 +37,33 @@ struct SIMDResultHandlerToFloat;
  * For range search, only 10 and 12 are supported.
  * add 100 to the implem to force single-thread scanning (the coarse quantizer
  * may still use multiple threads).
+ *
+ * For search interator, only 10 are supported, one query, no qbs
  */
+
+struct IVFFastScanIteratorWorkspace : IVFIteratorWorkspace {
+    IVFFastScanIteratorWorkspace() = default;
+    IVFFastScanIteratorWorkspace(
+            const float* query_data,
+            const IVFSearchParameters* search_params)
+            : IVFIteratorWorkspace(query_data, search_params){};
+    IVFFastScanIteratorWorkspace(
+            std::unique_ptr<IVFIteratorWorkspace>&& base_workspace) {
+        this->query_data = base_workspace->query_data;
+        this->search_params = base_workspace->search_params;
+        this->nprobe = base_workspace->nprobe;
+        this->backup_count_threshold = base_workspace->backup_count_threshold;
+        this->coarse_dis = std::move(base_workspace->coarse_dis);
+        this->coarse_idx = std::move(base_workspace->coarse_idx);
+        this->coarse_list_sizes = std::move(base_workspace->coarse_list_sizes);
+        base_workspace = nullptr;
+        return;
+    }
+    size_t dim12;
+    AlignedTable<uint8_t> dis_tables;
+    AlignedTable<uint16_t> biases;
+    float normalizers[2];
+};
 
 struct IndexIVFFastScan : IndexIVF {
     // size of the kernel
@@ -147,6 +173,14 @@ struct IndexIVFFastScan : IndexIVF {
             const IVFSearchParameters* params = nullptr,
             IndexIVFStats* stats = nullptr) const override;
 
+    std::unique_ptr<IVFIteratorWorkspace> getIteratorWorkspace(
+            const float* query_data,
+            const IVFSearchParameters* ivfsearchParams) const override;
+
+    void getIteratorNextBatch(
+            IVFIteratorWorkspace* workspace,
+            size_t current_backup_count) const override;
+
     // range_search implementation was introduced in Knowhere,
     //   diff 73f03354568b4bf5a370df6f37e8d56dfc3a9c85
     void range_search(
@@ -242,6 +276,12 @@ struct IndexIVFFastScan : IndexIVF {
             size_t* nlist_out,
             const NormTableScaler* scaler,
             const IVFSearchParameters* params = nullptr) const;
+
+    // one query call, no qbs
+    void get_interator_next_batch_implem_10(
+            SIMDResultHandlerToFloat& handler,
+            IVFFastScanIteratorWorkspace* workspace,
+            size_t current_backup_count) const;
 
     // implem 14 is multithreaded internally across nprobes and queries
     void search_implem_14(

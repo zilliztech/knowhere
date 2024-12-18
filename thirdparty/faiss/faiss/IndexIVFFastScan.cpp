@@ -395,6 +395,59 @@ void IndexIVFFastScan::range_search(
     range_search_dispatch_implem(n, x, radius, *result, cq, nullptr, params);
 }
 
+std::unique_ptr<IVFIteratorWorkspace> IndexIVFFastScan::getIteratorWorkspace(
+        const float* query_data,
+        const IVFSearchParameters* ivfsearchParams) const {
+    auto base_workspace =
+            IndexIVF::getIteratorWorkspace(query_data, ivfsearchParams);
+
+    auto ivf_fast_scan_workspace =
+            std::make_unique<IVFFastScanIteratorWorkspace>(
+                    std::move(base_workspace));
+
+    ivf_fast_scan_workspace->dim12 = ksub * M2;
+    CoarseQuantized cq{
+            ivf_fast_scan_workspace->nprobe,
+            ivf_fast_scan_workspace->coarse_dis.get(),
+            ivf_fast_scan_workspace->coarse_idx.get()};
+    compute_LUT_uint8(
+            1,
+            ivf_fast_scan_workspace->query_data,
+            cq,
+            ivf_fast_scan_workspace->dis_tables,
+            ivf_fast_scan_workspace->biases,
+            ivf_fast_scan_workspace->normalizers);
+    return ivf_fast_scan_workspace;
+}
+
+void IndexIVFFastScan::getIteratorNextBatch(
+        IVFIteratorWorkspace* workspace,
+        size_t current_backup_count) const {
+    auto ivf_fast_scan_workspace =
+            dynamic_cast<IVFFastScanIteratorWorkspace*>(workspace);
+    ivf_fast_scan_workspace->dists.clear();
+
+    std::unique_ptr<SIMDResultHandlerToFloat> handler;
+    bool is_max = !is_similarity_metric(metric_type);
+    auto id_selector = ivf_fast_scan_workspace->search_params->sel
+            ? ivf_fast_scan_workspace->search_params->sel
+            : nullptr;
+    if (is_max) {
+        handler.reset(new SingleQueryResultCollectHandler<
+                      CMax<uint16_t, int64_t>,
+                      true>(
+                ivf_fast_scan_workspace->dists, ntotal, id_selector));
+    } else {
+        handler.reset(new SingleQueryResultCollectHandler<
+                      CMin<uint16_t, int64_t>,
+                      true>(
+                ivf_fast_scan_workspace->dists, ntotal, id_selector));
+    }
+
+    get_interator_next_batch_implem_10(
+            *handler.get(), ivf_fast_scan_workspace, current_backup_count);
+}
+
 namespace {
 
 template <class C>
@@ -1699,6 +1752,53 @@ void IndexIVFFastScan::reconstruct_orig_invlists() {
             orig_invlists->add_entry(list_no, id, code.data());
         }
     }
+}
+
+void IndexIVFFastScan::get_interator_next_batch_implem_10(
+        SIMDResultHandlerToFloat& handler,
+        IVFFastScanIteratorWorkspace* workspace,
+        size_t current_backup_count) const {
+    bool single_LUT = !lookup_table_is_3d();
+    handler.begin(skip & 16 ? nullptr : workspace->normalizers);
+    auto dim12 = workspace->dim12;
+    const uint8_t* LUT = nullptr;
+
+    if (single_LUT) {
+        LUT = workspace->dis_tables.get();
+    }
+    while (current_backup_count + workspace->dists.size() <
+                   workspace->backup_count_threshold &&
+           workspace->next_visit_coarse_list_idx < nlist) {
+        auto next_list_idx = workspace->next_visit_coarse_list_idx;
+        workspace->next_visit_coarse_list_idx++;
+        if (!single_LUT) {
+            LUT = workspace->dis_tables.get() + next_list_idx * dim12;
+        }
+        invlists->prefetch_lists(
+                workspace->coarse_idx.get() + next_list_idx, 1);
+        if (workspace->biases.get()) {
+            handler.dbias = workspace->biases.get() + next_list_idx;
+        }
+        idx_t list_no = workspace->coarse_idx[next_list_idx];
+        size_t ls = invlists->list_size(list_no);
+        if (list_no < 0 || ls == 0)
+            continue;
+
+        InvertedLists::ScopedCodes codes(invlists, list_no);
+        InvertedLists::ScopedIds ids(invlists, list_no);
+        handler.ntotal = ls;
+        handler.id_map = ids.get();
+        pq4_accumulate_loop(
+                1,
+                roundup(ls, bbs),
+                bbs,
+                M2,
+                codes.get(),
+                LUT,
+                handler,
+                nullptr);
+    }
+    handler.end();
 }
 
 // IVFFastScanStats IVFFastScan_stats;
