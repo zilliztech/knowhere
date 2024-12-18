@@ -64,7 +64,8 @@ const int IO_FLAG_PQ_SKIP_SDC_TABLE = 32;
 // load index data with vectors' norms
 const int IO_FLAG_WITH_NORM = 1 << 8;
 // try to memmap data (useful to load an ArrayInvertedLists as an
-// OnDiskInvertedLists)
+// OnDiskInvertedLists). 
+// also, handles codes for IndexFlatCodes-derived indices and HNSW.
 const int IO_FLAG_MMAP = IO_FLAG_SKIP_IVF_DATA | 0x646f0000;
 
 Index* read_index(const char* fname, int io_flags = 0);
