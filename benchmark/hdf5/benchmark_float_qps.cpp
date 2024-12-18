@@ -258,6 +258,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         }
     }
 
+#ifdef KNOWHERE_WITH_DISKANN
     template <typename T>
     void
     test_diskann(const knowhere::Json& cfg) {
@@ -309,6 +310,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
             printf("[%.3f s] Test '%s/%s' done\n\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
         }
     }
+#endif
 
  private:
     template <typename T>

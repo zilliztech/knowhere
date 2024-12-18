@@ -68,7 +68,7 @@ class NeighborSetPopList {
 
     inline bool
     insert(const Neighbor nbr, IteratorMinHeap* disqualified = nullptr) {
-        auto pos = std::upper_bound(&data_[0], &data_[0] + size_, nbr) - &data_[0];
+        size_t pos = std::upper_bound(&data_[0], &data_[0] + size_, nbr) - &data_[0];
         if (pos >= capacity_) {
             if (disqualified) {
                 disqualified->push(nbr);

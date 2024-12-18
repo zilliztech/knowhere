@@ -162,9 +162,9 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
             BitsetViewIDSelector bw_idselector(bitset, xb_id_offset);
             faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
 
-            auto cur_query = (const DataType*)xq + dim * index;
             switch (faiss_metric_type) {
                 case faiss::METRIC_L2: {
+                    [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
                     if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                         faiss::float_maxheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
                         faiss::knn_L2sqr(cur_query, (const float*)xb, dim, 1, nb, &buf, nullptr, id_selector);
@@ -178,6 +178,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
                     break;
                 }
                 case faiss::METRIC_INNER_PRODUCT: {
+                    [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
                     faiss::float_minheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
                     if (is_cosine) {
                         if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
@@ -320,9 +321,9 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
 
             BitsetViewIDSelector bw_idselector(bitset, xb_id_offset);
             faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
-            auto cur_query = (const DataType*)xq + dim * index;
             switch (faiss_metric_type) {
                 case faiss::METRIC_L2: {
+                    [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
                     if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                         faiss::float_maxheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
                         faiss::knn_L2sqr(cur_query, (const float*)xb, dim, 1, nb, &buf, nullptr, id_selector);
@@ -336,6 +337,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                     break;
                 }
                 case faiss::METRIC_INNER_PRODUCT: {
+                    [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
                     faiss::float_minheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
                     if (is_cosine) {
                         if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
@@ -523,9 +525,9 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
 
                 BitsetViewIDSelector bw_idselector(bitset, xb_id_offset);
                 faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
-                auto cur_query = (const DataType*)xq + dim * index;
                 switch (faiss_metric_type) {
                     case faiss::METRIC_L2: {
+                        [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
                         if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                             faiss::range_search_L2sqr(cur_query, (const float*)xb, dim, 1, nb, radius, &res,
                                                       id_selector);
@@ -539,6 +541,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                         break;
                     }
                     case faiss::METRIC_INNER_PRODUCT: {
+                        [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
                         is_ip = true;
                         if (is_cosine) {
                             if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
@@ -795,14 +798,13 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
             ThreadPool::ScopedSearchOmpSetter setter(1);
 
             BitsetViewIDSelector bw_idselector(bitset, xb_id_offset);
-            faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+            [[maybe_unused]] faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
             auto larger_is_closer = faiss::is_similarity_metric(faiss_metric_type) || is_cosine;
             auto max_dis = larger_is_closer ? std::numeric_limits<float>::lowest() : std::numeric_limits<float>::max();
             std::vector<DistId> distances_ids(nb, {-1, max_dis});
-            auto cur_query = (const DataType*)xq + dim * index;
+            [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
             switch (faiss_metric_type) {
                 case faiss::METRIC_L2: {
-                    auto cur_query = (const DataType*)xq + dim * index;
                     if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                         faiss::all_L2sqr(cur_query, (const float*)xb, dim, 1, nb, distances_ids, nullptr, id_selector);
                     } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {

@@ -105,9 +105,9 @@ check_search_with_out_ids(const uint64_t nb, const uint64_t nq, const uint64_t d
     std::vector<float> dis(nq * k, std::numeric_limits<float>::quiet_NaN());
     std::vector<int64_t> ids(nq * k, -1);
     if (metric == knowhere::metric::L2) {
-        faiss::float_maxheap_array_t heaps{nq, k, ids.data(), dis.data()};
+        faiss::float_maxheap_array_t heaps{nq, (size_t)k, ids.data(), dis.data()};
         heaps.heapify();
-        for (auto i = 0; i < block_prefix.size() - 1; i++) {
+        for (size_t i = 0; i < block_prefix.size() - 1; i++) {
             auto begin_id = block_prefix[i];
             auto end_id = block_prefix[i + 1];
             auto blk_rows = end_id - begin_id;
@@ -120,9 +120,9 @@ check_search_with_out_ids(const uint64_t nb, const uint64_t nq, const uint64_t d
         }
         heaps.reorder();
     } else {
-        faiss::float_minheap_array_t heaps{nq, k, ids.data(), dis.data()};
+        faiss::float_minheap_array_t heaps{nq, (size_t)k, ids.data(), dis.data()};
         heaps.heapify();
-        for (auto i = 0; i < block_prefix.size() - 1; i++) {
+        for (size_t i = 0; i < block_prefix.size() - 1; i++) {
             auto begin_id = block_prefix[i];
             auto end_id = block_prefix[i + 1];
             auto blk_rows = end_id - begin_id;
@@ -139,7 +139,7 @@ check_search_with_out_ids(const uint64_t nb, const uint64_t nq, const uint64_t d
     auto gt = knowhere::BruteForce::Search<T>(total_train_ds, query_ds, conf, bitset);
     auto gt_ids = gt.value()->GetIds();
     const float* gt_dis = gt.value()->GetDistance();
-    for (auto i = 0; i < nq * k; i++) {
+    for (size_t i = 0; i < nq * k; i++) {
         REQUIRE(gt_ids[i] == ids[i]);
         REQUIRE(GetRelativeLoss(gt_dis[i], dis[i]) < 0.00001);
     }
