@@ -1425,7 +1425,7 @@ Index* read_index(IOReader* f, int io_flags) {
 }
 
 Index* read_index(FILE* f, int io_flags) {
-    if ((io_flags & IO_FLAG_MMAP) == IO_FLAG_MMAP) {
+    if ((io_flags & IO_FLAG_MMAP_IFC) == IO_FLAG_MMAP_IFC) {
         // enable mmap-supporting IOReader
         auto owner = std::make_shared<MmappedFileMappingOwner>(f);
         MappedFileIOReader reader(owner);
@@ -1437,7 +1437,7 @@ Index* read_index(FILE* f, int io_flags) {
 }
 
 Index* read_index(const char* fname, int io_flags) {
-    if ((io_flags & IO_FLAG_MMAP) == IO_FLAG_MMAP) {
+    if ((io_flags & IO_FLAG_MMAP_IFC) == IO_FLAG_MMAP_IFC) {
         // enable mmap-supporting IOReader
         auto owner = std::make_shared<MmappedFileMappingOwner>(fname);
         MappedFileIOReader reader(owner);

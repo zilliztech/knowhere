@@ -65,8 +65,11 @@ const int IO_FLAG_PQ_SKIP_SDC_TABLE = 32;
 const int IO_FLAG_WITH_NORM = 1 << 8;
 // try to memmap data (useful to load an ArrayInvertedLists as an
 // OnDiskInvertedLists). 
-// also, handles codes for IndexFlatCodes-derived indices and HNSW.
 const int IO_FLAG_MMAP = IO_FLAG_SKIP_IVF_DATA | 0x646f0000;
+// mmap that handles codes for IndexFlatCodes-derived indices and HNSW.
+// this is a temporary solution, it is expected to be merged with IO_FLAG_MMAP
+//   after OnDiskInvertedLists get properly updated.
+const int IO_FLAG_MMAP_IFC = 1 << 9;
 
 Index* read_index(const char* fname, int io_flags = 0);
 Index* read_index(FILE* f, int io_flags = 0);
