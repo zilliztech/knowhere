@@ -123,6 +123,9 @@ class IndexFactory {
 // register vector index supporting binary data type
 #define KNOWHERE_SIMPLE_REGISTER_DENSE_BIN_GLOBAL(name, index_node, features, ...) \
     KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, bin1, (features | knowhere::feature::BINARY), ##__VA_ARGS__);
+// register vector index supporting int8 data type
+#define KNOWHERE_SIMPLE_REGISTER_DENSE_INT8_GLOBAL(name, index_node, features, ...) \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, int8, (features | knowhere::feature::INT8), ##__VA_ARGS__);
 
 // register vector index supporting ALL_DENSE_FLOAT_TYPE(float32, bf16, fp16) data types
 #define KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(name, index_node, features, ...)                          \

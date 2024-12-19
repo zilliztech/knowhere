@@ -58,6 +58,12 @@ checkBuildConfig(knowhere::IndexType indexType, knowhere::Json& json) {
                                                              json, msg) == knowhere::Status::success);
         CHECK(msg.empty());
     }
+    if (knowhere::IndexFactory::Instance().FeatureCheck(indexType, knowhere::feature::INT8)) {
+        CHECK(knowhere::IndexStaticFaced<knowhere::int8>::ConfigCheck(
+                  indexType, knowhere::Version::GetCurrentVersion().VersionNumber(), json, msg) ==
+              knowhere::Status::success);
+        CHECK(msg.empty());
+    }
 }
 
 TEST_CASE("Test config json parse", "[config]") {

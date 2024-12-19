@@ -47,6 +47,7 @@ fp32_to_bits(const float& f) {
 
 namespace knowhere {
 using fp32 = float;
+using int8 = int8_t;
 using bin1 = uint8_t;
 
 struct fp16 {
@@ -161,13 +162,16 @@ typeCheck(uint64_t features) {
     if constexpr (std::is_same_v<T, fp32>) {
         return (features & knowhere::feature::FLOAT32) || (features & knowhere::feature::SPARSE_FLOAT32);
     }
+    if constexpr (std::is_same_v<T, int8>) {
+        return features & knowhere::feature::INT8;
+    }
     return false;
 }
 
 template <typename InType, typename... Types>
 using TypeMatch = std::bool_constant<(... | std::is_same_v<InType, Types>)>;
 template <typename InType>
-using KnowhereDataTypeCheck = TypeMatch<InType, bin1, fp16, fp32, bf16>;
+using KnowhereDataTypeCheck = TypeMatch<InType, bin1, fp16, fp32, bf16, int8>;
 template <typename InType>
 using KnowhereFloatTypeCheck = TypeMatch<InType, fp16, fp32, bf16>;
 template <typename InType>
@@ -185,6 +189,11 @@ struct MockData<knowhere::fp16> {
 
 template <>
 struct MockData<knowhere::bf16> {
+    using type = knowhere::fp32;
+};
+
+template <>
+struct MockData<knowhere::int8> {
     using type = knowhere::fp32;
 };
 }  // namespace knowhere
