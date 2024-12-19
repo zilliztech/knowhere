@@ -341,7 +341,7 @@ class FlatIndexNode : public IndexNode {
 
         int io_flags = 0;
         if (flat_cfg.enable_mmap.value()) {
-            io_flags |= faiss::IO_FLAG_MMAP;
+            io_flags |= faiss::IO_FLAG_MMAP_IFC;
         }
 
         if constexpr (std::is_same<IndexType, faiss::IndexFlat>::value) {

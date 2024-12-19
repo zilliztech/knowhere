@@ -213,7 +213,7 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
 
         int io_flags = 0;
         if (cfg.enable_mmap.value()) {
-            io_flags |= faiss::IO_FLAG_MMAP;
+            io_flags |= faiss::IO_FLAG_MMAP_IFC;
         }
 
         try {
