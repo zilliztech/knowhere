@@ -311,7 +311,7 @@ class IvfIndexNode : public IndexNode {
     }
 
  private:
-    // only support IVFFlat,IVFFlatCC, IVFSQ and IVFSQCC
+    // only support IVFFlat,IVFFlatCC, IVFSQ, IVFSQCC and SCANN
     // iterator will own the copied_norm_query
     // TODO: iterator should copy and own query data.
     // TODO: If SCANN support Iterator, raw_distance() function should be override.
@@ -337,6 +337,18 @@ class IvfIndexNode : public IndexNode {
             index_->getIteratorNextBatch(workspace_.get(), res_.size());
             batch_handler(workspace_->dists);
             workspace_->dists.clear();
+        }
+
+        float
+        raw_distance(int64_t id) override {
+            if constexpr (std::is_same_v<IndexType, faiss::IndexScaNN>) {
+                if (refine_) {
+                    return workspace_->dis_refine->operator()(id);
+                } else {
+                    throw std::runtime_error("raw_distance should not be called if refine == false");
+                }
+            }
+            throw std::runtime_error("raw_distance not implemented");
         }
 
      private:
@@ -923,9 +935,10 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::un
     if constexpr (!std::is_same<faiss::IndexIVFFlatCC, IndexType>::value &&
                   !std::is_same<faiss::IndexIVFFlat, IndexType>::value &&
                   !std::is_same<faiss::IndexIVFScalarQuantizer, IndexType>::value &&
-                  !std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
+                  !std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value &&
+                  !std::is_same<faiss::IndexScaNN, IndexType>::value) {
         LOG_KNOWHERE_WARNING_ << "Current index_type: " << Type()
-                              << ", only IVFFlat, IVFFlatCC, IVF_SQ8 and IVF_SQ_CC support Iterator.";
+                              << ", only IVFFlat, IVFFlatCC, IVF_SQ8, IVF_SQ_CC and SCANN support Iterator.";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::not_implemented, "index not supported");
     } else {
         auto dim = dataset->GetDim();
@@ -942,6 +955,11 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::un
         // set iterator_refine_ratio = 0.0. If quantizer != flat, faiss:indexivf will not keep raw data;
         // TODO: if SCANN support Iterator, iterator_refine_ratio should be set.
         float iterator_refine_ratio = 0.0f;
+        if constexpr (std::is_same_v<IndexType, faiss::IndexScaNN>) {
+            if (HasRawData(ivf_cfg.metric_type.value())) {
+                iterator_refine_ratio = ivf_cfg.iterator_refine_ratio.value();
+            }
+        }
         try {
             std::vector<folly::Future<folly::Unit>> futs;
             futs.reserve(rows);

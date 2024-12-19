@@ -7,6 +7,8 @@
 #include <faiss/utils/Heap.h>
 #include <faiss/utils/distances.h>
 #include <faiss/utils/utils.h>
+#include <faiss/FaissHook.h>
+#include <faiss/IndexCosine.h>
 
 namespace faiss {
 
@@ -253,6 +255,39 @@ void IndexScaNN::range_search(
         }
     }
     result->lims[1] = current;
+}
+
+std::unique_ptr<IVFIteratorWorkspace> IndexScaNN::getIteratorWorkspace(
+        const float* query_data,
+        const IVFSearchParameters* ivfsearchParams) const {
+    auto base = dynamic_cast<const IndexIVFPQFastScan*>(base_index);
+    auto iterator = base->getIteratorWorkspace(query_data, ivfsearchParams);
+    if (refine_index) {
+        auto refine = dynamic_cast<const IndexFlat*>(refine_index);
+        if (base->is_cosine) {
+            iterator->dis_refine = std::unique_ptr<faiss::DistanceComputer>(
+                    new faiss::WithCosineNormDistanceComputer(
+                            base->norms.data(),
+                            base->d,
+                            std::unique_ptr<faiss::DistanceComputer>(
+                                    refine->get_distance_computer())));
+        } else {
+            iterator->dis_refine = std::unique_ptr<faiss::DistanceComputer>(
+                    refine->get_FlatCodesDistanceComputer());
+        }
+        iterator->dis_refine->set_query(query_data);
+    } else {
+        iterator->dis_refine = nullptr;
+    }
+
+    return iterator;
+}
+
+void IndexScaNN::getIteratorNextBatch(
+        IVFIteratorWorkspace* workspace,
+        size_t current_backup_count) const {
+    auto base = dynamic_cast<const IndexIVFPQFastScan*>(base_index);
+    return base->getIteratorNextBatch(workspace, current_backup_count);
 }
 
 } // namespace faiss

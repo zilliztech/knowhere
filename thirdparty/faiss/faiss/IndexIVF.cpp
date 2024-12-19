@@ -153,6 +153,18 @@ idx_t Level1Quantizer::decode_listno(const uint8_t* code) const {
 }
 
 /*****************************************
+ * IVFIteratorWorkspace implementation
+ ******************************************/
+IVFIteratorWorkspace::IVFIteratorWorkspace(
+        const float* query_data,
+        const IVFSearchParameters* search_params)
+        : query_data(query_data),
+          search_params(search_params),
+          dis_refine(nullptr) {}
+
+IVFIteratorWorkspace::~IVFIteratorWorkspace() {}
+
+/*****************************************
  * IndexIVF implementation
  ******************************************/
 
