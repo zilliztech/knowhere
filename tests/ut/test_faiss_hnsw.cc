@@ -31,6 +31,7 @@
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/dataset.h"
+#include "knowhere/index/index_factory.h"
 #include "utils.h"
 
 namespace {
@@ -242,6 +243,12 @@ get_index_name(const std::string& ann_test_name, const std::string& index_type, 
 
 //
 const std::string ann_test_name_ = "faiss_hnsw";
+
+bool
+index_support_int8(const knowhere::Json& conf) {
+    const std::string index_type = conf[knowhere::meta::INDEX_TYPE].get<std::string>();
+    return knowhere::IndexFactory::Instance().FeatureCheck(index_type, knowhere::feature::INT8);
+}
 
 //
 template <typename T>
@@ -537,14 +544,16 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
                         test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
                                                   bitset_view);
+                        if (index_support_int8(conf)) {
+                            // int8 candidate
+                            printf(
+                                "\nProcessing HNSW,Flat int8 for %s distance, dim=%d, nrows=%d, %d%% points filtered "
+                                "out\n",
+                                DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
 
-                        // int8 candidate
-                        printf(
-                            "\nProcessing HNSW,Flat int8 for %s distance, dim=%d, nrows=%d, %d%% points filtered out\n",
-                            DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
-
-                        test_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                  bitset_view);
+                            test_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
+                                                      bitset_view);
+                        }
                     }
                 }
             }
@@ -635,17 +644,18 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
                             test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
                                                       bitset_view);
+                            if (index_support_int8(conf)) {
+                                // int8 candidate
+                                printf(
+                                    "\nProcessing HNSW,SQ(%s) int8 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                    "filtered "
+                                    "out\n",
+                                    sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
 
-                            // int8 candidate
-                            printf(
-                                "\nProcessing HNSW,SQ(%s) int8 for %s distance, dim=%d, nrows=%d, %d%% points filtered "
-                                "out\n",
-                                sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb,
-                                int(bitset_rate * 100));
-
-                            test_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view);
-
+                                test_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(), params,
+                                                          conf, bitset_view);
+                            }
                             // test refines for FP32
                             {
                                 const auto& allowed_refs = SQ_ALLOWED_REFINES_FP32[sq_type];
@@ -818,17 +828,17 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
                             test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
                                                       bitset_view);
+                            if (index_support_int8(conf)) {
+                                // test int8 candidate
+                                printf(
+                                    "\nProcessing HNSW,PQ%dx%d int8 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                    "filtered out\n",
+                                    pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
 
-                            // test int8 candidate
-                            printf(
-                                "\nProcessing HNSW,PQ%dx%d int8 for %s distance, dim=%d, nrows=%d, %d%% points "
-                                "filtered out\n",
-                                pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
-                                int(bitset_rate * 100));
-
-                            test_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view);
-
+                                test_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(), params,
+                                                          conf, bitset_view);
+                            }
                             // test refines for fp32
                             for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
                                  allowed_ref_idx++) {
@@ -995,16 +1005,17 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                             test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
                                                       bitset_view);
 
-                            // test int8 candidate
-                            printf(
-                                "\nProcessing HNSW,PRQ%dx%dx%d int8 for %s distance, dim=%d, nrows=%d, %d%% points "
-                                "filtered out\n",
-                                prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
-                                int(bitset_rate * 100));
+                            if (index_support_int8(conf)) {
+                                // test int8 candidate
+                                printf(
+                                    "\nProcessing HNSW,PRQ%dx%dx%d int8 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                    "filtered out\n",
+                                    prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
 
-                            test_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view);
-
+                                test_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(), params,
+                                                          conf, bitset_view);
+                            }
                             // test fp32 refines
                             for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
                                  allowed_ref_idx++) {
@@ -1272,16 +1283,17 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
                             test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params,
                                                             conf, bitset_view);
+                            if (index_support_int8(conf)) {
+                                // int8 candidate
+                                printf(
+                                    "\nProcessing HNSW,Flat int8 for %s distance, dim=%d, nrows=%d, radius=%f, "
+                                    "range_filter=%f, %d%% points filtered out\n",
+                                    DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
+                                    int(bitset_rate * 100));
 
-                            // int8 candidate
-                            printf(
-                                "\nProcessing HNSW,Flat int8 for %s distance, dim=%d, nrows=%d, radius=%f, "
-                                "range_filter=%f, %d%% points filtered out\n",
-                                DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
-                                int(bitset_rate * 100));
-
-                            test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(), params,
-                                                            conf, bitset_view);
+                                test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                                params, conf, bitset_view);
+                            }
                         }
                     }
                 }
@@ -1387,15 +1399,17 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                 test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
                                                                 params, conf, bitset_view);
 
-                                // int8 candidate
-                                printf(
-                                    "\nProcessing HNSW,SQ(%s) int8 for %s distance, dim=%d, nrows=%d, radius=%f, "
-                                    "range_filter=%f, %d%% points filtered out\n",
-                                    sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
-                                    range_filter, int(bitset_rate * 100));
+                                if (index_support_int8(conf)) {
+                                    // int8 candidate
+                                    printf(
+                                        "\nProcessing HNSW,SQ(%s) int8 for %s distance, dim=%d, nrows=%d, radius=%f, "
+                                        "range_filter=%f, %d%% points filtered out\n",
+                                        sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
+                                        range_filter, int(bitset_rate * 100));
 
-                                test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view);
+                                    test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                                    params, conf, bitset_view);
+                                }
 
                                 // test refines for FP32
                                 {
@@ -1587,15 +1601,17 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                 test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
                                                                 params, conf, bitset_view);
 
-                                // test int8 candidate
-                                printf(
-                                    "\nProcessing HNSW,PQ%dx%d int8 for %s distance, dim=%d, nrows=%d, radius=%f, "
-                                    "range_filter=%f, %d%% points filtered out\n",
-                                    pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
-                                    range_filter, int(bitset_rate * 100));
+                                if (index_support_int8(conf)) {
+                                    // test int8 candidate
+                                    printf(
+                                        "\nProcessing HNSW,PQ%dx%d int8 for %s distance, dim=%d, nrows=%d, radius=%f, "
+                                        "range_filter=%f, %d%% points filtered out\n",
+                                        pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
+                                        range_filter, int(bitset_rate * 100));
 
-                                test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view);
+                                    test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                                    params, conf, bitset_view);
+                                }
 
                                 // test refines for fp32
                                 for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
@@ -1781,15 +1797,18 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                 test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
                                                                 params, conf, bitset_view);
 
-                                // test int8 candidate
-                                printf(
-                                    "\nProcessing HNSW,PRQ%dx%dx%d int8 for %s distance, dim=%d, nrows=%d, radius=%f, "
-                                    "range_filter=%f, %d%% points filtered out\n",
-                                    prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
-                                    radius, range_filter, int(bitset_rate * 100));
+                                if (index_support_int8(conf)) {
+                                    // test int8 candidate
+                                    printf(
+                                        "\nProcessing HNSW,PRQ%dx%dx%d int8 for %s distance, dim=%d, nrows=%d, "
+                                        "radius=%f, "
+                                        "range_filter=%f, %d%% points filtered out\n",
+                                        prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim,
+                                        nb, radius, range_filter, int(bitset_rate * 100));
 
-                                test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view);
+                                    test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                                    params, conf, bitset_view);
+                                }
 
                                 // test fp32 refines
                                 for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
