@@ -103,12 +103,12 @@ class IndexFactory {
 // Please review carefully and select with caution
 
 // register vector index supporting ALL_TYPE(binary, bf16, fp16, fp32, sparse_float32) data types
-#define KNOWHERE_SIMPLE_REGISTER_ALL_GLOBAL(name, index_node, features, ...)                                         \
-    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, bin1, (features | knowhere::feature::BINARY), ##__VA_ARGS__);  \
-    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, bf16, (features | knowhere::feature::BF16), ##__VA_ARGS__);    \
-    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp16, (features | knowhere::feature::FP16), ##__VA_ARGS__);    \
-    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp32, (features | knowhere::feature::FLOAT32), ##__VA_ARGS__); \
-    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp32, (features | knowhere::feature::SPARSE_FLOAT32),          \
+#define KNOWHERE_SIMPLE_REGISTER_ALL_GLOBAL(name, index_node, features, ...)                                        \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, bin1, (features | knowhere::feature::BINARY), ##__VA_ARGS__); \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, bf16, (features | knowhere::feature::BF16), ##__VA_ARGS__);   \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp16, (features | knowhere::feature::FP16), ##__VA_ARGS__);   \
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp32,                                                         \
+                                    (features | knowhere::feature::FLOAT32 | knowhere::feature::SPARSE_FLOAT32),    \
                                     ##__VA_ARGS__);
 
 // register vector index supporting sparse_float32
