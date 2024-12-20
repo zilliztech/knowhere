@@ -434,6 +434,87 @@ struct HeapHandler : ResultHandlerCompare<C, with_id_map> {
     }
 };
 
+/** Structure that collects results, and return all */
+
+/** Structure that collects results in a min- or max-heap */
+template <class C, bool with_id_map = false>
+struct SingleQueryResultCollectHandler : ResultHandlerCompare<C, with_id_map> {
+    using T = typename C::T;
+    using TI = typename C::TI;
+    using RHC = ResultHandlerCompare<C, with_id_map>;
+    using RHC::normalizers;
+
+    std::vector<uint16_t> idis;
+    std::vector<TI> iids;
+    std::vector<knowhere::DistId>& collect;
+    const int q_id = 0;
+
+    SingleQueryResultCollectHandler(
+            std::vector<knowhere::DistId>& res,
+            size_t ntotal,
+            const IDSelector* sel_in)
+            : RHC(1, ntotal, sel_in), collect(res) {
+        this->q_map = &q_id;
+    }
+
+    void begin(const float* norms) override {
+        normalizers = norms;
+    }
+
+    void handle(size_t q, size_t b, simd16uint16 d0, simd16uint16 d1) final {
+        if (this->disable) {
+            return;
+        }
+
+        this->adjust_with_origin(q, d0, d1);
+
+        uint32_t lt_mask = this->get_lt_mask(C::neutral(), b, d0, d1);
+
+        if (!lt_mask) {
+            return;
+        }
+
+        ALIGNED(32) uint16_t d32tab[32];
+        d0.store(d32tab);
+        d1.store(d32tab + 16);
+
+        if (this->sel != nullptr) {
+            while (lt_mask) {
+                // find first non-zero
+                int j = __builtin_ctz(lt_mask);
+                auto real_idx = this->adjust_id(b, j);
+                lt_mask -= 1 << j;
+                if (this->sel->is_member(real_idx)) {
+                    T dis = d32tab[j];
+                    collect.emplace_back(real_idx, dis);
+                    this->in_range_num += 1;
+                }
+            }
+        }
+        else {
+            while (lt_mask) {
+                // find first non-zero
+                int j = __builtin_ctz(lt_mask);
+                lt_mask -= 1 << j;
+                T dis = d32tab[j];
+                int64_t idx = this->adjust_id(b, j);
+                collect.emplace_back(idx, dis);
+                this->in_range_num += 1;
+                
+            }
+        }
+    }
+
+    void end() override {
+        if (normalizers) {
+            float one_a = 1 / normalizers[0];
+            float b = normalizers[1];
+            for (auto i = 0; i < collect.size(); i++) {
+                collect[i].val = collect[i].val * one_a + b;
+            }
+        }
+    }
+};
 /** Simple top-N implementation using a reservoir.
  *
  * Results are stored when they are below the threshold until the capacity is

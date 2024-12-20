@@ -93,12 +93,13 @@ struct SearchParametersIVF : SearchParameters {
 
 // the new convention puts the index type after SearchParameters
 using IVFSearchParameters = SearchParametersIVF;
-
+struct DistanceComputer;
 struct IVFIteratorWorkspace {
+    IVFIteratorWorkspace() = default;
     IVFIteratorWorkspace(
             const float* query_data,
-            const IVFSearchParameters* search_params)
-            : query_data(query_data), search_params(search_params) {}
+            const IVFSearchParameters* search_params);
+    virtual ~IVFIteratorWorkspace();
 
     const float* query_data = nullptr; // single query
     const IVFSearchParameters* search_params = nullptr;
@@ -112,6 +113,7 @@ struct IVFIteratorWorkspace {
             nullptr; // backup coarse centroids ids (heap)
     std::unique_ptr<size_t[]> coarse_list_sizes =
             nullptr; // snapshot of the list_size
+    std::unique_ptr<DistanceComputer> dis_refine;
 };
 
 struct InvertedListScanner;
@@ -245,7 +247,7 @@ struct IndexIVF : Index, IndexIVFInterface {
             size_t code_size,
             MetricType metric = METRIC_L2);
 
-    std::unique_ptr<IVFIteratorWorkspace> getIteratorWorkspace(
+    virtual std::unique_ptr<IVFIteratorWorkspace> getIteratorWorkspace(
             const float* query_data,
             const IVFSearchParameters* ivfsearchParams) const;
 
@@ -255,7 +257,7 @@ struct IndexIVF : Index, IndexIVFInterface {
     //   iterator `Next()` operation.
     //   When there are not enough nodes in the heap, iterator will scan the
     //   next coarse list.
-    void getIteratorNextBatch(
+    virtual void getIteratorNextBatch(
             IVFIteratorWorkspace* workspace,
             size_t current_backup_count) const;
 
