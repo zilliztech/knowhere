@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "benchmark_knowhere.h"
+#include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/comp/local_file_manager.h"
@@ -23,10 +24,40 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
  public:
     template <typename T>
     void
+    test_brute_force(const knowhere::Json& cfg) {
+        auto conf = cfg;
+        std::string data_type_str = get_data_type_name<T>();
+
+        auto base_ds_ptr = knowhere::GenDataSet(nb_, dim_, xb_);
+        auto base = knowhere::ConvertToDataTypeIfNeeded<T>(base_ds_ptr);
+
+        printf("\n[%0.3f s] %s | %s(%s) \n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
+               data_type_str.c_str());
+        printf("================================================================================\n");
+        for (auto nq : NQs_) {
+            auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
+            auto query = knowhere::ConvertToDataTypeIfNeeded<T>(ds_ptr);
+            for (auto k : TOPKs_) {
+                conf[knowhere::meta::TOPK] = k;
+                CALC_TIME_SPAN(auto result = knowhere::BruteForce::Search<T>(base, query, conf, nullptr));
+                auto ids = result.value()->GetIds();
+                float recall = CalcRecall(ids, nq, k);
+                printf("  nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nq, k, TDIFF_, recall);
+                std::fflush(stdout);
+            }
+        }
+        printf("================================================================================\n");
+        printf("[%.3f s] Test '%s/%s' done\n\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
+    }
+
+    template <typename T>
+    void
     test_idmap(const knowhere::Json& cfg) {
         auto conf = cfg;
 
-        printf("\n[%0.3f s] %s | %s \n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
+        std::string data_type_str = get_data_type_name<T>();
+        printf("\n[%0.3f s] %s | %s(%s) \n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
+               data_type_str.c_str());
         printf("================================================================================\n");
         for (auto nq : NQs_) {
             auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
@@ -50,8 +81,9 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
         auto conf = cfg;
         auto nlist = conf[knowhere::indexparam::NLIST].get<int64_t>();
 
-        printf("\n[%0.3f s] %s | %s | nlist=%ld\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
-               nlist);
+        std::string data_type_str = get_data_type_name<T>();
+        printf("\n[%0.3f s] %s | %s(%s) | nlist=%ld\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
+               data_type_str.c_str(), nlist);
         printf("================================================================================\n");
         for (auto nprobe : NPROBEs_) {
             conf[knowhere::indexparam::NPROBE] = nprobe;
@@ -80,8 +112,9 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
         auto M = conf[knowhere::indexparam::HNSW_M].get<int64_t>();
         auto efConstruction = conf[knowhere::indexparam::EFCONSTRUCTION].get<int64_t>();
 
-        printf("\n[%0.3f s] %s | %s | M=%ld | efConstruction=%ld\n", get_time_diff(), ann_test_name_.c_str(),
-               index_type_.c_str(), M, efConstruction);
+        std::string data_type_str = get_data_type_name<T>();
+        printf("\n[%0.3f s] %s | %s(%s) | M=%ld | efConstruction=%ld\n", get_time_diff(), ann_test_name_.c_str(),
+               index_type_.c_str(), data_type_str.c_str(), M, efConstruction);
         printf("================================================================================\n");
         for (auto ef : EFs_) {
             conf[knowhere::indexparam::EF] = ef;
@@ -108,7 +141,9 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
     test_diskann(const knowhere::Json& cfg) {
         auto conf = cfg;
 
-        printf("\n[%0.3f s] %s | %s \n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
+        std::string data_type_str = get_data_type_name<T>();
+        printf("\n[%0.3f s] %s | %s(%s) \n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
+               data_type_str.c_str());
         printf("================================================================================\n");
         for (auto search_list_size : SEARCH_LISTs_) {
             conf["search_list_size"] = search_list_size;
@@ -137,7 +172,9 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
     test_raft_cagra(const knowhere::Json& cfg) {
         auto conf = cfg;
 
-        printf("\n[%0.3f s] %s | %s \n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
+        std::string data_type_str = get_data_type_name<T>();
+        printf("\n[%0.3f s] %s | %s(%s) \n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
+               data_type_str.c_str());
         printf("================================================================================\n");
         for (auto itopk_size : ITOPK_SIZEs_) {
             conf[knowhere::indexparam::ITOPK_SIZE] = itopk_size;
@@ -208,6 +245,15 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
     const std::vector<int32_t> GRAPH_DEGREEs_ = {8, 16, 32};
     const std::vector<int32_t> ITOPK_SIZEs_ = {128, 192, 256};
 };
+
+TEST_F(Benchmark_float, TEST_BRUTE_FORCE) {
+    index_type_ = "BruteForce";
+
+    knowhere::Json conf = cfg_;
+    test_brute_force<knowhere::fp32>(conf);
+    test_brute_force<knowhere::fp16>(conf);
+    test_brute_force<knowhere::bf16>(conf);
+}
 
 TEST_F(Benchmark_float, TEST_IDMAP) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IDMAP;

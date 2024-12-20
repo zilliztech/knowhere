@@ -26,8 +26,9 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
         auto conf = cfg;
         auto radius = conf.at(knowhere::meta::RADIUS).get<float>();
 
-        printf("\n[%0.3f s] %s | %s, radius=%.3f\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
-               radius);
+        std::string data_type_str = get_data_type_name<T>();
+        printf("\n[%0.3f s] %s | %s(%s) | radius=%.3f\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
+               data_type_str.c_str(), radius);
         printf("================================================================================\n");
         for (auto nq : NQs_) {
             auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
@@ -54,8 +55,9 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
         auto nlist = conf[knowhere::indexparam::NLIST].get<int64_t>();
         auto radius = conf.at(knowhere::meta::RADIUS).get<float>();
 
-        printf("\n[%0.3f s] %s | %s | nlist=%ld, radius=%.3f\n", get_time_diff(), ann_test_name_.c_str(),
-               index_type_.c_str(), nlist, radius);
+        std::string data_type_str = get_data_type_name<T>();
+        printf("\n[%0.3f s] %s | %s(%s) | nlist=%ld, radius=%.3f\n", get_time_diff(), ann_test_name_.c_str(),
+               index_type_.c_str(), data_type_str.c_str(), nlist, radius);
         printf("================================================================================\n");
         for (auto nprobe : NPROBEs_) {
             conf[knowhere::indexparam::NPROBE] = nprobe;
@@ -84,8 +86,9 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
         auto efc = conf[knowhere::indexparam::EFCONSTRUCTION].get<int64_t>();
         auto radius = conf.at(knowhere::meta::RADIUS).get<float>();
 
-        printf("\n[%0.3f s] %s | %s | M=%ld | efc=%ld, radius=%.3f\n", get_time_diff(), ann_test_name_.c_str(),
-               index_type_.c_str(), M, efc, radius);
+        std::string data_type_str = get_data_type_name<T>();
+        printf("\n[%0.3f s] %s | %s(%s) | M=%ld | efc=%ld, radius=%.3f\n", get_time_diff(), ann_test_name_.c_str(),
+               index_type_.c_str(), data_type_str.c_str(), M, efc, radius);
         printf("================================================================================\n");
         for (auto ef : EFs_) {
             conf[knowhere::indexparam::EF] = ef;
@@ -113,8 +116,9 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
         auto conf = cfg;
         auto radius = conf.at(knowhere::meta::RADIUS).get<float>();
 
-        printf("\n[%0.3f s] %s | %s, radius=%.3f\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
-               radius);
+        std::string data_type_str = get_data_type_name<T>();
+        printf("\n[%0.3f s] %s | %s(%s) | radius=%.3f\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
+               data_type_str.c_str(), radius);
         printf("================================================================================\n");
         for (auto search_list_size : SEARCH_LISTs_) {
             conf["search_list_size"] = search_list_size;
