@@ -34,7 +34,9 @@ class Benchmark_float_bitset : public Benchmark_knowhere, public ::testing::Test
     test_ivf(const knowhere::Json& cfg) {
         auto conf = cfg;
 
-        printf("\n[%0.3f s] %s | %s \n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
+        std::string data_type_str = get_data_type_name<T>();
+        printf("\n[%0.3f s] %s | %s(%s) \n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
+               data_type_str.c_str());
         printf("================================================================================\n");
         for (auto per : PERCENTs_) {
             auto bitset_data = GenRandomBitset(nb_, nb_ * per / 100);
@@ -65,7 +67,9 @@ class Benchmark_float_bitset : public Benchmark_knowhere, public ::testing::Test
     test_hnsw(const knowhere::Json& cfg) {
         auto conf = cfg;
 
-        printf("\n[%0.3f s] %s | %s \n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
+        std::string data_type_str = get_data_type_name<T>();
+        printf("\n[%0.3f s] %s | %s(%s) \n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
+               data_type_str.c_str());
         printf("================================================================================\n");
         for (auto per : PERCENTs_) {
             auto bitset_data = GenRandomBitset(nb_, nb_ * per / 100);
@@ -97,7 +101,9 @@ class Benchmark_float_bitset : public Benchmark_knowhere, public ::testing::Test
     test_diskann(const knowhere::Json& cfg) {
         auto conf = cfg;
 
-        printf("\n[%0.3f s] %s | %s \n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
+        std::string data_type_str = get_data_type_name<T>();
+        printf("\n[%0.3f s] %s | %s(%s) \n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
+               data_type_str.c_str());
         printf("================================================================================\n");
         for (auto per : PERCENTs_) {
             auto bitset_data = GenRandomBitset(nb_, nb_ * per / 100);

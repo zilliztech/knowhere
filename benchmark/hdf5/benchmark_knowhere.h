@@ -95,6 +95,22 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
 
     template <typename T>
     static std::string
+    get_data_type_name() {
+        if constexpr (std::is_same_v<T, knowhere::fp32>) {
+            return "FP32";
+        } else if constexpr (std::is_same_v<T, knowhere::fp16>) {
+            return "FP16";
+        } else if constexpr (std::is_same_v<T, knowhere::bf16>) {
+            return "BF16";
+        } else if constexpr (std::is_same_v<T, knowhere::int8>) {
+            return "INT8";
+        } else {
+            return "";
+        }
+    }
+
+    template <typename T>
+    static std::string
     get_index_name(const std::string& ann_test_name, const std::string& index_type,
                    const std::vector<int32_t>& params) {
         std::string params_str = "";

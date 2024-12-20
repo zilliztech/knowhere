@@ -32,8 +32,9 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         float expected_recall = 1.0f;
         conf[knowhere::meta::TOPK] = topk_;
 
-        printf("\n[%0.3f s] %s | %s | k=%d, R@=%.4f\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
-               topk_, expected_recall);
+        std::string data_type_str = get_data_type_name<T>();
+        printf("\n[%0.3f s] %s | %s(%s) | k=%d, R@=%.4f\n", get_time_diff(), ann_test_name_.c_str(),
+               index_type_.c_str(), data_type_str.c_str(), topk_, expected_recall);
         printf("================================================================================\n");
         for (auto thread_num : THREAD_NUMs_) {
             CALC_TIME_SPAN(task<T>(conf, thread_num, nq_));
@@ -49,6 +50,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
     test_ivf(const knowhere::Json& cfg) {
         auto conf = cfg;
         auto nlist = conf[knowhere::indexparam::NLIST].get<int32_t>();
+        std::string data_type_str = get_data_type_name<T>();
 
         auto find_smallest_nprobe = [&](float expected_recall) -> int32_t {
             conf[knowhere::meta::TOPK] = topk_;
@@ -83,8 +85,9 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
             conf[knowhere::indexparam::NPROBE] = nprobe;
             conf[knowhere::meta::TOPK] = topk_;
 
-            printf("\n[%0.3f s] %s | %s | nlist=%d, nprobe=%d, k=%d, R@=%.4f\n", get_time_diff(),
-                   ann_test_name_.c_str(), index_type_.c_str(), nlist, nprobe, topk_, expected_recall);
+            printf("\n[%0.3f s] %s | %s(%s) | nlist=%d, nprobe=%d, k=%d, R@=%.4f\n", get_time_diff(),
+                   ann_test_name_.c_str(), index_type_.c_str(), data_type_str.c_str(), nlist, nprobe, topk_,
+                   expected_recall);
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
                 CALC_TIME_SPAN(task<T>(conf, thread_num, nq_));
@@ -100,6 +103,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
     void
     test_raft_cagra(const knowhere::Json& cfg) {
         auto conf = cfg;
+        std::string data_type_str = get_data_type_name<T>();
 
         auto find_smallest_max_iters = [&](float expected_recall) -> int32_t {
             auto ds_ptr = knowhere::GenDataSet(nq_, dim_, xq_);
@@ -134,8 +138,8 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
             conf[knowhere::meta::TOPK] = topk_;
             conf[knowhere::indexparam::MAX_ITERATIONS] = find_smallest_max_iters(expected_recall);
 
-            printf("\n[%0.3f s] %s | %s | k=%d, R@=%.4f\n", get_time_diff(), ann_test_name_.c_str(),
-                   index_type_.c_str(), topk_, expected_recall);
+            printf("\n[%0.3f s] %s | %s(%s) | k=%d, R@=%.4f\n", get_time_diff(), ann_test_name_.c_str(),
+                   index_type_.c_str(), data_type_str.c_str(), topk_, expected_recall);
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
                 CALC_TIME_SPAN(task<T>(conf, thread_num, nq_));
@@ -153,6 +157,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         auto conf = cfg;
         auto M = conf[knowhere::indexparam::HNSW_M].get<int32_t>();
         auto efConstruction = conf[knowhere::indexparam::EFCONSTRUCTION].get<int32_t>();
+        std::string data_type_str = get_data_type_name<T>();
 
         auto find_smallest_ef = [&](float expected_recall) -> int32_t {
             conf[knowhere::meta::TOPK] = topk_;
@@ -187,8 +192,9 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
             conf[knowhere::indexparam::EF] = ef;
             conf[knowhere::meta::TOPK] = topk_;
 
-            printf("\n[%0.3f s] %s | %s | M=%d | efConstruction=%d, ef=%d, k=%d, R@=%.4f\n", get_time_diff(),
-                   ann_test_name_.c_str(), index_type_.c_str(), M, efConstruction, ef, topk_, expected_recall);
+            printf("\n[%0.3f s] %s | %s(%s) | M=%d | efConstruction=%d, ef=%d, k=%d, R@=%.4f\n", get_time_diff(),
+                   ann_test_name_.c_str(), index_type_.c_str(), data_type_str.c_str(), M, efConstruction, ef, topk_,
+                   expected_recall);
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
                 CALC_TIME_SPAN(task<T>(conf, thread_num, nq_));
@@ -208,6 +214,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         const auto reorder_k = conf[knowhere::indexparam::REORDER_K].get<int32_t>();
         const auto with_raw_data = conf[knowhere::indexparam::WITH_RAW_DATA].get<bool>();
         auto nlist = conf[knowhere::indexparam::NLIST].get<int32_t>();
+        std::string data_type_str = get_data_type_name<T>();
 
         auto find_smallest_nprobe = [&](float expected_recall) -> int32_t {
             conf[knowhere::meta::TOPK] = topk_;
@@ -244,9 +251,9 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
             conf[knowhere::indexparam::NPROBE] = nprobe;
             conf[knowhere::meta::TOPK] = topk_;
 
-            printf("\n[%0.3f s] %s | %s | nlist=%d, nprobe=%d, reorder_k=%d, with_raw_data=%d, k=%d, R@=%.4f\n",
-                   get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(), nlist, nprobe, reorder_k,
-                   with_raw_data ? 1 : 0, topk_, expected_recall);
+            printf("\n[%0.3f s] %s | %s(%s) | nlist=%d, nprobe=%d, reorder_k=%d, with_raw_data=%d, k=%d, R@=%.4f\n",
+                   get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(), data_type_str.c_str(), nlist, nprobe,
+                   reorder_k, with_raw_data ? 1 : 0, topk_, expected_recall);
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
                 CALC_TIME_SPAN(task<T>(conf, thread_num, nq_));
@@ -263,6 +270,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
     void
     test_diskann(const knowhere::Json& cfg) {
         auto conf = cfg;
+        std::string data_type_str = get_data_type_name<T>();
 
         auto find_smallest_search_list_size = [&](float expected_recall) -> int32_t {
             conf[knowhere::meta::TOPK] = topk_;
@@ -298,8 +306,9 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
             conf[knowhere::indexparam::SEARCH_LIST_SIZE] = search_list_size;
             conf[knowhere::meta::TOPK] = topk_;
 
-            printf("\n[%0.3f s] %s | %s | search_list_size=%d, k=%d, R@=%.4f\n", get_time_diff(),
-                   ann_test_name_.c_str(), index_type_.c_str(), search_list_size, topk_, expected_recall);
+            printf("\n[%0.3f s] %s | %s(%s) | search_list_size=%d, k=%d, R@=%.4f\n", get_time_diff(),
+                   ann_test_name_.c_str(), index_type_.c_str(), data_type_str.c_str(), search_list_size, topk_,
+                   expected_recall);
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
                 CALC_TIME_SPAN(task<T>(conf, thread_num, nq_));

@@ -35,8 +35,9 @@ class Benchmark_float_range_bitset : public Benchmark_knowhere, public ::testing
         auto conf = cfg;
         auto radius = conf[knowhere::meta::RADIUS].get<float>();
 
-        printf("\n[%0.3f s] %s | %s | radius=%.3f\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
-               radius);
+        std::string data_type_str = get_data_type_name<T>();
+        printf("\n[%0.3f s] %s | %s(%s) | radius=%.3f\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
+               data_type_str.c_str(), radius);
         printf("================================================================================\n");
         for (auto per : PERCENTs_) {
             auto bitset_data = GenRandomBitset(nb_, nb_ * per / 100);
@@ -68,8 +69,9 @@ class Benchmark_float_range_bitset : public Benchmark_knowhere, public ::testing
         auto conf = cfg;
         auto radius = conf[knowhere::meta::RADIUS].get<float>();
 
-        printf("\n[%0.3f s] %s | %s | radius=%.3f\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
-               radius);
+        std::string data_type_str = get_data_type_name<T>();
+        printf("\n[%0.3f s] %s | %s(%s) | radius=%.3f\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
+               data_type_str.c_str(), radius);
         printf("================================================================================\n");
         for (auto per : PERCENTs_) {
             auto bitset_data = GenRandomBitset(nb_, nb_ * per / 100);
@@ -102,8 +104,9 @@ class Benchmark_float_range_bitset : public Benchmark_knowhere, public ::testing
         auto conf = cfg;
         auto radius = conf[knowhere::meta::RADIUS].get<float>();
 
-        printf("\n[%0.3f s] %s | %s | radius=%.3f\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
-               radius);
+        std::string data_type_str = get_data_type_name<T>();
+        printf("\n[%0.3f s] %s | %s(%s) | radius=%.3f\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
+               data_type_str.c_str(), radius);
         printf("================================================================================\n");
         for (auto per : PERCENTs_) {
             auto bitset_data = GenRandomBitset(nb_, nb_ * per / 100);
