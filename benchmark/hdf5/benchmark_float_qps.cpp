@@ -52,7 +52,8 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         auto nlist = conf[knowhere::indexparam::NLIST].get<int32_t>();
         std::string data_type_str = get_data_type_name<T>();
 
-        auto find_smallest_nprobe = [&](float expected_recall) -> int32_t {
+        auto find_smallest_nprobe = [&](float expected_recall) -> std::tuple<int32_t, float> {
+            std::unordered_map<int32_t, float> recall_map;
             conf[knowhere::meta::TOPK] = topk_;
             auto ds_ptr = knowhere::GenDataSet(nq_, dim_, xq_);
             auto query = knowhere::ConvertToDataTypeIfNeeded<T>(ds_ptr);
@@ -65,11 +66,12 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
 
                 auto result = index_.value().Search(query, conf, nullptr);
                 recall = CalcRecall(result.value()->GetIds(), nq_, topk_);
+                recall_map[nprobe] = recall;
                 printf("[%0.3f s] iterate IVF param for recall %.4f: nlist=%d, nprobe=%4d, k=%d, R@=%.4f\n",
                        get_time_diff(), expected_recall, nlist, nprobe, topk_, recall);
                 std::fflush(stdout);
                 if (std::abs(recall - expected_recall) <= 0.0001) {
-                    return nprobe;
+                    return {nprobe, recall_map[nprobe]};
                 }
                 if (recall < expected_recall) {
                     left = nprobe + 1;
@@ -77,17 +79,16 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
                     right = nprobe - 1;
                 }
             }
-            return left;
+            return {left, recall_map[left]};
         };
 
         for (auto expected_recall : EXPECTED_RECALLs_) {
-            auto nprobe = find_smallest_nprobe(expected_recall);
+            auto [nprobe, recall] = find_smallest_nprobe(expected_recall);
             conf[knowhere::indexparam::NPROBE] = nprobe;
             conf[knowhere::meta::TOPK] = topk_;
 
             printf("\n[%0.3f s] %s | %s(%s) | nlist=%d, nprobe=%d, k=%d, R@=%.4f\n", get_time_diff(),
-                   ann_test_name_.c_str(), index_type_.c_str(), data_type_str.c_str(), nlist, nprobe, topk_,
-                   expected_recall);
+                   ann_test_name_.c_str(), index_type_.c_str(), data_type_str.c_str(), nlist, nprobe, topk_, recall);
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
                 CALC_TIME_SPAN(task<T>(conf, thread_num, nq_));
@@ -105,41 +106,44 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         auto conf = cfg;
         std::string data_type_str = get_data_type_name<T>();
 
-        auto find_smallest_max_iters = [&](float expected_recall) -> int32_t {
+        auto find_smallest_itopk_size = [&](float expected_recall) -> std::tuple<int32_t, float> {
+            std::unordered_map<int32_t, float> recall_map;
             auto ds_ptr = knowhere::GenDataSet(nq_, dim_, xq_);
             auto left = 32;
             auto right = 256;
-            auto max_iterations = left;
+            auto itopk_size = left;
 
             float recall;
             while (left <= right) {
-                max_iterations = left + (right - left) / 2;
-                conf[knowhere::indexparam::MAX_ITERATIONS] = max_iterations;
+                itopk_size = left + (right - left) / 2;
+                conf[knowhere::indexparam::ITOPK_SIZE] = itopk_size;
 
                 auto result = index_.value().Search(ds_ptr, conf, nullptr);
                 recall = CalcRecall(result.value()->GetIds(), nq_, topk_);
-                printf("[%0.3f s] iterate CAGRA param for recall %.4f: max_iterations=%d, k=%d, R@=%.4f\n",
-                       get_time_diff(), expected_recall, max_iterations, topk_, recall);
+                recall_map[itopk_size] = recall;
+                printf("[%0.3f s] iterate CAGRA param for recall %.4f: itopk_size=%d, k=%d, R@=%.4f\n", get_time_diff(),
+                       expected_recall, itopk_size, topk_, recall);
                 std::fflush(stdout);
                 if (std::abs(recall - expected_recall) <= 0.0001) {
-                    return max_iterations;
+                    return {itopk_size, recall_map[itopk_size]};
                 }
                 if (recall < expected_recall) {
-                    left = max_iterations + 1;
+                    left = itopk_size + 1;
                 } else {
-                    right = max_iterations - 1;
+                    right = itopk_size - 1;
                 }
             }
-            return left;
+            return {left, recall_map[itopk_size]};
         };
 
         for (auto expected_recall : EXPECTED_RECALLs_) {
+            auto [itopk_size, recall] = find_smallest_itopk_size(expected_recall);
             conf[knowhere::indexparam::ITOPK_SIZE] = ((int{topk_} + 32 - 1) / 32) * 32;
             conf[knowhere::meta::TOPK] = topk_;
-            conf[knowhere::indexparam::MAX_ITERATIONS] = find_smallest_max_iters(expected_recall);
+            conf[knowhere::indexparam::ITOPK_SIZE] = itopk_size;
 
             printf("\n[%0.3f s] %s | %s(%s) | k=%d, R@=%.4f\n", get_time_diff(), ann_test_name_.c_str(),
-                   index_type_.c_str(), data_type_str.c_str(), topk_, expected_recall);
+                   index_type_.c_str(), data_type_str.c_str(), topk_, recall);
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
                 CALC_TIME_SPAN(task<T>(conf, thread_num, nq_));
@@ -159,7 +163,8 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         auto efConstruction = conf[knowhere::indexparam::EFCONSTRUCTION].get<int32_t>();
         std::string data_type_str = get_data_type_name<T>();
 
-        auto find_smallest_ef = [&](float expected_recall) -> int32_t {
+        auto find_smallest_ef = [&](float expected_recall) -> std::tuple<int32_t, float> {
+            std::unordered_map<int32_t, float> recall_map;
             conf[knowhere::meta::TOPK] = topk_;
             auto ds_ptr = knowhere::GenDataSet(nq_, dim_, xq_);
             auto query = knowhere::ConvertToDataTypeIfNeeded<T>(ds_ptr);
@@ -170,13 +175,14 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
                 ef = left + (right - left) / 2;
                 conf[knowhere::indexparam::EF] = ef;
 
-                auto result = index_.value().Search(ds_ptr, conf, nullptr);
+                auto result = index_.value().Search(query, conf, nullptr);
                 recall = CalcRecall(result.value()->GetIds(), nq_, topk_);
+                recall_map[ef] = recall;
                 printf("[%0.3f s] iterate HNSW param for expected recall %.4f: M=%d, efc=%d, ef=%4d, k=%d, R@=%.4f\n",
                        get_time_diff(), expected_recall, M, efConstruction, ef, topk_, recall);
                 std::fflush(stdout);
                 if (std::abs(recall - expected_recall) <= 0.0001) {
-                    return ef;
+                    return {ef, recall_map[ef]};
                 }
                 if (recall < expected_recall) {
                     left = ef + 1;
@@ -184,17 +190,17 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
                     right = ef - 1;
                 }
             }
-            return left;
+            return {left, recall_map[left]};
         };
 
         for (auto expected_recall : EXPECTED_RECALLs_) {
-            auto ef = find_smallest_ef(expected_recall);
+            auto [ef, recall] = find_smallest_ef(expected_recall);
             conf[knowhere::indexparam::EF] = ef;
             conf[knowhere::meta::TOPK] = topk_;
 
             printf("\n[%0.3f s] %s | %s(%s) | M=%d | efConstruction=%d, ef=%d, k=%d, R@=%.4f\n", get_time_diff(),
                    ann_test_name_.c_str(), index_type_.c_str(), data_type_str.c_str(), M, efConstruction, ef, topk_,
-                   expected_recall);
+                   recall);
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
                 CALC_TIME_SPAN(task<T>(conf, thread_num, nq_));
@@ -216,7 +222,8 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         auto nlist = conf[knowhere::indexparam::NLIST].get<int32_t>();
         std::string data_type_str = get_data_type_name<T>();
 
-        auto find_smallest_nprobe = [&](float expected_recall) -> int32_t {
+        auto find_smallest_nprobe = [&](float expected_recall) -> std::tuple<int32_t, float> {
+            std::unordered_map<int32_t, float> recall_map;
             conf[knowhere::meta::TOPK] = topk_;
             auto ds_ptr = knowhere::GenDataSet(nq_, dim_, xq_);
             auto query = knowhere::ConvertToDataTypeIfNeeded<T>(ds_ptr);
@@ -227,15 +234,16 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
                 nprobe = left + (right - left) / 2;
                 conf[knowhere::indexparam::NPROBE] = nprobe;
 
-                auto result = index_.value().Search(ds_ptr, conf, nullptr);
+                auto result = index_.value().Search(query, conf, nullptr);
                 recall = CalcRecall(result.value()->GetIds(), nq_, topk_);
+                recall_map[nprobe] = recall;
                 printf(
                     "[%0.3f s] iterate scann param for recall %.4f: nlist=%d, nprobe=%4d, reorder_k=%d, "
                     "with_raw_data=%d, k=%d, R@=%.4f\n",
                     get_time_diff(), expected_recall, nlist, nprobe, reorder_k, with_raw_data ? 1 : 0, topk_, recall);
                 std::fflush(stdout);
                 if (std::abs(recall - expected_recall) <= 0.0001) {
-                    return nprobe;
+                    return {nprobe, recall_map[nprobe]};
                 }
                 if (recall < expected_recall) {
                     left = nprobe + 1;
@@ -243,17 +251,17 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
                     right = nprobe - 1;
                 }
             }
-            return left;
+            return {left, recall_map[left]};
         };
 
         for (auto expected_recall : EXPECTED_RECALLs_) {
-            auto nprobe = find_smallest_nprobe(expected_recall);
+            auto [nprobe, recall] = find_smallest_nprobe(expected_recall);
             conf[knowhere::indexparam::NPROBE] = nprobe;
             conf[knowhere::meta::TOPK] = topk_;
 
             printf("\n[%0.3f s] %s | %s(%s) | nlist=%d, nprobe=%d, reorder_k=%d, with_raw_data=%d, k=%d, R@=%.4f\n",
                    get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(), data_type_str.c_str(), nlist, nprobe,
-                   reorder_k, with_raw_data ? 1 : 0, topk_, expected_recall);
+                   reorder_k, with_raw_data ? 1 : 0, topk_, recall);
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
                 CALC_TIME_SPAN(task<T>(conf, thread_num, nq_));
@@ -272,7 +280,8 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         auto conf = cfg;
         std::string data_type_str = get_data_type_name<T>();
 
-        auto find_smallest_search_list_size = [&](float expected_recall) -> int32_t {
+        auto find_smallest_search_list_size = [&](float expected_recall) -> std::tuple<int32_t, float> {
+            std::unordered_map<int32_t, float> recall_map;
             conf[knowhere::meta::TOPK] = topk_;
             auto ds_ptr = knowhere::GenDataSet(nq_, dim_, xq_);
             auto query = knowhere::ConvertToDataTypeIfNeeded<T>(ds_ptr);
@@ -283,14 +292,15 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
                 search_list_size = left + (right - left) / 2;
                 conf[knowhere::indexparam::SEARCH_LIST_SIZE] = search_list_size;
 
-                auto result = index_.value().Search(ds_ptr, conf, nullptr);
+                auto result = index_.value().Search(query, conf, nullptr);
                 recall = CalcRecall(result.value()->GetIds(), nq_, topk_);
+                recall_map[search_list_size] = recall;
                 printf(
                     "[%0.3f s] iterate DISKANN param for expected recall %.4f: search_list_size=%4d, k=%d, R@=%.4f\n",
                     get_time_diff(), expected_recall, search_list_size, topk_, recall);
                 std::fflush(stdout);
                 if (std::abs(recall - expected_recall) <= 0.0001) {
-                    return search_list_size;
+                    return {search_list_size, recall_map[search_list_size]};
                 }
                 if (recall < expected_recall) {
                     left = search_list_size + 1;
@@ -298,17 +308,16 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
                     right = search_list_size - 1;
                 }
             }
-            return left;
+            return {left, recall_map[left]};
         };
 
         for (auto expected_recall : EXPECTED_RECALLs_) {
-            auto search_list_size = find_smallest_search_list_size(expected_recall);
+            auto [search_list_size, recall] = find_smallest_search_list_size(expected_recall);
             conf[knowhere::indexparam::SEARCH_LIST_SIZE] = search_list_size;
             conf[knowhere::meta::TOPK] = topk_;
 
             printf("\n[%0.3f s] %s | %s(%s) | search_list_size=%d, k=%d, R@=%.4f\n", get_time_diff(),
-                   ann_test_name_.c_str(), index_type_.c_str(), data_type_str.c_str(), search_list_size, topk_,
-                   expected_recall);
+                   ann_test_name_.c_str(), index_type_.c_str(), data_type_str.c_str(), search_list_size, topk_, recall);
             printf("================================================================================\n");
             for (auto thread_num : THREAD_NUMs_) {
                 CALC_TIME_SPAN(task<T>(conf, thread_num, nq_));
