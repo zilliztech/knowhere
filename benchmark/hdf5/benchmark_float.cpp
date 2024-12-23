@@ -107,6 +107,39 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
 
     template <typename T>
     void
+    test_scann(const knowhere::Json& cfg) {
+        auto conf = cfg;
+
+        const auto reorder_k = conf[knowhere::indexparam::REORDER_K].get<int32_t>();
+        const auto with_raw_data = conf[knowhere::indexparam::WITH_RAW_DATA].get<bool>();
+        auto nlist = conf[knowhere::indexparam::NLIST].get<int32_t>();
+        std::string data_type_str = get_data_type_name<T>();
+
+        printf("\n[%0.3f s] %s | %s(%s) | nlist=%d, reorder_k=%d\n", get_time_diff(), ann_test_name_.c_str(),
+               index_type_.c_str(), data_type_str.c_str(), nlist, reorder_k);
+        printf("================================================================================\n");
+        for (auto nprobe : NPROBEs_) {
+            conf[knowhere::indexparam::NPROBE] = nprobe;
+            for (auto nq : NQs_) {
+                auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
+                auto query = knowhere::ConvertToDataTypeIfNeeded<T>(ds_ptr);
+                for (auto k : TOPKs_) {
+                    conf[knowhere::meta::TOPK] = k;
+                    CALC_TIME_SPAN(auto result = index_.value().Search(query, conf, nullptr));
+                    auto ids = result.value()->GetIds();
+                    float recall = CalcRecall(ids, nq, k);
+                    printf("  nprobe = %4d, nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nprobe, nq, k, TDIFF_,
+                           recall);
+                    std::fflush(stdout);
+                }
+            }
+        }
+        printf("================================================================================\n");
+        printf("[%.3f s] Test '%s/%s' done\n\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
+    }
+
+    template <typename T>
+    void
     test_hnsw(const knowhere::Json& cfg) {
         auto conf = cfg;
         auto M = conf[knowhere::indexparam::HNSW_M].get<int64_t>();
@@ -233,6 +266,10 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
     const std::vector<int32_t> Ms_ = {8, 16, 32};
     const int32_t NBITS_ = 8;
 
+    // SCANN index params
+    const std::vector<int32_t> SCANN_REORDER_K = {256, 512, 1024};
+    const std::vector<bool> SCANN_WITH_RAW_DATA = {true};
+
     // HNSW index params
     const std::vector<int32_t> HNSW_Ms_ = {16};
     const std::vector<int32_t> EFCONs_ = {200};
@@ -336,6 +373,32 @@ TEST_F(Benchmark_float, TEST_IVF_PQ) {
     }
 }
 
+TEST_F(Benchmark_float, TEST_SCANN) {
+    index_type_ = knowhere::IndexEnum::INDEX_FAISS_SCANN;
+
+#define TEST_SCANN(T, X)                    \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_scann<T>(conf);
+
+    std::string index_file_name;
+    knowhere::Json conf = cfg_;
+    for (auto reorder_k : SCANN_REORDER_K) {
+        conf[knowhere::indexparam::REORDER_K] = reorder_k;
+        for (auto nlist : NLISTs_) {
+            conf[knowhere::indexparam::NLIST] = nlist;
+            for (const auto with_raw_data : SCANN_WITH_RAW_DATA) {
+                conf[knowhere::indexparam::WITH_RAW_DATA] = with_raw_data;
+                std::vector<int32_t> params = {nlist, reorder_k, with_raw_data};
+
+                TEST_SCANN(knowhere::fp32, params);
+                TEST_SCANN(knowhere::fp16, params);
+                TEST_SCANN(knowhere::bf16, params);
+            }
+        }
+    }
+}
+
 TEST_F(Benchmark_float, TEST_HNSW) {
     index_type_ = knowhere::IndexEnum::INDEX_HNSW;
 
@@ -386,8 +449,8 @@ TEST_F(Benchmark_float, TEST_DISKANN) {
         index_type_, knowhere::Version::GetCurrentVersion().VersionNumber(), diskann_index_pack);
     printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
     knowhere::DataSetPtr ds_ptr = nullptr;
-    index_.value().Build(ds_ptr, conf);
-
+    CALC_TIME_SPAN(index_.value().Build(ds_ptr, conf));
+    printf("Build index %s time: %.3fs \n", index_.value().Type().c_str(), TDIFF_);
     knowhere::BinarySet binset;
     index_.value().Serialize(binset);
     index_.value().Deserialize(binset, conf);
