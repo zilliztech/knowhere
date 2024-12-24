@@ -892,8 +892,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 input.read(linkLists_[i], linkListSize);
             }
         }
-
-        input.close();
     }
 
     void

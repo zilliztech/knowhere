@@ -32,6 +32,13 @@ struct FileReader {
         }
     }
 
+    ~FileReader() {
+        if (fd_ != -1) {
+            close(fd_);
+            fd_ = -1;
+        }
+    }
+
     int
     descriptor() const {
         return fd_;
@@ -62,13 +69,8 @@ struct FileReader {
         return lseek(fd_, 0, SEEK_CUR);
     }
 
-    int
-    close() {
-        return ::close(fd_);
-    }
-
  private:
-    int fd_;
+    int fd_ = -1;
     size_t size_;
 };
 }  // namespace knowhere
