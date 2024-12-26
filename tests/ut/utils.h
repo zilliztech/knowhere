@@ -380,6 +380,35 @@ GenSparseDataSet(int32_t rows, int32_t cols, float sparsity, int seed = 42) {
     return GenSparseDataSet(data, cols);
 }
 
+// Generate a sparse dataset with given sparsity and max value.
+inline knowhere::DataSetPtr
+GenSparseDataSetWithMaxVal(int32_t rows, int32_t cols, float sparsity, float max_val, bool use_bm25 = false,
+                           int seed = 42) {
+    int32_t num_elements = static_cast<int32_t>(rows * cols * (1.0f - sparsity));
+
+    std::mt19937 rng(seed);
+    auto real_distrib = std::uniform_real_distribution<float>(0, max_val);
+    auto row_distrib = std::uniform_int_distribution<int32_t>(0, rows - 1);
+    auto col_distrib = std::uniform_int_distribution<int32_t>(0, cols - 1);
+
+    std::vector<std::map<int32_t, float>> data(rows);
+
+    for (int32_t i = 0; i < num_elements; ++i) {
+        auto row = row_distrib(rng);
+        while (data[row].size() == (size_t)cols) {
+            row = row_distrib(rng);
+        }
+        auto col = col_distrib(rng);
+        while (data[row].find(col) != data[row].end()) {
+            col = col_distrib(rng);
+        }
+        auto val = use_bm25 ? static_cast<float>(static_cast<int32_t>(real_distrib(rng))) : real_distrib(rng);
+        data[row][col] = val;
+    }
+
+    return GenSparseDataSet(data, cols);
+}
+
 // a timer
 struct StopWatch {
     using timepoint_t = std::chrono::time_point<std::chrono::steady_clock>;
