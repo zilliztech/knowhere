@@ -19,7 +19,6 @@
 #include "knowhere/config.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
-#include "knowhere/feature.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/index_node.h"
 #include "knowhere/log.h"
@@ -125,7 +124,7 @@ class SparseInvertedIndexNode : public IndexNode {
      public:
         RefineIterator(const sparse::BaseInvertedIndex<T>* index, sparse::SparseRow<T>&& query,
                        std::shared_ptr<PrecomputedDistanceIterator> precomputed_it,
-                       const sparse::DocValueComputer<T>& computer, bool use_knowhere_search_pool = true,
+                       const sparse::DocValueComputer<float>& computer, bool use_knowhere_search_pool = true,
                        const float refine_ratio = 0.5f)
             : IndexIterator(true, use_knowhere_search_pool, refine_ratio),
               index_(index),
@@ -156,7 +155,7 @@ class SparseInvertedIndexNode : public IndexNode {
      private:
         const sparse::BaseInvertedIndex<T>* index_;
         sparse::SparseRow<T> query_;
-        const sparse::DocValueComputer<T> computer_;
+        const sparse::DocValueComputer<float> computer_;
         std::shared_ptr<PrecomputedDistanceIterator> precomputed_it_;
         bool first_return_ = true;
     };
@@ -270,7 +269,7 @@ class SparseInvertedIndexNode : public IndexNode {
             return index_or.error();
         }
         index_ = index_or.value();
-        return index_->Load(reader);
+        return index_->Load(reader, 0, "");
     }
 
     Status
@@ -349,7 +348,8 @@ class SparseInvertedIndexNode : public IndexNode {
     expected<sparse::BaseInvertedIndex<T>*>
     CreateIndex(const SparseInvertedIndexConfig& cfg) const {
         if (IsMetricType(cfg.metric_type.value(), metric::BM25)) {
-            auto idx = new sparse::InvertedIndex<T, use_wand, true, mmapped>();
+            // quantize float to uint16_t when BM25 metric type is used.
+            auto idx = new sparse::InvertedIndex<T, uint16_t, use_wand, true, mmapped>();
             if (!cfg.bm25_k1.has_value() || !cfg.bm25_b.has_value() || !cfg.bm25_avgdl.has_value()) {
                 return expected<sparse::BaseInvertedIndex<T>*>::Err(
                     Status::invalid_args, "BM25 parameters k1, b, and avgdl must be set when building/loading");
@@ -361,7 +361,7 @@ class SparseInvertedIndexNode : public IndexNode {
             idx->SetBM25Params(k1, b, avgdl, max_score_ratio);
             return idx;
         } else {
-            return new sparse::InvertedIndex<T, use_wand, false, mmapped>();
+            return new sparse::InvertedIndex<T, T, use_wand, false, mmapped>();
         }
     }
 

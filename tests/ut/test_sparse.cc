@@ -45,9 +45,10 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
     auto topk = 5;
     int64_t nq = 10;
 
-    auto drop_ratio_search = GENERATE(0.0, 0.3);
-
     auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
+
+    auto drop_ratio_search = metric == knowhere::metric::BM25 ? GENERATE(0.0, 0.1) : GENERATE(0.0, 0.3);
+
     auto version = GenTestVersionList();
 
     auto base_gen = [=, dim = dim]() {
@@ -67,9 +68,16 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         return json;
     };
 
-    const auto train_ds = GenSparseDataSet(nb, dim, doc_sparsity);
-    // it is possible the query has more dims than the train dataset.
-    const auto query_ds = GenSparseDataSet(nq, dim + 20, query_sparsity);
+    auto sparse_dataset_gen = [&](int nr, int dim, float sparsity) -> knowhere::DataSetPtr {
+        if (metric == knowhere::metric::BM25) {
+            return GenSparseDataSetWithMaxVal(nr, dim, sparsity, 256, true);
+        } else {
+            return GenSparseDataSet(nr, dim, sparsity);
+        }
+    };
+
+    auto train_ds = sparse_dataset_gen(nb, dim, doc_sparsity);
+    auto query_ds = sparse_dataset_gen(nq, dim + 20, query_sparsity);
 
     const knowhere::Json conf = {
         {knowhere::meta::METRIC_TYPE, metric}, {knowhere::meta::TOPK, topk},      {knowhere::meta::BM25_K1, 1.2},
@@ -251,10 +259,15 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         REQUIRE(idx.Size() > 0);
         REQUIRE(idx.Count() == nb);
 
-        auto [radius, range_filter] = GENERATE(table<float, float>({
-            {0.5, 1},
-            {1, 1.5},
-        }));
+        auto [radius, range_filter] = metric == knowhere::metric::BM25 ? GENERATE(table<float, float>({
+                                                                             {80.0, 100.0},
+                                                                             {100.0, 200.0},
+                                                                         }))
+                                                                       : GENERATE(table<float, float>({
+                                                                             {0.5, 1},
+                                                                             {1, 1.5},
+                                                                         }));
+
         json[knowhere::meta::RADIUS] = radius;
         json[knowhere::meta::RANGE_FILTER] = range_filter;
 
