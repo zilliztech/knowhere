@@ -22,9 +22,11 @@ test_binary_range_hnsw:
 
 ###################################################################################################
 # Test Knowhere float index
-test_float: test_float_brute_force test_float_idmap test_float_ivf_flat test_float_ivf_sq8 test_float_ivf_pq test_float_scann test_float_hnsw test_float_diskann
+test_float: test_float_brute_force test_float_idmap test_float_ivf_flat test_float_ivf_sq8 test_float_ivf_pq test_float_scann \
+            test_float_hnsw_flat test_float_hnsw_sq test_float_hnsw_pq test_float_diskann
 test_float_raft: test_float_raft_brute_force test_float_raft_ivf_flat test_float_raft_ivf_pq test_float_raft_cagra
-test_float_ivf: test_float_ivf_flat test_float_ivf_pq
+test_float_ivf: test_float_ivf_flat test_float_ivf_sq8 test_float_ivf_pq
+test_float_hnsw: test_float_hnsw_flat test_float_hnsw_sq test_float_hnsw_pq test_float_hnsw_prq
 
 test_float_brute_force:
 	./benchmark_float --gtest_filter="Benchmark_float.TEST_BRUTE_FORCE" | tee test_float_brute_force.log
@@ -38,8 +40,14 @@ test_float_ivf_pq:
 	./benchmark_float --gtest_filter="Benchmark_float.TEST_IVF_PQ" | tee test_float_ivf_pq.log
 test_float_scann:
 	./benchmark_float --gtest_filter="Benchmark_float.TEST_SCANN" | tee test_float_scann.log
-test_float_hnsw:
-	./benchmark_float --gtest_filter="Benchmark_float.TEST_HNSW" | tee test_float_hnsw.log
+test_float_hnsw_flat:
+	./benchmark_float --gtest_filter="Benchmark_float.TEST_HNSW_FLAT" | tee test_float_hnsw_flat.log
+test_float_hnsw_sq:
+	./benchmark_float --gtest_filter="Benchmark_float.TEST_HNSW_SQ" | tee test_float_hnsw_sq.log
+test_float_hnsw_pq:
+	./benchmark_float --gtest_filter="Benchmark_float.TEST_HNSW_PQ" | tee test_float_hnsw_pq.log
+test_float_hnsw_prq:
+	./benchmark_float --gtest_filter="Benchmark_float.TEST_HNSW_PRQ" | tee test_float_hnsw_prq.log
 test_float_diskann:
 	./benchmark_float --gtest_filter="Benchmark_float.TEST_DISKANN" | tee test_float_diskann.log
 
