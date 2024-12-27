@@ -20,7 +20,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <queue>
 #include <unordered_map>
 #include <vector>
 
@@ -47,7 +46,7 @@ class BaseInvertedIndex {
     Load(MemoryIOReader& reader, int map_flags = MAP_SHARED, const std::string& supplement_target_filename = "") = 0;
 
     virtual Status
-    Train(const SparseRow<T>* data, size_t rows, float drop_ratio_build) = 0;
+    Train(const SparseRow<T>* data, size_t rows) = 0;
 
     virtual Status
     Add(const SparseRow<T>* data, size_t rows, int64_t dim) = 0;
@@ -61,16 +60,10 @@ class BaseInvertedIndex {
                     const DocValueComputer<T>& computer) const = 0;
 
     virtual float
-    GetRawDistance(const label_t id, const SparseRow<T>& query, const DocValueComputer<T>& computer) const = 0;
-
-    virtual void
-    GetVectorById(const label_t id, SparseRow<T>& output) const = 0;
+    GetRawDistance(const label_t vec_id, const SparseRow<T>& query, const DocValueComputer<T>& computer) const = 0;
 
     virtual expected<DocValueComputer<T>>
     GetDocValueComputer(const SparseInvertedIndexConfig& cfg) const = 0;
-
-    virtual bool
-    IsApproximated() const = 0;
 
     [[nodiscard]] virtual size_t
     size() const = 0;
@@ -156,7 +149,7 @@ class InvertedIndex : public BaseInvertedIndex<T> {
          *
          * 1. size_t rows
          * 2. size_t cols
-         * 3. T value_threshold_
+         * 3. T value_threshold_ (deprecated)
          * 4. for each row:
          *     1. size_t len
          *     2. for each non-zero value:
@@ -168,23 +161,46 @@ class InvertedIndex : public BaseInvertedIndex<T> {
          *
          * Data are densely packed in serialized bytes and no padding is added.
          */
-        writeBinaryPOD(writer, n_rows_internal());
-        writeBinaryPOD(writer, n_cols_internal());
-        writeBinaryPOD(writer, value_threshold_);
-        for (size_t i = 0; i < n_rows_internal(); ++i) {
-            auto& row = raw_data_[i];
-            writeBinaryPOD(writer, row.size());
-            if (row.size() == 0) {
+        T deprecated_value_threshold = 0;
+        writeBinaryPOD(writer, n_rows_internal_);
+        writeBinaryPOD(writer, max_dim_);
+        writeBinaryPOD(writer, deprecated_value_threshold);
+        BitsetView bitset(nullptr, 0);
+
+        std::vector<Cursor<const typename decltype(inverted_lut_)::value_type&, BitsetView>> cursors;
+        for (size_t i = 0; i < inverted_lut_.size(); ++i) {
+            cursors.emplace_back(inverted_lut_[i], n_rows_internal_, 0, 0, bitset);
+        }
+
+        auto dim_map_reverse = std::unordered_map<uint32_t, table_t>();
+        for (auto dim_it = dim_map_.begin(); dim_it != dim_map_.end(); ++dim_it) {
+            dim_map_reverse[dim_it->second] = dim_it->first;
+        }
+
+        for (table_t vec_id = 0; vec_id < n_rows_internal_; ++vec_id) {
+            std::vector<std::pair<table_t, T>> vec_row;
+            for (size_t i = 0; i < inverted_lut_.size(); ++i) {
+                if (cursors[i].cur_vec_id_ == vec_id) {
+                    vec_row.emplace_back(dim_map_reverse[i], cursors[i].cur_vec_val());
+                    cursors[i].next();
+                }
+            }
+
+            SparseRow<T> raw_row(vec_row);
+            writeBinaryPOD(writer, raw_row.size());
+            if (raw_row.size() == 0) {
                 continue;
             }
-            writer.write(row.data(), row.size() * SparseRow<T>::element_size());
+            writer.write(raw_row.data(), raw_row.size() * SparseRow<T>::element_size());
         }
+
         return Status::success;
     }
 
     Status
     Load(MemoryIOReader& reader, int map_flags = MAP_SHARED,
          const std::string& supplement_target_filename = "") override {
+        T deprecated_value_threshold;
         int64_t rows;
         readBinaryPOD(reader, rows);
         // previous versions used the signness of rows to indicate whether to
@@ -192,15 +208,11 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         // take the absolute value of rows.
         rows = std::abs(rows);
         readBinaryPOD(reader, max_dim_);
-        readBinaryPOD(reader, value_threshold_);
-        if (value_threshold_ > 0) {
-            drop_during_build_ = true;
-        }
+        readBinaryPOD(reader, deprecated_value_threshold);
 
         if constexpr (mmapped) {
             RETURN_IF_ERROR(PrepareMmap(reader, rows, map_flags, supplement_target_filename));
         } else {
-            raw_data_.reserve(rows);
             if constexpr (bm25) {
                 bm25_params_->row_sums.reserve(rows);
             }
@@ -209,17 +221,21 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         for (int64_t i = 0; i < rows; ++i) {
             size_t count;
             readBinaryPOD(reader, count);
+            SparseRow<T> raw_row;
             if constexpr (mmapped) {
-                raw_data_.emplace_back(count, reader.data() + reader.tellg(), false);
+                raw_row = std::move(SparseRow<T>(count, reader.data() + reader.tellg(), false));
                 reader.advance(count * SparseRow<T>::element_size());
             } else {
-                raw_data_.emplace_back(count);
+                raw_row = std::move(SparseRow<T>(count));
                 if (count > 0) {
-                    reader.read(raw_data_[i].data(), count * SparseRow<T>::element_size());
+                    reader.read(raw_row.data(), count * SparseRow<T>::element_size());
                 }
             }
-            add_row_to_index(raw_data_[i], i);
+            add_row_to_index(raw_row, i);
         }
+
+        n_rows_internal_ = rows;
+
         return Status::success;
     }
 
@@ -248,16 +264,12 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         // reset reader to the beginning
         reader.seekg(initial_reader_location);
 
-        auto raw_data_byte_size = rows * sizeof(typename decltype(raw_data_)::value_type);
         auto inverted_lut_byte_size = idx_counts.size() * sizeof(typename decltype(inverted_lut_)::value_type);
-        // actually due to drop_ratio_build, the number of non-zero values that will be added to the luts is
-        // less than nnz. but since the memory is mmapped, it is ok to still allocate some extra space for those
-        // dropped values.
         auto luts_byte_size = nnz * sizeof(typename decltype(inverted_lut_)::value_type::value_type);
         auto max_score_in_dim_byte_size = idx_counts.size() * sizeof(typename decltype(max_score_in_dim_)::value_type);
         size_t row_sums_byte_size = 0;
 
-        map_byte_size_ = raw_data_byte_size + inverted_lut_byte_size + luts_byte_size;
+        map_byte_size_ = inverted_lut_byte_size + luts_byte_size;
         if constexpr (use_wand) {
             map_byte_size_ += max_score_in_dim_byte_size;
         }
@@ -302,8 +314,6 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         char* ptr = map_;
 
         // initialize containers memory.
-        raw_data_.initialize(ptr, raw_data_byte_size);
-        ptr += raw_data_byte_size;
         inverted_lut_.initialize(ptr, inverted_lut_byte_size);
         ptr += inverted_lut_byte_size;
 
@@ -338,30 +348,10 @@ class InvertedIndex : public BaseInvertedIndex<T> {
     // Non zero drop ratio is only supported for static index, i.e. data should
     // include all rows that'll be added to the index.
     Status
-    Train(const SparseRow<T>* data, size_t rows, float drop_ratio_build) override {
+    Train(const SparseRow<T>* data, size_t rows) override {
         if constexpr (mmapped) {
             throw std::invalid_argument("mmapped InvertedIndex does not support Train");
         } else {
-            if (drop_ratio_build == 0.0f) {
-                return Status::success;
-            }
-            // TODO: maybe i += 10 to down sample to speed up.
-            size_t amount = 0;
-            for (size_t i = 0; i < rows; ++i) {
-                amount += data[i].size();
-            }
-            if (amount == 0) {
-                return Status::success;
-            }
-            std::vector<T> vals;
-            vals.reserve(amount);
-            for (size_t i = 0; i < rows; ++i) {
-                for (size_t j = 0; j < data[i].size(); ++j) {
-                    vals.push_back(fabs(data[i][j].val));
-                }
-            }
-            value_threshold_ = get_threshold(vals, drop_ratio_build);
-            drop_during_build_ = true;
             return Status::success;
         }
     }
@@ -371,22 +361,19 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         if constexpr (mmapped) {
             throw std::invalid_argument("mmapped InvertedIndex does not support Add");
         } else {
-            auto current_rows = n_rows_internal();
-            if (current_rows > 0 && drop_during_build_) {
-                LOG_KNOWHERE_ERROR_ << "Not allowed to add data to a built index with drop_ratio_build > 0.";
-                return Status::invalid_args;
-            }
+            auto current_rows = n_rows_internal_;
             if ((size_t)dim > max_dim_) {
                 max_dim_ = dim;
             }
 
-            raw_data_.insert(raw_data_.end(), data, data + rows);
             if constexpr (bm25) {
                 bm25_params_->row_sums.reserve(current_rows + rows);
             }
             for (size_t i = 0; i < rows; ++i) {
                 add_row_to_index(data[i], current_rows + i);
             }
+            n_rows_internal_ += rows;
+
             return Status::success;
         }
     }
@@ -407,9 +394,8 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         }
         auto q_threshold = get_threshold(values, drop_ratio_search);
 
-        // if no data was dropped during both build and search, no refinement is
-        // needed.
-        if (!drop_during_build_ && drop_ratio_search == 0) {
+        // if no data was dropped during search, no refinement is needed.
+        if (drop_ratio_search == 0) {
             refine_factor = 1;
         }
         MaxMinHeap<T> heap(k * refine_factor);
@@ -439,40 +425,47 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         }
         auto q_threshold = get_threshold(values, drop_ratio_search);
         auto distances = compute_all_distances(query, q_threshold, computer);
-        for (size_t i = 0; i < distances.size(); ++i) {
-            if (bitset.empty() || !bitset.test(i)) {
-                continue;
+        if (!bitset.empty()) {
+            for (size_t i = 0; i < distances.size(); ++i) {
+                if (bitset.test(i)) {
+                    distances[i] = 0.0f;
+                }
             }
-            distances[i] = 0.0f;
         }
         return distances;
     }
 
     float
-    GetRawDistance(const label_t id, const SparseRow<T>& query, const DocValueComputer<T>& computer) const override {
-        T doc_sum = bm25 ? bm25_params_->row_sums.at(id) : 0;
-        return query.dot(raw_data_[id], computer, doc_sum);
-    }
+    GetRawDistance(const label_t vec_id, const SparseRow<T>& query,
+                   const DocValueComputer<T>& computer) const override {
+        float distance = 0.0f;
 
-    void
-    GetVectorById(const label_t id, SparseRow<T>& output) const override {
-        output = raw_data_[id];
+        for (size_t i = 0; i < query.size(); ++i) {
+            auto [idx, val] = query[i];
+            auto dim_id = dim_map_.find(idx);
+            if (dim_id == dim_map_.end()) {
+                continue;
+            }
+            auto& lut = inverted_lut_[dim_id->second];
+            auto it =
+                std::lower_bound(lut.begin(), lut.end(), vec_id, [](const auto& x, table_t y) { return x.id < y; });
+            if (it != lut.end() && it->id == vec_id) {
+                distance += val * computer(it->val, bm25 ? bm25_params_->row_sums.at(vec_id) : 0);
+            }
+        }
+
+        return distance;
     }
 
     [[nodiscard]] size_t
     size() const override {
         size_t res = sizeof(*this);
-        for (size_t i = 0; i < raw_data_.size(); ++i) {
-            res += raw_data_[i].memory_usage();
-        }
         res += dim_map_.size() *
                (sizeof(typename decltype(dim_map_)::key_type) + sizeof(typename decltype(dim_map_)::mapped_type));
 
         if constexpr (mmapped) {
             return res + map_byte_size_;
         } else {
-            res += sizeof(typename decltype(raw_data_)::value_type) * raw_data_.capacity();
-
             res += sizeof(typename decltype(inverted_lut_)::value_type) * inverted_lut_.capacity();
             for (size_t i = 0; i < inverted_lut_.size(); ++i) {
                 res += sizeof(typename decltype(inverted_lut_)::value_type::value_type) * inverted_lut_[i].capacity();
@@ -486,17 +479,12 @@ class InvertedIndex : public BaseInvertedIndex<T> {
 
     [[nodiscard]] size_t
     n_rows() const override {
-        return n_rows_internal();
+        return n_rows_internal_;
     }
 
     [[nodiscard]] size_t
     n_cols() const override {
-        return n_cols_internal();
-    }
-
-    [[nodiscard]] virtual bool
-    IsApproximated() const override {
-        return drop_during_build_;
+        return max_dim_;
     }
 
  private:
@@ -516,22 +504,12 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         return *pos;
     }
 
-    size_t
-    n_rows_internal() const {
-        return raw_data_.size();
-    }
-
-    size_t
-    n_cols_internal() const {
-        return max_dim_;
-    }
-
     std::vector<float>
     compute_all_distances(const SparseRow<T>& q_vec, T q_threshold, const DocValueComputer<T>& computer) const {
-        std::vector<float> scores(n_rows_internal(), 0.0f);
+        std::vector<float> scores(n_rows_internal_, 0.0f);
         for (size_t idx = 0; idx < q_vec.size(); ++idx) {
             auto [i, v] = q_vec[idx];
-            if (v < q_threshold || i >= n_cols_internal()) {
+            if (v < q_threshold || i >= max_dim_) {
                 continue;
             }
             auto dim_id = dim_map_.find(i);
@@ -549,41 +527,27 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         return scores;
     }
 
-    // find the top-k candidates using brute force search, k as specified by the capacity of the heap.
-    // any value in q_vec that is smaller than q_threshold and any value with dimension >= n_cols() will be ignored.
-    // TODO: may switch to row-wise brute force if filter rate is high. Benchmark needed.
-    void
-    search_brute_force(const SparseRow<T>& q_vec, T q_threshold, MaxMinHeap<T>& heap, const BitsetView& bitset,
-                       const DocValueComputer<T>& computer) const {
-        auto scores = compute_all_distances(q_vec, q_threshold, computer);
-        for (size_t i = 0; i < n_rows_internal(); ++i) {
-            if ((bitset.empty() || !bitset.test(i)) && scores[i] != 0) {
-                heap.push(i, scores[i]);
-            }
-        }
-    }
-
     // LUT supports size() and operator[] which returns an SparseIdVal.
-    template <typename LUT>
+    template <typename LUT, typename DocIdFilter>
     struct Cursor {
      public:
-        Cursor(const LUT& lut, size_t num_vec, float max_score, float q_value, const BitsetView bitset)
+        Cursor(const LUT& lut, size_t num_vec, float max_score, float q_value, DocIdFilter filter)
             : lut_(lut),
               lut_size_(lut.size()),
               total_num_vec_(num_vec),
               max_score_(max_score),
               q_value_(q_value),
-              bitset_(bitset) {
-            while (loc_ < lut_size_ && !bitset_.empty() && bitset_.test(lut_[loc_].id)) {
-                loc_++;
-            }
+              filter_(filter) {
+            skip_filtered_ids();
             update_cur_vec_id();
         }
         Cursor(const Cursor& rhs) = delete;
+        Cursor(Cursor&& rhs) noexcept = default;
 
         void
         next() {
-            next_internal();
+            ++loc_;
+            skip_filtered_ids();
             update_cur_vec_id();
         }
 
@@ -591,8 +555,9 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         void
         seek(table_t vec_id) {
             while (loc_ < lut_size_ && lut_[loc_].id < vec_id) {
-                next_internal();
+                ++loc_;
             }
+            skip_filtered_ids();
             update_cur_vec_id();
         }
 
@@ -607,7 +572,7 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         size_t total_num_vec_ = 0;
         float max_score_ = 0.0f;
         float q_value_ = 0.0f;
-        const BitsetView bitset_;
+        DocIdFilter filter_;
         table_t cur_vec_id_ = 0;
 
      private:
@@ -621,20 +586,36 @@ class InvertedIndex : public BaseInvertedIndex<T> {
         }
 
         inline void
-        next_internal() {
-            loc_++;
-            while (loc_ < lut_size_ && !bitset_.empty() && bitset_.test(lut_[loc_].id)) {
-                loc_++;
+        skip_filtered_ids() {
+            while (loc_ < lut_size_ && !filter_.empty() && filter_.test(lut_[loc_].id)) {
+                ++loc_;
             }
         }
     };  // struct Cursor
 
-    // any value in q_vec that is smaller than q_threshold will be ignored.
+    // find the top-k candidates using brute force search, k as specified by the capacity of the heap.
+    // any value in q_vec that is smaller than q_threshold and any value with dimension >= n_cols() will be ignored.
+    // TODO: may switch to row-wise brute force if filter rate is high. Benchmark needed.
+    template <typename DocIdFilter>
     void
-    search_wand(const SparseRow<T>& q_vec, T q_threshold, MaxMinHeap<T>& heap, const BitsetView& bitset,
+    search_brute_force(const SparseRow<T>& q_vec, T q_threshold, MaxMinHeap<T>& heap, DocIdFilter& filter,
+                       const DocValueComputer<T>& computer) const {
+        auto scores = compute_all_distances(q_vec, q_threshold, computer);
+        for (size_t i = 0; i < n_rows_internal_; ++i) {
+            if ((filter.empty() || !filter.test(i)) && scores[i] != 0) {
+                heap.push(i, scores[i]);
+            }
+        }
+    }
+
+    // any value in q_vec that is smaller than q_threshold will be ignored.
+    template <typename DocIdFilter>
+    void
+    search_wand(const SparseRow<T>& q_vec, T q_threshold, MaxMinHeap<T>& heap, DocIdFilter& filter,
                 const DocValueComputer<T>& computer) const {
         auto q_dim = q_vec.size();
-        std::vector<std::shared_ptr<Cursor<const typename decltype(inverted_lut_)::value_type&>>> cursors(q_dim);
+        std::vector<std::shared_ptr<Cursor<const typename decltype(inverted_lut_)::value_type&, DocIdFilter>>> cursors(
+            q_dim);
         size_t valid_q_dim = 0;
         for (size_t i = 0; i < q_dim; ++i) {
             auto [idx, val] = q_vec[i];
@@ -643,8 +624,8 @@ class InvertedIndex : public BaseInvertedIndex<T> {
                 continue;
             }
             auto& lut = inverted_lut_[dim_id->second];
-            cursors[valid_q_dim++] = std::make_shared<Cursor<decltype(lut)>>(
-                lut, n_rows_internal(), max_score_in_dim_[dim_id->second] * val, val, bitset);
+            cursors[valid_q_dim++] = std::make_shared<Cursor<decltype(lut), DocIdFilter>>(
+                lut, n_rows_internal_, max_score_in_dim_[dim_id->second] * val, val, filter);
         }
         if (valid_q_dim == 0) {
             return;
@@ -701,23 +682,23 @@ class InvertedIndex : public BaseInvertedIndex<T> {
     }
 
     void
-    refine_and_collect(const SparseRow<T>& q_vec, MaxMinHeap<T>& inaccurate, size_t k, float* distances,
+    refine_and_collect(const SparseRow<T>& q_vec, MaxMinHeap<T>& inacc_heap, size_t k, float* distances,
                        label_t* labels, const DocValueComputer<T>& computer) const {
-        std::priority_queue<SparseIdVal<T>, std::vector<SparseIdVal<T>>, std::greater<SparseIdVal<T>>> heap;
+        std::vector<table_t> docids;
+        MaxMinHeap<T> heap(k);
 
-        while (!inaccurate.empty()) {
-            auto [u, d] = inaccurate.top();
-            inaccurate.pop();
+        docids.reserve(inacc_heap.size());
+        while (!inacc_heap.empty()) {
+            auto [u, d] = inacc_heap.top();
+            docids.emplace_back(u);
+            inacc_heap.pop();
+        }
 
-            T u_sum = bm25 ? bm25_params_->row_sums.at(u) : 0;
-
-            auto dist_acc = q_vec.dot(raw_data_[u], computer, u_sum);
-            if (heap.size() < k) {
-                heap.emplace(u, dist_acc);
-            } else if (heap.top().val < dist_acc) {
-                heap.pop();
-                heap.emplace(u, dist_acc);
-            }
+        DocIdFilterByVector filter(std::move(docids));
+        if (use_wand) {
+            search_wand(q_vec, 0, heap, filter, computer);
+        } else {
+            search_brute_force(q_vec, 0, heap, filter, computer);
         }
         collect_result(heap, distances, labels);
     }
@@ -734,7 +715,7 @@ class InvertedIndex : public BaseInvertedIndex<T> {
     }
 
     inline void
-    add_row_to_index(const SparseRow<T>& row, table_t id) {
+    add_row_to_index(const SparseRow<T>& row, table_t vec_id) {
         [[maybe_unused]] T row_sum = 0;
         for (size_t j = 0; j < row.size(); ++j) {
             auto [idx, val] = row[j];
@@ -743,7 +724,7 @@ class InvertedIndex : public BaseInvertedIndex<T> {
             }
             // Skip values equals to or close enough to zero(which contributes
             // little to the total IP score).
-            if (val == 0 || (drop_during_build_ && fabs(val) < value_threshold_)) {
+            if (val == 0) {
                 continue;
             }
             auto dim_it = dim_map_.find(idx);
@@ -757,7 +738,7 @@ class InvertedIndex : public BaseInvertedIndex<T> {
                     max_score_in_dim_.emplace_back(0);
                 }
             }
-            inverted_lut_[dim_it->second].emplace_back(id, val);
+            inverted_lut_[dim_it->second].emplace_back(vec_id, val);
             if constexpr (use_wand) {
                 auto score = val;
                 if constexpr (bm25) {
@@ -778,17 +759,10 @@ class InvertedIndex : public BaseInvertedIndex<T> {
     using Vector = std::conditional_t<mmapped, GrowableVectorView<U>, std::vector<U>>;
 
     // reserve, [], size, emplace_back
-    Vector<SparseRow<T>> raw_data_;
-
     Vector<Vector<SparseIdVal<T>>> inverted_lut_;
-    // If we want to drop small values during build, we must first train the
-    // index with all the data to compute value_threshold_.
-    bool drop_during_build_ = false;
-    // when drop_during_build_ is true, any value smaller than value_threshold_
-    // will not be added to inverted_lut_. value_threshold_ is set to the
-    // drop_ratio_build-th percentile of all absolute values in the index.
-    T value_threshold_ = 0.0f;
     Vector<T> max_score_in_dim_;
+
+    size_t n_rows_internal_ = 0;
     size_t max_dim_ = 0;
     uint32_t next_dim_id_ = 0;
 

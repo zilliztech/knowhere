@@ -45,10 +45,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
     auto topk = 5;
     int64_t nq = 10;
 
-    auto [drop_ratio_build, drop_ratio_search] = GENERATE(table<float, float>({
-        {0.0, 0.0},
-        {0.15, 0.3},
-    }));
+    auto drop_ratio_search = GENERATE(0.0, 0.3);
 
     auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
     auto version = GenTestVersionList();
@@ -64,10 +61,8 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         return json;
     };
 
-    auto sparse_inverted_index_gen = [base_gen, drop_ratio_build = drop_ratio_build,
-                                      drop_ratio_search = drop_ratio_search]() {
+    auto sparse_inverted_index_gen = [base_gen, drop_ratio_search = drop_ratio_search]() {
         knowhere::Json json = base_gen();
-        json[knowhere::indexparam::DROP_RATIO_BUILD] = drop_ratio_build;
         json[knowhere::indexparam::DROP_RATIO_SEARCH] = drop_ratio_search;
         return json;
     };
@@ -144,9 +139,8 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
             REQUIRE(results.has_value());
             float recall = GetKNNRecall(*gt.value(), *results.value());
             check_distance_decreasing(*results.value());
-            auto drop_ratio_build = json[knowhere::indexparam::DROP_RATIO_BUILD].get<float>();
             auto drop_ratio_search = json[knowhere::indexparam::DROP_RATIO_SEARCH].get<float>();
-            if (drop_ratio_build == 0 && drop_ratio_search == 0) {
+            if (drop_ratio_search == 0) {
                 REQUIRE(recall == 1);
             } else {
                 // most test cases are above 0.95, only a few between 0.9 and 0.95
@@ -189,9 +183,8 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         float recall = GetKNNRecall(*filter_gt.value(), *results.value());
         check_distance_decreasing(*results.value());
 
-        auto drop_ratio_build = json[knowhere::indexparam::DROP_RATIO_BUILD].get<float>();
         auto drop_ratio_search = json[knowhere::indexparam::DROP_RATIO_SEARCH].get<float>();
-        if (drop_ratio_build == 0 && drop_ratio_search == 0) {
+        if (drop_ratio_search == 0) {
             REQUIRE(recall == 1);
         } else {
             REQUIRE(recall >= 0.8);
@@ -311,108 +304,6 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
     }
 }
 
-TEST_CASE("Test Mem Sparse Index GetVectorByIds", "[float metrics]") {
-    auto [nb, dim, doc_sparsity, query_sparsity] = GENERATE(table<int32_t, int32_t, float, float>({
-        // 300 dim, avg doc nnz 12, avg query nnz 9
-        {2000, 300, 0.95, 0.97},
-        // 300 dim, avg doc nnz 9, avg query nnz 3
-        {2000, 300, 0.97, 0.99},
-        // 3000 dim, avg doc nnz 90, avg query nnz 30
-        {20000, 3000, 0.97, 0.99},
-    }));
-    int64_t nq = GENERATE(10, 100);
-
-    auto [drop_ratio_build, drop_ratio_search] = GENERATE(table<float, float>({
-        {0.0, 0.0},
-        {0.32, 0.0},
-    }));
-
-    auto metric = knowhere::metric::IP;
-    auto version = GenTestVersionList();
-
-    auto base_gen = [=, dim = dim]() {
-        knowhere::Json json;
-        json[knowhere::meta::DIM] = dim;
-        json[knowhere::meta::METRIC_TYPE] = metric;
-        json[knowhere::meta::TOPK] = 1;
-        return json;
-    };
-
-    auto sparse_inverted_index_gen = [base_gen, drop_ratio_build = drop_ratio_build,
-                                      drop_ratio_search = drop_ratio_search]() {
-        knowhere::Json json = base_gen();
-        json[knowhere::indexparam::DROP_RATIO_BUILD] = drop_ratio_build;
-        json[knowhere::indexparam::DROP_RATIO_SEARCH] = drop_ratio_search;
-        return json;
-    };
-
-    const auto train_ds = GenSparseDataSet(nb, dim, doc_sparsity);
-
-    SECTION("Test GetVectorByIds") {
-        using std::make_tuple;
-        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
-        }));
-        auto use_mmap = GENERATE(true, false);
-        auto tmp_file = "/tmp/knowhere_sparse_inverted_index_test";
-        {
-            auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
-            auto cfg_json = gen().dump();
-            CAPTURE(name, cfg_json);
-            knowhere::Json json = knowhere::Json::parse(cfg_json);
-
-            auto ids_ds = GenIdsDataSet(nb, nq);
-            REQUIRE(idx.Type() == name);
-            auto res = idx.Build(train_ds, json);
-            REQUIRE(idx.HasRawData(metric) ==
-                    knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
-            if (!idx.HasRawData(metric)) {
-                return;
-            }
-            REQUIRE(res == knowhere::Status::success);
-            knowhere::BinarySet bs;
-            idx.Serialize(bs);
-
-            auto idx_new = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
-            if (use_mmap) {
-                WriteBinaryToFile(tmp_file, bs.GetByName(idx.Type()));
-                REQUIRE(idx_new.DeserializeFromFile(tmp_file, json) == knowhere::Status::success);
-            } else {
-                REQUIRE(idx_new.Deserialize(bs, json) == knowhere::Status::success);
-            }
-
-            auto retrieve_task = [&]() {
-                auto results = idx_new.GetVectorByIds(ids_ds);
-                REQUIRE(results.has_value());
-                auto xb = (knowhere::sparse::SparseRow<float>*)train_ds->GetTensor();
-                auto res_data = (knowhere::sparse::SparseRow<float>*)results.value()->GetTensor();
-                for (int i = 0; i < nq; ++i) {
-                    const auto id = ids_ds->GetIds()[i];
-                    const auto& truth_row = xb[id];
-                    const auto& res_row = res_data[i];
-                    REQUIRE(truth_row.size() == res_row.size());
-                    for (size_t j = 0; j < truth_row.size(); ++j) {
-                        REQUIRE(truth_row[j] == res_row[j]);
-                    }
-                }
-            };
-
-            std::vector<std::future<void>> retrieve_task_list;
-            for (int i = 0; i < 20; i++) {
-                retrieve_task_list.push_back(std::async(std::launch::async, [&] { return retrieve_task(); }));
-            }
-            for (auto& task : retrieve_task_list) {
-                task.wait();
-            }
-            // idx/idx_new to destroy and munmap
-        }
-        if (use_mmap) {
-            REQUIRE(std::remove(tmp_file) == 0);
-        }
-    }
-}
-
 TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
     auto [base_data, has_first_result] = GENERATE(table<std::vector<std::map<int32_t, float>>, bool>(
         {{std::vector<std::map<int32_t, float>>{
@@ -431,14 +322,9 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
     auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
     auto version = GenTestVersionList();
 
-    auto [drop_ratio_build, drop_ratio_search] = GENERATE(table<float, float>({
-        {0.0, 0.0},
-        {0.32, 0.0},
-        {0.32, 0.6},
-        {0.0, 0.6},
-    }));
+    auto drop_ratio_search = GENERATE(0.0, 0.6);
 
-    auto base_gen = [=, dim = dim, drop_ratio_build = drop_ratio_build, drop_ratio_search = drop_ratio_search]() {
+    auto base_gen = [=, dim = dim, drop_ratio_search = drop_ratio_search]() {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = metric;
@@ -446,7 +332,6 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
         json[knowhere::meta::BM25_K1] = 1.2;
         json[knowhere::meta::BM25_B] = 0.75;
         json[knowhere::meta::BM25_AVGDL] = 100;
-        json[knowhere::indexparam::DROP_RATIO_BUILD] = drop_ratio_build;
         json[knowhere::indexparam::DROP_RATIO_SEARCH] = drop_ratio_search;
         return json;
     };
@@ -537,22 +422,6 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
         REQUIRE(results.has_value());
         check_result(*results.value());
     }
-
-    SECTION("Test GetVectorByIds") {
-        std::vector<int64_t> ids = {0, 1, 2};
-        auto results = idx.GetVectorByIds(GenIdsDataSet(3, ids));
-        REQUIRE(results.has_value());
-        auto xb = (knowhere::sparse::SparseRow<float>*)train_ds->GetTensor();
-        auto res_data = (knowhere::sparse::SparseRow<float>*)results.value()->GetTensor();
-        for (int i = 0; i < 3; ++i) {
-            const auto& truth_row = xb[i];
-            const auto& res_row = res_data[i];
-            REQUIRE(truth_row.size() == res_row.size());
-            for (size_t j = 0; j < truth_row.size(); ++j) {
-                REQUIRE(truth_row[j] == res_row[j]);
-            }
-        }
-    }
 }
 
 TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
@@ -578,8 +447,6 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
 
     auto query_ds = doc_vector_gen(nq, dim);
 
-    // drop ratio build is not supported in CC index
-    auto drop_ratio_build = 0.0;
     auto drop_ratio_search = GENERATE(0.0, 0.3);
 
     auto metric = GENERATE(knowhere::metric::IP);
@@ -596,10 +463,8 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
         return json;
     };
 
-    auto sparse_inverted_index_gen = [base_gen, drop_ratio_build = drop_ratio_build,
-                                      drop_ratio_search = drop_ratio_search]() {
+    auto sparse_inverted_index_gen = [base_gen, drop_ratio_search = drop_ratio_search]() {
         knowhere::Json json = base_gen();
-        json[knowhere::indexparam::DROP_RATIO_BUILD] = drop_ratio_build;
         json[knowhere::indexparam::DROP_RATIO_SEARCH] = drop_ratio_search;
         return json;
     };

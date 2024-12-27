@@ -54,14 +54,12 @@ class SparseInvertedIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << Type() << " only support metric_type IP or BM25";
             return Status::invalid_metric_type;
         }
-        auto drop_ratio_build = cfg.drop_ratio_build.value_or(0.0f);
         auto index_or = CreateIndex</*mmapped=*/false>(cfg);
         if (!index_or.has_value()) {
             return index_or.error();
         }
         auto index = index_or.value();
-        index->Train(static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor()), dataset->GetRows(),
-                     drop_ratio_build);
+        index->Train(static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor()), dataset->GetRows());
         if (index_ != nullptr) {
             LOG_KNOWHERE_WARNING_ << Type() << " has already been created, deleting old";
             DeleteExistingIndex();
@@ -185,7 +183,7 @@ class SparseInvertedIndexNode : public IndexNode {
         auto computer = computer_or.value();
         auto drop_ratio_search = cfg.drop_ratio_search.value_or(0.0f);
 
-        const bool approximated = index_->IsApproximated() || drop_ratio_search > 0;
+        const bool approximated = drop_ratio_search > 0;
 
         auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
         try {
@@ -228,37 +226,17 @@ class SparseInvertedIndexNode : public IndexNode {
 
     [[nodiscard]] expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset) const override {
-        if (!index_) {
-            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
-        }
-
-        auto rows = dataset->GetRows();
-        auto ids = dataset->GetIds();
-
-        auto data = std::make_unique<sparse::SparseRow<T>[]>(rows);
-        int64_t dim = 0;
-        try {
-            for (int64_t i = 0; i < rows; ++i) {
-                auto& target = data[i];
-                index_->GetVectorById(ids[i], target);
-                dim = std::max(dim, target.dim());
-            }
-        } catch (std::exception& e) {
-            return expected<DataSetPtr>::Err(Status::invalid_args, "GetVectorByIds failed");
-        }
-        auto res = GenResultDataSet(rows, dim, data.release());
-        res->SetIsSparse(true);
-        return res;
+        return expected<DataSetPtr>::Err(Status::not_implemented, "GetVectorByIds not implemented");
     }
 
     [[nodiscard]] bool
     HasRawData(const std::string& metric_type) const override {
-        return true;
+        return false;
     }
 
     [[nodiscard]] expected<DataSetPtr>
     GetIndexMeta(std::unique_ptr<Config> cfg) const override {
-        throw std::runtime_error("GetIndexMeta not supported for current index type");
+        return expected<DataSetPtr>::Err(Status::not_implemented, "GetIndexMeta not supported for current index type");
     }
 
     Status
@@ -301,29 +279,36 @@ class SparseInvertedIndexNode : public IndexNode {
             LOG_KNOWHERE_WARNING_ << Type() << " has already been created, deleting old";
             DeleteExistingIndex();
         }
+
         auto cfg = static_cast<const knowhere::SparseInvertedIndexConfig&>(*config);
+        auto index_or = CreateIndex</*mmapped=*/true>(cfg);
+        if (!index_or.has_value()) {
+            return index_or.error();
+        }
+        index_ = index_or.value();
+
         auto reader = knowhere::FileReader(filename);
-        map_size_ = reader.size();
+        size_t map_size = reader.size();
         int map_flags = MAP_SHARED;
 #ifdef MAP_POPULATE
         if (cfg.enable_mmap_pop.has_value() && cfg.enable_mmap_pop.value()) {
             map_flags |= MAP_POPULATE;
         }
 #endif
-        map_ = static_cast<char*>(mmap(nullptr, map_size_, PROT_READ, map_flags, reader.descriptor(), 0));
-        if (map_ == MAP_FAILED) {
-            LOG_KNOWHERE_ERROR_ << "Failed to mmap file: " << strerror(errno);
+        void* mapped_memory = mmap(nullptr, map_size, PROT_READ, map_flags, reader.descriptor(), 0);
+        if (mapped_memory == MAP_FAILED) {
+            LOG_KNOWHERE_ERROR_ << "Failed to mmap file " << filename << ": " << strerror(errno);
             return Status::disk_file_error;
         }
-        if (madvise(map_, map_size_, MADV_RANDOM) != 0) {
-            LOG_KNOWHERE_WARNING_ << "Failed to madvise file: " << strerror(errno);
-        }
-        auto index_or = CreateIndex</*mmapped=*/true>(cfg);
-        if (!index_or.has_value()) {
-            return index_or.error();
-        }
-        index_ = index_or.value();
-        MemoryIOReader map_reader((uint8_t*)map_, map_size_);
+
+        auto cleanup_mmap = [map_size, filename](void* map_addr) {
+            if (munmap(map_addr, map_size) != 0) {
+                LOG_KNOWHERE_ERROR_ << "Failed to munmap file " << filename << ": " << strerror(errno);
+            }
+        };
+        std::unique_ptr<void, decltype(cleanup_mmap)> mmap_guard(mapped_memory, cleanup_mmap);
+
+        MemoryIOReader map_reader(reinterpret_cast<uint8_t*>(mapped_memory), map_size);
         auto supplement_target_filename = filename + ".knowhere_sparse_index_supplement";
         return index_->Load(map_reader, map_flags, supplement_target_filename);
     }
@@ -386,23 +371,11 @@ class SparseInvertedIndexNode : public IndexNode {
             delete index_;
             index_ = nullptr;
         }
-        if (map_ != nullptr) {
-            auto res = munmap(map_, map_size_);
-            if (res != 0) {
-                LOG_KNOWHERE_ERROR_ << "Failed to munmap when trying to delete index: " << strerror(errno);
-            }
-            map_ = nullptr;
-            map_size_ = 0;
-        }
     }
 
     sparse::BaseInvertedIndex<T>* index_{};
     std::shared_ptr<ThreadPool> search_pool_;
     std::shared_ptr<ThreadPool> build_pool_;
-
-    // if map_ is not nullptr, it means the index is mmapped from disk.
-    char* map_ = nullptr;
-    size_t map_size_ = 0;
 };  // class SparseInvertedIndexNode
 
 // Concurrent version of SparseInvertedIndexNode

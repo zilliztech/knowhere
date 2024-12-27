@@ -24,6 +24,7 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_INT refine_factor;
     CFG_FLOAT wand_bm25_max_score_ratio;
     KNOHWERE_DECLARE_CONFIG(SparseInvertedIndexConfig) {
+        // NOTE: drop_ratio_build has been deprecated, it won't change anything
         KNOWHERE_CONFIG_DECLARE_FIELD(drop_ratio_build)
             .description("drop ratio for build")
             .set_default(0.0f)
