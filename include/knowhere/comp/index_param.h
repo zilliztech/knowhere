@@ -167,6 +167,9 @@ constexpr const char* SEARCH_CACHE_BUDGET_GB = "search_cache_budget_gb";
 constexpr const char* SEARCH_LIST_SIZE = "search_list_size";
 
 // FAISS additional Params
+constexpr const char* HNSW_REFINE = "refine";
+constexpr const char* HNSW_REFINE_K = "refine_k";
+constexpr const char* HNSW_REFINE_TYPE = "refine_type";
 constexpr const char* SQ_TYPE = "sq_type";  // for IVF_SQ and HNSW_SQ
 constexpr const char* PRQ_NUM = "nrq";      // for PRQ, number of redisual quantizers
 

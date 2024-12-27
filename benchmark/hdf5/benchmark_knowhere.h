@@ -112,10 +112,10 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
     template <typename T>
     static std::string
     get_index_name(const std::string& ann_test_name, const std::string& index_type,
-                   const std::vector<int32_t>& params) {
+                   const std::vector<std::string>& params) {
         std::string params_str = "";
         for (size_t i = 0; i < params.size(); i++) {
-            params_str += "_" + std::to_string(params[i]);
+            params_str += "_" + params[i];
         }
         if constexpr (std::is_same_v<T, knowhere::fp32>) {
             return ann_test_name + "_" + index_type + params_str + "_fp32" + ".index";
@@ -131,6 +131,16 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
     template <typename T>
     std::string
     get_index_name(const std::vector<int32_t>& params) {
+        std::vector<std::string> str_params;
+        for (auto param : params) {
+            str_params.push_back(std::to_string(param));
+        }
+        return this->get_index_name<T>(ann_test_name_, index_type_, str_params);
+    }
+
+    template <typename T>
+    std::string
+    get_index_name(const std::vector<std::string>& params) {
         return this->get_index_name<T>(ann_test_name_, index_type_, params);
     }
 

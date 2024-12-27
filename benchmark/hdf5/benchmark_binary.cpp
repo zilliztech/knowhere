@@ -176,7 +176,8 @@ TEST_F(Benchmark_binary, TEST_BINARY_IDMAP) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_BIN_IDMAP;
 
     knowhere::Json conf = cfg_;
-    std::string index_file_name = get_index_name<knowhere::bin1>({});
+    std::vector<int32_t> params = {};
+    std::string index_file_name = get_index_name<knowhere::bin1>(params);
     create_index<knowhere::bin1>(index_file_name, conf);
     test_binary_idmap(conf);
 }
@@ -187,7 +188,8 @@ TEST_F(Benchmark_binary, TEST_BINARY_IVF_FLAT) {
     knowhere::Json conf = cfg_;
     for (auto nlist : NLISTs_) {
         conf[knowhere::indexparam::NLIST] = nlist;
-        std::string index_file_name = get_index_name<knowhere::bin1>({nlist});
+        std::vector<int32_t> params = {nlist};
+        std::string index_file_name = get_index_name<knowhere::bin1>(params);
         create_index<knowhere::bin1>(index_file_name, conf);
         test_binary_ivf(conf);
     }
@@ -201,7 +203,8 @@ TEST_F(Benchmark_binary, TEST_BINARY_HNSW) {
         conf[knowhere::indexparam::HNSW_M] = M;
         for (auto efc : EFCONs_) {
             conf[knowhere::indexparam::EFCONSTRUCTION] = efc;
-            std::string index_file_name = get_index_name<knowhere::bin1>({M, efc});
+            std::vector<int32_t> params = {M, efc};
+            std::string index_file_name = get_index_name<knowhere::bin1>(params);
             create_index<knowhere::bin1>(index_file_name, conf);
             test_binary_hnsw(conf);
         }
