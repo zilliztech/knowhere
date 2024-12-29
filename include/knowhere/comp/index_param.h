@@ -173,7 +173,8 @@ constexpr const char* HNSW_REFINE_TYPE = "refine_type";
 constexpr const char* SQ_TYPE = "sq_type";  // for IVF_SQ and HNSW_SQ
 constexpr const char* PRQ_NUM = "nrq";      // for PRQ, number of redisual quantizers
 
-// Sparse Params
+// Sparse Inverted Index Params
+constexpr const char* INVERTED_INDEX_ALGO = "inverted_index_algo";
 constexpr const char* DROP_RATIO_BUILD = "drop_ratio_build";
 constexpr const char* DROP_RATIO_SEARCH = "drop_ratio_search";
 }  // namespace indexparam
