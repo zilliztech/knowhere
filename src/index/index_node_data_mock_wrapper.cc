@@ -60,9 +60,9 @@ IndexNodeDataMockWrapper<DataType>::RangeSearch(const DataSetPtr dataset, std::u
 template <typename DataType>
 expected<std::vector<IndexNode::IteratorPtr>>
 IndexNodeDataMockWrapper<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
-                                                const BitsetView& bitset) const {
+                                                const BitsetView& bitset, bool use_knowhere_search_pool) const {
     auto ds_ptr = ConvertFromDataTypeIfNeeded<DataType>(dataset);
-    return index_node_->AnnIterator(ds_ptr, std::move(cfg), bitset);
+    return index_node_->AnnIterator(ds_ptr, std::move(cfg), bitset, use_knowhere_search_pool);
 }
 
 template <typename DataType>

@@ -151,14 +151,16 @@ class DiskANNIndexNode : public IndexNode {
     }
 
     expected<std::vector<IndexNode::IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                bool use_knowhere_search_pool) const override;
 
  private:
     class iterator : public IndexIterator {
      public:
         iterator(const bool transform, const DataType* query_data, const uint64_t lsearch, const uint64_t beam_width,
-                 const float filter_ratio, const knowhere::BitsetView& bitset, diskann::PQFlashIndex<DataType>* index)
-            : IndexIterator(transform),
+                 const float filter_ratio, const knowhere::BitsetView& bitset, diskann::PQFlashIndex<DataType>* index,
+                 bool use_knowhere_search_pool = true)
+            : IndexIterator(transform, use_knowhere_search_pool),
               index_(index),
               transform_(transform),
               workspace_(index_->getIteratorWorkspace(query_data, lsearch, beam_width, filter_ratio, bitset)) {
@@ -552,18 +554,17 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
 
 template <typename DataType>
 expected<std::vector<IndexNode::IteratorPtr>>
-DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
-                                        const BitsetView& bitset) const {
+DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                                        bool use_knowhere_search_pool) const {
     if (!is_prepared_.load() || !pq_flash_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
-        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::empty_index,
-                                                                                "DiskANN not loaded");
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "DiskANN not loaded");
     }
 
     auto search_conf = static_cast<const DiskANNConfig&>(*cfg);
     if (!CheckMetric(search_conf.metric_type.value())) {
-        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::invalid_metric_type,
-                                                                                "unsupported metric type");
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::invalid_metric_type,
+                                                                  "unsupported metric type");
     }
 
     constexpr uint64_t k_lsearch_iterator = 32;
@@ -575,25 +576,19 @@ DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_pt
     auto dim = dataset->GetDim();
     auto xq = dataset->GetTensor();
 
-    std::vector<folly::Future<folly::Unit>> futs;
-    futs.reserve(nq);
     auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
     auto metric = search_conf.metric_type.value();
     bool transform = metric != knowhere::metric::L2;
 
-    for (int i = 0; i < nq; i++) {
-        futs.emplace_back(search_pool_->push([&, id = i]() {
-            auto single_query = (DataType*)xq + id * dim;
+    try {
+        for (int i = 0; i < nq; i++) {
+            auto single_query = (DataType*)xq + i * dim;
             auto it = std::make_shared<iterator>(transform, single_query, lsearch, beamwidth, filter_ratio, bitset,
-                                                 pq_flash_index_.get());
-            it->initialize();
-            vec[id] = it;
-        }));
-    }
-
-    if (TryDiskANNCall([&]() { WaitAllSuccess(futs); }) != Status::success) {
-        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::diskann_inner_error,
-                                                                                "some ann-iterator failed");
+                                                 pq_flash_index_.get(), use_knowhere_search_pool);
+            vec[i] = it;
+        }
+    } catch (const std::exception& e) {
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::diskann_inner_error, e.what());
     }
 
     return vec;

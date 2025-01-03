@@ -57,7 +57,8 @@ class BaseFlatIndexNode : public IndexNode {
     }
 
     expected<std::vector<IndexNode::IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                bool use_knowhere_search_pool) const override {
         LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::AnnIterator()";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::not_implemented,
                                                                   "BaseFlatIndexNode::AnnIterator() not implemented");

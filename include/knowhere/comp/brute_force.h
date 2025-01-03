@@ -51,7 +51,7 @@ class BruteForce {
     template <typename DataType>
     static expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                const BitsetView& bitset);
+                const BitsetView& bitset, bool use_knowhere_search_pool = true);
 };
 
 }  // namespace knowhere
