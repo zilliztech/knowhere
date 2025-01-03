@@ -44,6 +44,21 @@ struct BitsetViewIDSelectorWrapper final {
     }
 };
 
+struct BitsetViewWithMappingIDSelectorWrapper final {
+    const BitsetView bitset_view;
+    const uint32_t* out_id_mapping;
+
+    inline BitsetViewWithMappingIDSelectorWrapper(BitsetView bitset_view, const uint32_t* out_id_mapping)
+        : bitset_view{bitset_view}, out_id_mapping{out_id_mapping} {
+    }
+
+    [[nodiscard]] inline bool
+    is_member(faiss::idx_t id) const {
+        // it is by design that bitset_view.empty() and out_id_mapping == nullptr is not tested here
+        return (!bitset_view.test(out_id_mapping[id]));
+    }
+};
+
 //
 IndexBruteForceWrapper::IndexBruteForceWrapper(faiss::Index* underlying_index)
     : faiss::cppcontrib::knowhere::IndexWrapper{underlying_index} {
@@ -69,37 +84,57 @@ IndexBruteForceWrapper::search(faiss::idx_t n, const float* __restrict x, faiss:
         // set up a filter
         faiss::IDSelector* sel = (params == nullptr) ? nullptr : params->sel;
 
-        // try knowhere-specific filter
-        const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
-            dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
-
         if (is_similarity_metric(index->metric_type)) {
             using C = faiss::CMin<float, idx_t>;
 
-            if (bw_idselector == nullptr || bw_idselector->bitset_view.empty()) {
-                faiss::IDSelectorAll sel_all;
-                faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer, faiss::IDSelectorAll>(
-                    index->ntotal, *dis, sel_all, k, local_distances, local_ids);
-            } else {
+            // try knowhere-specific filter
+            if (const knowhere::BitsetViewWithMappingIDSelector* __restrict bw_idselector =
+                    dynamic_cast<const knowhere::BitsetViewWithMappingIDSelector*>(sel);
+                bw_idselector && !bw_idselector->bitset_view.empty()) {
+                BitsetViewWithMappingIDSelectorWrapper bw_idselector_w(bw_idselector->bitset_view,
+                                                                       bw_idselector->out_id_mapping);
+
+                faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer,
+                                                                     BitsetViewWithMappingIDSelectorWrapper>(
+                    index->ntotal, *dis, bw_idselector_w, k, local_distances, local_ids);
+            } else if (const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
+                           dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
+                       bw_idselector && !bw_idselector->bitset_view.empty()) {
                 BitsetViewIDSelectorWrapper bw_idselector_w(bw_idselector->bitset_view);
 
                 faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer,
                                                                      BitsetViewIDSelectorWrapper>(
                     index->ntotal, *dis, bw_idselector_w, k, local_distances, local_ids);
+            } else {
+                faiss::IDSelectorAll sel_all;
+                faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer, faiss::IDSelectorAll>(
+                    index->ntotal, *dis, sel_all, k, local_distances, local_ids);
             }
         } else {
             using C = faiss::CMax<float, idx_t>;
 
-            if (bw_idselector == nullptr || bw_idselector->bitset_view.empty()) {
-                faiss::IDSelectorAll sel_all;
-                faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer, faiss::IDSelectorAll>(
-                    index->ntotal, *dis, sel_all, k, local_distances, local_ids);
-            } else {
+            // try knowhere-specific filter
+            if (const knowhere::BitsetViewWithMappingIDSelector* __restrict bw_idselector =
+                    dynamic_cast<const knowhere::BitsetViewWithMappingIDSelector*>(sel);
+                bw_idselector && !bw_idselector->bitset_view.empty()) {
+                BitsetViewWithMappingIDSelectorWrapper bw_idselector_w(bw_idselector->bitset_view,
+                                                                       bw_idselector->out_id_mapping);
+
+                faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer,
+                                                                     BitsetViewWithMappingIDSelectorWrapper>(
+                    index->ntotal, *dis, bw_idselector_w, k, local_distances, local_ids);
+            } else if (const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
+                           dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
+                       bw_idselector && !bw_idselector->bitset_view.empty()) {
                 BitsetViewIDSelectorWrapper bw_idselector_w(bw_idselector->bitset_view);
 
                 faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer,
                                                                      BitsetViewIDSelectorWrapper>(
                     index->ntotal, *dis, bw_idselector_w, k, local_distances, local_ids);
+            } else {
+                faiss::IDSelectorAll sel_all;
+                faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer, faiss::IDSelectorAll>(
+                    index->ntotal, *dis, sel_all, k, local_distances, local_ids);
             }
         }
     }

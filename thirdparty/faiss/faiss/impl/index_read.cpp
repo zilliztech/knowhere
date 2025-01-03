@@ -65,6 +65,29 @@
 
 namespace faiss {
 
+uint32_t read_value(IOReader* f) {
+    uint32_t h;
+    READ1(h)
+    return h;
+}
+
+void read_vector(std::vector<uint32_t>& v, IOReader* f) {
+    READVECTOR(v);
+}
+
+// "IHMV" is a special header for faiss hnsw to indicate whether mv or not
+bool read_is_mv(IOReader* f) {
+    uint32_t h;
+    READ1(h);
+    return h == fourcc("IHMV");
+}
+
+bool read_is_mv(const char* fname) {
+    FileIOReader f(fname);
+    return read_is_mv(&f);
+}
+
+
 template<typename VectorT>
 void read_vector(VectorT& target, IOReader* f) {
     // is it a mmap-enabled reader?

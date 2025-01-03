@@ -32,4 +32,21 @@ struct BitsetViewIDSelector final : faiss::IDSelector {
     }
 };
 
+struct BitsetViewWithMappingIDSelector final : faiss::IDSelector {
+    const BitsetView bitset_view;
+    const uint32_t* out_id_mapping;
+    const size_t id_offset;
+
+    inline BitsetViewWithMappingIDSelector(BitsetView bitset_view, const uint32_t* out_id_mapping,
+                                           const size_t offset = 0)
+        : bitset_view{bitset_view}, out_id_mapping(out_id_mapping), id_offset(offset) {
+    }
+
+    inline bool
+    is_member(faiss::idx_t id) const override final {
+        // it is by design that out_id_mapping == nullptr is not tested here
+        return (!bitset_view.test(out_id_mapping[id + id_offset]));
+    }
+};
+
 }  // namespace knowhere

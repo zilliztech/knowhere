@@ -51,8 +51,8 @@ WhetherPerformBruteForceSearch(const faiss::Index* index, const BaseConfig& cfg,
         double ratio = ((double)filtered_out_num) / bitset.size();
         knowhere::knowhere_hnsw_bitset_ratio.Observe(ratio);
 #endif
-        if (filtered_out_num >= (index->ntotal * HnswSearchThresholds::kHnswSearchKnnBFFilterThreshold) ||
-            k >= (index->ntotal - filtered_out_num) * HnswSearchThresholds::kHnswSearchBFTopkThreshold) {
+        if (filtered_out_num >= (bitset.size() * HnswSearchThresholds::kHnswSearchKnnBFFilterThreshold) ||
+            k >= (bitset.size() - filtered_out_num) * HnswSearchThresholds::kHnswSearchBFTopkThreshold) {
             return true;
         }
     }
@@ -84,8 +84,8 @@ WhetherPerformBruteForceRangeSearch(const faiss::Index* index, const FaissHnswCo
         double ratio = ((double)filtered_out_num) / bitset.size();
         knowhere::knowhere_hnsw_bitset_ratio.Observe(ratio);
 #endif
-        if (filtered_out_num >= (index->ntotal * HnswSearchThresholds::kHnswSearchRangeBFFilterThreshold) ||
-            ef >= (index->ntotal - filtered_out_num) * HnswSearchThresholds::kHnswSearchRangeBFFilterThreshold) {
+        if (filtered_out_num >= (bitset.size() * HnswSearchThresholds::kHnswSearchRangeBFFilterThreshold) ||
+            ef >= (bitset.size() - filtered_out_num) * HnswSearchThresholds::kHnswSearchRangeBFFilterThreshold) {
             return true;
         }
     }

@@ -190,7 +190,7 @@ read_index(knowhere::Index<knowhere::IndexNode>& index, const std::string& filen
 template <typename T>
 knowhere::Index<knowhere::IndexNode>
 create_index(const std::string& index_type, const std::string& index_file_name,
-             const knowhere::DataSetPtr& default_ds_ptr, const knowhere::Json& conf,
+             const knowhere::DataSetPtr& default_ds_ptr, const knowhere::Json& conf, const bool mv_only_enable,
              const std::optional<std::string>& additional_name = std::nullopt) {
     std::string additional_name_s = additional_name.value_or("");
 
@@ -207,6 +207,12 @@ create_index(const std::string& index_type, const std::string& index_file_name,
         printf("Building %sindex all on %ld vectors\n", additional_name_s.c_str(), default_ds_ptr->GetRows());
 
         auto base = knowhere::ConvertToDataTypeIfNeeded<T>(default_ds_ptr);
+
+        if (mv_only_enable) {
+            base->Set(knowhere::meta::SCALAR_INFO,
+                      default_ds_ptr->Get<std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>>(
+                          knowhere::meta::SCALAR_INFO));
+        }
 
         StopWatch sw;
         index.value().Build(base, conf);
@@ -252,10 +258,10 @@ index_support_int8(const knowhere::Json& conf) {
 
 //
 template <typename T>
-void
+std::string
 test_hnsw(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::DataSetPtr& query_ds_ptr,
           const knowhere::DataSetPtr& golden_result, const std::vector<int32_t>& index_params,
-          const knowhere::Json& conf, const knowhere::BitsetView bitset_view) {
+          const knowhere::Json& conf, const bool mv_only_enable, const knowhere::BitsetView bitset_view) {
     const std::string index_type = conf[knowhere::meta::INDEX_TYPE].get<std::string>();
 
     // load indices
@@ -266,10 +272,10 @@ test_hnsw(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::DataSetPtr
 
     // our index
     // first, we create an index and save it
-    auto index = create_index<T>(index_type, index_file_name, default_ds_ptr, conf);
+    auto index = create_index<T>(index_type, index_file_name, default_ds_ptr, conf, mv_only_enable);
 
     // then, we force it to be loaded in order to test load & save
-    auto index_loaded = create_index<T>(index_type, index_file_name, default_ds_ptr, conf);
+    auto index_loaded = create_index<T>(index_type, index_file_name, default_ds_ptr, conf, mv_only_enable);
 
     // query
     auto query_t_ds_ptr = knowhere::ConvertToDataTypeIfNeeded<T>(query_ds_ptr);
@@ -313,14 +319,15 @@ test_hnsw(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::DataSetPtr
 
         match_datasets<T>(default_t_ds_ptr, vectors.value(), ids);
     }
+    return index_file_name;
 }
 
 //
 template <typename T>
-void
+std::string
 test_hnsw_range(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::DataSetPtr& query_ds_ptr,
                 const knowhere::DataSetPtr& golden_result, const std::vector<int32_t>& index_params,
-                const knowhere::Json& conf, const knowhere::BitsetView bitset_view) {
+                const knowhere::Json& conf, const bool mv_only_enable, const knowhere::BitsetView bitset_view) {
     const std::string index_type = conf[knowhere::meta::INDEX_TYPE].get<std::string>();
 
     // load indices
@@ -331,10 +338,10 @@ test_hnsw_range(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::Data
 
     // our index
     // first, we create an index and save it
-    auto index = create_index<T>(index_type, index_file_name, default_ds_ptr, conf);
+    auto index = create_index<T>(index_type, index_file_name, default_ds_ptr, conf, mv_only_enable);
 
     // then, we force it to be loaded in order to test load & save
-    auto index_loaded = create_index<T>(index_type, index_file_name, default_ds_ptr, conf);
+    auto index_loaded = create_index<T>(index_type, index_file_name, default_ds_ptr, conf, mv_only_enable);
 
     // query
     auto query_t_ds_ptr = knowhere::ConvertToDataTypeIfNeeded<T>(query_ds_ptr);
@@ -381,6 +388,7 @@ test_hnsw_range(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::Data
 
         match_datasets<T>(default_t_ds_ptr, vectors.value(), ids);
     }
+    return index_file_name;
 }
 
 }  // namespace
@@ -402,6 +410,8 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
     const std::vector<int32_t> NBS = {256};
     const int32_t NQ = 16;
     const int32_t TOPK = 16;
+
+    const std::vector<bool> MV_ONLYs = {false, true};
 
     const std::vector<std::string> SQ_TYPES = {"SQ6", "SQ8", "BF16", "FP16"};
 
@@ -465,7 +475,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                     std::string golden_index_file_name =
                         get_index_name<knowhere::fp32>(ann_test_name_, golden_index_type, golden_params);
 
-                    create_index<knowhere::fp32>(golden_index_type, golden_index_file_name, default_ds_ptr, conf,
+                    create_index<knowhere::fp32>(golden_index_type, golden_index_file_name, default_ds_ptr, conf, false,
                                                  "golden ");
                 }
             }
@@ -504,55 +514,97 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                         get_index_name<knowhere::fp32>(ann_test_name_, golden_index_type, golden_params);
 
                     auto golden_index = create_index<knowhere::fp32>(golden_index_type, golden_index_file_name,
-                                                                     default_ds_ptr, conf, "golden ");
+                                                                     default_ds_ptr, conf, false, "golden ");
 
-                    // test various bitset rates
-                    for (const float bitset_rate : BITSET_RATES) {
-                        const int32_t nbits_set = nb * bitset_rate;
-                        const std::vector<uint8_t> bitset_data = GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                    std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_info =
+                        GenerateScalarInfo(nb);
+                    auto partition_size = scalar_info[0][0].size();  // will be masked by partition key value
 
-                        // initialize bitset_view.
-                        // provide a default one if nbits_set == 0
-                        knowhere::BitsetView bitset_view = nullptr;
-                        if (nbits_set != 0) {
-                            bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                    for (const bool mv_only_enable : MV_ONLYs) {
+#ifdef KNOWHERE_WITH_CARDINAL
+                        if (mv_only_enable) {
+                            continue;
+                        }
+#endif
+                        printf("with mv only enabled : %d\n", mv_only_enable);
+                        if (mv_only_enable) {
+                            default_ds_ptr->Set(knowhere::meta::SCALAR_INFO, scalar_info);
                         }
 
-                        // get a golden result
-                        auto golden_result = golden_index.Search(query_ds_ptr, conf, bitset_view);
+                        std::vector<std::string> index_files;
+                        std::string index_file;
 
-                        // fp32 candidate
-                        printf(
-                            "\nProcessing HNSW,Flat fp32 for %s distance, dim=%d, nrows=%d, %d%% points filtered out\n",
-                            DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+                        // test various bitset rates
+                        for (const float bitset_rate : BITSET_RATES) {
+                            const int32_t nbits_set = mv_only_enable
+                                                          ? partition_size + (nb - partition_size) * bitset_rate
+                                                          : nb * bitset_rate;
+                            const std::vector<uint8_t> bitset_data =
+                                mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
+                                               : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
-                        test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                  bitset_view);
+                            // initialize bitset_view.
+                            // provide a default one if nbits_set == 0
+                            knowhere::BitsetView bitset_view = nullptr;
+                            if (nbits_set != 0) {
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                            }
 
-                        // fp16 candidate
-                        printf(
-                            "\nProcessing HNSW,Flat fp16 for %s distance, dim=%d, nrows=%d, %d%% points filtered out\n",
-                            DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+                            // get a golden result
+                            auto golden_result = golden_index.Search(query_ds_ptr, conf, bitset_view);
 
-                        test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                  bitset_view);
-
-                        // bf16 candidate
-                        printf(
-                            "\nProcessing HNSW,Flat bf16 for %s distance, dim=%d, nrows=%d, %d%% points filtered out\n",
-                            DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
-
-                        test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                  bitset_view);
-                        if (index_support_int8(conf)) {
-                            // int8 candidate
+                            // fp32 candidate
                             printf(
-                                "\nProcessing HNSW,Flat int8 for %s distance, dim=%d, nrows=%d, %d%% points filtered "
+                                "\nProcessing HNSW,Flat fp32 for %s distance, dim=%d, nrows=%d, %d%% points filtered "
                                 "out\n",
                                 DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
 
-                            test_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view);
+                            index_file = test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                                   params, conf, mv_only_enable, bitset_view);
+                            index_files.emplace_back(index_file);
+
+                            // fp16 candidate
+                            printf(
+                                "\nProcessing HNSW,Flat fp16 for %s distance, dim=%d, nrows=%d, %d%% points filtered "
+                                "out\n",
+                                DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                            index_file = test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                                   params, conf, mv_only_enable, bitset_view);
+                            index_files.emplace_back(index_file);
+
+                            // bf16 candidate
+                            printf(
+                                "\nProcessing HNSW,Flat bf16 for %s distance, dim=%d, nrows=%d, %d%% points filtered "
+                                "out\n",
+                                DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                            index_file = test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                                   params, conf, mv_only_enable, bitset_view);
+                            index_files.emplace_back(index_file);
+                            if (index_support_int8(conf)) {
+                                // int8 candidate
+                                printf(
+                                    "\nProcessing HNSW,Flat int8 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                    "filtered "
+                                    "out\n",
+                                    DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                                index_file =
+                                    test_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                              params, conf, mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
+                            }
+
+                            std::remove(get_index_name<knowhere::fp32>(ann_test_name_, index_type, params).c_str());
+                            std::remove(get_index_name<knowhere::fp16>(ann_test_name_, index_type, params).c_str());
+                            std::remove(get_index_name<knowhere::bf16>(ann_test_name_, index_type, params).c_str());
+                            if (index_support_int8(conf)) {
+                                std::remove(get_index_name<knowhere::int8>(ann_test_name_, index_type, params).c_str());
+                            }
+                        }
+                        for (auto index : index_files) {
+                            std::remove(index.c_str());
                         }
                     }
                 }
@@ -588,154 +640,192 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                         get_index_name<knowhere::fp32>(ann_test_name_, golden_index_type, golden_params);
 
                     auto golden_index = create_index<knowhere::fp32>(golden_index_type, golden_index_file_name,
-                                                                     default_ds_ptr, conf_golden, "golden ");
+                                                                     default_ds_ptr, conf_golden, false, "golden ");
 
-                    // test various bitset rates
-                    for (const float bitset_rate : BITSET_RATES) {
-                        const int32_t nbits_set = nb * bitset_rate;
-                        const std::vector<uint8_t> bitset_data = GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                    std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_info =
+                        GenerateScalarInfo(nb);
+                    auto partition_size = scalar_info[0][0].size();  // will be masked by partition key value
 
-                        // initialize bitset_view.
-                        // provide a default one if nbits_set == 0
-                        knowhere::BitsetView bitset_view = nullptr;
-                        if (nbits_set != 0) {
-                            bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                    for (const bool mv_only_enable : MV_ONLYs) {
+                        printf("with mv only enabled : %d\n", mv_only_enable);
+                        if (mv_only_enable) {
+                            default_ds_ptr->Set(knowhere::meta::SCALAR_INFO, scalar_info);
                         }
+                        std::vector<std::string> index_files;
+                        std::string index_file;
 
-                        // get a golden result
-                        auto golden_result = golden_index.Search(query_ds_ptr, conf_golden, bitset_view);
+                        // test various bitset rates
+                        for (const float bitset_rate : BITSET_RATES) {
+                            const int32_t nbits_set = mv_only_enable
+                                                          ? partition_size + (nb - partition_size) * bitset_rate
+                                                          : nb * bitset_rate;
+                            const std::vector<uint8_t> bitset_data =
+                                mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
+                                               : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
-                        // go SQ
-                        for (size_t i_sq_type = 0; i_sq_type < SQ_TYPES.size(); i_sq_type++) {
-                            knowhere::Json conf = conf_golden;
-                            conf[knowhere::meta::INDEX_TYPE] = index_type;
+                            // initialize bitset_view.
+                            // provide a default one if nbits_set == 0
+                            knowhere::BitsetView bitset_view = nullptr;
+                            if (nbits_set != 0) {
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                            }
 
-                            const std::string sq_type = SQ_TYPES[i_sq_type];
-                            conf[knowhere::indexparam::SQ_TYPE] = sq_type;
+                            // get a golden result
+                            auto golden_result = golden_index.Search(query_ds_ptr, conf_golden, bitset_view);
 
-                            std::vector<int32_t> params = {(int)distance_type, dim, nb, (int)i_sq_type};
+                            // go SQ
+                            for (size_t i_sq_type = 0; i_sq_type < SQ_TYPES.size(); i_sq_type++) {
+                                knowhere::Json conf = conf_golden;
+                                conf[knowhere::meta::INDEX_TYPE] = index_type;
 
-                            // fp32 candidate
-                            printf(
-                                "\nProcessing HNSW,SQ(%s) fp32 for %s distance, dim=%d, nrows=%d, %d%% points filtered "
-                                "out\n",
-                                sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb,
-                                int(bitset_rate * 100));
+                                const std::string sq_type = SQ_TYPES[i_sq_type];
+                                conf[knowhere::indexparam::SQ_TYPE] = sq_type;
 
-                            test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view);
+                                std::vector<int32_t> params = {(int)distance_type, dim, nb, (int)i_sq_type};
 
-                            // fp16 candidate
-                            printf(
-                                "\nProcessing HNSW,SQ(%s) fp16 for %s distance, dim=%d, nrows=%d, %d%% points filtered "
-                                "out\n",
-                                sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb,
-                                int(bitset_rate * 100));
-
-                            test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view);
-
-                            // bf16 candidate
-                            printf(
-                                "\nProcessing HNSW,SQ(%s) bf16 for %s distance, dim=%d, nrows=%d, %d%% points filtered "
-                                "out\n",
-                                sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb,
-                                int(bitset_rate * 100));
-
-                            test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view);
-                            if (index_support_int8(conf)) {
-                                // int8 candidate
+                                // fp32 candidate
                                 printf(
-                                    "\nProcessing HNSW,SQ(%s) int8 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                    "\nProcessing HNSW,SQ(%s) fp32 for %s distance, dim=%d, nrows=%d, %d%% points "
                                     "filtered "
                                     "out\n",
                                     sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb,
                                     int(bitset_rate * 100));
 
-                                test_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(), params,
-                                                          conf, bitset_view);
-                            }
-                            // test refines for FP32
-                            {
-                                const auto& allowed_refs = SQ_ALLOWED_REFINES_FP32[sq_type];
-                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < allowed_refs.size();
-                                     allowed_ref_idx++) {
-                                    auto conf_refine = conf;
-                                    conf_refine["refine"] = true;
-                                    conf_refine["refine_k"] = 1.5;
-
-                                    const std::string allowed_ref = allowed_refs[allowed_ref_idx];
-                                    conf_refine["refine_type"] = allowed_ref;
-
-                                    std::vector<int32_t> params_refine = {(int)distance_type, dim, nb, (int)i_sq_type,
-                                                                          (int)allowed_ref_idx};
-
-                                    // fp32 candidate
-                                    printf(
-                                        "\nProcessing HNSW,SQ(%s) with %s refine, fp32 for %s distance, dim=%d, "
-                                        "nrows=%d, %d%% points filtered out\n",
-                                        sq_type.c_str(), allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
-                                        dim, nb, int(bitset_rate * 100));
-
+                                index_file =
                                     test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                              params_refine, conf_refine, bitset_view);
-                                }
-                            }
+                                                              params, conf, mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
 
-                            // test refines for FP16
-                            {
-                                const auto& allowed_refs = SQ_ALLOWED_REFINES_FP16[sq_type];
-                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < allowed_refs.size();
-                                     allowed_ref_idx++) {
-                                    auto conf_refine = conf;
-                                    conf_refine["refine"] = true;
-                                    conf_refine["refine_k"] = 1.5;
+                                // fp16 candidate
+                                printf(
+                                    "\nProcessing HNSW,SQ(%s) fp16 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                    "filtered "
+                                    "out\n",
+                                    sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
 
-                                    const std::string allowed_ref = allowed_refs[allowed_ref_idx];
-                                    conf_refine["refine_type"] = allowed_ref;
-
-                                    std::vector<int32_t> params_refine = {(int)distance_type, dim, nb, (int)i_sq_type,
-                                                                          (int)allowed_ref_idx};
-
-                                    // fp16 candidate
-                                    printf(
-                                        "\nProcessing HNSW,SQ(%s) with %s refine, fp16 for %s distance, dim=%d, "
-                                        "nrows=%d, %d%% points filtered out\n",
-                                        sq_type.c_str(), allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
-                                        dim, nb, int(bitset_rate * 100));
-
+                                index_file =
                                     test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                              params_refine, conf_refine, bitset_view);
-                                }
-                            }
+                                                              params, conf, mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
 
-                            // test refines for BF16
-                            {
-                                const auto& allowed_refs = SQ_ALLOWED_REFINES_BF16[sq_type];
-                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < allowed_refs.size();
-                                     allowed_ref_idx++) {
-                                    auto conf_refine = conf;
-                                    conf_refine["refine"] = true;
-                                    conf_refine["refine_k"] = 1.5;
+                                // bf16 candidate
+                                printf(
+                                    "\nProcessing HNSW,SQ(%s) bf16 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                    "filtered "
+                                    "out\n",
+                                    sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
 
-                                    const std::string allowed_ref = allowed_refs[allowed_ref_idx];
-                                    conf_refine["refine_type"] = allowed_ref;
-
-                                    std::vector<int32_t> params_refine = {(int)distance_type, dim, nb, (int)i_sq_type,
-                                                                          (int)allowed_ref_idx};
-
-                                    // bf16 candidate
-                                    printf(
-                                        "\nProcessing HNSW,SQ(%s) with %s refine, bf16 for %s distance, dim=%d, "
-                                        "nrows=%d, %d%% points filtered out\n",
-                                        sq_type.c_str(), allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
-                                        dim, nb, int(bitset_rate * 100));
-
+                                index_file =
                                     test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                              params_refine, conf_refine, bitset_view);
+                                                              params, conf, mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
+
+                                if (index_support_int8(conf)) {
+                                    // int8 candidate
+                                    printf(
+                                        "\nProcessing HNSW,SQ(%s) int8 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                        "filtered "
+                                        "out\n",
+                                        sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                        int(bitset_rate * 100));
+
+                                    index_file =
+                                        test_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                                  params, conf, mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
+                                // test refines for FP32
+                                {
+                                    const auto& allowed_refs = SQ_ALLOWED_REFINES_FP32[sq_type];
+                                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < allowed_refs.size();
+                                         allowed_ref_idx++) {
+                                        auto conf_refine = conf;
+                                        conf_refine["refine"] = true;
+                                        conf_refine["refine_k"] = 1.5;
+
+                                        const std::string allowed_ref = allowed_refs[allowed_ref_idx];
+                                        conf_refine["refine_type"] = allowed_ref;
+
+                                        std::vector<int32_t> params_refine = {(int)distance_type, dim, nb,
+                                                                              (int)i_sq_type, (int)allowed_ref_idx};
+
+                                        // fp32 candidate
+                                        printf(
+                                            "\nProcessing HNSW,SQ(%s) with %s refine, fp32 for %s distance, dim=%d, "
+                                            "nrows=%d, %d%% points filtered out\n",
+                                            sq_type.c_str(), allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
+                                            dim, nb, int(bitset_rate * 100));
+
+                                        index_file = test_hnsw<knowhere::fp32>(
+                                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
+                                            conf_refine, mv_only_enable, bitset_view);
+                                        index_files.emplace_back(index_file);
+                                    }
+                                }
+
+                                // test refines for FP16
+                                {
+                                    const auto& allowed_refs = SQ_ALLOWED_REFINES_FP16[sq_type];
+                                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < allowed_refs.size();
+                                         allowed_ref_idx++) {
+                                        auto conf_refine = conf;
+                                        conf_refine["refine"] = true;
+                                        conf_refine["refine_k"] = 1.5;
+
+                                        const std::string allowed_ref = allowed_refs[allowed_ref_idx];
+                                        conf_refine["refine_type"] = allowed_ref;
+
+                                        std::vector<int32_t> params_refine = {(int)distance_type, dim, nb,
+                                                                              (int)i_sq_type, (int)allowed_ref_idx};
+
+                                        // fp16 candidate
+                                        printf(
+                                            "\nProcessing HNSW,SQ(%s) with %s refine, fp16 for %s distance, dim=%d, "
+                                            "nrows=%d, %d%% points filtered out\n",
+                                            sq_type.c_str(), allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
+                                            dim, nb, int(bitset_rate * 100));
+
+                                        index_file = test_hnsw<knowhere::fp16>(
+                                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
+                                            conf_refine, mv_only_enable, bitset_view);
+                                        index_files.emplace_back(index_file);
+                                    }
+                                }
+
+                                // test refines for BF16
+                                {
+                                    const auto& allowed_refs = SQ_ALLOWED_REFINES_BF16[sq_type];
+                                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < allowed_refs.size();
+                                         allowed_ref_idx++) {
+                                        auto conf_refine = conf;
+                                        conf_refine["refine"] = true;
+                                        conf_refine["refine_k"] = 1.5;
+
+                                        const std::string allowed_ref = allowed_refs[allowed_ref_idx];
+                                        conf_refine["refine_type"] = allowed_ref;
+
+                                        std::vector<int32_t> params_refine = {(int)distance_type, dim, nb,
+                                                                              (int)i_sq_type, (int)allowed_ref_idx};
+
+                                        // bf16 candidate
+                                        printf(
+                                            "\nProcessing HNSW,SQ(%s) with %s refine, bf16 for %s distance, dim=%d, "
+                                            "nrows=%d, %d%% points filtered out\n",
+                                            sq_type.c_str(), allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
+                                            dim, nb, int(bitset_rate * 100));
+
+                                        index_file = test_hnsw<knowhere::bf16>(
+                                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
+                                            conf_refine, mv_only_enable, bitset_view);
+                                        index_files.emplace_back(index_file);
+                                    }
                                 }
                             }
+                        }
+                        for (auto index : index_files) {
+                            std::remove(index.c_str());
                         }
                     }
                 }
@@ -771,145 +861,182 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                         get_index_name<knowhere::fp32>(ann_test_name_, golden_index_type, golden_params);
 
                     auto golden_index = create_index<knowhere::fp32>(golden_index_type, golden_index_file_name,
-                                                                     default_ds_ptr, conf_golden, "golden ");
+                                                                     default_ds_ptr, conf_golden, false, "golden ");
 
-                    // test various bitset rates
-                    for (const float bitset_rate : BITSET_RATES) {
-                        const int32_t nbits_set = nb * bitset_rate;
-                        const std::vector<uint8_t> bitset_data = GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                    std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_info =
+                        GenerateScalarInfo(nb);
+                    auto partition_size = scalar_info[0][0].size();  // will be masked by partition key value
 
-                        // initialize bitset_view.
-                        // provide a default one if nbits_set == 0
-                        knowhere::BitsetView bitset_view = nullptr;
-                        if (nbits_set != 0) {
-                            bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                    for (const bool mv_only_enable : MV_ONLYs) {
+                        printf("with mv only enabled : %d\n", mv_only_enable);
+                        if (mv_only_enable) {
+                            default_ds_ptr->Set(knowhere::meta::SCALAR_INFO, scalar_info);
                         }
+                        std::vector<std::string> index_files;
+                        std::string index_file;
 
-                        // get a golden result
-                        auto golden_result = golden_index.Search(query_ds_ptr, conf_golden, bitset_view);
+                        // test various bitset rates
+                        for (const float bitset_rate : BITSET_RATES) {
+                            const int32_t nbits_set = mv_only_enable
+                                                          ? partition_size + (nb - partition_size) * bitset_rate
+                                                          : nb * bitset_rate;
+                            const std::vector<uint8_t> bitset_data =
+                                mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
+                                               : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
-                        // go PQ
-                        for (size_t nbits_type = 0; nbits_type < NBITS.size(); nbits_type++) {
-                            const int pq_m = 8;
+                            // initialize bitset_view.
+                            // provide a default one if nbits_set == 0
+                            knowhere::BitsetView bitset_view = nullptr;
+                            if (nbits_set != 0) {
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                            }
 
-                            knowhere::Json conf = conf_golden;
-                            conf[knowhere::meta::INDEX_TYPE] = index_type;
-                            conf[knowhere::indexparam::NBITS] = NBITS[nbits_type];
-                            conf[knowhere::indexparam::M] = pq_m;
+                            // get a golden result
+                            auto golden_result = golden_index.Search(query_ds_ptr, conf_golden, bitset_view);
 
-                            std::vector<int32_t> params = {(int)distance_type, dim, nb, pq_m, (int)nbits_type};
+                            // go PQ
+                            for (size_t nbits_type = 0; nbits_type < NBITS.size(); nbits_type++) {
+                                const int pq_m = 8;
 
-                            // test fp32 candidate
-                            printf(
-                                "\nProcessing HNSW,PQ%dx%d fp32 for %s distance, dim=%d, nrows=%d, %d%% points "
-                                "filtered out\n",
-                                pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
-                                int(bitset_rate * 100));
+                                knowhere::Json conf = conf_golden;
+                                conf[knowhere::meta::INDEX_TYPE] = index_type;
+                                conf[knowhere::indexparam::NBITS] = NBITS[nbits_type];
+                                conf[knowhere::indexparam::M] = pq_m;
 
-                            test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view);
+                                std::vector<int32_t> params = {(int)distance_type, dim, nb, pq_m, (int)nbits_type};
 
-                            // test fp16 candidate
-                            printf(
-                                "\nProcessing HNSW,PQ%dx%d fp16 for %s distance, dim=%d, nrows=%d, %d%% points "
-                                "filtered out\n",
-                                pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
-                                int(bitset_rate * 100));
-
-                            test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view);
-
-                            // test bf16 candidate
-                            printf(
-                                "\nProcessing HNSW,PQ%dx%d bf16 for %s distance, dim=%d, nrows=%d, %d%% points "
-                                "filtered out\n",
-                                pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
-                                int(bitset_rate * 100));
-
-                            test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view);
-                            if (index_support_int8(conf)) {
-                                // test int8 candidate
+                                // test fp32 candidate
                                 printf(
-                                    "\nProcessing HNSW,PQ%dx%d int8 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                    "\nProcessing HNSW,PQ%dx%d fp32 for %s distance, dim=%d, nrows=%d, %d%% points "
                                     "filtered out\n",
                                     pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
                                     int(bitset_rate * 100));
 
-                                test_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(), params,
-                                                          conf, bitset_view);
-                            }
-                            // test refines for fp32
-                            for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
-                                 allowed_ref_idx++) {
-                                auto conf_refine = conf;
-                                conf_refine["refine"] = true;
-                                conf_refine["refine_k"] = 1.5;
-
-                                const std::string allowed_ref = PQ_ALLOWED_REFINES_FP32[allowed_ref_idx];
-                                conf_refine["refine_type"] = allowed_ref;
-
-                                std::vector<int32_t> params_refine = {
-                                    (int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
-
-                                // test fp32 candidate
-                                printf(
-                                    "\nProcessing HNSW,PQ%dx%d with %s refine, fp32 for %s distance, dim=%d, nrows=%d, "
-                                    "%d%% points filtered out\n",
-                                    pq_m, NBITS[nbits_type], allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
-                                    dim, nb, int(bitset_rate * 100));
-
-                                test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                          params_refine, conf_refine, bitset_view);
-                            }
-
-                            // test refines for fp16
-                            for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP16.size();
-                                 allowed_ref_idx++) {
-                                auto conf_refine = conf;
-                                conf_refine["refine"] = true;
-                                conf_refine["refine_k"] = 1.5;
-
-                                const std::string allowed_ref = PQ_ALLOWED_REFINES_FP16[allowed_ref_idx];
-                                conf_refine["refine_type"] = allowed_ref;
-
-                                std::vector<int32_t> params_refine = {
-                                    (int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
+                                index_file =
+                                    test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                              params, conf, mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
 
                                 // test fp16 candidate
                                 printf(
-                                    "\nProcessing HNSW,PQ%dx%d with %s refine, fp16 for %s distance, dim=%d, nrows=%d, "
-                                    "%d%% points filtered out\n",
-                                    pq_m, NBITS[nbits_type], allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
-                                    dim, nb, int(bitset_rate * 100));
+                                    "\nProcessing HNSW,PQ%dx%d fp16 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                    "filtered out\n",
+                                    pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
 
-                                test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                          params_refine, conf_refine, bitset_view);
-                            }
-
-                            // test refines for bf16
-                            for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_BF16.size();
-                                 allowed_ref_idx++) {
-                                auto conf_refine = conf;
-                                conf_refine["refine"] = true;
-                                conf_refine["refine_k"] = 1.5;
-
-                                const std::string allowed_ref = PQ_ALLOWED_REFINES_BF16[allowed_ref_idx];
-                                conf_refine["refine_type"] = allowed_ref;
-
-                                std::vector<int32_t> params_refine = {
-                                    (int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
+                                index_file =
+                                    test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                              params, conf, mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
 
                                 // test bf16 candidate
                                 printf(
-                                    "\nProcessing HNSW,PQ%dx%d with %s refine, bf16 for %s distance, dim=%d, nrows=%d, "
-                                    "%d%% points filtered out\n",
-                                    pq_m, NBITS[nbits_type], allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
-                                    dim, nb, int(bitset_rate * 100));
+                                    "\nProcessing HNSW,PQ%dx%d bf16 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                    "filtered out\n",
+                                    pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
 
-                                test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                          params_refine, conf_refine, bitset_view);
+                                index_file =
+                                    test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                              params, conf, mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
+                                if (index_support_int8(conf)) {
+                                    // test int8 candidate
+                                    printf(
+                                        "\nProcessing HNSW,PQ%dx%d int8 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                        "filtered out\n",
+                                        pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                        int(bitset_rate * 100));
+
+                                    index_file =
+                                        test_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                                  params, conf, mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
+                                // test refines for fp32
+                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
+                                     allowed_ref_idx++) {
+                                    auto conf_refine = conf;
+                                    conf_refine["refine"] = true;
+                                    conf_refine["refine_k"] = 1.5;
+
+                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_FP32[allowed_ref_idx];
+                                    conf_refine["refine_type"] = allowed_ref;
+
+                                    std::vector<int32_t> params_refine = {
+                                        (int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
+
+                                    // test fp32 candidate
+                                    printf(
+                                        "\nProcessing HNSW,PQ%dx%d with %s refine, fp32 for %s distance, dim=%d, "
+                                        "nrows=%d, "
+                                        "%d%% points filtered out\n",
+                                        pq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                                    index_file = test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
+                                                                           golden_result.value(), params_refine,
+                                                                           conf_refine, mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
+
+                                // test refines for fp16
+                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP16.size();
+                                     allowed_ref_idx++) {
+                                    auto conf_refine = conf;
+                                    conf_refine["refine"] = true;
+                                    conf_refine["refine_k"] = 1.5;
+
+                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_FP16[allowed_ref_idx];
+                                    conf_refine["refine_type"] = allowed_ref;
+
+                                    std::vector<int32_t> params_refine = {
+                                        (int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
+
+                                    // test fp16 candidate
+                                    printf(
+                                        "\nProcessing HNSW,PQ%dx%d with %s refine, fp16 for %s distance, dim=%d, "
+                                        "nrows=%d, "
+                                        "%d%% points filtered out\n",
+                                        pq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                                    index_file = test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr,
+                                                                           golden_result.value(), params_refine,
+                                                                           conf_refine, mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
+
+                                // test refines for bf16
+                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_BF16.size();
+                                     allowed_ref_idx++) {
+                                    auto conf_refine = conf;
+                                    conf_refine["refine"] = true;
+                                    conf_refine["refine_k"] = 1.5;
+
+                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_BF16[allowed_ref_idx];
+                                    conf_refine["refine_type"] = allowed_ref;
+
+                                    std::vector<int32_t> params_refine = {
+                                        (int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
+
+                                    // test bf16 candidate
+                                    printf(
+                                        "\nProcessing HNSW,PQ%dx%d with %s refine, bf16 for %s distance, dim=%d, "
+                                        "nrows=%d, "
+                                        "%d%% points filtered out\n",
+                                        pq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                                    index_file = test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr,
+                                                                           golden_result.value(), params_refine,
+                                                                           conf_refine, mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
                             }
+                        }
+                        for (auto index : index_files) {
+                            std::remove(index.c_str());
                         }
                     }
                 }
@@ -945,151 +1072,189 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                         get_index_name<knowhere::fp32>(ann_test_name_, golden_index_type, golden_params);
 
                     auto golden_index = create_index<knowhere::fp32>(golden_index_type, golden_index_file_name,
-                                                                     default_ds_ptr, conf_golden, "golden ");
-                    // test various bitset rates
-                    for (const float bitset_rate : BITSET_RATES) {
-                        const int32_t nbits_set = nb * bitset_rate;
-                        const std::vector<uint8_t> bitset_data = GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                                                     default_ds_ptr, conf_golden, false, "golden ");
+                    std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_info =
+                        GenerateScalarInfo(nb);
+                    auto partition_size = scalar_info[0][0].size();  // will be masked by partition key value
 
-                        // initialize bitset_view.
-                        // provide a default one if nbits_set == 0
-                        knowhere::BitsetView bitset_view = nullptr;
-                        if (nbits_set != 0) {
-                            bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                    for (const bool mv_only_enable : MV_ONLYs) {
+                        printf("with mv only enabled : %d\n", mv_only_enable);
+                        if (mv_only_enable) {
+                            default_ds_ptr->Set(knowhere::meta::SCALAR_INFO, scalar_info);
                         }
+                        std::vector<std::string> index_files;
+                        std::string index_file;
 
-                        // get a golden result
-                        auto golden_result = golden_index.Search(query_ds_ptr, conf_golden, bitset_view);
+                        // test various bitset rates
+                        for (const float bitset_rate : BITSET_RATES) {
+                            const int32_t nbits_set = mv_only_enable
+                                                          ? partition_size + (nb - partition_size) * bitset_rate
+                                                          : nb * bitset_rate;
+                            const std::vector<uint8_t> bitset_data =
+                                mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
+                                               : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
-                        // go PRQ
-                        for (size_t nbits_type = 0; nbits_type < NBITS.size(); nbits_type++) {
-                            const int prq_m = 4;
-                            const int prq_num = 2;
+                            // initialize bitset_view.
+                            // provide a default one if nbits_set == 0
+                            knowhere::BitsetView bitset_view = nullptr;
+                            if (nbits_set != 0) {
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                            }
 
-                            knowhere::Json conf = conf_golden;
-                            conf[knowhere::meta::INDEX_TYPE] = index_type;
-                            conf[knowhere::indexparam::NBITS] = NBITS[nbits_type];
-                            conf[knowhere::indexparam::M] = prq_m;
-                            conf[knowhere::indexparam::PRQ_NUM] = prq_num;
+                            // get a golden result
+                            auto golden_result = golden_index.Search(query_ds_ptr, conf_golden, bitset_view);
 
-                            std::vector<int32_t> params = {(int)distance_type, dim, nb, prq_m, prq_num,
-                                                           (int)nbits_type};
+                            // go PRQ
+                            for (size_t nbits_type = 0; nbits_type < NBITS.size(); nbits_type++) {
+                                const int prq_m = 4;
+                                const int prq_num = 2;
 
-                            // test fp32 candidate
-                            printf(
-                                "\nProcessing HNSW,PRQ%dx%dx%d fp32 for %s distance, dim=%d, nrows=%d, %d%% points "
-                                "filtered out\n",
-                                prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
-                                int(bitset_rate * 100));
+                                knowhere::Json conf = conf_golden;
+                                conf[knowhere::meta::INDEX_TYPE] = index_type;
+                                conf[knowhere::indexparam::NBITS] = NBITS[nbits_type];
+                                conf[knowhere::indexparam::M] = prq_m;
+                                conf[knowhere::indexparam::PRQ_NUM] = prq_num;
 
-                            test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view);
+                                std::vector<int32_t> params = {(int)distance_type, dim, nb, prq_m, prq_num,
+                                                               (int)nbits_type};
 
-                            // test fp16 candidate
-                            printf(
-                                "\nProcessing HNSW,PRQ%dx%dx%d fp16 for %s distance, dim=%d, nrows=%d, %d%% points "
-                                "filtered out\n",
-                                prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
-                                int(bitset_rate * 100));
-
-                            test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view);
-
-                            // test bf16 candidate
-                            printf(
-                                "\nProcessing HNSW,PRQ%dx%dx%d bf16 for %s distance, dim=%d, nrows=%d, %d%% points "
-                                "filtered out\n",
-                                prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
-                                int(bitset_rate * 100));
-
-                            test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
-                                                      bitset_view);
-
-                            if (index_support_int8(conf)) {
-                                // test int8 candidate
+                                // test fp32 candidate
                                 printf(
-                                    "\nProcessing HNSW,PRQ%dx%dx%d int8 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                    "\nProcessing HNSW,PRQ%dx%dx%d fp32 for %s distance, dim=%d, nrows=%d, %d%% points "
                                     "filtered out\n",
                                     prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
                                     int(bitset_rate * 100));
 
-                                test_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(), params,
-                                                          conf, bitset_view);
-                            }
-                            // test fp32 refines
-                            for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
-                                 allowed_ref_idx++) {
-                                auto conf_refine = conf;
-                                conf_refine["refine"] = true;
-                                conf_refine["refine_k"] = 1.5;
+                                index_file =
+                                    test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                              params, conf, mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
 
-                                const std::string allowed_ref = PQ_ALLOWED_REFINES_FP32[allowed_ref_idx];
-                                conf_refine["refine_type"] = allowed_ref;
-
-                                std::vector<int32_t> params_refine = {
-                                    (int)distance_type, dim, nb, prq_m, prq_num, (int)nbits_type, (int)allowed_ref_idx};
-
-                                //
+                                // test fp16 candidate
                                 printf(
-                                    "\nProcessing HNSW,PRQ%dx%dx%d with %s refine, fp32 for %s distance, dim=%d, "
-                                    "nrows=%d, %d%% points filtered out\n",
-                                    prq_num, prq_m, NBITS[nbits_type], allowed_ref.c_str(),
-                                    DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+                                    "\nProcessing HNSW,PRQ%dx%dx%d fp16 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                    "filtered out\n",
+                                    prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
 
-                                // test a candidate
-                                test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                          params_refine, conf_refine, bitset_view);
-                            }
+                                index_file =
+                                    test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                              params, conf, mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
 
-                            // test fp16 refines
-                            for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP16.size();
-                                 allowed_ref_idx++) {
-                                auto conf_refine = conf;
-                                conf_refine["refine"] = true;
-                                conf_refine["refine_k"] = 1.5;
-
-                                const std::string allowed_ref = PQ_ALLOWED_REFINES_FP16[allowed_ref_idx];
-                                conf_refine["refine_type"] = allowed_ref;
-
-                                std::vector<int32_t> params_refine = {
-                                    (int)distance_type, dim, nb, prq_m, prq_num, (int)nbits_type, (int)allowed_ref_idx};
-
-                                //
+                                // test bf16 candidate
                                 printf(
-                                    "\nProcessing HNSW,PRQ%dx%dx%d with %s refine, fp16 for %s distance, dim=%d, "
-                                    "nrows=%d, %d%% points filtered out\n",
-                                    prq_num, prq_m, NBITS[nbits_type], allowed_ref.c_str(),
-                                    DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+                                    "\nProcessing HNSW,PRQ%dx%dx%d bf16 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                    "filtered out\n",
+                                    prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
 
-                                // test a candidate
-                                test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                          params_refine, conf_refine, bitset_view);
+                                index_file =
+                                    test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                              params, conf, mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
+
+                                if (index_support_int8(conf)) {
+                                    // test int8 candidate
+                                    printf(
+                                        "\nProcessing HNSW,PRQ%dx%dx%d int8 for %s distance, dim=%d, nrows=%d, %d%% "
+                                        "points "
+                                        "filtered out\n",
+                                        prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim,
+                                        nb, int(bitset_rate * 100));
+
+                                    index_file =
+                                        test_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                                  params, conf, mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
+                                // test fp32 refines
+                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
+                                     allowed_ref_idx++) {
+                                    auto conf_refine = conf;
+                                    conf_refine["refine"] = true;
+                                    conf_refine["refine_k"] = 1.5;
+
+                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_FP32[allowed_ref_idx];
+                                    conf_refine["refine_type"] = allowed_ref;
+
+                                    std::vector<int32_t> params_refine = {
+                                        (int)distance_type,  dim, nb, prq_m, prq_num, (int)nbits_type,
+                                        (int)allowed_ref_idx};
+
+                                    //
+                                    printf(
+                                        "\nProcessing HNSW,PRQ%dx%dx%d with %s refine, fp32 for %s distance, dim=%d, "
+                                        "nrows=%d, %d%% points filtered out\n",
+                                        prq_num, prq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                                    // test a candidate
+                                    index_file = test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
+                                                                           golden_result.value(), params_refine,
+                                                                           conf_refine, mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
+
+                                // test fp16 refines
+                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP16.size();
+                                     allowed_ref_idx++) {
+                                    auto conf_refine = conf;
+                                    conf_refine["refine"] = true;
+                                    conf_refine["refine_k"] = 1.5;
+
+                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_FP16[allowed_ref_idx];
+                                    conf_refine["refine_type"] = allowed_ref;
+
+                                    std::vector<int32_t> params_refine = {
+                                        (int)distance_type,  dim, nb, prq_m, prq_num, (int)nbits_type,
+                                        (int)allowed_ref_idx};
+
+                                    //
+                                    printf(
+                                        "\nProcessing HNSW,PRQ%dx%dx%d with %s refine, fp16 for %s distance, dim=%d, "
+                                        "nrows=%d, %d%% points filtered out\n",
+                                        prq_num, prq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                                    // test a candidate
+                                    index_file = test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr,
+                                                                           golden_result.value(), params_refine,
+                                                                           conf_refine, mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
+
+                                // test bf16 refines
+                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_BF16.size();
+                                     allowed_ref_idx++) {
+                                    auto conf_refine = conf;
+                                    conf_refine["refine"] = true;
+                                    conf_refine["refine_k"] = 1.5;
+
+                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_BF16[allowed_ref_idx];
+                                    conf_refine["refine_type"] = allowed_ref;
+
+                                    std::vector<int32_t> params_refine = {
+                                        (int)distance_type,  dim, nb, prq_m, prq_num, (int)nbits_type,
+                                        (int)allowed_ref_idx};
+
+                                    //
+                                    printf(
+                                        "\nProcessing HNSW,PRQ%dx%dx%d with %s refine, bf16 for %s distance, dim=%d, "
+                                        "nrows=%d, %d%% points filtered out\n",
+                                        prq_num, prq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                                    // test a candidate
+                                    index_file = test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr,
+                                                                           golden_result.value(), params_refine,
+                                                                           conf_refine, mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
                             }
-
-                            // test bf16 refines
-                            for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_BF16.size();
-                                 allowed_ref_idx++) {
-                                auto conf_refine = conf;
-                                conf_refine["refine"] = true;
-                                conf_refine["refine_k"] = 1.5;
-
-                                const std::string allowed_ref = PQ_ALLOWED_REFINES_BF16[allowed_ref_idx];
-                                conf_refine["refine_type"] = allowed_ref;
-
-                                std::vector<int32_t> params_refine = {
-                                    (int)distance_type, dim, nb, prq_m, prq_num, (int)nbits_type, (int)allowed_ref_idx};
-
-                                //
-                                printf(
-                                    "\nProcessing HNSW,PRQ%dx%dx%d with %s refine, bf16 for %s distance, dim=%d, "
-                                    "nrows=%d, %d%% points filtered out\n",
-                                    prq_num, prq_m, NBITS[nbits_type], allowed_ref.c_str(),
-                                    DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
-
-                                // test a candidate
-                                test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                          params_refine, conf_refine, bitset_view);
-                            }
+                        }
+                        for (auto index : index_files) {
+                            std::remove(index.c_str());
                         }
                     }
                 }
@@ -1122,6 +1287,8 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
     const std::vector<int32_t> DIMS = {4};
     const std::vector<int32_t> NBS = {256};
     const int32_t NQ = 16;
+
+    const std::vector<bool> MV_ONLYs = {false, true};
 
     const std::vector<std::string> SQ_TYPES = {"SQ6", "SQ8", "BF16", "FP16"};
 
@@ -1184,7 +1351,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                     std::string golden_index_file_name =
                         get_index_name<knowhere::fp32>(ann_test_name_, golden_index_type, golden_params);
 
-                    create_index<knowhere::fp32>(golden_index_type, golden_index_file_name, default_ds_ptr, conf,
+                    create_index<knowhere::fp32>(golden_index_type, golden_index_file_name, default_ds_ptr, conf, false,
                                                  "golden ");
                 }
             }
@@ -1192,11 +1359,10 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
     }
 
     // I'd like to have a sequential process here, because every item in the loop
-    //   is parallelized on its own
+    //  is parallelized on its own
 
     SECTION("FLAT") {
         const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW;
-        // const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW;
         const std::string& golden_index_type = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
 
         for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
@@ -1237,62 +1403,95 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                             get_index_name<knowhere::fp32>(ann_test_name_, golden_index_type, golden_params);
 
                         auto golden_index = create_index<knowhere::fp32>(golden_index_type, golden_index_file_name,
-                                                                         default_ds_ptr, conf, "golden ");
+                                                                         default_ds_ptr, conf, false, "golden ");
 
-                        // test various bitset rates
-                        for (const float bitset_rate : BITSET_RATES) {
-                            const int32_t nbits_set = nb * bitset_rate;
-                            const std::vector<uint8_t> bitset_data = GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                        std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_info =
+                            GenerateScalarInfo(nb);
+                        auto partition_size = scalar_info[0][0].size();  // will be masked by partition key value
 
-                            // initialize bitset_view.
-                            // provide a default one if nbits_set == 0
-                            knowhere::BitsetView bitset_view = nullptr;
-                            if (nbits_set != 0) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                        for (const bool mv_only_enable : MV_ONLYs) {
+#ifdef KNOWHERE_WITH_CARDINAL
+                            if (mv_only_enable) {
+                                continue;
                             }
+#endif
+                            printf("with mv only enabled : %d\n", mv_only_enable);
+                            if (mv_only_enable) {
+                                default_ds_ptr->Set(knowhere::meta::SCALAR_INFO, scalar_info);
+                            }
+                            std::vector<std::string> index_files;
+                            std::string index_file;
 
-                            // get a golden result
-                            auto golden_result = golden_index.RangeSearch(query_ds_ptr, conf, bitset_view);
+                            // test various bitset rates
+                            for (const float bitset_rate : BITSET_RATES) {
+                                const int32_t nbits_set = mv_only_enable
+                                                              ? partition_size + (nb - partition_size) * bitset_rate
+                                                              : nb * bitset_rate;
+                                const std::vector<uint8_t> bitset_data =
+                                    mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
+                                                   : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
-                            // fp32 candidate
-                            printf(
-                                "\nProcessing HNSW,Flat fp32 for %s distance, dim=%d, nrows=%d, radius=%f, "
-                                "range_filter=%f, %d%% points filtered out\n",
-                                DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
-                                int(bitset_rate * 100));
+                                // initialize bitset_view.
+                                // provide a default one if nbits_set == 0
+                                knowhere::BitsetView bitset_view = nullptr;
+                                if (nbits_set != 0) {
+                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                                }
 
-                            test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(), params,
-                                                            conf, bitset_view);
+                                // get a golden result
+                                auto golden_result = golden_index.RangeSearch(query_ds_ptr, conf, bitset_view);
 
-                            // fp16 candidate
-                            printf(
-                                "\nProcessing HNSW,Flat fp16 for %s distance, dim=%d, nrows=%d, radius=%f, "
-                                "range_filter=%f, %d%% points filtered out\n",
-                                DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
-                                int(bitset_rate * 100));
-
-                            test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params,
-                                                            conf, bitset_view);
-
-                            // bf16 candidate
-                            printf(
-                                "\nProcessing HNSW,Flat bf16 for %s distance, dim=%d, nrows=%d, radius=%f, "
-                                "range_filter=%f, %d%% points filtered out\n",
-                                DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
-                                int(bitset_rate * 100));
-
-                            test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(), params,
-                                                            conf, bitset_view);
-                            if (index_support_int8(conf)) {
-                                // int8 candidate
+                                // fp32 candidate
                                 printf(
-                                    "\nProcessing HNSW,Flat int8 for %s distance, dim=%d, nrows=%d, radius=%f, "
+                                    "\nProcessing HNSW,Flat fp32 for %s distance, dim=%d, nrows=%d, radius=%f, "
                                     "range_filter=%f, %d%% points filtered out\n",
                                     DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
                                     int(bitset_rate * 100));
 
-                                test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view);
+                                index_file =
+                                    test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                                    params, conf, mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
+
+                                // fp16 candidate
+                                printf(
+                                    "\nProcessing HNSW,Flat fp16 for %s distance, dim=%d, nrows=%d, radius=%f, "
+                                    "range_filter=%f, %d%% points filtered out\n",
+                                    DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
+                                    int(bitset_rate * 100));
+
+                                index_file =
+                                    test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                                    params, conf, mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
+
+                                // bf16 candidate
+                                printf(
+                                    "\nProcessing HNSW,Flat bf16 for %s distance, dim=%d, nrows=%d, radius=%f, "
+                                    "range_filter=%f, %d%% points filtered out\n",
+                                    DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
+                                    int(bitset_rate * 100));
+
+                                index_file =
+                                    test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                                    params, conf, mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
+                                if (index_support_int8(conf)) {
+                                    // int8 candidate
+                                    printf(
+                                        "\nProcessing HNSW,Flat int8 for %s distance, dim=%d, nrows=%d, radius=%f, "
+                                        "range_filter=%f, %d%% points filtered out\n",
+                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
+                                        int(bitset_rate * 100));
+
+                                    index_file = test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr,
+                                                                                 golden_result.value(), params, conf,
+                                                                                 mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
+                            }
+                            for (auto index : index_files) {
+                                std::remove(index.c_str());
                             }
                         }
                     }
@@ -1342,158 +1541,197 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                             get_index_name<knowhere::fp32>(ann_test_name_, golden_index_type, golden_params);
 
                         auto golden_index = create_index<knowhere::fp32>(golden_index_type, golden_index_file_name,
-                                                                         default_ds_ptr, conf_golden, "golden ");
+                                                                         default_ds_ptr, conf_golden, false, "golden ");
 
-                        // test various bitset rates
-                        for (const float bitset_rate : BITSET_RATES) {
-                            const int32_t nbits_set = nb * bitset_rate;
-                            const std::vector<uint8_t> bitset_data = GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                        std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_info =
+                            GenerateScalarInfo(nb);
+                        auto partition_size = scalar_info[0][0].size();  // will be masked by partition key value
 
-                            // initialize bitset_view.
-                            // provide a default one if nbits_set == 0
-                            knowhere::BitsetView bitset_view = nullptr;
-                            if (nbits_set != 0) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                        for (const bool mv_only_enable : MV_ONLYs) {
+                            printf("with mv only enabled : %d\n", mv_only_enable);
+                            if (mv_only_enable) {
+                                default_ds_ptr->Set(knowhere::meta::SCALAR_INFO, scalar_info);
                             }
+                            std::vector<std::string> index_files;
+                            std::string index_file;
 
-                            // get a golden result
-                            auto golden_result = golden_index.RangeSearch(query_ds_ptr, conf_golden, bitset_view);
+                            // test various bitset rates
+                            for (const float bitset_rate : BITSET_RATES) {
+                                const int32_t nbits_set = mv_only_enable
+                                                              ? partition_size + (nb - partition_size) * bitset_rate
+                                                              : nb * bitset_rate;
+                                const std::vector<uint8_t> bitset_data =
+                                    mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
+                                                   : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
-                            // go SQ
-                            for (size_t i_sq_type = 0; i_sq_type < SQ_TYPES.size(); i_sq_type++) {
-                                knowhere::Json conf = conf_golden;
-                                conf[knowhere::meta::INDEX_TYPE] = index_type;
+                                // initialize bitset_view.
+                                // provide a default one if nbits_set == 0
+                                knowhere::BitsetView bitset_view = nullptr;
+                                if (nbits_set != 0) {
+                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                                }
 
-                                const std::string sq_type = SQ_TYPES[i_sq_type];
-                                conf[knowhere::indexparam::SQ_TYPE] = sq_type;
+                                // get a golden result
+                                auto golden_result = golden_index.RangeSearch(query_ds_ptr, conf_golden, bitset_view);
 
-                                std::vector<int32_t> params = {(int)distance_type, dim, nb, (int)i_sq_type};
+                                // go SQ
+                                for (size_t i_sq_type = 0; i_sq_type < SQ_TYPES.size(); i_sq_type++) {
+                                    knowhere::Json conf = conf_golden;
+                                    conf[knowhere::meta::INDEX_TYPE] = index_type;
 
-                                // fp32 candidate
-                                printf(
-                                    "\nProcessing HNSW,SQ(%s) fp32 for %s distance, dim=%d, nrows=%d, radius=%f, "
-                                    "range_filter=%f, %d%% points filtered out\n",
-                                    sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
-                                    range_filter, int(bitset_rate * 100));
+                                    const std::string sq_type = SQ_TYPES[i_sq_type];
+                                    conf[knowhere::indexparam::SQ_TYPE] = sq_type;
 
-                                test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view);
+                                    std::vector<int32_t> params = {(int)distance_type, dim, nb, (int)i_sq_type};
 
-                                // fp16 candidate
-                                printf(
-                                    "\nProcessing HNSW,SQ(%s) fp16 for %s distance, dim=%d, nrows=%d, radius=%f, "
-                                    "range_filter=%f, %d%% points filtered out\n",
-                                    sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
-                                    range_filter, int(bitset_rate * 100));
-
-                                test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view);
-
-                                // bf16 candidate
-                                printf(
-                                    "\nProcessing HNSW,SQ(%s) bf16 for %s distance, dim=%d, nrows=%d, radius=%f, "
-                                    "range_filter=%f, %d%% points filtered out\n",
-                                    sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
-                                    range_filter, int(bitset_rate * 100));
-
-                                test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view);
-
-                                if (index_support_int8(conf)) {
-                                    // int8 candidate
+                                    // fp32 candidate
                                     printf(
-                                        "\nProcessing HNSW,SQ(%s) int8 for %s distance, dim=%d, nrows=%d, radius=%f, "
+                                        "\nProcessing HNSW,SQ(%s) fp32 for %s distance, dim=%d, nrows=%d, radius=%f, "
                                         "range_filter=%f, %d%% points filtered out\n",
                                         sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
                                         range_filter, int(bitset_rate * 100));
 
-                                    test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                    params, conf, bitset_view);
-                                }
+                                    index_file = test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
+                                                                                 golden_result.value(), params, conf,
+                                                                                 mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
 
-                                // test refines for FP32
-                                {
-                                    const auto& allowed_refs = SQ_ALLOWED_REFINES_FP32[sq_type];
-                                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < allowed_refs.size();
-                                         allowed_ref_idx++) {
-                                        auto conf_refine = conf;
-                                        conf_refine["refine"] = true;
-                                        conf_refine["refine_k"] = 1.5;
+                                    // fp16 candidate
+                                    printf(
+                                        "\nProcessing HNSW,SQ(%s) fp16 for %s distance, dim=%d, nrows=%d, radius=%f, "
+                                        "range_filter=%f, %d%% points filtered out\n",
+                                        sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
+                                        range_filter, int(bitset_rate * 100));
 
-                                        const std::string allowed_ref = allowed_refs[allowed_ref_idx];
-                                        conf_refine["refine_type"] = allowed_ref;
+                                    index_file = test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr,
+                                                                                 golden_result.value(), params, conf,
+                                                                                 mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
 
-                                        std::vector<int32_t> params_refine = {(int)distance_type, dim, nb,
-                                                                              (int)i_sq_type, (int)allowed_ref_idx};
+                                    // bf16 candidate
+                                    printf(
+                                        "\nProcessing HNSW,SQ(%s) bf16 for %s distance, dim=%d, nrows=%d, radius=%f, "
+                                        "range_filter=%f, %d%% points filtered out\n",
+                                        sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
+                                        range_filter, int(bitset_rate * 100));
 
-                                        // fp32 candidate
+                                    index_file = test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr,
+                                                                                 golden_result.value(), params, conf,
+                                                                                 mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+
+                                    if (index_support_int8(conf)) {
+                                        // int8 candidate
                                         printf(
-                                            "\nProcessing HNSW,SQ(%s) with %s refine, fp32 for %s distance, dim=%d, "
-                                            "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
-                                            sq_type.c_str(), allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
-                                            dim, nb, radius, range_filter, int(bitset_rate * 100));
+                                            "\nProcessing HNSW,SQ(%s) int8 for %s distance, dim=%d, nrows=%d, "
+                                            "radius=%f, "
+                                            "range_filter=%f, %d%% points filtered out\n",
+                                            sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
+                                            range_filter, int(bitset_rate * 100));
 
-                                        test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
-                                                                        golden_result.value(), params_refine,
-                                                                        conf_refine, bitset_view);
+                                        index_file = test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr,
+                                                                                     golden_result.value(), params,
+                                                                                     conf, mv_only_enable, bitset_view);
+                                        index_files.emplace_back(index_file);
+                                    }
+
+                                    // test refines for FP32
+                                    {
+                                        const auto& allowed_refs = SQ_ALLOWED_REFINES_FP32[sq_type];
+                                        for (size_t allowed_ref_idx = 0; allowed_ref_idx < allowed_refs.size();
+                                             allowed_ref_idx++) {
+                                            auto conf_refine = conf;
+                                            conf_refine["refine"] = true;
+                                            conf_refine["refine_k"] = 1.5;
+
+                                            const std::string allowed_ref = allowed_refs[allowed_ref_idx];
+                                            conf_refine["refine_type"] = allowed_ref;
+
+                                            std::vector<int32_t> params_refine = {(int)distance_type, dim, nb,
+                                                                                  (int)i_sq_type, (int)allowed_ref_idx};
+
+                                            // fp32 candidate
+                                            printf(
+                                                "\nProcessing HNSW,SQ(%s) with %s refine, fp32 for %s distance, "
+                                                "dim=%d, "
+                                                "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
+                                                sq_type.c_str(), allowed_ref.c_str(),
+                                                DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
+                                                int(bitset_rate * 100));
+
+                                            index_file = test_hnsw_range<knowhere::fp32>(
+                                                default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
+                                                conf_refine, mv_only_enable, bitset_view);
+                                            index_files.emplace_back(index_file);
+                                        }
+                                    }
+
+                                    // test refines for FP16
+                                    {
+                                        const auto& allowed_refs = SQ_ALLOWED_REFINES_FP16[sq_type];
+                                        for (size_t allowed_ref_idx = 0; allowed_ref_idx < allowed_refs.size();
+                                             allowed_ref_idx++) {
+                                            auto conf_refine = conf;
+                                            conf_refine["refine"] = true;
+                                            conf_refine["refine_k"] = 1.5;
+
+                                            const std::string allowed_ref = allowed_refs[allowed_ref_idx];
+                                            conf_refine["refine_type"] = allowed_ref;
+
+                                            std::vector<int32_t> params_refine = {(int)distance_type, dim, nb,
+                                                                                  (int)i_sq_type, (int)allowed_ref_idx};
+
+                                            // fp16 candidate
+                                            printf(
+                                                "\nProcessing HNSW,SQ(%s) with %s refine, fp16 for %s distance, "
+                                                "dim=%d, "
+                                                "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
+                                                sq_type.c_str(), allowed_ref.c_str(),
+                                                DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
+                                                int(bitset_rate * 100));
+
+                                            index_file = test_hnsw_range<knowhere::fp16>(
+                                                default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
+                                                conf_refine, mv_only_enable, bitset_view);
+                                            index_files.emplace_back(index_file);
+                                        }
+                                    }
+
+                                    // test refines for BF16
+                                    {
+                                        const auto& allowed_refs = SQ_ALLOWED_REFINES_BF16[sq_type];
+                                        for (size_t allowed_ref_idx = 0; allowed_ref_idx < allowed_refs.size();
+                                             allowed_ref_idx++) {
+                                            auto conf_refine = conf;
+                                            conf_refine["refine"] = true;
+                                            conf_refine["refine_k"] = 1.5;
+
+                                            const std::string allowed_ref = allowed_refs[allowed_ref_idx];
+                                            conf_refine["refine_type"] = allowed_ref;
+
+                                            std::vector<int32_t> params_refine = {(int)distance_type, dim, nb,
+                                                                                  (int)i_sq_type, (int)allowed_ref_idx};
+
+                                            // bf16 candidate
+                                            printf(
+                                                "\nProcessing HNSW,SQ(%s) with %s refine, bf16 for %s distance, "
+                                                "dim=%d, "
+                                                "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
+                                                sq_type.c_str(), allowed_ref.c_str(),
+                                                DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
+                                                int(bitset_rate * 100));
+
+                                            index_file = test_hnsw_range<knowhere::bf16>(
+                                                default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
+                                                conf_refine, mv_only_enable, bitset_view);
+                                            index_files.emplace_back(index_file);
+                                        }
                                     }
                                 }
+                            }
 
-                                // test refines for FP16
-                                {
-                                    const auto& allowed_refs = SQ_ALLOWED_REFINES_FP16[sq_type];
-                                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < allowed_refs.size();
-                                         allowed_ref_idx++) {
-                                        auto conf_refine = conf;
-                                        conf_refine["refine"] = true;
-                                        conf_refine["refine_k"] = 1.5;
-
-                                        const std::string allowed_ref = allowed_refs[allowed_ref_idx];
-                                        conf_refine["refine_type"] = allowed_ref;
-
-                                        std::vector<int32_t> params_refine = {(int)distance_type, dim, nb,
-                                                                              (int)i_sq_type, (int)allowed_ref_idx};
-
-                                        // fp16 candidate
-                                        printf(
-                                            "\nProcessing HNSW,SQ(%s) with %s refine, fp16 for %s distance, dim=%d, "
-                                            "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
-                                            sq_type.c_str(), allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
-                                            dim, nb, radius, range_filter, int(bitset_rate * 100));
-
-                                        test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr,
-                                                                        golden_result.value(), params_refine,
-                                                                        conf_refine, bitset_view);
-                                    }
-                                }
-
-                                // test refines for BF16
-                                {
-                                    const auto& allowed_refs = SQ_ALLOWED_REFINES_BF16[sq_type];
-                                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < allowed_refs.size();
-                                         allowed_ref_idx++) {
-                                        auto conf_refine = conf;
-                                        conf_refine["refine"] = true;
-                                        conf_refine["refine_k"] = 1.5;
-
-                                        const std::string allowed_ref = allowed_refs[allowed_ref_idx];
-                                        conf_refine["refine_type"] = allowed_ref;
-
-                                        std::vector<int32_t> params_refine = {(int)distance_type, dim, nb,
-                                                                              (int)i_sq_type, (int)allowed_ref_idx};
-
-                                        // bf16 candidate
-                                        printf(
-                                            "\nProcessing HNSW,SQ(%s) with %s refine, bf16 for %s distance, dim=%d, "
-                                            "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
-                                            sq_type.c_str(), allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
-                                            dim, nb, radius, range_filter, int(bitset_rate * 100));
-
-                                        test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr,
-                                                                        golden_result.value(), params_refine,
-                                                                        conf_refine, bitset_view);
-                                    }
-                                }
+                            for (auto index : index_files) {
+                                std::remove(index.c_str());
                             }
                         }
                     }
@@ -1543,150 +1781,184 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                             get_index_name<knowhere::fp32>(ann_test_name_, golden_index_type, golden_params);
 
                         auto golden_index = create_index<knowhere::fp32>(golden_index_type, golden_index_file_name,
-                                                                         default_ds_ptr, conf_golden, "golden ");
+                                                                         default_ds_ptr, conf_golden, false, "golden ");
 
-                        // test various bitset rates
-                        for (const float bitset_rate : BITSET_RATES) {
-                            const int32_t nbits_set = nb * bitset_rate;
-                            const std::vector<uint8_t> bitset_data = GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                        std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_info =
+                            GenerateScalarInfo(nb);
+                        auto partition_size = scalar_info[0][0].size();  // will be masked by partition key value
 
-                            // initialize bitset_view.
-                            // provide a default one if nbits_set == 0
-                            knowhere::BitsetView bitset_view = nullptr;
-                            if (nbits_set != 0) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                        for (const bool mv_only_enable : MV_ONLYs) {
+                            printf("with mv only enabled : %d\n", mv_only_enable);
+                            if (mv_only_enable) {
+                                default_ds_ptr->Set(knowhere::meta::SCALAR_INFO, scalar_info);
                             }
+                            std::vector<std::string> index_files;
+                            std::string index_file;
 
-                            // get a golden result
-                            auto golden_result = golden_index.RangeSearch(query_ds_ptr, conf_golden, bitset_view);
+                            // test various bitset rates
+                            for (const float bitset_rate : BITSET_RATES) {
+                                const int32_t nbits_set = mv_only_enable
+                                                              ? partition_size + (nb - partition_size) * bitset_rate
+                                                              : nb * bitset_rate;
+                                const std::vector<uint8_t> bitset_data =
+                                    mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
+                                                   : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                // initialize bitset_view.
+                                // provide a default one if nbits_set == 0
+                                knowhere::BitsetView bitset_view = nullptr;
+                                if (nbits_set != 0) {
+                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                                }
 
-                            // go PQ
-                            for (size_t nbits_type = 0; nbits_type < NBITS.size(); nbits_type++) {
-                                const int pq_m = 8;
+                                // get a golden result
+                                auto golden_result = golden_index.RangeSearch(query_ds_ptr, conf_golden, bitset_view);
 
-                                knowhere::Json conf = conf_golden;
-                                conf[knowhere::meta::INDEX_TYPE] = index_type;
-                                conf[knowhere::indexparam::NBITS] = NBITS[nbits_type];
-                                conf[knowhere::indexparam::M] = pq_m;
+                                // go PQ
+                                for (size_t nbits_type = 0; nbits_type < NBITS.size(); nbits_type++) {
+                                    const int pq_m = 8;
 
-                                std::vector<int32_t> params = {(int)distance_type, dim, nb, pq_m, (int)nbits_type};
+                                    knowhere::Json conf = conf_golden;
+                                    conf[knowhere::meta::INDEX_TYPE] = index_type;
+                                    conf[knowhere::indexparam::NBITS] = NBITS[nbits_type];
+                                    conf[knowhere::indexparam::M] = pq_m;
 
-                                // test fp32 candidate
-                                printf(
-                                    "\nProcessing HNSW,PQ%dx%d fp32 for %s distance, dim=%d, nrows=%d, radius=%f, "
-                                    "range_filter=%f, %d%% points filtered out\n",
-                                    pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
-                                    range_filter, int(bitset_rate * 100));
+                                    std::vector<int32_t> params = {(int)distance_type, dim, nb, pq_m, (int)nbits_type};
 
-                                test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view);
-
-                                // test fp16 candidate
-                                printf(
-                                    "\nProcessing HNSW,PQ%dx%d fp16 for %s distance, dim=%d, nrows=%d, radius=%f, "
-                                    "range_filter=%f, %d%% points filtered out\n",
-                                    pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
-                                    range_filter, int(bitset_rate * 100));
-
-                                test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view);
-
-                                // test bf16 candidate
-                                printf(
-                                    "\nProcessing HNSW,PQ%dx%d bf16 for %s distance, dim=%d, nrows=%d, radius=%f, "
-                                    "range_filter=%f, %d%% points filtered out\n",
-                                    pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
-                                    range_filter, int(bitset_rate * 100));
-
-                                test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view);
-
-                                if (index_support_int8(conf)) {
-                                    // test int8 candidate
+                                    // test fp32 candidate
                                     printf(
-                                        "\nProcessing HNSW,PQ%dx%d int8 for %s distance, dim=%d, nrows=%d, radius=%f, "
+                                        "\nProcessing HNSW,PQ%dx%d fp32 for %s distance, dim=%d, nrows=%d, radius=%f, "
                                         "range_filter=%f, %d%% points filtered out\n",
                                         pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
                                         range_filter, int(bitset_rate * 100));
 
-                                    test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                    params, conf, bitset_view);
-                                }
-
-                                // test refines for fp32
-                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
-                                     allowed_ref_idx++) {
-                                    auto conf_refine = conf;
-                                    conf_refine["refine"] = true;
-                                    conf_refine["refine_k"] = 1.5;
-
-                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_FP32[allowed_ref_idx];
-                                    conf_refine["refine_type"] = allowed_ref;
-
-                                    std::vector<int32_t> params_refine = {
-                                        (int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
-
-                                    // test fp32 candidate
-                                    printf(
-                                        "\nProcessing HNSW,PQ%dx%d with %s refine, fp32 for %s distance, dim=%d, "
-                                        "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
-                                        pq_m, NBITS[nbits_type], allowed_ref.c_str(),
-                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
-                                        int(bitset_rate * 100));
-
-                                    test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                    params_refine, conf_refine, bitset_view);
-                                }
-
-                                // test refines for fp16
-                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP16.size();
-                                     allowed_ref_idx++) {
-                                    auto conf_refine = conf;
-                                    conf_refine["refine"] = true;
-                                    conf_refine["refine_k"] = 1.5;
-
-                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_FP16[allowed_ref_idx];
-                                    conf_refine["refine_type"] = allowed_ref;
-
-                                    std::vector<int32_t> params_refine = {
-                                        (int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
+                                    index_file = test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
+                                                                                 golden_result.value(), params, conf,
+                                                                                 mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
 
                                     // test fp16 candidate
                                     printf(
-                                        "\nProcessing HNSW,PQ%dx%d with %s refine, fp16 for %s distance, dim=%d, "
-                                        "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
-                                        pq_m, NBITS[nbits_type], allowed_ref.c_str(),
-                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
-                                        int(bitset_rate * 100));
+                                        "\nProcessing HNSW,PQ%dx%d fp16 for %s distance, dim=%d, nrows=%d, radius=%f, "
+                                        "range_filter=%f, %d%% points filtered out\n",
+                                        pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
+                                        range_filter, int(bitset_rate * 100));
 
-                                    test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                    params_refine, conf_refine, bitset_view);
-                                }
-
-                                // test refines for bf16
-                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_BF16.size();
-                                     allowed_ref_idx++) {
-                                    auto conf_refine = conf;
-                                    conf_refine["refine"] = true;
-                                    conf_refine["refine_k"] = 1.5;
-
-                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_BF16[allowed_ref_idx];
-                                    conf_refine["refine_type"] = allowed_ref;
-
-                                    std::vector<int32_t> params_refine = {
-                                        (int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
+                                    index_file = test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr,
+                                                                                 golden_result.value(), params, conf,
+                                                                                 mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
 
                                     // test bf16 candidate
                                     printf(
-                                        "\nProcessing HNSW,PQ%dx%d with %s refine, bf16 for %s distance, dim=%d, "
-                                        "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
-                                        pq_m, NBITS[nbits_type], allowed_ref.c_str(),
-                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
-                                        int(bitset_rate * 100));
+                                        "\nProcessing HNSW,PQ%dx%d bf16 for %s distance, dim=%d, nrows=%d, radius=%f, "
+                                        "range_filter=%f, %d%% points filtered out\n",
+                                        pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
+                                        range_filter, int(bitset_rate * 100));
 
-                                    test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                    params_refine, conf_refine, bitset_view);
+                                    index_file = test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr,
+                                                                                 golden_result.value(), params, conf,
+                                                                                 mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+
+                                    if (index_support_int8(conf)) {
+                                        // test int8 candidate
+                                        printf(
+                                            "\nProcessing HNSW,PQ%dx%d int8 for %s distance, dim=%d, nrows=%d, "
+                                            "radius=%f, "
+                                            "range_filter=%f, %d%% points filtered out\n",
+                                            pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                            radius, range_filter, int(bitset_rate * 100));
+
+                                        index_file = test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr,
+                                                                                     golden_result.value(), params,
+                                                                                     conf, mv_only_enable, bitset_view);
+                                        index_files.emplace_back(index_file);
+                                    }
+
+                                    // test refines for fp32
+                                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
+                                         allowed_ref_idx++) {
+                                        auto conf_refine = conf;
+                                        conf_refine["refine"] = true;
+                                        conf_refine["refine_k"] = 1.5;
+
+                                        const std::string allowed_ref = PQ_ALLOWED_REFINES_FP32[allowed_ref_idx];
+                                        conf_refine["refine_type"] = allowed_ref;
+
+                                        std::vector<int32_t> params_refine = {
+                                            (int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
+
+                                        // test fp32 candidate
+                                        printf(
+                                            "\nProcessing HNSW,PQ%dx%d with %s refine, fp32 for %s distance, dim=%d, "
+                                            "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
+                                            pq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                            DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
+                                            int(bitset_rate * 100));
+
+                                        index_file = test_hnsw_range<knowhere::fp32>(
+                                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
+                                            conf_refine, mv_only_enable, bitset_view);
+                                        index_files.emplace_back(index_file);
+                                    }
+
+                                    // test refines for fp16
+                                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP16.size();
+                                         allowed_ref_idx++) {
+                                        auto conf_refine = conf;
+                                        conf_refine["refine"] = true;
+                                        conf_refine["refine_k"] = 1.5;
+
+                                        const std::string allowed_ref = PQ_ALLOWED_REFINES_FP16[allowed_ref_idx];
+                                        conf_refine["refine_type"] = allowed_ref;
+
+                                        std::vector<int32_t> params_refine = {
+                                            (int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
+
+                                        // test fp16 candidate
+                                        printf(
+                                            "\nProcessing HNSW,PQ%dx%d with %s refine, fp16 for %s distance, dim=%d, "
+                                            "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
+                                            pq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                            DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
+                                            int(bitset_rate * 100));
+
+                                        index_file = test_hnsw_range<knowhere::fp16>(
+                                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
+                                            conf_refine, mv_only_enable, bitset_view);
+                                        index_files.emplace_back(index_file);
+                                    }
+
+                                    // test refines for bf16
+                                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_BF16.size();
+                                         allowed_ref_idx++) {
+                                        auto conf_refine = conf;
+                                        conf_refine["refine"] = true;
+                                        conf_refine["refine_k"] = 1.5;
+
+                                        const std::string allowed_ref = PQ_ALLOWED_REFINES_BF16[allowed_ref_idx];
+                                        conf_refine["refine_type"] = allowed_ref;
+
+                                        std::vector<int32_t> params_refine = {
+                                            (int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
+
+                                        // test bf16 candidate
+                                        printf(
+                                            "\nProcessing HNSW,PQ%dx%d with %s refine, bf16 for %s distance, dim=%d, "
+                                            "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
+                                            pq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                            DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
+                                            int(bitset_rate * 100));
+
+                                        index_file = test_hnsw_range<knowhere::bf16>(
+                                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
+                                            conf_refine, mv_only_enable, bitset_view);
+                                        index_files.emplace_back(index_file);
+                                    }
                                 }
+                            }
+                            for (auto index : index_files) {
+                                std::remove(index.c_str());
                             }
                         }
                     }
@@ -1736,157 +2008,198 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                             get_index_name<knowhere::fp32>(ann_test_name_, golden_index_type, golden_params);
 
                         auto golden_index = create_index<knowhere::fp32>(golden_index_type, golden_index_file_name,
-                                                                         default_ds_ptr, conf_golden, "golden ");
+                                                                         default_ds_ptr, conf_golden, false, "golden ");
 
-                        // test various bitset rates
-                        for (const float bitset_rate : BITSET_RATES) {
-                            const int32_t nbits_set = nb * bitset_rate;
-                            const std::vector<uint8_t> bitset_data = GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                        std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_info =
+                            GenerateScalarInfo(nb);
+                        auto partition_size = scalar_info[0][0].size();  // will be masked by partition key value
 
-                            // initialize bitset_view.
-                            // provide a default one if nbits_set == 0
-                            knowhere::BitsetView bitset_view = nullptr;
-                            if (nbits_set != 0) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                        for (const bool mv_only_enable : MV_ONLYs) {
+                            printf("with mv only enabled : %d\n", mv_only_enable);
+                            if (mv_only_enable) {
+                                default_ds_ptr->Set(knowhere::meta::SCALAR_INFO, scalar_info);
                             }
 
-                            // get a golden result
-                            auto golden_result = golden_index.RangeSearch(query_ds_ptr, conf_golden, bitset_view);
+                            std::vector<std::string> index_files;
+                            std::string index_file;
 
-                            // go PRQ
-                            for (size_t nbits_type = 0; nbits_type < NBITS.size(); nbits_type++) {
-                                const int prq_m = 4;
-                                const int prq_num = 2;
+                            // test various bitset rates
+                            for (const float bitset_rate : BITSET_RATES) {
+                                const int32_t nbits_set = mv_only_enable
+                                                              ? partition_size + (nb - partition_size) * bitset_rate
+                                                              : nb * bitset_rate;
+                                const std::vector<uint8_t> bitset_data =
+                                    mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
+                                                   : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                // initialize bitset_view.
+                                // provide a default one if nbits_set == 0
+                                knowhere::BitsetView bitset_view = nullptr;
+                                if (nbits_set != 0) {
+                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                                }
 
-                                knowhere::Json conf = conf_golden;
-                                conf[knowhere::meta::INDEX_TYPE] = index_type;
-                                conf[knowhere::indexparam::NBITS] = NBITS[nbits_type];
-                                conf[knowhere::indexparam::M] = prq_m;
-                                conf[knowhere::indexparam::PRQ_NUM] = prq_num;
+                                // get a golden result
+                                auto golden_result = golden_index.RangeSearch(query_ds_ptr, conf_golden, bitset_view);
 
-                                std::vector<int32_t> params = {(int)distance_type, dim, nb, prq_m, prq_num,
-                                                               (int)nbits_type};
+                                // go PRQ
+                                for (size_t nbits_type = 0; nbits_type < NBITS.size(); nbits_type++) {
+                                    const int prq_m = 4;
+                                    const int prq_num = 2;
 
-                                // test fp32 candidate
-                                printf(
-                                    "\nProcessing HNSW,PRQ%dx%dx%d fp32 for %s distance, dim=%d, nrows=%d, radius=%f, "
-                                    "range_filter=%f, %d%% points filtered out\n",
-                                    prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
-                                    radius, range_filter, int(bitset_rate * 100));
+                                    knowhere::Json conf = conf_golden;
+                                    conf[knowhere::meta::INDEX_TYPE] = index_type;
+                                    conf[knowhere::indexparam::NBITS] = NBITS[nbits_type];
+                                    conf[knowhere::indexparam::M] = prq_m;
+                                    conf[knowhere::indexparam::PRQ_NUM] = prq_num;
 
-                                test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view);
+                                    std::vector<int32_t> params = {(int)distance_type, dim, nb, prq_m, prq_num,
+                                                                   (int)nbits_type};
 
-                                // test fp16 candidate
-                                printf(
-                                    "\nProcessing HNSW,PRQ%dx%dx%d fp16 for %s distance, dim=%d, nrows=%d, radius=%f, "
-                                    "range_filter=%f, %d%% points filtered out\n",
-                                    prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
-                                    radius, range_filter, int(bitset_rate * 100));
-
-                                test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view);
-
-                                // test bf16 candidate
-                                printf(
-                                    "\nProcessing HNSW,PRQ%dx%dx%d bf16 for %s distance, dim=%d, nrows=%d, radius=%f, "
-                                    "range_filter=%f, %d%% points filtered out\n",
-                                    prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
-                                    radius, range_filter, int(bitset_rate * 100));
-
-                                test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                params, conf, bitset_view);
-
-                                if (index_support_int8(conf)) {
-                                    // test int8 candidate
+                                    // test fp32 candidate
                                     printf(
-                                        "\nProcessing HNSW,PRQ%dx%dx%d int8 for %s distance, dim=%d, nrows=%d, "
+                                        "\nProcessing HNSW,PRQ%dx%dx%d fp32 for %s distance, dim=%d, nrows=%d, "
                                         "radius=%f, "
                                         "range_filter=%f, %d%% points filtered out\n",
                                         prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim,
                                         nb, radius, range_filter, int(bitset_rate * 100));
 
-                                    test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                    params, conf, bitset_view);
-                                }
+                                    index_file = test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
+                                                                                 golden_result.value(), params, conf,
+                                                                                 mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
 
-                                // test fp32 refines
-                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
-                                     allowed_ref_idx++) {
-                                    auto conf_refine = conf;
-                                    conf_refine["refine"] = true;
-                                    conf_refine["refine_k"] = 1.5;
-
-                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_FP32[allowed_ref_idx];
-                                    conf_refine["refine_type"] = allowed_ref;
-
-                                    std::vector<int32_t> params_refine = {
-                                        (int)distance_type,  dim, nb, prq_m, prq_num, (int)nbits_type,
-                                        (int)allowed_ref_idx};
-
+                                    // test fp16 candidate
                                     printf(
-                                        "\nProcessing HNSW,PRQ%dx%dx%d with %s refine, fp32 for %s distance, dim=%d, "
-                                        "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
-                                        prq_num, prq_m, NBITS[nbits_type], allowed_ref.c_str(),
-                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
-                                        int(bitset_rate * 100));
+                                        "\nProcessing HNSW,PRQ%dx%dx%d fp16 for %s distance, dim=%d, nrows=%d, "
+                                        "radius=%f, "
+                                        "range_filter=%f, %d%% points filtered out\n",
+                                        prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim,
+                                        nb, radius, range_filter, int(bitset_rate * 100));
 
-                                    // test a candidate
-                                    test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                    params_refine, conf_refine, bitset_view);
-                                }
+                                    index_file = test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr,
+                                                                                 golden_result.value(), params, conf,
+                                                                                 mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
 
-                                // test fp16 refines
-                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP16.size();
-                                     allowed_ref_idx++) {
-                                    auto conf_refine = conf;
-                                    conf_refine["refine"] = true;
-                                    conf_refine["refine_k"] = 1.5;
-
-                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_FP16[allowed_ref_idx];
-                                    conf_refine["refine_type"] = allowed_ref;
-
-                                    std::vector<int32_t> params_refine = {
-                                        (int)distance_type,  dim, nb, prq_m, prq_num, (int)nbits_type,
-                                        (int)allowed_ref_idx};
-
+                                    // test bf16 candidate
                                     printf(
-                                        "\nProcessing HNSW,PRQ%dx%dx%d with %s refine, fp16 for %s distance, dim=%d, "
-                                        "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
-                                        prq_num, prq_m, NBITS[nbits_type], allowed_ref.c_str(),
-                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
-                                        int(bitset_rate * 100));
+                                        "\nProcessing HNSW,PRQ%dx%dx%d bf16 for %s distance, dim=%d, nrows=%d, "
+                                        "radius=%f, "
+                                        "range_filter=%f, %d%% points filtered out\n",
+                                        prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim,
+                                        nb, radius, range_filter, int(bitset_rate * 100));
 
-                                    // test a candidate
-                                    test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                    params_refine, conf_refine, bitset_view);
+                                    index_file = test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr,
+                                                                                 golden_result.value(), params, conf,
+                                                                                 mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+
+                                    if (index_support_int8(conf)) {
+                                        // test int8 candidate
+                                        printf(
+                                            "\nProcessing HNSW,PRQ%dx%dx%d int8 for %s distance, dim=%d, nrows=%d, "
+                                            "radius=%f, "
+                                            "range_filter=%f, %d%% points filtered out\n",
+                                            prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(),
+                                            dim, nb, radius, range_filter, int(bitset_rate * 100));
+
+                                        index_file = test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr,
+                                                                                     golden_result.value(), params,
+                                                                                     conf, mv_only_enable, bitset_view);
+                                        index_files.emplace_back(index_file);
+                                    }
+
+                                    // test fp32 refines
+                                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
+                                         allowed_ref_idx++) {
+                                        auto conf_refine = conf;
+                                        conf_refine["refine"] = true;
+                                        conf_refine["refine_k"] = 1.5;
+
+                                        const std::string allowed_ref = PQ_ALLOWED_REFINES_FP32[allowed_ref_idx];
+                                        conf_refine["refine_type"] = allowed_ref;
+
+                                        std::vector<int32_t> params_refine = {
+                                            (int)distance_type,  dim, nb, prq_m, prq_num, (int)nbits_type,
+                                            (int)allowed_ref_idx};
+
+                                        printf(
+                                            "\nProcessing HNSW,PRQ%dx%dx%d with %s refine, fp32 for %s distance, "
+                                            "dim=%d, "
+                                            "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
+                                            prq_num, prq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                            DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
+                                            int(bitset_rate * 100));
+
+                                        // test a candidate
+                                        index_file = test_hnsw_range<knowhere::fp32>(
+                                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
+                                            conf_refine, mv_only_enable, bitset_view);
+                                        index_files.emplace_back(index_file);
+                                    }
+
+                                    // test fp16 refines
+                                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP16.size();
+                                         allowed_ref_idx++) {
+                                        auto conf_refine = conf;
+                                        conf_refine["refine"] = true;
+                                        conf_refine["refine_k"] = 1.5;
+
+                                        const std::string allowed_ref = PQ_ALLOWED_REFINES_FP16[allowed_ref_idx];
+                                        conf_refine["refine_type"] = allowed_ref;
+
+                                        std::vector<int32_t> params_refine = {
+                                            (int)distance_type,  dim, nb, prq_m, prq_num, (int)nbits_type,
+                                            (int)allowed_ref_idx};
+
+                                        printf(
+                                            "\nProcessing HNSW,PRQ%dx%dx%d with %s refine, fp16 for %s distance, "
+                                            "dim=%d, "
+                                            "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
+                                            prq_num, prq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                            DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
+                                            int(bitset_rate * 100));
+
+                                        // test a candidate
+                                        index_file = test_hnsw_range<knowhere::fp16>(
+                                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
+                                            conf_refine, mv_only_enable, bitset_view);
+
+                                        index_files.emplace_back(index_file);
+                                    }
+
+                                    // test bf16 refines
+                                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_BF16.size();
+                                         allowed_ref_idx++) {
+                                        auto conf_refine = conf;
+                                        conf_refine["refine"] = true;
+                                        conf_refine["refine_k"] = 1.5;
+
+                                        const std::string allowed_ref = PQ_ALLOWED_REFINES_BF16[allowed_ref_idx];
+                                        conf_refine["refine_type"] = allowed_ref;
+
+                                        std::vector<int32_t> params_refine = {
+                                            (int)distance_type,  dim, nb, prq_m, prq_num, (int)nbits_type,
+                                            (int)allowed_ref_idx};
+
+                                        printf(
+                                            "\nProcessing HNSW,PRQ%dx%dx%d with %s refine, bf16 for %s distance, "
+                                            "dim=%d, "
+                                            "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
+                                            prq_num, prq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                            DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
+                                            int(bitset_rate * 100));
+
+                                        // test a candidate
+                                        index_file = test_hnsw_range<knowhere::bf16>(
+                                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
+                                            conf_refine, mv_only_enable, bitset_view);
+                                        index_files.emplace_back(index_file);
+                                    }
                                 }
-
-                                // test bf16 refines
-                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_BF16.size();
-                                     allowed_ref_idx++) {
-                                    auto conf_refine = conf;
-                                    conf_refine["refine"] = true;
-                                    conf_refine["refine_k"] = 1.5;
-
-                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_BF16[allowed_ref_idx];
-                                    conf_refine["refine_type"] = allowed_ref;
-
-                                    std::vector<int32_t> params_refine = {
-                                        (int)distance_type,  dim, nb, prq_m, prq_num, (int)nbits_type,
-                                        (int)allowed_ref_idx};
-
-                                    printf(
-                                        "\nProcessing HNSW,PRQ%dx%dx%d with %s refine, bf16 for %s distance, dim=%d, "
-                                        "nrows=%d, radius=%f, range_filter=%f, %d%% points filtered out\n",
-                                        prq_num, prq_m, NBITS[nbits_type], allowed_ref.c_str(),
-                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius, range_filter,
-                                        int(bitset_rate * 100));
-
-                                    // test a candidate
-                                    test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                                    params_refine, conf_refine, bitset_view);
-                                }
+                            }
+                            for (auto index : index_files) {
+                                std::remove(index.c_str());
                             }
                         }
                     }
@@ -1946,8 +2259,8 @@ TEST_CASE("hnswlib to FAISS HNSW for HNSW_FLAT", "Check search fallback") {
         std::string hnswlib_index_file_name =
             get_index_name<knowhere::fp32>(ann_test_name_, hnswlib_index_type, hnswlib_params);
 
-        auto hnswlib_index =
-            create_index<knowhere::fp32>(hnswlib_index_type, hnswlib_index_file_name, default_ds_ptr, conf, "hnswlib ");
+        auto hnswlib_index = create_index<knowhere::fp32>(hnswlib_index_type, hnswlib_index_file_name, default_ds_ptr,
+                                                          conf, false, "hnswlib");
 
         // perform an hnswlib search
         auto hnswlib_result = hnswlib_index.Search(query_ds_ptr, conf, nullptr);
@@ -1959,7 +2272,7 @@ TEST_CASE("hnswlib to FAISS HNSW for HNSW_FLAT", "Check search fallback") {
 
         // load index back, but as a faiss index
         auto faiss_index = create_index<knowhere::fp32>(faiss_index_type, hnswlib_index_file_name, default_ds_ptr,
-                                                        faiss_conf, "hnswlib ");
+                                                        faiss_conf, false, "hnswlib ");
 
         // perform a faiss search
         auto faiss_result = faiss_index.Search(query_ds_ptr, faiss_conf, nullptr);
