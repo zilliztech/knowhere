@@ -89,6 +89,9 @@ include(cmake/libs/libhnsw.cmake)
 
 include_directories(thirdparty/faiss)
 
+find_package(Boost REQUIRED)
+include_directories(${Boost_INCLUDE_DIRS})
+
 find_package(OpenMP REQUIRED)
 
 find_package(folly REQUIRED)
@@ -177,6 +180,7 @@ endif()
 include_directories(src)
 include_directories(include)
 
+list(APPEND KNOWHERE_LINKER_LIBS Boost::boost)
 list(APPEND KNOWHERE_LINKER_LIBS faiss)
 list(APPEND KNOWHERE_LINKER_LIBS glog::glog)
 list(APPEND KNOWHERE_LINKER_LIBS nlohmann_json::nlohmann_json)
