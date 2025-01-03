@@ -127,8 +127,9 @@ class SparseInvertedIndexNode : public IndexNode {
      public:
         RefineIterator(const sparse::BaseInvertedIndex<T>* index, sparse::SparseRow<T>&& query,
                        std::shared_ptr<PrecomputedDistanceIterator> precomputed_it,
-                       const sparse::DocValueComputer<T>& computer, const float refine_ratio = 0.5f)
-            : IndexIterator(true, refine_ratio),
+                       const sparse::DocValueComputer<T>& computer, bool use_knowhere_search_pool = true,
+                       const float refine_ratio = 0.5f)
+            : IndexIterator(true, use_knowhere_search_pool, refine_ratio),
               index_(index),
               query_(std::move(query)),
               computer_(computer),
@@ -165,7 +166,8 @@ class SparseInvertedIndexNode : public IndexNode {
  public:
     // TODO: for now inverted index and wand use the same impl for AnnIterator.
     [[nodiscard]] expected<std::vector<IndexNode::IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset) const override {
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
+                bool use_knowhere_search_pool) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
             return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::empty_index,
@@ -186,23 +188,40 @@ class SparseInvertedIndexNode : public IndexNode {
         const bool approximated = index_->IsApproximated() || drop_ratio_search > 0;
 
         auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
-        std::vector<folly::Future<folly::Unit>> futs;
-        futs.reserve(nq);
-        for (int i = 0; i < nq; ++i) {
-            futs.emplace_back(search_pool_->push([&, i]() {
-                auto it = std::make_shared<PrecomputedDistanceIterator>(
-                    index_->GetAllDistances(queries[i], drop_ratio_search, bitset, computer), true);
+        try {
+            for (int i = 0; i < nq; ++i) {
+                // Heavy computations with `compute_dist_func` will be deferred until the first call to
+                // 'Iterator->Next()'.
+                auto compute_dist_func = [=]() -> std::vector<DistId> {
+                    auto queries = static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor());
+                    std::vector<float> distances =
+                        index_->GetAllDistances(queries[i], drop_ratio_search, bitset, computer);
+                    std::vector<DistId> distances_ids;
+                    // 30% is a ratio guesstimate of non-zero distances: probability of 2 random sparse splade
+                    // vectors(100 non zero dims out of 30000 total dims) sharing at least 1 common non-zero
+                    // dimension.
+                    distances_ids.reserve(distances.size() * 0.3);
+                    for (size_t i = 0; i < distances.size(); i++) {
+                        if (distances[i] != 0) {
+                            distances_ids.emplace_back((int64_t)i, distances[i]);
+                        }
+                    }
+                    return distances_ids;
+                };
                 if (!approximated || queries[i].size() == 0) {
+                    auto it = std::make_shared<PrecomputedDistanceIterator>(compute_dist_func, true,
+                                                                            use_knowhere_search_pool);
                     vec[i] = it;
                 } else {
                     sparse::SparseRow<T> query_copy(queries[i]);
-                    auto refine_it = std::make_shared<RefineIterator>(index_, std::move(query_copy), it, computer);
-                    refine_it->initialize();
-                    vec[i] = std::move(refine_it);
+                    auto it = std::make_shared<PrecomputedDistanceIterator>(compute_dist_func, true, false);
+                    vec[i] = std::make_shared<RefineIterator>(index_, std::move(query_copy), it, computer,
+                                                              use_knowhere_search_pool);
                 }
-            }));
+            }
+        } catch (const std::exception& e) {
+            return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::sparse_inner_error, e.what());
         }
-        WaitAllSuccess(futs);
 
         return vec;
     }
@@ -421,14 +440,16 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
     }
 
     expected<std::vector<IndexNode::IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                bool use_knowhere_search_pool) const override {
         ReadPermission permission(*this);
         // Always uses PrecomputedDistanceIterator for SparseInvertedIndexNodeCC:
         // If we want to use RefineIterator, it needs to get another ReadPermission when calling
         // index_->GetRawDistance(). If an Add task is added in between, there will be a deadlock.
         auto config = static_cast<const knowhere::SparseInvertedIndexConfig&>(*cfg);
         config.drop_ratio_search = 0.0f;
-        return SparseInvertedIndexNode<T, use_wand>::AnnIterator(dataset, std::move(cfg), bitset);
+        return SparseInvertedIndexNode<T, use_wand>::AnnIterator(dataset, std::move(cfg), bitset,
+                                                                 use_knowhere_search_pool);
     }
 
     expected<DataSetPtr>

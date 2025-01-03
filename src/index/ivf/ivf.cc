@@ -75,7 +75,8 @@ class IvfIndexNode : public IndexNode {
     expected<DataSetPtr>
     RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
     expected<std::vector<IndexNode::IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                bool use_knowhere_search_pool) const override;
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset) const override;
 
@@ -318,8 +319,11 @@ class IvfIndexNode : public IndexNode {
     class iterator : public IndexIterator {
      public:
         iterator(const IndexType* index, std::unique_ptr<float[]>&& copied_query, const BitsetView& bitset,
-                 size_t nprobe, bool larger_is_closer, const float refine_ratio = 0.5f)
-            : IndexIterator(larger_is_closer, refine_ratio), index_(index), copied_query_(std::move(copied_query)) {
+                 size_t nprobe, bool larger_is_closer, const float refine_ratio = 0.5f,
+                 bool use_knowhere_search_pool = true)
+            : IndexIterator(larger_is_closer, use_knowhere_search_pool, refine_ratio),
+              index_(index),
+              copied_query_(std::move(copied_query)) {
             if (!bitset.empty()) {
                 bw_idselector_ = std::make_unique<BitsetViewIDSelector>(bitset);
                 ivf_search_params_.sel = bw_idselector_.get();
@@ -334,7 +338,7 @@ class IvfIndexNode : public IndexNode {
      protected:
         void
         next_batch(std::function<void(const std::vector<DistId>&)> batch_handler) override {
-            index_->getIteratorNextBatch(workspace_.get(), res_.size());
+            index_->getIteratorNextBatch(workspace_.get(), this->res_.size());
             batch_handler(workspace_->dists);
             workspace_->dists.clear();
         }
@@ -342,7 +346,7 @@ class IvfIndexNode : public IndexNode {
         float
         raw_distance(int64_t id) override {
             if constexpr (std::is_same_v<IndexType, faiss::IndexScaNN>) {
-                if (refine_) {
+                if (this->refine_) {
                     return workspace_->dis_refine->operator()(id);
                 } else {
                     throw std::runtime_error("raw_distance should not be called if refine == false");
@@ -922,7 +926,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
 template <typename DataType, typename IndexType>
 expected<std::vector<IndexNode::IteratorPtr>>
 IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
-                                               const BitsetView& bitset) const {
+                                               const BitsetView& bitset, bool use_knowhere_search_pool) const {
     if (!index_) {
         LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "index not loaded");
@@ -961,31 +965,22 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::un
             }
         }
         try {
-            std::vector<folly::Future<folly::Unit>> futs;
-            futs.reserve(rows);
             for (int i = 0; i < rows; ++i) {
-                futs.emplace_back(search_pool_->push([&, index = i] {
-                    auto cur_query = (const float*)data + index * dim;
-                    // if cosine, need normalize
-                    std::unique_ptr<float[]> copied_query = nullptr;
-                    if (is_cosine) {
-                        copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                    } else {
-                        copied_query = std::make_unique<float[]>(dim);
-                        std::copy_n(cur_query, dim, copied_query.get());
-                    }
+                auto cur_query = (const float*)data + i * dim;
+                // if cosine, need normalize
+                std::unique_ptr<float[]> copied_query = nullptr;
+                if (is_cosine) {
+                    copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
+                } else {
+                    copied_query = std::make_unique<float[]>(dim);
+                    std::copy_n(cur_query, dim, copied_query.get());
+                }
 
-                    // iterator only own the copied_query.
-                    auto it = std::make_shared<iterator>(index_.get(), std::move(copied_query), bitset, nprobe,
-                                                         larger_is_closer, iterator_refine_ratio);
-                    it->initialize();
-                    vec[index] = it;
-                }));
+                // iterator only own the copied_query.
+                auto it = std::make_shared<iterator>(index_.get(), std::move(copied_query), bitset, nprobe,
+                                                     larger_is_closer, iterator_refine_ratio, use_knowhere_search_pool);
+                vec[i] = it;
             }
-
-            // wait for the completion
-            // initial search - scan at least (nprobe/nlist)% codes
-            WaitAllSuccess(futs);
 
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();

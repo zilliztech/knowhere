@@ -534,9 +534,8 @@ class FaissHnswIterator : public IndexIterator {
  public:
     FaissHnswIterator(const std::shared_ptr<faiss::Index>& index_in, std::unique_ptr<float[]>&& query_in,
                       const BitsetView& bitset_in, const int32_t ef_in, bool larger_is_closer,
-                      const float refine_ratio = 0.5f)
-        : IndexIterator(larger_is_closer, refine_ratio), index{index_in} {
-        //
+                      const float refine_ratio = 0.5f, bool use_knowhere_search_pool = true)
+        : IndexIterator(larger_is_closer, use_knowhere_search_pool, refine_ratio), index{index_in} {
         workspace.accumulated_alpha =
             (bitset_in.count() >= (index->ntotal * HnswSearchThresholds::kHnswSearchKnnBFFilterThreshold))
                 ? std::numeric_limits<float>::max()
@@ -1219,7 +1218,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
  public:
     //
     expected<std::vector<IndexNode::IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                bool use_knowhere_search_pool) const override {
         if (index == nullptr) {
             LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
             return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "index not loaded");
@@ -1245,49 +1245,37 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         const auto ef = hnsw_cfg.ef.value_or(kIteratorSeedEf);
 
         try {
-            std::vector<folly::Future<folly::Unit>> futs;
-            futs.reserve(n_queries);
             for (int64_t i = 0; i < n_queries; i++) {
-                futs.emplace_back(search_pool->push([&, idx = i] {
-                    // The query data is always cloned
-                    std::unique_ptr<float[]> cur_query = std::make_unique<float[]>(dim);
+                // The query data is always cloned
+                std::unique_ptr<float[]> cur_query = std::make_unique<float[]>(dim);
 
-                    switch (data_format) {
-                        case DataFormatEnum::fp32:
-                            std::copy_n(reinterpret_cast<const float*>(data) + idx * dim, dim, cur_query.get());
-                            break;
-                        case DataFormatEnum::fp16:
-                        case DataFormatEnum::bf16:
-                        case DataFormatEnum::int8:
-                            convert_rows_to_fp32(data, cur_query.get(), data_format, idx, 1, dim);
-                            break;
-                        default:
-                            // invalid one. Should not be triggered, bcz input parameters are validated
-                            throw;
-                    }
+                switch (data_format) {
+                    case DataFormatEnum::fp32:
+                        std::copy_n(reinterpret_cast<const float*>(data) + i * dim, dim, cur_query.get());
+                        break;
+                    case DataFormatEnum::fp16:
+                    case DataFormatEnum::bf16:
+                    case DataFormatEnum::int8:
+                        convert_rows_to_fp32(data, cur_query.get(), data_format, i, 1, dim);
+                        break;
+                    default:
+                        // invalid one. Should not be triggered, bcz input parameters are validated
+                        throw;
+                }
 
-                    const bool should_use_refine = (dynamic_cast<const faiss::IndexRefine*>(index.get()) != nullptr);
+                const bool should_use_refine = (dynamic_cast<const faiss::IndexRefine*>(index.get()) != nullptr);
 
-                    const float iterator_refine_ratio =
-                        should_use_refine ? hnsw_cfg.iterator_refine_ratio.value_or(0.5) : 0;
+                const float iterator_refine_ratio =
+                    should_use_refine ? hnsw_cfg.iterator_refine_ratio.value_or(0.5) : 0;
 
-                    // create an iterator and initialize it
-                    auto it =
-                        std::make_shared<FaissHnswIterator>(index, std::move(cur_query), bitset, ef, larger_is_closer,
-                                                            // // refine is not needed for flat
-                                                            // hnsw_cfg.iterator_refine_ratio.value_or(0.5f)
-                                                            iterator_refine_ratio);
-
-                    it->initialize();
-
-                    // store
-                    vec[idx] = it;
-                }));
+                // create an iterator and initialize it
+                //   refine is not needed for flat
+                //   hnsw_cfg.iterator_refine_ratio.value_or(0.5f)
+                auto it = std::make_shared<FaissHnswIterator>(index, std::move(cur_query), bitset, ef, larger_is_closer,
+                                                              iterator_refine_ratio, use_knowhere_search_pool);
+                // store
+                vec[i] = it;
             }
-
-            // wait for the completion
-            WaitAllSuccess(futs);
-
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
             return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::faiss_inner_error, e.what());
@@ -1548,11 +1536,12 @@ class HNSWIndexNodeWithFallback : public IndexNode {
     }
 
     expected<std::vector<IndexNode::IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                bool use_knowhere_search_pool) const override {
         if (use_base_index) {
-            return base_index->AnnIterator(dataset, std::move(cfg), bitset);
+            return base_index->AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool);
         } else {
-            return fallback_search_index->AnnIterator(dataset, std::move(cfg), bitset);
+            return fallback_search_index->AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool);
         }
     }
 

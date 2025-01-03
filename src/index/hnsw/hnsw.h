@@ -264,11 +264,12 @@ class HnswIndexNode : public IndexNode {
      public:
         iterator(const hnswlib::HierarchicalNSW<DataType, DistType, quant_type>* index, const char* query,
                  const bool transform, const BitsetView& bitset, const size_t ef = kIteratorSeedEf,
-                 const float refine_ratio = 0.5f)
-            : IndexIterator(transform, (hnswlib::HierarchicalNSW<DataType, DistType, quant_type>::sq_enabled &&
-                                        hnswlib::HierarchicalNSW<DataType, DistType, quant_type>::has_raw_data)
-                                           ? refine_ratio
-                                           : 0.0f),
+                 const float refine_ratio = 0.5f, bool use_knowhere_search_pool = true)
+            : IndexIterator(transform, use_knowhere_search_pool,
+                            (hnswlib::HierarchicalNSW<DataType, DistType, quant_type>::sq_enabled &&
+                             hnswlib::HierarchicalNSW<DataType, DistType, quant_type>::has_raw_data)
+                                ? refine_ratio
+                                : 0.0f),
               index_(index),
               transform_(transform),
               workspace_(index_->getIteratorWorkspace(query, ef, bitset)) {
@@ -303,7 +304,8 @@ class HnswIndexNode : public IndexNode {
 
  public:
     expected<std::vector<IndexNode::IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                bool use_knowhere_search_pool = true) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
             return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "index not loaded");
@@ -317,19 +319,16 @@ class HnswIndexNode : public IndexNode {
         bool transform =
             (index_->metric_type_ == hnswlib::Metric::INNER_PRODUCT || index_->metric_type_ == hnswlib::Metric::COSINE);
         auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
-        std::vector<folly::Future<folly::Unit>> futs;
-        futs.reserve(nq);
-        for (int i = 0; i < nq; ++i) {
-            futs.emplace_back(search_pool_->push([&, i]() {
+        try {
+            for (int i = 0; i < nq; ++i) {
                 auto single_query = (const char*)xq + i * index_->data_size_;
                 auto it = std::make_shared<iterator>(this->index_, single_query, transform, bitset, ef,
-                                                     hnsw_cfg.iterator_refine_ratio.value());
-                it->initialize();
+                                                     hnsw_cfg.iterator_refine_ratio.value(), use_knowhere_search_pool);
                 vec[i] = it;
-            }));
+            }
+        } catch (const std::exception& e) {
+            return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::hnsw_inner_error, e.what());
         }
-        // wait for initial search(in top layers and search for ef in base layer) to finish
-        WaitAllSuccess(futs);
 
         return vec;
     }

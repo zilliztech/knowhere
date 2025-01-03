@@ -161,7 +161,8 @@ class Index {
     Search(const DataSetPtr dataset, const Json& json, const BitsetView& bitset) const;
 
     expected<std::vector<IndexNode::IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetView& bitset) const;
+    AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetView& bitset,
+                bool use_knowhere_search_pool = true) const;
 
     expected<DataSetPtr>
     RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetView& bitset) const;

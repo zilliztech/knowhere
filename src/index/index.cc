@@ -168,7 +168,8 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
 
 template <typename T>
 inline expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
-Index<T>::AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetView& bitset_) const {
+Index<T>::AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetView& bitset_,
+                      bool use_knowhere_search_pool) const {
     auto cfg = this->node->CreateConfig();
     std::string msg;
     Status status = LoadConfig(cfg.get(), json, knowhere::ITERATOR, "Iterator", &msg);
@@ -191,12 +192,12 @@ Index<T>::AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetVi
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // note that this time includes only the initial search phase of iterator.
     TimeRecorder rc("AnnIterator");
-    auto res = this->node->AnnIterator(dataset, std::move(cfg), bitset);
+    auto res = this->node->AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool);
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
     knowhere_search_latency.Observe(time);
 #else
-    auto res = this->node->AnnIterator(dataset, std::move(cfg), bitset);
+    auto res = this->node->AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool);
 #endif
     return res;
 }

@@ -748,13 +748,9 @@ BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_d
 template <typename DataType>
 expected<std::vector<IndexNode::IteratorPtr>>
 BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                        const BitsetView& bitset) {
-    auto xb = base_dataset->GetTensor();
+                        const BitsetView& bitset, bool use_knowhere_search_pool) {
     auto nb = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
-    auto xb_id_offset = base_dataset->GetTensorBeginId();
-
-    auto xq = query_dataset->GetTensor();
     auto nq = query_dataset->GetRows();
     BruteForceConfig cfg;
     std::string msg;
@@ -786,84 +782,84 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
 #endif
     faiss::MetricType faiss_metric_type = result.value();
     bool is_cosine = IsMetricType(metric_str, metric::COSINE);
-
-    std::unique_ptr<float[]> norms = is_cosine ? GetVecNorms<DataType>(base_dataset) : nullptr;
-    auto pool = ThreadPool::GetGlobalSearchThreadPool();
+    auto larger_is_closer = faiss::is_similarity_metric(faiss_metric_type) || is_cosine;
     auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
-    std::vector<folly::Future<Status>> futs;
-    futs.reserve(nq);
+    std::shared_ptr<float[]> norms = GetVecNorms<DataType>(base_dataset);
 
-    for (int i = 0; i < nq; ++i) {
-        futs.emplace_back(pool->push([&, index = i] {
-            ThreadPool::ScopedSearchOmpSetter setter(1);
-
-            BitsetViewIDSelector bw_idselector(bitset, xb_id_offset);
-            [[maybe_unused]] faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
-            auto larger_is_closer = faiss::is_similarity_metric(faiss_metric_type) || is_cosine;
-            auto max_dis = larger_is_closer ? std::numeric_limits<float>::lowest() : std::numeric_limits<float>::max();
-            std::vector<DistId> distances_ids(nb, {-1, max_dis});
-            [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
-            switch (faiss_metric_type) {
-                case faiss::METRIC_L2: {
-                    if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                        faiss::all_L2sqr(cur_query, (const float*)xb, dim, 1, nb, distances_ids, nullptr, id_selector);
-                    } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
-                        faiss::half_precision_floating_point_all_L2sqr(cur_query, (const DataType*)xb, dim, 1, nb,
-                                                                       distances_ids, nullptr, id_selector);
-                    } else {
-                        LOG_KNOWHERE_ERROR_ << "Metric L2 only used in floating point data";
-                        return Status::faiss_inner_error;
-                    }
-                    break;
-                }
-                case faiss::METRIC_INNER_PRODUCT: {
-                    if (is_cosine) {
+    try {
+        for (int i = 0; i < nq; ++i) {
+            // Heavy computations with `compute_dist_func` will be deferred until the first call to 'Iterator->Next()'.
+            auto compute_dist_func = [=]() -> std::vector<DistId> {
+                auto xb = base_dataset->GetTensor();
+                auto xq = query_dataset->GetTensor();
+                auto xb_id_offset = base_dataset->GetTensorBeginId();
+                BitsetViewIDSelector bw_idselector(bitset, xb_id_offset);
+                [[maybe_unused]] faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+                auto max_dis =
+                    larger_is_closer ? std::numeric_limits<float>::lowest() : std::numeric_limits<float>::max();
+                std::vector<DistId> distances_ids(nb, {-1, max_dis});
+                [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * i;
+                switch (faiss_metric_type) {
+                    case faiss::METRIC_L2: {
                         if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                            auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                            faiss::all_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1, nb,
-                                              distances_ids, id_selector);
+                            faiss::all_L2sqr(cur_query, (const float*)xb, dim, 1, nb, distances_ids, nullptr,
+                                             id_selector);
                         } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
-                            // normalize query vector may cause presision loss, so div query norms in apply function
-
-                            faiss::half_precision_floating_point_all_cosine(cur_query, (const DataType*)xb, norms.get(),
-                                                                            dim, 1, nb, distances_ids, id_selector);
+                            faiss::half_precision_floating_point_all_L2sqr(cur_query, (const DataType*)xb, dim, 1, nb,
+                                                                           distances_ids, nullptr, id_selector);
                         } else {
-                            LOG_KNOWHERE_ERROR_ << "Metric Cosine only used in floating point data";
-                            return Status::faiss_inner_error;
+                            LOG_KNOWHERE_ERROR_ << "Metric L2 only used in floating point data";
+                            throw std::runtime_error("Metric L2 only used in floating point data");
                         }
-                    } else {
-                        if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                            faiss::all_inner_product(cur_query, (const float*)xb, dim, 1, nb, distances_ids,
-                                                     id_selector);
-                        } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
-                            faiss::half_precision_floating_point_all_inner_product(cur_query, (const DataType*)xb, dim,
-                                                                                   1, nb, distances_ids, id_selector);
-                        } else {
-                            LOG_KNOWHERE_ERROR_ << "Metric Cosine only used in floating point data";
-                            return Status::faiss_inner_error;
-                        }
+                        break;
                     }
-                    break;
-                }
-                default: {
-                    LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
-                    return Status::invalid_metric_type;
-                }
-            }
-            if (xb_id_offset != 0) {
-                for (auto& distances_id : distances_ids) {
-                    distances_id.id = distances_id.id == -1 ? -1 : distances_id.id + xb_id_offset;
-                }
-            }
-            vec[index] = std::make_shared<PrecomputedDistanceIterator>(std::move(distances_ids), larger_is_closer);
+                    case faiss::METRIC_INNER_PRODUCT: {
+                        if (is_cosine) {
+                            if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
+                                auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
+                                faiss::all_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1, nb,
+                                                  distances_ids, id_selector);
+                            } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
+                                // normalize query vector may cause presision loss, so div query norms in apply function
 
-            return Status::success;
-        }));
-    }
-
-    auto ret = WaitAllSuccess(futs);
-    if (ret != Status::success) {
-        return expected<std::vector<IndexNode::IteratorPtr>>::Err(ret, "failed to brute force search for iterator");
+                                faiss::half_precision_floating_point_all_cosine(cur_query, (const DataType*)xb,
+                                                                                norms.get(), dim, 1, nb, distances_ids,
+                                                                                id_selector);
+                            } else {
+                                LOG_KNOWHERE_ERROR_ << "Metric Cosine only used in floating point data";
+                                throw std::runtime_error("Metric Cosine only used in floating point data");
+                            }
+                        } else {
+                            if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
+                                faiss::all_inner_product(cur_query, (const float*)xb, dim, 1, nb, distances_ids,
+                                                         id_selector);
+                            } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
+                                faiss::half_precision_floating_point_all_inner_product(
+                                    cur_query, (const DataType*)xb, dim, 1, nb, distances_ids, id_selector);
+                            } else {
+                                LOG_KNOWHERE_ERROR_ << "Metric Cosine only used in floating point data";
+                                throw std::runtime_error("Metric Cosine only used in floating point data");
+                            }
+                        }
+                        break;
+                    }
+                    default: {
+                        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
+                        throw std::runtime_error("Invalid metric type");
+                    }
+                }
+                if (xb_id_offset != 0) {
+                    for (auto& distances_id : distances_ids) {
+                        distances_id.id = distances_id.id == -1 ? -1 : distances_id.id + xb_id_offset;
+                    }
+                }
+                return distances_ids;
+            };
+            vec[i] = std::make_shared<PrecomputedDistanceIterator>(compute_dist_func, larger_is_closer,
+                                                                   use_knowhere_search_pool);
+        }
+    } catch (const std::exception& e) {
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::brute_force_inner_error, e.what());
     }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
@@ -880,12 +876,9 @@ template <>
 expected<std::vector<IndexNode::IteratorPtr>>
 BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr base_dataset,
                                                             const DataSetPtr query_dataset, const Json& config,
-                                                            const BitsetView& bitset) {
-    auto base = static_cast<const sparse::SparseRow<float>*>(base_dataset->GetTensor());
+                                                            const BitsetView& bitset, bool use_knowhere_search_pool) {
     auto rows = base_dataset->GetRows();
     auto xb_id_offset = base_dataset->GetTensorBeginId();
-
-    auto xq = static_cast<const sparse::SparseRow<float>*>(query_dataset->GetTensor());
     auto nq = query_dataset->GetRows();
 
     BruteForceConfig cfg;
@@ -925,37 +918,42 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
     }
     auto computer = computer_or.value();
 
-    auto pool = ThreadPool::GetGlobalSearchThreadPool();
     auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
-    std::vector<folly::Future<folly::Unit>> futs;
-    futs.reserve(nq);
-    for (int64_t i = 0; i < nq; ++i) {
-        futs.emplace_back(pool->push([&, index = i] {
-            const auto& row = xq[index];
-            std::vector<DistId> distances_ids;
-            if (row.size() > 0) {
-                for (int64_t j = 0; j < rows; ++j) {
-                    auto xb_id = j + xb_id_offset;
-                    if (!bitset.empty() && bitset.test(xb_id)) {
-                        continue;
-                    }
-                    float row_sum = 0;
-                    if (is_bm25) {
-                        for (size_t k = 0; k < base[j].size(); ++k) {
-                            auto [d, v] = base[j][k];
-                            row_sum += v;
+    try {
+        for (int64_t i = 0; i < nq; ++i) {
+            // Heavy computations with `compute_dist_func` will be deferred until the first call to 'Iterator->Next()'.
+            auto compute_dist_func = [=]() -> std::vector<DistId> {
+                auto xq = static_cast<const sparse::SparseRow<float>*>(query_dataset->GetTensor());
+                auto base = static_cast<const sparse::SparseRow<float>*>(base_dataset->GetTensor());
+                const auto& row = xq[i];
+                std::vector<DistId> distances_ids;
+                if (row.size() > 0) {
+                    for (int64_t j = 0; j < rows; ++j) {
+                        auto xb_id = j + xb_id_offset;
+                        if (!bitset.empty() && bitset.test(xb_id)) {
+                            continue;
+                        }
+                        float row_sum = 0;
+                        if (is_bm25) {
+                            for (size_t k = 0; k < base[j].size(); ++k) {
+                                auto [d, v] = base[j][k];
+                                row_sum += v;
+                            }
+                        }
+                        auto dist = row.dot(base[j], computer, row_sum);
+                        if (dist > 0) {
+                            distances_ids.emplace_back(xb_id, dist);
                         }
                     }
-                    auto dist = row.dot(base[j], computer, row_sum);
-                    if (dist > 0) {
-                        distances_ids.emplace_back(xb_id, dist);
-                    }
                 }
-            }
-            vec[index] = std::make_shared<PrecomputedDistanceIterator>(std::move(distances_ids), true);
-        }));
+                return distances_ids;
+            };
+
+            vec[i] = std::make_shared<PrecomputedDistanceIterator>(compute_dist_func, true, use_knowhere_search_pool);
+        }
+    } catch (const std::exception& e) {
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::brute_force_inner_error, e.what());
     }
-    WaitAllSuccess(futs);
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
@@ -1026,12 +1024,15 @@ knowhere::BruteForce::RangeSearch<knowhere::sparse::SparseRow<float>>(const know
 template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
 knowhere::BruteForce::AnnIterator<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
-                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                  bool use_knowhere_search_pool = true);
 template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
 knowhere::BruteForce::AnnIterator<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
-                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                  bool use_knowhere_search_pool = true);
 template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
 knowhere::BruteForce::AnnIterator<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
-                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                  bool use_knowhere_search_pool = true);

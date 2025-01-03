@@ -42,7 +42,8 @@ class IndexNodeDataMockWrapper : public IndexNode {
     RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
 
     expected<std::vector<IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                bool use_knowhere_search_pool) const override;
 
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset) const override;
