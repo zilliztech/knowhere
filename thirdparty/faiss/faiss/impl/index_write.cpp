@@ -1102,6 +1102,20 @@ void write_index(const Index* idx, const char* fname, int io_flags) {
     write_index(idx, &writer, io_flags);
 }
 
+void write_value(uint32_t v, IOWriter* f) {
+    WRITE1(v);
+}
+
+void write_vector(const std::vector<uint32_t>& v, IOWriter* f) {
+    WRITEVECTOR(v);
+}
+
+// "IHMV" is a special header for faiss hnsw to indicate whether mv or not
+void write_mv(IOWriter* f) {
+    uint32_t h = fourcc("IHMV");
+    WRITE1(h);
+}
+
 // write index for offset-only index
 void write_index_nm(const Index *idx, IOWriter *f) {
     if(const IndexIVFFlat * ivfl =

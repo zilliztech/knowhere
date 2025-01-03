@@ -97,6 +97,15 @@ InvertedLists* read_InvertedLists(IOReader* reader, int io_flags = 0);
 // for backward compatibility
 Index *read_index_nm(IOReader *f, int io_flags = 0);
 void write_index_nm(const Index* idx, IOWriter* writer);
+
+// additional helper function for knowhere
+bool read_is_mv(IOReader* reader);
+bool read_is_mv(const char* fname);
+void write_vector(const std::vector<uint32_t>& v, IOWriter* writer);
+void read_vector(std::vector<uint32_t>& v, IOReader* f);
+uint32_t read_value(IOReader *f);
+void write_value(uint32_t v, IOWriter* writer);
+void write_mv(IOWriter* writer);
 } // namespace faiss
 
 #endif
