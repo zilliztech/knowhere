@@ -15,6 +15,7 @@
 #pragma once
 
 #include <algorithm>
+#include <boost/iterator/iterator_facade.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -59,6 +60,33 @@ GetDocValueBM25Computer(float k1, float b, float avgdl) {
     };
 }
 
+// A docid filter that tests whether a given id is in the list of docids, which is regarded as another form of BitSet.
+// Note that all ids to be tested must be tested exactly once and in order.
+class DocIdFilterByVector {
+ public:
+    DocIdFilterByVector(std::vector<table_t>&& docids) : docids_(std::move(docids)) {
+        std::sort(docids_.begin(), docids_.end());
+    }
+
+    [[nodiscard]] bool
+    test(const table_t id) {
+        // find the first id that is greater than or equal to the specific id
+        while (pos_ < docids_.size() && docids_[pos_] < id) {
+            ++pos_;
+        }
+        return !(pos_ < docids_.size() && docids_[pos_] == id);
+    }
+
+    [[nodiscard]] bool
+    empty() const {
+        return docids_.empty();
+    }
+
+ private:
+    std::vector<table_t> docids_;
+    size_t pos_ = 0;
+};
+
 template <typename T>
 class SparseRow {
     static_assert(std::is_same_v<T, fp32>, "SparseRow supports float only");
@@ -70,6 +98,15 @@ class SparseRow {
     }
 
     SparseRow(size_t count, uint8_t* data, bool own_data) : data_(data), count_(count), own_data_(own_data) {
+    }
+
+    SparseRow(const std::vector<std::pair<table_t, T>>& data) : count_(data.size()), own_data_(true) {
+        data_ = new uint8_t[count_ * element_size()];
+        for (size_t i = 0; i < count_; ++i) {
+            auto* elem = reinterpret_cast<ElementProxy*>(data_) + i;
+            elem->index = data[i].first;
+            elem->value = data[i].second;
+        }
     }
 
     // copy constructor and copy assignment operator perform deep copy
@@ -147,6 +184,9 @@ class SparseRow {
 
     void
     set_at(size_t i, table_t index, T value) {
+        if (i >= count_) {
+            throw std::out_of_range("set_at on a SparseRow with invalid index");
+        }
         auto* elem = reinterpret_cast<ElementProxy*>(data_) + i;
         elem->index = index;
         elem->value = value;
@@ -300,12 +340,12 @@ class GrowableVectorView {
         mmap_element_count_ = 0;
     }
 
-    size_type
+    [[nodiscard]] size_type
     capacity() const {
         return mmap_byte_size_ / sizeof(T);
     }
 
-    size_type
+    [[nodiscard]] size_type
     size() const {
         return mmap_element_count_;
     }
@@ -344,6 +384,59 @@ class GrowableVectorView {
             throw std::out_of_range("GrowableVectorView index out of range");
         }
         return reinterpret_cast<const T*>(mmap_data_)[i];
+    }
+
+    class iterator : public boost::iterator_facade<iterator, T, boost::random_access_traversal_tag, T&> {
+     public:
+        iterator() = default;
+        explicit iterator(T* ptr) : ptr_(ptr) {
+        }
+
+        friend class GrowableVectorView;
+        friend class boost::iterator_core_access;
+
+        T&
+        dereference() const {
+            return *ptr_;
+        }
+
+        void
+        increment() {
+            ++ptr_;
+        }
+
+        void
+        decrement() {
+            --ptr_;
+        }
+
+        void
+        advance(std::ptrdiff_t n) {
+            ptr_ += n;
+        }
+
+        std::ptrdiff_t
+        distance_to(const iterator& other) const {
+            return other.ptr_ - ptr_;
+        }
+
+        bool
+        equal(const iterator& other) const {
+            return ptr_ == other.ptr_;
+        }
+
+     private:
+        T* ptr_ = nullptr;
+    };
+
+    iterator
+    begin() const {
+        return iterator(reinterpret_cast<T*>(mmap_data_));
+    }
+
+    iterator
+    end() const {
+        return iterator(reinterpret_cast<T*>(mmap_data_) + mmap_element_count_);
     }
 
  private:
