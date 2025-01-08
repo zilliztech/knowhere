@@ -45,20 +45,32 @@ class SparseInvertedIndexConfig : public BaseConfig {
         /**
          * The term frequency part of score of BM25 is:
          * tf * (k1 + 1) / (tf + k1 * (1 - b + b * (doc_len / avgdl)))
-         * as more documents being added to the collection, avgdl can also
-         * change. In WAND index we precompute and cache this score in order to
-         * speed up the search process, but if avgdl changes, we need to
-         * re-compute such score which is expensive. To avoid this, we upscale
-         * the max score by a ratio to compensate for avgdl changes. This will
-         * make the max score larger than the actual max score, it makes the
-         * filtering less aggressive, but guarantees the correctness.
-         * The larger the ratio, the less aggressive the filtering is.
+         * WAND algorithm uses the max score of each dim for pruning, which is
+         * precomputed and cached in our implementation. The cached max score
+         * is actually not equal to the actual max score. Instead, it is a
+         * scaled one based on the wand_bm25_max_score_ratio.
+         * We should use different scale strategy for different reasons.
+         * 1. As more documents being added to the collection, avgdl could
+         *    be changed. Re-computing such score for each segment is
+         *    expensive. To avoid this, we should upscale the actual max score
+         *    by a ratio greater than 1.0 to compensate for avgdl changes.
+         *    This will make the cached max score larger than the actual max
+         *    score, so that it makes the filtering less aggressive, but
+         *    guarantees the correctness.
+         * 2. In WAND searching process, we use the sum of the max scores to
+         *    filter the candidate vectors. If the sum is smaller than the
+         *    threshold, skip current vector. If approximate searching is
+         *    accepted, we can make the skipping more aggressive by downscaling
+         *    the max score with a ratio less than 1.0. Since the possibility
+         *    that the max score of all dims in the query appears on the same
+         *    vector is relatively small, it won't lead to a sharp decline in
+         *    the recall rate within a certain range.
          */
         KNOWHERE_CONFIG_DECLARE_FIELD(wand_bm25_max_score_ratio)
-            .set_range(1.0, 1.3)
+            .set_range(0.5, 1.3)
             .set_default(1.05)
-            .description("ratio to upscale max score to compensate for avgdl changes")
-            .for_train()
+            .description("ratio to upscale/downscale the max score of each dimension")
+            .for_train_and_search()
             .for_deserialize()
             .for_deserialize_from_file();
     }
