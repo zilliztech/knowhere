@@ -181,25 +181,37 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
 
         auto dim_map_reverse = std::unordered_map<uint32_t, table_t>();
-        for (auto dim_it = dim_map_.begin(); dim_it != dim_map_.end(); ++dim_it) {
-            dim_map_reverse[dim_it->second] = dim_it->first;
+        for (const auto& [dim, idx] : dim_map_) {
+            dim_map_reverse[idx] = dim;
+        }
+
+        std::vector<size_t> row_sizes(n_rows_internal_, 0);
+        for (size_t i = 0; i < inverted_index_ids_.size(); ++i) {
+            for (const auto& id : inverted_index_ids_[i]) {
+                row_sizes[id]++;
+            }
+        }
+
+        std::vector<SparseRow<DType>> raw_rows(n_rows_internal_);
+        for (size_t i = 0; i < n_rows_internal_; ++i) {
+            raw_rows[i] = std::move(SparseRow<DType>(row_sizes[i]));
+        }
+
+        for (size_t i = 0; i < inverted_index_ids_.size(); ++i) {
+            const auto& ids = inverted_index_ids_[i];
+            const auto& vals = inverted_index_vals_[i];
+            const auto dim = dim_map_reverse[i];
+            for (size_t j = 0; j < ids.size(); ++j) {
+                raw_rows[ids[j]].set_at(raw_rows[ids[j]].size() - row_sizes[ids[j]], dim, vals[j]);
+                --row_sizes[ids[j]];
+            }
         }
 
         for (table_t vec_id = 0; vec_id < n_rows_internal_; ++vec_id) {
-            std::vector<std::pair<table_t, DType>> vec_row;
-            for (size_t i = 0; i < inverted_index_ids_.size(); ++i) {
-                if (cursors[i].cur_vec_id_ == vec_id) {
-                    vec_row.emplace_back(dim_map_reverse[i], cursors[i].cur_vec_val());
-                    cursors[i].next();
-                }
+            writeBinaryPOD(writer, raw_rows[vec_id].size());
+            if (raw_rows[vec_id].size() > 0) {
+                writer.write(raw_rows[vec_id].data(), raw_rows[vec_id].size() * SparseRow<DType>::element_size());
             }
-
-            SparseRow<DType> raw_row(vec_row);
-            writeBinaryPOD(writer, raw_row.size());
-            if (raw_row.size() == 0) {
-                continue;
-            }
-            writer.write(raw_row.data(), raw_row.size() * SparseRow<DType>::element_size());
         }
 
         return Status::success;
