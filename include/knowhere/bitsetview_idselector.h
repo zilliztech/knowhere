@@ -20,15 +20,20 @@ namespace knowhere {
 struct BitsetViewIDSelector final : faiss::IDSelector {
     const BitsetView bitset_view;
     const size_t id_offset;
+    const uint32_t* out_id_mapping;
 
-    inline BitsetViewIDSelector(BitsetView bitset_view, const size_t offset = 0)
-        : bitset_view{bitset_view}, id_offset(offset) {
+    inline BitsetViewIDSelector(BitsetView bitset_view, const size_t offset = 0,
+                                const uint32_t* out_id_mapping = nullptr)
+        : bitset_view{bitset_view}, id_offset(offset), out_id_mapping(out_id_mapping) {
     }
 
     inline bool
     is_member(faiss::idx_t id) const override final {
         // it is by design that bitset_view.empty() is not tested here
-        return (!bitset_view.test(id + id_offset));
+        if (out_id_mapping == nullptr) {
+            return (!bitset_view.test(id + id_offset));
+        }
+        return (!bitset_view.test(out_id_mapping[id + id_offset]));
     }
 };
 
