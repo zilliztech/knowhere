@@ -51,6 +51,7 @@ IndexIVFFastScan::IndexIVFFastScan(
     FAISS_THROW_IF_NOT(metric == METRIC_L2 || metric == METRIC_INNER_PRODUCT);
 
     this->is_cosine = is_cosine;
+    mutex = std::make_shared<std::shared_mutex>();
 }
 
 IndexIVFFastScan::IndexIVFFastScan() {
@@ -58,6 +59,7 @@ IndexIVFFastScan::IndexIVFFastScan() {
     M2 = 0;
     is_trained = false;
     by_residual = false;
+    mutex = std::make_shared<std::shared_mutex>();
 }
 
 void IndexIVFFastScan::init_fastscan(
@@ -178,6 +180,7 @@ void IndexIVFFastScan::add_with_ids_impl(
     // TODO parallelize
     idx_t i0 = 0;
     while (i0 < n) {
+        std::unique_lock<std::shared_mutex> lock(*mutex.get());
         idx_t list_no = idx[order[i0]];
         idx_t i1 = i0 + 1;
         while (i1 < n && idx[order[i1]] == list_no) {
@@ -361,6 +364,7 @@ void IndexIVFFastScan::search_preassigned(
         bool store_pairs,
         const IVFSearchParameters* params,
         IndexIVFStats* stats) const {
+    std::shared_lock<std::shared_mutex> lock(*mutex.get());
     size_t nprobe = this->nprobe;
     if (params) {
         FAISS_THROW_IF_NOT(params->max_codes == 0);
