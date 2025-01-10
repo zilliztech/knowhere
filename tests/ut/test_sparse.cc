@@ -504,41 +504,42 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
 
     auto test_time = 10;
 
+    using std::make_tuple;
+    auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+        make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC, sparse_inverted_index_gen),
+        make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND_CC, sparse_inverted_index_gen),
+    }));
+
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+    auto cfg_json = gen().dump();
+    CAPTURE(name, cfg_json);
+    knowhere::Json json = knowhere::Json::parse(cfg_json);
+    REQUIRE(idx.Type() == name);
+    // build the index with some initial data
+    auto train_ds = doc_vector_gen(nb, dim);
+    REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
+
+    auto add_task = [&]() {
+        auto start = std::chrono::steady_clock::now();
+        while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count() <
+               test_time) {
+            auto doc_ds = doc_vector_gen(nb, dim);
+            auto res = idx.Add(doc_ds, json);
+            REQUIRE(res == knowhere::Status::success);
+        }
+    };
+
+    auto search_task = [&]() {
+        auto start = std::chrono::steady_clock::now();
+        while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count() <
+               test_time) {
+            auto results = idx.Search(query_ds, json, nullptr);
+            REQUIRE(results.has_value());
+            check_result(*results.value());
+        }
+    };
+
     SECTION("Test Search") {
-        using std::make_tuple;
-        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC, sparse_inverted_index_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND_CC, sparse_inverted_index_gen),
-        }));
-
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
-        auto cfg_json = gen().dump();
-        CAPTURE(name, cfg_json);
-        knowhere::Json json = knowhere::Json::parse(cfg_json);
-        REQUIRE(idx.Type() == name);
-        // build the index with some initial data
-        REQUIRE(idx.Build(doc_vector_gen(nb, dim), json) == knowhere::Status::success);
-
-        auto add_task = [&]() {
-            auto start = std::chrono::steady_clock::now();
-            while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count() <
-                   test_time) {
-                auto doc_ds = doc_vector_gen(nb, dim);
-                auto res = idx.Add(doc_ds, json);
-                REQUIRE(res == knowhere::Status::success);
-            }
-        };
-
-        auto search_task = [&]() {
-            auto start = std::chrono::steady_clock::now();
-            while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count() <
-                   test_time) {
-                auto results = idx.Search(query_ds, json, nullptr);
-                REQUIRE(results.has_value());
-                check_result(*results.value());
-            }
-        };
-
         std::vector<std::future<void>> task_list;
         for (int thread = 0; thread < 5; thread++) {
             task_list.push_back(std::async(std::launch::async, search_task));
@@ -546,6 +547,23 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
         task_list.push_back(std::async(std::launch::async, add_task));
         for (auto& task : task_list) {
             task.wait();
+        }
+    }
+
+    SECTION("Test GetVectorByIds") {
+        std::vector<int64_t> ids = {0, 1, 2};
+        REQUIRE(idx.HasRawData(metric));
+        auto results = idx.GetVectorByIds(GenIdsDataSet(3, ids));
+        REQUIRE(results.has_value());
+        auto xb = (knowhere::sparse::SparseRow<float>*)train_ds->GetTensor();
+        auto res_data = (knowhere::sparse::SparseRow<float>*)results.value()->GetTensor();
+        for (int i = 0; i < 3; ++i) {
+            const auto& truth_row = xb[i];
+            const auto& res_row = res_data[i];
+            REQUIRE(truth_row.size() == res_row.size());
+            for (size_t j = 0; j < truth_row.size(); ++j) {
+                REQUIRE(truth_row[j] == res_row[j]);
+            }
         }
     }
 }

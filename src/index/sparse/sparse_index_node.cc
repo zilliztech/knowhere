@@ -11,10 +11,13 @@
 
 #include <sys/mman.h>
 
+#include <exception>
+
 #include "index/sparse/sparse_inverted_index.h"
 #include "index/sparse/sparse_inverted_index_config.h"
 #include "io/file_io.h"
 #include "io/memory_io.h"
+#include "knowhere/comp/index_param.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/config.h"
 #include "knowhere/dataset.h"
@@ -389,7 +392,7 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
     }
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> config) override {
         std::unique_lock<std::mutex> lock(mutex_);
         uint64_t task_id = next_task_id_++;
         add_tasks_.push(task_id);
@@ -397,7 +400,15 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
         // add task is allowed to run only after all search tasks that come before it have finished.
         cv_.wait(lock, [this, task_id]() { return current_task_id_ == task_id && active_readers_ == 0; });
 
-        auto res = SparseInvertedIndexNode<T, use_wand>::Add(dataset, cfg);
+        auto res = SparseInvertedIndexNode<T, use_wand>::Add(dataset, config);
+
+        auto cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
+        if (IsMetricType(cfg.metric_type.value(), metric::IP)) {
+            // insert dataset to raw data if metric type is IP
+            auto data = static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor());
+            auto rows = dataset->GetRows();
+            raw_data_.insert(raw_data_.end(), data, data + rows);
+        }
 
         add_tasks_.pop();
         current_task_id_++;
@@ -431,12 +442,6 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
         return SparseInvertedIndexNode<T, use_wand>::RangeSearch(dataset, std::move(cfg), bitset);
     }
 
-    expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override {
-        ReadPermission permission(*this);
-        return SparseInvertedIndexNode<T, use_wand>::GetVectorByIds(dataset);
-    }
-
     int64_t
     Dim() const override {
         ReadPermission permission(*this);
@@ -459,6 +464,49 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
     Type() const override {
         return use_wand ? knowhere::IndexEnum::INDEX_SPARSE_WAND_CC
                         : knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC;
+    }
+
+    expected<DataSetPtr>
+    GetVectorByIds(const DataSetPtr dataset) const override {
+        ReadPermission permission(*this);
+
+        if (raw_data_.empty()) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "GetVectorByIds failed: raw data is empty");
+        }
+
+        auto rows = dataset->GetRows();
+        auto ids = dataset->GetIds();
+        auto data = std::make_unique<sparse::SparseRow<T>[]>(rows);
+        int64_t dim = 0;
+
+        try {
+            for (int64_t i = 0; i < rows; ++i) {
+                data[i] = raw_data_[ids[i]];
+                dim = std::max(dim, data[i].dim());
+            }
+        } catch (std::exception& e) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "GetVectorByIds failed: " + std::string(e.what()));
+        }
+
+        auto res = GenResultDataSet(rows, dim, data.release());
+        res->SetIsSparse(true);
+
+        return res;
+    }
+
+    [[nodiscard]] bool
+    HasRawData(const std::string& metric_type) const override {
+        return IsMetricType(metric_type, metric::IP);
+    }
+
+    Status
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config> config) override {
+        return Status::not_implemented;
+    }
+
+    Status
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> config) override {
+        return Status::not_implemented;
     }
 
  private:
@@ -490,6 +538,7 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
     mutable std::queue<uint64_t> add_tasks_;
     mutable uint64_t next_task_id_ = 0;
     mutable uint64_t current_task_id_ = 0;
+    mutable std::vector<sparse::SparseRow<T>> raw_data_ = {};
 };  // class SparseInvertedIndexNodeCC
 
 KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_INVERTED_INDEX, SparseInvertedIndexNode, knowhere::feature::MMAP,
