@@ -13,8 +13,9 @@
 
 namespace knowhere {
 
-const prometheus::Histogram::BucketBoundaries defaultBuckets = {
-    1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 1048576};
+const prometheus::Histogram::BucketBoundaries defaultBuckets = {1,     2,     4,     8,      16,     32,     64,
+                                                                128,   256,   512,   1024,   2048,   4096,   8192,
+                                                                16384, 32768, 65536, 131072, 262144, 524288, 1048576};
 
 const prometheus::Histogram::BucketBoundaries ratioBuckets = {
     0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0};
