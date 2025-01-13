@@ -283,6 +283,52 @@ CheckDistanceInScope(const knowhere::DataSet& result, float low_bound, float hig
     return true;
 }
 
+inline std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>
+GenerateScalarInfo(size_t n) {
+    std::vector<std::vector<uint32_t>> scalar_info;
+    scalar_info.reserve(2);
+    std::vector<uint32_t> scalar1;
+    scalar1.reserve(n / 2);
+    std::vector<uint32_t> scalar2;
+    scalar2.reserve(n - n / 2);
+    for (size_t i = 0; i < n; ++i) {
+        if (i % 2 == 0) {
+            scalar2.emplace_back(i);
+        } else {
+            scalar1.emplace_back(i);
+        }
+    }
+    scalar_info.emplace_back(std::move(scalar1));
+    scalar_info.emplace_back(std::move(scalar2));
+    std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_map;
+    scalar_map[0] = std::move(scalar_info);
+    return scalar_map;
+}
+
+inline std::vector<uint8_t>
+GenerateBitsetByScalarInfoAndFirstTBits(const std::vector<uint32_t>& scalar, size_t n, size_t t) {
+    assert(scalar.size() <= n);
+    assert(t >= 0 && t <= n - scalar.size());
+    std::vector<uint8_t> data((n + 8 - 1) / 8, 0);
+    // set bits by scalar info
+    for (size_t i = 0; i < scalar.size(); ++i) {
+        data[scalar[i] >> 3] |= (0x1 << (scalar[i] & 0x7));
+    }
+    size_t count = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (count == t) {
+            break;
+        }
+        // already set, skip
+        if (data[i >> 3] & (0x1 << (i & 0x7))) {
+            continue;
+        }
+        data[i >> 3] |= (0x1 << (i & 0x7));
+        ++count;
+    }
+    return data;
+}
+
 // Return a n-bits bitset data with first t bits set to true
 inline std::vector<uint8_t>
 GenerateBitsetWithFirstTbitsSet(size_t n, size_t t) {
