@@ -34,6 +34,13 @@
 #include "knowhere/utils.h"
 
 namespace knowhere::sparse {
+
+enum class InvertedIndexAlgo {
+    TAAT_NAIVE,
+    DAAT_WAND,
+    DAAT_MAXSCORE,
+};
+
 template <typename T>
 class BaseInvertedIndex {
  public:
@@ -77,7 +84,7 @@ class BaseInvertedIndex {
     n_cols() const = 0;
 };
 
-template <typename DType, typename QType, bool use_wand = false, bool bm25 = false, bool mmapped = false>
+template <typename DType, typename QType, InvertedIndexAlgo algo, bool bm25 = false, bool mmapped = false>
 class InvertedIndex : public BaseInvertedIndex<DType> {
  public:
     explicit InvertedIndex() {
@@ -132,12 +139,13 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                                                           "avgdl must be supplied during searching");
         }
         auto avgdl = cfg.bm25_avgdl.value();
-        if constexpr (use_wand) {
-            // wand: search time k1/b must equal load time config.
+        if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
+            // daat_wand and daat_maxscore: search time k1/b must equal load time config.
             if ((cfg.bm25_k1.has_value() && cfg.bm25_k1.value() != bm25_params_->k1) ||
                 ((cfg.bm25_b.has_value() && cfg.bm25_b.value() != bm25_params_->b))) {
                 return expected<DocValueComputer<float>>::Err(
-                    Status::invalid_args, "search time k1/b must equal load time config for WAND index.");
+                    Status::invalid_args,
+                    "search time k1/b must equal load time config for DAAT_WAND or DAAT_MAXSCORE algorithm.");
             }
             return GetDocValueBM25Computer<float>(bm25_params_->k1, bm25_params_->b, avgdl);
         } else {
@@ -181,8 +189,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
 
         auto dim_map_reverse = std::unordered_map<uint32_t, table_t>();
-        for (const auto& [dim, idx] : dim_map_) {
-            dim_map_reverse[idx] = dim;
+        for (const auto& [dim, dim_id] : dim_map_) {
+            dim_map_reverse[dim_id] = dim;
         }
 
         std::vector<size_t> row_sizes(n_rows_internal_, 0);
@@ -293,7 +301,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
         map_byte_size_ =
             inverted_index_ids_byte_size + inverted_index_vals_byte_size + plists_ids_byte_size + plists_vals_byte_size;
-        if constexpr (use_wand) {
+        if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
             map_byte_size_ += max_score_in_dim_byte_size;
         }
         if constexpr (bm25) {
@@ -342,7 +350,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         inverted_index_vals_.initialize(ptr, inverted_index_vals_byte_size);
         ptr += inverted_index_vals_byte_size;
 
-        if constexpr (use_wand) {
+        if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
             max_score_in_dim_.initialize(ptr, max_score_in_dim_byte_size);
             ptr += max_score_in_dim_byte_size;
         }
@@ -367,7 +375,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         size_t dim_id = 0;
         for (const auto& [idx, count] : idx_counts) {
             dim_map_[idx] = dim_id;
-            if constexpr (use_wand) {
+            if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
                 max_score_in_dim_.emplace_back(0.0f);
             }
             ++dim_id;
@@ -431,11 +439,20 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         if (drop_ratio_search == 0) {
             refine_factor = 1;
         }
+
+        auto q_vec = parse_query(query, q_threshold);
+        if (q_vec.empty()) {
+            return;
+        }
+
         MaxMinHeap<float> heap(k * refine_factor);
-        if constexpr (!use_wand) {
-            search_brute_force(query, q_threshold, heap, bitset, computer);
+        // DAAT_WAND and DAAT_MAXSCORE are based on the implementation in PISA.
+        if constexpr (algo == InvertedIndexAlgo::DAAT_WAND) {
+            search_daat_wand(q_vec, heap, bitset, computer);
+        } else if constexpr (algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
+            search_daat_maxscore(q_vec, heap, bitset, computer);
         } else {
-            search_wand(query, q_threshold, heap, bitset, computer);
+            search_taat_naive(q_vec, heap, bitset, computer);
         }
 
         if (refine_factor == 1) {
@@ -457,7 +474,9 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             values[i] = std::abs(query[i].val);
         }
         auto q_threshold = get_threshold(values, drop_ratio_search);
-        auto distances = compute_all_distances(query, q_threshold, computer);
+        auto q_vec = parse_query(query, q_threshold);
+
+        auto distances = compute_all_distances(q_vec, computer);
         if (!bitset.empty()) {
             for (size_t i = 0; i < distances.size(); ++i) {
                 if (bitset.test(i)) {
@@ -474,16 +493,16 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         float distance = 0.0f;
 
         for (size_t i = 0; i < query.size(); ++i) {
-            auto [idx, val] = query[i];
-            auto dim_id = dim_map_.find(idx);
-            if (dim_id == dim_map_.end()) {
+            auto [dim, val] = query[i];
+            auto dim_it = dim_map_.find(dim);
+            if (dim_it == dim_map_.cend()) {
                 continue;
             }
-            auto& plist_ids = inverted_index_ids_[dim_id->second];
+            auto& plist_ids = inverted_index_ids_[dim_it->second];
             auto it = std::lower_bound(plist_ids.begin(), plist_ids.end(), vec_id,
                                        [](const auto& x, table_t y) { return x < y; });
             if (it != plist_ids.end() && *it == vec_id) {
-                distance += val * computer(inverted_index_vals_[dim_id->second][it - plist_ids.begin()],
+                distance += val * computer(inverted_index_vals_[dim_it->second][it - plist_ids.begin()],
                                            bm25 ? bm25_params_->row_sums.at(vec_id) : 0);
             }
         }
@@ -510,7 +529,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                 res += sizeof(typename decltype(inverted_index_vals_)::value_type::value_type) *
                        inverted_index_vals_[i].capacity();
             }
-            if constexpr (use_wand) {
+            if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
                 res += sizeof(typename decltype(max_score_in_dim_)::value_type) * max_score_in_dim_.capacity();
             }
             return res;
@@ -545,26 +564,17 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     }
 
     std::vector<float>
-    compute_all_distances(const SparseRow<DType>& q_vec, DType q_threshold,
+    compute_all_distances(const std::vector<std::pair<size_t, DType>>& q_vec,
                           const DocValueComputer<float>& computer) const {
         std::vector<float> scores(n_rows_internal_, 0.0f);
-        for (size_t idx = 0; idx < q_vec.size(); ++idx) {
-            auto [i, v] = q_vec[idx];
-            if (v < q_threshold || i >= max_dim_) {
-                continue;
-            }
-            auto dim_id = dim_map_.find(i);
-            if (dim_id == dim_map_.end()) {
-                continue;
-            }
-            auto& plist_ids = inverted_index_ids_[dim_id->second];
-            auto& plist_vals = inverted_index_vals_[dim_id->second];
+        for (size_t i = 0; i < q_vec.size(); ++i) {
+            auto& plist_ids = inverted_index_ids_[q_vec[i].first];
+            auto& plist_vals = inverted_index_vals_[q_vec[i].first];
             // TODO: improve with SIMD
             for (size_t j = 0; j < plist_ids.size(); ++j) {
                 auto doc_id = plist_ids[j];
-                auto val = plist_vals[j];
                 float val_sum = bm25 ? bm25_params_->row_sums.at(doc_id) : 0;
-                scores[doc_id] += v * computer(val, val_sum);
+                scores[doc_id] += q_vec[i].second * computer(plist_vals[j], val_sum);
             }
         }
         return scores;
@@ -633,14 +643,43 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
     };  // struct Cursor
 
+    std::vector<std::pair<size_t, DType>>
+    parse_query(const SparseRow<DType>& query, DType q_threshold) const {
+        std::vector<std::pair<size_t, DType>> filtered_query;
+        for (size_t i = 0; i < query.size(); ++i) {
+            auto [dim, val] = query[i];
+            auto dim_it = dim_map_.find(dim);
+            if (dim_it == dim_map_.cend() || std::abs(val) < q_threshold) {
+                continue;
+            }
+            filtered_query.emplace_back(dim_it->second, val);
+        }
+        return filtered_query;
+    }
+
+    template <typename DocIdFilter>
+    std::vector<Cursor<DocIdFilter>>
+    make_cursors(const std::vector<std::pair<size_t, DType>>& q_vec, const DocValueComputer<float>& computer,
+                 DocIdFilter& filter) const {
+        std::vector<Cursor<DocIdFilter>> cursors;
+        cursors.reserve(q_vec.size());
+        for (auto q_dim : q_vec) {
+            auto& plist_ids = inverted_index_ids_[q_dim.first];
+            auto& plist_vals = inverted_index_vals_[q_dim.first];
+            cursors.emplace_back(plist_ids, plist_vals, n_rows_internal_, max_score_in_dim_[q_dim.first] * q_dim.second,
+                                 q_dim.second, filter);
+        }
+        return cursors;
+    }
+
     // find the top-k candidates using brute force search, k as specified by the capacity of the heap.
     // any value in q_vec that is smaller than q_threshold and any value with dimension >= n_cols() will be ignored.
     // TODO: may switch to row-wise brute force if filter rate is high. Benchmark needed.
     template <typename DocIdFilter>
     void
-    search_brute_force(const SparseRow<DType>& q_vec, DType q_threshold, MaxMinHeap<float>& heap, DocIdFilter& filter,
-                       const DocValueComputer<float>& computer) const {
-        auto scores = compute_all_distances(q_vec, q_threshold, computer);
+    search_taat_naive(const std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
+                      const DocValueComputer<float>& computer) const {
+        auto scores = compute_all_distances(q_vec, computer);
         for (size_t i = 0; i < n_rows_internal_; ++i) {
             if ((filter.empty() || !filter.test(i)) && scores[i] != 0) {
                 heap.push(i, scores[i]);
@@ -648,43 +687,33 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
     }
 
-    // any value in q_vec that is smaller than q_threshold will be ignored.
     template <typename DocIdFilter>
     void
-    search_wand(const SparseRow<DType>& q_vec, DType q_threshold, MaxMinHeap<float>& heap, DocIdFilter& filter,
-                const DocValueComputer<float>& computer) const {
-        auto q_dim = q_vec.size();
-        std::vector<std::shared_ptr<Cursor<DocIdFilter>>> cursors(q_dim);
-        size_t valid_q_dim = 0;
-        for (size_t i = 0; i < q_dim; ++i) {
-            auto [idx, val] = q_vec[i];
-            auto dim_id = dim_map_.find(idx);
-            if (dim_id == dim_map_.end() || std::abs(val) < q_threshold) {
-                continue;
-            }
-            auto& plist_ids = inverted_index_ids_[dim_id->second];
-            auto& plist_vals = inverted_index_vals_[dim_id->second];
-            cursors[valid_q_dim++] = std::make_shared<Cursor<DocIdFilter>>(
-                plist_ids, plist_vals, n_rows_internal_, max_score_in_dim_[dim_id->second] * val, val, filter);
+    search_daat_wand(const std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
+                     const DocValueComputer<float>& computer) const {
+        std::vector<Cursor<DocIdFilter>> cursors = make_cursors(q_vec, computer, filter);
+        std::vector<Cursor<DocIdFilter>*> cursor_ptrs(cursors.size());
+        for (size_t i = 0; i < cursors.size(); ++i) {
+            cursor_ptrs[i] = &cursors[i];
         }
-        if (valid_q_dim == 0) {
-            return;
-        }
-        cursors.resize(valid_q_dim);
-        auto sort_cursors = [&cursors] {
-            std::sort(cursors.begin(), cursors.end(), [](auto& x, auto& y) { return x->cur_vec_id_ < y->cur_vec_id_; });
+
+        auto sort_cursors = [&cursor_ptrs] {
+            std::sort(cursor_ptrs.begin(), cursor_ptrs.end(),
+                      [](auto& x, auto& y) { return x->cur_vec_id_ < y->cur_vec_id_; });
         };
         sort_cursors();
+
         while (true) {
             float threshold = heap.full() ? heap.top().val : 0;
             float upper_bound = 0;
             size_t pivot;
+
             bool found_pivot = false;
-            for (pivot = 0; pivot < valid_q_dim; ++pivot) {
-                if (cursors[pivot]->loc_ >= cursors[pivot]->plist_size_) {
+            for (pivot = 0; pivot < q_vec.size(); ++pivot) {
+                if (cursor_ptrs[pivot]->cur_vec_id_ >= n_rows_internal_) {
                     break;
                 }
-                upper_bound += cursors[pivot]->max_score_;
+                upper_bound += cursor_ptrs[pivot]->max_score_;
                 if (upper_bound > threshold) {
                     found_pivot = true;
                     break;
@@ -693,36 +722,126 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             if (!found_pivot) {
                 break;
             }
-            table_t pivot_id = cursors[pivot]->cur_vec_id_;
-            if (pivot_id == cursors[0]->cur_vec_id_) {
+
+            table_t pivot_id = cursor_ptrs[pivot]->cur_vec_id_;
+            if (pivot_id == cursor_ptrs[0]->cur_vec_id_) {
                 float score = 0;
-                for (auto& cursor : cursors) {
-                    if (cursor->cur_vec_id_ != pivot_id) {
+                float cur_vec_sum = bm25 ? bm25_params_->row_sums.at(pivot_id) : 0;
+                for (auto& cursor_ptr : cursor_ptrs) {
+                    if (cursor_ptr->cur_vec_id_ != pivot_id) {
                         break;
                     }
-                    float cur_vec_sum = bm25 ? bm25_params_->row_sums.at(cursor->cur_vec_id_) : 0;
-                    score += cursor->q_value_ * computer(cursor->cur_vec_val(), cur_vec_sum);
-                    cursor->next();
+                    score += cursor_ptr->q_value_ * computer(cursor_ptr->cur_vec_val(), cur_vec_sum);
+                    cursor_ptr->next();
                 }
                 heap.push(pivot_id, score);
                 sort_cursors();
             } else {
                 size_t next_list = pivot;
-                for (; cursors[next_list]->cur_vec_id_ == pivot_id; --next_list) {
+                for (; cursor_ptrs[next_list]->cur_vec_id_ == pivot_id; --next_list) {
                 }
-                cursors[next_list]->seek(pivot_id);
-                for (size_t i = next_list + 1; i < valid_q_dim; ++i) {
-                    if (cursors[i]->cur_vec_id_ >= cursors[i - 1]->cur_vec_id_) {
+                cursor_ptrs[next_list]->seek(pivot_id);
+                for (size_t i = next_list + 1; i < q_vec.size(); ++i) {
+                    if (cursor_ptrs[i]->cur_vec_id_ >= cursor_ptrs[i - 1]->cur_vec_id_) {
                         break;
                     }
-                    std::swap(cursors[i], cursors[i - 1]);
+                    std::swap(cursor_ptrs[i], cursor_ptrs[i - 1]);
+                }
+            }
+        }
+    }
+
+    template <typename DocIdFilter>
+    void
+    search_daat_maxscore(std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
+                         const DocValueComputer<float>& computer) const {
+        std::sort(q_vec.begin(), q_vec.end(), [this](auto& a, auto& b) {
+            return a.second * max_score_in_dim_[a.first] > b.second * max_score_in_dim_[b.first];
+        });
+
+        std::vector<Cursor<DocIdFilter>> cursors = make_cursors(q_vec, computer, filter);
+
+        float threshold = heap.full() ? heap.top().val : 0;
+
+        std::vector<float> upper_bounds(cursors.size());
+        float bound_sum = 0.0;
+        for (size_t i = cursors.size() - 1; i + 1 > 0; --i) {
+            bound_sum += cursors[i].max_score_;
+            upper_bounds[i] = bound_sum;
+        }
+
+        table_t next_cand_vec_id = n_rows_internal_;
+        for (size_t i = 0; i < cursors.size(); ++i) {
+            if (cursors[i].cur_vec_id_ < next_cand_vec_id) {
+                next_cand_vec_id = cursors[i].cur_vec_id_;
+            }
+        }
+
+        // first_ne_idx is the index of the first non-essential cursor
+        size_t first_ne_idx = cursors.size();
+
+        while (first_ne_idx != 0 && upper_bounds[first_ne_idx - 1] <= threshold) {
+            --first_ne_idx;
+            if (first_ne_idx == 0) {
+                return;
+            }
+        }
+
+        float curr_cand_score = 0.0f;
+        table_t curr_cand_vec_id = 0;
+
+        while (curr_cand_vec_id < n_rows_internal_) {
+            auto found_cand = false;
+            while (found_cand == false) {
+                // start find from next_vec_id
+                if (next_cand_vec_id >= n_rows_internal_) {
+                    return;
+                }
+                // get current candidate vector
+                curr_cand_vec_id = next_cand_vec_id;
+                curr_cand_score = 0.0f;
+                // update next_cand_vec_id
+                next_cand_vec_id = n_rows_internal_;
+                float cur_vec_sum = bm25 ? bm25_params_->row_sums.at(curr_cand_vec_id) : 0;
+
+                for (size_t i = 0; i < first_ne_idx; ++i) {
+                    if (cursors[i].cur_vec_id_ == curr_cand_vec_id) {
+                        curr_cand_score += cursors[i].q_value_ * computer(cursors[i].cur_vec_val(), cur_vec_sum);
+                        cursors[i].next();
+                    }
+                    if (cursors[i].cur_vec_id_ < next_cand_vec_id) {
+                        next_cand_vec_id = cursors[i].cur_vec_id_;
+                    }
+                }
+
+                found_cand = true;
+                for (size_t i = first_ne_idx; i < cursors.size(); ++i) {
+                    if (curr_cand_score + upper_bounds[i] <= threshold) {
+                        found_cand = false;
+                        break;
+                    }
+                    cursors[i].seek(curr_cand_vec_id);
+                    if (cursors[i].cur_vec_id_ == curr_cand_vec_id) {
+                        curr_cand_score += cursors[i].q_value_ * computer(cursors[i].cur_vec_val(), cur_vec_sum);
+                    }
+                }
+            }
+
+            if (curr_cand_score > threshold) {
+                heap.push(curr_cand_vec_id, curr_cand_score);
+                threshold = heap.full() ? heap.top().val : 0;
+                while (first_ne_idx != 0 && upper_bounds[first_ne_idx - 1] <= threshold) {
+                    --first_ne_idx;
+                    if (first_ne_idx == 0) {
+                        return;
+                    }
                 }
             }
         }
     }
 
     void
-    refine_and_collect(const SparseRow<DType>& q_vec, MaxMinHeap<float>& inacc_heap, size_t k, float* distances,
+    refine_and_collect(const SparseRow<DType>& query, MaxMinHeap<float>& inacc_heap, size_t k, float* distances,
                        label_t* labels, const DocValueComputer<float>& computer) const {
         std::vector<table_t> docids;
         MaxMinHeap<float> heap(k);
@@ -733,11 +852,18 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             docids.emplace_back(u);
         }
 
+        auto q_vec = parse_query(query, 0);
+        if (q_vec.empty()) {
+            return;
+        }
+
         DocIdFilterByVector filter(std::move(docids));
-        if (use_wand) {
-            search_wand(q_vec, 0, heap, filter, computer);
+        if constexpr (algo == InvertedIndexAlgo::DAAT_WAND) {
+            search_daat_wand(q_vec, heap, filter, computer);
+        } else if constexpr (algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
+            search_daat_maxscore(q_vec, heap, filter, computer);
         } else {
-            search_brute_force(q_vec, 0, heap, filter, computer);
+            search_taat_naive(q_vec, heap, filter, computer);
         }
         collect_result(heap, distances, labels);
     }
@@ -757,7 +883,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     add_row_to_index(const SparseRow<DType>& row, table_t vec_id) {
         [[maybe_unused]] float row_sum = 0;
         for (size_t j = 0; j < row.size(); ++j) {
-            auto [idx, val] = row[j];
+            auto [dim, val] = row[j];
             if constexpr (bm25) {
                 row_sum += val;
             }
@@ -766,21 +892,21 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             if (val == 0) {
                 continue;
             }
-            auto dim_it = dim_map_.find(idx);
-            if (dim_it == dim_map_.end()) {
+            auto dim_it = dim_map_.find(dim);
+            if (dim_it == dim_map_.cend()) {
                 if constexpr (mmapped) {
                     throw std::runtime_error("unexpected vector dimension in mmaped InvertedIndex");
                 }
-                dim_it = dim_map_.insert({idx, next_dim_id_++}).first;
+                dim_it = dim_map_.insert({dim, next_dim_id_++}).first;
                 inverted_index_ids_.emplace_back();
                 inverted_index_vals_.emplace_back();
-                if constexpr (use_wand) {
+                if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
                     max_score_in_dim_.emplace_back(0.0f);
                 }
             }
             inverted_index_ids_[dim_it->second].emplace_back(vec_id);
             inverted_index_vals_[dim_it->second].emplace_back(get_quant_val(val));
-            if constexpr (use_wand) {
+            if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
                 auto score = static_cast<float>(val);
                 if constexpr (bm25) {
                     score = bm25_params_->max_score_ratio * bm25_params_->wand_max_score_computer(val, row_sum);
@@ -832,7 +958,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         // corresponds to the document length of each doc in the BM25 formula.
         Vector<float> row_sums;
 
-        // below are used only for WAND index.
+        // below are used only for DAAT_WAND and DAAT_MAXSCORE algorithms.
         float max_score_ratio;
         DocValueComputer<float> wand_max_score_computer;
 

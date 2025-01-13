@@ -47,6 +47,8 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
 
     auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
 
+    auto inverted_index_algo = GENERATE("TAAT_NAIVE", "DAAT_WAND", "DAAT_MAXSCORE");
+
     auto drop_ratio_search = metric == knowhere::metric::BM25 ? GENERATE(0.0, 0.1) : GENERATE(0.0, 0.3);
 
     auto version = GenTestVersionList();
@@ -62,9 +64,11 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         return json;
     };
 
-    auto sparse_inverted_index_gen = [base_gen, drop_ratio_search = drop_ratio_search]() {
+    auto sparse_inverted_index_gen = [base_gen, drop_ratio_search = drop_ratio_search,
+                                      inverted_index_algo = inverted_index_algo]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::DROP_RATIO_SEARCH] = drop_ratio_search;
+        json[knowhere::indexparam::INVERTED_INDEX_ALGO] = inverted_index_algo;
         return json;
     };
 
@@ -460,6 +464,8 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
 
     auto query_ds = doc_vector_gen(nq, dim);
 
+    auto inverted_index_algo = GENERATE("TAAT_NAIVE", "DAAT_WAND", "DAAT_MAXSCORE");
+
     auto drop_ratio_search = GENERATE(0.0, 0.3);
 
     auto metric = GENERATE(knowhere::metric::IP);
@@ -476,9 +482,11 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
         return json;
     };
 
-    auto sparse_inverted_index_gen = [base_gen, drop_ratio_search = drop_ratio_search]() {
+    auto sparse_inverted_index_gen = [base_gen, drop_ratio_search = drop_ratio_search,
+                                      inverted_index_algo = inverted_index_algo]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::DROP_RATIO_SEARCH] = drop_ratio_search;
+        json[knowhere::indexparam::INVERTED_INDEX_ALGO] = inverted_index_algo;
         return json;
     };
 

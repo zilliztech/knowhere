@@ -30,7 +30,7 @@
 
 namespace knowhere {
 
-// Inverted Index impl for sparse vectors. May optionally use WAND algorithm to speed up search.
+// Inverted Index impl for sparse vectors.
 //
 // Not overriding RangeSearch, will use the default implementation in IndexNode.
 //
@@ -351,8 +351,6 @@ class SparseInvertedIndexNode : public IndexNode {
     expected<sparse::BaseInvertedIndex<T>*>
     CreateIndex(const SparseInvertedIndexConfig& cfg) const {
         if (IsMetricType(cfg.metric_type.value(), metric::BM25)) {
-            // quantize float to uint16_t when BM25 metric type is used.
-            auto idx = new sparse::InvertedIndex<T, uint16_t, use_wand, true, mmapped>();
             if (!cfg.bm25_k1.has_value() || !cfg.bm25_b.has_value() || !cfg.bm25_avgdl.has_value()) {
                 return expected<sparse::BaseInvertedIndex<T>*>::Err(
                     Status::invalid_args, "BM25 parameters k1, b, and avgdl must be set when building/loading");
@@ -361,10 +359,40 @@ class SparseInvertedIndexNode : public IndexNode {
             auto b = cfg.bm25_b.value();
             auto avgdl = cfg.bm25_avgdl.value();
             auto max_score_ratio = cfg.wand_bm25_max_score_ratio.value();
-            idx->SetBM25Params(k1, b, avgdl, max_score_ratio);
-            return idx;
+            if (use_wand || cfg.inverted_index_algo.value() == "DAAT_WAND") {
+                auto index =
+                    new sparse::InvertedIndex<T, uint16_t, sparse::InvertedIndexAlgo::DAAT_WAND, true, mmapped>();
+                index->SetBM25Params(k1, b, avgdl, max_score_ratio);
+                return index;
+            } else if (cfg.inverted_index_algo.value() == "DAAT_MAXSCORE") {
+                auto index =
+                    new sparse::InvertedIndex<T, uint16_t, sparse::InvertedIndexAlgo::DAAT_MAXSCORE, true, mmapped>();
+                index->SetBM25Params(k1, b, avgdl, max_score_ratio);
+                return index;
+            } else if (cfg.inverted_index_algo.value() == "TAAT_NAIVE") {
+                auto index =
+                    new sparse::InvertedIndex<T, uint16_t, sparse::InvertedIndexAlgo::TAAT_NAIVE, true, mmapped>();
+                index->SetBM25Params(k1, b, avgdl, max_score_ratio);
+                return index;
+            } else {
+                return expected<sparse::BaseInvertedIndex<T>*>::Err(Status::invalid_args,
+                                                                    "Invalid search algorithm for SparseInvertedIndex");
+            }
         } else {
-            return new sparse::InvertedIndex<T, T, use_wand, false, mmapped>();
+            if (use_wand || cfg.inverted_index_algo.value() == "DAAT_WAND") {
+                auto index = new sparse::InvertedIndex<T, T, sparse::InvertedIndexAlgo::DAAT_WAND, false, mmapped>();
+                return index;
+            } else if (cfg.inverted_index_algo.value() == "DAAT_MAXSCORE") {
+                auto index =
+                    new sparse::InvertedIndex<T, T, sparse::InvertedIndexAlgo::DAAT_MAXSCORE, false, mmapped>();
+                return index;
+            } else if (cfg.inverted_index_algo.value() == "TAAT_NAIVE") {
+                auto index = new sparse::InvertedIndex<T, T, sparse::InvertedIndexAlgo::TAAT_NAIVE, false, mmapped>();
+                return index;
+            } else {
+                return expected<sparse::BaseInvertedIndex<T>*>::Err(Status::invalid_args,
+                                                                    "Invalid search algorithm for SparseInvertedIndex");
+            }
         }
     }
 
