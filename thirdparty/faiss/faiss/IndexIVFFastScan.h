@@ -8,6 +8,7 @@
 #pragma once
 
 #include <memory>
+#include <shared_mutex>
 
 #include <faiss/IndexIVF.h>
 #include <faiss/utils/AlignedTable.h>
@@ -87,6 +88,8 @@ struct IndexIVFFastScan : IndexIVF {
 
     // // todo aguzhva: get rid of this
     std::vector<float> norms;
+
+    std::shared_ptr<std::shared_mutex> mutex = nullptr;
 
     IndexIVFFastScan(
             Index* quantizer,
