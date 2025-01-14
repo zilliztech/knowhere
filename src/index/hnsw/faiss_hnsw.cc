@@ -1095,7 +1095,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                 auto data = std::make_unique<float[]>(dim * rows);
                 for (int64_t i = 0; i < rows; i++) {
                     const int64_t id = ids[i];
-                    assert(id >= 0 && id < index->ntotal);
+                    assert(id >= 0 && id < Count());
                     if (!get_vector(id, data.get() + i * dim)) {
                         return expected<DataSetPtr>::Err(Status::invalid_index_error,
                                                          "index inner error, cannot proceed with GetVectorByIds");
