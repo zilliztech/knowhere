@@ -95,18 +95,31 @@ class SparseInvertedIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "Could not search empty " << Type();
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
+
         auto cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
+
         auto computer_or = index_->GetDocValueComputer(cfg);
         if (!computer_or.has_value()) {
             return expected<DataSetPtr>::Err(computer_or.error(), computer_or.what());
         }
         auto computer = computer_or.value();
-        auto nq = dataset->GetRows();
-        auto queries = static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor());
-        auto k = cfg.k.value();
-        auto refine_factor = cfg.refine_factor.value_or(1);
+        auto dim_max_score_ratio = cfg.dim_max_score_ratio.value();
         auto drop_ratio_search = cfg.drop_ratio_search.value_or(0.0f);
+        auto refine_factor = cfg.refine_factor.value_or(1);
+        // if no data was dropped during search, no refinement is needed.
+        if (drop_ratio_search == 0) {
+            refine_factor = 1;
+        }
 
+        sparse::InvertedIndexApproxSearchParams approx_params = {
+            .refine_factor = refine_factor,
+            .drop_ratio_search = drop_ratio_search,
+            .dim_max_score_ratio = dim_max_score_ratio,
+        };
+
+        auto queries = static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor());
+        auto nq = dataset->GetRows();
+        auto k = cfg.k.value();
         auto p_id = std::make_unique<sparse::label_t[]>(nq * k);
         auto p_dist = std::make_unique<float[]>(nq * k);
 
@@ -114,8 +127,7 @@ class SparseInvertedIndexNode : public IndexNode {
         futs.reserve(nq);
         for (int64_t idx = 0; idx < nq; ++idx) {
             futs.emplace_back(search_pool_->push([&, idx = idx, p_id = p_id.get(), p_dist = p_dist.get()]() {
-                index_->Search(queries[idx], k, drop_ratio_search, p_dist + idx * k, p_id + idx * k, refine_factor,
-                               bitset, computer);
+                index_->Search(queries[idx], k, p_dist + idx * k, p_id + idx * k, bitset, computer, approx_params);
             }));
         }
         WaitAllSuccess(futs);
@@ -359,21 +371,21 @@ class SparseInvertedIndexNode : public IndexNode {
             auto k1 = cfg.bm25_k1.value();
             auto b = cfg.bm25_b.value();
             auto avgdl = cfg.bm25_avgdl.value();
-            auto max_score_ratio = cfg.wand_bm25_max_score_ratio.value();
+
             if (use_wand || cfg.inverted_index_algo.value() == "DAAT_WAND") {
-                auto index =
-                    new sparse::InvertedIndex<T, uint16_t, sparse::InvertedIndexAlgo::DAAT_WAND, true, mmapped>();
-                index->SetBM25Params(k1, b, avgdl, max_score_ratio);
+                auto index = new sparse::InvertedIndex<T, uint16_t, sparse::InvertedIndexAlgo::DAAT_WAND, mmapped>(
+                    sparse::SparseMetricType::METRIC_BM25);
+                index->SetBM25Params(k1, b, avgdl);
                 return index;
             } else if (cfg.inverted_index_algo.value() == "DAAT_MAXSCORE") {
-                auto index =
-                    new sparse::InvertedIndex<T, uint16_t, sparse::InvertedIndexAlgo::DAAT_MAXSCORE, true, mmapped>();
-                index->SetBM25Params(k1, b, avgdl, max_score_ratio);
+                auto index = new sparse::InvertedIndex<T, uint16_t, sparse::InvertedIndexAlgo::DAAT_MAXSCORE, mmapped>(
+                    sparse::SparseMetricType::METRIC_BM25);
+                index->SetBM25Params(k1, b, avgdl);
                 return index;
             } else if (cfg.inverted_index_algo.value() == "TAAT_NAIVE") {
-                auto index =
-                    new sparse::InvertedIndex<T, uint16_t, sparse::InvertedIndexAlgo::TAAT_NAIVE, true, mmapped>();
-                index->SetBM25Params(k1, b, avgdl, max_score_ratio);
+                auto index = new sparse::InvertedIndex<T, uint16_t, sparse::InvertedIndexAlgo::TAAT_NAIVE, mmapped>(
+                    sparse::SparseMetricType::METRIC_BM25);
+                index->SetBM25Params(k1, b, avgdl);
                 return index;
             } else {
                 return expected<sparse::BaseInvertedIndex<T>*>::Err(Status::invalid_args,
@@ -381,14 +393,16 @@ class SparseInvertedIndexNode : public IndexNode {
             }
         } else {
             if (use_wand || cfg.inverted_index_algo.value() == "DAAT_WAND") {
-                auto index = new sparse::InvertedIndex<T, T, sparse::InvertedIndexAlgo::DAAT_WAND, false, mmapped>();
+                auto index = new sparse::InvertedIndex<T, T, sparse::InvertedIndexAlgo::DAAT_WAND, mmapped>(
+                    sparse::SparseMetricType::METRIC_IP);
                 return index;
             } else if (cfg.inverted_index_algo.value() == "DAAT_MAXSCORE") {
-                auto index =
-                    new sparse::InvertedIndex<T, T, sparse::InvertedIndexAlgo::DAAT_MAXSCORE, false, mmapped>();
+                auto index = new sparse::InvertedIndex<T, T, sparse::InvertedIndexAlgo::DAAT_MAXSCORE, mmapped>(
+                    sparse::SparseMetricType::METRIC_IP);
                 return index;
             } else if (cfg.inverted_index_algo.value() == "TAAT_NAIVE") {
-                auto index = new sparse::InvertedIndex<T, T, sparse::InvertedIndexAlgo::TAAT_NAIVE, false, mmapped>();
+                auto index = new sparse::InvertedIndex<T, T, sparse::InvertedIndexAlgo::TAAT_NAIVE, mmapped>(
+                    sparse::SparseMetricType::METRIC_IP);
                 return index;
             } else {
                 return expected<sparse::BaseInvertedIndex<T>*>::Err(Status::invalid_args,
