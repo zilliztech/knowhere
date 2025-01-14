@@ -30,6 +30,7 @@
 #include "faiss/IndexHNSW.h"
 #include "faiss/IndexRefine.h"
 #include "faiss/impl/ScalarQuantizer.h"
+#include "faiss/impl/mapped_io.h"
 #include "faiss/index_io.h"
 #include "index/hnsw/faiss_hnsw_config.h"
 #include "index/hnsw/hnsw.h"
@@ -64,6 +65,11 @@ class BaseFaissIndexNode : public IndexNode {
     BaseFaissIndexNode(const int32_t& /*version*/, const Object& object) {
         build_pool = ThreadPool::GetGlobalBuildThreadPool();
         search_pool = ThreadPool::GetGlobalSearchThreadPool();
+    }
+
+    bool
+    IsAdditionalScalarSupported() const override {
+        return true;
     }
 
     //
@@ -159,21 +165,33 @@ is_faiss_fourcc_error(const char* what) {
 class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
  public:
     BaseFaissRegularIndexNode(const int32_t& version, const Object& object)
-        : BaseFaissIndexNode(version, object), index{nullptr} {
+        : BaseFaissIndexNode(version, object), indexes(1, nullptr) {
     }
 
     Status
     Serialize(BinarySet& binset) const override {
-        if (index == nullptr) {
+        if (isIndexEmpty()) {
             return Status::empty_index;
         }
 
         try {
             MemoryIOWriter writer;
-            faiss::write_index(index.get(), &writer);
+            if (indexes.size() > 1) {
+                // this is a hack for compatibility, faiss index has 4-byte header to indicate index category
+                // create a new one to distinguish MV faiss hnsw from faiss hnsw
+                faiss::write_mv(&writer);
+                writeHeader(&writer);
+                for (const auto& index : indexes) {
+                    faiss::write_index(index.get(), &writer);
+                }
 
-            std::shared_ptr<uint8_t[]> data(writer.data());
-            binset.Append(Type(), data, writer.tellg());
+                std::shared_ptr<uint8_t[]> data(writer.data());
+                binset.Append(Type(), data, writer.tellg());
+            } else {
+                faiss::write_index(indexes[0].get(), &writer);
+                std::shared_ptr<uint8_t[]> data(writer.data());
+                binset.Append(Type(), data, writer.tellg());
+            }
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
             return Status::faiss_inner_error;
@@ -192,8 +210,23 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
 
         MemoryIOReader reader(binary->data.get(), binary->size);
         try {
-            auto read_index = std::unique_ptr<faiss::Index>(faiss::read_index(&reader));
-            index.reset(read_index.release());
+            // this is a hack for compatibility, faiss index has 4-byte header to indicate index category
+            // create a new one to distinguish MV faiss hnsw from faiss hnsw
+            bool is_mv = faiss::read_is_mv(&reader);
+            if (is_mv) {
+                LOG_KNOWHERE_INFO_ << "start to load index by mv";
+                uint32_t v = readHeader(&reader);
+                indexes.resize(v);
+                LOG_KNOWHERE_INFO_ << "read " << v << " mvs";
+                for (auto i = 0; i < v; ++i) {
+                    auto read_index = std::unique_ptr<faiss::Index>(faiss::read_index(&reader));
+                    indexes[i].reset(read_index.release());
+                }
+            } else {
+                reader.reset();
+                auto read_index = std::unique_ptr<faiss::Index>(faiss::read_index(&reader));
+                indexes[0].reset(read_index.release());
+            }
         } catch (const std::exception& e) {
             if (is_faiss_fourcc_error(e.what())) {
                 LOG_KNOWHERE_WARNING_ << "faiss does not recognize the input index: " << e.what();
@@ -217,8 +250,34 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
         }
 
         try {
-            auto read_index = std::unique_ptr<faiss::Index>(faiss::read_index(filename.data(), io_flags));
-            index.reset(read_index.release());
+            // this is a hack for compatibility, faiss index has 4-byte header to indicate index category
+            // create a new one to distinguish MV faiss hnsw from faiss hnsw
+            bool is_mv = faiss::read_is_mv(filename.data());
+            if (is_mv) {
+                auto read_index = [&](faiss::IOReader* r) {
+                    LOG_KNOWHERE_INFO_ << "start to load index by mv";
+                    read_is_mv(r);
+                    uint32_t v = readHeader(r);
+                    LOG_KNOWHERE_INFO_ << "read " << v << " mvs";
+                    indexes.resize(v);
+                    for (auto i = 0; i < v; ++i) {
+                        auto read_index = std::unique_ptr<faiss::Index>(faiss::read_index(r, io_flags));
+                        indexes[i].reset(read_index.release());
+                    }
+                };
+                if ((io_flags & faiss::IO_FLAG_MMAP_IFC) == faiss::IO_FLAG_MMAP_IFC) {
+                    // enable mmap-supporting IOReader
+                    auto owner = std::make_shared<faiss::MmappedFileMappingOwner>(filename.data());
+                    faiss::MappedFileIOReader reader(owner);
+                    read_index(&reader);
+                } else {
+                    faiss::FileIOReader reader(filename.data());
+                    read_index(&reader);
+                }
+            } else {
+                auto read_index = std::unique_ptr<faiss::Index>(faiss::read_index(filename.data(), io_flags));
+                indexes[0].reset(read_index.release());
+            }
         } catch (const std::exception& e) {
             if (is_faiss_fourcc_error(e.what())) {
                 LOG_KNOWHERE_WARNING_ << "faiss does not recognize the input index: " << e.what();
@@ -235,32 +294,38 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
     //
     int64_t
     Dim() const override {
-        if (index == nullptr) {
+        if (isIndexEmpty()) {
             return -1;
         }
 
-        return index->d;
+        return indexes[0]->d;
     }
 
     int64_t
     Count() const override {
-        if (index == nullptr) {
+        if (isIndexEmpty()) {
             return -1;
+        }
+        int64_t count = 0;
+        for (const auto& index : indexes) {
+            count += index->ntotal;
         }
 
         // total number of indexed vectors
-        return index->ntotal;
+        return count;
     }
 
     int64_t
     Size() const override {
-        if (index == nullptr) {
+        if (isIndexEmpty()) {
             return 0;
         }
 
         // a temporary yet expensive workaround
         faiss::cppcontrib::knowhere::CountSizeIOWriter writer;
-        faiss::write_index(index.get(), &writer);
+        for (const auto& index : indexes) {
+            faiss::write_index(index.get(), &writer);
+        }
 
         // todo
         return writer.total_size;
@@ -269,25 +334,80 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
  protected:
     // it is std::shared_ptr, not std::unique_ptr, because it can be
     //    shared with FaissHnswIterator
-    std::shared_ptr<faiss::Index> index;
+    std::vector<std::shared_ptr<faiss::Index>> indexes;
+    // each index's out ids(label), can be shared with FaissHnswIterator
+    std::vector<std::shared_ptr<std::vector<uint32_t>>> labels;
 
-    Status
-    AddInternal(const DataSetPtr dataset, const Config&) override {
-        if (this->index == nullptr) {
-            LOG_KNOWHERE_ERROR_ << "Can not add data to an empty index.";
-            return Status::empty_index;
+    // index rows, help to locate index id by offset
+    std::vector<uint32_t> index_rows_sum;
+    // label to locate internal offset
+    std::vector<uint32_t> label_to_internal_offset;
+
+    int
+    getIndexToSearchByScalarInfo(const FaissHnswConfig& config, const BitsetView& bitset) const {
+        if (indexes.size() == 1) {
+            return 0;
         }
-
-        auto data = dataset->GetTensor();
-        auto rows = dataset->GetRows();
-        try {
-            this->index->add(rows, reinterpret_cast<const float*>(data));
-        } catch (const std::exception& e) {
-            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
-            return Status::faiss_inner_error;
+        if (bitset.empty()) {
+            LOG_KNOWHERE_WARNING_ << "partition key value not correctly set";
+            return -1;
         }
+        // all data is filtered, just pick the first one
+        // this will not happen combined with milvus, which will not call knowhere and just return
+        if (bitset.count() == bitset.size()) {
+            return 0;
+        }
+        size_t first_valid_index = bitset.get_first_valid_index();
+        auto it = std::lower_bound(index_rows_sum.begin(), index_rows_sum.end(),
+                                   label_to_internal_offset[first_valid_index] + 1);
+        if (it == index_rows_sum.end()) {
+            LOG_KNOWHERE_WARNING_ << "can not find vector of offset " << label_to_internal_offset[first_valid_index];
+            return -1;
+        }
+        return std::distance(index_rows_sum.begin(), it) - 1;
+    }
 
-        return Status::success;
+    void
+    writeHeader(faiss::IOWriter* f) const {
+        uint32_t version = 0;
+        faiss::write_value(version, f);
+        uint32_t size = indexes.size();
+        faiss::write_value(size, f);
+        uint32_t cluster_size = labels.size();
+        faiss::write_value(cluster_size, f);
+        for (const auto& label : labels) {
+            faiss::write_vector(*label, f);
+        }
+        faiss::write_vector(index_rows_sum, f);
+        faiss::write_vector(label_to_internal_offset, f);
+    }
+
+    uint32_t
+    readHeader(faiss::IOReader* f) {
+        [[maybe_unused]] uint32_t version = faiss::read_value(f);
+        uint32_t size = faiss::read_value(f);
+        uint32_t cluster_size = faiss::read_value(f);
+        labels.resize(cluster_size);
+        for (auto j = 0; j < cluster_size; ++j) {
+            labels[j] = std::make_shared<std::vector<uint32_t>>();
+            faiss::read_vector(*labels[j], f);
+        }
+        faiss::read_vector(index_rows_sum, f);
+        faiss::read_vector(label_to_internal_offset, f);
+        return size;
+    }
+
+    bool
+    isIndexEmpty() const {
+        if (indexes.empty()) {
+            return true;
+        }
+        for (const auto& index : indexes) {
+            if (index == nullptr) {
+                return true;
+            }
+        }
+        return false;
     }
 };
 
@@ -318,6 +438,48 @@ template <typename T>
 static constexpr DataFormatEnum datatype_v = DataType2EnumHelper<T>::value;
 
 namespace {
+
+bool
+convert_rows_to_fp32(const void* const __restrict src_in, float* const __restrict dst,
+                     const DataFormatEnum src_data_format, const uint32_t* const __restrict offsets, const size_t nrows,
+                     const size_t dim) {
+    if (src_data_format == DataFormatEnum::fp16) {
+        const knowhere::fp16* const src = reinterpret_cast<const knowhere::fp16*>(src_in);
+        for (size_t i = 0; i < nrows; i++) {
+            for (size_t j = 0; j < dim; ++j) {
+                dst[i * dim + j] = (float)(src[offsets[i] * dim + j]);
+            }
+        }
+        return true;
+    } else if (src_data_format == DataFormatEnum::bf16) {
+        const knowhere::bf16* const src = reinterpret_cast<const knowhere::bf16*>(src_in);
+        for (size_t i = 0; i < nrows; i++) {
+            for (size_t j = 0; j < dim; ++j) {
+                dst[i * dim + j] = (float)(src[offsets[i] * dim + j]);
+            }
+        }
+        return true;
+    } else if (src_data_format == DataFormatEnum::fp32) {
+        const knowhere::fp32* const src = reinterpret_cast<const knowhere::fp32*>(src_in);
+        for (size_t i = 0; i < nrows; i++) {
+            for (size_t j = 0; j < dim; ++j) {
+                dst[i * dim + j] = (float)(src[offsets[i] * dim + j]);
+            }
+        }
+        return true;
+    } else if (src_data_format == DataFormatEnum::int8) {
+        const knowhere::int8* const src = reinterpret_cast<const knowhere::int8*>(src_in);
+        for (size_t i = 0; i < nrows; i++) {
+            for (size_t j = 0; j < dim; ++j) {
+                dst[i * dim + j] = (float)(src[offsets[i] * dim + j]);
+            }
+        }
+        return true;
+    } else {
+        // unknown
+        return false;
+    }
+}
 
 bool
 convert_rows_to_fp32(const void* const __restrict src_in, float* const __restrict dst,
@@ -437,6 +599,39 @@ add_to_index(faiss::Index* const __restrict index, const DataSetPtr& dataset, co
     return Status::success;
 }
 
+Status
+add_partial_dataset_to_index(faiss::Index* const __restrict index, const DataSetPtr& dataset,
+                             const DataFormatEnum data_format, const std::vector<uint32_t>& ids) {
+    const auto* data = dataset->GetTensor();
+
+    if (ids.size() > dataset->GetRows()) {
+        LOG_KNOWHERE_ERROR_ << "partial ids size larger than whole dataset size";
+        return Status::invalid_args;
+    }
+    const int64_t rows = ids.size();
+    const auto dim = dataset->GetDim();
+
+    // convert data into float in pieces and add to the index
+    constexpr int64_t n_tmp_rows = 4096;
+    std::unique_ptr<float[]> tmp = std::make_unique<float[]>(n_tmp_rows * dim);
+
+    for (int64_t irow = 0; irow < rows; irow += n_tmp_rows) {
+        const int64_t start_row = irow;
+        const int64_t end_row = std::min(rows, start_row + n_tmp_rows);
+        const int64_t count_rows = end_row - start_row;
+
+        if (!convert_rows_to_fp32(data, tmp.get(), data_format, ids.data() + start_row, count_rows, dim)) {
+            LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+            return Status::invalid_args;
+        }
+
+        // add
+        index->add(count_rows, tmp.get());
+    }
+
+    return Status::success;
+}
+
 // IndexFlat and IndexFlatCosine contain raw fp32 data
 // IndexScalarQuantizer and IndexScalarQuantizerCosine may contain rar bf16 and fp16 data
 //
@@ -482,6 +677,46 @@ storage_distance_computer(const faiss::Index* storage) {
     } else {
         return storage->get_distance_computer();
     }
+}
+
+// there are chances that each partition split by scalar distribution is too small that we could not even train pq on it
+// bcz 256 points are needed for a 8-bit pq training in faiss
+// combine some small partitions to get a bigger one
+// for example: scalar_info= {{1,2}, {3,4,5}, {1}}, base_rows = 3
+// we will get {{2, 0}, {1}}, which means we combine the scalar id 0 and 2 together
+std::vector<std::vector<int>>
+combine_partitions(const std::vector<std::vector<uint32_t>>& scalar_info, const int64_t base_rows) {
+    auto scalar_size = scalar_info.size();
+    std::vector<int> indices(scalar_size);
+    std::iota(indices.begin(), indices.end(), 0);
+    std::vector<int> sizes;
+    sizes.reserve(scalar_size);
+    for (const auto& id_list : scalar_info) {
+        sizes.emplace_back(id_list.size());
+    }
+    std::sort(indices.begin(), indices.end(), [&sizes](size_t i1, size_t i2) { return sizes[i1] < sizes[i2]; });
+    std::vector<std::vector<int>> res;
+    std::vector<int> cur;
+    int64_t cur_size = 0;
+    for (auto i : indices) {
+        cur_size += sizes[i];
+        cur.push_back(i);
+        if (cur_size >= base_rows) {
+            res.push_back(cur);
+            cur.clear();
+            cur_size = 0;
+        }
+    }
+    // tail
+    if (!cur.empty()) {
+        if (res.empty()) {
+            res.push_back(cur);
+            return res;
+        } else {
+            res[res.size() - 1].insert(res[res.size() - 1].end(), cur.begin(), cur.end());
+        }
+    }
+    return res;
 }
 
 }  // namespace
@@ -532,10 +767,11 @@ struct FaissHnswIteratorWorkspace {
 // Contains an iterator logic
 class FaissHnswIterator : public IndexIterator {
  public:
-    FaissHnswIterator(const std::shared_ptr<faiss::Index>& index_in, std::unique_ptr<float[]>&& query_in,
+    FaissHnswIterator(const std::shared_ptr<faiss::Index>& index_in,
+                      const std::shared_ptr<std::vector<uint32_t>>& labels_in, std::unique_ptr<float[]>&& query_in,
                       const BitsetView& bitset_in, const int32_t ef_in, bool larger_is_closer,
                       const float refine_ratio = 0.5f, bool use_knowhere_search_pool = true)
-        : IndexIterator(larger_is_closer, use_knowhere_search_pool, refine_ratio), index{index_in} {
+        : IndexIterator(larger_is_closer, use_knowhere_search_pool, refine_ratio), index{index_in}, labels{labels_in} {
         workspace.accumulated_alpha =
             (bitset_in.count() >= (index->ntotal * HnswSearchThresholds::kHnswSearchKnnBFFilterThreshold))
                 ? std::numeric_limits<float>::max()
@@ -740,6 +976,12 @@ class FaissHnswIterator : public IndexIterator {
             }
         }
 
+        if (labels != nullptr) {
+            for (auto& p : workspace.dists) {
+                p.id = p.id < 0 ? p.id : labels->operator[](p.id);
+            }
+        }
+
         // pass back to the handler
         batch_handler(workspace.dists);
 
@@ -754,9 +996,14 @@ class FaissHnswIterator : public IndexIterator {
             filter_type sel;
 
             next_batch(batch_handler, sel);
-        } else {
+        } else if (labels == nullptr) {
             using filter_type = knowhere::BitsetViewIDSelector;
             filter_type sel(workspace.bitset);
+
+            next_batch(batch_handler, sel);
+        } else {
+            using filter_type = knowhere::BitsetViewWithMappingIDSelector;
+            filter_type sel(workspace.bitset, labels->data());
 
             next_batch(batch_handler, sel);
         }
@@ -770,6 +1017,7 @@ class FaissHnswIterator : public IndexIterator {
 
  private:
     std::shared_ptr<faiss::Index> index;
+    std::shared_ptr<std::vector<uint32_t>> labels;
 
     FaissHnswIteratorWorkspace workspace;
 };
@@ -783,37 +1031,63 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
     bool
     HasRawData(const std::string& metric_type) const override {
-        if (this->index == nullptr) {
+        if (indexes.empty()) {
             return false;
         }
 
         // check whether there is an index to reconstruct a raw data from
-        return (GetIndexToReconstructRawDataFrom() != nullptr);
+        // only check one is enough
+        return (GetIndexToReconstructRawDataFrom(0) != nullptr);
     }
 
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset) const override {
-        if (index == nullptr) {
+        if (indexes.empty()) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
-        if (!index->is_trained) {
-            return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
+        for (const auto& index : indexes) {
+            if (index == nullptr) {
+                return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+            }
+            if (!index->is_trained) {
+                return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
+            }
         }
 
         // an index that is used for reconstruction
-        const faiss::Index* index_to_reconstruct_from = GetIndexToReconstructRawDataFrom();
+        std::vector<const faiss::Index*> indexes_to_reconstruct_from(indexes.size());
+        for (auto i = 0; i < indexes.size(); ++i) {
+            const faiss::Index* index_to_reconstruct_from = GetIndexToReconstructRawDataFrom(i);
 
-        // check whether raw data is available
-        if (index_to_reconstruct_from == nullptr) {
-            return expected<DataSetPtr>::Err(
-                Status::invalid_index_error,
-                "The index does not contain a raw data, cannot proceed with GetVectorByIds");
+            // check whether raw data is available
+            if (index_to_reconstruct_from == nullptr) {
+                return expected<DataSetPtr>::Err(
+                    Status::invalid_index_error,
+                    "The index does not contain a raw data, cannot proceed with GetVectorByIds");
+            }
+            indexes_to_reconstruct_from[i] = index_to_reconstruct_from;
         }
 
         // perform reconstruction
         auto dim = Dim();
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
+
+        auto get_vector = [&](int64_t id, float* result) -> bool {
+            if (indexes.size() == 1) {
+                indexes_to_reconstruct_from[0]->reconstruct(id, result);
+            } else {
+                auto it =
+                    std::lower_bound(index_rows_sum.begin(), index_rows_sum.end(), label_to_internal_offset[id] + 1);
+                if (it == index_rows_sum.end()) {
+                    return false;
+                }
+                auto index_id = std::distance(index_rows_sum.begin(), it) - 1;
+                indexes_to_reconstruct_from[index_id]->reconstruct(
+                    label_to_internal_offset[id] - index_rows_sum[index_id], result);
+            }
+            return true;
+        };
 
         try {
             if (data_format == DataFormatEnum::fp32) {
@@ -822,7 +1096,10 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                 for (int64_t i = 0; i < rows; i++) {
                     const int64_t id = ids[i];
                     assert(id >= 0 && id < index->ntotal);
-                    index_to_reconstruct_from->reconstruct(id, data.get() + i * dim);
+                    if (!get_vector(id, data.get() + i * dim)) {
+                        return expected<DataSetPtr>::Err(Status::invalid_index_error,
+                                                         "index inner error, cannot proceed with GetVectorByIds");
+                    }
                 }
                 return GenResultDataSet(rows, dim, std::move(data));
             } else if (data_format == DataFormatEnum::fp16) {
@@ -832,8 +1109,11 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                 auto tmp = std::make_unique<float[]>(dim);
                 for (int64_t i = 0; i < rows; i++) {
                     const int64_t id = ids[i];
-                    assert(id >= 0 && id < index->ntotal);
-                    index_to_reconstruct_from->reconstruct(id, tmp.get());
+                    assert(id >= 0 && id < Count());
+                    if (!get_vector(id, tmp.get())) {
+                        return expected<DataSetPtr>::Err(Status::invalid_index_error,
+                                                         "index inner error, cannot proceed with GetVectorByIds");
+                    }
                     if (!convert_rows_from_fp32(tmp.get(), data.get(), data_format, i, 1, dim)) {
                         return expected<DataSetPtr>::Err(Status::invalid_args, "Unsupported data format");
                     }
@@ -846,8 +1126,11 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                 auto tmp = std::make_unique<float[]>(dim);
                 for (int64_t i = 0; i < rows; i++) {
                     const int64_t id = ids[i];
-                    assert(id >= 0 && id < index->ntotal);
-                    index_to_reconstruct_from->reconstruct(id, tmp.get());
+                    assert(id >= 0 && id < Count());
+                    if (!get_vector(id, tmp.get())) {
+                        return expected<DataSetPtr>::Err(Status::invalid_index_error,
+                                                         "index inner error, cannot proceed with GetVectorByIds");
+                    }
                     if (!convert_rows_from_fp32(tmp.get(), data.get(), data_format, i, 1, dim)) {
                         return expected<DataSetPtr>::Err(Status::invalid_args, "Unsupported data format");
                     }
@@ -860,8 +1143,11 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                 auto tmp = std::make_unique<float[]>(dim);
                 for (int64_t i = 0; i < rows; i++) {
                     const int64_t id = ids[i];
-                    assert(id >= 0 && id < index->ntotal);
-                    index_to_reconstruct_from->reconstruct(id, tmp.get());
+                    assert(id >= 0 && id < Count());
+                    if (!get_vector(id, tmp.get())) {
+                        return expected<DataSetPtr>::Err(Status::invalid_index_error,
+                                                         "index inner error, cannot proceed with GetVectorByIds");
+                    }
                     if (!convert_rows_from_fp32(tmp.get(), data.get(), data_format, i, 1, dim)) {
                         return expected<DataSetPtr>::Err(Status::invalid_args, "Unsupported data format");
                     }
@@ -878,11 +1164,16 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
-        if (this->index == nullptr) {
+        if (this->indexes.empty()) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
-        if (!this->index->is_trained) {
-            return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
+        for (const auto& index : indexes) {
+            if (index == nullptr) {
+                return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+            }
+            if (!index->is_trained) {
+                return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
+            }
         }
 
         const auto dim = dataset->GetDim();
@@ -891,7 +1182,10 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         const auto hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
         const auto k = hnsw_cfg.k.value();
-
+        auto index_id = getIndexToSearchByScalarInfo(hnsw_cfg, bitset);
+        if (index_id < 0) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "partition key value not correctly set");
+        }
         feder::hnsw::FederResultUniq feder_result;
         if (hnsw_cfg.trace_visit.value()) {
             if (rows != 1) {
@@ -901,7 +1195,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         }
 
         // check for brute-force search
-        auto whether_bf_search = WhetherPerformBruteForceSearch(index.get(), hnsw_cfg, bitset);
+        auto whether_bf_search = WhetherPerformBruteForceSearch(indexes[index_id].get(), hnsw_cfg, bitset);
 
         if (!whether_bf_search.has_value()) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "k parameter is missing");
@@ -912,7 +1206,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         // set up an index wrapper
         auto [index_wrapper, is_refined] = create_conditional_hnsw_wrapper(
-            index.get(), hnsw_cfg, whether_bf_search.value_or(false), whether_to_enable_refine);
+            indexes[index_id].get(), hnsw_cfg, whether_bf_search.value_or(false), whether_to_enable_refine);
 
         if (index_wrapper == nullptr) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
@@ -935,8 +1229,16 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         // set up a selector
         BitsetViewIDSelector bw_idselector(bitset);
-        faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
-
+        BitsetViewWithMappingIDSelector bw_mapping_idselector(
+            bitset, labels.empty() ? nullptr : labels[index_id].get()->data());
+        faiss::IDSelector* id_selector = nullptr;
+        if (!bitset.empty()) {
+            if (labels.empty()) {
+                id_selector = &bw_idselector;
+            } else {
+                id_selector = &bw_mapping_idselector;
+            }
+        }
         hnsw_search_params.sel = id_selector;
 
         // run
@@ -948,39 +1250,45 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             futs.reserve(rows);
 
             for (int64_t i = 0; i < rows; ++i) {
-                futs.emplace_back(
-                    search_pool->push([&, idx = i, is_refined = is_refined, index_wrapper_ptr = index_wrapper_ptr] {
-                        // 1 thread per element
-                        ThreadPool::ScopedSearchOmpSetter setter(1);
+                futs.emplace_back(search_pool->push([&, idx = i, is_refined = is_refined,
+                                                     index_wrapper_ptr = index_wrapper_ptr] {
+                    // 1 thread per element
+                    ThreadPool::ScopedSearchOmpSetter setter(1);
 
-                        // set up a query
-                        const float* cur_query = nullptr;
+                    // set up a query
+                    const float* cur_query = nullptr;
 
-                        std::vector<float> cur_query_tmp(dim);
-                        if (data_format == DataFormatEnum::fp32) {
-                            cur_query = (const float*)data + idx * dim;
-                        } else {
-                            convert_rows_to_fp32(data, cur_query_tmp.data(), data_format, idx, 1, dim);
-                            cur_query = cur_query_tmp.data();
+                    std::vector<float> cur_query_tmp(dim);
+                    if (data_format == DataFormatEnum::fp32) {
+                        cur_query = (const float*)data + idx * dim;
+                    } else {
+                        convert_rows_to_fp32(data, cur_query_tmp.data(), data_format, idx, 1, dim);
+                        cur_query = cur_query_tmp.data();
+                    }
+
+                    // set up local results
+                    faiss::idx_t* const __restrict local_ids = ids.get() + k * idx;
+                    float* const __restrict local_distances = distances.get() + k * idx;
+
+                    // perform the search
+                    if (is_refined) {
+                        faiss::IndexRefineSearchParameters refine_params;
+                        refine_params.k_factor = hnsw_cfg.refine_k.value_or(1);
+                        // a refine procedure itself does not need to care about filtering
+                        refine_params.sel = nullptr;
+                        refine_params.base_index_params = &hnsw_search_params;
+
+                        index_wrapper_ptr->search(1, cur_query, k, local_distances, local_ids, &refine_params);
+                    } else {
+                        index_wrapper_ptr->search(1, cur_query, k, local_distances, local_ids, &hnsw_search_params);
+                    }
+
+                    if (!labels.empty()) {
+                        for (auto j = 0; j < k; ++j) {
+                            local_ids[j] = local_ids[j] < 0 ? local_ids[j] : labels[index_id]->operator[](local_ids[j]);
                         }
-
-                        // set up local results
-                        faiss::idx_t* const __restrict local_ids = ids.get() + k * idx;
-                        float* const __restrict local_distances = distances.get() + k * idx;
-
-                        // perform the search
-                        if (is_refined) {
-                            faiss::IndexRefineSearchParameters refine_params;
-                            refine_params.k_factor = hnsw_cfg.refine_k.value_or(1);
-                            // a refine procedure itself does not need to care about filtering
-                            refine_params.sel = nullptr;
-                            refine_params.base_index_params = &hnsw_search_params;
-
-                            index_wrapper_ptr->search(1, cur_query, k, local_distances, local_ids, &refine_params);
-                        } else {
-                            index_wrapper_ptr->search(1, cur_query, k, local_distances, local_ids, &hnsw_search_params);
-                        }
-                    }));
+                    }
+                }));
             }
 
             // wait for the completion
@@ -1006,11 +1314,16 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
     expected<DataSetPtr>
     RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
-        if (this->index == nullptr) {
+        if (this->indexes.empty()) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
-        if (!this->index->is_trained) {
-            return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
+        for (const auto& index : indexes) {
+            if (index == nullptr) {
+                return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+            }
+            if (!index->is_trained) {
+                return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
+            }
         }
 
         const auto dim = dataset->GetDim();
@@ -1018,8 +1331,12 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         const auto* data = dataset->GetTensor();
 
         const auto hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
+        auto index_id = getIndexToSearchByScalarInfo(hnsw_cfg, bitset);
+        if (index_id < 0) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "partition key value not correctly set");
+        }
 
-        const bool is_similarity_metric = faiss::is_similarity_metric(index->metric_type);
+        const bool is_similarity_metric = faiss::is_similarity_metric(indexes[index_id]->metric_type);
 
         const float radius = hnsw_cfg.radius.value();
         const float range_filter = hnsw_cfg.range_filter.value();
@@ -1033,7 +1350,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         }
 
         // check for brute-force search
-        auto whether_bf_search = WhetherPerformBruteForceRangeSearch(index.get(), hnsw_cfg, bitset);
+        auto whether_bf_search = WhetherPerformBruteForceRangeSearch(indexes[index_id].get(), hnsw_cfg, bitset);
 
         if (!whether_bf_search.has_value()) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "ef parameter is missing");
@@ -1044,7 +1361,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         // set up an index wrapper
         auto [index_wrapper, is_refined] = create_conditional_hnsw_wrapper(
-            index.get(), hnsw_cfg, whether_bf_search.value_or(false), whether_to_enable_refine);
+            indexes[index_id].get(), hnsw_cfg, whether_bf_search.value_or(false), whether_to_enable_refine);
 
         if (index_wrapper == nullptr) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
@@ -1068,8 +1385,16 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         // set up a selector
         BitsetViewIDSelector bw_idselector(bitset);
-        faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
-
+        BitsetViewWithMappingIDSelector bw_mapping_idselector(
+            bitset, labels.empty() ? nullptr : labels[index_id].get()->data());
+        faiss::IDSelector* id_selector = nullptr;
+        if (!bitset.empty()) {
+            if (labels.empty()) {
+                id_selector = &bw_idselector;
+            } else {
+                id_selector = &bw_mapping_idselector;
+            }
+        }
         hnsw_search_params.sel = id_selector;
 
         ////////////////////////////////////////////////////////////////
@@ -1122,9 +1447,17 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     result_dist_array[idx].resize(elem_cnt);
                     result_id_array[idx].resize(elem_cnt);
 
-                    for (size_t j = 0; j < elem_cnt; j++) {
-                        result_dist_array[idx][j] = res.distances[j];
-                        result_id_array[idx][j] = res.labels[j];
+                    if (labels.empty()) {
+                        for (size_t j = 0; j < elem_cnt; j++) {
+                            result_dist_array[idx][j] = res.distances[j];
+                            result_id_array[idx][j] = res.labels[j];
+                        }
+                    } else {
+                        for (size_t j = 0; j < elem_cnt; j++) {
+                            result_dist_array[idx][j] = res.distances[j];
+                            result_id_array[idx][j] =
+                                res.labels[j] < 0 ? res.labels[j] : labels[index_id]->operator[](res.labels[j]);
+                        }
                     }
 
                     if (hnsw_cfg.range_filter.value() != defaultRangeFilter) {
@@ -1147,22 +1480,53 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
  protected:
     DataFormatEnum data_format;
 
+    std::vector<std::vector<int>> tmp_combined_scalar_ids;
+
     Status
     AddInternal(const DataSetPtr dataset, const Config&) override {
-        if (index == nullptr) {
+        if (isIndexEmpty()) {
             LOG_KNOWHERE_ERROR_ << "Can not add data to an empty index.";
             return Status::empty_index;
         }
 
         auto rows = dataset->GetRows();
-        try {
-            LOG_KNOWHERE_INFO_ << "Adding " << rows << " to HNSW Index";
 
-            auto status = add_to_index(index.get(), dataset, data_format);
-            if (status != Status::success) {
+        const std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>& scalar_info_map =
+            dataset->Get<std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>>(meta::SCALAR_INFO);
+        if (scalar_info_map.empty()) {
+            try {
+                LOG_KNOWHERE_INFO_ << "Adding " << rows << " rows to HNSW Index";
+
+                auto status = add_to_index(indexes[0].get(), dataset, data_format);
                 return status;
+            } catch (const std::exception& e) {
+                LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+                return Status::faiss_inner_error;
             }
+        }
 
+        if (scalar_info_map.size() > 1) {
+            LOG_KNOWHERE_WARNING_ << "vector index build with multiple scalar info is not supported";
+            return Status::invalid_args;
+        }
+        LOG_KNOWHERE_INFO_ << "Add data to Index with Scalar Info";
+
+        try {
+            for (const auto& [field_id, scalar_info] : scalar_info_map) {
+                for (auto i = 0; i < tmp_combined_scalar_ids.size(); ++i) {
+                    for (auto j = 0; j < tmp_combined_scalar_ids[i].size(); ++j) {
+                        auto id = tmp_combined_scalar_ids[i][j];
+                        // hnsw
+                        LOG_KNOWHERE_INFO_ << "Adding " << scalar_info[id].size() << " to HNSW Index";
+
+                        auto status =
+                            add_partial_dataset_to_index(indexes[i].get(), dataset, data_format, scalar_info[id]);
+                        if (status != Status::success) {
+                            return status;
+                        }
+                    }
+                }
+            }
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
             return Status::faiss_inner_error;
@@ -1172,8 +1536,11 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     }
 
     const faiss::Index*
-    GetIndexToReconstructRawDataFrom() const {
-        if (index == nullptr) {
+    GetIndexToReconstructRawDataFrom(int i) const {
+        if (indexes.size() <= i) {
+            return nullptr;
+        }
+        if (indexes[i] == nullptr) {
             return nullptr;
         }
 
@@ -1181,12 +1548,12 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         const faiss::Index* index_to_reconstruct_from = nullptr;
 
         // check whether our index uses refine
-        auto index_refine = dynamic_cast<const faiss::IndexRefine*>(index.get());
+        auto index_refine = dynamic_cast<const faiss::IndexRefine*>(indexes[i].get());
         if (index_refine == nullptr) {
             // non-refined index
 
             // cast as IndexHNSW
-            auto index_hnsw = dynamic_cast<const faiss::IndexHNSW*>(index.get());
+            auto index_hnsw = dynamic_cast<const faiss::IndexHNSW*>(indexes[i].get());
             if (index_hnsw == nullptr) {
                 // this is unexpected, we expect IndexHNSW
                 return nullptr;
@@ -1215,13 +1582,53 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         return index_to_reconstruct_from;
     }
 
+    Status
+    TrainIndexByScalarInfo(std::function<Status(const float* data, const int i, const int64_t rows)> train_index,
+                           const std::vector<std::vector<uint32_t>>& scalar_info, const void* data, const int64_t rows,
+                           const int64_t dim) {
+        label_to_internal_offset.resize(rows);
+        index_rows_sum.resize(tmp_combined_scalar_ids.size() + 1);
+        labels.resize(tmp_combined_scalar_ids.size());
+        indexes.resize(tmp_combined_scalar_ids.size());
+        for (auto i = 0; i < tmp_combined_scalar_ids.size(); ++i) {
+            size_t partition_size = 0;
+            for (int j : tmp_combined_scalar_ids[i]) {
+                partition_size += scalar_info[j].size();
+            }
+            std::unique_ptr<float[]> tmp_data = std::make_unique<float[]>(dim * partition_size);
+            labels[i] = std::make_shared<std::vector<uint32_t>>(partition_size);
+            index_rows_sum[i + 1] = index_rows_sum[i] + partition_size;
+            size_t cur_size = 0;
+
+            for (size_t j = 0; j < tmp_combined_scalar_ids[i].size(); ++j) {
+                auto scalar_id = tmp_combined_scalar_ids[i][j];
+                if (!convert_rows_to_fp32(data, tmp_data.get() + dim * cur_size, data_format,
+                                          scalar_info[scalar_id].data(), scalar_info[scalar_id].size(), dim)) {
+                    LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+                    return Status::invalid_args;
+                }
+                for (size_t m = 0; m < scalar_info[scalar_id].size(); ++m) {
+                    labels[i]->operator[](cur_size + m) = scalar_info[scalar_id][m];
+                    label_to_internal_offset[scalar_info[scalar_id][m]] = index_rows_sum[i] + cur_size + m;
+                }
+                cur_size += scalar_info[scalar_id].size();
+            }
+
+            Status s = train_index((const float*)(tmp_data.get()), i, partition_size);
+            if (s != Status::success) {
+                return s;
+            }
+        }
+        return Status::success;
+    }
+
  public:
     //
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                 bool use_knowhere_search_pool) const override {
-        if (index == nullptr) {
-            LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
+        if (isIndexEmpty()) {
+            LOG_KNOWHERE_ERROR_ << "creating iterator on empty index";
             return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "index not loaded");
         }
 
@@ -1239,6 +1646,11 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         auto vec = std::vector<IndexNode::IteratorPtr>(n_queries, nullptr);
 
         const FaissHnswConfig& hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
+        int index_id = getIndexToSearchByScalarInfo(hnsw_cfg, bitset);
+        if (index_id < 0) {
+            return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::invalid_args,
+                                                                      "partition key value not correctly set");
+        }
         const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), knowhere::metric::COSINE);
         const bool larger_is_closer = (IsMetricType(hnsw_cfg.metric_type.value(), knowhere::metric::IP) || is_cosine);
 
@@ -1263,7 +1675,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                         throw;
                 }
 
-                const bool should_use_refine = (dynamic_cast<const faiss::IndexRefine*>(index.get()) != nullptr);
+                const bool should_use_refine =
+                    (dynamic_cast<const faiss::IndexRefine*>(indexes[index_id].get()) != nullptr);
 
                 const float iterator_refine_ratio =
                     should_use_refine ? hnsw_cfg.iterator_refine_ratio.value_or(0.5) : 0;
@@ -1271,8 +1684,9 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                 // create an iterator and initialize it
                 //   refine is not needed for flat
                 //   hnsw_cfg.iterator_refine_ratio.value_or(0.5f)
-                auto it = std::make_shared<FaissHnswIterator>(index, std::move(cur_query), bitset, ef, larger_is_closer,
-                                                              iterator_refine_ratio, use_knowhere_search_pool);
+                auto it = std::make_shared<FaissHnswIterator>(
+                    indexes[index_id], labels.empty() ? nullptr : labels[index_id], std::move(cur_query), bitset, ef,
+                    larger_is_closer, iterator_refine_ratio, use_knowhere_search_pool);
                 // store
                 vec[i] = it;
             }
@@ -1329,54 +1743,75 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
         const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
 
         std::unique_ptr<faiss::IndexHNSW> hnsw_index;
-        if (is_cosine) {
-            if (data_format == DataFormatEnum::fp32) {
-                hnsw_index = std::make_unique<faiss::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
-            } else if (data_format == DataFormatEnum::fp16) {
-                hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, faiss::ScalarQuantizer::QT_fp16,
-                                                                        hnsw_cfg.M.value());
-            } else if (data_format == DataFormatEnum::bf16) {
-                hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, faiss::ScalarQuantizer::QT_bf16,
-                                                                        hnsw_cfg.M.value());
-            } else if (data_format == DataFormatEnum::int8) {
-                hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(
-                    dim, faiss::ScalarQuantizer::QT_8bit_direct_signed, hnsw_cfg.M.value());
+        auto train_index = [&](const float* data, const int i, const int64_t rows) {
+            if (is_cosine) {
+                if (data_format == DataFormatEnum::fp32) {
+                    hnsw_index = std::make_unique<faiss::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
+                } else if (data_format == DataFormatEnum::fp16) {
+                    hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, faiss::ScalarQuantizer::QT_fp16,
+                                                                            hnsw_cfg.M.value());
+                } else if (data_format == DataFormatEnum::bf16) {
+                    hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, faiss::ScalarQuantizer::QT_bf16,
+                                                                            hnsw_cfg.M.value());
+                } else if (data_format == DataFormatEnum::int8) {
+                    hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(
+                        dim, faiss::ScalarQuantizer::QT_8bit_direct_signed, hnsw_cfg.M.value());
+                } else {
+                    LOG_KNOWHERE_ERROR_ << "Unsupported metric type: " << hnsw_cfg.metric_type.value();
+                    return Status::invalid_metric_type;
+                }
             } else {
-                LOG_KNOWHERE_ERROR_ << "Unsupported metric type: " << hnsw_cfg.metric_type.value();
-                return Status::invalid_metric_type;
+                if (data_format == DataFormatEnum::fp32) {
+                    hnsw_index = std::make_unique<faiss::IndexHNSWFlat>(dim, hnsw_cfg.M.value(), metric.value());
+                } else if (data_format == DataFormatEnum::fp16) {
+                    hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(dim, faiss::ScalarQuantizer::QT_fp16,
+                                                                      hnsw_cfg.M.value(), metric.value());
+                } else if (data_format == DataFormatEnum::bf16) {
+                    hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(dim, faiss::ScalarQuantizer::QT_bf16,
+                                                                      hnsw_cfg.M.value(), metric.value());
+                } else if (data_format == DataFormatEnum::int8) {
+                    hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(
+                        dim, faiss::ScalarQuantizer::QT_8bit_direct_signed, hnsw_cfg.M.value(), metric.value());
+                } else {
+                    LOG_KNOWHERE_ERROR_ << "Unsupported metric type: " << hnsw_cfg.metric_type.value();
+                    return Status::invalid_metric_type;
+                }
             }
-        } else {
-            if (data_format == DataFormatEnum::fp32) {
-                hnsw_index = std::make_unique<faiss::IndexHNSWFlat>(dim, hnsw_cfg.M.value(), metric.value());
-            } else if (data_format == DataFormatEnum::fp16) {
-                hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(dim, faiss::ScalarQuantizer::QT_fp16,
-                                                                  hnsw_cfg.M.value(), metric.value());
-            } else if (data_format == DataFormatEnum::bf16) {
-                hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(dim, faiss::ScalarQuantizer::QT_bf16,
-                                                                  hnsw_cfg.M.value(), metric.value());
-            } else if (data_format == DataFormatEnum::int8) {
-                hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(dim, faiss::ScalarQuantizer::QT_8bit_direct_signed,
-                                                                  hnsw_cfg.M.value(), metric.value());
-            } else {
-                LOG_KNOWHERE_ERROR_ << "Unsupported metric type: " << hnsw_cfg.metric_type.value();
-                return Status::invalid_metric_type;
-            }
+            hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
+            // train
+            LOG_KNOWHERE_INFO_ << "Training HNSW Index";
+            // this function does nothing for the given parameters and indices.
+            //   as a result, I'm just keeping it to have is_trained set to true.
+            // WARNING: this may cause problems if ->train() performs some action
+            //   based on the data in the future. Otherwise, data needs to be
+            //   converted into float*.
+            hnsw_index->train(rows, data);
+
+            // done
+            indexes[i] = std::move(hnsw_index);
+            return Status::success;
+        };
+
+        const std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>& scalar_info_map =
+            dataset->Get<std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>>(meta::SCALAR_INFO);
+        if (scalar_info_map.size() > 1) {
+            LOG_KNOWHERE_WARNING_ << "vector index build with multiple scalar info is not supported";
+            return Status::invalid_args;
+        }
+        for (const auto& [field_id, scalar_info] : scalar_info_map) {
+            tmp_combined_scalar_ids =
+                scalar_info.size() > 1 ? combine_partitions(scalar_info, 128) : std::vector<std::vector<int>>();
         }
 
-        hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
+        // no scalar info or just one partition(after possible combination), build index on whole data
+        if (scalar_info_map.empty() || tmp_combined_scalar_ids.size() <= 1) {
+            return train_index((const float*)(data), 0, rows);
+        }
 
-        // train
-        LOG_KNOWHERE_INFO_ << "Training HNSW Index";
-
-        // this function does nothing for the given parameters and indices.
-        //   as a result, I'm just keeping it to have is_trained set to true.
-        // WARNING: this may cause problems if ->train() performs some action
-        //   based on the data in the future. Otherwise, data needs to be
-        //   converted into float*.
-        hnsw_index->train(rows, (const float*)data);
-
-        // done
-        index = std::move(hnsw_index);
+        LOG_KNOWHERE_INFO_ << "Train HNSW index with Scalar Info";
+        for (const auto& [field_id, scalar_info] : scalar_info_map) {
+            return TrainIndexByScalarInfo(train_index, scalar_info, data, rows, dim);
+        }
         return Status::success;
     }
 };
@@ -1406,6 +1841,15 @@ class HNSWIndexNodeWithFallback : public IndexNode {
             use_base_index = true;
         } else {
             use_base_index = false;
+        }
+    }
+
+    bool
+    IsAdditionalScalarSupported() const override {
+        if (use_base_index) {
+            return base_index->IsAdditionalScalarSupported();
+        } else {
+            return fallback_search_index->IsAdditionalScalarSupported();
         }
     }
 
@@ -1805,6 +2249,8 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
         auto rows = dataset->GetRows();
         // dimensionality of the data
         auto dim = dataset->GetDim();
+        // data
+        const void* data = dataset->GetTensor();
 
         // config
         auto hnsw_cfg = static_cast<const FaissHnswSqConfig&>(cfg);
@@ -1825,48 +2271,70 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
         // create an index
         const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
 
-        std::unique_ptr<faiss::IndexHNSW> hnsw_index;
-        if (is_cosine) {
-            hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, sq_type.value(), hnsw_cfg.M.value());
-        } else {
-            hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(dim, sq_type.value(), hnsw_cfg.M.value(), metric.value());
-        }
-
-        hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
-
         // should refine be used?
         std::unique_ptr<faiss::Index> final_index;
-        if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
-            // yes
-            auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
-            if (!final_index_cnd.has_value()) {
-                return Status::invalid_args;
+
+        auto train_index = [&](const float* data, const int i, const int64_t rows) {
+            std::unique_ptr<faiss::IndexHNSW> hnsw_index;
+            if (is_cosine) {
+                hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, sq_type.value(), hnsw_cfg.M.value());
+            } else {
+                hnsw_index =
+                    std::make_unique<faiss::IndexHNSWSQ>(dim, sq_type.value(), hnsw_cfg.M.value(), metric.value());
             }
 
-            // assign
-            final_index = std::move(final_index_cnd.value());
-        } else {
-            // no refine
+            hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
 
-            // assign
-            final_index = std::move(hnsw_index);
-        }
+            if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
+                // yes
+                auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
+                if (!final_index_cnd.has_value()) {
+                    return Status::invalid_args;
+                }
 
-        // we have to convert the data to float, unfortunately, which costs extra RAM
-        auto float_ds_ptr = convert_ds_to_float(dataset, data_format);
-        if (float_ds_ptr == nullptr) {
-            LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+                // assign
+                final_index = std::move(final_index_cnd.value());
+            } else {
+                // no refine
+
+                // assign
+                final_index = std::move(hnsw_index);
+            }
+
+            // train
+            LOG_KNOWHERE_INFO_ << "Training HNSW Index";
+
+            final_index->train(rows, data);
+
+            // done
+            indexes[i] = std::move(final_index);
+            return Status::success;
+        };
+
+        const std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>& scalar_info_map =
+            dataset->Get<std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>>(meta::SCALAR_INFO);
+        if (scalar_info_map.size() > 1) {
+            LOG_KNOWHERE_WARNING_ << "vector index build with multiple scalar info is not supported";
             return Status::invalid_args;
         }
-
-        // train
-        LOG_KNOWHERE_INFO_ << "Training HNSW Index";
-
-        final_index->train(rows, reinterpret_cast<const float*>(float_ds_ptr->GetTensor()));
-
-        // done
-        index = std::move(final_index);
-
+        for (const auto& [field_id, scalar_info] : scalar_info_map) {
+            tmp_combined_scalar_ids =
+                scalar_info.size() > 1 ? combine_partitions(scalar_info, 128) : std::vector<std::vector<int>>();
+        }
+        // no scalar info or just one partition(after possible combination), build index on whole data
+        if (scalar_info_map.empty() || tmp_combined_scalar_ids.size() <= 1) {
+            // we have to convert the data to float, unfortunately, which costs extra RAM
+            auto float_ds_ptr = convert_ds_to_float(dataset, data_format);
+            if (float_ds_ptr == nullptr) {
+                LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+                return Status::invalid_args;
+            }
+            return train_index(reinterpret_cast<const float*>(float_ds_ptr->GetTensor()), 0, rows);
+        }
+        LOG_KNOWHERE_INFO_ << "Train HNSWSQ Index with Scalar Info";
+        for (const auto& [field_id, scalar_info] : scalar_info_map) {
+            return TrainIndexByScalarInfo(train_index, scalar_info, data, rows, dim);
+        }
         return Status::success;
     }
 };
@@ -1914,7 +2382,7 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
     }
 
  protected:
-    std::unique_ptr<faiss::IndexPQ> tmp_index_pq;
+    std::vector<std::unique_ptr<faiss::IndexPQ>> tmp_index_pq;
 
     Status
     TrainInternal(const DataSetPtr dataset, const Config& cfg) override {
@@ -1922,9 +2390,17 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
         auto rows = dataset->GetRows();
         // dimensionality of the data
         auto dim = dataset->GetDim();
+        // data
+        const void* data = dataset->GetTensor();
 
         // config
         auto hnsw_cfg = static_cast<const FaissHnswPqConfig&>(cfg);
+
+        if (rows < (1 << hnsw_cfg.nbits.value())) {
+            LOG_KNOWHERE_ERROR_ << rows << " rows not enough, needs at least " << (1 << hnsw_cfg.nbits.value())
+                                << " rows";
+            return Status::faiss_inner_error;
+        }
 
         auto metric = Str2FaissMetricType(hnsw_cfg.metric_type.value());
         if (!metric.has_value()) {
@@ -1937,105 +2413,114 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
 
         // HNSW + PQ index yields BAD recall somewhy.
         // Let's build HNSW+FLAT index, then replace FLAT with PQ
-
-        std::unique_ptr<faiss::IndexHNSW> hnsw_index;
-        if (is_cosine) {
-            hnsw_index = std::make_unique<faiss::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
-        } else {
-            hnsw_index = std::make_unique<faiss::IndexHNSWFlat>(dim, hnsw_cfg.M.value(), metric.value());
-        }
-
-        hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
-
-        // pq
-        std::unique_ptr<faiss::IndexPQ> pq_index;
-        if (is_cosine) {
-            pq_index = std::make_unique<faiss::IndexPQCosine>(dim, hnsw_cfg.m.value(), hnsw_cfg.nbits.value());
-        } else {
-            pq_index =
-                std::make_unique<faiss::IndexPQ>(dim, hnsw_cfg.m.value(), hnsw_cfg.nbits.value(), metric.value());
-        }
-
-        // should refine be used?
-        std::unique_ptr<faiss::Index> final_index;
-        if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
-            // yes
-            auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
-            if (!final_index_cnd.has_value()) {
-                return Status::invalid_args;
+        auto train_index = [&](const float* data, const int i, const int64_t rows) {
+            std::unique_ptr<faiss::IndexHNSW> hnsw_index;
+            if (is_cosine) {
+                hnsw_index = std::make_unique<faiss::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
+            } else {
+                hnsw_index = std::make_unique<faiss::IndexHNSWFlat>(dim, hnsw_cfg.M.value(), metric.value());
             }
 
-            // assign
-            final_index = std::move(final_index_cnd.value());
-        } else {
-            // no refine
+            hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
 
-            // assign
-            final_index = std::move(hnsw_index);
-        }
+            // pq
+            std::unique_ptr<faiss::IndexPQ> pq_index;
+            if (is_cosine) {
+                pq_index = std::make_unique<faiss::IndexPQCosine>(dim, hnsw_cfg.m.value(), hnsw_cfg.nbits.value());
+            } else {
+                pq_index =
+                    std::make_unique<faiss::IndexPQ>(dim, hnsw_cfg.m.value(), hnsw_cfg.nbits.value(), metric.value());
+            }
 
-        // we have to convert the data to float, unfortunately, which costs extra RAM
-        auto float_ds_ptr = convert_ds_to_float(dataset, data_format);
-        if (float_ds_ptr == nullptr) {
-            LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+            // should refine be used?
+            std::unique_ptr<faiss::Index> final_index;
+            if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
+                // yes
+                auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
+                if (!final_index_cnd.has_value()) {
+                    return Status::invalid_args;
+                }
+
+                // assign
+                final_index = std::move(final_index_cnd.value());
+            } else {
+                // no refine
+
+                // assign
+                final_index = std::move(hnsw_index);
+            }
+
+            // train hnswflat
+            LOG_KNOWHERE_INFO_ << "Training HNSW Index";
+
+            final_index->train(rows, data);
+
+            // train pq
+            LOG_KNOWHERE_INFO_ << "Training PQ Index";
+
+            pq_index->train(rows, data);
+            pq_index->pq.compute_sdc_table();
+
+            // done
+            indexes[i] = std::move(final_index);
+            tmp_index_pq[i] = std::move(pq_index);
+            return Status::success;
+        };
+
+        const std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>& scalar_info_map =
+            dataset->Get<std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>>(meta::SCALAR_INFO);
+        if (scalar_info_map.size() > 1) {
+            LOG_KNOWHERE_WARNING_ << "vector index build with multiple scalar info is not supported";
             return Status::invalid_args;
         }
+        for (const auto& [field_id, scalar_info] : scalar_info_map) {
+            tmp_combined_scalar_ids = scalar_info.size() > 1
+                                          ? combine_partitions(scalar_info, (1 << hnsw_cfg.nbits.value()))
+                                          : std::vector<std::vector<int>>();
+        }
 
-        // train hnswflat
-        LOG_KNOWHERE_INFO_ << "Training HNSW Index";
+        // no scalar info or just one partition(after possible combination), build index on whole data
+        if (scalar_info_map.empty() || tmp_combined_scalar_ids.size() <= 1) {
+            tmp_index_pq.resize(1);
+            // we have to convert the data to float, unfortunately, which costs extra RAM
+            auto float_ds_ptr = convert_ds_to_float(dataset, data_format);
+            if (float_ds_ptr == nullptr) {
+                LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+                return Status::invalid_args;
+            }
+            return train_index((const float*)(float_ds_ptr->GetTensor()), 0, rows);
+        }
 
-        final_index->train(rows, reinterpret_cast<const float*>(float_ds_ptr->GetTensor()));
-
-        // train pq
-        LOG_KNOWHERE_INFO_ << "Training PQ Index";
-
-        pq_index->train(rows, reinterpret_cast<const float*>(float_ds_ptr->GetTensor()));
-        pq_index->pq.compute_sdc_table();
-
-        // done
-        index = std::move(final_index);
-        tmp_index_pq = std::move(pq_index);
-
+        LOG_KNOWHERE_INFO_ << "Train HNSWPQ Index with Scalar Info";
+        tmp_index_pq.resize(tmp_combined_scalar_ids.size());
+        for (const auto& [field_id, scalar_info] : scalar_info_map) {
+            return TrainIndexByScalarInfo(train_index, scalar_info, data, rows, dim);
+        }
         return Status::success;
     }
 
     Status
     AddInternal(const DataSetPtr dataset, const Config&) override {
-        if (this->index == nullptr) {
+        if (isIndexEmpty()) {
             LOG_KNOWHERE_ERROR_ << "Can not add data to an empty index.";
             return Status::empty_index;
         }
 
         auto rows = dataset->GetRows();
-        try {
-            // hnsw
-            LOG_KNOWHERE_INFO_ << "Adding " << rows << " to HNSW Index";
 
-            auto status_reg = add_to_index(index.get(), dataset, data_format);
-            if (status_reg != Status::success) {
-                return status_reg;
-            }
-
-            // pq
-            LOG_KNOWHERE_INFO_ << "Adding " << rows << " to PQ Index";
-
-            auto status_pq = add_to_index(tmp_index_pq.get(), dataset, data_format);
-            if (status_pq != Status::success) {
-                return status_pq;
-            }
-
+        auto finalize_index = [&](int i) {
             // we're done.
             // throw away flat and replace it with pq
 
             // check if we have a refine available.
             faiss::IndexHNSW* index_hnsw = nullptr;
 
-            faiss::IndexRefine* const index_refine = dynamic_cast<faiss::IndexRefine*>(index.get());
+            faiss::IndexRefine* const index_refine = dynamic_cast<faiss::IndexRefine*>(indexes[i].get());
 
             if (index_refine != nullptr) {
                 index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index_refine->base_index);
             } else {
-                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index.get());
+                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(indexes[i].get());
             }
 
             // recreate hnswpq
@@ -2057,14 +2542,70 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
             index_hnsw_pq->storage = nullptr;
 
             // replace storage
-            index_hnsw_pq->storage = tmp_index_pq.release();
+            index_hnsw_pq->storage = tmp_index_pq[i].release();
 
             // replace if refine
             if (index_refine != nullptr) {
                 delete index_refine->base_index;
                 index_refine->base_index = index_hnsw_pq.release();
             } else {
-                index = std::move(index_hnsw_pq);
+                indexes[i] = std::move(index_hnsw_pq);
+            }
+            return Status::success;
+        };
+        try {
+            const std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>& scalar_info_map =
+                dataset->Get<std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>>(meta::SCALAR_INFO);
+
+            if (scalar_info_map.empty() || tmp_combined_scalar_ids.size() <= 1) {
+                // hnsw
+                LOG_KNOWHERE_INFO_ << "Adding " << rows << " to HNSW Index";
+
+                auto status_reg = add_to_index(indexes[0].get(), dataset, data_format);
+                if (status_reg != Status::success) {
+                    return status_reg;
+                }
+
+                // pq
+                LOG_KNOWHERE_INFO_ << "Adding " << rows << " to PQ Index";
+
+                auto status_pq = add_to_index(tmp_index_pq[0].get(), dataset, data_format);
+                if (status_pq != Status::success) {
+                    return status_pq;
+                }
+                return finalize_index(0);
+            }
+            if (scalar_info_map.size() > 1) {
+                LOG_KNOWHERE_WARNING_ << "vector index build with multiple scalar info is not supported";
+                return Status::invalid_args;
+            }
+            LOG_KNOWHERE_INFO_ << "Add data to Index with Scalar Info";
+
+            for (const auto& [field_id, scalar_info] : scalar_info_map) {
+                for (auto i = 0; i < tmp_combined_scalar_ids.size(); ++i) {
+                    for (auto j = 0; j < tmp_combined_scalar_ids[i].size(); ++j) {
+                        auto id = tmp_combined_scalar_ids[i][j];
+                        // hnsw
+                        LOG_KNOWHERE_INFO_ << "Adding " << scalar_info[id].size() << " to HNSW Index";
+
+                        auto status_reg =
+                            add_partial_dataset_to_index(indexes[i].get(), dataset, data_format, scalar_info[id]);
+                        if (status_reg != Status::success) {
+                            return status_reg;
+                        }
+
+                        // pq
+                        LOG_KNOWHERE_INFO_ << "Adding " << scalar_info[id].size() << " to PQ Index";
+
+                        auto status_pq =
+                            add_partial_dataset_to_index(tmp_index_pq[i].get(), dataset, data_format, scalar_info[id]);
+
+                        if (status_pq != Status::success) {
+                            return status_pq;
+                        }
+                    }
+                    finalize_index(i);
+                }
             }
 
         } catch (const std::exception& e) {
@@ -2113,7 +2654,7 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
     }
 
  protected:
-    std::unique_ptr<faiss::IndexProductResidualQuantizer> tmp_index_prq;
+    std::vector<std::unique_ptr<faiss::IndexProductResidualQuantizer>> tmp_index_prq;
 
     Status
     TrainInternal(const DataSetPtr dataset, const Config& cfg) override {
@@ -2121,9 +2662,17 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
         auto rows = dataset->GetRows();
         // dimensionality of the data
         auto dim = dataset->GetDim();
+        // data
+        const void* data = dataset->GetTensor();
 
         // config
         auto hnsw_cfg = static_cast<const FaissHnswPrqConfig&>(cfg);
+
+        if (rows < (1 << hnsw_cfg.nbits.value())) {
+            LOG_KNOWHERE_ERROR_ << rows << " rows not enough, needs at least " << (1 << hnsw_cfg.nbits.value())
+                                << " rows";
+            return Status::faiss_inner_error;
+        }
 
         auto metric = Str2FaissMetricType(hnsw_cfg.metric_type.value());
         if (!metric.has_value()) {
@@ -2136,110 +2685,121 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
 
         // HNSW + PRQ index yields BAD recall somewhy.
         // Let's build HNSW+FLAT index, then replace FLAT with PRQ
-
-        std::unique_ptr<faiss::IndexHNSW> hnsw_index;
-        if (is_cosine) {
-            hnsw_index = std::make_unique<faiss::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
-        } else {
-            hnsw_index = std::make_unique<faiss::IndexHNSWFlat>(dim, hnsw_cfg.M.value(), metric.value());
-        }
-
-        hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
-
-        // prq
-        faiss::AdditiveQuantizer::Search_type_t prq_search_type =
-            (metric.value() == faiss::MetricType::METRIC_INNER_PRODUCT)
-                ? faiss::AdditiveQuantizer::Search_type_t::ST_LUT_nonorm
-                : faiss::AdditiveQuantizer::Search_type_t::ST_norm_float;
-
-        std::unique_ptr<faiss::IndexProductResidualQuantizer> prq_index;
-        if (is_cosine) {
-            prq_index = std::make_unique<faiss::IndexProductResidualQuantizerCosine>(
-                dim, hnsw_cfg.m.value(), hnsw_cfg.nrq.value(), hnsw_cfg.nbits.value(), prq_search_type);
-        } else {
-            prq_index = std::make_unique<faiss::IndexProductResidualQuantizer>(
-                dim, hnsw_cfg.m.value(), hnsw_cfg.nrq.value(), hnsw_cfg.nbits.value(), metric.value(), prq_search_type);
-        }
-
-        // should refine be used?
-        std::unique_ptr<faiss::Index> final_index;
-        if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
-            // yes
-            auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
-            if (!final_index_cnd.has_value()) {
-                return Status::invalid_args;
+        auto train_index = [&](const float* data, const int i, const int64_t rows) {
+            std::unique_ptr<faiss::IndexHNSW> hnsw_index;
+            if (is_cosine) {
+                hnsw_index = std::make_unique<faiss::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
+            } else {
+                hnsw_index = std::make_unique<faiss::IndexHNSWFlat>(dim, hnsw_cfg.M.value(), metric.value());
             }
 
-            // assign
-            final_index = std::move(final_index_cnd.value());
-        } else {
-            // no refine
+            hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
 
-            // assign
-            final_index = std::move(hnsw_index);
-        }
+            // prq
+            faiss::AdditiveQuantizer::Search_type_t prq_search_type =
+                (metric.value() == faiss::MetricType::METRIC_INNER_PRODUCT)
+                    ? faiss::AdditiveQuantizer::Search_type_t::ST_LUT_nonorm
+                    : faiss::AdditiveQuantizer::Search_type_t::ST_norm_float;
 
-        // we have to convert the data to float, unfortunately, which costs extra RAM
-        auto float_ds_ptr = convert_ds_to_float(dataset, data_format);
-        if (float_ds_ptr == nullptr) {
-            LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+            std::unique_ptr<faiss::IndexProductResidualQuantizer> prq_index;
+            if (is_cosine) {
+                prq_index = std::make_unique<faiss::IndexProductResidualQuantizerCosine>(
+                    dim, hnsw_cfg.m.value(), hnsw_cfg.nrq.value(), hnsw_cfg.nbits.value(), prq_search_type);
+            } else {
+                prq_index = std::make_unique<faiss::IndexProductResidualQuantizer>(
+                    dim, hnsw_cfg.m.value(), hnsw_cfg.nrq.value(), hnsw_cfg.nbits.value(), metric.value(),
+                    prq_search_type);
+            }
+
+            // should refine be used?
+            std::unique_ptr<faiss::Index> final_index;
+            if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
+                // yes
+                auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
+                if (!final_index_cnd.has_value()) {
+                    return Status::invalid_args;
+                }
+
+                // assign
+                final_index = std::move(final_index_cnd.value());
+            } else {
+                // no refine
+
+                // assign
+                final_index = std::move(hnsw_index);
+            }
+
+            // train hnswflat
+            LOG_KNOWHERE_INFO_ << "Training HNSW Index";
+
+            final_index->train(rows, data);
+
+            // train prq
+            LOG_KNOWHERE_INFO_ << "Training ProductResidualQuantizer Index";
+
+            prq_index->train(rows, data);
+
+            // done
+            indexes[i] = std::move(final_index);
+            tmp_index_prq[i] = std::move(prq_index);
+
+            return Status::success;
+        };
+        const std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>& scalar_info_map =
+            dataset->Get<std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>>(meta::SCALAR_INFO);
+        if (scalar_info_map.size() > 1) {
+            LOG_KNOWHERE_WARNING_ << "vector index build with multiple scalar info is not supported";
             return Status::invalid_args;
         }
+        for (const auto& [field_id, scalar_info] : scalar_info_map) {
+            tmp_combined_scalar_ids = scalar_info.size() > 1
+                                          ? combine_partitions(scalar_info, (1 << hnsw_cfg.nbits.value()))
+                                          : std::vector<std::vector<int>>();
+        }
 
-        // train hnswflat
-        LOG_KNOWHERE_INFO_ << "Training HNSW Index";
+        // no scalar info or just one partition(after possible combination), build index on whole data
+        if (scalar_info_map.empty() || tmp_combined_scalar_ids.size() <= 1) {
+            tmp_index_prq.resize(1);
+            // we have to convert the data to float, unfortunately, which costs extra RAM
+            auto float_ds_ptr = convert_ds_to_float(dataset, data_format);
 
-        final_index->train(rows, reinterpret_cast<const float*>(float_ds_ptr->GetTensor()));
+            if (float_ds_ptr == nullptr) {
+                LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+                return Status::invalid_args;
+            }
+            return train_index((const float*)(float_ds_ptr->GetTensor()), 0, rows);
+        }
 
-        // train prq
-        LOG_KNOWHERE_INFO_ << "Training ProductResidualQuantizer Index";
-
-        prq_index->train(rows, reinterpret_cast<const float*>(float_ds_ptr->GetTensor()));
-
-        // done
-        index = std::move(final_index);
-        tmp_index_prq = std::move(prq_index);
-
+        LOG_KNOWHERE_INFO_ << "Train HNSWPRQ Index with Scalar Info";
+        tmp_index_prq.resize(tmp_combined_scalar_ids.size());
+        for (const auto& [field_id, scalar_info] : scalar_info_map) {
+            return TrainIndexByScalarInfo(train_index, scalar_info, data, rows, dim);
+        }
         return Status::success;
     }
 
     Status
     AddInternal(const DataSetPtr dataset, const Config&) override {
-        if (this->index == nullptr) {
+        if (isIndexEmpty()) {
             LOG_KNOWHERE_ERROR_ << "Can not add data to an empty index.";
             return Status::empty_index;
         }
 
         auto rows = dataset->GetRows();
-        try {
-            // hnsw
-            LOG_KNOWHERE_INFO_ << "Adding " << rows << " to HNSW Index";
 
-            auto status_reg = add_to_index(index.get(), dataset, data_format);
-            if (status_reg != Status::success) {
-                return status_reg;
-            }
-
-            // prq
-            LOG_KNOWHERE_INFO_ << "Adding " << rows << " to ProductResidualQuantizer Index";
-
-            auto status_prq = add_to_index(tmp_index_prq.get(), dataset, data_format);
-            if (status_prq != Status::success) {
-                return status_prq;
-            }
-
+        auto finalize_index = [&](int i) {
             // we're done.
             // throw away flat and replace it with prq
 
             // check if we have a refine available.
             faiss::IndexHNSW* index_hnsw = nullptr;
 
-            faiss::IndexRefine* const index_refine = dynamic_cast<faiss::IndexRefine*>(index.get());
+            faiss::IndexRefine* const index_refine = dynamic_cast<faiss::IndexRefine*>(indexes[i].get());
 
             if (index_refine != nullptr) {
                 index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index_refine->base_index);
             } else {
-                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index.get());
+                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(indexes[i].get());
             }
 
             // recreate hnswprq
@@ -2261,14 +2821,71 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
             index_hnsw_prq->storage = nullptr;
 
             // replace storage
-            index_hnsw_prq->storage = tmp_index_prq.release();
+            index_hnsw_prq->storage = tmp_index_prq[i].release();
 
             // replace if refine
             if (index_refine != nullptr) {
                 delete index_refine->base_index;
                 index_refine->base_index = index_hnsw_prq.release();
             } else {
-                index = std::move(index_hnsw_prq);
+                indexes[i] = std::move(index_hnsw_prq);
+            }
+            return Status::success;
+        };
+        try {
+            const std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>& scalar_info_map =
+                dataset->Get<std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>>(meta::SCALAR_INFO);
+
+            if (scalar_info_map.empty() || tmp_combined_scalar_ids.size() <= 1) {
+                // hnsw
+                LOG_KNOWHERE_INFO_ << "Adding " << rows << " to HNSW Index";
+
+                auto status_reg = add_to_index(indexes[0].get(), dataset, data_format);
+                if (status_reg != Status::success) {
+                    return status_reg;
+                }
+
+                // prq
+                LOG_KNOWHERE_INFO_ << "Adding " << rows << " to ProductResidualQuantizer Index";
+
+                auto status_prq = add_to_index(tmp_index_prq[0].get(), dataset, data_format);
+                if (status_prq != Status::success) {
+                    return status_prq;
+                }
+                return finalize_index(0);
+            }
+
+            if (scalar_info_map.size() > 1) {
+                LOG_KNOWHERE_WARNING_ << "vector index build with multiple scalar info is not supported";
+                return Status::invalid_args;
+            }
+            LOG_KNOWHERE_INFO_ << "Add data to Index with Scalar Info";
+
+            for (const auto& [field_id, scalar_info] : scalar_info_map) {
+                for (auto i = 0; i < tmp_combined_scalar_ids.size(); ++i) {
+                    for (auto j = 0; j < tmp_combined_scalar_ids[i].size(); ++j) {
+                        auto id = tmp_combined_scalar_ids[i][j];
+                        // hnsw
+                        LOG_KNOWHERE_INFO_ << "Adding " << scalar_info[id].size() << " to HNSW Index";
+
+                        auto status_reg =
+                            add_partial_dataset_to_index(indexes[i].get(), dataset, data_format, scalar_info[id]);
+                        if (status_reg != Status::success) {
+                            return status_reg;
+                        }
+
+                        // prq
+                        LOG_KNOWHERE_INFO_ << "Adding " << scalar_info[id].size() << " to PQ Index";
+
+                        auto status_prq =
+                            add_partial_dataset_to_index(tmp_index_prq[i].get(), dataset, data_format, scalar_info[id]);
+
+                        if (status_prq != Status::success) {
+                            return status_prq;
+                        }
+                    }
+                    finalize_index(i);
+                }
             }
 
         } catch (const std::exception& e) {
@@ -2294,7 +2911,6 @@ class BaseFaissRegularIndexHNSWPRQNodeTemplate : public BaseFaissRegularIndexHNS
     }
 };
 
-// MV is only for compatibility
 #ifdef KNOWHERE_WITH_CARDINAL
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_DEPRECATED,
                                                 BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback,
@@ -2307,13 +2923,16 @@ KNOWHERE_SIMPLE_REGISTER_DENSE_INT8_GLOBAL(HNSW, BaseFaissRegularIndexHNSWFlatNo
 #endif
 
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_SQ, BaseFaissRegularIndexHNSWSQNodeTemplate,
-                                                knowhere::feature::MMAP)
-KNOWHERE_SIMPLE_REGISTER_DENSE_INT8_GLOBAL(HNSW_SQ, BaseFaissRegularIndexHNSWSQNodeTemplate, knowhere::feature::MMAP)
+                                                knowhere::feature::MMAP | knowhere::feature::MV)
+KNOWHERE_SIMPLE_REGISTER_DENSE_INT8_GLOBAL(HNSW_SQ, BaseFaissRegularIndexHNSWSQNodeTemplate,
+                                           knowhere::feature::MMAP | knowhere::feature::MV)
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTemplate,
-                                                knowhere::feature::MMAP)
-KNOWHERE_SIMPLE_REGISTER_DENSE_INT8_GLOBAL(HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTemplate, knowhere::feature::MMAP)
+                                                knowhere::feature::MMAP | knowhere::feature::MV)
+KNOWHERE_SIMPLE_REGISTER_DENSE_INT8_GLOBAL(HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTemplate,
+                                           knowhere::feature::MMAP | knowhere::feature::MV)
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNodeTemplate,
-                                                knowhere::feature::MMAP)
-KNOWHERE_SIMPLE_REGISTER_DENSE_INT8_GLOBAL(HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNodeTemplate, knowhere::feature::MMAP)
+                                                knowhere::feature::MMAP | knowhere::feature::MV)
+KNOWHERE_SIMPLE_REGISTER_DENSE_INT8_GLOBAL(HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNodeTemplate,
+                                           knowhere::feature::MMAP | knowhere::feature::MV)
 
 }  // namespace knowhere

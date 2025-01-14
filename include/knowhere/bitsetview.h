@@ -95,6 +95,38 @@ class BitsetView {
         return ret;
     }
 
+    size_t
+    get_first_valid_index() const {
+        size_t ret = 0;
+        auto len_uint8 = byte_size();
+        auto len_uint64 = len_uint8 >> 3;
+
+        uint64_t* p_uint64 = (uint64_t*)bits_;
+        for (size_t i = 0; i < len_uint64; i++) {
+            uint64_t value = (~(*p_uint64));
+            if (value == 0) {
+                p_uint64++;
+                continue;
+            }
+            ret = __builtin_ctzll(value);
+            return i * 64 + ret;
+        }
+
+        // calculate remainder
+        uint8_t* p_uint8 = (uint8_t*)bits_ + (len_uint64 << 3);
+        for (size_t i = 0; i < len_uint8 - (len_uint64 << 3); i++) {
+            uint8_t value = (~(*p_uint8));
+            if (value == 0) {
+                p_uint8++;
+                continue;
+            }
+            ret = __builtin_ctz(value);
+            return len_uint64 * 64 + i * 8 + ret;
+        }
+
+        return num_bits_;
+    }
+
     std::string
     to_string(size_t from, size_t to) const {
         if (empty()) {

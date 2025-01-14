@@ -135,39 +135,42 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
         faiss::IDSelector* sel = (params == nullptr) ? nullptr : params->sel;
 
         // try knowhere-specific filter
-        const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
-            dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
-
-        if (bw_idselector == nullptr || bw_idselector->bitset_view.empty()) {
-            // no filter
-            faiss::IDSelectorAll sel_all;
-
+        if (const knowhere::BitsetViewWithMappingIDSelector* __restrict bw_idselector =
+                dynamic_cast<const knowhere::BitsetViewWithMappingIDSelector*>(sel);
+            bw_idselector && !bw_idselector->bitset_view.empty()) {
+            // with filter
             // feder templating is important, bcz it removes an unneeded 'CALL' instruction.
             if (feder == nullptr) {
                 // no feder
                 DummyVisitor graph_visitor;
 
-                using searcher_type = faiss::cppcontrib::knowhere::v2_hnsw_searcher<
-                    faiss::DistanceComputer, DummyVisitor, faiss::cppcontrib::knowhere::Bitset, faiss::IDSelectorAll>;
+                using searcher_type =
+                    faiss::cppcontrib::knowhere::v2_hnsw_searcher<faiss::DistanceComputer, DummyVisitor,
+                                                                  faiss::cppcontrib::knowhere::Bitset,
+                                                                  knowhere::BitsetViewWithMappingIDSelector>;
 
-                searcher_type searcher{hnsw,    *(dis.get()), graph_visitor, bitset_visited_nodes,
-                                       sel_all, kAlpha,       params};
+                searcher_type searcher{hnsw,           *(dis.get()), graph_visitor, bitset_visited_nodes,
+                                       *bw_idselector, kAlpha,       params};
 
                 local_stats = searcher.search(k, distances + i * k, labels + i * k);
             } else {
                 // use feder
                 FederVisitor graph_visitor(feder);
 
-                using searcher_type = faiss::cppcontrib::knowhere::v2_hnsw_searcher<
-                    faiss::DistanceComputer, FederVisitor, faiss::cppcontrib::knowhere::Bitset, faiss::IDSelectorAll>;
+                using searcher_type =
+                    faiss::cppcontrib::knowhere::v2_hnsw_searcher<faiss::DistanceComputer, FederVisitor,
+                                                                  faiss::cppcontrib::knowhere::Bitset,
+                                                                  knowhere::BitsetViewWithMappingIDSelector>;
 
-                searcher_type searcher{hnsw,    *(dis.get()), graph_visitor, bitset_visited_nodes,
-                                       sel_all, kAlpha,       params};
+                searcher_type searcher{hnsw,           *(dis.get()), graph_visitor, bitset_visited_nodes,
+                                       *bw_idselector, kAlpha,       params};
 
                 local_stats = searcher.search(k, distances + i * k, labels + i * k);
             }
-        } else {
-            // with filter
+        } else if (const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
+                       dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
+                   bw_idselector && !bw_idselector->bitset_view.empty()) {
+            // with filter, no mapping
 
             // feder templating is important, bcz it removes an unneeded 'CALL' instruction.
             if (feder == nullptr) {
@@ -194,6 +197,34 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
 
                 searcher_type searcher{hnsw,           *(dis.get()), graph_visitor, bitset_visited_nodes,
                                        *bw_idselector, kAlpha,       params};
+
+                local_stats = searcher.search(k, distances + i * k, labels + i * k);
+            }
+        } else {
+            // no filter
+            faiss::IDSelectorAll sel_all;
+
+            // feder templating is important, bcz it removes an unneeded 'CALL' instruction.
+            if (feder == nullptr) {
+                // no feder
+                DummyVisitor graph_visitor;
+
+                using searcher_type = faiss::cppcontrib::knowhere::v2_hnsw_searcher<
+                    faiss::DistanceComputer, DummyVisitor, faiss::cppcontrib::knowhere::Bitset, faiss::IDSelectorAll>;
+
+                searcher_type searcher{hnsw,    *(dis.get()), graph_visitor, bitset_visited_nodes,
+                                       sel_all, kAlpha,       params};
+
+                local_stats = searcher.search(k, distances + i * k, labels + i * k);
+            } else {
+                // use feder
+                FederVisitor graph_visitor(feder);
+
+                using searcher_type = faiss::cppcontrib::knowhere::v2_hnsw_searcher<
+                    faiss::DistanceComputer, FederVisitor, faiss::cppcontrib::knowhere::Bitset, faiss::IDSelectorAll>;
+
+                searcher_type searcher{hnsw,    *(dis.get()), graph_visitor, bitset_visited_nodes,
+                                       sel_all, kAlpha,       params};
 
                 local_stats = searcher.search(k, distances + i * k, labels + i * k);
             }
@@ -301,39 +332,43 @@ IndexHNSWWrapper::range_search(idx_t n, const float* __restrict x, float radius_
         faiss::IDSelector* sel = (params == nullptr) ? nullptr : params->sel;
 
         // try knowhere-specific filter
-        const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
-            dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
-
-        if (bw_idselector == nullptr || bw_idselector->bitset_view.empty()) {
-            // no filter
-            faiss::IDSelectorAll sel_all;
+        if (const knowhere::BitsetViewWithMappingIDSelector* __restrict bw_idselector =
+                dynamic_cast<const knowhere::BitsetViewWithMappingIDSelector*>(sel);
+            bw_idselector && !bw_idselector->bitset_view.empty()) {
+            // with filter
 
             // feder templating is important, bcz it removes an unneeded 'CALL' instruction.
             if (feder == nullptr) {
                 // no feder
                 DummyVisitor graph_visitor;
 
-                using searcher_type = faiss::cppcontrib::knowhere::v2_hnsw_searcher<
-                    faiss::DistanceComputer, DummyVisitor, faiss::cppcontrib::knowhere::Bitset, faiss::IDSelectorAll>;
+                using searcher_type =
+                    faiss::cppcontrib::knowhere::v2_hnsw_searcher<faiss::DistanceComputer, DummyVisitor,
+                                                                  faiss::cppcontrib::knowhere::Bitset,
+                                                                  knowhere::BitsetViewWithMappingIDSelector>;
 
-                searcher_type searcher{hnsw,    *(dis.get()), graph_visitor, bitset_visited_nodes,
-                                       sel_all, kAlpha,       params};
+                searcher_type searcher{hnsw,           *(dis.get()), graph_visitor, bitset_visited_nodes,
+                                       *bw_idselector, kAlpha,       params};
 
                 local_stats = searcher.range_search(radius, &res_min);
             } else {
                 // use feder
                 FederVisitor graph_visitor(feder);
 
-                using searcher_type = faiss::cppcontrib::knowhere::v2_hnsw_searcher<
-                    faiss::DistanceComputer, FederVisitor, faiss::cppcontrib::knowhere::Bitset, faiss::IDSelectorAll>;
+                using searcher_type =
+                    faiss::cppcontrib::knowhere::v2_hnsw_searcher<faiss::DistanceComputer, FederVisitor,
+                                                                  faiss::cppcontrib::knowhere::Bitset,
+                                                                  knowhere::BitsetViewWithMappingIDSelector>;
 
-                searcher_type searcher{hnsw,    *(dis.get()), graph_visitor, bitset_visited_nodes,
-                                       sel_all, kAlpha,       params};
+                searcher_type searcher{hnsw,           *(dis.get()), graph_visitor, bitset_visited_nodes,
+                                       *bw_idselector, kAlpha,       params};
 
                 local_stats = searcher.range_search(radius, &res_min);
             }
-        } else {
-            // with filter
+        } else if (const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
+                       dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
+                   bw_idselector && !bw_idselector->bitset_view.empty()) {
+            // with filter, no mapping
 
             // feder templating is important, bcz it removes an unneeded 'CALL' instruction.
             if (feder == nullptr) {
@@ -360,6 +395,34 @@ IndexHNSWWrapper::range_search(idx_t n, const float* __restrict x, float radius_
 
                 searcher_type searcher{hnsw,           *(dis.get()), graph_visitor, bitset_visited_nodes,
                                        *bw_idselector, kAlpha,       params};
+
+                local_stats = searcher.range_search(radius, &res_min);
+            }
+        } else {
+            // no filter
+            faiss::IDSelectorAll sel_all;
+
+            // feder templating is important, bcz it removes an unneeded 'CALL' instruction.
+            if (feder == nullptr) {
+                // no feder
+                DummyVisitor graph_visitor;
+
+                using searcher_type = faiss::cppcontrib::knowhere::v2_hnsw_searcher<
+                    faiss::DistanceComputer, DummyVisitor, faiss::cppcontrib::knowhere::Bitset, faiss::IDSelectorAll>;
+
+                searcher_type searcher{hnsw,    *(dis.get()), graph_visitor, bitset_visited_nodes,
+                                       sel_all, kAlpha,       params};
+
+                local_stats = searcher.range_search(radius, &res_min);
+            } else {
+                // use feder
+                FederVisitor graph_visitor(feder);
+
+                using searcher_type = faiss::cppcontrib::knowhere::v2_hnsw_searcher<
+                    faiss::DistanceComputer, FederVisitor, faiss::cppcontrib::knowhere::Bitset, faiss::IDSelectorAll>;
+
+                searcher_type searcher{hnsw,    *(dis.get()), graph_visitor, bitset_visited_nodes,
+                                       sel_all, kAlpha,       params};
 
                 local_stats = searcher.range_search(radius, &res_min);
             }
