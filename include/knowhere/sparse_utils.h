@@ -29,6 +29,11 @@
 
 namespace knowhere::sparse {
 
+enum class SparseMetricType {
+    METRIC_IP = 1,
+    METRIC_BM25 = 2,
+};
+
 // integer type in SparseRow
 using table_t = uint32_t;
 // type used to represent the id of a vector in the index interface.

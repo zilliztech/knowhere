@@ -22,7 +22,7 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_FLOAT drop_ratio_build;
     CFG_FLOAT drop_ratio_search;
     CFG_INT refine_factor;
-    CFG_FLOAT wand_bm25_max_score_ratio;
+    CFG_FLOAT dim_max_score_ratio;
     CFG_STRING inverted_index_algo;
     KNOHWERE_DECLARE_CONFIG(SparseInvertedIndexConfig) {
         // NOTE: drop_ratio_build has been deprecated, it won't change anything
@@ -57,7 +57,7 @@ class SparseInvertedIndexConfig : public BaseConfig {
          * WAND algorithm uses the max score of each dim for pruning, which is
          * precomputed and cached in our implementation. The cached max score
          * is actually not equal to the actual max score. Instead, it is a
-         * scaled one based on the wand_bm25_max_score_ratio.
+         * scaled one based on the dim_max_score_ratio.
          * We should use different scale strategy for different reasons.
          * 1. As more documents being added to the collection, avgdl could
          *    be changed. Re-computing such score for each segment is
@@ -66,28 +66,44 @@ class SparseInvertedIndexConfig : public BaseConfig {
          *    This will make the cached max score larger than the actual max
          *    score, so that it makes the filtering less aggressive, but
          *    guarantees the correctness.
-         * 2. In WAND searching process, we use the sum of the max scores to
-         *    filter the candidate vectors. If the sum is smaller than the
-         *    threshold, skip current vector. If approximate searching is
-         *    accepted, we can make the skipping more aggressive by downscaling
-         *    the max score with a ratio less than 1.0. Since the possibility
-         *    that the max score of all dims in the query appears on the same
-         *    vector is relatively small, it won't lead to a sharp decline in
-         *    the recall rate within a certain range.
+         * 2. For dimension maxscore based algorithms like WAND and MaxScore,
+         *    they use the sum of the max scores to filter the candidate
+         *    vectors. If the sum is smaller than the threshold, skip current
+         *    vector. If approximate searching is accepted, we can make the
+         *    skipping more aggressive by downscaling the max score with a
+         *    ratio less than 1.0. Since the possibility that the max score
+         *    of all dims in the query appears on the same vector is
+         *    relatively small, it won't lead to a sharp decline in the
+         *    recall rate within a certain range.
          */
-        KNOWHERE_CONFIG_DECLARE_FIELD(wand_bm25_max_score_ratio)
+        KNOWHERE_CONFIG_DECLARE_FIELD(dim_max_score_ratio)
             .set_range(0.5, 1.3)
             .set_default(1.05)
             .description("ratio to upscale/downscale the max score of each dimension")
-            .for_train_and_search()
-            .for_deserialize()
-            .for_deserialize_from_file();
+            .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(inverted_index_algo)
             .description("inverted index algorithm")
             .set_default("DAAT_MAXSCORE")
-            .for_train_and_search()
+            .for_train()
             .for_deserialize()
             .for_deserialize_from_file();
+    }
+
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        if (param_type == PARAM_TYPE::TRAIN) {
+            constexpr std::array<std::string_view, 3> legal_inverted_index_algo_list{"TAAT_NAIVE", "DAAT_WAND",
+                                                                                     "DAAT_MAXSCORE"};
+            std::string inverted_index_algo_str = inverted_index_algo.value_or("");
+            if (std::find(legal_inverted_index_algo_list.begin(), legal_inverted_index_algo_list.end(),
+                          inverted_index_algo_str) == legal_inverted_index_algo_list.end()) {
+                std::string msg = "sparse inverted index algo " + inverted_index_algo_str +
+                                  " not found or not supported, supported: [TAAT_NAIVE DAAT_WAND DAAT_MAXSCORE]";
+                return HandleError(err_msg, msg, Status::invalid_args);
+            }
+        }
+
+        return Status::success;
     }
 };  // class SparseInvertedIndexConfig
 

@@ -103,7 +103,7 @@ constexpr const char* BM25_K1 = "bm25_k1";
 constexpr const char* BM25_B = "bm25_b";
 // average document length
 constexpr const char* BM25_AVGDL = "bm25_avgdl";
-constexpr const char* WAND_BM25_MAX_SCORE_RATIO = "wand_bm25_max_score_ratio";
+constexpr const char* DIM_MAX_SCORE_RATIO = "dim_max_score_ratio";
 };  // namespace meta
 
 namespace indexparam {
