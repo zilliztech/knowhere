@@ -1261,4 +1261,18 @@ KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_SQ8, IvfIndexNode, knowhere::f
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_SQ_CC, IvfIndexNode, knowhere::feature::NONE,
                                               faiss::IndexIVFScalarQuantizerCC)
 
+// int
+KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVFFLAT, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexIVFFlat)
+KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVF_FLAT, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexIVFFlat)
+KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVFFLATCC, IvfIndexNode, knowhere::feature::NONE, faiss::IndexIVFFlatCC)
+KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVF_FLAT_CC, IvfIndexNode, knowhere::feature::NONE, faiss::IndexIVFFlatCC)
+KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(SCANN, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexScaNN)
+KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVFPQ, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexIVFPQ)
+KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVF_PQ, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexIVFPQ)
+KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVFSQ, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexIVFScalarQuantizer)
+KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVF_SQ, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexIVFScalarQuantizer)
+KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVF_SQ8, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexIVFScalarQuantizer)
+KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVF_SQ_CC, IvfIndexNode, knowhere::feature::NONE,
+                                        faiss::IndexIVFScalarQuantizerCC)
+
 }  // namespace knowhere

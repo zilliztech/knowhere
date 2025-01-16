@@ -19,6 +19,8 @@
 
 #include "index_static.h"
 #include "knowhere/index/index.h"
+#include "knowhere/index/index_node_data_mock_wrapper.h"
+#include "knowhere/operands.h"
 #include "knowhere/utils.h"
 
 namespace knowhere {
@@ -122,11 +124,13 @@ class IndexFactory {
     KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, bf16, (features | knowhere::feature::BF16), ##__VA_ARGS__);   \
     KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp16, (features | knowhere::feature::FP16), ##__VA_ARGS__);   \
     KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp32, (features | knowhere::feature::FLOAT32), ##__VA_ARGS__);
+
 // register vector index supporting binary data type
 #define KNOWHERE_SIMPLE_REGISTER_DENSE_BIN_GLOBAL(name, index_node, features, ...) \
     KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, bin1, (features | knowhere::feature::BINARY), ##__VA_ARGS__);
+
 // register vector index supporting int8 data type
-#define KNOWHERE_SIMPLE_REGISTER_DENSE_INT8_GLOBAL(name, index_node, features, ...) \
+#define KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(name, index_node, features, ...) \
     KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, int8, (features | knowhere::feature::INT8), ##__VA_ARGS__);
 
 // register vector index supporting ALL_DENSE_FLOAT_TYPE(float32, bf16, fp16) data types
@@ -134,6 +138,11 @@ class IndexFactory {
     KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, bf16, (features | knowhere::feature::BF16), ##__VA_ARGS__); \
     KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp16, (features | knowhere::feature::FP16), ##__VA_ARGS__); \
     KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp32, (features | knowhere::feature::FLOAT32), ##__VA_ARGS__);
+
+// register vector index supporting int data type
+#define KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(name, index_node, features, ...) \
+    KNOWHERE_MOCK_REGISTER_GLOBAL(name, index_node, int8, (features | knowhere::feature::INT8), ##__VA_ARGS__);
+
 // register vector index supporting ALL_DENSE_FLOAT_TYPE(float32, bf16, fp16) data types, but mocked bf16 and fp16
 #define KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(name, index_node, features, ...)                          \
     KNOWHERE_MOCK_REGISTER_GLOBAL(name, index_node, bf16, (features | knowhere::feature::BF16), ##__VA_ARGS__); \
@@ -149,6 +158,7 @@ class IndexFactory {
                 std::make_unique<index_node<MockData<data_type>::type>>(version, object), thread_size)); \
         },                                                                                               \
         data_type, typeCheck<data_type>(features), features)
+
 #define KNOWHERE_SET_STATIC_GLOBAL_INDEX_TABLE(table_index, name, index_table)                      \
     static int name = []() -> int {                                                                 \
         auto& static_index_table = std::get<table_index>(IndexFactory::StaticIndexTableInstance()); \
