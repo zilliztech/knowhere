@@ -38,11 +38,19 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .for_search()
             .for_range_search()
             .for_iterator();
+        /**
+         * refine_factor is used for approximate search.
+         * refine_factor == 1 means no refinement, and is the default value.
+         * refine_factor > 1 means refinement. The larger the value, the more
+         * accurate the approximate result will be, but the slower the
+         * performance.
+         * Be aware that if you opt to use a large drop_ratio_search, it is
+         * necessary for you to manually modify this value.
+         */
         KNOWHERE_CONFIG_DECLARE_FIELD(refine_factor)
-            .description("refine factor")
-            .set_default(10)
-            .for_search()
-            .for_range_search();
+            .description("refine factor for approximate search")
+            .set_default(1)
+            .for_search();
         /**
          * The term frequency part of score of BM25 is:
          * tf * (k1 + 1) / (tf + k1 * (1 - b + b * (doc_len / avgdl)))

@@ -104,7 +104,7 @@ class SparseInvertedIndexNode : public IndexNode {
         auto nq = dataset->GetRows();
         auto queries = static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor());
         auto k = cfg.k.value();
-        auto refine_factor = cfg.refine_factor.value_or(10);
+        auto refine_factor = cfg.refine_factor.value_or(1);
         auto drop_ratio_search = cfg.drop_ratio_search.value_or(0.0f);
 
         auto p_id = std::make_unique<sparse::label_t[]>(nq * k);
@@ -185,7 +185,8 @@ class SparseInvertedIndexNode : public IndexNode {
         auto computer = computer_or.value();
         auto drop_ratio_search = cfg.drop_ratio_search.value_or(0.0f);
 
-        const bool approximated = drop_ratio_search > 0;
+        // TODO: set approximated to false for now since the refinement is too slow after forward index is removed.
+        const bool approximated = false;
 
         auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
         try {
