@@ -174,72 +174,57 @@ class Benchmark_float_range_bitset : public Benchmark_knowhere, public ::testing
     // const std::vector<int32_t> EFs_ = {128, 256, 512};
 };
 
-TEST_F(Benchmark_float_range_bitset, TEST_IVF_FLAT) {
-    index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
-
-#define TEST_IVF(T, X)                      \
+#define TEST_INDEX(NAME, T, X)              \
     index_file_name = get_index_name<T>(X); \
     create_index<T>(index_file_name, conf); \
-    test_ivf<T>(conf);
+    test_##NAME<T>(conf)
+
+TEST_F(Benchmark_float_range_bitset, TEST_IVF_FLAT) {
+    index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
 
     std::string index_file_name;
     knowhere::Json conf = cfg_;
     std::vector<int32_t> params = {};
 
-    TEST_IVF(knowhere::fp32, params);
-    TEST_IVF(knowhere::fp16, params);
-    TEST_IVF(knowhere::bf16, params);
+    TEST_INDEX(ivf, knowhere::fp32, params);
+    TEST_INDEX(ivf, knowhere::fp16, params);
+    TEST_INDEX(ivf, knowhere::bf16, params);
 }
 
 TEST_F(Benchmark_float_range_bitset, TEST_IVF_SQ8) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFSQ8;
 
-#define TEST_IVF(T, X)                      \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_ivf<T>(conf);
-
     std::string index_file_name;
     knowhere::Json conf = cfg_;
     std::vector<int32_t> params = {};
 
-    TEST_IVF(knowhere::fp32, params);
-    TEST_IVF(knowhere::fp16, params);
-    TEST_IVF(knowhere::bf16, params);
+    TEST_INDEX(ivf, knowhere::fp32, params);
+    TEST_INDEX(ivf, knowhere::fp16, params);
+    TEST_INDEX(ivf, knowhere::bf16, params);
 }
 
 TEST_F(Benchmark_float_range_bitset, TEST_IVF_PQ) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFPQ;
 
-#define TEST_IVF(T, X)                      \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_ivf<T>(conf);
-
     std::string index_file_name;
     knowhere::Json conf = cfg_;
     std::vector<int32_t> params = {};
 
-    TEST_IVF(knowhere::fp32, params);
-    TEST_IVF(knowhere::fp16, params);
-    TEST_IVF(knowhere::bf16, params);
+    TEST_INDEX(ivf, knowhere::fp32, params);
+    TEST_INDEX(ivf, knowhere::fp16, params);
+    TEST_INDEX(ivf, knowhere::bf16, params);
 }
 
 TEST_F(Benchmark_float_range_bitset, TEST_HNSW) {
     index_type_ = knowhere::IndexEnum::INDEX_HNSW;
 
-#define TEST_HNSW(T, X)                     \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_hnsw<T>(conf);
-
     std::string index_file_name;
     knowhere::Json conf = cfg_;
     std::vector<int32_t> params = {};
 
-    TEST_HNSW(knowhere::fp32, params);
-    TEST_HNSW(knowhere::fp16, params);
-    TEST_HNSW(knowhere::bf16, params);
+    TEST_INDEX(hnsw, knowhere::fp32, params);
+    TEST_INDEX(hnsw, knowhere::fp16, params);
+    TEST_INDEX(hnsw, knowhere::bf16, params);
 }
 
 #ifdef KNOWHERE_WITH_DISKANN
