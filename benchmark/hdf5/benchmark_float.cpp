@@ -180,7 +180,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
         conf[knowhere::indexparam::EF] = ef;
 
         std::string data_type_str = get_data_type_name<T>();
-        printf("\n[%0.3f s] %s | %s(%s) | hnsw_M=%ld, efc=%ld, ef=%ld\n", get_time_diff(), ann_test_name_.c_str(),
+        printf("\n[%0.3f s] %s | %s(%s) | hnsw_M=%ld, efc=%ld, ef=%d\n", get_time_diff(), ann_test_name_.c_str(),
                index_type_.c_str(), data_type_str.c_str(), hnsw_M, efc, ef);
         printf("================================================================================\n");
         for (auto refine_k : HNSW_REFINE_Ks_) {
@@ -319,6 +319,11 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
     const std::vector<int32_t> ITOPK_SIZEs_ = {128, 192, 256};
 };
 
+#define TEST_INDEX(NAME, T, X)              \
+    index_file_name = get_index_name<T>(X); \
+    create_index<T>(index_file_name, conf); \
+    test_##NAME<T>(conf)
+
 TEST_F(Benchmark_float, TEST_BRUTE_FORCE) {
     index_type_ = "BruteForce";
 
@@ -331,27 +336,17 @@ TEST_F(Benchmark_float, TEST_BRUTE_FORCE) {
 TEST_F(Benchmark_float, TEST_IDMAP) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
 
-#define TEST_IDMAP(T, X)                    \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_idmap<T>(conf);
-
     std::string index_file_name;
     knowhere::Json conf = cfg_;
     std::vector<int32_t> params = {};
 
-    TEST_IDMAP(knowhere::fp32, params);
-    TEST_IDMAP(knowhere::fp16, params);
-    TEST_IDMAP(knowhere::bf16, params);
+    TEST_INDEX(idmap, knowhere::fp32, params);
+    TEST_INDEX(idmap, knowhere::fp16, params);
+    TEST_INDEX(idmap, knowhere::bf16, params);
 }
 
 TEST_F(Benchmark_float, TEST_IVF_FLAT) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
-
-#define TEST_IVF(T, X)                      \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_ivf<T>(conf);
 
     std::string index_file_name;
     knowhere::Json conf = cfg_;
@@ -359,39 +354,29 @@ TEST_F(Benchmark_float, TEST_IVF_FLAT) {
         conf[knowhere::indexparam::NLIST] = nlist;
         std::vector<int32_t> params = {nlist};
 
-        TEST_IVF(knowhere::fp32, params);
-        TEST_IVF(knowhere::fp16, params);
-        TEST_IVF(knowhere::bf16, params);
+        TEST_INDEX(ivf, knowhere::fp32, params);
+        TEST_INDEX(ivf, knowhere::fp16, params);
+        TEST_INDEX(ivf, knowhere::bf16, params);
     }
 }
 
 TEST_F(Benchmark_float, TEST_IVF_SQ8) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFSQ8;
 
-#define TEST_IVF(T, X)                      \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_ivf<T>(conf);
-
     std::string index_file_name;
     knowhere::Json conf = cfg_;
     for (auto nlist : NLISTs_) {
         conf[knowhere::indexparam::NLIST] = nlist;
         std::vector<int32_t> params = {nlist};
 
-        TEST_IVF(knowhere::fp32, params);
-        TEST_IVF(knowhere::fp16, params);
-        TEST_IVF(knowhere::bf16, params);
+        TEST_INDEX(ivf, knowhere::fp32, params);
+        TEST_INDEX(ivf, knowhere::fp16, params);
+        TEST_INDEX(ivf, knowhere::bf16, params);
     }
 }
 
 TEST_F(Benchmark_float, TEST_IVF_PQ) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFPQ;
-
-#define TEST_IVF(T, X)                      \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_ivf<T>(conf);
 
     std::string index_file_name;
     knowhere::Json conf = cfg_;
@@ -402,20 +387,15 @@ TEST_F(Benchmark_float, TEST_IVF_PQ) {
             conf[knowhere::indexparam::NLIST] = nlist;
             std::vector<int32_t> params = {nlist, m};
 
-            TEST_IVF(knowhere::fp32, params);
-            TEST_IVF(knowhere::fp16, params);
-            TEST_IVF(knowhere::bf16, params);
+            TEST_INDEX(ivf, knowhere::fp32, params);
+            TEST_INDEX(ivf, knowhere::fp16, params);
+            TEST_INDEX(ivf, knowhere::bf16, params);
         }
     }
 }
 
 TEST_F(Benchmark_float, TEST_SCANN) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_SCANN;
-
-#define TEST_SCANN(T, X)                    \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_scann<T>(conf);
 
     std::string index_file_name;
     knowhere::Json conf = cfg_;
@@ -424,19 +404,14 @@ TEST_F(Benchmark_float, TEST_SCANN) {
         conf[knowhere::indexparam::NLIST] = nlist;
         std::vector<int32_t> params = {nlist};
 
-        TEST_SCANN(knowhere::fp32, params);
-        TEST_SCANN(knowhere::fp16, params);
-        TEST_SCANN(knowhere::bf16, params);
+        TEST_INDEX(scann, knowhere::fp32, params);
+        TEST_INDEX(scann, knowhere::fp16, params);
+        TEST_INDEX(scann, knowhere::bf16, params);
     }
 }
 
 TEST_F(Benchmark_float, TEST_HNSW_FLAT) {
     index_type_ = knowhere::IndexEnum::INDEX_HNSW;
-
-#define TEST_HNSW(T, X)                     \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_hnsw<T>(conf);
 
     std::string index_file_name;
     knowhere::Json conf = cfg_;
@@ -446,20 +421,15 @@ TEST_F(Benchmark_float, TEST_HNSW_FLAT) {
             conf[knowhere::indexparam::EFCONSTRUCTION] = efc;
             std::vector<int32_t> params = {M, efc};
 
-            TEST_HNSW(knowhere::fp32, params);
-            TEST_HNSW(knowhere::fp16, params);
-            TEST_HNSW(knowhere::bf16, params);
+            TEST_INDEX(hnsw, knowhere::fp32, params);
+            TEST_INDEX(hnsw, knowhere::fp16, params);
+            TEST_INDEX(hnsw, knowhere::bf16, params);
         }
     }
 }
 
 TEST_F(Benchmark_float, TEST_HNSW_SQ) {
     index_type_ = knowhere::IndexEnum::INDEX_HNSW_SQ;
-
-#define TEST_HNSW(T, X)                     \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_hnsw_refine<T>(conf);
 
     std::string index_file_name;
     knowhere::Json conf = cfg_;
@@ -475,9 +445,9 @@ TEST_F(Benchmark_float, TEST_HNSW_SQ) {
                 conf[knowhere::indexparam::SQ_TYPE] = sq_type;
                 std::vector<std::string> params = {std::to_string(M), std::to_string(efc), sq_type};
 
-                TEST_HNSW(knowhere::fp32, params);
-                TEST_HNSW(knowhere::fp16, params);
-                TEST_HNSW(knowhere::bf16, params);
+                TEST_INDEX(hnsw_refine, knowhere::fp32, params);
+                TEST_INDEX(hnsw_refine, knowhere::fp16, params);
+                TEST_INDEX(hnsw_refine, knowhere::bf16, params);
             }
         }
     }
@@ -485,11 +455,6 @@ TEST_F(Benchmark_float, TEST_HNSW_SQ) {
 
 TEST_F(Benchmark_float, TEST_HNSW_PQ) {
     index_type_ = knowhere::IndexEnum::INDEX_HNSW_PQ;
-
-#define TEST_HNSW(T, X)                     \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_hnsw_refine<T>(conf);
 
     std::string index_file_name;
     knowhere::Json conf = cfg_;
@@ -506,9 +471,9 @@ TEST_F(Benchmark_float, TEST_HNSW_PQ) {
                 conf[knowhere::indexparam::M] = pq_m;
                 std::vector<int32_t> params = {hnsw_m, efc, pq_m};
 
-                TEST_HNSW(knowhere::fp32, params);
-                TEST_HNSW(knowhere::fp16, params);
-                TEST_HNSW(knowhere::bf16, params);
+                TEST_INDEX(hnsw_refine, knowhere::fp32, params);
+                TEST_INDEX(hnsw_refine, knowhere::fp16, params);
+                TEST_INDEX(hnsw_refine, knowhere::bf16, params);
             }
         }
     }
@@ -516,11 +481,6 @@ TEST_F(Benchmark_float, TEST_HNSW_PQ) {
 
 TEST_F(Benchmark_float, TEST_HNSW_PRQ) {
     index_type_ = knowhere::IndexEnum::INDEX_HNSW_PRQ;
-
-#define TEST_HNSW(T, X)                     \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_hnsw_refine<T>(conf);
 
     std::string index_file_name;
     knowhere::Json conf = cfg_;
@@ -536,9 +496,9 @@ TEST_F(Benchmark_float, TEST_HNSW_PRQ) {
             conf[knowhere::indexparam::EFCONSTRUCTION] = efc;
             std::vector<int32_t> params = {M, efc};
 
-            TEST_HNSW(knowhere::fp32, params);
-            TEST_HNSW(knowhere::fp16, params);
-            TEST_HNSW(knowhere::bf16, params);
+            TEST_INDEX(hnsw_refine, knowhere::fp32, params);
+            TEST_INDEX(hnsw_refine, knowhere::fp16, params);
+            TEST_INDEX(hnsw_refine, knowhere::bf16, params);
         }
     }
 }
@@ -584,25 +544,15 @@ TEST_F(Benchmark_float, TEST_DISKANN) {
 TEST_F(Benchmark_float, TEST_RAFT_BRUTE_FORCE) {
     index_type_ = knowhere::IndexEnum::INDEX_RAFT_BRUTEFORCE;
 
-#define TEST_RAFT_BF(T, X)                  \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_idmap<T>(conf);
-
     std::string index_file_name;
     knowhere::Json conf = cfg_;
     std::vector<int32_t> params = {};
 
-    TEST_RAFT_BF(knowhere::fp32, params);
+    TEST_INDEX(idmap, knowhere::fp32, params);
 }
 
 TEST_F(Benchmark_float, TEST_RAFT_IVF_FLAT) {
     index_type_ = knowhere::IndexEnum::INDEX_RAFT_IVFFLAT;
-
-#define TEST_RAFT_IVF(T, X)                 \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_ivf<T>(conf);
 
     std::string index_file_name;
     knowhere::Json conf = cfg_;
@@ -610,17 +560,12 @@ TEST_F(Benchmark_float, TEST_RAFT_IVF_FLAT) {
         conf[knowhere::indexparam::NLIST] = nlist;
         std::vector<int32_t> params = {nlist};
 
-        TEST_RAFT_IVF(knowhere::fp32, params);
+        TEST_INDEX(ivf, knowhere::fp32, params);
     }
 }
 
 TEST_F(Benchmark_float, TEST_RAFT_IVF_PQ) {
     index_type_ = knowhere::IndexEnum::INDEX_RAFT_IVFPQ;
-
-#define TEST_RAFT_IVF(T, X)                 \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_ivf<T>(conf);
 
     std::string index_file_name;
     knowhere::Json conf = cfg_;
@@ -631,18 +576,13 @@ TEST_F(Benchmark_float, TEST_RAFT_IVF_PQ) {
             conf[knowhere::indexparam::NLIST] = nlist;
             std::vector<int32_t> params = {nlist, m};
 
-            TEST_RAFT_IVF(knowhere::fp32, params);
+            TEST_INDEX(ivf, knowhere::fp32, params);
         }
     }
 }
 
 TEST_F(Benchmark_float, TEST_RAFT_CAGRA) {
     index_type_ = knowhere::IndexEnum::INDEX_RAFT_CAGRA;
-
-#define TEST_RAFT_CAGRA(T, X)               \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_raft_cagra<T>(conf);
 
     std::string index_file_name;
     knowhere::Json conf = cfg_;
@@ -651,7 +591,7 @@ TEST_F(Benchmark_float, TEST_RAFT_CAGRA) {
         conf[knowhere::indexparam::GRAPH_DEGREE] = graph_degree;
         conf[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE] = graph_degree;
         std::vector<int32_t> params = {graph_degree};
-        TEST_RAFT_CAGRA(knowhere::fp32, params);
+        TEST_INDEX(raft_cagra, knowhere::fp32, params);
     }
 }
 #endif

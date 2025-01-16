@@ -227,30 +227,25 @@ TEST_F(Benchmark_float_range, TEST_CREATE_HDF5) {
 }
 #endif
 
-TEST_F(Benchmark_float_range, TEST_IDMAP) {
-    index_type_ = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
-
-#define TEST_IDMAP(T, X)                    \
+#define TEST_INDEX(NAME, T, X)              \
     index_file_name = get_index_name<T>(X); \
     create_index<T>(index_file_name, conf); \
-    test_idmap<T>(conf);
+    test_##NAME<T>(conf)
+
+TEST_F(Benchmark_float_range, TEST_IDMAP) {
+    index_type_ = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
 
     std::string index_file_name;
     knowhere::Json conf = cfg_;
     std::vector<int32_t> params = {};
 
-    TEST_IDMAP(knowhere::fp32, params);
-    TEST_IDMAP(knowhere::fp16, params);
-    TEST_IDMAP(knowhere::bf16, params);
+    TEST_INDEX(idmap, knowhere::fp32, params);
+    TEST_INDEX(idmap, knowhere::fp16, params);
+    TEST_INDEX(idmap, knowhere::bf16, params);
 }
 
 TEST_F(Benchmark_float_range, TEST_IVF_FLAT) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
-
-#define TEST_IVF(T, X)                      \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_ivf<T>(conf);
 
     std::string index_file_name;
     knowhere::Json conf = cfg_;
@@ -258,39 +253,29 @@ TEST_F(Benchmark_float_range, TEST_IVF_FLAT) {
         conf[knowhere::indexparam::NLIST] = nlist;
         std::vector<int32_t> params = {nlist};
 
-        TEST_IVF(knowhere::fp32, params);
-        TEST_IVF(knowhere::fp16, params);
-        TEST_IVF(knowhere::bf16, params);
+        TEST_INDEX(ivf, knowhere::fp32, params);
+        TEST_INDEX(ivf, knowhere::fp16, params);
+        TEST_INDEX(ivf, knowhere::bf16, params);
     }
 }
 
 TEST_F(Benchmark_float_range, TEST_IVF_SQ8) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFSQ8;
 
-#define TEST_IVF(T, X)                      \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_ivf<T>(conf);
-
     std::string index_file_name;
     knowhere::Json conf = cfg_;
     for (auto nlist : NLISTs_) {
         conf[knowhere::indexparam::NLIST] = nlist;
         std::vector<int32_t> params = {nlist};
 
-        TEST_IVF(knowhere::fp32, params);
-        TEST_IVF(knowhere::fp16, params);
-        TEST_IVF(knowhere::bf16, params);
+        TEST_INDEX(ivf, knowhere::fp32, params);
+        TEST_INDEX(ivf, knowhere::fp16, params);
+        TEST_INDEX(ivf, knowhere::bf16, params);
     }
 }
 
 TEST_F(Benchmark_float_range, TEST_IVF_PQ) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFPQ;
-
-#define TEST_IVF(T, X)                      \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_ivf<T>(conf);
 
     std::string index_file_name;
     knowhere::Json conf = cfg_;
@@ -301,20 +286,15 @@ TEST_F(Benchmark_float_range, TEST_IVF_PQ) {
             conf[knowhere::indexparam::NLIST] = nlist;
             std::vector<int32_t> params = {nlist, m};
 
-            TEST_IVF(knowhere::fp32, params);
-            TEST_IVF(knowhere::fp16, params);
-            TEST_IVF(knowhere::bf16, params);
+            TEST_INDEX(ivf, knowhere::fp32, params);
+            TEST_INDEX(ivf, knowhere::fp16, params);
+            TEST_INDEX(ivf, knowhere::bf16, params);
         }
     }
 }
 
 TEST_F(Benchmark_float_range, TEST_HNSW) {
     index_type_ = knowhere::IndexEnum::INDEX_HNSW;
-
-#define TEST_HNSW(T, X)                     \
-    index_file_name = get_index_name<T>(X); \
-    create_index<T>(index_file_name, conf); \
-    test_hnsw<T>(conf);
 
     std::string index_file_name;
     knowhere::Json conf = cfg_;
@@ -324,9 +304,9 @@ TEST_F(Benchmark_float_range, TEST_HNSW) {
             conf[knowhere::indexparam::EFCONSTRUCTION] = efc;
             std::vector<int32_t> params = {M, efc};
 
-            TEST_HNSW(knowhere::fp32, params);
-            TEST_HNSW(knowhere::fp16, params);
-            TEST_HNSW(knowhere::bf16, params);
+            TEST_INDEX(hnsw, knowhere::fp32, params);
+            TEST_INDEX(hnsw, knowhere::fp16, params);
+            TEST_INDEX(hnsw, knowhere::bf16, params);
         }
     }
 }

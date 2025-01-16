@@ -509,7 +509,7 @@ struct SingleQueryResultCollectHandler : ResultHandlerCompare<C, with_id_map> {
         if (normalizers) {
             float one_a = 1 / normalizers[0];
             float b = normalizers[1];
-            for (auto i = 0; i < collect.size(); i++) {
+            for (size_t i = 0; i < collect.size(); i++) {
                 collect[i].val = collect[i].val * one_a + b;
             }
         }
