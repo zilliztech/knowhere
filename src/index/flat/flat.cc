@@ -400,6 +400,10 @@ KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(FLAT, FlatIndexNode,
                                                   knowhere::feature::MMAP,
                                               faiss::IndexFlat);
 
+KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(FLAT, FlatIndexNode,
+                                        knowhere::feature::NO_TRAIN | knowhere::feature::KNN | knowhere::feature::MMAP,
+                                        faiss::IndexFlat);
+
 KNOWHERE_SIMPLE_REGISTER_DENSE_BIN_GLOBAL(BINFLAT, FlatIndexNode,
                                           knowhere::feature::NO_TRAIN | knowhere::feature::KNN |
                                               knowhere::feature::MMAP,

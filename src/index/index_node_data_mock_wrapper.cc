@@ -83,4 +83,6 @@ IndexNodeDataMockWrapper<DataType>::GetVectorByIds(const DataSetPtr dataset) con
 
 template class knowhere::IndexNodeDataMockWrapper<knowhere::fp16>;
 template class knowhere::IndexNodeDataMockWrapper<knowhere::bf16>;
+template class knowhere::IndexNodeDataMockWrapper<knowhere::int8>;
+
 }  // namespace knowhere

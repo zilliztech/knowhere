@@ -2918,21 +2918,21 @@ KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_DEPRECATED,
 #else
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW, BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback,
                                                 knowhere::feature::MMAP | knowhere::feature::MV)
-KNOWHERE_SIMPLE_REGISTER_DENSE_INT8_GLOBAL(HNSW, BaseFaissRegularIndexHNSWFlatNodeTemplate,
-                                           knowhere::feature::MMAP | knowhere::feature::MV)
+KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(HNSW, BaseFaissRegularIndexHNSWFlatNodeTemplate,
+                                          knowhere::feature::MMAP | knowhere::feature::MV)
 #endif
 
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_SQ, BaseFaissRegularIndexHNSWSQNodeTemplate,
                                                 knowhere::feature::MMAP | knowhere::feature::MV)
-KNOWHERE_SIMPLE_REGISTER_DENSE_INT8_GLOBAL(HNSW_SQ, BaseFaissRegularIndexHNSWSQNodeTemplate,
-                                           knowhere::feature::MMAP | knowhere::feature::MV)
+KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(HNSW_SQ, BaseFaissRegularIndexHNSWSQNodeTemplate,
+                                          knowhere::feature::MMAP | knowhere::feature::MV)
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTemplate,
                                                 knowhere::feature::MMAP | knowhere::feature::MV)
-KNOWHERE_SIMPLE_REGISTER_DENSE_INT8_GLOBAL(HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTemplate,
-                                           knowhere::feature::MMAP | knowhere::feature::MV)
+KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTemplate,
+                                          knowhere::feature::MMAP | knowhere::feature::MV)
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNodeTemplate,
                                                 knowhere::feature::MMAP | knowhere::feature::MV)
-KNOWHERE_SIMPLE_REGISTER_DENSE_INT8_GLOBAL(HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNodeTemplate,
-                                           knowhere::feature::MMAP | knowhere::feature::MV)
+KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNodeTemplate,
+                                          knowhere::feature::MMAP | knowhere::feature::MV)
 
 }  // namespace knowhere
