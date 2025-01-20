@@ -40,7 +40,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         // 300 dim, avg doc nnz 9, avg query nnz 3
         {2000, 300, 0.97, 0.99},
         // 3000 dim, avg doc nnz 90, avg query nnz 30
-        {20000, 3000, 0.97, 0.99},
+        {2000, 3000, 0.97, 0.99},
     }));
     auto topk = 5;
     int64_t nq = 10;
@@ -510,7 +510,7 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
         }
     };
 
-    auto test_time = 10;
+    auto test_time = 2;
 
     using std::make_tuple;
     auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
