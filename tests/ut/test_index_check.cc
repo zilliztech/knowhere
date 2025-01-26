@@ -483,7 +483,7 @@ TEST_CASE("Test index feature check", "[IndexFeatureCheck]") {
     }
 
     SECTION("Check MV") {
-        // Only HNSW family supports Materialized View
+        // HNSW family supports Materialized View
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW, knowhere::feature::MV));
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW_SQ, knowhere::feature::MV));
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW_SQ, knowhere::feature::MV));
@@ -491,6 +491,14 @@ TEST_CASE("Test index feature check", "[IndexFeatureCheck]") {
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW_PQ, knowhere::feature::MV));
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW_PRQ, knowhere::feature::MV));
 
+#ifdef KNOWHERE_WITH_DISKANN
+#ifdef KNOWHERE_WITH_CARDINAL
+        // cardinal diskann supports mv
+        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_DISKANN, knowhere::feature::MV));
+#else
+        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_DISKANN, knowhere::feature::MV));
+#endif
+#endif
         // All other indexes do not support MV
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_FAISS_IDMAP, knowhere::feature::MV));
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_FAISS_IVFFLAT, knowhere::feature::MV));
@@ -509,10 +517,6 @@ TEST_CASE("Test index feature check", "[IndexFeatureCheck]") {
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_RAFT_IVFFLAT, knowhere::feature::MV));
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_RAFT_IVFPQ, knowhere::feature::MV));
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_RAFT_CAGRA, knowhere::feature::MV));
-#endif
-
-#ifdef KNOWHERE_WITH_DISKANN
-        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_DISKANN, knowhere::feature::MV));
 #endif
     }
 }
