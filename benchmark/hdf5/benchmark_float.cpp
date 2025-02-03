@@ -314,7 +314,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
     // DISKANN index params
     const std::vector<int32_t> SEARCH_LISTs_ = {100, 200, 400};
 
-    // RAFT cagra index params
+    // cuVS cagra index params
     const std::vector<int32_t> GRAPH_DEGREEs_ = {8, 16, 32};
     const std::vector<int32_t> ITOPK_SIZEs_ = {128, 192, 256};
 };

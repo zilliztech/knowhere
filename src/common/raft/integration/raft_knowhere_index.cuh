@@ -184,7 +184,8 @@ codebook_string_to_cuvs_codebook_gen(std::string const& codebook_string) {
 build_algo_string_to_cagra_build_algo(std::string const& algo_string, int intermediate_graph_degree,
                                       int nn_descent_niter, cuvs::distance::DistanceType metric) {
     std::variant<std::monostate, cuvs::neighbors::cagra::graph_build_params::ivf_pq_params,
-                 cuvs::neighbors::cagra::graph_build_params::nn_descent_params>
+                 cuvs::neighbors::cagra::graph_build_params::nn_descent_params,
+                 cuvs::neighbors::cagra::graph_build_params::iterative_search_params>
         result = cuvs::neighbors::cagra::graph_build_params::ivf_pq_params();
     if (algo_string == "IVF_PQ") {
         result = cuvs::neighbors::cagra::graph_build_params::ivf_pq_params();
@@ -193,6 +194,8 @@ build_algo_string_to_cagra_build_algo(std::string const& algo_string, int interm
             cuvs::neighbors::cagra::graph_build_params::nn_descent_params(intermediate_graph_degree, metric);
         nn_desc_params.max_iterations = nn_descent_niter;
         result = nn_desc_params;
+    } else if (algo_string == "ITERATIVE") {
+        result = cuvs::neighbors::cagra::graph_build_params::iterative_search_params();
     } else {
         RAFT_FAIL("Unrecognized CAGRA build algo %s", algo_string.c_str());
     }

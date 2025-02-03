@@ -38,28 +38,28 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
             {
                 auto ptr = std::get_if<0>(&x.second);
                 if (ptr != nullptr) {
-                    delete[] *ptr;
+                    delete[] * ptr;
                 }
             }
             {
                 auto ptr = std::get_if<1>(&x.second);
                 if (ptr != nullptr) {
-                    delete[] *ptr;
+                    delete[] * ptr;
                 }
             }
             {
                 auto ptr = std::get_if<2>(&x.second);
                 if (ptr != nullptr) {
-                    delete[] *ptr;
+                    delete[] * ptr;
                 }
             }
             {
                 auto ptr = std::get_if<3>(&x.second);
                 if (ptr != nullptr) {
                     if (is_sparse) {
-                        delete[] (sparse::SparseRow<float>*)(*ptr);
+                        delete[](sparse::SparseRow<float>*)(*ptr);
                     } else {
-                        delete[] (char*)(*ptr);
+                        delete[](char*)(*ptr);
                     }
                 }
             }
