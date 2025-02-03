@@ -25,18 +25,18 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <istream>
-#include <optional>
-#include <ostream>
-#include <raft/core/bitmap.cuh>
-#include <raft/core/bitset.cuh>
-#include <raft/core/logger.hpp>
-#include <raft/core/copy.cuh>
 #include <cuvs/neighbors/brute_force.hpp>
 #include <cuvs/neighbors/cagra.hpp>
 #include <cuvs/neighbors/ivf_flat.hpp>
 #include <cuvs/neighbors/ivf_pq.hpp>
 #include <cuvs/neighbors/refine.hpp>
+#include <istream>
+#include <optional>
+#include <ostream>
+#include <raft/core/bitmap.cuh>
+#include <raft/core/bitset.cuh>
+#include <raft/core/copy.cuh>
+#include <raft/core/logger.hpp>
 #include <type_traits>
 
 #include "common/raft/proto/raft_index_kind.hpp"
@@ -109,7 +109,7 @@ post_filter(raft::resources const& res, filter_lambda_t const& sample_filter, in
             auto index = thrust::get<0>(index_id_distance);
             auto& id = thrust::get<1>(index_id_distance);
             auto& distance = thrust::get<2>(index_id_distance);
-            //if (!sample_filter(index / index_mdspan.extent(1), id)) {
+            // if (!sample_filter(index / index_mdspan.extent(1), id)) {
             if (!sample_filter.bitset_view_.test(id)) {
                 id = std::numeric_limits<std::remove_reference_t<decltype(id)>>::max();
                 distance = std::numeric_limits<std::remove_reference_t<decltype(distance)>>::max();
@@ -282,8 +282,8 @@ struct raft_index {
                 return raft_index<underlying_index_type, raft_index_args...>{
                     cuvs::neighbors::cagra::build(res, index_params, data)};
             } else if constexpr (vector_index_kind == raft_index_kind::ivf_pq) {
-                return raft_index<underlying_index_type, raft_index_args...>{cuvs::neighbors::ivf_pq::build(
-                    res, index_params, data)};
+                return raft_index<underlying_index_type, raft_index_args...>{
+                    cuvs::neighbors::ivf_pq::build(res, index_params, data)};
             } else if constexpr (vector_index_kind == raft_index_kind::ivf_flat) {
                 return raft_index<underlying_index_type, raft_index_args...>{
                     cuvs::neighbors::ivf_flat::build(res, index_params, data)};
@@ -305,7 +305,8 @@ struct raft_index {
         }
     }
 
-    template <typename T, typename IdxT, typename InputIdxT, typename FilterT = cuvs::neighbors::filtering::none_sample_filter>
+    template <typename T, typename IdxT, typename InputIdxT,
+              typename FilterT = cuvs::neighbors::filtering::none_sample_filter>
     auto static search(raft::resources const& res, raft_index<underlying_index_type, raft_index_args...> const& index,
                        search_params_type const& search_params, raft::device_matrix_view<T const, InputIdxT> queries,
                        raft::device_matrix_view<IdxT, InputIdxT> neighbors,
@@ -334,8 +335,7 @@ struct raft_index {
         }
 
         if constexpr (vector_index_kind == raft_index_kind::brute_force) {
-            cuvs::neighbors::brute_force::search(res, underlying_index, queries, neighbors_tmp,
-                                                 distances_tmp);
+            cuvs::neighbors::brute_force::search(res, underlying_index, queries, neighbors_tmp, distances_tmp);
             if constexpr (!std::is_same_v<FilterT, cuvs::neighbors::filtering::none_sample_filter>) {
                 // TODO(wphicks): This can be replaced once prefiltering is
                 // implemented for brute force upstream
@@ -345,11 +345,11 @@ struct raft_index {
             cuvs::neighbors::ivf_flat::search(res, search_params, underlying_index, queries, neighbors_tmp,
                                               distances_tmp, filter);
         } else if constexpr (vector_index_kind == raft_index_kind::ivf_pq) {
-            cuvs::neighbors::ivf_pq::search(res, search_params, underlying_index, queries, neighbors_tmp,
-                                            distances_tmp, filter);
+            cuvs::neighbors::ivf_pq::search(res, search_params, underlying_index, queries, neighbors_tmp, distances_tmp,
+                                            filter);
         } else if constexpr (vector_index_kind == raft_index_kind::cagra) {
-            cuvs::neighbors::cagra::search(res, search_params, underlying_index, queries, neighbors_tmp,
-                                           distances_tmp, filter);
+            cuvs::neighbors::cagra::search(res, search_params, underlying_index, queries, neighbors_tmp, distances_tmp,
+                                           filter);
         }
         if (refine_ratio > 1.0f) {
             if (dataset.has_value()) {
@@ -363,8 +363,9 @@ struct raft_index {
                                                       InputIdxT(dataset->extent(1))),
                         raft::make_device_matrix_view(queries.data_handle(), InputIdxT(queries.extent(0)),
                                                       InputIdxT(queries.extent(1))),
-                        raft::make_const_mdspan(raft::make_device_matrix_view(
-                            neighbors_tmp.data_handle(), InputIdxT(neighbors_tmp.extent(0)), InputIdxT(neighbors_tmp.extent(1)))),
+                        raft::make_const_mdspan(raft::make_device_matrix_view(neighbors_tmp.data_handle(),
+                                                                              InputIdxT(neighbors_tmp.extent(0)),
+                                                                              InputIdxT(neighbors_tmp.extent(1)))),
                         raft::make_device_matrix_view(neighbors.data_handle(), InputIdxT(neighbors.extent(0)),
                                                       InputIdxT(neighbors.extent(1))),
                         raft::make_device_matrix_view(distances.data_handle(), InputIdxT(distances.extent(0)),

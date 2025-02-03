@@ -191,10 +191,10 @@ class Benchmark_base {
     void
     free_all() {
         if (xb_ != nullptr) {
-            delete[](float*) xb_;
+            delete[] (float*)xb_;
         }
         if (xq_ != nullptr) {
-            delete[](float*) xq_;
+            delete[] (float*)xq_;
         }
         if (gt_radius_ != nullptr) {
             delete[] gt_radius_;

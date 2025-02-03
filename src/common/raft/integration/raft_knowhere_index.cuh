@@ -17,14 +17,14 @@
 #pragma once
 #include <cmath>
 #include <cstdint>
-#include <istream>
-#include <limits>
-#include <ostream>
 #include <cuvs/core/bitmap.hpp>
 #include <cuvs/core/bitset.hpp>
 #include <cuvs/distance/distance.hpp>
 #include <cuvs/neighbors/common.hpp>
 #include <cuvs/neighbors/ivf_pq.hpp>
+#include <istream>
+#include <limits>
+#include <ostream>
 #include <raft/core/copy.cuh>
 #include <raft/core/device_resources_manager.hpp>
 #include <raft/core/device_setter.hpp>
@@ -32,7 +32,6 @@
 #include <raft/core/resource/thrust_policy.hpp>
 #include <raft/core/serialize.hpp>
 #include <raft/linalg/normalize.cuh>
-
 #include <tuple>
 #include <type_traits>
 
@@ -182,14 +181,16 @@ codebook_string_to_cuvs_codebook_gen(std::string const& codebook_string) {
     return result;
 }
 [[nodiscard]] inline auto
-build_algo_string_to_cagra_build_algo(std::string const& algo_string, int intermediate_graph_degree, int nn_descent_niter, cuvs::distance::DistanceType metric) {
-    std::variant<std::monostate,
-               cuvs::neighbors::cagra::graph_build_params::ivf_pq_params,
-               cuvs::neighbors::cagra::graph_build_params::nn_descent_params> result = cuvs::neighbors::cagra::graph_build_params::ivf_pq_params();
+build_algo_string_to_cagra_build_algo(std::string const& algo_string, int intermediate_graph_degree,
+                                      int nn_descent_niter, cuvs::distance::DistanceType metric) {
+    std::variant<std::monostate, cuvs::neighbors::cagra::graph_build_params::ivf_pq_params,
+                 cuvs::neighbors::cagra::graph_build_params::nn_descent_params>
+        result = cuvs::neighbors::cagra::graph_build_params::ivf_pq_params();
     if (algo_string == "IVF_PQ") {
         result = cuvs::neighbors::cagra::graph_build_params::ivf_pq_params();
     } else if (algo_string == "NN_DESCENT") {
-        auto nn_desc_params = cuvs::neighbors::cagra::graph_build_params::nn_descent_params(intermediate_graph_degree, metric);
+        auto nn_desc_params =
+            cuvs::neighbors::cagra::graph_build_params::nn_descent_params(intermediate_graph_degree, metric);
         nn_desc_params.max_iterations = nn_descent_niter;
         result = nn_desc_params;
     } else {
@@ -305,7 +306,8 @@ config_to_index_params(raft_knowhere_config const& raw_config) {
         result.graph_degree = *(config.graph_degree);
         result.attach_dataset_on_build = config.add_data_on_build;
         // TODO(mide): add compression
-        result.graph_build_params = build_algo_string_to_cagra_build_algo(*(config.build_algo), result.intermediate_graph_degree, *(config.nn_descent_niter), result.metric);
+        result.graph_build_params = build_algo_string_to_cagra_build_algo(
+            *(config.build_algo), result.intermediate_graph_degree, *(config.nn_descent_niter), result.metric);
     }
     return result;
 }
@@ -459,15 +461,17 @@ struct raft_knowhere_index<IndexKind>::impl {
                                         raft::linalg::NormType::L2Norm);
         }
 
-        auto device_bitset =
-            std::optional<cuvs::core::bitset<knowhere_bitset_internal_data_type, knowhere_bitset_internal_indexing_type>>{};
+        auto device_bitset = std::optional<
+            cuvs::core::bitset<knowhere_bitset_internal_data_type, knowhere_bitset_internal_indexing_type>>{};
         auto k_tmp = k;
         if (bitset_data != nullptr && bitset_byte_size != 0) {
             device_bitset =
-                cuvs::core::bitset<knowhere_bitset_internal_data_type, knowhere_bitset_internal_indexing_type>(res, bitset_size);
+                cuvs::core::bitset<knowhere_bitset_internal_data_type, knowhere_bitset_internal_indexing_type>(
+                    res, bitset_size);
             raft::copy(res,
-                raft::make_device_vector_view<knowhere_bitset_data_type, knowhere_bitset_indexing_type>(reinterpret_cast<knowhere_bitset_data_type*>(device_bitset->data()), bitset_byte_size),
-                raft::make_host_vector_view(bitset_data, bitset_byte_size));
+                       raft::make_device_vector_view<knowhere_bitset_data_type, knowhere_bitset_indexing_type>(
+                           reinterpret_cast<knowhere_bitset_data_type*>(device_bitset->data()), bitset_byte_size),
+                       raft::make_host_vector_view(bitset_data, bitset_byte_size));
             if constexpr (index_kind == raft_proto::raft_index_kind::brute_force) {
                 k_tmp += device_bitset->count(res);
                 if (k_tmp == k) {
@@ -505,8 +509,8 @@ struct raft_knowhere_index<IndexKind>::impl {
             raft_index_type::search(
                 res, *index_, search_params, raft::make_const_mdspan(device_data_storage.view()), device_ids,
                 device_distances, config.refine_ratio, input_indexing_type{}, dataset_view,
-                cuvs::neighbors::filtering::bitset_filter<knowhere_bitset_internal_data_type, knowhere_bitset_internal_indexing_type>{
-                    bitset_view});
+                cuvs::neighbors::filtering::bitset_filter<knowhere_bitset_internal_data_type,
+                                                          knowhere_bitset_internal_indexing_type>{bitset_view});
         } else {
             raft_index_type::search(res, *index_, search_params, raft::make_const_mdspan(device_data_storage.view()),
                                     device_ids, device_distances, config.refine_ratio, input_indexing_type{},
