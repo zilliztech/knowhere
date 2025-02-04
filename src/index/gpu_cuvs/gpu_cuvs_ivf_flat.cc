@@ -17,21 +17,20 @@
 
 #include <vector>
 
-#include "common/raft/proto/raft_index_kind.hpp"
-#include "gpu_raft.h"
+#include "common/cuvs/proto/cuvs_index_kind.hpp"
+#include "gpu_cuvs.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/index_node_thread_pool_wrapper.h"
 #include "raft/util/cuda_rt_essentials.hpp"
-
 namespace knowhere {
-KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_BRUTE_FORCE, GpuRaftBruteForceIndexNode, fp32,
-                                          knowhere::feature::GPU_KNN_FLOAT_INDEX, []() {
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_IVF_FLAT, GpuCuvsIvfFlatIndexNode, fp32,
+                                          knowhere::feature::GPU_ANN_FLOAT_INDEX, []() {
                                               int count;
                                               RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
                                               return count * cuda_concurrent_size_per_device;
                                           }());
-KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_BRUTE_FORCE, GpuRaftBruteForceIndexNode, fp32,
-                                          knowhere::feature::GPU_KNN_FLOAT_INDEX, []() {
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_IVF_FLAT, GpuCuvsIvfFlatIndexNode, fp32,
+                                          knowhere::feature::GPU_ANN_FLOAT_INDEX, []() {
                                               int count;
                                               RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
                                               return count * cuda_concurrent_size_per_device;

@@ -17,8 +17,8 @@
 
 #include <vector>
 
-#include "common/raft/proto/raft_index_kind.hpp"
-#include "gpu_raft.h"
+#include "common/cuvs/proto/cuvs_index_kind.hpp"
+#include "gpu_cuvs.h"
 #include "hnswlib/hnswalg.h"
 #include "knowhere/dataset.h"
 #include "knowhere/index/index_factory.h"
@@ -28,29 +28,29 @@
 namespace knowhere {
 
 template <typename DataType>
-class GpuRaftCagraHybridIndexNode : public GpuRaftCagraIndexNode<DataType> {
+class GpuCuvsCagraHybridIndexNode : public GpuCuvsCagraIndexNode<DataType> {
  public:
     using DistType = float;
-    GpuRaftCagraHybridIndexNode(int32_t version, const Object& object)
-        : GpuRaftCagraIndexNode<DataType>(version, object) {
+    GpuCuvsCagraHybridIndexNode(int32_t version, const Object& object)
+        : GpuCuvsCagraIndexNode<DataType>(version, object) {
     }
 
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
-        const GpuRaftCagraConfig& cagra_cfg = static_cast<const GpuRaftCagraConfig&>(*cfg);
+        const GpuCuvsCagraConfig& cagra_cfg = static_cast<const GpuCuvsCagraConfig&>(*cfg);
         if (cagra_cfg.adapt_for_cpu.value())
             adapt_for_cpu = true;
-        return GpuRaftCagraIndexNode<DataType>::Train(dataset, cfg);
+        return GpuCuvsCagraIndexNode<DataType>::Train(dataset, cfg);
     }
 
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
         if (!adapt_for_cpu || hnsw_index_ == nullptr)
-            return GpuRaftCagraIndexNode<DataType>::Search(dataset, std::move(cfg), bitset);
+            return GpuCuvsCagraIndexNode<DataType>::Search(dataset, std::move(cfg), bitset);
         auto nq = dataset->GetRows();
         auto xq = dataset->GetTensor();
 
-        auto cagra_cfg = static_cast<const GpuRaftCagraConfig&>(*cfg);
+        auto cagra_cfg = static_cast<const GpuCuvsCagraConfig&>(*cfg);
         auto k = cagra_cfg.k.value();
 
         auto p_id = std::make_unique<int64_t[]>(k * nq);
@@ -86,7 +86,7 @@ class GpuRaftCagraHybridIndexNode : public GpuRaftCagraIndexNode<DataType> {
     Status
     Serialize(BinarySet& binset) const override {
         if (!adapt_for_cpu)
-            return GpuRaftCagraIndexNode<DataType>::Serialize(binset);
+            return GpuCuvsCagraIndexNode<DataType>::Serialize(binset);
         auto result = Status::success;
         std::stringbuf buf;
         if (!this->index_.is_trained()) {
@@ -98,7 +98,7 @@ class GpuRaftCagraHybridIndexNode : public GpuRaftCagraIndexNode<DataType> {
                 this->index_.synchronize(true);
             } catch (const std::exception& e) {
                 LOG_KNOWHERE_ERROR_ << e.what();
-                result = Status::raft_inner_error;
+                result = Status::cuvs_inner_error;
             }
             os.flush();
         }
@@ -114,7 +114,7 @@ class GpuRaftCagraHybridIndexNode : public GpuRaftCagraIndexNode<DataType> {
     int64_t
     Count() const override {
         if (!adapt_for_cpu)
-            return GpuRaftCagraIndexNode<DataType>::Count();
+            return GpuCuvsCagraIndexNode<DataType>::Count();
         if (!hnsw_index_) {
             return 0;
         }
@@ -147,7 +147,7 @@ class GpuRaftCagraHybridIndexNode : public GpuRaftCagraIndexNode<DataType> {
             return Status::success;
         }
 
-        return GpuRaftCagraIndexNode<DataType>::Deserialize(binset, std::move(cfg));
+        return GpuCuvsCagraIndexNode<DataType>::Deserialize(binset, std::move(cfg));
     }
 
     Status
@@ -160,13 +160,13 @@ class GpuRaftCagraHybridIndexNode : public GpuRaftCagraIndexNode<DataType> {
     std::unique_ptr<hnswlib::HierarchicalNSW<DataType, float, hnswlib::None>> hnsw_index_ = nullptr;
 };
 
-KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_CAGRA, GpuRaftCagraHybridIndexNode, fp32,
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_CAGRA, GpuCuvsCagraHybridIndexNode, fp32,
                                           knowhere::feature::GPU_ANN_FLOAT_INDEX, []() {
                                               int count;
                                               RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
                                               return count * cuda_concurrent_size_per_device;
                                           }());
-KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuRaftCagraHybridIndexNode, fp32,
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuCuvsCagraHybridIndexNode, fp32,
                                           knowhere::feature::GPU_ANN_FLOAT_INDEX, []() {
                                               int count;
                                               RAFT_CUDA_TRY(cudaGetDeviceCount(&count));

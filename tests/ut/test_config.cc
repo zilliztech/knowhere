@@ -22,7 +22,7 @@
 #include "index/diskann/diskann_config.h"
 #endif
 #ifdef KNOWHERE_WITH_CUVS
-#include "index/gpu_raft/gpu_raft_cagra_config.h"
+#include "index/gpu_cuvs/gpu_cuvs_cagra_config.h"
 #endif
 
 void
@@ -433,14 +433,14 @@ TEST_CASE("Test config json parse", "[config]") {
 
         {
             // search without params
-            knowhere::GpuRaftCagraConfig cagra_config;
+            knowhere::GpuCuvsCagraConfig cagra_config;
             s = knowhere::Config::Load(cagra_config, json, knowhere::SEARCH);
             CHECK(s == knowhere::Status::success);
         }
 
         {
             // search only with legal search_width
-            knowhere::GpuRaftCagraConfig cagra_config;
+            knowhere::GpuCuvsCagraConfig cagra_config;
             auto tmp_json = json;
             tmp_json["search_width"] = 4;
             s = knowhere::Config::Load(cagra_config, tmp_json, knowhere::SEARCH);
@@ -449,7 +449,7 @@ TEST_CASE("Test config json parse", "[config]") {
 
         {
             // search only with illegal search_width with default itopk
-            knowhere::GpuRaftCagraConfig cagra_config;
+            knowhere::GpuCuvsCagraConfig cagra_config;
             auto tmp_json = json;
             tmp_json["search_width"] = 2;
             s = knowhere::Config::Load(cagra_config, tmp_json, knowhere::SEARCH);
@@ -458,7 +458,7 @@ TEST_CASE("Test config json parse", "[config]") {
 
         {
             // search only with legal itopk
-            knowhere::GpuRaftCagraConfig cagra_config;
+            knowhere::GpuCuvsCagraConfig cagra_config;
             auto tmp_json = json;
             tmp_json["itopk_size"] = 120;
             s = knowhere::Config::Load(cagra_config, tmp_json, knowhere::SEARCH);
@@ -467,7 +467,7 @@ TEST_CASE("Test config json parse", "[config]") {
 
         {
             // search only with illegal itopk and default search_width
-            knowhere::GpuRaftCagraConfig cagra_config;
+            knowhere::GpuCuvsCagraConfig cagra_config;
             auto tmp_json = json;
             tmp_json["itopk_size"] = 30;
             s = knowhere::Config::Load(cagra_config, tmp_json, knowhere::SEARCH);
@@ -476,7 +476,7 @@ TEST_CASE("Test config json parse", "[config]") {
 
         {
             // search only with illegal itopk and search width
-            knowhere::GpuRaftCagraConfig cagra_config;
+            knowhere::GpuCuvsCagraConfig cagra_config;
             auto tmp_json = json;
             tmp_json["itopk_size"] = 30;
             tmp_json["search_width"] = 3;
@@ -486,7 +486,7 @@ TEST_CASE("Test config json parse", "[config]") {
 
         {
             // search only with legal itopk and search width
-            knowhere::GpuRaftCagraConfig cagra_config;
+            knowhere::GpuCuvsCagraConfig cagra_config;
             auto tmp_json = json;
             tmp_json["itopk_size"] = 97;
             tmp_json["search_width"] = 2;
@@ -496,7 +496,7 @@ TEST_CASE("Test config json parse", "[config]") {
 
         {
             // search only with legal itopk and search width
-            knowhere::GpuRaftCagraConfig cagra_config;
+            knowhere::GpuCuvsCagraConfig cagra_config;
             auto tmp_json = json;
             tmp_json["itopk_size"] = 30;
             tmp_json["search_width"] = 4;

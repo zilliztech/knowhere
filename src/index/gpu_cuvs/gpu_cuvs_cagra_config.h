@@ -17,8 +17,8 @@
 #ifndef GPU_CUVS_CAGRA_CONFIG_H
 #define GPU_CUVS_CAGRA_CONFIG_H
 
-#include "common/raft/integration/raft_knowhere_config.hpp"
-#include "common/raft/proto/raft_index_kind.hpp"
+#include "common/cuvs/integration/cuvs_knowhere_config.hpp"
+#include "common/cuvs/proto/cuvs_index_kind.hpp"
 #include "index/ivf/ivf_config.h"
 #include "knowhere/config.h"
 
@@ -29,7 +29,7 @@ constexpr const CFG_INT::value_type kAlignFactor = 32;
 constexpr const CFG_INT::value_type kItopkSize = 64;
 }  // namespace
 
-struct GpuRaftCagraConfig : public BaseConfig {
+struct GpuCuvsCagraConfig : public BaseConfig {
     CFG_BOOL cache_dataset_on_device;
     CFG_FLOAT refine_ratio;
     CFG_INT intermediate_graph_degree;
@@ -50,7 +50,7 @@ struct GpuRaftCagraConfig : public BaseConfig {
     CFG_BOOL adapt_for_cpu;
     CFG_INT ef;
 
-    KNOHWERE_DECLARE_CONFIG(GpuRaftCagraConfig) {
+    KNOHWERE_DECLARE_CONFIG(GpuCuvsCagraConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(cache_dataset_on_device)
             .set_default(false)
             .description("cache dataset on device for refinement")
@@ -150,8 +150,8 @@ struct GpuRaftCagraConfig : public BaseConfig {
 };
 
 [[nodiscard]] inline auto
-to_raft_knowhere_config(GpuRaftCagraConfig const& cfg) {
-    auto result = raft_knowhere::raft_knowhere_config{raft_proto::raft_index_kind::cagra};
+to_cuvs_knowhere_config(GpuCuvsCagraConfig const& cfg) {
+    auto result = cuvs_knowhere::cuvs_knowhere_config{cuvs_proto::cuvs_index_kind::cagra};
 
     result.metric_type = cfg.metric_type.value();
     result.cache_dataset_on_device = cfg.cache_dataset_on_device.value();

@@ -37,7 +37,7 @@ enum class Status {
     disk_file_error = 15,
     invalid_value_in_json = 16,
     arithmetic_overflow = 17,
-    raft_inner_error = 18,
+    cuvs_inner_error = 18,
     invalid_binary_set = 19,
     invalid_instruction_set = 20,
     cardinal_inner_error = 21,
@@ -87,7 +87,7 @@ Status2String(knowhere::Status status) {
             return "invalid value in json";
         case knowhere::Status::arithmetic_overflow:
             return "arithmetic overflow";
-        case knowhere::Status::raft_inner_error:
+        case knowhere::Status::cuvs_inner_error:
             return "raft inner error";
         case knowhere::Status::invalid_binary_set:
             return "invalid binary set";

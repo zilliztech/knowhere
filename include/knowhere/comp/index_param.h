@@ -120,11 +120,11 @@ constexpr const char* ENSURE_TOPK_FULL = "ensure_topk_full";
 constexpr const char* CODE_SIZE = "code_size";
 constexpr const char* RAW_DATA_STORE_PREFIX = "raw_data_store_prefix";
 
-// RAFT Params
+// cuVS Params
 constexpr const char* REFINE_RATIO = "refine_ratio";
 constexpr const char* CACHE_DATASET_ON_DEVICE = "cache_dataset_on_device";
 
-// RAFT-specific IVF Params
+// cuVS-specific IVF Params
 constexpr const char* KMEANS_N_ITERS = "kmeans_n_iters";
 constexpr const char* KMEANS_TRAINSET_FRACTION = "kmeans_trainset_fraction";
 constexpr const char* ADAPTIVE_CENTERS = "adaptive_centers";                              // IVF FLAT

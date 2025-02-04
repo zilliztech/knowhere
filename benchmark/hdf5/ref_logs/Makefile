@@ -24,7 +24,7 @@ test_binary_range_hnsw:
 # Test Knowhere float index
 test_float: test_float_brute_force test_float_idmap test_float_ivf_flat test_float_ivf_sq8 test_float_ivf_pq test_float_scann \
             test_float_hnsw_flat test_float_hnsw_sq test_float_hnsw_pq test_float_diskann
-test_float_raft: test_float_raft_brute_force test_float_raft_ivf_flat test_float_raft_ivf_pq test_float_raft_cagra
+test_float_cuvs: test_float_cuvs_brute_force test_float_cuvs_ivf_flat test_float_cuvs_ivf_pq test_float_cuvs_cagra
 test_float_ivf: test_float_ivf_flat test_float_ivf_sq8 test_float_ivf_pq
 test_float_hnsw: test_float_hnsw_flat test_float_hnsw_sq test_float_hnsw_pq test_float_hnsw_prq
 
@@ -51,14 +51,14 @@ test_float_hnsw_prq:
 test_float_diskann:
 	./benchmark_float --gtest_filter="Benchmark_float.TEST_DISKANN" | tee test_float_diskann.log
 
-test_float_raft_brute_force:
-	./benchmark_float --gtest_filter="Benchmark_float.TEST_RAFT_BRUTE_FORCE" | tee test_float_raft_brute_force.log
-test_float_raft_ivf_flat:
-	./benchmark_float --gtest_filter="Benchmark_float.TEST_RAFT_IVF_FLAT" | tee test_float_raft_ivf_flat.log
-test_float_raft_ivf_pq:
-	./benchmark_float --gtest_filter="Benchmark_float.TEST_RAFT_IVF_PQ" | tee test_float_raft_ivf_pq.log
-test_float_raft_cagra:
-	./benchmark_float --gtest_filter="Benchmark_float.TEST_RAFT_CAGRA" | tee test_float_raft_cagra.log
+test_float_cuvs_brute_force:
+	./benchmark_float --gtest_filter="Benchmark_float.TEST_CUVS_BRUTE_FORCE" | tee test_float_cuvs_brute_force.log
+test_float_cuvs_ivf_flat:
+	./benchmark_float --gtest_filter="Benchmark_float.TEST_CUVS_IVF_FLAT" | tee test_float_cuvs_ivf_flat.log
+test_float_cuvs_ivf_pq:
+	./benchmark_float --gtest_filter="Benchmark_float.TEST_CUVS_IVF_PQ" | tee test_float_cuvs_ivf_pq.log
+test_float_cuvs_cagra:
+	./benchmark_float --gtest_filter="Benchmark_float.TEST_CUVS_CAGRA" | tee test_float_cuvs_cagra.log
 
 ###################################################################################################
 # Test Knowhere float index bitset
@@ -126,7 +126,7 @@ test_float_range_multi_hnsw:
 ###################################################################################################
 # Test Knowhere float index qps
 test_float_qps: test_float_qps_idmap test_float_qps_ivf_flat test_float_qps_ivf_sq8 test_float_qps_ivf_pq test_float_qps_hnsw test_float_qps_scann test_float_qps_diskann
-test_float_qps_raft: test_float_qps_raft_brute_force test_float_qps_raft_ivf_flat test_float_qps_raft_ivf_pq test_float_qps_raft_cagra
+test_float_qps_cuvs: test_float_qps_cuvs_brute_force test_float_qps_cuvs_ivf_flat test_float_qps_cuvs_ivf_pq test_float_qps_cuvs_cagra
 
 test_float_qps_idmap:
 	./benchmark_float_qps --gtest_filter="Benchmark_float_qps.TEST_IDMAP" | tee test_float_qps_idmap.log
@@ -143,14 +143,14 @@ test_float_qps_scann:
 test_float_qps_diskann:
 	./benchmark_float_qps --gtest_filter="Benchmark_float_qps.TEST_DISKANN" | tee test_float_qps_diskann.log
 
-test_float_qps_raft_brute_force:
-	./benchmark_float_qps --gtest_filter="Benchmark_float_qps.TEST_RAFT_BRUTE_FORCE" | tee test_float_qps_raft_brute_force.log
-test_float_qps_raft_ivf_flat:
-	./benchmark_float_qps --gtest_filter="Benchmark_float_qps.TEST_RAFT_IVF_FLAT" | tee test_float_qps_raft_ivf_flat.log
-test_float_qps_raft_ivf_pq:
-	./benchmark_float_qps --gtest_filter="Benchmark_float_qps.TEST_RAFT_IVF_PQ" | tee test_float_qps_raft_ivf_pq.log
-test_float_qps_raft_cagra:
-	./benchmark_float_qps --gtest_filter="Benchmark_float_qps.TEST_RAFT_CAGRA" | tee test_float_qps_raft_cagra.log
+test_float_qps_cuvs_brute_force:
+	./benchmark_float_qps --gtest_filter="Benchmark_float_qps.TEST_CUVS_BRUTE_FORCE" | tee test_float_qps_cuvs_brute_force.log
+test_float_qps_cuvs_ivf_flat:
+	./benchmark_float_qps --gtest_filter="Benchmark_float_qps.TEST_CUVS_IVF_FLAT" | tee test_float_qps_cuvs_ivf_flat.log
+test_float_qps_cuvs_ivf_pq:
+	./benchmark_float_qps --gtest_filter="Benchmark_float_qps.TEST_CUVS_IVF_PQ" | tee test_float_qps_cuvs_ivf_pq.log
+test_float_qps_cuvs_cagra:
+	./benchmark_float_qps --gtest_filter="Benchmark_float_qps.TEST_CUVS_CAGRA" | tee test_float_qps_cuvs_cagra.log
 
 ###################################################################################################
 # Test Knowhere float index range qps

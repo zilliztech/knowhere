@@ -17,13 +17,13 @@
 #ifndef GPU_CUVS_BRUTE_FORCE_CONFIG_H
 #define GPU_CUVS_BRUTE_FORCE_CONFIG_H
 
-#include "common/raft/integration/raft_knowhere_config.hpp"
-#include "common/raft/proto/raft_index_kind.hpp"
+#include "common/cuvs/integration/cuvs_knowhere_config.hpp"
+#include "common/cuvs/proto/cuvs_index_kind.hpp"
 #include "knowhere/config.h"
 
 namespace knowhere {
 
-struct GpuRaftBruteForceConfig : public BaseConfig {
+struct GpuCuvsBruteForceConfig : public BaseConfig {
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
         if (param_type == PARAM_TYPE::TRAIN) {
@@ -39,8 +39,8 @@ struct GpuRaftBruteForceConfig : public BaseConfig {
 };
 
 [[nodiscard]] inline auto
-to_raft_knowhere_config(GpuRaftBruteForceConfig const& cfg) {
-    auto result = raft_knowhere::raft_knowhere_config{raft_proto::raft_index_kind::brute_force};
+to_cuvs_knowhere_config(GpuCuvsBruteForceConfig const& cfg) {
+    auto result = cuvs_knowhere::cuvs_knowhere_config{cuvs_proto::cuvs_index_kind::brute_force};
 
     result.metric_type = cfg.metric_type.value();
     result.k = cfg.k.value();

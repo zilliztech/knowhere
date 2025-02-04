@@ -14,9 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "common/raft/integration/raft_knowhere_index.cuh"
-#include "common/raft/proto/raft_index_kind.hpp"
+#include "common/cuvs/integration/cuvs_knowhere_index.cuh"
+#include "common/cuvs/proto/cuvs_index_kind.hpp"
 
-namespace raft_knowhere {
-template struct raft_knowhere_index<raft_proto::raft_index_kind::brute_force>;
-}  // namespace raft_knowhere
+namespace cuvs_knowhere {
+template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::brute_force>;
+}  // namespace cuvs_knowhere

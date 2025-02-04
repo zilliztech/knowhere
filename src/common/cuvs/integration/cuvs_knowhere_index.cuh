@@ -35,51 +35,51 @@
 #include <tuple>
 #include <type_traits>
 
-#include "common/raft/integration/raft_knowhere_index.hpp"
-#include "common/raft/proto/raft_index.cuh"
-#include "common/raft/proto/raft_index_kind.hpp"
+#include "common/cuvs/integration/cuvs_knowhere_index.hpp"
+#include "common/cuvs/proto/cuvs_index.cuh"
+#include "common/cuvs/proto/cuvs_index_kind.hpp"
 #include "knowhere/comp/index_param.h"
 
-namespace raft_knowhere {
+namespace cuvs_knowhere {
 namespace detail {
 
-// This helper struct maps the generic type of RAFT index to the specific
+// This helper struct maps the generic type of cuVS index to the specific
 // instantiation of that index used within knowhere.
-template <bool B, raft_proto::raft_index_kind IndexKind>
-struct raft_index_type_mapper : std::false_type {};
+template <bool B, cuvs_proto::cuvs_index_kind IndexKind>
+struct cuvs_index_type_mapper : std::false_type {};
 
 template <>
-struct raft_index_type_mapper<true, raft_proto::raft_index_kind::brute_force> : std::true_type {
-    using data_type = raft_data_t<raft_proto::raft_index_kind::brute_force>;
-    using indexing_type = raft_indexing_t<raft_proto::raft_index_kind::brute_force>;
-    using type = raft_proto::raft_index<cuvs::neighbors::brute_force::index, data_type>;
+struct cuvs_index_type_mapper<true, cuvs_proto::cuvs_index_kind::brute_force> : std::true_type {
+    using data_type = cuvs_data_t<cuvs_proto::cuvs_index_kind::brute_force>;
+    using indexing_type = cuvs_indexing_t<cuvs_proto::cuvs_index_kind::brute_force>;
+    using type = cuvs_proto::cuvs_index<cuvs::neighbors::brute_force::index, data_type>;
     using underlying_index_type = typename type::vector_index_type;
     using index_params_type = typename type::index_params_type;
     using search_params_type = typename type::search_params_type;
 };
 template <>
-struct raft_index_type_mapper<true, raft_proto::raft_index_kind::ivf_flat> : std::true_type {
-    using data_type = raft_data_t<raft_proto::raft_index_kind::ivf_flat>;
-    using indexing_type = raft_indexing_t<raft_proto::raft_index_kind::ivf_flat>;
-    using type = raft_proto::raft_index<cuvs::neighbors::ivf_flat::index, data_type, indexing_type>;
+struct cuvs_index_type_mapper<true, cuvs_proto::cuvs_index_kind::ivf_flat> : std::true_type {
+    using data_type = cuvs_data_t<cuvs_proto::cuvs_index_kind::ivf_flat>;
+    using indexing_type = cuvs_indexing_t<cuvs_proto::cuvs_index_kind::ivf_flat>;
+    using type = cuvs_proto::cuvs_index<cuvs::neighbors::ivf_flat::index, data_type, indexing_type>;
     using underlying_index_type = typename type::vector_index_type;
     using index_params_type = typename type::index_params_type;
     using search_params_type = typename type::search_params_type;
 };
 template <>
-struct raft_index_type_mapper<true, raft_proto::raft_index_kind::ivf_pq> : std::true_type {
-    using data_type = raft_data_t<raft_proto::raft_index_kind::ivf_pq>;
-    using indexing_type = raft_indexing_t<raft_proto::raft_index_kind::ivf_pq>;
-    using type = raft_proto::raft_index<cuvs::neighbors::ivf_pq::index, indexing_type>;
+struct cuvs_index_type_mapper<true, cuvs_proto::cuvs_index_kind::ivf_pq> : std::true_type {
+    using data_type = cuvs_data_t<cuvs_proto::cuvs_index_kind::ivf_pq>;
+    using indexing_type = cuvs_indexing_t<cuvs_proto::cuvs_index_kind::ivf_pq>;
+    using type = cuvs_proto::cuvs_index<cuvs::neighbors::ivf_pq::index, indexing_type>;
     using underlying_index_type = typename type::vector_index_type;
     using index_params_type = typename type::index_params_type;
     using search_params_type = typename type::search_params_type;
 };
 template <>
-struct raft_index_type_mapper<true, raft_proto::raft_index_kind::cagra> : std::true_type {
-    using data_type = raft_data_t<raft_proto::raft_index_kind::cagra>;
-    using indexing_type = raft_indexing_t<raft_proto::raft_index_kind::cagra>;
-    using type = raft_proto::raft_index<cuvs::neighbors::cagra::index, data_type, indexing_type>;
+struct cuvs_index_type_mapper<true, cuvs_proto::cuvs_index_kind::cagra> : std::true_type {
+    using data_type = cuvs_data_t<cuvs_proto::cuvs_index_kind::cagra>;
+    using indexing_type = cuvs_indexing_t<cuvs_proto::cuvs_index_kind::cagra>;
+    using type = cuvs_proto::cuvs_index<cuvs::neighbors::cagra::index, data_type, indexing_type>;
     using underlying_index_type = typename type::vector_index_type;
     using index_params_type = typename type::index_params_type;
     using search_params_type = typename type::search_params_type;
@@ -105,15 +105,15 @@ struct check_valid_entry {
 
 }  // namespace detail
 
-template <raft_proto::raft_index_kind IndexKind>
-using raft_index_t = typename detail::raft_index_type_mapper<true, IndexKind>::type;
+template <cuvs_proto::cuvs_index_kind IndexKind>
+using cuvs_index_t = typename detail::cuvs_index_type_mapper<true, IndexKind>::type;
 
-template <raft_proto::raft_index_kind IndexKind>
-using raft_index_params_t = typename detail::raft_index_type_mapper<true, IndexKind>::index_params_type;
-template <raft_proto::raft_index_kind IndexKind>
-using raft_search_params_t = typename detail::raft_index_type_mapper<true, IndexKind>::search_params_type;
+template <cuvs_proto::cuvs_index_kind IndexKind>
+using cuvs_index_params_t = typename detail::cuvs_index_type_mapper<true, IndexKind>::index_params_type;
+template <cuvs_proto::cuvs_index_kind IndexKind>
+using raft_search_params_t = typename detail::cuvs_index_type_mapper<true, IndexKind>::search_params_type;
 
-// Metrics are passed between knowhere and RAFT as strings to avoid tight
+// Metrics are passed between knowhere and cuVS as strings to avoid tight
 // coupling between the implementation details of either one.
 [[nodiscard]] inline auto
 metric_string_to_cuvs_distance_type(std::string const& metric_string) {
@@ -277,34 +277,34 @@ dtype_string_to_cuda_dtype(std::string const& dtype_string) {
 
 // Given a generic config without cuVS symbols, convert to cuVS index build
 // parameters
-template <raft_proto::raft_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind>
 [[nodiscard]] auto
-config_to_index_params(raft_knowhere_config const& raw_config) {
+config_to_index_params(cuvs_knowhere_config const& raw_config) {
     RAFT_EXPECTS(raw_config.index_type == IndexKind, "Incorrect index type for this index");
-    auto config = validate_raft_knowhere_config(raw_config);
-    auto result = raft_index_params_t<IndexKind>{};
+    auto config = validate_cuvs_knowhere_config(raw_config);
+    auto result = cuvs_index_params_t<IndexKind>{};
 
     result.metric = metric_string_to_cuvs_distance_type(config.metric_type);
     result.metric_arg = config.metric_arg;
 
-    if constexpr (IndexKind == raft_proto::raft_index_kind::ivf_flat ||
-                  IndexKind == raft_proto::raft_index_kind::ivf_pq) {
+    if constexpr (IndexKind == cuvs_proto::cuvs_index_kind::ivf_flat ||
+                  IndexKind == cuvs_proto::cuvs_index_kind::ivf_pq) {
         result.n_lists = *(config.nlist);
         result.kmeans_n_iters = *(config.kmeans_n_iters);
         result.kmeans_trainset_fraction = *(config.kmeans_trainset_fraction);
         result.conservative_memory_allocation = *(config.conservative_memory_allocation);
         result.add_data_on_build = config.add_data_on_build;
     }
-    if constexpr (IndexKind == raft_proto::raft_index_kind::ivf_flat) {
+    if constexpr (IndexKind == cuvs_proto::cuvs_index_kind::ivf_flat) {
         result.adaptive_centers = *(config.adaptive_centers);
     }
-    if constexpr (IndexKind == raft_proto::raft_index_kind::ivf_pq) {
+    if constexpr (IndexKind == cuvs_proto::cuvs_index_kind::ivf_pq) {
         result.pq_dim = *(config.m);
         result.pq_bits = *(config.nbits);
         result.codebook_kind = codebook_string_to_cuvs_codebook_gen(*(config.codebook_kind));
         result.force_random_rotation = *(config.force_random_rotation);
     }
-    if constexpr (IndexKind == raft_proto::raft_index_kind::cagra) {
+    if constexpr (IndexKind == cuvs_proto::cuvs_index_kind::cagra) {
         result.intermediate_graph_degree = *(config.intermediate_graph_degree);
         result.graph_degree = *(config.graph_degree);
         result.attach_dataset_on_build = config.add_data_on_build;
@@ -317,22 +317,22 @@ config_to_index_params(raft_knowhere_config const& raw_config) {
 
 // Given a generic config without cuVS symbols, convert to cuVS index search
 // parameters
-template <raft_proto::raft_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind>
 [[nodiscard]] auto
-config_to_search_params(raft_knowhere_config const& raw_config) {
+config_to_search_params(cuvs_knowhere_config const& raw_config) {
     RAFT_EXPECTS(raw_config.index_type == IndexKind, "Incorrect index type for this index");
-    auto config = validate_raft_knowhere_config(raw_config);
+    auto config = validate_cuvs_knowhere_config(raw_config);
     auto result = raft_search_params_t<IndexKind>{};
-    if constexpr (IndexKind == raft_proto::raft_index_kind::ivf_flat ||
-                  IndexKind == raft_proto::raft_index_kind::ivf_pq) {
+    if constexpr (IndexKind == cuvs_proto::cuvs_index_kind::ivf_flat ||
+                  IndexKind == cuvs_proto::cuvs_index_kind::ivf_pq) {
         result.n_probes = *(config.nprobe);
     }
-    if constexpr (IndexKind == raft_proto::raft_index_kind::ivf_pq) {
+    if constexpr (IndexKind == cuvs_proto::cuvs_index_kind::ivf_pq) {
         result.lut_dtype = dtype_string_to_cuda_dtype(*(config.lookup_table_dtype));
         result.internal_distance_dtype = dtype_string_to_cuda_dtype(*(config.internal_distance_dtype));
         result.preferred_shmem_carveout = *(config.preferred_shmem_carveout);
     }
-    if constexpr (IndexKind == raft_proto::raft_index_kind::cagra) {
+    if constexpr (IndexKind == cuvs_proto::cuvs_index_kind::cagra) {
         result.max_queries = *(config.max_queries);
         result.itopk_size = *(config.itopk_size);
         result.max_iterations = *(config.max_iterations);
@@ -377,13 +377,13 @@ select_device_id() {
 // is provided here, but this header should never be directly included in
 // another knowhere header. This ensures that cuVS symbols are not exposed in
 // any knowhere header.
-template <raft_proto::raft_index_kind IndexKind>
-struct raft_knowhere_index<IndexKind>::impl {
+template <cuvs_proto::cuvs_index_kind IndexKind>
+struct cuvs_knowhere_index<IndexKind>::impl {
     auto static constexpr index_kind = IndexKind;
-    using data_type = raft_data_t<index_kind>;
-    using indexing_type = raft_indexing_t<index_kind>;
-    using input_indexing_type = raft_input_indexing_t<index_kind>;
-    using raft_index_type = raft_index_t<index_kind>;
+    using data_type = cuvs_data_t<index_kind>;
+    using indexing_type = cuvs_indexing_t<index_kind>;
+    using input_indexing_type = cuvs_input_indexing_t<index_kind>;
+    using cuvs_index_type = cuvs_index_t<index_kind>;
 
     impl() {
     }
@@ -410,12 +410,12 @@ struct raft_knowhere_index<IndexKind>::impl {
     }
 
     void
-    train(raft_knowhere_config const& config, data_type const* data, knowhere_indexing_type row_count,
+    train(cuvs_knowhere_config const& config, data_type const* data, knowhere_indexing_type row_count,
           knowhere_indexing_type feature_count) {
         auto scoped_device = raft::device_setter{device_id};
         auto index_params = config_to_index_params<index_kind>(config);
-        if constexpr (index_kind == raft_proto::raft_index_kind::ivf_flat ||
-                      index_kind == raft_proto::raft_index_kind::ivf_pq) {
+        if constexpr (index_kind == cuvs_proto::cuvs_index_kind::ivf_flat ||
+                      index_kind == cuvs_proto::cuvs_index_kind::ivf_pq) {
             index_params.n_lists = std::min(knowhere_indexing_type(index_params.n_lists), row_count);
         }
         auto const& res = get_device_resources_without_mempool();
@@ -436,16 +436,16 @@ struct raft_knowhere_index<IndexKind>::impl {
                 raft::make_device_matrix<data_type, input_indexing_type>(res, row_count, feature_count);
             auto device_data = device_dataset_storage->view();
             raft::copy(res, device_data, host_data);
-            index_ = raft_index_type::template build<data_type, indexing_type, input_indexing_type>(
+            index_ = cuvs_index_type::template build<data_type, indexing_type, input_indexing_type>(
                 res, index_params, raft::make_const_mdspan(device_data));
         } else {
-            index_ = raft_index_type::template build<data_type, indexing_type, input_indexing_type>(
+            index_ = cuvs_index_type::template build<data_type, indexing_type, input_indexing_type>(
                 res, index_params, raft::make_const_mdspan(host_data));
         }
     }
 
     auto
-    search(raft_knowhere_config const& config, data_type const* data, knowhere_indexing_type row_count,
+    search(cuvs_knowhere_config const& config, data_type const* data, knowhere_indexing_type row_count,
            knowhere_indexing_type feature_count, knowhere_bitset_data_type const* bitset_data,
            knowhere_bitset_indexing_type bitset_byte_size, knowhere_bitset_indexing_type bitset_size) const {
         auto scoped_device = raft::device_setter{device_id};
@@ -475,7 +475,7 @@ struct raft_knowhere_index<IndexKind>::impl {
                        raft::make_device_vector_view<knowhere_bitset_data_type, knowhere_bitset_indexing_type>(
                            reinterpret_cast<knowhere_bitset_data_type*>(device_bitset->data()), bitset_byte_size),
                        raft::make_host_vector_view(bitset_data, bitset_byte_size));
-            if constexpr (index_kind == raft_proto::raft_index_kind::brute_force) {
+            if constexpr (index_kind == cuvs_proto::cuvs_index_kind::brute_force) {
                 k_tmp += device_bitset->count(res);
                 if (k_tmp == k) {
                     device_bitset = std::nullopt;
@@ -509,13 +509,13 @@ struct raft_knowhere_index<IndexKind>::impl {
             // type to make them compatible.
             auto bitset_view = device_bitset->view();
             bitset_view.set_original_nbits(sizeof(knowhere_bitset_data_type) * 8);
-            raft_index_type::search(
+            cuvs_index_type::search(
                 res, *index_, search_params, raft::make_const_mdspan(device_data_storage.view()), device_ids,
                 device_distances, config.refine_ratio, input_indexing_type{}, dataset_view,
                 cuvs::neighbors::filtering::bitset_filter<knowhere_bitset_internal_data_type,
                                                           knowhere_bitset_internal_indexing_type>{bitset_view});
         } else {
-            raft_index_type::search(res, *index_, search_params, raft::make_const_mdspan(device_data_storage.view()),
+            cuvs_index_type::search(res, *index_, search_params, raft::make_const_mdspan(device_data_storage.view()),
                                     device_ids, device_distances, config.refine_ratio, input_indexing_type{},
                                     dataset_view);
         }
@@ -549,7 +549,7 @@ struct raft_knowhere_index<IndexKind>::impl {
                                                                                       knowhere_indexing_type(size())},
             typename decltype(device_knowhere_ids)::value_type{-1});
 
-        if constexpr (index_kind == raft_proto::raft_index_kind::brute_force) {
+        if constexpr (index_kind == cuvs_proto::cuvs_index_kind::brute_force) {
             if (k_tmp > k) {
                 for (auto i = 0; i < host_ids.extent(0); ++i) {
                     raft::copy(res, raft::make_host_vector_view(host_ids.data_handle() + i * host_ids.extent(1), k),
@@ -584,7 +584,7 @@ struct raft_knowhere_index<IndexKind>::impl {
         auto scoped_device = raft::device_setter{device_id};
         auto const& res = get_device_resources_without_mempool();
         RAFT_EXPECTS(index_, "Index has not yet been trained");
-        raft_index_type::template serialize<data_type, indexing_type>(res, os, *index_);
+        cuvs_index_type::template serialize<data_type, indexing_type>(res, os, *index_);
         if (device_dataset_storage) {
             raft::serialize_scalar(res, os, true);
             raft::serialize_scalar(res, os, device_dataset_storage->extent(0));
@@ -598,11 +598,11 @@ struct raft_knowhere_index<IndexKind>::impl {
     void
     serialize_to_hnswlib(std::ostream& os) const {
         // only cagra can save to hnswlib format
-        if constexpr (index_kind == raft_proto::raft_index_kind::cagra) {
+        if constexpr (index_kind == cuvs_proto::cuvs_index_kind::cagra) {
             auto scoped_device = raft::device_setter{device_id};
             auto const& res = get_device_resources_without_mempool();
             RAFT_EXPECTS(index_, "Index has not yet been trained");
-            raft_index_type::template serialize_to_hnswlib<data_type, indexing_type>(res, os, *index_);
+            cuvs_index_type::template serialize_to_hnswlib<data_type, indexing_type>(res, os, *index_);
             raft::serialize_scalar(res, os, false);
         }
     }
@@ -628,7 +628,7 @@ struct raft_knowhere_index<IndexKind>::impl {
         }
         auto scoped_device = raft::device_setter{new_device_id};
         auto const& res = get_device_resources_without_mempool();
-        auto des_index = raft_index_type::template deserialize<data_type, indexing_type>(res, is);
+        auto des_index = cuvs_index_type::template deserialize<data_type, indexing_type>(res, is);
 
         auto dataset = std::optional<raft::device_matrix<data_type, input_indexing_type>>{};
         auto has_dataset = raft::deserialize_scalar<bool>(res, is);
@@ -637,13 +637,13 @@ struct raft_knowhere_index<IndexKind>::impl {
             auto cols = raft::deserialize_scalar<input_indexing_type>(res, is);
             dataset = raft::make_device_matrix<data_type, input_indexing_type>(res, rows, cols);
             raft::deserialize_mdspan(res, is, dataset->view());
-            if constexpr (index_kind == raft_proto::raft_index_kind::brute_force ||
-                          index_kind == raft_proto::raft_index_kind::cagra) {
-                raft_index_type::template update_dataset<data_type, input_indexing_type>(
+            if constexpr (index_kind == cuvs_proto::cuvs_index_kind::brute_force ||
+                          index_kind == cuvs_proto::cuvs_index_kind::cagra) {
+                cuvs_index_type::template update_dataset<data_type, input_indexing_type>(
                     res, des_index, raft::make_const_mdspan(dataset->view()));
             }
         }
-        return std::make_unique<typename raft_knowhere_index<index_kind>::impl>(std::move(des_index), new_device_id,
+        return std::make_unique<typename cuvs_knowhere_index<index_kind>::impl>(std::move(des_index), new_device_id,
                                                                                 std::move(dataset));
     }
 
@@ -657,64 +657,64 @@ struct raft_knowhere_index<IndexKind>::impl {
             raft::device_resources_manager::get_device_resources().sync_stream();
         }
     }
-    impl(raft_index_type&& index, int new_device_id,
+    impl(cuvs_index_type&& index, int new_device_id,
          std::optional<raft::device_matrix<data_type, input_indexing_type>>&& dataset)
         : index_{std::move(index)}, device_id{new_device_id}, device_dataset_storage{std::move(dataset)} {
     }
 
  private:
-    std::optional<raft_index_type> index_ = std::nullopt;
+    std::optional<cuvs_index_type> index_ = std::nullopt;
     int device_id = select_device_id();
     std::optional<raft::device_matrix<data_type, input_indexing_type>> device_dataset_storage = std::nullopt;
 };
 
-template <raft_proto::raft_index_kind IndexKind>
-raft_knowhere_index<IndexKind>::raft_knowhere_index() : pimpl{new raft_knowhere_index<IndexKind>::impl()} {
+template <cuvs_proto::cuvs_index_kind IndexKind>
+cuvs_knowhere_index<IndexKind>::cuvs_knowhere_index() : pimpl{new cuvs_knowhere_index<IndexKind>::impl()} {
 }
 
-template <raft_proto::raft_index_kind IndexKind>
-raft_knowhere_index<IndexKind>::~raft_knowhere_index<IndexKind>() = default;
+template <cuvs_proto::cuvs_index_kind IndexKind>
+cuvs_knowhere_index<IndexKind>::~cuvs_knowhere_index<IndexKind>() = default;
 
-template <raft_proto::raft_index_kind IndexKind>
-raft_knowhere_index<IndexKind>::raft_knowhere_index(raft_knowhere_index<IndexKind>&& other)
+template <cuvs_proto::cuvs_index_kind IndexKind>
+cuvs_knowhere_index<IndexKind>::cuvs_knowhere_index(cuvs_knowhere_index<IndexKind>&& other)
     : pimpl{std::move(other.pimpl)} {
 }
 
-template <raft_proto::raft_index_kind IndexKind>
-raft_knowhere_index<IndexKind>&
-raft_knowhere_index<IndexKind>::operator=(raft_knowhere_index<IndexKind>&& other) {
+template <cuvs_proto::cuvs_index_kind IndexKind>
+cuvs_knowhere_index<IndexKind>&
+cuvs_knowhere_index<IndexKind>::operator=(cuvs_knowhere_index<IndexKind>&& other) {
     pimpl = std::move(other.pimpl);
     return *this;
 }
 
-template <raft_proto::raft_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind>
 bool
-raft_knowhere_index<IndexKind>::is_trained() const {
+cuvs_knowhere_index<IndexKind>::is_trained() const {
     return pimpl->is_trained();
 }
 
-template <raft_proto::raft_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind>
 std::int64_t
-raft_knowhere_index<IndexKind>::size() const {
+cuvs_knowhere_index<IndexKind>::size() const {
     return pimpl->size();
 }
 
-template <raft_proto::raft_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind>
 std::int64_t
-raft_knowhere_index<IndexKind>::dim() const {
+cuvs_knowhere_index<IndexKind>::dim() const {
     return pimpl->dim();
 }
 
-template <raft_proto::raft_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind>
 void
-raft_knowhere_index<IndexKind>::train(raft_knowhere_config const& config, data_type const* data,
+cuvs_knowhere_index<IndexKind>::train(cuvs_knowhere_config const& config, data_type const* data,
                                       knowhere_indexing_type row_count, knowhere_indexing_type feature_count) {
     return pimpl->train(config, data, row_count, feature_count);
 }
 
-template <raft_proto::raft_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind>
 std::tuple<knowhere_indexing_type*, knowhere_data_type*>
-raft_knowhere_index<IndexKind>::search(raft_knowhere_config const& config, data_type const* data,
+cuvs_knowhere_index<IndexKind>::search(cuvs_knowhere_config const& config, data_type const* data,
                                        knowhere_indexing_type row_count, knowhere_indexing_type feature_count,
                                        knowhere_bitset_data_type const* bitset_data,
                                        knowhere_bitset_indexing_type bitset_byte_size,
@@ -722,40 +722,40 @@ raft_knowhere_index<IndexKind>::search(raft_knowhere_config const& config, data_
     return pimpl->search(config, data, row_count, feature_count, bitset_data, bitset_byte_size, bitset_size);
 }
 
-template <raft_proto::raft_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind>
 void
-raft_knowhere_index<IndexKind>::range_search() const {
+cuvs_knowhere_index<IndexKind>::range_search() const {
     return pimpl->range_search();
 }
 
-template <raft_proto::raft_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind>
 void
-raft_knowhere_index<IndexKind>::get_vector_by_id() const {
+cuvs_knowhere_index<IndexKind>::get_vector_by_id() const {
     return pimpl->get_vector_by_id();
 }
 
-template <raft_proto::raft_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind>
 void
-raft_knowhere_index<IndexKind>::serialize(std::ostream& os) const {
+cuvs_knowhere_index<IndexKind>::serialize(std::ostream& os) const {
     return pimpl->serialize(os);
 }
 
-template <raft_proto::raft_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind>
 void
-raft_knowhere_index<IndexKind>::serialize_to_hnswlib(std::ostream& os) const {
+cuvs_knowhere_index<IndexKind>::serialize_to_hnswlib(std::ostream& os) const {
     return pimpl->serialize_to_hnswlib(os);
 }
 
-template <raft_proto::raft_index_kind IndexKind>
-raft_knowhere_index<IndexKind>
-raft_knowhere_index<IndexKind>::deserialize(std::istream& is) {
-    return raft_knowhere_index<IndexKind>(raft_knowhere_index<IndexKind>::impl::deserialize(is));
+template <cuvs_proto::cuvs_index_kind IndexKind>
+cuvs_knowhere_index<IndexKind>
+cuvs_knowhere_index<IndexKind>::deserialize(std::istream& is) {
+    return cuvs_knowhere_index<IndexKind>(cuvs_knowhere_index<IndexKind>::impl::deserialize(is));
 }
 
-template <raft_proto::raft_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind>
 void
-raft_knowhere_index<IndexKind>::synchronize(bool is_without_mempool) const {
+cuvs_knowhere_index<IndexKind>::synchronize(bool is_without_mempool) const {
     return pimpl->synchronize(is_without_mempool);
 }
 
-}  // namespace raft_knowhere
+}  // namespace cuvs_knowhere

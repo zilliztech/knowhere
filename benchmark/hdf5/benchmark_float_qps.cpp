@@ -102,14 +102,14 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
 
     template <typename T>
     void
-    test_raft_cagra(const knowhere::Json& cfg) {
+    test_cuvs_cagra(const knowhere::Json& cfg) {
         auto conf = cfg;
         std::string data_type_str = get_data_type_name<T>();
 
-        auto find_smallest_itopk_size = [&](float expected_recall) -> std::tuple<int32_t, float> {
+        auto find_smallest_itopk_size = [&](float expected_recall, int topk) -> std::tuple<int32_t, float> {
             std::unordered_map<int32_t, float> recall_map;
             auto ds_ptr = knowhere::GenDataSet(nq_, dim_, xq_);
-            auto left = 32;
+            auto left = topk;
             auto right = 256;
             auto itopk_size = left;
 
@@ -137,7 +137,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         };
 
         for (auto expected_recall : EXPECTED_RECALLs_) {
-            auto [itopk_size, recall] = find_smallest_itopk_size(expected_recall);
+            auto [itopk_size, recall] = find_smallest_itopk_size(expected_recall, topk_);
             conf[knowhere::indexparam::ITOPK_SIZE] = ((int{topk_} + 32 - 1) / 32) * 32;
             conf[knowhere::meta::TOPK] = topk_;
             conf[knowhere::indexparam::ITOPK_SIZE] = itopk_size;
@@ -559,7 +559,7 @@ TEST_F(Benchmark_float_qps, TEST_DISKANN) {
 #endif
 
 #ifdef KNOWHERE_WITH_CUVS
-TEST_F(Benchmark_float_qps, TEST_RAFT_BRUTE_FORCE) {
+TEST_F(Benchmark_float_qps, TEST_CUVS_BRUTE_FORCE) {
     index_type_ = knowhere::IndexEnum::INDEX_CUVS_BRUTEFORCE;
 
     std::string index_file_name;
@@ -569,7 +569,7 @@ TEST_F(Benchmark_float_qps, TEST_RAFT_BRUTE_FORCE) {
     TEST_INDEX(idmap, knowhere::fp32, params);
 }
 
-TEST_F(Benchmark_float_qps, TEST_RAFT_IVF_FLAT) {
+TEST_F(Benchmark_float_qps, TEST_CUVS_IVF_FLAT) {
     index_type_ = knowhere::IndexEnum::INDEX_CUVS_IVFFLAT;
 
     std::string index_file_name;
@@ -582,7 +582,7 @@ TEST_F(Benchmark_float_qps, TEST_RAFT_IVF_FLAT) {
     }
 }
 
-TEST_F(Benchmark_float_qps, TEST_RAFT_IVF_PQ) {
+TEST_F(Benchmark_float_qps, TEST_CUVS_IVF_PQ) {
     index_type_ = knowhere::IndexEnum::INDEX_CUVS_IVFPQ;
 
     std::string index_file_name;
@@ -599,7 +599,7 @@ TEST_F(Benchmark_float_qps, TEST_RAFT_IVF_PQ) {
     }
 }
 
-TEST_F(Benchmark_float_qps, TEST_RAFT_CAGRA) {
+TEST_F(Benchmark_float_qps, TEST_CUVS_CAGRA) {
     index_type_ = knowhere::IndexEnum::INDEX_CUVS_CAGRA;
 
     std::string index_file_name;
@@ -609,7 +609,7 @@ TEST_F(Benchmark_float_qps, TEST_RAFT_CAGRA) {
         conf[knowhere::indexparam::GRAPH_DEGREE] = graph_degree;
         conf[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE] = graph_degree;
         std::vector<int32_t> params = {graph_degree};
-        TEST_INDEX(raft_cagra, knowhere::fp32, params);
+        TEST_INDEX(cuvs_cagra, knowhere::fp32, params);
     }
 }
 #endif
