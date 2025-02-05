@@ -189,11 +189,6 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         writeBinaryPOD(writer, deprecated_value_threshold);
         BitsetView bitset(nullptr, 0);
 
-        std::vector<Cursor<BitsetView>> cursors;
-        for (size_t i = 0; i < inverted_index_ids_.size(); ++i) {
-            cursors.emplace_back(inverted_index_ids_[i], inverted_index_vals_[i], n_rows_internal_, 0, 0, bitset);
-        }
-
         auto dim_map_reverse = std::unordered_map<uint32_t, table_t>();
         for (const auto& [dim, dim_id] : dim_map_) {
             dim_map_reverse[dim_id] = dim;
@@ -230,6 +225,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
         return Status::success;
     }
+
     Status
     Load(MemoryIOReader& reader, int map_flags, const std::string& supplement_target_filename) override {
         DType deprecated_value_threshold;
@@ -313,6 +309,11 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         if (metric_type_ == SparseMetricType::METRIC_BM25) {
             row_sums_byte_size = rows * sizeof(typename decltype(bm25_params_->row_sums)::value_type);
             map_byte_size_ += row_sums_byte_size;
+        }
+
+        if (map_byte_size_ == 0) {
+            // early return to avoid mmapping empty file
+            return Status::success;
         }
 
         std::ofstream temp_file(supplement_target_filename, std::ios::binary | std::ios::trunc);
