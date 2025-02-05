@@ -172,8 +172,8 @@ knowhere_file_glob(GLOB_RECURSE KNOWHERE_GPU_SRCS src/index/gpu/flat_gpu/*.cc
 list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_GPU_SRCS})
 
 if(NOT WITH_CUVS)
-  knowhere_file_glob(GLOB_RECURSE KNOWHERE_CUVS_SRCS src/common/raft/*.cu
-                     src/common/raft/*.cc src/index/gpu_raft/*.cc)
+  knowhere_file_glob(GLOB_RECURSE KNOWHERE_CUVS_SRCS src/common/cuvs/*.cu
+                     src/common/cuvs/*.cc src/index/gpu_cuvs/*.cc)
   list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_CUVS_SRCS})
 endif()
 

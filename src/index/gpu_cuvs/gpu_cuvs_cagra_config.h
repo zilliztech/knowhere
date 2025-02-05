@@ -49,6 +49,7 @@ struct GpuCuvsCagraConfig : public BaseConfig {
     CFG_INT nn_descent_niter;
     CFG_BOOL adapt_for_cpu;
     CFG_INT ef;
+    CFG_BOOL persistent;
 
     KNOHWERE_DECLARE_CONFIG(GpuCuvsCagraConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(cache_dataset_on_device)
@@ -118,6 +119,10 @@ struct GpuCuvsCagraConfig : public BaseConfig {
             .allow_empty_without_default()
             .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
             .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(persistent)
+            .description("use the persistent version of the search kernel (only supported with SINGLE_CTA)")
+            .set_default(false)
+            .for_search();
     }
 
     Status
@@ -173,6 +178,7 @@ to_cuvs_knowhere_config(GpuCuvsCagraConfig const& cfg) {
     result.hashmap_min_bitlen = cfg.hashmap_min_bitlen;
     result.hashmap_max_fill_rate = cfg.hashmap_max_fill_rate;
     result.nn_descent_niter = cfg.nn_descent_niter;
+    result.persistent = cfg.persistent;
 
     return result;
 }

@@ -344,6 +344,7 @@ config_to_search_params(cuvs_knowhere_config const& raw_config) {
         result.hashmap_mode = hashmap_mode_string_to_cagra_hashmap_mode(*(config.hashmap_mode));
         result.hashmap_min_bitlen = *(config.hashmap_min_bitlen);
         result.hashmap_max_fill_rate = *(config.hashmap_max_fill_rate);
+        result.persistent = *(config.persistent);
     }
     return result;
 }
