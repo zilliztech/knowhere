@@ -967,6 +967,36 @@ void all_inner_product(
     }
 }
 
+void exhaustive_L2sqr_nearest_imp(
+        const float* __restrict x,
+        const float* __restrict y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* vals,
+        int64_t* ids) {
+    constexpr size_t ny_batch_size = 256; 
+    float sub_dis[ny_batch_size];
+    for (int64_t i = 0; i < nx; i++) {
+        const float* x_i = x + i * d;
+        size_t nearest_idx = 0;
+        float min_dis = HUGE_VALF;
+        // compute distances
+        for (auto j = 0; j < ny; j += ny_batch_size) {
+            const float* y_j = y + j * d;
+            const size_t y_j_n = std::min(ny_batch_size, ny - j);
+            auto batch_nearest_id =
+                    fvec_L2sqr_ny_nearest(sub_dis, x_i, y_j, d, y_j_n);
+            if (sub_dis[batch_nearest_id] < min_dis) {
+                nearest_idx = batch_nearest_id + j;
+                min_dis = sub_dis[batch_nearest_id];
+            }
+        }
+        ids[i] = nearest_idx;
+        vals[i] = min_dis;
+    }
+}
+
 void knn_L2sqr(
         const float* x,
         const float* y,
@@ -988,6 +1018,10 @@ void knn_L2sqr(
     }
     if (auto sela = dynamic_cast<const IDSelectorArray*>(sel)) {
         knn_L2sqr_by_idx(x, y, sela->ids, d, nx, ny, sela->n, k, vals, ids, 0);
+        return;
+    }
+    if (k == 1 && sel == nullptr) {
+        exhaustive_L2sqr_nearest_imp(x, y, d, nx, ny, vals, ids);
         return;
     }
     // // todo aguzhva: this is disabled for knowhere, because it requires 
