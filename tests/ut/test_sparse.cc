@@ -329,6 +329,8 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
               {{5, 0.0f}}  // implicitly empty row
           },
           true},
+         {std::vector<std::map<int32_t, float>>{{{1, 0.0f}}, {{3, 0.0f}}, {{5, 0.0f}}}, false},
+         {std::vector<std::map<int32_t, float>>{{{1, 0.0f}}, {{3, 0.0f}}, {}}, false},
          {std::vector<std::map<int32_t, float>>{{}, {}, {}}, false}}));
 
     auto dim = 7;
@@ -374,7 +376,7 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
     knowhere::BinarySet bs;
     REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
 
-    auto use_mmap = GENERATE(false);
+    auto use_mmap = GENERATE(false, true);
     auto tmp_file = "/tmp/knowhere_sparse_inverted_index_test";
 
     if (use_mmap) {
