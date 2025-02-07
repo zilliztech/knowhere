@@ -151,7 +151,7 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
 #else
         set_ann_test_name("sift-128-euclidean-range");
         parse_ann_test_name_with_range();
-        load_hdf5_data_range<false>();
+        load_hdf5_data_range<knowhere::fp32>();
 #endif
 
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;

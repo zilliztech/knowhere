@@ -101,7 +101,7 @@ class Benchmark_binary : public Benchmark_knowhere, public ::testing::Test {
         T0_ = elapsed();
         set_ann_test_name("sift-4096-hamming");
         parse_ann_test_name();
-        load_hdf5_data<true>();
+        load_hdf5_data<knowhere::bin1>();
 
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
         knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);

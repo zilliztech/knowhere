@@ -57,7 +57,7 @@ class Create_HDF5 : public Benchmark_hdf5, public ::testing::Test {
     TearDown() override {
     }
 
-    template <bool is_binary>
+    template <typename T>
     void
     create_hdf5_file(const knowhere::MetricType& metric_type, const int64_t nb, const int64_t nq, const int64_t dim,
                      const int64_t topk) {
@@ -71,12 +71,14 @@ class Create_HDF5 : public Benchmark_hdf5, public ::testing::Test {
         json[knowhere::meta::TOPK] = topk;
 
         knowhere::DataSetPtr xb_ds, xq_ds;
-        if (is_binary) {
+        if constexpr (std::is_same_v<T, knowhere::bin1>) {
             xb_ds = GenBinDataSet(nb, dim);
             xq_ds = GenBinDataSet(nq, dim);
-        } else {
+        } else if constexpr (std::is_same_v<T, knowhere::fp32>) {
             xb_ds = GenDataSet(nb, dim);
             xq_ds = GenDataSet(nq, dim);
+        } else {
+            assert("unknown data type");
         }
 
         auto result = knowhere::BruteForce::Search<knowhere::fp32>(xb_ds, xq_ds, json, nullptr);
@@ -89,11 +91,11 @@ class Create_HDF5 : public Benchmark_hdf5, public ::testing::Test {
             gt_ids_int[i] = result.value()->GetIds()[i];
         }
 
-        hdf5_write<is_binary>(fn.c_str(), dim, topk, xb_ds->GetTensor(), nb, xq_ds->GetTensor(), nq, gt_ids_int.data(),
-                              result.value()->GetDistance());
+        hdf5_write<T>(fn.c_str(), dim, topk, xb_ds->GetTensor(), nb, xq_ds->GetTensor(), nq, gt_ids_int.data(),
+                      result.value()->GetDistance());
     }
 
-    template <bool is_binary>
+    template <typename T>
     void
     create_range_hdf5_file(const knowhere::MetricType& metric_type, const int64_t nb, const int64_t nq,
                            const int64_t dim, const float radius) {
@@ -107,12 +109,14 @@ class Create_HDF5 : public Benchmark_hdf5, public ::testing::Test {
         json[knowhere::meta::RADIUS] = radius;
 
         knowhere::DataSetPtr xb_ds, xq_ds;
-        if (is_binary) {
+        if constexpr (std::is_same_v<T, knowhere::bin1>) {
             xb_ds = GenBinDataSet(nb, dim);
             xq_ds = GenBinDataSet(nq, dim);
-        } else {
+        } else if constexpr (std::is_same_v<T, knowhere::fp32>) {
             xb_ds = GenDataSet(nb, dim);
             xq_ds = GenDataSet(nq, dim);
+        } else {
+            assert("unknown data type");
         }
 
         auto result = knowhere::BruteForce::RangeSearch<knowhere::fp32>(xb_ds, xq_ds, json, nullptr);
@@ -131,8 +135,8 @@ class Create_HDF5 : public Benchmark_hdf5, public ::testing::Test {
             gt_ids_int[i] = result.value()->GetIds()[i];
         }
 
-        hdf5_write_range<is_binary>(fn.c_str(), dim, xb_ds->GetTensor(), nb, xq_ds->GetTensor(), nq, radius,
-                                    gt_lims_int.data(), gt_ids_int.data(), result.value()->GetDistance());
+        hdf5_write_range<T>(fn.c_str(), dim, xb_ds->GetTensor(), nb, xq_ds->GetTensor(), nq, radius, gt_lims_int.data(),
+                            gt_ids_int.data(), result.value()->GetDistance());
     }
 };
 
@@ -142,9 +146,9 @@ TEST_F(Create_HDF5, CREATE_FLOAT) {
     int64_t dim = 128;
     int64_t topk = 100;
 
-    create_hdf5_file<false>(knowhere::metric::L2, nb, nq, dim, topk);
-    create_hdf5_file<false>(knowhere::metric::IP, nb, nq, dim, topk);
-    create_hdf5_file<false>(knowhere::metric::COSINE, nb, nq, dim, topk);
+    create_hdf5_file<knowhere::fp32>(knowhere::metric::L2, nb, nq, dim, topk);
+    create_hdf5_file<knowhere::fp32>(knowhere::metric::IP, nb, nq, dim, topk);
+    create_hdf5_file<knowhere::fp32>(knowhere::metric::COSINE, nb, nq, dim, topk);
 }
 
 TEST_F(Create_HDF5, CREATE_FLOAT_RANGE) {
@@ -152,9 +156,9 @@ TEST_F(Create_HDF5, CREATE_FLOAT_RANGE) {
     int64_t nq = 100;
     int64_t dim = 128;
 
-    create_range_hdf5_file<false>(knowhere::metric::L2, nb, nq, dim, 65.0);
-    create_range_hdf5_file<false>(knowhere::metric::IP, nb, nq, dim, 8.7);
-    create_range_hdf5_file<false>(knowhere::metric::COSINE, nb, nq, dim, 0.2);
+    create_range_hdf5_file<knowhere::fp32>(knowhere::metric::L2, nb, nq, dim, 65.0);
+    create_range_hdf5_file<knowhere::fp32>(knowhere::metric::IP, nb, nq, dim, 8.7);
+    create_range_hdf5_file<knowhere::fp32>(knowhere::metric::COSINE, nb, nq, dim, 0.2);
 }
 
 TEST_F(Create_HDF5, CREATE_BINARY) {
@@ -163,8 +167,8 @@ TEST_F(Create_HDF5, CREATE_BINARY) {
     int64_t dim = 1024;
     int64_t topk = 100;
 
-    create_hdf5_file<true>(knowhere::metric::HAMMING, nb, nq, dim, topk);
-    create_hdf5_file<true>(knowhere::metric::JACCARD, nb, nq, dim, topk);
+    create_hdf5_file<knowhere::bin1>(knowhere::metric::HAMMING, nb, nq, dim, topk);
+    create_hdf5_file<knowhere::bin1>(knowhere::metric::JACCARD, nb, nq, dim, topk);
 }
 
 TEST_F(Create_HDF5, CREATE_BINARY_RANGE) {
@@ -172,6 +176,6 @@ TEST_F(Create_HDF5, CREATE_BINARY_RANGE) {
     int64_t nq = 100;
     int64_t dim = 1024;
 
-    create_range_hdf5_file<true>(knowhere::metric::HAMMING, nb, nq, dim, 476);
-    create_range_hdf5_file<true>(knowhere::metric::JACCARD, nb, nq, dim, 0.63);
+    create_range_hdf5_file<knowhere::bin1>(knowhere::metric::HAMMING, nb, nq, dim, 476);
+    create_range_hdf5_file<knowhere::bin1>(knowhere::metric::JACCARD, nb, nq, dim, 0.63);
 }

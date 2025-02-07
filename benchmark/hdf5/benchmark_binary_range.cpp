@@ -109,7 +109,7 @@ class Benchmark_binary_range : public Benchmark_knowhere, public ::testing::Test
 #else
         set_ann_test_name("sift-4096-hamming-range");
         parse_ann_test_name_with_range();
-        load_hdf5_data_range<true>();
+        load_hdf5_data_range<knowhere::bin1>();
 #endif
 
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
