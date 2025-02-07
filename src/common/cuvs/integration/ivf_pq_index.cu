@@ -14,8 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#pragma once
+#include "common/cuvs/integration/cuvs_knowhere_index.cuh"
+#include "common/cuvs/proto/cuvs_index_kind.hpp"
 
-namespace raft_proto {
-enum struct raft_index_kind { brute_force, ivf_flat, ivf_pq, cagra };
-}  // namespace raft_proto
+namespace cuvs_knowhere {
+template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_pq>;
+}  // namespace cuvs_knowhere

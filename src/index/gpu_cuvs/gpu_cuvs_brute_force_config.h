@@ -14,23 +14,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef GPU_RAFT_BRUTE_FORCE_CONFIG_H
-#define GPU_RAFT_BRUTE_FORCE_CONFIG_H
+#ifndef GPU_CUVS_BRUTE_FORCE_CONFIG_H
+#define GPU_CUVS_BRUTE_FORCE_CONFIG_H
 
-#include "common/raft/integration/raft_knowhere_config.hpp"
-#include "common/raft/proto/raft_index_kind.hpp"
+#include "common/cuvs/integration/cuvs_knowhere_config.hpp"
+#include "common/cuvs/proto/cuvs_index_kind.hpp"
 #include "knowhere/config.h"
 
 namespace knowhere {
 
-struct GpuRaftBruteForceConfig : public BaseConfig {
+struct GpuCuvsBruteForceConfig : public BaseConfig {
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
         if (param_type == PARAM_TYPE::TRAIN) {
             constexpr std::array<std::string_view, 3> legal_metric_list{"L2", "IP", "COSINE"};
             std::string metric = metric_type.value();
             if (std::find(legal_metric_list.begin(), legal_metric_list.end(), metric) == legal_metric_list.end()) {
-                std::string msg = "metric type " + metric + " not found or not supported, supported: [L2 IP]";
+                std::string msg = "metric type " + metric + " not found or not supported, supported: [L2 IP COSINE]";
                 return HandleError(err_msg, msg, Status::invalid_metric_type);
             }
         }
@@ -39,8 +39,8 @@ struct GpuRaftBruteForceConfig : public BaseConfig {
 };
 
 [[nodiscard]] inline auto
-to_raft_knowhere_config(GpuRaftBruteForceConfig const& cfg) {
-    auto result = raft_knowhere::raft_knowhere_config{raft_proto::raft_index_kind::brute_force};
+to_cuvs_knowhere_config(GpuCuvsBruteForceConfig const& cfg) {
+    auto result = cuvs_knowhere::cuvs_knowhere_config{cuvs_proto::cuvs_index_kind::brute_force};
 
     result.metric_type = cfg.metric_type.value();
     result.k = cfg.k.value();
@@ -50,4 +50,4 @@ to_raft_knowhere_config(GpuRaftBruteForceConfig const& cfg) {
 
 }  // namespace knowhere
 
-#endif /*GPU_RAFT_BRUTE_FORCE_CONFIG_H*/
+#endif /*GPU_CUVS_BRUTE_FORCE_CONFIG_H*/

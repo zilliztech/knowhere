@@ -38,10 +38,10 @@ constexpr const char* INDEX_FAISS_GPU_IVFFLAT = "GPU_FAISS_IVF_FLAT";
 constexpr const char* INDEX_FAISS_GPU_IVFPQ = "GPU_FAISS_IVF_PQ";
 constexpr const char* INDEX_FAISS_GPU_IVFSQ8 = "GPU_FAISS_IVF_SQ8";
 
-constexpr const char* INDEX_RAFT_BRUTEFORCE = "GPU_RAFT_BRUTE_FORCE";
-constexpr const char* INDEX_RAFT_IVFFLAT = "GPU_RAFT_IVF_FLAT";
-constexpr const char* INDEX_RAFT_IVFPQ = "GPU_RAFT_IVF_PQ";
-constexpr const char* INDEX_RAFT_CAGRA = "GPU_RAFT_CAGRA";
+constexpr const char* INDEX_CUVS_BRUTEFORCE = "GPU_CUVS_BRUTE_FORCE";
+constexpr const char* INDEX_CUVS_IVFFLAT = "GPU_CUVS_IVF_FLAT";
+constexpr const char* INDEX_CUVS_IVFPQ = "GPU_CUVS_IVF_PQ";
+constexpr const char* INDEX_CUVS_CAGRA = "GPU_CUVS_CAGRA";
 
 constexpr const char* INDEX_GPU_BRUTEFORCE = "GPU_BRUTE_FORCE";
 constexpr const char* INDEX_GPU_IVFFLAT = "GPU_IVF_FLAT";
@@ -120,11 +120,11 @@ constexpr const char* ENSURE_TOPK_FULL = "ensure_topk_full";
 constexpr const char* CODE_SIZE = "code_size";
 constexpr const char* RAW_DATA_STORE_PREFIX = "raw_data_store_prefix";
 
-// RAFT Params
+// cuVS Params
 constexpr const char* REFINE_RATIO = "refine_ratio";
 constexpr const char* CACHE_DATASET_ON_DEVICE = "cache_dataset_on_device";
 
-// RAFT-specific IVF Params
+// cuVS-specific IVF Params
 constexpr const char* KMEANS_N_ITERS = "kmeans_n_iters";
 constexpr const char* KMEANS_TRAINSET_FRACTION = "kmeans_trainset_fraction";
 constexpr const char* ADAPTIVE_CENTERS = "adaptive_centers";                              // IVF FLAT

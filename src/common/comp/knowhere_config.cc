@@ -23,8 +23,8 @@
 #ifdef KNOWHERE_WITH_GPU
 #include "index/gpu/gpu_res_mgr.h"
 #endif
-#ifdef KNOWHERE_WITH_RAFT
-#include "common/raft/integration/raft_initialization.hpp"
+#ifdef KNOWHERE_WITH_CUVS
+#include "common/cuvs/integration/raft_initialization.hpp"
 #include "cuda_runtime_api.h"
 #endif
 #include "simd/hook.h"
@@ -40,7 +40,7 @@ KnowhereConfig::ShowVersion() {
 
 #ifdef KNOWHERE_VERSION
     msg = msg + XSTR(KNOWHERE_VERSION);
-#ifdef KNOWHERE_WITH_RAFT
+#ifdef KNOWHERE_WITH_CUVS
     msg = msg + "-gpu";
 #endif
 #else
@@ -187,7 +187,7 @@ KnowhereConfig::FreeGPUResource() {
 
 void
 KnowhereConfig::SetRaftMemPool(size_t init_size, size_t max_size) {
-#ifdef KNOWHERE_WITH_RAFT
+#ifdef KNOWHERE_WITH_CUVS
     int count = 0;
     auto status = cudaGetDeviceCount(&count);
     if (status != cudaSuccess) {
@@ -199,21 +199,21 @@ KnowhereConfig::SetRaftMemPool(size_t init_size, size_t max_size) {
         return;
     }
 
-    auto config = raft_knowhere::raft_configuration{};
+    auto config = cuvs_knowhere::raft_configuration{};
     config.init_mem_pool_size_mb = init_size;
     config.max_mem_pool_size_mb = max_size;
     // This should probably be a separate configuration option, but fine for now
     config.max_workspace_size_mb = max_size;
-    raft_knowhere::initialize_raft(config);
+    cuvs_knowhere::initialize_raft(config);
 #endif
 }
 
 void
 KnowhereConfig::SetRaftMemPool() {
     // Overload for default values
-#ifdef KNOWHERE_WITH_RAFT
-    auto config = raft_knowhere::raft_configuration{};
-    raft_knowhere::initialize_raft(config);
+#ifdef KNOWHERE_WITH_CUVS
+    auto config = cuvs_knowhere::raft_configuration{};
+    cuvs_knowhere::initialize_raft(config);
 #endif
 }
 

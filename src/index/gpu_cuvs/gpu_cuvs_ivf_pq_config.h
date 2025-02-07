@@ -14,17 +14,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef GPU_RAFT_IVF_PQ_CONFIG_H
-#define GPU_RAFT_IVF_PQ_CONFIG_H
+#ifndef GPU_CUVS_IVF_PQ_CONFIG_H
+#define GPU_CUVS_IVF_PQ_CONFIG_H
 
-#include "common/raft/integration/raft_knowhere_config.hpp"
-#include "common/raft/proto/raft_index_kind.hpp"
+#include "common/cuvs/integration/cuvs_knowhere_config.hpp"
+#include "common/cuvs/proto/cuvs_index_kind.hpp"
 #include "index/ivf/ivf_config.h"
 #include "knowhere/config.h"
 
 namespace knowhere {
 
-struct GpuRaftIvfPqConfig : public IvfPqConfig {
+struct GpuCuvsIvfPqConfig : public IvfPqConfig {
     CFG_BOOL cache_dataset_on_device;
     CFG_FLOAT refine_ratio;
     CFG_INT kmeans_n_iters;
@@ -37,7 +37,7 @@ struct GpuRaftIvfPqConfig : public IvfPqConfig {
     CFG_STRING internal_distance_dtype;
     CFG_FLOAT preferred_shmem_carveout;
 
-    KNOHWERE_DECLARE_CONFIG(GpuRaftIvfPqConfig) {
+    KNOHWERE_DECLARE_CONFIG(GpuCuvsIvfPqConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(cache_dataset_on_device)
             .set_default(false)
             .description("cache dataset on device for refinement")
@@ -108,8 +108,8 @@ struct GpuRaftIvfPqConfig : public IvfPqConfig {
 };
 
 [[nodiscard]] inline auto
-to_raft_knowhere_config(GpuRaftIvfPqConfig const& cfg) {
-    auto result = raft_knowhere::raft_knowhere_config{raft_proto::raft_index_kind::ivf_pq};
+to_cuvs_knowhere_config(GpuCuvsIvfPqConfig const& cfg) {
+    auto result = cuvs_knowhere::cuvs_knowhere_config{cuvs_proto::cuvs_index_kind::ivf_pq};
 
     result.metric_type = cfg.metric_type.value();
     result.cache_dataset_on_device = cfg.cache_dataset_on_device.value();
@@ -135,4 +135,4 @@ to_raft_knowhere_config(GpuRaftIvfPqConfig const& cfg) {
 
 }  // namespace knowhere
 
-#endif /*GPU_RAFT_IVF_PQ_CONFIG_H*/
+#endif /*GPU_CUVS_IVF_PQ_CONFIG_H*/

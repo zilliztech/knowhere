@@ -14,11 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef GPU_RAFT_CAGRA_CONFIG_H
-#define GPU_RAFT_CAGRA_CONFIG_H
+#ifndef GPU_CUVS_CAGRA_CONFIG_H
+#define GPU_CUVS_CAGRA_CONFIG_H
 
-#include "common/raft/integration/raft_knowhere_config.hpp"
-#include "common/raft/proto/raft_index_kind.hpp"
+#include "common/cuvs/integration/cuvs_knowhere_config.hpp"
+#include "common/cuvs/proto/cuvs_index_kind.hpp"
 #include "index/ivf/ivf_config.h"
 #include "knowhere/config.h"
 
@@ -29,7 +29,7 @@ constexpr const CFG_INT::value_type kAlignFactor = 32;
 constexpr const CFG_INT::value_type kItopkSize = 64;
 }  // namespace
 
-struct GpuRaftCagraConfig : public BaseConfig {
+struct GpuCuvsCagraConfig : public BaseConfig {
     CFG_BOOL cache_dataset_on_device;
     CFG_FLOAT refine_ratio;
     CFG_INT intermediate_graph_degree;
@@ -49,8 +49,9 @@ struct GpuRaftCagraConfig : public BaseConfig {
     CFG_INT nn_descent_niter;
     CFG_BOOL adapt_for_cpu;
     CFG_INT ef;
+    CFG_BOOL persistent;
 
-    KNOHWERE_DECLARE_CONFIG(GpuRaftCagraConfig) {
+    KNOHWERE_DECLARE_CONFIG(GpuCuvsCagraConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(cache_dataset_on_device)
             .set_default(false)
             .description("cache dataset on device for refinement")
@@ -118,6 +119,10 @@ struct GpuRaftCagraConfig : public BaseConfig {
             .allow_empty_without_default()
             .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
             .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(persistent)
+            .description("use the persistent version of the search kernel (only supported with SINGLE_CTA)")
+            .set_default(false)
+            .for_search();
     }
 
     Status
@@ -150,8 +155,8 @@ struct GpuRaftCagraConfig : public BaseConfig {
 };
 
 [[nodiscard]] inline auto
-to_raft_knowhere_config(GpuRaftCagraConfig const& cfg) {
-    auto result = raft_knowhere::raft_knowhere_config{raft_proto::raft_index_kind::cagra};
+to_cuvs_knowhere_config(GpuCuvsCagraConfig const& cfg) {
+    auto result = cuvs_knowhere::cuvs_knowhere_config{cuvs_proto::cuvs_index_kind::cagra};
 
     result.metric_type = cfg.metric_type.value();
     result.cache_dataset_on_device = cfg.cache_dataset_on_device.value();
@@ -173,10 +178,11 @@ to_raft_knowhere_config(GpuRaftCagraConfig const& cfg) {
     result.hashmap_min_bitlen = cfg.hashmap_min_bitlen;
     result.hashmap_max_fill_rate = cfg.hashmap_max_fill_rate;
     result.nn_descent_niter = cfg.nn_descent_niter;
+    result.persistent = cfg.persistent;
 
     return result;
 }
 
 }  // namespace knowhere
 
-#endif /*GPU_RAFT_CAGRA_CONFIG_H*/
+#endif /*GPU_CUVS_CAGRA_CONFIG_H*/

@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef GPU_RAFT_H
-#define GPU_RAFT_H
+#ifndef GPU_CUVS_H
+#define GPU_CUVS_H
 
 #include <cstdint>
 #include <exception>
@@ -26,13 +26,13 @@
 #include <tuple>
 #include <vector>
 
-#include "common/raft/integration/raft_knowhere_config.hpp"
-#include "common/raft/integration/raft_knowhere_index.hpp"
-#include "common/raft/proto/raft_index_kind.hpp"
-#include "index/gpu_raft/gpu_raft_brute_force_config.h"
-#include "index/gpu_raft/gpu_raft_cagra_config.h"
-#include "index/gpu_raft/gpu_raft_ivf_flat_config.h"
-#include "index/gpu_raft/gpu_raft_ivf_pq_config.h"
+#include "common/cuvs/integration/cuvs_knowhere_config.hpp"
+#include "common/cuvs/integration/cuvs_knowhere_index.hpp"
+#include "common/cuvs/proto/cuvs_index_kind.hpp"
+#include "index/gpu_cuvs/gpu_cuvs_brute_force_config.h"
+#include "index/gpu_cuvs/gpu_cuvs_cagra_config.h"
+#include "index/gpu_cuvs/gpu_cuvs_ivf_flat_config.h"
+#include "index/gpu_cuvs/gpu_cuvs_ivf_pq_config.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/expected.h"
 #include "knowhere/index/index_factory.h"
@@ -43,43 +43,43 @@ namespace knowhere {
 
 auto static constexpr cuda_concurrent_size_per_device = std::uint32_t{4};
 
-template <raft_proto::raft_index_kind K>
+template <cuvs_proto::cuvs_index_kind K>
 struct KnowhereConfigType {};
 
 template <>
-struct KnowhereConfigType<raft_proto::raft_index_kind::brute_force> {
-    using Type = GpuRaftBruteForceConfig;
+struct KnowhereConfigType<cuvs_proto::cuvs_index_kind::brute_force> {
+    using Type = GpuCuvsBruteForceConfig;
 };
 
 template <>
-struct KnowhereConfigType<raft_proto::raft_index_kind::ivf_flat> {
-    using Type = GpuRaftIvfFlatConfig;
+struct KnowhereConfigType<cuvs_proto::cuvs_index_kind::ivf_flat> {
+    using Type = GpuCuvsIvfFlatConfig;
 };
 
 template <>
-struct KnowhereConfigType<raft_proto::raft_index_kind::ivf_pq> {
-    using Type = GpuRaftIvfPqConfig;
+struct KnowhereConfigType<cuvs_proto::cuvs_index_kind::ivf_pq> {
+    using Type = GpuCuvsIvfPqConfig;
 };
 
 template <>
-struct KnowhereConfigType<raft_proto::raft_index_kind::cagra> {
-    using Type = GpuRaftCagraConfig;
+struct KnowhereConfigType<cuvs_proto::cuvs_index_kind::cagra> {
+    using Type = GpuCuvsCagraConfig;
 };
 
-template <typename DataType, raft_proto::raft_index_kind K>
-struct GpuRaftIndexNode : public IndexNode {
+template <typename DataType, cuvs_proto::cuvs_index_kind K>
+struct GpuCuvsIndexNode : public IndexNode {
     auto static constexpr index_kind = K;
     using knowhere_config_type = typename KnowhereConfigType<index_kind>::Type;
 
-    GpuRaftIndexNode(int32_t, const Object& object) : index_{} {
+    GpuCuvsIndexNode(int32_t, const Object& object) : index_{} {
     }
 
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
         auto result = Status::success;
-        auto raft_cfg = raft_knowhere::raft_knowhere_config{};
+        auto raft_cfg = cuvs_knowhere::cuvs_knowhere_config{};
         try {
-            raft_cfg = to_raft_knowhere_config(static_cast<const knowhere_config_type&>(*cfg));
+            raft_cfg = to_cuvs_knowhere_config(static_cast<const knowhere_config_type&>(*cfg));
         } catch (const std::exception& e) {
             LOG_KNOWHERE_ERROR_ << e.what();
             result = Status::invalid_args;
@@ -96,7 +96,7 @@ struct GpuRaftIndexNode : public IndexNode {
                 index_.synchronize(true);
             } catch (const std::exception& e) {
                 LOG_KNOWHERE_ERROR_ << e.what();
-                result = Status::raft_inner_error;
+                result = Status::cuvs_inner_error;
             }
         }
         return result;
@@ -110,10 +110,10 @@ struct GpuRaftIndexNode : public IndexNode {
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
         auto result = Status::success;
-        auto raft_cfg = raft_knowhere::raft_knowhere_config{};
+        auto raft_cfg = cuvs_knowhere::cuvs_knowhere_config{};
         auto err_msg = std::string{};
         try {
-            raft_cfg = to_raft_knowhere_config(static_cast<const knowhere_config_type&>(*cfg));
+            raft_cfg = to_cuvs_knowhere_config(static_cast<const knowhere_config_type&>(*cfg));
         } catch (const std::exception& e) {
             err_msg = std::string{e.what()};
             LOG_KNOWHERE_ERROR_ << e.what();
@@ -132,7 +132,7 @@ struct GpuRaftIndexNode : public IndexNode {
             } catch (const std::exception& e) {
                 err_msg = std::string{e.what()};
                 LOG_KNOWHERE_ERROR_ << e.what();
-                result = Status::raft_inner_error;
+                result = Status::cuvs_inner_error;
             }
         }
         return expected<DataSetPtr>::Err(result, err_msg.c_str());
@@ -167,7 +167,7 @@ struct GpuRaftIndexNode : public IndexNode {
                 index_.synchronize(true);
             } catch (const std::exception& e) {
                 LOG_KNOWHERE_ERROR_ << e.what();
-                result = Status::raft_inner_error;
+                result = Status::cuvs_inner_error;
             }
             os.flush();
         }
@@ -232,31 +232,31 @@ struct GpuRaftIndexNode : public IndexNode {
 
     std::string
     Type() const override {
-        if constexpr (index_kind == raft_proto::raft_index_kind::brute_force) {
-            return knowhere::IndexEnum::INDEX_RAFT_BRUTEFORCE;
-        } else if constexpr (index_kind == raft_proto::raft_index_kind::ivf_flat) {
-            return knowhere::IndexEnum::INDEX_RAFT_IVFFLAT;
-        } else if constexpr (index_kind == raft_proto::raft_index_kind::ivf_pq) {
-            return knowhere::IndexEnum::INDEX_RAFT_IVFPQ;
-        } else if constexpr (index_kind == raft_proto::raft_index_kind::cagra) {
-            return knowhere::IndexEnum::INDEX_RAFT_CAGRA;
+        if constexpr (index_kind == cuvs_proto::cuvs_index_kind::brute_force) {
+            return knowhere::IndexEnum::INDEX_CUVS_BRUTEFORCE;
+        } else if constexpr (index_kind == cuvs_proto::cuvs_index_kind::ivf_flat) {
+            return knowhere::IndexEnum::INDEX_CUVS_IVFFLAT;
+        } else if constexpr (index_kind == cuvs_proto::cuvs_index_kind::ivf_pq) {
+            return knowhere::IndexEnum::INDEX_CUVS_IVFPQ;
+        } else if constexpr (index_kind == cuvs_proto::cuvs_index_kind::cagra) {
+            return knowhere::IndexEnum::INDEX_CUVS_CAGRA;
         }
     }
 
-    using raft_knowhere_index_type = typename raft_knowhere::raft_knowhere_index<K>;
+    using cuvs_knowhere_index_type = typename cuvs_knowhere::cuvs_knowhere_index<K>;
 
  protected:
-    raft_knowhere_index_type index_;
+    cuvs_knowhere_index_type index_;
 
     Status
     DeserializeFromStream(std::istream& stream) {
         auto result = Status::success;
         try {
-            index_ = raft_knowhere_index_type::deserialize(stream);
+            index_ = cuvs_knowhere_index_type::deserialize(stream);
             index_.synchronize(true);
         } catch (const std::exception& e) {
             LOG_KNOWHERE_ERROR_ << e.what();
-            result = Status::raft_inner_error;
+            result = Status::cuvs_inner_error;
         }
         stream.sync();
         return result;
@@ -264,14 +264,14 @@ struct GpuRaftIndexNode : public IndexNode {
 };
 
 template <typename DataType>
-using GpuRaftBruteForceIndexNode = GpuRaftIndexNode<DataType, raft_proto::raft_index_kind::brute_force>;
+using GpuCuvsBruteForceIndexNode = GpuCuvsIndexNode<DataType, cuvs_proto::cuvs_index_kind::brute_force>;
 template <typename DataType>
-using GpuRaftIvfFlatIndexNode = GpuRaftIndexNode<DataType, raft_proto::raft_index_kind::ivf_flat>;
+using GpuCuvsIvfFlatIndexNode = GpuCuvsIndexNode<DataType, cuvs_proto::cuvs_index_kind::ivf_flat>;
 template <typename DataType>
-using GpuRaftIvfPqIndexNode = GpuRaftIndexNode<DataType, raft_proto::raft_index_kind::ivf_pq>;
+using GpuCuvsIvfPqIndexNode = GpuCuvsIndexNode<DataType, cuvs_proto::cuvs_index_kind::ivf_pq>;
 template <typename DataType>
-using GpuRaftCagraIndexNode = GpuRaftIndexNode<DataType, raft_proto::raft_index_kind::cagra>;
+using GpuCuvsCagraIndexNode = GpuCuvsIndexNode<DataType, cuvs_proto::cuvs_index_kind::cagra>;
 
 }  // namespace knowhere
 
-#endif /* GPU_RAFT_H */
+#endif /* GPU_CUVS_H */

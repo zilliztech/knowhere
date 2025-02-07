@@ -18,14 +18,14 @@
 #include <optional>
 #include <string>
 
-#include "common/raft/proto/raft_index_kind.hpp"
+#include "common/cuvs/proto/cuvs_index_kind.hpp"
 
-namespace raft_knowhere {
-// This struct includes all parameters that may be passed to underlying RAFT
-// indexes. It is designed to not expose ANY RAFT types in order to cleanly
-// separate RAFT from knowhere headers.
-struct raft_knowhere_config {
-    raft_proto::raft_index_kind index_type;
+namespace cuvs_knowhere {
+// This struct includes all parameters that may be passed to underlying cuVS
+// indexes. It is designed to not expose ANY cuVS types in order to cleanly
+// separate cuVS from knowhere headers.
+struct cuvs_knowhere_config {
+    cuvs_proto::cuvs_index_kind index_type;
     int k = 10;
 
     // Common Parameters
@@ -70,28 +70,29 @@ struct raft_knowhere_config {
     std::optional<int> hashmap_min_bitlen = std::nullopt;
     std::optional<float> hashmap_max_fill_rate = std::nullopt;
     std::optional<int> nn_descent_niter = std::nullopt;
+    std::optional<bool> persistent = std::nullopt;
 };
 
 // The following function provides a single source of truth for default values
-// of RAFT index configurations.
+// of cuVS index configurations.
 [[nodiscard]] inline auto
-validate_raft_knowhere_config(raft_knowhere_config config) {
-    if (config.index_type == raft_proto::raft_index_kind::brute_force) {
+validate_cuvs_knowhere_config(cuvs_knowhere_config config) {
+    if (config.index_type == cuvs_proto::cuvs_index_kind::brute_force) {
         config.add_data_on_build = false;
         config.cache_dataset_on_device = true;
     }
-    if (config.index_type == raft_proto::raft_index_kind::ivf_flat ||
-        config.index_type == raft_proto::raft_index_kind::ivf_pq) {
+    if (config.index_type == cuvs_proto::cuvs_index_kind::ivf_flat ||
+        config.index_type == cuvs_proto::cuvs_index_kind::ivf_pq) {
         config.add_data_on_build = true;
         config.nlist = config.nlist.value_or(128);
         config.nprobe = config.nprobe.value_or(8);
         config.kmeans_n_iters = config.kmeans_n_iters.value_or(20);
         config.kmeans_trainset_fraction = config.kmeans_trainset_fraction.value_or(0.5f);
     }
-    if (config.index_type == raft_proto::raft_index_kind::ivf_flat) {
+    if (config.index_type == cuvs_proto::cuvs_index_kind::ivf_flat) {
         config.adaptive_centers = config.adaptive_centers.value_or(false);
     }
-    if (config.index_type == raft_proto::raft_index_kind::ivf_pq) {
+    if (config.index_type == cuvs_proto::cuvs_index_kind::ivf_pq) {
         config.m = config.m.value_or(0);
         config.nbits = config.nbits.value_or(8);
         config.codebook_kind = config.codebook_kind.value_or("PER_SUBSPACE");
@@ -101,7 +102,7 @@ validate_raft_knowhere_config(raft_knowhere_config config) {
         config.internal_distance_dtype = config.internal_distance_dtype.value_or("CUDA_R_32F");
         config.preferred_shmem_carveout = config.preferred_shmem_carveout.value_or(1.0f);
     }
-    if (config.index_type == raft_proto::raft_index_kind::cagra) {
+    if (config.index_type == cuvs_proto::cuvs_index_kind::cagra) {
         config.add_data_on_build = true;
         config.intermediate_graph_degree = config.intermediate_graph_degree.value_or(128);
         config.graph_degree = config.graph_degree.value_or(64);
@@ -118,8 +119,9 @@ validate_raft_knowhere_config(raft_knowhere_config config) {
         config.hashmap_min_bitlen = config.hashmap_min_bitlen.value_or(0);
         config.hashmap_max_fill_rate = config.hashmap_max_fill_rate.value_or(0.5f);
         config.nn_descent_niter = config.nn_descent_niter.value_or(20);
+        config.persistent = config.persistent.value_or(false);
     }
     return config;
 }
 
-}  // namespace raft_knowhere
+}  // namespace cuvs_knowhere

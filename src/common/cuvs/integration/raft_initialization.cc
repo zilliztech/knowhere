@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "common/raft/integration/raft_initialization.hpp"
+#include "common/cuvs/integration/raft_initialization.hpp"
 
 #include <cuda_runtime_api.h>
 
@@ -22,7 +22,7 @@
 #include <raft/core/device_resources_manager.hpp>
 #include <raft/core/device_setter.hpp>
 #include <raft/core/resource/device_memory_resource.hpp>
-namespace raft_knowhere {
+namespace cuvs_knowhere {
 
 void
 initialize_raft(raft_configuration const& config) {
@@ -76,4 +76,4 @@ initialize_raft(raft_configuration const& config) {
     });
 }
 
-}  // namespace raft_knowhere
+}  // namespace cuvs_knowhere

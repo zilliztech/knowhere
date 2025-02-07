@@ -14,23 +14,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef GPU_RAFT_IVF_FLAT_CONFIG_H
-#define GPU_RAFT_IVF_FLAT_CONFIG_H
+#ifndef GPU_CUVS_IVF_FLAT_CONFIG_H
+#define GPU_CUVS_IVF_FLAT_CONFIG_H
 
-#include "common/raft/integration/raft_knowhere_config.hpp"
-#include "common/raft/proto/raft_index_kind.hpp"
+#include "common/cuvs/integration/cuvs_knowhere_config.hpp"
+#include "common/cuvs/proto/cuvs_index_kind.hpp"
 #include "index/ivf/ivf_config.h"
 #include "knowhere/config.h"
 
 namespace knowhere {
 
-struct GpuRaftIvfFlatConfig : public IvfFlatConfig {
+struct GpuCuvsIvfFlatConfig : public IvfFlatConfig {
     CFG_BOOL cache_dataset_on_device;
     CFG_FLOAT refine_ratio;
     CFG_INT kmeans_n_iters;
     CFG_FLOAT kmeans_trainset_fraction;
     CFG_BOOL adaptive_centers;
-    KNOHWERE_DECLARE_CONFIG(GpuRaftIvfFlatConfig) {
+    KNOHWERE_DECLARE_CONFIG(GpuCuvsIvfFlatConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(cache_dataset_on_device)
             .set_default(false)
             .description("cache dataset on device for refinement")
@@ -64,7 +64,7 @@ struct GpuRaftIvfFlatConfig : public IvfFlatConfig {
             constexpr std::array<std::string_view, 3> legal_metric_list{"L2", "IP", "COSINE"};
             std::string metric = metric_type.value();
             if (std::find(legal_metric_list.begin(), legal_metric_list.end(), metric) == legal_metric_list.end()) {
-                std::string msg = "metric type " + metric + " not found or not supported, supported: [L2 IP]";
+                std::string msg = "metric type " + metric + " not found or not supported, supported: [L2 IP COSINE]";
                 return HandleError(err_msg, msg, Status::invalid_metric_type);
             }
         }
@@ -73,8 +73,8 @@ struct GpuRaftIvfFlatConfig : public IvfFlatConfig {
 };
 
 [[nodiscard]] inline auto
-to_raft_knowhere_config(GpuRaftIvfFlatConfig const& cfg) {
-    auto result = raft_knowhere::raft_knowhere_config{raft_proto::raft_index_kind::ivf_flat};
+to_cuvs_knowhere_config(GpuCuvsIvfFlatConfig const& cfg) {
+    auto result = cuvs_knowhere::cuvs_knowhere_config{cuvs_proto::cuvs_index_kind::ivf_flat};
 
     result.metric_type = cfg.metric_type.value();
     result.cache_dataset_on_device = cfg.cache_dataset_on_device.value();
@@ -91,4 +91,4 @@ to_raft_knowhere_config(GpuRaftIvfFlatConfig const& cfg) {
 
 }  // namespace knowhere
 
-#endif /*GPU_RAFT_IVF_FLAT_CONFIG_H*/
+#endif /*GPU_CUVS_IVF_FLAT_CONFIG_H*/
