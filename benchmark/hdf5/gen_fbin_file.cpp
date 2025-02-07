@@ -151,7 +151,7 @@ TEST_F(Create_FBIN, CREATE_FLOAT) {
 TEST_F(Create_FBIN, HDF5_TO_FBIN) {
     set_ann_test_name("rand-128-l2");
     parse_ann_test_name();
-    load_hdf5_data<false>();
+    load_hdf5_data<knowhere::fp32>();
 
     std::string prefix = dataset_name_ + "-" + std::to_string(dim_) + "-";
     std::string postfix = ".fbin";
@@ -172,7 +172,7 @@ TEST_F(Create_FBIN, HDF5_TO_FBIN) {
 TEST_F(Create_FBIN, HDF5_RANGE_TO_FBIN) {
     set_ann_test_name("rand-128-l2-range");
     parse_ann_test_name_with_range();
-    load_hdf5_data_range<false>();
+    load_hdf5_data_range<knowhere::fp32>();
 
     std::string prefix = dataset_name_ + "-" + std::to_string(dim_) + "-range-";
     std::string postfix = ".fbin";
@@ -193,7 +193,7 @@ TEST_F(Create_FBIN, HDF5_RANGE_TO_FBIN) {
 TEST_F(Create_FBIN, HDF5_BIN_TO_FBIN) {
     set_ann_test_name("rand-1024-hamming");
     parse_ann_test_name();
-    load_hdf5_data<true>();
+    load_hdf5_data<knowhere::bin1>();
 
     std::string prefix = dataset_name_ + "-" + std::to_string(dim_) + "-";
     std::string postfix = ".fbin";
@@ -214,7 +214,7 @@ TEST_F(Create_FBIN, HDF5_BIN_TO_FBIN) {
 TEST_F(Create_FBIN, HDF5_BIN_RANGE_TO_FBIN) {
     set_ann_test_name("rand-1024-hamming-range");
     parse_ann_test_name_with_range();
-    load_hdf5_data_range<true>();
+    load_hdf5_data_range<knowhere::bin1>();
 
     std::string prefix = dataset_name_ + "-" + std::to_string(dim_) + "-range-";
     std::string postfix = ".fbin";

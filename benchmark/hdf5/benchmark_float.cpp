@@ -271,7 +271,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
         T0_ = elapsed();
         set_ann_test_name("sift-128-euclidean");
         parse_ann_test_name();
-        load_hdf5_data<false>();
+        load_hdf5_data<knowhere::fp32>();
 
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
         knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);

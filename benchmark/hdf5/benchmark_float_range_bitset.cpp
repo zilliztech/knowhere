@@ -138,7 +138,7 @@ class Benchmark_float_range_bitset : public Benchmark_knowhere, public ::testing
         T0_ = elapsed();
         set_ann_test_name("sift-128-euclidean-range");
         parse_ann_test_name_with_range();
-        load_hdf5_data_range<false>();
+        load_hdf5_data_range<knowhere::fp32>();
 
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
         cfg_[knowhere::meta::RADIUS] = *gt_radius_;
