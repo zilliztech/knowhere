@@ -193,8 +193,17 @@ struct cuvs_index {
             cuvs::neighbors::cagra::search(res, search_params, underlying_index, queries, neighbors_tmp, distances_tmp,
                                            filter);
         }
-        if (refine_ratio > 1.0f) {
-            if (dataset.has_value()) {
+        bool do_refine_step = refine_ratio > 1.0f;
+        if (do_refine_step && !dataset.has_value()) {
+            RAFT_LOG_WARN("Refinement requested, but no dataset provided. Ignoring refinement request.");
+            do_refine_step = false;
+        }
+        if (do_refine_step && !std::is_same_v<T, float>) {
+            RAFT_LOG_WARN("Refinement requested, but only float are supported. Ignoring refinement request.");
+            do_refine_step = false;
+        }
+        if constexpr (std::is_same_v<T, float>) {
+            if (do_refine_step) {
                 if constexpr (std::is_same_v<IdxT, InputIdxT>) {
                     cuvs::neighbors::refine(res, *dataset, queries, raft::make_const_mdspan(neighbors_tmp), neighbors,
                                             distances, underlying_index.metric());
@@ -214,8 +223,6 @@ struct cuvs_index {
                                                       InputIdxT(distances.extent(1))),
                         underlying_index.metric());
                 }
-            } else {
-                RAFT_LOG_WARN("Refinement requested, but no dataset provided. Ignoring refinement request.");
             }
         }
     }

@@ -22,7 +22,7 @@
 
 namespace cuvs_knowhere {
 
-using knowhere_data_type = float;
+using knowhere_distance_type = float;
 using knowhere_indexing_type = std::int64_t;
 using knowhere_bitset_data_type = std::uint8_t;
 using knowhere_bitset_indexing_type = std::uint32_t;
@@ -61,11 +61,7 @@ struct cuvs_io_type_mapper<true, cuvs_proto::cuvs_index_kind::cagra> : std::true
     using indexing_type = std::uint32_t;
     using input_indexing_type = std::int64_t;
 };
-
 }  // namespace detail
-
-template <cuvs_proto::cuvs_index_kind IndexKind>
-using cuvs_data_t = typename detail::cuvs_io_type_mapper<true, IndexKind>::data_type;
 
 template <cuvs_proto::cuvs_index_kind IndexKind>
 using cuvs_indexing_t = typename detail::cuvs_io_type_mapper<true, IndexKind>::indexing_type;

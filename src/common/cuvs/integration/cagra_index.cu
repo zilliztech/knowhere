@@ -18,5 +18,6 @@
 #include "common/cuvs/proto/cuvs_index_kind.hpp"
 
 namespace cuvs_knowhere {
-template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra>;
+template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, float>;
+template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, std::uint8_t>;
 }  // namespace cuvs_knowhere

@@ -63,6 +63,7 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     {IndexEnum::INDEX_GPU_IVFFLAT, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_GPU_IVFPQ, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_GPU_CAGRA, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_GPU_CAGRA, VecType::VECTOR_INT8},
 
     // hnsw
     {IndexEnum::INDEX_HNSW, VecType::VECTOR_FLOAT},

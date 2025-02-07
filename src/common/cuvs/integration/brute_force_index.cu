@@ -18,5 +18,5 @@
 #include "common/cuvs/proto/cuvs_index_kind.hpp"
 
 namespace cuvs_knowhere {
-template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::brute_force>;
+template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::brute_force, float>;
 }  // namespace cuvs_knowhere
