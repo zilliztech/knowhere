@@ -214,6 +214,7 @@ fvec_hook(std::string& simd_type) {
         bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_avx512;
         fp16_vec_L2sqr_batch_4 = fp16_vec_L2sqr_batch_4_avx512;
         bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_avx512;
+        fvec_L2sqr_ny_nearest = fvec_L2sqr_ny_nearest_avx;  // avx2 compute small dim faster than avx512
 
         simd_type = "AVX512";
         support_pq_fast_scan = true;
@@ -248,6 +249,7 @@ fvec_hook(std::string& simd_type) {
         fp16_vec_L2sqr_batch_4 = fp16_vec_L2sqr_batch_4_avx;
         bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_avx;
 
+        fvec_L2sqr_ny_nearest = fvec_L2sqr_ny_nearest_avx;
         simd_type = "AVX2";
         support_pq_fast_scan = true;
     } else if (use_sse4_2 && cpu_support_sse4_2()) {

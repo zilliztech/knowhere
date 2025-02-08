@@ -180,6 +180,15 @@ void pairwise_indexed_inner_product(
         const int64_t* iy,
         float* dis);
 
+void exhaustive_L2sqr_nearest_imp(
+        const float* __restrict x,
+        const float* __restrict y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* vals,
+        int64_t* ids);
+
 /***************************************************************************
  * KNN functions
  ***************************************************************************/

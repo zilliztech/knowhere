@@ -108,6 +108,12 @@ fp16_vec_norm_L2sqr_avx(const knowhere::fp16* x, size_t d);
 float
 bf16_vec_norm_L2sqr_avx(const knowhere::bf16* x, size_t d);
 
+void
+fvec_L2sqr_ny_avx(float* dis, const float* x, const float* y, size_t d, size_t ny);
+
+size_t
+fvec_L2sqr_ny_nearest_avx(float* distances_tmp_buffer, const float* x, const float* y, size_t d, size_t ny);
+
 }  // namespace faiss
 
 #endif /* DISTANCES_AVX_H */
