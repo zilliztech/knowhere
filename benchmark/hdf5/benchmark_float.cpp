@@ -319,6 +319,29 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
     const std::vector<int32_t> ITOPK_SIZEs_ = {128, 192, 256};
 };
 
+// This testcase is to convert sift-128-euclidean for VECTOR_INT8
+// In the original SIFT dataset, the numerical range for training and testing data is [0, 218].
+// After subtracting 110 from each value, the range of values becomes [-110, 108], then each
+// FLOAT data can be converted to INT8 without loss for VECTOR-INT8 testing.
+#if 0
+TEST_F(Benchmark_float, TEST_CREATE_HDF5_FOR_VECTOR_INT8) {
+    std::vector<float> xb_new(nb_ * dim_);
+    for (int32_t i = 0; i <= nb_ * dim_; i++) {
+        xb_new[i] = *((float*)xb_ + i) - 110;
+    }
+
+    std::vector<float> xq_new(nq_ * dim_);
+    for (int32_t i = 0; i <= nq_ * dim_; i++) {
+        xq_new[i] = *((float*)xq_ + i) - 110;
+    }
+
+    assert(dim_ == 128);
+    assert(nq_ == 10000);
+    hdf5_write<knowhere::fp32>("sift-128-euclidean-new.hdf5", dim_, gt_k_, xb_new.data(), nb_, xq_new.data(), nq_,
+                               gt_ids_, gt_dist_);
+}
+#endif
+
 #define TEST_INDEX(NAME, T, X)              \
     index_file_name = get_index_name<T>(X); \
     create_index<T>(index_file_name, conf); \

@@ -117,14 +117,18 @@ class Benchmark_knowhere : public Benchmark_hdf5 {
         for (size_t i = 0; i < params.size(); i++) {
             params_str += "_" + params[i];
         }
-        if constexpr (std::is_same_v<T, knowhere::fp32>) {
+        if constexpr (std::is_same_v<T, knowhere::bin1>) {
+            return ann_test_name + "_" + index_type + params_str + "_bin" + ".index";
+        } else if constexpr (std::is_same_v<T, knowhere::fp32>) {
             return ann_test_name + "_" + index_type + params_str + "_fp32" + ".index";
         } else if constexpr (std::is_same_v<T, knowhere::fp16>) {
             return ann_test_name + "_" + index_type + params_str + "_fp16" + ".index";
         } else if constexpr (std::is_same_v<T, knowhere::bf16>) {
             return ann_test_name + "_" + index_type + params_str + "_bf16" + ".index";
+        } else if constexpr (std::is_same_v<T, knowhere::int8>) {
+            return ann_test_name + "_" + index_type + params_str + "_int8" + ".index";
         } else {
-            return ann_test_name + "_" + index_type + params_str + ".index";
+            assert("unknown data type");
         }
     }
 
