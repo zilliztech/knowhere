@@ -108,7 +108,8 @@ namespace diskann {
         }
       } else {
         // if true, `workspace next batch` will be skipped.
-        // so that iterator will return nothing, iterator.HasNext() will be false.
+        // so that iterator will return nothing, iterator.HasNext() will be
+        // false.
         not_l2_but_zero = true;
       }
     }
@@ -1513,6 +1514,59 @@ namespace diskann {
     }
   }
 
+  // range search returns results of all neighbors within distance of range.
+  // indices and distances need to be pre-allocated of size l_search and the
+  // return value is the number of matching hits.
+  template<typename T>
+  _u32 PQFlashIndex<T>::range_search(
+      const T *query1, const double range, const _u64 min_l_search,
+      const _u64 max_l_search, std::vector<_s64> &indices,
+      std::vector<float> &distances, const _u64 beam_width,
+      knowhere::BitsetView bitset_view, QueryStats *stats) {
+    _u32 res_count = 0;
+
+    bool stop_flag = false;
+
+    _u32 l_search = min_l_search;  // starting size of the candidate list
+    while (!stop_flag) {
+      if (stats != nullptr) {
+        stats->n_iters++;
+      }
+      indices.resize(l_search);
+      distances.resize(l_search);
+      for (auto &x : distances)
+        x = std::numeric_limits<float>::max();
+      this->cached_beam_search(query1, l_search, l_search, indices.data(),
+                               distances.data(), beam_width, false, stats,
+                               nullptr, bitset_view);
+      for (_u32 i = 0; i < l_search; i++) {
+        if (indices[i] == -1) {
+          res_count = i;
+          break;
+        }
+        bool in_range = (metric == diskann::Metric::INNER_PRODUCT ||
+                         metric == diskann::Metric::COSINE)
+                            ? distances[i] > (float) range
+                            : distances[i] < (float) range;
+        if (!in_range) {
+          res_count = i;
+          break;
+        }
+        if (i == l_search - 1) {
+          res_count = l_search;
+        }
+      }
+      if (res_count < (_u32) (l_search / 2.0))
+        stop_flag = true;
+      l_search = l_search * 2;
+      if (l_search > max_l_search)
+        stop_flag = true;
+    }
+    indices.resize(res_count);
+    distances.resize(res_count);
+    return res_count;
+  }
+
   template<typename T>
   inline void PQFlashIndex<T>::copy_vec_base_data(T *des, const int64_t des_idx,
                                                   void *src) {
@@ -1659,7 +1713,8 @@ namespace diskann {
       throw ANNException("Beamwidth can not be higher than MAX_N_SECTOR_READS",
                          -1, __FUNCSIG__, __FILE__, __LINE__);
 
-    // if metric is cosine or ip, and the query is zero vector, iterator will return nothing.
+    // if metric is cosine or ip, and the query is zero vector, iterator will
+    // return nothing.
     if (workspace->not_l2_but_zero) {
       return;
     }
