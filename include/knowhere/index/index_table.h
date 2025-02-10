@@ -26,37 +26,37 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     {IndexEnum::INDEX_FAISS_IDMAP, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_FAISS_IDMAP, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_FAISS_IDMAP, VecType::VECTOR_BFLOAT16},
-    {IndexEnum::INDEX_FAISS_IDMAP, VecType::VECTOR_INT8},
+    // {IndexEnum::INDEX_FAISS_IDMAP, VecType::VECTOR_INT8},
 
     {IndexEnum::INDEX_FAISS_IVFFLAT, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_FAISS_IVFFLAT, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_FAISS_IVFFLAT, VecType::VECTOR_BFLOAT16},
-    {IndexEnum::INDEX_FAISS_IVFFLAT, VecType::VECTOR_INT8},
+    // {IndexEnum::INDEX_FAISS_IVFFLAT, VecType::VECTOR_INT8},
 
     {IndexEnum::INDEX_FAISS_IVFFLAT_CC, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_FAISS_IVFFLAT_CC, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_FAISS_IVFFLAT_CC, VecType::VECTOR_BFLOAT16},
-    {IndexEnum::INDEX_FAISS_IVFFLAT_CC, VecType::VECTOR_INT8},
+    // {IndexEnum::INDEX_FAISS_IVFFLAT_CC, VecType::VECTOR_INT8},
 
     {IndexEnum::INDEX_FAISS_IVFPQ, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_FAISS_IVFPQ, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_FAISS_IVFPQ, VecType::VECTOR_BFLOAT16},
-    {IndexEnum::INDEX_FAISS_IVFPQ, VecType::VECTOR_INT8},
+    // {IndexEnum::INDEX_FAISS_IVFPQ, VecType::VECTOR_INT8},
 
     {IndexEnum::INDEX_FAISS_SCANN, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_FAISS_SCANN, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_FAISS_SCANN, VecType::VECTOR_BFLOAT16},
-    {IndexEnum::INDEX_FAISS_SCANN, VecType::VECTOR_INT8},
+    // {IndexEnum::INDEX_FAISS_SCANN, VecType::VECTOR_INT8},
 
     {IndexEnum::INDEX_FAISS_IVFSQ8, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_FAISS_IVFSQ8, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_FAISS_IVFSQ8, VecType::VECTOR_BFLOAT16},
-    {IndexEnum::INDEX_FAISS_IVFSQ8, VecType::VECTOR_INT8},
+    // {IndexEnum::INDEX_FAISS_IVFSQ8, VecType::VECTOR_INT8},
 
     {IndexEnum::INDEX_FAISS_IVFSQ_CC, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_FAISS_IVFSQ_CC, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_FAISS_IVFSQ_CC, VecType::VECTOR_BFLOAT16},
-    {IndexEnum::INDEX_FAISS_IVFSQ_CC, VecType::VECTOR_INT8},
+    // {IndexEnum::INDEX_FAISS_IVFSQ_CC, VecType::VECTOR_INT8},
 
     // gpu index
     {IndexEnum::INDEX_GPU_BRUTEFORCE, VecType::VECTOR_FLOAT},
