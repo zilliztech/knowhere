@@ -187,6 +187,7 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
     const std::vector<int32_t> SEARCH_LISTs_ = {100, 200, 400};
 };
 
+#if 0
 // This testcase can be used to generate HDF5 file
 // Following these steps:
 //   1. set_ann_test_name, eg. "sift-128-euclidean" or "glove-200-angular"
@@ -196,7 +197,6 @@ class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test 
 //   5. use RunFloatRangeSearchBF<CMin<float>> for L2, or RunFloatRangeSearchBF<CMax<float>> for IP
 //   6. specify the hdf5 file name to generate
 //   7. run this testcase
-#if 0
 TEST_F(Benchmark_float_range, TEST_CREATE_HDF5) {
     // set this radius to get about 1M result dataset for 10k nq
     const float radius = 186.0 * 186.0;
@@ -224,6 +224,27 @@ TEST_F(Benchmark_float_range, TEST_CREATE_HDF5) {
     assert(nq_ == 10000);
     hdf5_write_range<false>("sift-128-euclidean-range.hdf5", dim_, xb_, nb_, xq_, nq_, high_bound,
                             golden_lims_int.data(), golden_ids_int.data(), golden_distances.data());
+}
+
+// This testcase is to convert sift-128-euclidean for VECTOR_INT8
+// In the original SIFT dataset, the numerical range for training and testing data is [0, 218].
+// After subtracting 110 from each value, the range of values becomes [-110, 108], then each
+// FLOAT data can be converted to INT8 without loss for VECTOR-INT8 testing.
+TEST_F(Benchmark_float_range, TEST_CREATE_HDF5_FOR_VECTOR_INT8) {
+    std::vector<float> xb_new(nb_ * dim_);
+    for (int32_t i = 0; i <= nb_ * dim_; i++) {
+        xb_new[i] = *((float*)xb_ + i) - 110;
+    }
+
+    std::vector<float> xq_new(nq_ * dim_);
+    for (int32_t i = 0; i <= nq_ * dim_; i++) {
+        xq_new[i] = *((float*)xq_ + i) - 110;
+    }
+
+    assert(dim_ == 128);
+    assert(nq_ == 10000);
+    hdf5_write_range<knowhere::fp32>("sift-128-euclidean-range-new.hdf5", dim_, xb_new.data(), nb_, xq_new.data(), nq_,
+                                     *gt_radius_, gt_lims_, gt_ids_, gt_dist_);
 }
 #endif
 
