@@ -24,7 +24,7 @@
 knowhere::DataSetPtr
 GenDataSet(int rows, int dim) {
     std::mt19937 rng(42);
-    std::uniform_real_distribution<> distrib(-1.0, 1.0);
+    std::uniform_int_distribution<> distrib(-128, 127);
     float* ts = new float[rows * dim];
     for (int i = 0; i < rows * dim; ++i) {
         ts[i] = (float)distrib(rng);
@@ -137,13 +137,61 @@ class Create_FBIN : public Benchmark_hdf5, public ::testing::Test {
             fbin_result_write(filename, nq, topk, gt_ids_int.data(), result.value()->GetDistance());
         }
     }
+
+    void
+    create_range_fbin_files(const int64_t nb, const int64_t nq, const int64_t dim,
+                            const std::vector<std::pair<knowhere::MetricType, float>>& params) {
+        knowhere::DataSetPtr xb_ds, xq_ds;
+        xb_ds = GenDataSet(nb, dim);
+        xq_ds = GenDataSet(nq, dim);
+
+        std::string prefix = "rand-" + std::to_string(dim) + "-";
+        std::string postfix = ".fbin";
+        std::string filename;
+
+        filename = prefix + "base" + postfix;
+        fbin_write(filename, nb, dim, xb_ds->GetTensor());
+
+        filename = prefix + "query" + postfix;
+        fbin_write(filename, nq, dim, xq_ds->GetTensor());
+
+        for (auto [metric_type, radius] : params) {
+            std::string metric_str = metric_type;
+            transform(metric_str.begin(), metric_str.end(), metric_str.begin(), ::tolower);
+
+            knowhere::Json json;
+            json[knowhere::meta::DIM] = dim;
+            json[knowhere::meta::METRIC_TYPE] = metric_type;
+            json[knowhere::meta::RADIUS] = radius;
+
+            auto result = knowhere::BruteForce::RangeSearch<knowhere::fp32>(xb_ds, xq_ds, json, nullptr);
+            assert(result.has_value());
+
+            // convert golden_lims to int32
+            std::vector<uint32_t> gt_lims_int(nq + 1);
+            for (int32_t i = 0; i <= nq; i++) {
+                gt_lims_int[i] = result.value()->GetLims()[i];
+            }
+
+            // convert golden_ids to int32
+            auto elem_cnt = result.value()->GetLims()[nq];
+            std::vector<uint32_t> gt_ids_int(elem_cnt);
+            for (int32_t i = 0; i < elem_cnt; i++) {
+                gt_ids_int[i] = result.value()->GetIds()[i];
+            }
+
+            filename = prefix + metric_str + "-gt" + postfix;
+            fbin_range_result_write(filename, nq, radius, gt_lims_int.data(), gt_ids_int.data(),
+                                    result.value()->GetDistance());
+        }
+    }
 };
 
 TEST_F(Create_FBIN, CREATE_FLOAT) {
     int64_t nb = 10000;
     int64_t nq = 100;
     int64_t dim = 128;
-    int64_t topk = 100;
+    int64_t topk = 5000;
 
     create_fbin_files(nb, nq, dim, topk, {knowhere::metric::L2, knowhere::metric::IP, knowhere::metric::COSINE});
 }
@@ -191,7 +239,7 @@ TEST_F(Create_FBIN, HDF5_RANGE_TO_FBIN) {
 }
 
 TEST_F(Create_FBIN, HDF5_BIN_TO_FBIN) {
-    set_ann_test_name("rand-1024-hamming");
+    set_ann_test_name("rand-4096-hamming");
     parse_ann_test_name();
     load_hdf5_data<knowhere::bin1>();
 
@@ -212,7 +260,7 @@ TEST_F(Create_FBIN, HDF5_BIN_TO_FBIN) {
 }
 
 TEST_F(Create_FBIN, HDF5_BIN_RANGE_TO_FBIN) {
-    set_ann_test_name("rand-1024-hamming-range");
+    set_ann_test_name("rand-4096-hamming-range");
     parse_ann_test_name_with_range();
     load_hdf5_data_range<knowhere::bin1>();
 

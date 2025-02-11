@@ -19,6 +19,8 @@ def CreateIndex(name, version, type=np.float32):
         return swigknowhere.IndexWrapBF16(name, version)
     if type == np.uint8:
         return swigknowhere.IndexWrapBin(name, version)
+    if type == np.int8:
+        return swigknowhere.IndexWrapInt8(name, version)
 
 def BruteForceSearch(type=np.float32, *args):
     if type == np.float32:
@@ -74,6 +76,8 @@ def ArrayToDataSet(arr):
         return swigknowhere.Array2DataSetIds(arr)
     if arr.ndim == 2:
         if arr.dtype == np.uint8:
+            return swigknowhere.Array2DataSetU(arr)
+        if arr.dtype == np.int8:
             return swigknowhere.Array2DataSetI(arr)
         if arr.dtype == np.float32:
             return swigknowhere.Array2DataSetF(arr)
@@ -174,6 +178,13 @@ def GetBinaryVectorDataSetToArray(ans):
     rows = swigknowhere.DataSet_Rows(ans)
     data = np.zeros([rows, dim]).astype(np.uint8)
     swigknowhere.BinaryDataSetTensor2Array(ans, data)
+    return data
+
+def GetInt8VectorDataSetToArray(ans):
+    dim = swigknowhere.DataSet_Dim(ans)
+    rows = swigknowhere.DataSet_Rows(ans)
+    data = np.zeros([rows, dim]).astype(np.int8)
+    swigknowhere.Int8DataSetTensor2Array(ans, data)
     return data
 
 def SetSimdType(type):

@@ -78,7 +78,9 @@ class Benchmark_hdf5 : public Benchmark_base {
     set_metric_type(const std::string& str) {
         if (str == METRIC_L2_STR || str == "l2") {
             metric_type_ = "L2";
-        } else if (str == METRIC_COS_STR) {
+        } else if (str == "ip") {
+            metric_type_ = "IP";
+        } else if (str == METRIC_COS_STR || str == "cosine") {
             metric_type_ = "COSINE";
         } else if (str == METRIC_HAM_STR) {
             metric_type_ = "HAMMING";

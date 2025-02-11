@@ -23,7 +23,7 @@
 knowhere::DataSetPtr
 GenDataSet(int rows, int dim) {
     std::mt19937 rng(42);
-    std::uniform_real_distribution<> distrib(-1.0, 1.0);
+    std::uniform_int_distribution<> distrib(-128, 127);
     float* ts = new float[rows * dim];
     for (int i = 0; i < rows * dim; ++i) {
         ts[i] = (float)distrib(rng);
@@ -144,7 +144,7 @@ TEST_F(Create_HDF5, CREATE_FLOAT) {
     int64_t nb = 10000;
     int64_t nq = 100;
     int64_t dim = 128;
-    int64_t topk = 100;
+    int64_t topk = 5000;
 
     create_hdf5_file<knowhere::fp32>(knowhere::metric::L2, nb, nq, dim, topk);
     create_hdf5_file<knowhere::fp32>(knowhere::metric::IP, nb, nq, dim, topk);
@@ -156,16 +156,16 @@ TEST_F(Create_HDF5, CREATE_FLOAT_RANGE) {
     int64_t nq = 100;
     int64_t dim = 128;
 
-    create_range_hdf5_file<knowhere::fp32>(knowhere::metric::L2, nb, nq, dim, 65.0);
-    create_range_hdf5_file<knowhere::fp32>(knowhere::metric::IP, nb, nq, dim, 8.7);
+    create_range_hdf5_file<knowhere::fp32>(knowhere::metric::L2, nb, nq, dim, 1070000.0);
+    create_range_hdf5_file<knowhere::fp32>(knowhere::metric::IP, nb, nq, dim, 142000.0);
     create_range_hdf5_file<knowhere::fp32>(knowhere::metric::COSINE, nb, nq, dim, 0.2);
 }
 
 TEST_F(Create_HDF5, CREATE_BINARY) {
     int64_t nb = 10000;
     int64_t nq = 100;
-    int64_t dim = 1024;
-    int64_t topk = 100;
+    int64_t dim = 4096;
+    int64_t topk = 5000;
 
     create_hdf5_file<knowhere::bin1>(knowhere::metric::HAMMING, nb, nq, dim, topk);
     create_hdf5_file<knowhere::bin1>(knowhere::metric::JACCARD, nb, nq, dim, topk);
@@ -174,8 +174,8 @@ TEST_F(Create_HDF5, CREATE_BINARY) {
 TEST_F(Create_HDF5, CREATE_BINARY_RANGE) {
     int64_t nb = 10000;
     int64_t nq = 100;
-    int64_t dim = 1024;
+    int64_t dim = 4096;
 
-    create_range_hdf5_file<knowhere::bin1>(knowhere::metric::HAMMING, nb, nq, dim, 476);
-    create_range_hdf5_file<knowhere::bin1>(knowhere::metric::JACCARD, nb, nq, dim, 0.63);
+    create_range_hdf5_file<knowhere::bin1>(knowhere::metric::HAMMING, nb, nq, dim, 1974);
+    create_range_hdf5_file<knowhere::bin1>(knowhere::metric::JACCARD, nb, nq, dim, 0.647);
 }
