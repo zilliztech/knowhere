@@ -147,8 +147,7 @@ if(WITH_LIGHT)
     src/index/sparse/*.cc
     src/io/*.cc
     src/index/index_factory.cc)
-  knowhere_file_glob(GLOB_RECURSE KNOWHERE_TRACER_SRCS src/common/tracer.cc
-                     src/common/prometheus_client.cc)
+  knowhere_file_glob(GLOB_RECURSE KNOWHERE_TRACER_SRCS src/common/tracer.cc)
   list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_TRACER_SRCS})
 endif()
 
@@ -184,9 +183,7 @@ list(APPEND KNOWHERE_LINKER_LIBS Boost::boost)
 list(APPEND KNOWHERE_LINKER_LIBS faiss)
 list(APPEND KNOWHERE_LINKER_LIBS glog::glog)
 list(APPEND KNOWHERE_LINKER_LIBS nlohmann_json::nlohmann_json)
-if(NOT WITH_LIGHT)
-  list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
-endif()
+list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
 list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt-header-only)
 list(APPEND KNOWHERE_LINKER_LIBS Folly::folly)
 if(NOT WITH_LIGHT)
