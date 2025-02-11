@@ -31,16 +31,17 @@ pull_request_rules:
       - or:
           - base=main
           - base~=^2(\.\d+){1,2}$
-      - -title~=\[automated\]
-      - -label=kind/improvement
+      - title!=\[automated\]
       - or:
         - and:
-          - -body~=\#[0-9]{1,6}(\s+|$)
-          - -body~=https://github.com/zilliztech/knowhere/issues/[0-9]{1,6}(\s+|$)
-        - and:
-          - -label=kind/enhancement
-          - -label=kind/feature
-          - -label=kind/bug
+          - label!=kind/improvement
+          - or:
+            - body!=(\#|https://github.com/zilliztech/knowhere/issues/)[0-9]{1,6}
+            - body!=\#[0-9]{1,6}(\s+|$)
+            - and:
+                - label!=kind/enhancement
+                - label!=kind/feature
+                - label!=kind/bug
     actions:
       label:
         add:
