@@ -770,7 +770,6 @@ fvec_L2sqr_ny_avx_impl(float* dis, const float* x, const float* y, size_t d, siz
     while (i < ny) {
         const float* __restrict y_i = y + d * i;
         dis[i] = fvec_L2sqr_avx(x, y_i, d);
-        y += d;
         i++;
     }
 }
