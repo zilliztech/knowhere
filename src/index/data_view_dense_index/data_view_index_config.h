@@ -74,6 +74,7 @@ AdaptToBaseIndexConfig(Config* cfg, PARAM_TYPE param_type, size_t dim) {
                 auto reorder_k = int(base_cfg->k.value() * base_cfg->refine_ratio.value());
                 base_cfg->k = reorder_k;
                 base_cfg->reorder_k = reorder_k;
+                base_cfg->ensure_topk_full = true;
                 break;
             }
             case PARAM_TYPE::RANGE_SEARCH: {

@@ -64,16 +64,25 @@ struct SIMDResultHandlerToFloat : SIMDResultHandler {
             nullptr; // table of biases to add to each query (for IVF L2 search)
     const float* normalizers = nullptr; // size 2 * nq, to convert
 
+    size_t scan_cnt = 0; // scanned vector number (except filtered)
+
     SIMDResultHandlerToFloat(size_t nq, size_t ntotal) : nq(nq), ntotal(ntotal) {}
 
     virtual void begin(const float* norms) {
         normalizers = norms;
+        scan_cnt = 0;
     }
 
     // called at end of search to convert int16 distances to float, before
     // normalizers are deallocated
     virtual void end() {
         normalizers = nullptr;
+        scan_cnt = 0;
+    }
+
+    // Get the number of scanned vectors
+    size_t count_scanned_rows() {
+        return scan_cnt;
     }
 };
 
@@ -293,6 +302,7 @@ struct SingleResultHandler : ResultHandlerCompare<C, with_id_map> {
                 auto real_idx = this->adjust_id(b, j);
                 lt_mask -= 1 << j;
                 if (this->sel->is_member(real_idx)) {
+                    this->scan_cnt++;
                     T d = d32tab[j];
                     if (C::cmp(idis[q], d)) {
                         idis[q] = d;
@@ -310,6 +320,7 @@ struct SingleResultHandler : ResultHandlerCompare<C, with_id_map> {
                 lt_mask -= 1 << j;
                 T d = d32tab[j];
                 if (C::cmp(idis[q], d)) {
+                    this->scan_cnt++;
                     idis[q] = d;
                     ids[q] = this->adjust_id(b, j);
 
@@ -329,6 +340,7 @@ struct SingleResultHandler : ResultHandlerCompare<C, with_id_map> {
                 dis[q] = b + idis[q] * one_a;
             }
         }
+        this->scan_cnt = 0;
     }
 };
 
@@ -388,6 +400,7 @@ struct HeapHandler : ResultHandlerCompare<C, with_id_map> {
                 auto real_idx = this->adjust_id(b, j);
                 lt_mask -= 1 << j;
                 if (this->sel->is_member(real_idx)) {
+                    this->scan_cnt++;
                     T dis = d32tab[j];
                     if (C::cmp(heap_dis[0], dis)) {
                         heap_replace_top<C>(k, heap_dis, heap_ids, dis, real_idx);
@@ -404,6 +417,7 @@ struct HeapHandler : ResultHandlerCompare<C, with_id_map> {
                 lt_mask -= 1 << j;
                 T dis = d32tab[j];
                 if (C::cmp(heap_dis[0], dis)) {
+                    this->scan_cnt++;
                     int64_t idx = this->adjust_id(b, j);
                     heap_replace_top<C>(k, heap_dis, heap_ids, dis, idx);
 
@@ -431,6 +445,7 @@ struct HeapHandler : ResultHandlerCompare<C, with_id_map> {
                 heap_ids[j] = heap_ids_in[j];
             }
         }
+        this->scan_cnt = 0;
     }
 };
 
@@ -500,7 +515,6 @@ struct SingleQueryResultCollectHandler : ResultHandlerCompare<C, with_id_map> {
                 int64_t idx = this->adjust_id(b, j);
                 collect.emplace_back(idx, dis);
                 this->in_range_num += 1;
-                
             }
         }
     }
@@ -582,6 +596,7 @@ struct ReservoirHandler : ResultHandlerCompare<C, with_id_map> {
                 auto real_idx = this->adjust_id(b, j);
                 lt_mask -= 1 << j;
                 if (this->sel->is_member(real_idx)) {
+                    this->scan_cnt++;
                     T dis = d32tab[j];
                     res.add(dis, real_idx);
 
@@ -595,6 +610,7 @@ struct ReservoirHandler : ResultHandlerCompare<C, with_id_map> {
                 int j = __builtin_ctz(lt_mask);
                 lt_mask -= 1 << j;
                 T dis = d32tab[j];
+                this->scan_cnt++;
                 res.add(dis, this->adjust_id(b, j));
 
                 this->in_range_num += 1;
@@ -639,6 +655,7 @@ struct ReservoirHandler : ResultHandlerCompare<C, with_id_map> {
             // possibly add empty results
             heap_heapify<Cf>(n - res.i, heap_dis + res.i, heap_ids + res.i);
         }
+        this->scan_cnt = 0;
     }
 };
 

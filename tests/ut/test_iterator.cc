@@ -192,6 +192,7 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         json[knowhere::indexparam::NPROBE] = 14;
         json[knowhere::indexparam::REORDER_K] = 200;
         json[knowhere::indexparam::WITH_RAW_DATA] = true;
+        json[knowhere::indexparam::ENSURE_TOPK_FULL] = false;
         return json;
     };
 
