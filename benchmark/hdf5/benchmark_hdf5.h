@@ -90,6 +90,7 @@ class Benchmark_hdf5 : public Benchmark_base {
             assert(false);
         }
     }
+
     void
     parse_ann_test_name() {
         auto pos = parse_name_and_dim();
