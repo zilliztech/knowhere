@@ -76,7 +76,9 @@ import_array();
 %apply (int* IN_ARRAY2, int DIM1, int DIM2) {(int* xb, int nb, int dim)}
 %apply (uint8_t *IN_ARRAY1, int DIM1) {(uint8_t *block, int size)}
 %apply (uint8_t* IN_ARRAY2, int DIM1, int DIM2) {(uint8_t* xb, int nb, int dim)}
-%apply (uint8_t* INPLACE_ARRAY2, int DIM1, int DIM2) {(uint8_t *data,int rows,int dim)}
+%apply (uint8_t* INPLACE_ARRAY2, int DIM1, int DIM2) {(uint8_t *data, int rows, int dim)}
+%apply (int8_t* IN_ARRAY2, int DIM1, int DIM2) {(int8_t* xb, int nb, int dim)}
+%apply (int8_t* INPLACE_ARRAY2, int DIM1, int DIM2) {(int8_t *data, int rows, int dim)}
 %apply (int *IN_ARRAY1, int DIM1) {(int *lims, int len)}
 %apply (int *IN_ARRAY1, int DIM1) {(int *ids, int len)}
 %apply (float *IN_ARRAY1, int DIM1) {(float *dis, int len)}
@@ -336,6 +338,7 @@ Array2DataSetFP16(float* xb, int nb, int dim) {
     ds->SetTensor(fp16_data);
     return ds;
 };
+
 #pragma GCC push_options
 #pragma GCC optimize("O0")
 knowhere::DataSetPtr
@@ -394,11 +397,21 @@ Array2SparseDataSet(float* data, int nb1, int* ids, int nb2, int64_t* indptr, in
 }
 
 knowhere::DataSetPtr
-Array2DataSetI(uint8_t* xb, int nb, int dim) {
+Array2DataSetU(uint8_t* xb, int nb, int dim) {
     auto ds = std::make_shared<DataSet>();
     ds->SetIsOwner(false);
     ds->SetRows(nb);
     ds->SetDim(dim*8);
+    ds->SetTensor(xb);
+    return ds;
+};
+
+knowhere::DataSetPtr
+Array2DataSetI(int8_t* xb, int nb, int dim) {
+    auto ds = std::make_shared<DataSet>();
+    ds->SetIsOwner(false);
+    ds->SetRows(nb);
+    ds->SetDim(dim);
     ds->SetTensor(xb);
     return ds;
 };
@@ -515,6 +528,17 @@ BinaryDataSetTensor2Array(knowhere::DataSetPtr result, uint8_t* data, int rows, 
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < dim; ++j) {
             *(data + i * dim + j) = *((uint8_t*)(data_) + i * dim + j);
+        }
+    }
+}
+
+void
+Int8DataSetTensor2Array(knowhere::DataSetPtr result, int8_t* data, int rows, int dim) {
+    GILReleaser rel;
+    auto data_ = result->GetTensor();
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < dim; ++j) {
+            *(data + i * dim + j) = *((knowhere::int8*)(data_) + i * dim + j);
         }
     }
 }
@@ -683,6 +707,7 @@ SetSearchThreadPool(uint32_t num_threads) {
 %template(IndexWrapFP16) IndexWrap<knowhere::fp16>;
 %template(IndexWrapBF16) IndexWrap<knowhere::bf16>;
 %template(IndexWrapBin) IndexWrap<knowhere::bin1>;
+%template(IndexWrapInt8) IndexWrap<knowhere::int8>;
 
 %template(BruteForceSearchFloat) BruteForceSearch<float>;
 %template(BruteForceSearchFP16) BruteForceSearch<knowhere::fp16>;
