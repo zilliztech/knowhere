@@ -363,7 +363,6 @@ void IndexIVFFastScan::search_preassigned(
         IndexIVFStats* stats) const {
     size_t nprobe = this->nprobe;
     if (params) {
-        FAISS_THROW_IF_NOT(params->max_codes == 0);
         nprobe = params->nprobe;
     }
 
@@ -591,7 +590,7 @@ void IndexIVFFastScan::search_dispatch_implem(
     int impl = implem;
 
     if (impl == 0) {
-        if (bbs == 32) {
+        if (bbs == 32 && !params->ensure_topk_full) {
             impl = 12;
         } else {
             impl = 10;
@@ -671,7 +670,7 @@ void IndexIVFFastScan::search_dispatch_implem(
                     )
                 );
                 search_implem_10(
-                        n, x, *handler.get(), cq,
+                        n, x, k, *handler.get(), cq,
                         &ndis, &nlist_visited, scaler, params);
             }
             // clang-format on
@@ -704,7 +703,7 @@ void IndexIVFFastScan::search_dispatch_implem(
                             cq_i, &ndis, &nlist_visited, scaler, params);
                     } else {
                         search_implem_10(
-                                i1 - i0, x + i0 * d, *handler.get(),
+                                i1 - i0, x + i0 * d,k, *handler.get(),
                                 cq_i, &ndis, &nlist_visited, scaler, params);
                     }
                     // clang-format on
@@ -1021,12 +1020,27 @@ void IndexIVFFastScan::search_implem_2(
 void IndexIVFFastScan::search_implem_10(
         idx_t n,
         const float* x,
+        idx_t k,
         SIMDResultHandlerToFloat& handler,
         const CoarseQuantized& cq,
         size_t* ndis_out,
         size_t* nlist_out,
         const NormTableScaler* scaler,
         const IVFSearchParameters* params) const {
+    // const size_t nprobe = params ? params->nprobe : this->nprobe;
+    const bool ensure_topk_full = params ? params->ensure_topk_full : false;
+    size_t max_codes = params ? params->max_codes : this->max_codes;
+    size_t max_lists_num = params ? params->max_lists_num : nlist;
+    FAISS_THROW_IF_NOT_MSG(
+            n == 1 || !ensure_topk_full,
+            "ensure_topk_full can't be true if queries number larger than 1.");
+    if (max_codes == 0) {
+        max_codes = std::numeric_limits<idx_t>::max();
+    }
+    if (max_lists_num == 0) {
+        max_lists_num = nlist;
+    }
+
     size_t dim12 = ksub * M2;
     AlignedTable<uint8_t> dis_tables;
     AlignedTable<uint16_t> biases;
@@ -1051,6 +1065,11 @@ void IndexIVFFastScan::search_implem_10(
             LUT = dis_tables.get() + i * dim12;
         }
         for (size_t j = 0; j < nprobe; j++) {
+            auto nscan = handler.count_scanned_rows();
+            if ((nscan >= max_codes || j >= max_lists_num) &&
+                (!ensure_topk_full || nscan >= (size_t)k)) {
+                break;
+            }
             size_t ij = i * nprobe + j;
             if (!single_LUT) {
                 LUT = dis_tables.get() + ij * dim12;

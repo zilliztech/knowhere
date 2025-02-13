@@ -128,6 +128,76 @@ TEST_CASE("Test SCANN with data view refiner", "[float metrics]") {
     }
 }
 
+TEST_CASE("Ensure topk test", "[float metrics]") {
+    using Catch::Approx;
+    auto version = GenTestVersionList();
+    if (!faiss::support_pq_fast_scan) {
+        SKIP("pass scann test");
+    }
+
+    const int64_t nb = 10000, nq = 10;
+    auto metric = GENERATE(as<std::string>{}, knowhere::metric::COSINE, knowhere::metric::IP, knowhere::metric::L2);
+    auto topk = nb;
+    auto dim = GENERATE(as<int64_t>{}, 120);
+
+    auto base_gen = [=]() {
+        knowhere::Json json;
+        json[knowhere::meta::DIM] = dim;
+        json[knowhere::meta::METRIC_TYPE] = metric;
+        json[knowhere::meta::TOPK] = topk;
+        json[knowhere::meta::RADIUS] = knowhere::IsMetricType(metric, knowhere::metric::L2) ? 10.0 : 0.99;
+        json[knowhere::meta::RANGE_FILTER] = knowhere::IsMetricType(metric, knowhere::metric::L2) ? 0.0 : 1.01;
+        return json;
+    };
+
+    auto scann_gen = [base_gen, topk]() {
+        knowhere::Json json = base_gen();
+        json[knowhere::indexparam::NLIST] = 512;
+        json[knowhere::indexparam::NPROBE] = 1;
+        json[knowhere::indexparam::REFINE_RATIO] = 1.0;
+        json[knowhere::indexparam::SUB_DIM] = 2;
+        json[knowhere::indexparam::WITH_RAW_DATA] = true;
+        json[knowhere::indexparam::ENSURE_TOPK_FULL] = true;
+        return json;
+    };
+
+    auto rand = GENERATE(1);
+    const auto train_ds = GenDataSet(nb, dim, rand);
+    const auto query_ds = GenDataSet(nq, dim, rand + 777);
+
+    const knowhere::Json conf = {
+        {knowhere::meta::METRIC_TYPE, metric},
+        {knowhere::meta::TOPK, topk},
+    };
+    knowhere::ViewDataOp data_view = [&train_ds, data_size = sizeof(float) * dim](size_t id) {
+        auto data = train_ds->GetTensor();
+        return data + data_size * id;
+    };
+    auto data_view_pack = knowhere::Pack(data_view);
+    auto cfg_json = scann_gen().dump();
+    knowhere::Json json = knowhere::Json::parse(cfg_json);
+
+    auto scann_with_dv_refiner =
+        knowhere::IndexFactory::Instance()
+            .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, version, data_view_pack)
+            .value();
+
+    REQUIRE(scann_with_dv_refiner.Type() == knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR);
+    REQUIRE(scann_with_dv_refiner.Build(train_ds, json) == knowhere::Status::success);
+    REQUIRE(scann_with_dv_refiner.Count() == nb);
+    REQUIRE(scann_with_dv_refiner.Size() > 0);
+    REQUIRE(scann_with_dv_refiner.HasRawData(metric) == false);
+    REQUIRE(scann_with_dv_refiner.HasRawData(metric) ==
+            knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, version,
+                                                                   cfg_json));
+    auto scann_with_dv_refiner_results = scann_with_dv_refiner.Search(query_ds, json, nullptr);
+    auto res_ids = scann_with_dv_refiner_results.value()->GetIds();
+    // check we can get all vectors in (topk = nb, nprobe = )
+    for (auto i = 0; i < nq * topk; i++) {
+        REQUIRE(res_ids[i] != -1);
+    }
+}
+
 template <typename DataType>
 void
 BaseTest(const knowhere::DataSetPtr train_ds, const knowhere::DataSetPtr query_ds, const int64_t k,

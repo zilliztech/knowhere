@@ -77,6 +77,8 @@ struct SearchParametersIVF : SearchParameters {
     ///< to minimize code change, when users only use nprobe to search, this config does not take affect since we will first retrieve the nearest nprobe buckets
     ///< it is a bit heavy to further retrieve more buckets
     ///< therefore to make sure we get topk results, use nprobe=nlist and use max_codes to narrow down the search range
+    size_t max_lists_num = 0; ///< select min{scanned number of (max_codes),
+    ///< scanned number of (max_lists_num) to return.}
     bool ensure_topk_full = false;
 
     ///< during IVF range search, if reach 'max_empty_result_buckets' num of
