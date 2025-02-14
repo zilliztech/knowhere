@@ -752,7 +752,7 @@ class BaseConfig : public Config {
         // type is WAND.
         KNOWHERE_CONFIG_DECLARE_FIELD(bm25_avgdl)
             .allow_empty_without_default()
-            .set_range(1, std::numeric_limits<CFG_FLOAT::value_type>::max())
+            .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
             .description("average document length")
             .for_train_and_search()
             .for_iterator()
