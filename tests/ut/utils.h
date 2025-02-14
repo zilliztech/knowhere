@@ -159,7 +159,7 @@ GetKNNRecall(const knowhere::DataSet& ground_truth, const std::vector<std::vecto
 //  Compare two ann-search results
 //      "ground_truth" here is just used as a baseline value for comparison. It is not real groundtruth and the knn
 //  results may be worse, we can call the compare results as "relative-recall".
-//      when the k-th distance of gt is worth, define the recall as 1.0f
+//      when the k-th distance of gt is worse, define the recall as 1.0f
 //      when the k-th distance of gt is better, define the recall as (intersection_count / size)
 inline float
 GetKNNRelativeRecall(const knowhere::DataSet& ground_truth, const knowhere::DataSet& result, bool dist_less_better) {

@@ -45,39 +45,39 @@ namespace detail {
 
 // This helper struct maps the generic type of cuVS index to the specific
 // instantiation of that index used within knowhere.
-template <bool B, cuvs_proto::cuvs_index_kind IndexKind>
+template <bool B, cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
 struct cuvs_index_type_mapper : std::false_type {};
 
-template <>
-struct cuvs_index_type_mapper<true, cuvs_proto::cuvs_index_kind::brute_force> : std::true_type {
-    using data_type = cuvs_data_t<cuvs_proto::cuvs_index_kind::brute_force>;
+template <typename DataType>
+struct cuvs_index_type_mapper<true, cuvs_proto::cuvs_index_kind::brute_force, DataType> : std::true_type {
+    using data_type = DataType;
     using indexing_type = cuvs_indexing_t<cuvs_proto::cuvs_index_kind::brute_force>;
     using type = cuvs_proto::cuvs_index<cuvs::neighbors::brute_force::index, data_type>;
     using underlying_index_type = typename type::vector_index_type;
     using index_params_type = typename type::index_params_type;
     using search_params_type = typename type::search_params_type;
 };
-template <>
-struct cuvs_index_type_mapper<true, cuvs_proto::cuvs_index_kind::ivf_flat> : std::true_type {
-    using data_type = cuvs_data_t<cuvs_proto::cuvs_index_kind::ivf_flat>;
+template <typename DataType>
+struct cuvs_index_type_mapper<true, cuvs_proto::cuvs_index_kind::ivf_flat, DataType> : std::true_type {
+    using data_type = DataType;
     using indexing_type = cuvs_indexing_t<cuvs_proto::cuvs_index_kind::ivf_flat>;
     using type = cuvs_proto::cuvs_index<cuvs::neighbors::ivf_flat::index, data_type, indexing_type>;
     using underlying_index_type = typename type::vector_index_type;
     using index_params_type = typename type::index_params_type;
     using search_params_type = typename type::search_params_type;
 };
-template <>
-struct cuvs_index_type_mapper<true, cuvs_proto::cuvs_index_kind::ivf_pq> : std::true_type {
-    using data_type = cuvs_data_t<cuvs_proto::cuvs_index_kind::ivf_pq>;
+template <typename DataType>
+struct cuvs_index_type_mapper<true, cuvs_proto::cuvs_index_kind::ivf_pq, DataType> : std::true_type {
+    using data_type = DataType;
     using indexing_type = cuvs_indexing_t<cuvs_proto::cuvs_index_kind::ivf_pq>;
     using type = cuvs_proto::cuvs_index<cuvs::neighbors::ivf_pq::index, indexing_type>;
     using underlying_index_type = typename type::vector_index_type;
     using index_params_type = typename type::index_params_type;
     using search_params_type = typename type::search_params_type;
 };
-template <>
-struct cuvs_index_type_mapper<true, cuvs_proto::cuvs_index_kind::cagra> : std::true_type {
-    using data_type = cuvs_data_t<cuvs_proto::cuvs_index_kind::cagra>;
+template <typename DataType>
+struct cuvs_index_type_mapper<true, cuvs_proto::cuvs_index_kind::cagra, DataType> : std::true_type {
+    using data_type = DataType;
     using indexing_type = cuvs_indexing_t<cuvs_proto::cuvs_index_kind::cagra>;
     using type = cuvs_proto::cuvs_index<cuvs::neighbors::cagra::index, data_type, indexing_type>;
     using underlying_index_type = typename type::vector_index_type;
@@ -105,13 +105,13 @@ struct check_valid_entry {
 
 }  // namespace detail
 
-template <cuvs_proto::cuvs_index_kind IndexKind>
-using cuvs_index_t = typename detail::cuvs_index_type_mapper<true, IndexKind>::type;
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
+using cuvs_index_t = typename detail::cuvs_index_type_mapper<true, IndexKind, DataType>::type;
 
 template <cuvs_proto::cuvs_index_kind IndexKind>
-using cuvs_index_params_t = typename detail::cuvs_index_type_mapper<true, IndexKind>::index_params_type;
+using cuvs_index_params_t = typename detail::cuvs_index_type_mapper<true, IndexKind, float>::index_params_type;
 template <cuvs_proto::cuvs_index_kind IndexKind>
-using raft_search_params_t = typename detail::cuvs_index_type_mapper<true, IndexKind>::search_params_type;
+using cuvs_search_params_t = typename detail::cuvs_index_type_mapper<true, IndexKind, float>::search_params_type;
 
 // Metrics are passed between knowhere and cuVS as strings to avoid tight
 // coupling between the implementation details of either one.
@@ -153,7 +153,7 @@ metric_string_to_cuvs_distance_type(std::string const& metric_string) {
     } else if (metric_string == "JensenShannon") {
         result = cuvs::distance::DistanceType::JensenShannon;
     } else if (metric_string == "HAMMING") {
-        result = cuvs::distance::DistanceType::HammingUnexpanded;
+        result = cuvs::distance::DistanceType::BitwiseHamming;
     } else if (metric_string == "KLDivergence") {
         result = cuvs::distance::DistanceType::KLDivergence;
     } else if (metric_string == "RusselRaoExpanded") {
@@ -322,7 +322,7 @@ template <cuvs_proto::cuvs_index_kind IndexKind>
 config_to_search_params(cuvs_knowhere_config const& raw_config) {
     RAFT_EXPECTS(raw_config.index_type == IndexKind, "Incorrect index type for this index");
     auto config = validate_cuvs_knowhere_config(raw_config);
-    auto result = raft_search_params_t<IndexKind>{};
+    auto result = cuvs_search_params_t<IndexKind>{};
     if constexpr (IndexKind == cuvs_proto::cuvs_index_kind::ivf_flat ||
                   IndexKind == cuvs_proto::cuvs_index_kind::ivf_pq) {
         result.n_probes = *(config.nprobe);
@@ -378,13 +378,13 @@ select_device_id() {
 // is provided here, but this header should never be directly included in
 // another knowhere header. This ensures that cuVS symbols are not exposed in
 // any knowhere header.
-template <cuvs_proto::cuvs_index_kind IndexKind>
-struct cuvs_knowhere_index<IndexKind>::impl {
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
+struct cuvs_knowhere_index<IndexKind, DataType>::impl {
     auto static constexpr index_kind = IndexKind;
-    using data_type = cuvs_data_t<index_kind>;
+    using data_type = DataType;
     using indexing_type = cuvs_indexing_t<index_kind>;
     using input_indexing_type = cuvs_input_indexing_t<index_kind>;
-    using cuvs_index_type = cuvs_index_t<index_kind>;
+    using cuvs_index_type = cuvs_index_t<index_kind, data_type>;
 
     impl() {
     }
@@ -413,6 +413,10 @@ struct cuvs_knowhere_index<IndexKind>::impl {
     void
     train(cuvs_knowhere_config const& config, data_type const* data, knowhere_indexing_type row_count,
           knowhere_indexing_type feature_count) {
+        if constexpr (std::is_same_v<data_type, std::uint8_t>) {
+            // The input feature_count represents the number of bits. Change it to number of bytes
+            feature_count = feature_count / (8 * sizeof(data_type));
+        }
         auto scoped_device = raft::device_setter{device_id};
         auto index_params = config_to_index_params<index_kind>(config);
         if constexpr (index_kind == cuvs_proto::cuvs_index_kind::ivf_flat ||
@@ -449,6 +453,10 @@ struct cuvs_knowhere_index<IndexKind>::impl {
     search(cuvs_knowhere_config const& config, data_type const* data, knowhere_indexing_type row_count,
            knowhere_indexing_type feature_count, knowhere_bitset_data_type const* bitset_data,
            knowhere_bitset_indexing_type bitset_byte_size, knowhere_bitset_indexing_type bitset_size) const {
+        if constexpr (std::is_same_v<data_type, std::uint8_t>) {
+            // The input feature_count represents the number of bits. Change it to number of bytes
+            feature_count = feature_count / (8 * sizeof(data_type));
+        }
         auto scoped_device = raft::device_setter{device_id};
         auto const& res = raft::device_resources_manager::get_device_resources();
         auto k = knowhere_indexing_type(config.k);
@@ -490,13 +498,14 @@ struct cuvs_knowhere_index<IndexKind>::impl {
 
         auto output_size = row_count * k;
         auto ids = std::unique_ptr<knowhere_indexing_type[]>(new knowhere_indexing_type[output_size]);
-        auto distances = std::unique_ptr<knowhere_data_type[]>(new knowhere_data_type[output_size]);
+        auto distances = std::unique_ptr<knowhere_distance_type[]>(new knowhere_distance_type[output_size]);
 
         auto host_ids = raft::make_host_matrix_view(ids.get(), row_count, k);
         auto host_distances = raft::make_host_matrix_view(distances.get(), row_count, k);
 
         auto device_ids_storage = raft::make_device_matrix<indexing_type, input_indexing_type>(res, row_count, k_tmp);
-        auto device_distances_storage = raft::make_device_matrix<data_type, input_indexing_type>(res, row_count, k_tmp);
+        auto device_distances_storage =
+            raft::make_device_matrix<knowhere_distance_type, input_indexing_type>(res, row_count, k_tmp);
         auto device_ids = device_ids_storage.view();
         auto device_distances = device_distances_storage.view();
 
@@ -534,21 +543,19 @@ struct cuvs_knowhere_index<IndexKind>::impl {
             }
         }();
 
-        auto max_distance = std::nextafter(std::numeric_limits<data_type>::max(), 0.0f);
+        auto max_distance =
+            std::nextafter(std::numeric_limits<knowhere_distance_type>::max(), knowhere_distance_type{0});
         thrust::replace_if(
             raft::resource::get_thrust_policy(res),
-            thrust::device_ptr<typename decltype(device_knowhere_ids)::value_type>(device_knowhere_ids.data_handle()),
-            thrust::device_ptr<typename decltype(device_knowhere_ids)::value_type>(device_knowhere_ids.data_handle() +
-                                                                                   device_knowhere_ids.size()),
-            thrust::make_zip_iterator(thrust::make_tuple(
-                thrust::device_ptr<typename decltype(device_knowhere_ids)::value_type>(
-                    device_knowhere_ids.data_handle()),
-                thrust::device_ptr<typename decltype(device_distances)::value_type>(device_distances.data_handle()))),
-            detail::check_valid_entry<thrust::tuple<typename decltype(device_knowhere_ids)::value_type,
-                                                    typename decltype(device_distances)::value_type>,
-                                      decltype(max_distance), knowhere_indexing_type>{max_distance,
+            thrust::device_ptr<knowhere_indexing_type>(device_knowhere_ids.data_handle()),
+            thrust::device_ptr<knowhere_indexing_type>(device_knowhere_ids.data_handle() + device_knowhere_ids.size()),
+            thrust::make_zip_iterator(
+                thrust::make_tuple(thrust::device_ptr<knowhere_indexing_type>(device_knowhere_ids.data_handle()),
+                                   thrust::device_ptr<knowhere_distance_type>(device_distances.data_handle()))),
+            detail::check_valid_entry<thrust::tuple<knowhere_indexing_type, knowhere_distance_type>,
+                                      knowhere_distance_type, knowhere_indexing_type>{max_distance,
                                                                                       knowhere_indexing_type(size())},
-            typename decltype(device_knowhere_ids)::value_type{-1});
+            knowhere_indexing_type{-1});
 
         if constexpr (index_kind == cuvs_proto::cuvs_index_kind::brute_force) {
             if (k_tmp > k) {
@@ -644,8 +651,8 @@ struct cuvs_knowhere_index<IndexKind>::impl {
                     res, des_index, raft::make_const_mdspan(dataset->view()));
             }
         }
-        return std::make_unique<typename cuvs_knowhere_index<index_kind>::impl>(std::move(des_index), new_device_id,
-                                                                                std::move(dataset));
+        return std::make_unique<typename cuvs_knowhere_index<index_kind, data_type>::impl>(
+            std::move(des_index), new_device_id, std::move(dataset));
     }
 
     void
@@ -669,93 +676,95 @@ struct cuvs_knowhere_index<IndexKind>::impl {
     std::optional<raft::device_matrix<data_type, input_indexing_type>> device_dataset_storage = std::nullopt;
 };
 
-template <cuvs_proto::cuvs_index_kind IndexKind>
-cuvs_knowhere_index<IndexKind>::cuvs_knowhere_index() : pimpl{new cuvs_knowhere_index<IndexKind>::impl()} {
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
+cuvs_knowhere_index<IndexKind, DataType>::cuvs_knowhere_index()
+    : pimpl{new cuvs_knowhere_index<IndexKind, DataType>::impl()} {
 }
 
-template <cuvs_proto::cuvs_index_kind IndexKind>
-cuvs_knowhere_index<IndexKind>::~cuvs_knowhere_index<IndexKind>() = default;
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
+cuvs_knowhere_index<IndexKind, DataType>::~cuvs_knowhere_index<IndexKind, DataType>() = default;
 
-template <cuvs_proto::cuvs_index_kind IndexKind>
-cuvs_knowhere_index<IndexKind>::cuvs_knowhere_index(cuvs_knowhere_index<IndexKind>&& other)
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
+cuvs_knowhere_index<IndexKind, DataType>::cuvs_knowhere_index(cuvs_knowhere_index<IndexKind, DataType>&& other)
     : pimpl{std::move(other.pimpl)} {
 }
 
-template <cuvs_proto::cuvs_index_kind IndexKind>
-cuvs_knowhere_index<IndexKind>&
-cuvs_knowhere_index<IndexKind>::operator=(cuvs_knowhere_index<IndexKind>&& other) {
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
+cuvs_knowhere_index<IndexKind, DataType>&
+cuvs_knowhere_index<IndexKind, DataType>::operator=(cuvs_knowhere_index<IndexKind, DataType>&& other) {
     pimpl = std::move(other.pimpl);
     return *this;
 }
 
-template <cuvs_proto::cuvs_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
 bool
-cuvs_knowhere_index<IndexKind>::is_trained() const {
+cuvs_knowhere_index<IndexKind, DataType>::is_trained() const {
     return pimpl->is_trained();
 }
 
-template <cuvs_proto::cuvs_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
 std::int64_t
-cuvs_knowhere_index<IndexKind>::size() const {
+cuvs_knowhere_index<IndexKind, DataType>::size() const {
     return pimpl->size();
 }
 
-template <cuvs_proto::cuvs_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
 std::int64_t
-cuvs_knowhere_index<IndexKind>::dim() const {
+cuvs_knowhere_index<IndexKind, DataType>::dim() const {
     return pimpl->dim();
 }
 
-template <cuvs_proto::cuvs_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
 void
-cuvs_knowhere_index<IndexKind>::train(cuvs_knowhere_config const& config, data_type const* data,
-                                      knowhere_indexing_type row_count, knowhere_indexing_type feature_count) {
+cuvs_knowhere_index<IndexKind, DataType>::train(cuvs_knowhere_config const& config, data_type const* data,
+                                                knowhere_indexing_type row_count,
+                                                knowhere_indexing_type feature_count) {
     return pimpl->train(config, data, row_count, feature_count);
 }
 
-template <cuvs_proto::cuvs_index_kind IndexKind>
-std::tuple<knowhere_indexing_type*, knowhere_data_type*>
-cuvs_knowhere_index<IndexKind>::search(cuvs_knowhere_config const& config, data_type const* data,
-                                       knowhere_indexing_type row_count, knowhere_indexing_type feature_count,
-                                       knowhere_bitset_data_type const* bitset_data,
-                                       knowhere_bitset_indexing_type bitset_byte_size,
-                                       knowhere_bitset_indexing_type bitset_size) const {
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
+std::tuple<knowhere_indexing_type*, knowhere_distance_type*>
+cuvs_knowhere_index<IndexKind, DataType>::search(cuvs_knowhere_config const& config, data_type const* data,
+                                                 knowhere_indexing_type row_count, knowhere_indexing_type feature_count,
+                                                 knowhere_bitset_data_type const* bitset_data,
+                                                 knowhere_bitset_indexing_type bitset_byte_size,
+                                                 knowhere_bitset_indexing_type bitset_size) const {
     return pimpl->search(config, data, row_count, feature_count, bitset_data, bitset_byte_size, bitset_size);
 }
 
-template <cuvs_proto::cuvs_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
 void
-cuvs_knowhere_index<IndexKind>::range_search() const {
+cuvs_knowhere_index<IndexKind, DataType>::range_search() const {
     return pimpl->range_search();
 }
 
-template <cuvs_proto::cuvs_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
 void
-cuvs_knowhere_index<IndexKind>::get_vector_by_id() const {
+cuvs_knowhere_index<IndexKind, DataType>::get_vector_by_id() const {
     return pimpl->get_vector_by_id();
 }
 
-template <cuvs_proto::cuvs_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
 void
-cuvs_knowhere_index<IndexKind>::serialize(std::ostream& os) const {
+cuvs_knowhere_index<IndexKind, DataType>::serialize(std::ostream& os) const {
     return pimpl->serialize(os);
 }
 
-template <cuvs_proto::cuvs_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
 void
-cuvs_knowhere_index<IndexKind>::serialize_to_hnswlib(std::ostream& os) const {
+cuvs_knowhere_index<IndexKind, DataType>::serialize_to_hnswlib(std::ostream& os) const {
     return pimpl->serialize_to_hnswlib(os);
 }
 
-template <cuvs_proto::cuvs_index_kind IndexKind>
-cuvs_knowhere_index<IndexKind>
-cuvs_knowhere_index<IndexKind>::deserialize(std::istream& is) {
-    return cuvs_knowhere_index<IndexKind>(cuvs_knowhere_index<IndexKind>::impl::deserialize(is));
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
+cuvs_knowhere_index<IndexKind, DataType>
+cuvs_knowhere_index<IndexKind, DataType>::deserialize(std::istream& is) {
+    return cuvs_knowhere_index<IndexKind, DataType>(cuvs_knowhere_index<IndexKind, DataType>::impl::deserialize(is));
 }
 
-template <cuvs_proto::cuvs_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
 void
-cuvs_knowhere_index<IndexKind>::synchronize(bool is_without_mempool) const {
+cuvs_knowhere_index<IndexKind, DataType>::synchronize(bool is_without_mempool) const {
     return pimpl->synchronize(is_without_mempool);
 }
 

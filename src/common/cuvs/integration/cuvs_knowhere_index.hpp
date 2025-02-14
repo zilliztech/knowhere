@@ -22,11 +22,11 @@
 #include "common/cuvs/proto/cuvs_index_kind.hpp"
 namespace cuvs_knowhere {
 
-template <cuvs_proto::cuvs_index_kind IndexKind>
+template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
 struct cuvs_knowhere_index {
     auto static constexpr index_kind = IndexKind;
 
-    using data_type = cuvs_data_t<index_kind>;
+    using data_type = DataType;
     using indexing_type = cuvs_indexing_t<index_kind>;
     using input_indexing_type = cuvs_input_indexing_t<index_kind>;
 
@@ -45,7 +45,7 @@ struct cuvs_knowhere_index {
     dim() const;
     void
     train(cuvs_knowhere_config const&, data_type const*, knowhere_indexing_type, knowhere_indexing_type);
-    std::tuple<knowhere_indexing_type*, knowhere_data_type*>
+    std::tuple<knowhere_indexing_type*, knowhere_distance_type*>
     search(cuvs_knowhere_config const& config, data_type const* data, knowhere_indexing_type row_count,
            knowhere_indexing_type feature_count, knowhere_bitset_data_type const* bitset_data = nullptr,
            knowhere_bitset_indexing_type bitset_byte_size = knowhere_bitset_indexing_type{},
@@ -58,7 +58,7 @@ struct cuvs_knowhere_index {
     serialize(std::ostream& os) const;
     void
     serialize_to_hnswlib(std::ostream& os) const;
-    static cuvs_knowhere_index<IndexKind>
+    static cuvs_knowhere_index<IndexKind, DataType>
     deserialize(std::istream& is);
     void
     synchronize(bool is_without_mempool = false) const;
@@ -73,9 +73,10 @@ struct cuvs_knowhere_index {
     }
 };
 
-extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::brute_force>;
-extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_flat>;
-extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_pq>;
-extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra>;
+extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::brute_force, float>;
+extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_flat, float>;
+extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_pq, float>;
+extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, float>;
+extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, uint8_t>;
 
 }  // namespace cuvs_knowhere

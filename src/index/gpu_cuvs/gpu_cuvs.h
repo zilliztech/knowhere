@@ -77,9 +77,9 @@ struct GpuCuvsIndexNode : public IndexNode {
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
         auto result = Status::success;
-        auto raft_cfg = cuvs_knowhere::cuvs_knowhere_config{};
+        auto cuvs_cfg = cuvs_knowhere::cuvs_knowhere_config{};
         try {
-            raft_cfg = to_cuvs_knowhere_config(static_cast<const knowhere_config_type&>(*cfg));
+            cuvs_cfg = to_cuvs_knowhere_config(static_cast<const knowhere_config_type&>(*cfg));
         } catch (const std::exception& e) {
             LOG_KNOWHERE_ERROR_ << e.what();
             result = Status::invalid_args;
@@ -90,9 +90,9 @@ struct GpuCuvsIndexNode : public IndexNode {
         if (result == Status::success) {
             auto rows = dataset->GetRows();
             auto dim = dataset->GetDim();
-            auto const* data = reinterpret_cast<float const*>(dataset->GetTensor());
+            auto const* data = reinterpret_cast<const DataType*>(dataset->GetTensor());
             try {
-                index_.train(raft_cfg, data, rows, dim);
+                index_.train(cuvs_cfg, data, rows, dim);
                 index_.synchronize(true);
             } catch (const std::exception& e) {
                 LOG_KNOWHERE_ERROR_ << e.what();
@@ -110,10 +110,10 @@ struct GpuCuvsIndexNode : public IndexNode {
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
         auto result = Status::success;
-        auto raft_cfg = cuvs_knowhere::cuvs_knowhere_config{};
+        auto cuvs_cfg = cuvs_knowhere::cuvs_knowhere_config{};
         auto err_msg = std::string{};
         try {
-            raft_cfg = to_cuvs_knowhere_config(static_cast<const knowhere_config_type&>(*cfg));
+            cuvs_cfg = to_cuvs_knowhere_config(static_cast<const knowhere_config_type&>(*cfg));
         } catch (const std::exception& e) {
             err_msg = std::string{e.what()};
             LOG_KNOWHERE_ERROR_ << e.what();
@@ -123,12 +123,12 @@ struct GpuCuvsIndexNode : public IndexNode {
             try {
                 auto rows = dataset->GetRows();
                 auto dim = dataset->GetDim();
-                auto const* data = reinterpret_cast<float const*>(dataset->GetTensor());
+                auto const* data = reinterpret_cast<const DataType*>(dataset->GetTensor());
                 auto search_result =
-                    index_.search(raft_cfg, data, rows, dim, bitset.data(), bitset.byte_size(), bitset.size());
+                    index_.search(cuvs_cfg, data, rows, dim, bitset.data(), bitset.byte_size(), bitset.size());
                 std::this_thread::yield();
                 index_.synchronize();
-                return GenResultDataSet(rows, raft_cfg.k, std::get<0>(search_result), std::get<1>(search_result));
+                return GenResultDataSet(rows, cuvs_cfg.k, std::get<0>(search_result), std::get<1>(search_result));
             } catch (const std::exception& e) {
                 err_msg = std::string{e.what()};
                 LOG_KNOWHERE_ERROR_ << e.what();
@@ -243,7 +243,7 @@ struct GpuCuvsIndexNode : public IndexNode {
         }
     }
 
-    using cuvs_knowhere_index_type = typename cuvs_knowhere::cuvs_knowhere_index<K>;
+    using cuvs_knowhere_index_type = typename cuvs_knowhere::cuvs_knowhere_index<K, DataType>;
 
  protected:
     cuvs_knowhere_index_type index_;

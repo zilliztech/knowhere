@@ -81,6 +81,15 @@ TEST_CASE("Test All GPU Index", "[search]") {
             return json;
         };
     };
+    auto hamming_gen = [](auto&& upstream_gen) {
+        return [upstream_gen]() {
+            knowhere::Json json = upstream_gen();
+            json[knowhere::meta::METRIC_TYPE] = knowhere::metric::HAMMING;
+            json[knowhere::indexparam::BUILD_ALGO] = "ITERATIVE";
+            return json;
+        };
+    };
+
     SECTION("Test Gpu Index Search") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
@@ -263,7 +272,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
         REQUIRE(recall >= 0.8f);
     }
 
-    SECTION("Test Gpu Index Search Metric") {
+    SECTION("Test Gpu Index Search Cosine Metric") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(
             {make_tuple(knowhere::IndexEnum::INDEX_CUVS_BRUTEFORCE, cosine_gen(bruteforce_gen)),
@@ -276,21 +285,50 @@ TEST_CASE("Test All GPU Index", "[search]") {
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
         auto train_ds = GenDataSet(nb, dim, seed);
-        auto query_ds = GenDataSet(nq, dim, seed);
+        auto query_ds = GenDataSet(nq, dim, seed + 1);
         REQUIRE(idx.Type() == name);
         auto res = idx.Build(train_ds, json);
         REQUIRE(res == knowhere::Status::success);
         REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
                 knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
-        auto results = idx.Search(train_ds, json, nullptr);
+        auto results = idx.Search(query_ds, json, nullptr);
         REQUIRE(results.has_value());
-        auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, train_ds, json, nullptr);
+        auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, json, nullptr);
         auto ids = results.value()->GetIds();
         auto dist = results.value()->GetDistance();
         auto gt_ids = gt.value()->GetIds();
         auto gt_dist = gt.value()->GetDistance();
+        float recall = GetKNNRecall(*gt.value(), *results.value());
+        REQUIRE(recall > 0.65f);
+    }
+
+    SECTION("Test Gpu Index Search Hamming Metric") {
+        using std::make_tuple;
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(
+            {make_tuple(knowhere::IndexEnum::INDEX_CUVS_CAGRA, hamming_gen(cagra_gen))}));
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::bin1>(name, version).value();
+        auto cfg_json = gen().dump();
+        CAPTURE(name, cfg_json);
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        nb = 1500;  // Reduce dataset size to have less distance = 0 when testing query distance
+        auto train_ds = GenBinDataSet(nb, dim, seed);
+        auto query_ds = GenBinDataSet(nq, dim, seed + 1);
+        auto res = idx.Build(train_ds, json);
+        REQUIRE(res == knowhere::Status::success);
+        REQUIRE(idx.Count() == nb);
+        auto results = idx.Search(query_ds, json, nullptr);
+        REQUIRE(results.has_value());
+        auto gt = knowhere::BruteForce::Search<knowhere::bin1>(train_ds, query_ds, json, nullptr);
+        auto ids = results.value()->GetIds();
+        auto dist = results.value()->GetDistance();
+        auto gt_ids = gt.value()->GetIds();
+        auto gt_dist = gt.value()->GetDistance();
+        float recall = GetKNNRecall(*gt.value(), *results.value());
+        REQUIRE(recall > 0.8f);
+        recall = GetKNNRelativeRecall(*gt.value(), *results.value(), true);
+        REQUIRE(recall > 0.95f);
         for (int i = 1; i < nq; ++i) {
-            CHECK(ids[i] == gt_ids[i]);
+            // Check query distance
             CHECK(GetRelativeLoss(gt_dist[i], dist[i]) < 0.1f);
         }
     }

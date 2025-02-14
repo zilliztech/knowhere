@@ -18,5 +18,5 @@
 #include "common/cuvs/proto/cuvs_index_kind.hpp"
 
 namespace cuvs_knowhere {
-template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_flat>;
+template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_flat, float>;
 }  // namespace cuvs_knowhere
