@@ -71,8 +71,8 @@ TEST_CASE("Test SCANN with data view refiner", "[float metrics]") {
         {knowhere::meta::TOPK, topk},
     };
     auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
-    knowhere::ViewDataOp data_view = [&train_ds, data_size = sizeof(float) * dim](size_t id) {
-        auto data = train_ds->GetTensor();
+    knowhere::ViewDataOp data_view = [&train_ds, data_size = dim](size_t id) {
+        auto data = (const float*)train_ds->GetTensor();
         return data + data_size * id;
     };
     auto data_view_pack = knowhere::Pack(data_view);
@@ -210,8 +210,8 @@ BaseTest(const knowhere::DataSetPtr train_ds, const knowhere::DataSetPtr query_d
     auto nq = query->GetRows();
 
     auto knn_gt = knowhere::BruteForce::Search<DataType>(base, query, conf, nullptr);
-    knowhere::ViewDataOp data_view = [&base, data_size = sizeof(DataType) * dim](size_t id) {
-        auto data = base->GetTensor();
+    knowhere::ViewDataOp data_view = [&base, data_size = dim](size_t id) {
+        auto data = (const DataType*)base->GetTensor();
         return data + data_size * id;
     };
     auto data_view_pack = knowhere::Pack(data_view);
