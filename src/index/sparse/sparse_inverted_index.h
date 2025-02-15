@@ -145,6 +145,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                                                           "avgdl must be supplied during searching");
         }
         auto avgdl = cfg.bm25_avgdl.value();
+        avgdl = std::max(avgdl, 1.0f);
         if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
             // daat_wand and daat_maxscore: search time k1/b must equal load time config.
             if ((cfg.bm25_k1.has_value() && cfg.bm25_k1.value() != bm25_params_->k1) ||

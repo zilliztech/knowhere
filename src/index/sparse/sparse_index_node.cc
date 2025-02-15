@@ -371,6 +371,9 @@ class SparseInvertedIndexNode : public IndexNode {
             auto k1 = cfg.bm25_k1.value();
             auto b = cfg.bm25_b.value();
             auto avgdl = cfg.bm25_avgdl.value();
+            // avgdl is used as a denominator in BM25 score computation,
+            // so it should be at least 1.0 to avoid division by zero.
+            avgdl = std::max(avgdl, 1.0f);
 
             if (use_wand || cfg.inverted_index_algo.value() == "DAAT_WAND") {
                 auto index = new sparse::InvertedIndex<T, uint16_t, sparse::InvertedIndexAlgo::DAAT_WAND, mmapped>(

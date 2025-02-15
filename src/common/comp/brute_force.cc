@@ -56,6 +56,7 @@ GetDocValueComputer(const BruteForceConfig& cfg) {
         auto k1 = cfg.bm25_k1.value();
         auto b = cfg.bm25_b.value();
         auto avgdl = cfg.bm25_avgdl.value();
+        avgdl = std::max(avgdl, 1.0f);
         return sparse::GetDocValueBM25Computer<T>(k1, b, avgdl);
     } else {
         return expected<sparse::DocValueComputer<T>>::Err(Status::invalid_metric_type,
