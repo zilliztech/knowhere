@@ -15,8 +15,50 @@
 #include <arm_neon.h>
 #include <math.h>
 
-#include "simd_util.h"
 namespace faiss {
+
+namespace {
+inline float32x4x4_t
+vcvt4_f32_f16(const float16x4x4_t a) {
+    float32x4x4_t c;
+    c.val[0] = vcvt_f32_f16(a.val[0]);
+    c.val[1] = vcvt_f32_f16(a.val[1]);
+    c.val[2] = vcvt_f32_f16(a.val[2]);
+    c.val[3] = vcvt_f32_f16(a.val[3]);
+    return c;
+}
+
+inline float32x4x2_t
+vcvt2_f32_f16(const float16x4x2_t a) {
+    float32x4x2_t c;
+    c.val[0] = vcvt_f32_f16(a.val[0]);
+    c.val[1] = vcvt_f32_f16(a.val[1]);
+    return c;
+}
+
+inline float32x4x4_t
+vcvt4_f32_half(const uint16x4x4_t x) {
+    float32x4x4_t c;
+    c.val[0] = vreinterpretq_f32_u32(vshlq_n_u32(vmovl_u16(x.val[0]), 16));
+    c.val[1] = vreinterpretq_f32_u32(vshlq_n_u32(vmovl_u16(x.val[1]), 16));
+    c.val[2] = vreinterpretq_f32_u32(vshlq_n_u32(vmovl_u16(x.val[2]), 16));
+    c.val[3] = vreinterpretq_f32_u32(vshlq_n_u32(vmovl_u16(x.val[3]), 16));
+    return c;
+}
+
+inline float32x4x2_t
+vcvt2_f32_half(const uint16x4x2_t x) {
+    float32x4x2_t c;
+    c.val[0] = vreinterpretq_f32_u32(vshlq_n_u32(vmovl_u16(x.val[0]), 16));
+    c.val[1] = vreinterpretq_f32_u32(vshlq_n_u32(vmovl_u16(x.val[1]), 16));
+    return c;
+}
+
+inline float32x4_t
+vcvt_f32_half(const uint16x4_t x) {
+    return vreinterpretq_f32_u32(vshlq_n_u32(vmovl_u16(x), 16));
+}
+}  // namespace
 
 // The main goal is to reduce the original precision of floats to maintain consistency with the distance result
 // precision of the cardinal index.

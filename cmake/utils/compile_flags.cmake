@@ -16,6 +16,7 @@ if(WITH_ASAN)
 endif()
 
 set(CMAKE_CXX_FLAGS "-Wall -fPIC ${CMAKE_CXX_FLAGS}")
+#set(CMAKE_CXX_FLAGS "-Wall -Werror -fPIC ${CMAKE_CXX_FLAGS}")
 
 if(__X86_64)
   set(CMAKE_CXX_FLAGS "-msse4.2 ${CMAKE_CXX_FLAGS}")

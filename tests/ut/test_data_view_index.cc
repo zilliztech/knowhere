@@ -170,7 +170,7 @@ TEST_CASE("Ensure topk test", "[float metrics]") {
         {knowhere::meta::TOPK, topk},
     };
     knowhere::ViewDataOp data_view = [&train_ds, data_size = sizeof(float) * dim](size_t id) {
-        auto data = train_ds->GetTensor();
+        auto data = (const char*)train_ds->GetTensor();
         return data + data_size * id;
     };
     auto data_view_pack = knowhere::Pack(data_view);
@@ -206,7 +206,6 @@ BaseTest(const knowhere::DataSetPtr train_ds, const knowhere::DataSetPtr query_d
     auto base = knowhere::ConvertToDataTypeIfNeeded<DataType>(train_ds);
     auto query = knowhere::ConvertToDataTypeIfNeeded<DataType>(query_ds);
     auto dim = base->GetDim();
-    auto nb = base->GetRows();
     auto nq = query->GetRows();
 
     auto knn_gt = knowhere::BruteForce::Search<DataType>(base, query, conf, nullptr);

@@ -18,7 +18,6 @@
 #include <cstdint>
 
 #include "distances_ref.h"
-#include "simd_util.h"
 
 namespace faiss {
 
@@ -28,8 +27,9 @@ namespace faiss {
  * SSE and AVX implementations
  */
 
+namespace {
 // reads 0 <= d < 4 floats as __m128
-static inline __m128
+inline __m128
 masked_read(int d, const float* x) {
     assert(0 <= d && d < 4);
     ALIGNED(16) float buf[4] = {0, 0, 0, 0};
@@ -44,6 +44,36 @@ masked_read(int d, const float* x) {
     return _mm_load_ps(buf);
     // cannot use AVX2 _mm_mask_set1_epi32
 }
+
+inline __m128i
+mm_masked_read_short(int d, const uint16_t* x) {
+    assert(0 <= d && d < 8);
+    ALIGNED(16) uint16_t buf[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    switch (d) {
+        case 7:
+            buf[6] = x[6];
+        case 6:
+            buf[5] = x[5];
+        case 5:
+            buf[4] = x[4];
+        case 4:
+            buf[3] = x[3];
+        case 3:
+            buf[2] = x[2];
+        case 2:
+            buf[1] = x[1];
+        case 1:
+            buf[0] = x[0];
+    }
+    return _mm_loadu_si128((__m128i*)buf);
+}
+
+inline __m128
+_mm_bf16_to_fp32(const __m128i& a) {
+    auto o = _mm_slli_epi32(_mm_cvtepu16_epi32(a), 16);
+    return _mm_castsi128_ps(o);
+}
+}  // namespace
 
 float
 fvec_norm_L2sqr_sse(const float* x, size_t d) {

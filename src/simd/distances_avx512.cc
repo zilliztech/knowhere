@@ -19,12 +19,12 @@
 #include <string>
 
 #include "faiss/impl/platform_macros.h"
-#include "simd_util.h"
 
 namespace faiss {
 
+namespace {
 // reads 0 <= d < 4 floats as __m128
-static inline __m128
+inline __m128
 masked_read(int d, const float* x) {
     assert(0 <= d && d < 4);
     __attribute__((__aligned__(16))) float buf[4] = {0, 0, 0, 0};
@@ -39,6 +39,12 @@ masked_read(int d, const float* x) {
     return _mm_load_ps(buf);
     // cannot use AVX2 _mm_mask_set1_epi32
 }
+
+inline __m512
+_mm512_bf16_to_fp32(const __m256i& x) {
+    return _mm512_castsi512_ps(_mm512_slli_epi32(_mm512_cvtepu16_epi32(x), 16));
+}
+}  // namespace
 
 // trust the compiler to unroll this properly
 FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
