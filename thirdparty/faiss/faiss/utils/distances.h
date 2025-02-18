@@ -309,6 +309,18 @@ void knn_cosine(
         float_minheap_array_t* ha,
         const IDSelector* sel = nullptr);
 
+void knn_cosine(
+        const float* x,
+        const float* y,
+        const float* y_norms,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        size_t k,
+        float* distances,
+        int64_t* indexes,
+        const IDSelector* sel = nullptr);
+
 void all_cosine(
         const float* x,
         const float* y,
