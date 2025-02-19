@@ -95,6 +95,7 @@ class KnowhereConan(ConanFile):
     def requirements(self):
         self.requires("boost/1.83.0")
         self.requires("glog/0.6.0")
+        self.requires("ms-gsl/4.1.0")
         self.requires("nlohmann_json/3.11.2")
         self.requires("openssl/1.1.1t")
         self.requires("prometheus-cpp/1.1.0")
