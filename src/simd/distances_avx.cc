@@ -95,92 +95,6 @@ fvec_inner_product_avx(const float* x, const float* y, size_t d) {
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
-float
-fp16_vec_inner_product_avx(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
-    __m256 msum_0 = _mm256_setzero_ps();
-    while (d >= 16) {
-        auto mx = _mm256_loadu_si256((__m256i*)x);
-        auto mx_0 = _mm256_cvtph_ps(_mm256_extracti128_si256(mx, 0));
-        auto mx_1 = _mm256_cvtph_ps(_mm256_extracti128_si256(mx, 1));
-
-        auto my = _mm256_loadu_si256((__m256i*)y);
-        auto my_0 = _mm256_cvtph_ps(_mm256_extracti128_si256(my, 0));
-        auto my_1 = _mm256_cvtph_ps(_mm256_extracti128_si256(my, 1));
-
-        msum_0 = _mm256_fmadd_ps(mx_0, my_0, msum_0);
-        auto msum_1 = _mm256_mul_ps(mx_1, my_1);
-        msum_0 = msum_0 + msum_1;
-        x += 16;
-        y += 16;
-        d -= 16;
-    }
-    while (d >= 8) {
-        auto mx = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)x));
-        auto my = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y));
-        msum_0 = _mm256_fmadd_ps(mx, my, msum_0);
-        x += 8;
-        y += 8;
-        d -= 8;
-    }
-    if (d > 0) {
-        auto mx = _mm256_cvtph_ps(mm_masked_read_short(d, (uint16_t*)x));
-        auto my = _mm256_cvtph_ps(mm_masked_read_short(d, (uint16_t*)y));
-        msum_0 = _mm256_fmadd_ps(mx, my, msum_0);
-    }
-    auto res = _mm256_reduce_add_ps(msum_0);
-    return res;
-}
-
-float
-bf16_vec_inner_product_avx(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
-    __m256 msum_0 = _mm256_setzero_ps();
-    while (d >= 16) {
-        auto mx = _mm256_loadu_si256((__m256i*)x);
-        auto mx_0 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(mx, 0));
-        auto mx_1 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(mx, 1));
-
-        auto my = _mm256_loadu_si256((__m256i*)y);
-        auto my_0 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(my, 0));
-        auto my_1 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(my, 1));
-
-        msum_0 = _mm256_fmadd_ps(mx_0, my_0, msum_0);
-        auto msum_1 = _mm256_mul_ps(mx_1, my_1);
-        msum_0 = msum_0 + msum_1;
-        x += 16;
-        y += 16;
-        d -= 16;
-    }
-    while (d >= 8) {
-        auto mx = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)x));
-        auto my = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y));
-        msum_0 = _mm256_fmadd_ps(mx, my, msum_0);
-        x += 8;
-        y += 8;
-        d -= 8;
-    }
-    if (d > 0) {
-        auto mx = _mm256_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)x));
-        auto my = _mm256_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)y));
-        msum_0 = _mm256_fmadd_ps(mx, my, msum_0);
-    }
-    auto res = _mm256_reduce_add_ps(msum_0);
-    return res;
-}
-
-// trust the compiler to unroll this properly
-FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
-float
-fvec_inner_product_avx_bf16_patch(const float* x, const float* y, size_t d) {
-    size_t i;
-    float res = 0;
-    FAISS_PRAGMA_IMPRECISE_LOOP
-    for (i = 0; i < d; i++) {
-        res += x[i] * bf16_float(y[i]);
-    }
-    return res;
-}
-FAISS_PRAGMA_IMPRECISE_FUNCTION_END
-
 // trust the compiler to unroll this properly
 FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
 float
@@ -190,98 +104,6 @@ fvec_L2sqr_avx(const float* x, const float* y, size_t d) {
     FAISS_PRAGMA_IMPRECISE_LOOP
     for (i = 0; i < d; i++) {
         const float tmp = x[i] - y[i];
-        res += tmp * tmp;
-    }
-    return res;
-}
-FAISS_PRAGMA_IMPRECISE_FUNCTION_END
-
-float
-fp16_vec_L2sqr_avx(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
-    __m256 msum_0 = _mm256_setzero_ps();
-    while (d >= 16) {
-        auto mx = _mm256_loadu_si256((__m256i*)x);
-        auto mx_0 = _mm256_cvtph_ps(_mm256_extracti128_si256(mx, 0));
-        auto mx_1 = _mm256_cvtph_ps(_mm256_extracti128_si256(mx, 1));
-
-        auto my = _mm256_loadu_si256((__m256i*)y);
-        auto my_0 = _mm256_cvtph_ps(_mm256_extracti128_si256(my, 0));
-        auto my_1 = _mm256_cvtph_ps(_mm256_extracti128_si256(my, 1));
-
-        mx_0 = _mm256_sub_ps(mx_0, my_0);
-        mx_1 = _mm256_sub_ps(mx_1, my_1);
-        msum_0 = _mm256_fmadd_ps(mx_0, mx_0, msum_0);
-        msum_0 = _mm256_fmadd_ps(mx_1, mx_1, msum_0);
-
-        x += 16;
-        y += 16;
-        d -= 16;
-    }
-    while (d >= 8) {
-        auto mx = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)x));
-        auto my = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y));
-        mx = _mm256_sub_ps(mx, my);
-        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
-        x += 8;
-        y += 8;
-        d -= 8;
-    }
-    if (d > 0) {
-        auto mx = _mm256_cvtph_ps(mm_masked_read_short(d, (uint16_t*)x));
-        auto my = _mm256_cvtph_ps(mm_masked_read_short(d, (uint16_t*)y));
-        mx = _mm256_sub_ps(mx, my);
-        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
-    }
-    auto res = _mm256_reduce_add_ps(msum_0);
-    return res;
-}
-
-float
-bf16_vec_L2sqr_avx(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
-    __m256 msum_0 = _mm256_setzero_ps();
-    while (d >= 16) {
-        auto mx = _mm256_loadu_si256((__m256i*)x);
-        auto mx_0 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(mx, 0));
-        auto mx_1 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(mx, 1));
-
-        auto my = _mm256_loadu_si256((__m256i*)y);
-        auto my_0 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(my, 0));
-        auto my_1 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(my, 1));
-        mx_0 = _mm256_sub_ps(mx_0, my_0);
-        mx_1 = _mm256_sub_ps(mx_1, my_1);
-        msum_0 = _mm256_fmadd_ps(mx_0, mx_0, msum_0);
-        msum_0 = _mm256_fmadd_ps(mx_1, mx_1, msum_0);
-        x += 16;
-        y += 16;
-        d -= 16;
-    }
-    while (d >= 8) {
-        auto mx = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)x));
-        auto my = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y));
-        mx = _mm256_sub_ps(mx, my);
-        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
-        x += 8;
-        y += 8;
-        d -= 8;
-    }
-    if (d > 0) {
-        auto mx = _mm256_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)x));
-        auto my = _mm256_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)y));
-        mx = _mm256_sub_ps(mx, my);
-        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
-    }
-    auto res = _mm256_reduce_add_ps(msum_0);
-    return res;
-}
-
-FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
-float
-fvec_L2sqr_avx_bf16_patch(const float* x, const float* y, size_t d) {
-    size_t i;
-    float res = 0;
-    FAISS_PRAGMA_IMPRECISE_LOOP
-    for (i = 0; i < d; i++) {
-        const float tmp = x[i] - bf16_float(y[i]);
         res += tmp * tmp;
     }
     return res;
@@ -409,32 +231,6 @@ FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 // trust the compiler to unroll this properly
 FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
 void
-fvec_inner_product_batch_4_avx_bf16_patch(const float* __restrict x, const float* __restrict y0,
-                                          const float* __restrict y1, const float* __restrict y2,
-                                          const float* __restrict y3, const size_t d, float& dis0, float& dis1,
-                                          float& dis2, float& dis3) {
-    float d0 = 0;
-    float d1 = 0;
-    float d2 = 0;
-    float d3 = 0;
-    FAISS_PRAGMA_IMPRECISE_LOOP
-    for (size_t i = 0; i < d; ++i) {
-        d0 += x[i] * bf16_float(y0[i]);
-        d1 += x[i] * bf16_float(y1[i]);
-        d2 += x[i] * bf16_float(y2[i]);
-        d3 += x[i] * bf16_float(y3[i]);
-    }
-
-    dis0 = d0;
-    dis1 = d1;
-    dis2 = d2;
-    dis3 = d3;
-}
-FAISS_PRAGMA_IMPRECISE_FUNCTION_END
-
-// trust the compiler to unroll this properly
-FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
-void
 fvec_L2sqr_batch_4_avx(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
                        const size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
     float d0 = 0;
@@ -459,251 +255,6 @@ fvec_L2sqr_batch_4_avx(const float* x, const float* y0, const float* y1, const f
     dis3 = d3;
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
-
-// trust the compiler to unroll this properly
-FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
-void
-fvec_L2sqr_batch_4_avx_bf16_patch(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
-                                  const size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
-    float d0 = 0;
-    float d1 = 0;
-    float d2 = 0;
-    float d3 = 0;
-    FAISS_PRAGMA_IMPRECISE_LOOP
-    for (size_t i = 0; i < d; ++i) {
-        const float q0 = x[i] - bf16_float(y0[i]);
-        const float q1 = x[i] - bf16_float(y1[i]);
-        const float q2 = x[i] - bf16_float(y2[i]);
-        const float q3 = x[i] - bf16_float(y3[i]);
-        d0 += q0 * q0;
-        d1 += q1 * q1;
-        d2 += q2 * q2;
-        d3 += q3 * q3;
-    }
-
-    dis0 = d0;
-    dis1 = d1;
-    dis2 = d2;
-    dis3 = d3;
-}
-FAISS_PRAGMA_IMPRECISE_FUNCTION_END
-
-void
-fp16_vec_inner_product_batch_4_avx(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
-                                   const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0,
-                                   float& dis1, float& dis2, float& dis3) {
-    __m256 msum_0 = _mm256_setzero_ps();
-    __m256 msum_1 = _mm256_setzero_ps();
-    __m256 msum_2 = _mm256_setzero_ps();
-    __m256 msum_3 = _mm256_setzero_ps();
-
-    size_t cur_d = d;
-    while (cur_d >= 8) {
-        auto mx = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)x));
-        auto my0 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y0));
-        auto my1 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y1));
-        auto my2 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y2));
-        auto my3 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y3));
-        msum_0 = _mm256_fmadd_ps(mx, my0, msum_0);
-        msum_1 = _mm256_fmadd_ps(mx, my1, msum_1);
-        msum_2 = _mm256_fmadd_ps(mx, my2, msum_2);
-        msum_3 = _mm256_fmadd_ps(mx, my3, msum_3);
-        x += 8;
-        y0 += 8;
-        y1 += 8;
-        y2 += 8;
-        y3 += 8;
-        cur_d -= 8;
-    }
-    if (cur_d > 0) {
-        auto mx = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)x));
-        auto my0 = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)y0));
-        auto my1 = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)y1));
-        auto my2 = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)y2));
-        auto my3 = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)y3));
-        msum_0 = _mm256_fmadd_ps(mx, my0, msum_0);
-        msum_1 = _mm256_fmadd_ps(mx, my1, msum_1);
-        msum_2 = _mm256_fmadd_ps(mx, my2, msum_2);
-        msum_3 = _mm256_fmadd_ps(mx, my3, msum_3);
-    }
-    dis0 = _mm256_reduce_add_ps(msum_0);
-    dis1 = _mm256_reduce_add_ps(msum_1);
-    dis2 = _mm256_reduce_add_ps(msum_2);
-    dis3 = _mm256_reduce_add_ps(msum_3);
-    return;
-}
-
-void
-bf16_vec_inner_product_batch_4_avx(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                                   const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
-                                   float& dis1, float& dis2, float& dis3) {
-    __m256 msum_0 = _mm256_setzero_ps();
-    __m256 msum_1 = _mm256_setzero_ps();
-    __m256 msum_2 = _mm256_setzero_ps();
-    __m256 msum_3 = _mm256_setzero_ps();
-    size_t cur_d = d;
-    while (cur_d >= 8) {
-        auto mx = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)x));
-        auto my0 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y0));
-        auto my1 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y1));
-        auto my2 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y2));
-        auto my3 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y3));
-        msum_0 = _mm256_fmadd_ps(mx, my0, msum_0);
-        msum_1 = _mm256_fmadd_ps(mx, my1, msum_1);
-        msum_2 = _mm256_fmadd_ps(mx, my2, msum_2);
-        msum_3 = _mm256_fmadd_ps(mx, my3, msum_3);
-        x += 8;
-        y0 += 8;
-        y1 += 8;
-        y2 += 8;
-        y3 += 8;
-        cur_d -= 8;
-    }
-    if (cur_d > 0) {
-        auto mx = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)x));
-        auto my0 = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)y0));
-        auto my1 = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)y1));
-        auto my2 = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)y2));
-        auto my3 = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)y3));
-        msum_0 = _mm256_fmadd_ps(mx, my0, msum_0);
-        msum_1 = _mm256_fmadd_ps(mx, my1, msum_1);
-        msum_2 = _mm256_fmadd_ps(mx, my2, msum_2);
-        msum_3 = _mm256_fmadd_ps(mx, my3, msum_3);
-    }
-    dis0 = _mm256_reduce_add_ps(msum_0);
-    dis1 = _mm256_reduce_add_ps(msum_1);
-    dis2 = _mm256_reduce_add_ps(msum_2);
-    dis3 = _mm256_reduce_add_ps(msum_3);
-
-    return;
-}
-
-void
-fp16_vec_L2sqr_batch_4_avx(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
-                           const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0, float& dis1,
-                           float& dis2, float& dis3) {
-    __m256 msum_0 = _mm256_setzero_ps();
-    __m256 msum_1 = _mm256_setzero_ps();
-    __m256 msum_2 = _mm256_setzero_ps();
-    __m256 msum_3 = _mm256_setzero_ps();
-    auto cur_d = d;
-    while (cur_d >= 8) {
-        auto mx = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)x));
-        auto my0 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y0));
-        auto my1 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y1));
-        auto my2 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y2));
-        auto my3 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y3));
-        my0 = _mm256_sub_ps(mx, my0);
-        msum_0 = _mm256_fmadd_ps(my0, my0, msum_0);
-        my1 = _mm256_sub_ps(mx, my1);
-        msum_1 = _mm256_fmadd_ps(my1, my1, msum_1);
-        my2 = _mm256_sub_ps(mx, my2);
-        msum_2 = _mm256_fmadd_ps(my2, my2, msum_2);
-        my3 = _mm256_sub_ps(mx, my3);
-        msum_3 = _mm256_fmadd_ps(my3, my3, msum_3);
-        x += 8;
-        y0 += 8;
-        y1 += 8;
-        y2 += 8;
-        y3 += 8;
-        cur_d -= 8;
-    }
-    if (cur_d > 0) {
-        auto mx = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)x));
-        auto my0 = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)y0));
-        auto my1 = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)y1));
-        auto my2 = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)y2));
-        auto my3 = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)y3));
-        my0 = _mm256_sub_ps(mx, my0);
-        my1 = _mm256_sub_ps(mx, my1);
-        my2 = _mm256_sub_ps(mx, my2);
-        my3 = _mm256_sub_ps(mx, my3);
-        msum_0 = _mm256_fmadd_ps(my0, my0, msum_0);
-        msum_1 = _mm256_fmadd_ps(my1, my1, msum_1);
-        msum_2 = _mm256_fmadd_ps(my2, my2, msum_2);
-        msum_3 = _mm256_fmadd_ps(my3, my3, msum_3);
-    }
-    dis0 = _mm256_reduce_add_ps(msum_0);
-    dis1 = _mm256_reduce_add_ps(msum_1);
-    dis2 = _mm256_reduce_add_ps(msum_2);
-    dis3 = _mm256_reduce_add_ps(msum_3);
-    return;
-}
-
-void
-bf16_vec_L2sqr_batch_4_avx(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                           const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0, float& dis1,
-                           float& dis2, float& dis3) {
-    __m256 msum_0 = _mm256_setzero_ps();
-    __m256 msum_1 = _mm256_setzero_ps();
-    __m256 msum_2 = _mm256_setzero_ps();
-    __m256 msum_3 = _mm256_setzero_ps();
-    size_t cur_d = d;
-    while (cur_d >= 8) {
-        auto mx = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)x));
-        auto my0 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y0));
-        auto my1 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y1));
-        auto my2 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y2));
-        auto my3 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y3));
-        my0 = _mm256_sub_ps(mx, my0);
-        my1 = _mm256_sub_ps(mx, my1);
-        my2 = _mm256_sub_ps(mx, my2);
-        my3 = _mm256_sub_ps(mx, my3);
-        msum_0 = _mm256_fmadd_ps(my0, my0, msum_0);
-        msum_1 = _mm256_fmadd_ps(my1, my1, msum_1);
-        msum_2 = _mm256_fmadd_ps(my2, my2, msum_2);
-        msum_3 = _mm256_fmadd_ps(my3, my3, msum_3);
-        x += 8;
-        y0 += 8;
-        y1 += 8;
-        y2 += 8;
-        y3 += 8;
-        cur_d -= 8;
-    }
-    if (cur_d > 0) {
-        auto mx = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)x));
-        auto my0 = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)y0));
-        auto my1 = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)y1));
-        auto my2 = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)y2));
-        auto my3 = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)y3));
-        my0 = _mm256_sub_ps(mx, my0);
-        my1 = _mm256_sub_ps(mx, my1);
-        my2 = _mm256_sub_ps(mx, my2);
-        my3 = _mm256_sub_ps(mx, my3);
-        msum_0 = _mm256_fmadd_ps(my0, my0, msum_0);
-        msum_1 = _mm256_fmadd_ps(my1, my1, msum_1);
-        msum_2 = _mm256_fmadd_ps(my2, my2, msum_2);
-        msum_3 = _mm256_fmadd_ps(my3, my3, msum_3);
-    }
-    dis0 = _mm256_reduce_add_ps(msum_0);
-    dis1 = _mm256_reduce_add_ps(msum_1);
-    dis2 = _mm256_reduce_add_ps(msum_2);
-    dis3 = _mm256_reduce_add_ps(msum_3);
-    return;
-}
-
-// trust the compiler to unroll this properly
-int32_t
-ivec_inner_product_avx(const int8_t* x, const int8_t* y, size_t d) {
-    size_t i;
-    int32_t res = 0;
-    for (i = 0; i < d; i++) {
-        res += (int32_t)x[i] * y[i];
-    }
-    return res;
-}
-
-// trust the compiler to unroll this properly
-int32_t
-ivec_L2sqr_avx(const int8_t* x, const int8_t* y, size_t d) {
-    size_t i;
-    int32_t res = 0;
-    for (i = 0; i < d; i++) {
-        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
-        res += tmp * tmp;
-    }
-    return res;
-}
 
 float
 fvec_norm_L2sqr_avx(const float* x, size_t d) {
@@ -735,60 +286,6 @@ fvec_norm_L2sqr_avx(const float* x, size_t d) {
             rest_1 = masked_read(d, x);
         }
         auto mx = _mm256_set_m128(rest_0, rest_1);
-        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
-    }
-    auto res = _mm256_reduce_add_ps(msum_0);
-    return res;
-}
-
-float
-fp16_vec_norm_L2sqr_avx(const knowhere::fp16* x, size_t d) {
-    __m256 msum_0 = _mm256_setzero_ps();
-    while (d >= 16) {
-        auto mx = _mm256_loadu_si256((__m256i*)x);
-        auto mx_0 = _mm256_cvtph_ps(_mm256_extracti128_si256(mx, 0));
-        auto mx_1 = _mm256_cvtph_ps(_mm256_extracti128_si256(mx, 1));
-        msum_0 = _mm256_fmadd_ps(mx_0, mx_0, msum_0);
-        auto msum_1 = _mm256_mul_ps(mx_1, mx_1);
-        msum_0 = msum_0 + msum_1;
-        x += 16;
-        d -= 16;
-    }
-    while (d >= 8) {
-        auto mx = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)x));
-        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
-        x += 8;
-        d -= 8;
-    }
-    if (d > 0) {
-        auto mx = _mm256_cvtph_ps(mm_masked_read_short(d, (uint16_t*)x));
-        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
-    }
-    auto res = _mm256_reduce_add_ps(msum_0);
-    return res;
-}
-
-float
-bf16_vec_norm_L2sqr_avx(const knowhere::bf16* x, size_t d) {
-    __m256 msum_0 = _mm256_setzero_ps();
-    while (d >= 16) {
-        auto mx = _mm256_loadu_si256((__m256i*)x);
-        auto mx_0 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(mx, 0));
-        auto mx_1 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(mx, 1));
-        msum_0 = _mm256_fmadd_ps(mx_0, mx_0, msum_0);
-        auto msum_1 = _mm256_mul_ps(mx_1, mx_1);
-        msum_0 = msum_0 + msum_1;
-        x += 16;
-        d -= 16;
-    }
-    while (d >= 8) {
-        auto mx = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)x));
-        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
-        x += 8;
-        d -= 8;
-    }
-    if (d > 0) {
-        auto mx = _mm256_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)x));
         msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
     }
     auto res = _mm256_reduce_add_ps(msum_0);
@@ -961,6 +458,518 @@ fvec_L2sqr_ny_nearest_avx(float* __restrict distances_tmp_buffer, const float* _
     }
     return nearest_idx;
 }
+
+///////////////////////////////////////////////////////////////////////////////
+// for hnsw sq, obsolete
+
+// trust the compiler to unroll this properly
+int32_t
+ivec_inner_product_avx(const int8_t* x, const int8_t* y, size_t d) {
+    size_t i;
+    int32_t res = 0;
+    for (i = 0; i < d; i++) {
+        res += (int32_t)x[i] * y[i];
+    }
+    return res;
+}
+
+// trust the compiler to unroll this properly
+int32_t
+ivec_L2sqr_avx(const int8_t* x, const int8_t* y, size_t d) {
+    size_t i;
+    int32_t res = 0;
+    for (i = 0; i < d; i++) {
+        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
+        res += tmp * tmp;
+    }
+    return res;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// fp16
+
+float
+fp16_vec_inner_product_avx(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+    __m256 msum_0 = _mm256_setzero_ps();
+    while (d >= 16) {
+        auto mx = _mm256_loadu_si256((__m256i*)x);
+        auto mx_0 = _mm256_cvtph_ps(_mm256_extracti128_si256(mx, 0));
+        auto mx_1 = _mm256_cvtph_ps(_mm256_extracti128_si256(mx, 1));
+
+        auto my = _mm256_loadu_si256((__m256i*)y);
+        auto my_0 = _mm256_cvtph_ps(_mm256_extracti128_si256(my, 0));
+        auto my_1 = _mm256_cvtph_ps(_mm256_extracti128_si256(my, 1));
+
+        msum_0 = _mm256_fmadd_ps(mx_0, my_0, msum_0);
+        auto msum_1 = _mm256_mul_ps(mx_1, my_1);
+        msum_0 = msum_0 + msum_1;
+        x += 16;
+        y += 16;
+        d -= 16;
+    }
+    while (d >= 8) {
+        auto mx = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)x));
+        auto my = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y));
+        msum_0 = _mm256_fmadd_ps(mx, my, msum_0);
+        x += 8;
+        y += 8;
+        d -= 8;
+    }
+    if (d > 0) {
+        auto mx = _mm256_cvtph_ps(mm_masked_read_short(d, (uint16_t*)x));
+        auto my = _mm256_cvtph_ps(mm_masked_read_short(d, (uint16_t*)y));
+        msum_0 = _mm256_fmadd_ps(mx, my, msum_0);
+    }
+    auto res = _mm256_reduce_add_ps(msum_0);
+    return res;
+}
+
+float
+fp16_vec_L2sqr_avx(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+    __m256 msum_0 = _mm256_setzero_ps();
+    while (d >= 16) {
+        auto mx = _mm256_loadu_si256((__m256i*)x);
+        auto mx_0 = _mm256_cvtph_ps(_mm256_extracti128_si256(mx, 0));
+        auto mx_1 = _mm256_cvtph_ps(_mm256_extracti128_si256(mx, 1));
+
+        auto my = _mm256_loadu_si256((__m256i*)y);
+        auto my_0 = _mm256_cvtph_ps(_mm256_extracti128_si256(my, 0));
+        auto my_1 = _mm256_cvtph_ps(_mm256_extracti128_si256(my, 1));
+
+        mx_0 = _mm256_sub_ps(mx_0, my_0);
+        mx_1 = _mm256_sub_ps(mx_1, my_1);
+        msum_0 = _mm256_fmadd_ps(mx_0, mx_0, msum_0);
+        msum_0 = _mm256_fmadd_ps(mx_1, mx_1, msum_0);
+
+        x += 16;
+        y += 16;
+        d -= 16;
+    }
+    while (d >= 8) {
+        auto mx = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)x));
+        auto my = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y));
+        mx = _mm256_sub_ps(mx, my);
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+        x += 8;
+        y += 8;
+        d -= 8;
+    }
+    if (d > 0) {
+        auto mx = _mm256_cvtph_ps(mm_masked_read_short(d, (uint16_t*)x));
+        auto my = _mm256_cvtph_ps(mm_masked_read_short(d, (uint16_t*)y));
+        mx = _mm256_sub_ps(mx, my);
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+    }
+    auto res = _mm256_reduce_add_ps(msum_0);
+    return res;
+}
+
+float
+fp16_vec_norm_L2sqr_avx(const knowhere::fp16* x, size_t d) {
+    __m256 msum_0 = _mm256_setzero_ps();
+    while (d >= 16) {
+        auto mx = _mm256_loadu_si256((__m256i*)x);
+        auto mx_0 = _mm256_cvtph_ps(_mm256_extracti128_si256(mx, 0));
+        auto mx_1 = _mm256_cvtph_ps(_mm256_extracti128_si256(mx, 1));
+        msum_0 = _mm256_fmadd_ps(mx_0, mx_0, msum_0);
+        auto msum_1 = _mm256_mul_ps(mx_1, mx_1);
+        msum_0 = msum_0 + msum_1;
+        x += 16;
+        d -= 16;
+    }
+    while (d >= 8) {
+        auto mx = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)x));
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+        x += 8;
+        d -= 8;
+    }
+    if (d > 0) {
+        auto mx = _mm256_cvtph_ps(mm_masked_read_short(d, (uint16_t*)x));
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+    }
+    auto res = _mm256_reduce_add_ps(msum_0);
+    return res;
+}
+
+void
+fp16_vec_inner_product_batch_4_avx(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
+                                   const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0,
+                                   float& dis1, float& dis2, float& dis3) {
+    __m256 msum_0 = _mm256_setzero_ps();
+    __m256 msum_1 = _mm256_setzero_ps();
+    __m256 msum_2 = _mm256_setzero_ps();
+    __m256 msum_3 = _mm256_setzero_ps();
+
+    size_t cur_d = d;
+    while (cur_d >= 8) {
+        auto mx = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)x));
+        auto my0 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y0));
+        auto my1 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y1));
+        auto my2 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y2));
+        auto my3 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y3));
+        msum_0 = _mm256_fmadd_ps(mx, my0, msum_0);
+        msum_1 = _mm256_fmadd_ps(mx, my1, msum_1);
+        msum_2 = _mm256_fmadd_ps(mx, my2, msum_2);
+        msum_3 = _mm256_fmadd_ps(mx, my3, msum_3);
+        x += 8;
+        y0 += 8;
+        y1 += 8;
+        y2 += 8;
+        y3 += 8;
+        cur_d -= 8;
+    }
+    if (cur_d > 0) {
+        auto mx = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)x));
+        auto my0 = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)y0));
+        auto my1 = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)y1));
+        auto my2 = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)y2));
+        auto my3 = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)y3));
+        msum_0 = _mm256_fmadd_ps(mx, my0, msum_0);
+        msum_1 = _mm256_fmadd_ps(mx, my1, msum_1);
+        msum_2 = _mm256_fmadd_ps(mx, my2, msum_2);
+        msum_3 = _mm256_fmadd_ps(mx, my3, msum_3);
+    }
+    dis0 = _mm256_reduce_add_ps(msum_0);
+    dis1 = _mm256_reduce_add_ps(msum_1);
+    dis2 = _mm256_reduce_add_ps(msum_2);
+    dis3 = _mm256_reduce_add_ps(msum_3);
+    return;
+}
+
+void
+fp16_vec_L2sqr_batch_4_avx(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
+                           const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0, float& dis1,
+                           float& dis2, float& dis3) {
+    __m256 msum_0 = _mm256_setzero_ps();
+    __m256 msum_1 = _mm256_setzero_ps();
+    __m256 msum_2 = _mm256_setzero_ps();
+    __m256 msum_3 = _mm256_setzero_ps();
+    auto cur_d = d;
+    while (cur_d >= 8) {
+        auto mx = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)x));
+        auto my0 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y0));
+        auto my1 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y1));
+        auto my2 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y2));
+        auto my3 = _mm256_cvtph_ps(_mm_loadu_si128((__m128i*)y3));
+        my0 = _mm256_sub_ps(mx, my0);
+        msum_0 = _mm256_fmadd_ps(my0, my0, msum_0);
+        my1 = _mm256_sub_ps(mx, my1);
+        msum_1 = _mm256_fmadd_ps(my1, my1, msum_1);
+        my2 = _mm256_sub_ps(mx, my2);
+        msum_2 = _mm256_fmadd_ps(my2, my2, msum_2);
+        my3 = _mm256_sub_ps(mx, my3);
+        msum_3 = _mm256_fmadd_ps(my3, my3, msum_3);
+        x += 8;
+        y0 += 8;
+        y1 += 8;
+        y2 += 8;
+        y3 += 8;
+        cur_d -= 8;
+    }
+    if (cur_d > 0) {
+        auto mx = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)x));
+        auto my0 = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)y0));
+        auto my1 = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)y1));
+        auto my2 = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)y2));
+        auto my3 = _mm256_cvtph_ps(mm_masked_read_short(cur_d, (uint16_t*)y3));
+        my0 = _mm256_sub_ps(mx, my0);
+        my1 = _mm256_sub_ps(mx, my1);
+        my2 = _mm256_sub_ps(mx, my2);
+        my3 = _mm256_sub_ps(mx, my3);
+        msum_0 = _mm256_fmadd_ps(my0, my0, msum_0);
+        msum_1 = _mm256_fmadd_ps(my1, my1, msum_1);
+        msum_2 = _mm256_fmadd_ps(my2, my2, msum_2);
+        msum_3 = _mm256_fmadd_ps(my3, my3, msum_3);
+    }
+    dis0 = _mm256_reduce_add_ps(msum_0);
+    dis1 = _mm256_reduce_add_ps(msum_1);
+    dis2 = _mm256_reduce_add_ps(msum_2);
+    dis3 = _mm256_reduce_add_ps(msum_3);
+    return;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// bf16
+
+float
+bf16_vec_inner_product_avx(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+    __m256 msum_0 = _mm256_setzero_ps();
+    while (d >= 16) {
+        auto mx = _mm256_loadu_si256((__m256i*)x);
+        auto mx_0 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(mx, 0));
+        auto mx_1 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(mx, 1));
+
+        auto my = _mm256_loadu_si256((__m256i*)y);
+        auto my_0 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(my, 0));
+        auto my_1 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(my, 1));
+
+        msum_0 = _mm256_fmadd_ps(mx_0, my_0, msum_0);
+        auto msum_1 = _mm256_mul_ps(mx_1, my_1);
+        msum_0 = msum_0 + msum_1;
+        x += 16;
+        y += 16;
+        d -= 16;
+    }
+    while (d >= 8) {
+        auto mx = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)x));
+        auto my = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y));
+        msum_0 = _mm256_fmadd_ps(mx, my, msum_0);
+        x += 8;
+        y += 8;
+        d -= 8;
+    }
+    if (d > 0) {
+        auto mx = _mm256_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)x));
+        auto my = _mm256_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)y));
+        msum_0 = _mm256_fmadd_ps(mx, my, msum_0);
+    }
+    auto res = _mm256_reduce_add_ps(msum_0);
+    return res;
+}
+
+float
+bf16_vec_L2sqr_avx(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+    __m256 msum_0 = _mm256_setzero_ps();
+    while (d >= 16) {
+        auto mx = _mm256_loadu_si256((__m256i*)x);
+        auto mx_0 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(mx, 0));
+        auto mx_1 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(mx, 1));
+
+        auto my = _mm256_loadu_si256((__m256i*)y);
+        auto my_0 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(my, 0));
+        auto my_1 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(my, 1));
+        mx_0 = _mm256_sub_ps(mx_0, my_0);
+        mx_1 = _mm256_sub_ps(mx_1, my_1);
+        msum_0 = _mm256_fmadd_ps(mx_0, mx_0, msum_0);
+        msum_0 = _mm256_fmadd_ps(mx_1, mx_1, msum_0);
+        x += 16;
+        y += 16;
+        d -= 16;
+    }
+    while (d >= 8) {
+        auto mx = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)x));
+        auto my = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y));
+        mx = _mm256_sub_ps(mx, my);
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+        x += 8;
+        y += 8;
+        d -= 8;
+    }
+    if (d > 0) {
+        auto mx = _mm256_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)x));
+        auto my = _mm256_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)y));
+        mx = _mm256_sub_ps(mx, my);
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+    }
+    auto res = _mm256_reduce_add_ps(msum_0);
+    return res;
+}
+
+float
+bf16_vec_norm_L2sqr_avx(const knowhere::bf16* x, size_t d) {
+    __m256 msum_0 = _mm256_setzero_ps();
+    while (d >= 16) {
+        auto mx = _mm256_loadu_si256((__m256i*)x);
+        auto mx_0 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(mx, 0));
+        auto mx_1 = _mm256_bf16_to_fp32(_mm256_extracti128_si256(mx, 1));
+        msum_0 = _mm256_fmadd_ps(mx_0, mx_0, msum_0);
+        auto msum_1 = _mm256_mul_ps(mx_1, mx_1);
+        msum_0 = msum_0 + msum_1;
+        x += 16;
+        d -= 16;
+    }
+    while (d >= 8) {
+        auto mx = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)x));
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+        x += 8;
+        d -= 8;
+    }
+    if (d > 0) {
+        auto mx = _mm256_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)x));
+        msum_0 = _mm256_fmadd_ps(mx, mx, msum_0);
+    }
+    auto res = _mm256_reduce_add_ps(msum_0);
+    return res;
+}
+
+void
+bf16_vec_inner_product_batch_4_avx(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
+                                   const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
+                                   float& dis1, float& dis2, float& dis3) {
+    __m256 msum_0 = _mm256_setzero_ps();
+    __m256 msum_1 = _mm256_setzero_ps();
+    __m256 msum_2 = _mm256_setzero_ps();
+    __m256 msum_3 = _mm256_setzero_ps();
+    size_t cur_d = d;
+    while (cur_d >= 8) {
+        auto mx = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)x));
+        auto my0 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y0));
+        auto my1 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y1));
+        auto my2 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y2));
+        auto my3 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y3));
+        msum_0 = _mm256_fmadd_ps(mx, my0, msum_0);
+        msum_1 = _mm256_fmadd_ps(mx, my1, msum_1);
+        msum_2 = _mm256_fmadd_ps(mx, my2, msum_2);
+        msum_3 = _mm256_fmadd_ps(mx, my3, msum_3);
+        x += 8;
+        y0 += 8;
+        y1 += 8;
+        y2 += 8;
+        y3 += 8;
+        cur_d -= 8;
+    }
+    if (cur_d > 0) {
+        auto mx = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)x));
+        auto my0 = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)y0));
+        auto my1 = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)y1));
+        auto my2 = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)y2));
+        auto my3 = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)y3));
+        msum_0 = _mm256_fmadd_ps(mx, my0, msum_0);
+        msum_1 = _mm256_fmadd_ps(mx, my1, msum_1);
+        msum_2 = _mm256_fmadd_ps(mx, my2, msum_2);
+        msum_3 = _mm256_fmadd_ps(mx, my3, msum_3);
+    }
+    dis0 = _mm256_reduce_add_ps(msum_0);
+    dis1 = _mm256_reduce_add_ps(msum_1);
+    dis2 = _mm256_reduce_add_ps(msum_2);
+    dis3 = _mm256_reduce_add_ps(msum_3);
+
+    return;
+}
+
+void
+bf16_vec_L2sqr_batch_4_avx(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
+                           const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0, float& dis1,
+                           float& dis2, float& dis3) {
+    __m256 msum_0 = _mm256_setzero_ps();
+    __m256 msum_1 = _mm256_setzero_ps();
+    __m256 msum_2 = _mm256_setzero_ps();
+    __m256 msum_3 = _mm256_setzero_ps();
+    size_t cur_d = d;
+    while (cur_d >= 8) {
+        auto mx = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)x));
+        auto my0 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y0));
+        auto my1 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y1));
+        auto my2 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y2));
+        auto my3 = _mm256_bf16_to_fp32(_mm_loadu_si128((__m128i*)y3));
+        my0 = _mm256_sub_ps(mx, my0);
+        my1 = _mm256_sub_ps(mx, my1);
+        my2 = _mm256_sub_ps(mx, my2);
+        my3 = _mm256_sub_ps(mx, my3);
+        msum_0 = _mm256_fmadd_ps(my0, my0, msum_0);
+        msum_1 = _mm256_fmadd_ps(my1, my1, msum_1);
+        msum_2 = _mm256_fmadd_ps(my2, my2, msum_2);
+        msum_3 = _mm256_fmadd_ps(my3, my3, msum_3);
+        x += 8;
+        y0 += 8;
+        y1 += 8;
+        y2 += 8;
+        y3 += 8;
+        cur_d -= 8;
+    }
+    if (cur_d > 0) {
+        auto mx = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)x));
+        auto my0 = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)y0));
+        auto my1 = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)y1));
+        auto my2 = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)y2));
+        auto my3 = _mm256_bf16_to_fp32(mm_masked_read_short(cur_d, (uint16_t*)y3));
+        my0 = _mm256_sub_ps(mx, my0);
+        my1 = _mm256_sub_ps(mx, my1);
+        my2 = _mm256_sub_ps(mx, my2);
+        my3 = _mm256_sub_ps(mx, my3);
+        msum_0 = _mm256_fmadd_ps(my0, my0, msum_0);
+        msum_1 = _mm256_fmadd_ps(my1, my1, msum_1);
+        msum_2 = _mm256_fmadd_ps(my2, my2, msum_2);
+        msum_3 = _mm256_fmadd_ps(my3, my3, msum_3);
+    }
+    dis0 = _mm256_reduce_add_ps(msum_0);
+    dis1 = _mm256_reduce_add_ps(msum_1);
+    dis2 = _mm256_reduce_add_ps(msum_2);
+    dis3 = _mm256_reduce_add_ps(msum_3);
+    return;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// for cardinal
+
+FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
+float
+fvec_inner_product_bf16_patch_avx(const float* x, const float* y, size_t d) {
+    size_t i;
+    float res = 0;
+    FAISS_PRAGMA_IMPRECISE_LOOP
+    for (i = 0; i < d; i++) {
+        res += x[i] * bf16_float(y[i]);
+    }
+    return res;
+}
+FAISS_PRAGMA_IMPRECISE_FUNCTION_END
+
+FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
+float
+fvec_L2sqr_bf16_patch_avx(const float* x, const float* y, size_t d) {
+    size_t i;
+    float res = 0;
+    FAISS_PRAGMA_IMPRECISE_LOOP
+    for (i = 0; i < d; i++) {
+        const float tmp = x[i] - bf16_float(y[i]);
+        res += tmp * tmp;
+    }
+    return res;
+}
+FAISS_PRAGMA_IMPRECISE_FUNCTION_END
+
+FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
+void
+fvec_inner_product_batch_4_bf16_patch_avx(const float* __restrict x, const float* __restrict y0,
+                                          const float* __restrict y1, const float* __restrict y2,
+                                          const float* __restrict y3, const size_t d, float& dis0, float& dis1,
+                                          float& dis2, float& dis3) {
+    float d0 = 0;
+    float d1 = 0;
+    float d2 = 0;
+    float d3 = 0;
+    FAISS_PRAGMA_IMPRECISE_LOOP
+    for (size_t i = 0; i < d; ++i) {
+        d0 += x[i] * bf16_float(y0[i]);
+        d1 += x[i] * bf16_float(y1[i]);
+        d2 += x[i] * bf16_float(y2[i]);
+        d3 += x[i] * bf16_float(y3[i]);
+    }
+
+    dis0 = d0;
+    dis1 = d1;
+    dis2 = d2;
+    dis3 = d3;
+}
+FAISS_PRAGMA_IMPRECISE_FUNCTION_END
+
+FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
+void
+fvec_L2sqr_batch_4_bf16_patch_avx(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
+                                  const size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
+    float d0 = 0;
+    float d1 = 0;
+    float d2 = 0;
+    float d3 = 0;
+    FAISS_PRAGMA_IMPRECISE_LOOP
+    for (size_t i = 0; i < d; ++i) {
+        const float q0 = x[i] - bf16_float(y0[i]);
+        const float q1 = x[i] - bf16_float(y1[i]);
+        const float q2 = x[i] - bf16_float(y2[i]);
+        const float q3 = x[i] - bf16_float(y3[i]);
+        d0 += q0 * q0;
+        d1 += q1 * q1;
+        d2 += q2 * q2;
+        d3 += q3 * q3;
+    }
+
+    dis0 = d0;
+    dis1 = d1;
+    dis2 = d2;
+    dis3 = d3;
+}
+FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
 }  // namespace faiss
 #endif

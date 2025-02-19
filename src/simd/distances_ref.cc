@@ -16,44 +16,21 @@
 namespace faiss {
 
 float
+fvec_inner_product_ref(const float* x, const float* y, size_t d) {
+    size_t i;
+    float res = 0;
+    for (i = 0; i < d; i++) {
+        res += x[i] * y[i];
+    }
+    return res;
+}
+
+float
 fvec_L2sqr_ref(const float* x, const float* y, size_t d) {
     size_t i;
     float res = 0;
     for (i = 0; i < d; i++) {
         const float tmp = x[i] - y[i];
-        res += tmp * tmp;
-    }
-    return res;
-}
-
-float
-fp16_vec_L2sqr_ref(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
-    size_t i;
-    float res = 0;
-    for (i = 0; i < d; i++) {
-        const float tmp = (float)x[i] - (float)y[i];
-        res += tmp * tmp;
-    }
-    return res;
-}
-
-float
-bf16_vec_L2sqr_ref(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
-    size_t i;
-    float res = 0;
-    for (i = 0; i < d; i++) {
-        const float tmp = (float)x[i] - (float)y[i];
-        res += tmp * tmp;
-    }
-    return res;
-}
-
-float
-fvec_L2sqr_ref_bf16_patch(const float* x, const float* y, size_t d) {
-    size_t i;
-    float res = 0;
-    for (i = 0; i < d; i++) {
-        const float tmp = x[i] - bf16_float(y[i]);
         res += tmp * tmp;
     }
     return res;
@@ -81,71 +58,11 @@ fvec_Linf_ref(const float* x, const float* y, size_t d) {
 }
 
 float
-fvec_inner_product_ref(const float* x, const float* y, size_t d) {
-    size_t i;
-    float res = 0;
-    for (i = 0; i < d; i++) {
-        res += x[i] * y[i];
-    }
-    return res;
-}
-
-float
-fp16_vec_inner_product_ref(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
-    size_t i;
-    float res = 0;
-    for (i = 0; i < d; i++) {
-        res += (float)x[i] * (float)y[i];
-    }
-    return res;
-}
-
-float
-bf16_vec_inner_product_ref(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
-    size_t i;
-    float res = 0;
-    for (i = 0; i < d; i++) {
-        res += (float)x[i] * (float)y[i];
-    }
-    return res;
-}
-
-float
-fvec_inner_product_ref_bf16_patch(const float* x, const float* y, size_t d) {
-    size_t i;
-    float res = 0;
-    for (i = 0; i < d; i++) {
-        res += x[i] * bf16_float(y[i]);
-    }
-    return res;
-}
-
-float
 fvec_norm_L2sqr_ref(const float* x, size_t d) {
     size_t i;
     double res = 0;
     for (i = 0; i < d; i++) {
         res += x[i] * x[i];
-    }
-    return res;
-}
-
-float
-fp16_vec_norm_L2sqr_ref(const knowhere::fp16* x, size_t d) {
-    size_t i;
-    double res = 0;
-    for (i = 0; i < d; i++) {
-        res += (float)x[i] * (float)x[i];
-    }
-    return res;
-}
-
-float
-bf16_vec_norm_L2sqr_ref(const knowhere::bf16* x, size_t d) {
-    size_t i;
-    double res = 0;
-    for (i = 0; i < d; i++) {
-        res += (float)x[i] * (float)x[i];
     }
     return res;
 }
@@ -274,28 +191,6 @@ fvec_inner_product_batch_4_ref(const float* __restrict x, const float* __restric
 }
 
 void
-fvec_inner_product_batch_4_ref_bf16_patch(const float* __restrict x, const float* __restrict y0,
-                                          const float* __restrict y1, const float* __restrict y2,
-                                          const float* __restrict y3, const size_t d, float& dis0, float& dis1,
-                                          float& dis2, float& dis3) {
-    float d0 = 0;
-    float d1 = 0;
-    float d2 = 0;
-    float d3 = 0;
-    for (size_t i = 0; i < d; ++i) {
-        d0 += x[i] * bf16_float(y0[i]);
-        d1 += x[i] * bf16_float(y1[i]);
-        d2 += x[i] * bf16_float(y2[i]);
-        d3 += x[i] * bf16_float(y3[i]);
-    }
-
-    dis0 = d0;
-    dis1 = d1;
-    dis2 = d2;
-    dis3 = d3;
-}
-
-void
 fvec_L2sqr_batch_4_ref(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
                        const size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
     float d0 = 0;
@@ -319,55 +214,67 @@ fvec_L2sqr_batch_4_ref(const float* x, const float* y0, const float* y1, const f
     dis3 = d3;
 }
 
-void
-fvec_L2sqr_batch_4_ref_bf16_patch(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
-                                  const size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
-    float d0 = 0;
-    float d1 = 0;
-    float d2 = 0;
-    float d3 = 0;
-    for (size_t i = 0; i < d; ++i) {
-        const float q0 = x[i] - bf16_float(y0[i]);
-        const float q1 = x[i] - bf16_float(y1[i]);
-        const float q2 = x[i] - bf16_float(y2[i]);
-        const float q3 = x[i] - bf16_float(y3[i]);
-        d0 += q0 * q0;
-        d1 += q1 * q1;
-        d2 += q2 * q2;
-        d3 += q3 * q3;
-    }
+///////////////////////////////////////////////////////////////////////////////
+// for hnsw sq, obsolete
 
-    dis0 = d0;
-    dis1 = d1;
-    dis2 = d2;
-    dis3 = d3;
+int32_t
+ivec_inner_product_ref(const int8_t* x, const int8_t* y, size_t d) {
+    size_t i;
+    int32_t res = 0;
+    for (i = 0; i < d; i++) {
+        res += (int32_t)x[i] * y[i];
+    }
+    return res;
+}
+
+int32_t
+ivec_L2sqr_ref(const int8_t* x, const int8_t* y, size_t d) {
+    size_t i;
+    int32_t res = 0;
+    for (i = 0; i < d; i++) {
+        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
+        res += tmp * tmp;
+    }
+    return res;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// fp16
+
+float
+fp16_vec_inner_product_ref(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+    size_t i;
+    float res = 0;
+    for (i = 0; i < d; i++) {
+        res += (float)x[i] * (float)y[i];
+    }
+    return res;
+}
+
+float
+fp16_vec_L2sqr_ref(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+    size_t i;
+    float res = 0;
+    for (i = 0; i < d; i++) {
+        const float tmp = (float)x[i] - (float)y[i];
+        res += tmp * tmp;
+    }
+    return res;
+}
+
+float
+fp16_vec_norm_L2sqr_ref(const knowhere::fp16* x, size_t d) {
+    size_t i;
+    double res = 0;
+    for (i = 0; i < d; i++) {
+        res += (float)x[i] * (float)x[i];
+    }
+    return res;
 }
 
 void
 fp16_vec_inner_product_batch_4_ref(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
                                    const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0,
-                                   float& dis1, float& dis2, float& dis3) {
-    float d0 = 0;
-    float d1 = 0;
-    float d2 = 0;
-    float d3 = 0;
-    for (size_t i = 0; i < d; ++i) {
-        auto x_i = (float)x[i];
-        d0 += x_i * (float)y0[i];
-        d1 += x_i * (float)y1[i];
-        d2 += x_i * (float)y2[i];
-        d3 += x_i * (float)y3[i];
-    }
-
-    dis0 = d0;
-    dis1 = d1;
-    dis2 = d2;
-    dis3 = d3;
-}
-
-void
-bf16_vec_inner_product_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                                   const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
                                    float& dis1, float& dis2, float& dis3) {
     float d0 = 0;
     float d1 = 0;
@@ -413,6 +320,62 @@ fp16_vec_L2sqr_batch_4_ref(const knowhere::fp16* x, const knowhere::fp16* y0, co
     dis3 = d3;
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// bf16
+
+float
+bf16_vec_inner_product_ref(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+    size_t i;
+    float res = 0;
+    for (i = 0; i < d; i++) {
+        res += (float)x[i] * (float)y[i];
+    }
+    return res;
+}
+
+float
+bf16_vec_L2sqr_ref(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+    size_t i;
+    float res = 0;
+    for (i = 0; i < d; i++) {
+        const float tmp = (float)x[i] - (float)y[i];
+        res += tmp * tmp;
+    }
+    return res;
+}
+
+float
+bf16_vec_norm_L2sqr_ref(const knowhere::bf16* x, size_t d) {
+    size_t i;
+    double res = 0;
+    for (i = 0; i < d; i++) {
+        res += (float)x[i] * (float)x[i];
+    }
+    return res;
+}
+
+void
+bf16_vec_inner_product_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
+                                   const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
+                                   float& dis1, float& dis2, float& dis3) {
+    float d0 = 0;
+    float d1 = 0;
+    float d2 = 0;
+    float d3 = 0;
+    for (size_t i = 0; i < d; ++i) {
+        auto x_i = (float)x[i];
+        d0 += x_i * (float)y0[i];
+        d1 += x_i * (float)y1[i];
+        d2 += x_i * (float)y2[i];
+        d3 += x_i * (float)y3[i];
+    }
+
+    dis0 = d0;
+    dis1 = d1;
+    dis2 = d2;
+    dis3 = d3;
+}
+
 void
 bf16_vec_L2sqr_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
                            const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0, float& dis1,
@@ -439,25 +402,74 @@ bf16_vec_L2sqr_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16* y0, co
     dis3 = d3;
 }
 
-int32_t
-ivec_inner_product_ref(const int8_t* x, const int8_t* y, size_t d) {
+///////////////////////////////////////////////////////////////////////////////
+// for cardinal
+
+float
+fvec_inner_product_bf16_patch_ref(const float* x, const float* y, size_t d) {
     size_t i;
-    int32_t res = 0;
+    float res = 0;
     for (i = 0; i < d; i++) {
-        res += (int32_t)x[i] * y[i];
+        res += x[i] * bf16_float(y[i]);
     }
     return res;
 }
 
-int32_t
-ivec_L2sqr_ref(const int8_t* x, const int8_t* y, size_t d) {
+float
+fvec_L2sqr_bf16_patch_ref(const float* x, const float* y, size_t d) {
     size_t i;
-    int32_t res = 0;
+    float res = 0;
     for (i = 0; i < d; i++) {
-        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
+        const float tmp = x[i] - bf16_float(y[i]);
         res += tmp * tmp;
     }
     return res;
+}
+
+void
+fvec_inner_product_batch_4_bf16_patch_ref(const float* __restrict x, const float* __restrict y0,
+                                          const float* __restrict y1, const float* __restrict y2,
+                                          const float* __restrict y3, const size_t d, float& dis0, float& dis1,
+                                          float& dis2, float& dis3) {
+    float d0 = 0;
+    float d1 = 0;
+    float d2 = 0;
+    float d3 = 0;
+    for (size_t i = 0; i < d; ++i) {
+        d0 += x[i] * bf16_float(y0[i]);
+        d1 += x[i] * bf16_float(y1[i]);
+        d2 += x[i] * bf16_float(y2[i]);
+        d3 += x[i] * bf16_float(y3[i]);
+    }
+
+    dis0 = d0;
+    dis1 = d1;
+    dis2 = d2;
+    dis3 = d3;
+}
+
+void
+fvec_L2sqr_batch_4_bf16_patch_ref(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
+                                  const size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
+    float d0 = 0;
+    float d1 = 0;
+    float d2 = 0;
+    float d3 = 0;
+    for (size_t i = 0; i < d; ++i) {
+        const float q0 = x[i] - bf16_float(y0[i]);
+        const float q1 = x[i] - bf16_float(y1[i]);
+        const float q2 = x[i] - bf16_float(y2[i]);
+        const float q3 = x[i] - bf16_float(y3[i]);
+        d0 += q0 * q0;
+        d1 += q1 * q1;
+        d2 += q2 * q2;
+        d3 += q3 * q3;
+    }
+
+    dis0 = d0;
+    dis1 = d1;
+    dis2 = d2;
+    dis3 = d3;
 }
 
 }  // namespace faiss

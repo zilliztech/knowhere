@@ -16,21 +16,16 @@
 #include <cstdio>
 
 #include "knowhere/operands.h"
+
 namespace faiss {
 
 /// Squared L2 distance between two vectors
 float
 fvec_L2sqr_sse(const float* x, const float* y, size_t d);
 
-float
-bf16_vec_L2sqr_sse(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
-
 /// inner product
 float
 fvec_inner_product_sse(const float* x, const float* y, size_t d);
-
-float
-bf16_vec_inner_product_sse(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
 
 /// L1 distance
 float
@@ -42,9 +37,6 @@ fvec_Linf_sse(const float* x, const float* y, size_t d);
 
 float
 fvec_norm_L2sqr_sse(const float* x, size_t d);
-
-float
-bf16_vec_norm_L2sqr_sse(const knowhere::bf16* x, size_t d);
 
 void
 fvec_L2sqr_ny_sse(float* dis, const float* x, const float* y, size_t d, size_t ny);
@@ -58,11 +50,26 @@ fvec_madd_sse(size_t n, const float* a, float bf, const float* b, float* c);
 int
 fvec_madd_and_argmin_sse(size_t n, const float* a, float bf, const float* b, float* c);
 
+///////////////////////////////////////////////////////////////////////////////
+// for hnsw sq, obsolete
+
 int32_t
 ivec_inner_product_sse(const int8_t* x, const int8_t* y, size_t d);
 
 int32_t
 ivec_L2sqr_sse(const int8_t* x, const int8_t* y, size_t d);
+
+///////////////////////////////////////////////////////////////////////////////
+// bf16
+
+float
+bf16_vec_inner_product_sse(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
+
+float
+bf16_vec_L2sqr_sse(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
+
+float
+bf16_vec_norm_L2sqr_sse(const knowhere::bf16* x, size_t d);
 
 }  // namespace faiss
 
