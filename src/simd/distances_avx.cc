@@ -18,14 +18,14 @@
 #include <cassert>
 
 #include "faiss/impl/platform_macros.h"
-#include "simd_util.h"
 
 namespace faiss {
 
 #define ALIGNED(x) __attribute__((aligned(x)))
 
+namespace {
 // reads 0 <= d < 4 floats as __m128
-static inline __m128
+inline __m128
 masked_read(int d, const float* x) {
     assert(0 <= d && d < 4);
     ALIGNED(16) float buf[4] = {0, 0, 0, 0};
@@ -40,6 +40,46 @@ masked_read(int d, const float* x) {
     return _mm_load_ps(buf);
     // cannot use AVX2 _mm_mask_set1_epi32
 }
+
+inline __m128i
+mm_masked_read_short(int d, const uint16_t* x) {
+    assert(0 <= d && d < 8);
+    ALIGNED(16) uint16_t buf[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    switch (d) {
+        case 7:
+            buf[6] = x[6];
+        case 6:
+            buf[5] = x[5];
+        case 5:
+            buf[4] = x[4];
+        case 4:
+            buf[3] = x[3];
+        case 3:
+            buf[2] = x[2];
+        case 2:
+            buf[1] = x[1];
+        case 1:
+            buf[0] = x[0];
+    }
+    return _mm_loadu_si128((__m128i*)buf);
+}
+
+inline __m256
+_mm256_bf16_to_fp32(const __m128i& a) {
+    __m256i o = _mm256_slli_epi32(_mm256_cvtepu16_epi32(a), 16);
+    return _mm256_castsi256_ps(o);
+}
+
+inline float
+_mm256_reduce_add_ps(const __m256 res) {
+    const __m128 sum = _mm_add_ps(_mm256_castps256_ps128(res), _mm256_extractf128_ps(res, 1));
+    const __m128 v0 = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(0, 0, 3, 2));
+    const __m128 v1 = _mm_add_ps(sum, v0);
+    __m128 v2 = _mm_shuffle_ps(v1, v1, _MM_SHUFFLE(0, 0, 0, 1));
+    const __m128 v3 = _mm_add_ps(v1, v2);
+    return _mm_cvtss_f32(v3);
+}
+}  // namespace
 
 // trust the compiler to unroll this properly
 FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN

@@ -260,7 +260,7 @@ struct HeapBlockResultHandler : BlockResultHandler<C> {
     void add_results(size_t j0, size_t j1, const T* dis_tab,
                      const IDSelector* sel) final {
 #pragma omp parallel for
-        for (int64_t i = i0; i < i1; i++) {
+        for (size_t i = i0; i < i1; i++) {
             T* heap_dis = heap_dis_tab + i * k;
             TI* heap_ids = heap_ids_tab + i * k;
             const T* dis_tab_i = dis_tab + (j1 - j0) * (i - i0) - j0;
@@ -350,7 +350,7 @@ struct ReservoirTopN : ResultHandler<C> {
     }
 
     void to_result(T* heap_dis, TI* heap_ids) const {
-        for (int j = 0; j < std::min(i, n); j++) {
+        for (size_t j = 0; j < std::min(i, n); j++) {
             heap_push<C>(j + 1, heap_dis, heap_ids, vals[j], ids[j]);
         }
 
@@ -468,7 +468,7 @@ struct ReservoirBlockResultHandler : BlockResultHandler<C> {
     void add_results(size_t j0, size_t j1, const T* dis_tab,
                      const IDSelector* sel) {
 #pragma omp parallel for
-        for (int64_t i = i0; i < i1; i++) {
+        for (size_t i = i0; i < i1; i++) {
             ReservoirTopN<C>& reservoir = reservoirs[i - i0];
             const T* dis_tab_i = dis_tab + (j1 - j0) * (i - i0) - j0;
             for (size_t j = j0; j < j1; j++) {

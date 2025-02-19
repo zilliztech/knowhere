@@ -143,7 +143,13 @@ data_type_conversion(const DataSet& src, const std::optional<int64_t> start = st
 
     // map
     auto* des_data = new OutType[out_dim * count_rows];
-    std::memset(des_data, 0, sizeof(OutType) * out_dim * count_rows);
+
+    // only do memset() for intrinsic data types, such as float;
+    // for fp16/bf16, they will be initialized by the constructor
+    if constexpr (std::is_arithmetic_v<OutType>) {
+        std::memset(des_data, 0, sizeof(OutType) * out_dim * count_rows);
+    }
+
     auto* src_data = (const InType*)src.GetTensor();
     for (auto i = 0; i < count_rows; i++) {
         for (auto d = 0; d < in_dim; d++) {

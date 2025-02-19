@@ -139,6 +139,8 @@ TEST_CASE("Test index node") {
     DataSetPtr ds = std::make_shared<DataSet>();
     BinarySet binset;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"  // to ignore build warnings
     SECTION("Test IndexNode") {
         KNOWHERE_SIMPLE_REGISTER_GLOBAL(BASE_FLAT, BaseFlatIndexNode, fp32, knowhere::feature::FLOAT32);
         auto index = IndexFactory::Instance().Create<fp32>("BASE_FLAT", version).value();
@@ -202,4 +204,5 @@ TEST_CASE("Test index node") {
         REQUIRE(index.Count() == 0);
         REQUIRE(index.Type() == INDEX_BASE_FLAT);
     }
+#pragma GCC diagnostic pop
 }
