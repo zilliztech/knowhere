@@ -8,7 +8,9 @@
 // Unless required by applicable law or agreed to in writing, software distributed under the License
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
+
 #if defined(__ARM_NEON)
+
 #pragma GCC optimize("O3,fast-math,inline")
 #include "distances_neon.h"
 
@@ -144,219 +146,6 @@ fvec_inner_product_neon(const float* x, const float* y, size_t d) {
 }
 
 float
-fvec_inner_product_neon_bf16_patch(const float* x, const float* y, size_t d) {
-    float32x4_t sum_ = vdupq_n_f32(0.0f);
-    auto dim = d;
-    while (d >= 16) {
-        float32x4x4_t a = vld1q_f32_x4(x + dim - d);
-        float32x4x4_t b = vld1q_f32_x4(y + dim - d);
-
-        a.val[0] = bf16_float_neon(a.val[0]);
-        a.val[1] = bf16_float_neon(a.val[1]);
-        a.val[2] = bf16_float_neon(a.val[2]);
-        a.val[3] = bf16_float_neon(a.val[3]);
-
-        b.val[0] = bf16_float_neon(b.val[0]);
-        b.val[1] = bf16_float_neon(b.val[1]);
-        b.val[2] = bf16_float_neon(b.val[2]);
-        b.val[3] = bf16_float_neon(b.val[3]);
-        float32x4x4_t c;
-        c.val[0] = vmulq_f32(a.val[0], b.val[0]);
-        c.val[1] = vmulq_f32(a.val[1], b.val[1]);
-        c.val[2] = vmulq_f32(a.val[2], b.val[2]);
-        c.val[3] = vmulq_f32(a.val[3], b.val[3]);
-
-        c.val[0] = vaddq_f32(c.val[0], c.val[1]);
-        c.val[2] = vaddq_f32(c.val[2], c.val[3]);
-        c.val[0] = vaddq_f32(c.val[0], c.val[2]);
-
-        sum_ = vaddq_f32(sum_, c.val[0]);
-
-        d -= 16;
-    }
-
-    if (d >= 8) {
-        float32x4x2_t a = vld1q_f32_x2(x + dim - d);
-        float32x4x2_t b = vld1q_f32_x2(y + dim - d);
-
-        a.val[0] = bf16_float_neon(a.val[0]);
-        a.val[1] = bf16_float_neon(a.val[1]);
-
-        b.val[0] = bf16_float_neon(b.val[0]);
-        b.val[1] = bf16_float_neon(b.val[1]);
-
-        float32x4x2_t c;
-        c.val[0] = vmulq_f32(a.val[0], b.val[0]);
-        c.val[1] = vmulq_f32(a.val[1], b.val[1]);
-        c.val[0] = vaddq_f32(c.val[0], c.val[1]);
-        sum_ = vaddq_f32(sum_, c.val[0]);
-        d -= 8;
-    }
-    if (d >= 4) {
-        float32x4_t a = vld1q_f32(x + dim - d);
-        float32x4_t b = vld1q_f32(y + dim - d);
-        a = bf16_float_neon(a);
-        b = bf16_float_neon(b);
-        float32x4_t c;
-        c = vmulq_f32(a, b);
-        sum_ = vaddq_f32(sum_, c);
-        d -= 4;
-    }
-
-    float32x4_t res_x = vdupq_n_f32(0.0f);
-    float32x4_t res_y = vdupq_n_f32(0.0f);
-    if (d >= 3) {
-        res_x = vld1q_lane_f32(x + dim - d, res_x, 2);
-        res_y = vld1q_lane_f32(y + dim - d, res_y, 2);
-        d -= 1;
-    }
-
-    if (d >= 2) {
-        res_x = vld1q_lane_f32(x + dim - d, res_x, 1);
-        res_y = vld1q_lane_f32(y + dim - d, res_y, 1);
-        d -= 1;
-    }
-
-    if (d >= 1) {
-        res_x = vld1q_lane_f32(x + dim - d, res_x, 0);
-        res_y = vld1q_lane_f32(y + dim - d, res_y, 0);
-        d -= 1;
-    }
-    res_x = bf16_float_neon(res_x);
-    res_y = bf16_float_neon(res_y);
-
-    sum_ = vaddq_f32(sum_, vmulq_f32(res_x, res_y));
-
-    return vaddvq_f32(sum_);
-}
-
-float
-fp16_vec_inner_product_neon(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
-    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
-    while (d >= 16) {
-        float32x4x4_t a = vcvt4_f32_f16(vld4_f16((const __fp16*)x));
-        float32x4x4_t b = vcvt4_f32_f16(vld4_f16((const __fp16*)y));
-
-        res.val[0] = vmlaq_f32(res.val[0], a.val[0], b.val[0]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[1], b.val[1]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[2], b.val[2]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[3], b.val[3]);
-        d -= 16;
-        x += 16;
-        y += 16;
-    }
-    res.val[0] = vaddq_f32(res.val[0], res.val[1]);
-    res.val[2] = vaddq_f32(res.val[2], res.val[3]);
-    if (d >= 8) {
-        float32x4x2_t a = vcvt2_f32_f16(vld2_f16((const __fp16*)x));
-        float32x4x2_t b = vcvt2_f32_f16(vld2_f16((const __fp16*)y));
-        res.val[0] = vmlaq_f32(res.val[0], a.val[0], b.val[0]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[1], b.val[1]);
-        d -= 8;
-        x += 8;
-        y += 8;
-    }
-    res.val[0] = vaddq_f32(res.val[0], res.val[2]);
-    if (d >= 4) {
-        float32x4_t a = vcvt_f32_f16(vld1_f16((const __fp16*)x));
-        float32x4_t b = vcvt_f32_f16(vld1_f16((const __fp16*)y));
-        res.val[0] = vmlaq_f32(res.val[0], a, b);
-        d -= 4;
-        x += 4;
-        y += 4;
-    }
-    if (d >= 0) {
-        float16x4_t res_x = {0.0f, 0.0f, 0.0f, 0.0f};
-        float16x4_t res_y = {0.0f, 0.0f, 0.0f, 0.0f};
-        switch (d) {
-            case 3:
-                res_x = vld1_lane_f16((const __fp16*)x, res_x, 2);
-                res_y = vld1_lane_f16((const __fp16*)y, res_y, 2);
-                x++;
-                y++;
-                d--;
-            case 2:
-                res_x = vld1_lane_f16((const __fp16*)x, res_x, 1);
-                res_y = vld1_lane_f16((const __fp16*)y, res_y, 1);
-                x++;
-                y++;
-                d--;
-            case 1:
-                res_x = vld1_lane_f16((const __fp16*)x, res_x, 0);
-                res_y = vld1_lane_f16((const __fp16*)y, res_y, 0);
-                x++;
-                y++;
-                d--;
-        }
-        res.val[0] = vmlaq_f32(res.val[0], vcvt_f32_f16(res_x), vcvt_f32_f16(res_y));
-    }
-    return vaddvq_f32(res.val[0]);
-}
-
-float
-bf16_vec_inner_product_neon(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
-    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
-    while (d >= 16) {
-        float32x4x4_t a = vcvt4_f32_half(vld4_u16((const uint16_t*)x));
-        float32x4x4_t b = vcvt4_f32_half(vld4_u16((const uint16_t*)y));
-
-        res.val[0] = vmlaq_f32(res.val[0], a.val[0], b.val[0]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[1], b.val[1]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[2], b.val[2]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[3], b.val[3]);
-        d -= 16;
-        x += 16;
-        y += 16;
-    }
-    res.val[0] = vaddq_f32(res.val[0], res.val[1]);
-    res.val[2] = vaddq_f32(res.val[2], res.val[3]);
-    if (d >= 8) {
-        float32x4x2_t a = vcvt2_f32_half(vld2_u16((const uint16_t*)x));
-        float32x4x2_t b = vcvt2_f32_half(vld2_u16((const uint16_t*)y));
-        res.val[0] = vmlaq_f32(res.val[0], a.val[0], b.val[0]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[1], b.val[1]);
-        d -= 8;
-        x += 8;
-        y += 8;
-    }
-    res.val[0] = vaddq_f32(res.val[0], res.val[2]);
-    if (d >= 4) {
-        float32x4_t a = vcvt_f32_half(vld1_u16((const uint16_t*)x));
-        float32x4_t b = vcvt_f32_half(vld1_u16((const uint16_t*)y));
-        res.val[0] = vmlaq_f32(res.val[0], a, b);
-        d -= 4;
-        x += 4;
-        y += 4;
-    }
-    if (d >= 0) {
-        uint16x4_t res_x = {0, 0, 0, 0};
-        uint16x4_t res_y = {0, 0, 0, 0};
-        switch (d) {
-            case 3:
-                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 2);
-                res_y = vld1_lane_u16((const uint16_t*)y, res_y, 2);
-                x++;
-                y++;
-                d--;
-            case 2:
-                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 1);
-                res_y = vld1_lane_u16((const uint16_t*)y, res_y, 1);
-                x++;
-                y++;
-                d--;
-            case 1:
-                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 0);
-                res_y = vld1_lane_u16((const uint16_t*)y, res_y, 0);
-                x++;
-                y++;
-                d--;
-        }
-        res.val[0] = vmlaq_f32(res.val[0], vcvt_f32_half(res_x), vcvt_f32_half(res_y));
-    }
-    return vaddvq_f32(res.val[0]);
-}
-
-float
 fvec_L2sqr_neon(const float* x, const float* y, size_t d) {
     float32x4_t sum_ = vdupq_n_f32(0.0f);
     auto dim = d;
@@ -432,251 +221,6 @@ fvec_L2sqr_neon(const float* x, const float* y, size_t d) {
     sum_ = vaddq_f32(sum_, vmulq_f32(vsubq_f32(res_x, res_y), vsubq_f32(res_x, res_y)));
 
     return vaddvq_f32(sum_);
-}
-
-float
-fvec_L2sqr_neon_bf16_patch(const float* x, const float* y, size_t d) {
-    float32x4_t sum_ = vdupq_n_f32(0.0f);
-    auto dim = d;
-    while (d >= 16) {
-        float32x4x4_t a = vld1q_f32_x4(x + dim - d);
-        float32x4x4_t b = vld1q_f32_x4(y + dim - d);
-        a.val[0] = bf16_float_neon(a.val[0]);
-        a.val[1] = bf16_float_neon(a.val[1]);
-        a.val[2] = bf16_float_neon(a.val[2]);
-        a.val[3] = bf16_float_neon(a.val[3]);
-
-        b.val[0] = bf16_float_neon(b.val[0]);
-        b.val[1] = bf16_float_neon(b.val[1]);
-        b.val[2] = bf16_float_neon(b.val[2]);
-        b.val[3] = bf16_float_neon(b.val[3]);
-
-        float32x4x4_t c;
-
-        c.val[0] = vsubq_f32(a.val[0], b.val[0]);
-        c.val[1] = vsubq_f32(a.val[1], b.val[1]);
-        c.val[2] = vsubq_f32(a.val[2], b.val[2]);
-        c.val[3] = vsubq_f32(a.val[3], b.val[3]);
-
-        c.val[0] = vmulq_f32(c.val[0], c.val[0]);
-        c.val[1] = vmulq_f32(c.val[1], c.val[1]);
-        c.val[2] = vmulq_f32(c.val[2], c.val[2]);
-        c.val[3] = vmulq_f32(c.val[3], c.val[3]);
-
-        c.val[0] = vaddq_f32(c.val[0], c.val[1]);
-        c.val[2] = vaddq_f32(c.val[2], c.val[3]);
-        c.val[0] = vaddq_f32(c.val[0], c.val[2]);
-
-        sum_ = vaddq_f32(sum_, c.val[0]);
-
-        d -= 16;
-    }
-
-    if (d >= 8) {
-        float32x4x2_t a = vld1q_f32_x2(x + dim - d);
-        float32x4x2_t b = vld1q_f32_x2(y + dim - d);
-
-        a.val[0] = bf16_float_neon(a.val[0]);
-        a.val[1] = bf16_float_neon(a.val[1]);
-
-        b.val[0] = bf16_float_neon(b.val[0]);
-        b.val[1] = bf16_float_neon(b.val[1]);
-
-        float32x4x2_t c;
-        c.val[0] = vsubq_f32(a.val[0], b.val[0]);
-        c.val[1] = vsubq_f32(a.val[1], b.val[1]);
-
-        c.val[0] = vmulq_f32(c.val[0], c.val[0]);
-        c.val[1] = vmulq_f32(c.val[1], c.val[1]);
-
-        c.val[0] = vaddq_f32(c.val[0], c.val[1]);
-        sum_ = vaddq_f32(sum_, c.val[0]);
-        d -= 8;
-    }
-    if (d >= 4) {
-        float32x4_t a = vld1q_f32(x + dim - d);
-        float32x4_t b = vld1q_f32(y + dim - d);
-        a = bf16_float_neon(a);
-        b = bf16_float_neon(b);
-        float32x4_t c;
-        c = vsubq_f32(a, b);
-        c = vmulq_f32(c, c);
-
-        sum_ = vaddq_f32(sum_, c);
-        d -= 4;
-    }
-
-    float32x4_t res_x = vdupq_n_f32(0.0f);
-    float32x4_t res_y = vdupq_n_f32(0.0f);
-    if (d >= 3) {
-        res_x = vld1q_lane_f32(x + dim - d, res_x, 2);
-        res_y = vld1q_lane_f32(y + dim - d, res_y, 2);
-        d -= 1;
-    }
-
-    if (d >= 2) {
-        res_x = vld1q_lane_f32(x + dim - d, res_x, 1);
-        res_y = vld1q_lane_f32(y + dim - d, res_y, 1);
-        d -= 1;
-    }
-
-    if (d >= 1) {
-        res_x = vld1q_lane_f32(x + dim - d, res_x, 0);
-        res_y = vld1q_lane_f32(y + dim - d, res_y, 0);
-        d -= 1;
-    }
-
-    res_x = bf16_float_neon(res_x);
-    res_y = bf16_float_neon(res_y);
-
-    sum_ = vaddq_f32(sum_, vmulq_f32(vsubq_f32(res_x, res_y), vsubq_f32(res_x, res_y)));
-
-    return vaddvq_f32(sum_);
-}
-
-float
-fp16_vec_L2sqr_neon(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
-    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
-    while (d >= 16) {
-        float32x4x4_t a = vcvt4_f32_f16(vld4_f16((const __fp16*)x));
-        float32x4x4_t b = vcvt4_f32_f16(vld4_f16((const __fp16*)y));
-        a.val[0] = vsubq_f32(a.val[0], b.val[0]);
-        a.val[1] = vsubq_f32(a.val[1], b.val[1]);
-        a.val[2] = vsubq_f32(a.val[2], b.val[2]);
-        a.val[3] = vsubq_f32(a.val[3], b.val[3]);
-
-        res.val[0] = vmlaq_f32(res.val[0], a.val[0], a.val[0]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[1], a.val[1]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[2], a.val[2]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[3], a.val[3]);
-        d -= 16;
-        x += 16;
-        y += 16;
-    }
-    res.val[0] = vaddq_f32(res.val[0], res.val[1]);
-    res.val[2] = vaddq_f32(res.val[2], res.val[3]);
-    if (d >= 8) {
-        float32x4x2_t a = vcvt2_f32_f16(vld2_f16((const __fp16*)x));
-        float32x4x2_t b = vcvt2_f32_f16(vld2_f16((const __fp16*)y));
-        a.val[0] = vsubq_f32(a.val[0], b.val[0]);
-        a.val[1] = vsubq_f32(a.val[1], b.val[1]);
-        res.val[0] = vmlaq_f32(res.val[0], a.val[0], a.val[0]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[1], a.val[1]);
-        d -= 8;
-        x += 8;
-        y += 8;
-    }
-    res.val[0] = vaddq_f32(res.val[0], res.val[2]);
-    if (d >= 4) {
-        float32x4_t a = vcvt_f32_f16(vld1_f16((const __fp16*)x));
-        float32x4_t b = vcvt_f32_f16(vld1_f16((const __fp16*)y));
-        a = vsubq_f32(a, b);
-        res.val[0] = vmlaq_f32(res.val[0], a, a);
-        d -= 4;
-        x += 4;
-        y += 4;
-    }
-    if (d >= 0) {
-        float16x4_t res_x = vdup_n_f16(0.0f);
-        float16x4_t res_y = vdup_n_f16(0.0f);
-        switch (d) {
-            case 3:
-                res_x = vld1_lane_f16((const __fp16*)x, res_x, 2);
-                res_y = vld1_lane_f16((const __fp16*)y, res_y, 2);
-                x++;
-                y++;
-                d--;
-            case 2:
-                res_x = vld1_lane_f16((const __fp16*)x, res_x, 1);
-                res_y = vld1_lane_f16((const __fp16*)y, res_y, 1);
-                x++;
-                y++;
-                d--;
-            case 1:
-                res_x = vld1_lane_f16((const __fp16*)x, res_x, 0);
-                res_y = vld1_lane_f16((const __fp16*)y, res_y, 0);
-                x++;
-                y++;
-                d--;
-        }
-        float32x4_t diff = vsubq_f32(vcvt_f32_f16(res_x), vcvt_f32_f16(res_y));
-
-        res.val[0] = vmlaq_f32(res.val[0], diff, diff);
-    }
-    return vaddvq_f32(res.val[0]);
-}
-
-float
-bf16_vec_L2sqr_neon(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
-    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
-    while (d >= 16) {
-        float32x4x4_t a = vcvt4_f32_half(vld4_u16((const uint16_t*)x));
-        float32x4x4_t b = vcvt4_f32_half(vld4_u16((const uint16_t*)y));
-        a.val[0] = vsubq_f32(a.val[0], b.val[0]);
-        a.val[1] = vsubq_f32(a.val[1], b.val[1]);
-        a.val[2] = vsubq_f32(a.val[2], b.val[2]);
-        a.val[3] = vsubq_f32(a.val[3], b.val[3]);
-
-        res.val[0] = vmlaq_f32(res.val[0], a.val[0], a.val[0]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[1], a.val[1]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[2], a.val[2]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[3], a.val[3]);
-        d -= 16;
-        x += 16;
-        y += 16;
-    }
-    res.val[0] = vaddq_f32(res.val[0], res.val[1]);
-    res.val[2] = vaddq_f32(res.val[2], res.val[3]);
-    if (d >= 8) {
-        float32x4x2_t a = vcvt2_f32_half(vld2_u16((const uint16_t*)x));
-        float32x4x2_t b = vcvt2_f32_half(vld2_u16((const uint16_t*)y));
-        a.val[0] = vsubq_f32(a.val[0], b.val[0]);
-        a.val[1] = vsubq_f32(a.val[1], b.val[1]);
-        res.val[0] = vmlaq_f32(res.val[0], a.val[0], a.val[0]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[1], a.val[1]);
-        d -= 8;
-        x += 8;
-        y += 8;
-    }
-    res.val[0] = vaddq_f32(res.val[0], res.val[2]);
-    if (d >= 4) {
-        float32x4_t a = vcvt_f32_half(vld1_u16((const uint16_t*)x));
-        float32x4_t b = vcvt_f32_half(vld1_u16((const uint16_t*)y));
-        a = vsubq_f32(a, b);
-        res.val[0] = vmlaq_f32(res.val[0], a, a);
-        d -= 4;
-        x += 4;
-        y += 4;
-    }
-    if (d >= 0) {
-        uint16x4_t res_x = vdup_n_u16(0);
-        uint16x4_t res_y = vdup_n_u16(0);
-        switch (d) {
-            case 3:
-                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 2);
-                res_y = vld1_lane_u16((const uint16_t*)y, res_y, 2);
-                x++;
-                y++;
-                d--;
-            case 2:
-                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 1);
-                res_y = vld1_lane_u16((const uint16_t*)y, res_y, 1);
-                x++;
-                y++;
-                d--;
-            case 1:
-                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 0);
-                res_y = vld1_lane_u16((const uint16_t*)y, res_y, 0);
-                x++;
-                y++;
-                d--;
-        }
-
-        float32x4_t diff = vsubq_f32(vcvt_f32_half(res_x), vcvt_f32_half(res_y));
-
-        res.val[0] = vmlaq_f32(res.val[0], diff, diff);
-    }
-    return vaddvq_f32(res.val[0]);
 }
 
 float
@@ -894,108 +438,6 @@ fvec_norm_L2sqr_neon(const float* x, size_t d) {
     sum_ = vaddq_f32(sum_, vmulq_f32(res_x, res_x));
 
     return vaddvq_f32(sum_);
-}
-
-float
-fp16_vec_norm_L2sqr_neon(const knowhere::fp16* x, size_t d) {
-    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
-    while (d >= 16) {
-        float32x4x4_t a = vcvt4_f32_f16(vld4_f16((const __fp16*)x));
-        res.val[0] = vmlaq_f32(res.val[0], a.val[0], a.val[0]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[1], a.val[1]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[2], a.val[2]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[3], a.val[3]);
-        d -= 16;
-        x += 16;
-    }
-    res.val[0] = vaddq_f32(res.val[0], res.val[1]);
-    res.val[2] = vaddq_f32(res.val[2], res.val[3]);
-    if (d >= 8) {
-        float32x4x2_t a = vcvt2_f32_f16(vld2_f16((const __fp16*)x));
-        res.val[0] = vmlaq_f32(res.val[0], a.val[0], a.val[0]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[1], a.val[1]);
-        d -= 8;
-        x += 8;
-    }
-    res.val[0] = vaddq_f32(res.val[0], res.val[2]);
-    if (d >= 4) {
-        float32x4_t a = vcvt_f32_f16(vld1_f16((const __fp16*)x));
-        res.val[0] = vmlaq_f32(res.val[0], a, a);
-        d -= 4;
-        x += 4;
-    }
-    if (d >= 0) {
-        float16x4_t res_x = vdup_n_f16(0.0f);
-        switch (d) {
-            case 3:
-                res_x = vld1_lane_f16((const __fp16*)x, res_x, 2);
-                x++;
-                d--;
-            case 2:
-                res_x = vld1_lane_f16((const __fp16*)x, res_x, 1);
-                x++;
-                d--;
-            case 1:
-                res_x = vld1_lane_f16((const __fp16*)x, res_x, 0);
-                x++;
-                d--;
-        }
-        float32x4_t x_f32 = vcvt_f32_f16(res_x);
-        res.val[0] = vmlaq_f32(res.val[0], x_f32, x_f32);
-    }
-    return vaddvq_f32(res.val[0]);
-}
-
-float
-bf16_vec_norm_L2sqr_neon(const knowhere::bf16* x, size_t d) {
-    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
-    while (d >= 16) {
-        float32x4x4_t a = vcvt4_f32_half(vld4_u16((const uint16_t*)x));
-        res.val[0] = vmlaq_f32(res.val[0], a.val[0], a.val[0]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[1], a.val[1]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[2], a.val[2]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[3], a.val[3]);
-        d -= 16;
-        x += 16;
-    }
-    res.val[0] = vaddq_f32(res.val[0], res.val[1]);
-    res.val[2] = vaddq_f32(res.val[2], res.val[3]);
-    if (d >= 8) {
-        float32x4x2_t a = vcvt2_f32_half(vld2_u16((const uint16_t*)x));
-        res.val[0] = vmlaq_f32(res.val[0], a.val[0], a.val[0]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[1], a.val[1]);
-        d -= 8;
-        x += 8;
-    }
-    res.val[0] = vaddq_f32(res.val[0], res.val[2]);
-    if (d >= 4) {
-        float32x4_t a = vcvt_f32_half(vld1_u16((const uint16_t*)x));
-        res.val[0] = vmlaq_f32(res.val[0], a, a);
-        d -= 4;
-        x += 4;
-    }
-    if (d >= 0) {
-        uint16x4_t res_x = vdup_n_u16(0);
-        switch (d) {
-            case 3:
-                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 2);
-                x++;
-                d--;
-            case 2:
-                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 1);
-                x++;
-                d--;
-            case 1:
-                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 0);
-                x++;
-                d--;
-        }
-
-        float32x4_t x_fp32 = vcvt_f32_half(res_x);
-
-        res.val[0] = vmlaq_f32(res.val[0], x_fp32, x_fp32);
-    }
-    return vaddvq_f32(res.val[0]);
 }
 
 void
@@ -1249,29 +691,6 @@ fvec_madd_and_argmin_neon(size_t n, const float* a, float bf, const float* b, fl
         }
     }
     return ans_;
-}
-
-// trust the compiler to unroll this properly
-int32_t
-ivec_inner_product_neon(const int8_t* x, const int8_t* y, size_t d) {
-    size_t i;
-    int32_t res = 0;
-    for (i = 0; i < d; i++) {
-        res += (int32_t)x[i] * y[i];
-    }
-    return res;
-}
-
-// trust the compiler to unroll this properly
-int32_t
-ivec_L2sqr_neon(const int8_t* x, const int8_t* y, size_t d) {
-    size_t i;
-    int32_t res = 0;
-    for (i = 0; i < d; i++) {
-        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
-        res += tmp * tmp;
-    }
-    return res;
 }
 
 void
@@ -1689,8 +1108,1230 @@ fvec_L2sqr_batch_4_neon(const float* x, const float* y0, const float* y1, const 
     dis3 = vaddvq_f32(sum_.val[3]);
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// for hnsw sq, obsolete
+
+int32_t
+ivec_inner_product_neon(const int8_t* x, const int8_t* y, size_t d) {
+    size_t i;
+    int32_t res = 0;
+    for (i = 0; i < d; i++) {
+        res += (int32_t)x[i] * y[i];
+    }
+    return res;
+}
+
+int32_t
+ivec_L2sqr_neon(const int8_t* x, const int8_t* y, size_t d) {
+    size_t i;
+    int32_t res = 0;
+    for (i = 0; i < d; i++) {
+        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
+        res += tmp * tmp;
+    }
+    return res;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// fp16
+
+float
+fp16_vec_inner_product_neon(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
+    while (d >= 16) {
+        float32x4x4_t a = vcvt4_f32_f16(vld4_f16((const __fp16*)x));
+        float32x4x4_t b = vcvt4_f32_f16(vld4_f16((const __fp16*)y));
+
+        res.val[0] = vmlaq_f32(res.val[0], a.val[0], b.val[0]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[1], b.val[1]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[2], b.val[2]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[3], b.val[3]);
+        d -= 16;
+        x += 16;
+        y += 16;
+    }
+    res.val[0] = vaddq_f32(res.val[0], res.val[1]);
+    res.val[2] = vaddq_f32(res.val[2], res.val[3]);
+    if (d >= 8) {
+        float32x4x2_t a = vcvt2_f32_f16(vld2_f16((const __fp16*)x));
+        float32x4x2_t b = vcvt2_f32_f16(vld2_f16((const __fp16*)y));
+        res.val[0] = vmlaq_f32(res.val[0], a.val[0], b.val[0]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[1], b.val[1]);
+        d -= 8;
+        x += 8;
+        y += 8;
+    }
+    res.val[0] = vaddq_f32(res.val[0], res.val[2]);
+    if (d >= 4) {
+        float32x4_t a = vcvt_f32_f16(vld1_f16((const __fp16*)x));
+        float32x4_t b = vcvt_f32_f16(vld1_f16((const __fp16*)y));
+        res.val[0] = vmlaq_f32(res.val[0], a, b);
+        d -= 4;
+        x += 4;
+        y += 4;
+    }
+    if (d >= 0) {
+        float16x4_t res_x = {0.0f, 0.0f, 0.0f, 0.0f};
+        float16x4_t res_y = {0.0f, 0.0f, 0.0f, 0.0f};
+        switch (d) {
+            case 3:
+                res_x = vld1_lane_f16((const __fp16*)x, res_x, 2);
+                res_y = vld1_lane_f16((const __fp16*)y, res_y, 2);
+                x++;
+                y++;
+                d--;
+            case 2:
+                res_x = vld1_lane_f16((const __fp16*)x, res_x, 1);
+                res_y = vld1_lane_f16((const __fp16*)y, res_y, 1);
+                x++;
+                y++;
+                d--;
+            case 1:
+                res_x = vld1_lane_f16((const __fp16*)x, res_x, 0);
+                res_y = vld1_lane_f16((const __fp16*)y, res_y, 0);
+                x++;
+                y++;
+                d--;
+        }
+        res.val[0] = vmlaq_f32(res.val[0], vcvt_f32_f16(res_x), vcvt_f32_f16(res_y));
+    }
+    return vaddvq_f32(res.val[0]);
+}
+
+float
+fp16_vec_L2sqr_neon(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
+    while (d >= 16) {
+        float32x4x4_t a = vcvt4_f32_f16(vld4_f16((const __fp16*)x));
+        float32x4x4_t b = vcvt4_f32_f16(vld4_f16((const __fp16*)y));
+        a.val[0] = vsubq_f32(a.val[0], b.val[0]);
+        a.val[1] = vsubq_f32(a.val[1], b.val[1]);
+        a.val[2] = vsubq_f32(a.val[2], b.val[2]);
+        a.val[3] = vsubq_f32(a.val[3], b.val[3]);
+
+        res.val[0] = vmlaq_f32(res.val[0], a.val[0], a.val[0]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[1], a.val[1]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[2], a.val[2]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[3], a.val[3]);
+        d -= 16;
+        x += 16;
+        y += 16;
+    }
+    res.val[0] = vaddq_f32(res.val[0], res.val[1]);
+    res.val[2] = vaddq_f32(res.val[2], res.val[3]);
+    if (d >= 8) {
+        float32x4x2_t a = vcvt2_f32_f16(vld2_f16((const __fp16*)x));
+        float32x4x2_t b = vcvt2_f32_f16(vld2_f16((const __fp16*)y));
+        a.val[0] = vsubq_f32(a.val[0], b.val[0]);
+        a.val[1] = vsubq_f32(a.val[1], b.val[1]);
+        res.val[0] = vmlaq_f32(res.val[0], a.val[0], a.val[0]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[1], a.val[1]);
+        d -= 8;
+        x += 8;
+        y += 8;
+    }
+    res.val[0] = vaddq_f32(res.val[0], res.val[2]);
+    if (d >= 4) {
+        float32x4_t a = vcvt_f32_f16(vld1_f16((const __fp16*)x));
+        float32x4_t b = vcvt_f32_f16(vld1_f16((const __fp16*)y));
+        a = vsubq_f32(a, b);
+        res.val[0] = vmlaq_f32(res.val[0], a, a);
+        d -= 4;
+        x += 4;
+        y += 4;
+    }
+    if (d >= 0) {
+        float16x4_t res_x = vdup_n_f16(0.0f);
+        float16x4_t res_y = vdup_n_f16(0.0f);
+        switch (d) {
+            case 3:
+                res_x = vld1_lane_f16((const __fp16*)x, res_x, 2);
+                res_y = vld1_lane_f16((const __fp16*)y, res_y, 2);
+                x++;
+                y++;
+                d--;
+            case 2:
+                res_x = vld1_lane_f16((const __fp16*)x, res_x, 1);
+                res_y = vld1_lane_f16((const __fp16*)y, res_y, 1);
+                x++;
+                y++;
+                d--;
+            case 1:
+                res_x = vld1_lane_f16((const __fp16*)x, res_x, 0);
+                res_y = vld1_lane_f16((const __fp16*)y, res_y, 0);
+                x++;
+                y++;
+                d--;
+        }
+        float32x4_t diff = vsubq_f32(vcvt_f32_f16(res_x), vcvt_f32_f16(res_y));
+
+        res.val[0] = vmlaq_f32(res.val[0], diff, diff);
+    }
+    return vaddvq_f32(res.val[0]);
+}
+
+float
+fp16_vec_norm_L2sqr_neon(const knowhere::fp16* x, size_t d) {
+    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
+    while (d >= 16) {
+        float32x4x4_t a = vcvt4_f32_f16(vld4_f16((const __fp16*)x));
+        res.val[0] = vmlaq_f32(res.val[0], a.val[0], a.val[0]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[1], a.val[1]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[2], a.val[2]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[3], a.val[3]);
+        d -= 16;
+        x += 16;
+    }
+    res.val[0] = vaddq_f32(res.val[0], res.val[1]);
+    res.val[2] = vaddq_f32(res.val[2], res.val[3]);
+    if (d >= 8) {
+        float32x4x2_t a = vcvt2_f32_f16(vld2_f16((const __fp16*)x));
+        res.val[0] = vmlaq_f32(res.val[0], a.val[0], a.val[0]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[1], a.val[1]);
+        d -= 8;
+        x += 8;
+    }
+    res.val[0] = vaddq_f32(res.val[0], res.val[2]);
+    if (d >= 4) {
+        float32x4_t a = vcvt_f32_f16(vld1_f16((const __fp16*)x));
+        res.val[0] = vmlaq_f32(res.val[0], a, a);
+        d -= 4;
+        x += 4;
+    }
+    if (d >= 0) {
+        float16x4_t res_x = vdup_n_f16(0.0f);
+        switch (d) {
+            case 3:
+                res_x = vld1_lane_f16((const __fp16*)x, res_x, 2);
+                x++;
+                d--;
+            case 2:
+                res_x = vld1_lane_f16((const __fp16*)x, res_x, 1);
+                x++;
+                d--;
+            case 1:
+                res_x = vld1_lane_f16((const __fp16*)x, res_x, 0);
+                x++;
+                d--;
+        }
+        float32x4_t x_f32 = vcvt_f32_f16(res_x);
+        res.val[0] = vmlaq_f32(res.val[0], x_f32, x_f32);
+    }
+    return vaddvq_f32(res.val[0]);
+}
+
 void
-fvec_inner_product_batch_4_neon_bf16_patch(const float* x, const float* y0, const float* y1, const float* y2,
+fp16_vec_inner_product_batch_4_neon(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
+                                    const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0,
+                                    float& dis1, float& dis2, float& dis3) {
+    // res store sub result of {4*dis0, 4*dis1, d4*is2, 4*dis3}
+    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
+    auto cur_d = d;
+    while (cur_d >= 16) {
+        float32x4x4_t a = vcvt4_f32_f16(vld4_f16((const __fp16*)x));
+        float32x4x4_t b0 = vcvt4_f32_f16(vld4_f16((const __fp16*)y0));
+        float32x4x4_t b1 = vcvt4_f32_f16(vld4_f16((const __fp16*)y1));
+        float32x4x4_t b2 = vcvt4_f32_f16(vld4_f16((const __fp16*)y2));
+        float32x4x4_t b3 = vcvt4_f32_f16(vld4_f16((const __fp16*)y3));
+
+        res.val[0] = vmlaq_f32(res.val[0], a.val[0], b0.val[0]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[0], b1.val[0]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[0], b2.val[0]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[0], b3.val[0]);
+
+        res.val[0] = vmlaq_f32(res.val[0], a.val[1], b0.val[1]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[1], b1.val[1]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[1], b2.val[1]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[1], b3.val[1]);
+
+        res.val[0] = vmlaq_f32(res.val[0], a.val[2], b0.val[2]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[2], b1.val[2]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[2], b2.val[2]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[2], b3.val[2]);
+
+        res.val[0] = vmlaq_f32(res.val[0], a.val[3], b0.val[3]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[3], b1.val[3]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[3], b2.val[3]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[3], b3.val[3]);
+
+        cur_d -= 16;
+        x += 16;
+        y0 += 16;
+        y1 += 16;
+        y2 += 16;
+        y3 += 16;
+    }
+    if (cur_d >= 8) {
+        float32x4x2_t a = vcvt2_f32_f16(vld2_f16((const __fp16*)x));
+        float32x4x2_t b0 = vcvt2_f32_f16(vld2_f16((const __fp16*)y0));
+        float32x4x2_t b1 = vcvt2_f32_f16(vld2_f16((const __fp16*)y1));
+        float32x4x2_t b2 = vcvt2_f32_f16(vld2_f16((const __fp16*)y2));
+        float32x4x2_t b3 = vcvt2_f32_f16(vld2_f16((const __fp16*)y3));
+        res.val[0] = vmlaq_f32(res.val[0], a.val[0], b0.val[0]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[0], b1.val[0]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[0], b2.val[0]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[0], b3.val[0]);
+
+        res.val[0] = vmlaq_f32(res.val[0], a.val[1], b0.val[1]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[1], b1.val[1]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[1], b2.val[1]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[1], b3.val[1]);
+
+        cur_d -= 8;
+        x += 8;
+        y0 += 8;
+        y1 += 8;
+        y2 += 8;
+        y3 += 8;
+    }
+    if (cur_d >= 4) {
+        float32x4_t a = vcvt_f32_f16(vld1_f16((const __fp16*)x));
+        float32x4_t b0 = vcvt_f32_f16(vld1_f16((const __fp16*)y0));
+        float32x4_t b1 = vcvt_f32_f16(vld1_f16((const __fp16*)y1));
+        float32x4_t b2 = vcvt_f32_f16(vld1_f16((const __fp16*)y2));
+        float32x4_t b3 = vcvt_f32_f16(vld1_f16((const __fp16*)y3));
+        res.val[0] = vmlaq_f32(res.val[0], a, b0);
+        res.val[1] = vmlaq_f32(res.val[1], a, b1);
+        res.val[2] = vmlaq_f32(res.val[2], a, b2);
+        res.val[3] = vmlaq_f32(res.val[3], a, b3);
+        cur_d -= 4;
+        x += 4;
+        y0 += 4;
+        y1 += 4;
+        y2 += 4;
+        y3 += 4;
+    }
+    if (cur_d >= 0) {
+        float16x4_t res_x = {0.0f, 0.0f, 0.0f, 0.0f};
+        float16x4_t res_y0 = {0.0f, 0.0f, 0.0f, 0.0f};
+        float16x4_t res_y1 = {0.0f, 0.0f, 0.0f, 0.0f};
+        float16x4_t res_y2 = {0.0f, 0.0f, 0.0f, 0.0f};
+        float16x4_t res_y3 = {0.0f, 0.0f, 0.0f, 0.0f};
+        switch (cur_d) {
+            case 3:
+                res_x = vld1_lane_f16((const __fp16*)x, res_x, 2);
+                res_y0 = vld1_lane_f16((const __fp16*)y0, res_y0, 2);
+                res_y1 = vld1_lane_f16((const __fp16*)y1, res_y1, 2);
+                res_y2 = vld1_lane_f16((const __fp16*)y2, res_y2, 2);
+                res_y3 = vld1_lane_f16((const __fp16*)y3, res_y3, 2);
+                x++;
+                y0++;
+                y1++;
+                y2++;
+                y3++;
+                cur_d--;
+            case 2:
+                res_x = vld1_lane_f16((const __fp16*)x, res_x, 1);
+                res_y0 = vld1_lane_f16((const __fp16*)y0, res_y0, 1);
+                res_y1 = vld1_lane_f16((const __fp16*)y1, res_y1, 1);
+                res_y2 = vld1_lane_f16((const __fp16*)y2, res_y2, 1);
+                res_y3 = vld1_lane_f16((const __fp16*)y3, res_y3, 1);
+                x++;
+                y0++;
+                y1++;
+                y2++;
+                y3++;
+                cur_d--;
+            case 1:
+                res_x = vld1_lane_f16((const __fp16*)x, res_x, 0);
+                res_y0 = vld1_lane_f16((const __fp16*)y0, res_y0, 0);
+                res_y1 = vld1_lane_f16((const __fp16*)y1, res_y1, 0);
+                res_y2 = vld1_lane_f16((const __fp16*)y2, res_y2, 0);
+                res_y3 = vld1_lane_f16((const __fp16*)y3, res_y3, 0);
+                x++;
+                y0++;
+                y1++;
+                y2++;
+                y3++;
+                cur_d--;
+        }
+        res.val[0] = vmlaq_f32(res.val[0], vcvt_f32_f16(res_x), vcvt_f32_f16(res_y0));
+        res.val[1] = vmlaq_f32(res.val[1], vcvt_f32_f16(res_x), vcvt_f32_f16(res_y1));
+        res.val[2] = vmlaq_f32(res.val[2], vcvt_f32_f16(res_x), vcvt_f32_f16(res_y2));
+        res.val[3] = vmlaq_f32(res.val[3], vcvt_f32_f16(res_x), vcvt_f32_f16(res_y3));
+    }
+    dis0 = vaddvq_f32(res.val[0]);
+    dis1 = vaddvq_f32(res.val[1]);
+    dis2 = vaddvq_f32(res.val[2]);
+    dis3 = vaddvq_f32(res.val[3]);
+    return;
+}
+
+void
+fp16_vec_L2sqr_batch_4_neon(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
+                            const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0,
+                            float& dis1, float& dis2, float& dis3) {
+    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
+    auto cur_d = d;
+    while (cur_d >= 16) {
+        float32x4x4_t a = vcvt4_f32_f16(vld4_f16((const __fp16*)x));
+        float32x4x4_t b0 = vcvt4_f32_f16(vld4_f16((const __fp16*)y0));
+        float32x4x4_t b1 = vcvt4_f32_f16(vld4_f16((const __fp16*)y1));
+        float32x4x4_t b2 = vcvt4_f32_f16(vld4_f16((const __fp16*)y2));
+        float32x4x4_t b3 = vcvt4_f32_f16(vld4_f16((const __fp16*)y3));
+
+        b0.val[0] = vsubq_f32(a.val[0], b0.val[0]);
+        b0.val[1] = vsubq_f32(a.val[1], b0.val[1]);
+        b0.val[2] = vsubq_f32(a.val[2], b0.val[2]);
+        b0.val[3] = vsubq_f32(a.val[3], b0.val[3]);
+
+        b1.val[0] = vsubq_f32(a.val[0], b1.val[0]);
+        b1.val[1] = vsubq_f32(a.val[1], b1.val[1]);
+        b1.val[2] = vsubq_f32(a.val[2], b1.val[2]);
+        b1.val[3] = vsubq_f32(a.val[3], b1.val[3]);
+
+        b2.val[0] = vsubq_f32(a.val[0], b2.val[0]);
+        b2.val[1] = vsubq_f32(a.val[1], b2.val[1]);
+        b2.val[2] = vsubq_f32(a.val[2], b2.val[2]);
+        b2.val[3] = vsubq_f32(a.val[3], b2.val[3]);
+
+        b3.val[0] = vsubq_f32(a.val[0], b3.val[0]);
+        b3.val[1] = vsubq_f32(a.val[1], b3.val[1]);
+        b3.val[2] = vsubq_f32(a.val[2], b3.val[2]);
+        b3.val[3] = vsubq_f32(a.val[3], b3.val[3]);
+
+        res.val[0] = vaddq_f32(vmulq_f32(b0.val[0], b0.val[0]), res.val[0]);
+        res.val[1] = vaddq_f32(vmulq_f32(b1.val[0], b1.val[0]), res.val[1]);
+        res.val[2] = vaddq_f32(vmulq_f32(b2.val[0], b2.val[0]), res.val[2]);
+        res.val[3] = vaddq_f32(vmulq_f32(b3.val[0], b3.val[0]), res.val[3]);
+
+        res.val[0] = vaddq_f32(vmulq_f32(b0.val[1], b0.val[1]), res.val[0]);
+        res.val[1] = vaddq_f32(vmulq_f32(b1.val[1], b1.val[1]), res.val[1]);
+        res.val[2] = vaddq_f32(vmulq_f32(b2.val[1], b2.val[1]), res.val[2]);
+        res.val[3] = vaddq_f32(vmulq_f32(b3.val[1], b3.val[1]), res.val[3]);
+
+        res.val[0] = vaddq_f32(vmulq_f32(b0.val[2], b0.val[2]), res.val[0]);
+        res.val[1] = vaddq_f32(vmulq_f32(b1.val[2], b1.val[2]), res.val[1]);
+        res.val[2] = vaddq_f32(vmulq_f32(b2.val[2], b2.val[2]), res.val[2]);
+        res.val[3] = vaddq_f32(vmulq_f32(b3.val[2], b3.val[2]), res.val[3]);
+
+        res.val[0] = vaddq_f32(vmulq_f32(b0.val[3], b0.val[3]), res.val[0]);
+        res.val[1] = vaddq_f32(vmulq_f32(b1.val[3], b1.val[3]), res.val[1]);
+        res.val[2] = vaddq_f32(vmulq_f32(b2.val[3], b2.val[3]), res.val[2]);
+        res.val[3] = vaddq_f32(vmulq_f32(b3.val[3], b3.val[3]), res.val[3]);
+
+        cur_d -= 16;
+        x += 16;
+        y0 += 16;
+        y1 += 16;
+        y2 += 16;
+        y3 += 16;
+    }
+    if (cur_d >= 8) {
+        float32x4x2_t a = vcvt2_f32_f16(vld2_f16((const __fp16*)x));
+        float32x4x2_t b0 = vcvt2_f32_f16(vld2_f16((const __fp16*)y0));
+        float32x4x2_t b1 = vcvt2_f32_f16(vld2_f16((const __fp16*)y1));
+        float32x4x2_t b2 = vcvt2_f32_f16(vld2_f16((const __fp16*)y2));
+        float32x4x2_t b3 = vcvt2_f32_f16(vld2_f16((const __fp16*)y3));
+        b0.val[0] = vsubq_f32(a.val[0], b0.val[0]);
+        b0.val[1] = vsubq_f32(a.val[1], b0.val[1]);
+
+        b1.val[0] = vsubq_f32(a.val[0], b1.val[0]);
+        b1.val[1] = vsubq_f32(a.val[1], b1.val[1]);
+
+        b2.val[0] = vsubq_f32(a.val[0], b2.val[0]);
+        b2.val[1] = vsubq_f32(a.val[1], b2.val[1]);
+
+        b3.val[0] = vsubq_f32(a.val[0], b3.val[0]);
+        b3.val[1] = vsubq_f32(a.val[1], b3.val[1]);
+
+        res.val[0] = vaddq_f32(vmulq_f32(b0.val[0], b0.val[0]), res.val[0]);
+        res.val[1] = vaddq_f32(vmulq_f32(b1.val[0], b1.val[0]), res.val[1]);
+        res.val[2] = vaddq_f32(vmulq_f32(b2.val[0], b2.val[0]), res.val[2]);
+        res.val[3] = vaddq_f32(vmulq_f32(b3.val[0], b3.val[0]), res.val[3]);
+
+        res.val[0] = vaddq_f32(vmulq_f32(b0.val[1], b0.val[1]), res.val[0]);
+        res.val[1] = vaddq_f32(vmulq_f32(b1.val[1], b1.val[1]), res.val[1]);
+        res.val[2] = vaddq_f32(vmulq_f32(b2.val[1], b2.val[1]), res.val[2]);
+        res.val[3] = vaddq_f32(vmulq_f32(b3.val[1], b3.val[1]), res.val[3]);
+
+        cur_d -= 8;
+        x += 8;
+        y0 += 8;
+        y1 += 8;
+        y2 += 8;
+        y3 += 8;
+    }
+    if (cur_d >= 4) {
+        float32x4_t a = vcvt_f32_f16(vld1_f16((const __fp16*)x));
+        float32x4_t b0 = vcvt_f32_f16(vld1_f16((const __fp16*)y0));
+        float32x4_t b1 = vcvt_f32_f16(vld1_f16((const __fp16*)y1));
+        float32x4_t b2 = vcvt_f32_f16(vld1_f16((const __fp16*)y2));
+        float32x4_t b3 = vcvt_f32_f16(vld1_f16((const __fp16*)y3));
+
+        b0 = vsubq_f32(a, b0);
+        b1 = vsubq_f32(a, b1);
+        b2 = vsubq_f32(a, b2);
+        b3 = vsubq_f32(a, b3);
+
+        res.val[0] = vaddq_f32(vmulq_f32(b0, b0), res.val[0]);
+        res.val[1] = vaddq_f32(vmulq_f32(b1, b1), res.val[1]);
+        res.val[2] = vaddq_f32(vmulq_f32(b2, b2), res.val[2]);
+        res.val[3] = vaddq_f32(vmulq_f32(b3, b3), res.val[3]);
+        cur_d -= 4;
+        x += 4;
+        y0 += 4;
+        y1 += 4;
+        y2 += 4;
+        y3 += 4;
+    }
+    if (cur_d >= 0) {
+        float16x4_t res_x = {0.0f, 0.0f, 0.0f, 0.0f};
+        float16x4_t res_y0 = {0.0f, 0.0f, 0.0f, 0.0f};
+        float16x4_t res_y1 = {0.0f, 0.0f, 0.0f, 0.0f};
+        float16x4_t res_y2 = {0.0f, 0.0f, 0.0f, 0.0f};
+        float16x4_t res_y3 = {0.0f, 0.0f, 0.0f, 0.0f};
+        switch (cur_d) {
+            case 3:
+                res_x = vld1_lane_f16((const __fp16*)x, res_x, 2);
+                res_y0 = vld1_lane_f16((const __fp16*)y0, res_y0, 2);
+                res_y1 = vld1_lane_f16((const __fp16*)y1, res_y1, 2);
+                res_y2 = vld1_lane_f16((const __fp16*)y2, res_y2, 2);
+                res_y3 = vld1_lane_f16((const __fp16*)y3, res_y3, 2);
+                x++;
+                y0++;
+                y1++;
+                y2++;
+                y3++;
+                cur_d--;
+            case 2:
+                res_x = vld1_lane_f16((const __fp16*)x, res_x, 1);
+                res_y0 = vld1_lane_f16((const __fp16*)y0, res_y0, 1);
+                res_y1 = vld1_lane_f16((const __fp16*)y1, res_y1, 1);
+                res_y2 = vld1_lane_f16((const __fp16*)y2, res_y2, 1);
+                res_y3 = vld1_lane_f16((const __fp16*)y3, res_y3, 1);
+                x++;
+                y0++;
+                y1++;
+                y2++;
+                y3++;
+                cur_d--;
+            case 1:
+                res_x = vld1_lane_f16((const __fp16*)x, res_x, 0);
+                res_y0 = vld1_lane_f16((const __fp16*)y0, res_y0, 0);
+                res_y1 = vld1_lane_f16((const __fp16*)y1, res_y1, 0);
+                res_y2 = vld1_lane_f16((const __fp16*)y2, res_y2, 0);
+                res_y3 = vld1_lane_f16((const __fp16*)y3, res_y3, 0);
+                x++;
+                y0++;
+                y1++;
+                y2++;
+                y3++;
+                cur_d--;
+        }
+        float32x4_t diff0 = vsubq_f32(vcvt_f32_f16(res_x), vcvt_f32_f16(res_y0));
+        float32x4_t diff1 = vsubq_f32(vcvt_f32_f16(res_x), vcvt_f32_f16(res_y1));
+        float32x4_t diff2 = vsubq_f32(vcvt_f32_f16(res_x), vcvt_f32_f16(res_y2));
+        float32x4_t diff3 = vsubq_f32(vcvt_f32_f16(res_x), vcvt_f32_f16(res_y3));
+        res.val[0] = vaddq_f32(vmulq_f32(diff0, diff0), res.val[0]);
+        res.val[1] = vaddq_f32(vmulq_f32(diff1, diff1), res.val[1]);
+        res.val[2] = vaddq_f32(vmulq_f32(diff2, diff2), res.val[2]);
+        res.val[3] = vaddq_f32(vmulq_f32(diff3, diff3), res.val[3]);
+    }
+    dis0 = vaddvq_f32(res.val[0]);
+    dis1 = vaddvq_f32(res.val[1]);
+    dis2 = vaddvq_f32(res.val[2]);
+    dis3 = vaddvq_f32(res.val[3]);
+    return;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// bf16
+
+float
+bf16_vec_inner_product_neon(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
+    while (d >= 16) {
+        float32x4x4_t a = vcvt4_f32_half(vld4_u16((const uint16_t*)x));
+        float32x4x4_t b = vcvt4_f32_half(vld4_u16((const uint16_t*)y));
+
+        res.val[0] = vmlaq_f32(res.val[0], a.val[0], b.val[0]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[1], b.val[1]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[2], b.val[2]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[3], b.val[3]);
+        d -= 16;
+        x += 16;
+        y += 16;
+    }
+    res.val[0] = vaddq_f32(res.val[0], res.val[1]);
+    res.val[2] = vaddq_f32(res.val[2], res.val[3]);
+    if (d >= 8) {
+        float32x4x2_t a = vcvt2_f32_half(vld2_u16((const uint16_t*)x));
+        float32x4x2_t b = vcvt2_f32_half(vld2_u16((const uint16_t*)y));
+        res.val[0] = vmlaq_f32(res.val[0], a.val[0], b.val[0]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[1], b.val[1]);
+        d -= 8;
+        x += 8;
+        y += 8;
+    }
+    res.val[0] = vaddq_f32(res.val[0], res.val[2]);
+    if (d >= 4) {
+        float32x4_t a = vcvt_f32_half(vld1_u16((const uint16_t*)x));
+        float32x4_t b = vcvt_f32_half(vld1_u16((const uint16_t*)y));
+        res.val[0] = vmlaq_f32(res.val[0], a, b);
+        d -= 4;
+        x += 4;
+        y += 4;
+    }
+    if (d >= 0) {
+        uint16x4_t res_x = {0, 0, 0, 0};
+        uint16x4_t res_y = {0, 0, 0, 0};
+        switch (d) {
+            case 3:
+                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 2);
+                res_y = vld1_lane_u16((const uint16_t*)y, res_y, 2);
+                x++;
+                y++;
+                d--;
+            case 2:
+                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 1);
+                res_y = vld1_lane_u16((const uint16_t*)y, res_y, 1);
+                x++;
+                y++;
+                d--;
+            case 1:
+                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 0);
+                res_y = vld1_lane_u16((const uint16_t*)y, res_y, 0);
+                x++;
+                y++;
+                d--;
+        }
+        res.val[0] = vmlaq_f32(res.val[0], vcvt_f32_half(res_x), vcvt_f32_half(res_y));
+    }
+    return vaddvq_f32(res.val[0]);
+}
+
+float
+bf16_vec_L2sqr_neon(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
+    while (d >= 16) {
+        float32x4x4_t a = vcvt4_f32_half(vld4_u16((const uint16_t*)x));
+        float32x4x4_t b = vcvt4_f32_half(vld4_u16((const uint16_t*)y));
+        a.val[0] = vsubq_f32(a.val[0], b.val[0]);
+        a.val[1] = vsubq_f32(a.val[1], b.val[1]);
+        a.val[2] = vsubq_f32(a.val[2], b.val[2]);
+        a.val[3] = vsubq_f32(a.val[3], b.val[3]);
+
+        res.val[0] = vmlaq_f32(res.val[0], a.val[0], a.val[0]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[1], a.val[1]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[2], a.val[2]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[3], a.val[3]);
+        d -= 16;
+        x += 16;
+        y += 16;
+    }
+    res.val[0] = vaddq_f32(res.val[0], res.val[1]);
+    res.val[2] = vaddq_f32(res.val[2], res.val[3]);
+    if (d >= 8) {
+        float32x4x2_t a = vcvt2_f32_half(vld2_u16((const uint16_t*)x));
+        float32x4x2_t b = vcvt2_f32_half(vld2_u16((const uint16_t*)y));
+        a.val[0] = vsubq_f32(a.val[0], b.val[0]);
+        a.val[1] = vsubq_f32(a.val[1], b.val[1]);
+        res.val[0] = vmlaq_f32(res.val[0], a.val[0], a.val[0]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[1], a.val[1]);
+        d -= 8;
+        x += 8;
+        y += 8;
+    }
+    res.val[0] = vaddq_f32(res.val[0], res.val[2]);
+    if (d >= 4) {
+        float32x4_t a = vcvt_f32_half(vld1_u16((const uint16_t*)x));
+        float32x4_t b = vcvt_f32_half(vld1_u16((const uint16_t*)y));
+        a = vsubq_f32(a, b);
+        res.val[0] = vmlaq_f32(res.val[0], a, a);
+        d -= 4;
+        x += 4;
+        y += 4;
+    }
+    if (d >= 0) {
+        uint16x4_t res_x = vdup_n_u16(0);
+        uint16x4_t res_y = vdup_n_u16(0);
+        switch (d) {
+            case 3:
+                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 2);
+                res_y = vld1_lane_u16((const uint16_t*)y, res_y, 2);
+                x++;
+                y++;
+                d--;
+            case 2:
+                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 1);
+                res_y = vld1_lane_u16((const uint16_t*)y, res_y, 1);
+                x++;
+                y++;
+                d--;
+            case 1:
+                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 0);
+                res_y = vld1_lane_u16((const uint16_t*)y, res_y, 0);
+                x++;
+                y++;
+                d--;
+        }
+
+        float32x4_t diff = vsubq_f32(vcvt_f32_half(res_x), vcvt_f32_half(res_y));
+
+        res.val[0] = vmlaq_f32(res.val[0], diff, diff);
+    }
+    return vaddvq_f32(res.val[0]);
+}
+
+float
+bf16_vec_norm_L2sqr_neon(const knowhere::bf16* x, size_t d) {
+    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
+    while (d >= 16) {
+        float32x4x4_t a = vcvt4_f32_half(vld4_u16((const uint16_t*)x));
+        res.val[0] = vmlaq_f32(res.val[0], a.val[0], a.val[0]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[1], a.val[1]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[2], a.val[2]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[3], a.val[3]);
+        d -= 16;
+        x += 16;
+    }
+    res.val[0] = vaddq_f32(res.val[0], res.val[1]);
+    res.val[2] = vaddq_f32(res.val[2], res.val[3]);
+    if (d >= 8) {
+        float32x4x2_t a = vcvt2_f32_half(vld2_u16((const uint16_t*)x));
+        res.val[0] = vmlaq_f32(res.val[0], a.val[0], a.val[0]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[1], a.val[1]);
+        d -= 8;
+        x += 8;
+    }
+    res.val[0] = vaddq_f32(res.val[0], res.val[2]);
+    if (d >= 4) {
+        float32x4_t a = vcvt_f32_half(vld1_u16((const uint16_t*)x));
+        res.val[0] = vmlaq_f32(res.val[0], a, a);
+        d -= 4;
+        x += 4;
+    }
+    if (d >= 0) {
+        uint16x4_t res_x = vdup_n_u16(0);
+        switch (d) {
+            case 3:
+                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 2);
+                x++;
+                d--;
+            case 2:
+                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 1);
+                x++;
+                d--;
+            case 1:
+                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 0);
+                x++;
+                d--;
+        }
+
+        float32x4_t x_fp32 = vcvt_f32_half(res_x);
+
+        res.val[0] = vmlaq_f32(res.val[0], x_fp32, x_fp32);
+    }
+    return vaddvq_f32(res.val[0]);
+}
+
+void
+bf16_vec_inner_product_batch_4_neon(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
+                                    const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
+                                    float& dis1, float& dis2, float& dis3) {
+    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
+    auto cur_d = d;
+    while (cur_d >= 16) {
+        float32x4x4_t a = vcvt4_f32_half(vld4_u16((const uint16_t*)x));
+        float32x4x4_t b0 = vcvt4_f32_half(vld4_u16((const uint16_t*)y0));
+        float32x4x4_t b1 = vcvt4_f32_half(vld4_u16((const uint16_t*)y1));
+        float32x4x4_t b2 = vcvt4_f32_half(vld4_u16((const uint16_t*)y2));
+        float32x4x4_t b3 = vcvt4_f32_half(vld4_u16((const uint16_t*)y3));
+
+        res.val[0] = vmlaq_f32(res.val[0], a.val[0], b0.val[0]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[0], b1.val[0]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[0], b2.val[0]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[0], b3.val[0]);
+
+        res.val[0] = vmlaq_f32(res.val[0], a.val[1], b0.val[1]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[1], b1.val[1]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[1], b2.val[1]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[1], b3.val[1]);
+
+        res.val[0] = vmlaq_f32(res.val[0], a.val[2], b0.val[2]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[2], b1.val[2]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[2], b2.val[2]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[2], b3.val[2]);
+
+        res.val[0] = vmlaq_f32(res.val[0], a.val[3], b0.val[3]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[3], b1.val[3]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[3], b2.val[3]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[3], b3.val[3]);
+
+        cur_d -= 16;
+        x += 16;
+        y0 += 16;
+        y1 += 16;
+        y2 += 16;
+        y3 += 16;
+    }
+    if (cur_d >= 8) {
+        float32x4x2_t a = vcvt2_f32_half(vld2_u16((const uint16_t*)x));
+        float32x4x2_t b0 = vcvt2_f32_half(vld2_u16((const uint16_t*)y0));
+        float32x4x2_t b1 = vcvt2_f32_half(vld2_u16((const uint16_t*)y1));
+        float32x4x2_t b2 = vcvt2_f32_half(vld2_u16((const uint16_t*)y2));
+        float32x4x2_t b3 = vcvt2_f32_half(vld2_u16((const uint16_t*)y3));
+        res.val[0] = vmlaq_f32(res.val[0], a.val[0], b0.val[0]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[0], b1.val[0]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[0], b2.val[0]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[0], b3.val[0]);
+
+        res.val[0] = vmlaq_f32(res.val[0], a.val[1], b0.val[1]);
+        res.val[1] = vmlaq_f32(res.val[1], a.val[1], b1.val[1]);
+        res.val[2] = vmlaq_f32(res.val[2], a.val[1], b2.val[1]);
+        res.val[3] = vmlaq_f32(res.val[3], a.val[1], b3.val[1]);
+
+        cur_d -= 8;
+        x += 8;
+        y0 += 8;
+        y1 += 8;
+        y2 += 8;
+        y3 += 8;
+    }
+    if (cur_d >= 4) {
+        float32x4_t a = vcvt_f32_half(vld1_u16((const uint16_t*)x));
+        float32x4_t b0 = vcvt_f32_half(vld1_u16((const uint16_t*)y0));
+        float32x4_t b1 = vcvt_f32_half(vld1_u16((const uint16_t*)y1));
+        float32x4_t b2 = vcvt_f32_half(vld1_u16((const uint16_t*)y2));
+        float32x4_t b3 = vcvt_f32_half(vld1_u16((const uint16_t*)y3));
+        res.val[0] = vmlaq_f32(res.val[0], a, b0);
+        res.val[1] = vmlaq_f32(res.val[1], a, b1);
+        res.val[2] = vmlaq_f32(res.val[2], a, b2);
+        res.val[3] = vmlaq_f32(res.val[3], a, b3);
+        cur_d -= 4;
+        x += 4;
+        y0 += 4;
+        y1 += 4;
+        y2 += 4;
+        y3 += 4;
+    }
+    if (cur_d >= 0) {
+        uint16x4_t res_x = vdup_n_u16(0);
+        uint16x4_t res_y0 = vdup_n_u16(0);
+        uint16x4_t res_y1 = vdup_n_u16(0);
+        uint16x4_t res_y2 = vdup_n_u16(0);
+        uint16x4_t res_y3 = vdup_n_u16(0);
+        switch (cur_d) {
+            case 3:
+                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 2);
+                res_y0 = vld1_lane_u16((const uint16_t*)y0, res_y0, 2);
+                res_y1 = vld1_lane_u16((const uint16_t*)y1, res_y1, 2);
+                res_y2 = vld1_lane_u16((const uint16_t*)y2, res_y2, 2);
+                res_y3 = vld1_lane_u16((const uint16_t*)y3, res_y3, 2);
+                x++;
+                y0++;
+                y1++;
+                y2++;
+                y3++;
+                cur_d--;
+            case 2:
+                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 1);
+                res_y0 = vld1_lane_u16((const uint16_t*)y0, res_y0, 1);
+                res_y1 = vld1_lane_u16((const uint16_t*)y1, res_y1, 1);
+                res_y2 = vld1_lane_u16((const uint16_t*)y2, res_y2, 1);
+                res_y3 = vld1_lane_u16((const uint16_t*)y3, res_y3, 1);
+                x++;
+                y0++;
+                y1++;
+                y2++;
+                y3++;
+                cur_d--;
+            case 1:
+                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 0);
+                res_y0 = vld1_lane_u16((const uint16_t*)y0, res_y0, 0);
+                res_y1 = vld1_lane_u16((const uint16_t*)y1, res_y1, 0);
+                res_y2 = vld1_lane_u16((const uint16_t*)y2, res_y2, 0);
+                res_y3 = vld1_lane_u16((const uint16_t*)y3, res_y3, 0);
+                x++;
+                y0++;
+                y1++;
+                y2++;
+                y3++;
+                cur_d--;
+        }
+        res.val[0] = vmlaq_f32(res.val[0], vcvt_f32_half(res_x), vcvt_f32_half(res_y0));
+        res.val[1] = vmlaq_f32(res.val[1], vcvt_f32_half(res_x), vcvt_f32_half(res_y1));
+        res.val[2] = vmlaq_f32(res.val[2], vcvt_f32_half(res_x), vcvt_f32_half(res_y2));
+        res.val[3] = vmlaq_f32(res.val[3], vcvt_f32_half(res_x), vcvt_f32_half(res_y3));
+    }
+    dis0 = vaddvq_f32(res.val[0]);
+    dis1 = vaddvq_f32(res.val[1]);
+    dis2 = vaddvq_f32(res.val[2]);
+    dis3 = vaddvq_f32(res.val[3]);
+    return;
+}
+
+void
+bf16_vec_L2sqr_batch_4_neon(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
+                            const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
+                            float& dis1, float& dis2, float& dis3) {
+    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
+    auto cur_d = d;
+    while (cur_d >= 16) {
+        float32x4x4_t a = vcvt4_f32_half(vld4_u16((const uint16_t*)x));
+        float32x4x4_t b0 = vcvt4_f32_half(vld4_u16((const uint16_t*)y0));
+        float32x4x4_t b1 = vcvt4_f32_half(vld4_u16((const uint16_t*)y1));
+        float32x4x4_t b2 = vcvt4_f32_half(vld4_u16((const uint16_t*)y2));
+        float32x4x4_t b3 = vcvt4_f32_half(vld4_u16((const uint16_t*)y3));
+
+        b0.val[0] = vsubq_f32(a.val[0], b0.val[0]);
+        b0.val[1] = vsubq_f32(a.val[1], b0.val[1]);
+        b0.val[2] = vsubq_f32(a.val[2], b0.val[2]);
+        b0.val[3] = vsubq_f32(a.val[3], b0.val[3]);
+
+        b1.val[0] = vsubq_f32(a.val[0], b1.val[0]);
+        b1.val[1] = vsubq_f32(a.val[1], b1.val[1]);
+        b1.val[2] = vsubq_f32(a.val[2], b1.val[2]);
+        b1.val[3] = vsubq_f32(a.val[3], b1.val[3]);
+
+        b2.val[0] = vsubq_f32(a.val[0], b2.val[0]);
+        b2.val[1] = vsubq_f32(a.val[1], b2.val[1]);
+        b2.val[2] = vsubq_f32(a.val[2], b2.val[2]);
+        b2.val[3] = vsubq_f32(a.val[3], b2.val[3]);
+
+        b3.val[0] = vsubq_f32(a.val[0], b3.val[0]);
+        b3.val[1] = vsubq_f32(a.val[1], b3.val[1]);
+        b3.val[2] = vsubq_f32(a.val[2], b3.val[2]);
+        b3.val[3] = vsubq_f32(a.val[3], b3.val[3]);
+
+        res.val[0] = vmlaq_f32(res.val[0], b0.val[0], b0.val[0]);
+        res.val[1] = vmlaq_f32(res.val[1], b1.val[0], b1.val[0]);
+        res.val[2] = vmlaq_f32(res.val[2], b2.val[0], b2.val[0]);
+        res.val[3] = vmlaq_f32(res.val[3], b3.val[0], b3.val[0]);
+
+        res.val[0] = vmlaq_f32(res.val[0], b0.val[1], b0.val[1]);
+        res.val[1] = vmlaq_f32(res.val[1], b1.val[1], b1.val[1]);
+        res.val[2] = vmlaq_f32(res.val[2], b2.val[1], b2.val[1]);
+        res.val[3] = vmlaq_f32(res.val[3], b3.val[1], b3.val[1]);
+
+        res.val[0] = vmlaq_f32(res.val[0], b0.val[2], b0.val[2]);
+        res.val[1] = vmlaq_f32(res.val[1], b1.val[2], b1.val[2]);
+        res.val[2] = vmlaq_f32(res.val[2], b2.val[2], b2.val[2]);
+        res.val[3] = vmlaq_f32(res.val[3], b3.val[2], b3.val[2]);
+
+        res.val[0] = vmlaq_f32(res.val[0], b0.val[3], b0.val[3]);
+        res.val[1] = vmlaq_f32(res.val[1], b1.val[3], b1.val[3]);
+        res.val[2] = vmlaq_f32(res.val[2], b2.val[3], b2.val[3]);
+        res.val[3] = vmlaq_f32(res.val[3], b3.val[3], b3.val[3]);
+
+        cur_d -= 16;
+        x += 16;
+        y0 += 16;
+        y1 += 16;
+        y2 += 16;
+        y3 += 16;
+    }
+    if (cur_d >= 8) {
+        float32x4x2_t a = vcvt2_f32_half(vld2_u16((const uint16_t*)x));
+        float32x4x2_t b0 = vcvt2_f32_half(vld2_u16((const uint16_t*)y0));
+        float32x4x2_t b1 = vcvt2_f32_half(vld2_u16((const uint16_t*)y1));
+        float32x4x2_t b2 = vcvt2_f32_half(vld2_u16((const uint16_t*)y2));
+        float32x4x2_t b3 = vcvt2_f32_half(vld2_u16((const uint16_t*)y3));
+
+        b0.val[0] = vsubq_f32(a.val[0], b0.val[0]);
+        b0.val[1] = vsubq_f32(a.val[1], b0.val[1]);
+
+        b1.val[0] = vsubq_f32(a.val[0], b1.val[0]);
+        b1.val[1] = vsubq_f32(a.val[1], b1.val[1]);
+
+        b2.val[0] = vsubq_f32(a.val[0], b2.val[0]);
+        b2.val[1] = vsubq_f32(a.val[1], b2.val[1]);
+
+        b3.val[0] = vsubq_f32(a.val[0], b3.val[0]);
+        b3.val[1] = vsubq_f32(a.val[1], b3.val[1]);
+
+        res.val[0] = vmlaq_f32(res.val[0], b0.val[0], b0.val[0]);
+        res.val[1] = vmlaq_f32(res.val[1], b1.val[0], b1.val[0]);
+        res.val[2] = vmlaq_f32(res.val[2], b2.val[0], b2.val[0]);
+        res.val[3] = vmlaq_f32(res.val[3], b3.val[0], b3.val[0]);
+
+        res.val[0] = vmlaq_f32(res.val[0], b0.val[1], b0.val[1]);
+        res.val[1] = vmlaq_f32(res.val[1], b1.val[1], b1.val[1]);
+        res.val[2] = vmlaq_f32(res.val[2], b2.val[1], b2.val[1]);
+        res.val[3] = vmlaq_f32(res.val[3], b3.val[1], b3.val[1]);
+
+        cur_d -= 8;
+        x += 8;
+        y0 += 8;
+        y1 += 8;
+        y2 += 8;
+        y3 += 8;
+    }
+    if (cur_d >= 4) {
+        float32x4_t a = vcvt_f32_half(vld1_u16((const uint16_t*)x));
+        float32x4_t b0 = vcvt_f32_half(vld1_u16((const uint16_t*)y0));
+        float32x4_t b1 = vcvt_f32_half(vld1_u16((const uint16_t*)y1));
+        float32x4_t b2 = vcvt_f32_half(vld1_u16((const uint16_t*)y2));
+        float32x4_t b3 = vcvt_f32_half(vld1_u16((const uint16_t*)y3));
+        b0 = vsubq_f32(a, b0);
+        b1 = vsubq_f32(a, b1);
+        b2 = vsubq_f32(a, b2);
+        b3 = vsubq_f32(a, b3);
+
+        res.val[0] = vmlaq_f32(res.val[0], b0, b0);
+        res.val[1] = vmlaq_f32(res.val[1], b1, b1);
+        res.val[2] = vmlaq_f32(res.val[2], b2, b2);
+        res.val[3] = vmlaq_f32(res.val[3], b3, b3);
+        cur_d -= 4;
+        x += 4;
+        y0 += 4;
+        y1 += 4;
+        y2 += 4;
+        y3 += 4;
+    }
+    if (cur_d >= 0) {
+        uint16x4_t res_x = vdup_n_u16(0);
+        uint16x4_t res_y0 = vdup_n_u16(0);
+        uint16x4_t res_y1 = vdup_n_u16(0);
+        uint16x4_t res_y2 = vdup_n_u16(0);
+        uint16x4_t res_y3 = vdup_n_u16(0);
+        switch (cur_d) {
+            case 3:
+                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 2);
+                res_y0 = vld1_lane_u16((const uint16_t*)y0, res_y0, 2);
+                res_y1 = vld1_lane_u16((const uint16_t*)y1, res_y1, 2);
+                res_y2 = vld1_lane_u16((const uint16_t*)y2, res_y2, 2);
+                res_y3 = vld1_lane_u16((const uint16_t*)y3, res_y3, 2);
+                x++;
+                y0++;
+                y1++;
+                y2++;
+                y3++;
+                cur_d--;
+            case 2:
+                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 1);
+                res_y0 = vld1_lane_u16((const uint16_t*)y0, res_y0, 1);
+                res_y1 = vld1_lane_u16((const uint16_t*)y1, res_y1, 1);
+                res_y2 = vld1_lane_u16((const uint16_t*)y2, res_y2, 1);
+                res_y3 = vld1_lane_u16((const uint16_t*)y3, res_y3, 1);
+                x++;
+                y0++;
+                y1++;
+                y2++;
+                y3++;
+                cur_d--;
+            case 1:
+                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 0);
+                res_y0 = vld1_lane_u16((const uint16_t*)y0, res_y0, 0);
+                res_y1 = vld1_lane_u16((const uint16_t*)y1, res_y1, 0);
+                res_y2 = vld1_lane_u16((const uint16_t*)y2, res_y2, 0);
+                res_y3 = vld1_lane_u16((const uint16_t*)y3, res_y3, 0);
+                x++;
+                y0++;
+                y1++;
+                y2++;
+                y3++;
+                cur_d--;
+        }
+        float32x4_t diff0 = vsubq_f32(vcvt_f32_half(res_x), vcvt_f32_half(res_y0));
+        float32x4_t diff1 = vsubq_f32(vcvt_f32_half(res_x), vcvt_f32_half(res_y1));
+        float32x4_t diff2 = vsubq_f32(vcvt_f32_half(res_x), vcvt_f32_half(res_y2));
+        float32x4_t diff3 = vsubq_f32(vcvt_f32_half(res_x), vcvt_f32_half(res_y3));
+        res.val[0] = vmlaq_f32(res.val[0], diff0, diff0);
+        res.val[1] = vmlaq_f32(res.val[1], diff1, diff1);
+        res.val[2] = vmlaq_f32(res.val[2], diff2, diff2);
+        res.val[3] = vmlaq_f32(res.val[3], diff3, diff3);
+    }
+    dis0 = vaddvq_f32(res.val[0]);
+    dis1 = vaddvq_f32(res.val[1]);
+    dis2 = vaddvq_f32(res.val[2]);
+    dis3 = vaddvq_f32(res.val[3]);
+    return;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// for cardinal
+
+float
+fvec_inner_product_bf16_patch_neon(const float* x, const float* y, size_t d) {
+    float32x4_t sum_ = vdupq_n_f32(0.0f);
+    auto dim = d;
+    while (d >= 16) {
+        float32x4x4_t a = vld1q_f32_x4(x + dim - d);
+        float32x4x4_t b = vld1q_f32_x4(y + dim - d);
+
+        a.val[0] = bf16_float_neon(a.val[0]);
+        a.val[1] = bf16_float_neon(a.val[1]);
+        a.val[2] = bf16_float_neon(a.val[2]);
+        a.val[3] = bf16_float_neon(a.val[3]);
+
+        b.val[0] = bf16_float_neon(b.val[0]);
+        b.val[1] = bf16_float_neon(b.val[1]);
+        b.val[2] = bf16_float_neon(b.val[2]);
+        b.val[3] = bf16_float_neon(b.val[3]);
+        float32x4x4_t c;
+        c.val[0] = vmulq_f32(a.val[0], b.val[0]);
+        c.val[1] = vmulq_f32(a.val[1], b.val[1]);
+        c.val[2] = vmulq_f32(a.val[2], b.val[2]);
+        c.val[3] = vmulq_f32(a.val[3], b.val[3]);
+
+        c.val[0] = vaddq_f32(c.val[0], c.val[1]);
+        c.val[2] = vaddq_f32(c.val[2], c.val[3]);
+        c.val[0] = vaddq_f32(c.val[0], c.val[2]);
+
+        sum_ = vaddq_f32(sum_, c.val[0]);
+
+        d -= 16;
+    }
+
+    if (d >= 8) {
+        float32x4x2_t a = vld1q_f32_x2(x + dim - d);
+        float32x4x2_t b = vld1q_f32_x2(y + dim - d);
+
+        a.val[0] = bf16_float_neon(a.val[0]);
+        a.val[1] = bf16_float_neon(a.val[1]);
+
+        b.val[0] = bf16_float_neon(b.val[0]);
+        b.val[1] = bf16_float_neon(b.val[1]);
+
+        float32x4x2_t c;
+        c.val[0] = vmulq_f32(a.val[0], b.val[0]);
+        c.val[1] = vmulq_f32(a.val[1], b.val[1]);
+        c.val[0] = vaddq_f32(c.val[0], c.val[1]);
+        sum_ = vaddq_f32(sum_, c.val[0]);
+        d -= 8;
+    }
+    if (d >= 4) {
+        float32x4_t a = vld1q_f32(x + dim - d);
+        float32x4_t b = vld1q_f32(y + dim - d);
+        a = bf16_float_neon(a);
+        b = bf16_float_neon(b);
+        float32x4_t c;
+        c = vmulq_f32(a, b);
+        sum_ = vaddq_f32(sum_, c);
+        d -= 4;
+    }
+
+    float32x4_t res_x = vdupq_n_f32(0.0f);
+    float32x4_t res_y = vdupq_n_f32(0.0f);
+    if (d >= 3) {
+        res_x = vld1q_lane_f32(x + dim - d, res_x, 2);
+        res_y = vld1q_lane_f32(y + dim - d, res_y, 2);
+        d -= 1;
+    }
+
+    if (d >= 2) {
+        res_x = vld1q_lane_f32(x + dim - d, res_x, 1);
+        res_y = vld1q_lane_f32(y + dim - d, res_y, 1);
+        d -= 1;
+    }
+
+    if (d >= 1) {
+        res_x = vld1q_lane_f32(x + dim - d, res_x, 0);
+        res_y = vld1q_lane_f32(y + dim - d, res_y, 0);
+        d -= 1;
+    }
+    res_x = bf16_float_neon(res_x);
+    res_y = bf16_float_neon(res_y);
+
+    sum_ = vaddq_f32(sum_, vmulq_f32(res_x, res_y));
+
+    return vaddvq_f32(sum_);
+}
+
+float
+fvec_L2sqr_bf16_patch_neon(const float* x, const float* y, size_t d) {
+    float32x4_t sum_ = vdupq_n_f32(0.0f);
+    auto dim = d;
+    while (d >= 16) {
+        float32x4x4_t a = vld1q_f32_x4(x + dim - d);
+        float32x4x4_t b = vld1q_f32_x4(y + dim - d);
+        a.val[0] = bf16_float_neon(a.val[0]);
+        a.val[1] = bf16_float_neon(a.val[1]);
+        a.val[2] = bf16_float_neon(a.val[2]);
+        a.val[3] = bf16_float_neon(a.val[3]);
+
+        b.val[0] = bf16_float_neon(b.val[0]);
+        b.val[1] = bf16_float_neon(b.val[1]);
+        b.val[2] = bf16_float_neon(b.val[2]);
+        b.val[3] = bf16_float_neon(b.val[3]);
+
+        float32x4x4_t c;
+
+        c.val[0] = vsubq_f32(a.val[0], b.val[0]);
+        c.val[1] = vsubq_f32(a.val[1], b.val[1]);
+        c.val[2] = vsubq_f32(a.val[2], b.val[2]);
+        c.val[3] = vsubq_f32(a.val[3], b.val[3]);
+
+        c.val[0] = vmulq_f32(c.val[0], c.val[0]);
+        c.val[1] = vmulq_f32(c.val[1], c.val[1]);
+        c.val[2] = vmulq_f32(c.val[2], c.val[2]);
+        c.val[3] = vmulq_f32(c.val[3], c.val[3]);
+
+        c.val[0] = vaddq_f32(c.val[0], c.val[1]);
+        c.val[2] = vaddq_f32(c.val[2], c.val[3]);
+        c.val[0] = vaddq_f32(c.val[0], c.val[2]);
+
+        sum_ = vaddq_f32(sum_, c.val[0]);
+
+        d -= 16;
+    }
+
+    if (d >= 8) {
+        float32x4x2_t a = vld1q_f32_x2(x + dim - d);
+        float32x4x2_t b = vld1q_f32_x2(y + dim - d);
+
+        a.val[0] = bf16_float_neon(a.val[0]);
+        a.val[1] = bf16_float_neon(a.val[1]);
+
+        b.val[0] = bf16_float_neon(b.val[0]);
+        b.val[1] = bf16_float_neon(b.val[1]);
+
+        float32x4x2_t c;
+        c.val[0] = vsubq_f32(a.val[0], b.val[0]);
+        c.val[1] = vsubq_f32(a.val[1], b.val[1]);
+
+        c.val[0] = vmulq_f32(c.val[0], c.val[0]);
+        c.val[1] = vmulq_f32(c.val[1], c.val[1]);
+
+        c.val[0] = vaddq_f32(c.val[0], c.val[1]);
+        sum_ = vaddq_f32(sum_, c.val[0]);
+        d -= 8;
+    }
+    if (d >= 4) {
+        float32x4_t a = vld1q_f32(x + dim - d);
+        float32x4_t b = vld1q_f32(y + dim - d);
+        a = bf16_float_neon(a);
+        b = bf16_float_neon(b);
+        float32x4_t c;
+        c = vsubq_f32(a, b);
+        c = vmulq_f32(c, c);
+
+        sum_ = vaddq_f32(sum_, c);
+        d -= 4;
+    }
+
+    float32x4_t res_x = vdupq_n_f32(0.0f);
+    float32x4_t res_y = vdupq_n_f32(0.0f);
+    if (d >= 3) {
+        res_x = vld1q_lane_f32(x + dim - d, res_x, 2);
+        res_y = vld1q_lane_f32(y + dim - d, res_y, 2);
+        d -= 1;
+    }
+
+    if (d >= 2) {
+        res_x = vld1q_lane_f32(x + dim - d, res_x, 1);
+        res_y = vld1q_lane_f32(y + dim - d, res_y, 1);
+        d -= 1;
+    }
+
+    if (d >= 1) {
+        res_x = vld1q_lane_f32(x + dim - d, res_x, 0);
+        res_y = vld1q_lane_f32(y + dim - d, res_y, 0);
+        d -= 1;
+    }
+
+    res_x = bf16_float_neon(res_x);
+    res_y = bf16_float_neon(res_y);
+
+    sum_ = vaddq_f32(sum_, vmulq_f32(vsubq_f32(res_x, res_y), vsubq_f32(res_x, res_y)));
+
+    return vaddvq_f32(sum_);
+}
+
+void
+fvec_inner_product_batch_4_bf16_patch_neon(const float* x, const float* y0, const float* y1, const float* y2,
                                            const float* y3, const size_t dim, float& dis0, float& dis1, float& dis2,
                                            float& dis3) {
     float32x4x4_t sum_ = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
@@ -1889,7 +2530,7 @@ fvec_inner_product_batch_4_neon_bf16_patch(const float* x, const float* y0, cons
 }
 
 void
-fvec_L2sqr_batch_4_neon_bf16_patch(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
+fvec_L2sqr_batch_4_bf16_patch_neon(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
                                    const size_t dim, float& dis0, float& dis1, float& dis2, float& dis3) {
     float32x4x4_t sum_ = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
     auto d = dim;
@@ -2132,633 +2773,5 @@ fvec_L2sqr_batch_4_neon_bf16_patch(const float* x, const float* y0, const float*
     dis3 = vaddvq_f32(sum_.val[3]);
 }
 
-void
-fp16_vec_inner_product_batch_4_neon(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
-                                    const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0,
-                                    float& dis1, float& dis2, float& dis3) {
-    // res store sub result of {4*dis0, 4*dis1, d4*is2, 4*dis3}
-    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
-    auto cur_d = d;
-    while (cur_d >= 16) {
-        float32x4x4_t a = vcvt4_f32_f16(vld4_f16((const __fp16*)x));
-        float32x4x4_t b0 = vcvt4_f32_f16(vld4_f16((const __fp16*)y0));
-        float32x4x4_t b1 = vcvt4_f32_f16(vld4_f16((const __fp16*)y1));
-        float32x4x4_t b2 = vcvt4_f32_f16(vld4_f16((const __fp16*)y2));
-        float32x4x4_t b3 = vcvt4_f32_f16(vld4_f16((const __fp16*)y3));
-
-        res.val[0] = vmlaq_f32(res.val[0], a.val[0], b0.val[0]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[0], b1.val[0]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[0], b2.val[0]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[0], b3.val[0]);
-
-        res.val[0] = vmlaq_f32(res.val[0], a.val[1], b0.val[1]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[1], b1.val[1]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[1], b2.val[1]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[1], b3.val[1]);
-
-        res.val[0] = vmlaq_f32(res.val[0], a.val[2], b0.val[2]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[2], b1.val[2]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[2], b2.val[2]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[2], b3.val[2]);
-
-        res.val[0] = vmlaq_f32(res.val[0], a.val[3], b0.val[3]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[3], b1.val[3]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[3], b2.val[3]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[3], b3.val[3]);
-
-        cur_d -= 16;
-        x += 16;
-        y0 += 16;
-        y1 += 16;
-        y2 += 16;
-        y3 += 16;
-    }
-    if (cur_d >= 8) {
-        float32x4x2_t a = vcvt2_f32_f16(vld2_f16((const __fp16*)x));
-        float32x4x2_t b0 = vcvt2_f32_f16(vld2_f16((const __fp16*)y0));
-        float32x4x2_t b1 = vcvt2_f32_f16(vld2_f16((const __fp16*)y1));
-        float32x4x2_t b2 = vcvt2_f32_f16(vld2_f16((const __fp16*)y2));
-        float32x4x2_t b3 = vcvt2_f32_f16(vld2_f16((const __fp16*)y3));
-        res.val[0] = vmlaq_f32(res.val[0], a.val[0], b0.val[0]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[0], b1.val[0]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[0], b2.val[0]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[0], b3.val[0]);
-
-        res.val[0] = vmlaq_f32(res.val[0], a.val[1], b0.val[1]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[1], b1.val[1]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[1], b2.val[1]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[1], b3.val[1]);
-
-        cur_d -= 8;
-        x += 8;
-        y0 += 8;
-        y1 += 8;
-        y2 += 8;
-        y3 += 8;
-    }
-    if (cur_d >= 4) {
-        float32x4_t a = vcvt_f32_f16(vld1_f16((const __fp16*)x));
-        float32x4_t b0 = vcvt_f32_f16(vld1_f16((const __fp16*)y0));
-        float32x4_t b1 = vcvt_f32_f16(vld1_f16((const __fp16*)y1));
-        float32x4_t b2 = vcvt_f32_f16(vld1_f16((const __fp16*)y2));
-        float32x4_t b3 = vcvt_f32_f16(vld1_f16((const __fp16*)y3));
-        res.val[0] = vmlaq_f32(res.val[0], a, b0);
-        res.val[1] = vmlaq_f32(res.val[1], a, b1);
-        res.val[2] = vmlaq_f32(res.val[2], a, b2);
-        res.val[3] = vmlaq_f32(res.val[3], a, b3);
-        cur_d -= 4;
-        x += 4;
-        y0 += 4;
-        y1 += 4;
-        y2 += 4;
-        y3 += 4;
-    }
-    if (cur_d >= 0) {
-        float16x4_t res_x = {0.0f, 0.0f, 0.0f, 0.0f};
-        float16x4_t res_y0 = {0.0f, 0.0f, 0.0f, 0.0f};
-        float16x4_t res_y1 = {0.0f, 0.0f, 0.0f, 0.0f};
-        float16x4_t res_y2 = {0.0f, 0.0f, 0.0f, 0.0f};
-        float16x4_t res_y3 = {0.0f, 0.0f, 0.0f, 0.0f};
-        switch (cur_d) {
-            case 3:
-                res_x = vld1_lane_f16((const __fp16*)x, res_x, 2);
-                res_y0 = vld1_lane_f16((const __fp16*)y0, res_y0, 2);
-                res_y1 = vld1_lane_f16((const __fp16*)y1, res_y1, 2);
-                res_y2 = vld1_lane_f16((const __fp16*)y2, res_y2, 2);
-                res_y3 = vld1_lane_f16((const __fp16*)y3, res_y3, 2);
-                x++;
-                y0++;
-                y1++;
-                y2++;
-                y3++;
-                cur_d--;
-            case 2:
-                res_x = vld1_lane_f16((const __fp16*)x, res_x, 1);
-                res_y0 = vld1_lane_f16((const __fp16*)y0, res_y0, 1);
-                res_y1 = vld1_lane_f16((const __fp16*)y1, res_y1, 1);
-                res_y2 = vld1_lane_f16((const __fp16*)y2, res_y2, 1);
-                res_y3 = vld1_lane_f16((const __fp16*)y3, res_y3, 1);
-                x++;
-                y0++;
-                y1++;
-                y2++;
-                y3++;
-                cur_d--;
-            case 1:
-                res_x = vld1_lane_f16((const __fp16*)x, res_x, 0);
-                res_y0 = vld1_lane_f16((const __fp16*)y0, res_y0, 0);
-                res_y1 = vld1_lane_f16((const __fp16*)y1, res_y1, 0);
-                res_y2 = vld1_lane_f16((const __fp16*)y2, res_y2, 0);
-                res_y3 = vld1_lane_f16((const __fp16*)y3, res_y3, 0);
-                x++;
-                y0++;
-                y1++;
-                y2++;
-                y3++;
-                cur_d--;
-        }
-        res.val[0] = vmlaq_f32(res.val[0], vcvt_f32_f16(res_x), vcvt_f32_f16(res_y0));
-        res.val[1] = vmlaq_f32(res.val[1], vcvt_f32_f16(res_x), vcvt_f32_f16(res_y1));
-        res.val[2] = vmlaq_f32(res.val[2], vcvt_f32_f16(res_x), vcvt_f32_f16(res_y2));
-        res.val[3] = vmlaq_f32(res.val[3], vcvt_f32_f16(res_x), vcvt_f32_f16(res_y3));
-    }
-    dis0 = vaddvq_f32(res.val[0]);
-    dis1 = vaddvq_f32(res.val[1]);
-    dis2 = vaddvq_f32(res.val[2]);
-    dis3 = vaddvq_f32(res.val[3]);
-    return;
-}
-
-void
-bf16_vec_inner_product_batch_4_neon(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                                    const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
-                                    float& dis1, float& dis2, float& dis3) {
-    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
-    auto cur_d = d;
-    while (cur_d >= 16) {
-        float32x4x4_t a = vcvt4_f32_half(vld4_u16((const uint16_t*)x));
-        float32x4x4_t b0 = vcvt4_f32_half(vld4_u16((const uint16_t*)y0));
-        float32x4x4_t b1 = vcvt4_f32_half(vld4_u16((const uint16_t*)y1));
-        float32x4x4_t b2 = vcvt4_f32_half(vld4_u16((const uint16_t*)y2));
-        float32x4x4_t b3 = vcvt4_f32_half(vld4_u16((const uint16_t*)y3));
-
-        res.val[0] = vmlaq_f32(res.val[0], a.val[0], b0.val[0]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[0], b1.val[0]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[0], b2.val[0]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[0], b3.val[0]);
-
-        res.val[0] = vmlaq_f32(res.val[0], a.val[1], b0.val[1]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[1], b1.val[1]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[1], b2.val[1]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[1], b3.val[1]);
-
-        res.val[0] = vmlaq_f32(res.val[0], a.val[2], b0.val[2]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[2], b1.val[2]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[2], b2.val[2]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[2], b3.val[2]);
-
-        res.val[0] = vmlaq_f32(res.val[0], a.val[3], b0.val[3]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[3], b1.val[3]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[3], b2.val[3]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[3], b3.val[3]);
-
-        cur_d -= 16;
-        x += 16;
-        y0 += 16;
-        y1 += 16;
-        y2 += 16;
-        y3 += 16;
-    }
-    if (cur_d >= 8) {
-        float32x4x2_t a = vcvt2_f32_half(vld2_u16((const uint16_t*)x));
-        float32x4x2_t b0 = vcvt2_f32_half(vld2_u16((const uint16_t*)y0));
-        float32x4x2_t b1 = vcvt2_f32_half(vld2_u16((const uint16_t*)y1));
-        float32x4x2_t b2 = vcvt2_f32_half(vld2_u16((const uint16_t*)y2));
-        float32x4x2_t b3 = vcvt2_f32_half(vld2_u16((const uint16_t*)y3));
-        res.val[0] = vmlaq_f32(res.val[0], a.val[0], b0.val[0]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[0], b1.val[0]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[0], b2.val[0]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[0], b3.val[0]);
-
-        res.val[0] = vmlaq_f32(res.val[0], a.val[1], b0.val[1]);
-        res.val[1] = vmlaq_f32(res.val[1], a.val[1], b1.val[1]);
-        res.val[2] = vmlaq_f32(res.val[2], a.val[1], b2.val[1]);
-        res.val[3] = vmlaq_f32(res.val[3], a.val[1], b3.val[1]);
-
-        cur_d -= 8;
-        x += 8;
-        y0 += 8;
-        y1 += 8;
-        y2 += 8;
-        y3 += 8;
-    }
-    if (cur_d >= 4) {
-        float32x4_t a = vcvt_f32_half(vld1_u16((const uint16_t*)x));
-        float32x4_t b0 = vcvt_f32_half(vld1_u16((const uint16_t*)y0));
-        float32x4_t b1 = vcvt_f32_half(vld1_u16((const uint16_t*)y1));
-        float32x4_t b2 = vcvt_f32_half(vld1_u16((const uint16_t*)y2));
-        float32x4_t b3 = vcvt_f32_half(vld1_u16((const uint16_t*)y3));
-        res.val[0] = vmlaq_f32(res.val[0], a, b0);
-        res.val[1] = vmlaq_f32(res.val[1], a, b1);
-        res.val[2] = vmlaq_f32(res.val[2], a, b2);
-        res.val[3] = vmlaq_f32(res.val[3], a, b3);
-        cur_d -= 4;
-        x += 4;
-        y0 += 4;
-        y1 += 4;
-        y2 += 4;
-        y3 += 4;
-    }
-    if (cur_d >= 0) {
-        uint16x4_t res_x = vdup_n_u16(0);
-        uint16x4_t res_y0 = vdup_n_u16(0);
-        uint16x4_t res_y1 = vdup_n_u16(0);
-        uint16x4_t res_y2 = vdup_n_u16(0);
-        uint16x4_t res_y3 = vdup_n_u16(0);
-        switch (cur_d) {
-            case 3:
-                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 2);
-                res_y0 = vld1_lane_u16((const uint16_t*)y0, res_y0, 2);
-                res_y1 = vld1_lane_u16((const uint16_t*)y1, res_y1, 2);
-                res_y2 = vld1_lane_u16((const uint16_t*)y2, res_y2, 2);
-                res_y3 = vld1_lane_u16((const uint16_t*)y3, res_y3, 2);
-                x++;
-                y0++;
-                y1++;
-                y2++;
-                y3++;
-                cur_d--;
-            case 2:
-                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 1);
-                res_y0 = vld1_lane_u16((const uint16_t*)y0, res_y0, 1);
-                res_y1 = vld1_lane_u16((const uint16_t*)y1, res_y1, 1);
-                res_y2 = vld1_lane_u16((const uint16_t*)y2, res_y2, 1);
-                res_y3 = vld1_lane_u16((const uint16_t*)y3, res_y3, 1);
-                x++;
-                y0++;
-                y1++;
-                y2++;
-                y3++;
-                cur_d--;
-            case 1:
-                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 0);
-                res_y0 = vld1_lane_u16((const uint16_t*)y0, res_y0, 0);
-                res_y1 = vld1_lane_u16((const uint16_t*)y1, res_y1, 0);
-                res_y2 = vld1_lane_u16((const uint16_t*)y2, res_y2, 0);
-                res_y3 = vld1_lane_u16((const uint16_t*)y3, res_y3, 0);
-                x++;
-                y0++;
-                y1++;
-                y2++;
-                y3++;
-                cur_d--;
-        }
-        res.val[0] = vmlaq_f32(res.val[0], vcvt_f32_half(res_x), vcvt_f32_half(res_y0));
-        res.val[1] = vmlaq_f32(res.val[1], vcvt_f32_half(res_x), vcvt_f32_half(res_y1));
-        res.val[2] = vmlaq_f32(res.val[2], vcvt_f32_half(res_x), vcvt_f32_half(res_y2));
-        res.val[3] = vmlaq_f32(res.val[3], vcvt_f32_half(res_x), vcvt_f32_half(res_y3));
-    }
-    dis0 = vaddvq_f32(res.val[0]);
-    dis1 = vaddvq_f32(res.val[1]);
-    dis2 = vaddvq_f32(res.val[2]);
-    dis3 = vaddvq_f32(res.val[3]);
-    return;
-}
-
-void
-fp16_vec_L2sqr_batch_4_neon(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
-                            const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0,
-                            float& dis1, float& dis2, float& dis3) {
-    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
-    auto cur_d = d;
-    while (cur_d >= 16) {
-        float32x4x4_t a = vcvt4_f32_f16(vld4_f16((const __fp16*)x));
-        float32x4x4_t b0 = vcvt4_f32_f16(vld4_f16((const __fp16*)y0));
-        float32x4x4_t b1 = vcvt4_f32_f16(vld4_f16((const __fp16*)y1));
-        float32x4x4_t b2 = vcvt4_f32_f16(vld4_f16((const __fp16*)y2));
-        float32x4x4_t b3 = vcvt4_f32_f16(vld4_f16((const __fp16*)y3));
-
-        b0.val[0] = vsubq_f32(a.val[0], b0.val[0]);
-        b0.val[1] = vsubq_f32(a.val[1], b0.val[1]);
-        b0.val[2] = vsubq_f32(a.val[2], b0.val[2]);
-        b0.val[3] = vsubq_f32(a.val[3], b0.val[3]);
-
-        b1.val[0] = vsubq_f32(a.val[0], b1.val[0]);
-        b1.val[1] = vsubq_f32(a.val[1], b1.val[1]);
-        b1.val[2] = vsubq_f32(a.val[2], b1.val[2]);
-        b1.val[3] = vsubq_f32(a.val[3], b1.val[3]);
-
-        b2.val[0] = vsubq_f32(a.val[0], b2.val[0]);
-        b2.val[1] = vsubq_f32(a.val[1], b2.val[1]);
-        b2.val[2] = vsubq_f32(a.val[2], b2.val[2]);
-        b2.val[3] = vsubq_f32(a.val[3], b2.val[3]);
-
-        b3.val[0] = vsubq_f32(a.val[0], b3.val[0]);
-        b3.val[1] = vsubq_f32(a.val[1], b3.val[1]);
-        b3.val[2] = vsubq_f32(a.val[2], b3.val[2]);
-        b3.val[3] = vsubq_f32(a.val[3], b3.val[3]);
-
-        res.val[0] = vaddq_f32(vmulq_f32(b0.val[0], b0.val[0]), res.val[0]);
-        res.val[1] = vaddq_f32(vmulq_f32(b1.val[0], b1.val[0]), res.val[1]);
-        res.val[2] = vaddq_f32(vmulq_f32(b2.val[0], b2.val[0]), res.val[2]);
-        res.val[3] = vaddq_f32(vmulq_f32(b3.val[0], b3.val[0]), res.val[3]);
-
-        res.val[0] = vaddq_f32(vmulq_f32(b0.val[1], b0.val[1]), res.val[0]);
-        res.val[1] = vaddq_f32(vmulq_f32(b1.val[1], b1.val[1]), res.val[1]);
-        res.val[2] = vaddq_f32(vmulq_f32(b2.val[1], b2.val[1]), res.val[2]);
-        res.val[3] = vaddq_f32(vmulq_f32(b3.val[1], b3.val[1]), res.val[3]);
-
-        res.val[0] = vaddq_f32(vmulq_f32(b0.val[2], b0.val[2]), res.val[0]);
-        res.val[1] = vaddq_f32(vmulq_f32(b1.val[2], b1.val[2]), res.val[1]);
-        res.val[2] = vaddq_f32(vmulq_f32(b2.val[2], b2.val[2]), res.val[2]);
-        res.val[3] = vaddq_f32(vmulq_f32(b3.val[2], b3.val[2]), res.val[3]);
-
-        res.val[0] = vaddq_f32(vmulq_f32(b0.val[3], b0.val[3]), res.val[0]);
-        res.val[1] = vaddq_f32(vmulq_f32(b1.val[3], b1.val[3]), res.val[1]);
-        res.val[2] = vaddq_f32(vmulq_f32(b2.val[3], b2.val[3]), res.val[2]);
-        res.val[3] = vaddq_f32(vmulq_f32(b3.val[3], b3.val[3]), res.val[3]);
-
-        cur_d -= 16;
-        x += 16;
-        y0 += 16;
-        y1 += 16;
-        y2 += 16;
-        y3 += 16;
-    }
-    if (cur_d >= 8) {
-        float32x4x2_t a = vcvt2_f32_f16(vld2_f16((const __fp16*)x));
-        float32x4x2_t b0 = vcvt2_f32_f16(vld2_f16((const __fp16*)y0));
-        float32x4x2_t b1 = vcvt2_f32_f16(vld2_f16((const __fp16*)y1));
-        float32x4x2_t b2 = vcvt2_f32_f16(vld2_f16((const __fp16*)y2));
-        float32x4x2_t b3 = vcvt2_f32_f16(vld2_f16((const __fp16*)y3));
-        b0.val[0] = vsubq_f32(a.val[0], b0.val[0]);
-        b0.val[1] = vsubq_f32(a.val[1], b0.val[1]);
-
-        b1.val[0] = vsubq_f32(a.val[0], b1.val[0]);
-        b1.val[1] = vsubq_f32(a.val[1], b1.val[1]);
-
-        b2.val[0] = vsubq_f32(a.val[0], b2.val[0]);
-        b2.val[1] = vsubq_f32(a.val[1], b2.val[1]);
-
-        b3.val[0] = vsubq_f32(a.val[0], b3.val[0]);
-        b3.val[1] = vsubq_f32(a.val[1], b3.val[1]);
-
-        res.val[0] = vaddq_f32(vmulq_f32(b0.val[0], b0.val[0]), res.val[0]);
-        res.val[1] = vaddq_f32(vmulq_f32(b1.val[0], b1.val[0]), res.val[1]);
-        res.val[2] = vaddq_f32(vmulq_f32(b2.val[0], b2.val[0]), res.val[2]);
-        res.val[3] = vaddq_f32(vmulq_f32(b3.val[0], b3.val[0]), res.val[3]);
-
-        res.val[0] = vaddq_f32(vmulq_f32(b0.val[1], b0.val[1]), res.val[0]);
-        res.val[1] = vaddq_f32(vmulq_f32(b1.val[1], b1.val[1]), res.val[1]);
-        res.val[2] = vaddq_f32(vmulq_f32(b2.val[1], b2.val[1]), res.val[2]);
-        res.val[3] = vaddq_f32(vmulq_f32(b3.val[1], b3.val[1]), res.val[3]);
-
-        cur_d -= 8;
-        x += 8;
-        y0 += 8;
-        y1 += 8;
-        y2 += 8;
-        y3 += 8;
-    }
-    if (cur_d >= 4) {
-        float32x4_t a = vcvt_f32_f16(vld1_f16((const __fp16*)x));
-        float32x4_t b0 = vcvt_f32_f16(vld1_f16((const __fp16*)y0));
-        float32x4_t b1 = vcvt_f32_f16(vld1_f16((const __fp16*)y1));
-        float32x4_t b2 = vcvt_f32_f16(vld1_f16((const __fp16*)y2));
-        float32x4_t b3 = vcvt_f32_f16(vld1_f16((const __fp16*)y3));
-
-        b0 = vsubq_f32(a, b0);
-        b1 = vsubq_f32(a, b1);
-        b2 = vsubq_f32(a, b2);
-        b3 = vsubq_f32(a, b3);
-
-        res.val[0] = vaddq_f32(vmulq_f32(b0, b0), res.val[0]);
-        res.val[1] = vaddq_f32(vmulq_f32(b1, b1), res.val[1]);
-        res.val[2] = vaddq_f32(vmulq_f32(b2, b2), res.val[2]);
-        res.val[3] = vaddq_f32(vmulq_f32(b3, b3), res.val[3]);
-        cur_d -= 4;
-        x += 4;
-        y0 += 4;
-        y1 += 4;
-        y2 += 4;
-        y3 += 4;
-    }
-    if (cur_d >= 0) {
-        float16x4_t res_x = {0.0f, 0.0f, 0.0f, 0.0f};
-        float16x4_t res_y0 = {0.0f, 0.0f, 0.0f, 0.0f};
-        float16x4_t res_y1 = {0.0f, 0.0f, 0.0f, 0.0f};
-        float16x4_t res_y2 = {0.0f, 0.0f, 0.0f, 0.0f};
-        float16x4_t res_y3 = {0.0f, 0.0f, 0.0f, 0.0f};
-        switch (cur_d) {
-            case 3:
-                res_x = vld1_lane_f16((const __fp16*)x, res_x, 2);
-                res_y0 = vld1_lane_f16((const __fp16*)y0, res_y0, 2);
-                res_y1 = vld1_lane_f16((const __fp16*)y1, res_y1, 2);
-                res_y2 = vld1_lane_f16((const __fp16*)y2, res_y2, 2);
-                res_y3 = vld1_lane_f16((const __fp16*)y3, res_y3, 2);
-                x++;
-                y0++;
-                y1++;
-                y2++;
-                y3++;
-                cur_d--;
-            case 2:
-                res_x = vld1_lane_f16((const __fp16*)x, res_x, 1);
-                res_y0 = vld1_lane_f16((const __fp16*)y0, res_y0, 1);
-                res_y1 = vld1_lane_f16((const __fp16*)y1, res_y1, 1);
-                res_y2 = vld1_lane_f16((const __fp16*)y2, res_y2, 1);
-                res_y3 = vld1_lane_f16((const __fp16*)y3, res_y3, 1);
-                x++;
-                y0++;
-                y1++;
-                y2++;
-                y3++;
-                cur_d--;
-            case 1:
-                res_x = vld1_lane_f16((const __fp16*)x, res_x, 0);
-                res_y0 = vld1_lane_f16((const __fp16*)y0, res_y0, 0);
-                res_y1 = vld1_lane_f16((const __fp16*)y1, res_y1, 0);
-                res_y2 = vld1_lane_f16((const __fp16*)y2, res_y2, 0);
-                res_y3 = vld1_lane_f16((const __fp16*)y3, res_y3, 0);
-                x++;
-                y0++;
-                y1++;
-                y2++;
-                y3++;
-                cur_d--;
-        }
-        float32x4_t diff0 = vsubq_f32(vcvt_f32_f16(res_x), vcvt_f32_f16(res_y0));
-        float32x4_t diff1 = vsubq_f32(vcvt_f32_f16(res_x), vcvt_f32_f16(res_y1));
-        float32x4_t diff2 = vsubq_f32(vcvt_f32_f16(res_x), vcvt_f32_f16(res_y2));
-        float32x4_t diff3 = vsubq_f32(vcvt_f32_f16(res_x), vcvt_f32_f16(res_y3));
-        res.val[0] = vaddq_f32(vmulq_f32(diff0, diff0), res.val[0]);
-        res.val[1] = vaddq_f32(vmulq_f32(diff1, diff1), res.val[1]);
-        res.val[2] = vaddq_f32(vmulq_f32(diff2, diff2), res.val[2]);
-        res.val[3] = vaddq_f32(vmulq_f32(diff3, diff3), res.val[3]);
-    }
-    dis0 = vaddvq_f32(res.val[0]);
-    dis1 = vaddvq_f32(res.val[1]);
-    dis2 = vaddvq_f32(res.val[2]);
-    dis3 = vaddvq_f32(res.val[3]);
-    return;
-}
-
-void
-bf16_vec_L2sqr_batch_4_neon(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                            const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
-                            float& dis1, float& dis2, float& dis3) {
-    float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
-    auto cur_d = d;
-    while (cur_d >= 16) {
-        float32x4x4_t a = vcvt4_f32_half(vld4_u16((const uint16_t*)x));
-        float32x4x4_t b0 = vcvt4_f32_half(vld4_u16((const uint16_t*)y0));
-        float32x4x4_t b1 = vcvt4_f32_half(vld4_u16((const uint16_t*)y1));
-        float32x4x4_t b2 = vcvt4_f32_half(vld4_u16((const uint16_t*)y2));
-        float32x4x4_t b3 = vcvt4_f32_half(vld4_u16((const uint16_t*)y3));
-
-        b0.val[0] = vsubq_f32(a.val[0], b0.val[0]);
-        b0.val[1] = vsubq_f32(a.val[1], b0.val[1]);
-        b0.val[2] = vsubq_f32(a.val[2], b0.val[2]);
-        b0.val[3] = vsubq_f32(a.val[3], b0.val[3]);
-
-        b1.val[0] = vsubq_f32(a.val[0], b1.val[0]);
-        b1.val[1] = vsubq_f32(a.val[1], b1.val[1]);
-        b1.val[2] = vsubq_f32(a.val[2], b1.val[2]);
-        b1.val[3] = vsubq_f32(a.val[3], b1.val[3]);
-
-        b2.val[0] = vsubq_f32(a.val[0], b2.val[0]);
-        b2.val[1] = vsubq_f32(a.val[1], b2.val[1]);
-        b2.val[2] = vsubq_f32(a.val[2], b2.val[2]);
-        b2.val[3] = vsubq_f32(a.val[3], b2.val[3]);
-
-        b3.val[0] = vsubq_f32(a.val[0], b3.val[0]);
-        b3.val[1] = vsubq_f32(a.val[1], b3.val[1]);
-        b3.val[2] = vsubq_f32(a.val[2], b3.val[2]);
-        b3.val[3] = vsubq_f32(a.val[3], b3.val[3]);
-
-        res.val[0] = vmlaq_f32(res.val[0], b0.val[0], b0.val[0]);
-        res.val[1] = vmlaq_f32(res.val[1], b1.val[0], b1.val[0]);
-        res.val[2] = vmlaq_f32(res.val[2], b2.val[0], b2.val[0]);
-        res.val[3] = vmlaq_f32(res.val[3], b3.val[0], b3.val[0]);
-
-        res.val[0] = vmlaq_f32(res.val[0], b0.val[1], b0.val[1]);
-        res.val[1] = vmlaq_f32(res.val[1], b1.val[1], b1.val[1]);
-        res.val[2] = vmlaq_f32(res.val[2], b2.val[1], b2.val[1]);
-        res.val[3] = vmlaq_f32(res.val[3], b3.val[1], b3.val[1]);
-
-        res.val[0] = vmlaq_f32(res.val[0], b0.val[2], b0.val[2]);
-        res.val[1] = vmlaq_f32(res.val[1], b1.val[2], b1.val[2]);
-        res.val[2] = vmlaq_f32(res.val[2], b2.val[2], b2.val[2]);
-        res.val[3] = vmlaq_f32(res.val[3], b3.val[2], b3.val[2]);
-
-        res.val[0] = vmlaq_f32(res.val[0], b0.val[3], b0.val[3]);
-        res.val[1] = vmlaq_f32(res.val[1], b1.val[3], b1.val[3]);
-        res.val[2] = vmlaq_f32(res.val[2], b2.val[3], b2.val[3]);
-        res.val[3] = vmlaq_f32(res.val[3], b3.val[3], b3.val[3]);
-
-        cur_d -= 16;
-        x += 16;
-        y0 += 16;
-        y1 += 16;
-        y2 += 16;
-        y3 += 16;
-    }
-    if (cur_d >= 8) {
-        float32x4x2_t a = vcvt2_f32_half(vld2_u16((const uint16_t*)x));
-        float32x4x2_t b0 = vcvt2_f32_half(vld2_u16((const uint16_t*)y0));
-        float32x4x2_t b1 = vcvt2_f32_half(vld2_u16((const uint16_t*)y1));
-        float32x4x2_t b2 = vcvt2_f32_half(vld2_u16((const uint16_t*)y2));
-        float32x4x2_t b3 = vcvt2_f32_half(vld2_u16((const uint16_t*)y3));
-
-        b0.val[0] = vsubq_f32(a.val[0], b0.val[0]);
-        b0.val[1] = vsubq_f32(a.val[1], b0.val[1]);
-
-        b1.val[0] = vsubq_f32(a.val[0], b1.val[0]);
-        b1.val[1] = vsubq_f32(a.val[1], b1.val[1]);
-
-        b2.val[0] = vsubq_f32(a.val[0], b2.val[0]);
-        b2.val[1] = vsubq_f32(a.val[1], b2.val[1]);
-
-        b3.val[0] = vsubq_f32(a.val[0], b3.val[0]);
-        b3.val[1] = vsubq_f32(a.val[1], b3.val[1]);
-
-        res.val[0] = vmlaq_f32(res.val[0], b0.val[0], b0.val[0]);
-        res.val[1] = vmlaq_f32(res.val[1], b1.val[0], b1.val[0]);
-        res.val[2] = vmlaq_f32(res.val[2], b2.val[0], b2.val[0]);
-        res.val[3] = vmlaq_f32(res.val[3], b3.val[0], b3.val[0]);
-
-        res.val[0] = vmlaq_f32(res.val[0], b0.val[1], b0.val[1]);
-        res.val[1] = vmlaq_f32(res.val[1], b1.val[1], b1.val[1]);
-        res.val[2] = vmlaq_f32(res.val[2], b2.val[1], b2.val[1]);
-        res.val[3] = vmlaq_f32(res.val[3], b3.val[1], b3.val[1]);
-
-        cur_d -= 8;
-        x += 8;
-        y0 += 8;
-        y1 += 8;
-        y2 += 8;
-        y3 += 8;
-    }
-    if (cur_d >= 4) {
-        float32x4_t a = vcvt_f32_half(vld1_u16((const uint16_t*)x));
-        float32x4_t b0 = vcvt_f32_half(vld1_u16((const uint16_t*)y0));
-        float32x4_t b1 = vcvt_f32_half(vld1_u16((const uint16_t*)y1));
-        float32x4_t b2 = vcvt_f32_half(vld1_u16((const uint16_t*)y2));
-        float32x4_t b3 = vcvt_f32_half(vld1_u16((const uint16_t*)y3));
-        b0 = vsubq_f32(a, b0);
-        b1 = vsubq_f32(a, b1);
-        b2 = vsubq_f32(a, b2);
-        b3 = vsubq_f32(a, b3);
-
-        res.val[0] = vmlaq_f32(res.val[0], b0, b0);
-        res.val[1] = vmlaq_f32(res.val[1], b1, b1);
-        res.val[2] = vmlaq_f32(res.val[2], b2, b2);
-        res.val[3] = vmlaq_f32(res.val[3], b3, b3);
-        cur_d -= 4;
-        x += 4;
-        y0 += 4;
-        y1 += 4;
-        y2 += 4;
-        y3 += 4;
-    }
-    if (cur_d >= 0) {
-        uint16x4_t res_x = vdup_n_u16(0);
-        uint16x4_t res_y0 = vdup_n_u16(0);
-        uint16x4_t res_y1 = vdup_n_u16(0);
-        uint16x4_t res_y2 = vdup_n_u16(0);
-        uint16x4_t res_y3 = vdup_n_u16(0);
-        switch (cur_d) {
-            case 3:
-                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 2);
-                res_y0 = vld1_lane_u16((const uint16_t*)y0, res_y0, 2);
-                res_y1 = vld1_lane_u16((const uint16_t*)y1, res_y1, 2);
-                res_y2 = vld1_lane_u16((const uint16_t*)y2, res_y2, 2);
-                res_y3 = vld1_lane_u16((const uint16_t*)y3, res_y3, 2);
-                x++;
-                y0++;
-                y1++;
-                y2++;
-                y3++;
-                cur_d--;
-            case 2:
-                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 1);
-                res_y0 = vld1_lane_u16((const uint16_t*)y0, res_y0, 1);
-                res_y1 = vld1_lane_u16((const uint16_t*)y1, res_y1, 1);
-                res_y2 = vld1_lane_u16((const uint16_t*)y2, res_y2, 1);
-                res_y3 = vld1_lane_u16((const uint16_t*)y3, res_y3, 1);
-                x++;
-                y0++;
-                y1++;
-                y2++;
-                y3++;
-                cur_d--;
-            case 1:
-                res_x = vld1_lane_u16((const uint16_t*)x, res_x, 0);
-                res_y0 = vld1_lane_u16((const uint16_t*)y0, res_y0, 0);
-                res_y1 = vld1_lane_u16((const uint16_t*)y1, res_y1, 0);
-                res_y2 = vld1_lane_u16((const uint16_t*)y2, res_y2, 0);
-                res_y3 = vld1_lane_u16((const uint16_t*)y3, res_y3, 0);
-                x++;
-                y0++;
-                y1++;
-                y2++;
-                y3++;
-                cur_d--;
-        }
-        float32x4_t diff0 = vsubq_f32(vcvt_f32_half(res_x), vcvt_f32_half(res_y0));
-        float32x4_t diff1 = vsubq_f32(vcvt_f32_half(res_x), vcvt_f32_half(res_y1));
-        float32x4_t diff2 = vsubq_f32(vcvt_f32_half(res_x), vcvt_f32_half(res_y2));
-        float32x4_t diff3 = vsubq_f32(vcvt_f32_half(res_x), vcvt_f32_half(res_y3));
-        res.val[0] = vmlaq_f32(res.val[0], diff0, diff0);
-        res.val[1] = vmlaq_f32(res.val[1], diff1, diff1);
-        res.val[2] = vmlaq_f32(res.val[2], diff2, diff2);
-        res.val[3] = vmlaq_f32(res.val[3], diff3, diff3);
-    }
-    dis0 = vaddvq_f32(res.val[0]);
-    dis1 = vaddvq_f32(res.val[1]);
-    dis2 = vaddvq_f32(res.val[2]);
-    dis3 = vaddvq_f32(res.val[3]);
-    return;
-}
 }  // namespace faiss
 #endif

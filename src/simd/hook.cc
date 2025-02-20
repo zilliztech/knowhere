@@ -9,18 +9,11 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
-// -*- c++ -*-
-
 #include "hook.h"
 
-#include <iostream>
 #include <mutex>
 
 #include "faiss/FaissHook.h"
-
-#if defined(__ARM_NEON)
-#include "distances_neon.h"
-#endif
 
 #if defined(__x86_64__)
 #include "distances_avx.h"
@@ -29,12 +22,16 @@
 #include "instruction_set.h"
 #endif
 
+#if defined(__ARM_NEON)
+#include "distances_neon.h"
+#endif
+
 #if defined(__powerpc64__)
 #include "distances_powerpc.h"
 #endif
 
 #include "distances_ref.h"
-#include "knowhere/log.h"
+
 namespace faiss {
 
 #if defined(__x86_64__)
@@ -45,6 +42,7 @@ bool use_sse4_2 = true;
 
 bool support_pq_fast_scan = true;
 
+///////////////////////////////////////////////////////////////////////////////
 decltype(fvec_inner_product) fvec_inner_product = fvec_inner_product_ref;
 decltype(fvec_L2sqr) fvec_L2sqr = fvec_L2sqr_ref;
 
@@ -64,22 +62,27 @@ decltype(fvec_L2sqr_ny_transposed) fvec_L2sqr_ny_transposed = fvec_L2sqr_ny_tran
 decltype(fvec_inner_product_batch_4) fvec_inner_product_batch_4 = fvec_inner_product_batch_4_ref;
 decltype(fvec_L2sqr_batch_4) fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref;
 
+// for hnsw sq, obsolete
 decltype(ivec_inner_product) ivec_inner_product = ivec_inner_product_ref;
 decltype(ivec_L2sqr) ivec_L2sqr = ivec_L2sqr_ref;
 
-// fp16/bf16 distance
+// fp16
 decltype(fp16_vec_L2sqr) fp16_vec_L2sqr = fp16_vec_L2sqr_ref;
-decltype(bf16_vec_L2sqr) bf16_vec_L2sqr = bf16_vec_L2sqr_ref;
 decltype(fp16_vec_inner_product) fp16_vec_inner_product = fp16_vec_inner_product_ref;
-decltype(bf16_vec_inner_product) bf16_vec_inner_product = bf16_vec_inner_product_ref;
 decltype(fp16_vec_norm_L2sqr) fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_ref;
-decltype(bf16_vec_norm_L2sqr) bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_ref;
 
 decltype(fp16_vec_inner_product_batch_4) fp16_vec_inner_product_batch_4 = fp16_vec_inner_product_batch_4_ref;
-decltype(bf16_vec_inner_product_batch_4) bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_ref;
 decltype(fp16_vec_L2sqr_batch_4) fp16_vec_L2sqr_batch_4 = fp16_vec_L2sqr_batch_4_ref;
+
+// bf16
+decltype(bf16_vec_L2sqr) bf16_vec_L2sqr = bf16_vec_L2sqr_ref;
+decltype(bf16_vec_inner_product) bf16_vec_inner_product = bf16_vec_inner_product_ref;
+decltype(bf16_vec_norm_L2sqr) bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_ref;
+
+decltype(bf16_vec_inner_product_batch_4) bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_ref;
 decltype(bf16_vec_L2sqr_batch_4) bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_ref;
 
+///////////////////////////////////////////////////////////////////////////////
 #if defined(__x86_64__)
 bool
 cpu_support_avx512() {
@@ -114,37 +117,33 @@ enable_patch_for_fp32_bf16() {
 #if defined(__x86_64__)
     if (use_avx512 && cpu_support_avx512()) {
         // Cloud branch
-        fvec_inner_product = fvec_inner_product_avx512_bf16_patch;
-        fvec_L2sqr = fvec_L2sqr_avx512_bf16_patch;
+        fvec_inner_product = fvec_inner_product_bf16_patch_avx512;
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_bf16_patch_avx512;
 
-        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_avx512_bf16_patch;
-        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_avx512_bf16_patch;
-
+        fvec_L2sqr = fvec_L2sqr_bf16_patch_avx512;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_bf16_patch_avx512;
     } else if (use_avx2 && cpu_support_avx2()) {
-        fvec_inner_product = fvec_inner_product_avx_bf16_patch;
-        fvec_L2sqr = fvec_L2sqr_avx_bf16_patch;
+        fvec_inner_product = fvec_inner_product_bf16_patch_avx;
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_bf16_patch_avx;
 
-        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_avx_bf16_patch;
-        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_avx_bf16_patch;
-
+        fvec_L2sqr = fvec_L2sqr_bf16_patch_avx;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_bf16_patch_avx;
     } else if (use_sse4_2 && cpu_support_sse4_2()) {
         // The branch that can't be reached
     } else {
-        fvec_inner_product = fvec_inner_product_ref_bf16_patch;
-        fvec_L2sqr = fvec_L2sqr_ref_bf16_patch;
+        fvec_inner_product = fvec_inner_product_bf16_patch_ref;
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_bf16_patch_ref;
 
-        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_ref_bf16_patch;
-        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref_bf16_patch;
+        fvec_L2sqr = fvec_L2sqr_bf16_patch_ref;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_bf16_patch_ref;
     }
 #endif
 #if defined(__ARM_NEON)
+    fvec_inner_product = fvec_inner_product_bf16_patch_neon;
+    fvec_inner_product_batch_4 = fvec_inner_product_batch_4_bf16_patch_neon;
 
-    fvec_inner_product = fvec_inner_product_neon_bf16_patch;
-    fvec_L2sqr = fvec_L2sqr_neon_bf16_patch;
-
-    fvec_inner_product_batch_4 = fvec_inner_product_batch_4_neon_bf16_patch;
-    fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_neon_bf16_patch;
-
+    fvec_L2sqr = fvec_L2sqr_bf16_patch_neon;
+    fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_bf16_patch_neon;
 #endif
 }
 
@@ -155,25 +154,23 @@ disable_patch_for_fp32_bf16() {
     if (use_avx512 && cpu_support_avx512()) {
         // Cloud branch
         fvec_inner_product = fvec_inner_product_avx512;
-        fvec_L2sqr = fvec_L2sqr_avx512;
-
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_avx512;
-        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_avx512;
 
+        fvec_L2sqr = fvec_L2sqr_avx512;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_avx512;
     } else if (use_avx2 && cpu_support_avx2()) {
         fvec_inner_product = fvec_inner_product_avx;
-        fvec_L2sqr = fvec_L2sqr_avx;
-
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_avx;
-        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_avx;
 
+        fvec_L2sqr = fvec_L2sqr_avx;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_avx;
     } else if (use_sse4_2 && cpu_support_sse4_2()) {
         // The branch that can't be reached
     } else {
         fvec_inner_product = fvec_inner_product_ref;
-        fvec_L2sqr = fvec_L2sqr_ref;
-
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_ref;
+
+        fvec_L2sqr = fvec_L2sqr_ref;
         fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref;
     }
 #endif
@@ -198,24 +195,29 @@ fvec_hook(std::string& simd_type) {
 
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_avx512;
         fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_avx512;
+        fvec_L2sqr_ny_nearest = fvec_L2sqr_ny_nearest_avx;  // avx2 compute small dim faster than avx512
 
+        // for hnsw sq, obsolete
         ivec_inner_product = ivec_inner_product_avx512;
         ivec_L2sqr = ivec_L2sqr_avx512;
 
+        // fp16
         fp16_vec_inner_product = fp16_vec_inner_product_avx512;
         fp16_vec_L2sqr = fp16_vec_L2sqr_avx512;
         fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_avx512;
 
+        fp16_vec_inner_product_batch_4 = fp16_vec_inner_product_batch_4_avx512;
+        fp16_vec_L2sqr_batch_4 = fp16_vec_L2sqr_batch_4_avx512;
+
+        // bf16
         bf16_vec_inner_product = bf16_vec_inner_product_avx512;
         bf16_vec_L2sqr = bf16_vec_L2sqr_avx512;
         bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_avx512;
 
-        fp16_vec_inner_product_batch_4 = fp16_vec_inner_product_batch_4_avx512;
         bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_avx512;
-        fp16_vec_L2sqr_batch_4 = fp16_vec_L2sqr_batch_4_avx512;
         bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_avx512;
-        fvec_L2sqr_ny_nearest = fvec_L2sqr_ny_nearest_avx;  // avx2 compute small dim faster than avx512
 
+        //
         simd_type = "AVX512";
         support_pq_fast_scan = true;
     } else if (use_avx2 && cpu_support_avx2()) {
@@ -232,24 +234,29 @@ fvec_hook(std::string& simd_type) {
 
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_avx;
         fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_avx;
+        fvec_L2sqr_ny_nearest = fvec_L2sqr_ny_nearest_avx;
 
+        // for hnsw sq, obsolete
         ivec_inner_product = ivec_inner_product_avx;
         ivec_L2sqr = ivec_L2sqr_avx;
 
+        // fp16
         fp16_vec_inner_product = fp16_vec_inner_product_avx;
         fp16_vec_L2sqr = fp16_vec_L2sqr_avx;
         fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_avx;
 
+        fp16_vec_inner_product_batch_4 = fp16_vec_inner_product_batch_4_avx;
+        fp16_vec_L2sqr_batch_4 = fp16_vec_L2sqr_batch_4_avx;
+
+        // bf16
         bf16_vec_inner_product = bf16_vec_inner_product_avx;
         bf16_vec_L2sqr = bf16_vec_L2sqr_avx;
         bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_avx;
 
-        fp16_vec_inner_product_batch_4 = fp16_vec_inner_product_batch_4_avx;
         bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_avx;
-        fp16_vec_L2sqr_batch_4 = fp16_vec_L2sqr_batch_4_avx;
         bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_avx;
 
-        fvec_L2sqr_ny_nearest = fvec_L2sqr_ny_nearest_avx;
+        //
         simd_type = "AVX2";
         support_pq_fast_scan = true;
     } else if (use_sse4_2 && cpu_support_sse4_2()) {
@@ -267,22 +274,27 @@ fvec_hook(std::string& simd_type) {
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_ref;
         fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref;
 
+        // for hnsw sq, obsolete
         ivec_inner_product = ivec_inner_product_sse;
         ivec_L2sqr = ivec_L2sqr_sse;
 
+        // fp16
         fp16_vec_inner_product = fp16_vec_inner_product_ref;
         fp16_vec_L2sqr = fp16_vec_L2sqr_ref;
         fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_ref;
 
+        fp16_vec_inner_product_batch_4 = fp16_vec_inner_product_batch_4_ref;
+        fp16_vec_L2sqr_batch_4 = fp16_vec_L2sqr_batch_4_ref;
+
+        // bf16
         bf16_vec_inner_product = bf16_vec_inner_product_sse;
         bf16_vec_L2sqr = bf16_vec_L2sqr_sse;
         bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_sse;
 
-        fp16_vec_inner_product_batch_4 = fp16_vec_inner_product_batch_4_ref;
         bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_ref;
-        fp16_vec_L2sqr_batch_4 = fp16_vec_L2sqr_batch_4_ref;
         bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_ref;
 
+        //
         simd_type = "SSE4_2";
         support_pq_fast_scan = false;
     } else {
@@ -300,22 +312,27 @@ fvec_hook(std::string& simd_type) {
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_ref;
         fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref;
 
+        // for hnsw sq, obsolete
         ivec_inner_product = ivec_inner_product_ref;
         ivec_L2sqr = ivec_L2sqr_ref;
 
+        // fp16
         fp16_vec_inner_product = fp16_vec_inner_product_ref;
         fp16_vec_L2sqr = fp16_vec_L2sqr_ref;
         fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_ref;
 
+        fp16_vec_inner_product_batch_4 = fp16_vec_inner_product_batch_4_ref;
+        fp16_vec_L2sqr_batch_4 = fp16_vec_L2sqr_batch_4_ref;
+
+        // bf16
         bf16_vec_inner_product = bf16_vec_inner_product_ref;
         bf16_vec_L2sqr = bf16_vec_L2sqr_ref;
         bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_ref;
 
-        fp16_vec_inner_product_batch_4 = fp16_vec_inner_product_batch_4_ref;
         bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_ref;
-        fp16_vec_L2sqr_batch_4 = fp16_vec_L2sqr_batch_4_ref;
         bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_ref;
 
+        //
         simd_type = "GENERIC";
         support_pq_fast_scan = false;
     }
@@ -333,28 +350,31 @@ fvec_hook(std::string& simd_type) {
     fvec_madd = fvec_madd_neon;
     fvec_madd_and_argmin = fvec_madd_and_argmin_neon;
 
+    fvec_inner_product_batch_4 = fvec_inner_product_batch_4_neon;
+    fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_neon;
+
     ivec_inner_product = ivec_inner_product_neon;
     ivec_L2sqr = ivec_L2sqr_neon;
 
+    // fp16
     fp16_vec_inner_product = fp16_vec_inner_product_neon;
     fp16_vec_L2sqr = fp16_vec_L2sqr_neon;
     fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_neon;
 
+    fp16_vec_inner_product_batch_4 = fp16_vec_inner_product_batch_4_neon;
+    fp16_vec_L2sqr_batch_4 = fp16_vec_L2sqr_batch_4_neon;
+
+    // bf16
     bf16_vec_inner_product = bf16_vec_inner_product_neon;
     bf16_vec_L2sqr = bf16_vec_L2sqr_neon;
     bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_neon;
 
-    fvec_inner_product_batch_4 = fvec_inner_product_batch_4_neon;
-    fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_neon;
-
-    fp16_vec_inner_product_batch_4 = fp16_vec_inner_product_batch_4_neon;
     bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_neon;
-    fp16_vec_L2sqr_batch_4 = fp16_vec_L2sqr_batch_4_neon;
     bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_neon;
 
+    //
     simd_type = "NEON";
     support_pq_fast_scan = true;
-
 #endif
 
 // ToDo MG: include VSX intrinsics via distances_vsx once _ref tests succeed
@@ -376,9 +396,11 @@ fvec_hook(std::string& simd_type) {
     fvec_madd = fvec_madd_ppc;
     fvec_madd_and_argmin = fvec_madd_and_argmin_ppc;
 
+    // for hnsw sq, obsolete
     ivec_inner_product = ivec_inner_product_ppc;
     ivec_L2sqr = ivec_L2sqr_ppc;
 
+    //
     simd_type = "GENERIC";
     support_pq_fast_scan = false;
 #endif
