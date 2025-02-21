@@ -97,7 +97,6 @@ fvec_inner_product_neon(const float* x, const float* y, size_t d) {
         c.val[0] = vaddq_f32(c.val[0], c.val[2]);
 
         sum_ = vaddq_f32(sum_, c.val[0]);
-
         d -= 16;
     }
 
@@ -141,7 +140,6 @@ fvec_inner_product_neon(const float* x, const float* y, size_t d) {
     }
 
     sum_ = vaddq_f32(sum_, vmulq_f32(res_x, res_y));
-
     return vaddvq_f32(sum_);
 }
 
@@ -169,7 +167,6 @@ fvec_L2sqr_neon(const float* x, const float* y, size_t d) {
         c.val[0] = vaddq_f32(c.val[0], c.val[2]);
 
         sum_ = vaddq_f32(sum_, c.val[0]);
-
         d -= 16;
     }
 
@@ -219,7 +216,6 @@ fvec_L2sqr_neon(const float* x, const float* y, size_t d) {
     }
 
     sum_ = vaddq_f32(sum_, vmulq_f32(vsubq_f32(res_x, res_y), vsubq_f32(res_x, res_y)));
-
     return vaddvq_f32(sum_);
 }
 
@@ -248,7 +244,6 @@ fvec_L1_neon(const float* x, const float* y, size_t d) {
         c.val[0] = vaddq_f32(c.val[0], c.val[2]);
 
         sum_ = vaddq_f32(sum_, c.val[0]);
-
         d -= 16;
     }
 
@@ -298,7 +293,6 @@ fvec_L1_neon(const float* x, const float* y, size_t d) {
     }
 
     sum_ = vaddq_f32(sum_, vabsq_f32(vsubq_f32(res_x, res_y)));
-
     return vaddvq_f32(sum_);
 }
 
@@ -327,7 +321,6 @@ fvec_Linf_neon(const float* x, const float* y, size_t d) {
         c.val[0] = vmaxq_f32(c.val[0], c.val[2]);
 
         sum_ = vmaxq_f32(sum_, c.val[0]);
-
         d -= 16;
     }
 
@@ -377,7 +370,6 @@ fvec_Linf_neon(const float* x, const float* y, size_t d) {
     }
 
     sum_ = vmaxq_f32(sum_, vabsq_f32(vsubq_f32(res_x, res_y)));
-
     return vmaxvq_f32(sum_);
 }
 
@@ -398,7 +390,6 @@ fvec_norm_L2sqr_neon(const float* x, size_t d) {
         c.val[0] = vaddq_f32(c.val[0], c.val[2]);
 
         sum_ = vaddq_f32(sum_, c.val[0]);
-
         d -= 16;
     }
 
@@ -436,7 +427,6 @@ fvec_norm_L2sqr_neon(const float* x, size_t d) {
     }
 
     sum_ = vaddq_f32(sum_, vmulq_f32(res_x, res_x));
-
     return vaddvq_f32(sum_);
 }
 
@@ -558,28 +548,21 @@ fvec_madd_and_argmin_neon(size_t n, const float* a, float bf, const float* b, fl
         vst1q_f32_x4(c + len - n, c_);
 
         uint32_t loc = len - n;
+
         auto cmp = vcleq_f32(c_.val[0], val);
-
         ids = vbslq_u32(cmp, vaddq_u32(uint32x4_t{0, 1, 2, 3}, vld1q_dup_u32(&loc)), ids);
-
         val = vminq_f32(c_.val[0], val);
 
         cmp = vcleq_f32(c_.val[1], val);
-
         ids = vbslq_u32(cmp, vaddq_u32(uint32x4_t{4, 5, 6, 7}, vld1q_dup_u32(&loc)), ids);
-
         val = vminq_f32(val, c_.val[1]);
 
         cmp = vcleq_f32(c_.val[2], val);
-
         ids = vbslq_u32(cmp, vaddq_u32(uint32x4_t{8, 9, 10, 11}, vld1q_dup_u32(&loc)), ids);
-
         val = vminq_f32(val, c_.val[2]);
 
         cmp = vcleq_f32(c_.val[3], val);
-
         ids = vbslq_u32(cmp, vaddq_u32(uint32x4_t{12, 13, 14, 15}, vld1q_dup_u32(&loc)), ids);
-
         val = vminq_f32(val, c_.val[3]);
 
         n -= 16;
@@ -616,9 +599,7 @@ fvec_madd_and_argmin_neon(size_t n, const float* a, float bf, const float* b, fl
         uint32_t loc = len - n;
 
         auto cmp = vcleq_f32(c_, val);
-
         ids = vbslq_u32(cmp, vaddq_u32(uint32x4_t{0, 1, 2, 3}, vld1q_dup_u32(&loc)), ids);
-
         val = vminq_f32(val, c_);
         n -= 4;
     }
@@ -1113,9 +1094,8 @@ fvec_L2sqr_batch_4_neon(const float* x, const float* y0, const float* y1, const 
 
 int32_t
 ivec_inner_product_neon(const int8_t* x, const int8_t* y, size_t d) {
-    size_t i;
     int32_t res = 0;
-    for (i = 0; i < d; i++) {
+    for (size_t i = 0; i < d; i++) {
         res += (int32_t)x[i] * y[i];
     }
     return res;
@@ -1123,9 +1103,8 @@ ivec_inner_product_neon(const int8_t* x, const int8_t* y, size_t d) {
 
 int32_t
 ivec_L2sqr_neon(const int8_t* x, const int8_t* y, size_t d) {
-    size_t i;
     int32_t res = 0;
-    for (i = 0; i < d; i++) {
+    for (size_t i = 0; i < d; i++) {
         const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
         res += tmp * tmp;
     }
@@ -1454,7 +1433,6 @@ fp16_vec_inner_product_batch_4_neon(const knowhere::fp16* x, const knowhere::fp1
     dis1 = vaddvq_f32(res.val[1]);
     dis2 = vaddvq_f32(res.val[2]);
     dis3 = vaddvq_f32(res.val[3]);
-    return;
 }
 
 void
@@ -1632,7 +1610,6 @@ fp16_vec_L2sqr_batch_4_neon(const knowhere::fp16* x, const knowhere::fp16* y0, c
     dis1 = vaddvq_f32(res.val[1]);
     dis2 = vaddvq_f32(res.val[2]);
     dis3 = vaddvq_f32(res.val[3]);
-    return;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1768,7 +1745,6 @@ bf16_vec_L2sqr_neon(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) 
         }
 
         float32x4_t diff = vsubq_f32(vcvt_f32_half(res_x), vcvt_f32_half(res_y));
-
         res.val[0] = vmlaq_f32(res.val[0], diff, diff);
     }
     return vaddvq_f32(res.val[0]);
@@ -1820,7 +1796,6 @@ bf16_vec_norm_L2sqr_neon(const knowhere::bf16* x, size_t d) {
         }
 
         float32x4_t x_fp32 = vcvt_f32_half(res_x);
-
         res.val[0] = vmlaq_f32(res.val[0], x_fp32, x_fp32);
     }
     return vaddvq_f32(res.val[0]);
@@ -1959,7 +1934,6 @@ bf16_vec_inner_product_batch_4_neon(const knowhere::bf16* x, const knowhere::bf1
     dis1 = vaddvq_f32(res.val[1]);
     dis2 = vaddvq_f32(res.val[2]);
     dis3 = vaddvq_f32(res.val[3]);
-    return;
 }
 
 void
@@ -2137,7 +2111,6 @@ bf16_vec_L2sqr_batch_4_neon(const knowhere::bf16* x, const knowhere::bf16* y0, c
     dis1 = vaddvq_f32(res.val[1]);
     dis2 = vaddvq_f32(res.val[2]);
     dis3 = vaddvq_f32(res.val[3]);
-    return;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -2171,7 +2144,6 @@ fvec_inner_product_bf16_patch_neon(const float* x, const float* y, size_t d) {
         c.val[0] = vaddq_f32(c.val[0], c.val[2]);
 
         sum_ = vaddq_f32(sum_, c.val[0]);
-
         d -= 16;
     }
 
@@ -2226,7 +2198,6 @@ fvec_inner_product_bf16_patch_neon(const float* x, const float* y, size_t d) {
     res_y = bf16_float_neon(res_y);
 
     sum_ = vaddq_f32(sum_, vmulq_f32(res_x, res_y));
-
     return vaddvq_f32(sum_);
 }
 
@@ -2264,7 +2235,6 @@ fvec_L2sqr_bf16_patch_neon(const float* x, const float* y, size_t d) {
         c.val[0] = vaddq_f32(c.val[0], c.val[2]);
 
         sum_ = vaddq_f32(sum_, c.val[0]);
-
         d -= 16;
     }
 
@@ -2326,7 +2296,6 @@ fvec_L2sqr_bf16_patch_neon(const float* x, const float* y, size_t d) {
     res_y = bf16_float_neon(res_y);
 
     sum_ = vaddq_f32(sum_, vmulq_f32(vsubq_f32(res_x, res_y), vsubq_f32(res_x, res_y)));
-
     return vaddvq_f32(sum_);
 }
 

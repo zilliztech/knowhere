@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #if defined(__x86_64__)
+
 #include "distances_avx512.h"
 
 #include <immintrin.h>
@@ -50,10 +51,9 @@ _mm512_bf16_to_fp32(const __m256i& x) {
 FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
 float
 fvec_inner_product_avx512(const float* x, const float* y, size_t d) {
-    size_t i;
     float res = 0;
     FAISS_PRAGMA_IMPRECISE_LOOP
-    for (i = 0; i < d; i++) {
+    for (size_t i = 0; i < d; i++) {
         res += x[i] * y[i];
     }
     return res;
@@ -64,10 +64,9 @@ FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
 float
 fvec_L2sqr_avx512(const float* x, const float* y, size_t d) {
-    size_t i;
     float res = 0;
     FAISS_PRAGMA_IMPRECISE_LOOP
-    for (i = 0; i < d; i++) {
+    for (size_t i = 0; i < d; i++) {
         const float tmp = x[i] - y[i];
         res += tmp * tmp;
     }
@@ -202,10 +201,8 @@ void
 fvec_inner_product_batch_4_avx512(const float* __restrict x, const float* __restrict y0, const float* __restrict y1,
                                   const float* __restrict y2, const float* __restrict y3, const size_t d, float& dis0,
                                   float& dis1, float& dis2, float& dis3) {
-    float d0 = 0;
-    float d1 = 0;
-    float d2 = 0;
-    float d3 = 0;
+    float d0 = 0, d1 = 0, d2 = 0, d3 = 0;
+
     FAISS_PRAGMA_IMPRECISE_LOOP
     for (size_t i = 0; i < d; ++i) {
         d0 += x[i] * y0[i];
@@ -225,10 +222,8 @@ FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
 void
 fvec_L2sqr_batch_4_avx512(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
                           const size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
-    float d0 = 0;
-    float d1 = 0;
-    float d2 = 0;
-    float d3 = 0;
+    float d0 = 0, d1 = 0, d2 = 0, d3 = 0;
+
     FAISS_PRAGMA_IMPRECISE_LOOP
     for (size_t i = 0; i < d; ++i) {
         const float q0 = x[i] - y0[i];
@@ -280,9 +275,8 @@ fvec_norm_L2sqr_avx512(const float* x, size_t d) {
 
 int32_t
 ivec_inner_product_avx512(const int8_t* x, const int8_t* y, size_t d) {
-    size_t i;
     int32_t res = 0;
-    for (i = 0; i < d; i++) {
+    for (size_t i = 0; i < d; i++) {
         res += (int32_t)x[i] * y[i];
     }
     return res;
@@ -290,9 +284,8 @@ ivec_inner_product_avx512(const int8_t* x, const int8_t* y, size_t d) {
 
 int32_t
 ivec_L2sqr_avx512(const int8_t* x, const int8_t* y, size_t d) {
-    size_t i;
     int32_t res = 0;
-    for (i = 0; i < d; i++) {
+    for (size_t i = 0; i < d; i++) {
         const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
         res += tmp * tmp;
     }
@@ -439,7 +432,6 @@ fp16_vec_inner_product_batch_4_avx512(const knowhere::fp16* x, const knowhere::f
     dis1 = _mm512_reduce_add_ps(m512_res_1);
     dis2 = _mm512_reduce_add_ps(m512_res_2);
     dis3 = _mm512_reduce_add_ps(m512_res_3);
-    return;
 }
 
 void
@@ -492,7 +484,6 @@ fp16_vec_L2sqr_batch_4_avx512(const knowhere::fp16* x, const knowhere::fp16* y0,
     dis1 = _mm512_reduce_add_ps(m512_res_1);
     dis2 = _mm512_reduce_add_ps(m512_res_2);
     dis3 = _mm512_reduce_add_ps(m512_res_3);
-    return;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -637,7 +628,6 @@ bf16_vec_inner_product_batch_4_avx512(const knowhere::bf16* x, const knowhere::b
     dis1 = _mm512_reduce_add_ps(m512_res_1);
     dis2 = _mm512_reduce_add_ps(m512_res_2);
     dis3 = _mm512_reduce_add_ps(m512_res_3);
-    return;
 }
 
 void
@@ -690,7 +680,6 @@ bf16_vec_L2sqr_batch_4_avx512(const knowhere::bf16* x, const knowhere::bf16* y0,
     dis1 = _mm512_reduce_add_ps(m512_res_1);
     dis2 = _mm512_reduce_add_ps(m512_res_2);
     dis3 = _mm512_reduce_add_ps(m512_res_3);
-    return;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -699,10 +688,9 @@ bf16_vec_L2sqr_batch_4_avx512(const knowhere::bf16* x, const knowhere::bf16* y0,
 FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
 float
 fvec_inner_product_bf16_patch_avx512(const float* x, const float* y, size_t d) {
-    size_t i;
     float res = 0;
     FAISS_PRAGMA_IMPRECISE_LOOP
-    for (i = 0; i < d; i++) {
+    for (size_t i = 0; i < d; i++) {
         res += x[i] * bf16_float(y[i]);
     }
     return res;
@@ -712,10 +700,9 @@ FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
 float
 fvec_L2sqr_bf16_patch_avx512(const float* x, const float* y, size_t d) {
-    size_t i;
     float res = 0;
     FAISS_PRAGMA_IMPRECISE_LOOP
-    for (i = 0; i < d; i++) {
+    for (size_t i = 0; i < d; i++) {
         const float tmp = x[i] - bf16_float(y[i]);
         res += tmp * tmp;
     }
@@ -729,10 +716,8 @@ fvec_inner_product_batch_4_bf16_patch_avx512(const float* __restrict x, const fl
                                              const float* __restrict y1, const float* __restrict y2,
                                              const float* __restrict y3, const size_t d, float& dis0, float& dis1,
                                              float& dis2, float& dis3) {
-    float d0 = 0;
-    float d1 = 0;
-    float d2 = 0;
-    float d3 = 0;
+    float d0 = 0, d1 = 0, d2 = 0, d3 = 0;
+
     FAISS_PRAGMA_IMPRECISE_LOOP
     for (size_t i = 0; i < d; ++i) {
         d0 += x[i] * bf16_float(y0[i]);
@@ -752,10 +737,8 @@ FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
 void
 fvec_L2sqr_batch_4_bf16_patch_avx512(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
                                      const size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
-    float d0 = 0;
-    float d1 = 0;
-    float d2 = 0;
-    float d3 = 0;
+    float d0 = 0, d1 = 0, d2 = 0, d3 = 0;
+
     FAISS_PRAGMA_IMPRECISE_LOOP
     for (size_t i = 0; i < d; ++i) {
         const float q0 = x[i] - bf16_float(y0[i]);
@@ -776,5 +759,4 @@ fvec_L2sqr_batch_4_bf16_patch_avx512(const float* x, const float* y0, const floa
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
 }  // namespace faiss
-
 #endif

@@ -515,5 +515,4 @@ ivec_L2sqr_ppc(const int8_t* x, const int8_t* y, size_t d) {
 }
 
 }  // namespace faiss
-
 #endif

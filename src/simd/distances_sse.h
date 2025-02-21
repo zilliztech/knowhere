@@ -9,8 +9,7 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
-#ifndef DISTANCES_SSE_H
-#define DISTANCES_SSE_H
+#pragma once
 
 #include <cstdint>
 #include <cstdio>
@@ -72,5 +71,3 @@ float
 bf16_vec_norm_L2sqr_sse(const knowhere::bf16* x, size_t d);
 
 }  // namespace faiss
-
-#endif /* DISTANCES_SSE_H */
