@@ -975,25 +975,34 @@ void exhaustive_L2sqr_nearest_imp(
         size_t ny,
         float* vals,
         int64_t* ids) {
-    constexpr size_t ny_batch_size = 256; 
-    float sub_dis[ny_batch_size];
-    for (int64_t i = 0; i < nx; i++) {
-        const float* x_i = x + i * d;
-        size_t nearest_idx = 0;
-        float min_dis = HUGE_VALF;
-        // compute distances
-        for (auto j = 0; j < ny; j += ny_batch_size) {
-            const float* y_j = y + j * d;
-            const size_t y_j_n = std::min(ny_batch_size, ny - j);
-            auto batch_nearest_id =
-                    fvec_L2sqr_ny_nearest(sub_dis, x_i, y_j, d, y_j_n);
-            if (sub_dis[batch_nearest_id] < min_dis) {
-                nearest_idx = batch_nearest_id + j;
-                min_dis = sub_dis[batch_nearest_id];
+#pragma omp parallel
+    {
+        int nt = omp_get_num_threads();
+        int rank = omp_get_thread_num();
+
+        size_t i0 = nx * rank / nt;
+        size_t i1 = nx * (rank + 1) / nt;
+
+        constexpr size_t ny_batch_size = 256;
+        float dis_buffer[ny_batch_size];
+        for (size_t i = i0; i < i1; i++) {
+            const float* x_i = x + i * d;
+            size_t nearest_idx = 0;
+            float min_dis = HUGE_VALF;
+            // compute distances
+            for (auto j = 0; j < ny; j += ny_batch_size) {
+                const float* y_j = y + j * d;
+                const size_t y_j_n = std::min(ny_batch_size, ny - j);
+                auto batch_nearest_id =
+                        fvec_L2sqr_ny_nearest(dis_buffer, x_i, y_j, d, y_j_n);
+                if (dis_buffer[batch_nearest_id] < min_dis) {
+                    nearest_idx = batch_nearest_id + j;
+                    min_dis = dis_buffer[batch_nearest_id];
+                }
             }
+            ids[i] = nearest_idx;
+            vals[i] = min_dis;
         }
-        ids[i] = nearest_idx;
-        vals[i] = min_dis;
     }
 }
 
