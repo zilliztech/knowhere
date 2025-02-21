@@ -70,4 +70,16 @@ bf16_vec_L2sqr_sse(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
 float
 bf16_vec_norm_L2sqr_sse(const knowhere::bf16* x, size_t d);
 
+///////////////////////////////////////////////////////////////////////////////
+// int8
+
+float
+int8_vec_inner_product_sse(const int8_t* x, const int8_t* y, size_t d);
+
+float
+int8_vec_L2sqr_sse(const int8_t* x, const int8_t* y, size_t d);
+
+float
+int8_vec_norm_L2sqr_sse(const int8_t* x, size_t d);
+
 }  // namespace faiss
