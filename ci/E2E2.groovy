@@ -66,7 +66,7 @@ pipeline {
                       sh "pip3 install ${knowhere_wheel}"
                       sh "cat requirements.txt | xargs -n 1 pip3 install"
                       sh "cp -r /home/data/milvus/ann_fbin/ ."
-                      sh "pytest -v -m 'L0'"
+                      sh "pytest -n 2 -v -m 'L0'"
                     }
                 }
             }
