@@ -9,8 +9,7 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
-#ifndef DISTANCES_NEON_H
-#define DISTANCES_NEON_H
+#pragma once
 
 #include <cstdint>
 #include <cstdio>
@@ -137,5 +136,3 @@ fvec_L2sqr_batch_4_bf16_patch_neon(const float* x, const float* y0, const float*
                                    const size_t dim, float& dis0, float& dis1, float& dis2, float& dis3);
 
 }  // namespace faiss
-
-#endif /* DISTANCES_NEON_H */

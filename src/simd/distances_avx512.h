@@ -9,8 +9,7 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
-#ifndef DISTANCES_AVX512_H
-#define DISTANCES_AVX512_H
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -120,5 +119,3 @@ fvec_L2sqr_batch_4_bf16_patch_avx512(const float* x, const float* y0, const floa
                                      const size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
 
 }  // namespace faiss
-
-#endif /* DISTANCES_AVX512_H */

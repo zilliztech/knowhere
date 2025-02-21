@@ -11,8 +11,7 @@
  * language governing permissions and limitations under the License.
  */
 
-#ifndef DISTANCES_POWERPC_H
-#define DISTANCES_POWERPC_H
+#pragma once
 
 #include <cstdint>
 #include <cstdio>
@@ -92,5 +91,3 @@ int32_t
 ivec_L2sqr_ppc(const int8_t* x, const int8_t* y, size_t d);
 
 }  // namespace faiss
-
-#endif /* DISTANCES_POWERPC_H */

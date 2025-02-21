@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #if defined(__x86_64__)
+
 #include "distances_sse.h"
 
 #include <immintrin.h>
@@ -409,9 +410,8 @@ fvec_L2sqr_ny_sse(float* dis, const float* x, const float* y, size_t d, size_t n
 
 int32_t
 ivec_inner_product_sse(const int8_t* x, const int8_t* y, size_t d) {
-    size_t i;
     int32_t res = 0;
-    for (i = 0; i < d; i++) {
+    for (size_t i = 0; i < d; i++) {
         res += (int32_t)x[i] * y[i];
     }
     return res;
@@ -419,9 +419,8 @@ ivec_inner_product_sse(const int8_t* x, const int8_t* y, size_t d) {
 
 int32_t
 ivec_L2sqr_sse(const int8_t* x, const int8_t* y, size_t d) {
-    size_t i;
     int32_t res = 0;
-    for (i = 0; i < d; i++) {
+    for (size_t i = 0; i < d; i++) {
         const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
         res += tmp * tmp;
     }
@@ -491,7 +490,6 @@ bf16_vec_norm_L2sqr_sse(const knowhere::bf16* x, size_t d) {
     m_res = _mm_hadd_ps(m_res, m_res);
     m_res = _mm_hadd_ps(m_res, m_res);
     return _mm_cvtss_f32(m_res);
-    ;
 }
 
 }  // namespace faiss
