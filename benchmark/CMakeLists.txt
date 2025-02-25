@@ -51,6 +51,7 @@ benchmark_test(benchmark_float_bitset          hdf5/benchmark_float_bitset.cpp)
 benchmark_test(benchmark_float_qps             hdf5/benchmark_float_qps.cpp)
 benchmark_test(benchmark_float_range           hdf5/benchmark_float_range.cpp)
 benchmark_test(benchmark_float_range_bitset    hdf5/benchmark_float_range_bitset.cpp)
+benchmark_test(benchmark_simd_qps              hdf5/benchmark_simd_qps.cpp)
 
 benchmark_test(gen_hdf5_file hdf5/gen_hdf5_file.cpp)
 benchmark_test(gen_fbin_file hdf5/gen_fbin_file.cpp)
