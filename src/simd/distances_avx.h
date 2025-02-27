@@ -107,6 +107,27 @@ bf16_vec_L2sqr_batch_4_avx(const knowhere::bf16* x, const knowhere::bf16* y0, co
                            float& dis2, float& dis3);
 
 ///////////////////////////////////////////////////////////////////////////////
+// int8
+
+float
+int8_vec_inner_product_avx(const int8_t* x, const int8_t* y, size_t d);
+
+float
+int8_vec_L2sqr_avx(const int8_t* x, const int8_t* y, size_t d);
+
+float
+int8_vec_norm_L2sqr_avx(const int8_t* x, size_t d);
+
+void
+int8_vec_inner_product_batch_4_avx(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2,
+                                   const int8_t* y3, const size_t d, float& dis0, float& dis1, float& dis2,
+                                   float& dis3);
+
+void
+int8_vec_L2sqr_batch_4_avx(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2, const int8_t* y3,
+                           const size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
+
+///////////////////////////////////////////////////////////////////////////////
 // for cardinal
 
 float
