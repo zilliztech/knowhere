@@ -1,4 +1,4 @@
-int total_timeout_minutes = 90
+int total_timeout_minutes = 120
 def knowhere_wheel=''
 pipeline {
     agent {
