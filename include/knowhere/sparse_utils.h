@@ -34,6 +34,14 @@ enum class SparseMetricType {
     METRIC_BM25 = 2,
 };
 
+union SparseMetricParams {
+    struct {
+        float k1;
+        float b;
+        float avgdl;
+    } bm25;
+};
+
 // integer type in SparseRow
 using table_t = uint32_t;
 // type used to represent the id of a vector in the index interface.
@@ -64,33 +72,6 @@ GetDocValueBM25Computer(float k1, float b, float avgdl) {
         return tf * (k1 + 1) / (tf + k1 * (1 - b + b * (doc_len / avgdl)));
     };
 }
-
-// A docid filter that tests whether a given id is in the list of docids, which is regarded as another form of BitSet.
-// Note that all ids to be tested must be tested exactly once and in order.
-class DocIdFilterByVector {
- public:
-    DocIdFilterByVector(std::vector<table_t>&& docids) : docids_(std::move(docids)) {
-        std::sort(docids_.begin(), docids_.end());
-    }
-
-    [[nodiscard]] bool
-    test(const table_t id) {
-        // find the first id that is greater than or equal to the specific id
-        while (pos_ < docids_.size() && docids_[pos_] < id) {
-            ++pos_;
-        }
-        return !(pos_ < docids_.size() && docids_[pos_] == id);
-    }
-
-    [[nodiscard]] bool
-    empty() const {
-        return docids_.empty();
-    }
-
- private:
-    std::vector<table_t> docids_;
-    size_t pos_ = 0;
-};
 
 template <typename T>
 class SparseRow {

@@ -97,6 +97,9 @@ find_package(OpenMP REQUIRED)
 find_package(folly REQUIRED)
 include_directories(${folly_INCLUDE_DIRS})
 
+find_package(Microsoft.GSL REQUIRED)
+include_directories(${Microsoft.GSL_INCLUDE_DIRS})
+
 find_package(nlohmann_json REQUIRED)
 find_package(glog REQUIRED)
 find_package(prometheus-cpp REQUIRED)
