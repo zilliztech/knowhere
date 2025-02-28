@@ -683,6 +683,95 @@ bf16_vec_L2sqr_batch_4_avx512(const knowhere::bf16* x, const knowhere::bf16* y0,
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// int8
+
+FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
+float
+int8_vec_inner_product_avx512(const int8_t* x, const int8_t* y, size_t d) {
+    int32_t res = 0;
+    FAISS_PRAGMA_IMPRECISE_LOOP
+    for (size_t i = 0; i < d; i++) {
+        res += (int32_t)x[i] * (int32_t)y[i];
+    }
+    return (float)res;
+}
+FAISS_PRAGMA_IMPRECISE_FUNCTION_END
+
+FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
+float
+int8_vec_L2sqr_avx512(const int8_t* x, const int8_t* y, size_t d) {
+    int32_t res = 0;
+    FAISS_PRAGMA_IMPRECISE_LOOP
+    for (size_t i = 0; i < d; i++) {
+        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
+        res += tmp * tmp;
+    }
+    return (float)res;
+}
+FAISS_PRAGMA_IMPRECISE_FUNCTION_END
+
+FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
+float
+int8_vec_norm_L2sqr_avx512(const int8_t* x, size_t d) {
+    int32_t res = 0;
+    FAISS_PRAGMA_IMPRECISE_LOOP
+    for (size_t i = 0; i < d; i++) {
+        res += (int32_t)x[i] * (int32_t)x[i];
+    }
+    return (float)res;
+}
+FAISS_PRAGMA_IMPRECISE_FUNCTION_END
+
+FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
+void
+int8_vec_inner_product_batch_4_avx512(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2,
+                                      const int8_t* y3, const size_t d, float& dis0, float& dis1, float& dis2,
+                                      float& dis3) {
+    int32_t d0 = 0, d1 = 0, d2 = 0, d3 = 0;
+
+    FAISS_PRAGMA_IMPRECISE_LOOP
+    for (size_t i = 0; i < d; ++i) {
+        auto x_i = (int32_t)x[i];
+        d0 += x_i * (int32_t)y0[i];
+        d1 += x_i * (int32_t)y1[i];
+        d2 += x_i * (int32_t)y2[i];
+        d3 += x_i * (int32_t)y3[i];
+    }
+
+    dis0 = (float)d0;
+    dis1 = (float)d1;
+    dis2 = (float)d2;
+    dis3 = (float)d3;
+}
+FAISS_PRAGMA_IMPRECISE_FUNCTION_END
+
+FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
+void
+int8_vec_L2sqr_batch_4_avx512(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2, const int8_t* y3,
+                              const size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
+    int32_t d0 = 0, d1 = 0, d2 = 0, d3 = 0;
+
+    FAISS_PRAGMA_IMPRECISE_LOOP
+    for (size_t i = 0; i < d; ++i) {
+        auto x_i = (int32_t)x[i];
+        const int32_t q0 = x_i - (int32_t)y0[i];
+        const int32_t q1 = x_i - (int32_t)y1[i];
+        const int32_t q2 = x_i - (int32_t)y2[i];
+        const int32_t q3 = x_i - (int32_t)y3[i];
+        d0 += q0 * q0;
+        d1 += q1 * q1;
+        d2 += q2 * q2;
+        d3 += q3 * q3;
+    }
+
+    dis0 = (float)d0;
+    dis1 = (float)d1;
+    dis2 = (float)d2;
+    dis3 = (float)d3;
+}
+FAISS_PRAGMA_IMPRECISE_FUNCTION_END
+
+///////////////////////////////////////////////////////////////////////////////
 // for cardinal
 
 FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN

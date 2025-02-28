@@ -19,6 +19,7 @@
 #include <cstdint>
 
 #include "distances_ref.h"
+#include "faiss/impl/platform_macros.h"
 
 namespace faiss {
 
@@ -491,6 +492,46 @@ bf16_vec_norm_L2sqr_sse(const knowhere::bf16* x, size_t d) {
     m_res = _mm_hadd_ps(m_res, m_res);
     return _mm_cvtss_f32(m_res);
 }
+
+///////////////////////////////////////////////////////////////////////////////
+// int8
+
+FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
+float
+int8_vec_inner_product_sse(const int8_t* x, const int8_t* y, size_t d) {
+    int32_t res = 0;
+    FAISS_PRAGMA_IMPRECISE_LOOP
+    for (size_t i = 0; i < d; i++) {
+        res += (int32_t)x[i] * (int32_t)y[i];
+    }
+    return (float)res;
+}
+FAISS_PRAGMA_IMPRECISE_FUNCTION_END
+
+FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
+float
+int8_vec_L2sqr_sse(const int8_t* x, const int8_t* y, size_t d) {
+    int32_t res = 0;
+    FAISS_PRAGMA_IMPRECISE_LOOP
+    for (size_t i = 0; i < d; i++) {
+        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
+        res += tmp * tmp;
+    }
+    return (float)res;
+}
+FAISS_PRAGMA_IMPRECISE_FUNCTION_END
+
+FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
+float
+int8_vec_norm_L2sqr_sse(const int8_t* x, size_t d) {
+    int32_t res = 0;
+    FAISS_PRAGMA_IMPRECISE_LOOP
+    for (size_t i = 0; i < d; i++) {
+        res += (int32_t)x[i] * (int32_t)x[i];
+    }
+    return (float)res;
+}
+FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
 }  // namespace faiss
 #endif

@@ -71,7 +71,12 @@ TEST_CASE("Test distance") {
     const auto x_bf16 = ConvertVector<knowhere::bf16>(x.get(), nx, dim);
     const auto y_bf16 = ConvertVector<knowhere::bf16>(y.get(), ny, dim);
 
-    // int8
+    // int8 should have no precision loss
+    const float int8_tolerance = 0.000001f;
+    const auto x_int8 = ConvertVector<knowhere::int8>(x.get(), nx, dim);
+    const auto y_int8 = ConvertVector<knowhere::int8>(y.get(), ny, dim);
+
+    // int8, for hnsw sq, obsolete
     const auto xi = ConvertVector<int8_t>(x.get(), nx, dim);
     const auto yi = ConvertVector<int8_t>(y.get(), ny, dim);
 
@@ -122,6 +127,30 @@ TEST_CASE("Test distance") {
                          Catch::Matchers::WithinRel(ref_L2sqr[i], bf16_tolerance));
             REQUIRE_THAT(faiss::bf16_vec_norm_L2sqr(y_data, dim),
                          Catch::Matchers::WithinRel(ref_norm_L2sqr[i], bf16_tolerance));
+        }
+    }
+
+    SECTION("test single distance calculation for int8") {
+        // calculate the float result ref
+        std::vector<float> ref_ip, ref_L2sqr, ref_norm_L2sqr;
+        for (size_t i = 0; i < ny; i++) {
+            const knowhere::int8* x_data = x_int8.get();
+            const knowhere::int8* y_data = y_int8.get() + dim;
+            ref_ip.push_back(faiss::int8_vec_inner_product_ref(x_data, y_data, dim));
+            ref_L2sqr.push_back(faiss::int8_vec_L2sqr_ref(x_data, y_data, dim));
+            ref_norm_L2sqr.push_back(faiss::int8_vec_norm_L2sqr_ref(y_data, dim));
+        }
+
+        // int8
+        for (size_t i = 0; i < ny; i++) {
+            const knowhere::int8* x_data = x_int8.get();
+            const knowhere::int8* y_data = y_int8.get() + dim;
+            REQUIRE_THAT(faiss::int8_vec_inner_product(x_data, y_data, dim),
+                         Catch::Matchers::WithinRel(ref_ip[i], int8_tolerance));
+            REQUIRE_THAT(faiss::int8_vec_L2sqr(x_data, y_data, dim),
+                         Catch::Matchers::WithinRel(ref_L2sqr[i], int8_tolerance));
+            REQUIRE_THAT(faiss::int8_vec_norm_L2sqr(y_data, dim),
+                         Catch::Matchers::WithinRel(ref_norm_L2sqr[i], int8_tolerance));
         }
     }
 
@@ -239,6 +268,39 @@ TEST_CASE("Test distance") {
             REQUIRE_THAT(l2_batch_4[1], Catch::Matchers::WithinRel(ref_l2_batch_4[1], tolerance));
             REQUIRE_THAT(l2_batch_4[2], Catch::Matchers::WithinRel(ref_l2_batch_4[2], tolerance));
             REQUIRE_THAT(l2_batch_4[3], Catch::Matchers::WithinRel(ref_l2_batch_4[3], tolerance));
+        }
+
+        // int8
+        {
+            const knowhere::int8* x_data = x_int8.get();
+            std::vector<const knowhere::int8*> y_data{y_int8.get(), y_int8.get() + dim, y_int8.get() + 2 * dim,
+                                                      y_int8.get() + 3 * dim};
+
+            // calculate the int8 result ref
+            std::vector<float> ref_l2_batch_4(4), ref_ip_batch_4(4);
+            faiss::int8_vec_inner_product_batch_4_ref(x_data, y_data[0], y_data[1], y_data[2], y_data[3], dim,
+                                                      ref_ip_batch_4[0], ref_ip_batch_4[1], ref_ip_batch_4[2],
+                                                      ref_ip_batch_4[3]);
+            faiss::int8_vec_L2sqr_batch_4_ref(x_data, y_data[0], y_data[1], y_data[2], y_data[3], dim,
+                                              ref_l2_batch_4[0], ref_l2_batch_4[1], ref_l2_batch_4[2],
+                                              ref_l2_batch_4[3]);
+
+            // int8
+            std::vector<float> l2_batch_4(4), ip_batch_4(4);
+            faiss::int8_vec_inner_product_batch_4(x_data, y_data[0], y_data[1], y_data[2], y_data[3], dim,
+                                                  ip_batch_4[0], ip_batch_4[1], ip_batch_4[2], ip_batch_4[3]);
+            faiss::int8_vec_L2sqr_batch_4(x_data, y_data[0], y_data[1], y_data[2], y_data[3], dim, l2_batch_4[0],
+                                          l2_batch_4[1], l2_batch_4[2], l2_batch_4[3]);
+
+            REQUIRE_THAT(ip_batch_4[0], Catch::Matchers::WithinRel(ref_ip_batch_4[0], int8_tolerance));
+            REQUIRE_THAT(ip_batch_4[1], Catch::Matchers::WithinRel(ref_ip_batch_4[1], int8_tolerance));
+            REQUIRE_THAT(ip_batch_4[2], Catch::Matchers::WithinRel(ref_ip_batch_4[2], int8_tolerance));
+            REQUIRE_THAT(ip_batch_4[3], Catch::Matchers::WithinRel(ref_ip_batch_4[3], int8_tolerance));
+
+            REQUIRE_THAT(l2_batch_4[0], Catch::Matchers::WithinRel(ref_l2_batch_4[0], int8_tolerance));
+            REQUIRE_THAT(l2_batch_4[1], Catch::Matchers::WithinRel(ref_l2_batch_4[1], int8_tolerance));
+            REQUIRE_THAT(l2_batch_4[2], Catch::Matchers::WithinRel(ref_l2_batch_4[2], int8_tolerance));
+            REQUIRE_THAT(l2_batch_4[3], Catch::Matchers::WithinRel(ref_l2_batch_4[3], int8_tolerance));
         }
     }
 

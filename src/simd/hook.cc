@@ -82,6 +82,14 @@ decltype(bf16_vec_norm_L2sqr) bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_ref;
 decltype(bf16_vec_inner_product_batch_4) bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_ref;
 decltype(bf16_vec_L2sqr_batch_4) bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_ref;
 
+// int8
+decltype(int8_vec_L2sqr) int8_vec_L2sqr = int8_vec_L2sqr_ref;
+decltype(int8_vec_inner_product) int8_vec_inner_product = int8_vec_inner_product_ref;
+decltype(int8_vec_norm_L2sqr) int8_vec_norm_L2sqr = int8_vec_norm_L2sqr_ref;
+
+decltype(int8_vec_inner_product_batch_4) int8_vec_inner_product_batch_4 = int8_vec_inner_product_batch_4_ref;
+decltype(int8_vec_L2sqr_batch_4) int8_vec_L2sqr_batch_4 = int8_vec_L2sqr_batch_4_ref;
+
 ///////////////////////////////////////////////////////////////////////////////
 #if defined(__x86_64__)
 bool
@@ -217,6 +225,14 @@ fvec_hook(std::string& simd_type) {
         bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_avx512;
         bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_avx512;
 
+        // int8
+        int8_vec_inner_product = int8_vec_inner_product_avx512;
+        int8_vec_L2sqr = int8_vec_L2sqr_avx512;
+        int8_vec_norm_L2sqr = int8_vec_norm_L2sqr_avx512;
+
+        int8_vec_inner_product_batch_4 = int8_vec_inner_product_batch_4_avx512;
+        int8_vec_L2sqr_batch_4 = int8_vec_L2sqr_batch_4_avx512;
+
         //
         simd_type = "AVX512";
         support_pq_fast_scan = true;
@@ -256,6 +272,14 @@ fvec_hook(std::string& simd_type) {
         bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_avx;
         bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_avx;
 
+        // int8
+        int8_vec_inner_product = int8_vec_inner_product_avx;
+        int8_vec_L2sqr = int8_vec_L2sqr_avx;
+        int8_vec_norm_L2sqr = int8_vec_norm_L2sqr_avx;
+
+        int8_vec_inner_product_batch_4 = int8_vec_inner_product_batch_4_avx;
+        int8_vec_L2sqr_batch_4 = int8_vec_L2sqr_batch_4_avx;
+
         //
         simd_type = "AVX2";
         support_pq_fast_scan = true;
@@ -294,6 +318,14 @@ fvec_hook(std::string& simd_type) {
         bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_ref;
         bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_ref;
 
+        // int8
+        int8_vec_inner_product = int8_vec_inner_product_sse;
+        int8_vec_L2sqr = int8_vec_L2sqr_sse;
+        int8_vec_norm_L2sqr = int8_vec_norm_L2sqr_sse;
+
+        int8_vec_inner_product_batch_4 = int8_vec_inner_product_batch_4_ref;
+        int8_vec_L2sqr_batch_4 = int8_vec_L2sqr_batch_4_ref;
+
         //
         simd_type = "SSE4_2";
         support_pq_fast_scan = false;
@@ -331,6 +363,14 @@ fvec_hook(std::string& simd_type) {
 
         bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_ref;
         bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_ref;
+
+        // int8
+        int8_vec_inner_product = int8_vec_inner_product_ref;
+        int8_vec_L2sqr = int8_vec_L2sqr_ref;
+        int8_vec_norm_L2sqr = int8_vec_norm_L2sqr_ref;
+
+        int8_vec_inner_product_batch_4 = int8_vec_inner_product_batch_4_ref;
+        int8_vec_L2sqr_batch_4 = int8_vec_L2sqr_batch_4_ref;
 
         //
         simd_type = "GENERIC";

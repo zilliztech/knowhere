@@ -108,6 +108,15 @@ extern void (*bf16_vec_inner_product_batch_4)(const knowhere::bf16*, const knowh
 extern void (*bf16_vec_L2sqr_batch_4)(const knowhere::bf16*, const knowhere::bf16*, const knowhere::bf16*,
                                       const knowhere::bf16*, const knowhere::bf16*, const size_t, float&, float&,
                                       float&, float&);
+// int8
+extern float (*int8_vec_inner_product)(const int8_t*, const int8_t*, size_t);
+extern float (*int8_vec_L2sqr)(const int8_t*, const int8_t*, size_t);
+extern float (*int8_vec_norm_L2sqr)(const int8_t*, size_t);
+
+extern void (*int8_vec_inner_product_batch_4)(const int8_t*, const int8_t*, const int8_t*, const int8_t*, const int8_t*,
+                                              const size_t, float&, float&, float&, float&);
+extern void (*int8_vec_L2sqr_batch_4)(const int8_t*, const int8_t*, const int8_t*, const int8_t*, const int8_t*,
+                                      const size_t, float&, float&, float&, float&);
 
 ///////////////////////////////////////////////////////////////////////////////
 #if defined(__x86_64__)
