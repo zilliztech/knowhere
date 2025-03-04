@@ -441,7 +441,7 @@ fvec_hook(std::string& simd_type) {
     ivec_L2sqr = ivec_L2sqr_ppc;
 
     //
-    simd_type = "GENERIC";
+    simd_type = "PPC";
     support_pq_fast_scan = false;
 #endif
 }
