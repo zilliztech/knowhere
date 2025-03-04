@@ -31,7 +31,8 @@ pipeline {
                         sh "pip3 install -U setuptools"
                         sh "cmake --version"
                         sh "mkdir build"
-                        sh "cd build/ && conan install .. --build=missing -o with_diskann=True -s compiler.libcxx=libstdc++11 && conan build .."
+                        sh "cd build/ && conan install .. --build=missing -o with_diskann=True -o with_ut=True -o with_benchmark=True -s compiler.libcxx=libstdc++11 && conan build .."
+                        sh "sleep 36000"
                         sh "cd python && VERSION=${version} python3 setup.py bdist_wheel"
                         dir('python/dist'){
                         knowhere_wheel=sh(returnStdout: true, script: 'ls | grep .whl').trim()

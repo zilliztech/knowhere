@@ -26,7 +26,7 @@ class Benchmark_simd_qps : public Benchmark_knowhere, public ::testing::Test {
     template <typename T>
     void
     test_simd(std::string worker_name, worker worker_func, float* dist = nullptr) {
-        const int32_t thread_num = 8;
+        const int32_t thread_num = 4;
         std::string data_type_str = get_data_type_name<T>();
 
         auto base_ds_ptr = knowhere::GenDataSet(nb_, dim_, xb_);
