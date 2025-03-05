@@ -2127,30 +2127,9 @@ int8_vec_inner_product_neon(const int8_t* x, const int8_t* y, size_t d) {
         int8x16_t a = vld1q_s8(x);
         int8x16_t b = vld1q_s8(y);
 
-        // extend int8_t to int16_t
-        int16x8_t a_low = vmovl_s8(vget_low_s8(a));
-        int16x8_t a_high = vmovl_s8(vget_high_s8(a));
-        int16x8_t b_low = vmovl_s8(vget_low_s8(b));
-        int16x8_t b_high = vmovl_s8(vget_high_s8(b));
+        // use vdotq_s32 to calculate dot product and accumulate
+        sum_ = vdotq_s32(sum_, a, b);
 
-        // extend int16_t to int32_t
-        int32x4_t a_low_low = vmovl_s16(vget_low_s16(a_low));
-        int32x4_t a_low_high = vmovl_s16(vget_high_s16(a_low));
-        int32x4_t a_high_low = vmovl_s16(vget_low_s16(a_high));
-        int32x4_t a_high_high = vmovl_s16(vget_high_s16(a_high));
-
-        int32x4_t b_low_low = vmovl_s16(vget_low_s16(b_low));
-        int32x4_t b_low_high = vmovl_s16(vget_high_s16(b_low));
-        int32x4_t b_high_low = vmovl_s16(vget_low_s16(b_high));
-        int32x4_t b_high_high = vmovl_s16(vget_high_s16(b_high));
-
-        // accumulate partial sum
-        sum_ = vaddq_s32(sum_, vmulq_s32(a_low_low, b_low_low));
-        sum_ = vaddq_s32(sum_, vmulq_s32(a_low_high, b_low_high));
-        sum_ = vaddq_s32(sum_, vmulq_s32(a_high_low, b_high_low));
-        sum_ = vaddq_s32(sum_, vmulq_s32(a_high_high, b_high_high));
-
-        // update the pointer and the count of remaining elements
         x += 16;
         y += 16;
         d -= 16;
@@ -2161,16 +2140,10 @@ int8_vec_inner_product_neon(const int8_t* x, const int8_t* y, size_t d) {
         int8x8_t a = vld1_s8(x);
         int8x8_t b = vld1_s8(y);
 
-        int16x8_t a_ext = vmovl_s8(a);
-        int16x8_t b_ext = vmovl_s8(b);
+        int8x16_t a_ext = vcombine_s8(a, vdup_n_s8(0));
+        int8x16_t b_ext = vcombine_s8(b, vdup_n_s8(0));
 
-        int32x4_t a_low = vmovl_s16(vget_low_s16(a_ext));
-        int32x4_t a_high = vmovl_s16(vget_high_s16(a_ext));
-        int32x4_t b_low = vmovl_s16(vget_low_s16(b_ext));
-        int32x4_t b_high = vmovl_s16(vget_high_s16(b_ext));
-
-        sum_ = vaddq_s32(sum_, vmulq_s32(a_low, b_low));
-        sum_ = vaddq_s32(sum_, vmulq_s32(a_high, b_high));
+        sum_ = vdotq_s32(sum_, a_ext, b_ext);
 
         x += 8;
         y += 8;
@@ -2182,13 +2155,10 @@ int8_vec_inner_product_neon(const int8_t* x, const int8_t* y, size_t d) {
         int8x8_t a = vld1_s8(x);
         int8x8_t b = vld1_s8(y);
 
-        int16x8_t a_ext = vmovl_s8(a);
-        int16x8_t b_ext = vmovl_s8(b);
+        int8x16_t a_ext = vcombine_s8(a, vdup_n_s8(0));
+        int8x16_t b_ext = vcombine_s8(b, vdup_n_s8(0));
 
-        int32x4_t a_low = vmovl_s16(vget_low_s16(a_ext));
-        int32x4_t b_low = vmovl_s16(vget_low_s16(b_ext));
-
-        sum_ = vaddq_s32(sum_, vmulq_s32(a_low, b_low));
+        sum_ = vdotq_s32(sum_, a_ext, b_ext);
 
         x += 4;
         y += 4;
