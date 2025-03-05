@@ -65,6 +65,15 @@ TEST_CASE("Test All GPU Index", "[search]") {
         return json;
     };
 
+    auto cagra_hnsw_gen = [](auto&& upstream_gen) {
+        return [upstream_gen]() {
+            knowhere::Json json = upstream_gen();
+            json[knowhere::indexparam::ADAPT_FOR_CPU] = true;
+            json[knowhere::indexparam::EF] = 128;
+            return json;
+        };
+    };
+
     auto refined_gen = [](auto&& upstream_gen) {
         return [upstream_gen]() {
             knowhere::Json json = upstream_gen();
@@ -210,6 +219,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
             make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFPQ, ivfpq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFPQ, refined_gen(ivfpq_gen)),
             make_tuple(knowhere::IndexEnum::INDEX_CUVS_CAGRA, cagra_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_CUVS_CAGRA, cagra_hnsw_gen(cagra_gen)),
         }));
 
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
