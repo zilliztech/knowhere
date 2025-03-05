@@ -121,6 +121,8 @@ constexpr const char* ENSURE_TOPK_FULL = "ensure_topk_full";
 constexpr const char* CODE_SIZE = "code_size";
 constexpr const char* RAW_DATA_STORE_PREFIX = "raw_data_store_prefix";
 constexpr const char* SUB_DIM = "sub_dim";
+constexpr const char* REFINE_TYPE = "refine_type";
+constexpr const char* REFINE_WITH_QUANT = "refine_with_quant";
 
 // cuVS Params
 constexpr const char* REFINE_RATIO = "refine_ratio";
@@ -203,5 +205,12 @@ enum VecType {
     VECTOR_SPARSE_FLOAT = 104,
     VECTOR_INT8 = 105,
 };  // keep the same value as milvus proto define
+
+enum RefineType {
+    DATA_VIEW = 0,
+    UINT8_QUANT,
+    FLOAT16_QUANT,
+    BFLOAT16_QUANT,
+};
 
 }  // namespace knowhere

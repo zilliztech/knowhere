@@ -25,6 +25,7 @@
 #include <variant>
 #include <vector>
 
+#include "knowhere/comp/index_param.h"
 #include "knowhere/comp/materialized_view.h"
 #include "knowhere/expected.h"
 #include "knowhere/log.h"
@@ -620,6 +621,18 @@ class BaseConfig : public Config {
     CFG_FLOAT bm25_k1;
     CFG_FLOAT bm25_b;
     CFG_FLOAT bm25_avgdl;
+    /**
+     * refine_type and refine_with_quant only used by data view index
+     * - refine_type, train parameter, has several config:
+     *    DATA_VIEW, not alloc extra memory in refiner
+     *    FLOAT16_QUANT, keep data as float16 vector in memory in refiner
+     *    BFLOAT16_QUANT, keep data as bfloat16 vector in memory in refiner
+     *    UINT8_QUANT, keep data as uint8 vector in memory in refiner
+     * - refine_with_quant, search parameter, whether to use quantized data to refine, faster but lost a little
+     * precision
+     */
+    CFG_INT refine_type;
+    CFG_BOOL refine_with_quant;
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(dim).allow_empty_without_default().description("vector dim").for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
@@ -758,6 +771,16 @@ class BaseConfig : public Config {
             .for_iterator()
             .for_deserialize()
             .for_deserialize_from_file();
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine_type)
+            .description("refiner type , no memory by default")
+            .set_default(RefineType::DATA_VIEW)
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine_with_quant)
+            .description("search parameters, whether use quantized data to refine")
+            .set_default(false)
+            .for_search()
+            .for_range_search()
+            .for_iterator();
     }
 };
 }  // namespace knowhere
