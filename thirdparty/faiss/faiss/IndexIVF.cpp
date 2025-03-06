@@ -488,7 +488,7 @@ void IndexIVF::search_preassigned(
 #pragma omp parallel if (do_parallel) reduction(+ : nlistv, ndis, nheap)
     {
         std::unique_ptr<InvertedListScanner> scanner(
-                get_InvertedListScanner(store_pairs, sel));
+                get_InvertedListScanner(store_pairs, sel, params));
 
         /*****************************************************
          * Depending on parallel_mode, there are two possible ways
@@ -839,7 +839,7 @@ void IndexIVF::range_search_preassigned(
     {
         RangeSearchPartialResult pres(result);
         std::unique_ptr<InvertedListScanner> scanner(
-                get_InvertedListScanner(store_pairs, sel));
+                get_InvertedListScanner(store_pairs, sel, params));
         FAISS_THROW_IF_NOT(scanner.get());
         all_pres[omp_get_thread_num()] = &pres;
 
@@ -972,7 +972,8 @@ void IndexIVF::range_search_preassigned(
 
 InvertedListScanner* IndexIVF::get_InvertedListScanner(
         bool /*store_pairs*/,
-        const IDSelector* /* sel */) const {
+        const IDSelector* /* sel */,
+        const IVFSearchParameters* /* params */) const {
     FAISS_THROW_MSG("get_InvertedListScanner not implemented");
 }
 
@@ -1340,7 +1341,7 @@ void IndexIVF::getIteratorNextBatch(
                 ? workspace->search_params->sel
                 : nullptr;
         std::unique_ptr<InvertedListScanner> scanner(
-                get_InvertedListScanner(false, sel));
+                get_InvertedListScanner(false, sel, workspace->search_params));
         scanner->set_query(workspace->query_data);
         scanner->set_list(list_no, coarse_list_centroid_dist);
 
@@ -1481,36 +1482,50 @@ size_t InvertedListScanner::scan_codes(
 
     if (!keep_max) {
         for (size_t j = 0; j < list_size; j++) {
-            // // todo aguzhva: use int64_t id instead of j ?
-            if (!sel || sel->is_member(j)) {
-                scan_cnt++;
-                float dis = distance_to_code(codes);
-                if (code_norms) {
-                    dis /= code_norms[j];
-                }
-                if (dis < simi[0]) {
-                    int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                    maxheap_replace_top(k, simi, idxi, dis, id);
-                    nup++;
+            if (sel != nullptr) {
+                int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
+                if (!sel->is_member(id)) {
+                    codes += code_size;
+                    continue;
                 }
             }
+
+            // // todo aguzhva: use int64_t id instead of j ?
+            scan_cnt++;
+            float dis = distance_to_code(codes);
+            if (code_norms) {
+                dis /= code_norms[j];
+            }
+            if (dis < simi[0]) {
+                int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
+                maxheap_replace_top(k, simi, idxi, dis, id);
+                nup++;
+            }
+
             codes += code_size;
         }
     } else {
         for (size_t j = 0; j < list_size; j++) {
             // // todo aguzhva: use int64_t id instead of j ?
-            if (!sel || sel->is_member(j)) {
-                scan_cnt++;
-                float dis = distance_to_code(codes);
-                if (code_norms) {
-                    dis /= code_norms[j];
-                }
-                if (dis > simi[0]) {
-                    int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                    minheap_replace_top(k, simi, idxi, dis, id);
-                    nup++;
+            if (sel != nullptr) {
+                int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
+                if (!sel->is_member(id)) {
+                    codes += code_size;
+                    continue;
                 }
             }
+
+            scan_cnt++;
+            float dis = distance_to_code(codes);
+            if (code_norms) {
+                dis /= code_norms[j];
+            }
+            if (dis > simi[0]) {
+                int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
+                minheap_replace_top(k, simi, idxi, dis, id);
+                nup++;
+            }
+
             codes += code_size;
         }
     }
