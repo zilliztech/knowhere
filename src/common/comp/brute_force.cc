@@ -17,7 +17,7 @@
 #include "faiss/MetricType.h"
 #include "faiss/utils/binary_distances.h"
 #include "faiss/utils/distances.h"
-#include "faiss/utils/half_precision_floating_point_distances.h"
+#include "faiss/utils/distances_typed.h"
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/config.h"
@@ -167,11 +167,11 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
                 case faiss::METRIC_L2: {
                     [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
                     if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                        faiss::float_maxheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
-                        faiss::knn_L2sqr(cur_query, (const float*)xb, dim, 1, nb, &buf, nullptr, id_selector);
+                        faiss::knn_L2sqr(cur_query, (const float*)xb, dim, 1, nb, topk, cur_distances, cur_labels,
+                                         nullptr, id_selector);
                     } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
-                        faiss::half_precision_floating_point_knn_L2sqr(cur_query, (const DataType*)xb, dim, 1, nb, topk,
-                                                                       cur_distances, cur_labels, nullptr, id_selector);
+                        faiss::knn_L2sqr_typed(cur_query, (const DataType*)xb, dim, 1, nb, topk, cur_distances,
+                                               cur_labels, nullptr, id_selector);
                     } else {
                         LOG_KNOWHERE_ERROR_ << "Metric L2 only used in floating point data";
                         return Status::faiss_inner_error;
@@ -180,29 +180,26 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
                 }
                 case faiss::METRIC_INNER_PRODUCT: {
                     [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
-                    faiss::float_minheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
                     if (is_cosine) {
                         if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                             auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                            faiss::knn_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1, nb, &buf,
-                                              id_selector);
+                            faiss::knn_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1, nb, topk,
+                                              cur_distances, cur_labels, id_selector);
                         } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
-                            // normalize query vector may cause presision loss, so div query norms in apply function
-
-                            faiss::half_precision_floating_point_knn_cosine(cur_query, (const DataType*)xb, norms.get(),
-                                                                            dim, 1, nb, topk, cur_distances, cur_labels,
-                                                                            id_selector);
+                            // normalize query vector may cause precision loss, so div query norms in apply function
+                            faiss::knn_cosine_typed(cur_query, (const DataType*)xb, norms.get(), dim, 1, nb, topk,
+                                                    cur_distances, cur_labels, id_selector);
                         } else {
                             LOG_KNOWHERE_ERROR_ << "Metric Cosine only used in floating point data";
                             return Status::faiss_inner_error;
                         }
                     } else {
                         if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                            faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, &buf, id_selector);
+                            faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, topk, cur_distances,
+                                                     cur_labels, id_selector);
                         } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
-                            faiss::half_precision_floating_point_knn_inner_product(cur_query, (const DataType*)xb, dim,
-                                                                                   1, nb, topk, cur_distances,
-                                                                                   cur_labels, id_selector);
+                            faiss::knn_inner_product_typed(cur_query, (const DataType*)xb, dim, 1, nb, topk,
+                                                           cur_distances, cur_labels, id_selector);
                         } else {
                             LOG_KNOWHERE_ERROR_ << "Metric Inner Product only used in floating point data";
                             return Status::faiss_inner_error;
@@ -326,11 +323,11 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                 case faiss::METRIC_L2: {
                     [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
                     if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                        faiss::float_maxheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
-                        faiss::knn_L2sqr(cur_query, (const float*)xb, dim, 1, nb, &buf, nullptr, id_selector);
+                        faiss::knn_L2sqr(cur_query, (const float*)xb, dim, 1, nb, topk, cur_distances, cur_labels,
+                                         nullptr, id_selector);
                     } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
-                        faiss::half_precision_floating_point_knn_L2sqr(cur_query, (const DataType*)xb, dim, 1, nb, topk,
-                                                                       cur_distances, cur_labels, nullptr, id_selector);
+                        faiss::knn_L2sqr_typed(cur_query, (const DataType*)xb, dim, 1, nb, topk, cur_distances,
+                                               cur_labels, nullptr, id_selector);
                     } else {
                         LOG_KNOWHERE_ERROR_ << "Metric L2 only used in floating point data";
                         return Status::faiss_inner_error;
@@ -339,29 +336,26 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                 }
                 case faiss::METRIC_INNER_PRODUCT: {
                     [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
-                    faiss::float_minheap_array_t buf{(size_t)1, (size_t)topk, cur_labels, cur_distances};
                     if (is_cosine) {
                         if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                             auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                            faiss::knn_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1, nb, &buf,
-                                              id_selector);
+                            faiss::knn_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1, nb, topk,
+                                              cur_distances, cur_labels, id_selector);
                         } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
-                            // normalize query vector may cause presision loss, so div query norms in apply function
-
-                            faiss::half_precision_floating_point_knn_cosine(cur_query, (const DataType*)xb, norms.get(),
-                                                                            dim, 1, nb, topk, cur_distances, cur_labels,
-                                                                            id_selector);
+                            // normalize query vector may cause precision loss, so div query norms in apply function
+                            faiss::knn_cosine_typed(cur_query, (const DataType*)xb, norms.get(), dim, 1, nb, topk,
+                                                    cur_distances, cur_labels, id_selector);
                         } else {
                             LOG_KNOWHERE_ERROR_ << "Metric Cosine only used in floating point data";
                             return Status::faiss_inner_error;
                         }
                     } else {
                         if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                            faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, &buf, id_selector);
+                            faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, topk, cur_distances,
+                                                     cur_labels, id_selector);
                         } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
-                            faiss::half_precision_floating_point_knn_inner_product(cur_query, (const DataType*)xb, dim,
-                                                                                   1, nb, topk, cur_distances,
-                                                                                   cur_labels, id_selector);
+                            faiss::knn_inner_product_typed(cur_query, (const DataType*)xb, dim, 1, nb, topk,
+                                                           cur_distances, cur_labels, id_selector);
                         } else {
                             LOG_KNOWHERE_ERROR_ << "Metric Inner Product only used in floating point data";
                             return Status::faiss_inner_error;
@@ -533,8 +527,8 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                             faiss::range_search_L2sqr(cur_query, (const float*)xb, dim, 1, nb, radius, &res,
                                                       id_selector);
                         } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
-                            faiss::half_precision_floating_point_range_search_L2sqr(cur_query, (const DataType*)xb, dim,
-                                                                                    1, nb, radius, &res, id_selector);
+                            faiss::range_search_L2sqr_typed(cur_query, (const DataType*)xb, dim, 1, nb, radius, &res,
+                                                            id_selector);
                         } else {
                             LOG_KNOWHERE_ERROR_ << "Metric L2 only used in floating point data";
                             return Status::faiss_inner_error;
@@ -550,10 +544,9 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                                 faiss::range_search_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1,
                                                            nb, radius, &res, id_selector);
                             } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
-                                // normalize query vector may cause presision loss, so div query norms in apply function
-
-                                faiss::half_precision_floating_point_range_search_cosine(
-                                    cur_query, (const DataType*)xb, norms.get(), dim, 1, nb, radius, &res, id_selector);
+                                // normalize query vector may cause precision loss, so div query norms in apply function
+                                faiss::range_search_cosine_typed(cur_query, (const DataType*)xb, norms.get(), dim, 1,
+                                                                 nb, radius, &res, id_selector);
                             } else {
                                 LOG_KNOWHERE_ERROR_ << "Metric Cosine only used in floating point data";
                                 return Status::faiss_inner_error;
@@ -563,8 +556,8 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                                 faiss::range_search_inner_product(cur_query, (const DataType*)xb, dim, 1, nb, radius,
                                                                   &res, id_selector);
                             } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
-                                faiss::half_precision_floating_point_range_search_inner_product(
-                                    cur_query, (const DataType*)xb, dim, 1, nb, radius, &res, id_selector);
+                                faiss::range_search_inner_product_typed(cur_query, (const DataType*)xb, dim, 1, nb,
+                                                                        radius, &res, id_selector);
                             } else {
                                 LOG_KNOWHERE_ERROR_ << "Metric Inner Product only used in floating point data";
                                 return Status::faiss_inner_error;
@@ -806,8 +799,8 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                             faiss::all_L2sqr(cur_query, (const float*)xb, dim, 1, nb, distances_ids, nullptr,
                                              id_selector);
                         } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
-                            faiss::half_precision_floating_point_all_L2sqr(cur_query, (const DataType*)xb, dim, 1, nb,
-                                                                           distances_ids, nullptr, id_selector);
+                            faiss::all_L2sqr_typed(cur_query, (const DataType*)xb, dim, 1, nb, distances_ids, nullptr,
+                                                   id_selector);
                         } else {
                             LOG_KNOWHERE_ERROR_ << "Metric L2 only used in floating point data";
                             throw std::runtime_error("Metric L2 only used in floating point data");
@@ -821,11 +814,9 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                                 faiss::all_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1, nb,
                                                   distances_ids, id_selector);
                             } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
-                                // normalize query vector may cause presision loss, so div query norms in apply function
-
-                                faiss::half_precision_floating_point_all_cosine(cur_query, (const DataType*)xb,
-                                                                                norms.get(), dim, 1, nb, distances_ids,
-                                                                                id_selector);
+                                // normalize query vector may cause precision loss, so div query norms in apply function
+                                faiss::all_cosine_typed(cur_query, (const DataType*)xb, norms.get(), dim, 1, nb,
+                                                        distances_ids, id_selector);
                             } else {
                                 LOG_KNOWHERE_ERROR_ << "Metric Cosine only used in floating point data";
                                 throw std::runtime_error("Metric Cosine only used in floating point data");
@@ -835,8 +826,8 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                                 faiss::all_inner_product(cur_query, (const float*)xb, dim, 1, nb, distances_ids,
                                                          id_selector);
                             } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
-                                faiss::half_precision_floating_point_all_inner_product(
-                                    cur_query, (const DataType*)xb, dim, 1, nb, distances_ids, id_selector);
+                                faiss::all_inner_product_typed(cur_query, (const DataType*)xb, dim, 1, nb,
+                                                               distances_ids, id_selector);
                             } else {
                                 LOG_KNOWHERE_ERROR_ << "Metric Cosine only used in floating point data";
                                 throw std::runtime_error("Metric Cosine only used in floating point data");
