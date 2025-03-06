@@ -2118,78 +2118,648 @@ bf16_vec_L2sqr_batch_4_neon(const knowhere::bf16* x, const knowhere::bf16* y0, c
 
 float
 int8_vec_inner_product_neon(const int8_t* x, const int8_t* y, size_t d) {
-    // TODO caiyd: use ref implementation temporarily
-    int32_t res = 0;
-    for (size_t i = 0; i < d; i++) {
-        res += (int32_t)x[i] * (int32_t)y[i];
+    // initialize the accumulator
+    int32x4_t sum_ = vdupq_n_s32(0);
+
+    // main loop: process 16 int8_t elements each time
+    while (d >= 16) {
+        // load 16 int8_t element into NEON register
+        int8x16_t a = vld1q_s8(x);
+        int8x16_t b = vld1q_s8(y);
+
+        // extend int8_t to int16_t
+        int16x8_t a_low = vmovl_s8(vget_low_s8(a));
+        int16x8_t a_high = vmovl_s8(vget_high_s8(a));
+        int16x8_t b_low = vmovl_s8(vget_low_s8(b));
+        int16x8_t b_high = vmovl_s8(vget_high_s8(b));
+
+        // extend int16_t to int32_t
+        int32x4_t a_low_low = vmovl_s16(vget_low_s16(a_low));
+        int32x4_t a_low_high = vmovl_s16(vget_high_s16(a_low));
+        int32x4_t a_high_low = vmovl_s16(vget_low_s16(a_high));
+        int32x4_t a_high_high = vmovl_s16(vget_high_s16(a_high));
+
+        int32x4_t b_low_low = vmovl_s16(vget_low_s16(b_low));
+        int32x4_t b_low_high = vmovl_s16(vget_high_s16(b_low));
+        int32x4_t b_high_low = vmovl_s16(vget_low_s16(b_high));
+        int32x4_t b_high_high = vmovl_s16(vget_high_s16(b_high));
+
+        // accumulate partial sum
+        sum_ = vaddq_s32(sum_, vmulq_s32(a_low_low, b_low_low));
+        sum_ = vaddq_s32(sum_, vmulq_s32(a_low_high, b_low_high));
+        sum_ = vaddq_s32(sum_, vmulq_s32(a_high_low, b_high_low));
+        sum_ = vaddq_s32(sum_, vmulq_s32(a_high_high, b_high_high));
+
+        // update the pointer and the count of remaining elements
+        x += 16;
+        y += 16;
+        d -= 16;
     }
-    return (float)res;
+
+    // process 8 int8_t elements each time
+    if (d >= 8) {
+        int8x8_t a = vld1_s8(x);
+        int8x8_t b = vld1_s8(y);
+
+        int16x8_t a_ext = vmovl_s8(a);
+        int16x8_t b_ext = vmovl_s8(b);
+
+        int32x4_t a_low = vmovl_s16(vget_low_s16(a_ext));
+        int32x4_t a_high = vmovl_s16(vget_high_s16(a_ext));
+        int32x4_t b_low = vmovl_s16(vget_low_s16(b_ext));
+        int32x4_t b_high = vmovl_s16(vget_high_s16(b_ext));
+
+        sum_ = vaddq_s32(sum_, vmulq_s32(a_low, b_low));
+        sum_ = vaddq_s32(sum_, vmulq_s32(a_high, b_high));
+
+        x += 8;
+        y += 8;
+        d -= 8;
+    }
+
+    // process 4 int8_t elements each time
+    if (d >= 4) {
+        int8x8_t a = vld1_s8(x);
+        int8x8_t b = vld1_s8(y);
+
+        int16x8_t a_ext = vmovl_s8(a);
+        int16x8_t b_ext = vmovl_s8(b);
+
+        int32x4_t a_low = vmovl_s16(vget_low_s16(a_ext));
+        int32x4_t b_low = vmovl_s16(vget_low_s16(b_ext));
+
+        sum_ = vaddq_s32(sum_, vmulq_s32(a_low, b_low));
+
+        x += 4;
+        y += 4;
+        d -= 4;
+    }
+
+    // process left elements
+    int32_t rem_sum = 0;
+    for (size_t i = 0; i < d; ++i) {
+        rem_sum += static_cast<int32_t>(x[i]) * static_cast<int32_t>(y[i]);
+    }
+
+    // accumulate the total sum
+    return static_cast<float>(vaddvq_s32(sum_) + rem_sum);
 }
 
 float
 int8_vec_L2sqr_neon(const int8_t* x, const int8_t* y, size_t d) {
-    // TODO caiyd: use ref implementation temporarily
-    int32_t res = 0;
-    for (size_t i = 0; i < d; i++) {
-        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
-        res += tmp * tmp;
+    // initialize the accumulator
+    int32x4_t sum_ = vdupq_n_s32(0);
+
+    // main loop: process 16 int8_t elements each time
+    while (d >= 16) {
+        // load 16 int8_t element into NEON register
+        int8x16_t a = vld1q_s8(x);
+        int8x16_t b = vld1q_s8(y);
+
+        // extend int8_t to int16_t
+        int16x8_t a_low = vmovl_s8(vget_low_s8(a));
+        int16x8_t a_high = vmovl_s8(vget_high_s8(a));
+        int16x8_t b_low = vmovl_s8(vget_low_s8(b));
+        int16x8_t b_high = vmovl_s8(vget_high_s8(b));
+
+        // calculate the diff and extend it to int32_t
+        int32x4_t diff_low_low = vsubl_s16(vget_low_s16(a_low), vget_low_s16(b_low));
+        int32x4_t diff_low_high = vsubl_s16(vget_high_s16(a_low), vget_high_s16(b_low));
+        int32x4_t diff_high_low = vsubl_s16(vget_low_s16(a_high), vget_low_s16(b_high));
+        int32x4_t diff_high_high = vsubl_s16(vget_high_s16(a_high), vget_high_s16(b_high));
+
+        // accumulate partial sum
+        sum_ = vaddq_s32(sum_, vmulq_s32(diff_low_low, diff_low_low));
+        sum_ = vaddq_s32(sum_, vmulq_s32(diff_low_high, diff_low_high));
+        sum_ = vaddq_s32(sum_, vmulq_s32(diff_high_low, diff_high_low));
+        sum_ = vaddq_s32(sum_, vmulq_s32(diff_high_high, diff_high_high));
+
+        // update the pointer and the count of remaining elements
+        x += 16;
+        y += 16;
+        d -= 16;
     }
-    return (float)res;
+
+    // process 8 int8_t elements each time
+    if (d >= 8) {
+        int8x8_t a = vld1_s8(x);
+        int8x8_t b = vld1_s8(y);
+
+        int16x8_t a_ext = vmovl_s8(a);
+        int16x8_t b_ext = vmovl_s8(b);
+
+        int32x4_t diff_low = vsubl_s16(vget_low_s16(a_ext), vget_low_s16(b_ext));
+        int32x4_t diff_high = vsubl_s16(vget_high_s16(a_ext), vget_high_s16(b_ext));
+
+        sum_ = vaddq_s32(sum_, vmulq_s32(diff_low, diff_low));
+        sum_ = vaddq_s32(sum_, vmulq_s32(diff_high, diff_high));
+
+        x += 8;
+        y += 8;
+        d -= 8;
+    }
+
+    // process 4 int8_t elements each time
+    if (d >= 4) {
+        int8x8_t a = vld1_s8(x);
+        int8x8_t b = vld1_s8(y);
+
+        int16x8_t a_ext = vmovl_s8(a);
+        int16x8_t b_ext = vmovl_s8(b);
+
+        int32x4_t diff_low = vsubl_s16(vget_low_s16(a_ext), vget_low_s16(b_ext));
+
+        sum_ = vaddq_s32(sum_, vmulq_s32(diff_low, diff_low));
+
+        x += 4;
+        y += 4;
+        d -= 4;
+    }
+
+    // process left elements
+    int32_t rem_sum = 0;
+    for (size_t i = 0; i < d; ++i) {
+        int32_t diff = static_cast<int32_t>(x[i]) - static_cast<int32_t>(y[i]);
+        rem_sum += diff * diff;
+    }
+
+    // accumulate the total sum
+    return static_cast<float>(vaddvq_s32(sum_) + rem_sum);
 }
 
 float
 int8_vec_norm_L2sqr_neon(const int8_t* x, size_t d) {
-    // TODO caiyd: use ref implementation temporarily
-    int32_t res = 0;
-    for (size_t i = 0; i < d; i++) {
-        res += (int32_t)x[i] * (int32_t)x[i];
+    // initialize the accumulator
+    int32x4_t sum_ = vdupq_n_s32(0);
+
+    // main loop: process 16 int8_t elements each time
+    while (d >= 16) {
+        // load 16 int8_t element into NEON register
+        int8x16_t a = vld1q_s8(x);
+
+        // extend int8_t to int16_t
+        int16x8_t a_low = vmovl_s8(vget_low_s8(a));
+        int16x8_t a_high = vmovl_s8(vget_high_s8(a));
+
+        // extend int16_t to int32_t
+        int32x4_t a_low_low = vmovl_s16(vget_low_s16(a_low));
+        int32x4_t a_low_high = vmovl_s16(vget_high_s16(a_low));
+        int32x4_t a_high_low = vmovl_s16(vget_low_s16(a_high));
+        int32x4_t a_high_high = vmovl_s16(vget_high_s16(a_high));
+
+        // accumulate partial sum
+        sum_ = vaddq_s32(sum_, vmulq_s32(a_low_low, a_low_low));
+        sum_ = vaddq_s32(sum_, vmulq_s32(a_low_high, a_low_high));
+        sum_ = vaddq_s32(sum_, vmulq_s32(a_high_low, a_high_low));
+        sum_ = vaddq_s32(sum_, vmulq_s32(a_high_high, a_high_high));
+
+        // update the pointer and the count of remaining elements
+        x += 16;
+        d -= 16;
     }
-    return (float)res;
+
+    // process 8 int8_t elements each time
+    if (d >= 8) {
+        int8x8_t a = vld1_s8(x);
+
+        int16x8_t a_ext = vmovl_s8(a);
+
+        int32x4_t a_low = vmovl_s16(vget_low_s16(a_ext));
+        int32x4_t a_high = vmovl_s16(vget_high_s16(a_ext));
+
+        sum_ = vaddq_s32(sum_, vmulq_s32(a_low, a_low));
+        sum_ = vaddq_s32(sum_, vmulq_s32(a_high, a_high));
+
+        x += 8;
+        d -= 8;
+    }
+
+    // process 4 int8_t elements each time
+    if (d >= 4) {
+        int8x8_t a = vld1_s8(x);
+
+        int16x8_t a_ext = vmovl_s8(a);
+
+        int32x4_t a_low = vmovl_s16(vget_low_s16(a_ext));
+
+        sum_ = vaddq_s32(sum_, vmulq_s32(a_low, a_low));
+
+        x += 4;
+        d -= 4;
+    }
+
+    // process left elements
+    int32_t remaining_sum = 0;
+    for (size_t i = 0; i < d; ++i) {
+        int32_t val = static_cast<int32_t>(x[i]);
+        remaining_sum += val * val;
+    }
+
+    // accumulate the total sum
+    return static_cast<float>(vaddvq_s32(sum_) + remaining_sum);
 }
 
 void
 int8_vec_inner_product_batch_4_neon(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2,
-                                    const int8_t* y3, const size_t d, float& dis0, float& dis1, float& dis2,
+                                    const int8_t* y3, const size_t dim, float& dis0, float& dis1, float& dis2,
                                     float& dis3) {
-    // TODO caiyd: use ref implementation temporarily
-    int32_t d0 = 0, d1 = 0, d2 = 0, d3 = 0;
+    // initialize the accumulator
+    int32x4_t sum0 = vdupq_n_s32(0);
+    int32x4_t sum1 = vdupq_n_s32(0);
+    int32x4_t sum2 = vdupq_n_s32(0);
+    int32x4_t sum3 = vdupq_n_s32(0);
 
-    for (size_t i = 0; i < d; ++i) {
-        auto x_i = (int32_t)x[i];
-        d0 += x_i * (int32_t)y0[i];
-        d1 += x_i * (int32_t)y1[i];
-        d2 += x_i * (int32_t)y2[i];
-        d3 += x_i * (int32_t)y3[i];
+    size_t d = dim;
+
+    // main loop: process 16 int8_t elements each time
+    while (d >= 16) {
+        // load 16 int8_t element into NEON register
+        int8x16_t a = vld1q_s8(x + dim - d);
+        int8x16_t b0 = vld1q_s8(y0 + dim - d);
+        int8x16_t b1 = vld1q_s8(y1 + dim - d);
+        int8x16_t b2 = vld1q_s8(y2 + dim - d);
+        int8x16_t b3 = vld1q_s8(y3 + dim - d);
+
+        // extend int8_t to int16_t
+        int16x8_t a_low = vmovl_s8(vget_low_s8(a));
+        int16x8_t a_high = vmovl_s8(vget_high_s8(a));
+        int16x8_t b0_low = vmovl_s8(vget_low_s8(b0));
+        int16x8_t b0_high = vmovl_s8(vget_high_s8(b0));
+        int16x8_t b1_low = vmovl_s8(vget_low_s8(b1));
+        int16x8_t b1_high = vmovl_s8(vget_high_s8(b1));
+        int16x8_t b2_low = vmovl_s8(vget_low_s8(b2));
+        int16x8_t b2_high = vmovl_s8(vget_high_s8(b2));
+        int16x8_t b3_low = vmovl_s8(vget_low_s8(b3));
+        int16x8_t b3_high = vmovl_s8(vget_high_s8(b3));
+
+        // extend int16_t to int32_t
+        int32x4_t a_low_low = vmovl_s16(vget_low_s16(a_low));
+        int32x4_t a_low_high = vmovl_s16(vget_high_s16(a_low));
+        int32x4_t a_high_low = vmovl_s16(vget_low_s16(a_high));
+        int32x4_t a_high_high = vmovl_s16(vget_high_s16(a_high));
+
+        int32x4_t b0_low_low = vmovl_s16(vget_low_s16(b0_low));
+        int32x4_t b0_low_high = vmovl_s16(vget_high_s16(b0_low));
+        int32x4_t b0_high_low = vmovl_s16(vget_low_s16(b0_high));
+        int32x4_t b0_high_high = vmovl_s16(vget_high_s16(b0_high));
+
+        int32x4_t b1_low_low = vmovl_s16(vget_low_s16(b1_low));
+        int32x4_t b1_low_high = vmovl_s16(vget_high_s16(b1_low));
+        int32x4_t b1_high_low = vmovl_s16(vget_low_s16(b1_high));
+        int32x4_t b1_high_high = vmovl_s16(vget_high_s16(b1_high));
+
+        int32x4_t b2_low_low = vmovl_s16(vget_low_s16(b2_low));
+        int32x4_t b2_low_high = vmovl_s16(vget_high_s16(b2_low));
+        int32x4_t b2_high_low = vmovl_s16(vget_low_s16(b2_high));
+        int32x4_t b2_high_high = vmovl_s16(vget_high_s16(b2_high));
+
+        int32x4_t b3_low_low = vmovl_s16(vget_low_s16(b3_low));
+        int32x4_t b3_low_high = vmovl_s16(vget_high_s16(b3_low));
+        int32x4_t b3_high_low = vmovl_s16(vget_low_s16(b3_high));
+        int32x4_t b3_high_high = vmovl_s16(vget_high_s16(b3_high));
+
+        // accumulate partial sum
+        sum0 = vaddq_s32(sum0, vmulq_s32(a_low_low, b0_low_low));
+        sum0 = vaddq_s32(sum0, vmulq_s32(a_low_high, b0_low_high));
+        sum0 = vaddq_s32(sum0, vmulq_s32(a_high_low, b0_high_low));
+        sum0 = vaddq_s32(sum0, vmulq_s32(a_high_high, b0_high_high));
+
+        sum1 = vaddq_s32(sum1, vmulq_s32(a_low_low, b1_low_low));
+        sum1 = vaddq_s32(sum1, vmulq_s32(a_low_high, b1_low_high));
+        sum1 = vaddq_s32(sum1, vmulq_s32(a_high_low, b1_high_low));
+        sum1 = vaddq_s32(sum1, vmulq_s32(a_high_high, b1_high_high));
+
+        sum2 = vaddq_s32(sum2, vmulq_s32(a_low_low, b2_low_low));
+        sum2 = vaddq_s32(sum2, vmulq_s32(a_low_high, b2_low_high));
+        sum2 = vaddq_s32(sum2, vmulq_s32(a_high_low, b2_high_low));
+        sum2 = vaddq_s32(sum2, vmulq_s32(a_high_high, b2_high_high));
+
+        sum3 = vaddq_s32(sum3, vmulq_s32(a_low_low, b3_low_low));
+        sum3 = vaddq_s32(sum3, vmulq_s32(a_low_high, b3_low_high));
+        sum3 = vaddq_s32(sum3, vmulq_s32(a_high_low, b3_high_low));
+        sum3 = vaddq_s32(sum3, vmulq_s32(a_high_high, b3_high_high));
+
+        d -= 16;
     }
 
-    dis0 = (float)d0;
-    dis1 = (float)d1;
-    dis2 = (float)d2;
-    dis3 = (float)d3;
+    // process 8 int8_t elements each time
+    if (d >= 8) {
+        int8x8_t a = vld1_s8(x + dim - d);
+        int8x8_t b0 = vld1_s8(y0 + dim - d);
+        int8x8_t b1 = vld1_s8(y1 + dim - d);
+        int8x8_t b2 = vld1_s8(y2 + dim - d);
+        int8x8_t b3 = vld1_s8(y3 + dim - d);
+
+        // extend int8_t to int16_t
+        int16x8_t a_ext = vmovl_s8(a);
+        int16x8_t b0_ext = vmovl_s8(b0);
+        int16x8_t b1_ext = vmovl_s8(b1);
+        int16x8_t b2_ext = vmovl_s8(b2);
+        int16x8_t b3_ext = vmovl_s8(b3);
+
+        // extend int16_t to int32_t
+        int32x4_t a_low = vmovl_s16(vget_low_s16(a_ext));
+        int32x4_t a_high = vmovl_s16(vget_high_s16(a_ext));
+
+        int32x4_t b0_low = vmovl_s16(vget_low_s16(b0_ext));
+        int32x4_t b0_high = vmovl_s16(vget_high_s16(b0_ext));
+
+        int32x4_t b1_low = vmovl_s16(vget_low_s16(b1_ext));
+        int32x4_t b1_high = vmovl_s16(vget_high_s16(b1_ext));
+
+        int32x4_t b2_low = vmovl_s16(vget_low_s16(b2_ext));
+        int32x4_t b2_high = vmovl_s16(vget_high_s16(b2_ext));
+
+        int32x4_t b3_low = vmovl_s16(vget_low_s16(b3_ext));
+        int32x4_t b3_high = vmovl_s16(vget_high_s16(b3_ext));
+
+        // update partial sum
+        sum0 = vaddq_s32(sum0, vmulq_s32(a_low, b0_low));
+        sum0 = vaddq_s32(sum0, vmulq_s32(a_high, b0_high));
+
+        sum1 = vaddq_s32(sum1, vmulq_s32(a_low, b1_low));
+        sum1 = vaddq_s32(sum1, vmulq_s32(a_high, b1_high));
+
+        sum2 = vaddq_s32(sum2, vmulq_s32(a_low, b2_low));
+        sum2 = vaddq_s32(sum2, vmulq_s32(a_high, b2_high));
+
+        sum3 = vaddq_s32(sum3, vmulq_s32(a_low, b3_low));
+        sum3 = vaddq_s32(sum3, vmulq_s32(a_high, b3_high));
+
+        d -= 8;
+    }
+
+    // process 4 int8_t elements each time
+    if (d >= 4) {
+        int8x8_t a = vld1_s8(x + dim - d);
+        int8x8_t b0 = vld1_s8(y0 + dim - d);
+        int8x8_t b1 = vld1_s8(y1 + dim - d);
+        int8x8_t b2 = vld1_s8(y2 + dim - d);
+        int8x8_t b3 = vld1_s8(y3 + dim - d);
+
+        // extend int8_t to int16_t
+        int16x8_t a_ext = vmovl_s8(a);
+        int16x8_t b0_ext = vmovl_s8(b0);
+        int16x8_t b1_ext = vmovl_s8(b1);
+        int16x8_t b2_ext = vmovl_s8(b2);
+        int16x8_t b3_ext = vmovl_s8(b3);
+
+        // extend int16_t to int32_t
+        int32x4_t a_low = vmovl_s16(vget_low_s16(a_ext));
+
+        int32x4_t b0_low = vmovl_s16(vget_low_s16(b0_ext));
+        int32x4_t b1_low = vmovl_s16(vget_low_s16(b1_ext));
+        int32x4_t b2_low = vmovl_s16(vget_low_s16(b2_ext));
+        int32x4_t b3_low = vmovl_s16(vget_low_s16(b3_ext));
+
+        // update partial sum
+        sum0 = vaddq_s32(sum0, vmulq_s32(a_low, b0_low));
+        sum1 = vaddq_s32(sum1, vmulq_s32(a_low, b1_low));
+        sum2 = vaddq_s32(sum2, vmulq_s32(a_low, b2_low));
+        sum3 = vaddq_s32(sum3, vmulq_s32(a_low, b3_low));
+
+        d -= 4;
+    }
+
+    // process left elements
+    int32_t rem_sum0 = 0;
+    int32_t rem_sum1 = 0;
+    int32_t rem_sum2 = 0;
+    int32_t rem_sum3 = 0;
+    for (size_t i = 0; i < d; ++i) {
+        int32_t val_x = static_cast<int32_t>(x[dim - d + i]);
+        rem_sum0 += val_x * static_cast<int32_t>(y0[dim - d + i]);
+        rem_sum1 += val_x * static_cast<int32_t>(y1[dim - d + i]);
+        rem_sum2 += val_x * static_cast<int32_t>(y2[dim - d + i]);
+        rem_sum3 += val_x * static_cast<int32_t>(y3[dim - d + i]);
+    }
+
+    // accumulate the total sum
+    dis0 = static_cast<float>(vaddvq_s32(sum0) + rem_sum0);
+    dis1 = static_cast<float>(vaddvq_s32(sum1) + rem_sum1);
+    dis2 = static_cast<float>(vaddvq_s32(sum2) + rem_sum2);
+    dis3 = static_cast<float>(vaddvq_s32(sum3) + rem_sum3);
 }
 
 void
 int8_vec_L2sqr_batch_4_neon(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2, const int8_t* y3,
-                            const size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
-    // TODO caiyd: use ref implementation temporarily
-    int32_t d0 = 0, d1 = 0, d2 = 0, d3 = 0;
+                            const size_t dim, float& dis0, float& dis1, float& dis2, float& dis3) {
+    // initialize the accumulator
+    int32x4_t sum0 = vdupq_n_s32(0);
+    int32x4_t sum1 = vdupq_n_s32(0);
+    int32x4_t sum2 = vdupq_n_s32(0);
+    int32x4_t sum3 = vdupq_n_s32(0);
 
-    for (size_t i = 0; i < d; ++i) {
-        auto x_i = (int32_t)x[i];
-        const int32_t q0 = x_i - (int32_t)y0[i];
-        const int32_t q1 = x_i - (int32_t)y1[i];
-        const int32_t q2 = x_i - (int32_t)y2[i];
-        const int32_t q3 = x_i - (int32_t)y3[i];
-        d0 += q0 * q0;
-        d1 += q1 * q1;
-        d2 += q2 * q2;
-        d3 += q3 * q3;
+    size_t d = dim;
+
+    // main loop: process 16 int8_t elements each time
+    while (d >= 16) {
+        // load 16 int8_t element into NEON register
+        int8x16_t a = vld1q_s8(x + dim - d);
+        int8x16_t b0 = vld1q_s8(y0 + dim - d);
+        int8x16_t b1 = vld1q_s8(y1 + dim - d);
+        int8x16_t b2 = vld1q_s8(y2 + dim - d);
+        int8x16_t b3 = vld1q_s8(y3 + dim - d);
+
+        // extend int8_t to int16_t
+        int16x8_t a_low = vmovl_s8(vget_low_s8(a));
+        int16x8_t a_high = vmovl_s8(vget_high_s8(a));
+        int16x8_t b0_low = vmovl_s8(vget_low_s8(b0));
+        int16x8_t b0_high = vmovl_s8(vget_high_s8(b0));
+        int16x8_t b1_low = vmovl_s8(vget_low_s8(b1));
+        int16x8_t b1_high = vmovl_s8(vget_high_s8(b1));
+        int16x8_t b2_low = vmovl_s8(vget_low_s8(b2));
+        int16x8_t b2_high = vmovl_s8(vget_high_s8(b2));
+        int16x8_t b3_low = vmovl_s8(vget_low_s8(b3));
+        int16x8_t b3_high = vmovl_s8(vget_high_s8(b3));
+
+        // extend int16_t to int32_t
+        int32x4_t a_low_low = vmovl_s16(vget_low_s16(a_low));
+        int32x4_t a_low_high = vmovl_s16(vget_high_s16(a_low));
+        int32x4_t a_high_low = vmovl_s16(vget_low_s16(a_high));
+        int32x4_t a_high_high = vmovl_s16(vget_high_s16(a_high));
+
+        int32x4_t b0_low_low = vmovl_s16(vget_low_s16(b0_low));
+        int32x4_t b0_low_high = vmovl_s16(vget_high_s16(b0_low));
+        int32x4_t b0_high_low = vmovl_s16(vget_low_s16(b0_high));
+        int32x4_t b0_high_high = vmovl_s16(vget_high_s16(b0_high));
+
+        int32x4_t b1_low_low = vmovl_s16(vget_low_s16(b1_low));
+        int32x4_t b1_low_high = vmovl_s16(vget_high_s16(b1_low));
+        int32x4_t b1_high_low = vmovl_s16(vget_low_s16(b1_high));
+        int32x4_t b1_high_high = vmovl_s16(vget_high_s16(b1_high));
+
+        int32x4_t b2_low_low = vmovl_s16(vget_low_s16(b2_low));
+        int32x4_t b2_low_high = vmovl_s16(vget_high_s16(b2_low));
+        int32x4_t b2_high_low = vmovl_s16(vget_low_s16(b2_high));
+        int32x4_t b2_high_high = vmovl_s16(vget_high_s16(b2_high));
+
+        int32x4_t b3_low_low = vmovl_s16(vget_low_s16(b3_low));
+        int32x4_t b3_low_high = vmovl_s16(vget_high_s16(b3_low));
+        int32x4_t b3_high_low = vmovl_s16(vget_low_s16(b3_high));
+        int32x4_t b3_high_high = vmovl_s16(vget_high_s16(b3_high));
+
+        // calculate the diff
+        int32x4_t diff0_low_low = vsubq_s32(a_low_low, b0_low_low);
+        int32x4_t diff0_low_high = vsubq_s32(a_low_high, b0_low_high);
+        int32x4_t diff0_high_low = vsubq_s32(a_high_low, b0_high_low);
+        int32x4_t diff0_high_high = vsubq_s32(a_high_high, b0_high_high);
+
+        int32x4_t diff1_low_low = vsubq_s32(a_low_low, b1_low_low);
+        int32x4_t diff1_low_high = vsubq_s32(a_low_high, b1_low_high);
+        int32x4_t diff1_high_low = vsubq_s32(a_high_low, b1_high_low);
+        int32x4_t diff1_high_high = vsubq_s32(a_high_high, b1_high_high);
+
+        int32x4_t diff2_low_low = vsubq_s32(a_low_low, b2_low_low);
+        int32x4_t diff2_low_high = vsubq_s32(a_low_high, b2_low_high);
+        int32x4_t diff2_high_low = vsubq_s32(a_high_low, b2_high_low);
+        int32x4_t diff2_high_high = vsubq_s32(a_high_high, b2_high_high);
+
+        int32x4_t diff3_low_low = vsubq_s32(a_low_low, b3_low_low);
+        int32x4_t diff3_low_high = vsubq_s32(a_low_high, b3_low_high);
+        int32x4_t diff3_high_low = vsubq_s32(a_high_low, b3_high_low);
+        int32x4_t diff3_high_high = vsubq_s32(a_high_high, b3_high_high);
+
+        // accumulate partial sum
+        sum0 = vaddq_s32(sum0, vmulq_s32(diff0_low_low, diff0_low_low));
+        sum0 = vaddq_s32(sum0, vmulq_s32(diff0_low_high, diff0_low_high));
+        sum0 = vaddq_s32(sum0, vmulq_s32(diff0_high_low, diff0_high_low));
+        sum0 = vaddq_s32(sum0, vmulq_s32(diff0_high_high, diff0_high_high));
+
+        sum1 = vaddq_s32(sum1, vmulq_s32(diff1_low_low, diff1_low_low));
+        sum1 = vaddq_s32(sum1, vmulq_s32(diff1_low_high, diff1_low_high));
+        sum1 = vaddq_s32(sum1, vmulq_s32(diff1_high_low, diff1_high_low));
+        sum1 = vaddq_s32(sum1, vmulq_s32(diff1_high_high, diff1_high_high));
+
+        sum2 = vaddq_s32(sum2, vmulq_s32(diff2_low_low, diff2_low_low));
+        sum2 = vaddq_s32(sum2, vmulq_s32(diff2_low_high, diff2_low_high));
+        sum2 = vaddq_s32(sum2, vmulq_s32(diff2_high_low, diff2_high_low));
+        sum2 = vaddq_s32(sum2, vmulq_s32(diff2_high_high, diff2_high_high));
+
+        sum3 = vaddq_s32(sum3, vmulq_s32(diff3_low_low, diff3_low_low));
+        sum3 = vaddq_s32(sum3, vmulq_s32(diff3_low_high, diff3_low_high));
+        sum3 = vaddq_s32(sum3, vmulq_s32(diff3_high_low, diff3_high_low));
+        sum3 = vaddq_s32(sum3, vmulq_s32(diff3_high_high, diff3_high_high));
+
+        d -= 16;
     }
 
-    dis0 = (float)d0;
-    dis1 = (float)d1;
-    dis2 = (float)d2;
-    dis3 = (float)d3;
+    // process 8 int8_t elements each time
+    if (d >= 8) {
+        int8x8_t a = vld1_s8(x + dim - d);
+        int8x8_t b0 = vld1_s8(y0 + dim - d);
+        int8x8_t b1 = vld1_s8(y1 + dim - d);
+        int8x8_t b2 = vld1_s8(y2 + dim - d);
+        int8x8_t b3 = vld1_s8(y3 + dim - d);
+
+        // extend int8_t to int16_t
+        int16x8_t a_ext = vmovl_s8(a);
+        int16x8_t b0_ext = vmovl_s8(b0);
+        int16x8_t b1_ext = vmovl_s8(b1);
+        int16x8_t b2_ext = vmovl_s8(b2);
+        int16x8_t b3_ext = vmovl_s8(b3);
+
+        // extend int16_t to int32_t
+        int32x4_t a_low = vmovl_s16(vget_low_s16(a_ext));
+        int32x4_t a_high = vmovl_s16(vget_high_s16(a_ext));
+
+        int32x4_t b0_low = vmovl_s16(vget_low_s16(b0_ext));
+        int32x4_t b0_high = vmovl_s16(vget_high_s16(b0_ext));
+
+        int32x4_t b1_low = vmovl_s16(vget_low_s16(b1_ext));
+        int32x4_t b1_high = vmovl_s16(vget_high_s16(b1_ext));
+
+        int32x4_t b2_low = vmovl_s16(vget_low_s16(b2_ext));
+        int32x4_t b2_high = vmovl_s16(vget_high_s16(b2_ext));
+
+        int32x4_t b3_low = vmovl_s16(vget_low_s16(b3_ext));
+        int32x4_t b3_high = vmovl_s16(vget_high_s16(b3_ext));
+
+        // calculate the diff
+        int32x4_t diff0_low = vsubq_s32(a_low, b0_low);
+        int32x4_t diff0_high = vsubq_s32(a_high, b0_high);
+
+        int32x4_t diff1_low = vsubq_s32(a_low, b1_low);
+        int32x4_t diff1_high = vsubq_s32(a_high, b1_high);
+
+        int32x4_t diff2_low = vsubq_s32(a_low, b2_low);
+        int32x4_t diff2_high = vsubq_s32(a_high, b2_high);
+
+        int32x4_t diff3_low = vsubq_s32(a_low, b3_low);
+        int32x4_t diff3_high = vsubq_s32(a_high, b3_high);
+
+        // accumulate partial sum
+        sum0 = vaddq_s32(sum0, vmulq_s32(diff0_low, diff0_low));
+        sum0 = vaddq_s32(sum0, vmulq_s32(diff0_high, diff0_high));
+
+        sum1 = vaddq_s32(sum1, vmulq_s32(diff1_low, diff1_low));
+        sum1 = vaddq_s32(sum1, vmulq_s32(diff1_high, diff1_high));
+
+        sum2 = vaddq_s32(sum2, vmulq_s32(diff2_low, diff2_low));
+        sum2 = vaddq_s32(sum2, vmulq_s32(diff2_high, diff2_high));
+
+        sum3 = vaddq_s32(sum3, vmulq_s32(diff3_low, diff3_low));
+        sum3 = vaddq_s32(sum3, vmulq_s32(diff3_high, diff3_high));
+
+        d -= 8;
+    }
+
+    // process 4 int8_t elements each time
+    if (d >= 4) {
+        int8x8_t a = vld1_s8(x + dim - d);
+        int8x8_t b0 = vld1_s8(y0 + dim - d);
+        int8x8_t b1 = vld1_s8(y1 + dim - d);
+        int8x8_t b2 = vld1_s8(y2 + dim - d);
+        int8x8_t b3 = vld1_s8(y3 + dim - d);
+
+        // extend int8_t to int16_t
+        int16x8_t a_ext = vmovl_s8(a);
+        int16x8_t b0_ext = vmovl_s8(b0);
+        int16x8_t b1_ext = vmovl_s8(b1);
+        int16x8_t b2_ext = vmovl_s8(b2);
+        int16x8_t b3_ext = vmovl_s8(b3);
+
+        // extend int16_t to int32_t
+        int32x4_t a_low = vmovl_s16(vget_low_s16(a_ext));
+
+        int32x4_t b0_low = vmovl_s16(vget_low_s16(b0_ext));
+        int32x4_t b1_low = vmovl_s16(vget_low_s16(b1_ext));
+        int32x4_t b2_low = vmovl_s16(vget_low_s16(b2_ext));
+        int32x4_t b3_low = vmovl_s16(vget_low_s16(b3_ext));
+
+        // calculate the diff
+        int32x4_t diff0_low = vsubq_s32(a_low, b0_low);
+        int32x4_t diff1_low = vsubq_s32(a_low, b1_low);
+        int32x4_t diff2_low = vsubq_s32(a_low, b2_low);
+        int32x4_t diff3_low = vsubq_s32(a_low, b3_low);
+
+        // accumulate partial sum
+        sum0 = vaddq_s32(sum0, vmulq_s32(diff0_low, diff0_low));
+        sum1 = vaddq_s32(sum1, vmulq_s32(diff1_low, diff1_low));
+        sum2 = vaddq_s32(sum2, vmulq_s32(diff2_low, diff2_low));
+        sum3 = vaddq_s32(sum3, vmulq_s32(diff3_low, diff3_low));
+
+        d -= 4;
+    }
+
+    // process left elements
+    int32_t rem_sum0 = 0;
+    int32_t rem_sum1 = 0;
+    int32_t rem_sum2 = 0;
+    int32_t rem_sum3 = 0;
+    for (size_t i = 0; i < d; ++i) {
+        int32_t val_x = static_cast<int32_t>(x[dim - d + i]);
+        rem_sum0 += (val_x - static_cast<int32_t>(y0[dim - d + i])) * (val_x - static_cast<int32_t>(y0[dim - d + i]));
+        rem_sum1 += (val_x - static_cast<int32_t>(y1[dim - d + i])) * (val_x - static_cast<int32_t>(y1[dim - d + i]));
+        rem_sum2 += (val_x - static_cast<int32_t>(y2[dim - d + i])) * (val_x - static_cast<int32_t>(y2[dim - d + i]));
+        rem_sum3 += (val_x - static_cast<int32_t>(y3[dim - d + i])) * (val_x - static_cast<int32_t>(y3[dim - d + i]));
+    }
+
+    // accumulate the total sum
+    dis0 = static_cast<float>(vaddvq_s32(sum0) + rem_sum0);
+    dis1 = static_cast<float>(vaddvq_s32(sum1) + rem_sum1);
+    dis2 = static_cast<float>(vaddvq_s32(sum2) + rem_sum2);
+    dis3 = static_cast<float>(vaddvq_s32(sum3) + rem_sum3);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
