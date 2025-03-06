@@ -51,7 +51,7 @@ void half_precision_floating_point_exhaustive_inner_product_impl(
             if constexpr (std::is_same_v<DataType, knowhere::fp16>) {
                 fp16_vec_inner_products_ny_by_idx_if(
                         x_i, y, selector.ids, d, selector.n, filter, apply);
-            } else {
+            } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
                 bf16_vec_inner_products_ny_by_idx_if(
                         x_i, y, selector.ids, d, selector.n, filter, apply);
             }
@@ -62,7 +62,7 @@ void half_precision_floating_point_exhaustive_inner_product_impl(
             };
             if constexpr (std::is_same_v<DataType, knowhere::fp16>) {
                 fp16_vec_inner_products_ny_if(x_i, y, d, ny, filter, apply);
-            } else {
+            } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
                 bf16_vec_inner_products_ny_if(x_i, y, d, ny, filter, apply);
             }
         }
@@ -97,7 +97,7 @@ void half_precision_floating_point_exhaustive_L2sqr_seq_impl(
             if constexpr (std::is_same_v<DataType, knowhere::fp16>) {
                 fp16_vec_L2sqr_ny_by_idx_if(
                         x_i, y, selector.ids, d, selector->n, filter, apply);
-            } else {
+            } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
                 bf16_vec_L2sqr_ny_by_idx_if(
                         x_i, y, selector.ids, d, selector->n, filter, apply);
             }
@@ -108,7 +108,7 @@ void half_precision_floating_point_exhaustive_L2sqr_seq_impl(
             };
             if constexpr (std::is_same_v<DataType, knowhere::fp16>) {
                 fp16_vec_L2sqr_ny_if(x_i, y, d, ny, filter, apply);
-            } else {
+            } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
                 bf16_vec_L2sqr_ny_if(x_i, y, d, ny, filter, apply);
             }
         }
@@ -132,7 +132,7 @@ void half_precision_floating_point_exhaustive_cosine_seq_impl(
     NormComputer norm_computer;
     if constexpr (std::is_same_v<DataType, knowhere::fp16>) {
         norm_computer = fp16_vec_norm_L2sqr;
-    } else {
+    } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
         norm_computer = bf16_vec_norm_L2sqr;
     }
     SingleResultHandler resi(res);
@@ -158,7 +158,7 @@ void half_precision_floating_point_exhaustive_cosine_seq_impl(
             if constexpr (std::is_same_v<DataType, knowhere::fp16>) {
                 fp16_vec_inner_products_ny_by_idx_if(
                         x_i, y, selector.ids, d, selector->n, filter, apply);
-            } else {
+            } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
                 bf16_vec_inner_products_ny_by_idx_if(
                         x_i, y, selector.ids, d, selector->n, filter, apply);
             }
@@ -169,7 +169,7 @@ void half_precision_floating_point_exhaustive_cosine_seq_impl(
             };
             if constexpr (std::is_same_v<DataType, knowhere::fp16>) {
                 fp16_vec_inner_products_ny_if(x_i, y, d, ny, filter, apply);
-            } else {
+            } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
                 bf16_vec_inner_products_ny_if(x_i, y, d, ny, filter, apply);
             }
         }
@@ -505,7 +505,7 @@ void half_precision_floating_point_range_search_cosine(
     return;
 }
 
-// knn functions
+// fp16 knn functions
 template void faiss::half_precision_floating_point_knn_inner_product<
         knowhere::fp16>(
         const knowhere::fp16*,
@@ -517,17 +517,7 @@ template void faiss::half_precision_floating_point_knn_inner_product<
         float*,
         int64_t*,
         const IDSelector*);
-template void faiss::half_precision_floating_point_knn_inner_product<
-        knowhere::bf16>(
-        const knowhere::bf16*,
-        const knowhere::bf16*,
-        size_t,
-        size_t,
-        size_t,
-        size_t,
-        float*,
-        int64_t*,
-        const IDSelector*);
+
 template void faiss::half_precision_floating_point_all_inner_product<
         knowhere::fp16>(
         const knowhere::fp16*,
@@ -537,15 +527,7 @@ template void faiss::half_precision_floating_point_all_inner_product<
         size_t,
         std::vector<knowhere::DistId>&,
         const IDSelector*);
-template void faiss::half_precision_floating_point_all_inner_product<
-        knowhere::bf16>(
-        const knowhere::bf16*,
-        const knowhere::bf16*,
-        size_t,
-        size_t,
-        size_t,
-        std::vector<knowhere::DistId>&,
-        const IDSelector*);
+
 template void faiss::half_precision_floating_point_knn_L2sqr<knowhere::fp16>(
         const knowhere::fp16*,
         const knowhere::fp16*,
@@ -557,17 +539,7 @@ template void faiss::half_precision_floating_point_knn_L2sqr<knowhere::fp16>(
         int64_t*,
         const float*,
         const IDSelector*);
-template void faiss::half_precision_floating_point_knn_L2sqr<knowhere::bf16>(
-        const knowhere::bf16*,
-        const knowhere::bf16*,
-        size_t,
-        size_t,
-        size_t,
-        size_t,
-        float*,
-        int64_t*,
-        const float*,
-        const IDSelector*);
+
 template void faiss::half_precision_floating_point_all_L2sqr<knowhere::fp16>(
         const knowhere::fp16*,
         const knowhere::fp16*,
@@ -577,15 +549,7 @@ template void faiss::half_precision_floating_point_all_L2sqr<knowhere::fp16>(
         std::vector<knowhere::DistId>&,
         const float*,
         const IDSelector*);
-template void faiss::half_precision_floating_point_all_L2sqr<knowhere::bf16>(
-        const knowhere::bf16*,
-        const knowhere::bf16*,
-        size_t,
-        size_t,
-        size_t,
-        std::vector<knowhere::DistId>&,
-        const float*,
-        const IDSelector*);
+
 template void faiss::half_precision_floating_point_knn_cosine<knowhere::fp16>(
         const knowhere::fp16*,
         const knowhere::fp16*,
@@ -597,6 +561,62 @@ template void faiss::half_precision_floating_point_knn_cosine<knowhere::fp16>(
         float*,
         int64_t*,
         const IDSelector*);
+
+template void faiss::half_precision_floating_point_all_cosine<knowhere::fp16>(
+        const knowhere::fp16*,
+        const knowhere::fp16*,
+        const float*,
+        size_t,
+        size_t,
+        size_t,
+        std::vector<knowhere::DistId>&,
+        const IDSelector*);
+
+// bf16 knn functions
+template void faiss::half_precision_floating_point_knn_inner_product<
+        knowhere::bf16>(
+        const knowhere::bf16*,
+        const knowhere::bf16*,
+        size_t,
+        size_t,
+        size_t,
+        size_t,
+        float*,
+        int64_t*,
+        const IDSelector*);
+
+template void faiss::half_precision_floating_point_all_inner_product<
+        knowhere::bf16>(
+        const knowhere::bf16*,
+        const knowhere::bf16*,
+        size_t,
+        size_t,
+        size_t,
+        std::vector<knowhere::DistId>&,
+        const IDSelector*);
+
+template void faiss::half_precision_floating_point_knn_L2sqr<knowhere::bf16>(
+        const knowhere::bf16*,
+        const knowhere::bf16*,
+        size_t,
+        size_t,
+        size_t,
+        size_t,
+        float*,
+        int64_t*,
+        const float*,
+        const IDSelector*);
+
+template void faiss::half_precision_floating_point_all_L2sqr<knowhere::bf16>(
+        const knowhere::bf16*,
+        const knowhere::bf16*,
+        size_t,
+        size_t,
+        size_t,
+        std::vector<knowhere::DistId>&,
+        const float*,
+        const IDSelector*);
+
 template void faiss::half_precision_floating_point_knn_cosine<knowhere::bf16>(
         const knowhere::bf16*,
         const knowhere::bf16*,
@@ -608,15 +628,7 @@ template void faiss::half_precision_floating_point_knn_cosine<knowhere::bf16>(
         float*,
         int64_t*,
         const IDSelector*);
-template void faiss::half_precision_floating_point_all_cosine<knowhere::fp16>(
-        const knowhere::fp16*,
-        const knowhere::fp16*,
-        const float*,
-        size_t,
-        size_t,
-        size_t,
-        std::vector<knowhere::DistId>&,
-        const IDSelector*);
+
 template void faiss::half_precision_floating_point_all_cosine<knowhere::bf16>(
         const knowhere::bf16*,
         const knowhere::bf16*,
@@ -626,7 +638,8 @@ template void faiss::half_precision_floating_point_all_cosine<knowhere::bf16>(
         size_t,
         std::vector<knowhere::DistId>&,
         const IDSelector*);
-// range search functions
+
+// fp16 range search functions
 template void faiss::half_precision_floating_point_range_search_L2sqr<
         knowhere::fp16>(
         const knowhere::fp16*,
@@ -637,16 +650,7 @@ template void faiss::half_precision_floating_point_range_search_L2sqr<
         float,
         faiss::RangeSearchResult*,
         const faiss::IDSelector*);
-template void faiss::half_precision_floating_point_range_search_L2sqr<
-        knowhere::bf16>(
-        const knowhere::bf16*,
-        const knowhere::bf16*,
-        size_t,
-        size_t,
-        size_t,
-        float,
-        faiss::RangeSearchResult*,
-        const faiss::IDSelector*);
+
 template void faiss::half_precision_floating_point_range_search_inner_product<
         knowhere::fp16>(
         const knowhere::fp16*,
@@ -657,16 +661,7 @@ template void faiss::half_precision_floating_point_range_search_inner_product<
         float,
         faiss::RangeSearchResult*,
         const faiss::IDSelector*);
-template void faiss::half_precision_floating_point_range_search_inner_product<
-        knowhere::bf16>(
-        const knowhere::bf16*,
-        const knowhere::bf16*,
-        size_t,
-        size_t,
-        size_t,
-        float,
-        faiss::RangeSearchResult*,
-        const faiss::IDSelector*);
+
 template void faiss::half_precision_floating_point_range_search_cosine<
         knowhere::fp16>(
         const knowhere::fp16*,
@@ -678,6 +673,30 @@ template void faiss::half_precision_floating_point_range_search_cosine<
         float,
         faiss::RangeSearchResult*,
         const faiss::IDSelector*);
+
+// bf16 range search functions
+template void faiss::half_precision_floating_point_range_search_L2sqr<
+        knowhere::bf16>(
+        const knowhere::bf16*,
+        const knowhere::bf16*,
+        size_t,
+        size_t,
+        size_t,
+        float,
+        faiss::RangeSearchResult*,
+        const faiss::IDSelector*);
+
+template void faiss::half_precision_floating_point_range_search_inner_product<
+        knowhere::bf16>(
+        const knowhere::bf16*,
+        const knowhere::bf16*,
+        size_t,
+        size_t,
+        size_t,
+        float,
+        faiss::RangeSearchResult*,
+        const faiss::IDSelector*);
+
 template void faiss::half_precision_floating_point_range_search_cosine<
         knowhere::bf16>(
         const knowhere::bf16*,
@@ -689,4 +708,5 @@ template void faiss::half_precision_floating_point_range_search_cosine<
         float,
         faiss::RangeSearchResult*,
         const faiss::IDSelector*);
+
 } // namespace faiss

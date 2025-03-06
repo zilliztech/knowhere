@@ -574,7 +574,7 @@ void distance_compute_by_idx_if(
 }
 
 /***************************************************************************
- * float16 & bfloat16 search functions
+ * float16 search functions
  ***************************************************************************/
 namespace {
 template <
@@ -686,6 +686,111 @@ void internal_fp16_vec_L2sqr_ny_if(
             DEFAULT_BUFFER_SIZE>(
             ny, pred, distance1, distance4, remapper, apply);
 }
+} // namespace
+
+// compute ny inner product between x vectors x and a set of contiguous y
+// vectors
+//   with filtering and applying filtered elements.
+template <
+        // A predicate for filtering elements.
+        //   std::optional<bool> Pred(const size_t idx);
+        // * return true to accept an element.
+        // * return false to reject an element.
+        // * return std::nullopt to break the iteration loop.
+        typename Pred,
+        // Apply an element.
+        //   void Apply(const float dis, const size_t idx);
+        typename Apply>
+void fp16_vec_inner_products_ny_if(
+        const knowhere::fp16* __restrict x,
+        const knowhere::fp16* __restrict y,
+        size_t d,
+        const size_t ny,
+        Pred pred,
+        Apply apply) {
+    internal_fp16_vec_inner_products_ny_if(
+            x, y, d, ny, pred, NoRemapping(), apply);
+}
+
+// compute ny square L2 distance between x vectors x and a set of contiguous y
+// vectors
+//   with filtering and applying filtered elements.
+template <
+        // A predicate for filtering elements.
+        //   std::optional<bool> Pred(const size_t idx);
+        // * return true to accept an element.
+        // * return false to reject an element.
+        // * return std::nullopt to break the iteration loop.
+        typename Pred,
+        // Apply an element.
+        //   void Apply(const float dis, const size_t idx);
+        typename Apply>
+void fp16_vec_L2sqr_ny_if(
+        const knowhere::fp16* __restrict x,
+        const knowhere::fp16* __restrict y,
+        size_t d,
+        const size_t ny,
+        Pred pred,
+        Apply apply) {
+    internal_fp16_vec_L2sqr_ny_if(x, y, d, ny, pred, NoRemapping(), apply);
+}
+
+// compute ny inner product between x vectors x and a set of contiguous y
+// vectors
+//   whose indices are given by idy with filtering and applying filtered
+//   elements.
+template <
+        // A predicate for filtering elements.
+        //   std::optional<bool> Pred(const size_t idx);
+        // * return true to accept an element.
+        // * return false to reject an element.
+        // * return std::nullopt to break the iteration loop.
+        typename Pred,
+        // Apply an element.
+        //   void Apply(const float dis, const int64_t idx);
+        typename Apply>
+void fp16_vec_inner_products_ny_by_idx_if(
+        const knowhere::fp16* __restrict x,
+        const knowhere::fp16* __restrict y,
+        const int64_t* __restrict ids, /* ids of y vecs */
+        size_t d,
+        const size_t ny,
+        Pred pred,
+        Apply apply) {
+    ByIdxRemapping<int64_t> remapper{ids};
+    internal_fp16_vec_inner_products_ny_if(x, y, d, ny, pred, remapper, apply);
+}
+
+// compute ny square L2 distance between x vectors x and a set of contiguous y
+// vectors
+//   whose indices are given by idy with filtering and applying filtered
+//   elements.
+template <
+        // A predicate for filtering elements.
+        //   std::optional<bool> Pred(const size_t idx);
+        // * return true to accept an element.
+        // * return false to reject an element.
+        // * return std::nullopt to break the iteration loop.
+        typename Pred,
+        // Apply an element.
+        //   void Apply(const float dis, const int64_t idx);
+        typename Apply>
+void fp16_vec_L2sqr_ny_by_idx_if(
+        const knowhere::fp16* __restrict x,
+        const knowhere::fp16* __restrict y,
+        const int64_t* __restrict ids, /* ids of y vecs */
+        size_t d,
+        const size_t ny,
+        Pred pred,
+        Apply apply) {
+    ByIdxRemapping<int64_t> remapper{ids};
+    internal_fp16_vec_L2sqr_ny_if(x, y, d, ny, pred, remapper, apply);
+}
+
+/***************************************************************************
+ * bfloat16 search functions
+ ***************************************************************************/
+namespace {
 template <
         // A predicate for filtering elements.
         //   std::optional<bool> Pred(const size_t idx);
@@ -714,21 +819,21 @@ void internal_bf16_vec_inner_products_ny_if(
     auto distance1 = [x, y, d](const idx_type idx) {
         return bf16_vec_inner_product(x, y + idx * d, d);
     };
-        // compute distances from the query to 4 elements
+    // compute distances from the query to 4 elements
     auto distance4 = [x, y, d](
                              const std::array<idx_type, 4> indices,
                              std::array<float, 4>& dis) {
         bf16_vec_inner_product_batch_4(
-            x,
-            y + indices[0] * d,
-            y + indices[1] * d,
-            y + indices[2] * d,
-            y + indices[3] * d,
-            d,
-            dis[0],
-            dis[1],
-            dis[2],
-            dis[3]);
+                x,
+                y + indices[0] * d,
+                y + indices[1] * d,
+                y + indices[2] * d,
+                y + indices[3] * d,
+                d,
+                dis[0],
+                dis[1],
+                dis[2],
+                dis[3]);
     };
     fvec_distance_ny_if<
             Pred,
@@ -796,105 +901,7 @@ void internal_bf16_vec_L2sqr_ny_if(
             DEFAULT_BUFFER_SIZE>(
             ny, pred, distance1, distance4, remapper, apply);
 }
-} // namespace 
-// compute ny inner product between x vectors x and a set of contiguous y
-// vectors
-//   with filtering and applying filtered elements.
-template <
-        // A predicate for filtering elements.
-        //   std::optional<bool> Pred(const size_t idx);
-        // * return true to accept an element.
-        // * return false to reject an element.
-        // * return std::nullopt to break the iteration loop.
-        typename Pred,
-        // Apply an element.
-        //   void Apply(const float dis, const size_t idx);
-        typename Apply>
-void fp16_vec_inner_products_ny_if(
-        const knowhere::fp16* __restrict x,
-        const knowhere::fp16* __restrict y,
-        size_t d,
-        const size_t ny,
-        Pred pred,
-        Apply apply) {
-    internal_fp16_vec_inner_products_ny_if(
-            x, y, d, ny, pred, NoRemapping(), apply);
-}
-
-// compute ny square L2 distance between x vectors x and a set of contiguous y
-// vectors
-//   with filtering and applying filtered elements.
-template <
-        // A predicate for filtering elements.
-        //   std::optional<bool> Pred(const size_t idx);
-        // * return true to accept an element.
-        // * return false to reject an element.
-        // * return std::nullopt to break the iteration loop.
-        typename Pred,
-        // Apply an element.
-        //   void Apply(const float dis, const size_t idx);
-        typename Apply>
-void fp16_vec_L2sqr_ny_if(
-        const knowhere::fp16* __restrict x,
-        const knowhere::fp16* __restrict y,
-        size_t d,
-        const size_t ny,
-        Pred pred,
-        Apply apply) {
-    internal_fp16_vec_L2sqr_ny_if(x, y, d, ny, pred, NoRemapping(), apply);
-}
-
-// compute ny inner product between x vectors x and a set of contiguous y
-// vectors
-//   whose indices are given by idy with filtering and applying filtered
-//   elements.
-template <
-        // A predicate for filtering elements.
-        //   std::optional<bool> Pred(const size_t idx);
-        // * return true to accept an element.
-        // * return false to reject an element.
-        // * return std::nullopt to break the iteration loop.
-        typename Pred,
-        // Apply an element.
-        //   void Apply(const float dis, const int64_t idx);
-        typename Apply>
-void fp16_vec_inner_products_ny_by_idx_if(
-        const float* __restrict x,
-        const float* __restrict y,
-        const int64_t* __restrict ids, /* ids of y vecs */
-        size_t d,
-        const size_t ny,
-        Pred pred,
-        Apply apply) {
-    ByIdxRemapping<int64_t> remapper{ids};
-    internal_fp16_vec_inner_products_ny_if(x, y, d, ny, pred, remapper, apply);
-}
-
-// compute ny square L2 distance between x vectors x and a set of contiguous y
-// vectors
-//   whose indices are given by idy with filtering and applying filtered
-//   elements.
-template <
-        // A predicate for filtering elements.
-        //   std::optional<bool> Pred(const size_t idx);
-        // * return true to accept an element.
-        // * return false to reject an element.
-        // * return std::nullopt to break the iteration loop.
-        typename Pred,
-        // Apply an element.
-        //   void Apply(const float dis, const int64_t idx);
-        typename Apply>
-void fp16_vec_L2sqr_ny_by_idx_if(
-        const float* __restrict x,
-        const float* __restrict y,
-        const int64_t* __restrict ids, /* ids of y vecs */
-        size_t d,
-        const size_t ny,
-        Pred pred,
-        Apply apply) {
-    ByIdxRemapping<int64_t> remapper{ids};
-    internal_fp16_vec_L2sqr_ny_if(x, y, d, ny, pred, remapper, apply);
-}
+} // namespace
 
 // compute ny inner product between x vectors x and a set of contiguous y
 // vectors
@@ -958,8 +965,8 @@ template <
         //   void Apply(const float dis, const int64_t idx);
         typename Apply>
 void bf16_vec_inner_products_ny_by_idx_if(
-        const float* __restrict x,
-        const float* __restrict y,
+        const knowhere::bf16* __restrict x,
+        const knowhere::bf16* __restrict y,
         const int64_t* __restrict ids, /* ids of y vecs */
         size_t d,
         const size_t ny,
@@ -984,8 +991,8 @@ template <
         //   void Apply(const float dis, const int64_t idx);
         typename Apply>
 void bf16_vec_L2sqr_ny_by_idx_if(
-        const float* __restrict x,
-        const float* __restrict y,
+        const knowhere::bf16* __restrict x,
+        const knowhere::bf16* __restrict y,
         const int64_t* __restrict ids, /* ids of y vecs */
         size_t d,
         const size_t ny,
@@ -994,7 +1001,6 @@ void bf16_vec_L2sqr_ny_by_idx_if(
     ByIdxRemapping<int64_t> remapper{ids};
     internal_bf16_vec_L2sqr_ny_if(x, y, d, ny, pred, remapper, apply);
 }
-
 
 } //namespace faiss
 
