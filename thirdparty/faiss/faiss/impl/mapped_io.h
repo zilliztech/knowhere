@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 #pragma once
 
 #include <cstddef>
@@ -10,7 +17,7 @@
 namespace faiss {
 
 // holds a memory-mapped region over a file
-struct MmappedFileMappingOwner : public MappingOwner {
+struct MmappedFileMappingOwner : public MaybeOwnedVectorOwner {
     MmappedFileMappingOwner(const std::string& filename);
     MmappedFileMappingOwner(FILE* f);
     ~MmappedFileMappingOwner();
@@ -22,7 +29,9 @@ struct MmappedFileMappingOwner : public MappingOwner {
     std::unique_ptr<PImpl> p_impl;
 };
 
-// a deserializer that supports memory-mapped files
+// A deserializer that supports memory-mapped files.
+// All de-allocations should happen as soon as the index gets destroyed,
+//   after all underlying the MaybeOwnerVector objects are destroyed.
 struct MappedFileIOReader : IOReader {
     std::shared_ptr<MmappedFileMappingOwner> mmap_owner;
 
@@ -39,4 +48,4 @@ struct MappedFileIOReader : IOReader {
     int filedescriptor() override;
 };
 
-}
+} // namespace faiss
