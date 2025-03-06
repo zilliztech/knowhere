@@ -4,6 +4,7 @@ from .swigknowhere import CreateBinarySet, GetBinarySet, GetNullDataSet, GetNull
 from .swigknowhere import BruteForceSearchFloat, BruteForceRangeSearchFloat
 from .swigknowhere import BruteForceSearchFP16, BruteForceRangeSearchFP16
 from .swigknowhere import BruteForceSearchBF16, BruteForceRangeSearchBF16
+from .swigknowhere import BruteForceSearchInt8, BruteForceRangeSearchInt8
 from .swigknowhere import BruteForceSearchBin, BruteForceRangeSearchBin
 
 import numpy as np
@@ -29,6 +30,8 @@ def BruteForceSearch(type=np.float32, *args):
         return BruteForceSearchFP16(*args)
     if type == bfloat16:
         return BruteForceSearchBF16(*args)
+    if type == np.int8:
+        return BruteForceSearchInt8(*args)
     if type == np.uint8:
         return BruteForceSearchBin(*args)
 
@@ -39,6 +42,8 @@ def BruteForceRangeSearch(type=np.float32, *args):
         return BruteForceRangeSearchFP16(*args)
     if type == bfloat16:
         return BruteForceRangeSearchBF16(*args)
+    if type == np.int8:
+        return BruteForceRangeSearchInt8(*args)
     if type == np.uint8:
         return BruteForceRangeSearchBin(*args)
 

@@ -354,6 +354,7 @@ TEST_F(Benchmark_float, TEST_BRUTE_FORCE) {
     test_brute_force<knowhere::fp32>(conf);
     test_brute_force<knowhere::fp16>(conf);
     test_brute_force<knowhere::bf16>(conf);
+    test_brute_force<knowhere::int8>(conf);
 }
 
 TEST_F(Benchmark_float, TEST_IDMAP) {

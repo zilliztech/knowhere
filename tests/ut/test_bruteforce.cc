@@ -169,18 +169,21 @@ TEST_CASE("Test Brute Force", "[float vector]") {
         check_search<knowhere::fp32>(train_ds, query_ds, k, metric, conf);
         check_search<knowhere::fp16>(train_ds, query_ds, k, metric, conf);
         check_search<knowhere::bf16>(train_ds, query_ds, k, metric, conf);
+        check_search<knowhere::int8>(train_ds, query_ds, k, metric, conf);
     }
 
     SECTION("Test Search With Buf") {
         check_search_with_buf<knowhere::fp32>(train_ds, query_ds, k, metric, conf);
         check_search_with_buf<knowhere::fp16>(train_ds, query_ds, k, metric, conf);
         check_search_with_buf<knowhere::bf16>(train_ds, query_ds, k, metric, conf);
+        check_search_with_buf<knowhere::int8>(train_ds, query_ds, k, metric, conf);
     }
 
     SECTION("Test Range Search") {
         check_range_search<knowhere::fp32>(train_ds, query_ds, k, metric, conf);
         check_range_search<knowhere::fp16>(train_ds, query_ds, k, metric, conf);
         check_range_search<knowhere::bf16>(train_ds, query_ds, k, metric, conf);
+        check_range_search<knowhere::int8>(train_ds, query_ds, k, metric, conf);
     }
 }
 
@@ -269,4 +272,5 @@ TEST_CASE("Test Brute Force with input ids", "[float vector]") {
     check_search_with_out_ids<knowhere::fp32>(nb, nq, dim, k, metric, conf);
     check_search_with_out_ids<knowhere::fp16>(nb, nq, dim, k, metric, conf);
     check_search_with_out_ids<knowhere::bf16>(nb, nq, dim, k, metric, conf);
+    check_search_with_out_ids<knowhere::int8>(nb, nq, dim, k, metric, conf);
 }

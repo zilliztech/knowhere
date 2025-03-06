@@ -169,11 +169,11 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
                     if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                         faiss::knn_L2sqr(cur_query, (const float*)xb, dim, 1, nb, topk, cur_distances, cur_labels,
                                          nullptr, id_selector);
-                    } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
+                    } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                         faiss::knn_L2sqr_typed(cur_query, (const DataType*)xb, dim, 1, nb, topk, cur_distances,
                                                cur_labels, nullptr, id_selector);
                     } else {
-                        LOG_KNOWHERE_ERROR_ << "Metric L2 only used in floating point data";
+                        LOG_KNOWHERE_ERROR_ << "Metric L2 not supported for current vector type";
                         return Status::faiss_inner_error;
                     }
                     break;
@@ -185,23 +185,23 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
                             auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                             faiss::knn_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1, nb, topk,
                                               cur_distances, cur_labels, id_selector);
-                        } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
+                        } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                             // normalize query vector may cause precision loss, so div query norms in apply function
                             faiss::knn_cosine_typed(cur_query, (const DataType*)xb, norms.get(), dim, 1, nb, topk,
                                                     cur_distances, cur_labels, id_selector);
                         } else {
-                            LOG_KNOWHERE_ERROR_ << "Metric Cosine only used in floating point data";
+                            LOG_KNOWHERE_ERROR_ << "Metric COSINE not supported for current vector type";
                             return Status::faiss_inner_error;
                         }
                     } else {
                         if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                             faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, topk, cur_distances,
                                                      cur_labels, id_selector);
-                        } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
+                        } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                             faiss::knn_inner_product_typed(cur_query, (const DataType*)xb, dim, 1, nb, topk,
                                                            cur_distances, cur_labels, id_selector);
                         } else {
-                            LOG_KNOWHERE_ERROR_ << "Metric Inner Product only used in floating point data";
+                            LOG_KNOWHERE_ERROR_ << "Metric IP not supported for current vector type";
                             return Status::faiss_inner_error;
                         }
                     }
@@ -325,11 +325,11 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                     if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                         faiss::knn_L2sqr(cur_query, (const float*)xb, dim, 1, nb, topk, cur_distances, cur_labels,
                                          nullptr, id_selector);
-                    } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
+                    } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                         faiss::knn_L2sqr_typed(cur_query, (const DataType*)xb, dim, 1, nb, topk, cur_distances,
                                                cur_labels, nullptr, id_selector);
                     } else {
-                        LOG_KNOWHERE_ERROR_ << "Metric L2 only used in floating point data";
+                        LOG_KNOWHERE_ERROR_ << "Metric L2 not supported for current vector type";
                         return Status::faiss_inner_error;
                     }
                     break;
@@ -341,23 +341,23 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                             auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                             faiss::knn_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1, nb, topk,
                                               cur_distances, cur_labels, id_selector);
-                        } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
+                        } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                             // normalize query vector may cause precision loss, so div query norms in apply function
                             faiss::knn_cosine_typed(cur_query, (const DataType*)xb, norms.get(), dim, 1, nb, topk,
                                                     cur_distances, cur_labels, id_selector);
                         } else {
-                            LOG_KNOWHERE_ERROR_ << "Metric Cosine only used in floating point data";
+                            LOG_KNOWHERE_ERROR_ << "Metric COSINE not supported for current vector type";
                             return Status::faiss_inner_error;
                         }
                     } else {
                         if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                             faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, topk, cur_distances,
                                                      cur_labels, id_selector);
-                        } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
+                        } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                             faiss::knn_inner_product_typed(cur_query, (const DataType*)xb, dim, 1, nb, topk,
                                                            cur_distances, cur_labels, id_selector);
                         } else {
-                            LOG_KNOWHERE_ERROR_ << "Metric Inner Product only used in floating point data";
+                            LOG_KNOWHERE_ERROR_ << "Metric IP not supported for current vector type";
                             return Status::faiss_inner_error;
                         }
                     }
@@ -526,11 +526,11 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                         if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                             faiss::range_search_L2sqr(cur_query, (const float*)xb, dim, 1, nb, radius, &res,
                                                       id_selector);
-                        } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
+                        } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                             faiss::range_search_L2sqr_typed(cur_query, (const DataType*)xb, dim, 1, nb, radius, &res,
                                                             id_selector);
                         } else {
-                            LOG_KNOWHERE_ERROR_ << "Metric L2 only used in floating point data";
+                            LOG_KNOWHERE_ERROR_ << "Metric L2 not supported for current vector type";
                             return Status::faiss_inner_error;
                         }
                         break;
@@ -543,23 +543,23 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                                 auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                                 faiss::range_search_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1,
                                                            nb, radius, &res, id_selector);
-                            } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
+                            } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                                 // normalize query vector may cause precision loss, so div query norms in apply function
                                 faiss::range_search_cosine_typed(cur_query, (const DataType*)xb, norms.get(), dim, 1,
                                                                  nb, radius, &res, id_selector);
                             } else {
-                                LOG_KNOWHERE_ERROR_ << "Metric Cosine only used in floating point data";
+                                LOG_KNOWHERE_ERROR_ << "Metric COSINE not supported for current vector type";
                                 return Status::faiss_inner_error;
                             }
                         } else {
                             if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                                 faiss::range_search_inner_product(cur_query, (const DataType*)xb, dim, 1, nb, radius,
                                                                   &res, id_selector);
-                            } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
+                            } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                                 faiss::range_search_inner_product_typed(cur_query, (const DataType*)xb, dim, 1, nb,
                                                                         radius, &res, id_selector);
                             } else {
-                                LOG_KNOWHERE_ERROR_ << "Metric Inner Product only used in floating point data";
+                                LOG_KNOWHERE_ERROR_ << "Metric IP not supported for current vector type";
                                 return Status::faiss_inner_error;
                             }
                         }
@@ -798,12 +798,13 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                         if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                             faiss::all_L2sqr(cur_query, (const float*)xb, dim, 1, nb, distances_ids, nullptr,
                                              id_selector);
-                        } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
+                        } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                             faiss::all_L2sqr_typed(cur_query, (const DataType*)xb, dim, 1, nb, distances_ids, nullptr,
                                                    id_selector);
                         } else {
-                            LOG_KNOWHERE_ERROR_ << "Metric L2 only used in floating point data";
-                            throw std::runtime_error("Metric L2 only used in floating point data");
+                            std::string err_msg = "Metric L2 not supported for current vector type";
+                            LOG_KNOWHERE_ERROR_ << err_msg;
+                            KNOWHERE_THROW_MSG(err_msg);
                         }
                         break;
                     }
@@ -813,31 +814,34 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                                 auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                                 faiss::all_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1, nb,
                                                   distances_ids, id_selector);
-                            } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
+                            } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                                 // normalize query vector may cause precision loss, so div query norms in apply function
                                 faiss::all_cosine_typed(cur_query, (const DataType*)xb, norms.get(), dim, 1, nb,
                                                         distances_ids, id_selector);
                             } else {
-                                LOG_KNOWHERE_ERROR_ << "Metric Cosine only used in floating point data";
-                                throw std::runtime_error("Metric Cosine only used in floating point data");
+                                std::string err_msg = "Metric COSINE not supported for current vector type";
+                                LOG_KNOWHERE_ERROR_ << err_msg;
+                                KNOWHERE_THROW_MSG(err_msg);
                             }
                         } else {
                             if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                                 faiss::all_inner_product(cur_query, (const float*)xb, dim, 1, nb, distances_ids,
                                                          id_selector);
-                            } else if constexpr (KnowhereHalfPrecisionFloatPointTypeCheck<DataType>::value) {
+                            } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                                 faiss::all_inner_product_typed(cur_query, (const DataType*)xb, dim, 1, nb,
                                                                distances_ids, id_selector);
                             } else {
-                                LOG_KNOWHERE_ERROR_ << "Metric Cosine only used in floating point data";
-                                throw std::runtime_error("Metric Cosine only used in floating point data");
+                                std::string err_msg = "Metric IP not supported for current vector type";
+                                LOG_KNOWHERE_ERROR_ << err_msg;
+                                KNOWHERE_THROW_MSG(err_msg);
                             }
                         }
                         break;
                     }
                     default: {
-                        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
-                        throw std::runtime_error("Invalid metric type");
+                        std::string err_msg = "Invalid metric type: " + cfg.metric_type.value();
+                        LOG_KNOWHERE_ERROR_ << err_msg;
+                        KNOWHERE_THROW_MSG(err_msg);
                     }
                 }
                 if (xb_id_offset != 0) {
@@ -958,7 +962,6 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
     return vec;
 }
 
-}  // namespace knowhere
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::Search<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
                                              const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
@@ -972,9 +975,14 @@ knowhere::BruteForce::Search<knowhere::bf16>(const knowhere::DataSetPtr base_dat
                                              const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
                                              const knowhere::BitsetView& bitset);
 template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::Search<knowhere::int8>(const knowhere::DataSetPtr base_dataset,
+                                             const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
+                                             const knowhere::BitsetView& bitset);
+template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::Search<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
                                              const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
                                              const knowhere::BitsetView& bitset);
+
 template knowhere::Status
 knowhere::BruteForce::SearchWithBuf<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
                                                     const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
@@ -988,9 +996,14 @@ knowhere::BruteForce::SearchWithBuf<knowhere::bf16>(const knowhere::DataSetPtr b
                                                     const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
                                                     const knowhere::Json& config, const knowhere::BitsetView& bitset);
 template knowhere::Status
+knowhere::BruteForce::SearchWithBuf<knowhere::int8>(const knowhere::DataSetPtr base_dataset,
+                                                    const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
+                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::Status
 knowhere::BruteForce::SearchWithBuf<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
                                                     const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
                                                     const knowhere::Json& config, const knowhere::BitsetView& bitset);
+
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
@@ -1001,6 +1014,10 @@ knowhere::BruteForce::RangeSearch<knowhere::fp16>(const knowhere::DataSetPtr bas
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
+                                                  const knowhere::DataSetPtr query_dataset,
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+template knowhere::expected<knowhere::DataSetPtr>
+knowhere::BruteForce::RangeSearch<knowhere::int8>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset);
 template knowhere::expected<knowhere::DataSetPtr>
@@ -1028,3 +1045,10 @@ knowhere::BruteForce::AnnIterator<knowhere::bf16>(const knowhere::DataSetPtr bas
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset,
                                                   bool use_knowhere_search_pool = true);
+template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
+knowhere::BruteForce::AnnIterator<knowhere::int8>(const knowhere::DataSetPtr base_dataset,
+                                                  const knowhere::DataSetPtr query_dataset,
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                  bool use_knowhere_search_pool = true);
+
+}  // namespace knowhere
