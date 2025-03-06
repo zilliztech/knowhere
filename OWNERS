@@ -11,6 +11,7 @@ filters:
       - cqy123456
       - zhengbuqian
       - chasingegg
+      - alexanderguzhva
 
     approvers:
       - cydrain
@@ -23,6 +24,7 @@ filters:
       - cqy123456
       - zhengbuqian
       - chasingegg
+      - alexanderguzhva
 
   "tests":
     reviewers:
