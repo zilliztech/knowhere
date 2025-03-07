@@ -712,9 +712,11 @@ SetSearchThreadPool(uint32_t num_threads) {
 %template(BruteForceSearchFloat) BruteForceSearch<float>;
 %template(BruteForceSearchFP16) BruteForceSearch<knowhere::fp16>;
 %template(BruteForceSearchBF16) BruteForceSearch<knowhere::bf16>;
+%template(BruteForceSearchInt8) BruteForceSearch<knowhere::int8>;
 %template(BruteForceSearchBin) BruteForceSearch<knowhere::bin1>;
 
 %template(BruteForceRangeSearchFloat) BruteForceRangeSearch<float>;
 %template(BruteForceRangeSearchFP16) BruteForceRangeSearch<knowhere::fp16>;
 %template(BruteForceRangeSearchBF16) BruteForceRangeSearch<knowhere::bf16>;
+%template(BruteForceRangeSearchInt8) BruteForceRangeSearch<knowhere::int8>;
 %template(BruteForceRangeSearchBin) BruteForceRangeSearch<knowhere::bin1>;

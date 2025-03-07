@@ -54,6 +54,9 @@ void exhaustive_inner_product_impl_typed(
             } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
                 bf16_vec_inner_products_ny_by_idx_if(
                         x_i, y, selector.ids, d, selector.n, filter, apply);
+            } else if constexpr (std::is_same_v<DataType, knowhere::int8>) {
+                int8_vec_inner_products_ny_by_idx_if(
+                        x_i, y, selector.ids, d, selector.n, filter, apply);
             }
         } else {
             // the lambda that filters acceptable elements.
@@ -64,6 +67,8 @@ void exhaustive_inner_product_impl_typed(
                 fp16_vec_inner_products_ny_if(x_i, y, d, ny, filter, apply);
             } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
                 bf16_vec_inner_products_ny_if(x_i, y, d, ny, filter, apply);
+            } else if constexpr (std::is_same_v<DataType, knowhere::int8>) {
+                int8_vec_inner_products_ny_if(x_i, y, d, ny, filter, apply);
             }
         }
         resi.end();
@@ -100,6 +105,9 @@ void exhaustive_L2sqr_seq_impl_typed(
             } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
                 bf16_vec_L2sqr_ny_by_idx_if(
                         x_i, y, selector.ids, d, selector->n, filter, apply);
+            } else if constexpr (std::is_same_v<DataType, knowhere::int8>) {
+                int8_vec_L2sqr_ny_by_idx_if(
+                        x_i, y, selector.ids, d, selector->n, filter, apply);
             }
         } else {
             // the lambda that filters acceptable elements.
@@ -110,6 +118,8 @@ void exhaustive_L2sqr_seq_impl_typed(
                 fp16_vec_L2sqr_ny_if(x_i, y, d, ny, filter, apply);
             } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
                 bf16_vec_L2sqr_ny_if(x_i, y, d, ny, filter, apply);
+            } else if constexpr (std::is_same_v<DataType, knowhere::int8>) {
+                int8_vec_L2sqr_ny_if(x_i, y, d, ny, filter, apply);
             }
         }
         resi.end();
@@ -134,6 +144,8 @@ void exhaustive_cosine_seq_impl_typed(
         norm_computer = fp16_vec_norm_L2sqr;
     } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
         norm_computer = bf16_vec_norm_L2sqr;
+    } else if constexpr (std::is_same_v<DataType, knowhere::int8>) {
+        norm_computer = int8_vec_norm_L2sqr;
     }
     SingleResultHandler resi(res);
     for (int64_t i = 0; i < nx; i++) {
@@ -161,6 +173,9 @@ void exhaustive_cosine_seq_impl_typed(
             } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
                 bf16_vec_inner_products_ny_by_idx_if(
                         x_i, y, selector.ids, d, selector->n, filter, apply);
+            } else if constexpr (std::is_same_v<DataType, knowhere::int8>) {
+                int8_vec_inner_products_ny_by_idx_if(
+                        x_i, y, selector.ids, d, selector->n, filter, apply);
             }
         } else {
             // the lambda that filters acceptable elements.
@@ -171,6 +186,8 @@ void exhaustive_cosine_seq_impl_typed(
                 fp16_vec_inner_products_ny_if(x_i, y, d, ny, filter, apply);
             } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
                 bf16_vec_inner_products_ny_if(x_i, y, d, ny, filter, apply);
+            } else if constexpr (std::is_same_v<DataType, knowhere::int8>) {
+                int8_vec_inner_products_ny_if(x_i, y, d, ny, filter, apply);
             }
         }
         resi.end();
@@ -616,6 +633,71 @@ template void faiss::all_cosine_typed<knowhere::bf16>(
         std::vector<knowhere::DistId>&,
         const IDSelector*);
 
+// int8 knn functions
+template void faiss::knn_inner_product_typed<knowhere::int8>(
+        const knowhere::int8*,
+        const knowhere::int8*,
+        size_t,
+        size_t,
+        size_t,
+        size_t,
+        float*,
+        int64_t*,
+        const IDSelector*);
+
+template void faiss::all_inner_product_typed<knowhere::int8>(
+        const knowhere::int8*,
+        const knowhere::int8*,
+        size_t,
+        size_t,
+        size_t,
+        std::vector<knowhere::DistId>&,
+        const IDSelector*);
+
+template void faiss::knn_L2sqr_typed<knowhere::int8>(
+        const knowhere::int8*,
+        const knowhere::int8*,
+        size_t,
+        size_t,
+        size_t,
+        size_t,
+        float*,
+        int64_t*,
+        const float*,
+        const IDSelector*);
+
+template void faiss::all_L2sqr_typed<knowhere::int8>(
+        const knowhere::int8*,
+        const knowhere::int8*,
+        size_t,
+        size_t,
+        size_t,
+        std::vector<knowhere::DistId>&,
+        const float*,
+        const IDSelector*);
+
+template void faiss::knn_cosine_typed<knowhere::int8>(
+        const knowhere::int8*,
+        const knowhere::int8*,
+        const float*,
+        size_t,
+        size_t,
+        size_t,
+        size_t,
+        float*,
+        int64_t*,
+        const IDSelector*);
+
+template void faiss::all_cosine_typed<knowhere::int8>(
+        const knowhere::int8*,
+        const knowhere::int8*,
+        const float*,
+        size_t,
+        size_t,
+        size_t,
+        std::vector<knowhere::DistId>&,
+        const IDSelector*);
+
 // fp16 range search functions
 template void faiss::range_search_L2sqr_typed<knowhere::fp16>(
         const knowhere::fp16*,
@@ -672,6 +754,38 @@ template void faiss::range_search_inner_product_typed<knowhere::bf16>(
 template void faiss::range_search_cosine_typed<knowhere::bf16>(
         const knowhere::bf16*,
         const knowhere::bf16*,
+        const float*,
+        size_t,
+        size_t,
+        size_t,
+        float,
+        faiss::RangeSearchResult*,
+        const faiss::IDSelector*);
+
+// int8 range search functions
+template void faiss::range_search_L2sqr_typed<knowhere::int8>(
+        const knowhere::int8*,
+        const knowhere::int8*,
+        size_t,
+        size_t,
+        size_t,
+        float,
+        faiss::RangeSearchResult*,
+        const faiss::IDSelector*);
+
+template void faiss::range_search_inner_product_typed<knowhere::int8>(
+        const knowhere::int8*,
+        const knowhere::int8*,
+        size_t,
+        size_t,
+        size_t,
+        float,
+        faiss::RangeSearchResult*,
+        const faiss::IDSelector*);
+
+template void faiss::range_search_cosine_typed<knowhere::int8>(
+        const knowhere::int8*,
+        const knowhere::int8*,
         const float*,
         size_t,
         size_t,
