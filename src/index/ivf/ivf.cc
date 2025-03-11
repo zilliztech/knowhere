@@ -19,11 +19,14 @@
 #include "faiss/IndexIVFPQFastScan.h"
 #include "faiss/IndexIVFRaBitQ.h"
 #include "faiss/IndexIVFScalarQuantizerCC.h"
+#include "faiss/IndexPreTransform.h"
 #include "faiss/IndexScaNN.h"
 #include "faiss/IndexScalarQuantizer.h"
+#include "faiss/VectorTransform.h"
 #include "faiss/index_io.h"
 #include "index/data_view_dense_index/index_node_with_data_view_refiner.h"
 #include "index/ivf/ivf_config.h"
+#include "index/ivf/ivfrbq_wrapper.h"
 #include "io/memory_io.h"
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/thread_pool.h"
@@ -36,11 +39,6 @@
 #include "knowhere/log.h"
 #include "knowhere/range_util.h"
 #include "knowhere/utils.h"
-
-#include "faiss/IndexPreTransform.h"
-#include "faiss/VectorTransform.h"
-
-#include "index/ivf/ivfrbq_wrapper.h"
 
 namespace knowhere {
 struct IVFBaseTag {};
@@ -328,8 +326,7 @@ class IvfIndexNode : public IndexNode {
         return std::is_same_v<IndexType, faiss::IndexIVFPQ> ||
                std::is_same_v<IndexType, faiss::IndexIVFScalarQuantizer> ||
                std::is_same_v<IndexType, faiss::IndexIVFScalarQuantizerCC> ||
-               std::is_same_v<IndexType, faiss::IndexScaNN> ||
-               std::is_same_v<IndexType, IndexIVFRaBitQWrapper>;
+               std::is_same_v<IndexType, faiss::IndexScaNN> || std::is_same_v<IndexType, IndexIVFRaBitQWrapper>;
     }
 
  private:
@@ -838,7 +835,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
                     scann_search_params.reorder_k = scann_cfg.reorder_k.value();
 
                     index_->search(1, cur_query, k, distances.get() + offset, ids.get() + offset, &scann_search_params);
-                } else if constexpr(std::is_same<IndexType, IndexIVFRaBitQWrapper>::value) {
+                } else if constexpr (std::is_same<IndexType, IndexIVFRaBitQWrapper>::value) {
                     auto cur_query = (const float*)data + index * dim;
                     if (is_cosine) {
                         copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
@@ -974,7 +971,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
                     ivf_search_params.max_codes = 0;
                     ivf_search_params.max_empty_result_buckets = ivf_cfg.max_empty_result_buckets.value();
                     ivf_search_params.sel = id_selector;
-                    ivf_search_params.qb = ivf_rabitq_cfg.qbits.value_or(0);                    
+                    ivf_search_params.qb = ivf_rabitq_cfg.qbits.value_or(0);
 
                     index_->range_search(1, cur_query, radius, &res, &ivf_search_params);
                 } else {
@@ -1308,7 +1305,7 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, std::sha
             }
 
             if constexpr (!std::is_same_v<IndexType, faiss::IndexScaNN> &&
-                        !std::is_same_v<IndexType, faiss::IndexIVFScalarQuantizerCC>) {
+                          !std::is_same_v<IndexType, faiss::IndexIVFScalarQuantizerCC>) {
                 const BaseConfig& base_cfg = static_cast<const BaseConfig&>(*cfg);
                 if (HasRawData(base_cfg.metric_type.value())) {
                     index_->make_direct_map(true);
@@ -1386,10 +1383,8 @@ KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_SQ8, IvfIndexNode, knowhere::f
                                               faiss::IndexIVFScalarQuantizer)
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_SQ_CC, IvfIndexNode, knowhere::feature::NONE,
                                               faiss::IndexIVFScalarQuantizerCC)
-KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVFRABITQ, IvfIndexNode, knowhere::feature::MMAP,
-                                              IndexIVFRaBitQWrapper)
-KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_RABITQ, IvfIndexNode, knowhere::feature::MMAP,
-                                              IndexIVFRaBitQWrapper)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVFRABITQ, IvfIndexNode, knowhere::feature::MMAP, IndexIVFRaBitQWrapper)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_RABITQ, IvfIndexNode, knowhere::feature::MMAP, IndexIVFRaBitQWrapper)
 // int
 KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVFFLAT, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexIVFFlat)
 KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVF_FLAT, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexIVFFlat)

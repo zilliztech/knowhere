@@ -21,37 +21,38 @@ struct IndexIVFRaBitQWrapper : faiss::Index {
 
     virtual ~IndexIVFRaBitQWrapper();
 
-    void train(faiss::idx_t n, const float* x) override;
+    void
+    train(faiss::idx_t n, const float* x) override;
 
-    void add(faiss::idx_t n, const float* x) override;
+    void
+    add(faiss::idx_t n, const float* x) override;
 
-    void search(
-            faiss::idx_t n,
-            const float* x,
-            faiss::idx_t k,
-            float* distances,
-            faiss::idx_t* labels,
-            const faiss::SearchParameters* params = nullptr) const override;
+    void
+    search(faiss::idx_t n, const float* x, faiss::idx_t k, float* distances, faiss::idx_t* labels,
+           const faiss::SearchParameters* params = nullptr) const override;
 
-    void range_search(
-            faiss::idx_t n,
-            const float* x,
-            float radius,
-            faiss::RangeSearchResult* result,
-            const faiss::SearchParameters* params = nullptr) const override;
+    void
+    range_search(faiss::idx_t n, const float* x, float radius, faiss::RangeSearchResult* result,
+                 const faiss::SearchParameters* params = nullptr) const override;
 
-    void reset() override;
+    void
+    reset() override;
 
-    void merge_from(Index& otherIndex, faiss::idx_t add_id = 0) override;
+    void
+    merge_from(Index& otherIndex, faiss::idx_t add_id = 0) override;
 
-    faiss::DistanceComputer* get_distance_computer() const override;
+    faiss::DistanceComputer*
+    get_distance_computer() const override;
 
     // point to IndexIVFRaBitQ or return nullptr
-    faiss::IndexIVFRaBitQ* get_ivfrabitq_index();
-    const faiss::IndexIVFRaBitQ* get_ivfrabitq_index() const;
+    faiss::IndexIVFRaBitQ*
+    get_ivfrabitq_index();
+    const faiss::IndexIVFRaBitQ*
+    get_ivfrabitq_index() const;
 
     // return the size of the index
-    size_t size() const;
+    size_t
+    size() const;
 };
 
-}
+}  // namespace knowhere
