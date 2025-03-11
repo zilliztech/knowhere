@@ -7,8 +7,6 @@
 #include "faiss/IndexPreTransform.h"
 #include "faiss/index_io.h"
 
-using namespace faiss;
-
 namespace knowhere {
 
 IndexIVFRaBitQWrapper::IndexIVFRaBitQWrapper(std::unique_ptr<faiss::Index>&& index_in)
@@ -23,28 +21,28 @@ IndexIVFRaBitQWrapper::~IndexIVFRaBitQWrapper() {
 }
 
 void
-IndexIVFRaBitQWrapper::train(idx_t n, const float* x) {
+IndexIVFRaBitQWrapper::train(faiss::idx_t n, const float* x) {
     // index->train(n, x);
     // is_trained = index->is_trained;
     throw std::runtime_error("IndexIVFRaBitQWrapper::train(() is not supposed to be called");
 }
 
 void
-IndexIVFRaBitQWrapper::add(idx_t n, const float* x) {
+IndexIVFRaBitQWrapper::add(faiss::idx_t n, const float* x) {
     // index->add(n, x);
     // this->ntotal = index->ntotal;
     throw std::runtime_error("IndexIVFRaBitQWrapper::add() is not supposed to be called");
 }
 
 void
-IndexIVFRaBitQWrapper::search(idx_t n, const float* x, idx_t k, float* distances, idx_t* labels,
-                              const SearchParameters* params) const {
+IndexIVFRaBitQWrapper::search(faiss::idx_t n, const float* x, faiss::idx_t k, float* distances, faiss::idx_t* labels,
+                              const faiss::SearchParameters* params) const {
     index->search(n, x, k, distances, labels, params);
 }
 
 void
-IndexIVFRaBitQWrapper::range_search(idx_t n, const float* x, float radius, RangeSearchResult* result,
-                                    const SearchParameters* params) const {
+IndexIVFRaBitQWrapper::range_search(faiss::idx_t n, const float* x, float radius, faiss::RangeSearchResult* result,
+                                    const faiss::SearchParameters* params) const {
     index->range_search(n, x, radius, result, params);
 }
 
@@ -55,33 +53,33 @@ IndexIVFRaBitQWrapper::reset() {
 }
 
 void
-IndexIVFRaBitQWrapper::merge_from(Index& otherIndex, idx_t add_id) {
+IndexIVFRaBitQWrapper::merge_from(Index& otherIndex, faiss::idx_t add_id) {
     index->merge_from(otherIndex, add_id);
 }
 
-DistanceComputer*
+faiss::DistanceComputer*
 IndexIVFRaBitQWrapper::get_distance_computer() const {
     return index->get_distance_computer();
 }
 
-IndexIVFRaBitQ*
+faiss::IndexIVFRaBitQ*
 IndexIVFRaBitQWrapper::get_ivfrabitq_index() {
-    IndexPreTransform* index_pt = dynamic_cast<IndexPreTransform*>(index.get());
+    faiss::IndexPreTransform* index_pt = dynamic_cast<faiss::IndexPreTransform*>(index.get());
     if (index_pt == nullptr) {
         return nullptr;
     }
 
-    return dynamic_cast<IndexIVFRaBitQ*>(index_pt->index);
+    return dynamic_cast<faiss::IndexIVFRaBitQ*>(index_pt->index);
 }
 
-const IndexIVFRaBitQ*
+const faiss::IndexIVFRaBitQ*
 IndexIVFRaBitQWrapper::get_ivfrabitq_index() const {
-    const IndexPreTransform* index_pt = dynamic_cast<const IndexPreTransform*>(index.get());
+    const faiss::IndexPreTransform* index_pt = dynamic_cast<const faiss::IndexPreTransform*>(index.get());
     if (index_pt == nullptr) {
         return nullptr;
     }
 
-    return dynamic_cast<const IndexIVFRaBitQ*>(index_pt->index);
+    return dynamic_cast<const faiss::IndexIVFRaBitQ*>(index_pt->index);
 }
 
 size_t

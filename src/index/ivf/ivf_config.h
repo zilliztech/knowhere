@@ -221,12 +221,12 @@ class IvfSqCcConfig : public IvfFlatCcConfig {
     }
 };
 
-
 class IvfRaBitQConfig : public IvfConfig {
  public:
     CFG_INT qbits;
     KNOHWERE_DECLARE_CONFIG(IvfRaBitQConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(qbits).description("qbits")
+        KNOWHERE_CONFIG_DECLARE_FIELD(qbits)
+            .description("qbits")
             .set_default(0)
             .set_range(0, 8)
             .for_search()

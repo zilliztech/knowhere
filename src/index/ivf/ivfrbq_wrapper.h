@@ -29,17 +29,17 @@ struct IndexIVFRaBitQWrapper : faiss::Index {
 
     void
     search(faiss::idx_t n, const float* x, faiss::idx_t k, float* distances, faiss::idx_t* labels,
-           const faiss::SearchParameters* params = nullptr) const override;
+           const faiss::SearchParameters* params) const override;
 
     void
     range_search(faiss::idx_t n, const float* x, float radius, faiss::RangeSearchResult* result,
-                 const faiss::SearchParameters* params = nullptr) const override;
+                 const faiss::SearchParameters* params) const override;
 
     void
     reset() override;
 
     void
-    merge_from(Index& otherIndex, faiss::idx_t add_id = 0) override;
+    merge_from(Index& otherIndex, faiss::idx_t add_id) override;
 
     faiss::DistanceComputer*
     get_distance_computer() const override;
