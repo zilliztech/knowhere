@@ -268,6 +268,20 @@ struct cuvs_index {
                                      bool include_dataset = true) {
         auto const& underlying_index = index.get_vector_index();
         if constexpr (vector_index_kind == cuvs_index_kind::cagra) {
+            size_t metric_type;
+            if (underlying_index.metric() == cuvs::distance::DistanceType::L2Expanded) {
+                metric_type = 0;
+            } else if (underlying_index.metric() == cuvs::distance::DistanceType::InnerProduct) {
+                metric_type = 1;
+            } else if (underlying_index.metric() == cuvs::distance::DistanceType::CosineExpanded) {
+                metric_type = 2;
+            }
+
+            os.write(reinterpret_cast<char*>(&metric_type), sizeof(metric_type));
+            size_t data_size = underlying_index.dim() * sizeof(float);
+            os.write(reinterpret_cast<char*>(&data_size), sizeof(data_size));
+            size_t dim = underlying_index.dim();
+            os.write(reinterpret_cast<char*>(&dim), sizeof(dim));
             return cuvs::neighbors::cagra::serialize_to_hnswlib(res, os, underlying_index);
         }
     }
