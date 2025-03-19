@@ -18,6 +18,7 @@
 #define GPU_CUVS_H
 
 #include <cstdint>
+#include <ctime>
 #include <exception>
 #include <fstream>
 #include <istream>
@@ -40,6 +41,23 @@
 #include "knowhere/utils.h"
 
 namespace knowhere {
+
+inline std::string
+generate_random_filename() {
+    std::string filename = "file_";
+    for (int i = 0; i < 10; ++i) filename += 'a' + rand() % 26;
+    filename += ".bin";
+    std::cout << "FILE_NAME: " << filename << std::endl;
+    return filename;
+}
+
+inline void
+write_binary_buffer(const char* buffer, size_t size) {
+    std::ofstream out_file(generate_random_filename(), std::ios::binary);
+    if (out_file) {
+        out_file.write(buffer, size);
+    }
+}
 
 auto static constexpr cuda_concurrent_size_per_device = std::uint32_t{4};
 
@@ -128,6 +146,9 @@ struct GpuCuvsIndexNode : public IndexNode {
                     index_.search(cuvs_cfg, data, rows, dim, bitset.data(), bitset.byte_size(), bitset.size());
                 std::this_thread::yield();
                 index_.synchronize();
+                write_binary_buffer((const char*)std::get<0>(search_result), sizeof(int64_t) * cuvs_cfg.k * rows);
+                write_binary_buffer((const char*)std::get<1>(search_result), sizeof(float) * cuvs_cfg.k * rows);
+
                 return GenResultDataSet(rows, cuvs_cfg.k, std::get<0>(search_result), std::get<1>(search_result));
             } catch (const std::exception& e) {
                 err_msg = std::string{e.what()};
