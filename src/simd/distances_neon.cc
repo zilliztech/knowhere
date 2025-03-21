@@ -2773,11 +2773,6 @@ fvec_inner_product_bf16_patch_neon(const float* x, const float* y, size_t d) {
         float32x4x4_t a = vld1q_f32_x4(x + dim - d);
         float32x4x4_t b = vld1q_f32_x4(y + dim - d);
 
-        a.val[0] = bf16_float_neon(a.val[0]);
-        a.val[1] = bf16_float_neon(a.val[1]);
-        a.val[2] = bf16_float_neon(a.val[2]);
-        a.val[3] = bf16_float_neon(a.val[3]);
-
         b.val[0] = bf16_float_neon(b.val[0]);
         b.val[1] = bf16_float_neon(b.val[1]);
         b.val[2] = bf16_float_neon(b.val[2]);
@@ -2800,9 +2795,6 @@ fvec_inner_product_bf16_patch_neon(const float* x, const float* y, size_t d) {
         float32x4x2_t a = vld1q_f32_x2(x + dim - d);
         float32x4x2_t b = vld1q_f32_x2(y + dim - d);
 
-        a.val[0] = bf16_float_neon(a.val[0]);
-        a.val[1] = bf16_float_neon(a.val[1]);
-
         b.val[0] = bf16_float_neon(b.val[0]);
         b.val[1] = bf16_float_neon(b.val[1]);
 
@@ -2816,7 +2808,6 @@ fvec_inner_product_bf16_patch_neon(const float* x, const float* y, size_t d) {
     if (d >= 4) {
         float32x4_t a = vld1q_f32(x + dim - d);
         float32x4_t b = vld1q_f32(y + dim - d);
-        a = bf16_float_neon(a);
         b = bf16_float_neon(b);
         float32x4_t c;
         c = vmulq_f32(a, b);
@@ -2843,7 +2834,6 @@ fvec_inner_product_bf16_patch_neon(const float* x, const float* y, size_t d) {
         res_y = vld1q_lane_f32(y + dim - d, res_y, 0);
         d -= 1;
     }
-    res_x = bf16_float_neon(res_x);
     res_y = bf16_float_neon(res_y);
 
     sum_ = vaddq_f32(sum_, vmulq_f32(res_x, res_y));
@@ -2857,10 +2847,6 @@ fvec_L2sqr_bf16_patch_neon(const float* x, const float* y, size_t d) {
     while (d >= 16) {
         float32x4x4_t a = vld1q_f32_x4(x + dim - d);
         float32x4x4_t b = vld1q_f32_x4(y + dim - d);
-        a.val[0] = bf16_float_neon(a.val[0]);
-        a.val[1] = bf16_float_neon(a.val[1]);
-        a.val[2] = bf16_float_neon(a.val[2]);
-        a.val[3] = bf16_float_neon(a.val[3]);
 
         b.val[0] = bf16_float_neon(b.val[0]);
         b.val[1] = bf16_float_neon(b.val[1]);
@@ -2891,9 +2877,6 @@ fvec_L2sqr_bf16_patch_neon(const float* x, const float* y, size_t d) {
         float32x4x2_t a = vld1q_f32_x2(x + dim - d);
         float32x4x2_t b = vld1q_f32_x2(y + dim - d);
 
-        a.val[0] = bf16_float_neon(a.val[0]);
-        a.val[1] = bf16_float_neon(a.val[1]);
-
         b.val[0] = bf16_float_neon(b.val[0]);
         b.val[1] = bf16_float_neon(b.val[1]);
 
@@ -2911,7 +2894,6 @@ fvec_L2sqr_bf16_patch_neon(const float* x, const float* y, size_t d) {
     if (d >= 4) {
         float32x4_t a = vld1q_f32(x + dim - d);
         float32x4_t b = vld1q_f32(y + dim - d);
-        a = bf16_float_neon(a);
         b = bf16_float_neon(b);
         float32x4_t c;
         c = vsubq_f32(a, b);
@@ -2941,7 +2923,6 @@ fvec_L2sqr_bf16_patch_neon(const float* x, const float* y, size_t d) {
         d -= 1;
     }
 
-    res_x = bf16_float_neon(res_x);
     res_y = bf16_float_neon(res_y);
 
     sum_ = vaddq_f32(sum_, vmulq_f32(vsubq_f32(res_x, res_y), vsubq_f32(res_x, res_y)));
@@ -2956,11 +2937,6 @@ fvec_inner_product_batch_4_bf16_patch_neon(const float* x, const float* y0, cons
     auto d = dim;
     while (d >= 16) {
         float32x4x4_t a = vld1q_f32_x4(x + dim - d);
-
-        a.val[0] = bf16_float_neon(a.val[0]);
-        a.val[1] = bf16_float_neon(a.val[1]);
-        a.val[2] = bf16_float_neon(a.val[2]);
-        a.val[3] = bf16_float_neon(a.val[3]);
 
         {
             float32x4x4_t b = vld1q_f32_x4(y0 + dim - d);
@@ -3027,8 +3003,6 @@ fvec_inner_product_batch_4_bf16_patch_neon(const float* x, const float* y0, cons
 
     if (d >= 8) {
         float32x4x2_t a = vld1q_f32_x2(x + dim - d);
-        a.val[0] = bf16_float_neon(a.val[0]);
-        a.val[1] = bf16_float_neon(a.val[1]);
 
         {
             float32x4x2_t b = vld1q_f32_x2(y0 + dim - d);
@@ -3067,7 +3041,6 @@ fvec_inner_product_batch_4_bf16_patch_neon(const float* x, const float* y0, cons
     }
     if (d >= 4) {
         float32x4_t a = vld1q_f32(x + dim - d);
-        a = bf16_float_neon(a);
         {
             float32x4_t b = vld1q_f32(y0 + dim - d);
             float32x4_t c;
@@ -3130,7 +3103,6 @@ fvec_inner_product_batch_4_bf16_patch_neon(const float* x, const float* y0, cons
         d -= 1;
     }
 
-    res_x = bf16_float_neon(res_x);
     res_y.val[0] = bf16_float_neon(res_y.val[0]);
     res_y.val[1] = bf16_float_neon(res_y.val[1]);
     res_y.val[2] = bf16_float_neon(res_y.val[2]);
@@ -3154,10 +3126,6 @@ fvec_L2sqr_batch_4_bf16_patch_neon(const float* x, const float* y0, const float*
     auto d = dim;
     while (d >= 16) {
         float32x4x4_t a = vld1q_f32_x4(x + dim - d);
-        a.val[0] = bf16_float_neon(a.val[0]);
-        a.val[1] = bf16_float_neon(a.val[1]);
-        a.val[2] = bf16_float_neon(a.val[2]);
-        a.val[3] = bf16_float_neon(a.val[3]);
 
         {
             float32x4x4_t b = vld1q_f32_x4(y0 + dim - d);
@@ -3248,8 +3216,6 @@ fvec_L2sqr_batch_4_bf16_patch_neon(const float* x, const float* y0, const float*
 
     if (d >= 8) {
         float32x4x2_t a = vld1q_f32_x2(x + dim - d);
-        a.val[0] = bf16_float_neon(a.val[0]);
-        a.val[1] = bf16_float_neon(a.val[1]);
         {
             float32x4x2_t b = vld1q_f32_x2(y0 + dim - d);
             float32x4x2_t c;
@@ -3307,7 +3273,6 @@ fvec_L2sqr_batch_4_bf16_patch_neon(const float* x, const float* y0, const float*
     }
     if (d >= 4) {
         float32x4_t a = vld1q_f32(x + dim - d);
-        a = bf16_float_neon(a);
         {
             float32x4_t b = vld1q_f32(y0 + dim - d);
             float32x4_t c;
@@ -3374,7 +3339,6 @@ fvec_L2sqr_batch_4_bf16_patch_neon(const float* x, const float* y0, const float*
         d -= 1;
     }
 
-    res_x = bf16_float_neon(res_x);
     res_y.val[0] = bf16_float_neon(res_y.val[0]);
     res_y.val[1] = bf16_float_neon(res_y.val[1]);
     res_y.val[2] = bf16_float_neon(res_y.val[2]);
