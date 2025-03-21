@@ -10,15 +10,12 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <future>
-#include <thread>
 
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 #include "knowhere/bitsetview.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
-#include "knowhere/comp/knowhere_check.h"
-#include "knowhere/comp/knowhere_config.h"
 #include "knowhere/index/index_factory.h"
 #include "utils.h"
 
@@ -117,36 +114,64 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         }
     };
 
+    using std::make_tuple;
+    auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+        make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
+        make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
+    }));
+
+    auto [is_growable, use_mmap] = GENERATE(table<bool, bool>({{true, false}, {false, true}, {false, false}}));
+
+    auto tmp_index_file = "knowhere_sparse_inverted_index_test";
+
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+    auto cfg_json = gen().dump();
+    CAPTURE(name, cfg_json);
+    knowhere::Json json = knowhere::Json::parse(cfg_json);
+    REQUIRE(idx.Type() == name);
+    REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
+    REQUIRE(idx.Size() > 0);
+    REQUIRE(idx.Count() == nb);
+
+    if (!is_growable) {
+        knowhere::BinarySet bs;
+        REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
+        if (use_mmap) {
+            WriteBinaryToFile(tmp_index_file, bs.GetByName(idx.Type()));
+            REQUIRE(idx.DeserializeFromFile(tmp_index_file, json) == knowhere::Status::success);
+        } else {
+            REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
+        }
+    }
+
     SECTION("Test Search") {
-        using std::make_tuple;
-        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
-        }));
         auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, conf, nullptr);
         check_distance_decreasing(*gt.value());
 
-        auto use_mmap = GENERATE(true, false);
-        auto tmp_file = "/tmp/knowhere_sparse_inverted_index_test";
-        {
-            auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
-            auto cfg_json = gen().dump();
-            CAPTURE(name, cfg_json);
-            knowhere::Json json = knowhere::Json::parse(cfg_json);
-            REQUIRE(idx.Type() == name);
-            REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
-            REQUIRE(idx.Size() > 0);
-            REQUIRE(idx.Count() == nb);
+        auto results = idx.Search(query_ds, json, nullptr);
+        REQUIRE(results.has_value());
+        float recall = GetKNNRecall(*gt.value(), *results.value());
+        check_distance_decreasing(*results.value());
+        auto drop_ratio_search = json[knowhere::indexparam::DROP_RATIO_SEARCH].get<float>();
+        if (drop_ratio_search == 0) {
+            REQUIRE(recall == 1);
+        } else {
+            // most test cases are above 0.95, only a few between 0.9 and 0.95
+            REQUIRE(recall >= 0.85);
+        }
+    }
 
-            knowhere::BinarySet bs;
-            REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
-            if (use_mmap) {
-                WriteBinaryToFile(tmp_file, bs.GetByName(idx.Type()));
-                REQUIRE(idx.DeserializeFromFile(tmp_file, json) == knowhere::Status::success);
-            } else {
-                REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
-            }
+    SECTION("Test Search with different search algo") {
+        auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, conf, nullptr);
+        check_distance_decreasing(*gt.value());
 
+        std::unordered_map<std::string, std::vector<std::string>> available_search_algos = {
+            {"TAAT_NAIVE", {"INHERIT", "TAAT_NAIVE"}},
+            {"DAAT_WAND", {"INHERIT", "TAAT_NAIVE", "DAAT_WAND", "DAAT_MAXSCORE"}},
+            {"DAAT_MAXSCORE", {"INHERIT", "TAAT_NAIVE", "DAAT_WAND", "DAAT_MAXSCORE"}}};
+
+        for (auto search_algo : available_search_algos[inverted_index_algo]) {
+            json[knowhere::indexparam::SEARCH_ALGO] = search_algo;
             auto results = idx.Search(query_ds, json, nullptr);
             REQUIRE(results.has_value());
             float recall = GetKNNRecall(*gt.value(), *results.value());
@@ -158,28 +183,10 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
                 // most test cases are above 0.95, only a few between 0.9 and 0.95
                 REQUIRE(recall >= 0.85);
             }
-            // idx to destruct and munmap
-        }
-        if (use_mmap) {
-            REQUIRE(std::remove(tmp_file) == 0);
         }
     }
 
     SECTION("Test Search with Bitset") {
-        using std::make_tuple;
-        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
-        }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
-        auto cfg_json = gen().dump();
-        CAPTURE(name, cfg_json);
-        knowhere::Json json = knowhere::Json::parse(cfg_json);
-        REQUIRE(idx.Type() == name);
-        REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
-        REQUIRE(idx.Size() > 0);
-        REQUIRE(idx.Count() == nb);
-
         auto gen_bitset_fn = GENERATE(GenerateBitsetWithFirstTbitsSet, GenerateBitsetWithRandomTbitsSet);
         auto bitset_percentages = GENERATE(0.4f, 0.9f);
 
@@ -204,20 +211,6 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
     }
 
     SECTION("Test Sparse Iterator with Bitset") {
-        using std::make_tuple;
-        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
-        }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
-        auto cfg_json = gen().dump();
-        CAPTURE(name, cfg_json);
-        knowhere::Json json = knowhere::Json::parse(cfg_json);
-        REQUIRE(idx.Type() == name);
-        REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
-        REQUIRE(idx.Size() > 0);
-        REQUIRE(idx.Count() == nb);
-
         auto gen_bitset_fn = GENERATE(GenerateBitsetWithFirstTbitsSet, GenerateBitsetWithRandomTbitsSet);
         auto bitset_percentages = GENERATE(0.4f, 0.9f);
 
@@ -248,21 +241,6 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
     }
 
     SECTION("Test Sparse Range Search") {
-        using std::make_tuple;
-        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
-        }));
-
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
-        auto cfg_json = gen().dump();
-        CAPTURE(name, cfg_json);
-        knowhere::Json json = knowhere::Json::parse(cfg_json);
-        REQUIRE(idx.Type() == name);
-        REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
-        REQUIRE(idx.Size() > 0);
-        REQUIRE(idx.Count() == nb);
-
         auto [radius, range_filter] = metric == knowhere::metric::BM25 ? GENERATE(table<float, float>({
                                                                              {80.0, 100.0},
                                                                              {100.0, 200.0},
@@ -319,6 +297,10 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         // most above 0.95, only a few between 0.9 and 0.83
         REQUIRE(actual_count * 1.0f / gt_count >= 0.83);
     }
+
+    if (use_mmap) {
+        REQUIRE(std::remove(tmp_index_file) == 0);
+    }
 }
 
 TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
@@ -373,17 +355,20 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
     REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
     REQUIRE(idx.Size() > 0);
 
-    knowhere::BinarySet bs;
-    REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
+    auto [is_growable, use_mmap] = GENERATE(table<bool, bool>({{true, false}, {false, true}, {false, false}}));
 
-    auto use_mmap = GENERATE(false, true);
-    auto tmp_file = "/tmp/knowhere_sparse_inverted_index_test";
+    auto tmp_file = "knowhere_sparse_inverted_index_test";
 
-    if (use_mmap) {
-        WriteBinaryToFile(tmp_file, bs.GetByName(idx.Type()));
-        REQUIRE(idx.DeserializeFromFile(tmp_file, json) == knowhere::Status::success);
-    } else {
-        REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
+    if (!is_growable) {
+        knowhere::BinarySet bs;
+        REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
+
+        if (use_mmap) {
+            WriteBinaryToFile(tmp_file, bs.GetByName(idx.Type()));
+            REQUIRE(idx.DeserializeFromFile(tmp_file, json) == knowhere::Status::success);
+        } else {
+            REQUIRE(idx.Deserialize(bs, json) == knowhere::Status::success);
+        }
     }
 
     const knowhere::Json conf = {
@@ -441,6 +426,10 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
         REQUIRE(results.has_value());
         check_result(*results.value());
     }
+
+    if (use_mmap) {
+        REQUIRE(std::remove(tmp_file) == 0);
+    }
 }
 
 TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
@@ -468,8 +457,6 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
 
     auto inverted_index_algo = GENERATE("TAAT_NAIVE", "DAAT_WAND", "DAAT_MAXSCORE");
 
-    auto drop_ratio_search = GENERATE(0.0, 0.3);
-
     auto metric = GENERATE(knowhere::metric::IP);
     auto version = GenTestVersionList();
 
@@ -484,10 +471,8 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
         return json;
     };
 
-    auto sparse_inverted_index_gen = [base_gen, drop_ratio_search = drop_ratio_search,
-                                      inverted_index_algo = inverted_index_algo]() {
+    auto sparse_inverted_index_gen = [base_gen, inverted_index_algo = inverted_index_algo]() {
         knowhere::Json json = base_gen();
-        json[knowhere::indexparam::DROP_RATIO_SEARCH] = drop_ratio_search;
         json[knowhere::indexparam::INVERTED_INDEX_ALGO] = inverted_index_algo;
         return json;
     };
