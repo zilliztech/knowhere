@@ -1,7 +1,6 @@
 filters:
   ".*":
     reviewers:
-      - cydrain
       - xiaofan-luan
       - liliu-z
       - Presburger
@@ -14,7 +13,6 @@ filters:
       - alexanderguzhva
 
     approvers:
-      - cydrain
       - xiaofan-luan
       - liliu-z
       - Presburger
