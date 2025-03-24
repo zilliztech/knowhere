@@ -36,7 +36,7 @@
 #include <type_traits>
 
 #include "common/cuvs/integration/cuvs_knowhere_index.hpp"
-#include "common/cuvs/proto/cuvs_index.cuh"
+#include "common/cuvs/proto/cuvs_index.hpp"
 #include "common/cuvs/proto/cuvs_index_kind.hpp"
 #include "knowhere/comp/index_param.h"
 
@@ -52,7 +52,7 @@ template <typename DataType>
 struct cuvs_index_type_mapper<true, cuvs_proto::cuvs_index_kind::brute_force, DataType> : std::true_type {
     using data_type = DataType;
     using indexing_type = cuvs_indexing_t<cuvs_proto::cuvs_index_kind::brute_force>;
-    using type = cuvs_proto::cuvs_index<cuvs::neighbors::brute_force::index, data_type>;
+    using type = cuvs_proto::cuvs_index<cuvs::neighbors::brute_force::index, data_type, float>;
     using underlying_index_type = typename type::vector_index_type;
     using index_params_type = typename type::index_params_type;
     using search_params_type = typename type::search_params_type;
@@ -381,7 +381,7 @@ select_device_id() {
 template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
 struct cuvs_knowhere_index<IndexKind, DataType>::impl {
     auto static constexpr index_kind = IndexKind;
-    using data_type = DataType;
+    using data_type = typename cuvs_data_type_mapper<DataType>::data_type;
     using indexing_type = cuvs_indexing_t<index_kind>;
     using input_indexing_type = cuvs_input_indexing_t<index_kind>;
     using cuvs_index_type = cuvs_index_t<index_kind, data_type>;
@@ -651,7 +651,7 @@ struct cuvs_knowhere_index<IndexKind, DataType>::impl {
                     res, des_index, raft::make_const_mdspan(dataset->view()));
             }
         }
-        return std::make_unique<typename cuvs_knowhere_index<index_kind, data_type>::impl>(
+        return std::make_unique<typename cuvs_knowhere_index<index_kind, DataType>::impl>(
             std::move(des_index), new_device_id, std::move(dataset));
     }
 

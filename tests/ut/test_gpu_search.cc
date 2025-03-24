@@ -22,6 +22,31 @@
 #include "utils.h"
 
 #ifdef KNOWHERE_WITH_CUVS
+
+template <typename T>
+void
+check_search(const int64_t nb, const int64_t nq, const int64_t dim, const int64_t seed, std::string name, int version,
+             const knowhere::Json& conf) {
+    auto train_ds = knowhere::ConvertToDataTypeIfNeeded<T>(GenDataSet(nb, dim, seed));
+    auto query_ds = knowhere::ConvertToDataTypeIfNeeded<T>(GenDataSet(nq, dim, seed));
+
+    auto idx = knowhere::IndexFactory::Instance().Create<T>(name, version).value();
+    auto res = idx.Build(train_ds, conf);
+    REQUIRE(res == knowhere::Status::success);
+    auto results = idx.Search(query_ds, conf, nullptr);
+    REQUIRE(results.has_value());
+
+    /*auto gt = knowhere::BruteForce::Search<T>(train_ds, query_ds, conf, nullptr);
+    REQUIRE(gt.has_value());
+
+    float recall = GetKNNRecall(*gt.value(), *results.value());
+    REQUIRE(recall > 0.80f);*/
+    auto ids = results.value()->GetIds();
+    for (int i = 1; i < nq; ++i) {
+        CHECK(ids[i] == i);
+    }
+}
+
 TEST_CASE("Test All GPU Index", "[search]") {
     using Catch::Approx;
 
@@ -102,37 +127,20 @@ TEST_CASE("Test All GPU Index", "[search]") {
     SECTION("Test Gpu Index Search") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            // GPU_FLAT cannot run this test is because its Train() and Add() actually run in CPU,
-            // "res_" in gpu_index_ is not set correctly
-            // make_tuple(knowhere::IndexEnum::INDEX_FAISS_GPU_IDMAP, gpu_flat_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_FAISS_GPU_IVFFLAT, ivfflat_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_FAISS_GPU_IVFPQ, ivfpq_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_FAISS_GPU_IVFSQ8, ivfsq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_CUVS_BRUTEFORCE, bruteforce_gen),
             make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFFLAT, ivfflat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFFLAT, refined_gen(ivfflat_gen)),
             make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFPQ, ivfpq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFPQ, refined_gen(ivfpq_gen)),
             make_tuple(knowhere::IndexEnum::INDEX_CUVS_CAGRA, cagra_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_CUVS_CAGRA, cagra_hnsw_gen(cagra_gen)),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
-        knowhere::Json json = knowhere::Json::parse(cfg_json);
-        auto train_ds = GenDataSet(nb, dim, seed);
-        auto query_ds = GenDataSet(nq, dim, seed);
-        REQUIRE(idx.Type() == name);
-        auto res = idx.Build(train_ds, json);
-        REQUIRE(res == knowhere::Status::success);
-        REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
-                knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
-        auto results = idx.Search(query_ds, json, nullptr);
-        REQUIRE(results.has_value());
-        auto ids = results.value()->GetIds();
-        // Due to issues with the filtering of invalid values, index 0 is temporarily not being checked.
-        for (int i = 1; i < nq; ++i) {
-            CHECK(ids[i] == i);
-        }
+        knowhere::Json conf = knowhere::Json::parse(cfg_json);
+        conf[knowhere::meta::METRIC_TYPE] = knowhere::metric::L2;
+        check_search<knowhere::fp32>(nb, nq, dim, seed, name, version, conf);
     }
 
     SECTION("Test Gpu Index Search With Bitset") {
@@ -185,6 +193,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
             make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFPQ, ivfpq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFPQ, refined_gen(ivfpq_gen)),
             make_tuple(knowhere::IndexEnum::INDEX_CUVS_CAGRA, cagra_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_CUVS_CAGRA, cagra_hnsw_gen(cagra_gen)),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
@@ -341,6 +350,23 @@ TEST_CASE("Test All GPU Index", "[search]") {
             // Check query distance
             CHECK(GetRelativeLoss(gt_dist[i], dist[i]) < 0.1f);
         }
+    }
+
+    SECTION("Test Gpu Index Search FP16") {
+        using std::make_tuple;
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+            make_tuple(knowhere::IndexEnum::INDEX_CUVS_BRUTEFORCE, bruteforce_gen),
+            // make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFFLAT, ivfflat_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFPQ, ivfpq_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFPQ, refined_gen(ivfpq_gen)),
+            // make_tuple(knowhere::IndexEnum::INDEX_CUVS_CAGRA, cagra_gen)
+        }));
+
+        auto cfg_json = gen().dump();
+        CAPTURE(name, cfg_json);
+        knowhere::Json conf = knowhere::Json::parse(cfg_json);
+        conf[knowhere::meta::METRIC_TYPE] = knowhere::metric::L2;
+        check_search<knowhere::fp16>(nb, nq, dim, seed, name, version, conf);
     }
 }
 #endif

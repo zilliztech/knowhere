@@ -19,4 +19,5 @@
 
 namespace cuvs_knowhere {
 template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::brute_force, float>;
+template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::brute_force, knowhere::fp16>;
 }  // namespace cuvs_knowhere

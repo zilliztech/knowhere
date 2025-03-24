@@ -15,18 +15,22 @@
  * limitations under the License.
  */
 #pragma once
+#include <cuda_fp16.h>
+
 #include <cstdint>
 
 #include "common/cuvs/integration/cuvs_knowhere_config.hpp"
 #include "common/cuvs/integration/type_mappers.hpp"
 #include "common/cuvs/proto/cuvs_index_kind.hpp"
+#include "knowhere/operands.h"
+
 namespace cuvs_knowhere {
 
 template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
 struct cuvs_knowhere_index {
     auto static constexpr index_kind = IndexKind;
 
-    using data_type = DataType;
+    using data_type = typename cuvs_data_type_mapper<DataType>::data_type;
     using indexing_type = cuvs_indexing_t<index_kind>;
     using input_indexing_type = cuvs_input_indexing_t<index_kind>;
 
@@ -74,8 +78,10 @@ struct cuvs_knowhere_index {
 };
 
 extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::brute_force, float>;
+extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::brute_force, knowhere::fp16>;
 extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_flat, float>;
 extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_pq, float>;
+extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_pq, knowhere::fp16>;
 extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, float>;
 extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, uint8_t>;
 

@@ -34,12 +34,21 @@ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_IVF_PQ, GpuCuvsIvfPqIndexNode
 
 );
 KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_IVF_PQ, GpuCuvsIvfPqIndexNode, fp32,
-                                          knowhere::feature::GPU_ANN_FLOAT_INDEX,
-                                          []() {
+                                          knowhere::feature::GPU_ANN_FLOAT_INDEX, []() {
                                               int count;
                                               RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
                                               return count * cuda_concurrent_size_per_device;
-                                          }()
-
-);
+                                          }());
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_IVF_PQ, GpuCuvsIvfPqIndexNode, fp16,
+                                          knowhere::feature::GPU | knowhere::feature::FP16, []() {
+                                              int count;
+                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
+                                              return count * cuda_concurrent_size_per_device;
+                                          }());
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_IVF_PQ, GpuCuvsIvfPqIndexNode, fp16,
+                                          knowhere::feature::GPU | knowhere::feature::FP16, []() {
+                                              int count;
+                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
+                                              return count * cuda_concurrent_size_per_device;
+                                          }());
 }  // namespace knowhere
