@@ -24,13 +24,13 @@ class IndexNodeThreadPoolWrapper : public IndexNode {
     IndexNodeThreadPoolWrapper(std::unique_ptr<IndexNode> index_node, std::shared_ptr<ThreadPool> thread_pool);
 
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
-        return index_node_->Train(dataset, std::move(cfg));
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
+        return index_node_->Train(dataset, std::move(cfg), use_knowhere_build_pool);
     }
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
-        return index_node_->Add(dataset, std::move(cfg));
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
+        return index_node_->Add(dataset, std::move(cfg), use_knowhere_build_pool);
     }
 
     expected<DataSetPtr>

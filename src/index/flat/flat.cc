@@ -40,7 +40,7 @@ class FlatIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         const FlatConfig& f_cfg = static_cast<const FlatConfig&>(*cfg);
 
         auto metric = Str2FaissMetricType(f_cfg.metric_type.value());
@@ -59,7 +59,7 @@ class FlatIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config>) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         auto x = dataset->GetTensor();
         auto n = dataset->GetRows();
         index_->add(n, (const DataType*)x);

@@ -279,24 +279,30 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
             std::vector<std::future<knowhere::expected<knowhere::DataSetPtr>>> search_task_list;
             std::vector<std::future<knowhere::expected<knowhere::DataSetPtr>>> range_search_task_list;
             std::vector<std::future<knowhere::expected<knowhere::DataSetPtr>>> retrieve_task_list;
+
+            retrieve_search_list.reserve(search_task_num);
             for (int j = 0; j < search_task_num; j++) {
                 retrieve_search_list.push_back(GenIdsDataSet(nb * i, nq));
             }
+            add_task_list.reserve(build_task_num);
             for (int j = 0; j < build_task_num; j++) {
-                add_task_list.push_back(
-                    std::async(std::launch::async, [&idx, &build_ds, &json] { return idx.Add(build_ds, json); }));
+                add_task_list.push_back(std::async(
+                    std::launch::async, [&idx, &build_ds, &json] { return idx.Add(build_ds, json, false); }));
             }
+            search_task_list.reserve(search_task_num);
             for (int j = 0; j < search_task_num; j++) {
                 auto& query_set = search_list[j];
                 search_task_list.push_back(std::async(
                     std::launch::async, [&idx, &query_set, &json] { return idx.Search(query_set, json, nullptr); }));
             }
+            range_search_task_list.reserve(search_task_num);
             for (int j = 0; j < search_task_num; j++) {
                 auto& range_query_set = range_search_list[j];
                 range_search_task_list.push_back(std::async(std::launch::async, [&idx, &range_query_set, &json] {
                     return idx.RangeSearch(range_query_set, json, nullptr);
                 }));
             }
+            retrieve_task_list.reserve(search_task_num);
             for (int j = 0; j < search_task_num; j++) {
                 auto& retrieve_ids_set = retrieve_search_list[j];
                 retrieve_task_list.push_back(std::async(

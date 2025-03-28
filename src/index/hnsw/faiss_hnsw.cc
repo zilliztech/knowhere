@@ -77,7 +77,7 @@ class BaseFaissIndexNode : public IndexNode {
 
     //
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         // config
         const BaseConfig& base_cfg = static_cast<const FaissHnswConfig&>(*cfg);
 
@@ -105,7 +105,7 @@ class BaseFaissIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         const BaseConfig& base_cfg = static_cast<const FaissHnswConfig&>(*cfg);
 
         // use build_pool_ to make sure the OMP threads spawned by index_->train etc
@@ -1831,20 +1831,20 @@ class HNSWIndexNodeWithFallback : public IndexNode {
     }
 
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         if (use_base_index) {
-            return base_index->Train(dataset, cfg);
+            return base_index->Train(dataset, cfg, use_knowhere_build_pool);
         } else {
-            return fallback_search_index->Train(dataset, cfg);
+            return fallback_search_index->Train(dataset, cfg, use_knowhere_build_pool);
         }
     }
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         if (use_base_index) {
-            return base_index->Add(dataset, cfg);
+            return base_index->Add(dataset, cfg, use_knowhere_build_pool);
         } else {
-            return fallback_search_index->Add(dataset, cfg);
+            return fallback_search_index->Add(dataset, cfg, use_knowhere_build_pool);
         }
     }
 
