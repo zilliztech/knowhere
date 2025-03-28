@@ -145,4 +145,11 @@ void
 fvec_L2sqr_batch_4_bf16_patch_avx(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
                                   const size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
 
+///////////////////////////////////////////////////////////////////////////////
+// rabitq
+float
+fvec_masked_sum_avx(const float* q, const uint8_t* x, const size_t d);
+int
+rabitq_dp_popcnt_avx(const uint8_t* q, const uint8_t* x, const size_t d, const size_t nb);
+
 }  // namespace faiss
