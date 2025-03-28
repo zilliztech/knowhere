@@ -68,9 +68,9 @@ class IvfIndexNode : public IndexNode {
         build_pool_ = ThreadPool::GetGlobalBuildThreadPool();
     }
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override;
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override;
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
     expected<DataSetPtr>
@@ -438,10 +438,12 @@ get_ivf_sq_quantizer_type(int code_size) {
 
 template <typename DataType, typename IndexType>
 Status
-IvfIndexNode<DataType, IndexType>::Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
+IvfIndexNode<DataType, IndexType>::Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
+                                         bool use_knowhere_build_pool) {
     // use build_pool_ to make sure the OMP threads spawded by index_->train etc
     // can inherit the low nice value of threads in build_pool_.
-    auto tryObj = build_pool_->push([&] { return TrainInternal(dataset, std::move(cfg)); }).getTry();
+    auto build_pool_wrapper = std::make_shared<ThreadPoolWrapper>(build_pool_, use_knowhere_build_pool);
+    auto tryObj = build_pool_wrapper->push([&] { return TrainInternal(dataset, std::move(cfg)); }).getTry();
     if (tryObj.hasValue()) {
         return tryObj.value();
     }
@@ -654,7 +656,8 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
 
 template <typename DataType, typename IndexType>
 Status
-IvfIndexNode<DataType, IndexType>::Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
+IvfIndexNode<DataType, IndexType>::Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
+                                       bool use_knowhere_build_pool) {
     if (!this->index_) {
         LOG_KNOWHERE_ERROR_ << "Can not add data to empty IVF index.";
         return Status::empty_index;
@@ -664,7 +667,8 @@ IvfIndexNode<DataType, IndexType>::Add(const DataSetPtr dataset, std::shared_ptr
     const BaseConfig& base_cfg = static_cast<const IvfConfig&>(*cfg);
     // use build_pool_ to make sure the OMP threads spawded by index_->add
     // can inherit the low nice value of threads in build_pool_.
-    auto tryObj = build_pool_
+    auto build_pool_wrapper = std::make_shared<ThreadPoolWrapper>(build_pool_, use_knowhere_build_pool);
+    auto tryObj = build_pool_wrapper
                       ->push([&] {
                           std::unique_ptr<ThreadPool::ScopedBuildOmpSetter> setter;
                           if (base_cfg.num_build_thread.has_value()) {

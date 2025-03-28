@@ -33,13 +33,13 @@ class BaseFlatIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::Train()";
         return Status::success;
     }
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::Add()";
         return Status::success;
     }

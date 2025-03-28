@@ -140,7 +140,7 @@ TEST_CASE("Test SCANN with data view refiner", "[float metrics]") {
                 .value();
 
         REQUIRE(scann_with_dv_refiner.Type() == knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR);
-        REQUIRE(scann_with_dv_refiner.Build(train_ds, json) == knowhere::Status::success);
+        REQUIRE(scann_with_dv_refiner.Build(train_ds, json, false) == knowhere::Status::success);
         REQUIRE(scann_with_dv_refiner.Count() == nb);
         REQUIRE(scann_with_dv_refiner.Size() > 0);
         REQUIRE(scann_with_dv_refiner.HasRawData(metric) == false);
@@ -237,7 +237,7 @@ TEST_CASE("Ensure topk test", "[float metrics]") {
             .value();
 
     REQUIRE(scann_with_dv_refiner.Type() == knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR);
-    REQUIRE(scann_with_dv_refiner.Build(train_ds, json) == knowhere::Status::success);
+    REQUIRE(scann_with_dv_refiner.Build(train_ds, json, false) == knowhere::Status::success);
     REQUIRE(scann_with_dv_refiner.Count() == nb);
     REQUIRE(scann_with_dv_refiner.Size() > 0);
     REQUIRE(scann_with_dv_refiner.HasRawData(metric) == false);
@@ -274,7 +274,7 @@ BaseTest(const knowhere::DataSetPtr train_ds, const knowhere::DataSetPtr query_d
             .value();
 
     REQUIRE(scann_with_dv_refiner.Type() == knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR);
-    REQUIRE(scann_with_dv_refiner.Build(base, conf) == knowhere::Status::success);
+    REQUIRE(scann_with_dv_refiner.Build(base, conf, false) == knowhere::Status::success);
 
     REQUIRE(scann_with_dv_refiner.Size() > 0);
     REQUIRE(scann_with_dv_refiner.HasRawData(metric) == false);

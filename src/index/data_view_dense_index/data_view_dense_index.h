@@ -78,10 +78,10 @@ class DataViewIndexBase {
     virtual ~DataViewIndexBase(){};
 
     virtual void
-    Train(idx_t n, const void* __restrict x) = 0;
+    Train(idx_t n, const void* __restrict x, bool use_knowhere_build_pool) = 0;
 
     virtual void
-    Add(idx_t n, const void* __restrict x, const float* __restrict norms_) = 0;
+    Add(idx_t n, const void* __restrict x, const float* __restrict norms_, bool use_knowhere_build_pool) = 0;
 
     virtual void
     Search(const idx_t n, const void* __restrict x, const idx_t k, float* __restrict distances,
@@ -174,10 +174,11 @@ class DataViewIndexFlat : public DataViewIndexBase {
         this->ntotal_.store(0);
     }
     void
-    Train(idx_t n, const void* x) override {
+    Train(idx_t n, const void* x, bool use_knowhere_build_pool) override {
         if (quant_data_ != nullptr) {
-            auto build_pool = ThreadPool::GetGlobalBuildThreadPool();
-            auto task = build_pool
+            auto build_pool_wrapper =
+                std::make_shared<ThreadPoolWrapper>(ThreadPool::GetGlobalBuildThreadPool(), use_knowhere_build_pool);
+            auto task = build_pool_wrapper
                             ->push([&] {
                                 std::unique_ptr<ThreadPool::ScopedBuildOmpSetter> setter;
                                 if (build_thread_num_.has_value()) {
@@ -197,10 +198,11 @@ class DataViewIndexFlat : public DataViewIndexBase {
     }
 
     void
-    Add(idx_t n, const void* x, const float* __restrict in_norms) override {
+    Add(idx_t n, const void* x, const float* __restrict in_norms, bool use_knowhere_build_pool) override {
         if (quant_data_ != nullptr) {
-            auto build_pool = ThreadPool::GetGlobalBuildThreadPool();
-            auto task = build_pool
+            auto build_pool_wrapper =
+                std::make_shared<ThreadPoolWrapper>(ThreadPool::GetGlobalBuildThreadPool(), use_knowhere_build_pool);
+            auto task = build_pool_wrapper
                             ->push([&] {
                                 std::unique_ptr<ThreadPool::ScopedBuildOmpSetter> setter;
                                 if (build_thread_num_.has_value()) {

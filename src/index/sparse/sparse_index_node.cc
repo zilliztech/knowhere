@@ -49,7 +49,7 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> config) override {
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool) override {
         auto cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
         if (!IsMetricType(cfg.metric_type.value(), metric::IP) &&
             !IsMetricType(cfg.metric_type.value(), metric::BM25)) {
@@ -71,12 +71,13 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> config) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool) override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Could not add data to empty " << Type();
             return Status::empty_index;
         }
-        auto tryObj = build_pool_
+        auto build_pool_wrapper = std::make_shared<ThreadPoolWrapper>(build_pool_, use_knowhere_build_pool);
+        auto tryObj = build_pool_wrapper
                           ->push([&] {
                               return index_->Add(static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor()),
                                                  dataset->GetRows(), dataset->GetDim());
@@ -438,7 +439,7 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
     }
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> config) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool) override {
         std::unique_lock<std::mutex> lock(mutex_);
         uint64_t task_id = next_task_id_++;
         add_tasks_.push(task_id);
@@ -446,7 +447,7 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
         // add task is allowed to run only after all search tasks that come before it have finished.
         cv_.wait(lock, [this, task_id]() { return current_task_id_ == task_id && active_readers_ == 0; });
 
-        auto res = SparseInvertedIndexNode<T, use_wand>::Add(dataset, config);
+        auto res = SparseInvertedIndexNode<T, use_wand>::Add(dataset, config, use_knowhere_build_pool);
 
         auto cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
         if (IsMetricType(cfg.metric_type.value(), metric::IP)) {

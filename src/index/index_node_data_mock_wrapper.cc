@@ -22,23 +22,26 @@ namespace knowhere {
 
 template <typename DataType>
 Status
-IndexNodeDataMockWrapper<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
+IndexNodeDataMockWrapper<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
+                                          bool use_knowhere_build_pool) {
     auto ds_ptr = ConvertFromDataTypeIfNeeded<DataType>(dataset);
-    return index_node_->Build(ds_ptr, std::move(cfg));
+    return index_node_->Build(ds_ptr, std::move(cfg), use_knowhere_build_pool);
 }
 
 template <typename DataType>
 Status
-IndexNodeDataMockWrapper<DataType>::Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
+IndexNodeDataMockWrapper<DataType>::Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
+                                          bool use_knowhere_build_pool) {
     auto ds_ptr = ConvertFromDataTypeIfNeeded<DataType>(dataset);
-    return index_node_->Train(ds_ptr, std::move(cfg));
+    return index_node_->Train(ds_ptr, std::move(cfg), use_knowhere_build_pool);
 }
 
 template <typename DataType>
 Status
-IndexNodeDataMockWrapper<DataType>::Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
+IndexNodeDataMockWrapper<DataType>::Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
+                                        bool use_knowhere_build_pool) {
     auto ds_ptr = ConvertFromDataTypeIfNeeded<DataType>(dataset);
-    return index_node_->Add(ds_ptr, std::move(cfg));
+    return index_node_->Add(ds_ptr, std::move(cfg), use_knowhere_build_pool);
 }
 
 template <typename DataType>
