@@ -37,6 +37,7 @@ class InstructionSet {
           nExIds_{0},
           isIntel_{false},
           isAMD_{false},
+          f_0_ECX_{0},
           f_1_ECX_{0},
           f_1_EDX_{0},
           f_7_EBX_{0},
@@ -68,6 +69,11 @@ class InstructionSet {
             isIntel_ = true;
         } else if (vendor_ == "AuthenticAMD") {
             isAMD_ = true;
+        }
+
+        // load bitset with flags for function 0x00000000
+        if (nIds_ >= 1) {
+            f_0_ECX_ = data_[0][2];
         }
 
         // load bitset with flags for function 0x00000001
@@ -347,6 +353,11 @@ class InstructionSet {
         return isAMD_ && f_81_EDX_[31];
     }
 
+    bool
+    AVX512VPOPCNTDQ() {
+        return f_0_ECX_[14];
+    }
+
  private:
     int nIds_;
     int nExIds_;
@@ -354,6 +365,7 @@ class InstructionSet {
     std::string brand_;
     bool isIntel_;
     bool isAMD_;
+    std::bitset<32> f_0_ECX_;
     std::bitset<32> f_1_ECX_;
     std::bitset<32> f_1_EDX_;
     std::bitset<32> f_7_EBX_;

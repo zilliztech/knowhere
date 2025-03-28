@@ -670,7 +670,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
     if constexpr (std::is_same<IndexIVFRaBitQWrapper, IndexType>::value) {
         const IvfRaBitQConfig& ivf_rabitq_cfg = static_cast<const IvfRaBitQConfig&>(*cfg);
         auto nlist = MatchNlist(rows, ivf_rabitq_cfg.nlist.value());
-        auto qb = ivf_rabitq_cfg.qbits.value();
+        auto qb = ivf_rabitq_cfg.rbq_bits_query.value();
 
         auto idx_flat = std::make_unique<faiss::IndexFlat>(dim, metric.value(), false);
         auto idx_ivfrbq = std::make_unique<faiss::IndexIVFRaBitQ>(idx_flat.release(), dim, nlist, metric.value());
@@ -852,7 +852,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
                     ivf_search_params.nprobe = nprobe;
                     ivf_search_params.max_codes = 0;
                     ivf_search_params.sel = id_selector;
-                    ivf_search_params.qb = ivf_rabitq_cfg.qbits.value_or(0);
+                    ivf_search_params.qb = ivf_rabitq_cfg.rbq_bits_query.value_or(0);
 
                     index_->search(1, cur_query, k, distances.get() + offset, ids.get() + offset, &ivf_search_params);
                 } else {
@@ -975,7 +975,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
                     ivf_search_params.max_codes = 0;
                     ivf_search_params.max_empty_result_buckets = ivf_cfg.max_empty_result_buckets.value();
                     ivf_search_params.sel = id_selector;
-                    ivf_search_params.qb = ivf_rabitq_cfg.qbits.value_or(0);
+                    ivf_search_params.qb = ivf_rabitq_cfg.rbq_bits_query.value_or(0);
 
                     index_->range_search(1, cur_query, radius, &res, &ivf_search_params);
                 } else {
@@ -1204,6 +1204,8 @@ IvfIndexNode<DataType, IndexType>::SerializeImpl(BinarySet& binset, IVFBaseTag) 
         MemoryIOWriter writer;
         if constexpr (std::is_same<IndexType, faiss::IndexBinaryIVF>::value) {
             faiss::write_index_binary(index_.get(), &writer);
+        } else if constexpr (std::is_same<IndexType, IndexIVFRaBitQWrapper>::value) {
+            faiss::write_index(index_->index.get(), &writer);
         } else {
             faiss::write_index(index_.get(), &writer);
         }

@@ -223,10 +223,10 @@ class IvfSqCcConfig : public IvfFlatCcConfig {
 
 class IvfRaBitQConfig : public IvfConfig {
  public:
-    CFG_INT qbits;
+    CFG_INT rbq_bits_query;
     KNOHWERE_DECLARE_CONFIG(IvfRaBitQConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(qbits)
-            .description("qbits")
+        KNOWHERE_CONFIG_DECLARE_FIELD(rbq_bits_query)
+            .description("rbq_bits_query")
             .set_default(0)
             .set_range(0, 8)
             .for_search()
