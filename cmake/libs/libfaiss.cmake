@@ -1,3 +1,5 @@
+include(CheckCXXCompilerFlag)
+
 knowhere_file_glob(
   GLOB FAISS_SRCS thirdparty/faiss/faiss/*.cpp
   thirdparty/faiss/faiss/impl/*.cpp thirdparty/faiss/faiss/invlists/*.cpp
@@ -47,11 +49,49 @@ if(__X86_64)
 endif()
 
 if(__AARCH64)
-  set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc
-                src/simd/distances_neon.cc)
-  add_library(knowhere_utils STATIC ${UTILS_SRC})
+
+  set(UTILS_SRC src/simd/distances_ref.cc src/simd/distances_neon.cc)
+  set(UTILS_SVE_SRC src/simd/hook.cc src/simd/distances_sve.cc)
+  set(ALL_UTILS_SRC ${UTILS_SRC} ${UTILS_SVE_SRC})
+
+  add_library(
+    knowhere_utils STATIC
+    ${ALL_UTILS_SRC}
+  )
+
+  check_cxx_compiler_flag("-march=armv9-a+sve" HAS_ARMV9_SVE)
+  if (HAS_ARMV9_SVE)
+    message(STATUS "SVE for ARMv9: Found")
+  else()
+    message(STATUS "SVE for ARMv9: Not Found")
+  endif()
+
+  check_cxx_compiler_flag("-march=armv8-a+sve" HAS_ARMV8_SVE)
+  if (HAS_ARMV8_SVE)
+    message(STATUS "SVE for ARMv8: Found")
+  else()
+    message(STATUS "SVE for ARMv8: Not Found")
+  endif()
+
+  if (HAS_ARMV9_SVE)
+    foreach(SVE_FILE ${UTILS_SVE_SRC})
+      set_source_files_properties(${SVE_FILE} PROPERTIES COMPILE_OPTIONS "-march=armv9-a+sve")
+      target_compile_options(knowhere_utils PRIVATE -march=armv8-a)
+    endforeach()
+  elseif (HAS_ARMV8_SVE)
+    foreach(SVE_FILE ${UTILS_SVE_SRC})
+      set_source_files_properties(${SVE_FILE} PROPERTIES COMPILE_OPTIONS "-march=armv8-a+sve")
+      target_compile_options(knowhere_utils PRIVATE -march=armv8-a)
+    endforeach()
+  else()
+    message(WARNING "SVE not supported on this platform.")
+    target_compile_options(knowhere_utils PRIVATE -march=armv8-a)
+  endif()
+
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
 endif()
+
+
 
 # ToDo: Add distances_vsx.cc for powerpc64 SIMD acceleration
 if(__PPC64)
