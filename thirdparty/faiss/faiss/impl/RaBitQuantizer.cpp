@@ -213,6 +213,7 @@ float RaBitDistanceComputerNotQ::distance_to_code(const uint8_t* code) {
     const uint8_t* binary_data = code;
     const FactorsData* fac =
             reinterpret_cast<const FactorsData*>(code + (d + 7) / 8);
+    __builtin_prefetch(fac, 0);
 
     // this is the baseline code
     //
@@ -226,20 +227,12 @@ float RaBitDistanceComputerNotQ::distance_to_code(const uint8_t* code) {
     // Current implementation:
     // 
     // Sum of all bits is cached.
-    for (size_t i = 0; i < d; i++) {
-        // extract i-th bit
-        const uint8_t masker = (1 << (i % 8));
-        const bool b_bit = ((binary_data[i / 8] & masker) == masker);
-
-        // accumulate dp
-        dot_qo += (b_bit) ? rotated_q[i] : 0;
-    }
+    dot_qo = fvec_masked_sum(rotated_q.data(), binary_data, d);
 
     float sum_q = fac->sum_xb;
 
-    float final_dot = 0;
     // dot-product itself
-    final_dot += query_fac.c1 * dot_qo;
+    float final_dot = query_fac.c1 * dot_qo;
     // normalizer coefficients
     final_dot += query_fac.c2 * sum_q;
     // normalizer coefficients
@@ -355,30 +348,7 @@ float RaBitDistanceComputerQ::distance_to_code(const uint8_t* code) {
     // }
 
     // this is the scheme for popcount
-    const size_t di_8b = (d + 7) / 8;
-    const size_t di_64b = (di_8b / 8) * 8;
-
-    uint64_t dot_qo = 0;
-    for (size_t j = 0; j < qb; j++) {
-        const uint8_t* query_j = rearranged_rotated_qq.data() + j * di_8b;
-
-        // process 64-bit popcounts
-        uint64_t count_dot = 0;
-        for (size_t i = 0; i < di_64b; i += 8) {
-            const auto qv = *(const uint64_t*)(query_j + i);
-            const auto yv = *(const uint64_t*)(binary_data + i);
-            count_dot += __builtin_popcountll(qv & yv);
-        }
-
-        // process leftovers
-        for (size_t i = di_64b; i < di_8b; i++) {
-            const auto qv = *(query_j + i);
-            const auto yv = *(binary_data + i);
-            count_dot += __builtin_popcount(qv & yv);
-        }
-
-        dot_qo += (count_dot << j);
-    }
+    float dot_qo = rabitq_dp_popcnt(rearranged_rotated_qq.data(), binary_data, d, qb);
 
     // Baseline FAISS:
     //
@@ -390,9 +360,8 @@ float RaBitDistanceComputerQ::distance_to_code(const uint8_t* code) {
     // The sum of all bits is cached.
     float sum_q = fac->sum_xb;
 
-    float final_dot = 0;
     // dot-product itself
-    final_dot += query_fac.c1 * dot_qo;
+    float final_dot = query_fac.c1 * dot_qo;
     // normalizer coefficients
     final_dot += query_fac.c2 * sum_q;
     // normalizer coefficients
@@ -477,8 +446,19 @@ void RaBitDistanceComputerQ::set_query(const float* x) {
     rearranged_rotated_qq.resize(offset * qb);
     std::fill(rearranged_rotated_qq.begin(), rearranged_rotated_qq.end(), 0);
 
-    for (size_t idim = 0; idim < d; idim++) {
-        for (size_t iv = 0; iv < qb; iv++) {
+    size_t d8 = (d / 8) * 8;
+    for (size_t iv = 0; iv < qb; iv++) {
+        for (size_t idim = 0; idim < d8; idim += 8) {
+            uint8_t value = 0;
+            for (size_t ldim = 0; ldim < 8; ldim++) {
+                const bool bit = ((rotated_qq[ldim + idim] & (1 << iv)) != 0);
+                value |= bit ? (1 << (ldim % 8)) : 0;
+            }
+
+            rearranged_rotated_qq[iv * offset + idim / 8] = value;
+        }
+
+        for (size_t idim = d8; idim < d; idim++) {
             const bool bit = ((rotated_qq[idim] & (1 << iv)) != 0);
             rearranged_rotated_qq[iv * offset + idim / 8] |=
                     bit ? (1 << (idim % 8)) : 0;
