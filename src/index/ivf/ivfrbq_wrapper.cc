@@ -13,12 +13,31 @@
 
 #include <faiss/cppcontrib/knowhere/impl/CountSizeIOWriter.h>
 
-#include <stdexcept>
+#include <memory>
 
+#include "faiss/IndexFlat.h"
 #include "faiss/IndexPreTransform.h"
 #include "faiss/index_io.h"
 
 namespace knowhere {
+
+IndexIVFRaBitQWrapper::IndexIVFRaBitQWrapper(const faiss::idx_t d, const size_t nlist, const uint8_t qb,
+                                             faiss::MetricType metric)
+    : faiss::Index(d, metric) {
+    auto idx_flat = std::make_unique<faiss::IndexFlat>(d, metric, false);
+    auto idx_ivfrbq = std::make_unique<faiss::IndexIVFRaBitQ>(idx_flat.release(), d, nlist, metric);
+    idx_ivfrbq->own_fields = true;
+    idx_ivfrbq->qb = qb;
+
+    auto rr = std::make_unique<faiss::RandomRotationMatrix>(d, d);
+    auto idx_rr = std::make_unique<faiss::IndexPreTransform>(rr.release(), idx_ivfrbq.release());
+    idx_rr->own_fields = true;
+
+    index = std::move(idx_rr);
+
+    this->is_trained = index->is_trained;
+    this->is_cosine = index->is_cosine;
+}
 
 IndexIVFRaBitQWrapper::IndexIVFRaBitQWrapper(std::unique_ptr<faiss::Index>&& index_in)
     : Index{index_in->d, index_in->metric_type}, index{std::move(index_in)} {
@@ -28,21 +47,33 @@ IndexIVFRaBitQWrapper::IndexIVFRaBitQWrapper(std::unique_ptr<faiss::Index>&& ind
     metric_arg = index->metric_arg;
 }
 
-IndexIVFRaBitQWrapper::~IndexIVFRaBitQWrapper() {
+std::unique_ptr<IndexIVFRaBitQWrapper>
+IndexIVFRaBitQWrapper::from_deserialized(std::unique_ptr<faiss::Index>&& index_in) {
+    auto index = std::unique_ptr<IndexIVFRaBitQWrapper>(new IndexIVFRaBitQWrapper(std::move(index_in)));
+
+    // check a provided index type
+    auto index_rabitq = index->get_ivfrabitq_index();
+    if (index_rabitq == nullptr) {
+        return nullptr;
+    }
+
+    // construct an index map
+    index_rabitq->make_direct_map(true);
+
+    // done
+    return index;
 }
 
 void
 IndexIVFRaBitQWrapper::train(faiss::idx_t n, const float* x) {
-    // index->train(n, x);
-    // is_trained = index->is_trained;
-    throw std::runtime_error("IndexIVFRaBitQWrapper::train(() is not supposed to be called");
+    index->train(n, x);
+    is_trained = index->is_trained;
 }
 
 void
 IndexIVFRaBitQWrapper::add(faiss::idx_t n, const float* x) {
     index->add(n, x);
     this->ntotal = index->ntotal;
-    // throw std::runtime_error("IndexIVFRaBitQWrapper::add() is not supposed to be called");
 }
 
 void

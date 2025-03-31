@@ -672,21 +672,8 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         auto nlist = MatchNlist(rows, ivf_rabitq_cfg.nlist.value());
         auto qb = ivf_rabitq_cfg.rbq_bits_query.value();
 
-        auto idx_flat = std::make_unique<faiss::IndexFlat>(dim, metric.value(), false);
-        auto idx_ivfrbq = std::make_unique<faiss::IndexIVFRaBitQ>(idx_flat.release(), dim, nlist, metric.value());
-        idx_ivfrbq->own_fields = true;
-        idx_ivfrbq->qb = qb;
-
-        auto rr = std::make_unique<faiss::RandomRotationMatrix>(dim, dim);
-        auto idx_rr = std::make_unique<faiss::IndexPreTransform>(rr.release(), idx_ivfrbq.release());
-        idx_rr->own_fields = true;
-
-        idx_rr->train(rows, (const float*)data);
-
-        // put it inside the wrapper
-        auto index_wrapper = std::make_unique<IndexIVFRaBitQWrapper>(std::move(idx_rr));
-
-        index = std::move(index_wrapper);
+        index = std::make_unique<IndexIVFRaBitQWrapper>(dim, nlist, qb, metric.value());
+        index->train(rows, (const float*)data);
     }
     index_ = std::move(index);
 
@@ -1284,12 +1271,12 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, std::sha
 
             // deserialize
             auto index_raw = std::unique_ptr<faiss::Index>(faiss::read_index(&reader));
-            auto index_wr = std::make_unique<IndexIVFRaBitQWrapper>(std::move(index_raw));
-            // make direct_map
-            auto index_rabitq = index_wr->get_ivfrabitq_index();
-            if (index_rabitq != nullptr) {
-                index_rabitq->make_direct_map(true);
+            auto index_wr = IndexIVFRaBitQWrapper::from_deserialized(std::move(index_raw));
+            if (index_wr == nullptr) {
+                LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFRaBitQ";
+                return Status::invalid_serialized_index_type;
             }
+
             // use the wrapper
             index_ = std::move(index_wr);
         } else {
@@ -1340,12 +1327,12 @@ IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filena
 
             // deserialize into a wrapper
             auto index_raw = std::unique_ptr<faiss::Index>(faiss::read_index(filename.data(), io_flags));
-            auto index_wr = std::make_unique<IndexIVFRaBitQWrapper>(std::move(index_raw));
-            // make direct_map
-            auto index_rabitq = index_wr->get_ivfrabitq_index();
-            if (index_rabitq != nullptr) {
-                index_rabitq->make_direct_map(true);
+            auto index_wr = IndexIVFRaBitQWrapper::from_deserialized(std::move(index_raw));
+            if (index_wr == nullptr) {
+                LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFRaBitQ";
+                return Status::invalid_serialized_index_type;
             }
+
             // use the wrapper
             index_ = std::move(index_wr);
         } else {

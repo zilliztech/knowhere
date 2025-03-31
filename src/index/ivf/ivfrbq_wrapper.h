@@ -28,9 +28,15 @@ namespace knowhere {
 struct IndexIVFRaBitQWrapper : faiss::Index {
     std::unique_ptr<faiss::Index> index;
 
-    explicit IndexIVFRaBitQWrapper(std::unique_ptr<faiss::Index>&& index_in);
+    // this form is for a regular index constructoin
+    IndexIVFRaBitQWrapper(const faiss::idx_t d, const size_t nlist, const uint8_t qb,
+                          faiss::MetricType metric = faiss::METRIC_L2);
 
-    virtual ~IndexIVFRaBitQWrapper();
+    // this is for the deserialization.
+    // returns nullptr if the provided index type is not the one
+    //   as expected.
+    static std::unique_ptr<IndexIVFRaBitQWrapper>
+    from_deserialized(std::unique_ptr<faiss::Index>&& index_in);
 
     void
     train(faiss::idx_t n, const float* x) override;
@@ -64,6 +70,9 @@ struct IndexIVFRaBitQWrapper : faiss::Index {
     // return the size of the index
     size_t
     size() const;
+
+ private:
+    IndexIVFRaBitQWrapper(std::unique_ptr<faiss::Index>&& index_in);
 };
 
 }  // namespace knowhere
