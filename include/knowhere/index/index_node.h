@@ -79,7 +79,7 @@ class IndexNode : public Object {
 #ifdef KNOWHERE_WITH_CARDINAL
     virtual Status
     BuildAsync(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const Interrupt* = nullptr) {
-        return Build(dataset, std::move(cfg));
+        return Build(dataset, std::move(cfg), true);
     }
 #endif
 
