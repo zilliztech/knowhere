@@ -156,9 +156,10 @@ idx_t Level1Quantizer::decode_listno(const uint8_t* code) const {
  * IVFIteratorWorkspace implementation
  ******************************************/
 IVFIteratorWorkspace::IVFIteratorWorkspace(
-        const float* query_data,
+        const float* query_data_in,
+        const size_t d,
         const IVFSearchParameters* search_params)
-        : query_data(query_data),
+        : query_data(query_data_in, query_data_in + d),
           search_params(search_params),
           dis_refine(nullptr) {}
 
@@ -1249,7 +1250,7 @@ std::unique_ptr<IVFIteratorWorkspace> IndexIVF::getIteratorWorkspace(
         const float* query_data,
         const IVFSearchParameters* ivfsearchParams) const {
     auto workspace =
-            std::make_unique<IVFIteratorWorkspace>(query_data, ivfsearchParams);
+            std::make_unique<IVFIteratorWorkspace>(query_data, d, ivfsearchParams);
 
     // snapshot of list_sizes;
     auto coarse_list_sizes = std::make_unique<size_t[]>(nlist);
@@ -1278,7 +1279,7 @@ std::unique_ptr<IVFIteratorWorkspace> IndexIVF::getIteratorWorkspace(
     auto coarse_dis = std::make_unique<float[]>(nlist);
     quantizer->search(
             1,
-            workspace->query_data,
+            workspace->query_data.data(),
             nlist,
             coarse_dis.get(),
             coarse_idx.get(),
@@ -1342,7 +1343,7 @@ void IndexIVF::getIteratorNextBatch(
                 : nullptr;
         std::unique_ptr<InvertedListScanner> scanner(
                 get_InvertedListScanner(false, sel, workspace->search_params));
-        scanner->set_query(workspace->query_data);
+        scanner->set_query(workspace->query_data.data());
         scanner->set_list(list_no, coarse_list_centroid_dist);
 
         size_t segment_num = invlists->get_segment_num(list_no);

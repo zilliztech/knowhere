@@ -100,10 +100,11 @@ struct IVFIteratorWorkspace {
     IVFIteratorWorkspace() = default;
     IVFIteratorWorkspace(
             const float* query_data,
+            const size_t d,
             const IVFSearchParameters* search_params);
     virtual ~IVFIteratorWorkspace();
 
-    const float* query_data = nullptr; // single query
+    std::vector<float> query_data; // a copy of a single query
     const IVFSearchParameters* search_params = nullptr;
     size_t nprobe = 0;
     size_t backup_count_threshold = 0;   // count * nprobe / nlist
