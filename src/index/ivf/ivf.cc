@@ -1021,9 +1021,10 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::un
                   !std::is_same<faiss::IndexIVFFlat, IndexType>::value &&
                   !std::is_same<faiss::IndexIVFScalarQuantizer, IndexType>::value &&
                   !std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value &&
-                  !std::is_same<faiss::IndexScaNN, IndexType>::value) {
+                  !std::is_same<faiss::IndexScaNN, IndexType>::value &&
+                  !std::is_same<IndexIVFRaBitQWrapper, IndexType>::value) {
         LOG_KNOWHERE_WARNING_ << "Current index_type: " << Type()
-                              << ", only IVFFlat, IVFFlatCC, IVF_SQ8, IVF_SQ_CC and SCANN support Iterator.";
+                              << ", only IVFFlat, IVFFlatCC, IVF_SQ8, IVF_SQ_CC, SCANN and IVFRABITQ support Iterator.";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::not_implemented, "index not supported");
     } else {
         auto dim = dataset->GetDim();

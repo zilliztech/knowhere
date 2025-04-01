@@ -38,6 +38,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
 
     auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::COSINE);
     auto topk = GENERATE(as<int64_t>{}, 5, 120);
+    auto bits_query = GENERATE(as<uint8_t>{}, 0, 8);
     auto version = GenTestVersionList();
 
     auto base_gen = [=]() {
@@ -141,6 +142,12 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         return json;
     };
 
+    auto ivfrabitq_gen = [ivfflat_gen, bits_query]() {
+        knowhere::Json json = ivfflat_gen();
+        json[knowhere::indexparam::RABITQ_QUERY_BITS] = bits_query;
+        return json;
+    };
+
     const auto train_ds = GenDataSet(nb, dim);
     const auto query_ds = GenDataSet(nq, dim);
 
@@ -166,6 +173,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen)
         }));
         knowhere::BinarySet bs;
         // build process
@@ -226,13 +234,14 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             float recall = GetKNNRecall(*gt.value(), *results.value());
             bool scann_without_raw_data =
                 (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && scann_gen2().dump() == cfg_json);
-            if (name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ && !scann_without_raw_data) {
+            if (name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ && name != knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ && !scann_without_raw_data) {
                 REQUIRE(recall > kKnnRecallThreshold);
             }
 
             if (metric == knowhere::metric::COSINE) {
                 if (name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ8 && name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ &&
                     name != knowhere::IndexEnum::INDEX_HNSW_SQ && name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC &&
+                    name != knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ &&
                     !scann_without_raw_data) {
                     REQUIRE(CheckDistanceInScope(*results.value(), topk, -1.00001, 1.00001));
                 }
@@ -257,6 +266,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen)
         }));
         auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN) {
@@ -284,7 +294,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         bool scann_without_raw_data =
             (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && scann_gen2().dump() == cfg_json);
         if (name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ && name != knowhere::IndexEnum::INDEX_FAISS_SCANN &&
-            name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC) {
+            name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC &&name !=  knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ) {
             for (int i = 0; i < nq; ++i) {
                 CHECK(ids[lims[i]] == i);
             }
@@ -293,7 +303,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         if (metric == knowhere::metric::COSINE) {
             if (name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ8 && name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ &&
                 name != knowhere::IndexEnum::INDEX_HNSW_SQ && name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC &&
-                !scann_without_raw_data) {
+                name != knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ && !scann_without_raw_data) {
                 REQUIRE(CheckDistanceInScope(*results.value(), -1.00001, 1.00001));
             }
         }
@@ -470,6 +480,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
             make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen)
         }));
 
         auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);

@@ -9,6 +9,7 @@
 
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/RaBitQuantizer.h>
+#include <faiss/utils/distances_if.h>
 
 namespace faiss {
 
@@ -170,6 +171,29 @@ struct RaBitInvertedListScanner : InvertedListScanner {
             dc->set_query(query_vector.data());
         }
     }
+
+    void scan_codes_and_return(
+            size_t list_size,
+            const uint8_t* codes,
+            const float* code_norms,
+            const idx_t* ids,
+            std::vector<knowhere::DistId>& out) const override {
+        // the lambda that filters acceptable elements.
+        const bool use_sel = (sel != nullptr);
+
+        auto filter = [&](const size_t j) {
+            return (!use_sel || sel->is_member(use_sel == 1 ? ids[j] : j));
+        };
+        // the lambda that applies a valid element.
+        auto apply = [&](const float dis_in, const size_t j) {
+            const float dis =
+                    (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]);
+            out.emplace_back(ids[j], dis);
+        };
+        distance_compute_by_idx_if_flatcodes(
+            codes, code_size, list_size, dc.get(), filter, apply
+        );
+    }
 };
 
 InvertedListScanner* IndexIVFRaBitQ::get_InvertedListScanner(
@@ -177,13 +201,9 @@ InvertedListScanner* IndexIVFRaBitQ::get_InvertedListScanner(
         const IDSelector* sel,
         const IVFSearchParameters* search_params_in) const {
     uint8_t used_qb = qb;
-    if (search_params_in != nullptr) {
-        const auto* search_params =
-                dynamic_cast<const IVFRaBitQSearchParameters*>(
-                        search_params_in);
-        FAISS_THROW_IF_NOT_MSG(search_params, "invalid search params");
-
-        used_qb = search_params->qb;
+    if (auto params = dynamic_cast<const IVFRaBitQSearchParameters*>(
+                search_params_in)) {
+        used_qb = params->qb;
     }
 
     return new RaBitInvertedListScanner(*this, store_pairs, sel, used_qb);

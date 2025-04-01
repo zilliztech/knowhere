@@ -16,6 +16,7 @@
 #include <memory>
 
 #include "faiss/Index.h"
+#include "faiss/IndexIVF.h"
 #include "faiss/IndexIVFRaBitQ.h"
 
 namespace knowhere {
@@ -70,6 +71,12 @@ struct IndexIVFRaBitQWrapper : faiss::Index {
     // return the size of the index
     size_t
     size() const;
+
+    std::unique_ptr<faiss::IVFIteratorWorkspace>
+    getIteratorWorkspace(const float* query_data, const faiss::IVFSearchParameters* ivfsearchParams) const;
+
+    void
+    getIteratorNextBatch(faiss::IVFIteratorWorkspace* workspace, size_t current_backup_count) const;
 
  private:
     IndexIVFRaBitQWrapper(std::unique_ptr<faiss::Index>&& index_in);

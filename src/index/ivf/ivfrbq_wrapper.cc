@@ -138,4 +138,31 @@ IndexIVFRaBitQWrapper::size() const {
     return writer.total_size;
 }
 
+std::unique_ptr<faiss::IVFIteratorWorkspace>
+IndexIVFRaBitQWrapper::getIteratorWorkspace(const float* query_data,
+                                            const faiss::IVFSearchParameters* ivfsearchParams) const {
+    const faiss::IndexPreTransform* index_pt = dynamic_cast<const faiss::IndexPreTransform*>(index.get());
+    if (index_pt == nullptr) {
+        return nullptr;
+    }
+
+    const faiss::IndexIVFRaBitQ* index_rbq = dynamic_cast<const faiss::IndexIVFRaBitQ*>(index_pt->index);
+    if (index_rbq == nullptr) {
+        return nullptr;
+    }
+
+    // ok, transform the query
+    std::unique_ptr<const float[]> transformed_query(index_pt->apply_chain(1, query_data));
+    // create a workspace
+    auto workspace = index_rbq->getIteratorWorkspace(transformed_query.get(), ivfsearchParams);
+    // done
+    return workspace;
+}
+
+void
+IndexIVFRaBitQWrapper::getIteratorNextBatch(faiss::IVFIteratorWorkspace* workspace, size_t current_backup_count) const {
+    const auto ivfrbq = this->get_ivfrabitq_index();
+    ivfrbq->getIteratorNextBatch(workspace, current_backup_count);
+}
+
 }  // namespace knowhere
