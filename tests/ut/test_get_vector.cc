@@ -174,17 +174,16 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
 
     SECTION("Test float index") {
         using std::make_tuple;
-        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IDMAP, flat_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivfflat_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, base_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFPQ, base_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen)
-        }));
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(
+            {make_tuple(knowhere::IndexEnum::INDEX_FAISS_IDMAP, flat_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivfflat_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, base_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFPQ, base_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
+             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen)}));
 
         auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN) {
