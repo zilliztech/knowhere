@@ -54,7 +54,7 @@ void fvec_distance_ny_scalar_if(
                 dis[3]);
     };
 
-    auto remapper = [](const size_t idx) { return idx; };
+    NoRemapping remapper;
 
     fvec_distance_ny_if<
             Pred,

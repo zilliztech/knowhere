@@ -45,8 +45,9 @@ struct IVFFastScanIteratorWorkspace : IVFIteratorWorkspace {
     IVFFastScanIteratorWorkspace() = default;
     IVFFastScanIteratorWorkspace(
             const float* query_data,
+            const size_t d,
             const IVFSearchParameters* search_params)
-            : IVFIteratorWorkspace(query_data, search_params){};
+            : IVFIteratorWorkspace(query_data, d, search_params){};
     IVFFastScanIteratorWorkspace(
             std::unique_ptr<IVFIteratorWorkspace>&& base_workspace) {
         this->query_data = base_workspace->query_data;

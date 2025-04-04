@@ -573,6 +573,54 @@ void distance_compute_by_idx_if(
     internal_distance_compute_if(ny, dc, pred, remapper, apply);
 }
 
+// compute ny distance between x vectors x and a set of contiguous y vectors
+//   whose indices are given by query_indices
+//   with filtering and applying filtered elements.
+template<
+    // A predicate for filtering elements. 
+    //   std::optional<bool> Pred(const size_t idx);
+    // * return true to accept an element.
+    // * return false to reject an element.
+    // * return std::nullopt to break the iteration loop.
+    typename Pred, 
+    // Apply an element.
+    //   void Apply(const float dis, const idx_t idx);
+    typename Apply>
+void distance_compute_by_idx_if_flatcodes(
+        const uint8_t* codes,
+        const size_t code_size,
+        const size_t ny,
+        FlatCodesDistanceComputer* const __restrict dc,
+        Pred pred,
+        Apply apply) {
+    // compute a distance from the query to 1 element
+    auto distance1 = [&dc, codes, code_size](const size_t idx) {
+        return dc->distance_to_code(codes + idx * code_size);
+    };
+
+    // compute distances from the query to 4 elements
+    auto distance4 = [&dc, codes, code_size](
+                             const std::array<size_t, 4> indices,
+                             std::array<float, 4>& dis) {
+        dis[0] = dc->distance_to_code(codes + indices[0] * code_size);
+        dis[1] = dc->distance_to_code(codes + indices[1] * code_size);
+        dis[2] = dc->distance_to_code(codes + indices[2] * code_size);
+        dis[3] = dc->distance_to_code(codes + indices[3] * code_size);
+    };
+
+    NoRemapping remapper;
+
+    fvec_distance_ny_if<
+            Pred,
+            decltype(distance1),
+            decltype(distance4),
+            decltype(remapper),
+            Apply,
+            4,
+            DEFAULT_BUFFER_SIZE>(
+            ny, pred, distance1, distance4, remapper, apply);
+}
+
 /***************************************************************************
  * float16 search functions
  ***************************************************************************/

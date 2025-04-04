@@ -33,6 +33,7 @@ constexpr const char* INDEX_FAISS_SCANN = "SCANN";
 constexpr const char* INDEX_FAISS_SCANN_DVR = "SCANN_DVR";
 constexpr const char* INDEX_FAISS_IVFSQ8 = "IVF_SQ8";
 constexpr const char* INDEX_FAISS_IVFSQ_CC = "IVF_SQ_CC";
+constexpr const char* INDEX_FAISS_IVFRABITQ = "IVF_RABITQ";
 
 constexpr const char* INDEX_FAISS_GPU_IDMAP = "GPU_FAISS_FLAT";
 constexpr const char* INDEX_FAISS_GPU_IVFFLAT = "GPU_FAISS_IVF_FLAT";
@@ -182,6 +183,10 @@ constexpr const char* PRQ_NUM = "nrq";      // for PRQ, number of redisual quant
 constexpr const char* INVERTED_INDEX_ALGO = "inverted_index_algo";
 constexpr const char* DROP_RATIO_BUILD = "drop_ratio_build";
 constexpr const char* DROP_RATIO_SEARCH = "drop_ratio_search";
+
+// RaBitQ Params
+constexpr const char* RABITQ_QUERY_BITS = "rbq_bits_query";
+
 }  // namespace indexparam
 
 using MetricType = std::string;
