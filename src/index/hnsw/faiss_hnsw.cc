@@ -1819,6 +1819,7 @@ class HNSWIndexNodeWithFallback : public IndexNode {
         } else {
             use_base_index = false;
         }
+	use_base_index = false;
     }
 
     bool
