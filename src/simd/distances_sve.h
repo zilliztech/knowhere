@@ -13,11 +13,17 @@
 
 #include <cstdint>
 #include <cstdio>
+
+#include "knowhere/operands.h"
+
 #if defined(__ARM_FEATURE_SVE)
 namespace faiss {
 
 float
 fvec_L2sqr_sve(const float* x, const float* y, size_t d);
+
+float
+fp16_vec_L2sqr_sve(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
 
 float
 fvec_L1_sve(const float* x, const float* y, size_t d);
@@ -27,6 +33,9 @@ fvec_Linf_sve(const float* x, const float* y, size_t d);
 
 float
 fvec_norm_L2sqr_sve(const float* x, size_t d);
+
+float
+fp16_vec_norm_L2sqr_sve(const knowhere::fp16* x, size_t d);
 
 void
 fvec_madd_sve(size_t n, const float* a, float bf, const float* b, float* c);
@@ -44,6 +53,9 @@ fvec_inner_product_batch_4_sve(const float* x, const float* y0, const float* y1,
 void
 fvec_L2sqr_batch_4_sve(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
                        const size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
+
+void
+fvec_L2sqr_ny_sve(float* dis, const float* x, const float* y, size_t d, size_t ny);
 
 }  // namespace faiss
 #endif

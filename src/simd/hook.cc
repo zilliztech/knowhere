@@ -414,7 +414,7 @@ fvec_hook(std::string& simd_type) {
         fvec_madd_and_argmin = fvec_madd_and_argmin_sve;
 
         fvec_inner_product = fvec_inner_product_neon;
-        fvec_L2sqr_ny = fvec_L2sqr_ny_neon;
+        fvec_L2sqr_ny = fvec_L2sqr_ny_sve;
         fvec_inner_products_ny = fvec_inner_products_ny_neon;
 
         ivec_inner_product = ivec_inner_product_neon;
@@ -422,8 +422,8 @@ fvec_hook(std::string& simd_type) {
 
         // fp16
         fp16_vec_inner_product = fp16_vec_inner_product_neon;
-        fp16_vec_L2sqr = fp16_vec_L2sqr_neon;
-        fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_neon;
+        fp16_vec_L2sqr = fp16_vec_L2sqr_sve;
+        fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_sve;
 
         // bf16
         bf16_vec_inner_product = bf16_vec_inner_product_neon;
