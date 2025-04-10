@@ -68,7 +68,7 @@ class IndexNode : public Object {
      * shared, so `shared_ptr` is used instead.
      */
     virtual Status
-    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) {
+    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) {
         RETURN_IF_ERROR(Train(dataset, cfg, use_knowhere_build_pool));
         return Add(dataset, std::move(cfg), use_knowhere_build_pool);
     }
@@ -98,7 +98,7 @@ class IndexNode : public Object {
      * shared, so `shared_ptr` is used instead.
      */
     virtual Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) = 0;
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) = 0;
 
     /**
      * @brief Adds data to the trained index.
@@ -118,7 +118,7 @@ class IndexNode : public Object {
      * shared, so `shared_ptr` is used instead.
      */
     virtual Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) = 0;
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) = 0;
 
     /**
      * @brief Performs a search operation on the index.
