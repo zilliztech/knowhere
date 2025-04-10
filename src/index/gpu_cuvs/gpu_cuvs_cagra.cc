@@ -40,7 +40,7 @@ class GpuCuvsCagraHybridIndexNode : public GpuCuvsCagraIndexNode<DataType> {
         const GpuCuvsCagraConfig& cagra_cfg = static_cast<const GpuCuvsCagraConfig&>(*cfg);
         if (cagra_cfg.adapt_for_cpu.value())
             adapt_for_cpu = true;
-        return GpuCuvsCagraIndexNode<DataType>::Train(dataset, cfg);
+        return GpuCuvsCagraIndexNode<DataType>::Train(dataset, cfg, use_knowhere_build_pool);
     }
 
     expected<DataSetPtr>
