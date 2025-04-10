@@ -847,5 +847,66 @@ fvec_L2sqr_batch_4_bf16_patch_avx512(const float* x, const float* y0, const floa
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
+///////////////////////////////////////////////////////////////////////////////
+// rabitq
+float
+fvec_masked_sum_avx512(const float* q, const uint8_t* x, const size_t d) {
+    __m512 sum = _mm512_setzero_ps();
+
+    const size_t d_16 = (d / 16) * 16;
+
+    for (size_t i = 0; i < d_16; i += 16) {
+        __mmask16 mask = *((const uint16_t*)(x + i / 8));
+        sum = _mm512_add_ps(sum, _mm512_maskz_loadu_ps(mask, q + i));
+    }
+
+    if (d != d_16) {
+        const size_t leftovers = d - d_16;
+        __mmask16 len_mask = (1U << leftovers) - 1;
+
+        __mmask16 mask = 0;
+        if (leftovers > 8) {
+            mask = *((const uint16_t*)(x + d_16 / 8));
+        } else {
+            mask = *(x + d_16 / 8);
+        }
+
+        sum = _mm512_add_ps(sum, _mm512_maskz_loadu_ps(mask & len_mask, q + d_16));
+    }
+
+    return _mm512_reduce_add_ps(sum);
+}
+
+int
+rabitq_dp_popcnt_avx512(const uint8_t* q, const uint8_t* x, const size_t d, const size_t nb) {
+    // this is the scheme for popcount
+    const size_t di_8b = (d + 7) / 8;
+    const size_t di_64b = (di_8b / 8) * 8;
+
+    int dot = 0;
+    for (size_t j = 0; j < nb; j++) {
+        const uint8_t* q_j = q + j * di_8b;
+
+        // process 64-bit popcounts
+        int count_dot = 0;
+        for (size_t i = 0; i < di_64b; i += 8) {
+            const auto qv = *(const uint64_t*)(q_j + i);
+            const auto xv = *(const uint64_t*)(x + i);
+            count_dot += __builtin_popcountll(qv & xv);
+        }
+
+        // process leftovers
+        for (size_t i = di_64b; i < di_8b; i++) {
+            const auto qv = *(q_j + i);
+            const auto xv = *(x + i);
+            count_dot += __builtin_popcount(qv & xv);
+        }
+
+        dot += (count_dot << j);
+    }
+
+    return dot;
+}
+
 }  // namespace faiss
 #endif

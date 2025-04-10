@@ -18,6 +18,7 @@
 #if defined(__x86_64__)
 #include "distances_avx.h"
 #include "distances_avx512.h"
+#include "distances_avx512icx.h"
 #include "distances_sse.h"
 #include "instruction_set.h"
 #endif
@@ -98,6 +99,10 @@ decltype(int8_vec_norm_L2sqr) int8_vec_norm_L2sqr = int8_vec_norm_L2sqr_ref;
 
 decltype(int8_vec_inner_product_batch_4) int8_vec_inner_product_batch_4 = int8_vec_inner_product_batch_4_ref;
 decltype(int8_vec_L2sqr_batch_4) int8_vec_L2sqr_batch_4 = int8_vec_L2sqr_batch_4_ref;
+
+// rabitq
+decltype(fvec_masked_sum) fvec_masked_sum = fvec_masked_sum_ref;
+decltype(rabitq_dp_popcnt) rabitq_dp_popcnt = rabitq_dp_popcnt_ref;
 
 ///////////////////////////////////////////////////////////////////////////////
 #if defined(__x86_64__)
@@ -257,6 +262,14 @@ fvec_hook(std::string& simd_type) {
         int8_vec_inner_product_batch_4 = int8_vec_inner_product_batch_4_avx512;
         int8_vec_L2sqr_batch_4 = int8_vec_L2sqr_batch_4_avx512;
 
+        // rabitq
+        fvec_masked_sum = fvec_masked_sum_avx512;
+        if (InstructionSet::GetInstance().AVX512VPOPCNTDQ()) {
+            rabitq_dp_popcnt = rabitq_dp_popcnt_avx512icx;
+        } else {
+            rabitq_dp_popcnt = rabitq_dp_popcnt_avx512;
+        }
+
         //
         simd_type = "AVX512";
         support_pq_fast_scan = true;
@@ -304,6 +317,10 @@ fvec_hook(std::string& simd_type) {
         int8_vec_inner_product_batch_4 = int8_vec_inner_product_batch_4_avx;
         int8_vec_L2sqr_batch_4 = int8_vec_L2sqr_batch_4_avx;
 
+        // rabitq
+        fvec_masked_sum = fvec_masked_sum_avx;
+        rabitq_dp_popcnt = rabitq_dp_popcnt_avx;
+
         //
         simd_type = "AVX2";
         support_pq_fast_scan = true;
@@ -350,6 +367,10 @@ fvec_hook(std::string& simd_type) {
         int8_vec_inner_product_batch_4 = int8_vec_inner_product_batch_4_ref;
         int8_vec_L2sqr_batch_4 = int8_vec_L2sqr_batch_4_ref;
 
+        // rabitq
+        fvec_masked_sum = fvec_masked_sum_sse;
+        rabitq_dp_popcnt = rabitq_dp_popcnt_sse;
+
         //
         simd_type = "SSE4_2";
         support_pq_fast_scan = false;
@@ -395,6 +416,10 @@ fvec_hook(std::string& simd_type) {
 
         int8_vec_inner_product_batch_4 = int8_vec_inner_product_batch_4_ref;
         int8_vec_L2sqr_batch_4 = int8_vec_L2sqr_batch_4_ref;
+
+        // rabitq
+        fvec_masked_sum = fvec_masked_sum_ref;
+        rabitq_dp_popcnt = rabitq_dp_popcnt_ref;
 
         //
         simd_type = "GENERIC";

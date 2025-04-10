@@ -82,4 +82,11 @@ int8_vec_L2sqr_sse(const int8_t* x, const int8_t* y, size_t d);
 float
 int8_vec_norm_L2sqr_sse(const int8_t* x, size_t d);
 
+///////////////////////////////////////////////////////////////////////////////
+// rabitq
+float
+fvec_masked_sum_sse(const float* q, const uint8_t* x, const size_t d);
+int
+rabitq_dp_popcnt_sse(const uint8_t* q, const uint8_t* x, const size_t d, const size_t nb);
+
 }  // namespace faiss

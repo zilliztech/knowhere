@@ -31,20 +31,24 @@ if(__X86_64)
   set(UTILS_SSE_SRC src/simd/distances_sse.cc)
   set(UTILS_AVX_SRC src/simd/distances_avx.cc)
   set(UTILS_AVX512_SRC src/simd/distances_avx512.cc)
+  set(UTILS_AVX512ICX_SRC src/simd/distances_avx512icx.cc)
 
   add_library(utils_sse OBJECT ${UTILS_SSE_SRC})
   add_library(utils_avx OBJECT ${UTILS_AVX_SRC})
   add_library(utils_avx512 OBJECT ${UTILS_AVX512_SRC})
+  add_library(utils_avx512icx OBJECT ${UTILS_AVX512ICX_SRC})
 
   target_compile_options(utils_sse PRIVATE -msse4.2 -mpopcnt)
   target_compile_options(utils_avx PRIVATE -mfma -mf16c -mavx2 -mpopcnt)
   target_compile_options(utils_avx512 PRIVATE -mfma -mf16c -mavx512f -mavx512dq
                                               -mavx512bw -mpopcnt -mavx512vl)
+  target_compile_options(utils_avx512icx PRIVATE -mfma -mf16c -mavx512f -mavx512dq
+                                              -mavx512bw -mpopcnt -mavx512vl -mavx512vpopcntdq)
 
   add_library(
     knowhere_utils STATIC
     ${UTILS_SRC} $<TARGET_OBJECTS:utils_sse> $<TARGET_OBJECTS:utils_avx>
-    $<TARGET_OBJECTS:utils_avx512>)
+    $<TARGET_OBJECTS:utils_avx512> $<TARGET_OBJECTS:utils_avx512icx>)
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
 endif()
 

@@ -202,6 +202,8 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         return json;
     };
 
+    auto ivfrabitq_gen = ivf_base_gen;
+
     auto rand = GENERATE(1, 2);
 
     const auto train_ds = GenDataSet(nb, dim, rand);
@@ -211,22 +213,22 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
     // todo: re-enable later
     SECTION("Test Search using iterator") {
         using std::make_tuple;
-        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivf_base_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivf_base_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_cc_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_refine_flat_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_refine_fp16_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_refine_flat_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_refine_sq8_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_HNSW_PRQ, hnsw_prq_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
-        }));
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(
+            {make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivf_base_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivf_base_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_cc_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_refine_flat_gen),
+             // make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_refine_fp16_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_refine_flat_gen),
+             // make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_refine_sq8_gen),
+             // make_tuple(knowhere::IndexEnum::INDEX_HNSW_PRQ, hnsw_prq_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen)}));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
@@ -299,22 +301,22 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
     // todo: re-enable later
     SECTION("Test Search with Bitset using iterator") {
         using std::make_tuple;
-        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivf_base_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivf_base_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_cc_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_refine_flat_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_refine_fp16_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_refine_flat_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_refine_sq8_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_HNSW_PRQ, hnsw_prq_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
-        }));
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(
+            {make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivf_base_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivf_base_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_cc_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_refine_flat_gen),
+             // make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_refine_fp16_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_refine_flat_gen),
+             // make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_refine_sq8_gen),
+             // make_tuple(knowhere::IndexEnum::INDEX_HNSW_PRQ, hnsw_prq_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen)}));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
@@ -347,22 +349,22 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
     // todo: re-enable later
     SECTION("Test Search with Bitset using iterator insufficient results") {
         using std::make_tuple;
-        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivf_base_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivf_base_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_cc_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_refine_flat_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_refine_fp16_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_refine_flat_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_refine_sq8_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_HNSW_PRQ, hnsw_prq_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
-        }));
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(
+            {make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivf_base_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivf_base_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_cc_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_refine_flat_gen),
+             // make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_refine_fp16_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_refine_flat_gen),
+             // make_tuple(knowhere::IndexEnum::INDEX_HNSW_PQ, hnsw_pq_refine_sq8_gen),
+             // make_tuple(knowhere::IndexEnum::INDEX_HNSW_PRQ, hnsw_prq_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen)}));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
