@@ -449,12 +449,10 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
         auto res = SparseInvertedIndexNode<T, use_wand>::Add(dataset, config);
 
         auto cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
-        if (IsMetricType(cfg.metric_type.value(), metric::IP)) {
-            // insert dataset to raw data if metric type is IP
-            auto data = static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor());
-            auto rows = dataset->GetRows();
-            raw_data_.insert(raw_data_.end(), data, data + rows);
-        }
+        // insert dataset to raw data if metric type is IP
+        auto data = static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor());
+        auto rows = dataset->GetRows();
+        raw_data_.insert(raw_data_.end(), data, data + rows);
 
         add_tasks_.pop();
         current_task_id_++;
