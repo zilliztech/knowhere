@@ -40,6 +40,7 @@
 #include "index/hnsw/impl/IndexConditionalWrapper.h"
 #include "index/hnsw/impl/IndexHNSWWrapper.h"
 #include "index/hnsw/impl/IndexWrapperCosine.h"
+#include "index/refine/refine_utils.h"
 #include "io/memory_io.h"
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/index_param.h"
@@ -2034,205 +2035,6 @@ class BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback : public HNSWI
     }
 };
 
-namespace {
-
-// a supporting function
-expected<faiss::ScalarQuantizer::QuantizerType>
-get_sq_quantizer_type(const std::string& sq_type) {
-    std::map<std::string, faiss::ScalarQuantizer::QuantizerType> sq_types = {
-        {"sq6", faiss::ScalarQuantizer::QT_6bit},
-        {"sq8", faiss::ScalarQuantizer::QT_8bit},
-        {"fp16", faiss::ScalarQuantizer::QT_fp16},
-        {"bf16", faiss::ScalarQuantizer::QT_bf16},
-        {"int8", faiss::ScalarQuantizer::QT_8bit_direct_signed}};
-
-    // todo: tolower
-    auto sq_type_tolower = str_to_lower(sq_type);
-    auto itr = sq_types.find(sq_type_tolower);
-    if (itr == sq_types.cend()) {
-        return expected<faiss::ScalarQuantizer::QuantizerType>::Err(
-            Status::invalid_args, fmt::format("invalid scalar quantizer type ({})", sq_type_tolower));
-    }
-
-    return itr->second;
-}
-
-/*
-// checks whether an index contains a refiner, suitable for a given data format
-std::optional<bool> whether_refine_is_datatype(
-    const faiss::Index* index,
-    const DataFormatEnum data_format
-) {
-    if (index == nullptr) {
-        return {};
-    }
-
-    const faiss::IndexRefine* const index_refine = dynamic_cast<const faiss::IndexRefine*>(index);
-    if (index_refine == nullptr) {
-        return false;
-    }
-
-    switch(data_format) {
-        case DataFormatEnum::fp32:
-            return (dynamic_cast<const faiss::IndexFlat*>(index_refine->refine_index) != nullptr);
-        case DataFormatEnum::fp16:
-            {
-                const auto* const index_sq = dynamic_cast<const
-faiss::IndexScalarQuantizer*>(index_refine->refine_index); return (index_sq != nullptr && index_sq->sq.qtype ==
-faiss::ScalarQuantizer::QT_fp16);
-            }
-        case DataFormatEnum::bf16:
-            {
-                const auto* const index_sq = dynamic_cast<const
-faiss::IndexScalarQuantizer*>(index_refine->refine_index); return (index_sq != nullptr && index_sq->sq.qtype ==
-faiss::ScalarQuantizer::QT_bf16);
-            }
-        default:
-            return {};
-    }
-}
-*/
-
-expected<bool>
-is_flat_refine(const std::optional<std::string>& refine_type) {
-    // grab a type of a refine index
-    if (!refine_type.has_value()) {
-        return true;
-    };
-
-    // todo: tolower
-    std::string refine_type_tolower = str_to_lower(refine_type.value());
-    if (refine_type_tolower == "fp32" || refine_type_tolower == "flat") {
-        return true;
-    };
-
-    // parse
-    auto refine_sq_type = get_sq_quantizer_type(refine_type_tolower);
-    if (!refine_sq_type.has_value()) {
-        LOG_KNOWHERE_ERROR_ << "Invalid refine type: " << refine_type.value();
-        return expected<bool>::Err(Status::invalid_args, fmt::format("invalid refine type ({})", refine_type.value()));
-    }
-
-    return false;
-}
-
-bool
-has_lossless_quant(const expected<faiss::ScalarQuantizer::QuantizerType>& quant_type, DataFormatEnum dataFormat) {
-    if (!quant_type.has_value()) {
-        return false;
-    }
-
-    auto quant = quant_type.value();
-    switch (dataFormat) {
-        case DataFormatEnum::fp32:
-            return false;
-        case DataFormatEnum::fp16:
-            return quant == faiss::ScalarQuantizer::QuantizerType::QT_fp16;
-        case DataFormatEnum::bf16:
-            return quant == faiss::ScalarQuantizer::QuantizerType::QT_bf16;
-        case DataFormatEnum::int8:
-            return quant == faiss::ScalarQuantizer::QuantizerType::QT_8bit_direct_signed;
-        default:
-            return false;
-    }
-}
-
-bool
-has_lossless_refine_index(const FaissHnswConfig& hnsw_cfg, DataFormatEnum dataFormat) {
-    bool has_refine = hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value();
-    if (has_refine) {
-        expected<bool> flat_refine = is_flat_refine(hnsw_cfg.refine_type);
-        if (flat_refine.has_value() && flat_refine.value()) {
-            return true;
-        }
-
-        auto sq_refine_type = get_sq_quantizer_type(hnsw_cfg.refine_type.value());
-        return has_lossless_quant(sq_refine_type, dataFormat);
-    }
-    return false;
-}
-
-// pick a refine index
-expected<std::unique_ptr<faiss::Index>>
-pick_refine_index(const DataFormatEnum data_format, const std::optional<std::string>& refine_type,
-                  std::unique_ptr<faiss::IndexHNSW>&& hnsw_index) {
-    // yes
-
-    // grab a type of a refine index
-    expected<bool> is_fp32_flat = is_flat_refine(refine_type);
-    if (!is_fp32_flat.has_value()) {
-        return expected<std::unique_ptr<faiss::Index>>::Err(Status::invalid_args, "");
-    }
-
-    const bool is_fp32_flat_v = is_fp32_flat.value();
-
-    // check input data_format
-    if (data_format == DataFormatEnum::fp16) {
-        // make sure that we're using fp16 refine
-        auto refine_sq_type = get_sq_quantizer_type(refine_type.value());
-        if (!(refine_sq_type.has_value() &&
-              (refine_sq_type.value() != faiss::ScalarQuantizer::QT_bf16 && !is_fp32_flat_v))) {
-            LOG_KNOWHERE_ERROR_ << "fp16 input data does not accept bf16 or fp32 as a refine index.";
-            return expected<std::unique_ptr<faiss::Index>>::Err(
-                Status::invalid_args, "fp16 input data does not accept bf16 or fp32 as a refine index.");
-        }
-    }
-
-    if (data_format == DataFormatEnum::bf16) {
-        // make sure that we're using bf16 refine
-        auto refine_sq_type = get_sq_quantizer_type(refine_type.value());
-        if (!(refine_sq_type.has_value() &&
-              (refine_sq_type.value() != faiss::ScalarQuantizer::QT_fp16 && !is_fp32_flat_v))) {
-            LOG_KNOWHERE_ERROR_ << "bf16 input data does not accept fp16 or fp32 as a refine index.";
-            return expected<std::unique_ptr<faiss::Index>>::Err(
-                Status::invalid_args, "bf16 input data does not accept fp16 or fp32 as a refine index.");
-        }
-    }
-
-    // build
-    std::unique_ptr<faiss::IndexHNSW> local_hnsw_index = std::move(hnsw_index);
-
-    // either build flat or sq
-    if (is_fp32_flat_v) {
-        // build IndexFlat as a refine
-        auto refine_index = std::make_unique<faiss::IndexRefineFlat>(local_hnsw_index.get());
-
-        // let refine_index to own everything
-        refine_index->own_fields = true;
-        local_hnsw_index.release();
-
-        // reassign
-        return refine_index;
-    } else {
-        // being IndexScalarQuantizer as a refine
-        auto refine_sq_type = get_sq_quantizer_type(refine_type.value());
-
-        // a redundant check
-        if (!refine_sq_type.has_value()) {
-            LOG_KNOWHERE_ERROR_ << "Invalid refine type: " << refine_type.value();
-            return expected<std::unique_ptr<faiss::Index>>::Err(
-                Status::invalid_args, fmt::format("invalid refine type ({})", refine_type.value()));
-        }
-
-        // create an sq
-        auto sq_refine = std::make_unique<faiss::IndexScalarQuantizer>(
-            local_hnsw_index->storage->d, refine_sq_type.value(), local_hnsw_index->storage->metric_type);
-
-        auto refine_index = std::make_unique<faiss::IndexRefine>(local_hnsw_index.get(), sq_refine.get());
-
-        // let refine_index to own everything
-        refine_index->own_refine_index = true;
-        refine_index->own_fields = true;
-        local_hnsw_index.release();
-        sq_refine.release();
-
-        // reassign
-        return refine_index;
-    }
-}
-
-}  // namespace
-
 //
 class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
  public:
@@ -2300,7 +2102,10 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
 
             if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
                 // yes
-                auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
+                const auto hnsw_d = hnsw_index->storage->d;
+                const auto hnsw_metric_type = hnsw_index->storage->metric_type;
+                auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index),
+                                                         hnsw_d, hnsw_metric_type);
                 if (!final_index_cnd.has_value()) {
                     return Status::invalid_args;
                 }
@@ -2368,7 +2173,7 @@ class BaseFaissRegularIndexHNSWSQNodeTemplate : public BaseFaissRegularIndexHNSW
             return true;
         }
 
-        return has_lossless_refine_index(hnsw_sq_cfg, datatype_v<DataType>);
+        return has_lossless_refine_index(hnsw_sq_cfg.refine, hnsw_sq_cfg.refine_type, datatype_v<DataType>);
     }
 };
 
@@ -2449,7 +2254,10 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
             std::unique_ptr<faiss::Index> final_index;
             if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
                 // yes
-                auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
+                const auto hnsw_d = hnsw_index->storage->d;
+                const auto hnsw_metric_type = hnsw_index->storage->metric_type;
+                auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index),
+                                                         hnsw_d, hnsw_metric_type);
                 if (!final_index_cnd.has_value()) {
                     return Status::invalid_args;
                 }
@@ -2640,7 +2448,7 @@ class BaseFaissRegularIndexHNSWPQNodeTemplate : public BaseFaissRegularIndexHNSW
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
         auto hnsw_cfg = static_cast<const FaissHnswConfig&>(config);
-        return has_lossless_refine_index(hnsw_cfg, datatype_v<DataType>);
+        return has_lossless_refine_index(hnsw_cfg.refine, hnsw_cfg.refine_type, datatype_v<DataType>);
     }
 };
 
@@ -2728,7 +2536,10 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
             std::unique_ptr<faiss::Index> final_index;
             if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
                 // yes
-                auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
+                const auto hnsw_d = hnsw_index->storage->d;
+                const auto hnsw_metric_type = hnsw_index->storage->metric_type;
+                auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index),
+                                                         hnsw_d, hnsw_metric_type);
                 if (!final_index_cnd.has_value()) {
                     return Status::invalid_args;
                 }
@@ -2920,7 +2731,7 @@ class BaseFaissRegularIndexHNSWPRQNodeTemplate : public BaseFaissRegularIndexHNS
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
         auto hnsw_cfg = static_cast<const FaissHnswConfig&>(config);
-        return has_lossless_refine_index(hnsw_cfg, datatype_v<DataType>);
+        return has_lossless_refine_index(hnsw_cfg.refine, hnsw_cfg.refine_type, datatype_v<DataType>);
     }
 };
 
