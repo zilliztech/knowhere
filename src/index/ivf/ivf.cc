@@ -670,9 +670,15 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
     if constexpr (std::is_same<IndexIVFRaBitQWrapper, IndexType>::value) {
         const IvfRaBitQConfig& ivf_rabitq_cfg = static_cast<const IvfRaBitQConfig&>(*cfg);
         auto nlist = MatchNlist(rows, ivf_rabitq_cfg.nlist.value());
-        auto qb = ivf_rabitq_cfg.rbq_bits_query.value();
 
-        index = std::make_unique<IndexIVFRaBitQWrapper>(dim, nlist, qb, metric.value());
+        DataFormatEnum data_format = DataType2EnumHelper<DataType>::value;
+
+        auto result = IndexIVFRaBitQWrapper::create(dim, nlist, ivf_rabitq_cfg, data_format, metric.value());
+        if (!result.has_value()) {
+            return result.error();
+        }
+
+        index = std::move(result.value());
         index->train(rows, (const float*)data);
     }
     index_ = std::move(index);
@@ -835,13 +841,36 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
 
                     const IvfRaBitQConfig& ivf_rabitq_cfg = static_cast<const IvfRaBitQConfig&>(*cfg);
 
+                    // use refine?
+                    bool use_refine = false;
+
+                    const bool whether_to_enable_refine = ivf_rabitq_cfg.refine_k.has_value();
+                    if (const auto wrapper_index = dynamic_cast<const IndexIVFRaBitQWrapper*>(index_.get());
+                        wrapper_index != nullptr) {
+                        const faiss::IndexRefine* refine_index = wrapper_index->get_refine_index();
+                        use_refine = (refine_index != nullptr);
+                    }
+
                     faiss::IVFRaBitQSearchParameters ivf_search_params;
                     ivf_search_params.nprobe = nprobe;
                     ivf_search_params.max_codes = 0;
                     ivf_search_params.sel = id_selector;
                     ivf_search_params.qb = ivf_rabitq_cfg.rbq_bits_query.value_or(0);
 
-                    index_->search(1, cur_query, k, distances.get() + offset, ids.get() + offset, &ivf_search_params);
+                    if (use_refine && whether_to_enable_refine) {
+                        // yes, use refine
+                        faiss::IndexRefineSearchParameters refine_search_params;
+                        refine_search_params.sel = id_selector;
+                        refine_search_params.k_factor = ivf_rabitq_cfg.refine_k.value_or(1);
+                        refine_search_params.base_index_params = &ivf_search_params;
+
+                        index_->search(1, cur_query, k, distances.get() + offset, ids.get() + offset,
+                                       &refine_search_params);
+                    } else {
+                        // do not use refine
+                        index_->search(1, cur_query, k, distances.get() + offset, ids.get() + offset,
+                                       &ivf_search_params);
+                    }
                 } else {
                     auto cur_query = (const float*)data + index * dim;
                     if (is_cosine) {
@@ -964,7 +993,27 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
                     ivf_search_params.sel = id_selector;
                     ivf_search_params.qb = ivf_rabitq_cfg.rbq_bits_query.value_or(0);
 
-                    index_->range_search(1, cur_query, radius, &res, &ivf_search_params);
+                    // use refine?
+                    bool use_refine = false;
+
+                    const bool whether_to_enable_refine = ivf_rabitq_cfg.refine_k.has_value();
+                    if (const auto wrapper_index = dynamic_cast<const IndexIVFRaBitQWrapper*>(index_.get());
+                        wrapper_index != nullptr) {
+                        const faiss::IndexRefine* refine_index = wrapper_index->get_refine_index();
+                        use_refine = (refine_index != nullptr);
+                    }
+
+                    if (use_refine && whether_to_enable_refine) {
+                        // yes, use refine
+                        faiss::IndexRefineSearchParameters refine_search_params;
+                        refine_search_params.sel = id_selector;
+                        refine_search_params.k_factor = ivf_rabitq_cfg.refine_k.value_or(1);
+                        refine_search_params.base_index_params = &ivf_search_params;
+
+                        index_->range_search(1, cur_query, radius, &res, &refine_search_params);
+                    } else {
+                        index_->range_search(1, cur_query, radius, &res, &ivf_search_params);
+                    }
                 } else {
                     auto cur_query = (const float*)xq + index * dim;
                     if (is_cosine) {

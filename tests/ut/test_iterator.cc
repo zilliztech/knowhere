@@ -204,6 +204,13 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
 
     auto ivfrabitq_gen = ivf_base_gen;
 
+    auto ivfrabitq_refine_flat_gen = [ivfrabitq_gen] {
+        knowhere::Json json = ivfrabitq_gen();
+        json["refine"] = true;
+        json["refine_type"] = "FLAT";
+        return json;
+    };
+
     auto rand = GENERATE(1, 2);
 
     const auto train_ds = GenDataSet(nb, dim, rand);
@@ -228,7 +235,8 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
              // make_tuple(knowhere::IndexEnum::INDEX_HNSW_PRQ, hnsw_prq_gen),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
-             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen)}));
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_refine_flat_gen)}));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
@@ -316,7 +324,8 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
              // make_tuple(knowhere::IndexEnum::INDEX_HNSW_PRQ, hnsw_prq_gen),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
-             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen)}));
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_refine_flat_gen)}));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
@@ -364,7 +373,8 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
              // make_tuple(knowhere::IndexEnum::INDEX_HNSW_PRQ, hnsw_prq_gen),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
-             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen)}));
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_refine_flat_gen)}));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
