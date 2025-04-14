@@ -1189,6 +1189,18 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
         }
 
+        // set up a bf wrapper as fallback
+        std::unique_ptr<faiss::Index> bf_index_wrapper = nullptr;
+        faiss::Index* bf_index_wrapper_ptr = nullptr;
+        if (!whether_bf_search.value_or(false)) {
+            std::tie(bf_index_wrapper, is_refined) =
+                create_conditional_hnsw_wrapper(indexes[index_id].get(), hnsw_cfg, true, whether_to_enable_refine);
+            if (bf_index_wrapper == nullptr) {
+                return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
+            }
+            bf_index_wrapper_ptr = bf_index_wrapper.get();
+        }
+
         faiss::Index* index_wrapper_ptr = index_wrapper.get();
 
         // set up faiss search parameters
@@ -1228,7 +1240,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
             for (int64_t i = 0; i < rows; ++i) {
                 futs.emplace_back(search_pool->push([&, idx = i, is_refined = is_refined,
-                                                     index_wrapper_ptr = index_wrapper_ptr] {
+                                                     index_wrapper_ptr = index_wrapper_ptr,
+                                                     bf_index_wrapper_ptr = bf_index_wrapper_ptr]() {
                     // 1 thread per element
                     ThreadPool::ScopedSearchOmpSetter setter(1);
 
@@ -1247,6 +1260,22 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     faiss::idx_t* const __restrict local_ids = ids.get() + k * idx;
                     float* const __restrict local_distances = distances.get() + k * idx;
 
+                    // check if we need to perform a brute-force search bcz of the lack of results
+                    auto bf_search_needed = [&]() -> bool {
+                        size_t real_topk = 0;
+                        for (auto j = 0; j < k; ++j) {
+                            if (local_ids[j] < 0) {
+                                continue;
+                            }
+                            real_topk++;
+                        }
+                        if (real_topk < k && real_topk < bitset.size() - bitset.count() &&
+                            bf_index_wrapper_ptr != nullptr) {
+                            return true;
+                        }
+                        return false;
+                    };
+
                     // perform the search
                     if (is_refined) {
                         faiss::IndexRefineSearchParameters refine_params;
@@ -1256,8 +1285,15 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                         refine_params.base_index_params = &hnsw_search_params;
 
                         index_wrapper_ptr->search(1, cur_query, k, local_distances, local_ids, &refine_params);
+                        if (bf_search_needed()) {
+                            bf_index_wrapper_ptr->search(1, cur_query, k, local_distances, local_ids, &refine_params);
+                        }
                     } else {
                         index_wrapper_ptr->search(1, cur_query, k, local_distances, local_ids, &hnsw_search_params);
+                        if (bf_search_needed()) {
+                            bf_index_wrapper_ptr->search(1, cur_query, k, local_distances, local_ids,
+                                                         &hnsw_search_params);
+                        }
                     }
 
                     if (!labels.empty()) {
