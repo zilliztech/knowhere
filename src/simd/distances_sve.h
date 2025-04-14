@@ -23,6 +23,9 @@ float
 fvec_L2sqr_sve(const float* x, const float* y, size_t d);
 
 float
+fvec_inner_product_sve(const float* x, const float* y, size_t d);
+
+float
 fp16_vec_L2sqr_sve(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
 
 float
