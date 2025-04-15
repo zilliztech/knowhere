@@ -104,6 +104,9 @@ decltype(int8_vec_L2sqr_batch_4) int8_vec_L2sqr_batch_4 = int8_vec_L2sqr_batch_4
 decltype(fvec_masked_sum) fvec_masked_sum = fvec_masked_sum_ref;
 decltype(rabitq_dp_popcnt) rabitq_dp_popcnt = rabitq_dp_popcnt_ref;
 
+// minhash
+decltype(fvec_minhash_jaccard) fvec_minhash_jaccard = fvec_minhash_jaccard_ref;
+decltype(binary_search) binary_search = binary_search_ref;
 ///////////////////////////////////////////////////////////////////////////////
 #if defined(__x86_64__)
 bool
@@ -269,6 +272,9 @@ fvec_hook(std::string& simd_type) {
         } else {
             rabitq_dp_popcnt = rabitq_dp_popcnt_avx512;
         }
+        // minhash
+        fvec_minhash_jaccard = fvec_minhash_jaccard_avx512;
+        binary_search = binary_search_avx512;
 
         //
         simd_type = "AVX512";

@@ -277,11 +277,12 @@ base_search() {
 
         // generate the gt of knn search and range search
         auto base_json = base_gen();
-
+        std::cout << "use BruteForce to get gt.... " << std::endl;
         auto result_knn = knowhere::BruteForce::Search<DataType>(base_ds, query_ds, base_json, nullptr);
         knn_gt_ptr = result_knn.value();
         auto result_range = knowhere::BruteForce::RangeSearch<DataType>(base_ds, query_ds, base_json, nullptr);
         range_search_gt_ptr = result_range.value();
+        std::cout << "get gt done" << std::endl;
     }
 
     SECTION("Test search and range search") {

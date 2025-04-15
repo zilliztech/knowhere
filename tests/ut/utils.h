@@ -41,9 +41,9 @@ struct DisPairLess {
 inline knowhere::DataSetPtr
 GenDataSet(int rows, int dim, int seed = 42) {
     std::mt19937 rng(seed);
-    std::uniform_real_distribution<> distrib(0.0, 100.0);
+    std::uniform_real_distribution<> distrib(0.0, 10000.0);
     float* ts = new float[rows * dim];
-    for (int i = 0; i < rows * dim; ++i) ts[i] = distrib(rng);
+    for (int i = 0; i < rows * dim; ++i) ts[i] = int(distrib(rng)) % 10000;
     auto ds = knowhere::GenDataSet(rows, dim, ts);
     ds->SetIsOwner(true);
     return ds;

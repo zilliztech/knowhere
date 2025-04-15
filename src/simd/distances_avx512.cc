@@ -908,5 +908,84 @@ rabitq_dp_popcnt_avx512(const uint8_t* q, const uint8_t* x, const size_t d, cons
     return dot;
 }
 
+float
+fvec_minhash_jaccard_avx512(const float* x, const float* y, size_t d, size_t mh_d) {
+    size_t mh_r = d / mh_d;
+
+    for (size_t i = 0; i < mh_d; ++i) {
+        const float* x_i = x + i * mh_r;
+        const float* y_i = y + i * mh_r;
+        bool all_equal = true;
+        size_t j = 0;
+
+        for (; j + 15 < mh_r; j += 16) {
+            __m512 x_vec = _mm512_loadu_ps(x_i + j);
+            __m512 y_vec = _mm512_loadu_ps(y_i + j);
+            __mmask16 mask = _mm512_cmp_ps_mask(x_vec, y_vec, _CMP_EQ_OQ);
+            if (mask != 0xFFFF) {
+                all_equal = false;
+                break;
+            }
+        }
+
+        if (all_equal) {
+            for (; j < mh_r; ++j) {
+                if (x_i[j] != y_i[j]) {
+                    all_equal = false;
+                    break;
+                }
+            }
+        }
+
+        if (all_equal)
+            return 1.0f;
+    }
+    return 0.0f;
+}
+
+int
+binary_search_avx512(const uint64_t* arr, const size_t size, const uint64_t key) {
+    const __m512i vtarget = _mm512_set1_epi64(key);
+    intptr_t low = 0;
+    intptr_t high = static_cast<intptr_t>(size) - 1;
+    intptr_t found_idx = -1;
+
+    while (low <= high) {
+        intptr_t mid = low + (high - low) / 2;
+        mid = mid & ~0x7;
+
+        if (mid + 7 >= size) {
+            mid = size - 8;
+        }
+
+        __m512i vdata = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(&arr[mid]));
+
+        __mmask8 eq_mask = _mm512_cmpeq_epi64_mask(vdata, vtarget);
+        __mmask8 gt_mask = _mm512_cmpgt_epi64_mask(vdata, vtarget);
+
+        if (eq_mask != 0) {
+            const int offset = __builtin_ctz(eq_mask);
+            found_idx = mid + offset;
+            high = found_idx - 1;
+        }
+        if (gt_mask != 0) {
+            high = mid - 1;
+        } else {
+            low = mid + 8;
+        }
+    }
+    if (found_idx != -1 && arr[found_idx] == key) {
+        return static_cast<int>(found_idx);
+    }
+
+    for (intptr_t i = low; i <= high; ++i) {
+        if (arr[i] == key)
+            return static_cast<int>(i);
+        if (arr[i] > key)
+            break;
+    }
+    return -1;
+}
+
 }  // namespace faiss
 #endif

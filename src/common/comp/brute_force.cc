@@ -24,6 +24,7 @@
 #include "knowhere/expected.h"
 #include "knowhere/index/index_node.h"
 #include "knowhere/log.h"
+#include "knowhere/minhash_util.h"
 #include "knowhere/range_util.h"
 #include "knowhere/sparse_utils.h"
 #include "knowhere/utils.h"
@@ -100,6 +101,21 @@ GetVecNorms(const DataSetPtr& base) {
     WaitAllSuccess(futs);
     return norms;
 }
+
+void
+find_minhash_jaccard_hit(const float* x, const float* y, size_t d, size_t mh_d, size_t ny, float* vals, int64_t* ids) {
+    *vals = 0;
+    *ids = -1;
+    for (size_t i = 0; i < ny; i++) {
+        auto hit = faiss::fvec_minhash_jaccard(x, y + d * i, d, mh_d);
+        if (hit > 0.0) {
+            *vals = hit;
+            *ids = i;
+            break;
+        }
+    }
+    return;
+}
 }  // namespace
 
 template <typename DataType>
@@ -151,6 +167,14 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     auto labels = std::make_unique<int64_t[]>(nq * topk);
     auto distances = std::make_unique<float[]>(nq * topk);
     std::unique_ptr<float[]> norms = is_cosine ? GetVecNorms<DataType>(base_dataset) : nullptr;
+    // some check for minhash metric
+    if (faiss_metric_type == faiss::METRIC_MinHash_Jaccard) {
+        auto mh_valid_stat =
+            MinhashConfigCheck(dim, datatype_v<DataType>, PARAM_TYPE::SEARCH | PARAM_TYPE::TRAIN, &cfg, &bitset);
+        if (mh_valid_stat != Status::success) {
+            return expected<DataSetPtr>::Err(mh_valid_stat, "some check for minhash fail.");
+        }
+    }
     auto pool = ThreadPool::GetGlobalSearchThreadPool();
     std::vector<folly::Future<Status>> futs;
     futs.reserve(nq);
@@ -211,6 +235,12 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
                     auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
                     faiss::float_maxheap_array_t res = {size_t(1), size_t(topk), cur_labels, cur_distances};
                     binary_knn_hc(faiss::METRIC_Jaccard, &res, cur_query, (const uint8_t*)xb, nb, dim / 8, id_selector);
+                    break;
+                }
+                case faiss::METRIC_MinHash_Jaccard: {
+                    size_t mh_d = cfg.band.value();
+                    auto cur_query = (const float*)xq + dim * index;
+                    find_minhash_jaccard_hit((const float*)xb, cur_query, dim, mh_d, 1, cur_distances, cur_labels);
                     break;
                 }
                 case faiss::METRIC_Hamming: {
@@ -306,6 +336,14 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     int topk = cfg.k.value();
     auto labels = ids;
     auto distances = dis;
+    // some check for minhash metric
+    if (faiss_metric_type == faiss::METRIC_MinHash_Jaccard) {
+        auto mh_valid_stat =
+            MinhashConfigCheck(dim, datatype_v<DataType>, PARAM_TYPE::SEARCH | PARAM_TYPE::TRAIN, &cfg, &bitset);
+        if (mh_valid_stat != Status::success) {
+            return mh_valid_stat;
+        }
+    }
 
     std::unique_ptr<float[]> norms = is_cosine ? GetVecNorms<DataType>(base_dataset) : nullptr;
     auto pool = ThreadPool::GetGlobalSearchThreadPool();
@@ -361,6 +399,12 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                             return Status::faiss_inner_error;
                         }
                     }
+                    break;
+                }
+                case faiss::METRIC_MinHash_Jaccard: {
+                    size_t mh_d = cfg.band.value();
+                    auto cur_query = (const float*)xq + dim * index;
+                    find_minhash_jaccard_hit((const float*)xb, cur_query, dim, mh_d, 1, cur_distances, cur_labels);
                     break;
                 }
                 case faiss::METRIC_Jaccard: {
@@ -483,6 +527,10 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     float range_filter = cfg.range_filter.value();
 
     auto pool = ThreadPool::GetGlobalSearchThreadPool();
+    // some check for minhash metric
+    if (faiss_metric_type == faiss::METRIC_MinHash_Jaccard) {
+        return expected<DataSetPtr>::Err(Status::not_implemented, "minhash not support range search.");
+    }
 
     std::vector<std::vector<int64_t>> result_id_array(nq);
     std::vector<std::vector<float>> result_dist_array(nq);
@@ -756,6 +804,12 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
     auto result = Str2FaissMetricType(metric_str);
     if (result.error() != Status::success) {
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(result.error(), result.what());
+    }
+
+    // some check for minhash metric
+    if (metric_str == metric::MHJACCARD) {
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::not_implemented,
+                                                                  "minhash not support iterator.");
     }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)

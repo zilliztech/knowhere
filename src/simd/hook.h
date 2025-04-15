@@ -122,6 +122,9 @@ extern void (*int8_vec_L2sqr_batch_4)(const int8_t*, const int8_t*, const int8_t
 extern float (*fvec_masked_sum)(const float*, const uint8_t*, const size_t);
 extern int (*rabitq_dp_popcnt)(const uint8_t*, const uint8_t*, const size_t, const size_t);
 
+// minhash
+extern float (*fvec_minhash_jaccard)(const float*, const float*, size_t, size_t);
+extern int (*binary_search)(const uint64_t*, const size_t n, const uint64_t key);
 ///////////////////////////////////////////////////////////////////////////////
 #if defined(__x86_64__)
 bool

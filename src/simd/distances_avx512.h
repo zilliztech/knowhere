@@ -146,4 +146,9 @@ fvec_masked_sum_avx512(const float* q, const uint8_t* x, const size_t d);
 int
 rabitq_dp_popcnt_avx512(const uint8_t* q, const uint8_t* x, const size_t d, const size_t nb);
 
+// minhash
+float
+fvec_minhash_jaccard_avx512(const float* x, const float* y, size_t d, size_t mh_d);
+int
+binary_search_avx512(const uint64_t* arr, const size_t size, const uint64_t key);
 }  // namespace faiss

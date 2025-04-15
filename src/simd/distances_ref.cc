@@ -566,4 +566,30 @@ rabitq_dp_popcnt_ref(const uint8_t* q, const uint8_t* x, const size_t d, const s
     return dot;
 }
 
+float
+fvec_minhash_jaccard_ref(const float* x, const float* y, size_t d, size_t mh_d) {
+    // checking d % mh_d == 0 at first
+    size_t mh_r = d / mh_d;
+    for (size_t i = 0; i < mh_d; i++) {
+        const float* x_i = x + mh_r * i;
+        const float* y_i = y + mh_r * i;
+        size_t j = 0;
+        for (; j < mh_r; j++) {
+            if (x_i[j] != y_i[j])
+                break;
+        }
+        if (j == mh_r)
+            return 1.0;
+    }
+    return 0.0;
+}
+int
+binary_search_ref(const uint64_t* arr, const size_t n, const uint64_t key) {
+    auto result = std::lower_bound(arr, arr + n, key);
+    if (result != arr + n) {
+        return result - arr;
+    } else {
+        return -1;
+    }
+}
 }  // namespace faiss

@@ -56,6 +56,7 @@ constexpr const char* INDEX_HNSW_PQ = "HNSW_PQ";
 constexpr const char* INDEX_HNSW_PRQ = "HNSW_PRQ";
 
 constexpr const char* INDEX_DISKANN = "DISKANN";
+constexpr const char* INDEX_MINHASH_INDEX = "MinHashIndex";
 
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX = "SPARSE_INVERTED_INDEX";
 constexpr const char* INDEX_SPARSE_WAND = "SPARSE_WAND";
@@ -186,7 +187,11 @@ constexpr const char* DROP_RATIO_SEARCH = "drop_ratio_search";
 
 // RaBitQ Params
 constexpr const char* RABITQ_QUERY_BITS = "rbq_bits_query";
-
+// minhash Params
+constexpr const char* ALIGNED_BLOCK_SIZE = "aligned_block_size";
+constexpr const char* BAND = "band";
+constexpr const char* SHARED_BLOOM_FILTER = "shared_bloom_filter";
+constexpr const char* BLOOM_FALSE_POSITIVE_RPOB = "bloom_false_positive_prob";
 }  // namespace indexparam
 
 using MetricType = std::string;
@@ -197,6 +202,7 @@ constexpr const char* L2 = "L2";
 constexpr const char* COSINE = "COSINE";
 constexpr const char* HAMMING = "HAMMING";
 constexpr const char* JACCARD = "JACCARD";
+constexpr const char* MHJACCARD = "MHJACCARD";
 constexpr const char* SUBSTRUCTURE = "SUBSTRUCTURE";
 constexpr const char* SUPERSTRUCTURE = "SUPERSTRUCTURE";
 constexpr const char* BM25 = "BM25";

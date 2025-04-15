@@ -178,4 +178,12 @@ fvec_masked_sum_ref(const float* q, const uint8_t* x, const size_t d);
 int
 rabitq_dp_popcnt_ref(const uint8_t* q, const uint8_t* x, const size_t d, const size_t nb);
 
+///////////////////////////////////////////////////////////////////////////////
+// minhash
+float
+fvec_minhash_jaccard_ref(const float* x, const float* y, size_t d, size_t mh_d);
+
+int
+binary_search_ref(const uint64_t*, const size_t n, const uint64_t key);
+
 }  // namespace faiss
