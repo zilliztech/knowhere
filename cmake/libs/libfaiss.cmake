@@ -77,6 +77,12 @@ if(__AARCH64)
     message(STATUS "SVE for ARMv8: Not Found")
   endif()
 
+  if (APPLE)
+    set(HAS_ARMV9_SVE FALSE)
+    set(HAS_ARMV8_SVE FALSE)
+    message(STATUS "Disable SVE for Apple")
+  endif()
+
   if (HAS_ARMV9_SVE)
     foreach(SVE_FILE ${UTILS_SVE_SRC})
       set_source_files_properties(${SVE_FILE} PROPERTIES COMPILE_OPTIONS "-march=armv9-a+sve")
