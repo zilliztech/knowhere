@@ -35,7 +35,7 @@
 #include "distances_powerpc.h"
 #endif
 
-#if defined(__aarch64__)
+#if defined(__aarch64__) && !defined(__APPLE__)
 #include <asm/hwcap.h>
 #include <sys/auxv.h>
 #endif
@@ -132,11 +132,18 @@ cpu_support_f16c() {
 #endif
 
 #if defined(__aarch64__)
+#if defined(__APPLE__)
+bool
+supports_sve() {
+    return false;
+}
+#else
 bool
 supports_sve() {
     unsigned long hwcap = getauxval(AT_HWCAP);
     return (hwcap & HWCAP_SVE) != 0;
 }
+#endif
 #endif
 
 static std::mutex patch_bf16_mutex;
