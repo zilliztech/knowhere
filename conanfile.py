@@ -105,6 +105,7 @@ class KnowhereConan(ConanFile):
         self.requires("fmt/9.1.0")
         self.requires("folly/2023.10.30.09@milvus/dev")
         self.requires("libcurl/8.2.1")
+        self.requires("simde/0.8.2")
         if self.settings.os == "Android":
             self.requires("openblas/0.3.27")
         if not self.options.with_light:
