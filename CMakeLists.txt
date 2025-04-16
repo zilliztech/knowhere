@@ -57,6 +57,9 @@ add_definitions(-DFMT_HEADER_ONLY)
 # unaffected.
 add_definitions(-DFMT_HEADER_ONLY)
 
+set(KNOWHERE_INDEX_VERSION 6 CACHE INTERNAL "Index version for knowhere")
+add_definitions(-DKNOWHERE_INDEX_VERSION=${KNOWHERE_INDEX_VERSION})
+
 if(KNOWHERE_VERSION)
   message(STATUS "Building KNOWHERE version: ${KNOWHERE_VERSION}")
   add_definitions(-DKNOWHERE_VERSION=${KNOWHERE_VERSION})
