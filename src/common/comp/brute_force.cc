@@ -67,7 +67,7 @@ GetDocValueComputer(const BruteForceConfig& cfg) {
 template <typename DataType>
 std::unique_ptr<float[]>
 GetVecNorms(const DataSetPtr& base) {
-    typedef float (*NormComputer)(const DataType*, size_t);
+    using NormComputer = float (*)(const DataType*, size_t);
     NormComputer norm_computer;
     if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
         norm_computer = faiss::fvec_norm_L2sqr;
