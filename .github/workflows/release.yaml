@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-20.04]
+        os: [ubuntu-22.04]
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -51,7 +51,7 @@ jobs:
     name: Create a Release
     env:
       RELEASE_NAME: 'knowhere-${{ github.event.inputs.tag }}'
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Download Artifacts
         uses: actions/download-artifact@v2
