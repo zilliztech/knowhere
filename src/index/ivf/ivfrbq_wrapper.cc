@@ -71,7 +71,7 @@ IndexIVFRaBitQWrapper::IndexIVFRaBitQWrapper(std::unique_ptr<faiss::Index>&& ind
 
 std::unique_ptr<IndexIVFRaBitQWrapper>
 IndexIVFRaBitQWrapper::from_deserialized(std::unique_ptr<faiss::Index>&& index_in) {
-    auto index = std::unique_ptr<IndexIVFRaBitQWrapper>(new IndexIVFRaBitQWrapper(std::move(index_in)));
+    auto index = std::make_unique<IndexIVFRaBitQWrapper>(std::move(index_in));
 
     // check a provided index type
     auto index_rabitq = index->get_ivfrabitq_index();
