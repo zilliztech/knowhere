@@ -18,20 +18,30 @@
 #include "faiss/Index.h"
 #include "faiss/IndexIVF.h"
 #include "faiss/IndexIVFRaBitQ.h"
+#include "faiss/IndexRefine.h"
+#include "index/ivf/ivf_config.h"
+#include "knowhere/expected.h"
 
 namespace knowhere {
 
 // This is wrapper is needed, bcz we use faiss::IndexPreTransform
-//   for wrapping faiss::IndexIVFRaBitQ. The problem is that
-//   IndexPreTransform is a generic class, suitable for any other
-//   use case as well, so this is wrong to reference IndexPreTransform
-//   in the ivf.cc file.
+//   for wrapping faiss::IndexIVFRaBitQ, optionally combined with
+//   faiss::IndexRefine.
+// The problem is that IndexPreTransform is a generic class, suitable
+//   for any other use case as well, so this is wrong to reference
+//   IndexPreTransform in the ivf.cc file.
 struct IndexIVFRaBitQWrapper : faiss::Index {
+    // this is one of two:
+    // * faiss::IndexPreTransform + faiss::IndexIVFRaBitQ
+    // * faiss::IndexPreTransform + faiss::IndexRefine + faiss::IndexIVFRaBitQ
     std::unique_ptr<faiss::Index> index;
 
-    // this form is for a regular index constructoin
-    IndexIVFRaBitQWrapper(const faiss::idx_t d, const size_t nlist, const uint8_t qb,
-                          faiss::MetricType metric = faiss::METRIC_L2);
+    IndexIVFRaBitQWrapper(std::unique_ptr<faiss::Index>&& index_in);
+
+    static expected<std::unique_ptr<IndexIVFRaBitQWrapper>>
+    create(const faiss::idx_t d, const size_t nlist, const IvfRaBitQConfig& ivf_rabitq_cfg,
+           // this is the data format of the raw data (if the refine is used)
+           const DataFormatEnum raw_data_format, const faiss::MetricType metric = faiss::METRIC_L2);
 
     // this is for the deserialization.
     // returns nullptr if the provided index type is not the one
@@ -62,11 +72,18 @@ struct IndexIVFRaBitQWrapper : faiss::Index {
     faiss::DistanceComputer*
     get_distance_computer() const override;
 
-    // point to IndexIVFRaBitQ or return nullptr
+    // point to IndexIVFRaBitQ or return nullptr.
+    // this may also point to an index, owned by IndexRefine
     faiss::IndexIVFRaBitQ*
     get_ivfrabitq_index();
     const faiss::IndexIVFRaBitQ*
     get_ivfrabitq_index() const;
+
+    // point to IndexRefine or return nullptr.
+    faiss::IndexRefine*
+    get_refine_index();
+    const faiss::IndexRefine*
+    get_refine_index() const;
 
     // return the size of the index
     size_t
@@ -77,9 +94,6 @@ struct IndexIVFRaBitQWrapper : faiss::Index {
 
     void
     getIteratorNextBatch(faiss::IVFIteratorWorkspace* workspace, size_t current_backup_count) const;
-
- private:
-    IndexIVFRaBitQWrapper(std::unique_ptr<faiss::Index>&& index_in);
 };
 
 }  // namespace knowhere
