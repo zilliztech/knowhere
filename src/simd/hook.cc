@@ -445,7 +445,7 @@ fvec_hook(std::string& simd_type) {
         fvec_madd = fvec_madd_sve;
         fvec_madd_and_argmin = fvec_madd_and_argmin_sve;
 
-        fvec_inner_product = fvec_inner_product_neon;
+        fvec_inner_product = fvec_inner_product_sve;
         fvec_L2sqr_ny = fvec_L2sqr_ny_sve;
         fvec_inner_products_ny = fvec_inner_products_ny_neon;
 

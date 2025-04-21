@@ -41,6 +41,28 @@ fvec_L2sqr_sve(const float* x, const float* y, size_t d) {
 }
 
 float
+fvec_inner_product_sve(const float* x, const float* y, size_t d) {
+    svfloat32_t sum = svdup_f32(0.0f);
+    size_t i = 0;
+
+    svbool_t pg = svptrue_b32();
+
+    while (i < d) {
+        if (d - i < svcntw())
+            pg = svwhilelt_b32(i, d);
+
+        svfloat32_t a = svld1_f32(pg, x + i);
+        svfloat32_t b = svld1_f32(pg, y + i);
+        sum = svmla_f32_m(pg, sum, a, b);
+        i += svcntw();
+    }
+
+    float result = svaddv_f32(svptrue_b32(), sum);
+
+    return result;
+}
+
+float
 fp16_vec_L2sqr_sve(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
     svfloat32_t sum1 = svdup_f32(0.0f);
     svfloat32_t sum2 = svdup_f32(0.0f);
