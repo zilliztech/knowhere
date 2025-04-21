@@ -9,7 +9,12 @@
 # is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 # or implied. See the License for the specific language governing permissions and limitations under the License
 
-knowhere_file_glob(GLOB_RECURSE KNOWHERE_UT_SRCS *.cc)
+if(NOT DEFINED KNOWHERE_UT_SRCS)
+  knowhere_file_glob(GLOB_RECURSE KNOWHERE_UT_SRCS *.cc)
+else()
+  knowhere_file_glob(GLOB_RECURSE KNOWHERE_ORIGINAL_UT_SRCS *.cc)
+  list(APPEND KNOWHERE_UT_SRCS ${KNOWHERE_ORIGINAL_UT_SRCS})
+endif()
 
 if(NOT WITH_DISKANN)
   knowhere_file_glob(GLOB_RECURSE KNOWHERE_DISKANN_TESTS test_diskann.cc)
