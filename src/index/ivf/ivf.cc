@@ -805,7 +805,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
                     faiss::IVFSearchParameters base_search_params;
                     base_search_params.sel = id_selector;
                     base_search_params.nprobe = nprobe;
-                    base_search_params.ensure_topk_full = ivf_cfg.ensure_topk_full.value();
+                    base_search_params.ensure_topk_full = scann_cfg.ensure_topk_full.value();
                     if (base_search_params.ensure_topk_full) {
                         if (auto base_index_ptr = reinterpret_cast<faiss::IndexIVFPQFastScan*>(index_->base_index)) {
                             auto nlist = base_index_ptr->nlist;
