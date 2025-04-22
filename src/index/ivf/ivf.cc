@@ -19,7 +19,6 @@
 #include "faiss/IndexIVFPQFastScan.h"
 #include "faiss/IndexIVFRaBitQ.h"
 #include "faiss/IndexIVFScalarQuantizerCC.h"
-#include "faiss/IndexPreTransform.h"
 #include "faiss/IndexScaNN.h"
 #include "faiss/IndexScalarQuantizer.h"
 #include "faiss/VectorTransform.h"

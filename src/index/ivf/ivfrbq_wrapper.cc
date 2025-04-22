@@ -25,6 +25,9 @@ namespace knowhere {
 expected<std::unique_ptr<IndexIVFRaBitQWrapper>>
 IndexIVFRaBitQWrapper::create(const faiss::idx_t d, const size_t nlist, const IvfRaBitQConfig& ivf_rabitq_cfg,
                               const DataFormatEnum raw_data_format, const faiss::MetricType metric) {
+    // the index factory string is either `RR(dim),IVFx,RaBitQ,Refine(y)`,
+    //   or `RR(dim),IVFx,RaBitQ`, depends on the refine parameters
+
     // create IndexIVFRaBitQ
     auto qb = ivf_rabitq_cfg.rbq_bits_query.value();
 
@@ -33,30 +36,31 @@ IndexIVFRaBitQWrapper::create(const faiss::idx_t d, const size_t nlist, const Iv
     idx_ivfrbq->own_fields = true;
     idx_ivfrbq->qb = qb;
 
+    // wrap it in an IndexPreTransform
+    auto rr = std::make_unique<faiss::RandomRotationMatrix>(d, d);
+    auto idx_rr = std::make_unique<faiss::IndexPreTransform>(rr.release(), idx_ivfrbq.release());
+    idx_rr->own_fields = true;
+
     // create a refiner index, if needed
-    std::unique_ptr<faiss::Index> idx_for_rotation;
+    std::unique_ptr<faiss::Index> idx_final;
     if (ivf_rabitq_cfg.refine.value_or(false) && ivf_rabitq_cfg.refine_type.has_value()) {
         // refine is needed
-        const auto base_d = idx_ivfrbq->d;
-        const auto base_metric_type = idx_ivfrbq->metric_type;
-        auto final_index_cnd = pick_refine_index(raw_data_format, ivf_rabitq_cfg.refine_type, std::move(idx_ivfrbq),
-                                                 base_d, base_metric_type);
+        const auto base_d = idx_rr->d;
+        const auto base_metric_type = idx_rr->metric_type;
+        auto final_index_cnd =
+            pick_refine_index(raw_data_format, ivf_rabitq_cfg.refine_type, std::move(idx_rr), base_d, base_metric_type);
         if (!final_index_cnd.has_value()) {
             return expected<std::unique_ptr<IndexIVFRaBitQWrapper>>::Err(Status::invalid_args,
                                                                          "Invalid refine parameters");
         }
 
-        idx_for_rotation = std::move(final_index_cnd.value());
+        idx_final = std::move(final_index_cnd.value());
     } else {
         // refine is not needed
-        idx_for_rotation = std::move(idx_ivfrbq);
+        idx_final = std::move(idx_rr);
     }
 
-    auto rr = std::make_unique<faiss::RandomRotationMatrix>(d, d);
-    auto idx_rr = std::make_unique<faiss::IndexPreTransform>(rr.release(), idx_for_rotation.release());
-    idx_rr->own_fields = true;
-
-    auto result = std::make_unique<IndexIVFRaBitQWrapper>(std::move(idx_rr));
+    auto result = std::make_unique<IndexIVFRaBitQWrapper>(std::move(idx_final));
     return result;
 }
 
@@ -128,58 +132,42 @@ IndexIVFRaBitQWrapper::get_distance_computer() const {
 
 faiss::IndexIVFRaBitQ*
 IndexIVFRaBitQWrapper::get_ivfrabitq_index() {
-    faiss::IndexPreTransform* index_pt = dynamic_cast<faiss::IndexPreTransform*>(index.get());
+    // try refine
+    faiss::IndexRefine* index_refine = dynamic_cast<faiss::IndexRefine*>(index.get());
+    faiss::Index* index_for_pt = (index_refine != nullptr) ? index_refine->base_index : index.get();
+
+    // pre-transform
+    faiss::IndexPreTransform* index_pt = dynamic_cast<faiss::IndexPreTransform*>(index_for_pt);
     if (index_pt == nullptr) {
         return nullptr;
     }
 
-    // try refine
-    faiss::IndexRefine* index_refine = dynamic_cast<faiss::IndexRefine*>(index_pt->index);
-    if (index_refine == nullptr) {
-        // no refine it used
-        return dynamic_cast<faiss::IndexIVFRaBitQ*>(index_pt->index);
-    } else {
-        // refine is used
-        return dynamic_cast<faiss::IndexIVFRaBitQ*>(index_refine->base_index);
-    }
+    return dynamic_cast<faiss::IndexIVFRaBitQ*>(index_pt->index);
 }
 
 const faiss::IndexIVFRaBitQ*
 IndexIVFRaBitQWrapper::get_ivfrabitq_index() const {
-    const faiss::IndexPreTransform* index_pt = dynamic_cast<const faiss::IndexPreTransform*>(index.get());
+    // try refine
+    const faiss::IndexRefine* index_refine = dynamic_cast<const faiss::IndexRefine*>(index.get());
+    const faiss::Index* index_for_pt = (index_refine != nullptr) ? index_refine->base_index : index.get();
+
+    // pre-transform
+    const faiss::IndexPreTransform* index_pt = dynamic_cast<const faiss::IndexPreTransform*>(index_for_pt);
     if (index_pt == nullptr) {
         return nullptr;
     }
 
-    // try refine
-    const faiss::IndexRefine* index_refine = dynamic_cast<const faiss::IndexRefine*>(index_pt->index);
-    if (index_refine == nullptr) {
-        // no refine it used
-        return dynamic_cast<const faiss::IndexIVFRaBitQ*>(index_pt->index);
-    } else {
-        // refine is used
-        return dynamic_cast<const faiss::IndexIVFRaBitQ*>(index_refine->base_index);
-    }
+    return dynamic_cast<const faiss::IndexIVFRaBitQ*>(index_pt->index);
 }
 
 faiss::IndexRefine*
 IndexIVFRaBitQWrapper::get_refine_index() {
-    faiss::IndexPreTransform* index_pt = dynamic_cast<faiss::IndexPreTransform*>(index.get());
-    if (index_pt == nullptr) {
-        return nullptr;
-    }
-
-    return dynamic_cast<faiss::IndexRefine*>(index_pt->index);
+    return dynamic_cast<faiss::IndexRefine*>(index.get());
 }
 
 const faiss::IndexRefine*
 IndexIVFRaBitQWrapper::get_refine_index() const {
-    const faiss::IndexPreTransform* index_pt = dynamic_cast<const faiss::IndexPreTransform*>(index.get());
-    if (index_pt == nullptr) {
-        return nullptr;
-    }
-
-    return dynamic_cast<const faiss::IndexRefine*>(index_pt->index);
+    return dynamic_cast<const faiss::IndexRefine*>(index.get());
 }
 
 size_t
@@ -199,12 +187,16 @@ IndexIVFRaBitQWrapper::size() const {
 std::unique_ptr<faiss::IVFIteratorWorkspace>
 IndexIVFRaBitQWrapper::getIteratorWorkspace(const float* query_data,
                                             const faiss::IVFSearchParameters* ivfsearchParams) const {
-    const faiss::IndexPreTransform* index_pt = dynamic_cast<const faiss::IndexPreTransform*>(index.get());
+    // try refine
+    const faiss::IndexRefine* index_refine = dynamic_cast<const faiss::IndexRefine*>(index.get());
+    faiss::Index* index_for_pt = (index_refine != nullptr) ? index_refine->base_index : index.get();
+
+    const faiss::IndexPreTransform* index_pt = dynamic_cast<const faiss::IndexPreTransform*>(index_for_pt);
     if (index_pt == nullptr) {
         return nullptr;
     }
 
-    const faiss::IndexIVFRaBitQ* index_rbq = this->get_ivfrabitq_index();
+    const faiss::IndexIVFRaBitQ* index_rbq = dynamic_cast<const faiss::IndexIVFRaBitQ*>(index_pt->index);
     if (index_rbq == nullptr) {
         return nullptr;
     }
@@ -215,7 +207,6 @@ IndexIVFRaBitQWrapper::getIteratorWorkspace(const float* query_data,
     auto workspace = index_rbq->getIteratorWorkspace(transformed_query.get(), ivfsearchParams);
 
     // check if refine exists
-    const faiss::IndexRefine* index_refine = this->get_refine_index();
     if (index_refine != nullptr) {
         // create a distance
         // index_rbq == index_refine->base_index
