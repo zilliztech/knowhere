@@ -148,6 +148,13 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         return json;
     };
 
+    auto ivfrabitq_refine_flat_gen = [ivfrabitq_gen]() {
+        knowhere::Json json = ivfrabitq_gen();
+        json["refine"] = true;
+        json["refine_type"] = "FLAT";
+        return json;
+    };
+
     const auto train_ds = GenDataSet(nb, dim);
     const auto query_ds = GenDataSet(nq, dim);
 
@@ -173,7 +180,8 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
              make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
              make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_gen),
-             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen)}));
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_refine_flat_gen)}));
         knowhere::BinarySet bs;
         // build process
         {
@@ -265,7 +273,8 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
              make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
              make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_gen),
-             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen)}));
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_refine_flat_gen)}));
         auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN) {
             // need to check cpu model for scann
@@ -478,7 +487,8 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
              make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
              make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_gen),
-             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen)}));
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_refine_flat_gen)}));
 
         auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN) {

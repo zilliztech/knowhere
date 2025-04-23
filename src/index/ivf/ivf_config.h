@@ -12,7 +12,13 @@
 #ifndef IVF_CONFIG_H
 #define IVF_CONFIG_H
 
+#include <algorithm>
+#include <limits>
+#include <string>
+#include <vector>
+
 #include "knowhere/config.h"
+#include "knowhere/tolower.h"
 #include "simd/hook.h"
 
 namespace knowhere {
@@ -223,6 +229,13 @@ class IvfSqCcConfig : public IvfFlatCcConfig {
 
 class IvfRaBitQConfig : public IvfConfig {
  public:
+    // whether an index is built with a refine support
+    CFG_BOOL refine;
+    // undefined value leads to a search without a refine
+    CFG_FLOAT refine_k;
+    // type of refine
+    CFG_STRING refine_type;
+
     // the value `0` means that the query won't be quantized and will
     //   be processed as is.
     CFG_INT rbq_bits_query;
@@ -233,6 +246,59 @@ class IvfRaBitQConfig : public IvfConfig {
             .set_range(0, 8)
             .for_search()
             .for_range_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine)
+            .description("whether the refine is used during the train")
+            .set_default(false)
+            .for_train()
+            .for_static();
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine_k)
+            .description("refine k")
+            .set_default(1)
+            .set_range(1, std::numeric_limits<CFG_FLOAT::value_type>::max())
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine_type)
+            .description("the type of a refine index")
+            .allow_empty_without_default()
+            .for_train()
+            .for_static();
+    }
+
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        // check the base class
+        const auto base_status = IvfConfig::CheckAndAdjust(param_type, err_msg);
+        if (base_status != Status::success) {
+            return base_status;
+        }
+
+        // check our parameters
+        if (param_type == PARAM_TYPE::TRAIN) {
+            // check refine
+            if (refine_type.has_value()) {
+                if (!WhetherAcceptableRefineType(refine_type.value())) {
+                    std::string msg =
+                        "invalid refine type : " + refine_type.value() + ", optional types are [sq6, sq8, fp16, bf16]";
+                    return HandleError(err_msg, msg, Status::invalid_args);
+                }
+            }
+        }
+        return Status::success;
+    }
+
+ protected:
+    bool
+    WhetherAcceptableRefineType(const std::string& refine_type) {
+        // 'flat' is identical to 'fp32'
+        std::vector<std::string> allowed_list = {"sq6", "sq8", "fp16", "bf16", "fp32", "flat"};
+        std::string refine_type_tolower = str_to_lower(refine_type);
+
+        for (const auto& allowed : allowed_list) {
+            if (refine_type_tolower == allowed) {
+                return true;
+            }
+        }
+
+        return false;
     }
 };
 
