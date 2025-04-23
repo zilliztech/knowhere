@@ -29,6 +29,9 @@ float
 fp16_vec_L2sqr_sve(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
 
 float
+fp16_vec_inner_product_sve(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
+
+float
 fvec_L1_sve(const float* x, const float* y, size_t d);
 
 float
@@ -59,6 +62,9 @@ fvec_L2sqr_batch_4_sve(const float* x, const float* y0, const float* y1, const f
 
 void
 fvec_L2sqr_ny_sve(float* dis, const float* x, const float* y, size_t d, size_t ny);
+
+void
+fvec_inner_products_ny_sve(float* ip, const float* x, const float* y, size_t d, size_t ny);
 
 }  // namespace faiss
 #endif
