@@ -184,7 +184,7 @@ list(APPEND KNOWHERE_LINKER_LIBS faiss)
 list(APPEND KNOWHERE_LINKER_LIBS glog::glog)
 list(APPEND KNOWHERE_LINKER_LIBS nlohmann_json::nlohmann_json)
 list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
-list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt-header-only)
+#list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt-header-only)
 list(APPEND KNOWHERE_LINKER_LIBS Folly::folly)
 if(NOT WITH_LIGHT)
   list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_trace)
@@ -205,10 +205,6 @@ if(WITH_CUVS)
     APPEND
     KNOWHERE_LINKER_LIBS
     raft::raft
-    raft::raft_logger
-    raft::raft_logger_impl
-    rmm::rmm_logger
-    rmm::rmm_logger_impl
     cuvs::cuvs
     CUDA::cublas
     CUDA::cusparse

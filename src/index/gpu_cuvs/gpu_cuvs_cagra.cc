@@ -125,8 +125,11 @@ class GpuCuvsCagraHybridIndexNode : public GpuCuvsCagraIndexNode<DataType> {
     Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) override {
         if (binset.Contains(std::string(this->Type()) + "_cpu")) {
             this->adapt_for_cpu = true;
-            auto binary = binset.GetByName(std::string(this->Type() + "_cpu"));
-
+            if constexpr (std::is_same_v<DataType, std::int8_t>) {
+                // TODO: Add HNSW support for INT8
+                LOG_KNOWHERE_ERROR_ << "CAGRA+HNSW does not support INT8 data.";
+                return Status::invalid_binary_set;
+            }
             try {
                 auto binary = binset.GetByName(std::string(this->Type()) + "_cpu");
                 if (binary == nullptr) {
@@ -173,6 +176,30 @@ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuCuvsCagraHybridIndexNode
                                               return count * cuda_concurrent_size_per_device;
                                           }());
 
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_CAGRA, GpuCuvsCagraHybridIndexNode, fp16,
+                                          knowhere::feature::GPU | knowhere::feature::FP16, []() {
+                                              int count;
+                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
+                                              return count * cuda_concurrent_size_per_device;
+                                          }());
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuCuvsCagraHybridIndexNode, fp16,
+                                          knowhere::feature::GPU | knowhere::feature::FP16, []() {
+                                              int count;
+                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
+                                              return count * cuda_concurrent_size_per_device;
+                                          }());
+/*KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_CAGRA, GpuCuvsCagraHybridIndexNode, int8,
+                                          knowhere::feature::GPU | knowhere::feature::INT8, []() {
+                                              int count;
+                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
+                                              return count * cuda_concurrent_size_per_device;
+                                          }());
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuCuvsCagraHybridIndexNode, int8,
+                                          knowhere::feature::GPU | knowhere::feature::INT8, []() {
+                                              int count;
+                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
+                                              return count * cuda_concurrent_size_per_device;
+                                          }());*/
 KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_CAGRA, GpuCuvsCagraHybridIndexNode, bin1,
                                           knowhere::feature::GPU | knowhere::feature::BINARY, []() {
                                               int count;
@@ -185,4 +212,5 @@ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuCuvsCagraHybridIndexNode
                                               RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
                                               return count * cuda_concurrent_size_per_device;
                                           }());
+
 }  // namespace knowhere

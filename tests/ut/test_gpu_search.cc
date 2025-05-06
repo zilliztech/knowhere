@@ -356,10 +356,11 @@ TEST_CASE("Test All GPU Index", "[search]") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_CUVS_BRUTEFORCE, bruteforce_gen),
-            // make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFFLAT, ivfflat_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFFLAT, ivfflat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFPQ, ivfpq_gen),
             make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFPQ, refined_gen(ivfpq_gen)),
-            // make_tuple(knowhere::IndexEnum::INDEX_CUVS_CAGRA, cagra_gen)
+            make_tuple(knowhere::IndexEnum::INDEX_CUVS_CAGRA, cagra_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_CUVS_CAGRA, cagra_hnsw_gen(cagra_gen)),
         }));
 
         auto cfg_json = gen().dump();
@@ -367,6 +368,23 @@ TEST_CASE("Test All GPU Index", "[search]") {
         knowhere::Json conf = knowhere::Json::parse(cfg_json);
         conf[knowhere::meta::METRIC_TYPE] = knowhere::metric::L2;
         check_search<knowhere::fp16>(nb, nq, dim, seed, name, version, conf);
+    }
+
+    SECTION("Test Gpu Index Search INT8") {
+        using std::make_tuple;
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+            make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFFLAT, ivfflat_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFPQ, ivfpq_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_CUVS_IVFPQ, refined_gen(ivfpq_gen)),
+            // make_tuple(knowhere::IndexEnum::INDEX_CUVS_CAGRA, cagra_gen),
+            // make_tuple(knowhere::IndexEnum::INDEX_CUVS_CAGRA, cagra_hnsw_gen(cagra_gen)),
+        }));
+
+        auto cfg_json = gen().dump();
+        CAPTURE(name, cfg_json);
+        knowhere::Json conf = knowhere::Json::parse(cfg_json);
+        conf[knowhere::meta::METRIC_TYPE] = knowhere::metric::L2;
+        check_search<knowhere::int8>(nb, nq, dim, seed, name, version, conf);
     }
 }
 #endif

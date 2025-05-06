@@ -77,12 +77,20 @@ struct cuvs_knowhere_index {
     }
 };
 
-extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::brute_force, float>;
+extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::brute_force, knowhere::fp32>;
 extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::brute_force, knowhere::fp16>;
-extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_flat, float>;
-extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_pq, float>;
+
+extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_flat, knowhere::fp32>;
+extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_flat, knowhere::fp16>;
+extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_flat, knowhere::int8>;
+
+extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_pq, knowhere::fp32>;
 extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_pq, knowhere::fp16>;
-extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, float>;
-extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, uint8_t>;
+extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_pq, knowhere::int8>;
+
+extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::fp32>;
+extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::fp16>;
+// extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::int8>;
+extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::bin1>;
 
 }  // namespace cuvs_knowhere

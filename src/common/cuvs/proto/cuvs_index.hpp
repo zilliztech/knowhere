@@ -198,8 +198,10 @@ struct cuvs_index {
             RAFT_LOG_WARN("Refinement requested, but no dataset provided. Ignoring refinement request.");
             do_refine_step = false;
         }
-        if (do_refine_step && !std::is_same_v<T, float>) {
-            RAFT_LOG_WARN("Refinement requested, but only float are supported. Ignoring refinement request.");
+        if (do_refine_step && std::is_same_v<T, std::uint8_t>) {
+            RAFT_LOG_WARN(
+                "Refinement requested, but categorical/binary data is not supported. "
+                "Ignoring refinement request.");
             do_refine_step = false;
         }
         if constexpr (std::is_same_v<T, float>) {
