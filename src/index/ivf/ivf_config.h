@@ -27,7 +27,7 @@ class IvfConfig : public BaseConfig {
     CFG_INT nlist;
     CFG_INT nprobe;
     CFG_BOOL use_elkan;
-    CFG_BOOL ensure_topk_full;  // only take affect on temp index(IVF_FLAT_CC) now
+    CFG_BOOL ensure_topk_full;  // internal config, used for temp index
     CFG_INT max_empty_result_buckets;
     KNOHWERE_DECLARE_CONFIG(IvfConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(nlist)
@@ -109,6 +109,7 @@ class ScannConfig : public IvfFlatConfig {
     CFG_INT reorder_k;
     CFG_BOOL with_raw_data;
     CFG_INT sub_dim;
+    CFG_BOOL ensure_topk_full;
     KNOHWERE_DECLARE_CONFIG(ScannConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(reorder_k)
             .description("reorder k used for refining")
@@ -125,6 +126,10 @@ class ScannConfig : public IvfFlatConfig {
             .set_default(2)
             .for_train()
             .set_range(1, 65536);
+        KNOWHERE_CONFIG_DECLARE_FIELD(ensure_topk_full)
+            .set_default(false)
+            .description("whether to make sure topk results full")
+            .for_search();
     }
 
     Status
