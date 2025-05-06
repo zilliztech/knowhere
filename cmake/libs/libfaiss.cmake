@@ -56,7 +56,11 @@ if(__AARCH64)
 
   set(UTILS_SRC src/simd/distances_ref.cc src/simd/distances_neon.cc)
   set(UTILS_SVE_SRC src/simd/hook.cc src/simd/distances_sve.cc)
-  set(ALL_UTILS_SRC ${UTILS_SRC} ${UTILS_SVE_SRC})
+  if(LINUX)
+    set(ALL_UTILS_SRC ${UTILS_SRC} ${UTILS_SVE_SRC})
+  else()
+    set(ALL_UTILS_SRC ${UTILS_SRC})
+  endif()
 
   add_library(
     knowhere_utils STATIC
