@@ -15,8 +15,8 @@
 
 add_definitions(-DKNOWHERE_WITH_CUVS)
 set(CUVS_VERSION "${RAPIDS_VERSION}")
-set(CUVS_FORK "lowener")
-set(CUVS_PINNED_TAG "25.06-cagra-half")
+set(CUVS_FORK "rapidsai")
+set(CUVS_PINNED_TAG "branch-25.06")
 
 rapids_find_package(CUDAToolkit REQUIRED BUILD_EXPORT_SET knowhere-exports
                     INSTALL_EXPORT_SET knowhere-exports)
