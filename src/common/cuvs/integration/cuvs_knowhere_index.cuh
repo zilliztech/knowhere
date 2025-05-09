@@ -17,7 +17,6 @@
 #pragma once
 #include <cmath>
 #include <cstdint>
-#include <cuvs/core/bitmap.hpp>
 #include <cuvs/core/bitset.hpp>
 #include <cuvs/distance/distance.hpp>
 #include <cuvs/neighbors/common.hpp>
@@ -85,17 +84,19 @@ struct cuvs_index_type_mapper<true, cuvs_proto::cuvs_index_kind::cagra, DataType
     using search_params_type = typename type::search_params_type;
 };
 
-template <typename T, typename U, typename V>
+template <typename U, typename V>
 struct check_valid_entry {
     __device__ __host__
     check_valid_entry(U max_distance, V max_id)
         : max_distance_(max_distance), max_id_(max_id) {
     }
-    __device__ auto
-    operator()(T id_distance) {
-        auto id = thrust::get<0>(id_distance);
-        auto distance = thrust::get<1>(id_distance);
-        return distance >= max_distance_ || distance < 0 || id >= max_id_;
+    __device__ thrust::tuple<V, U>
+    operator()(V id, U distance) {
+        if (distance >= max_distance_ || id >= max_id_)
+            return thrust::tuple<V, U>(V{-1}, distance);
+        if (distance < 0)
+            return thrust::tuple<V, U>(id, U{0});
+        return thrust::tuple<V, U>(id, distance);
     }
 
  private:
@@ -484,13 +485,6 @@ struct cuvs_knowhere_index<IndexKind, DataType>::impl {
                        raft::make_device_vector_view<knowhere_bitset_data_type, knowhere_bitset_indexing_type>(
                            reinterpret_cast<knowhere_bitset_data_type*>(device_bitset->data()), bitset_byte_size),
                        raft::make_host_vector_view(bitset_data, bitset_byte_size));
-            if constexpr (index_kind == cuvs_proto::cuvs_index_kind::brute_force) {
-                k_tmp += device_bitset->count(res);
-                if (k_tmp == k) {
-                    device_bitset = std::nullopt;
-                }
-                k_tmp = std::min(k_tmp, size());
-            }
             if (device_bitset) {
                 device_bitset->flip(res);
             }
@@ -545,38 +539,20 @@ struct cuvs_knowhere_index<IndexKind, DataType>::impl {
 
         auto max_distance =
             std::nextafter(std::numeric_limits<knowhere_distance_type>::max(), knowhere_distance_type{0});
-        thrust::replace_if(
+        auto device_post_process = detail::check_valid_entry<knowhere_distance_type, knowhere_indexing_type>{
+            max_distance, knowhere_indexing_type(size())};
+        thrust::transform(
             raft::resource::get_thrust_policy(res),
             thrust::device_ptr<knowhere_indexing_type>(device_knowhere_ids.data_handle()),
             thrust::device_ptr<knowhere_indexing_type>(device_knowhere_ids.data_handle() + device_knowhere_ids.size()),
+            thrust::device_ptr<knowhere_distance_type>(device_distances.data_handle()),
             thrust::make_zip_iterator(
                 thrust::make_tuple(thrust::device_ptr<knowhere_indexing_type>(device_knowhere_ids.data_handle()),
                                    thrust::device_ptr<knowhere_distance_type>(device_distances.data_handle()))),
-            detail::check_valid_entry<thrust::tuple<knowhere_indexing_type, knowhere_distance_type>,
-                                      knowhere_distance_type, knowhere_indexing_type>{max_distance,
-                                                                                      knowhere_indexing_type(size())},
-            knowhere_indexing_type{-1});
+            device_post_process);
 
-        if constexpr (index_kind == cuvs_proto::cuvs_index_kind::brute_force) {
-            if (k_tmp > k) {
-                for (auto i = 0; i < host_ids.extent(0); ++i) {
-                    raft::copy(res, raft::make_host_vector_view(host_ids.data_handle() + i * host_ids.extent(1), k),
-                               raft::make_device_vector_view(
-                                   device_knowhere_ids.data_handle() + i * device_knowhere_ids.extent(1), k));
-                    raft::copy(
-                        res,
-                        raft::make_host_vector_view(host_distances.data_handle() + i * host_distances.extent(1), k),
-                        raft::make_device_vector_view(device_distances.data_handle() + i * device_distances.extent(1),
-                                                      k));
-                }
-            } else {
-                raft::copy(res, host_ids, device_knowhere_ids);
-                raft::copy(res, host_distances, device_distances);
-            }
-        } else {
-            raft::copy(res, host_ids, device_knowhere_ids);
-            raft::copy(res, host_distances, device_distances);
-        }
+        raft::copy(res, host_ids, device_knowhere_ids);
+        raft::copy(res, host_distances, device_distances);
         return std::make_tuple(ids.release(), distances.release());
     }
     void

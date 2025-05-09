@@ -20,6 +20,6 @@
 namespace cuvs_knowhere {
 template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::fp32>;
 template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::fp16>;
-// template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::int8>;
+template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::int8>;
 template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::bin1>;
 }  // namespace cuvs_knowhere

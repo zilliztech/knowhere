@@ -90,7 +90,7 @@ extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_pq, 
 
 extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::fp32>;
 extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::fp16>;
-// extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::int8>;
+extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::int8>;
 extern template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::bin1>;
 
 }  // namespace cuvs_knowhere
