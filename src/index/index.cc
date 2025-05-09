@@ -62,7 +62,7 @@ Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chro
 #else
 template <typename T>
 inline const std::shared_ptr<Interrupt>
-Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json) {
+Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool) {
     auto pool = ThreadPool::GetGlobalBuildThreadPool();
     auto interrupt = std::make_shared<Interrupt>();
     interrupt->Set(pool->push([this, dataset, json]() { return this->Build(dataset, json); }));
@@ -72,38 +72,38 @@ Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json) {
 
 template <typename T>
 inline Status
-Index<T>::Build(const DataSetPtr dataset, const Json& json) {
+Index<T>::Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool) {
     auto cfg = this->node->CreateConfig();
     RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     TimeRecorder rc("Build index", 2);
-    auto res = this->node->Build(dataset, std::move(cfg));
+    auto res = this->node->Build(dataset, std::move(cfg), use_knowhere_build_pool);
     auto time = rc.ElapseFromBegin("done");
     time *= 0.000001;  // convert to s
     knowhere_build_latency.Observe(time);
 #else
-    auto res = this->node->Build(dataset, std::move(cfg));
+    auto res = this->node->Build(dataset, std::move(cfg), use_knowhere_build_pool);
 #endif
     return res;
 }
 
 template <typename T>
 inline Status
-Index<T>::Train(const DataSetPtr dataset, const Json& json) {
+Index<T>::Train(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool) {
     auto cfg = this->node->CreateConfig();
     std::string msg;
     RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Train", &msg));
-    return this->node->Train(dataset, std::move(cfg));
+    return this->node->Train(dataset, std::move(cfg), use_knowhere_build_pool);
 }
 
 template <typename T>
 inline Status
-Index<T>::Add(const DataSetPtr dataset, const Json& json) {
+Index<T>::Add(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool) {
     auto cfg = this->node->CreateConfig();
     std::string msg;
     RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Add", &msg));
-    return this->node->Add(dataset, std::move(cfg));
+    return this->node->Add(dataset, std::move(cfg), use_knowhere_build_pool);
 }
 
 template <typename T>

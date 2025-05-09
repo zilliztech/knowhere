@@ -22,6 +22,7 @@ namespace {
 static constexpr int32_t default_version = 0;
 static constexpr int32_t minimal_version = 0;
 static constexpr int32_t current_version = 6;
+static constexpr int32_t maximum_version = 7;
 }  // namespace
 
 class Version {
@@ -35,10 +36,16 @@ class Version {
         return Version(default_version);
     }
 
-    // the current version (newest version support)
+    // the recommended version
     static inline Version
     GetCurrentVersion() {
         return Version(current_version);
+    }
+
+    // the maximum version (beta version)
+    static inline Version
+    GetMaximumVersion() {
+        return Version(maximum_version);
     }
 
     // the minimal version (oldest version support)
@@ -49,12 +56,12 @@ class Version {
 
     static inline bool
     VersionSupport(const Version& version) {
-        return GetMinimalVersion() <= version && version <= GetCurrentVersion();
+        return GetMinimalVersion() <= version && version <= GetMaximumVersion();
     }
 
     static inline std::pair<Version, Version>
     GetSupportRange() {
-        return std::make_pair(Version(minimal_version), Version(current_version));
+        return std::make_pair(Version(minimal_version), Version(maximum_version));
     }
 
     // the version number

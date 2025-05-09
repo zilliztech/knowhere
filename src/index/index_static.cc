@@ -138,7 +138,7 @@ IndexStaticFaced<DataType>::InternalStaticHasRawData(const BaseConfig& /*config*
 template <typename DataType>
 std::unique_ptr<BaseConfig>
 IndexStaticFaced<DataType>::InternalStaticCreateConfig() {
-    return std::unique_ptr<BaseConfig>();
+    return std::make_unique<BaseConfig>();
 }
 
 template <typename DataType>

@@ -170,18 +170,28 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
 
     auto flat_gen = base_gen;
 
+    auto ivfrabitq_gen = ivfflat_gen;
+
+    auto ivfrabitq_refine_flat_gen = [ivfrabitq_gen]() {
+        knowhere::Json json = ivfrabitq_gen();
+        json["refine"] = true;
+        json["refine_type"] = "FLAT";
+        return json;
+    };
+
     SECTION("Test float index") {
         using std::make_tuple;
-        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IDMAP, flat_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivfflat_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, base_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFPQ, base_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
-            make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
-        }));
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(
+            {make_tuple(knowhere::IndexEnum::INDEX_FAISS_IDMAP, flat_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivfflat_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, base_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFPQ, base_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
+             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen),
+             make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_refine_flat_gen)}));
 
         auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN) {

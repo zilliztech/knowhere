@@ -27,13 +27,13 @@ class IndexNodeDataMockWrapper : public IndexNode {
     }
 
     Status
-    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override;
+    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
 
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override;
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override;
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
 
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;

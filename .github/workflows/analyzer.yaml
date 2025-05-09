@@ -8,7 +8,7 @@ on:
 jobs:
   analyzer:
     name: analyzer
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -19,7 +19,7 @@ jobs:
           submodules: 'none'
       - name: Install Dependency
         run: |
-          sudo apt update && sudo apt install -y cmake g++ gcc libopenblas-openmp-dev libaio-dev libcurl4-openssl-dev libevent-dev clang-tidy python3-pip && \
+          sudo apt update && sudo apt install -y cmake g++ gcc libopenblas-openmp-dev libaio-dev libcurl4-openssl-dev libevent-dev clang-tidy-14 python3-pip libomp-dev && \
           pip3 install conan==1.61.0 && conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local
       - name: Cache conan
         id: cache-conan
@@ -31,4 +31,4 @@ jobs:
       - name: Build & Analyzer
         run: |
           mkdir build && cd build && conan install .. --build=missing -o with_ut=True -o with_diskann=True && conan build .. \
-          && cd .. && find src -type f | grep -E "\.cc$" | xargs /usr/lib/llvm-10/share/clang/run-clang-tidy.py -quiet -p=./build/Release
+          && cd .. && find src -type f | grep -E "\.cc$" | xargs /usr/bin/run-clang-tidy-14.py -quiet -p=./build/Release

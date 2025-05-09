@@ -1041,5 +1041,103 @@ fvec_L2sqr_batch_4_bf16_patch_avx(const float* x, const float* y0, const float* 
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
+namespace {
+
+inline __m256i
+mask_from_u8(const uint8_t value) {
+    const __m256i v_v = _mm256_set1_epi8(value);
+    return _mm256_sllv_epi32(v_v, _mm256_set_epi32(24, 25, 26, 27, 28, 29, 30, 31));
+}
+
+inline float
+horizontal_sum(const __m128 v) {
+    const __m128 v0 = _mm_shuffle_ps(v, v, _MM_SHUFFLE(0, 0, 3, 2));
+    const __m128 v1 = _mm_add_ps(v, v0);
+    __m128 v2 = _mm_shuffle_ps(v1, v1, _MM_SHUFFLE(0, 0, 0, 1));
+    const __m128 v3 = _mm_add_ps(v1, v2);
+    return _mm_cvtss_f32(v3);
+}
+
+inline float
+horizontal_sum(const __m256 v) {
+    const __m128 v0 = _mm_add_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps(v, 1));
+    return horizontal_sum(v0);
+}
+
+}  // namespace
+
+float
+fvec_masked_sum_avx(const float* q, const uint8_t* x, const size_t d) {
+    __m256 sum_0 = _mm256_setzero_ps();
+    __m256 sum_1 = _mm256_setzero_ps();
+    __m256 sum_2 = _mm256_setzero_ps();
+    __m256 sum_3 = _mm256_setzero_ps();
+
+    const size_t d_32 = (d / 32) * 32;
+    const size_t d_8 = (d / 8) * 8;
+
+    if (d_32 > 0) {
+        for (size_t i = 0; i < d_32; i += 32) {
+            const __m256i mask_0 = mask_from_u8(x[i / 8 + 0]);
+            const __m256i mask_1 = mask_from_u8(x[i / 8 + 1]);
+            const __m256i mask_2 = mask_from_u8(x[i / 8 + 2]);
+            const __m256i mask_3 = mask_from_u8(x[i / 8 + 3]);
+            sum_0 = _mm256_add_ps(sum_0, _mm256_maskload_ps(q + i + 0 * 8, mask_0));
+            sum_1 = _mm256_add_ps(sum_1, _mm256_maskload_ps(q + i + 1 * 8, mask_1));
+            sum_2 = _mm256_add_ps(sum_2, _mm256_maskload_ps(q + i + 2 * 8, mask_2));
+            sum_3 = _mm256_add_ps(sum_3, _mm256_maskload_ps(q + i + 3 * 8, mask_3));
+        }
+
+        sum_0 = _mm256_add_ps(sum_0, sum_1);
+        sum_2 = _mm256_add_ps(sum_2, sum_3);
+        sum_0 = _mm256_add_ps(sum_0, sum_2);
+    }
+
+    for (size_t i = d_32; i < d_8; i += 8) {
+        const __m256i mask = mask_from_u8(x[i / 8]);
+        sum_0 = _mm256_add_ps(sum_0, _mm256_maskload_ps(q + i, mask));
+    }
+
+    if (d != d_8) {
+        const size_t leftovers = d - d_8;
+        const uint8_t mask_u8 = ((1U << leftovers) - 1) & x[d_8 / 8];
+        const __m256i mask = mask_from_u8(mask_u8);
+        sum_0 = _mm256_add_ps(sum_0, _mm256_maskload_ps(q + d_8, mask));
+    }
+
+    return horizontal_sum(sum_0);
+}
+
+int
+rabitq_dp_popcnt_avx(const uint8_t* q, const uint8_t* x, const size_t d, const size_t nb) {
+    // this is the scheme for popcount
+    const size_t di_8b = (d + 7) / 8;
+    const size_t di_64b = (di_8b / 8) * 8;
+
+    int dot = 0;
+    for (size_t j = 0; j < nb; j++) {
+        const uint8_t* q_j = q + j * di_8b;
+
+        // process 64-bit popcounts
+        int count_dot = 0;
+        for (size_t i = 0; i < di_64b; i += 8) {
+            const auto qv = *(const uint64_t*)(q_j + i);
+            const auto xv = *(const uint64_t*)(x + i);
+            count_dot += __builtin_popcountll(qv & xv);
+        }
+
+        // process leftovers
+        for (size_t i = di_64b; i < di_8b; i++) {
+            const auto qv = *(q_j + i);
+            const auto xv = *(x + i);
+            count_dot += __builtin_popcount(qv & xv);
+        }
+
+        dot += (count_dot << j);
+    }
+
+    return dot;
+}
+
 }  // namespace faiss
 #endif

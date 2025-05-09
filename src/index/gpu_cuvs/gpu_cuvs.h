@@ -77,7 +77,7 @@ struct GpuCuvsIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         auto result = Status::success;
         auto cuvs_cfg = cuvs_knowhere::cuvs_knowhere_config{};
         try {
@@ -105,7 +105,7 @@ struct GpuCuvsIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         return Status::success;
     }
 

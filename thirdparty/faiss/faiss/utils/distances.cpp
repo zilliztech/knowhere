@@ -245,14 +245,13 @@ void exhaustive_inner_product_seq(
         size_t d,
         size_t nx,
         size_t ny,
-        BlockResultHandler& res,
-        const IDSelector* __restrict sel) {
+        BlockResultHandler& res) {
     // add different specialized cases here via introducing
     //   helpers which are converted into templates.
 
     // bitset.empty() translates into sel=nullptr
 
-    if (const auto* bitsetview_sel = dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel)) {
+    if (const auto* bitsetview_sel = dynamic_cast<const knowhere::BitsetViewIDSelector*>(res.sel)) {
         // A specialized case for Knowhere
         auto bitset = bitsetview_sel->bitset_view;
         auto id_offset = bitsetview_sel->id_offset;
@@ -263,9 +262,9 @@ void exhaustive_inner_product_seq(
             return;
         }
     }
-    else if (sel != nullptr) {
+    else if (res.sel != nullptr) {
         // default Faiss case if sel is defined
-        IDSelectorHelper ids_helper{sel};
+        IDSelectorHelper ids_helper{res.sel};
         exhaustive_inner_product_seq_impl<BlockResultHandler, IDSelectorHelper>(
             x, y, d, nx, ny, res, ids_helper);
         return;
@@ -360,14 +359,13 @@ void exhaustive_L2sqr_seq(
         size_t d,
         size_t nx,
         size_t ny,
-        BlockResultHandler& res,
-        const IDSelector* __restrict sel) {
+        BlockResultHandler& res) {
     // add different specialized cases here via introducing
     //   helpers which are converted into templates.
 
     // bitset.empty() translates into sel=nullptr
 
-    if (const auto* bitsetview_sel = dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel)) {
+    if (const auto* bitsetview_sel = dynamic_cast<const knowhere::BitsetViewIDSelector*>(res.sel)) {
         // A specialized case for Knowhere
         auto bitset = bitsetview_sel->bitset_view;
         auto id_offset = bitsetview_sel->id_offset;
@@ -378,9 +376,9 @@ void exhaustive_L2sqr_seq(
             return;
         }
     }
-    else if (sel != nullptr) {
+    else if (res.sel != nullptr) {
         // default Faiss case if sel is defined
-        IDSelectorHelper ids_helper{sel};
+        IDSelectorHelper ids_helper{res.sel};
         exhaustive_L2sqr_seq_impl<BlockResultHandler, IDSelectorHelper>(
             x, y, d, nx, ny, res, ids_helper);
         return;
@@ -487,14 +485,13 @@ void exhaustive_cosine_seq(
         size_t d,
         size_t nx,
         size_t ny,
-        BlockResultHandler& res,
-        const IDSelector* __restrict sel) {
+        BlockResultHandler& res) {
     // add different specialized cases here via introducing
     //   helpers which are converted into templates.
 
     // bitset.empty() translates into sel=nullptr
 
-    if (const auto* bitsetview_sel = dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel)) {
+    if (const auto* bitsetview_sel = dynamic_cast<const knowhere::BitsetViewIDSelector*>(res.sel)) {
         // A specialized case for Knowhere
         auto bitset = bitsetview_sel->bitset_view;
         auto id_offset = bitsetview_sel->id_offset;
@@ -505,9 +502,9 @@ void exhaustive_cosine_seq(
             return;
         }
     }
-    else if (sel != nullptr) {
+    else if (res.sel != nullptr) {
         // default Faiss case if sel is defined
-        IDSelectorHelper ids_helper{sel};
+        IDSelectorHelper ids_helper{res.sel};
         exhaustive_cosine_seq_impl<BlockResultHandler, IDSelectorHelper>(
             x, y, y_norms, d, nx, ny, res, ids_helper);
         return;
@@ -528,8 +525,7 @@ void exhaustive_inner_product_blas(
         size_t d,
         size_t nx,
         size_t ny,
-        BlockResultHandler& res,
-        const IDSelector* sel) {
+        BlockResultHandler& res) {
     // BLAS does not like empty matrices
     if (nx == 0 || ny == 0)
         return;
@@ -569,7 +565,7 @@ void exhaustive_inner_product_blas(
                        &nyi);
             }
 
-            res.add_results(j0, j1, ip_block.get(), sel);
+            res.add_results(j0, j1, ip_block.get());
         }
         res.end_multiple();
         InterruptCallback::check();
@@ -586,8 +582,7 @@ void exhaustive_L2sqr_blas(
         size_t nx,
         size_t ny,
         BlockResultHandler& res,
-        const float* y_norms = nullptr,
-        const IDSelector* sel = nullptr) {
+        const float* y_norms = nullptr) {
     // BLAS does not like empty matrices
     if (nx == 0 || ny == 0)
         return;
@@ -655,7 +650,7 @@ void exhaustive_L2sqr_blas(
                     ip_line++;
                 }
             }
-            res.add_results(j0, j1, ip_block.get(), sel);
+            res.add_results(j0, j1, ip_block.get());
         }
         res.end_multiple();
         InterruptCallback::check();
@@ -670,8 +665,7 @@ void exhaustive_cosine_blas(
         size_t d,
         size_t nx,
         size_t ny,
-        BlockResultHandler& res,
-        const IDSelector* sel = nullptr) {
+        BlockResultHandler& res) {
     // BLAS does not like empty matrices
     if (nx == 0 || ny == 0)
         return;
@@ -730,7 +724,7 @@ void exhaustive_cosine_blas(
                     ip_line++;
                 }
             }
-            res.add_results(j0, j1, ip_block.get(), sel);
+            res.add_results(j0, j1, ip_block.get());
         }
         res.end_multiple();
         InterruptCallback::check();
@@ -745,8 +739,7 @@ static void knn_jaccard_blas(
         size_t nx,
         size_t ny,
         BlockResultHandler& res,
-        const DistanceCorrection& corr,
-        const IDSelector* sel) {
+        const DistanceCorrection& corr) {
     // BLAS does not like empty matrices
     if (nx == 0 || ny == 0)
         return;
@@ -798,7 +791,7 @@ static void knn_jaccard_blas(
                 float* ip_line = ip_block.get() + (i - i0) * (j1 - j0);
 
                 for (size_t j = j0; j < j1; j++) {
-                    if (!sel || sel->is_member(j)) {
+                    if (res.is_in_selection(j)) {
                         float ip = *ip_line;
                         float dis = 1.0 - ip / (x_norms[i] + y_norms[j] - ip);
 
@@ -813,7 +806,7 @@ static void knn_jaccard_blas(
                     ip_line++;
                 }
             }
-            res.add_results(j0, j1, ip_block.get(), sel);
+            res.add_results(j0, j1, ip_block.get());
         }
         res.end_multiple();
         InterruptCallback::check();
@@ -828,15 +821,11 @@ void knn_L2sqr_select(
         size_t nx,
         size_t ny,
         BlockResultHandler& res,
-        const float* y_norm2,
-        const IDSelector* sel) {
-    if (sel) {
-        exhaustive_L2sqr_seq<BlockResultHandler>(
-                x, y, d, nx, ny, res, sel);
-    } else if (nx < distance_compute_blas_threshold) {
-        exhaustive_L2sqr_seq<BlockResultHandler>(x, y, d, nx, ny, res, nullptr);
+        const float* y_norm2) {
+    if (res.sel || nx < distance_compute_blas_threshold) {
+        exhaustive_L2sqr_seq<BlockResultHandler>(x, y, d, nx, ny, res);
     } else {
-        exhaustive_L2sqr_blas<BlockResultHandler>(x, y, d, nx, ny, res, y_norm2, nullptr);
+        exhaustive_L2sqr_blas<BlockResultHandler>(x, y, d, nx, ny, res, y_norm2);
     }
 }
 
@@ -847,15 +836,11 @@ void knn_inner_product_select(
         size_t d,
         size_t nx,
         size_t ny,
-        BlockResultHandler& res,
-        const IDSelector* sel) {
-    if (sel) {
-        exhaustive_inner_product_seq<BlockResultHandler>(
-                x, y, d, nx, ny, res, sel);
-    } else if (nx < distance_compute_blas_threshold) {
-        exhaustive_inner_product_seq<BlockResultHandler>(x, y, d, nx, ny, res, nullptr);
+        BlockResultHandler& res) {
+    if (res.sel || nx < distance_compute_blas_threshold) {
+        exhaustive_inner_product_seq<BlockResultHandler>(x, y, d, nx, ny, res);
     } else {
-        exhaustive_inner_product_blas<BlockResultHandler>(x, y, d, nx, ny, res, nullptr);
+        exhaustive_inner_product_blas<BlockResultHandler>(x, y, d, nx, ny, res);
     }
 }
 
@@ -867,15 +852,11 @@ void knn_cosine_select(
         size_t d,
         size_t nx,
         size_t ny,
-        BlockResultHandler& res,
-        const IDSelector* sel) {
-    if (sel) {
-        exhaustive_cosine_seq<BlockResultHandler>(
-                x, y, y_norms, d, nx, ny, res, sel);
-    } else if (nx < distance_compute_blas_threshold) {
-        exhaustive_cosine_seq<BlockResultHandler>(x, y, y_norms, d, nx, ny, res, nullptr);
+        BlockResultHandler& res) {
+    if (res.sel || nx < distance_compute_blas_threshold) {
+        exhaustive_cosine_seq<BlockResultHandler>(x, y, y_norms, d, nx, ny, res);
     } else {
-        exhaustive_cosine_blas<BlockResultHandler>(x, y, y_norms, d, nx, ny, res, nullptr);
+        exhaustive_cosine_blas<BlockResultHandler>(x, y, y_norms, d, nx, ny, res);
     }
 }
 
@@ -920,11 +901,21 @@ void knn_inner_product(
     //     knn_inner_product_select(x, y, d, nx, ny, res, sel);
     // } else 
     if (k < distance_compute_min_k_reservoir) {
-        HeapBlockResultHandler<CMin<float, int64_t>> res(nx, vals, ids, k);
-        knn_inner_product_select(x, y, d, nx, ny, res, sel);
+        if (sel == nullptr) {
+            HeapBlockResultHandler<CMin<float, int64_t>, false> res(nx, vals, ids, k);
+            knn_inner_product_select(x, y, d, nx, ny, res);
+        } else {
+            HeapBlockResultHandler<CMin<float, int64_t>, true> res(nx, vals, ids, k, sel);
+            knn_inner_product_select(x, y, d, nx, ny, res);
+        }
     } else {
-        ReservoirBlockResultHandler<CMin<float, int64_t>> res(nx, vals, ids, k);
-        knn_inner_product_select(x, y, d, nx, ny, res, sel);
+        if (sel == nullptr) {
+            ReservoirBlockResultHandler<CMin<float, int64_t>, false> res(nx, vals, ids, k);
+            knn_inner_product_select(x, y, d, nx, ny, res);
+        } else {
+            ReservoirBlockResultHandler<CMin<float, int64_t>, true> res(nx, vals, ids, k, sel);
+            knn_inner_product_select(x, y, d, nx, ny, res);
+        }        
     }
 
     if (imin != 0) {
@@ -959,11 +950,20 @@ void all_inner_product(
         size_t ny,
         std::vector<knowhere::DistId>& output,
         const IDSelector* sel) {
-    CollectAllResultHandler<CMax<float, int64_t>> res(nx, ny, output);
-    if (nx < distance_compute_blas_threshold) {
-        exhaustive_inner_product_seq(x, y, d, nx, ny, res, sel);
+    if (sel == nullptr) {
+        CollectAllResultHandler<CMax<float, int64_t>, false> res(nx, ny, output);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_inner_product_seq(x, y, d, nx, ny, res);
+        } else {
+            exhaustive_inner_product_blas(x, y, d, nx, ny, res);
+        }
     } else {
-        exhaustive_inner_product_blas(x, y, d, nx, ny, res, sel);
+        CollectAllResultHandler<CMax<float, int64_t>, true> res(nx, ny, output, sel);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_inner_product_seq(x, y, d, nx, ny, res);
+        } else {
+            exhaustive_inner_product_blas(x, y, d, nx, ny, res);
+        }
     }
 }
 
@@ -1040,11 +1040,21 @@ void knn_L2sqr(
     //     knn_L2sqr_select(x, y, d, nx, ny, res, y_norm2, sel);
     // } else 
     if (k < distance_compute_min_k_reservoir) {
-        HeapBlockResultHandler<CMax<float, int64_t>> res(nx, vals, ids, k);
-        knn_L2sqr_select(x, y, d, nx, ny, res, y_norm2, sel);
+        if (sel == nullptr) {
+            HeapBlockResultHandler<CMax<float, int64_t>, false> res(nx, vals, ids, k);
+            knn_L2sqr_select(x, y, d, nx, ny, res, y_norm2);
+        } else {
+            HeapBlockResultHandler<CMax<float, int64_t>, true> res(nx, vals, ids, k, sel);
+            knn_L2sqr_select(x, y, d, nx, ny, res, y_norm2);
+        }
     } else {
-        ReservoirBlockResultHandler<CMax<float, int64_t>> res(nx, vals, ids, k);
-        knn_L2sqr_select(x, y, d, nx, ny, res, y_norm2, sel);
+        if (sel == nullptr) {
+            ReservoirBlockResultHandler<CMax<float, int64_t>, false> res(nx, vals, ids, k);
+            knn_L2sqr_select(x, y, d, nx, ny, res, y_norm2);
+        } else {
+            ReservoirBlockResultHandler<CMax<float, int64_t>, true> res(nx, vals, ids, k, sel);
+            knn_L2sqr_select(x, y, d, nx, ny, res, y_norm2);
+        }
     }
     if (imin != 0) {
         for (size_t i = 0; i < nx * k; i++) {
@@ -1080,11 +1090,20 @@ void all_L2sqr(
         std::vector<knowhere::DistId>& output,
         const float* y_norms,
         const IDSelector* sel) {
-    CollectAllResultHandler<CMax<float, int64_t>> res(nx, ny, output);
-    if (nx < distance_compute_blas_threshold) {
-        exhaustive_L2sqr_seq(x, y, d, nx, ny, res, sel);
+    if (sel == nullptr) {
+        CollectAllResultHandler<CMax<float, int64_t>, false> res(nx, ny, output);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_L2sqr_seq(x, y, d, nx, ny, res);
+        } else {
+            exhaustive_L2sqr_blas(x, y, d, nx, ny, res, y_norms);
+        }
     } else {
-        exhaustive_L2sqr_blas(x, y, d, nx, ny, res, y_norms, sel);
+        CollectAllResultHandler<CMax<float, int64_t>, true> res(nx, ny, output, sel);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_L2sqr_seq(x, y, d, nx, ny, res);
+        } else {
+            exhaustive_L2sqr_blas(x, y, d, nx, ny, res, y_norms);
+        }
     }
 }
 
@@ -1120,11 +1139,21 @@ void knn_cosine(
     //     knn_cosine_select(x, y, y_norms, d, nx, ny, res, sel);
     // } else 
     if (k < distance_compute_min_k_reservoir) {
-        HeapBlockResultHandler<CMin<float, int64_t>> res(nx, vals, ids, k);
-        knn_cosine_select(x, y, y_norms, d, nx, ny, res, sel);
+        if (sel == nullptr) {
+            HeapBlockResultHandler<CMin<float, int64_t>, false> res(nx, vals, ids, k);
+            knn_cosine_select(x, y, y_norms, d, nx, ny, res);
+        } else {
+            HeapBlockResultHandler<CMin<float, int64_t>, true> res(nx, vals, ids, k, sel);
+            knn_cosine_select(x, y, y_norms, d, nx, ny, res);
+        }
     } else {
-        ReservoirBlockResultHandler<CMin<float, int64_t>> res(nx, vals, ids, k);
-        knn_cosine_select(x, y, y_norms, d, nx, ny, res, sel);
+        if (sel == nullptr) {
+            ReservoirBlockResultHandler<CMin<float, int64_t>, false> res(nx, vals, ids, k);
+            knn_cosine_select(x, y, y_norms, d, nx, ny, res);
+        } else {
+            ReservoirBlockResultHandler<CMin<float, int64_t>, true> res(nx, vals, ids, k, sel);
+            knn_cosine_select(x, y, y_norms, d, nx, ny, res);
+        }
     }
 
     if (imin != 0) {
@@ -1161,11 +1190,20 @@ void all_cosine(
         size_t ny,
         std::vector<knowhere::DistId>& output,
         const IDSelector* sel) {
-    CollectAllResultHandler<CMax<float, int64_t>> res(nx, ny, output);
-    if (nx < distance_compute_blas_threshold) {
-        exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, res, sel);
+    if (sel == nullptr) {
+        CollectAllResultHandler<CMax<float, int64_t>, false> res(nx, ny, output);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, res);
+        } else {
+            exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, res);
+        }
     } else {
-        exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, res, sel);
+        CollectAllResultHandler<CMax<float, int64_t>, true> res(nx, ny, output, sel);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, res);
+        } else {
+            exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, res);
+        }
     }
 }
 
@@ -1188,9 +1226,15 @@ void knn_jaccard(
         FAISS_ASSERT_MSG(false, "dim is not multiple of 4!");
     } else {
         NopDistanceCorrection nop;
-        HeapBlockResultHandler<CMax<float, int64_t>> res(
-                ha->nh, ha->val, ha->ids, ha->k);
-        knn_jaccard_blas(x, y, d, nx, ny, res, nop, sel);
+        if (sel == nullptr) {
+            HeapBlockResultHandler<CMax<float, int64_t>, false> res(
+                    ha->nh, ha->val, ha->ids, ha->k);
+            knn_jaccard_blas(x, y, d, nx, ny, res, nop);
+        } else {
+            HeapBlockResultHandler<CMax<float, int64_t>, true> res(
+                    ha->nh, ha->val, ha->ids, ha->k, sel);
+            knn_jaccard_blas(x, y, d, nx, ny, res, nop);
+        }
     }
 }
 
@@ -1207,11 +1251,20 @@ void range_search_L2sqr(
         float radius,
         RangeSearchResult* res,
         const IDSelector* sel) {
-    RangeSearchBlockResultHandler<CMax<float, int64_t>> resh(res, radius);
-    if (nx < distance_compute_blas_threshold) {
-        exhaustive_L2sqr_seq(x, y, d, nx, ny, resh, sel);
+    if (sel == nullptr) {
+        RangeSearchBlockResultHandler<CMax<float, int64_t>, false> resh(res, radius);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_L2sqr_seq(x, y, d, nx, ny, resh);
+        } else {
+            exhaustive_L2sqr_blas(x, y, d, nx, ny, resh, nullptr);
+        }
     } else {
-        exhaustive_L2sqr_blas(x, y, d, nx, ny, resh, nullptr, sel);
+        RangeSearchBlockResultHandler<CMax<float, int64_t>, true> resh(res, radius, sel);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_L2sqr_seq(x, y, d, nx, ny, resh);
+        } else {
+            exhaustive_L2sqr_blas(x, y, d, nx, ny, resh, nullptr);
+        }
     }
 }
 
@@ -1224,11 +1277,20 @@ void range_search_inner_product(
         float radius,
         RangeSearchResult* res,
         const IDSelector* sel) {
-    RangeSearchBlockResultHandler<CMin<float, int64_t>> resh(res, radius);
-    if (nx < distance_compute_blas_threshold) {
-        exhaustive_inner_product_seq(x, y, d, nx, ny, resh, sel);
+    if (sel == nullptr) {
+        RangeSearchBlockResultHandler<CMin<float, int64_t>, false> resh(res, radius);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_inner_product_seq(x, y, d, nx, ny, resh);
+        } else {
+            exhaustive_inner_product_blas(x, y, d, nx, ny, resh);
+        }
     } else {
-        exhaustive_inner_product_blas(x, y, d, nx, ny, resh, sel);
+        RangeSearchBlockResultHandler<CMin<float, int64_t>, true> resh(res, radius, sel);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_inner_product_seq(x, y, d, nx, ny, resh);
+        } else {
+            exhaustive_inner_product_blas(x, y, d, nx, ny, resh);
+        }
     }
 }
 
@@ -1242,11 +1304,20 @@ void range_search_cosine(
         float radius,
         RangeSearchResult* res,
         const IDSelector* sel) {
-    RangeSearchBlockResultHandler<CMin<float, int64_t>> resh(res, radius);
-    if (nx < distance_compute_blas_threshold) {
-        exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, resh, sel);
+    if (sel == nullptr) {
+        RangeSearchBlockResultHandler<CMin<float, int64_t>, false> resh(res, radius);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, resh);
+        } else {
+            exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, resh);
+        }
     } else {
-        exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, resh, sel);
+        RangeSearchBlockResultHandler<CMin<float, int64_t>, true> resh(res, radius, sel);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, resh);
+        } else {
+            exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, resh);
+        }
     }
 }
 

@@ -36,6 +36,7 @@
 #include <faiss/IndexIVFPQ.h>
 #include <faiss/IndexIVFPQFastScan.h>
 #include <faiss/IndexIVFPQR.h>
+#include <faiss/IndexIVFRaBitQ.h>
 #include <faiss/IndexIVFSpectralHash.h>
 #include <faiss/IndexLSH.h>
 #include <faiss/IndexLattice.h>
@@ -43,6 +44,7 @@
 #include <faiss/IndexPQ.h>
 #include <faiss/IndexPQFastScan.h>
 #include <faiss/IndexPreTransform.h>
+#include <faiss/IndexRaBitQ.h>
 #include <faiss/IndexRefine.h>
 #include <faiss/IndexRowwiseMinMax.h>
 #include <faiss/IndexScalarQuantizer.h>
@@ -188,6 +190,8 @@ std::vector<size_t> aq_parse_nbits(std::string stok) {
     }
     return nbits;
 }
+
+const std::string rabitq_pattern = "(RaBitQ)";
 
 /***************************************************************
  * Parse VectorTransform
@@ -426,6 +430,9 @@ IndexIVF* parse_IndexIVF(
         }
         return index_ivf;
     }
+    if (match(rabitq_pattern)) {
+        return new IndexIVFRaBitQ(get_q(), d, nlist, mt);
+    }
     return nullptr;
 }
 
@@ -644,6 +651,11 @@ Index* parse_other_indexes(
             return new IndexProductLocalSearchQuantizerFastScan(
                     d, nsplits, Msub, 4, metric, st, bbs);
         }
+    }
+
+    // IndexRaBitQ
+    if (match(rabitq_pattern)) {
+        return new IndexRaBitQ(d, metric);
     }
 
     return nullptr;

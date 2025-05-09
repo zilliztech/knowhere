@@ -330,4 +330,33 @@ WaitAllSuccess(std::vector<folly::Future<T>>& futures) {
     return Status::success;
 }
 
+// This class is used to wrap the thread pool and the inline executor
+// If use_pool is true, the function will be pushed to the thread pool
+// If use_pool is false, the function will be executed directly
+class ThreadPoolWrapper {
+ public:
+    ThreadPoolWrapper(const std::shared_ptr<ThreadPool>& pool, bool use_pool = true)
+        : pool_(pool), use_pool_(use_pool) {
+    }
+
+    template <typename Func, typename... Args>
+    auto
+    push(Func&& func, Args&&... args) {
+        if (use_pool_) {
+            return pool_->push(std::forward<Func>(func), std::forward<Args>(args)...);
+        } else {
+            // If the pool is not used, the function will be executed within the current thread directly
+            return folly::makeSemiFuture()
+                .via(&folly::InlineExecutor::instance())
+                .then([func = std::forward<Func>(func), &args...](auto&&) mutable {
+                    return func(std::forward<Args>(args)...);
+                });
+        }
+    }
+
+ private:
+    std::shared_ptr<ThreadPool> pool_;
+    bool use_pool_;
+};
+
 }  // namespace knowhere

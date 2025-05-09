@@ -58,6 +58,10 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     {IndexEnum::INDEX_FAISS_IVFSQ_CC, VecType::VECTOR_BFLOAT16},
     // {IndexEnum::INDEX_FAISS_IVFSQ_CC, VecType::VECTOR_INT8},
 
+    {IndexEnum::INDEX_FAISS_IVFRABITQ, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_FAISS_IVFRABITQ, VecType::VECTOR_FLOAT16},
+    {IndexEnum::INDEX_FAISS_IVFRABITQ, VecType::VECTOR_BFLOAT16},
+
     // gpu index
     {IndexEnum::INDEX_GPU_BRUTEFORCE, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_GPU_BRUTEFORCE, VecType::VECTOR_FLOAT16},
@@ -115,6 +119,7 @@ static std::set<std::string> legal_support_mmap_knowhere_index = {
     IndexEnum::INDEX_FAISS_SCANN,
     IndexEnum::INDEX_FAISS_IVFSQ8,
     IndexEnum::INDEX_FAISS_IVFSQ_CC,
+    IndexEnum::INDEX_FAISS_IVFRABITQ,
 
     // hnsw
     IndexEnum::INDEX_HNSW,

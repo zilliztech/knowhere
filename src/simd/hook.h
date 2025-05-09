@@ -118,6 +118,10 @@ extern void (*int8_vec_inner_product_batch_4)(const int8_t*, const int8_t*, cons
 extern void (*int8_vec_L2sqr_batch_4)(const int8_t*, const int8_t*, const int8_t*, const int8_t*, const int8_t*,
                                       const size_t, float&, float&, float&, float&);
 
+// rabitq
+extern float (*fvec_masked_sum)(const float*, const uint8_t*, const size_t);
+extern int (*rabitq_dp_popcnt)(const uint8_t*, const uint8_t*, const size_t, const size_t);
+
 ///////////////////////////////////////////////////////////////////////////////
 #if defined(__x86_64__)
 bool
@@ -128,6 +132,11 @@ bool
 cpu_support_sse4_2();
 bool
 cpu_support_f16c();
+#endif
+
+#if defined(__aarch64__)
+bool
+supports_sve();
 #endif
 
 void

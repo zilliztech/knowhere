@@ -43,10 +43,10 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
     }
 
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override;
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override;
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
 
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
@@ -306,7 +306,8 @@ ConvertToBaseIndexFp32DataSet(const DataSetPtr& src, bool is_cosine = false,
 
 template <typename DataType, typename BaseIndexNode>
 Status
-IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
+IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
+                                                             bool use_knowhere_build_pool) {
     BaseConfig& base_cfg = static_cast<BaseConfig&>(*cfg);
     this->is_cosine_ = IsMetricType(base_cfg.metric_type.value(), knowhere::metric::COSINE);
     auto dim = dataset->GetDim();
@@ -326,19 +327,20 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Train(const DataSetPtr da
     refine_offset_index_ = std::make_unique<DataViewIndexFlat>(
         dim, datatype_v<DataType>, refine_metric, this->view_data_op_, is_cosine_, refine_type, build_thread_num);
     try {
-        refine_offset_index_->Train(train_rows, data);
+        refine_offset_index_->Train(train_rows, data, use_knowhere_build_pool);
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "data view index inner error: " << e.what();
         return Status::internal_error;
     }
-    return base_index_->Train(
-        fp32_train_ds,
-        cfg);  // train not need base_index_lock_, all add and search will fail if train not called before
+    return base_index_->Train(fp32_train_ds, cfg,
+                              use_knowhere_build_pool);  // train not need base_index_lock_, all add and search will
+                                                         // fail if train not called before
 }
 
 template <typename DataType, typename BaseIndexNode>
 Status
-IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
+IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
+                                                           bool use_knowhere_build_pool) {
     auto rows = dataset->GetRows();
     auto dim = dataset->GetDim();
     auto data = (const DataType*)dataset->GetTensor();
@@ -349,14 +351,14 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Add(const DataSetPtr data
         auto [fp32_base_ds, norms] =
             ConvertToBaseIndexFp32DataSet<DataType>(dataset, is_cosine_, blk_i, blk_size, base_index_->Dim());
         try {
-            refine_offset_index_->Add(blk_size, data + blk_i * dim, norms.data());
+            refine_offset_index_->Add(blk_size, data + blk_i * dim, norms.data(), use_knowhere_build_pool);
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "data view index inner error: " << e.what();
             return Status::internal_error;
         }
         {
             FairWriteLockGuard guard(*this->base_index_lock_);
-            add_stat = base_index_->Add(fp32_base_ds, cfg);
+            add_stat = base_index_->Add(fp32_base_ds, cfg, use_knowhere_build_pool);
         }
 
         if (add_stat != Status::success) {

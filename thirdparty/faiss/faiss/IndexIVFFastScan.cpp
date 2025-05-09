@@ -411,7 +411,7 @@ std::unique_ptr<IVFIteratorWorkspace> IndexIVFFastScan::getIteratorWorkspace(
             ivf_fast_scan_workspace->coarse_idx.get()};
     compute_LUT_uint8(
             1,
-            ivf_fast_scan_workspace->query_data,
+            ivf_fast_scan_workspace->query_data.data(),
             cq,
             ivf_fast_scan_workspace->dis_tables,
             ivf_fast_scan_workspace->biases,

@@ -125,12 +125,29 @@ void accumulate_fixed_blocks(
         ResultHandler& res,
         const Scaler& scaler) {
     constexpr int bbs = 32 * BB;
-    for (size_t j0 = 0; j0 < nb; j0 += bbs) {
+    for (size_t j0 = 0; j0 < nb; j0 += bbs, codes += bbs * nsq / 2) {
+        res.set_block_origin(0, j0);
+        // skip computing distances if all vectors inside a block are filtered out
+        if constexpr(has_sel_member_v<ResultHandler>) {
+            if (res.sel != nullptr) {  // we have filter here
+                bool skip_flag = true;
+                for (size_t jj = 0; jj < std::min<size_t>(bbs, res.ntotal - j0);
+                    jj++) {
+                    auto real_idx = res.adjust_id(0, jj);
+                    if (res.sel->is_member(real_idx)) {  // id is not filtered out, can not skip computing
+                        skip_flag = false;
+                        break;
+                    }
+                }
+
+                if (skip_flag) {
+                    continue;
+                }
+            }
+        }
         FixedStorageHandler<NQ, 2 * BB> res2;
         kernel_accumulate_block<NQ, BB>(nsq, codes, LUT, res2, scaler);
-        res.set_block_origin(0, j0);
         res2.to_other_handler(res);
-        codes += bbs * nsq / 2;
     }
 }
 

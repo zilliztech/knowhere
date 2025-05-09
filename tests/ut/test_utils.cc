@@ -149,6 +149,9 @@ TEST_CASE("Test Version") {
     REQUIRE(knowhere::Version::VersionSupport(knowhere::Version::GetDefaultVersion()));
     REQUIRE(knowhere::Version::VersionSupport(knowhere::Version::GetMinimalVersion()));
     REQUIRE(knowhere::Version::VersionSupport(knowhere::Version::GetCurrentVersion()));
+    REQUIRE(knowhere::Version::VersionSupport(knowhere::Version::GetMaximumVersion()));
+    REQUIRE(knowhere::Version::GetMinimalVersion() <= knowhere::Version::GetCurrentVersion());
+    REQUIRE(knowhere::Version::GetCurrentVersion() <= knowhere::Version::GetMaximumVersion());
 }
 
 TEST_CASE("Test DiskLoad") {
