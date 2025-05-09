@@ -141,15 +141,12 @@ TEST_CASE("Test All GPU Index", "[search]") {
         knowhere::Json conf = knowhere::Json::parse(cfg_json);
         conf[knowhere::meta::METRIC_TYPE] = knowhere::metric::L2;
         if (knowhere::IndexFactory::Instance().FeatureCheck(name, knowhere::feature::FLOAT32)) {
-            std::cout << "Testing fp32" << name << std::endl;
             check_search<knowhere::fp32>(nb, nq, dim, seed, name, version, conf);
         }
         if (knowhere::IndexFactory::Instance().FeatureCheck(name, knowhere::feature::FP16)) {
-            std::cout << "Testing fp16" << name << std::endl;
             check_search<knowhere::fp16>(nb, nq, dim, seed, name, version, conf);
         }
         if (knowhere::IndexFactory::Instance().FeatureCheck(name, knowhere::feature::INT8)) {
-            std::cout << "Testing int8" << name << std::endl;
             check_search<knowhere::int8>(nb, nq, dim, seed, name, version, conf);
         }
     }
