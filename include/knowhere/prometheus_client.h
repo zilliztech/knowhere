@@ -86,6 +86,13 @@ extern const std::unique_ptr<PrometheusClient> prometheusClient;
 #define DECLARE_PROMETHEUS_COUNTER(name, module) extern prometheus::Counter& CONCATENATE(module, name);
 #define DECLARE_PROMETHEUS_HISTOGRAM(name, module) extern prometheus::Histogram& CONCATENATE(module, name);
 
+#define DECLARE_PROMETHEUS_GAUGE_FAMILY(name, module) \
+    extern prometheus::Family<prometheus::Gauge>& CONCATENATE(name, family);
+#define DECLARE_PROMETHEUS_COUNTER_FAMILY(name, module) \
+    extern prometheus::Family<prometheus::Counter>& CONCATENATE(name, family);
+#define DECLARE_PROMETHEUS_HISTOGRAM_FAMILY(name, module) \
+    extern prometheus::Family<prometheus::Histogram>& CONCATENATE(name, family);
+
 DECLARE_PROMETHEUS_HISTOGRAM(build_latency, PROMETHEUS_LABEL_KNOWHERE);
 DECLARE_PROMETHEUS_HISTOGRAM(build_latency, PROMETHEUS_LABEL_CARDINAL);
 
@@ -131,4 +138,8 @@ DECLARE_PROMETHEUS_HISTOGRAM(hnsw_search_hops, PROMETHEUS_LABEL_KNOWHERE);
 DECLARE_PROMETHEUS_HISTOGRAM(diskann_bitset_ratio, PROMETHEUS_LABEL_KNOWHERE);
 DECLARE_PROMETHEUS_HISTOGRAM(diskann_search_hops, PROMETHEUS_LABEL_KNOWHERE);
 DECLARE_PROMETHEUS_HISTOGRAM(diskann_range_search_iters, PROMETHEUS_LABEL_KNOWHERE);
+
+DECLARE_PROMETHEUS_HISTOGRAM_FAMILY(sparse_dataset_nnz_len, PROMETHEUS_LABEL_KNOWHERE);
+DECLARE_PROMETHEUS_HISTOGRAM_FAMILY(sparse_inverted_index_posting_list_len, PROMETHEUS_LABEL_KNOWHERE);
+DECLARE_PROMETHEUS_GAUGE_FAMILY(sparse_inverted_index_size, PROMETHEUS_LABEL_KNOWHERE);
 }  // namespace knowhere

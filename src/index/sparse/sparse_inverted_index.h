@@ -30,6 +30,7 @@
 #include "knowhere/comp/index_param.h"
 #include "knowhere/expected.h"
 #include "knowhere/log.h"
+#include "knowhere/prometheus_client.h"
 #include "knowhere/sparse_utils.h"
 #include "knowhere/utils.h"
 
@@ -94,6 +95,18 @@ template <typename DType, typename QType, InvertedIndexAlgo algo, bool mmapped =
 class InvertedIndex : public BaseInvertedIndex<DType> {
  public:
     explicit InvertedIndex(SparseMetricType metric_type) : metric_type_(metric_type) {
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        // for now, use timestamp as index_id
+        index_id_ = std::to_string(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
+                .count());
+        index_size_gauge_ =
+            &sparse_inverted_index_size_family.Add({{"index_id", index_id_}, {"index_type", "inverted"}});
+        index_dataset_nnz_len_histogram_ =
+            &sparse_dataset_nnz_len_family.Add({{"index_id", index_id_}, {"index_type", "inverted"}}, defaultBuckets);
+        index_posting_list_len_histogram_ = &sparse_inverted_index_posting_list_len_family.Add(
+            {{"index_id", index_id_}, {"index_type", "inverted"}}, defaultBuckets);
+#endif
     }
 
     ~InvertedIndex() override {
@@ -112,6 +125,17 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                 map_fd_ = -1;
             }
         }
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        if (index_size_gauge_ != nullptr) {
+            sparse_inverted_index_size_family.Remove(index_size_gauge_);
+        }
+        if (index_dataset_nnz_len_histogram_ != nullptr) {
+            sparse_dataset_nnz_len_family.Remove(index_dataset_nnz_len_histogram_);
+        }
+        if (index_posting_list_len_histogram_ != nullptr) {
+            sparse_inverted_index_posting_list_len_family.Remove(index_posting_list_len_histogram_);
+        }
+#endif
     }
 
     template <typename U>
@@ -247,7 +271,13 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             }
         }
 
+        auto load_progress_interval = rows / 10;
         for (int64_t i = 0; i < rows; ++i) {
+            if (load_progress_interval > 0 && i % load_progress_interval == 0) {
+                LOG_KNOWHERE_INFO_ << "Sparse Inverted Index loading progress: " << (i / load_progress_interval * 10)
+                                   << "%";
+            }
+
             size_t count;
             readBinaryPOD(reader, count);
             SparseRow<DType> raw_row;
@@ -261,7 +291,18 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                 }
             }
             add_row_to_index(raw_row, i);
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+            index_dataset_nnz_len_histogram_->Observe(count);
+#endif
         }
+        LOG_KNOWHERE_INFO_ << "Sparse Inverted Index loading progress: 100%";
+
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        for (size_t i = 0; i < dim_map_.size(); ++i) {
+            index_posting_list_len_histogram_->Observe(inverted_index_ids_[i].size());
+        }
+        index_size_gauge_->Set((double)size() / 1024.0 / 1024.0);
+#endif
 
         n_rows_internal_ = rows;
 
@@ -921,7 +962,18 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             }
             inverted_index_ids_[dim_it->second].emplace_back(vec_id);
             inverted_index_vals_[dim_it->second].emplace_back(get_quant_val(val));
-            if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
+        }
+        // update max_score_in_dim_
+        if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
+            for (size_t j = 0; j < row.size(); ++j) {
+                auto [dim, val] = row[j];
+                if (val == 0) {
+                    continue;
+                }
+                auto dim_it = dim_map_.find(dim);
+                if (dim_it == dim_map_.cend()) {
+                    throw std::runtime_error("unexpected vector dimension in InvertedIndex");
+                }
                 auto score = static_cast<float>(val);
                 if (metric_type_ == SparseMetricType::METRIC_BM25) {
                     score = bm25_params_->max_score_computer(val, row_sum);
@@ -984,6 +1036,12 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
     std::unique_ptr<BM25Params> bm25_params_;
 
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+    std::string index_id_{};
+    prometheus::Gauge* index_size_gauge_{nullptr};
+    prometheus::Histogram* index_dataset_nnz_len_histogram_{nullptr};
+    prometheus::Histogram* index_posting_list_len_histogram_{nullptr};
+#endif
 };  // class InvertedIndex
 
 }  // namespace knowhere::sparse
