@@ -30,6 +30,7 @@
 #include "knowhere/comp/index_param.h"
 #include "knowhere/expected.h"
 #include "knowhere/log.h"
+#include "knowhere/prometheus_client.h"
 #include "knowhere/sparse_utils.h"
 #include "knowhere/utils.h"
 
@@ -261,7 +262,17 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                 }
             }
             add_row_to_index(raw_row, i);
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+            knowhere_sparse_dataset_nnz_len.Observe(count);
+#endif
         }
+
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        for (size_t i = 0; i < dim_map_.size(); ++i) {
+            knowhere_sparse_inverted_index_posting_list_len.Observe(inverted_index_ids_[i].size());
+        }
+        knowhere_sparse_inverted_index_size.Increment((double)size() / 1024.0 / 1024.0);
+#endif
 
         n_rows_internal_ = rows;
 
@@ -438,6 +449,9 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
 
         auto q_vec = parse_query(query, approx_params.drop_ratio_search);
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        knowhere_sparse_query_nnz_len.Observe(q_vec.size());
+#endif
         if (q_vec.empty()) {
             return;
         }
@@ -921,7 +935,18 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             }
             inverted_index_ids_[dim_it->second].emplace_back(vec_id);
             inverted_index_vals_[dim_it->second].emplace_back(get_quant_val(val));
-            if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
+        }
+        // update max_score_in_dim_
+        if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
+            for (size_t j = 0; j < row.size(); ++j) {
+                auto [dim, val] = row[j];
+                if (val == 0) {
+                    continue;
+                }
+                auto dim_it = dim_map_.find(dim);
+                if (dim_it == dim_map_.cend()) {
+                    throw std::runtime_error("unexpected vector dimension in InvertedIndex");
+                }
                 auto score = static_cast<float>(val);
                 if (metric_type_ == SparseMetricType::METRIC_BM25) {
                     score = bm25_params_->max_score_computer(val, row_sum);
