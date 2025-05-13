@@ -141,6 +141,11 @@ class ThreadPool {
         return pool_.getPendingTaskCount();
     }
 
+    folly::CPUThreadPoolExecutor&
+    GetPool() {
+        return pool_;
+    }
+
     void
     SetNumThreads(uint32_t num_threads) {
         if (num_threads == 0) {
