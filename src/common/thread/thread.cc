@@ -18,6 +18,7 @@
 #include <thread>
 #include <utility>
 
+#include "folly/executors/CPUThreadPoolExecutor.h"
 #include "knowhere/comp/thread_pool.h"
 
 namespace knowhere {
@@ -55,6 +56,16 @@ ExecOverBuildThreadPool(std::vector<std::function<void()>>& tasks) {
 void
 InitBuildThreadPool(uint32_t num_threads) {
     ThreadPool::InitGlobalBuildThreadPool(num_threads);
+}
+
+folly::CPUThreadPoolExecutor&
+GetBuildThreadPool() {
+    return ThreadPool::GetGlobalBuildThreadPool()->GetPool();
+}
+
+folly::CPUThreadPoolExecutor&
+GetSearchThreadPool() {
+    return ThreadPool::GetGlobalSearchThreadPool()->GetPool();
 }
 
 void
