@@ -245,6 +245,11 @@ class SparseInvertedIndexNode : public IndexNode {
         return expected<DataSetPtr>::Err(Status::not_implemented, "GetVectorByIds not implemented");
     }
 
+    static bool
+    StaticHasRawData(const knowhere::BaseConfig& /*config*/, const IndexVersion& /*version*/) {
+        return false;
+    }
+
     [[nodiscard]] bool
     HasRawData(const std::string& metric_type) const override {
         return false;
@@ -539,6 +544,14 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
         res->SetIsSparse(true);
 
         return res;
+    }
+
+    static bool
+    StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
+        if (!config.metric_type.has_value()) {
+            return false;
+        }
+        return IsMetricType(config.metric_type.value(), metric::IP);
     }
 
     [[nodiscard]] bool
