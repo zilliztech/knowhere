@@ -209,8 +209,8 @@ TEST_CASE("Test index has raw data", "[IndexHasRawData]") {
         CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_CUVS_CAGRA, ver, {}));
 #endif
         // sparse index
-        CHECK(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, ver, {}));
-        CHECK(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_SPARSE_WAND, ver, {}));
+        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, ver, {}));
+        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_SPARSE_WAND, ver, {}));
     }
 
     SECTION("Special test") {

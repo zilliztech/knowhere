@@ -137,6 +137,8 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
             REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
             REQUIRE(idx.Size() > 0);
             REQUIRE(idx.Count() == nb);
+            REQUIRE(idx.HasRawData(metric) ==
+                    knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
 
             knowhere::BinarySet bs;
             REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
@@ -562,7 +564,7 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
 
     SECTION("Test GetVectorByIds") {
         std::vector<int64_t> ids = {0, 1, 2};
-        REQUIRE(idx.HasRawData(metric));
+        REQUIRE(idx.HasRawData(metric) == knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
         auto results = idx.GetVectorByIds(GenIdsDataSet(3, ids));
         REQUIRE(results.has_value());
         auto xb = (knowhere::sparse::SparseRow<float>*)train_ds->GetTensor();
