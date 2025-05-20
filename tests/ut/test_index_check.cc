@@ -65,28 +65,28 @@ TEST_CASE("Test index and data type check", "[IndexCheckTest]") {
 
         // gpu index
         CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_BRUTEFORCE, VecType::VECTOR_FLOAT));
-        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_BRUTEFORCE, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_BRUTEFORCE, VecType::VECTOR_FLOAT16));
         CHECK_FALSE(
             KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_BRUTEFORCE, VecType::VECTOR_BFLOAT16));
         CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_BRUTEFORCE, VecType::VECTOR_INT8));
         CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_BRUTEFORCE, VecType::VECTOR_BINARY));
 
         CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFFLAT, VecType::VECTOR_FLOAT));
-        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFFLAT, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFFLAT, VecType::VECTOR_FLOAT16));
         CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFFLAT, VecType::VECTOR_BFLOAT16));
-        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFFLAT, VecType::VECTOR_INT8));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFFLAT, VecType::VECTOR_INT8));
         CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFFLAT, VecType::VECTOR_BINARY));
 
         CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFPQ, VecType::VECTOR_FLOAT));
-        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFPQ, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFPQ, VecType::VECTOR_FLOAT16));
         CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFPQ, VecType::VECTOR_BFLOAT16));
-        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFPQ, VecType::VECTOR_INT8));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFPQ, VecType::VECTOR_INT8));
         CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_IVFPQ, VecType::VECTOR_BINARY));
 
         CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_CAGRA, VecType::VECTOR_FLOAT));
-        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_CAGRA, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_CAGRA, VecType::VECTOR_FLOAT16));
         CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_CAGRA, VecType::VECTOR_BFLOAT16));
-        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_CAGRA, VecType::VECTOR_INT8));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_CAGRA, VecType::VECTOR_INT8));
         CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_GPU_CAGRA, VecType::VECTOR_BINARY));
 
         // HNSW
@@ -405,7 +405,7 @@ TEST_CASE("Test index feature check", "[IndexFeatureCheck]") {
         // GPU Indexes
 #ifdef KNOWHERE_WITH_CUVS
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_BRUTEFORCE, knowhere::feature::FLOAT32));
-        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_BRUTEFORCE, knowhere::feature::FP16));
+        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_BRUTEFORCE, knowhere::feature::FP16));
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_BRUTEFORCE, knowhere::feature::BF16));
         REQUIRE_FALSE(
             IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_BRUTEFORCE, knowhere::feature::BINARY));
@@ -413,21 +413,21 @@ TEST_CASE("Test index feature check", "[IndexFeatureCheck]") {
             IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_BRUTEFORCE, knowhere::feature::SPARSE_FLOAT32));
 
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_IVFFLAT, knowhere::feature::FLOAT32));
-        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_IVFFLAT, knowhere::feature::FP16));
+        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_IVFFLAT, knowhere::feature::FP16));
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_IVFFLAT, knowhere::feature::BF16));
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_IVFFLAT, knowhere::feature::BINARY));
         REQUIRE_FALSE(
             IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_IVFFLAT, knowhere::feature::SPARSE_FLOAT32));
 
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_IVFPQ, knowhere::feature::FLOAT32));
-        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_IVFPQ, knowhere::feature::FP16));
+        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_IVFPQ, knowhere::feature::FP16));
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_IVFPQ, knowhere::feature::BF16));
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_IVFPQ, knowhere::feature::BINARY));
         REQUIRE_FALSE(
             IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_IVFPQ, knowhere::feature::SPARSE_FLOAT32));
 
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_CAGRA, knowhere::feature::FLOAT32));
-        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_CAGRA, knowhere::feature::FP16));
+        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_CAGRA, knowhere::feature::FP16));
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_CAGRA, knowhere::feature::BF16));
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_CAGRA, knowhere::feature::BINARY));
         REQUIRE_FALSE(
