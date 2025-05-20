@@ -476,7 +476,6 @@ struct cuvs_knowhere_index<IndexKind, DataType>::impl {
 
         auto device_bitset = std::optional<
             cuvs::core::bitset<knowhere_bitset_internal_data_type, knowhere_bitset_internal_indexing_type>>{};
-        auto k_tmp = k;
         if (bitset_data != nullptr && bitset_byte_size != 0) {
             device_bitset =
                 cuvs::core::bitset<knowhere_bitset_internal_data_type, knowhere_bitset_internal_indexing_type>(
@@ -497,9 +496,9 @@ struct cuvs_knowhere_index<IndexKind, DataType>::impl {
         auto host_ids = raft::make_host_matrix_view(ids.get(), row_count, k);
         auto host_distances = raft::make_host_matrix_view(distances.get(), row_count, k);
 
-        auto device_ids_storage = raft::make_device_matrix<indexing_type, input_indexing_type>(res, row_count, k_tmp);
+        auto device_ids_storage = raft::make_device_matrix<indexing_type, input_indexing_type>(res, row_count, k);
         auto device_distances_storage =
-            raft::make_device_matrix<knowhere_distance_type, input_indexing_type>(res, row_count, k_tmp);
+            raft::make_device_matrix<knowhere_distance_type, input_indexing_type>(res, row_count, k);
         auto device_ids = device_ids_storage.view();
         auto device_distances = device_distances_storage.view();
 
@@ -526,12 +525,12 @@ struct cuvs_knowhere_index<IndexKind, DataType>::impl {
 
         auto device_knowhere_ids_storage =
             std::optional<raft::device_matrix<knowhere_indexing_type, input_indexing_type>>{};
-        auto device_knowhere_ids = [&device_knowhere_ids_storage, &res, row_count, k_tmp, device_ids]() {
+        auto device_knowhere_ids = [&device_knowhere_ids_storage, &res, row_count, k, device_ids]() {
             if constexpr (std::is_signed_v<indexing_type>) {
                 return device_ids;
             } else {
                 device_knowhere_ids_storage =
-                    raft::make_device_matrix<knowhere_indexing_type, input_indexing_type>(res, row_count, k_tmp);
+                    raft::make_device_matrix<knowhere_indexing_type, input_indexing_type>(res, row_count, k);
                 raft::copy(res, device_knowhere_ids_storage->view(), device_ids);
                 return device_knowhere_ids_storage->view();
             }
