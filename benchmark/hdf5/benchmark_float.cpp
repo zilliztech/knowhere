@@ -25,8 +25,10 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
     template <typename T>
     void
     test_brute_force(const knowhere::Json& cfg) {
+        printf("=================================== 1 ==========================================\n");
         auto conf = cfg;
         std::string data_type_str = get_data_type_name<T>();
+        
 
         auto base_ds_ptr = knowhere::GenDataSet(nb_, dim_, xb_);
         auto base = knowhere::ConvertToDataTypeIfNeeded<T>(base_ds_ptr);
@@ -269,13 +271,14 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
     void
     SetUp() override {
         T0_ = elapsed();
-        set_ann_test_name("sift-128-euclidean");
+        set_ann_test_name("dbpediaopenai-1536-angular");
         parse_ann_test_name();
         load_hdf5_data<knowhere::fp32>();
-
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
-        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);
+        std::string simd_type = knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX512);
+        printf("simd_type: %s \n",simd_type.c_str());
         knowhere::KnowhereConfig::SetBuildThreadPoolSize(default_build_thread_num);
+        printf("2\n");
         knowhere::KnowhereConfig::SetSearchThreadPoolSize(default_search_thread_num);
         printf("faiss::distance_compute_blas_threshold: %ld\n", knowhere::KnowhereConfig::GetBlasThreshold());
 
@@ -351,181 +354,181 @@ TEST_F(Benchmark_float, TEST_BRUTE_FORCE) {
     index_type_ = "BruteForce";
 
     knowhere::Json conf = cfg_;
-    test_brute_force<knowhere::fp32>(conf);
-    test_brute_force<knowhere::fp16>(conf);
+    // test_brute_force<knowhere::fp32>(conf);
+    // test_brute_force<knowhere::fp16>(conf);
     test_brute_force<knowhere::bf16>(conf);
-    test_brute_force<knowhere::int8>(conf);
+    // test_brute_force<knowhere::int8>(conf);
 }
 
-TEST_F(Benchmark_float, TEST_IDMAP) {
-    index_type_ = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
+// TEST_F(Benchmark_float, TEST_IDMAP) {
+//     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
 
-    std::string index_file_name;
-    knowhere::Json conf = cfg_;
-    std::vector<int32_t> params = {};
+//     std::string index_file_name;
+//     knowhere::Json conf = cfg_;
+//     std::vector<int32_t> params = {};
 
-    TEST_INDEX(idmap, knowhere::fp32, params);
-    TEST_INDEX(idmap, knowhere::fp16, params);
-    TEST_INDEX(idmap, knowhere::bf16, params);
-}
+//     TEST_INDEX(idmap, knowhere::fp32, params);
+//     TEST_INDEX(idmap, knowhere::fp16, params);
+//     TEST_INDEX(idmap, knowhere::bf16, params);
+// }
 
-TEST_F(Benchmark_float, TEST_IVF_FLAT) {
-    index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
+// TEST_F(Benchmark_float, TEST_IVF_FLAT) {
+//     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
 
-    std::string index_file_name;
-    knowhere::Json conf = cfg_;
-    for (auto nlist : NLISTs_) {
-        conf[knowhere::indexparam::NLIST] = nlist;
-        std::vector<int32_t> params = {nlist};
+//     std::string index_file_name;
+//     knowhere::Json conf = cfg_;
+//     for (auto nlist : NLISTs_) {
+//         conf[knowhere::indexparam::NLIST] = nlist;
+//         std::vector<int32_t> params = {nlist};
 
-        TEST_INDEX(ivf, knowhere::fp32, params);
-        TEST_INDEX(ivf, knowhere::fp16, params);
-        TEST_INDEX(ivf, knowhere::bf16, params);
-    }
-}
+//         TEST_INDEX(ivf, knowhere::fp32, params);
+//         TEST_INDEX(ivf, knowhere::fp16, params);
+//         TEST_INDEX(ivf, knowhere::bf16, params);
+//     }
+// }
 
-TEST_F(Benchmark_float, TEST_IVF_SQ8) {
-    index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFSQ8;
+// TEST_F(Benchmark_float, TEST_IVF_SQ8) {
+//     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFSQ8;
 
-    std::string index_file_name;
-    knowhere::Json conf = cfg_;
-    for (auto nlist : NLISTs_) {
-        conf[knowhere::indexparam::NLIST] = nlist;
-        std::vector<int32_t> params = {nlist};
+//     std::string index_file_name;
+//     knowhere::Json conf = cfg_;
+//     for (auto nlist : NLISTs_) {
+//         conf[knowhere::indexparam::NLIST] = nlist;
+//         std::vector<int32_t> params = {nlist};
 
-        TEST_INDEX(ivf, knowhere::fp32, params);
-        TEST_INDEX(ivf, knowhere::fp16, params);
-        TEST_INDEX(ivf, knowhere::bf16, params);
-    }
-}
+//         TEST_INDEX(ivf, knowhere::fp32, params);
+//         TEST_INDEX(ivf, knowhere::fp16, params);
+//         TEST_INDEX(ivf, knowhere::bf16, params);
+//     }
+// }
 
-TEST_F(Benchmark_float, TEST_IVF_PQ) {
-    index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFPQ;
+// TEST_F(Benchmark_float, TEST_IVF_PQ) {
+//     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFPQ;
 
-    std::string index_file_name;
-    knowhere::Json conf = cfg_;
-    conf[knowhere::indexparam::NBITS] = NBITS_;
-    for (auto m : Ms_) {
-        conf[knowhere::indexparam::M] = m;
-        for (auto nlist : NLISTs_) {
-            conf[knowhere::indexparam::NLIST] = nlist;
-            std::vector<int32_t> params = {nlist, m};
+//     std::string index_file_name;
+//     knowhere::Json conf = cfg_;
+//     conf[knowhere::indexparam::NBITS] = NBITS_;
+//     for (auto m : Ms_) {
+//         conf[knowhere::indexparam::M] = m;
+//         for (auto nlist : NLISTs_) {
+//             conf[knowhere::indexparam::NLIST] = nlist;
+//             std::vector<int32_t> params = {nlist, m};
 
-            TEST_INDEX(ivf, knowhere::fp32, params);
-            TEST_INDEX(ivf, knowhere::fp16, params);
-            TEST_INDEX(ivf, knowhere::bf16, params);
-        }
-    }
-}
+//             TEST_INDEX(ivf, knowhere::fp32, params);
+//             TEST_INDEX(ivf, knowhere::fp16, params);
+//             TEST_INDEX(ivf, knowhere::bf16, params);
+//         }
+//     }
+// }
 
-TEST_F(Benchmark_float, TEST_SCANN) {
-    index_type_ = knowhere::IndexEnum::INDEX_FAISS_SCANN;
+// TEST_F(Benchmark_float, TEST_SCANN) {
+//     index_type_ = knowhere::IndexEnum::INDEX_FAISS_SCANN;
 
-    std::string index_file_name;
-    knowhere::Json conf = cfg_;
-    conf[knowhere::indexparam::WITH_RAW_DATA] = true;
-    for (auto nlist : NLISTs_) {
-        conf[knowhere::indexparam::NLIST] = nlist;
-        std::vector<int32_t> params = {nlist};
+//     std::string index_file_name;
+//     knowhere::Json conf = cfg_;
+//     conf[knowhere::indexparam::WITH_RAW_DATA] = true;
+//     for (auto nlist : NLISTs_) {
+//         conf[knowhere::indexparam::NLIST] = nlist;
+//         std::vector<int32_t> params = {nlist};
 
-        TEST_INDEX(scann, knowhere::fp32, params);
-        TEST_INDEX(scann, knowhere::fp16, params);
-        TEST_INDEX(scann, knowhere::bf16, params);
-    }
-}
+//         TEST_INDEX(scann, knowhere::fp32, params);
+//         TEST_INDEX(scann, knowhere::fp16, params);
+//         TEST_INDEX(scann, knowhere::bf16, params);
+//     }
+// }
 
-TEST_F(Benchmark_float, TEST_HNSW_FLAT) {
-    index_type_ = knowhere::IndexEnum::INDEX_HNSW;
+// TEST_F(Benchmark_float, TEST_HNSW_FLAT) {
+//     index_type_ = knowhere::IndexEnum::INDEX_HNSW;
 
-    std::string index_file_name;
-    knowhere::Json conf = cfg_;
-    for (auto M : HNSW_Ms_) {
-        conf[knowhere::indexparam::HNSW_M] = M;
-        for (auto efc : EFCONs_) {
-            conf[knowhere::indexparam::EFCONSTRUCTION] = efc;
-            std::vector<int32_t> params = {M, efc};
+//     std::string index_file_name;
+//     knowhere::Json conf = cfg_;
+//     for (auto M : HNSW_Ms_) {
+//         conf[knowhere::indexparam::HNSW_M] = M;
+//         for (auto efc : EFCONs_) {
+//             conf[knowhere::indexparam::EFCONSTRUCTION] = efc;
+//             std::vector<int32_t> params = {M, efc};
 
-            TEST_INDEX(hnsw, knowhere::fp32, params);
-            TEST_INDEX(hnsw, knowhere::fp16, params);
-            TEST_INDEX(hnsw, knowhere::bf16, params);
-        }
-    }
-}
+//             TEST_INDEX(hnsw, knowhere::fp32, params);
+//             TEST_INDEX(hnsw, knowhere::fp16, params);
+//             TEST_INDEX(hnsw, knowhere::bf16, params);
+//         }
+//     }
+// }
 
-TEST_F(Benchmark_float, TEST_HNSW_SQ) {
-    index_type_ = knowhere::IndexEnum::INDEX_HNSW_SQ;
+// TEST_F(Benchmark_float, TEST_HNSW_SQ) {
+//     index_type_ = knowhere::IndexEnum::INDEX_HNSW_SQ;
 
-    std::string index_file_name;
-    knowhere::Json conf = cfg_;
+//     std::string index_file_name;
+//     knowhere::Json conf = cfg_;
 
-    conf[knowhere::indexparam::HNSW_REFINE] = true;
-    conf[knowhere::indexparam::HNSW_REFINE_TYPE] = "FLAT";
+//     conf[knowhere::indexparam::HNSW_REFINE] = true;
+//     conf[knowhere::indexparam::HNSW_REFINE_TYPE] = "FLAT";
 
-    for (auto M : HNSW_Ms_) {
-        conf[knowhere::indexparam::HNSW_M] = M;
-        for (auto efc : EFCONs_) {
-            conf[knowhere::indexparam::EFCONSTRUCTION] = efc;
-            for (auto sq_type : HNSW_SQ_TYPEs_) {
-                conf[knowhere::indexparam::SQ_TYPE] = sq_type;
-                std::vector<std::string> params = {std::to_string(M), std::to_string(efc), sq_type};
+//     for (auto M : HNSW_Ms_) {
+//         conf[knowhere::indexparam::HNSW_M] = M;
+//         for (auto efc : EFCONs_) {
+//             conf[knowhere::indexparam::EFCONSTRUCTION] = efc;
+//             for (auto sq_type : HNSW_SQ_TYPEs_) {
+//                 conf[knowhere::indexparam::SQ_TYPE] = sq_type;
+//                 std::vector<std::string> params = {std::to_string(M), std::to_string(efc), sq_type};
 
-                TEST_INDEX(hnsw_refine, knowhere::fp32, params);
-                TEST_INDEX(hnsw_refine, knowhere::fp16, params);
-                TEST_INDEX(hnsw_refine, knowhere::bf16, params);
-            }
-        }
-    }
-}
+//                 TEST_INDEX(hnsw_refine, knowhere::fp32, params);
+//                 TEST_INDEX(hnsw_refine, knowhere::fp16, params);
+//                 TEST_INDEX(hnsw_refine, knowhere::bf16, params);
+//             }
+//         }
+//     }
+// }
 
-TEST_F(Benchmark_float, TEST_HNSW_PQ) {
-    index_type_ = knowhere::IndexEnum::INDEX_HNSW_PQ;
+// TEST_F(Benchmark_float, TEST_HNSW_PQ) {
+//     index_type_ = knowhere::IndexEnum::INDEX_HNSW_PQ;
 
-    std::string index_file_name;
-    knowhere::Json conf = cfg_;
+//     std::string index_file_name;
+//     knowhere::Json conf = cfg_;
 
-    conf[knowhere::indexparam::HNSW_REFINE] = true;
-    conf[knowhere::indexparam::HNSW_REFINE_TYPE] = "FLAT";
-    conf[knowhere::indexparam::NBITS] = NBITS_;
-    conf[knowhere::indexparam::M] = 8;
-    for (auto hnsw_m : HNSW_Ms_) {
-        conf[knowhere::indexparam::HNSW_M] = hnsw_m;
-        for (auto efc : EFCONs_) {
-            conf[knowhere::indexparam::EFCONSTRUCTION] = efc;
-            for (auto pq_m : Ms_) {
-                conf[knowhere::indexparam::M] = pq_m;
-                std::vector<int32_t> params = {hnsw_m, efc, pq_m};
+//     conf[knowhere::indexparam::HNSW_REFINE] = true;
+//     conf[knowhere::indexparam::HNSW_REFINE_TYPE] = "FLAT";
+//     conf[knowhere::indexparam::NBITS] = NBITS_;
+//     conf[knowhere::indexparam::M] = 8;
+//     for (auto hnsw_m : HNSW_Ms_) {
+//         conf[knowhere::indexparam::HNSW_M] = hnsw_m;
+//         for (auto efc : EFCONs_) {
+//             conf[knowhere::indexparam::EFCONSTRUCTION] = efc;
+//             for (auto pq_m : Ms_) {
+//                 conf[knowhere::indexparam::M] = pq_m;
+//                 std::vector<int32_t> params = {hnsw_m, efc, pq_m};
 
-                TEST_INDEX(hnsw_refine, knowhere::fp32, params);
-                TEST_INDEX(hnsw_refine, knowhere::fp16, params);
-                TEST_INDEX(hnsw_refine, knowhere::bf16, params);
-            }
-        }
-    }
-}
+//                 TEST_INDEX(hnsw_refine, knowhere::fp32, params);
+//                 TEST_INDEX(hnsw_refine, knowhere::fp16, params);
+//                 TEST_INDEX(hnsw_refine, knowhere::bf16, params);
+//             }
+//         }
+//     }
+// }
 
-TEST_F(Benchmark_float, TEST_HNSW_PRQ) {
-    index_type_ = knowhere::IndexEnum::INDEX_HNSW_PRQ;
+// TEST_F(Benchmark_float, TEST_HNSW_PRQ) {
+//     index_type_ = knowhere::IndexEnum::INDEX_HNSW_PRQ;
 
-    std::string index_file_name;
-    knowhere::Json conf = cfg_;
+//     std::string index_file_name;
+//     knowhere::Json conf = cfg_;
 
-    conf[knowhere::indexparam::HNSW_REFINE] = true;
-    conf[knowhere::indexparam::HNSW_REFINE_TYPE] = "FLAT";
-    conf[knowhere::indexparam::NBITS] = NBITS_;
-    conf[knowhere::indexparam::M] = 8;
-    conf[knowhere::indexparam::PRQ_NUM] = 2;
-    for (auto M : HNSW_Ms_) {
-        conf[knowhere::indexparam::HNSW_M] = M;
-        for (auto efc : EFCONs_) {
-            conf[knowhere::indexparam::EFCONSTRUCTION] = efc;
-            std::vector<int32_t> params = {M, efc};
+//     conf[knowhere::indexparam::HNSW_REFINE] = true;
+//     conf[knowhere::indexparam::HNSW_REFINE_TYPE] = "FLAT";
+//     conf[knowhere::indexparam::NBITS] = NBITS_;
+//     conf[knowhere::indexparam::M] = 8;
+//     conf[knowhere::indexparam::PRQ_NUM] = 2;
+//     for (auto M : HNSW_Ms_) {
+//         conf[knowhere::indexparam::HNSW_M] = M;
+//         for (auto efc : EFCONs_) {
+//             conf[knowhere::indexparam::EFCONSTRUCTION] = efc;
+//             std::vector<int32_t> params = {M, efc};
 
-            TEST_INDEX(hnsw_refine, knowhere::fp32, params);
-            TEST_INDEX(hnsw_refine, knowhere::fp16, params);
-            TEST_INDEX(hnsw_refine, knowhere::bf16, params);
-        }
-    }
-}
+//             TEST_INDEX(hnsw_refine, knowhere::fp32, params);
+//             TEST_INDEX(hnsw_refine, knowhere::fp16, params);
+//             TEST_INDEX(hnsw_refine, knowhere::bf16, params);
+//         }
+//     }
+// }
 
 #ifdef KNOWHERE_WITH_DISKANN
 TEST_F(Benchmark_float, TEST_DISKANN) {
@@ -620,20 +623,20 @@ TEST_F(Benchmark_float, TEST_CUVS_CAGRA) {
 }
 #endif
 
-TEST_F(Benchmark_float, TEST_IVF_RABITQ) {
-    index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ;
+// TEST_F(Benchmark_float, TEST_IVF_RABITQ) {
+//     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ;
 
-    std::string index_file_name;
-    knowhere::Json conf = cfg_;
-    for (auto nlist : NLISTs_) {
-        for (auto qb : {0, 4, 6, 8}) {
-            conf[knowhere::indexparam::NLIST] = nlist;
-            conf[knowhere::indexparam::RABITQ_QUERY_BITS] = qb;
-            std::vector<int32_t> params = {nlist, qb};
+//     std::string index_file_name;
+//     knowhere::Json conf = cfg_;
+//     for (auto nlist : NLISTs_) {
+//         for (auto qb : {0, 4, 6, 8}) {
+//             conf[knowhere::indexparam::NLIST] = nlist;
+//             conf[knowhere::indexparam::RABITQ_QUERY_BITS] = qb;
+//             std::vector<int32_t> params = {nlist, qb};
 
-            TEST_INDEX(ivf, knowhere::fp32, params);
-            TEST_INDEX(ivf, knowhere::fp16, params);
-            TEST_INDEX(ivf, knowhere::bf16, params);
-        }
-    }
-}
+//             TEST_INDEX(ivf, knowhere::fp32, params);
+//             TEST_INDEX(ivf, knowhere::fp16, params);
+//             TEST_INDEX(ivf, knowhere::bf16, params);
+//         }
+//     }
+// }

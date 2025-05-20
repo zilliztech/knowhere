@@ -855,8 +855,8 @@ template <
         //   void Apply(const float dis, const auto idx);
         typename Apply>
 void internal_bf16_vec_inner_products_ny_if(
-        const knowhere::bf16* __restrict x,
-        const knowhere::bf16* __restrict y,
+        const knowhere::bf16*  x,
+        const knowhere::bf16*  y,
         size_t d,
         const size_t ny,
         Pred pred,
@@ -872,17 +872,18 @@ void internal_bf16_vec_inner_products_ny_if(
                              const std::array<idx_type, 4> indices,
                              std::array<float, 4>& dis) {
         bf16_vec_inner_product_batch_4(
-                x,
-                y + indices[0] * d,
-                y + indices[1] * d,
-                y + indices[2] * d,
-                y + indices[3] * d,
-                d,
-                dis[0],
-                dis[1],
-                dis[2],
-                dis[3]);
+            const_cast<knowhere::bf16*>(x),
+            const_cast<knowhere::bf16*>(y + indices[0] * d),
+            const_cast<knowhere::bf16*>(y + indices[1] * d),
+            const_cast<knowhere::bf16*>(y + indices[2] * d),
+            const_cast<knowhere::bf16*>(y + indices[3] * d),
+            d,
+            dis[0],
+            dis[1],
+            dis[2],
+            dis[3]);
     };
+
     fvec_distance_ny_if<
             Pred,
             decltype(distance1),
@@ -891,7 +892,56 @@ void internal_bf16_vec_inner_products_ny_if(
             Apply,
             4,
             DEFAULT_BUFFER_SIZE>(
-            ny, pred, distance1, distance4, remapper, apply);
+            ny, pred, distance1, distance4, remapper, apply);      
+
+    // auto distance16 = [x, y, d](
+    //     const std::array<idx_type, 16> indices,
+    //     std::array<float, 16>& dis) {
+    //         bf16_vec_inner_product_batch_16_amx(
+    //         const_cast<knowhere::bf16*>(x),
+    //         const_cast<knowhere::bf16*>(y + indices[0] * d),
+    //         const_cast<knowhere::bf16*>(y + indices[1] * d),
+    //         const_cast<knowhere::bf16*>(y + indices[2] * d),
+    //         const_cast<knowhere::bf16*>(y + indices[3] * d),
+    //         const_cast<knowhere::bf16*>(y + indices[4] * d),
+    //         const_cast<knowhere::bf16*>(y + indices[5] * d),
+    //         const_cast<knowhere::bf16*>(y + indices[6] * d),
+    //         const_cast<knowhere::bf16*>(y + indices[7] * d),
+    //         const_cast<knowhere::bf16*>(y + indices[8] * d),
+    //         const_cast<knowhere::bf16*>(y + indices[9] * d),
+    //         const_cast<knowhere::bf16*>(y + indices[10] * d),
+    //         const_cast<knowhere::bf16*>(y + indices[11] * d),
+    //         const_cast<knowhere::bf16*>(y + indices[12] * d),
+    //         const_cast<knowhere::bf16*>(y + indices[13] * d),
+    //         const_cast<knowhere::bf16*>(y + indices[14] * d),
+    //         const_cast<knowhere::bf16*>(y + indices[15] * d),
+    //         d,
+    //         dis[0],
+    //         dis[1],
+    //         dis[2],
+    //         dis[3],
+    //         dis[4],
+    //         dis[5],
+    //         dis[6],
+    //         dis[7],
+    //         dis[8],
+    //         dis[9],
+    //         dis[10],
+    //         dis[11],
+    //         dis[12],
+    //         dis[13],
+    //         dis[14],
+    //         dis[15]);
+    //     };    
+    // fvec_distance_ny_if<
+    //         Pred,
+    //         decltype(distance1),
+    //         decltype(distance16),
+    //         IndexRemapper,
+    //         Apply,
+    //         16,
+    //         16>(
+    //         ny, pred, distance1, distance16, remapper, apply);
 }
 
 template <

@@ -221,9 +221,9 @@ if(WITH_UT)
   add_subdirectory(tests/ut)
 endif()
 
-if(WITH_BENCHMARK)
-  add_subdirectory(benchmark)
-endif()
+# if(WITH_BENCHMARK)
+add_subdirectory(benchmark)
+# endif()
 
 if(WITH_FAISS_TESTS)
   add_subdirectory(tests/faiss)
