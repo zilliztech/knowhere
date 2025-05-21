@@ -35,6 +35,7 @@ class KnowhereConfig {
         AVX2,      // only enable AVX2
         SSE4_2,    // only enable SSE4_2
         GENERIC,   // use arithmetic instead of SIMD
+        AMX
     };
 
     static std::string

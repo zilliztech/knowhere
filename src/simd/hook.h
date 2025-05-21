@@ -19,6 +19,7 @@
 namespace faiss {
 
 #if defined(__x86_64__)
+extern bool use_amx;
 extern bool use_avx512;
 extern bool use_avx2;
 extern bool use_sse4_2;
@@ -149,6 +150,8 @@ extern int (*rabitq_dp_popcnt)(const uint8_t*, const uint8_t*, const size_t, con
 
 ///////////////////////////////////////////////////////////////////////////////
 #if defined(__x86_64__)
+bool
+cpu_support_amx();
 bool
 cpu_support_avx512();
 bool

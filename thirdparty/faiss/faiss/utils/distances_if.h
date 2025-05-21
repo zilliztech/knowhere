@@ -867,81 +867,84 @@ void internal_bf16_vec_inner_products_ny_if(
     auto distance1 = [x, y, d](const idx_type idx) {
         return bf16_vec_inner_product(x, y + idx * d, d);
     };
-    // compute distances from the query to 4 elements
-    auto distance4 = [x, y, d](
-                             const std::array<idx_type, 4> indices,
-                             std::array<float, 4>& dis) {
-        bf16_vec_inner_product_batch_4(
-            const_cast<knowhere::bf16*>(x),
-            const_cast<knowhere::bf16*>(y + indices[0] * d),
-            const_cast<knowhere::bf16*>(y + indices[1] * d),
-            const_cast<knowhere::bf16*>(y + indices[2] * d),
-            const_cast<knowhere::bf16*>(y + indices[3] * d),
-            d,
-            dis[0],
-            dis[1],
-            dis[2],
-            dis[3]);
-    };
+    // printf("use_amx: %d, cpu_support_amx: %d\n",use_amx, cpu_support_amx());
+    if (use_amx && cpu_support_amx()) {
+        auto distance16 = [x, y, d](
+            const std::array<idx_type, 16> indices,
+            std::array<float, 16>& dis) {
+                bf16_vec_inner_product_batch_16_amx(
+                const_cast<knowhere::bf16*>(x),
+                const_cast<knowhere::bf16*>(y + indices[0] * d),
+                const_cast<knowhere::bf16*>(y + indices[1] * d),
+                const_cast<knowhere::bf16*>(y + indices[2] * d),
+                const_cast<knowhere::bf16*>(y + indices[3] * d),
+                const_cast<knowhere::bf16*>(y + indices[4] * d),
+                const_cast<knowhere::bf16*>(y + indices[5] * d),
+                const_cast<knowhere::bf16*>(y + indices[6] * d),
+                const_cast<knowhere::bf16*>(y + indices[7] * d),
+                const_cast<knowhere::bf16*>(y + indices[8] * d),
+                const_cast<knowhere::bf16*>(y + indices[9] * d),
+                const_cast<knowhere::bf16*>(y + indices[10] * d),
+                const_cast<knowhere::bf16*>(y + indices[11] * d),
+                const_cast<knowhere::bf16*>(y + indices[12] * d),
+                const_cast<knowhere::bf16*>(y + indices[13] * d),
+                const_cast<knowhere::bf16*>(y + indices[14] * d),
+                const_cast<knowhere::bf16*>(y + indices[15] * d),
+                d,
+                dis[0],
+                dis[1],
+                dis[2],
+                dis[3],
+                dis[4],
+                dis[5],
+                dis[6],
+                dis[7],
+                dis[8],
+                dis[9],
+                dis[10],
+                dis[11],
+                dis[12],
+                dis[13],
+                dis[14],
+                dis[15]);
+            };    
+        fvec_distance_ny_if<
+                Pred,
+                decltype(distance1),
+                decltype(distance16),
+                IndexRemapper,
+                Apply,
+                16,
+                16>(
+                ny, pred, distance1, distance16, remapper, apply);
+    } else {
+        // compute distances from the query to 4 elements
+        auto distance4 = [x, y, d](
+            const std::array<idx_type, 4> indices,
+            std::array<float, 4>& dis) {
+                bf16_vec_inner_product_batch_4(
+                const_cast<knowhere::bf16*>(x),
+                const_cast<knowhere::bf16*>(y + indices[0] * d),
+                const_cast<knowhere::bf16*>(y + indices[1] * d),
+                const_cast<knowhere::bf16*>(y + indices[2] * d),
+                const_cast<knowhere::bf16*>(y + indices[3] * d),
+                d,
+                dis[0],
+                dis[1],
+                dis[2],
+                dis[3]);
+            };
 
-    fvec_distance_ny_if<
-            Pred,
-            decltype(distance1),
-            decltype(distance4),
-            IndexRemapper,
-            Apply,
-            4,
-            DEFAULT_BUFFER_SIZE>(
-            ny, pred, distance1, distance4, remapper, apply);      
-
-    // auto distance16 = [x, y, d](
-    //     const std::array<idx_type, 16> indices,
-    //     std::array<float, 16>& dis) {
-    //         bf16_vec_inner_product_batch_16_amx(
-    //         const_cast<knowhere::bf16*>(x),
-    //         const_cast<knowhere::bf16*>(y + indices[0] * d),
-    //         const_cast<knowhere::bf16*>(y + indices[1] * d),
-    //         const_cast<knowhere::bf16*>(y + indices[2] * d),
-    //         const_cast<knowhere::bf16*>(y + indices[3] * d),
-    //         const_cast<knowhere::bf16*>(y + indices[4] * d),
-    //         const_cast<knowhere::bf16*>(y + indices[5] * d),
-    //         const_cast<knowhere::bf16*>(y + indices[6] * d),
-    //         const_cast<knowhere::bf16*>(y + indices[7] * d),
-    //         const_cast<knowhere::bf16*>(y + indices[8] * d),
-    //         const_cast<knowhere::bf16*>(y + indices[9] * d),
-    //         const_cast<knowhere::bf16*>(y + indices[10] * d),
-    //         const_cast<knowhere::bf16*>(y + indices[11] * d),
-    //         const_cast<knowhere::bf16*>(y + indices[12] * d),
-    //         const_cast<knowhere::bf16*>(y + indices[13] * d),
-    //         const_cast<knowhere::bf16*>(y + indices[14] * d),
-    //         const_cast<knowhere::bf16*>(y + indices[15] * d),
-    //         d,
-    //         dis[0],
-    //         dis[1],
-    //         dis[2],
-    //         dis[3],
-    //         dis[4],
-    //         dis[5],
-    //         dis[6],
-    //         dis[7],
-    //         dis[8],
-    //         dis[9],
-    //         dis[10],
-    //         dis[11],
-    //         dis[12],
-    //         dis[13],
-    //         dis[14],
-    //         dis[15]);
-    //     };    
-    // fvec_distance_ny_if<
-    //         Pred,
-    //         decltype(distance1),
-    //         decltype(distance16),
-    //         IndexRemapper,
-    //         Apply,
-    //         16,
-    //         16>(
-    //         ny, pred, distance1, distance16, remapper, apply);
+        fvec_distance_ny_if<
+                Pred,
+                decltype(distance1),
+                decltype(distance4),
+                IndexRemapper,
+                Apply,
+                4,
+                DEFAULT_BUFFER_SIZE>(
+                ny, pred, distance1, distance4, remapper, apply);         
+    }                
 }
 
 template <

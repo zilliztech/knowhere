@@ -58,26 +58,37 @@ std::string
 KnowhereConfig::SetSimdType(const SimdType simd_type) {
 #ifdef __x86_64__
     if (simd_type == SimdType::AUTO) {
+        faiss::use_amx = true;
         faiss::use_avx512 = true;
         faiss::use_avx2 = true;
         faiss::use_sse4_2 = true;
         LOG_KNOWHERE_INFO_ << "FAISS expect simdType::AUTO";
-    } else if (simd_type == SimdType::AVX512) {
+    } else if (simd_type == SimdType::AMX) {
+        faiss::use_amx = true;
+        faiss::use_avx512 = true;
+        faiss::use_avx2 = true;
+        faiss::use_sse4_2 = true;
+        LOG_KNOWHERE_INFO_ << "FAISS expect simdType::AMX";
+    }  else if (simd_type == SimdType::AVX512) {
+        faiss::use_amx = false;
         faiss::use_avx512 = true;
         faiss::use_avx2 = true;
         faiss::use_sse4_2 = true;
         LOG_KNOWHERE_INFO_ << "FAISS expect simdType::AVX512";
     } else if (simd_type == SimdType::AVX2) {
+        faiss::use_amx = false;
         faiss::use_avx512 = false;
         faiss::use_avx2 = true;
         faiss::use_sse4_2 = true;
         LOG_KNOWHERE_INFO_ << "FAISS expect simdType::AVX2";
     } else if (simd_type == SimdType::SSE4_2) {
+        faiss::use_amx = false;
         faiss::use_avx512 = false;
         faiss::use_avx2 = false;
         faiss::use_sse4_2 = true;
         LOG_KNOWHERE_INFO_ << "FAISS expect simdType::SSE4_2";
     } else if (simd_type == SimdType::GENERIC) {
+        faiss::use_amx = false;
         faiss::use_avx512 = false;
         faiss::use_avx2 = false;
         faiss::use_sse4_2 = false;

@@ -23,7 +23,7 @@ void sq_hook() {
     static std::mutex hook_mutex;
     std::lock_guard<std::mutex> lock(hook_mutex);
 
-    if (use_avx512 && cpu_support_avx512()) {
+    if ((use_avx512 || use_amx) && cpu_support_avx512()) {
         /* for IVFSQ */
         sq_get_distance_computer = sq_get_distance_computer_avx512;
         sq_sel_quantizer = sq_select_quantizer_avx512;

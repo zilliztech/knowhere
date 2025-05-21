@@ -43,7 +43,7 @@ class InstructionSet {
           f_7_EBX_{0},
           f_7_ECX_{0},
           f_81_ECX_{0},
-          f_81_EDX_{0},
+          f_81_EDX_{0},          
           data_{},
           extdata_{} {
         std::array<int, 4> cpui;
@@ -86,6 +86,7 @@ class InstructionSet {
         if (nIds_ >= 7) {
             f_7_EBX_ = data_[7][1];
             f_7_ECX_ = data_[7][2];
+            f_7_EDX_ = data_[7][3];  // <- add this line
         }
 
         // Calling __cpuid with 0x80000000 as the function_id argument
@@ -302,6 +303,15 @@ class InstructionSet {
         return f_7_EBX_[31];
     }
 
+    /// Advanced Matrix Extensions (base tile instructions)
+    bool AMXTILE()    const { return f_7_EDX_[24]; }
+
+    /// AMX‐INT8 Tile Matrix Multiply unit
+    bool AMXINT8()    const { return f_7_EDX_[25]; }
+
+    /// AMX‐BF16 Tile Matrix Multiply unit
+    bool AMXBF16()    const { return f_7_EDX_[22]; }    
+
     bool
     PREFETCHWT1() {
         return f_7_ECX_[0];
@@ -370,6 +380,7 @@ class InstructionSet {
     std::bitset<32> f_1_EDX_;
     std::bitset<32> f_7_EBX_;
     std::bitset<32> f_7_ECX_;
+    std::bitset<32> f_7_EDX_;      // capture EDX for AMX bits
     std::bitset<32> f_81_ECX_;
     std::bitset<32> f_81_EDX_;
     std::vector<std::array<int, 4>> data_;
