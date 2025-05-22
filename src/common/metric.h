@@ -33,6 +33,7 @@ Str2FaissMetricType(std::string metric) {
         {metric::JACCARD, faiss::MetricType::METRIC_Jaccard},
         {metric::SUBSTRUCTURE, faiss::MetricType::METRIC_Substructure},
         {metric::SUPERSTRUCTURE, faiss::MetricType::METRIC_Superstructure},
+        {metric::MHJACCARD, faiss::MetricType::METRIC_MinHash_Jaccard},
     };
 
     std::transform(metric.begin(), metric.end(), metric.begin(), toupper);
