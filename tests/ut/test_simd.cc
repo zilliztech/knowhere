@@ -43,7 +43,54 @@ ConvertVector(float* data, int dim, int rows) {
     }
     return x;
 }
+TEST_CASE("Test minhash function") {
+    auto simd_type = knowhere::KnowhereConfig::SimdType::AVX512;
+    knowhere::KnowhereConfig::SetSimdType(simd_type);
+    constexpr size_t seed = 111;
+    SECTION("test binary search funtion ") {
+        size_t size = 1200;
+        auto x = GenRandomVector<uint64_t>(size, 1, seed);
+        std::sort(x.get(), x.get() + size);
+        auto key = x[1000];
 
+        CHECK_EQ(faiss::u64_binary_search_eq(x.get(), size, key), faiss::u64_binary_search_eq_ref(x.get(), size, key));
+        CHECK_EQ(faiss::u64_binary_search_ge(x.get(), size, key), faiss::u64_binary_search_ge_ref(x.get(), size, key));
+    }
+    SECTION("test minhash distance") {
+        auto dim = GENERATE(as<size_t>{}, 1, 2, 4, 7, 8, 12, 14, 16, 21, 28, 32, 35, 42, 49, 56, 64, 128, 256);
+        auto u64_x = GenRandomVector<uint64_t>(dim, 4, seed);
+        auto u64_y = GenRandomVector<uint64_t>(dim, 1, seed + 222);
+        auto u32_x = GenRandomVector<uint32_t>(dim, 4, seed);
+        auto u32_y = GenRandomVector<uint32_t>(dim, 1, seed + 222);
+        float res_dis[4], gt_ids[4];
+        CHECK_EQ(faiss::u64_jaccard_distance((const char*)u64_x.get(), (const char*)u64_x.get(), dim, 8), 1.0);
+        CHECK_EQ(faiss::u64_jaccard_distance((const char*)u64_x.get(), (const char*)u64_y.get(), dim, 8),
+                 faiss::u64_jaccard_distance_ref((const char*)u64_x.get(), (const char*)u64_y.get(), dim, 8));
+        CHECK_EQ(faiss::u32_jaccard_distance((const char*)u32_x.get(), (const char*)u32_x.get(), dim, 4), 1.0);
+        CHECK_EQ(faiss::u32_jaccard_distance((const char*)u32_x.get(), (const char*)u32_y.get(), dim, 4),
+                 faiss::u32_jaccard_distance_ref((const char*)u32_x.get(), (const char*)u32_y.get(), dim, 4));
+        faiss::u32_jaccard_distance_batch_4(
+            (const char*)(&u32_y[0]), (const char*)(&u32_x[0]), (const char*)(&u32_x[1]), (const char*)(&u32_x[2]),
+            (const char*)(&u32_x[3]), dim, 4, res_dis[0], res_dis[1], res_dis[2], res_dis[3]);
+        faiss::u32_jaccard_distance_batch_4_ref(
+            (const char*)(&u32_y[0]), (const char*)(&u32_x[0]), (const char*)(&u32_x[1]), (const char*)(&u32_x[2]),
+            (const char*)(&u32_x[3]), dim, 4, gt_ids[0], gt_ids[1], gt_ids[2], gt_ids[3]);
+        CHECK_EQ(res_dis[0], gt_ids[0]);
+        CHECK_EQ(res_dis[1], gt_ids[1]);
+        CHECK_EQ(res_dis[2], gt_ids[2]);
+        CHECK_EQ(res_dis[3], gt_ids[3]);
+        faiss::u64_jaccard_distance_batch_4(
+            (const char*)(&u64_y[0]), (const char*)(&u64_x[0]), (const char*)(&u64_x[1]), (const char*)(&u64_x[2]),
+            (const char*)(&u64_x[3]), dim, 8, res_dis[0], res_dis[1], res_dis[2], res_dis[3]);
+        faiss::u64_jaccard_distance_batch_4_ref(
+            (const char*)(&u64_y[0]), (const char*)(&u64_x[0]), (const char*)(&u64_x[1]), (const char*)(&u64_x[2]),
+            (const char*)(&u64_x[3]), dim, 8, gt_ids[0], gt_ids[1], gt_ids[2], gt_ids[3]);
+        CHECK_EQ(res_dis[0], gt_ids[0]);
+        CHECK_EQ(res_dis[1], gt_ids[1]);
+        CHECK_EQ(res_dis[2], gt_ids[2]);
+        CHECK_EQ(res_dis[3], gt_ids[3]);
+    }
+}
 TEST_CASE("Test distance") {
     using Catch::Approx;
     auto simd_type = GENERATE(as<knowhere::KnowhereConfig::SimdType>{}, knowhere::KnowhereConfig::SimdType::AVX512,
