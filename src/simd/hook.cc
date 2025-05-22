@@ -104,6 +104,14 @@ decltype(int8_vec_L2sqr_batch_4) int8_vec_L2sqr_batch_4 = int8_vec_L2sqr_batch_4
 decltype(fvec_masked_sum) fvec_masked_sum = fvec_masked_sum_ref;
 decltype(rabitq_dp_popcnt) rabitq_dp_popcnt = rabitq_dp_popcnt_ref;
 
+// minhash
+decltype(u64_binary_search_eq) u64_binary_search_eq = u64_binary_search_eq_ref;
+decltype(u64_binary_search_ge) u64_binary_search_ge = u64_binary_search_ge_ref;
+decltype(calculate_hash) calculate_hash = calculate_hash_ref;
+decltype(u32_jaccard_distance) u32_jaccard_distance = u32_jaccard_distance_ref;
+decltype(u32_jaccard_distance_batch_4) u32_jaccard_distance_batch_4 = u32_jaccard_distance_batch_4_ref;
+decltype(u64_jaccard_distance) u64_jaccard_distance = u64_jaccard_distance_ref;
+decltype(u64_jaccard_distance_batch_4) u64_jaccard_distance_batch_4 = u64_jaccard_distance_batch_4_ref;
 ///////////////////////////////////////////////////////////////////////////////
 #if defined(__x86_64__)
 bool
@@ -276,7 +284,14 @@ fvec_hook(std::string& simd_type) {
         } else {
             rabitq_dp_popcnt = rabitq_dp_popcnt_avx512;
         }
-
+        // minhash
+        u64_binary_search_eq = u64_binary_search_eq_avx512;
+        u64_binary_search_ge = u64_binary_search_ge_avx512;
+        calculate_hash = calculate_hash_avx512;
+        u32_jaccard_distance = u32_jaccard_distance_ref;
+        u32_jaccard_distance_batch_4 = u32_jaccard_distance_batch_4_ref;
+        u64_jaccard_distance = u64_jaccard_distance_ref;
+        u64_jaccard_distance_batch_4 = u64_jaccard_distance_batch_4_ref;
         //
         simd_type = "AVX512";
         support_pq_fast_scan = true;
