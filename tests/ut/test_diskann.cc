@@ -52,17 +52,6 @@ constexpr float kKnnRecall = 0.9;
 constexpr float kL2RangeAp = 0.9;
 constexpr float kIpRangeAp = 0.9;
 constexpr float kCosineRangeAp = 0.9;
-
-template <typename DataType>
-void
-WriteRawDataToDisk(const std::string data_path, const DataType* raw_data, const uint32_t num, const uint32_t dim) {
-    std::ofstream writer(data_path.c_str(), std::ios::binary);
-    writer.write((char*)&num, sizeof(uint32_t));
-    writer.write((char*)&dim, sizeof(uint32_t));
-    writer.write((char*)raw_data, sizeof(DataType) * num * dim);
-    writer.close();
-}
-
 }  // namespace
 TEST_CASE("Valid diskann build params test", "[diskann]") {
     int rows_num = 1000000;
@@ -277,7 +266,6 @@ base_search() {
 
         // generate the gt of knn search and range search
         auto base_json = base_gen();
-
         auto result_knn = knowhere::BruteForce::Search<DataType>(base_ds, query_ds, base_json, nullptr);
         knn_gt_ptr = result_knn.value();
         auto result_range = knowhere::BruteForce::RangeSearch<DataType>(base_ds, query_ds, base_json, nullptr);
