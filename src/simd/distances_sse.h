@@ -89,8 +89,4 @@ fvec_masked_sum_sse(const float* q, const uint8_t* x, const size_t d);
 int
 rabitq_dp_popcnt_sse(const uint8_t* q, const uint8_t* x, const size_t d, const size_t nb);
 
-///////////////////////////////////////////////////////////////////////////////
-// minhash
-uint64_t
-calculate_hash_sse(const char* data, size_t size);
 }  // namespace faiss

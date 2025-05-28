@@ -50,7 +50,6 @@ if(__X86_64)
     ${UTILS_SRC} $<TARGET_OBJECTS:utils_sse> $<TARGET_OBJECTS:utils_avx>
     $<TARGET_OBJECTS:utils_avx512> $<TARGET_OBJECTS:utils_avx512icx>)
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
-  target_link_libraries(knowhere_utils PUBLIC xxHash::xxhash)
 endif()
 
 if(__AARCH64)
@@ -100,14 +99,12 @@ if(__AARCH64)
   endif()
 
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
-  target_link_libraries(knowhere_utils PUBLIC xxHash::xxhash)
 endif()
 
 if(__RISCV64)
   set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc)
   add_library(knowhere_utils STATIC ${UTILS_SRC})
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
-  target_link_libraries(knowhere_utils PUBLIC xxHash::xxhash)
 endif()
 
 # ToDo: Add distances_vsx.cc for powerpc64 SIMD acceleration
@@ -115,7 +112,6 @@ if(__PPC64)
   set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc src/simd/distances_powerpc.cc)
   add_library(knowhere_utils STATIC ${UTILS_SRC})
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
-  target_link_libraries(knowhere_utils PUBLIC xxHash::xxhash)
 endif()
 
 
@@ -134,9 +130,6 @@ else()
   find_package(LAPACK REQUIRED)
   find_package(BLAS REQUIRED)
 endif()
-
-find_package(xxHash REQUIRED)
-include_directories(${xxHash_INCLUDE_DIRS})
 
 if(__X86_64)
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX2_SRCS})

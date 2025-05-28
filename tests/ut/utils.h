@@ -67,9 +67,8 @@ GenBinDataSet(int rows, int dim, int seed = 42) {
     std::mt19937 rng(seed);
     std::uniform_int_distribution<> distrib(0.0, 100.0);
     int uint8_num = dim / 8;
-    uint64_t total_size = rows * uint8_num;
-    uint8_t* ts = new uint8_t[total_size];
-    for (uint64_t i = 0; i < total_size; ++i) ts[i] = (uint8_t)distrib(rng);
+    uint8_t* ts = new uint8_t[rows * uint8_num];
+    for (int i = 0; i < rows * uint8_num; ++i) ts[i] = (uint8_t)distrib(rng);
     auto ds = knowhere::GenDataSet(rows, dim, ts);
     ds->SetIsOwner(true);
     return ds;
@@ -121,6 +120,7 @@ GetKNNRecall(const knowhere::DataSet& ground_truth, const knowhere::DataSet& res
     for (auto i = 0; i < nq; ++i) {
         std::vector<int64_t> ids_0(gt_ids + i * gt_k, gt_ids + i * gt_k + res_k);
         std::vector<int64_t> ids_1(res_ids + i * res_k, res_ids + i * res_k + res_k);
+
         std::sort(ids_0.begin(), ids_0.end());
         std::sort(ids_1.begin(), ids_1.end());
 
@@ -245,20 +245,6 @@ GetRelativeLoss(float gt_res, float res) {
         return gt_res;
     }
     return std::abs((gt_res - res) / gt_res);
-}
-
-template <typename DataType>
-void
-WriteRawDataToDisk(const std::string data_path, const DataType* raw_data, const uint32_t num, const uint32_t dim) {
-    std::ofstream writer(data_path.c_str(), std::ios::binary);
-    writer.write((char*)&num, sizeof(uint32_t));
-    writer.write((char*)&dim, sizeof(uint32_t));
-    uint64_t size = sizeof(DataType) * num * dim;
-    if constexpr (std::is_same_v<DataType, knowhere::bin1>) {
-        size = num * dim / 8.0;
-    }
-    writer.write((char*)raw_data, size);
-    writer.close();
 }
 
 inline bool
