@@ -14,7 +14,6 @@
 #include <strings.h>
 
 #include <algorithm>
-#include <fstream>
 #include <vector>
 
 #include "knowhere/binaryset.h"
@@ -225,25 +224,6 @@ template <typename T, typename R>
 static void
 readBinaryPOD(R& in, T& podRef) {
     in.read((char*)&podRef, sizeof(T));
-}
-
-inline void
-load_binary_vec(const std::string& bin_file, std::unique_ptr<char[]>& data, size_t& npts, size_t& dim) {
-    std::ifstream file(bin_file, std::ios::binary);
-    if (!file.is_open()) {
-        throw std::runtime_error("fail to open file: " + bin_file);
-    }
-    uint32_t n, d;
-    file.read(reinterpret_cast<char*>(&n), sizeof(uint32_t));
-    file.read(reinterpret_cast<char*>(&d), sizeof(uint32_t));
-    npts = n;
-    dim = d;
-    if (dim % 8 != 0) {
-        throw std::runtime_error("fail to load binary vector base file, dim % 8 != 0 ");
-    }
-    uint64_t total_size = dim * npts / 8;
-    data = std::make_unique<char[]>(total_size);
-    file.read(reinterpret_cast<char*>(data.get()), total_size);
 }
 
 // taken from

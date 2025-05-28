@@ -20,7 +20,6 @@
 
 #include "distances_ref.h"
 #include "faiss/impl/platform_macros.h"
-#include "xxhash.h"
 
 namespace faiss {
 
@@ -583,9 +582,5 @@ rabitq_dp_popcnt_sse(const uint8_t* q, const uint8_t* x, const size_t d, const s
     return dot;
 }
 
-uint64_t
-calculate_hash_sse(const char* data, size_t size) {
-    return XXH3_64bits(data, size);
-}
 }  // namespace faiss
 #endif

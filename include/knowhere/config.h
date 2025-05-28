@@ -633,12 +633,6 @@ class BaseConfig : public Config {
      */
     CFG_INT refine_type;
     CFG_BOOL refine_with_quant;
-    /*
-     * band is a special parameters of BF search and MinHash index node train.
-     */
-    CFG_INT band;
-    CFG_BOOL search_with_jaccard;
-    CFG_INT mh_element_bit_width;
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(dim).allow_empty_without_default().description("vector dim").for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
@@ -787,17 +781,6 @@ class BaseConfig : public Config {
             .for_search()
             .for_range_search()
             .for_iterator();
-        KNOWHERE_CONFIG_DECLARE_FIELD(band).description("param of MinHashLSH").set_default(1).for_train().for_search();
-        KNOWHERE_CONFIG_DECLARE_FIELD(mh_element_bit_width)
-            .description("sizeof(hash code), the hash element should be aligned on 8 bits")
-            .set_default(8)
-            .set_range(8, 256)
-            .for_train()
-            .for_search();
-        KNOWHERE_CONFIG_DECLARE_FIELD(search_with_jaccard)
-            .description("return the jaccard distance of minhash vector search or minhashlsh hit flag.")
-            .set_default(false)
-            .for_search();
     }
 };
 }  // namespace knowhere
