@@ -13,7 +13,8 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-set(RAPIDS_VERSION 25.02)
+set(RAPIDS_VERSION 25.06)
+set(rapids-cmake-version ${RAPIDS_VERSION})
 
 if(NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/RAPIDS.cmake)
   file(
