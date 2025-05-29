@@ -56,6 +56,7 @@ constexpr const char* INDEX_HNSW_PQ = "HNSW_PQ";
 constexpr const char* INDEX_HNSW_PRQ = "HNSW_PRQ";
 
 constexpr const char* INDEX_DISKANN = "DISKANN";
+constexpr const char* INDEX_MINHASH_LSH = "MINHASH_LSH";
 
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX = "SPARSE_INVERTED_INDEX";
 constexpr const char* INDEX_SPARSE_WAND = "SPARSE_WAND";
@@ -187,6 +188,17 @@ constexpr const char* DROP_RATIO_SEARCH = "drop_ratio_search";
 // RaBitQ Params
 constexpr const char* RABITQ_QUERY_BITS = "rbq_bits_query";
 
+// minhash meta Params
+constexpr const char* MH_ELEMENT_BIT_WIDTH = "mh_element_bit_width";
+constexpr const char* MH_LSH_SEARCH_WITH_JACCARD = "mh_search_with_jaccard";
+// minhash lsh index params
+constexpr const char* MH_LSH_ALIGNED_BLOCK_SIZE = "mh_lsh_aligned_block_size";
+constexpr const char* MH_LSH_BAND = "mh_lsh_band";
+constexpr const char* MH_LSH_SHARED_BLOOM_FILTER = "mh_lsh_shared_bloom_filter";
+constexpr const char* MH_LSH_BLOOM_FALSE_POSITIVE_RPOB = "mh_lsh_bloom_false_positive_prob";
+constexpr const char* MH_LSH_HASH_CODE_IN_MEM = "mh_lsh_code_in_mem";
+constexpr const char* MH_LSH_REFINE_K = "refine_k";
+constexpr const char* MH_LSH_BATCH_SEARCH = "mh_lsh_batch_search";
 }  // namespace indexparam
 
 using MetricType = std::string;
@@ -197,6 +209,7 @@ constexpr const char* L2 = "L2";
 constexpr const char* COSINE = "COSINE";
 constexpr const char* HAMMING = "HAMMING";
 constexpr const char* JACCARD = "JACCARD";
+constexpr const char* MHJACCARD = "MHJACCARD";
 constexpr const char* SUBSTRUCTURE = "SUBSTRUCTURE";
 constexpr const char* SUPERSTRUCTURE = "SUPERSTRUCTURE";
 constexpr const char* BM25 = "BM25";
