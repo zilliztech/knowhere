@@ -347,6 +347,165 @@ fvec_inner_products_ny_sve(float* ip, const float* x, const float* y, size_t d, 
     }
 }
 
+float
+int8_vec_L2sqr_sve(const int8_t* x, const int8_t* y, size_t d) {
+    int32_t scalar_sum = 0;
+
+    if (d < 16) {
+        for (size_t i = 0; i < d; ++i) {
+            int32_t diff = x[i] - y[i];
+            scalar_sum += diff * diff;
+        }
+        return static_cast<float>(scalar_sum);
+    }
+
+    svint32_t sum_a2 = svdup_n_s32(0);
+    svint32_t sum_ab = svdup_n_s32(0);
+    svint32_t sum_b2 = svdup_n_s32(0);
+
+    size_t vl = svcntb();
+    size_t i = 0;
+    svbool_t pg = svptrue_b8();
+
+    for (; i + vl <= d; i += vl) {
+        svint8_t vx = svld1_s8(pg, x + i);
+        svint8_t vy = svld1_s8(pg, y + i);
+        sum_a2 = svdot_s32(sum_a2, vx, vx);
+        sum_ab = svdot_s32(sum_ab, vx, vy);
+        sum_b2 = svdot_s32(sum_b2, vy, vy);
+    }
+
+    if (i < d) {
+        pg = svwhilelt_b8(i, d);
+        svint8_t vx = svld1_s8(pg, x + i);
+        svint8_t vy = svld1_s8(pg, y + i);
+        sum_a2 = svdot_s32(sum_a2, vx, vx);
+        sum_ab = svdot_s32(sum_ab, vx, vy);
+        sum_b2 = svdot_s32(sum_b2, vy, vy);
+    }
+
+    int32_t total_a2 = svaddv_s32(svptrue_b32(), sum_a2);
+    int32_t total_ab = svaddv_s32(svptrue_b32(), sum_ab);
+    int32_t total_b2 = svaddv_s32(svptrue_b32(), sum_b2);
+
+    return static_cast<float>(total_a2 - 2 * total_ab + total_b2);
+}
+
+float
+int8_vec_norm_L2sqr_sve(const int8_t* x, size_t d) {
+    const size_t vl = svcntb();
+    svint32_t sum = svdup_n_s32(0);
+
+    size_t i = 0;
+    svbool_t pg = svwhilelt_b8((unsigned long)i, (unsigned long)d);
+    while (svptest_any(svptrue_b8(), pg)) {
+        svint8_t a = svld1_s8(pg, x + i);
+
+        sum = svdot_s32(sum, a, a);
+
+        i += vl;
+        pg = svwhilelt_b8((unsigned long)i, (unsigned long)d);
+    }
+
+    int32_t result = svaddv_s32(svptrue_b32(), sum);
+    return static_cast<float>(result);
+}
+
+void
+int8_vec_L2sqr_batch_4_sve(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2, const int8_t* y3,
+                           const size_t dim, float& dis0, float& dis1, float& dis2, float& dis3) {
+    int32_t sum_a2 = 0;
+    int32_t sum_ab0 = 0, sum_ab1 = 0, sum_ab2 = 0, sum_ab3 = 0;
+    int32_t sum_b20 = 0, sum_b21 = 0, sum_b22 = 0, sum_b23 = 0;
+    if (dim == 0) {
+        dis0 = dis1 = dis2 = dis3 = 0.0f;
+        return;
+    }
+    if (dim < 16) {
+        for (size_t i = 0; i < dim; i++) {
+            int16_t xi = x[i];
+            int16_t y0i = y0[i];
+            int16_t y1i = y1[i];
+            int16_t y2i = y2[i];
+            int16_t y3i = y3[i];
+
+            sum_a2 += xi * xi;
+            sum_ab0 += xi * y0i;
+            sum_ab1 += xi * y1i;
+            sum_ab2 += xi * y2i;
+            sum_ab3 += xi * y3i;
+            sum_b20 += y0i * y0i;
+            sum_b21 += y1i * y1i;
+            sum_b22 += y2i * y2i;
+            sum_b23 += y3i * y3i;
+        }
+
+        dis0 = static_cast<float>(sum_a2 - 2 * sum_ab0 + sum_b20);
+        dis1 = static_cast<float>(sum_a2 - 2 * sum_ab1 + sum_b21);
+        dis2 = static_cast<float>(sum_a2 - 2 * sum_ab2 + sum_b22);
+        dis3 = static_cast<float>(sum_a2 - 2 * sum_ab3 + sum_b23);
+        return;
+    }
+    svint32_t vec_a2 = svdup_n_s32(0);
+    svint32_t vec_ab0 = svdup_n_s32(0);
+    svint32_t vec_ab1 = svdup_n_s32(0);
+    svint32_t vec_ab2 = svdup_n_s32(0);
+    svint32_t vec_ab3 = svdup_n_s32(0);
+    svint32_t vec_b20 = svdup_n_s32(0);
+    svint32_t vec_b21 = svdup_n_s32(0);
+    svint32_t vec_b22 = svdup_n_s32(0);
+    svint32_t vec_b23 = svdup_n_s32(0);
+    const size_t vl = svcntb();
+    const svbool_t pg = svptrue_b8();
+    size_t d = 0;
+    for (; d + vl <= dim; d += vl) {
+        svint8_t a = svld1_s8(pg, x + d);
+        svint8_t b0 = svld1_s8(pg, y0 + d);
+        svint8_t b1 = svld1_s8(pg, y1 + d);
+        svint8_t b2 = svld1_s8(pg, y2 + d);
+        svint8_t b3 = svld1_s8(pg, y3 + d);
+        vec_a2 = svdot_s32(vec_a2, a, a);
+        vec_ab0 = svdot_s32(vec_ab0, a, b0);
+        vec_ab1 = svdot_s32(vec_ab1, a, b1);
+        vec_ab2 = svdot_s32(vec_ab2, a, b2);
+        vec_ab3 = svdot_s32(vec_ab3, a, b3);
+        vec_b20 = svdot_s32(vec_b20, b0, b0);
+        vec_b21 = svdot_s32(vec_b21, b1, b1);
+        vec_b22 = svdot_s32(vec_b22, b2, b2);
+        vec_b23 = svdot_s32(vec_b23, b3, b3);
+    }
+    for (; d < dim; d++) {
+        int16_t xi = x[d];
+        int16_t y0i = y0[d];
+        int16_t y1i = y1[d];
+        int16_t y2i = y2[d];
+        int16_t y3i = y3[d];
+
+        sum_a2 += xi * xi;
+        sum_ab0 += xi * y0i;
+        sum_ab1 += xi * y1i;
+        sum_ab2 += xi * y2i;
+        sum_ab3 += xi * y3i;
+        sum_b20 += y0i * y0i;
+        sum_b21 += y1i * y1i;
+        sum_b22 += y2i * y2i;
+        sum_b23 += y3i * y3i;
+    }
+    sum_a2 += svaddv_s32(svptrue_b32(), vec_a2);
+    sum_ab0 += svaddv_s32(svptrue_b32(), vec_ab0);
+    sum_ab1 += svaddv_s32(svptrue_b32(), vec_ab1);
+    sum_ab2 += svaddv_s32(svptrue_b32(), vec_ab2);
+    sum_ab3 += svaddv_s32(svptrue_b32(), vec_ab3);
+    sum_b20 += svaddv_s32(svptrue_b32(), vec_b20);
+    sum_b21 += svaddv_s32(svptrue_b32(), vec_b21);
+    sum_b22 += svaddv_s32(svptrue_b32(), vec_b22);
+    sum_b23 += svaddv_s32(svptrue_b32(), vec_b23);
+    dis0 = static_cast<float>(sum_a2 - 2 * sum_ab0 + sum_b20);
+    dis1 = static_cast<float>(sum_a2 - 2 * sum_ab1 + sum_b21);
+    dis2 = static_cast<float>(sum_a2 - 2 * sum_ab2 + sum_b22);
+    dis3 = static_cast<float>(sum_a2 - 2 * sum_ab3 + sum_b23);
+}
+
 }  // namespace faiss
 
 #endif

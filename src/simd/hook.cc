@@ -464,6 +464,11 @@ fvec_hook(std::string& simd_type) {
         fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_sve;
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_sve;
 
+        // int8
+        int8_vec_L2sqr = int8_vec_L2sqr_sve;
+        int8_vec_norm_L2sqr = int8_vec_norm_L2sqr_sve;
+        int8_vec_L2sqr_batch_4 = int8_vec_L2sqr_batch_4_sve;
+
         simd_type = "SVE";
         support_pq_fast_scan = true;
 #endif
