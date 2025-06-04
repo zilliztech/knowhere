@@ -1007,11 +1007,19 @@ TEST_CASE("Test config", "[FormatAndCheck]") {
             CFG_FLOAT float_val;
             CFG_BOOL true_val;
             CFG_BOOL false_val;
+            CFG_BOOL True_val;
+            CFG_BOOL False_val;
+            CFG_BOOL TRUE_val;
+            CFG_BOOL FALSE_val;
             KNOHWERE_DECLARE_CONFIG(TestConfig) {
                 KNOWHERE_CONFIG_DECLARE_FIELD(int_val).for_train_and_search();
                 KNOWHERE_CONFIG_DECLARE_FIELD(float_val).for_train_and_search();
                 KNOWHERE_CONFIG_DECLARE_FIELD(true_val).for_train_and_search();
                 KNOWHERE_CONFIG_DECLARE_FIELD(false_val).for_train_and_search();
+                KNOWHERE_CONFIG_DECLARE_FIELD(True_val).for_train_and_search();
+                KNOWHERE_CONFIG_DECLARE_FIELD(False_val).for_train_and_search();
+                KNOWHERE_CONFIG_DECLARE_FIELD(TRUE_val).for_train_and_search();
+                KNOWHERE_CONFIG_DECLARE_FIELD(FALSE_val).for_train_and_search();
             }
         };
 
@@ -1022,7 +1030,11 @@ TEST_CASE("Test config", "[FormatAndCheck]") {
             "int_val": "123",
             "float_val": "1.23",
             "true_val": "true",
-            "false_val": "false"
+            "false_val": "false",
+            "True_val": "True",
+            "False_val": "False",
+            "TRUE_val": "TRUE",
+            "FALSE_val": "FALSE"
         })");
         s = knowhere::Config::FormatAndCheck(test_cfg, json, &err_msg);
         CHECK(s == knowhere::Status::success);
@@ -1032,6 +1044,10 @@ TEST_CASE("Test config", "[FormatAndCheck]") {
         CHECK_LT(std::abs(test_cfg.float_val.value() - 1.23), 0.00001);
         CHECK(test_cfg.true_val.value() == true);
         CHECK(test_cfg.false_val.value() == false);
+        CHECK(test_cfg.True_val.value() == true);
+        CHECK(test_cfg.False_val.value() == false);
+        CHECK(test_cfg.TRUE_val.value() == true);
+        CHECK(test_cfg.FALSE_val.value() == false);
     }
 
     SECTION("check config with invalid string type int value") {

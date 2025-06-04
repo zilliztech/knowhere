@@ -154,10 +154,10 @@ Config::FormatAndCheck(const Config& cfg, Json& json, std::string* const err_msg
                     }
                 }
                 if (std::get_if<Entry<CFG_BOOL>>(&var)) {
-                    if (json[it.first] == "true") {
+                    if (json[it.first] == "true" || json[it.first] == "True" || json[it.first] == "TRUE") {
                         json[it.first] = true;
                     }
-                    if (json[it.first] == "false") {
+                    if (json[it.first] == "false" || json[it.first] == "False" || json[it.first] == "FALSE") {
                         json[it.first] = false;
                     }
                 }
