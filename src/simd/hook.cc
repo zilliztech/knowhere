@@ -93,12 +93,9 @@ decltype(bf16_vec_norm_L2sqr) bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_ref;
 decltype(bf16_vec_inner_product_batch_4) bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_ref;
 decltype(bf16_vec_L2sqr_batch_4) bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_ref;
 
-// #if defined(USE_AMX)
+// bf16 amx
 decltype(bf16_vec_inner_product_batch_4_amx) bf16_vec_inner_product_batch_4_amx = bf16_vec_inner_product_batch_4_ref_amx;
 decltype(bf16_vec_inner_product_batch_16_amx) bf16_vec_inner_product_batch_16_amx = bf16_vec_inner_product_batch_16_ref_amx;
-// decltype(bf16_vec_inner_product_batch_16_amx) bf16_vec_inner_product_batch_16_amx = bf16_vec_inner_product_batch_16_ref_amx_prefetch;
-// decltype(bf16_vec_inner_product_batch_32_amx) bf16_vec_inner_product_batch_32_amx = bf16_vec_inner_product_batch_32_ref_amx;
-// #endif
 
 // int8
 decltype(int8_vec_L2sqr) int8_vec_L2sqr = int8_vec_L2sqr_ref;
