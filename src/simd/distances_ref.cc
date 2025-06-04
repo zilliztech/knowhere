@@ -358,27 +358,6 @@ bf16_vec_inner_product_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16
 }
 
 void
-bf16_vec_inner_product_batch_4_ref_amx(knowhere::bf16* x, knowhere::bf16* y0, knowhere::bf16* y1,
-                                    knowhere::bf16* y2, knowhere::bf16* y3, const size_t d, float& dis0,
-                                   float& dis1, float& dis2, float& dis3) {
-    enable_amx();
-    void** base_vec =(void **) malloc(sizeof(uint16_t*) * 4);
-    base_vec[0] = (void*)y0->get();
-    base_vec[1] = (void*)y1->get();
-    base_vec[2] = (void*)y2->get();
-    base_vec[3] = (void*)y3->get();
-
-    float dis[4] = {0};
-    bf16_vec_inner_product_amx_ref(base_vec, x->get(), (void*)&d, 4, 1, dis);
-    dis0 = dis[0];
-    dis1 = dis[1];
-    dis2 = dis[2];
-    dis3 = dis[3];
-
-    free(base_vec);
-}
-
-void
 bf16_vec_inner_product_batch_16_ref_amx(knowhere::bf16* x, 
                                     knowhere::bf16* y0, knowhere::bf16* y1, knowhere::bf16* y2, knowhere::bf16* y3,
                                     knowhere::bf16* y4, knowhere::bf16* y5, knowhere::bf16* y6, knowhere::bf16* y7,

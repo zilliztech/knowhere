@@ -131,11 +131,6 @@ bf16_vec_inner_product_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16
                                    float& dis1, float& dis2, float& dis3);
 
 void
-bf16_vec_inner_product_batch_4_ref_amx(knowhere::bf16* x, knowhere::bf16* y0, knowhere::bf16* y1,
-                                        knowhere::bf16* y2, knowhere::bf16* y3, const size_t d, float& dis0,
-                                        float& dis1, float& dis2, float& dis3);
-
-void
 bf16_vec_inner_product_batch_16_ref_amx(knowhere::bf16* x, 
                                     knowhere::bf16* y0, knowhere::bf16* y1, knowhere::bf16* y2, knowhere::bf16* y3,
                                     knowhere::bf16* y4, knowhere::bf16* y5, knowhere::bf16* y6, knowhere::bf16* y7,
@@ -146,7 +141,7 @@ bf16_vec_inner_product_batch_16_ref_amx(knowhere::bf16* x,
                                     float& dis4, float& dis5, float& dis6, float& dis7,
                                     float& dis8, float& dis9, float& dis10, float& dis11,
                                     float& dis12, float& dis13, float& dis14, float& dis15
-                                    );                                 
+                                    );                          
 
 void
 bf16_vec_L2sqr_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
