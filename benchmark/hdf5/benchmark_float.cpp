@@ -25,11 +25,9 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
     template <typename T>
     void
     test_brute_force(const knowhere::Json& cfg) {
-        printf("=================================== 1 ==========================================\n");
         auto conf = cfg;
         std::string data_type_str = get_data_type_name<T>();
         
-
         auto base_ds_ptr = knowhere::GenDataSet(nb_, dim_, xb_);
         auto base = knowhere::ConvertToDataTypeIfNeeded<T>(base_ds_ptr);
 
@@ -271,14 +269,13 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
     void
     SetUp() override {
         T0_ = elapsed();
-        set_ann_test_name("dbpediaopenai-1536-angular");
+        set_ann_test_name("sift-128-euclidean");
         parse_ann_test_name();
         load_hdf5_data<knowhere::fp32>();
+
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
-        std::string simd_type = knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX512);
-        printf("simd_type: %s \n",simd_type.c_str());
+        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX512);        
         knowhere::KnowhereConfig::SetBuildThreadPoolSize(default_build_thread_num);
-        printf("2\n");
         knowhere::KnowhereConfig::SetSearchThreadPoolSize(default_search_thread_num);
         printf("faiss::distance_compute_blas_threshold: %ld\n", knowhere::KnowhereConfig::GetBlasThreshold());
 

@@ -246,7 +246,6 @@ class Benchmark_hdf5 : public Benchmark_base {
         void* data_out = nullptr; /* output buffer */
 
         /* Open the file and the dataset. */
-        printf("[%.3f s] Loading hd5 file : %s\n", file_name.c_str());
         file = H5Fopen(file_name.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
         dataset = H5Dopen2(file, dataset_name.c_str(), H5P_DEFAULT);
 

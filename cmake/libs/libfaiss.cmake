@@ -1,11 +1,9 @@
-include(CheckCXXCompilerFlag)
- 
+include(CheckCXXCompilerFlag) 
 knowhere_file_glob(
   GLOB FAISS_SRCS thirdparty/faiss/faiss/*.cpp
   thirdparty/faiss/faiss/impl/*.cpp thirdparty/faiss/faiss/invlists/*.cpp
   thirdparty/faiss/faiss/utils/*.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/*.cpp)
- 
 knowhere_file_glob(GLOB FAISS_AVX512_SRCS
                    thirdparty/faiss/faiss/impl/*avx512.cpp)
 # knowhere_file_glob(GLOB FAISS_AMX_SRCS
@@ -27,7 +25,7 @@ list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX512_SRCS})
 # disable RHNSW
 knowhere_file_glob(GLOB FAISS_RHNSW_SRCS thirdparty/faiss/faiss/impl/RHNSW.cpp)
 list(REMOVE_ITEM FAISS_SRCS ${FAISS_RHNSW_SRCS})
- 
+
 if(__X86_64)
   set(UTILS_SRC src/simd/distances_ref.cc src/simd/hook.cc)
   set(UTILS_SSE_SRC src/simd/distances_sse.cc)
@@ -35,7 +33,6 @@ if(__X86_64)
   set(UTILS_AVX512_SRC src/simd/distances_avx512.cc)
   set(UTILS_AVX512ICX_SRC src/simd/distances_avx512icx.cc)
   set(UTILS_AMX_SRC src/simd/distances_amx.cc)
- 
  
   add_library(utils_sse OBJECT ${UTILS_SSE_SRC})
   add_library(utils_avx OBJECT ${UTILS_AVX_SRC})
@@ -51,7 +48,6 @@ if(__X86_64)
                                               -mavx512bw -mpopcnt -mavx512vl -mavx512vpopcntdq)
   target_compile_options(utils_amx PRIVATE -mfma -mf16c -mavx512f -mavx512dq
                                               -mavx512bw -mpopcnt -mavx512vl -mamx-bf16 -mamx-tile -mavx512bf16)
- 
   add_library(
     knowhere_utils STATIC
     ${UTILS_SRC} $<TARGET_OBJECTS:utils_sse> $<TARGET_OBJECTS:utils_avx>
@@ -60,7 +56,6 @@ if(__X86_64)
 endif()
  
 if(__AARCH64)
- 
   set(UTILS_SRC src/simd/distances_ref.cc src/simd/distances_neon.cc)
   set(UTILS_SVE_SRC src/simd/hook.cc src/simd/distances_sve.cc)
   set(ALL_UTILS_SRC ${UTILS_SRC} ${UTILS_SVE_SRC})
@@ -120,8 +115,7 @@ if(__PPC64)
   add_library(knowhere_utils STATIC ${UTILS_SRC})
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
 endif()
- 
- 
+
 if(LINUX)
   set(BLA_VENDOR OpenBLAS)
 endif()
@@ -162,7 +156,7 @@ if(__X86_64)
             -mpopcnt>)
  
   add_library(faiss STATIC ${FAISS_SRCS})
- 
+
   add_dependencies(faiss faiss_avx2 faiss_avx512 knowhere_utils)
   target_compile_options(
     faiss
@@ -233,7 +227,7 @@ if(__PPC64)
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_NEON_SRCS})
  
   add_library(faiss STATIC ${FAISS_SRCS})
- 
+
   target_compile_options(
     faiss
     PRIVATE $<$<COMPILE_LANGUAGE:CXX>:
