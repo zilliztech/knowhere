@@ -1507,7 +1507,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         const std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>& scalar_info_map =
             dataset->Get<std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>>(meta::SCALAR_INFO);
-        if (scalar_info_map.empty()) {
+        if (scalar_info_map.empty() || tmp_combined_scalar_ids.size() <= 1) {
             try {
                 LOG_KNOWHERE_INFO_ << "Adding " << rows << " rows to HNSW Index";
 

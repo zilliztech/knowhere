@@ -122,4 +122,7 @@ DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(diskann_range_search_iters, "DISKANN range se
 DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(diskann_range_search_iters, PROMETHEUS_LABEL_KNOWHERE,
                                          diskannRangeSearchIterBuckets)
 
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(sparse_dataset_nnz_len, "sparse dataset nnz length")
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(sparse_inverted_index_posting_list_len, "sparse inverted index posting list length")
+DEFINE_PROMETHEUS_GAUGE_FAMILY(sparse_inverted_index_size, "sparse inverted index size (MB)")
 }  // namespace knowhere

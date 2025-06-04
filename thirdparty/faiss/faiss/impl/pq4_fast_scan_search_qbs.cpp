@@ -113,18 +113,6 @@ void kernel_accumulate_block(
     }
 }
 
-namespace {
-
-// a helper that checks whether a ResultHandler has a .sel member
-template<typename T, typename = void>
-struct has_sel_member : std::false_type {};
-template<typename T>
-struct has_sel_member<T, std::void_t<decltype(T::sel)>> : std::true_type {};
-template<typename T>
-inline constexpr bool has_sel_member_v = has_sel_member<T>::value;
-
-}
-
 // handle at most 4 blocks of queries
 template <int QBS, class ResultHandler, class Scaler>
 void accumulate_q_4step(
