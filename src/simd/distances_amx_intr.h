@@ -1,4 +1,3 @@
-
 #pragma once
 #include <stdlib.h>
 #include <mutex>
@@ -9,11 +8,6 @@
 #include <sys/syscall.h> 
 #include <unistd.h>
 #include <iostream>
-
-
-
-// static bool is_onednn_init = false;
-// static std::mutex init_mutex;
 
 #define u64 unsigned long long
 #define u8  unsigned char
@@ -29,7 +23,6 @@
 
 using namespace std;
 static uint64_t get_amx_xcr_reg(void) {
-    // 调用 _xgetbv 内建函数，参数0表示读取XCR0
     return _xgetbv(0);
 }
 static int enable_amx() {
@@ -55,21 +48,8 @@ static int enable_amx() {
     return 1;
 }
 
-// static bool is_config = false;
-
 static void amx_bf16_mul(void *cfg, void *ma, void *mb, int64_t a_stride, int64_t b_stride, void *mc) {
-/*     if (cfg != NULL) {
-        _tile_loadconfig((void *)cfg);
-    } */
-
-    // 使用 AMX 指令进行矩阵乘法
-    // 注意：这里的函数名是假设性的，实际使用时需要根据 oneAPI 文档来确定
     _tile_loadd(0,ma, a_stride);
     _tile_loadd(1,mb, b_stride);
     _tile_dpbf16ps(2,0,1);
-    //_tile_stored(2, mc, b_stride);
-    //_tile_release();
-
-
-    return ;  // 返回 mc 的地址
 }

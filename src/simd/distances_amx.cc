@@ -56,12 +56,9 @@ float amx_inner_product_matrix_bf16( char **floatLibraryMatrix, char  *floatQuer
  
         _tile_loadconfig((void *)cfg);
     }
-    //memset(maBf16,0,16*DIM*2);
  
     int i=0;
     for(int i=0;i<blockCount;i++){
- 
-      //int32_t stride=i*DIM;
       __m512i sa;
       size_t offset = i * blockDim *2;
      
@@ -82,7 +79,6 @@ float amx_inner_product_matrix_bf16( char **floatLibraryMatrix, char  *floatQuer
       _tile_dpbf16ps(2,3,4);
       _tile_dpbf16ps(2,0,1);
       _tile_dpbf16ps(2,5,6);
-    //amx_int8_mul((u64*) cfg, maInt8,queryMatrix+stride,DIM,batchSizeB*4,(void*)results);
     }
     if(tailBlock >= DIM){
       for(int i=0;i<tailBlock/DIM;i++){
@@ -98,69 +94,54 @@ float amx_inner_product_matrix_bf16( char **floatLibraryMatrix, char  *floatQuer
     }
     _tile_stored(2, results, batchSizeB*2*2);
     _tile_zero(2);
-   
-    // if (tailCount != 0) {
-    //     int32_t offset= dims/DIM*DIM;
-    //     for (int k = 0; k < batchSizeA; k++) {
-    //         for (int l = 0; l < batchSizeB; l++) {
-    //             for (int m = 0; m < tailCount; m += 1) {
-    //               //blockDim*blockCount+tailBlock/DIM*DIM+i
-                 
-    //               results[k * batchSizeB + l] += bf162float(*(uint16_t *)(floatLibraryMatrix[k]  + 2*(offset+m))) * bf162float(*(uint16_t *)(floatQueryMatrix + 2*(offset+m)));
-    //                 // __m512 lib_vec = _mm512_loadu_ps((float *)(floatLibraryMatrix[k]  + 2*(DIM * blockCount + i)));
-    //                 // __m512 query_vec = _mm512_loadu_ps((float *)(floatQueryMatrix + 2*(DIM * blockCount + i)));
-    //                 // result_vec = _mm512_fmadd_ps(lib_vec, query_vec, result_vec);
-    //             }
-    //         }
-    //     }
-    // }
     memcpy(results_ptr, results, batchSizeA * batchSizeB * sizeof(float));
  
     return 0;
 }
  
 static float InnerProductDistanceBf16AVX512(const void* a, const void* b, const void *qty_ptr) {
-  float result[16] = {0.0f}; // 用于存储中间结果
- 
+  float result[16] = {0.0f}; // Used to store intermediate results
+
   uint16_t *x = (uint16_t *)a;
   uint16_t *y = (uint16_t *)b;
-  __m512 vr_f32 = _mm512_setzero_ps(); // 初始化累积寄存器为0
- 
-  size_t dim = * (size_t*) qty_ptr ;
- 
+  __m512 vr_f32 = _mm512_setzero_ps(); // Initialize the accumulation register to zero
+
+  size_t dim = * (size_t*) qty_ptr;
+
   size_t i = 0;
-  // 每次处理32个元素（16个__bf16元素在__m512bh寄存器中存储为32个uint16_t）
+  // Process 32 elements at a time (16 __bf16 elements are stored as 32 uint16_t in a __m512bh register)
   for (; i + 32 <= dim; i += 32) {
-      // 加载32个uint16_t到__m512i类型的临时寄存器
+      // Load 32 uint16_t into a temporary __m512i register
       __m512i temp_x = _mm512_loadu_si512(x + i);
       __m512i temp_y = _mm512_loadu_si512(y + i);
- 
-      // 强制转换为__m512bh类型
+
+      // Cast to __m512bh type
       __m512bh v1_f16 = reinterpret_cast<__m512bh&>(temp_x);
       __m512bh v2_f16 = reinterpret_cast<__m512bh&>(temp_y);
- 
-      // 计算BF16的点积，并将结果累加到vr_f32
+
+      // Compute the BF16 dot product and accumulate the result into vr_f32
       vr_f32 = _mm512_dpbf16_ps(vr_f32, v1_f16, v2_f16);
   }
- 
-  // 将vr_f32寄存器的值存入result数组
+
+  // Store the values from the vr_f32 register into the result array
   _mm512_storeu_ps(result, vr_f32);
- 
-  // 累加result数组的所有元素，获得最终的点积结果
+
+  // Sum all elements of the result array to obtain the final dot product
   float dot_product = 0.0f;
   for (int j = 0; j < 16; j++) {
       dot_product += result[j];
   }
- 
-  // 处理剩余的元素（小于32的部分）
+
+  // Handle remaining elements (less than 32)
   for (; i < dim; i++) {
       float x_val = (float)(knowhere::bf16)(x[i]);
       float y_val = (float)(knowhere::bf16)(y[i]);
       dot_product += x_val * y_val;
   }
-  //printf("%d %f ",dim,dot_product);
   return dot_product;
 }
+
+
 static float InnerProductBatchExtAMXBF16(void **pVect1v, void *pVect2v, void *qty_ptr, size_t nSize, size_t mSize, float * results_amx){
   unsigned int dims= *(unsigned int*)qty_ptr;
   char **floatLibraryMatrix = (char**) pVect1v;
@@ -185,9 +166,7 @@ static float InnerProductBatchExtAMXBF16(void **pVect1v, void *pVect2v, void *qt
       for (int j = 0; j < batchCountB; j++) {
           int currentBatchSizeB = (j == batchCountB - 1) ? lastBatchSizeB : batchSizeB;
           char *currentQueryMatrixPtr = floatQueryMatrix + j * offsetB;
- 
           amx_inner_product_matrix_bf16(currentLibraryMatrixPtr, currentQueryMatrixPtr, dims, currentBatchSizeA, currentBatchSizeB, results_ptr);
- 
           results_ptr += currentBatchSizeB * currentBatchSizeA;
       }
   }
@@ -211,19 +190,8 @@ bf16_vec_inner_product_amx_ref(void **p_bVect1v, void *p_qVect2v, void *dim_ptr,
             results_amx[i] += InnerProductDistanceBf16AVX512(pVect1, pVect2, &qty_left);
         }
     }
- 
-    // float *results_avx512 = new float[b_Size*q_Size];
-    // for(size_t i = 0; i < b_Size; i++) {
-    //     results_avx512[i] = InnerProductDistanceBf16AVX512(p_bVect1v[i], p_qVect2v, &qty);
-    // }
- 
-    // for(size_t i = 0; i < nSize; i++) {
-    //     printf("amx:%f,avx512:%f\n",results_amx[i],results_avx512[i]);
-    // }
     return 0;
-}  
- 
+}
 #endif
- 
 }
 #endif
