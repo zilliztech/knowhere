@@ -27,7 +27,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
     test_brute_force(const knowhere::Json& cfg) {
         auto conf = cfg;
         std::string data_type_str = get_data_type_name<T>();
-
+        
         auto base_ds_ptr = knowhere::GenDataSet(nb_, dim_, xb_);
         auto base = knowhere::ConvertToDataTypeIfNeeded<T>(base_ds_ptr);
 
@@ -274,7 +274,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
         load_hdf5_data<knowhere::fp32>();
 
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
-        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);
+        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);        
         knowhere::KnowhereConfig::SetBuildThreadPoolSize(default_build_thread_num);
         knowhere::KnowhereConfig::SetSearchThreadPoolSize(default_search_thread_num);
         printf("faiss::distance_compute_blas_threshold: %ld\n", knowhere::KnowhereConfig::GetBlasThreshold());

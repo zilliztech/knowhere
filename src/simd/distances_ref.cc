@@ -14,6 +14,8 @@
 #include <cmath>
 
 #include "knowhere/operands.h"
+#include "distances_amx.h"
+#include "distances_amx_intr.h"
 
 namespace faiss {
 
@@ -353,6 +355,57 @@ bf16_vec_inner_product_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16
     dis1 = d1;
     dis2 = d2;
     dis3 = d3;
+}
+
+void
+bf16_vec_inner_product_batch_16_ref_amx(knowhere::bf16* x, 
+                                    knowhere::bf16* y0, knowhere::bf16* y1, knowhere::bf16* y2, knowhere::bf16* y3,
+                                    knowhere::bf16* y4, knowhere::bf16* y5, knowhere::bf16* y6, knowhere::bf16* y7,
+                                    knowhere::bf16* y8, knowhere::bf16* y9, knowhere::bf16* y10, knowhere::bf16* y11,
+                                    knowhere::bf16* y12, knowhere::bf16* y13, knowhere::bf16* y14, knowhere::bf16* y15,
+                                    const size_t d, 
+                                    float& dis0, float& dis1, float& dis2, float& dis3,
+                                    float& dis4, float& dis5, float& dis6, float& dis7,
+                                    float& dis8, float& dis9, float& dis10, float& dis11,
+                                    float& dis12, float& dis13, float& dis14, float& dis15
+                                    ) {
+    enable_amx();
+    void* base_vec[16];
+    base_vec[0] = (void*)y0->get();
+    base_vec[1] = (void*)y1->get();
+    base_vec[2] = (void*)y2->get();
+    base_vec[3] = (void*)y3->get();
+    base_vec[4] = (void*)y4->get();
+    base_vec[5] = (void*)y5->get();
+    base_vec[6] = (void*)y6->get();
+    base_vec[7] = (void*)y7->get();
+    base_vec[8] = (void*)y8->get();
+    base_vec[9] = (void*)y9->get();
+    base_vec[10] = (void*)y10->get();
+    base_vec[11] = (void*)y11->get();
+    base_vec[12] = (void*)y12->get();
+    base_vec[13] = (void*)y13->get();
+    base_vec[14] = (void*)y14->get();
+    base_vec[15] = (void*)y15->get();
+
+    float dis[16] = {0};
+    bf16_vec_inner_product_amx_ref(base_vec, x->get(), (void*)&d, 16, 1, dis);
+    dis0 = dis[0];
+    dis1 = dis[1];
+    dis2 = dis[2];
+    dis3 = dis[3];
+    dis4 = dis[4];
+    dis5 = dis[5];
+    dis6 = dis[6];
+    dis7 = dis[7];
+    dis8 = dis[8];
+    dis9 = dis[9];
+    dis10 = dis[10];
+    dis11 = dis[11];
+    dis12 = dis[12];
+    dis13 = dis[13];
+    dis14 = dis[14];
+    dis15 = dis[15];
 }
 
 void

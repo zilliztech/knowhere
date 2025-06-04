@@ -130,6 +130,10 @@ struct bf16 {
         return this->to_fp32(bits);
     }
 
+    uint16_t* get() {
+        return &bits;
+    }
+
  private:
     uint16_t bits = 0;
     void

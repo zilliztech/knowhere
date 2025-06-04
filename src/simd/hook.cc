@@ -45,6 +45,7 @@
 namespace faiss {
 
 #if defined(__x86_64__)
+bool use_amx = true;
 bool use_avx512 = true;
 bool use_avx2 = true;
 bool use_sse4_2 = true;
@@ -92,6 +93,9 @@ decltype(bf16_vec_norm_L2sqr) bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_ref;
 decltype(bf16_vec_inner_product_batch_4) bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_ref;
 decltype(bf16_vec_L2sqr_batch_4) bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_ref;
 
+// bf16 amx
+decltype(bf16_vec_inner_product_batch_16_amx) bf16_vec_inner_product_batch_16_amx = bf16_vec_inner_product_batch_16_ref_amx;
+
 // int8
 decltype(int8_vec_L2sqr) int8_vec_L2sqr = int8_vec_L2sqr_ref;
 decltype(int8_vec_inner_product) int8_vec_inner_product = int8_vec_inner_product_ref;
@@ -106,6 +110,12 @@ decltype(rabitq_dp_popcnt) rabitq_dp_popcnt = rabitq_dp_popcnt_ref;
 
 ///////////////////////////////////////////////////////////////////////////////
 #if defined(__x86_64__)
+bool
+cpu_support_amx() {
+    InstructionSet& instruction_set_inst = InstructionSet::GetInstance();
+    return (instruction_set_inst.AMXTILE() && instruction_set_inst.AMXINT8() && instruction_set_inst.AMXBF16());
+}
+
 bool
 cpu_support_avx512() {
     InstructionSet& instruction_set_inst = InstructionSet::GetInstance();
@@ -152,7 +162,14 @@ void
 enable_patch_for_fp32_bf16() {
     std::lock_guard<std::mutex> lock(patch_bf16_mutex);
 #if defined(__x86_64__)
-    if (use_avx512 && cpu_support_avx512()) {
+    if (use_amx && cpu_support_amx()) {
+        // Cloud branch
+        fvec_inner_product = fvec_inner_product_bf16_patch_avx512;
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_bf16_patch_avx512;
+
+        fvec_L2sqr = fvec_L2sqr_bf16_patch_avx512;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_bf16_patch_avx512;
+    } else if (use_avx512 && cpu_support_avx512()) {
         // Cloud branch
         fvec_inner_product = fvec_inner_product_bf16_patch_avx512;
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_bf16_patch_avx512;
@@ -195,7 +212,14 @@ void
 disable_patch_for_fp32_bf16() {
     std::lock_guard<std::mutex> lock(patch_bf16_mutex);
 #if defined(__x86_64__)
-    if (use_avx512 && cpu_support_avx512()) {
+    if (use_amx && cpu_support_amx()) {
+        // Cloud branch
+        fvec_inner_product = fvec_inner_product_avx512;
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_avx512;
+
+        fvec_L2sqr = fvec_L2sqr_avx512;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_avx512;
+    } else if (use_avx512 && cpu_support_avx512()) {
         // Cloud branch
         fvec_inner_product = fvec_inner_product_avx512;
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_avx512;
@@ -225,7 +249,7 @@ fvec_hook(std::string& simd_type) {
     static std::mutex hook_mutex;
     std::lock_guard<std::mutex> lock(hook_mutex);
 #if defined(__x86_64__)
-    if (use_avx512 && cpu_support_avx512()) {
+    if ((use_avx512 || use_amx) && cpu_support_avx512()) {
         fvec_inner_product = fvec_inner_product_avx512;
         fvec_L2sqr = fvec_L2sqr_avx512;
         fvec_L1 = fvec_L1_avx512;
