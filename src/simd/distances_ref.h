@@ -178,4 +178,25 @@ fvec_masked_sum_ref(const float* q, const uint8_t* x, const size_t d);
 int
 rabitq_dp_popcnt_ref(const uint8_t* q, const uint8_t* x, const size_t d, const size_t nb);
 
+///////////////////////////////////////////////////////////////////////////////
+// minhash
+float
+minhash_lsh_hit_ref(const char* x, const char* y, size_t dim, size_t mh_lsh_band);
+int
+u64_binary_search_eq_ref(const uint64_t*, const size_t n, const uint64_t key);
+int
+u64_binary_search_ge_ref(const uint64_t*, const size_t n, const uint64_t key);
+uint64_t
+calculate_hash_ref(const char* data, size_t size);
+float
+u32_jaccard_distance_ref(const char*, const char*, size_t size, size_t);
+void
+u32_jaccard_distance_batch_4_ref(const char*, const char*, const char*, const char*, const char*, size_t, size_t,
+                                 float&, float&, float&, float&);
+float
+u64_jaccard_distance_ref(const char*, const char*, size_t size, size_t);
+void
+u64_jaccard_distance_batch_4_ref(const char*, const char*, const char*, const char*, const char*, size_t, size_t,
+                                 float&, float&, float&, float&);
+
 }  // namespace faiss

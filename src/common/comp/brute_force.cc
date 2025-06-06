@@ -18,6 +18,7 @@
 #include "faiss/utils/binary_distances.h"
 #include "faiss/utils/distances.h"
 #include "faiss/utils/distances_typed.h"
+#include "index/minhash/minhash_util.h"
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/config.h"
@@ -151,6 +152,14 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     auto labels = std::make_unique<int64_t[]>(nq * topk);
     auto distances = std::make_unique<float[]>(nq * topk);
     std::unique_ptr<float[]> norms = is_cosine ? GetVecNorms<DataType>(base_dataset) : nullptr;
+    // some check for minhash metric
+    if (faiss_metric_type == faiss::METRIC_MinHash_Jaccard) {
+        auto mh_valid_stat =
+            MinhashConfigCheck(dim, datatype_v<DataType>, PARAM_TYPE::SEARCH | PARAM_TYPE::TRAIN, &cfg, &bitset);
+        if (mh_valid_stat != Status::success) {
+            return expected<DataSetPtr>::Err(mh_valid_stat, "MinhashConfigCheck() failed, please check the config.");
+        }
+    }
     auto pool = ThreadPool::GetGlobalSearchThreadPool();
     std::vector<folly::Future<Status>> futs;
     futs.reserve(nq);
@@ -211,6 +220,23 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
                     auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
                     faiss::float_maxheap_array_t res = {size_t(1), size_t(topk), cur_labels, cur_distances};
                     binary_knn_hc(faiss::METRIC_Jaccard, &res, cur_query, (const uint8_t*)xb, nb, dim / 8, id_selector);
+                    break;
+                }
+                case faiss::METRIC_MinHash_Jaccard: {
+                    size_t mh_lsh_band = cfg.mh_lsh_band.value();
+                    bool mh_search_with_jaccard = cfg.mh_search_with_jaccard.value();
+                    if (mh_search_with_jaccard) {
+                        size_t hash_element_size = cfg.mh_element_bit_width.value() / 8;  // in bytes
+                        size_t hash_element_length = dim / (hash_element_size * 8);
+                        auto cur_query = (const char*)xq + (dim / 8) * index;
+                        minhash_jaccard_knn_ny(cur_query, (const char*)xb, hash_element_length, hash_element_size, nb,
+                                               topk, bitset, cur_distances, cur_labels);
+                    } else {
+                        size_t u8_dim = dim / 8;
+                        auto cur_query = (const char*)xq + u8_dim * index;
+                        minhash_lsh_hit_ny(cur_query, (const char*)xb, u8_dim, mh_lsh_band, nb, topk, bitset,
+                                           cur_distances, cur_labels);
+                    }
                     break;
                 }
                 case faiss::METRIC_Hamming: {
@@ -306,6 +332,14 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     int topk = cfg.k.value();
     auto labels = ids;
     auto distances = dis;
+    // some check for minhash metric
+    if (faiss_metric_type == faiss::METRIC_MinHash_Jaccard) {
+        auto mh_valid_stat =
+            MinhashConfigCheck(dim, datatype_v<DataType>, PARAM_TYPE::SEARCH | PARAM_TYPE::TRAIN, &cfg, &bitset);
+        if (mh_valid_stat != Status::success) {
+            return mh_valid_stat;
+        }
+    }
 
     std::unique_ptr<float[]> norms = is_cosine ? GetVecNorms<DataType>(base_dataset) : nullptr;
     auto pool = ThreadPool::GetGlobalSearchThreadPool();
@@ -360,6 +394,23 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                             LOG_KNOWHERE_ERROR_ << "Metric IP not supported for current vector type";
                             return Status::faiss_inner_error;
                         }
+                    }
+                    break;
+                }
+                case faiss::METRIC_MinHash_Jaccard: {
+                    size_t mh_lsh_band = cfg.mh_lsh_band.value();
+                    bool mh_search_with_jaccard = cfg.mh_search_with_jaccard.value();
+                    if (mh_search_with_jaccard) {
+                        size_t hash_element_size = cfg.mh_element_bit_width.value() / 8;  // in bytes
+                        size_t hash_element_length = dim / (hash_element_size * 8);
+                        auto cur_query = (const char*)xq + (dim / 8) * index;
+                        minhash_jaccard_knn_ny(cur_query, (const char*)xb, hash_element_length, hash_element_size, nb,
+                                               topk, bitset, cur_distances, cur_labels);
+                    } else {
+                        size_t u8_dim = dim / 8;
+                        auto cur_query = (const char*)xq + u8_dim * index;
+                        minhash_lsh_hit_ny(cur_query, (const char*)xb, u8_dim, mh_lsh_band, nb, topk, bitset,
+                                           cur_distances, cur_labels);
                     }
                     break;
                 }
@@ -483,6 +534,10 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     float range_filter = cfg.range_filter.value();
 
     auto pool = ThreadPool::GetGlobalSearchThreadPool();
+    // some check for minhash metric
+    if (metric_str == metric::MHJACCARD) {
+        return expected<DataSetPtr>::Err(Status::not_implemented, "minhash not support range search.");
+    }
 
     std::vector<std::vector<int64_t>> result_id_array(nq);
     std::vector<std::vector<float>> result_dist_array(nq);
@@ -756,6 +811,12 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
     auto result = Str2FaissMetricType(metric_str);
     if (result.error() != Status::success) {
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(result.error(), result.what());
+    }
+
+    // some check for minhash metric
+    if (metric_str == metric::MHJACCARD) {
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::not_implemented,
+                                                                  "minhash does not support iterator.");
     }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
