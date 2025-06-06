@@ -153,14 +153,14 @@ class IndexFactory {
     KNOWHERE_MOCK_REGISTER_GLOBAL(name, index_node, fp16, (features | knowhere::feature::FP16), ##__VA_ARGS__); \
     KNOWHERE_SIMPLE_REGISTER_GLOBAL(name, index_node, fp32, (features | knowhere::feature::FLOAT32), ##__VA_ARGS__);
 
-#define KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(name, index_node, data_type, features, thread_size)    \
-    KNOWHERE_REGISTER_STATIC(name, index_node, data_type)                                                \
-    KNOWHERE_REGISTER_GLOBAL(                                                                            \
-        name,                                                                                            \
-        [](const int32_t& version, const Object& object) {                                               \
-            return (Index<IndexNodeThreadPoolWrapper>::Create(                                           \
-                std::make_unique<index_node<MockData<data_type>::type>>(version, object), thread_size)); \
-        },                                                                                               \
+#define KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(name, index_node, data_type, features, thread_size) \
+    KNOWHERE_REGISTER_STATIC(name, index_node, data_type)                                             \
+    KNOWHERE_REGISTER_GLOBAL(                                                                         \
+        name,                                                                                         \
+        [](const int32_t& version, const Object& object) {                                            \
+            return (Index<IndexNodeThreadPoolWrapper>::Create(                                        \
+                std::make_unique<index_node<data_type>>(version, object), thread_size));              \
+        },                                                                                            \
         data_type, typeCheck<data_type>(features), features)
 
 #define KNOWHERE_SET_STATIC_GLOBAL_INDEX_TABLE(table_index, name, index_table)                      \
