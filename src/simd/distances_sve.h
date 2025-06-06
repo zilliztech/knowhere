@@ -66,5 +66,15 @@ fvec_L2sqr_ny_sve(float* dis, const float* x, const float* y, size_t d, size_t n
 void
 fvec_inner_products_ny_sve(float* ip, const float* x, const float* y, size_t d, size_t ny);
 
+float
+int8_vec_L2sqr_sve(const int8_t* x, const int8_t* y, size_t d);
+
+float
+int8_vec_norm_L2sqr_sve(const int8_t* x, size_t d);
+
+void
+int8_vec_L2sqr_batch_4_sve(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2, const int8_t* y3,
+                           const size_t dim, float& dis0, float& dis1, float& dis2, float& dis3);
+
 }  // namespace faiss
 #endif
