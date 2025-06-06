@@ -1328,6 +1328,10 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
     expected<DataSetPtr>
     RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+        // if support ann_iterator, use iterator-based range_search (IndexNode::RangeSearch)
+        if (is_ann_iterator_supported()) {
+            return IndexNode::RangeSearch(dataset, std::move(cfg), bitset);
+        }
         if (this->indexes.empty()) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
@@ -1637,7 +1641,15 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     }
 
  public:
-    //
+    bool
+    is_ann_iterator_supported() const {
+        if (data_format != DataFormatEnum::fp32 && data_format != DataFormatEnum::fp16 &&
+            data_format != DataFormatEnum::bf16) {
+            return false;
+        }
+        return true;
+    }
+
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                 bool use_knowhere_search_pool) const override {
@@ -1646,8 +1658,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "index not loaded");
         }
 
-        if (data_format != DataFormatEnum::fp32 && data_format != DataFormatEnum::fp16 &&
-            data_format != DataFormatEnum::bf16) {
+        if (!is_ann_iterator_supported()) {
             LOG_KNOWHERE_ERROR_ << "Unsupported data format";
             return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::invalid_args, "unsupported data format");
         }
