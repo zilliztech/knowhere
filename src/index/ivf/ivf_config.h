@@ -39,6 +39,7 @@ class IvfConfig : public BaseConfig {
             .set_default(8)
             .description("number of probes at query time.")
             .for_search()
+            .for_range_search()
             .for_iterator()
             .set_range(1, 65536);
         KNOWHERE_CONFIG_DECLARE_FIELD(use_elkan)

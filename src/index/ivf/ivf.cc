@@ -79,6 +79,15 @@ class IvfIndexNode : public IndexNode {
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
     expected<DataSetPtr>
     RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
+    static constexpr bool
+    is_ann_iterator_supported() {
+        return (std::is_same<faiss::IndexIVFFlatCC, IndexType>::value ||
+                std::is_same<faiss::IndexIVFFlat, IndexType>::value ||
+                std::is_same<faiss::IndexIVFScalarQuantizer, IndexType>::value ||
+                std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value ||
+                std::is_same<faiss::IndexScaNN, IndexType>::value ||
+                std::is_same<IndexIVFRaBitQWrapper, IndexType>::value);
+    }
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                 bool use_knowhere_search_pool) const override;
@@ -901,6 +910,14 @@ template <typename DataType, typename IndexType>
 expected<DataSetPtr>
 IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
                                                const BitsetView& bitset) const {
+    // if support ann_iterator, use iterator-based range_search (IndexNode::RangeSearch)
+    constexpr bool use_iterator_for_range_search = is_ann_iterator_supported();
+    if (use_iterator_for_range_search) {
+        // todo: there are some issues with ann_iterator of `IndexScaNN` , need to be fixed by @cqy
+        if constexpr (!std::is_same<IndexType, faiss::IndexScaNN>::value) {
+            return IndexNode::RangeSearch(dataset, std::move(cfg), bitset);
+        }
+    }
     if (!this->index_) {
         LOG_KNOWHERE_WARNING_ << "range search on empty index";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -1064,13 +1081,7 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::un
         LOG_KNOWHERE_WARNING_ << "index not trained";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::index_not_trained, "index not trained");
     }
-    // only support IVFFlat, IVFFlatCC, IVF_SQ8 and IVF_SQ_CC;
-    if constexpr (!std::is_same<faiss::IndexIVFFlatCC, IndexType>::value &&
-                  !std::is_same<faiss::IndexIVFFlat, IndexType>::value &&
-                  !std::is_same<faiss::IndexIVFScalarQuantizer, IndexType>::value &&
-                  !std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value &&
-                  !std::is_same<faiss::IndexScaNN, IndexType>::value &&
-                  !std::is_same<IndexIVFRaBitQWrapper, IndexType>::value) {
+    if constexpr (!is_ann_iterator_supported()) {
         LOG_KNOWHERE_WARNING_ << "Current index_type: " << Type()
                               << ", only IVFFlat, IVFFlatCC, IVF_SQ8, IVF_SQ_CC, SCANN and IVFRABITQ support Iterator.";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::not_implemented, "index not supported");
