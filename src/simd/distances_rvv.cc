@@ -5,21 +5,23 @@
 //
 // http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
-// or implied. See the License for the specific language governing permissions and limitations under the License.
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
 
 #if defined(__riscv_vector)
 #pragma GCC optimize("O3,fast-math,inline")
 #include "distances_rvv.h"
-#include <riscv_vector.h>
+
 #include <math.h>
+#include <riscv_vector.h>
 
 namespace faiss {
 
 // =================== float distances ===================
-float fvec_inner_product_rvv(const float* x, const float* y, size_t d) {
-
-size_t vlmax = __riscv_vsetvlmax_e32m2(); // 使用m2以支持4路并行
+float
+fvec_inner_product_rvv(const float* x, const float* y, size_t d) {
+    size_t vlmax = __riscv_vsetvlmax_e32m2();  // 使用m2以支持4路并行
 
     // 4个累积器
     vfloat32m2_t vacc0 = __riscv_vfmv_v_f_f32m2(0.0f, vlmax);
@@ -41,10 +43,10 @@ size_t vlmax = __riscv_vsetvlmax_e32m2(); // 使用m2以支持4路并行
         vfloat32m2_t vy0 = __riscv_vle32_v_f32m2(y + offset, vl);
         vfloat32m2_t vx1 = __riscv_vle32_v_f32m2(x + offset + vl, vl);
         vfloat32m2_t vy1 = __riscv_vle32_v_f32m2(y + offset + vl, vl);
-        vfloat32m2_t vx2 = __riscv_vle32_v_f32m2(x + offset + 2*vl, vl);
-        vfloat32m2_t vy2 = __riscv_vle32_v_f32m2(y + offset + 2*vl, vl);
-        vfloat32m2_t vx3 = __riscv_vle32_v_f32m2(x + offset + 3*vl, vl);
-        vfloat32m2_t vy3 = __riscv_vle32_v_f32m2(y + offset + 3*vl, vl);
+        vfloat32m2_t vx2 = __riscv_vle32_v_f32m2(x + offset + 2 * vl, vl);
+        vfloat32m2_t vy2 = __riscv_vle32_v_f32m2(y + offset + 2 * vl, vl);
+        vfloat32m2_t vx3 = __riscv_vle32_v_f32m2(x + offset + 3 * vl, vl);
+        vfloat32m2_t vy3 = __riscv_vle32_v_f32m2(y + offset + 3 * vl, vl);
 
         // 并行FMACC操作
         vacc0 = __riscv_vfmacc_vv_f32m2_tu(vacc0, vx0, vy0, vl);
