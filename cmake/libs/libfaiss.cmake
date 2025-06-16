@@ -104,7 +104,7 @@ if(__AARCH64)
 endif()
 
 if(__RISCV64)
-  set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc)
+  set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc src/simd/distances_rvv.cc) 
   add_library(knowhere_utils STATIC ${UTILS_SRC})
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
   target_link_libraries(knowhere_utils PUBLIC xxHash::xxhash)
@@ -205,8 +205,11 @@ endif()
 
 if(__RISCV64)
   knowhere_file_glob(GLOB FAISS_AVX_SRCS thirdparty/faiss/faiss/impl/*avx.cpp)
-
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX_SRCS})
+
+  knowhere_file_glob(GLOB FAISS_NEON_SRCS thirdparty/faiss/faiss/impl/*neon.cpp)
+  list(REMOVE_ITEM FAISS_SRCS ${FAISS_NEON_SRCS})
+
   add_library(faiss STATIC ${FAISS_SRCS})
 
   target_compile_options(

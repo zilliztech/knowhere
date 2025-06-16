@@ -27,6 +27,10 @@
 #include "distances_neon.h"
 #endif
 
+#if defined(__riscv_vector)
+#include "distances_rvv.h"
+#endif
+
 #if defined(__ARM_FEATURE_SVE)
 #include "distances_sve.h"
 #endif
@@ -530,6 +534,16 @@ fvec_hook(std::string& simd_type) {
         support_pq_fast_scan = true;
 #endif
     }
+#endif
+
+#if defined(__riscv_vector)
+    fvec_inner_product = fvec_inner_product_rvv;
+    simd_type = "RVV";
+    support_pq_fast_scan = true;
+#else
+    fvec_inner_product = fvec_inner_product_ref;
+    simd_type = "GENERIC";
+    support_pq_fast_scan = false;
 #endif
 
 // ToDo MG: include VSX intrinsics via distances_vsx once _ref tests succeed
