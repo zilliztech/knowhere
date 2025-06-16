@@ -16,7 +16,7 @@
 #include "knowhere/operands.h"
 
 namespace faiss {
-    
+
 float fvec_inner_product_rvv(const float* x, const float* y, size_t d);
 
 }  // namespace faiss

@@ -104,7 +104,7 @@ if(__AARCH64)
 endif()
 
 if(__RISCV64)
-  set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc src/simd/distances_rvv.cc) 
+  set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc src/simd/distances_rvv.cc)
   add_library(knowhere_utils STATIC ${UTILS_SRC})
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
   target_link_libraries(knowhere_utils PUBLIC xxHash::xxhash)
