@@ -205,10 +205,6 @@ if(WITH_CUVS)
     APPEND
     KNOWHERE_LINKER_LIBS
     raft::raft
-    raft::raft_logger
-    raft::raft_logger_impl
-    rmm::rmm_logger
-    rmm::rmm_logger_impl
     cuvs::cuvs
     CUDA::cublas
     CUDA::cusparse
