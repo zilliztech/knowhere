@@ -506,6 +506,116 @@ int8_vec_L2sqr_batch_4_sve(const int8_t* x, const int8_t* y0, const int8_t* y1, 
     dis3 = static_cast<float>(sum_a2 - 2 * sum_ab3 + sum_b23);
 }
 
+float
+bf16_vec_L2sqr_sve(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+    svfloat32_t acc_squared_norm_x = svdup_f32(0.0f);
+    svfloat32_t acc_squared_norm_y = svdup_f32(0.0f);
+    svfloat32_t acc_dot_product = svdup_f32(0.0f);
+
+    size_t i = 0;
+    svbool_t pg = svptrue_b16();
+
+    while (i < d) {
+        if (d - i < svcnth())
+            pg = svwhilelt_b16(i, d);
+
+        svbfloat16_t bf16_x = svld1_bf16(pg, reinterpret_cast<const __bf16*>(x + i));
+        svbfloat16_t bf16_y = svld1_bf16(pg, reinterpret_cast<const __bf16*>(y + i));
+
+        acc_squared_norm_x = svbfdot_f32(acc_squared_norm_x, bf16_x, bf16_x);
+        acc_squared_norm_y = svbfdot_f32(acc_squared_norm_y, bf16_y, bf16_y);
+        acc_dot_product = svbfdot_f32(acc_dot_product, bf16_x, bf16_y);
+
+        i += svcnth();
+    }
+
+    float norm_x_sq = svaddv_f32(svptrue_b32(), acc_squared_norm_x);
+    float norm_y_sq = svaddv_f32(svptrue_b32(), acc_squared_norm_y);
+    float dot_xy = svaddv_f32(svptrue_b32(), acc_dot_product);
+
+    return norm_x_sq + norm_y_sq - 2.0f * dot_xy;
+}
+
+float
+bf16_vec_norm_L2sqr_sve(const knowhere::bf16* x, size_t d) {
+    svfloat32_t acc = svdup_f32(0.0f);
+
+    size_t i = 0;
+    svbool_t pg = svptrue_b16();
+
+    while (i < d) {
+        if (d - i < svcnth())
+            pg = svwhilelt_b16(i, d);
+
+        svbfloat16_t x_vec = svld1_bf16(pg, reinterpret_cast<const __bf16*>(x + i));
+
+        acc = svbfdot_f32(acc, x_vec, x_vec);
+
+        i += svcnth();
+    }
+
+    return svaddv_f32(svptrue_b32(), acc);
+}
+
+void
+bf16_vec_L2sqr_batch_4_sve(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
+                           const knowhere::bf16* y2, const knowhere::bf16* y3, size_t d, float& dis0, float& dis1,
+                           float& dis2, float& dis3) {
+    svfloat32_t acc_x = svdup_f32(0.0f);
+    svfloat32_t acc_y0 = svdup_f32(0.0f);
+    svfloat32_t acc_y1 = svdup_f32(0.0f);
+    svfloat32_t acc_y2 = svdup_f32(0.0f);
+    svfloat32_t acc_y3 = svdup_f32(0.0f);
+
+    svfloat32_t acc_ip0 = svdup_f32(0.0f);
+    svfloat32_t acc_ip1 = svdup_f32(0.0f);
+    svfloat32_t acc_ip2 = svdup_f32(0.0f);
+    svfloat32_t acc_ip3 = svdup_f32(0.0f);
+
+    size_t i = 0;
+    svbool_t pg = svptrue_b16();
+
+    while (i < d) {
+        if (d - i < svcnth())
+            pg = svwhilelt_b16(i, d);
+
+        svbfloat16_t x_vec = svld1_bf16(pg, reinterpret_cast<const __bf16*>(x + i));
+        svbfloat16_t y0_vec = svld1_bf16(pg, reinterpret_cast<const __bf16*>(y0 + i));
+        svbfloat16_t y1_vec = svld1_bf16(pg, reinterpret_cast<const __bf16*>(y1 + i));
+        svbfloat16_t y2_vec = svld1_bf16(pg, reinterpret_cast<const __bf16*>(y2 + i));
+        svbfloat16_t y3_vec = svld1_bf16(pg, reinterpret_cast<const __bf16*>(y3 + i));
+
+        acc_x = svbfdot_f32(acc_x, x_vec, x_vec);
+        acc_y0 = svbfdot_f32(acc_y0, y0_vec, y0_vec);
+        acc_y1 = svbfdot_f32(acc_y1, y1_vec, y1_vec);
+        acc_y2 = svbfdot_f32(acc_y2, y2_vec, y2_vec);
+        acc_y3 = svbfdot_f32(acc_y3, y3_vec, y3_vec);
+
+        acc_ip0 = svbfdot_f32(acc_ip0, x_vec, y0_vec);
+        acc_ip1 = svbfdot_f32(acc_ip1, x_vec, y1_vec);
+        acc_ip2 = svbfdot_f32(acc_ip2, x_vec, y2_vec);
+        acc_ip3 = svbfdot_f32(acc_ip3, x_vec, y3_vec);
+
+        i += svcnth();
+    }
+
+    float norm_x = svaddv_f32(svptrue_b32(), acc_x);
+    float norm_y0 = svaddv_f32(svptrue_b32(), acc_y0);
+    float norm_y1 = svaddv_f32(svptrue_b32(), acc_y1);
+    float norm_y2 = svaddv_f32(svptrue_b32(), acc_y2);
+    float norm_y3 = svaddv_f32(svptrue_b32(), acc_y3);
+
+    float ip0 = svaddv_f32(svptrue_b32(), acc_ip0);
+    float ip1 = svaddv_f32(svptrue_b32(), acc_ip1);
+    float ip2 = svaddv_f32(svptrue_b32(), acc_ip2);
+    float ip3 = svaddv_f32(svptrue_b32(), acc_ip3);
+
+    dis0 = norm_x + norm_y0 - 2.0f * ip0;
+    dis1 = norm_x + norm_y1 - 2.0f * ip1;
+    dis2 = norm_x + norm_y2 - 2.0f * ip2;
+    dis3 = norm_x + norm_y3 - 2.0f * ip3;
+}
+
 }  // namespace faiss
 
 #endif
