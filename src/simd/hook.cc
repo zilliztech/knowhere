@@ -546,7 +546,6 @@ fvec_hook(std::string& simd_type) {
     support_pq_fast_scan = false;
 #endif
 
-
 // ToDo MG: include VSX intrinsics via distances_vsx once _ref tests succeed
 #if defined(__powerpc64__)
     fvec_inner_product = fvec_inner_product_ppc;
