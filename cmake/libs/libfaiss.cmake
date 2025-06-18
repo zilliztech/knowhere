@@ -215,6 +215,8 @@ if(__RISCV64)
   target_compile_options(
     faiss
     PRIVATE $<$<COMPILE_LANGUAGE:CXX>:
+            -march=rv64gcv
+            -mabi=lp64d
             -Wno-sign-compare
             -Wno-unused-variable
             -Wno-reorder

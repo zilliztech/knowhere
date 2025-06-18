@@ -10,7 +10,7 @@
 // specific language governing permissions and limitations under the License.
 
 #if defined(__riscv_vector)
-#pragma GCC optimize("O3,fast-math,inline")
+
 #include "distances_rvv.h"
 
 #include <math.h>
@@ -34,10 +34,6 @@ fvec_inner_product_rvv(const float* x, const float* y, size_t d) {
     // 4路展开循环
     while (d >= 4 * vlmax) {
         size_t vl = vlmax;
-
-        // 预取数据 (如果支持)
-        // __builtin_prefetch(x + offset + 4 * vl, 0, 3);
-        // __builtin_prefetch(y + offset + 4 * vl, 0, 3);
 
         vfloat32m2_t vx0 = __riscv_vle32_v_f32m2(x + offset, vl);
         vfloat32m2_t vy0 = __riscv_vle32_v_f32m2(y + offset, vl);
