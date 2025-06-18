@@ -507,6 +507,106 @@ int8_vec_L2sqr_batch_4_sve(const int8_t* x, const int8_t* y0, const int8_t* y1, 
 }
 
 float
+int8_vec_inner_product_sve(const int8_t* x, const int8_t* y, size_t d) {
+    svint32_t sum0 = svdup_s32(0);
+    svint32_t sum1 = svdup_s32(0);
+    svint32_t sum2 = svdup_s32(0);
+    svint32_t sum3 = svdup_s32(0);
+
+    size_t vl = svcntb();
+    size_t step = 4 * vl;
+
+    while (d >= step) {
+        svbool_t pg = svptrue_b8();
+
+        svint8_t a0 = svld1_s8(pg, x);
+        svint8_t b0 = svld1_s8(pg, y);
+        sum0 = svdot_s32(sum0, a0, b0);
+
+        svint8_t a1 = svld1_s8(pg, x + vl);
+        svint8_t b1 = svld1_s8(pg, y + vl);
+        sum1 = svdot_s32(sum1, a1, b1);
+
+        svint8_t a2 = svld1_s8(pg, x + 2 * vl);
+        svint8_t b2 = svld1_s8(pg, y + 2 * vl);
+        sum2 = svdot_s32(sum2, a2, b2);
+
+        svint8_t a3 = svld1_s8(pg, x + 3 * vl);
+        svint8_t b3 = svld1_s8(pg, y + 3 * vl);
+        sum3 = svdot_s32(sum3, a3, b3);
+
+        x += step;
+        y += step;
+        d -= step;
+    }
+
+    svint32_t sum = svadd_s32_x(svptrue_b32(), sum0, sum1);
+    sum = svadd_s32_x(svptrue_b32(), sum, sum2);
+    sum = svadd_s32_x(svptrue_b32(), sum, sum3);
+
+    while (d >= vl) {
+        svbool_t pg = svptrue_b8();
+        svint8_t a = svld1_s8(pg, x);
+        svint8_t b = svld1_s8(pg, y);
+        sum = svdot_s32(sum, a, b);
+        x += vl;
+        y += vl;
+        d -= vl;
+    }
+
+    if (d > 0) {
+        svbool_t pg = svwhilelt_b8_s32(0, d);
+        svint8_t a = svld1_s8(pg, x);
+        svint8_t b = svld1_s8(pg, y);
+        sum = svdot_s32(sum, a, b);
+    }
+
+    int32_t total = svaddv_s32(svptrue_b32(), sum);
+
+    return static_cast<float>(total);
+}
+void
+int8_vec_inner_product_batch_4_sve(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2,
+                                   const int8_t* y3, const size_t dim, float& dis0, float& dis1, float& dis2,
+                                   float& dis3) {
+    svint32_t sum0 = svdup_n_s32(0);
+    svint32_t sum1 = svdup_n_s32(0);
+    svint32_t sum2 = svdup_n_s32(0);
+    svint32_t sum3 = svdup_n_s32(0);
+    size_t d = 0;
+    const size_t vl = svcntb() / sizeof(int8_t);
+    svbool_t pg = svptrue_b8();
+    while (d + vl <= dim) {
+        svint8_t a = svld1_s8(pg, x + d);
+        svint8_t b0 = svld1_s8(pg, y0 + d);
+        svint8_t b1 = svld1_s8(pg, y1 + d);
+        svint8_t b2 = svld1_s8(pg, y2 + d);
+        svint8_t b3 = svld1_s8(pg, y3 + d);
+        sum0 = svdot_s32(sum0, a, b0);
+        sum1 = svdot_s32(sum1, a, b1);
+        sum2 = svdot_s32(sum2, a, b2);
+        sum3 = svdot_s32(sum3, a, b3);
+        d += vl;
+    }
+    if (d < dim) {
+        pg = svwhilelt_b8(d, dim);
+        svint8_t a = svld1_s8(pg, x + d);
+        svint8_t b0 = svld1_s8(pg, y0 + d);
+        svint8_t b1 = svld1_s8(pg, y1 + d);
+        svint8_t b2 = svld1_s8(pg, y2 + d);
+        svint8_t b3 = svld1_s8(pg, y3 + d);
+        sum0 = svdot_s32(sum0, a, b0);
+        sum1 = svdot_s32(sum1, a, b1);
+        sum2 = svdot_s32(sum2, a, b2);
+        sum3 = svdot_s32(sum3, a, b3);
+    }
+    dis0 = static_cast<float>(svaddv_s32(svptrue_b32(), sum0));
+    dis1 = static_cast<float>(svaddv_s32(svptrue_b32(), sum1));
+    dis2 = static_cast<float>(svaddv_s32(svptrue_b32(), sum2));
+    dis3 = static_cast<float>(svaddv_s32(svptrue_b32(), sum3));
+}
+
+float
 bf16_vec_L2sqr_sve(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
     svfloat32_t acc_squared_norm_x = svdup_f32(0.0f);
     svfloat32_t acc_squared_norm_y = svdup_f32(0.0f);

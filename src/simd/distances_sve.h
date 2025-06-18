@@ -77,6 +77,14 @@ int8_vec_L2sqr_batch_4_sve(const int8_t* x, const int8_t* y0, const int8_t* y1, 
                            const size_t dim, float& dis0, float& dis1, float& dis2, float& dis3);
 
 float
+int8_vec_inner_product_sve(const int8_t* x, const int8_t* y, size_t d);
+
+void
+int8_vec_inner_product_batch_4_sve(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2,
+                                   const int8_t* y3, const size_t dim, float& dis0, float& dis1, float& dis2,
+                                   float& dis3);
+
+float
 bf16_vec_L2sqr_sve(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
 
 float
