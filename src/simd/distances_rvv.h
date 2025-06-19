@@ -21,4 +21,13 @@ namespace faiss {
 float
 fvec_inner_product_rvv(const float* x, const float* y, size_t d);
 
+float
+fvec_L2sqr_rvv(const float* x, const float* y, size_t d);
+
+float
+fvec_L1_rvv(const float* x, const float* y, size_t d);
+
+float
+fvec_Linf_rvv(const float* x, const float* y, size_t d);
+
 }  // namespace faiss

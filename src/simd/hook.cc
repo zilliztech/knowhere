@@ -542,6 +542,11 @@ fvec_hook(std::string& simd_type) {
 
 #if defined(__riscv_vector)
     fvec_inner_product = fvec_inner_product_rvv;
+    fvec_L1 = fvec_L1_rvv;
+    fvec_Linf = fvec_Linf_rvv;
+
+    fvec_L2sqr = fvec_L2sqr_rvv;
+
     simd_type = "RVV";
     support_pq_fast_scan = false;
 #endif
