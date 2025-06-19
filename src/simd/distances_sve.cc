@@ -716,6 +716,64 @@ bf16_vec_L2sqr_batch_4_sve(const knowhere::bf16* x, const knowhere::bf16* y0, co
     dis3 = norm_x + norm_y3 - 2.0f * ip3;
 }
 
+float
+bf16_vec_inner_product_sve(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+    svfloat32_t acc = svdup_f32(0.0f);
+
+    size_t i = 0;
+    svbool_t pg = svptrue_b16();
+
+    while (i < d) {
+        if (d - i < svcnth())
+            pg = svwhilelt_b16(i, d);
+
+        svbfloat16_t x_vec = svld1_bf16(pg, reinterpret_cast<const bfloat16_t*>(x + i));
+        svbfloat16_t y_vec = svld1_bf16(pg, reinterpret_cast<const bfloat16_t*>(y + i));
+
+        acc = svbfdot_f32(acc, x_vec, y_vec);
+
+        i += svcnth();
+    }
+
+    return svaddv_f32(svptrue_b32(), acc);
+}
+
+void
+bf16_vec_inner_product_batch_4_sve(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
+                                   const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
+                                   float& dis1, float& dis2, float& dis3) {
+    svfloat32_t acc0 = svdup_f32(0.0f);
+    svfloat32_t acc1 = svdup_f32(0.0f);
+    svfloat32_t acc2 = svdup_f32(0.0f);
+    svfloat32_t acc3 = svdup_f32(0.0f);
+
+    size_t i = 0;
+    svbool_t pg = svptrue_b16();
+
+    while (i < d) {
+        if (d - i < svcnth())
+            pg = svwhilelt_b16(i, d);
+
+        svbfloat16_t x_vec = svld1_bf16(pg, reinterpret_cast<const __bf16*>(x + i));
+        svbfloat16_t y0_vec = svld1_bf16(pg, reinterpret_cast<const __bf16*>(y0 + i));
+        svbfloat16_t y1_vec = svld1_bf16(pg, reinterpret_cast<const __bf16*>(y1 + i));
+        svbfloat16_t y2_vec = svld1_bf16(pg, reinterpret_cast<const __bf16*>(y2 + i));
+        svbfloat16_t y3_vec = svld1_bf16(pg, reinterpret_cast<const __bf16*>(y3 + i));
+
+        acc0 = svbfdot_f32(acc0, x_vec, y0_vec);
+        acc1 = svbfdot_f32(acc1, x_vec, y1_vec);
+        acc2 = svbfdot_f32(acc2, x_vec, y2_vec);
+        acc3 = svbfdot_f32(acc3, x_vec, y3_vec);
+
+        i += svcnth();
+    }
+
+    dis0 = svaddv_f32(svptrue_b32(), acc0);
+    dis1 = svaddv_f32(svptrue_b32(), acc1);
+    dis2 = svaddv_f32(svptrue_b32(), acc2);
+    dis3 = svaddv_f32(svptrue_b32(), acc3);
+}
+
 }  // namespace faiss
 
 #endif
