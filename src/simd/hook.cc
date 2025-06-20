@@ -547,6 +547,11 @@ fvec_hook(std::string& simd_type) {
     fvec_Linf = fvec_Linf_rvv;
 
     fvec_L2sqr = fvec_L2sqr_rvv;
+    fvec_inner_products_ny = fvec_inner_products_ny_rvv;
+
+    fvec_norm_L2sqr = fvec_norm_L2sqr_rvv;
+    fvec_L2sqr_ny = fvec_L2sqr_ny_rvv;
+    fvec_madd = fvec_madd_rvv;
 
     simd_type = "RVV";
     support_pq_fast_scan = false;
