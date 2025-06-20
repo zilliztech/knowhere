@@ -215,6 +215,82 @@ fvec_Linf_rvv(const float* x, const float* y, size_t d) {
     return __riscv_vfmv_f_s_f32m1_f32(max_scalar);
 }
 
+float
+fvec_norm_L2sqr_rvv(const float* x, size_t d) {
+    size_t vlmax = __riscv_vsetvlmax_e32m2();
+    vfloat32m2_t vacc0 = __riscv_vfmv_v_f_f32m2(0.0f, vlmax);
+    vfloat32m2_t vacc1 = __riscv_vfmv_v_f_f32m2(0.0f, vlmax);
+    vfloat32m2_t vacc2 = __riscv_vfmv_v_f_f32m2(0.0f, vlmax);
+    vfloat32m2_t vacc3 = __riscv_vfmv_v_f_f32m2(0.0f, vlmax);
+    size_t offset = 0;
+    while (d >= 4 * vlmax) {
+        size_t vl = vlmax;
+        vfloat32m2_t vx0 = __riscv_vle32_v_f32m2(x + offset, vl);
+        vfloat32m2_t vx1 = __riscv_vle32_v_f32m2(x + offset + vl, vl);
+        vfloat32m2_t vx2 = __riscv_vle32_v_f32m2(x + offset + 2 * vl, vl);
+        vfloat32m2_t vx3 = __riscv_vle32_v_f32m2(x + offset + 3 * vl, vl);
+        vacc0 = __riscv_vfmacc_vv_f32m2_tu(vacc0, vx0, vx0, vl);
+        vacc1 = __riscv_vfmacc_vv_f32m2_tu(vacc1, vx1, vx1, vl);
+        vacc2 = __riscv_vfmacc_vv_f32m2_tu(vacc2, vx2, vx2, vl);
+        vacc3 = __riscv_vfmacc_vv_f32m2_tu(vacc3, vx3, vx3, vl);
+        offset += 4 * vl;
+        d -= 4 * vl;
+    }
+    vacc0 = __riscv_vfadd_vv_f32m2(vacc0, vacc1, vlmax);
+    vacc2 = __riscv_vfadd_vv_f32m2(vacc2, vacc3, vlmax);
+    vacc0 = __riscv_vfadd_vv_f32m2(vacc0, vacc2, vlmax);
+    while (d > 0) {
+        size_t vl = __riscv_vsetvl_e32m2(d);
+        vfloat32m2_t vx = __riscv_vle32_v_f32m2(x + offset, vl);
+        vacc0 = __riscv_vfmacc_vv_f32m2_tu(vacc0, vx, vx, vl);
+        offset += vl;
+        d -= vl;
+    }
+    vfloat32m1_t sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    sum_scalar = __riscv_vfredusum_vs_f32m2_f32m1(vacc0, sum_scalar, vlmax);
+    return __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
+}
+
+void
+fvec_L2sqr_ny_rvv(float* dis, const float* x, const float* y, size_t d, size_t ny) {
+    for (size_t i = 0; i < ny; ++i) {
+        dis[i] = fvec_L2sqr_rvv(x, y, d);
+        y += d;
+    }
+}
+
+void
+fvec_inner_products_ny_rvv(float* ip, const float* x, const float* y, size_t d, size_t ny) {
+    for (size_t i = 0; i < ny; ++i) {
+        ip[i] = fvec_inner_product_rvv(x, y, d);
+        y += d;
+    }
+}
+
+void
+fvec_madd_rvv(size_t n, const float* a, float bf, const float* b, float* c) {
+    size_t offset = 0;
+    size_t vlmax = __riscv_vsetvlmax_e32m2();
+    vfloat32m2_t vbf = __riscv_vfmv_v_f_f32m2(bf, vlmax);
+    while (n >= vlmax) {
+        size_t vl = vlmax;
+        vfloat32m2_t va = __riscv_vle32_v_f32m2(a + offset, vl);
+        vfloat32m2_t vb = __riscv_vle32_v_f32m2(b + offset, vl);
+        vfloat32m2_t vc = __riscv_vfmacc_vv_f32m2(va, vbf, vb, vl);
+        __riscv_vse32_v_f32m2(c + offset, vc, vl);
+        offset += vl;
+        n -= vl;
+    }
+    if (n > 0) {
+        size_t vl = __riscv_vsetvl_e32m2(n);
+        vfloat32m2_t va = __riscv_vle32_v_f32m2(a + offset, vl);
+        vfloat32m2_t vb = __riscv_vle32_v_f32m2(b + offset, vl);
+        vfloat32m2_t vbf_tail = __riscv_vfmv_v_f_f32m2(bf, vl);
+        vfloat32m2_t vc = __riscv_vfmacc_vv_f32m2(va, vbf_tail, vb, vl);
+        __riscv_vse32_v_f32m2(c + offset, vc, vl);
+    }
+}
+
 }  // namespace faiss
 
 #endif

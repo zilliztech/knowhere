@@ -30,4 +30,16 @@ fvec_L1_rvv(const float* x, const float* y, size_t d);
 float
 fvec_Linf_rvv(const float* x, const float* y, size_t d);
 
+float
+fvec_norm_L2sqr_rvv(const float* x, size_t d);
+
+void
+fvec_L2sqr_ny_rvv(float* dis, const float* x, const float* y, size_t d, size_t ny);
+
+void
+fvec_inner_products_ny_rvv(float* ip, const float* x, const float* y, size_t d, size_t ny);
+
+void
+fvec_madd_rvv(size_t n, const float* a, float bf, const float* b, float* c);
+
 }  // namespace faiss
