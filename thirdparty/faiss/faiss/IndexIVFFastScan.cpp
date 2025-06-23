@@ -111,7 +111,12 @@ void IndexIVFFastScan::add_with_ids(
     if (is_cosine) {
         auto norm_data = std::make_unique<float[]>(n * d);
         std::memcpy(norm_data.get(), x, n * d * sizeof(float));
-        norms = knowhere::NormalizeVecs(norm_data.get(), n, d);
+        auto l2_norms = knowhere::NormalizeVecs(norm_data.get(), n, d);
+        // Convert L2 norms to inverse L2 norms for WithCosineNormDistanceComputer
+        inverse_norms.reserve(l2_norms.size());
+        for (const auto& norm : l2_norms) {
+            inverse_norms.push_back((norm > 0) ? (1.0f / norm) : 1.0f);
+        }
         add_with_ids_impl(n, norm_data.get(), xids);
     } else {
         add_with_ids_impl(n, x, xids);

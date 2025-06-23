@@ -86,8 +86,8 @@ struct IndexIVFFastScan : IndexIVF {
     int qbs = 0;
     size_t qbs2 = 0;
 
-    // // todo aguzhva: get rid of this
-    std::vector<float> norms;
+    // Inverse L2 norms for cosine similarity computation
+    std::vector<float> inverse_norms;
 
     IndexIVFFastScan(
             Index* quantizer,
