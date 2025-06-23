@@ -1075,7 +1075,7 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITE1(ivpq_2->qbs2);
         WRITE1(ivpq_2->is_cosine);
         if (ivpq_2->is_cosine) {
-            WRITEVECTOR(ivpq_2->norms);
+            WRITEVECTOR(ivpq_2->inverse_norms);
         }
         write_ProductQuantizer(&ivpq_2->pq, f);
         write_InvertedLists(ivpq_2->invlists, f);
