@@ -291,6 +291,214 @@ fvec_madd_rvv(size_t n, const float* a, float bf, const float* b, float* c) {
     }
 }
 
+int
+fvec_madd_and_argmin_rvv(size_t n, const float* a, float bf, const float* b, float* c) {
+    size_t offset = 0;
+    size_t vlmax = __riscv_vsetvlmax_e32m2();
+    float min_val = 1e20f;
+    int min_idx = -1;
+    int idx_base = 0;
+    vfloat32m2_t vbf = __riscv_vfmv_v_f_f32m2(bf, vlmax);
+    while (n >= vlmax) {
+        size_t vl = vlmax;
+        vfloat32m2_t va = __riscv_vle32_v_f32m2(a + offset, vl);
+        vfloat32m2_t vb = __riscv_vle32_v_f32m2(b + offset, vl);
+        vfloat32m2_t vc = __riscv_vfmacc_vv_f32m2(va, vbf, vb, vl);
+        __riscv_vse32_v_f32m2(c + offset, vc, vl);
+        // 归约找最小值
+        vfloat32m1_t vmin = __riscv_vfmv_s_f_f32m1(1e20f, 1);
+        vmin = __riscv_vfredmin_vs_f32m2_f32m1(vc, vmin, vl);
+        float local_min = __riscv_vfmv_f_s_f32m1_f32(vmin);
+        if (local_min < min_val) {
+            // 找到最小值的索引
+            for (size_t i = 0; i < vl; ++i) {
+                float val = c[offset + i];
+                if (val < min_val) {
+                    min_val = val;
+                    min_idx = idx_base + i;
+                }
+            }
+        }
+        offset += vl;
+        n -= vl;
+        idx_base += vl;
+    }
+    if (n > 0) {
+        size_t vl = __riscv_vsetvl_e32m2(n);
+        vfloat32m2_t va = __riscv_vle32_v_f32m2(a + offset, vl);
+        vfloat32m2_t vb = __riscv_vle32_v_f32m2(b + offset, vl);
+        vfloat32m2_t vbf_tail = __riscv_vfmv_v_f_f32m2(bf, vl);
+        vfloat32m2_t vc = __riscv_vfmacc_vv_f32m2(va, vbf_tail, vb, vl);
+        __riscv_vse32_v_f32m2(c + offset, vc, vl);
+        vfloat32m1_t vmin = __riscv_vfmv_s_f_f32m1(1e20f, 1);
+        vmin = __riscv_vfredmin_vs_f32m2_f32m1(vc, vmin, vl);
+        float local_min = __riscv_vfmv_f_s_f32m1_f32(vmin);
+        if (local_min < min_val) {
+            for (size_t i = 0; i < vl; ++i) {
+                float val = c[offset + i];
+                if (val < min_val) {
+                    min_val = val;
+                    min_idx = idx_base + i;
+                }
+            }
+        }
+    }
+    return min_idx;
+}
+
+void
+fvec_inner_product_batch_4_rvv(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
+                               size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
+    // 使用更小的向量长度来减少内存压力
+    size_t vlmax = __riscv_vsetvlmax_e32m1();  // 使用m1而不是m2
+
+    // 4个累积器
+    vfloat32m1_t vacc0 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    vfloat32m1_t vacc1 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    vfloat32m1_t vacc2 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    vfloat32m1_t vacc3 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+
+    size_t offset = 0;
+
+    // 使用更小的向量长度，减少内存压力
+    while (d >= vlmax) {
+        size_t vl = vlmax;
+
+        // 加载数据
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(x + offset, vl);
+        vfloat32m1_t vy0 = __riscv_vle32_v_f32m1(y0 + offset, vl);
+        vfloat32m1_t vy1 = __riscv_vle32_v_f32m1(y1 + offset, vl);
+        vfloat32m1_t vy2 = __riscv_vle32_v_f32m1(y2 + offset, vl);
+        vfloat32m1_t vy3 = __riscv_vle32_v_f32m1(y3 + offset, vl);
+
+        // 并行FMACC操作
+        vacc0 = __riscv_vfmacc_vv_f32m1_tu(vacc0, vx, vy0, vl);
+        vacc1 = __riscv_vfmacc_vv_f32m1_tu(vacc1, vx, vy1, vl);
+        vacc2 = __riscv_vfmacc_vv_f32m1_tu(vacc2, vx, vy2, vl);
+        vacc3 = __riscv_vfmacc_vv_f32m1_tu(vacc3, vx, vy3, vl);
+
+        offset += vl;
+        d -= vl;
+    }
+
+    // 处理剩余元素
+    while (d > 0) {
+        size_t vl = __riscv_vsetvl_e32m1(d);
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(x + offset, vl);
+        vfloat32m1_t vy0 = __riscv_vle32_v_f32m1(y0 + offset, vl);
+        vfloat32m1_t vy1 = __riscv_vle32_v_f32m1(y1 + offset, vl);
+        vfloat32m1_t vy2 = __riscv_vle32_v_f32m1(y2 + offset, vl);
+        vfloat32m1_t vy3 = __riscv_vle32_v_f32m1(y3 + offset, vl);
+
+        vacc0 = __riscv_vfmacc_vv_f32m1_tu(vacc0, vx, vy0, vl);
+        vacc1 = __riscv_vfmacc_vv_f32m1_tu(vacc1, vx, vy1, vl);
+        vacc2 = __riscv_vfmacc_vv_f32m1_tu(vacc2, vx, vy2, vl);
+        vacc3 = __riscv_vfmacc_vv_f32m1_tu(vacc3, vx, vy3, vl);
+
+        offset += vl;
+        d -= vl;
+    }
+
+    // 最终归约
+    vfloat32m1_t sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc0, sum_scalar, vlmax);
+    dis0 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
+
+    sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc1, sum_scalar, vlmax);
+    dis1 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
+
+    sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc2, sum_scalar, vlmax);
+    dis2 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
+
+    sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc3, sum_scalar, vlmax);
+    dis3 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
+}
+
+void
+fvec_L2sqr_batch_4_rvv(const float* x, const float* y0, const float* y1, const float* y2, const float* y3, size_t d,
+                       float& dis0, float& dis1, float& dis2, float& dis3) {
+    // 使用更小的向量长度来减少内存压力
+    size_t vlmax = __riscv_vsetvlmax_e32m1();  // 使用m1而不是m2
+
+    // 4个累积器
+    vfloat32m1_t vacc0 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    vfloat32m1_t vacc1 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    vfloat32m1_t vacc2 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    vfloat32m1_t vacc3 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+
+    size_t offset = 0;
+
+    // 使用更小的向量长度，减少内存压力
+    while (d >= vlmax) {
+        size_t vl = vlmax;
+
+        // 加载数据
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(x + offset, vl);
+        vfloat32m1_t vy0 = __riscv_vle32_v_f32m1(y0 + offset, vl);
+        vfloat32m1_t vy1 = __riscv_vle32_v_f32m1(y1 + offset, vl);
+        vfloat32m1_t vy2 = __riscv_vle32_v_f32m1(y2 + offset, vl);
+        vfloat32m1_t vy3 = __riscv_vle32_v_f32m1(y3 + offset, vl);
+
+        // 计算差值并平方
+        vfloat32m1_t vtmp0 = __riscv_vfsub_vv_f32m1(vx, vy0, vl);
+        vfloat32m1_t vtmp1 = __riscv_vfsub_vv_f32m1(vx, vy1, vl);
+        vfloat32m1_t vtmp2 = __riscv_vfsub_vv_f32m1(vx, vy2, vl);
+        vfloat32m1_t vtmp3 = __riscv_vfsub_vv_f32m1(vx, vy3, vl);
+
+        // 并行FMACC操作
+        vacc0 = __riscv_vfmacc_vv_f32m1_tu(vacc0, vtmp0, vtmp0, vl);
+        vacc1 = __riscv_vfmacc_vv_f32m1_tu(vacc1, vtmp1, vtmp1, vl);
+        vacc2 = __riscv_vfmacc_vv_f32m1_tu(vacc2, vtmp2, vtmp2, vl);
+        vacc3 = __riscv_vfmacc_vv_f32m1_tu(vacc3, vtmp3, vtmp3, vl);
+
+        offset += vl;
+        d -= vl;
+    }
+
+    // 处理剩余元素
+    while (d > 0) {
+        size_t vl = __riscv_vsetvl_e32m1(d);
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(x + offset, vl);
+        vfloat32m1_t vy0 = __riscv_vle32_v_f32m1(y0 + offset, vl);
+        vfloat32m1_t vy1 = __riscv_vle32_v_f32m1(y1 + offset, vl);
+        vfloat32m1_t vy2 = __riscv_vle32_v_f32m1(y2 + offset, vl);
+        vfloat32m1_t vy3 = __riscv_vle32_v_f32m1(y3 + offset, vl);
+
+        vfloat32m1_t vtmp0 = __riscv_vfsub_vv_f32m1(vx, vy0, vl);
+        vfloat32m1_t vtmp1 = __riscv_vfsub_vv_f32m1(vx, vy1, vl);
+        vfloat32m1_t vtmp2 = __riscv_vfsub_vv_f32m1(vx, vy2, vl);
+        vfloat32m1_t vtmp3 = __riscv_vfsub_vv_f32m1(vx, vy3, vl);
+
+        vacc0 = __riscv_vfmacc_vv_f32m1_tu(vacc0, vtmp0, vtmp0, vl);
+        vacc1 = __riscv_vfmacc_vv_f32m1_tu(vacc1, vtmp1, vtmp1, vl);
+        vacc2 = __riscv_vfmacc_vv_f32m1_tu(vacc2, vtmp2, vtmp2, vl);
+        vacc3 = __riscv_vfmacc_vv_f32m1_tu(vacc3, vtmp3, vtmp3, vl);
+
+        offset += vl;
+        d -= vl;
+    }
+
+    // 最终归约
+    vfloat32m1_t sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc0, sum_scalar, vlmax);
+    dis0 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
+
+    sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc1, sum_scalar, vlmax);
+    dis1 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
+
+    sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc2, sum_scalar, vlmax);
+    dis2 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
+
+    sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc3, sum_scalar, vlmax);
+    dis3 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
+}
+
 }  // namespace faiss
 
 #endif
