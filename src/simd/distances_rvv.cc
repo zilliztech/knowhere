@@ -350,7 +350,7 @@ fvec_madd_and_argmin_rvv(size_t n, const float* a, float bf, const float* b, flo
 void
 fvec_inner_product_batch_4_rvv(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
                                size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
-    // Use smaller vector length to reduce memory pressure
+    // Use smaller vector length to reduce memory pressure 
     size_t vlmax = __riscv_vsetvlmax_e32m1();  // Use m1 instead of m2
 
     // 4 accumulators
