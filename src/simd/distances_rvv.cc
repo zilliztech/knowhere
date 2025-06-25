@@ -311,7 +311,6 @@ fvec_madd_and_argmin_rvv(size_t n, const float* a, float bf, const float* b, flo
         vmin = __riscv_vfredmin_vs_f32m2_f32m1(vc, vmin, vl);
         float local_min = __riscv_vfmv_f_s_f32m1_f32(vmin);
         if (local_min < min_val) {
-            
             // Find the index of minimum value
             for (size_t i = 0; i < vl; ++i) {
                 float val = c[offset + i];
