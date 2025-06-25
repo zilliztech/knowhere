@@ -21,9 +21,9 @@ namespace faiss {
 // =================== float distances ===================
 float
 fvec_inner_product_rvv(const float* x, const float* y, size_t d) {
-    size_t vlmax = __riscv_vsetvlmax_e32m2();  // 使用m2以支持4路并行
+    size_t vlmax = __riscv_vsetvlmax_e32m2();  // Use m2 to support 4-way parallelism
 
-    // 4个累积器
+    // 4 accumulators
     vfloat32m2_t vacc0 = __riscv_vfmv_v_f_f32m2(0.0f, vlmax);
     vfloat32m2_t vacc1 = __riscv_vfmv_v_f_f32m2(0.0f, vlmax);
     vfloat32m2_t vacc2 = __riscv_vfmv_v_f_f32m2(0.0f, vlmax);
@@ -31,7 +31,7 @@ fvec_inner_product_rvv(const float* x, const float* y, size_t d) {
 
     size_t offset = 0;
 
-    // 4路展开循环
+    // 4-way unrolled loop
     while (d >= 4 * vlmax) {
         size_t vl = vlmax;
 
@@ -44,7 +44,7 @@ fvec_inner_product_rvv(const float* x, const float* y, size_t d) {
         vfloat32m2_t vx3 = __riscv_vle32_v_f32m2(x + offset + 3 * vl, vl);
         vfloat32m2_t vy3 = __riscv_vle32_v_f32m2(y + offset + 3 * vl, vl);
 
-        // 并行FMACC操作
+        // Parallel FMACC operations
         vacc0 = __riscv_vfmacc_vv_f32m2_tu(vacc0, vx0, vy0, vl);
         vacc1 = __riscv_vfmacc_vv_f32m2_tu(vacc1, vx1, vy1, vl);
         vacc2 = __riscv_vfmacc_vv_f32m2_tu(vacc2, vx2, vy2, vl);
@@ -54,12 +54,12 @@ fvec_inner_product_rvv(const float* x, const float* y, size_t d) {
         d -= 4 * vl;
     }
 
-    // 合并累积器
+    // Merge accumulators
     vacc0 = __riscv_vfadd_vv_f32m2(vacc0, vacc1, vlmax);
     vacc2 = __riscv_vfadd_vv_f32m2(vacc2, vacc3, vlmax);
     vacc0 = __riscv_vfadd_vv_f32m2(vacc0, vacc2, vlmax);
 
-    // 处理剩余元素
+    // Handle remaining elements
     while (d > 0) {
         size_t vl = __riscv_vsetvl_e32m2(d);
         vfloat32m2_t vx = __riscv_vle32_v_f32m2(x + offset, vl);
@@ -70,7 +70,7 @@ fvec_inner_product_rvv(const float* x, const float* y, size_t d) {
         d -= vl;
     }
 
-    // 最终归约
+    // Final reduction
     vfloat32m1_t sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
     sum_scalar = __riscv_vfredusum_vs_f32m2_f32m1(vacc0, sum_scalar, vlmax);
 
@@ -305,12 +305,14 @@ fvec_madd_and_argmin_rvv(size_t n, const float* a, float bf, const float* b, flo
         vfloat32m2_t vb = __riscv_vle32_v_f32m2(b + offset, vl);
         vfloat32m2_t vc = __riscv_vfmacc_vv_f32m2(va, vbf, vb, vl);
         __riscv_vse32_v_f32m2(c + offset, vc, vl);
-        // 归约找最小值
+
+        // Reduction to find minimum value
         vfloat32m1_t vmin = __riscv_vfmv_s_f_f32m1(1e20f, 1);
         vmin = __riscv_vfredmin_vs_f32m2_f32m1(vc, vmin, vl);
         float local_min = __riscv_vfmv_f_s_f32m1_f32(vmin);
         if (local_min < min_val) {
-            // 找到最小值的索引
+            
+            // Find the index of minimum value
             for (size_t i = 0; i < vl; ++i) {
                 float val = c[offset + i];
                 if (val < min_val) {
@@ -349,10 +351,10 @@ fvec_madd_and_argmin_rvv(size_t n, const float* a, float bf, const float* b, flo
 void
 fvec_inner_product_batch_4_rvv(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
                                size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
-    // 使用更小的向量长度来减少内存压力
-    size_t vlmax = __riscv_vsetvlmax_e32m1();  // 使用m1而不是m2
+    // Use smaller vector length to reduce memory pressure
+    size_t vlmax = __riscv_vsetvlmax_e32m1();  // Use m1 instead of m2
 
-    // 4个累积器
+    // 4 accumulators
     vfloat32m1_t vacc0 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
     vfloat32m1_t vacc1 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
     vfloat32m1_t vacc2 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
@@ -360,18 +362,18 @@ fvec_inner_product_batch_4_rvv(const float* x, const float* y0, const float* y1,
 
     size_t offset = 0;
 
-    // 使用更小的向量长度，减少内存压力
+    // Use smaller vector length to reduce memory pressure
     while (d >= vlmax) {
         size_t vl = vlmax;
 
-        // 加载数据
+        // Load data
         vfloat32m1_t vx = __riscv_vle32_v_f32m1(x + offset, vl);
         vfloat32m1_t vy0 = __riscv_vle32_v_f32m1(y0 + offset, vl);
         vfloat32m1_t vy1 = __riscv_vle32_v_f32m1(y1 + offset, vl);
         vfloat32m1_t vy2 = __riscv_vle32_v_f32m1(y2 + offset, vl);
         vfloat32m1_t vy3 = __riscv_vle32_v_f32m1(y3 + offset, vl);
 
-        // 并行FMACC操作
+        // Parallel FMACC operations
         vacc0 = __riscv_vfmacc_vv_f32m1_tu(vacc0, vx, vy0, vl);
         vacc1 = __riscv_vfmacc_vv_f32m1_tu(vacc1, vx, vy1, vl);
         vacc2 = __riscv_vfmacc_vv_f32m1_tu(vacc2, vx, vy2, vl);
@@ -381,7 +383,7 @@ fvec_inner_product_batch_4_rvv(const float* x, const float* y0, const float* y1,
         d -= vl;
     }
 
-    // 处理剩余元素
+    // Handle remaining elements
     while (d > 0) {
         size_t vl = __riscv_vsetvl_e32m1(d);
         vfloat32m1_t vx = __riscv_vle32_v_f32m1(x + offset, vl);
@@ -399,7 +401,7 @@ fvec_inner_product_batch_4_rvv(const float* x, const float* y0, const float* y1,
         d -= vl;
     }
 
-    // 最终归约
+    // Final reduction
     vfloat32m1_t sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
     sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc0, sum_scalar, vlmax);
     dis0 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
@@ -420,10 +422,10 @@ fvec_inner_product_batch_4_rvv(const float* x, const float* y0, const float* y1,
 void
 fvec_L2sqr_batch_4_rvv(const float* x, const float* y0, const float* y1, const float* y2, const float* y3, size_t d,
                        float& dis0, float& dis1, float& dis2, float& dis3) {
-    // 使用更小的向量长度来减少内存压力
-    size_t vlmax = __riscv_vsetvlmax_e32m1();  // 使用m1而不是m2
+    // Use smaller vector length to reduce memory pressure
+    size_t vlmax = __riscv_vsetvlmax_e32m1();  // Use m1 instead of m2
 
-    // 4个累积器
+    // 4 accumulators
     vfloat32m1_t vacc0 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
     vfloat32m1_t vacc1 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
     vfloat32m1_t vacc2 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
@@ -431,24 +433,24 @@ fvec_L2sqr_batch_4_rvv(const float* x, const float* y0, const float* y1, const f
 
     size_t offset = 0;
 
-    // 使用更小的向量长度，减少内存压力
+    // Use smaller vector length to reduce memory pressure
     while (d >= vlmax) {
         size_t vl = vlmax;
 
-        // 加载数据
+        // Load data
         vfloat32m1_t vx = __riscv_vle32_v_f32m1(x + offset, vl);
         vfloat32m1_t vy0 = __riscv_vle32_v_f32m1(y0 + offset, vl);
         vfloat32m1_t vy1 = __riscv_vle32_v_f32m1(y1 + offset, vl);
         vfloat32m1_t vy2 = __riscv_vle32_v_f32m1(y2 + offset, vl);
         vfloat32m1_t vy3 = __riscv_vle32_v_f32m1(y3 + offset, vl);
 
-        // 计算差值并平方
+        // Calculate difference and square
         vfloat32m1_t vtmp0 = __riscv_vfsub_vv_f32m1(vx, vy0, vl);
         vfloat32m1_t vtmp1 = __riscv_vfsub_vv_f32m1(vx, vy1, vl);
         vfloat32m1_t vtmp2 = __riscv_vfsub_vv_f32m1(vx, vy2, vl);
         vfloat32m1_t vtmp3 = __riscv_vfsub_vv_f32m1(vx, vy3, vl);
 
-        // 并行FMACC操作
+        // Parallel FMACC operations
         vacc0 = __riscv_vfmacc_vv_f32m1_tu(vacc0, vtmp0, vtmp0, vl);
         vacc1 = __riscv_vfmacc_vv_f32m1_tu(vacc1, vtmp1, vtmp1, vl);
         vacc2 = __riscv_vfmacc_vv_f32m1_tu(vacc2, vtmp2, vtmp2, vl);
@@ -458,7 +460,7 @@ fvec_L2sqr_batch_4_rvv(const float* x, const float* y0, const float* y1, const f
         d -= vl;
     }
 
-    // 处理剩余元素
+    // Handle remaining elements
     while (d > 0) {
         size_t vl = __riscv_vsetvl_e32m1(d);
         vfloat32m1_t vx = __riscv_vle32_v_f32m1(x + offset, vl);
@@ -481,7 +483,7 @@ fvec_L2sqr_batch_4_rvv(const float* x, const float* y0, const float* y1, const f
         d -= vl;
     }
 
-    // 最终归约
+    // Final reduction
     vfloat32m1_t sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
     sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc0, sum_scalar, vlmax);
     dis0 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
