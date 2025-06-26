@@ -65,6 +65,11 @@ GetRangeSearchResult(const std::vector<std::vector<float>>& result_distances,
     LOG_KNOWHERE_DEBUG_ << "Range search: is_ip " << (is_ip ? "True" : "False") << ", radius " << radius
                         << ", range_filter " << range_filter << ", total result num " << total_valid;
 
+    // Handle the case where total_valid is 0
+    if (total_valid == 0) {
+        return RangeSearchResult{.distances = nullptr, .labels = nullptr, .lims = std::move(lims)};
+    }
+
     auto distances = std::make_unique<float[]>(total_valid);
     auto labels = std::make_unique<int64_t[]>(total_valid);
 

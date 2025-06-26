@@ -913,10 +913,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
     // if support ann_iterator, use iterator-based range_search (IndexNode::RangeSearch)
     constexpr bool use_iterator_for_range_search = is_ann_iterator_supported();
     if (use_iterator_for_range_search) {
-        // todo: there are some issues with ann_iterator of `IndexScaNN` , need to be fixed by @cqy
-        if constexpr (!std::is_same<IndexType, faiss::IndexScaNN>::value) {
-            return IndexNode::RangeSearch(dataset, std::move(cfg), bitset);
-        }
+        return IndexNode::RangeSearch(dataset, std::move(cfg), bitset);
     }
     if (!this->index_) {
         LOG_KNOWHERE_WARNING_ << "range search on empty index";
