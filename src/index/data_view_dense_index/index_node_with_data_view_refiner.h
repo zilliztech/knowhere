@@ -51,9 +51,6 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
 
-    expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
-
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                 bool use_knowhere_search_pool) const override;
@@ -410,46 +407,6 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Search(const DataSetPtr d
         return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
     }
     return GenResultDataSet(nq, topk, std::move(labels), std::move(distances));
-}
-
-template <typename DataType, typename BaseIndexNode>
-expected<DataSetPtr>
-IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::RangeSearch(const DataSetPtr dataset,
-                                                                   std::unique_ptr<Config> cfg,
-                                                                   const BitsetView& bitset) const {
-    if (this->base_index_ == nullptr || this->refine_offset_index_ == nullptr) {
-        LOG_KNOWHERE_WARNING_ << "search on empty index";
-        return expected<DataSetPtr>::Err(Status::empty_index, "index not is trained.");
-    }
-    const BaseConfig& base_cfg = static_cast<const BaseConfig&>(*cfg);
-    auto nq = dataset->GetRows();
-    auto dim = dataset->GetDim();
-    auto radius = base_cfg.radius.value();
-    auto range_filter = base_cfg.range_filter.value();
-    auto refine_with_quant = base_cfg.refine_with_quant.value();
-    AdaptToBaseIndexConfig(cfg.get(), PARAM_TYPE::RANGE_SEARCH, dim);
-    auto base_index_ds = std::get<0>(
-        ConvertToBaseIndexFp32DataSet<DataType>(dataset, is_cosine_, std::nullopt, std::nullopt, base_index_->Dim()));
-
-    knowhere::expected<knowhere::DataSetPtr> quant_res;
-    {
-        FairReadLockGuard guard(*this->base_index_lock_);
-        quant_res = base_index_->RangeSearch(base_index_ds, std::move(cfg), bitset);
-    }
-    if (!quant_res.has_value()) {
-        return quant_res;
-    }
-    auto quant_res_ids = quant_res.value()->GetIds();
-    auto quant_res_lims = quant_res.value()->GetLims();
-    try {
-        auto final_res = refine_offset_index_->RangeSearchWithIds(
-            nq, dataset->GetTensor(), (const knowhere::idx_t*)quant_res_lims, (const knowhere::idx_t*)quant_res_ids,
-            radius, range_filter, refine_with_quant);
-        return GenResultDataSet(nq, std::move(final_res));
-    } catch (const std::exception& e) {
-        LOG_KNOWHERE_WARNING_ << "data view index inner error: " << e.what();
-        return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
-    }
 }
 
 template <typename DataType, typename BaseIndexNode>
