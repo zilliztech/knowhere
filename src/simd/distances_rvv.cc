@@ -500,6 +500,60 @@ fvec_L2sqr_batch_4_rvv(const float* x, const float* y0, const float* y1, const f
     dis3 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
 }
 
+int32_t
+ivec_inner_product_rvv(const int8_t* x, const int8_t* y, size_t d) {
+    int32_t res = 0;
+    size_t vl;
+
+    for (size_t i = 0; i < d;) {
+        vl = __riscv_vsetvl_e8m1(d - i);
+
+        // Load int8 vectors
+        vint8m1_t vx = __riscv_vle8_v_i8m1(x + i, vl);
+        vint8m1_t vy = __riscv_vle8_v_i8m1(y + i, vl);
+
+        // Use widening multiplication directly (int8 * int8 -> int16)
+        vint16m2_t vmul = __riscv_vwmul_vv_i16m2(vx, vy, vl);
+
+        // Extend to int32 and accumulate
+        vint32m4_t vmul_ext = __riscv_vsext_vf2_i32m4(vmul, vl);
+        vint32m1_t vsum = __riscv_vredsum_vs_i32m4_i32m1(vmul_ext, __riscv_vmv_s_x_i32m1(0, 1), vl);
+
+        res += __riscv_vmv_x_s_i32m1_i32(vsum);
+        i += vl;
+    }
+
+    return res;
+}
+
+int32_t
+ivec_L2sqr_rvv(const int8_t* x, const int8_t* y, size_t d) {
+    int32_t res = 0;
+    size_t vl;
+
+    for (size_t i = 0; i < d;) {
+        vl = __riscv_vsetvl_e8m1(d - i);
+
+        // Load int8 vectors
+        vint8m1_t vx = __riscv_vle8_v_i8m1(x + i, vl);
+        vint8m1_t vy = __riscv_vle8_v_i8m1(y + i, vl);
+
+        // Use widening subtraction (int8 - int8 -> int16)
+        vint16m2_t vdiff = __riscv_vwsub_vv_i16m2(vx, vy, vl);
+
+        // Use widening multiplication directly from int16 to int32
+        vint32m4_t vsqr = __riscv_vwmul_vv_i32m4(vdiff, vdiff, vl);
+
+        // Vector reduction sum
+        vint32m1_t vsum = __riscv_vredsum_vs_i32m4_i32m1(vsqr, __riscv_vmv_s_x_i32m1(0, 1), vl);
+
+        res += __riscv_vmv_x_s_i32m1_i32(vsum);
+        i += vl;
+    }
+
+    return res;
+}
+
 }  // namespace faiss
 
 #endif
