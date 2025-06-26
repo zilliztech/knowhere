@@ -53,4 +53,10 @@ void
 fvec_L2sqr_batch_4_rvv(const float* x, const float* y0, const float* y1, const float* y2, const float* y3, size_t d,
                        float& dis0, float& dis1, float& dis2, float& dis3);
 
+int32_t
+ivec_inner_product_rvv(const int8_t* x, const int8_t* y, size_t d);
+
+int32_t
+ivec_L2sqr_rvv(const int8_t* x, const int8_t* y, size_t d);
+
 }  // namespace faiss
