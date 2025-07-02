@@ -16,6 +16,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <boost/core/span.hpp>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -42,6 +43,26 @@ enum class InvertedIndexAlgo {
     DAAT_MAXSCORE,
 };
 
+struct InvertedIndexBuildStats {
+    std::vector<uint32_t> dataset_nnz_stats_;
+    std::vector<uint32_t> posting_list_length_stats_;
+};
+
+enum class InvertedIndexSectionType : uint32_t {
+    POSTING_LISTS = 0,
+    METRIC_PARAMS = 1,
+    DIM_MAP = 2,
+    ROW_SUMS = 3,
+    MAX_SCORES_PER_DIM = 4,
+    PROMETHEUS_BUILD_STATS = 5
+};
+
+struct InvertedIndexSectionHeader {
+    InvertedIndexSectionType type;
+    uint64_t offset;
+    uint64_t size;
+};
+
 struct InvertedIndexApproxSearchParams {
     int refine_factor;
     float drop_ratio_search;
@@ -60,6 +81,12 @@ class BaseInvertedIndex {
     // this file will be created during loading and deleted in the destructor.
     virtual Status
     Load(MemoryIOReader& reader, int map_flags, const std::string& supplement_target_filename) = 0;
+
+    virtual Status
+    Serialize(MemoryIOWriter& writer) = 0;
+
+    virtual Status
+    Deserialize(MemoryIOReader& reader) = 0;
 
     virtual Status
     Train(const SparseRow<T>* data, size_t rows) = 0;
@@ -306,6 +333,301 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
         n_rows_internal_ = rows;
 
+        nr_inner_dims_ = dim_map_.size();
+
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        build_stats_.posting_list_length_stats_.resize(nr_inner_dims_);
+        for (size_t i = 0; i < nr_inner_dims_; ++i) {
+            build_stats_.posting_list_length_stats_[i] = inverted_index_ids_[i].size();
+        }
+#endif
+        // mapping data to spans
+        inverted_index_ids_spans_.reserve(nr_inner_dims_);
+        inverted_index_vals_spans_.reserve(nr_inner_dims_);
+        for (size_t i = 0; i < nr_inner_dims_; ++i) {
+            inverted_index_ids_spans_.emplace_back(inverted_index_ids_[i].data(), inverted_index_ids_[i].size());
+            inverted_index_vals_spans_.emplace_back(inverted_index_vals_[i].data(), inverted_index_vals_[i].size());
+        }
+
+        if (max_score_in_dim_.size() > 0) {
+            max_score_in_dim_spans_ = boost::span<float>(max_score_in_dim_.data(), max_score_in_dim_.size());
+        }
+
+        if (metric_type_ == SparseMetricType::METRIC_BM25) {
+            bm25_params_->row_sums_spans_ =
+                boost::span<float>(bm25_params_->row_sums.data(), bm25_params_->row_sums.size());
+        }
+
+        return Status::success;
+    }
+
+    Status
+    Serialize(MemoryIOWriter& writer) override {
+        // Serialized format:
+        // 1. Index Header (36 bytes):
+        //    - index_format_version (uint32_t): Version of the index format, currently 1
+        //    - nr_rows (uint32_t): Number of rows in the index
+        //    - max_dim (uint32_t): Number of columns, or maximum dimension ID
+        //    - nr_inner_dims (uint32_t): Number of inner dimensions
+        //    - reserved (16 bytes): Reserved for future use
+        //
+        // 2. Section Headers Table:
+        //    - nr_sections (uint32_t): Number of sections
+        //    - section_headers[nr_sections]: Array of section headers, each containing:
+        //      - type (InvertedIndexSectionType): Type of the section
+        //      - offset (uint64_t): Offset of the section from the beginning of the file
+        //      - size (uint64_t): Size of the section in bytes
+        //
+        // 3. Posting Lists Section:
+        //    - index_encoding_type (uint32_t): Type of encoding used, only flat is supported for FlattenInvertedIndex
+        //    - encoded_index_data: Flattened posting lists
+        //
+        // 4. Dimension Map Section:
+        //    - dim_map_reverse[nr_inner_dims]: Array mapping internal dimension IDs to original dimensions
+        //
+        // 5. Optional Row Sums Section:
+        //    - row_sums[nr_rows]: Array of row sums (float)
+        //
+        // 6. Optional Max Scores Per Dimension Section:
+        //    - max_score_per_dim[nr_inner_dims]: Array of maximum scores per dimension (float)
+
+        // write index header data
+        const uint32_t index_format_version = 1;
+
+        // Index File Header
+        writer.write(&index_format_version, sizeof(uint32_t));    // index format version
+        writer.write(&this->n_rows_internal_, sizeof(uint32_t));  // number of rows
+        writer.write(&this->max_dim_, sizeof(uint32_t));          // number of cols, or maximum dimension id
+        writer.write(&this->nr_inner_dims_, sizeof(uint32_t));    // number of inner dimensions
+        auto reserved = std::array<uint8_t, 16>();                // reserved for future use
+        writer.write(reserved.data(), reserved.size());
+
+        // Section Headers Table
+        uint32_t nr_sections = 2;  // base sections: inverted index and dim map
+        // Count additional sections based on flags in a single operation
+        if (metric_type_ == SparseMetricType::METRIC_BM25) {
+            nr_sections += 1;  // row sums
+        }
+        if (max_score_in_dim_.size() > 0) {
+            nr_sections += 1;  // max scores per dim
+        }
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
+        // use a section to store some build stats for prometheus
+        nr_sections += 1;
+#endif
+        writer.write(&nr_sections, sizeof(uint32_t));
+
+        // since writer doesn't support seekp() for now, calculate all sizes of each sections first
+        std::vector<InvertedIndexSectionHeader> section_headers(nr_sections);
+        uint64_t used_offset = sizeof(InvertedIndexSectionHeader) * nr_sections + 36;
+        section_headers[0].type = InvertedIndexSectionType::POSTING_LISTS;
+        section_headers[0].offset = used_offset;
+        uint64_t posting_lists_size = sizeof(uint32_t);                       // used to store encoding type
+        posting_lists_size += sizeof(uint64_t) * (this->nr_inner_dims_ + 1);  // used to store dim offsets
+        for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
+            posting_lists_size += this->inverted_index_ids_spans_[i].size() * sizeof(uint32_t) +
+                                  this->inverted_index_vals_spans_[i].size() * sizeof(QType);
+        }
+        section_headers[0].size = posting_lists_size;
+        used_offset += section_headers[0].size;
+
+        section_headers[1].type = InvertedIndexSectionType::DIM_MAP;
+        section_headers[1].offset = used_offset;
+        section_headers[1].size = sizeof(uint32_t) * this->nr_inner_dims_;
+        used_offset += section_headers[1].size;
+
+        uint32_t curr_section_idx = 2;
+        if (metric_type_ == SparseMetricType::METRIC_BM25) {
+            section_headers[curr_section_idx].type = InvertedIndexSectionType::ROW_SUMS;
+            section_headers[curr_section_idx].offset = used_offset;
+            section_headers[curr_section_idx].size = sizeof(float) * n_rows_internal_;
+            used_offset += section_headers[curr_section_idx].size;
+            curr_section_idx++;
+        }
+
+        if (max_score_in_dim_.size() > 0) {
+            section_headers[curr_section_idx].type = InvertedIndexSectionType::MAX_SCORES_PER_DIM;
+            section_headers[curr_section_idx].offset = used_offset;
+            section_headers[curr_section_idx].size = sizeof(float) * this->nr_inner_dims_;
+            used_offset += section_headers[curr_section_idx].size;
+            curr_section_idx++;
+        }
+
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
+        section_headers[curr_section_idx].type = InvertedIndexSectionType::PROMETHEUS_BUILD_STATS;
+        section_headers[curr_section_idx].offset = used_offset;
+        section_headers[curr_section_idx].size =
+            sizeof(uint32_t) * this->n_rows_internal_ + sizeof(uint32_t) * this->nr_inner_dims_;
+        used_offset += section_headers[curr_section_idx].size;
+        curr_section_idx++;
+#endif
+
+        assert(curr_section_idx == nr_sections);
+
+        // write section headers table
+        writer.write(section_headers.data(), sizeof(InvertedIndexSectionHeader), nr_sections);
+
+        // write index encoding type and index
+        uint32_t index_encoding_type = 0;  // not used for now
+        writer.write(&index_encoding_type, sizeof(uint32_t));
+        std::vector<uint64_t> inverted_index_offsets(this->nr_inner_dims_ + 1);
+        inverted_index_offsets[0] = 0;
+        for (size_t i = 1; i <= this->nr_inner_dims_; ++i) {
+            inverted_index_offsets[i] = inverted_index_offsets[i - 1] + this->inverted_index_ids_spans_[i - 1].size();
+        }
+        writer.write(inverted_index_offsets.data(), sizeof(uint64_t), inverted_index_offsets.size());
+        for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
+            writer.write(this->inverted_index_ids_spans_[i].data(), sizeof(uint32_t),
+                         this->inverted_index_ids_spans_[i].size());
+        }
+        for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
+            writer.write(this->inverted_index_vals_spans_[i].data(), sizeof(QType),
+                         this->inverted_index_vals_spans_[i].size());
+        }
+
+        // write dim map
+        auto dim_map_reverse = std::vector<uint32_t>(this->nr_inner_dims_);
+        for (const auto& [dim, dim_id] : this->dim_map_) {
+            dim_map_reverse[dim_id] = dim;
+        }
+        writer.write(dim_map_reverse.data(), sizeof(uint32_t), this->nr_inner_dims_);
+
+        // write index meta data
+        if (metric_type_ == SparseMetricType::METRIC_BM25) {
+            writer.write(bm25_params_->row_sums_spans_.data(), sizeof(float), this->n_rows_internal_);
+        }
+
+        if (max_score_in_dim_.size() > 0) {
+            writer.write(max_score_in_dim_spans_.data(), sizeof(float), this->nr_inner_dims_);
+        }
+
+        // write prometheus build stats
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
+        writer.write(this->build_stats_.dataset_nnz_stats_.data(), sizeof(uint32_t), this->n_rows_internal_);
+        writer.write(this->build_stats_.posting_list_length_stats_.data(), sizeof(uint32_t), this->nr_inner_dims_);
+#endif
+
+        return Status::success;
+    }
+
+    Status
+    Deserialize(MemoryIOReader& reader) override {
+        auto file_header_handler = [&]() {
+            uint32_t index_format_version = 0;
+            reader.read(&index_format_version, sizeof(uint32_t));
+            // for now we only support version 1
+            if (index_format_version != 1) {
+                return Status::invalid_serialized_index_type;
+            }
+
+            reader.read(&this->n_rows_internal_, sizeof(uint32_t));
+            reader.read(&this->max_dim_, sizeof(uint32_t));
+            reader.read(&this->nr_inner_dims_, sizeof(uint32_t));
+            // skip reserved bytes
+            reader.advance(16);
+
+            return Status::success;
+        };
+
+        auto sections_handler = [&]() {
+            uint32_t nr_sections = 0;
+            reader.read(&nr_sections, sizeof(uint32_t));
+            size_t sec_table_offset = reader.tellg();
+
+            for (uint32_t i = 0; i < nr_sections; ++i) {
+                InvertedIndexSectionHeader section_header;
+                reader.seekg(sec_table_offset);
+                reader.read(&section_header, sizeof(InvertedIndexSectionHeader));
+                sec_table_offset += sizeof(InvertedIndexSectionHeader);
+
+                switch (section_header.type) {
+                    case InvertedIndexSectionType::POSTING_LISTS: {
+                        reader.seekg(section_header.offset);
+                        // check index encoding type
+                        uint32_t index_encoding_type = 0;
+                        reader.read(&index_encoding_type, sizeof(uint32_t));
+                        if (index_encoding_type != 0) {
+                            return Status::invalid_serialized_index_type;
+                        }
+                        auto inverted_index_offsets_span = boost::span<uint64_t>(
+                            reinterpret_cast<uint64_t*>(reader.data() + reader.tellg()), this->nr_inner_dims_ + 1);
+                        reader.advance(sizeof(uint64_t) * (this->nr_inner_dims_ + 1));
+                        inverted_index_ids_spans_.resize(this->nr_inner_dims_);
+                        inverted_index_vals_spans_.resize(this->nr_inner_dims_);
+                        for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
+                            inverted_index_ids_spans_[i] = boost::span<uint32_t>(
+                                reinterpret_cast<uint32_t*>(reader.data() + reader.tellg()),
+                                inverted_index_offsets_span[i + 1] - inverted_index_offsets_span[i]);
+                            reader.advance(inverted_index_ids_spans_[i].size() * sizeof(uint32_t));
+                        }
+                        for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
+                            inverted_index_vals_spans_[i] =
+                                boost::span<QType>(reinterpret_cast<QType*>(reader.data() + reader.tellg()),
+                                                   inverted_index_offsets_span[i + 1] - inverted_index_offsets_span[i]);
+                            reader.advance(inverted_index_vals_spans_[i].size() * sizeof(QType));
+                        }
+                        break;
+                    }
+                    case InvertedIndexSectionType::DIM_MAP: {
+                        reader.seekg(section_header.offset);
+                        for (uint32_t i = 0; i < this->nr_inner_dims_; ++i) {
+                            uint32_t dim = 0;
+                            reader.read(&dim, sizeof(uint32_t));
+                            this->dim_map_[dim] = i;
+                        }
+                        break;
+                    }
+                    case InvertedIndexSectionType::ROW_SUMS: {
+                        reader.seekg(section_header.offset);
+                        bm25_params_->row_sums_spans_ = boost::span<float>(
+                            reinterpret_cast<float*>(reader.data() + section_header.offset), this->n_rows_internal_);
+                        reader.advance(sizeof(float) * this->n_rows_internal_);
+                        break;
+                    }
+                    case InvertedIndexSectionType::MAX_SCORES_PER_DIM: {
+                        reader.seekg(section_header.offset);
+                        max_score_in_dim_spans_ = boost::span<float>(
+                            reinterpret_cast<float*>(reader.data() + section_header.offset), this->nr_inner_dims_);
+                        reader.advance(sizeof(float) * this->nr_inner_dims_);
+                        break;
+                    }
+                    case InvertedIndexSectionType::PROMETHEUS_BUILD_STATS: {
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+                        reader.seekg(section_header.offset);
+                        auto dataset_nnz_stats = std::vector<uint32_t>(this->n_rows_internal_);
+                        reader.read(dataset_nnz_stats.data(), sizeof(uint32_t), this->n_rows_internal_);
+                        auto posting_list_length_stats = std::vector<uint32_t>(this->nr_inner_dims_);
+                        reader.read(posting_list_length_stats.data(), sizeof(uint32_t), this->nr_inner_dims_);
+                        for (size_t i = 0; i < this->n_rows_internal_; ++i) {
+                            this->index_dataset_nnz_len_histogram_->Observe(dataset_nnz_stats[i]);
+                        }
+                        for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
+                            this->index_posting_list_len_histogram_->Observe(posting_list_length_stats[i]);
+                        }
+#endif
+                        break;
+                    }
+                    default:
+                        // skip unknown sections
+                        break;
+                }
+            }
+
+            return Status::success;
+        };
+
+        if (auto status = file_header_handler(); status != Status::success) {
+            return status;
+        }
+
+        if (auto status = sections_handler(); status != Status::success) {
+            return status;
+        }
+
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        this->index_size_gauge_->Set((double)size() / 1024.0 / 1024.0);
+#endif
+
         return Status::success;
     }
 
@@ -463,6 +785,35 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                 add_row_to_index(data[i], current_rows + i);
             }
             n_rows_internal_ += rows;
+
+            nr_inner_dims_ = dim_map_.size();
+
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+            build_stats_.posting_list_length_stats_.resize(nr_inner_dims_);
+            for (size_t i = 0; i < nr_inner_dims_; ++i) {
+                build_stats_.posting_list_length_stats_[i] = inverted_index_ids_[i].size();
+            }
+#endif
+
+            inverted_index_ids_spans_.clear();
+            inverted_index_vals_spans_.clear();
+            inverted_index_ids_spans_.reserve(nr_inner_dims_);
+            inverted_index_vals_spans_.reserve(nr_inner_dims_);
+
+            // mapping data to spans
+            for (size_t i = 0; i < nr_inner_dims_; ++i) {
+                inverted_index_ids_spans_.emplace_back(inverted_index_ids_[i].data(), inverted_index_ids_[i].size());
+                inverted_index_vals_spans_.emplace_back(inverted_index_vals_[i].data(), inverted_index_vals_[i].size());
+            }
+
+            if (max_score_in_dim_.size() > 0) {
+                max_score_in_dim_spans_ = boost::span<float>(max_score_in_dim_.data(), max_score_in_dim_.size());
+            }
+
+            if (metric_type_ == SparseMetricType::METRIC_BM25) {
+                bm25_params_->row_sums_spans_ =
+                    boost::span<float>(bm25_params_->row_sums.data(), bm25_params_->row_sums.size());
+            }
 
             return Status::success;
         }
@@ -622,8 +973,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     template <typename DocIdFilter>
     struct Cursor {
      public:
-        Cursor(const Vector<table_t>& plist_ids, const Vector<QType>& plist_vals, size_t num_vec, float max_score,
-               float q_value, DocIdFilter filter)
+        Cursor(const boost::span<table_t>& plist_ids, const boost::span<QType>& plist_vals, size_t num_vec,
+               float max_score, float q_value, DocIdFilter filter)
             : plist_ids_(plist_ids),
               plist_vals_(plist_vals),
               plist_size_(plist_ids.size()),
@@ -658,8 +1009,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             return plist_vals_[loc_];
         }
 
-        const Vector<table_t>& plist_ids_;
-        const Vector<QType>& plist_vals_;
+        const boost::span<table_t>& plist_ids_;
+        const boost::span<QType>& plist_vals_;
         const size_t plist_size_;
         size_t loc_ = 0;
         size_t total_num_vec_ = 0;
@@ -713,11 +1064,11 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         std::vector<Cursor<DocIdFilter>> cursors;
         cursors.reserve(q_vec.size());
         for (auto q_dim : q_vec) {
-            auto& plist_ids = inverted_index_ids_[q_dim.first];
-            auto& plist_vals = inverted_index_vals_[q_dim.first];
+            auto& plist_ids = inverted_index_ids_spans_[q_dim.first];
+            auto& plist_vals = inverted_index_vals_spans_[q_dim.first];
             cursors.emplace_back(plist_ids, plist_vals, n_rows_internal_,
-                                 max_score_in_dim_[q_dim.first] * q_dim.second * dim_max_score_ratio, q_dim.second,
-                                 filter);
+                                 max_score_in_dim_spans_[q_dim.first] * q_dim.second * dim_max_score_ratio,
+                                 q_dim.second, filter);
         }
         return cursors;
     }
@@ -807,7 +1158,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     search_daat_maxscore(std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
                          const DocValueComputer<float>& computer, float dim_max_score_ratio) const {
         std::sort(q_vec.begin(), q_vec.end(), [this](auto& a, auto& b) {
-            return a.second * max_score_in_dim_[a.first] > b.second * max_score_in_dim_[b.first];
+            return a.second * max_score_in_dim_spans_[a.first] > b.second * max_score_in_dim_spans_[b.first];
         });
 
         std::vector<Cursor<DocIdFilter>> cursors = make_cursors(q_vec, computer, filter, dim_max_score_ratio);
@@ -854,7 +1205,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                 // update next_cand_vec_id
                 next_cand_vec_id = n_rows_internal_;
                 float cur_vec_sum =
-                    metric_type_ == SparseMetricType::METRIC_BM25 ? bm25_params_->row_sums.at(curr_cand_vec_id) : 0;
+                    metric_type_ == SparseMetricType::METRIC_BM25 ? bm25_params_->row_sums_spans_[curr_cand_vec_id] : 0;
 
                 for (size_t i = 0; i < first_ne_idx; ++i) {
                     if (cursors[i].cur_vec_id_ == curr_cand_vec_id) {
@@ -963,6 +1314,9 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             inverted_index_ids_[dim_it->second].emplace_back(vec_id);
             inverted_index_vals_[dim_it->second].emplace_back(get_quant_val(val));
         }
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        build_stats_.dataset_nnz_stats_.push_back(row.size());
+#endif
         // update max_score_in_dim_
         if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
             for (size_t j = 0; j < row.size(); ++j) {
@@ -1004,11 +1358,15 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
     // key is raw sparse vector dim/idx, value is the mapped dim/idx id in the index.
     std::unordered_map<table_t, uint32_t> dim_map_;
+    uint32_t nr_inner_dims_ = 0;
 
     // reserve, [], size, emplace_back
     Vector<Vector<table_t>> inverted_index_ids_;
     Vector<Vector<QType>> inverted_index_vals_;
+    std::vector<boost::span<table_t>> inverted_index_ids_spans_;
+    std::vector<boost::span<QType>> inverted_index_vals_spans_;
     Vector<float> max_score_in_dim_;
+    boost::span<float> max_score_in_dim_spans_;
 
     SparseMetricType metric_type_;
 
@@ -1026,6 +1384,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         // row_sums is used to cache the sum of values of each row, which
         // corresponds to the document length of each doc in the BM25 formula.
         Vector<float> row_sums;
+        boost::span<float> row_sums_spans_;
 
         DocValueComputer<float> max_score_computer;
 
@@ -1037,6 +1396,9 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     std::unique_ptr<BM25Params> bm25_params_;
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+    // Statistics for the build process, which will be used to generate the prometheus metrics
+    InvertedIndexBuildStats build_stats_;
+
     std::string index_id_{};
     prometheus::Gauge* index_size_gauge_{nullptr};
     prometheus::Histogram* index_dataset_nnz_len_histogram_{nullptr};
