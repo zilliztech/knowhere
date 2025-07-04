@@ -75,15 +75,15 @@ class BaseInvertedIndex {
     virtual ~BaseInvertedIndex() = default;
 
     virtual Status
-    Save(MemoryIOWriter& writer) = 0;
+    SerializeV0(MemoryIOWriter& writer) const = 0;
 
     // supplement_target_filename: when in mmap mode, we need an extra file to store the mmapped index data structure.
     // this file will be created during loading and deleted in the destructor.
     virtual Status
-    Load(MemoryIOReader& reader, int map_flags, const std::string& supplement_target_filename) = 0;
+    DeserializeV0(MemoryIOReader& reader, int map_flags, const std::string& supplement_target_filename) = 0;
 
     virtual Status
-    Serialize(MemoryIOWriter& writer) = 0;
+    Serialize(MemoryIOWriter& writer) const = 0;
 
     virtual Status
     Deserialize(MemoryIOReader& reader) = 0;
@@ -215,7 +215,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     }
 
     Status
-    Save(MemoryIOWriter& writer) override {
+    SerializeV0(MemoryIOWriter& writer) const override {
         /**
          * Layout:
          *
@@ -279,7 +279,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     }
 
     Status
-    Load(MemoryIOReader& reader, int map_flags, const std::string& supplement_target_filename) override {
+    DeserializeV0(MemoryIOReader& reader, int map_flags, const std::string& supplement_target_filename) override {
         DType deprecated_value_threshold;
         int64_t rows;
         readBinaryPOD(reader, rows);
@@ -350,26 +350,26 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
 
         if (max_score_in_dim_.size() > 0) {
-            max_score_in_dim_spans_ = boost::span<float>(max_score_in_dim_.data(), max_score_in_dim_.size());
+            max_score_in_dim_spans_ = boost::span<const float>(max_score_in_dim_.data(), max_score_in_dim_.size());
         }
 
         if (metric_type_ == SparseMetricType::METRIC_BM25) {
             bm25_params_->row_sums_spans_ =
-                boost::span<float>(bm25_params_->row_sums.data(), bm25_params_->row_sums.size());
+                boost::span<const float>(bm25_params_->row_sums.data(), bm25_params_->row_sums.size());
         }
 
         return Status::success;
     }
 
     Status
-    Serialize(MemoryIOWriter& writer) override {
+    Serialize(MemoryIOWriter& writer) const override {
         // Serialized format:
-        // 1. Index Header (36 bytes):
+        // 1. Index File Header (v1) (64 bytes):
         //    - index_format_version (uint32_t): Version of the index format, currently 1
         //    - nr_rows (uint32_t): Number of rows in the index
         //    - max_dim (uint32_t): Number of columns, or maximum dimension ID
         //    - nr_inner_dims (uint32_t): Number of inner dimensions
-        //    - reserved (16 bytes): Reserved for future use
+        //    - reserved (48 bytes): Reserved for future use
         //
         // 2. Section Headers Table:
         //    - nr_sections (uint32_t): Number of sections
@@ -379,7 +379,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         //      - size (uint64_t): Size of the section in bytes
         //
         // 3. Posting Lists Section:
-        //    - index_encoding_type (uint32_t): Type of encoding used, only flat is supported for FlattenInvertedIndex
+        //    - index_encoding_type (uint32_t): Type of encoding used, only 0 is supported for now
         //    - encoded_index_data: Flattened posting lists
         //
         // 4. Dimension Map Section:
@@ -394,12 +394,13 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         // write index header data
         const uint32_t index_format_version = 1;
 
-        // Index File Header
+        // Index File Header (v1)
         writer.write(&index_format_version, sizeof(uint32_t));    // index format version
         writer.write(&this->n_rows_internal_, sizeof(uint32_t));  // number of rows
         writer.write(&this->max_dim_, sizeof(uint32_t));          // number of cols, or maximum dimension id
         writer.write(&this->nr_inner_dims_, sizeof(uint32_t));    // number of inner dimensions
-        auto reserved = std::array<uint8_t, 16>();                // reserved for future use
+        auto reserved =
+            std::array<uint8_t, InvertedIndex::index_file_v1_header_reserved_size>();  // reserved for future use
         writer.write(reserved.data(), reserved.size());
 
         // Section Headers Table
@@ -419,7 +420,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
         // since writer doesn't support seekp() for now, calculate all sizes of each sections first
         std::vector<InvertedIndexSectionHeader> section_headers(nr_sections);
-        uint64_t used_offset = sizeof(InvertedIndexSectionHeader) * nr_sections + 36;
+        uint64_t used_offset = InvertedIndex::index_file_v1_header_size + sizeof(uint32_t) +
+                               sizeof(InvertedIndexSectionHeader) * nr_sections;
         section_headers[0].type = InvertedIndexSectionType::POSTING_LISTS;
         section_headers[0].offset = used_offset;
         uint64_t posting_lists_size = sizeof(uint32_t);                       // used to store encoding type
@@ -524,7 +526,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             reader.read(&this->max_dim_, sizeof(uint32_t));
             reader.read(&this->nr_inner_dims_, sizeof(uint32_t));
             // skip reserved bytes
-            reader.advance(16);
+            reader.advance(InvertedIndex::index_file_v1_header_reserved_size);
 
             return Status::success;
         };
@@ -543,27 +545,27 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                 switch (section_header.type) {
                     case InvertedIndexSectionType::POSTING_LISTS: {
                         reader.seekg(section_header.offset);
-                        // check index encoding type
+                        // check index encoding type, 0 is the only supported type for now
                         uint32_t index_encoding_type = 0;
                         reader.read(&index_encoding_type, sizeof(uint32_t));
                         if (index_encoding_type != 0) {
                             return Status::invalid_serialized_index_type;
                         }
-                        auto inverted_index_offsets_span = boost::span<uint64_t>(
+                        auto inverted_index_offsets_span = boost::span<const uint64_t>(
                             reinterpret_cast<uint64_t*>(reader.data() + reader.tellg()), this->nr_inner_dims_ + 1);
                         reader.advance(sizeof(uint64_t) * (this->nr_inner_dims_ + 1));
                         inverted_index_ids_spans_.resize(this->nr_inner_dims_);
                         inverted_index_vals_spans_.resize(this->nr_inner_dims_);
                         for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
-                            inverted_index_ids_spans_[i] = boost::span<uint32_t>(
+                            inverted_index_ids_spans_[i] = boost::span<const uint32_t>(
                                 reinterpret_cast<uint32_t*>(reader.data() + reader.tellg()),
                                 inverted_index_offsets_span[i + 1] - inverted_index_offsets_span[i]);
                             reader.advance(inverted_index_ids_spans_[i].size() * sizeof(uint32_t));
                         }
                         for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
-                            inverted_index_vals_spans_[i] =
-                                boost::span<QType>(reinterpret_cast<QType*>(reader.data() + reader.tellg()),
-                                                   inverted_index_offsets_span[i + 1] - inverted_index_offsets_span[i]);
+                            inverted_index_vals_spans_[i] = boost::span<const QType>(
+                                reinterpret_cast<QType*>(reader.data() + reader.tellg()),
+                                inverted_index_offsets_span[i + 1] - inverted_index_offsets_span[i]);
                             reader.advance(inverted_index_vals_spans_[i].size() * sizeof(QType));
                         }
                         break;
@@ -579,14 +581,14 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                     }
                     case InvertedIndexSectionType::ROW_SUMS: {
                         reader.seekg(section_header.offset);
-                        bm25_params_->row_sums_spans_ = boost::span<float>(
+                        bm25_params_->row_sums_spans_ = boost::span<const float>(
                             reinterpret_cast<float*>(reader.data() + section_header.offset), this->n_rows_internal_);
                         reader.advance(sizeof(float) * this->n_rows_internal_);
                         break;
                     }
                     case InvertedIndexSectionType::MAX_SCORES_PER_DIM: {
                         reader.seekg(section_header.offset);
-                        max_score_in_dim_spans_ = boost::span<float>(
+                        max_score_in_dim_spans_ = boost::span<const float>(
                             reinterpret_cast<float*>(reader.data() + section_header.offset), this->nr_inner_dims_);
                         reader.advance(sizeof(float) * this->nr_inner_dims_);
                         break;
@@ -807,12 +809,12 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             }
 
             if (max_score_in_dim_.size() > 0) {
-                max_score_in_dim_spans_ = boost::span<float>(max_score_in_dim_.data(), max_score_in_dim_.size());
+                max_score_in_dim_spans_ = boost::span<const float>(max_score_in_dim_.data(), max_score_in_dim_.size());
             }
 
             if (metric_type_ == SparseMetricType::METRIC_BM25) {
                 bm25_params_->row_sums_spans_ =
-                    boost::span<float>(bm25_params_->row_sums.data(), bm25_params_->row_sums.size());
+                    boost::span<const float>(bm25_params_->row_sums.data(), bm25_params_->row_sums.size());
             }
 
             return Status::success;
@@ -973,7 +975,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     template <typename DocIdFilter>
     struct Cursor {
      public:
-        Cursor(const boost::span<table_t>& plist_ids, const boost::span<QType>& plist_vals, size_t num_vec,
+        Cursor(const boost::span<const table_t>& plist_ids, const boost::span<const QType>& plist_vals, size_t num_vec,
                float max_score, float q_value, DocIdFilter filter)
             : plist_ids_(plist_ids),
               plist_vals_(plist_vals),
@@ -1009,8 +1011,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             return plist_vals_[loc_];
         }
 
-        const boost::span<table_t>& plist_ids_;
-        const boost::span<QType>& plist_vals_;
+        const boost::span<const table_t>& plist_ids_;
+        const boost::span<const QType>& plist_vals_;
         const size_t plist_size_;
         size_t loc_ = 0;
         size_t total_num_vec_ = 0;
@@ -1363,10 +1365,10 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     // reserve, [], size, emplace_back
     Vector<Vector<table_t>> inverted_index_ids_;
     Vector<Vector<QType>> inverted_index_vals_;
-    std::vector<boost::span<table_t>> inverted_index_ids_spans_;
-    std::vector<boost::span<QType>> inverted_index_vals_spans_;
+    std::vector<boost::span<const table_t>> inverted_index_ids_spans_;
+    std::vector<boost::span<const QType>> inverted_index_vals_spans_;
     Vector<float> max_score_in_dim_;
-    boost::span<float> max_score_in_dim_spans_;
+    boost::span<const float> max_score_in_dim_spans_;
 
     SparseMetricType metric_type_;
 
@@ -1384,7 +1386,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         // row_sums is used to cache the sum of values of each row, which
         // corresponds to the document length of each doc in the BM25 formula.
         Vector<float> row_sums;
-        boost::span<float> row_sums_spans_;
+        boost::span<const float> row_sums_spans_;
 
         DocValueComputer<float> max_score_computer;
 
@@ -1394,6 +1396,9 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     };  // struct BM25Params
 
     std::unique_ptr<BM25Params> bm25_params_;
+
+    static constexpr uint32_t index_file_v1_header_size = 64;
+    static constexpr uint32_t index_file_v1_header_reserved_size = 48;
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // Statistics for the build process, which will be used to generate the prometheus metrics

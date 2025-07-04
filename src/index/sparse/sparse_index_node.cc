@@ -270,7 +270,7 @@ class SparseInvertedIndexNode : public IndexNode {
         }
         MemoryIOWriter writer;
         if (version_use_raw_data()) {
-            RETURN_IF_ERROR(index_->Save(writer));
+            RETURN_IF_ERROR(index_->SerializeV0(writer));
         } else {
             RETURN_IF_ERROR(index_->Serialize(writer));
         }
@@ -298,7 +298,7 @@ class SparseInvertedIndexNode : public IndexNode {
         }
         index_ = index_or.value();
         if (version_use_raw_data()) {
-            return index_->Load(reader, 0, "");
+            return index_->DeserializeV0(reader, 0, "");
         } else {
             binary_ = binary;  // save the binary to avoid being freed
             return index_->Deserialize(reader);
@@ -336,7 +336,7 @@ class SparseInvertedIndexNode : public IndexNode {
         MemoryIOReader map_reader(reinterpret_cast<uint8_t*>(mapped_memory), map_size);
         if (version_use_raw_data()) {
             auto supplement_target_filename = filename + ".knowhere_sparse_index_supplement";
-            return index_->Load(map_reader, map_flags, supplement_target_filename);
+            return index_->DeserializeV0(map_reader, map_flags, supplement_target_filename);
         } else {
             mmap_guard_ = std::move(mmap_guard);
             return index_->Deserialize(map_reader);

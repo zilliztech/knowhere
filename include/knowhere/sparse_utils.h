@@ -383,9 +383,9 @@ class GrowableVectorView {
         return reinterpret_cast<T*>(mmap_data_)[i];
     }
 
-    T*
+    const T*
     data() const {
-        return reinterpret_cast<T*>(mmap_data_);
+        return reinterpret_cast<const T*>(mmap_data_);
     }
 
     const T&
