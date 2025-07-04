@@ -383,6 +383,11 @@ class GrowableVectorView {
         return reinterpret_cast<T*>(mmap_data_)[i];
     }
 
+    const T*
+    data() const {
+        return reinterpret_cast<const T*>(mmap_data_);
+    }
+
     const T&
     at(size_type i) const {
         if (i >= mmap_element_count_) {
