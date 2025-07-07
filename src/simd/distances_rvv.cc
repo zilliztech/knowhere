@@ -554,6 +554,56 @@ ivec_L2sqr_rvv(const int8_t* x, const int8_t* y, size_t d) {
     return res;
 }
 
+float
+int8_vec_inner_product_rvv(const int8_t* x, const int8_t* y, size_t d) {
+    int32_t res = 0;
+    size_t vl;
+    for (size_t i = 0; i < d;) {
+        vl = __riscv_vsetvl_e8m1(d - i);
+        vint8m1_t vx = __riscv_vle8_v_i8m1(x + i, vl);
+        vint8m1_t vy = __riscv_vle8_v_i8m1(y + i, vl);
+        vint16m2_t vmul = __riscv_vwmul_vv_i16m2(vx, vy, vl);
+        vint32m4_t vmul_ext = __riscv_vsext_vf2_i32m4(vmul, vl);
+        vint32m1_t vsum = __riscv_vredsum_vs_i32m4_i32m1(vmul_ext, __riscv_vmv_s_x_i32m1(0, 1), vl);
+        res += __riscv_vmv_x_s_i32m1_i32(vsum);
+        i += vl;
+    }
+    return (float)res;
+}
+
+float
+int8_vec_L2sqr_rvv(const int8_t* x, const int8_t* y, size_t d) {
+    int32_t res = 0;
+    size_t vl;
+    for (size_t i = 0; i < d;) {
+        vl = __riscv_vsetvl_e8m1(d - i);
+        vint8m1_t vx = __riscv_vle8_v_i8m1(x + i, vl);
+        vint8m1_t vy = __riscv_vle8_v_i8m1(y + i, vl);
+        vint16m2_t vdiff = __riscv_vwsub_vv_i16m2(vx, vy, vl);
+        vint32m4_t vsqr = __riscv_vwmul_vv_i32m4(vdiff, vdiff, vl);
+        vint32m1_t vsum = __riscv_vredsum_vs_i32m4_i32m1(vsqr, __riscv_vmv_s_x_i32m1(0, 1), vl);
+        res += __riscv_vmv_x_s_i32m1_i32(vsum);
+        i += vl;
+    }
+    return (float)res;
+}
+
+float
+int8_vec_norm_L2sqr_rvv(const int8_t* x, size_t d) {
+    int32_t res = 0;
+    size_t vl;
+    for (size_t i = 0; i < d;) {
+        vl = __riscv_vsetvl_e8m1(d - i);
+        vint8m1_t vx = __riscv_vle8_v_i8m1(x + i, vl);
+        vint16m2_t vx_ext = __riscv_vwadd_vx_i16m2(vx, 0, vl);  // sign-extend int8->int16
+        vint32m4_t vsqr = __riscv_vwmul_vv_i32m4(vx_ext, vx_ext, vl);
+        vint32m1_t vsum = __riscv_vredsum_vs_i32m4_i32m1(vsqr, __riscv_vmv_s_x_i32m1(0, 1), vl);
+        res += __riscv_vmv_x_s_i32m1_i32(vsum);
+        i += vl;
+    }
+    return (float)res;
+}
+
 }  // namespace faiss
 
 #endif
