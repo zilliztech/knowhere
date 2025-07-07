@@ -59,4 +59,13 @@ ivec_inner_product_rvv(const int8_t* x, const int8_t* y, size_t d);
 int32_t
 ivec_L2sqr_rvv(const int8_t* x, const int8_t* y, size_t d);
 
+float
+int8_vec_inner_product_rvv(const int8_t* x, const int8_t* y, size_t d);
+
+float
+int8_vec_L2sqr_rvv(const int8_t* x, const int8_t* y, size_t d);
+
+float
+int8_vec_norm_L2sqr_rvv(const int8_t* x, size_t d);
+
 }  // namespace faiss
