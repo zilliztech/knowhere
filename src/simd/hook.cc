@@ -562,6 +562,8 @@ fvec_hook(std::string& simd_type) {
     int8_vec_inner_product = int8_vec_inner_product_rvv;
     int8_vec_L2sqr = int8_vec_L2sqr_rvv;
     int8_vec_norm_L2sqr = int8_vec_norm_L2sqr_rvv;
+    int8_vec_inner_product_batch_4 = int8_vec_inner_product_batch_4_rvv;
+    int8_vec_L2sqr_batch_4 = int8_vec_L2sqr_batch_4_rvv;
 
     simd_type = "RVV";
     support_pq_fast_scan = false;

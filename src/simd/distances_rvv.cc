@@ -604,6 +604,78 @@ int8_vec_norm_L2sqr_rvv(const int8_t* x, size_t d) {
     return (float)res;
 }
 
+void
+int8_vec_inner_product_batch_4_rvv(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2,
+                                   const int8_t* y3, size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
+    int32_t acc0 = 0, acc1 = 0, acc2 = 0, acc3 = 0;
+    size_t vl;
+    for (size_t i = 0; i < d;) {
+        vl = __riscv_vsetvl_e8m1(d - i);
+        vint8m1_t vx = __riscv_vle8_v_i8m1(x + i, vl);
+        vint8m1_t vy0 = __riscv_vle8_v_i8m1(y0 + i, vl);
+        vint8m1_t vy1 = __riscv_vle8_v_i8m1(y1 + i, vl);
+        vint8m1_t vy2 = __riscv_vle8_v_i8m1(y2 + i, vl);
+        vint8m1_t vy3 = __riscv_vle8_v_i8m1(y3 + i, vl);
+        vint16m2_t vmul0 = __riscv_vwmul_vv_i16m2(vx, vy0, vl);
+        vint16m2_t vmul1 = __riscv_vwmul_vv_i16m2(vx, vy1, vl);
+        vint16m2_t vmul2 = __riscv_vwmul_vv_i16m2(vx, vy2, vl);
+        vint16m2_t vmul3 = __riscv_vwmul_vv_i16m2(vx, vy3, vl);
+        vint32m4_t vmul0_ext = __riscv_vsext_vf2_i32m4(vmul0, vl);
+        vint32m4_t vmul1_ext = __riscv_vsext_vf2_i32m4(vmul1, vl);
+        vint32m4_t vmul2_ext = __riscv_vsext_vf2_i32m4(vmul2, vl);
+        vint32m4_t vmul3_ext = __riscv_vsext_vf2_i32m4(vmul3, vl);
+        vint32m1_t vsum0 = __riscv_vredsum_vs_i32m4_i32m1(vmul0_ext, __riscv_vmv_s_x_i32m1(0, 1), vl);
+        vint32m1_t vsum1 = __riscv_vredsum_vs_i32m4_i32m1(vmul1_ext, __riscv_vmv_s_x_i32m1(0, 1), vl);
+        vint32m1_t vsum2 = __riscv_vredsum_vs_i32m4_i32m1(vmul2_ext, __riscv_vmv_s_x_i32m1(0, 1), vl);
+        vint32m1_t vsum3 = __riscv_vredsum_vs_i32m4_i32m1(vmul3_ext, __riscv_vmv_s_x_i32m1(0, 1), vl);
+        acc0 += __riscv_vmv_x_s_i32m1_i32(vsum0);
+        acc1 += __riscv_vmv_x_s_i32m1_i32(vsum1);
+        acc2 += __riscv_vmv_x_s_i32m1_i32(vsum2);
+        acc3 += __riscv_vmv_x_s_i32m1_i32(vsum3);
+        i += vl;
+    }
+    dis0 = (float)acc0;
+    dis1 = (float)acc1;
+    dis2 = (float)acc2;
+    dis3 = (float)acc3;
+}
+
+void
+int8_vec_L2sqr_batch_4_rvv(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2, const int8_t* y3,
+                           size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
+    int32_t acc0 = 0, acc1 = 0, acc2 = 0, acc3 = 0;
+    size_t vl;
+    for (size_t i = 0; i < d;) {
+        vl = __riscv_vsetvl_e8m1(d - i);
+        vint8m1_t vx = __riscv_vle8_v_i8m1(x + i, vl);
+        vint8m1_t vy0 = __riscv_vle8_v_i8m1(y0 + i, vl);
+        vint8m1_t vy1 = __riscv_vle8_v_i8m1(y1 + i, vl);
+        vint8m1_t vy2 = __riscv_vle8_v_i8m1(y2 + i, vl);
+        vint8m1_t vy3 = __riscv_vle8_v_i8m1(y3 + i, vl);
+        vint16m2_t vdiff0 = __riscv_vwsub_vv_i16m2(vx, vy0, vl);
+        vint16m2_t vdiff1 = __riscv_vwsub_vv_i16m2(vx, vy1, vl);
+        vint16m2_t vdiff2 = __riscv_vwsub_vv_i16m2(vx, vy2, vl);
+        vint16m2_t vdiff3 = __riscv_vwsub_vv_i16m2(vx, vy3, vl);
+        vint32m4_t vsqr0 = __riscv_vwmul_vv_i32m4(vdiff0, vdiff0, vl);
+        vint32m4_t vsqr1 = __riscv_vwmul_vv_i32m4(vdiff1, vdiff1, vl);
+        vint32m4_t vsqr2 = __riscv_vwmul_vv_i32m4(vdiff2, vdiff2, vl);
+        vint32m4_t vsqr3 = __riscv_vwmul_vv_i32m4(vdiff3, vdiff3, vl);
+        vint32m1_t vsum0 = __riscv_vredsum_vs_i32m4_i32m1(vsqr0, __riscv_vmv_s_x_i32m1(0, 1), vl);
+        vint32m1_t vsum1 = __riscv_vredsum_vs_i32m4_i32m1(vsqr1, __riscv_vmv_s_x_i32m1(0, 1), vl);
+        vint32m1_t vsum2 = __riscv_vredsum_vs_i32m4_i32m1(vsqr2, __riscv_vmv_s_x_i32m1(0, 1), vl);
+        vint32m1_t vsum3 = __riscv_vredsum_vs_i32m4_i32m1(vsqr3, __riscv_vmv_s_x_i32m1(0, 1), vl);
+        acc0 += __riscv_vmv_x_s_i32m1_i32(vsum0);
+        acc1 += __riscv_vmv_x_s_i32m1_i32(vsum1);
+        acc2 += __riscv_vmv_x_s_i32m1_i32(vsum2);
+        acc3 += __riscv_vmv_x_s_i32m1_i32(vsum3);
+        i += vl;
+    }
+    dis0 = (float)acc0;
+    dis1 = (float)acc1;
+    dis2 = (float)acc2;
+    dis3 = (float)acc3;
+}
+
 }  // namespace faiss
 
 #endif
