@@ -68,4 +68,11 @@ int8_vec_L2sqr_rvv(const int8_t* x, const int8_t* y, size_t d);
 float
 int8_vec_norm_L2sqr_rvv(const int8_t* x, size_t d);
 
+void
+int8_vec_inner_product_batch_4_rvv(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2,
+                                   const int8_t* y3, size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
+void
+int8_vec_L2sqr_batch_4_rvv(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2, const int8_t* y3,
+                           size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
+
 }  // namespace faiss
