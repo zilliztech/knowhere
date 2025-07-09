@@ -34,6 +34,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
         printf("\n[%0.3f s] %s | %s(%s) \n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str(),
                data_type_str.c_str());
         printf("================================================================================\n");
+        while(true){
         for (auto nq : NQs_) {
             auto ds_ptr = knowhere::GenDataSet(nq, dim_, xq_);
             auto query = knowhere::ConvertToDataTypeIfNeeded<T>(ds_ptr);
@@ -45,6 +46,7 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
                 printf("  nq = %4d, k = %4d, elapse = %6.3fs, R@ = %.4f\n", nq, k, TDIFF_, recall);
                 std::fflush(stdout);
             }
+        }
         }
         printf("================================================================================\n");
         printf("[%.3f s] Test '%s/%s' done\n\n", get_time_diff(), ann_test_name_.c_str(), index_type_.c_str());
@@ -269,12 +271,12 @@ class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {
     void
     SetUp() override {
         T0_ = elapsed();
-        set_ann_test_name("sift-128-euclidean");
+        set_ann_test_name("nytimes-256-angular");
         parse_ann_test_name();
         load_hdf5_data<knowhere::fp32>();
 
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
-        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);        
+        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX512);        
         knowhere::KnowhereConfig::SetBuildThreadPoolSize(default_build_thread_num);
         knowhere::KnowhereConfig::SetSearchThreadPoolSize(default_search_thread_num);
         printf("faiss::distance_compute_blas_threshold: %ld\n", knowhere::KnowhereConfig::GetBlasThreshold());
@@ -351,13 +353,13 @@ TEST_F(Benchmark_float, TEST_BRUTE_FORCE) {
     index_type_ = "BruteForce";
 
     knowhere::Json conf = cfg_;
-    test_brute_force<knowhere::fp32>(conf);
-    test_brute_force<knowhere::fp16>(conf);
+    // test_brute_force<knowhere::fp32>(conf);
+    // test_brute_force<knowhere::fp16>(conf);
     test_brute_force<knowhere::bf16>(conf);
-    test_brute_force<knowhere::int8>(conf);
+    // test_brute_force<knowhere::int8>(conf);
 }
 
-TEST_F(Benchmark_float, TEST_IDMAP) {
+/* TEST_F(Benchmark_float, TEST_IDMAP) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
 
     std::string index_file_name;
@@ -526,7 +528,7 @@ TEST_F(Benchmark_float, TEST_HNSW_PRQ) {
         }
     }
 }
-
+ */
 #ifdef KNOWHERE_WITH_DISKANN
 TEST_F(Benchmark_float, TEST_DISKANN) {
     index_type_ = knowhere::IndexEnum::INDEX_DISKANN;
@@ -620,7 +622,7 @@ TEST_F(Benchmark_float, TEST_CUVS_CAGRA) {
 }
 #endif
 
-TEST_F(Benchmark_float, TEST_IVF_RABITQ) {
+/* TEST_F(Benchmark_float, TEST_IVF_RABITQ) {
     index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ;
 
     std::string index_file_name;
@@ -636,4 +638,4 @@ TEST_F(Benchmark_float, TEST_IVF_RABITQ) {
             TEST_INDEX(ivf, knowhere::bf16, params);
         }
     }
-}
+} */

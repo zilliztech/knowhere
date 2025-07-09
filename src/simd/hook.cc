@@ -16,6 +16,7 @@
 #include "faiss/FaissHook.h"
 
 #if defined(__x86_64__)
+#include "distances_amx.h"  
 #include "distances_avx.h"
 #include "distances_avx512.h"
 #include "distances_avx512icx.h"
@@ -163,7 +164,9 @@ enable_patch_for_fp32_bf16() {
     std::lock_guard<std::mutex> lock(patch_bf16_mutex);
 #if defined(__x86_64__)
     if (use_amx && cpu_support_amx()) {
+        
         // Cloud branch
+        enable_amx();
         fvec_inner_product = fvec_inner_product_bf16_patch_avx512;
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_bf16_patch_avx512;
 
@@ -214,6 +217,7 @@ disable_patch_for_fp32_bf16() {
 #if defined(__x86_64__)
     if (use_amx && cpu_support_amx()) {
         // Cloud branch
+        enable_amx();
         fvec_inner_product = fvec_inner_product_avx512;
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_avx512;
 
@@ -249,7 +253,11 @@ fvec_hook(std::string& simd_type) {
     static std::mutex hook_mutex;
     std::lock_guard<std::mutex> lock(hook_mutex);
 #if defined(__x86_64__)
+
     if ((use_avx512 || use_amx) && cpu_support_avx512()) {
+        if(use_amx && cpu_support_amx()) {
+          enable_amx();
+        }
         fvec_inner_product = fvec_inner_product_avx512;
         fvec_L2sqr = fvec_L2sqr_avx512;
         fvec_L1 = fvec_L1_avx512;

@@ -13,15 +13,68 @@
 namespace faiss {
  
 #if defined(USE_AMX)
+
+class TileConfig {
+  public: 
+    TileConfig() {
+      paletteId = 1; // must be 1
+      startRow = 0; // must be 0
+      for (int i = 0; i < 14; i++) {
+        reserved[i] = 0; // reserved bytes
+      }
+      for (int i = 0; i < 16; i++) {
+        colsb[i] = 0; // column sizes in bytes
+        rows[i] = 0; // row sizes in rows
+      }
+    }
+    TileConfig(uint32_t DIM, uint32_t batchSizeB) { 
+        paletteId=1;
+        startRow=0;
+
+        colsb[0] = DIM*2; // 32 * sizeof(int16_t)
+        rows[0] = 16;
+        // matrix B need a layout rearragement
+
+        colsb[1] = batchSizeB*2*2;
+        rows[1] = DIM/2;
+
+        colsb[2] = batchSizeB*2*2;
+        rows[2] = DIM/2;
+ 
+        colsb[3] = DIM*2;
+        rows[3] = 16;
+
+        colsb[4] = batchSizeB*2*2;
+        rows[4] = DIM/2;
+
+        colsb[5] = DIM*2;;
+        rows[5] = 16;
+
+        colsb[6] = batchSizeB*2*2;
+        rows[6] = DIM/2;
+    }
+
+  private :
+    // must be 1
+    uint8_t paletteId;
+    // must be 0
+    uint8_t startRow;
+    uint8_t reserved[14];
+    // measured in bytes
+    uint16_t colsb[16];
+    // measured in rows
+    uint8_t rows[16];
+};
+
 float amx_inner_product_matrix_bf16( char **floatLibraryMatrix, char  *floatQueryMatrix, uint64_t dims,uint64_t batchSizeA,
                               uint64_t batchSizeB, float *results_ptr){
-    int DIM=32;
-    int blockDim = 96;
+    constexpr int DIM=32;
+    constexpr int blockDim = 96;
     int blockCount=((dims))/blockDim;
     size_t tailCount=dims%DIM;
     int tailBlock=dims%blockDim;
  
-    thread_local char cfg[64]={0};
+    thread_local TileConfig cfg(DIM, batchSizeB);
     thread_local bool init_mem=false;
  
     unsigned char ma1Bf16[1024] __attribute__((aligned(64)));
@@ -31,38 +84,16 @@ float amx_inner_product_matrix_bf16( char **floatLibraryMatrix, char  *floatQuer
     float results[16*16] __attribute__((aligned(64)))={0};
  
     if(!init_mem){
-        cfg[0]=1;
-        cfg[16]=DIM*2;
-        cfg[48] = 16;  // row->M
-        // matrix B need a layout rearragement
-        cfg[16+1*2] = batchSizeB*2*2;   // col = N*4
-        cfg[48+1]   = DIM/2;   // row = K/4
- 
-        cfg[22]=DIM*2;
-        cfg[51] = 16;  // row->M
-        // matrix B need a layout rearragement
-        cfg[24] = batchSizeB*2*2;   // col = N*4
-        cfg[52]   = DIM/2;   // row = K/4
- 
-        cfg[26]= DIM*2;
-        cfg[53] = 16;  // row->M
-        // matrix B need a layout rearragement
-        cfg[28] = batchSizeB*2*2;   // col = N*4
-        cfg[54]   = DIM/2;   // row = K/4
- 
-        cfg[16+2*2] = (batchSizeB*4); // N*sizeof(int32)
-        cfg[48+2] = 16;
         init_mem = true;
- 
-        _tile_loadconfig((void *)cfg);
+        _tile_loadconfig((void *)&cfg);
     }
- 
-    int i=0;
-    for(int i=0;i<blockCount;i++){
+
+    _tile_zero(2);
+    for(size_t i=0;i<blockCount;i++){
       __m512i sa;
       size_t offset = i * blockDim *2;
      
-      for(int j=0;j<batchSizeA;j++){  
+      for(size_t j=0;j<batchSizeA;j++){  
         size_t destOffset1 = j * DIM * 2;
  
         _mm512_store_si512(ma1Bf16 + destOffset1, _mm512_loadu_si512(floatLibraryMatrix[j] + offset));
@@ -81,9 +112,9 @@ float amx_inner_product_matrix_bf16( char **floatLibraryMatrix, char  *floatQuer
       _tile_dpbf16ps(2,5,6);
     }
     if(tailBlock >= DIM){
-      for(int i=0;i<tailBlock/DIM;i++){
+      for(size_t i=0;i<tailBlock/DIM;i++){
         __m512i sa;
-        for(int j=0;j<batchSizeA;j++){  
+        for(size_t j=0;j<batchSizeA;j++){  
           sa=_mm512_loadu_si512(floatLibraryMatrix[j]+blockCount*blockDim * 2 + i * DIM * 2 );
           _mm512_store_si512(ma1Bf16+j*DIM*2,sa);
         }
@@ -93,7 +124,7 @@ float amx_inner_product_matrix_bf16( char **floatLibraryMatrix, char  *floatQuer
       }
     }
     _tile_stored(2, results, batchSizeB*2*2);
-    _tile_zero(2);
+
     memcpy(results_ptr, results, batchSizeA * batchSizeB * sizeof(float));
  
     return 0;
@@ -147,7 +178,10 @@ static float InnerProductBatchExtAMXBF16(void **pVect1v, void *pVect2v, void *qt
   char **floatLibraryMatrix = (char**) pVect1v;
   char *floatQueryMatrix = (char*) pVect2v;
  
-  int batchSizeA = 16, batchSizeB = 16;
+  // The size of one amx tile  16x64 bytes, it can store 16 64-dimensional vectors. 
+  // Each vector is stored as 32 bf16 elements, which are 2 bytes each.
+  // So, each tile can store 16 * 32 * 2 = 1024 bytes.
+  constexpr int batchSizeA = 16, batchSizeB = 16;  
   int batchCountA = (nSize - 1) / batchSizeA + 1;
   int batchCountB = (mSize - 1) / batchSizeB + 1;
  
@@ -158,13 +192,13 @@ static float InnerProductBatchExtAMXBF16(void **pVect1v, void *pVect2v, void *qt
   int offsetB = batchSizeB * dims * 2;
  
   float *results_ptr = results_amx;
- 
-  for (int i = 0; i < batchCountA; i++) {
-      int currentBatchSizeA = (i == batchCountA - 1) ? lastBatchSizeA : batchSizeA;
+
+  for (size_t i = 0; i < batchCountA; i++) {
+      size_t currentBatchSizeA = (i == batchCountA - 1) ? lastBatchSizeA : batchSizeA;
       char **currentLibraryMatrixPtr = floatLibraryMatrix + i * 16;
- 
-      for (int j = 0; j < batchCountB; j++) {
-          int currentBatchSizeB = (j == batchCountB - 1) ? lastBatchSizeB : batchSizeB;
+
+      for (size_t j = 0; j < batchCountB; j++) {
+          size_t currentBatchSizeB = (j == batchCountB - 1) ? lastBatchSizeB : batchSizeB;
           char *currentQueryMatrixPtr = floatQueryMatrix + j * offsetB;
           amx_inner_product_matrix_bf16(currentLibraryMatrixPtr, currentQueryMatrixPtr, dims, currentBatchSizeA, currentBatchSizeB, results_ptr);
           results_ptr += currentBatchSizeB * currentBatchSizeA;

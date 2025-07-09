@@ -855,8 +855,8 @@ template <
         //   void Apply(const float dis, const auto idx);
         typename Apply>
 void internal_bf16_vec_inner_products_ny_if(
-        const knowhere::bf16*  x,
-        const knowhere::bf16*  y,
+        const knowhere::bf16*  __restrict x,
+        const knowhere::bf16*  __restrict y,
         size_t d,
         const size_t ny,
         Pred pred,
@@ -867,7 +867,7 @@ void internal_bf16_vec_inner_products_ny_if(
     auto distance1 = [x, y, d](const idx_type idx) {
         return bf16_vec_inner_product(x, y + idx * d, d);
     };
-    // printf("use_amx: %d, cpu_support_amx: %d\n",use_amx, cpu_support_amx());
+
     if (use_amx && cpu_support_amx()) {
         auto distance16 = [x, y, d](
             const std::array<idx_type, 16> indices,

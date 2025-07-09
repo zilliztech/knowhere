@@ -15,7 +15,6 @@
 
 #include "knowhere/operands.h"
 #include "distances_amx.h"
-#include "distances_amx_intr.h"
 
 namespace faiss {
 
@@ -369,7 +368,6 @@ bf16_vec_inner_product_batch_16_ref_amx(knowhere::bf16* x,
                                     float& dis8, float& dis9, float& dis10, float& dis11,
                                     float& dis12, float& dis13, float& dis14, float& dis15
                                     ) {
-    enable_amx();
     void* base_vec[16];
     base_vec[0] = (void*)y0->get();
     base_vec[1] = (void*)y1->get();
