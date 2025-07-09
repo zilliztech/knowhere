@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstdio>
 
+#include "hook.h"
 #include "knowhere/operands.h"
 
 namespace faiss {
@@ -75,4 +76,6 @@ void
 int8_vec_L2sqr_batch_4_rvv(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2, const int8_t* y3,
                            size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
 
+float
+bf16_vec_norm_L2sqr_rvv(const knowhere::bf16* x, size_t d);
 }  // namespace faiss
