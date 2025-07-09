@@ -529,8 +529,10 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
 
     bool is_cosine = IsMetricType(metric_str, metric::COSINE);
 
+    const bool the_larger_the_closer = IsMetricType(metric_str, metric::IP) ||
+                                       IsMetricType(metric_str, metric::COSINE) ||
+                                       IsMetricType(metric_str, metric::BM25);
     auto radius = cfg.radius.value();
-    bool is_ip = false;
     float range_filter = cfg.range_filter.value();
 
     auto pool = ThreadPool::GetGlobalSearchThreadPool();
@@ -550,8 +552,10 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
             if constexpr (std::is_same_v<DataType, knowhere::sparse::SparseRow<float>>) {
                 auto cur_query = (const sparse::SparseRow<float>*)xq + index;
                 auto xb_sparse = (const sparse::SparseRow<float>*)xb;
+                std::set<std::pair<float, int64_t>, std::greater<>> result;
                 for (int j = 0; j < nb; ++j) {
-                    if (!bitset.empty() && bitset.test(j)) {
+                    auto xid = xb_id_offset + j;
+                    if (!bitset.empty() && bitset.test(xid)) {
                         continue;
                     }
                     float row_sum = 0;
@@ -563,9 +567,14 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                     }
                     auto dist = cur_query->dot(xb_sparse[j], sparse_computer, row_sum);
                     if (dist > radius && dist <= range_filter) {
-                        result_id_array[index].push_back(j);
-                        result_dist_array[index].push_back(dist);
+                        result.insert({dist, xid});
                     }
+                }
+                result_id_array[index].reserve(result.size());
+                result_dist_array[index].reserve(result.size());
+                for (auto& [dist, id] : result) {
+                    result_id_array[index].push_back(id);
+                    result_dist_array[index].push_back(dist);
                 }
                 return Status::success;
             } else {
@@ -592,7 +601,6 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                     }
                     case faiss::METRIC_INNER_PRODUCT: {
                         [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
-                        is_ip = true;
                         if (is_cosine) {
                             if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                                 auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
@@ -647,7 +655,8 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                     result_id_array[index][j] = res.labels[j] + xb_id_offset;
                 }
                 if (cfg.range_filter.value() != defaultRangeFilter) {
-                    FilterRangeSearchResultForOneNq(result_dist_array[index], result_id_array[index], is_ip, radius,
+                    FilterRangeSearchResultForOneNq(result_dist_array[index], result_id_array[index],
+                                                    faiss_metric_type == faiss::METRIC_INNER_PRODUCT, radius,
                                                     range_filter);
                 }
                 return Status::success;
@@ -660,7 +669,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     }
 
     auto range_search_result =
-        GetRangeSearchResult(result_dist_array, result_id_array, is_ip || is_bm25, nq, radius, range_filter);
+        GetRangeSearchResult(result_dist_array, result_id_array, the_larger_the_closer, nq, radius, range_filter);
     auto res = GenResultDataSet(nq, std::move(range_search_result));
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
