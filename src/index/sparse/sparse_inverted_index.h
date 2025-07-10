@@ -229,7 +229,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
          *        2. DType val (when QType is different from DType, the QType value of val is stored as a DType with
          *           precision loss)
          *
-         * inverted_index_ids_, inverted_index_vals_ and max_score_in_dim_ are
+         * inverted_index_ids_spans_, inverted_index_vals_spans_ and max_score_in_dim_spans_ are
          * not serialized, they will be constructed dynamically during
          * deserialization.
          *
@@ -247,8 +247,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
 
         std::vector<size_t> row_sizes(n_rows_internal_, 0);
-        for (size_t i = 0; i < inverted_index_ids_.size(); ++i) {
-            for (const auto& id : inverted_index_ids_[i]) {
+        for (auto inverted_index_ids_span : inverted_index_ids_spans_) {
+            for (const auto& id : inverted_index_ids_span) {
                 row_sizes[id]++;
             }
         }
@@ -258,9 +258,9 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             raw_rows[i] = std::move(SparseRow<DType>(row_sizes[i]));
         }
 
-        for (size_t i = 0; i < inverted_index_ids_.size(); ++i) {
-            const auto& ids = inverted_index_ids_[i];
-            const auto& vals = inverted_index_vals_[i];
+        for (size_t i = 0; i < inverted_index_ids_spans_.size(); ++i) {
+            const auto& ids = inverted_index_ids_spans_[i];
+            const auto& vals = inverted_index_vals_spans_[i];
             const auto dim = dim_map_reverse[i];
             for (size_t j = 0; j < ids.size(); ++j) {
                 raw_rows[ids[j]].set_at(raw_rows[ids[j]].size() - row_sizes[ids[j]], dim, vals[j]);
@@ -409,7 +409,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         if (metric_type_ == SparseMetricType::METRIC_BM25) {
             nr_sections += 1;  // row sums
         }
-        if (max_score_in_dim_.size() > 0) {
+        if (max_score_in_dim_spans_.size() > 0) {
             nr_sections += 1;  // max scores per dim
         }
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
@@ -447,7 +447,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             curr_section_idx++;
         }
 
-        if (max_score_in_dim_.size() > 0) {
+        if (max_score_in_dim_spans_.size() > 0) {
             section_headers[curr_section_idx].type = InvertedIndexSectionType::MAX_SCORES_PER_DIM;
             section_headers[curr_section_idx].offset = used_offset;
             section_headers[curr_section_idx].size = sizeof(float) * this->nr_inner_dims_;
@@ -499,7 +499,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             writer.write(bm25_params_->row_sums_spans_.data(), sizeof(float), this->n_rows_internal_);
         }
 
-        if (max_score_in_dim_.size() > 0) {
+        if (max_score_in_dim_spans_.size() > 0) {
             writer.write(max_score_in_dim_spans_.data(), sizeof(float), this->nr_inner_dims_);
         }
 
@@ -888,14 +888,14 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             if (dim_it == dim_map_.cend()) {
                 continue;
             }
-            auto& plist_ids = inverted_index_ids_[dim_it->second];
+            auto& plist_ids = inverted_index_ids_spans_[dim_it->second];
             auto it = std::lower_bound(plist_ids.begin(), plist_ids.end(), vec_id,
                                        [](const auto& x, table_t y) { return x < y; });
             if (it != plist_ids.end() && *it == vec_id) {
                 distance +=
                     val *
-                    computer(inverted_index_vals_[dim_it->second][it - plist_ids.begin()],
-                             metric_type_ == SparseMetricType::METRIC_BM25 ? bm25_params_->row_sums.at(vec_id) : 0);
+                    computer(inverted_index_vals_spans_[dim_it->second][it - plist_ids.begin()],
+                             metric_type_ == SparseMetricType::METRIC_BM25 ? bm25_params_->row_sums_spans_[vec_id] : 0);
             }
         }
 
@@ -911,18 +911,19 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         if constexpr (mmapped) {
             return res + map_byte_size_;
         } else {
-            res += sizeof(typename decltype(inverted_index_ids_)::value_type) * inverted_index_ids_.capacity();
-            for (size_t i = 0; i < inverted_index_ids_.size(); ++i) {
-                res += sizeof(typename decltype(inverted_index_ids_)::value_type::value_type) *
-                       inverted_index_ids_[i].capacity();
+            res += sizeof(typename decltype(inverted_index_ids_spans_)::value_type) * inverted_index_ids_spans_.size();
+            for (auto inverted_index_ids_span : inverted_index_ids_spans_) {
+                res += sizeof(typename decltype(inverted_index_ids_spans_)::value_type::value_type) *
+                       inverted_index_ids_span.size();
             }
-            res += sizeof(typename decltype(inverted_index_vals_)::value_type) * inverted_index_vals_.capacity();
-            for (size_t i = 0; i < inverted_index_vals_.size(); ++i) {
-                res += sizeof(typename decltype(inverted_index_vals_)::value_type::value_type) *
-                       inverted_index_vals_[i].capacity();
+            res +=
+                sizeof(typename decltype(inverted_index_vals_spans_)::value_type) * inverted_index_vals_spans_.size();
+            for (auto inverted_index_vals_span : inverted_index_vals_spans_) {
+                res += sizeof(typename decltype(inverted_index_vals_spans_)::value_type::value_type) *
+                       inverted_index_vals_span.size();
             }
             if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
-                res += sizeof(typename decltype(max_score_in_dim_)::value_type) * max_score_in_dim_.capacity();
+                res += sizeof(typename decltype(max_score_in_dim_spans_)::value_type) * max_score_in_dim_spans_.size();
             }
             return res;
         }
@@ -960,12 +961,13 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                           const DocValueComputer<float>& computer) const {
         std::vector<float> scores(n_rows_internal_, 0.0f);
         for (size_t i = 0; i < q_vec.size(); ++i) {
-            auto& plist_ids = inverted_index_ids_[q_vec[i].first];
-            auto& plist_vals = inverted_index_vals_[q_vec[i].first];
+            auto& plist_ids = inverted_index_ids_spans_[q_vec[i].first];
+            auto& plist_vals = inverted_index_vals_spans_[q_vec[i].first];
             // TODO: improve with SIMD
             for (size_t j = 0; j < plist_ids.size(); ++j) {
                 auto doc_id = plist_ids[j];
-                float val_sum = metric_type_ == SparseMetricType::METRIC_BM25 ? bm25_params_->row_sums.at(doc_id) : 0;
+                float val_sum =
+                    metric_type_ == SparseMetricType::METRIC_BM25 ? bm25_params_->row_sums_spans_[doc_id] : 0;
                 scores[doc_id] += q_vec[i].second * computer(plist_vals[j], val_sum);
             }
         }
@@ -1130,7 +1132,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             if (pivot_id == cursor_ptrs[0]->cur_vec_id_) {
                 float score = 0;
                 float cur_vec_sum =
-                    metric_type_ == SparseMetricType::METRIC_BM25 ? bm25_params_->row_sums.at(pivot_id) : 0;
+                    metric_type_ == SparseMetricType::METRIC_BM25 ? bm25_params_->row_sums_spans_[pivot_id] : 0;
                 for (auto& cursor_ptr : cursor_ptrs) {
                     if (cursor_ptr->cur_vec_id_ != pivot_id) {
                         break;
