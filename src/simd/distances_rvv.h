@@ -84,12 +84,4 @@ bf16_vec_L2sqr_rvv(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
 
 float
 bf16_vec_norm_L2sqr_rvv(const knowhere::bf16* x, size_t d);
-void
-bf16_vec_inner_product_batch_4_rvv(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                                   const knowhere::bf16* y2, const knowhere::bf16* y3, size_t d, float& dis0,
-                                   float& dis1, float& dis2, float& dis3);
-void
-bf16_vec_L2sqr_batch_4_rvv(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                           const knowhere::bf16* y2, const knowhere::bf16* y3, size_t d, float& dis0, float& dis1,
-                           float& dis2, float& dis3);
 }  // namespace faiss
