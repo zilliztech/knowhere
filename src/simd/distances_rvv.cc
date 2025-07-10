@@ -676,6 +676,226 @@ int8_vec_L2sqr_batch_4_rvv(const int8_t* x, const int8_t* y0, const int8_t* y1, 
     dis3 = (float)acc3;
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// bf16
+float
+bf16_vec_inner_product_rvv(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+    const size_t original_d = d;
+    const uint16_t* x_ptr = reinterpret_cast<const uint16_t*>(x);
+    const uint16_t* y_ptr = reinterpret_cast<const uint16_t*>(y);
+
+    size_t vlmax_m8 = __riscv_vsetvlmax_e32m8();
+    vfloat32m8_t v_acc = __riscv_vfmv_v_f_f32m8(0.0f, vlmax_m8);
+
+    for (size_t vl; (vl = __riscv_vsetvl_e16m4(d)) > 0; d -= vl) {
+        vuint16m4_t v_x_u16 = __riscv_vle16_v_u16m4(x_ptr, vl);
+        vuint16m4_t v_y_u16 = __riscv_vle16_v_u16m4(y_ptr, vl);
+
+        vuint32m8_t v_x_u32 = __riscv_vwaddu_vx_u32m8(v_x_u16, 0, vl);
+        vuint32m8_t v_y_u32 = __riscv_vwaddu_vx_u32m8(v_y_u16, 0, vl);
+
+        vuint32m8_t v_x_shifted = __riscv_vsll_vx_u32m8(v_x_u32, 16, vl);
+        vuint32m8_t v_y_shifted = __riscv_vsll_vx_u32m8(v_y_u32, 16, vl);
+
+        vfloat32m8_t v_x_w = __riscv_vreinterpret_v_u32m8_f32m8(v_x_shifted);
+        vfloat32m8_t v_y_w = __riscv_vreinterpret_v_u32m8_f32m8(v_y_shifted);
+
+        v_acc = __riscv_vfmacc_vv_f32m8(v_acc, v_x_w, v_y_w, vl);
+
+        x_ptr += vl;
+        y_ptr += vl;
+    }
+    vfloat32m1_t v_scalar_sum = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    size_t vl_for_reduction = __riscv_vsetvl_e32m8(original_d);
+    v_scalar_sum = __riscv_vfredusum_vs_f32m8_f32m1(v_acc, v_scalar_sum, vl_for_reduction);
+    return __riscv_vfmv_f_s_f32m1_f32(v_scalar_sum);
+}
+
+float
+bf16_vec_L2sqr_rvv(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+    const size_t original_d = d;
+    const uint16_t* x_ptr = reinterpret_cast<const uint16_t*>(x);
+    const uint16_t* y_ptr = reinterpret_cast<const uint16_t*>(y);
+
+    size_t vlmax_m4 = __riscv_vsetvlmax_e32m4();
+    vfloat32m4_t v_acc = __riscv_vfmv_v_f_f32m4(0.0f, vlmax_m4);
+
+    for (size_t vl; (vl = __riscv_vsetvl_e16m2(d)) > 0; d -= vl) {
+        vuint16m2_t v_x_u16 = __riscv_vle16_v_u16m2(x_ptr, vl);
+        vuint16m2_t v_y_u16 = __riscv_vle16_v_u16m2(y_ptr, vl);
+
+        vuint32m4_t v_x_u32 = __riscv_vwaddu_vx_u32m4(v_x_u16, 0, vl);
+        vuint32m4_t v_y_u32 = __riscv_vwaddu_vx_u32m4(v_y_u16, 0, vl);
+
+        vuint32m4_t v_x_shifted = __riscv_vsll_vx_u32m4(v_x_u32, 16, vl);
+        vuint32m4_t v_y_shifted = __riscv_vsll_vx_u32m4(v_y_u32, 16, vl);
+
+        vfloat32m4_t v_x_w = __riscv_vreinterpret_v_u32m4_f32m4(v_x_shifted);
+        vfloat32m4_t v_y_w = __riscv_vreinterpret_v_u32m4_f32m4(v_y_shifted);
+
+        vfloat32m4_t v_diff = __riscv_vfsub_vv_f32m4(v_x_w, v_y_w, vl);
+
+        v_acc = __riscv_vfmacc_vv_f32m4(v_acc, v_diff, v_diff, vl);
+
+        x_ptr += vl;
+        y_ptr += vl;
+    }
+
+    vfloat32m1_t v_scalar_sum = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    size_t vl_for_reduction = __riscv_vsetvl_e32m4(original_d);
+    v_scalar_sum = __riscv_vfredusum_vs_f32m4_f32m1(v_acc, v_scalar_sum, vl_for_reduction);
+    return __riscv_vfmv_f_s_f32m1_f32(v_scalar_sum);
+}
+
+float
+bf16_vec_norm_L2sqr_rvv(const knowhere::bf16* x, size_t d) {
+    const size_t original_d = d;
+    const uint16_t* x_ptr = reinterpret_cast<const uint16_t*>(x);
+
+    size_t vlmax_m8 = __riscv_vsetvlmax_e32m8();
+    vfloat32m8_t v_acc = __riscv_vfmv_v_f_f32m8(0.0f, vlmax_m8);
+
+    for (size_t vl; (vl = __riscv_vsetvl_e16m4(d)) > 0; d -= vl) {
+        vuint16m4_t v_x_u16 = __riscv_vle16_v_u16m4(x_ptr, vl);
+
+        vuint32m8_t v_x_u32 = __riscv_vwaddu_vx_u32m8(v_x_u16, 0, vl);
+        vuint32m8_t v_x_shifted = __riscv_vsll_vx_u32m8(v_x_u32, 16, vl);
+        vfloat32m8_t v_x_fp32 = __riscv_vreinterpret_v_u32m8_f32m8(v_x_shifted);
+
+        v_acc = __riscv_vfmacc_vv_f32m8(v_acc, v_x_fp32, v_x_fp32, vl);
+        x_ptr += vl;
+    }
+    vfloat32m1_t v_scalar_sum = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    size_t vl_for_reduction = __riscv_vsetvl_e32m8(original_d);
+    v_scalar_sum = __riscv_vfredusum_vs_f32m8_f32m1(v_acc, v_scalar_sum, vl_for_reduction);
+    return __riscv_vfmv_f_s_f32m1_f32(v_scalar_sum);
+}
+
+void
+bf16_vec_inner_product_batch_4_rvv(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
+                                   const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
+                                   float& dis1, float& dis2, float& dis3) {
+    size_t temp_d = d;
+    const uint16_t* x_ptr = reinterpret_cast<const uint16_t*>(x);
+    const uint16_t* y0_ptr = reinterpret_cast<const uint16_t*>(y0);
+    const uint16_t* y1_ptr = reinterpret_cast<const uint16_t*>(y1);
+    const uint16_t* y2_ptr = reinterpret_cast<const uint16_t*>(y2);
+    const uint16_t* y3_ptr = reinterpret_cast<const uint16_t*>(y3);
+
+    vfloat32m4_t vacc0 = __riscv_vfmv_v_f_f32m4(0.0f, __riscv_vsetvlmax_e32m4());
+    vfloat32m4_t vacc1 = __riscv_vfmv_v_f_f32m4(0.0f, __riscv_vsetvlmax_e32m4());
+    vfloat32m4_t vacc2 = __riscv_vfmv_v_f_f32m4(0.0f, __riscv_vsetvlmax_e32m4());
+    vfloat32m4_t vacc3 = __riscv_vfmv_v_f_f32m4(0.0f, __riscv_vsetvlmax_e32m4());
+
+    for (size_t vl; (vl = __riscv_vsetvl_e16m2(temp_d)) > 0; temp_d -= vl) {
+        vuint16m2_t vx_u16 = __riscv_vle16_v_u16m2(x_ptr, vl);
+        vfloat32m4_t vx_fp32 =
+            __riscv_vreinterpret_v_u32m4_f32m4(__riscv_vsll_vx_u32m4(__riscv_vwaddu_vx_u32m4(vx_u16, 0, vl), 16, vl));
+
+        // --- Process y0 ---
+        vuint16m2_t vy0_u16 = __riscv_vle16_v_u16m2(y0_ptr, vl);
+        vacc0 = __riscv_vfmacc_vv_f32m4(
+            vacc0, vx_fp32,
+            __riscv_vreinterpret_v_u32m4_f32m4(__riscv_vsll_vx_u32m4(__riscv_vwaddu_vx_u32m4(vy0_u16, 0, vl), 16, vl)),
+            vl);
+
+        // --- Process y1 ---
+        vuint16m2_t vy1_u16 = __riscv_vle16_v_u16m2(y1_ptr, vl);
+        vacc1 = __riscv_vfmacc_vv_f32m4(
+            vacc1, vx_fp32,
+            __riscv_vreinterpret_v_u32m4_f32m4(__riscv_vsll_vx_u32m4(__riscv_vwaddu_vx_u32m4(vy1_u16, 0, vl), 16, vl)),
+            vl);
+
+        // --- Process y2 ---
+        vuint16m2_t vy2_u16 = __riscv_vle16_v_u16m2(y2_ptr, vl);
+        vacc2 = __riscv_vfmacc_vv_f32m4(
+            vacc2, vx_fp32,
+            __riscv_vreinterpret_v_u32m4_f32m4(__riscv_vsll_vx_u32m4(__riscv_vwaddu_vx_u32m4(vy2_u16, 0, vl), 16, vl)),
+            vl);
+
+        // --- Process y3 ---
+        vuint16m2_t vy3_u16 = __riscv_vle16_v_u16m2(y3_ptr, vl);
+        vacc3 = __riscv_vfmacc_vv_f32m4(
+            vacc3, vx_fp32,
+            __riscv_vreinterpret_v_u32m4_f32m4(__riscv_vsll_vx_u32m4(__riscv_vwaddu_vx_u32m4(vy3_u16, 0, vl), 16, vl)),
+            vl);
+
+        x_ptr += vl;
+        y0_ptr += vl;
+        y1_ptr += vl;
+        y2_ptr += vl;
+        y3_ptr += vl;
+    }
+
+    vfloat32m1_t v_scalar_sum_init = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    dis0 = __riscv_vfmv_f_s_f32m1_f32(__riscv_vfredusum_vs_f32m4_f32m1(vacc0, v_scalar_sum_init, d));
+    dis1 = __riscv_vfmv_f_s_f32m1_f32(__riscv_vfredusum_vs_f32m4_f32m1(vacc1, v_scalar_sum_init, d));
+    dis2 = __riscv_vfmv_f_s_f32m1_f32(__riscv_vfredusum_vs_f32m4_f32m1(vacc2, v_scalar_sum_init, d));
+    dis3 = __riscv_vfmv_f_s_f32m1_f32(__riscv_vfredusum_vs_f32m4_f32m1(vacc3, v_scalar_sum_init, d));
+}
+
+void
+bf16_vec_L2sqr_batch_4_rvv(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
+                           const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0, float& dis1,
+                           float& dis2, float& dis3) {
+    size_t temp_d = d;
+    const uint16_t* x_ptr = reinterpret_cast<const uint16_t*>(x);
+    const uint16_t* y0_ptr = reinterpret_cast<const uint16_t*>(y0);
+    const uint16_t* y1_ptr = reinterpret_cast<const uint16_t*>(y1);
+    const uint16_t* y2_ptr = reinterpret_cast<const uint16_t*>(y2);
+    const uint16_t* y3_ptr = reinterpret_cast<const uint16_t*>(y3);
+
+    vfloat32m2_t vacc0 = __riscv_vfmv_v_f_f32m2(0.0f, __riscv_vsetvlmax_e32m2());
+    vfloat32m2_t vacc1 = __riscv_vfmv_v_f_f32m2(0.0f, __riscv_vsetvlmax_e32m2());
+    vfloat32m2_t vacc2 = __riscv_vfmv_v_f_f32m2(0.0f, __riscv_vsetvlmax_e32m2());
+    vfloat32m2_t vacc3 = __riscv_vfmv_v_f_f32m2(0.0f, __riscv_vsetvlmax_e32m2());
+
+    for (size_t vl; (vl = __riscv_vsetvl_e16m1(temp_d)) > 0; temp_d -= vl) {
+        vfloat32m2_t vx_fp32 = __riscv_vreinterpret_v_u32m2_f32m2(
+            __riscv_vsll_vx_u32m2(__riscv_vwaddu_vx_u32m2(__riscv_vle16_v_u16m1(x_ptr, vl), 0, vl), 16, vl));
+
+        vuint16m1_t vy0_u16 = __riscv_vle16_v_u16m1(y0_ptr, vl);
+        vfloat32m2_t vdiff0 = __riscv_vfsub_vv_f32m2(
+            vx_fp32,
+            __riscv_vreinterpret_v_u32m2_f32m2(__riscv_vsll_vx_u32m2(__riscv_vwaddu_vx_u32m2(vy0_u16, 0, vl), 16, vl)),
+            vl);
+        vacc0 = __riscv_vfmacc_vv_f32m2(vacc0, vdiff0, vdiff0, vl);
+
+        vuint16m1_t vy1_u16 = __riscv_vle16_v_u16m1(y1_ptr, vl);
+        vfloat32m2_t vdiff1 = __riscv_vfsub_vv_f32m2(
+            vx_fp32,
+            __riscv_vreinterpret_v_u32m2_f32m2(__riscv_vsll_vx_u32m2(__riscv_vwaddu_vx_u32m2(vy1_u16, 0, vl), 16, vl)),
+            vl);
+        vacc1 = __riscv_vfmacc_vv_f32m2(vacc1, vdiff1, vdiff1, vl);
+
+        vuint16m1_t vy2_u16 = __riscv_vle16_v_u16m1(y2_ptr, vl);
+        vfloat32m2_t vdiff2 = __riscv_vfsub_vv_f32m2(
+            vx_fp32,
+            __riscv_vreinterpret_v_u32m2_f32m2(__riscv_vsll_vx_u32m2(__riscv_vwaddu_vx_u32m2(vy2_u16, 0, vl), 16, vl)),
+            vl);
+        vacc2 = __riscv_vfmacc_vv_f32m2(vacc2, vdiff2, vdiff2, vl);
+
+        vuint16m1_t vy3_u16 = __riscv_vle16_v_u16m1(y3_ptr, vl);
+        vfloat32m2_t vdiff3 = __riscv_vfsub_vv_f32m2(
+            vx_fp32,
+            __riscv_vreinterpret_v_u32m2_f32m2(__riscv_vsll_vx_u32m2(__riscv_vwaddu_vx_u32m2(vy3_u16, 0, vl), 16, vl)),
+            vl);
+        vacc3 = __riscv_vfmacc_vv_f32m2(vacc3, vdiff3, vdiff3, vl);
+
+        x_ptr += vl;
+        y0_ptr += vl;
+        y1_ptr += vl;
+        y2_ptr += vl;
+        y3_ptr += vl;
+    }
+
+    vfloat32m1_t v_scalar_sum_init = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    dis0 = __riscv_vfmv_f_s_f32m1_f32(__riscv_vfredusum_vs_f32m2_f32m1(vacc0, v_scalar_sum_init, d));
+    dis1 = __riscv_vfmv_f_s_f32m1_f32(__riscv_vfredusum_vs_f32m2_f32m1(vacc1, v_scalar_sum_init, d));
+    dis2 = __riscv_vfmv_f_s_f32m1_f32(__riscv_vfredusum_vs_f32m2_f32m1(vacc2, v_scalar_sum_init, d));
+    dis3 = __riscv_vfmv_f_s_f32m1_f32(__riscv_vfredusum_vs_f32m2_f32m1(vacc3, v_scalar_sum_init, d));
+}
+
 }  // namespace faiss
 
 #endif
