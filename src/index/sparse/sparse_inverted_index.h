@@ -364,12 +364,12 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     Status
     Serialize(MemoryIOWriter& writer) const override {
         // Serialized format:
-        // 1. Index File Header (v1) (64 bytes):
+        // 1. Index File Header (v1) (32 bytes):
         //    - index_format_version (uint32_t): Version of the index format, currently 1
         //    - nr_rows (uint32_t): Number of rows in the index
         //    - max_dim (uint32_t): Number of columns, or maximum dimension ID
         //    - nr_inner_dims (uint32_t): Number of inner dimensions
-        //    - reserved (48 bytes): Reserved for future use
+        //    - reserved (16 bytes): Reserved for future use
         //
         // 2. Section Headers Table:
         //    - nr_sections (uint32_t): Number of sections
@@ -1397,8 +1397,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
     std::unique_ptr<BM25Params> bm25_params_;
 
-    static constexpr uint32_t index_file_v1_header_size = 64;
-    static constexpr uint32_t index_file_v1_header_reserved_size = 48;
+    static constexpr uint32_t index_file_v1_header_size = 32;
+    static constexpr uint32_t index_file_v1_header_reserved_size = 16;
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // Statistics for the build process, which will be used to generate the prometheus metrics
