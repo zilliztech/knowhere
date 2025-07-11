@@ -433,6 +433,28 @@ class IndexNode : public Object {
     virtual std::string
     Type() const = 0;
 
+    /**
+     * @brief Gets the mapping from internal IDs to external IDs.
+     *
+     * @return A reference to the mapping vector.
+     */
+    virtual std::shared_ptr<std::vector<uint32_t>>
+    GetInternalIdToExternalIdMap() const {
+        throw std::runtime_error("GetInterIdToOuterIdMap not implemented");
+    }
+
+    /**
+     * @brief Sets the mapping from internal IDs to "most external" IDs for 1-hop bitset check!
+     * Only used for hierarchical indexnode, such as emb_list + hnsw, each index node has its own relayout mapping.
+     *
+     * @param map The mapping vector to set.
+     * @return Status indicating success or failure of the mapping.
+     */
+    virtual Status
+    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) {
+        throw std::runtime_error("SetInternalIdToMostExternalIdMap not implemented");
+    }
+
     virtual ~IndexNode() {
     }
 
