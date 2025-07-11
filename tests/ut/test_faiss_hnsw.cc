@@ -2283,3 +2283,143 @@ TEST_CASE("hnswlib to FAISS HNSW for HNSW_FLAT", "Check search fallback") {
         REQUIRE(recall == 1);
     }
 }
+
+TEST_CASE("External ID Map for 1-hop Bitset Check", "[external_id_map]") {
+    const int64_t NB = 1000;
+    const int64_t dim = 128;
+    const int64_t NQ = 10;
+    const int64_t k = 10;
+    const int64_t range_search_k = k;
+    const float radius = std::numeric_limits<float>::max();
+
+    // Configure index
+    knowhere::Json conf;
+    conf[knowhere::meta::INDEX_TYPE] = knowhere::IndexEnum::INDEX_HNSW;
+    conf[knowhere::meta::ROWS] = NB;
+    conf[knowhere::meta::DIM] = dim;
+    conf[knowhere::meta::METRIC_TYPE] = knowhere::metric::L2;
+    conf[knowhere::meta::TOPK] = k;
+    conf[knowhere::meta::RANGE_SEARCH_K] = range_search_k;
+    conf[knowhere::meta::RADIUS] = radius;
+    conf[knowhere::indexparam::M] = 16;
+    conf[knowhere::indexparam::EFCONSTRUCTION] = 96;
+    conf[knowhere::indexparam::EF] = 64;
+    const std::string index_type = conf[knowhere::meta::INDEX_TYPE].get<std::string>();
+
+    const std::vector<bool> MV_ONLYs = {false, true};
+    const std::vector<int64_t> PARTITION_NUMS = {1, 5};
+    const std::vector<float> FILTER_RATES = {0.0, 0.5, 0.98, 1.0};
+
+    for (const int64_t partition_num : PARTITION_NUMS) {
+        std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_info =
+            GenerateScalarInfo(NB, partition_num);
+
+        for (const bool mv_only_enable : MV_ONLYs) {
+            // Generate test data
+            auto dataset = GenDataSet(NB, dim, (uint64_t)123);
+            auto query_dataset = GenDataSet(NQ, dim, (uint64_t)456);
+            if (mv_only_enable) {
+                dataset->Set(knowhere::meta::SCALAR_INFO, scalar_info);
+            }
+            std::string index_file_name =
+                std::string("hnsw_1hop_bitset_check") + (mv_only_enable ? "_mv_only" : "") + ".index";
+
+            knowhere::Index<knowhere::IndexNode> index =
+                create_index<knowhere::fp32>(index_type, index_file_name, dataset, conf, mv_only_enable);
+
+            // Train and add data
+            auto train_res = index.Train(dataset, conf);
+            REQUIRE(train_res == knowhere::Status::success);
+            printf("Training completed successfully\n");
+            auto add_res = index.Add(dataset, conf);
+            REQUIRE(add_res == knowhere::Status::success);
+            printf("Data addition completed successfully\n");
+
+            // Verify the external id mapping
+            std::shared_ptr<std::vector<uint32_t>> external_id_map = index.Node()->GetInternalIdToExternalIdMap();
+            REQUIRE(external_id_map != nullptr);
+            REQUIRE(external_id_map->size() == NB);
+
+            // generate a 8-bits bitset data with only 0-idx set to 0 (bit==1 means filter out)
+            // with the external id map, we can map NB-ids to {0, 1}.
+            const std::vector<uint8_t> bitset_data = std::vector<uint8_t>(1, 0xe);
+            knowhere::BitsetView bitset_view = knowhere::BitsetView(bitset_data.data(), 8, 7);
+
+            for (const float filter_rate : FILTER_RATES) {
+                printf("mv_only_enable: %d, partition_num: %ld, filter_rate: %f\n", mv_only_enable, partition_num,
+                       filter_rate);
+
+                // will filter out the id >= valid_cnt points
+                uint32_t valid_cnt = NB * (1.0f - filter_rate);
+
+                auto check_mv_only_result = [&](knowhere::DataSetPtr result, int64_t selected_partition_idx) {
+                    auto nq = result->GetRows();
+                    auto res_k = result->GetDim();
+                    auto lims = result->GetLims();
+                    auto res_ids = result->GetIds();
+
+                    auto length = res_k == 0 ? lims[nq] : res_k * nq;
+
+                    for (size_t i = 0; i < length; ++i) {
+                        if (res_ids[i] < 0) {
+                            continue;
+                        }
+                        REQUIRE(res_ids[i] < valid_cnt);
+                        bool in_partition = std::find(scalar_info[0][selected_partition_idx].begin(),
+                                                      scalar_info[0][selected_partition_idx].end(),
+                                                      res_ids[i]) != scalar_info[0][selected_partition_idx].end();
+                        REQUIRE(in_partition);
+                    }
+                };
+
+                auto check_not_mv_only_result = [&](knowhere::DataSetPtr result) {
+                    auto nq = result->GetRows();
+                    auto res_k = result->GetDim();
+                    auto lims = result->GetLims();
+                    auto res_ids = result->GetIds();
+                    auto length = res_k == 0 ? lims[nq] : res_k * nq;
+
+                    for (size_t i = 0; i < length; ++i) {
+                        REQUIRE(res_ids[i] < valid_cnt);
+                    }
+                };
+
+                if (mv_only_enable) {
+                    for (auto selected_partition_idx = 0; selected_partition_idx < partition_num;
+                         ++selected_partition_idx) {
+                        printf("selected_partition_idx: %d\n", selected_partition_idx);
+
+                        std::vector<uint32_t> internal_id_to_most_external_id_map(NB, 1);
+                        for (int64_t i = 0; i < NB; ++i) {
+                            if (external_id_map->at(i) < valid_cnt &&
+                                std::find(scalar_info[0][selected_partition_idx].begin(),
+                                          scalar_info[0][selected_partition_idx].end(),
+                                          external_id_map->at(i)) != scalar_info[0][selected_partition_idx].end()) {
+                                internal_id_to_most_external_id_map[i] = 0;
+                            }
+                        }
+                        index.Node()->SetInternalIdToMostExternalIdMap(std::move(internal_id_to_most_external_id_map));
+                        auto knn_result = index.Search(query_dataset, conf, bitset_view).value();
+                        check_mv_only_result(knn_result, selected_partition_idx);
+
+                        auto range_result = index.RangeSearch(query_dataset, conf, bitset_view).value();
+                        check_mv_only_result(range_result, selected_partition_idx);
+                    }
+                } else {
+                    std::vector<uint32_t> internal_id_to_most_external_id_map(NB, 1);
+                    for (int64_t i = 0; i < NB; ++i) {
+                        if (external_id_map->at(i) < valid_cnt) {
+                            internal_id_to_most_external_id_map[i] = 0;
+                        }
+                    }
+                    index.Node()->SetInternalIdToMostExternalIdMap(std::move(internal_id_to_most_external_id_map));
+                    auto knn_result = index.Search(query_dataset, conf, bitset_view).value();
+                    check_not_mv_only_result(knn_result);
+
+                    auto range_result = index.RangeSearch(query_dataset, conf, bitset_view).value();
+                    check_not_mv_only_result(range_result);
+                }
+            }
+        }
+    }
+}

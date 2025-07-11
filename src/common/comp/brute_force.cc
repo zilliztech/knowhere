@@ -106,10 +106,12 @@ GetVecNorms(const DataSetPtr& base) {
 template <typename DataType>
 expected<DataSetPtr>
 BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                   const BitsetView& bitset) {
+                   const BitsetView& bitset_) {
     auto xb = base_dataset->GetTensor();
     auto nb = base_dataset->GetRows();
     auto xb_id_offset = base_dataset->GetTensorBeginId();
+    BitsetView bitset = bitset_;
+    bitset.set_id_offset(xb_id_offset);
     auto dim = base_dataset->GetDim();
 
     auto xq = query_dataset->GetTensor();
@@ -169,7 +171,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
             auto cur_labels = labels_ptr + topk * index;
             auto cur_distances = distances_ptr + topk * index;
 
-            BitsetViewIDSelector bw_idselector(bitset, xb_id_offset);
+            BitsetViewIDSelector bw_idselector(bitset);
             faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
 
             switch (faiss_metric_type) {
@@ -291,11 +293,13 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
 template <typename DataType>
 Status
 BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids, float* dis,
-                          const Json& config, const BitsetView& bitset) {
+                          const Json& config, const BitsetView& bitset_) {
     auto xb = base_dataset->GetTensor();
     auto nb = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
     auto xb_id_offset = base_dataset->GetTensorBeginId();
+    BitsetView bitset = bitset_;
+    bitset.set_id_offset(xb_id_offset);
 
     auto xq = query_dataset->GetTensor();
     auto nq = query_dataset->GetRows();
@@ -351,7 +355,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
             auto cur_labels = labels + topk * index;
             auto cur_distances = distances + topk * index;
 
-            BitsetViewIDSelector bw_idselector(bitset, xb_id_offset);
+            BitsetViewIDSelector bw_idselector(bitset);
             faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
             switch (faiss_metric_type) {
                 case faiss::METRIC_L2: {
@@ -470,13 +474,14 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
 template <typename DataType>
 expected<DataSetPtr>
 BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                        const BitsetView& bitset) {
+                        const BitsetView& bitset_) {
     DataSetPtr query(query_dataset);
     auto xb = base_dataset->GetTensor();
     auto nb = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
     auto xb_id_offset = base_dataset->GetTensorBeginId();
-
+    BitsetView bitset = bitset_;
+    bitset.set_id_offset(xb_id_offset);
     auto xq = query_dataset->GetTensor();
     auto nq = query_dataset->GetRows();
 
@@ -555,7 +560,8 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                 std::set<std::pair<float, int64_t>, std::greater<>> result;
                 for (int j = 0; j < nb; ++j) {
                     auto xid = xb_id_offset + j;
-                    if (!bitset.empty() && bitset.test(xid)) {
+                    // bitset has already set the id_offset, so we need to use j instead of xid
+                    if (!bitset.empty() && bitset.test(j)) {
                         continue;
                     }
                     float row_sum = 0;
@@ -582,7 +588,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                 ThreadPool::ScopedSearchOmpSetter setter(1);
                 faiss::RangeSearchResult res(1);
 
-                BitsetViewIDSelector bw_idselector(bitset, xb_id_offset);
+                BitsetViewIDSelector bw_idselector(bitset);
                 faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
                 switch (faiss_metric_type) {
                     case faiss::METRIC_L2: {
@@ -806,7 +812,7 @@ BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_d
 template <typename DataType>
 expected<std::vector<IndexNode::IteratorPtr>>
 BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                        const BitsetView& bitset, bool use_knowhere_search_pool) {
+                        const BitsetView& bitset_, bool use_knowhere_search_pool) {
     auto nb = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
     auto nq = query_dataset->GetRows();
@@ -857,7 +863,9 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                 auto xb = base_dataset->GetTensor();
                 auto xq = query_dataset->GetTensor();
                 auto xb_id_offset = base_dataset->GetTensorBeginId();
-                BitsetViewIDSelector bw_idselector(bitset, xb_id_offset);
+                BitsetView bitset = bitset_;
+                bitset.set_id_offset(xb_id_offset);
+                BitsetViewIDSelector bw_idselector(bitset);
                 [[maybe_unused]] faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
                 auto max_dis =
                     larger_is_closer ? std::numeric_limits<float>::lowest() : std::numeric_limits<float>::max();
