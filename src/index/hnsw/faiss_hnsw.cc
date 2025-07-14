@@ -1078,6 +1078,9 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         };
 
         try {
+            // limit the parallel of reconstruction
+            ThreadPool::ScopedSearchOmpSetter setter(1);
+
             if (data_format == DataFormatEnum::fp32) {
                 // perform a direct reconstruction for fp32 data
                 auto data = std::make_unique<float[]>(dim * rows);
