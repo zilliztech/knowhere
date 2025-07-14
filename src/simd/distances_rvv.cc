@@ -708,6 +708,82 @@ int8_vec_L2sqr_batch_4_rvv(const int8_t* x, const int8_t* y0, const int8_t* y1, 
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// fp16
+
+float
+fp16_vec_inner_product_rvv(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+    const size_t original_d = d;
+    vfloat32m8_t acc = __riscv_vfmv_v_f_f32m8(0.0f, __riscv_vsetvlmax_e32m8());
+
+    const _Float16* x_ptr = reinterpret_cast<const _Float16*>(x);
+    const _Float16* y_ptr = reinterpret_cast<const _Float16*>(y);
+
+    for (size_t vl; (vl = __riscv_vsetvl_e16m4(d)) > 0; d -= vl) {
+        vfloat16m4_t vx = __riscv_vle16_v_f16m4(x_ptr, vl);
+        vfloat16m4_t vy = __riscv_vle16_v_f16m4(y_ptr, vl);
+
+        vfloat32m8_t vfx = __riscv_vfwcvt_f_f_v_f32m8(vx, vl);
+        vfloat32m8_t vfy = __riscv_vfwcvt_f_f_v_f32m8(vy, vl);
+
+        acc = __riscv_vfmacc_vv_f32m8(acc, vfx, vfy, vl);
+
+        x_ptr += vl;
+        y_ptr += vl;
+    }
+
+    vfloat32m1_t scalar_sum_vec = __riscv_vfredusum_vs_f32m8_f32m1(acc, __riscv_vfmv_s_f_f32m1(0.0f, 1), original_d);
+
+    return __riscv_vfmv_f_s_f32m1_f32(scalar_sum_vec);
+}
+
+float
+fp16_vec_L2sqr_rvv(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+    const size_t original_d = d;
+    vfloat32m4_t acc = __riscv_vfmv_v_f_f32m4(0.0f, __riscv_vsetvlmax_e32m4());
+    const _Float16* x_ptr = reinterpret_cast<const _Float16*>(x);
+    const _Float16* y_ptr = reinterpret_cast<const _Float16*>(y);
+
+    for (size_t vl; (vl = __riscv_vsetvl_e16m2(d)) > 0; d -= vl) {
+        vfloat16m2_t vx = __riscv_vle16_v_f16m2(x_ptr, vl);
+        vfloat16m2_t vy = __riscv_vle16_v_f16m2(y_ptr, vl);
+
+        vfloat32m4_t vfx = __riscv_vfwcvt_f_f_v_f32m4(vx, vl);
+        vfloat32m4_t vfy = __riscv_vfwcvt_f_f_v_f32m4(vy, vl);
+
+        vfloat32m4_t v_diff = __riscv_vfsub_vv_f32m4(vfx, vfy, vl);
+
+        acc = __riscv_vfmacc_vv_f32m4(acc, v_diff, v_diff, vl);
+        x_ptr += vl;
+        y_ptr += vl;
+    }
+
+    vfloat32m1_t scalar_sum_vec = __riscv_vfredusum_vs_f32m4_f32m1(acc, __riscv_vfmv_s_f_f32m1(0.0f, 1), original_d);
+
+    return __riscv_vfmv_f_s_f32m1_f32(scalar_sum_vec);
+}
+
+float
+fp16_vec_norm_L2sqr_rvv(const knowhere::fp16* x, size_t d) {
+    const size_t original_d = d;
+    vfloat32m8_t acc = __riscv_vfmv_v_f_f32m8(0.0f, __riscv_vsetvlmax_e32m8());
+    const _Float16* x_ptr = reinterpret_cast<const _Float16*>(x);
+
+    for (size_t vl; (vl = __riscv_vsetvl_e16m4(d)) > 0; d -= vl) {
+        vfloat16m4_t vx = __riscv_vle16_v_f16m4(x_ptr, vl);
+
+        vfloat32m8_t vfx = __riscv_vfwcvt_f_f_v_f32m8(vx, vl);
+
+        acc = __riscv_vfmacc_vv_f32m8(acc, vfx, vfx, vl);
+
+        x_ptr += vl;
+    }
+
+    vfloat32m1_t scalar_sum_vec = __riscv_vfredusum_vs_f32m8_f32m1(acc, __riscv_vfmv_s_f_f32m1(0.0f, 1), original_d);
+
+    return __riscv_vfmv_f_s_f32m1_f32(scalar_sum_vec);
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // bf16
 float
 bf16_vec_inner_product_rvv(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
