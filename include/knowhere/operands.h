@@ -176,6 +176,8 @@ template <typename InType>
 using KnowhereFloatTypeCheck = TypeMatch<InType, fp32, fp16, bf16>;
 template <typename InType>
 using KnowhereLowPrecisionTypeCheck = TypeMatch<InType, fp16, bf16, int8>;
+template <typename InType>
+using KnowhereIntTypeCheck = TypeMatch<InType, int8>;
 
 template <typename T>
 struct MockData {
