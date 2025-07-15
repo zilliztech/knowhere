@@ -107,185 +107,23 @@ template <typename DataType>
 expected<DataSetPtr>
 BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                    const BitsetView& bitset_) {
-    auto xb = base_dataset->GetTensor();
-    auto nb = base_dataset->GetRows();
-    auto xb_id_offset = base_dataset->GetTensorBeginId();
-    BitsetView bitset = bitset_;
-    bitset.set_id_offset(xb_id_offset);
-    auto dim = base_dataset->GetDim();
-
-    auto xq = query_dataset->GetTensor();
-    auto nq = query_dataset->GetRows();
-
     BruteForceConfig cfg;
     std::string msg;
     auto status = Config::Load(cfg, config, knowhere::SEARCH, &msg);
     if (status != Status::success) {
         return expected<DataSetPtr>::Err(status, msg);
     }
-
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-    // LCOV_EXCL_START
-    std::shared_ptr<tracer::trace::Span> span = nullptr;
-    if (cfg.trace_id.has_value()) {
-        auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
-        auto span_id_str = tracer::GetIDFromHexStr(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{(uint8_t*)trace_id_str.c_str(), (uint8_t*)span_id_str.c_str(),
-                                        (uint8_t)cfg.trace_flags.value()};
-        span = tracer::StartSpan("knowhere bf search", &ctx);
-        span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
-        span->SetAttribute(meta::TOPK, cfg.k.value());
-        span->SetAttribute(meta::ROWS, nb);
-        span->SetAttribute(meta::DIM, dim);
-        span->SetAttribute(meta::NQ, nq);
-    }
-    // LCOV_EXCL_STOP
-#endif
-
-    std::string metric_str = cfg.metric_type.value();
-    auto result = Str2FaissMetricType(metric_str);
-    if (result.error() != Status::success) {
-        return expected<DataSetPtr>::Err(result.error(), result.what());
-    }
-    faiss::MetricType faiss_metric_type = result.value();
-    bool is_cosine = IsMetricType(metric_str, metric::COSINE);
-
+    auto nq = query_dataset->GetRows();
     int topk = cfg.k.value();
     auto labels = std::make_unique<int64_t[]>(nq * topk);
     auto distances = std::make_unique<float[]>(nq * topk);
-    std::unique_ptr<float[]> norms = is_cosine ? GetVecNorms<DataType>(base_dataset) : nullptr;
-    // some check for minhash metric
-    if (faiss_metric_type == faiss::METRIC_MinHash_Jaccard) {
-        auto mh_valid_stat =
-            MinhashConfigCheck(dim, datatype_v<DataType>, PARAM_TYPE::SEARCH | PARAM_TYPE::TRAIN, &cfg, &bitset);
-        if (mh_valid_stat != Status::success) {
-            return expected<DataSetPtr>::Err(mh_valid_stat, "MinhashConfigCheck() failed, please check the config.");
-        }
-    }
-    auto pool = ThreadPool::GetGlobalSearchThreadPool();
-    std::vector<folly::Future<Status>> futs;
-    futs.reserve(nq);
-    for (int i = 0; i < nq; ++i) {
-        futs.emplace_back(pool->push([&, index = i, labels_ptr = labels.get(), distances_ptr = distances.get()] {
-            ThreadPool::ScopedSearchOmpSetter setter(1);
-            auto cur_labels = labels_ptr + topk * index;
-            auto cur_distances = distances_ptr + topk * index;
 
-            BitsetViewIDSelector bw_idselector(bitset);
-            faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
-
-            switch (faiss_metric_type) {
-                case faiss::METRIC_L2: {
-                    [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
-                    if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                        faiss::knn_L2sqr(cur_query, (const float*)xb, dim, 1, nb, topk, cur_distances, cur_labels,
-                                         nullptr, id_selector);
-                    } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
-                        faiss::knn_L2sqr_typed(cur_query, (const DataType*)xb, dim, 1, nb, topk, cur_distances,
-                                               cur_labels, nullptr, id_selector);
-                    } else {
-                        LOG_KNOWHERE_ERROR_ << "Metric L2 not supported for current vector type";
-                        return Status::faiss_inner_error;
-                    }
-                    break;
-                }
-                case faiss::METRIC_INNER_PRODUCT: {
-                    [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
-                    if (is_cosine) {
-                        if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                            auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                            faiss::knn_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1, nb, topk,
-                                              cur_distances, cur_labels, id_selector);
-                        } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
-                            // normalize query vector may cause precision loss, so div query norms in apply function
-                            faiss::knn_cosine_typed(cur_query, (const DataType*)xb, norms.get(), dim, 1, nb, topk,
-                                                    cur_distances, cur_labels, id_selector);
-                        } else {
-                            LOG_KNOWHERE_ERROR_ << "Metric COSINE not supported for current vector type";
-                            return Status::faiss_inner_error;
-                        }
-                    } else {
-                        if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                            faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, topk, cur_distances,
-                                                     cur_labels, id_selector);
-                        } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
-                            faiss::knn_inner_product_typed(cur_query, (const DataType*)xb, dim, 1, nb, topk,
-                                                           cur_distances, cur_labels, id_selector);
-                        } else {
-                            LOG_KNOWHERE_ERROR_ << "Metric IP not supported for current vector type";
-                            return Status::faiss_inner_error;
-                        }
-                    }
-                    break;
-                }
-                case faiss::METRIC_Jaccard: {
-                    auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
-                    faiss::float_maxheap_array_t res = {size_t(1), size_t(topk), cur_labels, cur_distances};
-                    binary_knn_hc(faiss::METRIC_Jaccard, &res, cur_query, (const uint8_t*)xb, nb, dim / 8, id_selector);
-                    break;
-                }
-                case faiss::METRIC_MinHash_Jaccard: {
-                    size_t mh_lsh_band = cfg.mh_lsh_band.value();
-                    bool mh_search_with_jaccard = cfg.mh_search_with_jaccard.value();
-                    if (mh_search_with_jaccard) {
-                        size_t hash_element_size = cfg.mh_element_bit_width.value() / 8;  // in bytes
-                        size_t hash_element_length = dim / (hash_element_size * 8);
-                        auto cur_query = (const char*)xq + (dim / 8) * index;
-                        minhash_jaccard_knn_ny(cur_query, (const char*)xb, hash_element_length, hash_element_size, nb,
-                                               topk, bitset, cur_distances, cur_labels);
-                    } else {
-                        size_t u8_dim = dim / 8;
-                        auto cur_query = (const char*)xq + u8_dim * index;
-                        minhash_lsh_hit_ny(cur_query, (const char*)xb, u8_dim, mh_lsh_band, nb, topk, bitset,
-                                           cur_distances, cur_labels);
-                    }
-                    break;
-                }
-                case faiss::METRIC_Hamming: {
-                    auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
-                    std::vector<int32_t> int_distances(topk);
-                    faiss::int_maxheap_array_t res = {size_t(1), size_t(topk), cur_labels, int_distances.data()};
-                    binary_knn_hc(faiss::METRIC_Hamming, &res, (const uint8_t*)cur_query, (const uint8_t*)xb, nb,
-                                  dim / 8, id_selector);
-                    for (int i = 0; i < topk; ++i) {
-                        cur_distances[i] = int_distances[i];
-                    }
-                    break;
-                }
-                case faiss::METRIC_Substructure:
-                case faiss::METRIC_Superstructure: {
-                    // only matched ids will be chosen, not to use heap
-                    auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
-                    binary_knn_mc(faiss_metric_type, cur_query, (const uint8_t*)xb, 1, nb, topk, dim / 8, cur_distances,
-                                  cur_labels, id_selector);
-                    break;
-                }
-                default: {
-                    LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
-                    return Status::invalid_metric_type;
-                }
-            }
-            return Status::success;
-        }));
-    }
-    auto ret = WaitAllSuccess(futs);
-    if (ret != Status::success) {
-        return expected<DataSetPtr>::Err(ret, "failed to brute force search");
-    }
-    if (xb_id_offset != 0) {
-        for (auto i = 0; i < nq * topk; i++) {
-            labels[i] = labels[i] == -1 ? -1 : labels[i] + xb_id_offset;
-        }
+    auto search_status =
+        SearchWithBuf<DataType>(base_dataset, query_dataset, labels.get(), distances.get(), config, bitset_);
+    if (search_status != Status::success) {
+        return expected<DataSetPtr>::Err(search_status, "search with buf failed");
     }
     auto res = GenResultDataSet(nq, cfg.k.value(), std::move(labels), std::move(distances));
-
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-    // LCOV_EXCL_START
-    if (cfg.trace_id.has_value()) {
-        span->End();
-    }
-    // LCOV_EXCL_STOP
-#endif
 
     return res;
 }
