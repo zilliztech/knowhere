@@ -20,9 +20,9 @@
 
 template <typename DataType>
 std::unique_ptr<DataType[]>
-GenRandomVector(int dim, int rows, int seed) {
+GenRandomVector(int dim, int rows, int seed, int range = 128) {
     std::mt19937 rng(seed);
-    std::uniform_real_distribution<> distrib(-128.0, 127.0);
+    std::uniform_real_distribution<> distrib(-1.0 * range, 1.0 * (range - 1));
     auto x = std::make_unique<DataType[]>(rows * dim);
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < dim; j++) {
@@ -47,14 +47,161 @@ TEST_CASE("Test minhash function") {
     auto simd_type = knowhere::KnowhereConfig::SimdType::AVX512;
     knowhere::KnowhereConfig::SetSimdType(simd_type);
     constexpr size_t seed = 111;
-    SECTION("test binary search funtion ") {
-        size_t size = 1200;
-        auto x = GenRandomVector<uint64_t>(size, 1, seed);
+    SECTION("test binary search function with comprehensive corner cases") {
+        auto size = GENERATE(as<size_t>{}, 1, 2, 4, 7, 8, 12, 14, 16, 21, 28, 32, 35, 42, 49, 56, 64, 111, 128, 256,
+                             1000, 2221, 5555);
+        auto iteration = GENERATE(0, 1, 2, 3, 4);
+        auto seed = 12345 + iteration * 1000;
+        auto x = GenRandomVector<uint64_t>(size, 1, seed, 100000);
         std::sort(x.get(), x.get() + size);
-        auto key = x[1000];
-
+        auto key = x[1000 % size];
         CHECK_EQ(faiss::u64_binary_search_eq(x.get(), size, key), faiss::u64_binary_search_eq_ref(x.get(), size, key));
         CHECK_EQ(faiss::u64_binary_search_ge(x.get(), size, key), faiss::u64_binary_search_ge_ref(x.get(), size, key));
+
+        uint64_t first_key = x[0];
+        CHECK_EQ(faiss::u64_binary_search_eq(x.get(), size, first_key),
+                 faiss::u64_binary_search_eq_ref(x.get(), size, first_key));
+        CHECK_EQ(faiss::u64_binary_search_ge(x.get(), size, first_key),
+                 faiss::u64_binary_search_ge_ref(x.get(), size, first_key));
+
+        uint64_t last_key = x[size - 1];
+        CHECK_EQ(faiss::u64_binary_search_eq(x.get(), size, last_key),
+                 faiss::u64_binary_search_eq_ref(x.get(), size, last_key));
+        CHECK_EQ(faiss::u64_binary_search_ge(x.get(), size, last_key),
+                 faiss::u64_binary_search_ge_ref(x.get(), size, last_key));
+
+        uint64_t mid_key = x[size / 2];
+        CHECK_EQ(faiss::u64_binary_search_eq(x.get(), size, mid_key),
+                 faiss::u64_binary_search_eq_ref(x.get(), size, mid_key));
+        CHECK_EQ(faiss::u64_binary_search_ge(x.get(), size, mid_key),
+                 faiss::u64_binary_search_ge_ref(x.get(), size, mid_key));
+
+        if (x[0] > 0) {
+            uint64_t smaller_key = x[0] - 1;
+            CHECK_EQ(faiss::u64_binary_search_eq(x.get(), size, smaller_key),
+                     faiss::u64_binary_search_eq_ref(x.get(), size, smaller_key));
+            CHECK_EQ(faiss::u64_binary_search_ge(x.get(), size, smaller_key),
+                     faiss::u64_binary_search_ge_ref(x.get(), size, smaller_key));
+        }
+
+        uint64_t larger_key = x[size - 1] + 1;
+        CHECK_EQ(faiss::u64_binary_search_eq(x.get(), size, larger_key),
+                 faiss::u64_binary_search_eq_ref(x.get(), size, larger_key));
+        CHECK_EQ(faiss::u64_binary_search_ge(x.get(), size, larger_key),
+                 faiss::u64_binary_search_ge_ref(x.get(), size, larger_key));
+
+        if (size > 1) {
+            for (size_t i = 0; i < size - 1; ++i) {
+                if (x[i + 1] > x[i] + 1) {
+                    uint64_t gap_key = x[i] + 1;
+                    CHECK_EQ(faiss::u64_binary_search_eq(x.get(), size, gap_key),
+                             faiss::u64_binary_search_eq_ref(x.get(), size, gap_key));
+                    CHECK_EQ(faiss::u64_binary_search_ge(x.get(), size, gap_key),
+                             faiss::u64_binary_search_ge_ref(x.get(), size, gap_key));
+                    break;
+                }
+            }
+        }
+        if (size >= 8) {
+            uint64_t simd_boundary_key = x[7];
+            CHECK_EQ(faiss::u64_binary_search_eq(x.get(), size, simd_boundary_key),
+                     faiss::u64_binary_search_eq_ref(x.get(), size, simd_boundary_key));
+            CHECK_EQ(faiss::u64_binary_search_ge(x.get(), size, simd_boundary_key),
+                     faiss::u64_binary_search_ge_ref(x.get(), size, simd_boundary_key));
+        }
+
+        if (size >= 16) {
+            uint64_t double_simd_key = x[15];
+            CHECK_EQ(faiss::u64_binary_search_eq(x.get(), size, double_simd_key),
+                     faiss::u64_binary_search_eq_ref(x.get(), size, double_simd_key));
+            CHECK_EQ(faiss::u64_binary_search_ge(x.get(), size, double_simd_key),
+                     faiss::u64_binary_search_ge_ref(x.get(), size, double_simd_key));
+        }
+
+        uint64_t zero_key = 0;
+        CHECK_EQ(faiss::u64_binary_search_eq(x.get(), size, zero_key),
+                 faiss::u64_binary_search_eq_ref(x.get(), size, zero_key));
+        CHECK_EQ(faiss::u64_binary_search_ge(x.get(), size, zero_key),
+                 faiss::u64_binary_search_ge_ref(x.get(), size, zero_key));
+
+        uint64_t max_key = UINT64_MAX;
+        CHECK_EQ(faiss::u64_binary_search_eq(x.get(), size, max_key),
+                 faiss::u64_binary_search_eq_ref(x.get(), size, max_key));
+        CHECK_EQ(faiss::u64_binary_search_ge(x.get(), size, max_key),
+                 faiss::u64_binary_search_ge_ref(x.get(), size, max_key));
+    }
+
+    SECTION("test binary search edge cases") {
+        uint64_t* empty_arr = nullptr;
+        CHECK_EQ(faiss::u64_binary_search_eq(empty_arr, 0, 42), faiss::u64_binary_search_eq_ref(empty_arr, 0, 42));
+        CHECK_EQ(faiss::u64_binary_search_ge(empty_arr, 0, 42), faiss::u64_binary_search_ge_ref(empty_arr, 0, 42));
+
+        uint64_t single_arr[] = {100};
+        CHECK_EQ(faiss::u64_binary_search_eq(single_arr, 1, 100), faiss::u64_binary_search_eq_ref(single_arr, 1, 100));
+        CHECK_EQ(faiss::u64_binary_search_eq(single_arr, 1, 99), faiss::u64_binary_search_eq_ref(single_arr, 1, 99));
+        CHECK_EQ(faiss::u64_binary_search_eq(single_arr, 1, 101), faiss::u64_binary_search_eq_ref(single_arr, 1, 101));
+
+        CHECK_EQ(faiss::u64_binary_search_ge(single_arr, 1, 100), faiss::u64_binary_search_ge_ref(single_arr, 1, 100));
+        CHECK_EQ(faiss::u64_binary_search_ge(single_arr, 1, 99), faiss::u64_binary_search_ge_ref(single_arr, 1, 99));
+        CHECK_EQ(faiss::u64_binary_search_ge(single_arr, 1, 101), faiss::u64_binary_search_ge_ref(single_arr, 1, 101));
+
+        uint64_t identical_arr[] = {50, 50, 50, 50, 50, 50, 50, 50, 50, 50};
+        size_t identical_size = sizeof(identical_arr) / sizeof(identical_arr[0]);
+
+        CHECK_EQ(faiss::u64_binary_search_eq(identical_arr, identical_size, 50),
+                 faiss::u64_binary_search_eq_ref(identical_arr, identical_size, 50));
+        CHECK_EQ(faiss::u64_binary_search_eq(identical_arr, identical_size, 49),
+                 faiss::u64_binary_search_eq_ref(identical_arr, identical_size, 49));
+        CHECK_EQ(faiss::u64_binary_search_eq(identical_arr, identical_size, 51),
+                 faiss::u64_binary_search_eq_ref(identical_arr, identical_size, 51));
+
+        CHECK_EQ(faiss::u64_binary_search_ge(identical_arr, identical_size, 50),
+                 faiss::u64_binary_search_ge_ref(identical_arr, identical_size, 50));
+        CHECK_EQ(faiss::u64_binary_search_ge(identical_arr, identical_size, 49),
+                 faiss::u64_binary_search_ge_ref(identical_arr, identical_size, 49));
+        CHECK_EQ(faiss::u64_binary_search_ge(identical_arr, identical_size, 51),
+                 faiss::u64_binary_search_ge_ref(identical_arr, identical_size, 51));
+
+        uint64_t strict_inc[] = {1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25};
+        size_t strict_size = sizeof(strict_inc) / sizeof(strict_inc[0]);
+
+        CHECK_EQ(faiss::u64_binary_search_eq(strict_inc, strict_size, 1),
+                 faiss::u64_binary_search_eq_ref(strict_inc, strict_size, 1));
+        CHECK_EQ(faiss::u64_binary_search_eq(strict_inc, strict_size, 25),
+                 faiss::u64_binary_search_eq_ref(strict_inc, strict_size, 25));
+        CHECK_EQ(faiss::u64_binary_search_eq(strict_inc, strict_size, 13),
+                 faiss::u64_binary_search_eq_ref(strict_inc, strict_size, 13));
+
+        CHECK_EQ(faiss::u64_binary_search_eq(strict_inc, strict_size, 2),
+                 faiss::u64_binary_search_eq_ref(strict_inc, strict_size, 2));
+        CHECK_EQ(faiss::u64_binary_search_eq(strict_inc, strict_size, 14),
+                 faiss::u64_binary_search_eq_ref(strict_inc, strict_size, 14));
+
+        CHECK_EQ(faiss::u64_binary_search_ge(strict_inc, strict_size, 2),
+                 faiss::u64_binary_search_ge_ref(strict_inc, strict_size, 2));
+        CHECK_EQ(faiss::u64_binary_search_ge(strict_inc, strict_size, 14),
+                 faiss::u64_binary_search_ge_ref(strict_inc, strict_size, 14));
+
+        uint64_t many_dups[] = {1, 1, 1, 5, 5, 5, 5, 5, 10, 10, 15, 15, 15};
+        size_t dups_size = sizeof(many_dups) / sizeof(many_dups[0]);
+
+        CHECK_EQ(faiss::u64_binary_search_eq(many_dups, dups_size, 1),
+                 faiss::u64_binary_search_eq_ref(many_dups, dups_size, 1));
+        CHECK_EQ(faiss::u64_binary_search_eq(many_dups, dups_size, 5),
+                 faiss::u64_binary_search_eq_ref(many_dups, dups_size, 5));
+        CHECK_EQ(faiss::u64_binary_search_eq(many_dups, dups_size, 10),
+                 faiss::u64_binary_search_eq_ref(many_dups, dups_size, 10));
+        CHECK_EQ(faiss::u64_binary_search_eq(many_dups, dups_size, 15),
+                 faiss::u64_binary_search_eq_ref(many_dups, dups_size, 15));
+
+        CHECK_EQ(faiss::u64_binary_search_ge(many_dups, dups_size, 1),
+                 faiss::u64_binary_search_ge_ref(many_dups, dups_size, 1));
+        CHECK_EQ(faiss::u64_binary_search_ge(many_dups, dups_size, 5),
+                 faiss::u64_binary_search_ge_ref(many_dups, dups_size, 5));
+        CHECK_EQ(faiss::u64_binary_search_ge(many_dups, dups_size, 3),
+                 faiss::u64_binary_search_ge_ref(many_dups, dups_size, 3));
+        CHECK_EQ(faiss::u64_binary_search_ge(many_dups, dups_size, 12),
+                 faiss::u64_binary_search_ge_ref(many_dups, dups_size, 12));
     }
     SECTION("test minhash distance") {
         auto dim = GENERATE(as<size_t>{}, 1, 2, 4, 7, 8, 12, 14, 16, 21, 28, 32, 35, 42, 49, 56, 64, 128, 256);

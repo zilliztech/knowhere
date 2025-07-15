@@ -132,6 +132,7 @@ extern float (*u64_jaccard_distance)(const char*, const char*, size_t size, size
 extern void (*u64_jaccard_distance_batch_4)(const char*, const char*, const char*, const char*, const char*, size_t,
                                             size_t, float&, float&, float&, float&);
 extern uint64_t (*calculate_hash)(const char*, size_t);
+extern float (*minhash_lsh_hit)(const char* x, const char* y, size_t dim, size_t mh_lsh_band);
 ///////////////////////////////////////////////////////////////////////////////
 #if defined(__x86_64__)
 bool

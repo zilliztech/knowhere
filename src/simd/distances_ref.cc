@@ -577,7 +577,18 @@ minhash_lsh_hit_ref(const char* x, const char* y, size_t dim, size_t mh_lsh_band
         const char* y_b = y + r * i;
         size_t j = r;
         bool eq = true;
-        while (j > 0) {
+        while (j >= 16) {
+            if (*(const uint64_t*)(x_b + 8) != *(const uint64_t*)(y_b + 8)) {
+                goto next_band;
+            }
+            if (*(const uint64_t*)(x_b) != *(const uint64_t*)(y_b)) {
+                goto next_band;
+            }
+            j -= 16;
+            x_b += 16;
+            y_b += 16;
+        }
+        if (j >= 8) {
             if (*(const uint64_t*)(x_b) != *(const uint64_t*)(y_b)) {
                 goto next_band;
             }
