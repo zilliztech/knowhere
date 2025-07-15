@@ -18,6 +18,148 @@
 #include "faiss/impl/platform_macros.h"
 #if defined(__ARM_FEATURE_SVE)
 namespace faiss {
+namespace {
+inline size_t
+find_min_index_sve(const float* data, size_t ny) {
+    if (ny <= 0)
+        return -1;
+    uint64_t vl = svcntw();
+    svfloat32_t min_val = svdup_n_f32(data[0]);
+    svuint32_t min_idx = svdup_n_u32(0);
+    svuint32_t current_idx = svindex_u32(0, 1);
+
+    for (size_t i = 0; i < ny; i += vl) {
+        svbool_t pg = svwhilelt_b32(i, ny);
+        svfloat32_t vec = svld1_f32(pg, data + i);
+        svbool_t cmp = svcmplt_f32(pg, vec, min_val);
+        min_val = svsel_f32(cmp, vec, min_val);
+        min_idx = svsel_u32(cmp, current_idx, min_idx);
+        current_idx = svadd_u32_x(pg, current_idx, svdup_n_u32(vl));
+    }
+
+    svbool_t res_pg = svptrue_b32();
+    float min_scalar = svminv_f32(res_pg, min_val);
+
+    svbool_t min_mask = svcmpeq_f32(res_pg, min_val, svdup_n_f32(min_scalar));
+    size_t min_index = svlastb_u32(min_mask, min_idx);
+    return min_index;
+}
+
+inline void
+fvec_L2sqr_ny_dimN_sve(float* dis, const float* x, const float* y, size_t d, size_t ny) {
+    const size_t prefetch_distance = 2 * svcntw();
+    size_t i = 0;
+
+    svprfd(svptrue_b32(), y + 0 * d, SV_PLDL1STRM);
+    svprfd(svptrue_b32(), y + 1 * d, SV_PLDL1STRM);
+    svprfd(svptrue_b32(), y + 2 * d, SV_PLDL1STRM);
+    svprfd(svptrue_b32(), y + 3 * d, SV_PLDL1STRM);
+
+    for (; i + 4 <= ny; i += 4) {
+        if (i + 4 + prefetch_distance <= ny) {
+            svprfd(svptrue_b32(), y + 4 * d + 0 * d, SV_PLDL1STRM);
+            svprfd(svptrue_b32(), y + 4 * d + 1 * d, SV_PLDL1STRM);
+            svprfd(svptrue_b32(), y + 4 * d + 2 * d, SV_PLDL1STRM);
+            svprfd(svptrue_b32(), y + 4 * d + 3 * d, SV_PLDL1STRM);
+        }
+
+        fvec_L2sqr_batch_4_sve(x, y, y + d, y + 2 * d, y + 3 * d, d, dis[i], dis[i + 1], dis[i + 2], dis[i + 3]);
+        y += 4 * d;
+    }
+
+    for (; i < ny; ++i) {
+        svprfd(svptrue_b32(), y, SV_PLDL1STRM);
+        dis[i] = fvec_L2sqr_sve(x, y, d);
+        y += d;
+    }
+}
+
+inline void
+fvec_L2sqr_ny_dim1_sve(float* dis, const float* x, const float* y, size_t d, size_t ny) {
+    const size_t vl = svcntw();
+    if (vl % d != 0) {
+        return fvec_L2sqr_ny_dimN_sve(dis, x, y, d, ny);
+    }
+    const size_t step = vl;
+
+    svfloat32_t x0 = svdup_n_f32(x[0]);
+    size_t i = 0;
+    for (; i < ny; i += step) {
+        svbool_t active = svwhilelt_b32(i, ny);
+
+        svfloat32_t y0 = svld1(active, y + i);
+        svfloat32_t diff0 = svsub_f32_z(active, x0, y0);
+        svfloat32_t sq_diff0 = svmul_f32_z(active, diff0, diff0);
+        svst1(active, &dis[i], sq_diff0);
+    }
+}
+inline void
+fvec_L2sqr_ny_dim2_sve(float* dis, const float* x, const float* y, size_t d, size_t ny) {
+    const size_t vl = svcntw();
+    if (vl % d != 0) {
+        return fvec_L2sqr_ny_dimN_sve(dis, x, y, d, ny);
+    }
+    const size_t step = vl / 2;  // caculate step y vectors each round
+    svfloat32_t x0 = svdup_n_f32(x[0]);
+    svfloat32_t x1 = svdup_n_f32(x[1]);
+    size_t i = 0;
+    for (; i < ny; i += step) {
+        svbool_t active = svwhilelt_b32(i * d, ny * d);
+        svfloat32_t y0 = svld1_f32(active, y + d * i + 0);
+        svfloat32_t y1 = svld1_f32(active, y + d * i + 1);
+        auto part0 = svuzp1(y0, y1);
+        auto part1 = svuzp2(y0, y1);
+
+        svfloat32_t diff0 = svsub_f32_z(active, x0, part0);
+        svfloat32_t diff1 = svsub_f32_z(active, x1, part1);
+
+        svfloat32_t sq_diff0 = svmul_f32_z(active, diff0, diff0);
+        svfloat32_t sq_diff1 = svmul_f32_z(active, diff1, diff1);
+
+        svfloat32_t sum = svadd_f32_z(active, sq_diff0, sq_diff1);
+        svbool_t store = svwhilelt_b32(size_t(0), std::min(step, ny - i));
+        svst1(store, &dis[i], sum);
+    }
+}
+
+inline void
+fvec_L2sqr_ny_dim4_sve(float* dis, const float* x, const float* y, size_t d, size_t ny) {
+    const size_t vl = svcntw();
+    const size_t prefetch_distance = 4 * vl;
+    if (vl % d != 0) {
+        return fvec_L2sqr_ny_dimN_sve(dis, x, y, d, ny);
+    }
+    const size_t step = vl * 2 / d;
+    svbool_t pg = svptrue_b32();
+
+    svfloat32_t x_vec = svld1rq_f32(pg, x);
+    svuint32_t indices = svand_n_u32_z(pg, svindex_u32(0, 1), 0x3);
+
+    auto x_n = svtbl_f32(x_vec, indices);  // [x0, x1, x2, x3, x0, x1, x2, x3]
+    size_t i = 0;
+    for (; i < ny; i += step) {
+        svbool_t active0 = svwhilelt_b32(i * 4, ny * 4);
+        svbool_t active1 = svwhilelt_b32(i * 4 + vl, ny * 4);
+        svfloat32_t y0 = svld1_f32(active0, y + 4 * i + 0);
+        svfloat32_t y1 = svld1_f32(active1, y + 4 * i + vl);
+
+        y0 = svsub_f32_z(pg, x_n, y0);
+        y1 = svsub_f32_z(pg, x_n, y1);
+        y0 = svmul_f32_z(pg, y0, y0);
+        y1 = svmul_f32_z(pg, y1, y1);
+
+        auto part0 = svuzp1(y0, y1);
+        auto part1 = svuzp2(y0, y1);
+        part0 = svadd_f32_z(pg, part0, part1);
+        svfloat32_t merged_evens = svuzp1(part0, svdup_n_f32(0.0f));
+        svfloat32_t merged_odds = svuzp2(part0, svdup_n_f32(0.0f));
+        merged_evens = svadd_f32_z(pg, merged_evens, merged_odds);
+
+        svbool_t store = svwhilelt_b32(size_t(0), std::min(step, ny - i));
+        svst1(store, &dis[i], merged_evens);
+    }
+}
+}  // namespace
 
 float
 fvec_L2sqr_sve(const float* x, const float* y, size_t d) {
@@ -309,33 +451,82 @@ fvec_inner_product_batch_4_sve(const float* x, const float* y0, const float* y1,
 void
 fvec_L2sqr_batch_4_sve(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
                        const size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
-    float d0 = 0;
-    float d1 = 0;
-    float d2 = 0;
-    float d3 = 0;
+    svfloat32_t acc0 = svdup_f32(0.0f);
+    svfloat32_t acc1 = svdup_f32(0.0f);
+    svfloat32_t acc2 = svdup_f32(0.0f);
+    svfloat32_t acc3 = svdup_f32(0.0f);
 
-    for (size_t i = 0; i < d; ++i) {
-        const float q0 = x[i] - y0[i];
-        const float q1 = x[i] - y1[i];
-        const float q2 = x[i] - y2[i];
-        const float q3 = x[i] - y3[i];
-        d0 += q0 * q0;
-        d1 += q1 * q1;
-        d2 += q2 * q2;
-        d3 += q3 * q3;
+    size_t i = 0;
+    svbool_t pg = svptrue_b32();
+
+    while (i < d) {
+        if (d - i < svcntw())
+            pg = svwhilelt_b32(i, d);
+
+        svfloat32_t vx = svld1_f32(pg, &x[i]);
+        svfloat32_t vy0 = svld1_f32(pg, &y0[i]);
+        svfloat32_t vy1 = svld1_f32(pg, &y1[i]);
+        svfloat32_t vy2 = svld1_f32(pg, &y2[i]);
+        svfloat32_t vy3 = svld1_f32(pg, &y3[i]);
+
+        vy0 = svsub_f32_m(pg, vx, vy0);
+        vy1 = svsub_f32_m(pg, vx, vy1);
+        vy2 = svsub_f32_m(pg, vx, vy2);
+        vy3 = svsub_f32_m(pg, vx, vy3);
+
+        acc0 = svmla_f32_m(pg, acc0, vy0, vy0);
+        acc1 = svmla_f32_m(pg, acc1, vy1, vy1);
+        acc2 = svmla_f32_m(pg, acc2, vy2, vy2);
+        acc3 = svmla_f32_m(pg, acc3, vy3, vy3);
+
+        i += svcntw();
     }
 
-    dis0 = d0;
-    dis1 = d1;
-    dis2 = d2;
-    dis3 = d3;
+    dis0 = svaddv_f32(svptrue_b32(), acc0);
+    dis1 = svaddv_f32(svptrue_b32(), acc1);
+    dis2 = svaddv_f32(svptrue_b32(), acc2);
+    dis3 = svaddv_f32(svptrue_b32(), acc3);
 }
 
 void
 fvec_L2sqr_ny_sve(float* dis, const float* x, const float* y, size_t d, size_t ny) {
-    for (size_t i = 0; i < ny; ++i) {
-        dis[i] = fvec_L2sqr_sve(x, y, d);
-        y += d;
+    switch (d) {
+        case 1:
+            fvec_L2sqr_ny_dim1_sve(dis, x, y, d, ny);
+            break;
+        case 2:
+            fvec_L2sqr_ny_dim2_sve(dis, x, y, d, ny);
+            break;
+        case 4:
+            fvec_L2sqr_ny_dim4_sve(dis, x, y, d, ny);
+            break;
+        default:
+            fvec_L2sqr_ny_dimN_sve(dis, x, y, d, ny);
+            break;
+    }
+}
+
+/// compute ny square L2 distance between x and a set of contiguous y vectors
+/// and return the index of the nearest vector.
+/// return 0 if ny == 0.
+size_t
+fvec_L2sqr_ny_nearest_sve(float* __restrict distances_tmp_buffer, const float* __restrict x, const float* __restrict y,
+                          size_t d, size_t ny) {
+    fvec_L2sqr_ny_sve(distances_tmp_buffer, x, y, d, ny);
+
+    if (ny >= 16) {
+        return find_min_index_sve(distances_tmp_buffer, ny);
+    } else {
+        size_t nearest_idx = 0;
+        float min_dis = HUGE_VALF;
+
+        for (size_t i = 0; i < ny; i++) {
+            if (distances_tmp_buffer[i] < min_dis) {
+                min_dis = distances_tmp_buffer[i];
+                nearest_idx = i;
+            }
+        }
+        return nearest_idx;
     }
 }
 
