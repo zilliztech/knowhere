@@ -23,8 +23,8 @@ class BitsetView {
     BitsetView() = default;
     ~BitsetView() = default;
 
-    BitsetView(const uint8_t* data, size_t num_bits, size_t filtered_out_num = 0)
-        : bits_(data), num_bits_(num_bits), filtered_out_num_(filtered_out_num) {
+    BitsetView(const uint8_t* data, size_t num_bits, size_t num_filtered_out_bits = 0, size_t id_offset = 0)
+        : bits_(data), num_bits_(num_bits), num_filtered_out_bits_(num_filtered_out_bits), id_offset_(id_offset) {
     }
 
     BitsetView(const std::nullptr_t) : BitsetView() {
@@ -35,9 +35,22 @@ class BitsetView {
         return num_bits_ == 0;
     }
 
+    // return the number of the bits. if with id mapping, return the number of the internal ids.
     size_t
     size() const {
+        if (out_ids_ != nullptr) {
+            return num_internal_ids_;
+        }
         return num_bits_;
+    }
+
+    // return the number of filtered out bits. if with id mapping, return the number of filtered out ids.
+    size_t
+    count() const {
+        if (out_ids_ != nullptr) {
+            return num_filtered_out_ids_;
+        }
+        return num_filtered_out_bits_;
     }
 
     size_t
@@ -51,23 +64,66 @@ class BitsetView {
     }
 
     bool
+    has_out_ids() const {
+        return out_ids_ != nullptr;
+    }
+
+    void
+    set_out_ids(const uint32_t* out_ids, size_t num_internal_ids, size_t num_filtered_out_ids = 0) {
+        out_ids_ = out_ids;
+        num_internal_ids_ = num_internal_ids;
+        if (num_filtered_out_ids > 0) {
+            num_filtered_out_ids_ = num_filtered_out_ids;
+        } else {
+            // auto calculate num_filtered_out_ids if not provided
+            num_filtered_out_ids_ = get_filtered_out_num_();
+        }
+    }
+
+    const uint32_t*
+    out_ids_data() const {
+        if (out_ids_ == nullptr) {
+            return nullptr;
+        }
+        return out_ids_;
+    }
+
+    void
+    set_id_offset(size_t id_offset) {
+        id_offset_ = id_offset;
+    }
+
+    bool
     test(int64_t index) const {
+        int64_t out_id = index + id_offset_;
+        if (out_ids_ != nullptr) {
+            out_id = out_ids_[out_id];
+        }
         // when index is larger than the max_offset, ignore it
-        return (index >= static_cast<int64_t>(num_bits_)) || (bits_[index >> 3] & (0x1 << (index & 0x7)));
+        return (out_id >= static_cast<int64_t>(num_bits_)) || (bits_[out_id >> 3] & (0x1 << (out_id & 0x7)));
     }
-
-    size_t
-    count() const {
-        return filtered_out_num_;
-    }
-
+    // return the filtered ratio. if with id mapping, calculated by internal_ids rather than bits.
     float
     filter_ratio() const {
-        return empty() ? 0.0f : ((float)filtered_out_num_ / num_bits_);
+        return empty() ? 0.0f : ((float)count() / size());
     }
 
     size_t
     get_filtered_out_num_() const {
+        if (empty()) {
+            return 0;
+        }
+        if (out_ids_ != nullptr) {
+            // if with id mapping, there is no optimization for the traversal.
+            size_t count = 0;
+            for (size_t i = 0; i < num_internal_ids_; i++) {
+                if (test(i)) {
+                    count++;
+                }
+            }
+            return count;
+        }
+        // if without id mapping, use a better algorithm to calculate the number of filtered out bits.
         size_t ret = 0;
         auto len_uint8 = byte_size();
         auto len_uint64 = len_uint8 >> 3;
@@ -95,8 +151,19 @@ class BitsetView {
         return ret;
     }
 
+    // return the first valid idx. if with id mapping, return the first valid internal_id.
     size_t
     get_first_valid_index() const {
+        if (out_ids_ != nullptr) {
+            // if with id mapping, there is no optimization for the traversal.
+            for (size_t i = 0; i < num_internal_ids_; i++) {
+                if (!test(i)) {
+                    return i;
+                }
+            }
+            return num_internal_ids_;
+        }
+        // if without id mapping, use a better algorithm to find the first valid index.
         size_t ret = 0;
         auto len_uint8 = byte_size();
         auto len_uint64 = len_uint8 >> 3;
@@ -143,7 +210,17 @@ class BitsetView {
  private:
     const uint8_t* bits_ = nullptr;
     size_t num_bits_ = 0;
-    size_t filtered_out_num_ = 0;
+    size_t num_filtered_out_bits_ = 0;
+
+    // optional. many indexes will share one bitset, requiring offset to distinguish between them.
+    //  like multi-chunk brute-force in /src/common/comp/brute_force.cc, or mv-only in /src/index/hnsw/faiss_hnsw.cc
+    size_t id_offset_ = 0;  // offset of the internal ids
+
+    // optional. bitset supports id mapping.
+    // Even allows multiple ids to map to the same bit, so the number of internal ids and bits may be not equal.
+    const uint32_t* out_ids_ = nullptr;
+    size_t num_internal_ids_ = 0;
+    size_t num_filtered_out_ids_ = 0;
 };
 }  // namespace knowhere
 
