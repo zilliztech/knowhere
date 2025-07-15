@@ -1,5 +1,0 @@
-56dfbaa0 2025-07-14T01:03:44+00:00 feat(simd-rvv): Add RVV SIMD optimized bf16 patch functions for inner product and L2sqr
-9160972e 2025-07-10T21:48:42+08:00 FEAT: Implement initial RVV optimizations for BF16_batch_4 functions (#1248)
-78ab62af 2025-07-10T20:56:42+08:00 fix: sparse: all entries should use span in version 8 (#1251)
-95f0e5e1 2025-07-10T11:08:41+08:00 fix: sparse vector dup key error in bruteforce range search (#1246)
-c02bd225 2025-07-09T23:18:42+08:00  [SIMD][RVV] add RVV SIMD optimization for bf16_vec_inner_product_rvv && bf16_vec_L2sqr_rvv && bf16_vec_norm_L2sqr_rvv (#1244)
