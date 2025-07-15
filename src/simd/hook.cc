@@ -558,6 +558,8 @@ fvec_hook(std::string& simd_type) {
 
     fvec_inner_product_bf16_patch = fvec_inner_product_bf16_patch_rvv;
     fvec_L2sqr_bf16_patch = fvec_L2sqr_bf16_patch_rvv;
+    fvec_inner_product_batch_4_bf16_patch = fvec_inner_product_batch_4_bf16_patch_rvv;
+    fvec_L2sqr_batch_4_bf16_patch = fvec_L2sqr_batch_4_bf16_patch_rvv;
 
     ivec_inner_product = ivec_inner_product_rvv;
     ivec_L2sqr = ivec_L2sqr_rvv;
