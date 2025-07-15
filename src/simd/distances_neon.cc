@@ -438,6 +438,27 @@ fvec_L2sqr_ny_neon(float* dis, const float* x, const float* y, size_t d, size_t 
     }
 }
 
+/// compute ny square L2 distance between x and a set of contiguous y vectors
+/// and return the index of the nearest vector.
+/// return 0 if ny == 0.
+size_t
+fvec_L2sqr_ny_nearest_neon(float* __restrict distances_tmp_buffer, const float* __restrict x, const float* __restrict y,
+                           size_t d, size_t ny) {
+    fvec_L2sqr_ny_neon(distances_tmp_buffer, x, y, d, ny);
+
+    size_t nearest_idx = 0;
+    float min_dis = HUGE_VALF;
+
+    for (size_t i = 0; i < ny; i++) {
+        if (distances_tmp_buffer[i] < min_dis) {
+            min_dis = distances_tmp_buffer[i];
+            nearest_idx = i;
+        }
+    }
+
+    return nearest_idx;
+}
+
 void
 fvec_inner_products_ny_neon(float* ip, const float* x, const float* y, size_t d, size_t ny) {
     for (size_t i = 0; i < ny; i++) {
