@@ -63,6 +63,12 @@ fvec_L2sqr_batch_4_sve(const float* x, const float* y0, const float* y1, const f
 void
 fvec_L2sqr_ny_sve(float* dis, const float* x, const float* y, size_t d, size_t ny);
 
+/// compute ny square L2 distance between x and a set of contiguous y vectors
+/// and return the index of the nearest vector.
+/// return 0 if ny == 0.
+size_t
+fvec_L2sqr_ny_nearest_sve(float* distances_tmp_buffer, const float* x, const float* y, size_t d, size_t ny);
+
 void
 fvec_inner_products_ny_sve(float* ip, const float* x, const float* y, size_t d, size_t ny);
 
