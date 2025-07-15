@@ -1137,6 +1137,172 @@ fvec_L2sqr_bf16_patch_rvv(const float* x, const float* y, size_t d) {
     return __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
 }
 
+void
+fvec_inner_product_batch_4_bf16_patch_rvv(const float* x, const float* y0, const float* y1, const float* y2,
+                                          const float* y3, size_t d, float& dis0, float& dis1, float& dis2,
+                                          float& dis3) {
+    size_t vlmax = __riscv_vsetvlmax_e32m1();
+    vfloat32m1_t vacc0 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    vfloat32m1_t vacc1 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    vfloat32m1_t vacc2 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    vfloat32m1_t vacc3 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    size_t offset = 0;
+
+    while (d >= vlmax) {
+        size_t vl = vlmax;
+
+        // Load data
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(x + offset, vl);
+        vfloat32m1_t vy0 = __riscv_vle32_v_f32m1(y0 + offset, vl);
+        vfloat32m1_t vy1 = __riscv_vle32_v_f32m1(y1 + offset, vl);
+        vfloat32m1_t vy2 = __riscv_vle32_v_f32m1(y2 + offset, vl);
+        vfloat32m1_t vy3 = __riscv_vle32_v_f32m1(y3 + offset, vl);
+
+        // Convert y vectors to bf16
+        vy0 = bf16_float_rvv(vy0, vl);
+        vy1 = bf16_float_rvv(vy1, vl);
+        vy2 = bf16_float_rvv(vy2, vl);
+        vy3 = bf16_float_rvv(vy3, vl);
+
+        // Parallel FMACC operations
+        vacc0 = __riscv_vfmacc_vv_f32m1_tu(vacc0, vx, vy0, vl);
+        vacc1 = __riscv_vfmacc_vv_f32m1_tu(vacc1, vx, vy1, vl);
+        vacc2 = __riscv_vfmacc_vv_f32m1_tu(vacc2, vx, vy2, vl);
+        vacc3 = __riscv_vfmacc_vv_f32m1_tu(vacc3, vx, vy3, vl);
+
+        offset += vl;
+        d -= vl;
+    }
+
+    // Handle remaining elements
+    while (d > 0) {
+        size_t vl = __riscv_vsetvl_e32m1(d);
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(x + offset, vl);
+        vfloat32m1_t vy0 = __riscv_vle32_v_f32m1(y0 + offset, vl);
+        vfloat32m1_t vy1 = __riscv_vle32_v_f32m1(y1 + offset, vl);
+        vfloat32m1_t vy2 = __riscv_vle32_v_f32m1(y2 + offset, vl);
+        vfloat32m1_t vy3 = __riscv_vle32_v_f32m1(y3 + offset, vl);
+
+        vy0 = bf16_float_rvv(vy0, vl);
+        vy1 = bf16_float_rvv(vy1, vl);
+        vy2 = bf16_float_rvv(vy2, vl);
+        vy3 = bf16_float_rvv(vy3, vl);
+
+        vacc0 = __riscv_vfmacc_vv_f32m1_tu(vacc0, vx, vy0, vl);
+        vacc1 = __riscv_vfmacc_vv_f32m1_tu(vacc1, vx, vy1, vl);
+        vacc2 = __riscv_vfmacc_vv_f32m1_tu(vacc2, vx, vy2, vl);
+        vacc3 = __riscv_vfmacc_vv_f32m1_tu(vacc3, vx, vy3, vl);
+
+        offset += vl;
+        d -= vl;
+    }
+
+    // Final reduction
+    vfloat32m1_t sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc0, sum_scalar, vlmax);
+    dis0 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
+
+    sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc1, sum_scalar, vlmax);
+    dis1 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
+
+    sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc2, sum_scalar, vlmax);
+    dis2 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
+
+    sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc3, sum_scalar, vlmax);
+    dis3 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
+}
+
+void
+fvec_L2sqr_batch_4_bf16_patch_rvv(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
+                                  size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
+    size_t vlmax = __riscv_vsetvlmax_e32m1();
+    vfloat32m1_t vacc0 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    vfloat32m1_t vacc1 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    vfloat32m1_t vacc2 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    vfloat32m1_t vacc3 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    size_t offset = 0;
+
+    while (d >= vlmax) {
+        size_t vl = vlmax;
+
+        // Load data
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(x + offset, vl);
+        vfloat32m1_t vy0 = __riscv_vle32_v_f32m1(y0 + offset, vl);
+        vfloat32m1_t vy1 = __riscv_vle32_v_f32m1(y1 + offset, vl);
+        vfloat32m1_t vy2 = __riscv_vle32_v_f32m1(y2 + offset, vl);
+        vfloat32m1_t vy3 = __riscv_vle32_v_f32m1(y3 + offset, vl);
+
+        // Convert y vectors to bf16
+        vy0 = bf16_float_rvv(vy0, vl);
+        vy1 = bf16_float_rvv(vy1, vl);
+        vy2 = bf16_float_rvv(vy2, vl);
+        vy3 = bf16_float_rvv(vy3, vl);
+
+        // Calculate difference and square
+        vfloat32m1_t vtmp0 = __riscv_vfsub_vv_f32m1(vx, vy0, vl);
+        vfloat32m1_t vtmp1 = __riscv_vfsub_vv_f32m1(vx, vy1, vl);
+        vfloat32m1_t vtmp2 = __riscv_vfsub_vv_f32m1(vx, vy2, vl);
+        vfloat32m1_t vtmp3 = __riscv_vfsub_vv_f32m1(vx, vy3, vl);
+
+        // Parallel FMACC operations
+        vacc0 = __riscv_vfmacc_vv_f32m1_tu(vacc0, vtmp0, vtmp0, vl);
+        vacc1 = __riscv_vfmacc_vv_f32m1_tu(vacc1, vtmp1, vtmp1, vl);
+        vacc2 = __riscv_vfmacc_vv_f32m1_tu(vacc2, vtmp2, vtmp2, vl);
+        vacc3 = __riscv_vfmacc_vv_f32m1_tu(vacc3, vtmp3, vtmp3, vl);
+
+        offset += vl;
+        d -= vl;
+    }
+
+    // Handle remaining elements
+    while (d > 0) {
+        size_t vl = __riscv_vsetvl_e32m1(d);
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(x + offset, vl);
+        vfloat32m1_t vy0 = __riscv_vle32_v_f32m1(y0 + offset, vl);
+        vfloat32m1_t vy1 = __riscv_vle32_v_f32m1(y1 + offset, vl);
+        vfloat32m1_t vy2 = __riscv_vle32_v_f32m1(y2 + offset, vl);
+        vfloat32m1_t vy3 = __riscv_vle32_v_f32m1(y3 + offset, vl);
+
+        vy0 = bf16_float_rvv(vy0, vl);
+        vy1 = bf16_float_rvv(vy1, vl);
+        vy2 = bf16_float_rvv(vy2, vl);
+        vy3 = bf16_float_rvv(vy3, vl);
+
+        vfloat32m1_t vtmp0 = __riscv_vfsub_vv_f32m1(vx, vy0, vl);
+        vfloat32m1_t vtmp1 = __riscv_vfsub_vv_f32m1(vx, vy1, vl);
+        vfloat32m1_t vtmp2 = __riscv_vfsub_vv_f32m1(vx, vy2, vl);
+        vfloat32m1_t vtmp3 = __riscv_vfsub_vv_f32m1(vx, vy3, vl);
+
+        vacc0 = __riscv_vfmacc_vv_f32m1_tu(vacc0, vtmp0, vtmp0, vl);
+        vacc1 = __riscv_vfmacc_vv_f32m1_tu(vacc1, vtmp1, vtmp1, vl);
+        vacc2 = __riscv_vfmacc_vv_f32m1_tu(vacc2, vtmp2, vtmp2, vl);
+        vacc3 = __riscv_vfmacc_vv_f32m1_tu(vacc3, vtmp3, vtmp3, vl);
+
+        offset += vl;
+        d -= vl;
+    }
+
+    // Final reduction
+    vfloat32m1_t sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc0, sum_scalar, vlmax);
+    dis0 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
+
+    sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc1, sum_scalar, vlmax);
+    dis1 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
+
+    sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc2, sum_scalar, vlmax);
+    dis2 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
+
+    sum_scalar = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+    sum_scalar = __riscv_vfredusum_vs_f32m1_f32m1(vacc3, sum_scalar, vlmax);
+    dis3 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
+}
+
 }  // namespace faiss
 
 #endif
