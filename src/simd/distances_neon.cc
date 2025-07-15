@@ -60,6 +60,140 @@ inline float32x4_t
 vcvt_f32_half(const uint16x4_t x) {
     return vreinterpretq_f32_u32(vshlq_n_u32(vmovl_u16(x), 16));
 }
+
+void
+fvec_L2sqr_ny_dimN_neon(float* dis, const float* x, const float* y, size_t d, size_t ny) {
+    for (size_t i = 0; i < ny; i++) {
+        dis[i] = fvec_L2sqr_neon(x, y, d);
+        y += d;
+    }
+}
+
+void
+fvec_L2sqr_ny_dim1_neon(float* dis, const float* x, const float* y, size_t d, size_t ny) {
+    const float x_val = x[0];
+    float32x4_t x_vec = vdupq_n_f32(x_val);
+    size_t i = 0;
+    while (ny - i >= 16) {
+        float32x4x4_t y_vec4x4 = vld4q_f32(y + i);
+        y_vec4x4.val[0] = vsubq_f32(x_vec, y_vec4x4.val[0]);
+        y_vec4x4.val[1] = vsubq_f32(x_vec, y_vec4x4.val[1]);
+        y_vec4x4.val[2] = vsubq_f32(x_vec, y_vec4x4.val[2]);
+        y_vec4x4.val[3] = vsubq_f32(x_vec, y_vec4x4.val[3]);
+        float32x4x4_t res;
+        res.val[0] = vmulq_f32(y_vec4x4.val[0], y_vec4x4.val[0]);
+        res.val[1] = vmulq_f32(y_vec4x4.val[1], y_vec4x4.val[1]);
+        res.val[2] = vmulq_f32(y_vec4x4.val[2], y_vec4x4.val[2]);
+        res.val[3] = vmulq_f32(y_vec4x4.val[3], y_vec4x4.val[3]);
+        vst4q_f32(dis + i, res);
+        i += 16;
+    }
+
+    if (ny - i >= 8) {
+        float32x4x2_t y_vec4x2 = vld1q_f32_x2(y + i);
+        y_vec4x2.val[0] = vsubq_f32(x_vec, y_vec4x2.val[0]);
+        y_vec4x2.val[1] = vsubq_f32(x_vec, y_vec4x2.val[1]);
+        float32x4x2_t res;
+        res.val[0] = vmulq_f32(y_vec4x2.val[0], y_vec4x2.val[0]);
+        res.val[1] = vmulq_f32(y_vec4x2.val[1], y_vec4x2.val[1]);
+        vst1q_f32(dis + i, res.val[0]);
+        vst1q_f32(dis + i + 4, res.val[1]);
+        i += 8;
+    }
+
+    if (ny - i >= 4) {
+        float32x4_t y0 = vld1q_f32(y + i);
+        y0 = vsubq_f32(x_vec, y0);
+        float32x4_t res;
+        res = vmulq_f32(y0, y0);
+        vst1q_f32(dis + i, res);
+        i += 4;
+    }
+
+    if (ny - i > 0) {
+        switch (ny - i) {
+            case 3:
+                dis[i + 2] = (x[0] - y[i + 2]) * (x[0] - y[i + 2]);
+            case 2:
+                dis[i + 1] = (x[0] - y[i + 1]) * (x[0] - y[i + 1]);
+            case 1:
+                dis[i] = (x[0] - y[i]) * (x[0] - y[i]);
+            default:
+                break;
+        }
+    }
+}
+
+void
+fvec_L2sqr_ny_dim2_neon(float* dis, const float* x, const float* y, size_t d, size_t ny) {
+    float32x4_t x0 = {x[0], x[1], x[0], x[1]};
+    float32x4_t x1 = x0;
+    size_t i = 0;
+    while (ny - i >= 8) {
+        float32x4x2_t y0 = vld1q_f32_x2(y + i * d);
+        float32x4x2_t y1 = vld1q_f32_x2(y + (i + 4) * d);
+        float32x4x2_t res0 = {vsubq_f32(x0, y0.val[0]), vsubq_f32(x0, y0.val[1])};
+        float32x4x2_t res1 = {vsubq_f32(x1, y1.val[0]), vsubq_f32(x1, y1.val[1])};
+        res0 = {vmulq_f32(res0.val[0], res0.val[0]), vmulq_f32(res0.val[1], res0.val[1])};
+        res1 = {vmulq_f32(res1.val[0], res1.val[0]), vmulq_f32(res1.val[1], res1.val[1])};
+
+        float32x4_t even = vuzp1q_f32(res0.val[0], res0.val[1]);
+        float32x4_t odd = vuzp2q_f32(res0.val[0], res0.val[1]);
+        vst1q_f32(dis + i, vaddq_f32(even, odd));
+        even = vuzp1q_f32(res1.val[0], res1.val[1]);
+        odd = vuzp2q_f32(res1.val[0], res1.val[1]);
+        vst1q_f32(dis + i + 4, vaddq_f32(even, odd));
+        i += 8;
+    }
+    if (ny - i >= 4) {
+        float32x4_t y0 = vld1q_f32(y + i * d);
+        float32x4_t y1 = vld1q_f32(y + (i + 2) * d);
+        y0 = vsubq_f32(x0, y0);
+        y1 = vsubq_f32(x1, y1);
+        y0 = vmulq_f32(y0, y0);
+        y1 = vmulq_f32(y1, y1);
+        float32x4_t low = vuzp1q_f32(y0, y1);
+        float32x4_t high = vuzp2q_f32(y0, y1);
+        float32x4_t res = vaddq_f32(low, high);
+        vst1q_f32(dis + i, res);
+        i += 4;
+    }
+    if (ny - i > 0) {
+        for (; i < ny; i++) {
+            dis[i] = (x[0] - y[i * d]) * (x[0] - y[i * d]) + (x[1] - y[i * d + 1]) * (x[1] - y[i * d + 1]);
+        }
+    }
+}
+
+void
+fvec_L2sqr_ny_dim4_neon(float* dis, const float* x, const float* y, size_t d, size_t ny) {
+    float32x4_t x_vec = vld1q_f32(x);
+    size_t i = 0;
+    for (; i + 4 <= ny; i += 4) {
+        float32x4x4_t y_vec = vld1q_f32_x4(y + i * d);
+        y_vec.val[0] = vsubq_f32(x_vec, y_vec.val[0]);
+        y_vec.val[1] = vsubq_f32(x_vec, y_vec.val[1]);
+        y_vec.val[2] = vsubq_f32(x_vec, y_vec.val[2]);
+        y_vec.val[3] = vsubq_f32(x_vec, y_vec.val[3]);
+
+        float32x4x4_t res;
+        res.val[0] = vmulq_f32(y_vec.val[0], y_vec.val[0]);
+        res.val[1] = vmulq_f32(y_vec.val[1], y_vec.val[1]);
+        res.val[2] = vmulq_f32(y_vec.val[2], y_vec.val[2]);
+        res.val[3] = vmulq_f32(y_vec.val[3], y_vec.val[3]);
+
+        dis[i] = vaddvq_f32(res.val[0]);
+        dis[i + 1] = vaddvq_f32(res.val[1]);
+        dis[i + 2] = vaddvq_f32(res.val[2]);
+        dis[i + 3] = vaddvq_f32(res.val[3]);
+    }
+    for (; i < ny; i++) {
+        float32x4_t y_vec = vld1q_f32(y + i * d);
+        y_vec = vsubq_f32(x_vec, y_vec);
+        float32x4_t res = vmulq_f32(y_vec, y_vec);
+        dis[i] = vaddvq_f32(res);
+    }
+}
 }  // namespace
 
 // The main goal is to reduce the original precision of floats to maintain consistency with the distance result
@@ -432,10 +566,41 @@ fvec_norm_L2sqr_neon(const float* x, size_t d) {
 
 void
 fvec_L2sqr_ny_neon(float* dis, const float* x, const float* y, size_t d, size_t ny) {
-    for (size_t i = 0; i < ny; i++) {
-        dis[i] = fvec_L2sqr_neon(x, y, d);
-        y += d;
+    switch (d) {
+        case 1:
+            fvec_L2sqr_ny_dim1_neon(dis, x, y, d, ny);
+            break;
+        case 2:
+            fvec_L2sqr_ny_dim2_neon(dis, x, y, d, ny);
+            break;
+        case 4:
+            fvec_L2sqr_ny_dim4_neon(dis, x, y, d, ny);
+            break;
+        default:
+            fvec_L2sqr_ny_dimN_neon(dis, x, y, d, ny);
+            break;
     }
+}
+
+/// compute ny square L2 distance between x and a set of contiguous y vectors
+/// and return the index of the nearest vector.
+/// return 0 if ny == 0.
+size_t
+fvec_L2sqr_ny_nearest_neon(float* __restrict distances_tmp_buffer, const float* __restrict x, const float* __restrict y,
+                           size_t d, size_t ny) {
+    fvec_L2sqr_ny_neon(distances_tmp_buffer, x, y, d, ny);
+
+    size_t nearest_idx = 0;
+    float min_dis = HUGE_VALF;
+
+    for (size_t i = 0; i < ny; i++) {
+        if (distances_tmp_buffer[i] < min_dis) {
+            min_dis = distances_tmp_buffer[i];
+            nearest_idx = i;
+        }
+    }
+
+    return nearest_idx;
 }
 
 void
