@@ -22,6 +22,7 @@
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/config.h"
+#include "knowhere/emb_list_utils.h"
 #include "knowhere/expected.h"
 #include "knowhere/index/index_node.h"
 #include "knowhere/log.h"
@@ -135,12 +136,18 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     auto xb = base_dataset->GetTensor();
     auto nb = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
+    bool is_emb_list = base_dataset->GetLims() != nullptr;
     auto xb_id_offset = base_dataset->GetTensorBeginId();
     BitsetView bitset = bitset_;
     bitset.set_id_offset(xb_id_offset);
 
     auto xq = query_dataset->GetTensor();
     auto nq = query_dataset->GetRows();
+    bool query_is_emb_list = query_dataset->GetLims() != nullptr;
+    if (is_emb_list != query_is_emb_list) {
+        LOG_KNOWHERE_ERROR_ << "base dataset and query must be both emb_list or not";
+        return Status::invalid_args;
+    }
 
     BruteForceConfig cfg;
     RETURN_IF_ERROR(Config::Load(cfg, config, knowhere::SEARCH));
@@ -164,132 +171,214 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
 #endif
 
     std::string metric_str = cfg.metric_type.value();
-    auto result = Str2FaissMetricType(cfg.metric_type.value());
-    if (result.error() != Status::success) {
-        return result.error();
-    }
-    faiss::MetricType faiss_metric_type = result.value();
-    bool is_cosine = IsMetricType(metric_str, metric::COSINE);
+    auto topk = cfg.k.value();
 
-    int topk = cfg.k.value();
-    auto labels = ids;
-    auto distances = dis;
-    // some check for minhash metric
-    if (faiss_metric_type == faiss::METRIC_MinHash_Jaccard) {
-        auto mh_valid_stat =
-            MinhashConfigCheck(dim, datatype_v<DataType>, PARAM_TYPE::SEARCH | PARAM_TYPE::TRAIN, &cfg, &bitset);
-        if (mh_valid_stat != Status::success) {
-            return mh_valid_stat;
+    if (is_emb_list) {
+        if (!IsMetricType(metric_str, metric::MAX_SIM) && !IsMetricType(metric_str, metric::ORDERED_MAX_SIM) &&
+            !IsMetricType(metric_str, metric::ORDERED_MAX_SIM_WITH_WINDOW) && !IsMetricType(metric_str, metric::DTW)) {
+            LOG_KNOWHERE_ERROR_ << "metric type not supported for emb_list: " << metric_str;
+            return Status::invalid_metric_type;
         }
-    }
+        auto base_el_offset = EmbListOffset(base_dataset->GetLims(), nb);
+        auto query_el_offset = EmbListOffset(query_dataset->GetLims(), nq);
+        auto num_base_el = base_el_offset.num_el();
+        auto num_query_el = query_el_offset.num_el();
 
-    std::unique_ptr<float[]> norms = is_cosine ? GetVecNorms<DataType>(base_dataset) : nullptr;
-    auto pool = ThreadPool::GetGlobalSearchThreadPool();
-    std::vector<folly::Future<Status>> futs;
-    futs.reserve(nq);
-    for (int i = 0; i < nq; ++i) {
-        futs.emplace_back(pool->push([&, index = i] {
-            ThreadPool::ScopedSearchOmpSetter setter(1);
-            auto cur_labels = labels + topk * index;
-            auto cur_distances = distances + topk * index;
+        auto pool = ThreadPool::GetGlobalSearchThreadPool();
+        std::vector<folly::Future<Status>> futs;
+        futs.reserve(num_query_el);
 
-            BitsetViewIDSelector bw_idselector(bitset);
-            faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
-            switch (faiss_metric_type) {
-                case faiss::METRIC_L2: {
-                    [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
-                    if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                        faiss::knn_L2sqr(cur_query, (const float*)xb, dim, 1, nb, topk, cur_distances, cur_labels,
-                                         nullptr, id_selector);
-                    } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
-                        faiss::knn_L2sqr_typed(cur_query, (const DataType*)xb, dim, 1, nb, topk, cur_distances,
-                                               cur_labels, nullptr, id_selector);
-                    } else {
-                        LOG_KNOWHERE_ERROR_ << "Metric L2 not supported for current vector type";
-                        return Status::faiss_inner_error;
-                    }
-                    break;
-                }
-                case faiss::METRIC_INNER_PRODUCT: {
-                    [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
-                    if (is_cosine) {
+        for (size_t query_el_i = 0; query_el_i < num_query_el; query_el_i++) {
+            futs.emplace_back(pool->push([&, query_el_idx = query_el_i] {
+                ThreadPool::ScopedSearchOmpSetter setter(1);
+                std::priority_queue<DistId, std::vector<DistId>, std::greater<>> minheap;
+                for (size_t base_el_idx = 0; base_el_idx < num_base_el; base_el_idx++) {
+                    if (bitset.empty() || !bitset.test(base_el_idx)) {
+                        auto num_base_vectors =
+                            base_el_offset.offset[base_el_idx + 1] - base_el_offset.offset[base_el_idx];
+                        assert(num_base_vectors >= 0);
+                        auto num_query_vectors =
+                            query_el_offset.offset[query_el_idx + 1] - query_el_offset.offset[query_el_idx];
+                        assert(num_query_vectors >= 0);
+                        auto distances = std::make_unique<float[]>(num_query_vectors * num_base_vectors);
+
+                        auto cur_query = (const DataType*)xq + query_el_offset.offset[query_el_idx] * dim;
+                        auto cur_base = (const DataType*)xb + base_el_offset.offset[base_el_idx] * dim;
+
                         if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                            auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                            faiss::knn_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1, nb, topk,
-                                              cur_distances, cur_labels, id_selector);
+                            faiss::all_inner_product_distances(cur_query, cur_base, dim, num_query_vectors,
+                                                               num_base_vectors, distances.get(), nullptr);
                         } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
-                            // normalize query vector may cause precision loss, so div query norms in apply function
-                            faiss::knn_cosine_typed(cur_query, (const DataType*)xb, norms.get(), dim, 1, nb, topk,
-                                                    cur_distances, cur_labels, id_selector);
-                        } else {
-                            LOG_KNOWHERE_ERROR_ << "Metric COSINE not supported for current vector type";
-                            return Status::faiss_inner_error;
-                        }
-                    } else {
-                        if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                            faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, topk, cur_distances,
-                                                     cur_labels, id_selector);
-                        } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
-                            faiss::knn_inner_product_typed(cur_query, (const DataType*)xb, dim, 1, nb, topk,
-                                                           cur_distances, cur_labels, id_selector);
+                            faiss::all_inner_product_distances_typed(cur_query, cur_base, dim, num_query_vectors,
+                                                                     num_base_vectors, distances.get(), nullptr);
                         } else {
                             LOG_KNOWHERE_ERROR_ << "Metric IP not supported for current vector type";
                             return Status::faiss_inner_error;
                         }
+
+                        auto score = get_sum_max_sim(distances.get(), num_query_vectors, num_base_vectors);
+                        if (minheap.size() < (size_t)topk) {
+                            minheap.emplace((int64_t)base_el_idx + xb_id_offset, score);
+                        } else {
+                            if (score > minheap.top().val) {
+                                minheap.pop();
+                                minheap.emplace((int64_t)base_el_idx + xb_id_offset, score);
+                            }
+                        }
                     }
-                    break;
                 }
-                case faiss::METRIC_MinHash_Jaccard: {
-                    size_t mh_lsh_band = cfg.mh_lsh_band.value();
-                    bool mh_search_with_jaccard = cfg.mh_search_with_jaccard.value();
-                    if (mh_search_with_jaccard) {
-                        size_t hash_element_size = cfg.mh_element_bit_width.value() / 8;  // in bytes
-                        size_t hash_element_length = dim / (hash_element_size * 8);
-                        auto cur_query = (const char*)xq + (dim / 8) * index;
-                        minhash_jaccard_knn_ny(cur_query, (const char*)xb, hash_element_length, hash_element_size, nb,
-                                               topk, bitset, cur_distances, cur_labels);
-                    } else {
-                        size_t u8_dim = dim / 8;
-                        auto cur_query = (const char*)xq + u8_dim * index;
-                        minhash_lsh_hit_ny(cur_query, (const char*)xb, u8_dim, mh_lsh_band, nb, topk, bitset,
-                                           cur_distances, cur_labels);
-                    }
-                    break;
+                auto real_el_k = minheap.size();
+                for (size_t j = 0; j < real_el_k; j++) {
+                    auto& a = minheap.top();
+                    ids[query_el_idx * topk + real_el_k - j - 1] = a.id;
+                    dis[query_el_idx * topk + real_el_k - j - 1] = a.val;
+                    minheap.pop();
                 }
-                case faiss::METRIC_Jaccard: {
-                    auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
-                    faiss::float_maxheap_array_t res = {size_t(1), size_t(topk), cur_labels, cur_distances};
-                    binary_knn_hc(faiss::METRIC_Jaccard, &res, cur_query, (const uint8_t*)xb, nb, dim / 8, id_selector);
-                    break;
+                for (size_t j = real_el_k; j < topk; j++) {
+                    ids[query_el_idx * topk + j] = -1;
+                    dis[query_el_idx * topk + j] = std::numeric_limits<float>::min();
                 }
-                case faiss::METRIC_Hamming: {
-                    auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
-                    std::vector<int32_t> int_distances(topk);
-                    faiss::int_maxheap_array_t res = {size_t(1), size_t(topk), cur_labels, int_distances.data()};
-                    binary_knn_hc(faiss::METRIC_Hamming, &res, (const uint8_t*)cur_query, (const uint8_t*)xb, nb,
-                                  dim / 8, id_selector);
-                    for (int i = 0; i < topk; ++i) {
-                        cur_distances[i] = int_distances[i];
-                    }
-                    break;
-                }
-                case faiss::METRIC_Substructure:
-                case faiss::METRIC_Superstructure: {
-                    // only matched ids will be chosen, not to use heap
-                    auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
-                    binary_knn_mc(faiss_metric_type, cur_query, (const uint8_t*)xb, 1, nb, topk, dim / 8, cur_distances,
-                                  cur_labels, id_selector);
-                    break;
-                }
-                default: {
-                    LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
-                    return Status::invalid_metric_type;
-                }
+
+                return Status::success;
+            }));
+        }
+
+        RETURN_IF_ERROR(WaitAllSuccess(futs));
+    } else {
+        auto result = Str2FaissMetricType(cfg.metric_type.value());
+        if (result.error() != Status::success) {
+            return result.error();
+        }
+        faiss::MetricType faiss_metric_type = result.value();
+        bool is_cosine = IsMetricType(metric_str, metric::COSINE);
+
+        auto labels = ids;
+        auto distances = dis;
+        // some check for minhash metric
+        if (faiss_metric_type == faiss::METRIC_MinHash_Jaccard) {
+            auto mh_valid_stat =
+                MinhashConfigCheck(dim, datatype_v<DataType>, PARAM_TYPE::SEARCH | PARAM_TYPE::TRAIN, &cfg, &bitset);
+            if (mh_valid_stat != Status::success) {
+                return mh_valid_stat;
             }
-            return Status::success;
-        }));
+        }
+
+        std::unique_ptr<float[]> norms = is_cosine ? GetVecNorms<DataType>(base_dataset) : nullptr;
+        auto pool = ThreadPool::GetGlobalSearchThreadPool();
+        std::vector<folly::Future<Status>> futs;
+        futs.reserve(nq);
+        for (int i = 0; i < nq; ++i) {
+            futs.emplace_back(pool->push([&, index = i] {
+                ThreadPool::ScopedSearchOmpSetter setter(1);
+                auto cur_labels = labels + topk * index;
+                auto cur_distances = distances + topk * index;
+
+                BitsetViewIDSelector bw_idselector(bitset);
+                faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+                switch (faiss_metric_type) {
+                    case faiss::METRIC_L2: {
+                        [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
+                        if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
+                            faiss::knn_L2sqr(cur_query, (const float*)xb, dim, 1, nb, topk, cur_distances, cur_labels,
+                                             nullptr, id_selector);
+                        } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
+                            faiss::knn_L2sqr_typed(cur_query, (const DataType*)xb, dim, 1, nb, topk, cur_distances,
+                                                   cur_labels, nullptr, id_selector);
+                        } else {
+                            LOG_KNOWHERE_ERROR_ << "Metric L2 not supported for current vector type";
+                            return Status::faiss_inner_error;
+                        }
+                        break;
+                    }
+                    case faiss::METRIC_INNER_PRODUCT: {
+                        [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
+                        if (is_cosine) {
+                            if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
+                                auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
+                                faiss::knn_cosine(copied_query.get(), (const float*)xb, norms.get(), dim, 1, nb, topk,
+                                                  cur_distances, cur_labels, id_selector);
+                            } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
+                                // normalize query vector may cause precision loss, so div query norms in apply
+                                // function
+                                faiss::knn_cosine_typed(cur_query, (const DataType*)xb, norms.get(), dim, 1, nb, topk,
+                                                        cur_distances, cur_labels, id_selector);
+                            } else {
+                                LOG_KNOWHERE_ERROR_ << "Metric COSINE not supported for current vector type";
+                                return Status::faiss_inner_error;
+                            }
+                        } else {
+                            if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
+                                faiss::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, topk, cur_distances,
+                                                         cur_labels, id_selector);
+                            } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
+                                faiss::knn_inner_product_typed(cur_query, (const DataType*)xb, dim, 1, nb, topk,
+                                                               cur_distances, cur_labels, id_selector);
+                            } else {
+                                LOG_KNOWHERE_ERROR_ << "Metric IP not supported for current vector type";
+                                return Status::faiss_inner_error;
+                            }
+                        }
+                        break;
+                    }
+                    case faiss::METRIC_MinHash_Jaccard: {
+                        size_t mh_lsh_band = cfg.mh_lsh_band.value();
+                        bool mh_search_with_jaccard = cfg.mh_search_with_jaccard.value();
+                        if (mh_search_with_jaccard) {
+                            size_t hash_element_size = cfg.mh_element_bit_width.value() / 8;  // in bytes
+                            size_t hash_element_length = dim / (hash_element_size * 8);
+                            auto cur_query = (const char*)xq + (dim / 8) * index;
+                            minhash_jaccard_knn_ny(cur_query, (const char*)xb, hash_element_length, hash_element_size,
+                                                   nb, topk, bitset, cur_distances, cur_labels);
+                        } else {
+                            size_t u8_dim = dim / 8;
+                            auto cur_query = (const char*)xq + u8_dim * index;
+                            minhash_lsh_hit_ny(cur_query, (const char*)xb, u8_dim, mh_lsh_band, nb, topk, bitset,
+                                               cur_distances, cur_labels);
+                        }
+                        break;
+                    }
+                    case faiss::METRIC_Jaccard: {
+                        auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
+                        faiss::float_maxheap_array_t res = {size_t(1), size_t(topk), cur_labels, cur_distances};
+                        binary_knn_hc(faiss::METRIC_Jaccard, &res, cur_query, (const uint8_t*)xb, nb, dim / 8,
+                                      id_selector);
+                        break;
+                    }
+                    case faiss::METRIC_Hamming: {
+                        auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
+                        std::vector<int32_t> int_distances(topk);
+                        faiss::int_maxheap_array_t res = {size_t(1), size_t(topk), cur_labels, int_distances.data()};
+                        binary_knn_hc(faiss::METRIC_Hamming, &res, (const uint8_t*)cur_query, (const uint8_t*)xb, nb,
+                                      dim / 8, id_selector);
+                        for (int i = 0; i < topk; ++i) {
+                            cur_distances[i] = int_distances[i];
+                        }
+                        break;
+                    }
+                    case faiss::METRIC_Substructure:
+                    case faiss::METRIC_Superstructure: {
+                        // only matched ids will be chosen, not to use heap
+                        auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
+                        binary_knn_mc(faiss_metric_type, cur_query, (const uint8_t*)xb, 1, nb, topk, dim / 8,
+                                      cur_distances, cur_labels, id_selector);
+                        break;
+                    }
+                    default: {
+                        LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
+                        return Status::invalid_metric_type;
+                    }
+                }
+                return Status::success;
+            }));
+        }
+        RETURN_IF_ERROR(WaitAllSuccess(futs));
+
+        if (xb_id_offset != 0) {
+            for (auto i = 0; i < nq * topk; i++) {
+                labels[i] = labels[i] == -1 ? -1 : labels[i] + xb_id_offset;
+            }
+        }
     }
-    RETURN_IF_ERROR(WaitAllSuccess(futs));
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
@@ -298,11 +387,6 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     }
     // LCOV_EXCL_STOP
 #endif
-    if (xb_id_offset != 0) {
-        for (auto i = 0; i < nq * topk; i++) {
-            labels[i] = labels[i] == -1 ? -1 : labels[i] + xb_id_offset;
-        }
-    }
 
     return Status::success;
 }

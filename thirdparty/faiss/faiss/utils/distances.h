@@ -248,6 +248,15 @@ void all_inner_product(
         std::vector<knowhere::DistId>& output,
         const IDSelector* sel);
 
+void all_inner_product_distances(
+        const float* x,
+        const float* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* output,
+        const IDSelector* sel);
+
 /** Return the k nearest neighors of each of the nx vectors x among the ny
  *  vector y, for the L2 distance
  * @param x    query vectors, size nx * d
@@ -400,7 +409,7 @@ void knn_cosine_by_idx(
         float* vals,
         int64_t* ids,
         int64_t ld_ids = -1);
-                
+
 /***************************************************************************
  * Range search
  ***************************************************************************/

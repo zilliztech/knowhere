@@ -382,7 +382,7 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
     std::vector<uint32_t> internal_offset_to_most_external_id;
 
     int
-    getIndexToSearchByScalarInfo(const FaissHnswConfig& config, const BitsetView& bitset) const {
+    getIndexToSearchByScalarInfo(const BitsetView& bitset) const {
         if (indexes.size() == 1) {
             return 0;
         }
@@ -1216,7 +1216,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         if (!internal_offset_to_most_external_id.empty()) {
             bitset.set_out_ids(internal_offset_to_most_external_id.data(), internal_offset_to_most_external_id.size());
         }
-        auto index_id = getIndexToSearchByScalarInfo(hnsw_cfg, bitset);
+        auto index_id = getIndexToSearchByScalarInfo(bitset);
         if (index_id < 0) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "partition key value not correctly set");
         }
@@ -1386,6 +1386,71 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     }
 
     expected<DataSetPtr>
+    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset_, const int64_t* labels,
+                  const size_t labels_len) const override {
+        if (this->indexes.empty()) {
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+        }
+        for (const auto& index : indexes) {
+            if (index == nullptr) {
+                return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+            }
+            if (!index->is_trained) {
+                return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
+            }
+        }
+        const auto dim = dataset->GetDim();
+        const auto rows = dataset->GetRows();
+        const float* data = (const float*)dataset->GetTensor();
+        auto distances = std::make_unique<float[]>(rows * labels_len);
+
+        BitsetView bitset(bitset_);
+        if (!internal_offset_to_most_external_id.empty()) {
+            bitset.set_out_ids(internal_offset_to_most_external_id.data(), internal_offset_to_most_external_id.size());
+        }
+        auto index_id = getIndexToSearchByScalarInfo(bitset);
+        if (index_id < 0) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "partition key value not correctly set");
+        }
+
+        try {
+            std::vector<folly::Future<folly::Unit>> futs;
+            futs.reserve(rows);
+            for (auto i = 0; i < rows; i++) {
+                futs.emplace_back(search_pool->push([&, idx = i, index_id = index_id]() {
+                    // set up a query
+                    const float* cur_query = nullptr;
+                    std::vector<float> cur_query_tmp(dim);
+                    if (data_format == DataFormatEnum::fp32) {
+                        cur_query = (const float*)data + idx * dim;
+                    } else {
+                        convert_rows_to_fp32(data, cur_query_tmp.data(), data_format, idx, 1, dim);
+                        cur_query = cur_query_tmp.data();
+                    }
+                    std::unique_ptr<faiss::DistanceComputer> dist_computer(indexes[index_id]->get_distance_computer());
+                    dist_computer->set_query(cur_query);
+                    for (auto j = 0; j < labels_len; j++) {
+                        auto id = labels[j];
+                        if (indexes.size() > 1) {
+                            id = label_to_internal_offset[labels[j]] - index_rows_sum[index_id];
+                        }
+                        distances[idx * labels_len + j] = (*dist_computer)(id);
+                    }
+                }));
+            }
+            // wait for the completion
+            WaitAllSuccess(futs);
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
+        }
+
+        // ids is not used in this context, so we can directly initialize it as an empty unique_ptr
+        std::unique_ptr<faiss::idx_t[]> ids = nullptr;
+        return GenResultDataSet(rows, labels_len, std::move(ids), std::move(distances));
+    };
+
+    expected<DataSetPtr>
     RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset_) const override {
         // if support ann_iterator, use iterator-based range_search (IndexNode::RangeSearch)
         if (is_ann_iterator_supported()) {
@@ -1412,7 +1477,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         if (!internal_offset_to_most_external_id.empty()) {
             bitset.set_out_ids(internal_offset_to_most_external_id.data(), internal_offset_to_most_external_id.size());
         }
-        auto index_id = getIndexToSearchByScalarInfo(hnsw_cfg, bitset);
+        auto index_id = getIndexToSearchByScalarInfo(bitset);
         if (index_id < 0) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "partition key value not correctly set");
         }
@@ -1739,7 +1804,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         if (!internal_offset_to_most_external_id.empty()) {
             bitset.set_out_ids(internal_offset_to_most_external_id.data(), internal_offset_to_most_external_id.size());
         }
-        int index_id = getIndexToSearchByScalarInfo(hnsw_cfg, bitset);
+        int index_id = getIndexToSearchByScalarInfo(bitset);
         if (index_id < 0) {
             return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::invalid_args,
                                                                       "partition key value not correctly set");
@@ -2113,6 +2178,16 @@ class HNSWIndexNodeWithFallback : public IndexNode {
             return fallback_search_index->SetInternalIdToMostExternalIdMap(std::move(map));
         }
     }
+
+    expected<DataSetPtr>
+    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
+                  const size_t labels_len) const override {
+        if (use_base_index) {
+            return base_index->CalcDistByIDs(dataset, bitset, labels, labels_len);
+        } else {
+            return fallback_search_index->CalcDistByIDs(dataset, bitset, labels, labels_len);
+        }
+    };
 
  protected:
     bool use_base_index = true;

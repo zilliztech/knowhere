@@ -307,6 +307,7 @@ test_hnsw(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::DataSetPtr
         const auto rows = default_t_ds_ptr->GetRows();
 
         int64_t* ids = new int64_t[rows];
+        printf("match_datasets ids: ");
         for (int64_t i = 0; i < rows; i++) {
             ids[i] = i;
         }

@@ -58,6 +58,8 @@ constexpr const char* INDEX_HNSW_PRQ = "HNSW_PRQ";
 constexpr const char* INDEX_DISKANN = "DISKANN";
 constexpr const char* INDEX_MINHASH_LSH = "MINHASH_LSH";
 
+constexpr const char* INDEX_EMB_LIST_HNSW = "EMB_LIST_HNSW";
+
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX = "SPARSE_INVERTED_INDEX";
 constexpr const char* INDEX_SPARSE_WAND = "SPARSE_WAND";
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX_CC = "SPARSE_INVERTED_INDEX_CC";
@@ -199,6 +201,9 @@ constexpr const char* MH_LSH_BLOOM_FALSE_POSITIVE_RPOB = "mh_lsh_bloom_false_pos
 constexpr const char* MH_LSH_HASH_CODE_IN_MEM = "mh_lsh_code_in_mem";
 constexpr const char* MH_LSH_REFINE_K = "refine_k";
 constexpr const char* MH_LSH_BATCH_SEARCH = "mh_lsh_batch_search";
+
+// Emb List Index Params
+constexpr const char* RETRIEVAL_ANN_RATIO = "retrieval_ann_ratio";
 }  // namespace indexparam
 
 using MetricType = std::string;
@@ -213,6 +218,11 @@ constexpr const char* MHJACCARD = "MHJACCARD";
 constexpr const char* SUBSTRUCTURE = "SUBSTRUCTURE";
 constexpr const char* SUPERSTRUCTURE = "SUPERSTRUCTURE";
 constexpr const char* BM25 = "BM25";
+// emb list
+constexpr const char* MAX_SIM = "MAX_SIM";
+constexpr const char* ORDERED_MAX_SIM = "ORDERED_MAX_SIM";
+constexpr const char* ORDERED_MAX_SIM_WITH_WINDOW = "ORDERED_MAX_SIM_WITH_WINDOW";
+constexpr const char* DTW = "DTW";
 }  // namespace metric
 
 enum VecType {
