@@ -164,6 +164,21 @@ data_type_conversion(const DataSet& src, const std::optional<int64_t> start = st
     des->SetTensor(des_data);
     des->SetIsOwner(true);
     des->SetTensorBeginId(src.GetTensorBeginId() + start_row);
+
+    // for emb_list
+    auto lims = src.GetLims();
+    if (lims != nullptr) {
+        size_t lims_size = 0;
+        while (lims[lims_size] < (size_t)rows && lims_size < (size_t)rows) {
+            lims_size++;
+        }
+        assert(lims[lims_size] == (size_t)rows);  // the last lims should be the rows
+        auto lims_data = std::make_unique<size_t[]>(lims_size + 1);
+        for (size_t i = 0; i < lims_size + 1; i++) {
+            lims_data[i] = lims[i];
+        }
+        des->SetLims(std::move(lims_data));
+    }
     return des;
 }
 

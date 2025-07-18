@@ -316,6 +316,24 @@ GenerateScalarInfo(size_t n, size_t partition_num = 2) {
     return scalar_map;
 }
 
+inline std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>
+GenerateScalarInfoWithStep(size_t n, size_t partition_num = 2, size_t step = 10) {
+    assert(step * partition_num <= n);
+    std::vector<std::vector<uint32_t>> scalar_info;
+    scalar_info.reserve(partition_num);
+    for (size_t i = 0; i < partition_num; ++i) {
+        std::vector<uint32_t> scalar;
+        scalar_info.emplace_back(std::move(scalar));
+    }
+    for (size_t i = 0; i < n; i += 1) {
+        size_t j = i / step;
+        scalar_info[j % partition_num].emplace_back(i);
+    }
+    std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_map;
+    scalar_map[0] = std::move(scalar_info);
+    return scalar_map;
+}
+
 inline std::vector<uint8_t>
 GenerateBitsetByScalarInfoAndFirstTBits(const std::vector<uint32_t>& scalar, size_t n, size_t t) {
     assert(scalar.size() <= n);
@@ -336,6 +354,20 @@ GenerateBitsetByScalarInfoAndFirstTBits(const std::vector<uint32_t>& scalar, siz
         }
         data[i >> 3] |= (0x1 << (i & 0x7));
         ++count;
+    }
+    return data;
+}
+
+inline std::vector<uint8_t>
+GenerateBitsetByPartition(size_t n, float pass_rate, size_t partition_num) {
+    float acc = 0.0f;
+    std::vector<uint8_t> data((n + 8 - 1) / 8, 0xff);
+    for (size_t i = 0; i < n; i += partition_num) {
+        acc += pass_rate;
+        if (acc >= 1.0f) {
+            acc -= 1.0f;
+            data[i >> 3] &= ~(0x1 << (i & 0x7));
+        }
     }
     return data;
 }

@@ -48,6 +48,16 @@ void all_inner_product_typed(
         const IDSelector* sel = nullptr);
 
 template <typename DataType>
+void all_inner_product_distances_typed(
+        const DataType* x,
+        const DataType* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* distances,
+        const IDSelector* sel = nullptr);
+
+template <typename DataType>
 void knn_L2sqr_typed(
         const DataType* x,
         const DataType* y,

@@ -963,6 +963,36 @@ void all_inner_product(
     }
 }
 
+// computes and stores all IP distances into output (only distances).
+// Output should be preallocated of size nx * ny, each element should be
+// initialized to lowest distance.
+void all_inner_product_distances(
+    const float* x,
+    const float* y,
+    size_t d,
+    size_t nx,
+    size_t ny,
+    float* output,
+    const IDSelector* sel) {
+if (sel == nullptr) {
+    CollectAllDistancesHandler<CMax<float, int64_t>, false> res(
+            nx, ny, output);
+    if (nx < distance_compute_blas_threshold) {
+        exhaustive_inner_product_seq(x, y, d, nx, ny, res);
+    } else {
+        exhaustive_inner_product_blas(x, y, d, nx, ny, res);
+    }
+} else {
+    CollectAllDistancesHandler<CMax<float, int64_t>, true> res(
+            nx, ny, output, sel);
+    if (nx < distance_compute_blas_threshold) {
+        exhaustive_inner_product_seq(x, y, d, nx, ny, res);
+    } else {
+        exhaustive_inner_product_blas(x, y, d, nx, ny, res);
+    }
+}
+}
+
 void exhaustive_L2sqr_nearest_imp(
         const float* __restrict x,
         const float* __restrict y,
@@ -1029,7 +1059,7 @@ void knn_L2sqr(
         exhaustive_L2sqr_nearest_imp(x, y, d, nx, ny, vals, ids);
         return;
     }
-    // // todo aguzhva: this is disabled for knowhere, because it requires 
+    // // todo aguzhva: this is disabled for knowhere, because it requires
     // //   some dynamic kernel dispatching.
     // if (k == 1) {
     //     Top1BlockResultHandler<CMax<float, int64_t>> res(nx, vals, ids);

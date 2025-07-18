@@ -133,6 +133,21 @@ class IndexNode : public Object {
     virtual expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const = 0;
 
+    /**
+     * @brief Performs a brute-force search operation on the index for given labels. (for emb-list based index)
+     *
+     * @param dataset Query vectors.
+     * @param labels
+     * @param labels_len
+     * @return An expected<> object containing the search results or an error.
+     */
+    virtual expected<DataSetPtr>
+    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
+                  const size_t labels_len) const {
+        return expected<DataSetPtr>::Err(Status::not_implemented,
+                                         "BruteForceByIDs not supported for current index type");
+    };
+
     // not thread safe.
     class iterator {
      public:

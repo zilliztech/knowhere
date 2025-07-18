@@ -271,6 +271,28 @@ void all_inner_product_typed(
 }
 
 template <typename DataType>
+void all_inner_product_distances_typed(
+        const DataType* x,
+        const DataType* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* output,
+        const IDSelector* sel) {
+    CollectAllDistancesHandler<CMax<float, int64_t>> res(nx, ny, output);
+    if (const auto* sel_bs =
+                dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel)) {
+        exhaustive_inner_product_impl_typed(x, y, d, nx, ny, res, *sel_bs);
+    } else if (sel == nullptr) {
+        exhaustive_inner_product_impl_typed(
+                x, y, d, nx, ny, res, IDSelectorAll());
+    } else {
+        exhaustive_inner_product_impl_typed(x, y, d, nx, ny, res, *sel);
+    }
+    return;
+}
+
+template <typename DataType>
 void knn_L2sqr_typed(
         const DataType* x,
         const DataType* y,
@@ -446,8 +468,7 @@ void range_search_L2sqr_typed(
                 dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel)) {
         exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, resh, *sel_bs);
     } else if (sel == nullptr) {
-        exhaustive_L2sqr_seq_impl_typed(
-                x, y, d, nx, ny, resh, IDSelectorAll());
+        exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, resh, IDSelectorAll());
     } else {
         exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, resh, *sel);
     }
@@ -524,6 +545,15 @@ template void faiss::all_inner_product_typed<knowhere::fp16>(
         std::vector<knowhere::DistId>&,
         const IDSelector*);
 
+template void faiss::all_inner_product_distances_typed<knowhere::fp16>(
+        const knowhere::fp16*,
+        const knowhere::fp16*,
+        size_t,
+        size_t,
+        size_t,
+        float*,
+        const IDSelector*);
+
 template void faiss::knn_L2sqr_typed<knowhere::fp16>(
         const knowhere::fp16*,
         const knowhere::fp16*,
@@ -589,6 +619,15 @@ template void faiss::all_inner_product_typed<knowhere::bf16>(
         std::vector<knowhere::DistId>&,
         const IDSelector*);
 
+template void faiss::all_inner_product_distances_typed<knowhere::bf16>(
+        const knowhere::bf16*,
+        const knowhere::bf16*,
+        size_t,
+        size_t,
+        size_t,
+        float*,
+        const IDSelector*);
+
 template void faiss::knn_L2sqr_typed<knowhere::bf16>(
         const knowhere::bf16*,
         const knowhere::bf16*,
@@ -652,6 +691,15 @@ template void faiss::all_inner_product_typed<knowhere::int8>(
         size_t,
         size_t,
         std::vector<knowhere::DistId>&,
+        const IDSelector*);
+
+template void faiss::all_inner_product_distances_typed<knowhere::int8>(
+        const knowhere::int8*,
+        const knowhere::int8*,
+        size_t,
+        size_t,
+        size_t,
+        float*,
         const IDSelector*);
 
 template void faiss::knn_L2sqr_typed<knowhere::int8>(

@@ -50,6 +50,7 @@ enum class Status {
     invalid_serialized_index_type = 28,
     sparse_inner_error = 29,
     brute_force_inner_error = 30,
+    emb_list_inner_error = 31,
 };
 
 inline std::string
