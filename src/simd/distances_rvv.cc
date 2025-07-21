@@ -783,6 +783,101 @@ fp16_vec_norm_L2sqr_rvv(const knowhere::fp16* x, size_t d) {
     return __riscv_vfmv_f_s_f32m1_f32(scalar_sum_vec);
 }
 
+void
+fp16_vec_inner_product_batch_4_rvv(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
+                                   const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0,
+                                   float& dis1, float& dis2, float& dis3) {
+    size_t temp_d = d;
+    const _Float16* x_ptr = reinterpret_cast<const _Float16*>(x);
+    const _Float16* y0_ptr = reinterpret_cast<const _Float16*>(y0);
+    const _Float16* y1_ptr = reinterpret_cast<const _Float16*>(y1);
+    const _Float16* y2_ptr = reinterpret_cast<const _Float16*>(y2);
+    const _Float16* y3_ptr = reinterpret_cast<const _Float16*>(y3);
+
+    size_t vlmax = __riscv_vsetvlmax_e32m4();
+    vfloat32m4_t vacc0 = __riscv_vfmv_v_f_f32m4(0.0f, vlmax);
+    vfloat32m4_t vacc1 = __riscv_vfmv_v_f_f32m4(0.0f, vlmax);
+    vfloat32m4_t vacc2 = __riscv_vfmv_v_f_f32m4(0.0f, vlmax);
+    vfloat32m4_t vacc3 = __riscv_vfmv_v_f_f32m4(0.0f, vlmax);
+
+    for (size_t vl; (vl = __riscv_vsetvl_e16m2(temp_d)) > 0; temp_d -= vl) {
+        vfloat32m4_t vx = __riscv_vfwcvt_f_f_v_f32m4(__riscv_vle16_v_f16m2(x_ptr, vl), vl);
+
+        vacc0 =
+            __riscv_vfmacc_vv_f32m4(vacc0, vx, __riscv_vfwcvt_f_f_v_f32m4(__riscv_vle16_v_f16m2(y0_ptr, vl), vl), vl);
+        vacc1 =
+            __riscv_vfmacc_vv_f32m4(vacc1, vx, __riscv_vfwcvt_f_f_v_f32m4(__riscv_vle16_v_f16m2(y1_ptr, vl), vl), vl);
+        vacc2 =
+            __riscv_vfmacc_vv_f32m4(vacc2, vx, __riscv_vfwcvt_f_f_v_f32m4(__riscv_vle16_v_f16m2(y2_ptr, vl), vl), vl);
+        vacc3 =
+            __riscv_vfmacc_vv_f32m4(vacc3, vx, __riscv_vfwcvt_f_f_v_f32m4(__riscv_vle16_v_f16m2(y3_ptr, vl), vl), vl);
+
+        x_ptr += vl;
+        y0_ptr += vl;
+        y1_ptr += vl;
+        y2_ptr += vl;
+        y3_ptr += vl;
+    }
+
+    vfloat32m1_t scalar_zero = __riscv_vfmv_v_f_f32m1(0.0f, 1);
+
+    dis0 = __riscv_vfmv_f_s_f32m1_f32(__riscv_vfredusum_vs_f32m4_f32m1(vacc0, scalar_zero, d));
+    dis1 = __riscv_vfmv_f_s_f32m1_f32(__riscv_vfredusum_vs_f32m4_f32m1(vacc1, scalar_zero, d));
+    dis2 = __riscv_vfmv_f_s_f32m1_f32(__riscv_vfredusum_vs_f32m4_f32m1(vacc2, scalar_zero, d));
+    dis3 = __riscv_vfmv_f_s_f32m1_f32(__riscv_vfredusum_vs_f32m4_f32m1(vacc3, scalar_zero, d));
+}
+
+void
+fp16_vec_L2sqr_batch_4_rvv(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
+                           const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0, float& dis1,
+                           float& dis2, float& dis3) {
+    const _Float16* x_ptr = reinterpret_cast<const _Float16*>(x);
+    const _Float16* y0_ptr = reinterpret_cast<const _Float16*>(y0);
+    const _Float16* y1_ptr = reinterpret_cast<const _Float16*>(y1);
+    const _Float16* y2_ptr = reinterpret_cast<const _Float16*>(y2);
+    const _Float16* y3_ptr = reinterpret_cast<const _Float16*>(y3);
+
+    size_t vlmax = __riscv_vsetvlmax_e32m4();
+    vfloat32m4_t vacc0 = __riscv_vfmv_v_f_f32m4(0.0f, vlmax);
+    vfloat32m4_t vacc1 = __riscv_vfmv_v_f_f32m4(0.0f, vlmax);
+    vfloat32m4_t vacc2 = __riscv_vfmv_v_f_f32m4(0.0f, vlmax);
+    vfloat32m4_t vacc3 = __riscv_vfmv_v_f_f32m4(0.0f, vlmax);
+
+    size_t temp_d = d;
+    for (size_t vl; (vl = __riscv_vsetvl_e16m2(temp_d)) > 0; temp_d -= vl) {
+        vfloat32m4_t vx_w = __riscv_vfwcvt_f_f_v_f32m4(__riscv_vle16_v_f16m2(x_ptr, vl), vl);
+
+        vfloat32m4_t vdiff0 =
+            __riscv_vfsub_vv_f32m4(vx_w, __riscv_vfwcvt_f_f_v_f32m4(__riscv_vle16_v_f16m2(y0_ptr, vl), vl), vl);
+        vacc0 = __riscv_vfmacc_vv_f32m4(vacc0, vdiff0, vdiff0, vl);
+
+        vfloat32m4_t vdiff1 =
+            __riscv_vfsub_vv_f32m4(vx_w, __riscv_vfwcvt_f_f_v_f32m4(__riscv_vle16_v_f16m2(y1_ptr, vl), vl), vl);
+        vacc1 = __riscv_vfmacc_vv_f32m4(vacc1, vdiff1, vdiff1, vl);
+
+        vfloat32m4_t vdiff2 =
+            __riscv_vfsub_vv_f32m4(vx_w, __riscv_vfwcvt_f_f_v_f32m4(__riscv_vle16_v_f16m2(y2_ptr, vl), vl), vl);
+        vacc2 = __riscv_vfmacc_vv_f32m4(vacc2, vdiff2, vdiff2, vl);
+
+        vfloat32m4_t vdiff3 =
+            __riscv_vfsub_vv_f32m4(vx_w, __riscv_vfwcvt_f_f_v_f32m4(__riscv_vle16_v_f16m2(y3_ptr, vl), vl), vl);
+        vacc3 = __riscv_vfmacc_vv_f32m4(vacc3, vdiff3, vdiff3, vl);
+
+        x_ptr += vl;
+        y0_ptr += vl;
+        y1_ptr += vl;
+        y2_ptr += vl;
+        y3_ptr += vl;
+    }
+
+    vfloat32m1_t scalar_zero = __riscv_vfmv_v_f_f32m1(0.0f, 1);
+
+    dis0 = __riscv_vfmv_f_s_f32m1_f32(__riscv_vfredusum_vs_f32m4_f32m1(vacc0, scalar_zero, d));
+    dis1 = __riscv_vfmv_f_s_f32m1_f32(__riscv_vfredusum_vs_f32m4_f32m1(vacc1, scalar_zero, d));
+    dis2 = __riscv_vfmv_f_s_f32m1_f32(__riscv_vfredusum_vs_f32m4_f32m1(vacc2, scalar_zero, d));
+    dis3 = __riscv_vfmv_f_s_f32m1_f32(__riscv_vfredusum_vs_f32m4_f32m1(vacc3, scalar_zero, d));
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // bf16
 float
