@@ -30,6 +30,13 @@ fvec_L2sqr_sve(const float* x, const float* y, size_t d) {
         if (d - i < svcntw())
             pg = svwhilelt_b32(i, d);
 
+        // prefetch one vector
+        size_t prefetch_offset = i + svcntw();
+        if (prefetch_offset < d) {
+            __builtin_prefetch(x + prefetch_offset);
+            __builtin_prefetch(y + prefetch_offset);
+        }
+
         svfloat32_t a = svld1_f32(pg, x + i);
         svfloat32_t b = svld1_f32(pg, y + i);
         svfloat32_t diff = svsub_f32_m(pg, a, b);
