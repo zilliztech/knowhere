@@ -678,6 +678,64 @@ struct CollectAllResultHandler : BlockResultHandler<C, use_sel> {
     void end_multiple() {}
 };
 
+template <class C, bool use_sel = false>
+struct CollectAllDistancesHandler : BlockResultHandler<C, use_sel> {
+    using T = typename C::T;
+    using TI = typename C::TI;
+    using BlockResultHandler<C, use_sel>::i0;
+    using BlockResultHandler<C, use_sel>::i1;
+
+    CollectAllDistancesHandler(
+            size_t nq,
+            size_t ny_in,
+            float* output,
+            const IDSelector* sel = nullptr)
+            : BlockResultHandler<C, use_sel>(nq, sel),
+              ny{ny_in},
+              output(output) {}
+
+    size_t ny;
+    float* output;
+
+    struct SingleResultHandler {
+        CollectAllDistancesHandler& all_handler;
+        float* target;
+
+        SingleResultHandler(CollectAllDistancesHandler& all_handler)
+                : all_handler(all_handler) {}
+
+        void begin(size_t i) {
+            target = all_handler.output + i * all_handler.ny;
+        }
+
+        void add_result(T dis, TI idx) {
+            target[idx] = dis;
+        }
+
+        void end() {}
+    };
+
+    void begin_multiple(size_t i0, size_t i1) {
+        this->i0 = i0;
+        this->i1 = i1;
+    }
+
+    void add_results(size_t j0, size_t j1, const T* dis_tab) {
+#pragma omp parallel for
+        for (int64_t i = i0; i < i1; i++) {
+            auto* target = output + i * ny;
+            const T* dis_tab_i = dis_tab + (j1 - j0) * (i - i0) - j0;
+            for (size_t j = j0; j < j1; j++) {
+                if (this->is_in_selection(j)) {
+                    T dis = dis_tab_i[j];
+                    target[j] = dis;
+                }
+            }
+        }
+    }
+
+    void end_multiple() {}
+};
 
 /*****************************************************************
  * Dispatcher function to choose the right knn result handler depending on k
