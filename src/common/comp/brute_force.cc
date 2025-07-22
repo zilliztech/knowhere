@@ -216,7 +216,13 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                             return Status::faiss_inner_error;
                         }
 
-                        auto score = get_sum_max_sim(distances.get(), num_query_vectors, num_base_vectors);
+                        auto score_or = get_sum_max_sim(distances.get(), num_query_vectors, num_base_vectors);
+                        if (!score_or.has_value()) {
+                            LOG_KNOWHERE_WARNING_ << "get_sum_max_sim failed, num_query_vectors: " << num_query_vectors
+                                                  << ", num_base_vectors: " << num_base_vectors;
+                            return Status::brute_force_inner_error;
+                        }
+                        auto score = score_or.value();
                         if (minheap.size() < (size_t)topk) {
                             minheap.emplace((int64_t)base_el_idx + xb_id_offset, score);
                         } else {
@@ -234,7 +240,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                     dis[query_el_idx * topk + real_el_k - j - 1] = a.val;
                     minheap.pop();
                 }
-                for (size_t j = real_el_k; j < topk; j++) {
+                for (size_t j = real_el_k; j < (size_t)topk; j++) {
                     ids[query_el_idx * topk + j] = -1;
                     dis[query_el_idx * topk + j] = std::numeric_limits<float>::min();
                 }
