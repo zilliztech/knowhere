@@ -232,6 +232,13 @@ enum VecType {
     VECTOR_BFLOAT16 = 103,
     VECTOR_SPARSE_FLOAT = 104,
     VECTOR_INT8 = 105,
+
+    EMB_LIST_BINARY = 200,
+    EMB_LIST_FLOAT = 201,
+    EMB_LIST_FLOAT16 = 202,
+    EMB_LIST_BFLOAT16 = 203,
+    EMB_LIST_SPARSE_FLOAT = 204,
+    EMB_LIST_INT8 = 205,
 };  // keep the same value as milvus proto define
 
 enum RefineType {

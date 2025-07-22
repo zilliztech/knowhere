@@ -127,6 +127,12 @@ TEST_CASE("Test index and data type check", "[IndexCheckTest]") {
         CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_SPARSE_INVERTED_INDEX,
                                                        VecType::VECTOR_SPARSE_FLOAT));
         CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_SPARSE_WAND, VecType::VECTOR_SPARSE_FLOAT));
+
+        // emb list - hnsw
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW, VecType::EMB_LIST_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW, VecType::EMB_LIST_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW, VecType::EMB_LIST_BFLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW, VecType::EMB_LIST_INT8));
     }
 }
 
@@ -158,6 +164,9 @@ TEST_CASE("Test support mmap index", "[IndexCheckTest]") {
 #else
         CHECK_FALSE(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_DISKANN));
 #endif
+
+        // emb list - hnsw
+        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW));
     }
 }
 
