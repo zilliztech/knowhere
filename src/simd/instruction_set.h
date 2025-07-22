@@ -347,6 +347,11 @@ class InstructionSet {
         return isAMD_ && f_81_EDX_[31];
     }
 
+    bool
+    AVX512VPOPCNTDQ() {
+        return f_7_ECX_[14];
+    }
+
  private:
     int nIds_;
     int nExIds_;

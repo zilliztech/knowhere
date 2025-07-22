@@ -40,6 +40,7 @@
 #include "index/hnsw/impl/IndexConditionalWrapper.h"
 #include "index/hnsw/impl/IndexHNSWWrapper.h"
 #include "index/hnsw/impl/IndexWrapperCosine.h"
+#include "index/refine/refine_utils.h"
 #include "io/memory_io.h"
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/index_param.h"
@@ -77,7 +78,7 @@ class BaseFaissIndexNode : public IndexNode {
 
     //
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         // config
         const BaseConfig& base_cfg = static_cast<const FaissHnswConfig&>(*cfg);
 
@@ -105,7 +106,7 @@ class BaseFaissIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         const BaseConfig& base_cfg = static_cast<const FaissHnswConfig&>(*cfg);
 
         // use build_pool_ to make sure the OMP threads spawned by index_->train etc
@@ -334,6 +335,38 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
         return writer.total_size;
     }
 
+    std::shared_ptr<std::vector<uint32_t>>
+    GetInternalIdToExternalIdMap() const override {
+        auto internal_offset_to_label = std::make_shared<std::vector<uint32_t>>();
+        assert(indexes.size() > 0);
+        if (indexes.size() == 1) {
+            // without mv-only labels, the id mapping is the same as the internal offset.
+            internal_offset_to_label->resize(Count());
+            std::iota(internal_offset_to_label->begin(), internal_offset_to_label->end(), 0);
+        } else {
+            // faiss_hnsw has stored mv-only labels (id mapping for each mv-index) *separately*, not a contiguous
+            // memory block. Note that the mv-only labels have a fixed serialization format; changing the design of
+            // labels would affect index version compatibility.
+            // so a temporary vector must be created to memcpy all id mappings.
+            auto total_size = index_rows_sum[index_rows_sum.size() - 1];
+            assert(total_size == Count());
+            internal_offset_to_label->resize(total_size);
+            for (auto par_idx = 0; par_idx < index_rows_sum.size() - 1; ++par_idx) {
+                auto par_size = index_rows_sum[par_idx + 1] - index_rows_sum[par_idx];
+                assert(par_size == labels[par_idx]->size());
+                std::memcpy(internal_offset_to_label->data() + index_rows_sum[par_idx], labels[par_idx]->data(),
+                            par_size * sizeof(uint32_t));
+            }
+        }
+        return internal_offset_to_label;
+    }
+
+    Status
+    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) override {
+        internal_offset_to_most_external_id = std::move(map);
+        return Status::success;
+    }
+
  protected:
     // it is std::shared_ptr, not std::unique_ptr, because it can be
     //    shared with FaissHnswIterator
@@ -345,9 +378,11 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
     std::vector<uint32_t> index_rows_sum;
     // label to locate internal offset
     std::vector<uint32_t> label_to_internal_offset;
+    // internal offset to most external id, only for 1-hop bitset check
+    std::vector<uint32_t> internal_offset_to_most_external_id;
 
     int
-    getIndexToSearchByScalarInfo(const FaissHnswConfig& config, const BitsetView& bitset) const {
+    getIndexToSearchByScalarInfo(const BitsetView& bitset) const {
         if (indexes.size() == 1) {
             return 0;
         }
@@ -361,8 +396,11 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
             return 0;
         }
         size_t first_valid_index = bitset.get_first_valid_index();
-        auto it = std::lower_bound(index_rows_sum.begin(), index_rows_sum.end(),
-                                   label_to_internal_offset[first_valid_index] + 1);
+        if (!bitset.has_out_ids()) {
+            first_valid_index = label_to_internal_offset[first_valid_index];
+        }
+        auto it = std::upper_bound(index_rows_sum.begin(), index_rows_sum.end(), first_valid_index);
+
         if (it == index_rows_sum.end()) {
             LOG_KNOWHERE_WARNING_ << "can not find vector of offset " << label_to_internal_offset[first_valid_index];
             return -1;
@@ -747,8 +785,13 @@ class FaissHnswIterator : public IndexIterator {
     FaissHnswIterator(const std::shared_ptr<faiss::Index>& index_in,
                       const std::shared_ptr<std::vector<uint32_t>>& labels_in, std::unique_ptr<float[]>&& query_in,
                       const BitsetView& bitset_in, const int32_t ef_in, bool larger_is_closer,
-                      const float refine_ratio = 0.5f, bool use_knowhere_search_pool = true)
-        : IndexIterator(larger_is_closer, use_knowhere_search_pool, refine_ratio), index{index_in}, labels{labels_in} {
+                      const float refine_ratio = 0.5f, const std::vector<uint32_t>& label_to_internal_offset_in = {},
+                      const uint32_t mv_base_offset_in = 0, bool use_knowhere_search_pool = true)
+        : IndexIterator(larger_is_closer, use_knowhere_search_pool, refine_ratio),
+          index{index_in},
+          labels{labels_in},
+          label_to_internal_offset(label_to_internal_offset_in),
+          mv_base_offset(mv_base_offset_in) {
         workspace.accumulated_alpha =
             (bitset_in.count() >= (index->ntotal * HnswSearchThresholds::kHnswSearchKnnBFFilterThreshold))
                 ? std::numeric_limits<float>::max()
@@ -973,14 +1016,9 @@ class FaissHnswIterator : public IndexIterator {
             filter_type sel;
 
             next_batch(batch_handler, sel);
-        } else if (labels == nullptr) {
+        } else {
             using filter_type = knowhere::BitsetViewIDSelector;
             filter_type sel(workspace.bitset);
-
-            next_batch(batch_handler, sel);
-        } else {
-            using filter_type = knowhere::BitsetViewWithMappingIDSelector;
-            filter_type sel(workspace.bitset, labels->data());
 
             next_batch(batch_handler, sel);
         }
@@ -988,13 +1026,24 @@ class FaissHnswIterator : public IndexIterator {
 
     float
     raw_distance(int64_t id) override {
-        const float refined_distance = workspace.qdis_refine->operator()(id);
-        return refined_distance;
+        if (label_to_internal_offset.empty()) {
+            return workspace.qdis_refine->operator()(id);
+        }
+        // todo: Currently, next-batch returns quant results that have already been mapped to labels (external_id),
+        // but refine requires the internal offset within the mv-index, so we need to map them back.
+        // This reverse mapping is actually quite wasteful.
+        // The best solution is to detect if need refine in next-batch, and directly return the internal offset of the
+        // mv-index. After refine computation, convert it back to the label (external_id).
+        // This involves changing the iterator interface in the base class in index_node.h, which will take some time.
+        auto mv_internal_offset = label_to_internal_offset[id] - mv_base_offset;
+        return workspace.qdis_refine->operator()(mv_internal_offset);
     }
 
  private:
     std::shared_ptr<faiss::Index> index;
     std::shared_ptr<std::vector<uint32_t>> labels;
+    const std::vector<uint32_t>& label_to_internal_offset;  // internal_offset = label_to_internal_offset[label_id];
+    const uint32_t mv_base_offset;                          // mv_internal_offset = internal_offset - mv_base_offset;
 
     FaissHnswIteratorWorkspace workspace;
 };
@@ -1067,6 +1116,9 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         };
 
         try {
+            // limit the parallel of reconstruction
+            ThreadPool::ScopedSearchOmpSetter setter(1);
+
             if (data_format == DataFormatEnum::fp32) {
                 // perform a direct reconstruction for fp32 data
                 auto data = std::make_unique<float[]>(dim * rows);
@@ -1140,7 +1192,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset_) const override {
         if (this->indexes.empty()) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
@@ -1159,10 +1211,27 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         const auto hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
         const auto k = hnsw_cfg.k.value();
-        auto index_id = getIndexToSearchByScalarInfo(hnsw_cfg, bitset);
+
+        BitsetView bitset(bitset_);
+        if (!internal_offset_to_most_external_id.empty()) {
+            bitset.set_out_ids(internal_offset_to_most_external_id.data(), internal_offset_to_most_external_id.size());
+        }
+        auto index_id = getIndexToSearchByScalarInfo(bitset);
         if (index_id < 0) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "partition key value not correctly set");
         }
+        if (indexes.size() > 1) {
+            // calculate more accurate filter statistics for the single mv-index.
+            size_t num_mv_ids = labels[index_id].get()->size();
+            size_t num_mv_filtered_out_ids = num_mv_ids - (bitset.size() - bitset.count());
+            if (!bitset.has_out_ids()) {
+                bitset.set_out_ids(labels[index_id].get()->data(), num_mv_ids, num_mv_filtered_out_ids);
+            } else {
+                bitset.set_out_ids(internal_offset_to_most_external_id.data(), num_mv_ids, num_mv_filtered_out_ids);
+                bitset.set_id_offset(index_rows_sum[index_id]);
+            }
+        }
+
         feder::hnsw::FederResultUniq feder_result;
         if (hnsw_cfg.trace_visit.value()) {
             if (rows != 1) {
@@ -1189,6 +1258,18 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
         }
 
+        // set up a bf wrapper as fallback
+        std::unique_ptr<faiss::Index> bf_index_wrapper = nullptr;
+        faiss::Index* bf_index_wrapper_ptr = nullptr;
+        if (!whether_bf_search.value_or(false)) {
+            std::tie(bf_index_wrapper, is_refined) =
+                create_conditional_hnsw_wrapper(indexes[index_id].get(), hnsw_cfg, true, whether_to_enable_refine);
+            if (bf_index_wrapper == nullptr) {
+                return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
+            }
+            bf_index_wrapper_ptr = bf_index_wrapper.get();
+        }
+
         faiss::Index* index_wrapper_ptr = index_wrapper.get();
 
         // set up faiss search parameters
@@ -1206,16 +1287,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         // set up a selector
         BitsetViewIDSelector bw_idselector(bitset);
-        BitsetViewWithMappingIDSelector bw_mapping_idselector(
-            bitset, labels.empty() ? nullptr : labels[index_id].get()->data());
-        faiss::IDSelector* id_selector = nullptr;
-        if (!bitset.empty()) {
-            if (labels.empty()) {
-                id_selector = &bw_idselector;
-            } else {
-                id_selector = &bw_mapping_idselector;
-            }
-        }
+        faiss::IDSelector* id_selector = &bw_idselector;
         hnsw_search_params.sel = id_selector;
 
         // run
@@ -1228,7 +1300,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
             for (int64_t i = 0; i < rows; ++i) {
                 futs.emplace_back(search_pool->push([&, idx = i, is_refined = is_refined,
-                                                     index_wrapper_ptr = index_wrapper_ptr] {
+                                                     index_wrapper_ptr = index_wrapper_ptr,
+                                                     bf_index_wrapper_ptr = bf_index_wrapper_ptr]() {
                     // 1 thread per element
                     ThreadPool::ScopedSearchOmpSetter setter(1);
 
@@ -1247,6 +1320,22 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     faiss::idx_t* const __restrict local_ids = ids.get() + k * idx;
                     float* const __restrict local_distances = distances.get() + k * idx;
 
+                    // check if we need to perform a brute-force search bcz of the lack of results
+                    auto bf_search_needed = [&]() -> bool {
+                        size_t real_topk = 0;
+                        for (auto j = 0; j < k; ++j) {
+                            if (local_ids[j] < 0) {
+                                continue;
+                            }
+                            real_topk++;
+                        }
+                        if (real_topk < k && real_topk < bitset.size() - bitset.count() &&
+                            bf_index_wrapper_ptr != nullptr) {
+                            return true;
+                        }
+                        return false;
+                    };
+
                     // perform the search
                     if (is_refined) {
                         faiss::IndexRefineSearchParameters refine_params;
@@ -1256,8 +1345,15 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                         refine_params.base_index_params = &hnsw_search_params;
 
                         index_wrapper_ptr->search(1, cur_query, k, local_distances, local_ids, &refine_params);
+                        if (bf_search_needed()) {
+                            bf_index_wrapper_ptr->search(1, cur_query, k, local_distances, local_ids, &refine_params);
+                        }
                     } else {
                         index_wrapper_ptr->search(1, cur_query, k, local_distances, local_ids, &hnsw_search_params);
+                        if (bf_search_needed()) {
+                            bf_index_wrapper_ptr->search(1, cur_query, k, local_distances, local_ids,
+                                                         &hnsw_search_params);
+                        }
                     }
 
                     if (!labels.empty()) {
@@ -1290,7 +1386,76 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     }
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset_, const int64_t* labels,
+                  const size_t labels_len) const override {
+        if (this->indexes.empty()) {
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+        }
+        for (const auto& index : indexes) {
+            if (index == nullptr) {
+                return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+            }
+            if (!index->is_trained) {
+                return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
+            }
+        }
+        const auto dim = dataset->GetDim();
+        const auto rows = dataset->GetRows();
+        const float* data = (const float*)dataset->GetTensor();
+        auto distances = std::make_unique<float[]>(rows * labels_len);
+
+        BitsetView bitset(bitset_);
+        if (!internal_offset_to_most_external_id.empty()) {
+            bitset.set_out_ids(internal_offset_to_most_external_id.data(), internal_offset_to_most_external_id.size());
+        }
+        auto index_id = getIndexToSearchByScalarInfo(bitset);
+        if (index_id < 0) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "partition key value not correctly set");
+        }
+
+        try {
+            std::vector<folly::Future<folly::Unit>> futs;
+            futs.reserve(rows);
+            for (auto i = 0; i < rows; i++) {
+                futs.emplace_back(search_pool->push([&, idx = i, index_id = index_id]() {
+                    // set up a query
+                    const float* cur_query = nullptr;
+                    std::vector<float> cur_query_tmp(dim);
+                    if (data_format == DataFormatEnum::fp32) {
+                        cur_query = (const float*)data + idx * dim;
+                    } else {
+                        convert_rows_to_fp32(data, cur_query_tmp.data(), data_format, idx, 1, dim);
+                        cur_query = cur_query_tmp.data();
+                    }
+                    std::unique_ptr<faiss::DistanceComputer> dist_computer(indexes[index_id]->get_distance_computer());
+                    dist_computer->set_query(cur_query);
+                    for (auto j = 0; j < labels_len; j++) {
+                        auto id = labels[j];
+                        if (indexes.size() > 1) {
+                            id = label_to_internal_offset[labels[j]] - index_rows_sum[index_id];
+                        }
+                        distances[idx * labels_len + j] = (*dist_computer)(id);
+                    }
+                }));
+            }
+            // wait for the completion
+            WaitAllSuccess(futs);
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
+        }
+
+        // ids is not used in this context, so we can directly initialize it as an empty unique_ptr
+        std::unique_ptr<faiss::idx_t[]> ids = nullptr;
+        return GenResultDataSet(rows, labels_len, std::move(ids), std::move(distances));
+    };
+
+    expected<DataSetPtr>
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset_) const override {
+        // if support ann_iterator, use iterator-based range_search (IndexNode::RangeSearch)
+        if (is_ann_iterator_supported()) {
+            return IndexNode::RangeSearch(dataset, std::move(cfg), bitset_);
+        }
         if (this->indexes.empty()) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
@@ -1308,9 +1473,23 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         const auto* data = dataset->GetTensor();
 
         const auto hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
-        auto index_id = getIndexToSearchByScalarInfo(hnsw_cfg, bitset);
+        BitsetView bitset(bitset_);
+        if (!internal_offset_to_most_external_id.empty()) {
+            bitset.set_out_ids(internal_offset_to_most_external_id.data(), internal_offset_to_most_external_id.size());
+        }
+        auto index_id = getIndexToSearchByScalarInfo(bitset);
         if (index_id < 0) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "partition key value not correctly set");
+        }
+        if (indexes.size() > 1) {
+            size_t num_mv_ids = labels[index_id].get()->size();
+            size_t num_mv_filtered_out_ids = num_mv_ids - (bitset.size() - bitset.count());
+            if (!bitset.has_out_ids()) {
+                bitset.set_out_ids(labels[index_id].get()->data(), num_mv_ids, num_mv_filtered_out_ids);
+            } else {
+                bitset.set_out_ids(internal_offset_to_most_external_id.data(), num_mv_ids, num_mv_filtered_out_ids);
+                bitset.set_id_offset(index_rows_sum[index_id]);
+            }
         }
 
         const bool is_similarity_metric = faiss::is_similarity_metric(indexes[index_id]->metric_type);
@@ -1362,16 +1541,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         // set up a selector
         BitsetViewIDSelector bw_idselector(bitset);
-        BitsetViewWithMappingIDSelector bw_mapping_idselector(
-            bitset, labels.empty() ? nullptr : labels[index_id].get()->data());
-        faiss::IDSelector* id_selector = nullptr;
-        if (!bitset.empty()) {
-            if (labels.empty()) {
-                id_selector = &bw_idselector;
-            } else {
-                id_selector = &bw_mapping_idselector;
-            }
-        }
+        faiss::IDSelector* id_selector = &bw_idselector;
         hnsw_search_params.sel = id_selector;
 
         ////////////////////////////////////////////////////////////////
@@ -1470,7 +1640,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         const std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>& scalar_info_map =
             dataset->Get<std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>>(meta::SCALAR_INFO);
-        if (scalar_info_map.empty()) {
+        if (scalar_info_map.empty() || tmp_combined_scalar_ids.size() <= 1) {
             try {
                 LOG_KNOWHERE_INFO_ << "Adding " << rows << " rows to HNSW Index";
 
@@ -1600,17 +1770,24 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     }
 
  public:
-    //
+    bool
+    is_ann_iterator_supported() const {
+        if (data_format != DataFormatEnum::fp32 && data_format != DataFormatEnum::fp16 &&
+            data_format != DataFormatEnum::bf16) {
+            return false;
+        }
+        return true;
+    }
+
     expected<std::vector<IndexNode::IteratorPtr>>
-    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset_,
                 bool use_knowhere_search_pool) const override {
         if (isIndexEmpty()) {
             LOG_KNOWHERE_ERROR_ << "creating iterator on empty index";
             return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "index not loaded");
         }
 
-        if (data_format != DataFormatEnum::fp32 && data_format != DataFormatEnum::fp16 &&
-            data_format != DataFormatEnum::bf16) {
+        if (!is_ann_iterator_supported()) {
             LOG_KNOWHERE_ERROR_ << "Unsupported data format";
             return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::invalid_args, "unsupported data format");
         }
@@ -1623,10 +1800,24 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         auto vec = std::vector<IndexNode::IteratorPtr>(n_queries, nullptr);
 
         const FaissHnswConfig& hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
-        int index_id = getIndexToSearchByScalarInfo(hnsw_cfg, bitset);
+        BitsetView bitset(bitset_);
+        if (!internal_offset_to_most_external_id.empty()) {
+            bitset.set_out_ids(internal_offset_to_most_external_id.data(), internal_offset_to_most_external_id.size());
+        }
+        int index_id = getIndexToSearchByScalarInfo(bitset);
         if (index_id < 0) {
             return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::invalid_args,
                                                                       "partition key value not correctly set");
+        }
+        if (indexes.size() > 1) {
+            size_t num_mv_ids = labels[index_id].get()->size();
+            size_t num_mv_filtered_out_ids = num_mv_ids - (bitset.size() - bitset.count());
+            if (!bitset.has_out_ids()) {
+                bitset.set_out_ids(labels[index_id].get()->data(), num_mv_ids, num_mv_filtered_out_ids);
+            } else {
+                bitset.set_out_ids(internal_offset_to_most_external_id.data(), num_mv_ids, num_mv_filtered_out_ids);
+                bitset.set_id_offset(index_rows_sum[index_id]);
+            }
         }
         const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), knowhere::metric::COSINE);
         const bool larger_is_closer = (IsMetricType(hnsw_cfg.metric_type.value(), knowhere::metric::IP) || is_cosine);
@@ -1661,9 +1852,13 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                 // create an iterator and initialize it
                 //   refine is not needed for flat
                 //   hnsw_cfg.iterator_refine_ratio.value_or(0.5f)
+
+                uint32_t mv_base_offset = index_rows_sum.size() > index_id ? index_rows_sum[index_id] : 0;
+
                 auto it = std::make_shared<FaissHnswIterator>(
                     indexes[index_id], labels.empty() ? nullptr : labels[index_id], std::move(cur_query), bitset, ef,
-                    larger_is_closer, iterator_refine_ratio, use_knowhere_search_pool);
+                    larger_is_closer, iterator_refine_ratio, label_to_internal_offset, mv_base_offset,
+                    use_knowhere_search_pool);
                 // store
                 vec[i] = it;
             }
@@ -1831,20 +2026,20 @@ class HNSWIndexNodeWithFallback : public IndexNode {
     }
 
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         if (use_base_index) {
-            return base_index->Train(dataset, cfg);
+            return base_index->Train(dataset, cfg, use_knowhere_build_pool);
         } else {
-            return fallback_search_index->Train(dataset, cfg);
+            return fallback_search_index->Train(dataset, cfg, use_knowhere_build_pool);
         }
     }
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         if (use_base_index) {
-            return base_index->Add(dataset, cfg);
+            return base_index->Add(dataset, cfg, use_knowhere_build_pool);
         } else {
-            return fallback_search_index->Add(dataset, cfg);
+            return fallback_search_index->Add(dataset, cfg, use_knowhere_build_pool);
         }
     }
 
@@ -1966,6 +2161,34 @@ class HNSWIndexNodeWithFallback : public IndexNode {
         }
     }
 
+    std::shared_ptr<std::vector<uint32_t>>
+    GetInternalIdToExternalIdMap() const override {
+        if (use_base_index) {
+            return base_index->GetInternalIdToExternalIdMap();
+        } else {
+            return fallback_search_index->GetInternalIdToExternalIdMap();
+        }
+    }
+
+    Status
+    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) override {
+        if (use_base_index) {
+            return base_index->SetInternalIdToMostExternalIdMap(std::move(map));
+        } else {
+            return fallback_search_index->SetInternalIdToMostExternalIdMap(std::move(map));
+        }
+    }
+
+    expected<DataSetPtr>
+    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
+                  const size_t labels_len) const override {
+        if (use_base_index) {
+            return base_index->CalcDistByIDs(dataset, bitset, labels, labels_len);
+        } else {
+            return fallback_search_index->CalcDistByIDs(dataset, bitset, labels, labels_len);
+        }
+    };
+
  protected:
     bool use_base_index = true;
     std::unique_ptr<IndexNode> base_index;
@@ -1997,205 +2220,6 @@ class BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback : public HNSWI
         return StaticCreateConfig();
     }
 };
-
-namespace {
-
-// a supporting function
-expected<faiss::ScalarQuantizer::QuantizerType>
-get_sq_quantizer_type(const std::string& sq_type) {
-    std::map<std::string, faiss::ScalarQuantizer::QuantizerType> sq_types = {
-        {"sq6", faiss::ScalarQuantizer::QT_6bit},
-        {"sq8", faiss::ScalarQuantizer::QT_8bit},
-        {"fp16", faiss::ScalarQuantizer::QT_fp16},
-        {"bf16", faiss::ScalarQuantizer::QT_bf16},
-        {"int8", faiss::ScalarQuantizer::QT_8bit_direct_signed}};
-
-    // todo: tolower
-    auto sq_type_tolower = str_to_lower(sq_type);
-    auto itr = sq_types.find(sq_type_tolower);
-    if (itr == sq_types.cend()) {
-        return expected<faiss::ScalarQuantizer::QuantizerType>::Err(
-            Status::invalid_args, fmt::format("invalid scalar quantizer type ({})", sq_type_tolower));
-    }
-
-    return itr->second;
-}
-
-/*
-// checks whether an index contains a refiner, suitable for a given data format
-std::optional<bool> whether_refine_is_datatype(
-    const faiss::Index* index,
-    const DataFormatEnum data_format
-) {
-    if (index == nullptr) {
-        return {};
-    }
-
-    const faiss::IndexRefine* const index_refine = dynamic_cast<const faiss::IndexRefine*>(index);
-    if (index_refine == nullptr) {
-        return false;
-    }
-
-    switch(data_format) {
-        case DataFormatEnum::fp32:
-            return (dynamic_cast<const faiss::IndexFlat*>(index_refine->refine_index) != nullptr);
-        case DataFormatEnum::fp16:
-            {
-                const auto* const index_sq = dynamic_cast<const
-faiss::IndexScalarQuantizer*>(index_refine->refine_index); return (index_sq != nullptr && index_sq->sq.qtype ==
-faiss::ScalarQuantizer::QT_fp16);
-            }
-        case DataFormatEnum::bf16:
-            {
-                const auto* const index_sq = dynamic_cast<const
-faiss::IndexScalarQuantizer*>(index_refine->refine_index); return (index_sq != nullptr && index_sq->sq.qtype ==
-faiss::ScalarQuantizer::QT_bf16);
-            }
-        default:
-            return {};
-    }
-}
-*/
-
-expected<bool>
-is_flat_refine(const std::optional<std::string>& refine_type) {
-    // grab a type of a refine index
-    if (!refine_type.has_value()) {
-        return true;
-    };
-
-    // todo: tolower
-    std::string refine_type_tolower = str_to_lower(refine_type.value());
-    if (refine_type_tolower == "fp32" || refine_type_tolower == "flat") {
-        return true;
-    };
-
-    // parse
-    auto refine_sq_type = get_sq_quantizer_type(refine_type_tolower);
-    if (!refine_sq_type.has_value()) {
-        LOG_KNOWHERE_ERROR_ << "Invalid refine type: " << refine_type.value();
-        return expected<bool>::Err(Status::invalid_args, fmt::format("invalid refine type ({})", refine_type.value()));
-    }
-
-    return false;
-}
-
-bool
-has_lossless_quant(const expected<faiss::ScalarQuantizer::QuantizerType>& quant_type, DataFormatEnum dataFormat) {
-    if (!quant_type.has_value()) {
-        return false;
-    }
-
-    auto quant = quant_type.value();
-    switch (dataFormat) {
-        case DataFormatEnum::fp32:
-            return false;
-        case DataFormatEnum::fp16:
-            return quant == faiss::ScalarQuantizer::QuantizerType::QT_fp16;
-        case DataFormatEnum::bf16:
-            return quant == faiss::ScalarQuantizer::QuantizerType::QT_bf16;
-        case DataFormatEnum::int8:
-            return quant == faiss::ScalarQuantizer::QuantizerType::QT_8bit_direct_signed;
-        default:
-            return false;
-    }
-}
-
-bool
-has_lossless_refine_index(const FaissHnswConfig& hnsw_cfg, DataFormatEnum dataFormat) {
-    bool has_refine = hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value();
-    if (has_refine) {
-        expected<bool> flat_refine = is_flat_refine(hnsw_cfg.refine_type);
-        if (flat_refine.has_value() && flat_refine.value()) {
-            return true;
-        }
-
-        auto sq_refine_type = get_sq_quantizer_type(hnsw_cfg.refine_type.value());
-        return has_lossless_quant(sq_refine_type, dataFormat);
-    }
-    return false;
-}
-
-// pick a refine index
-expected<std::unique_ptr<faiss::Index>>
-pick_refine_index(const DataFormatEnum data_format, const std::optional<std::string>& refine_type,
-                  std::unique_ptr<faiss::IndexHNSW>&& hnsw_index) {
-    // yes
-
-    // grab a type of a refine index
-    expected<bool> is_fp32_flat = is_flat_refine(refine_type);
-    if (!is_fp32_flat.has_value()) {
-        return expected<std::unique_ptr<faiss::Index>>::Err(Status::invalid_args, "");
-    }
-
-    const bool is_fp32_flat_v = is_fp32_flat.value();
-
-    // check input data_format
-    if (data_format == DataFormatEnum::fp16) {
-        // make sure that we're using fp16 refine
-        auto refine_sq_type = get_sq_quantizer_type(refine_type.value());
-        if (!(refine_sq_type.has_value() &&
-              (refine_sq_type.value() != faiss::ScalarQuantizer::QT_bf16 && !is_fp32_flat_v))) {
-            LOG_KNOWHERE_ERROR_ << "fp16 input data does not accept bf16 or fp32 as a refine index.";
-            return expected<std::unique_ptr<faiss::Index>>::Err(
-                Status::invalid_args, "fp16 input data does not accept bf16 or fp32 as a refine index.");
-        }
-    }
-
-    if (data_format == DataFormatEnum::bf16) {
-        // make sure that we're using bf16 refine
-        auto refine_sq_type = get_sq_quantizer_type(refine_type.value());
-        if (!(refine_sq_type.has_value() &&
-              (refine_sq_type.value() != faiss::ScalarQuantizer::QT_fp16 && !is_fp32_flat_v))) {
-            LOG_KNOWHERE_ERROR_ << "bf16 input data does not accept fp16 or fp32 as a refine index.";
-            return expected<std::unique_ptr<faiss::Index>>::Err(
-                Status::invalid_args, "bf16 input data does not accept fp16 or fp32 as a refine index.");
-        }
-    }
-
-    // build
-    std::unique_ptr<faiss::IndexHNSW> local_hnsw_index = std::move(hnsw_index);
-
-    // either build flat or sq
-    if (is_fp32_flat_v) {
-        // build IndexFlat as a refine
-        auto refine_index = std::make_unique<faiss::IndexRefineFlat>(local_hnsw_index.get());
-
-        // let refine_index to own everything
-        refine_index->own_fields = true;
-        local_hnsw_index.release();
-
-        // reassign
-        return refine_index;
-    } else {
-        // being IndexScalarQuantizer as a refine
-        auto refine_sq_type = get_sq_quantizer_type(refine_type.value());
-
-        // a redundant check
-        if (!refine_sq_type.has_value()) {
-            LOG_KNOWHERE_ERROR_ << "Invalid refine type: " << refine_type.value();
-            return expected<std::unique_ptr<faiss::Index>>::Err(
-                Status::invalid_args, fmt::format("invalid refine type ({})", refine_type.value()));
-        }
-
-        // create an sq
-        auto sq_refine = std::make_unique<faiss::IndexScalarQuantizer>(
-            local_hnsw_index->storage->d, refine_sq_type.value(), local_hnsw_index->storage->metric_type);
-
-        auto refine_index = std::make_unique<faiss::IndexRefine>(local_hnsw_index.get(), sq_refine.get());
-
-        // let refine_index to own everything
-        refine_index->own_refine_index = true;
-        refine_index->own_fields = true;
-        local_hnsw_index.release();
-        sq_refine.release();
-
-        // reassign
-        return refine_index;
-    }
-}
-
-}  // namespace
 
 //
 class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
@@ -2264,7 +2288,10 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
 
             if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
                 // yes
-                auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
+                const auto hnsw_d = hnsw_index->storage->d;
+                const auto hnsw_metric_type = hnsw_index->storage->metric_type;
+                auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index),
+                                                         hnsw_d, hnsw_metric_type);
                 if (!final_index_cnd.has_value()) {
                     return Status::invalid_args;
                 }
@@ -2332,7 +2359,7 @@ class BaseFaissRegularIndexHNSWSQNodeTemplate : public BaseFaissRegularIndexHNSW
             return true;
         }
 
-        return has_lossless_refine_index(hnsw_sq_cfg, datatype_v<DataType>);
+        return has_lossless_refine_index(hnsw_sq_cfg.refine, hnsw_sq_cfg.refine_type, datatype_v<DataType>);
     }
 };
 
@@ -2413,7 +2440,10 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
             std::unique_ptr<faiss::Index> final_index;
             if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
                 // yes
-                auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
+                const auto hnsw_d = hnsw_index->storage->d;
+                const auto hnsw_metric_type = hnsw_index->storage->metric_type;
+                auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index),
+                                                         hnsw_d, hnsw_metric_type);
                 if (!final_index_cnd.has_value()) {
                     return Status::invalid_args;
                 }
@@ -2604,7 +2634,7 @@ class BaseFaissRegularIndexHNSWPQNodeTemplate : public BaseFaissRegularIndexHNSW
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
         auto hnsw_cfg = static_cast<const FaissHnswConfig&>(config);
-        return has_lossless_refine_index(hnsw_cfg, datatype_v<DataType>);
+        return has_lossless_refine_index(hnsw_cfg.refine, hnsw_cfg.refine_type, datatype_v<DataType>);
     }
 };
 
@@ -2692,7 +2722,10 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
             std::unique_ptr<faiss::Index> final_index;
             if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
                 // yes
-                auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index));
+                const auto hnsw_d = hnsw_index->storage->d;
+                const auto hnsw_metric_type = hnsw_index->storage->metric_type;
+                auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index),
+                                                         hnsw_d, hnsw_metric_type);
                 if (!final_index_cnd.has_value()) {
                     return Status::invalid_args;
                 }
@@ -2884,7 +2917,7 @@ class BaseFaissRegularIndexHNSWPRQNodeTemplate : public BaseFaissRegularIndexHNS
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
         auto hnsw_cfg = static_cast<const FaissHnswConfig&>(config);
-        return has_lossless_refine_index(hnsw_cfg, datatype_v<DataType>);
+        return has_lossless_refine_index(hnsw_cfg.refine, hnsw_cfg.refine_type, datatype_v<DataType>);
     }
 };
 

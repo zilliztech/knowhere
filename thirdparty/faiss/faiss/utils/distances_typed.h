@@ -26,7 +26,7 @@ struct IDSelector;
  ***************************************************************************/
 // Knowhere-specific function
 template <typename DataType>
-void half_precision_floating_point_knn_inner_product(
+void knn_inner_product_typed(
         const DataType* x,
         const DataType* y,
         size_t d,
@@ -38,7 +38,7 @@ void half_precision_floating_point_knn_inner_product(
         const IDSelector* sel = nullptr);
 
 template <typename DataType>
-void half_precision_floating_point_all_inner_product(
+void all_inner_product_typed(
         const DataType* x,
         const DataType* y,
         size_t d,
@@ -48,7 +48,17 @@ void half_precision_floating_point_all_inner_product(
         const IDSelector* sel = nullptr);
 
 template <typename DataType>
-void half_precision_floating_point_knn_L2sqr(
+void all_inner_product_distances_typed(
+        const DataType* x,
+        const DataType* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* distances,
+        const IDSelector* sel = nullptr);
+
+template <typename DataType>
+void knn_L2sqr_typed(
         const DataType* x,
         const DataType* y,
         size_t d,
@@ -61,7 +71,7 @@ void half_precision_floating_point_knn_L2sqr(
         const IDSelector* sel = nullptr);
 
 template <typename DataType>
-void half_precision_floating_point_all_L2sqr(
+void all_L2sqr_typed(
         const DataType* x,
         const DataType* y,
         size_t d,
@@ -72,7 +82,7 @@ void half_precision_floating_point_all_L2sqr(
         const IDSelector* sel = nullptr);
 
 template <typename DataType>
-void half_precision_floating_point_knn_cosine(
+void knn_cosine_typed(
         const DataType* x,
         const DataType* y,
         const float* y_norms,
@@ -85,7 +95,7 @@ void half_precision_floating_point_knn_cosine(
         const IDSelector* sel = nullptr);
 
 template <typename DataType>
-void half_precision_floating_point_all_cosine(
+void all_cosine_typed(
         const DataType* x,
         const DataType* y,
         const float* y_norms,
@@ -100,7 +110,7 @@ void half_precision_floating_point_all_cosine(
  ***************************************************************************/
 struct RangeSearchResult;
 template <typename DataType>
-void half_precision_floating_point_range_search_L2sqr(
+void range_search_L2sqr_typed(
         const DataType* x,
         const DataType* y,
         size_t d,
@@ -112,7 +122,7 @@ void half_precision_floating_point_range_search_L2sqr(
 
 /// same as range_search_L2sqr for the inner product similarity
 template <typename DataType>
-void half_precision_floating_point_range_search_inner_product(
+void range_search_inner_product_typed(
         const DataType* x,
         const DataType* y,
         size_t d,
@@ -124,7 +134,7 @@ void half_precision_floating_point_range_search_inner_product(
 
 // Knowhere-specific function
 template <typename DataType>
-void half_precision_floating_point_range_search_cosine(
+void range_search_cosine_typed(
         const DataType* x,
         const DataType* y,
         const float* y_norms,

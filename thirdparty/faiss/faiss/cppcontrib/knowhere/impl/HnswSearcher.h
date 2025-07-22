@@ -423,7 +423,12 @@ struct v2_hnsw_searcher {
             distances[i] = retset[i].distance;
             labels[i] = (idx_t)retset[i].id;
         }
-
+        if (len < k) {
+            for (idx_t idx = len; idx < k; idx++) {
+                labels[idx] = -1;
+                distances[idx] = std::numeric_limits<float>::max();
+            }
+        }
         // update stats
         if (track_hnsw_stats) {
             stats.combine(local_stats);

@@ -15,21 +15,22 @@
 #include <string>
 
 #include "knowhere/operands.h"
+
 namespace faiss {
+
+#if defined(__x86_64__)
+extern bool use_avx512;
+extern bool use_avx2;
+extern bool use_sse4_2;
+#endif
+
+extern bool support_pq_fast_scan;
 
 /// inner product
 extern float (*fvec_inner_product)(const float*, const float*, size_t);
 
-extern float (*fp16_vec_inner_product)(const knowhere::fp16*, const knowhere::fp16*, size_t);
-
-extern float (*bf16_vec_inner_product)(const knowhere::bf16*, const knowhere::bf16*, size_t);
-
 /// Squared L2 distance between two vectors
 extern float (*fvec_L2sqr)(const float*, const float*, size_t);
-
-extern float (*fp16_vec_L2sqr)(const knowhere::fp16*, const knowhere::fp16*, size_t);
-
-extern float (*bf16_vec_L2sqr)(const knowhere::bf16*, const knowhere::bf16*, size_t);
 
 /// L1 distance
 extern float (*fvec_L1)(const float*, const float*, size_t);
@@ -39,10 +40,6 @@ extern float (*fvec_Linf)(const float*, const float*, size_t);
 
 /// squared norm of a vector
 extern float (*fvec_norm_L2sqr)(const float*, size_t);
-
-extern float (*fp16_vec_norm_L2sqr)(const knowhere::fp16*, size_t);
-
-extern float (*bf16_vec_norm_L2sqr)(const knowhere::bf16*, size_t);
 
 /// compute ny square L2 distance between x and a set of contiguous y vectors
 extern void (*fvec_L2sqr_ny)(float*, const float*, const float*, size_t, size_t);
@@ -78,40 +75,64 @@ extern int (*fvec_madd_and_argmin)(size_t, const float*, float, const float*, fl
 extern void (*fvec_inner_product_batch_4)(const float*, const float*, const float*, const float*, const float*,
                                           const size_t, float&, float&, float&, float&);
 
-extern void (*fp16_vec_inner_product_batch_4)(const knowhere::fp16*, const knowhere::fp16*, const knowhere::fp16*,
-                                              const knowhere::fp16*, const knowhere::fp16*, const size_t, float&,
-                                              float&, float&, float&);
-
-extern void (*bf16_vec_inner_product_batch_4)(const knowhere::bf16*, const knowhere::bf16*, const knowhere::bf16*,
-                                              const knowhere::bf16*, const knowhere::bf16*, const size_t, float&,
-                                              float&, float&, float&);
-
 /// Special version of L2sqr that computes 4 distances
 /// between x and yi, which is performance oriented.
 /// todo aguzhva: bring non-ref versions
 extern void (*fvec_L2sqr_batch_4)(const float*, const float*, const float*, const float*, const float*, const size_t,
                                   float&, float&, float&, float&);
 
+// for hnsw sq, obsolete
+extern int32_t (*ivec_inner_product)(const int8_t*, const int8_t*, size_t);
+extern int32_t (*ivec_L2sqr)(const int8_t*, const int8_t*, size_t);
+
+// fp16
+extern float (*fp16_vec_inner_product)(const knowhere::fp16*, const knowhere::fp16*, size_t);
+extern float (*fp16_vec_L2sqr)(const knowhere::fp16*, const knowhere::fp16*, size_t);
+extern float (*fp16_vec_norm_L2sqr)(const knowhere::fp16*, size_t);
+
+extern void (*fp16_vec_inner_product_batch_4)(const knowhere::fp16*, const knowhere::fp16*, const knowhere::fp16*,
+                                              const knowhere::fp16*, const knowhere::fp16*, const size_t, float&,
+                                              float&, float&, float&);
 extern void (*fp16_vec_L2sqr_batch_4)(const knowhere::fp16*, const knowhere::fp16*, const knowhere::fp16*,
                                       const knowhere::fp16*, const knowhere::fp16*, const size_t, float&, float&,
                                       float&, float&);
 
+// bf16
+extern float (*bf16_vec_inner_product)(const knowhere::bf16*, const knowhere::bf16*, size_t);
+extern float (*bf16_vec_L2sqr)(const knowhere::bf16*, const knowhere::bf16*, size_t);
+extern float (*bf16_vec_norm_L2sqr)(const knowhere::bf16*, size_t);
+
+extern void (*bf16_vec_inner_product_batch_4)(const knowhere::bf16*, const knowhere::bf16*, const knowhere::bf16*,
+                                              const knowhere::bf16*, const knowhere::bf16*, const size_t, float&,
+                                              float&, float&, float&);
 extern void (*bf16_vec_L2sqr_batch_4)(const knowhere::bf16*, const knowhere::bf16*, const knowhere::bf16*,
                                       const knowhere::bf16*, const knowhere::bf16*, const size_t, float&, float&,
                                       float&, float&);
+// int8
+extern float (*int8_vec_inner_product)(const int8_t*, const int8_t*, size_t);
+extern float (*int8_vec_L2sqr)(const int8_t*, const int8_t*, size_t);
+extern float (*int8_vec_norm_L2sqr)(const int8_t*, size_t);
 
-extern int32_t (*ivec_inner_product)(const int8_t*, const int8_t*, size_t);
+extern void (*int8_vec_inner_product_batch_4)(const int8_t*, const int8_t*, const int8_t*, const int8_t*, const int8_t*,
+                                              const size_t, float&, float&, float&, float&);
+extern void (*int8_vec_L2sqr_batch_4)(const int8_t*, const int8_t*, const int8_t*, const int8_t*, const int8_t*,
+                                      const size_t, float&, float&, float&, float&);
 
-extern int32_t (*ivec_L2sqr)(const int8_t*, const int8_t*, size_t);
+// rabitq
+extern float (*fvec_masked_sum)(const float*, const uint8_t*, const size_t);
+extern int (*rabitq_dp_popcnt)(const uint8_t*, const uint8_t*, const size_t, const size_t);
 
-#if defined(__x86_64__)
-extern bool use_avx512;
-extern bool use_avx2;
-extern bool use_sse4_2;
-#endif
-
-extern bool support_pq_fast_scan;
-
+// minhash
+extern int (*u64_binary_search_eq)(const uint64_t*, const size_t, const uint64_t);
+extern int (*u64_binary_search_ge)(const uint64_t*, const size_t, const uint64_t);
+extern float (*u32_jaccard_distance)(const char*, const char*, size_t size, size_t);
+extern void (*u32_jaccard_distance_batch_4)(const char*, const char*, const char*, const char*, const char*, size_t,
+                                            size_t, float&, float&, float&, float&);
+extern float (*u64_jaccard_distance)(const char*, const char*, size_t size, size_t);
+extern void (*u64_jaccard_distance_batch_4)(const char*, const char*, const char*, const char*, const char*, size_t,
+                                            size_t, float&, float&, float&, float&);
+extern uint64_t (*calculate_hash)(const char*, size_t);
+///////////////////////////////////////////////////////////////////////////////
 #if defined(__x86_64__)
 bool
 cpu_support_avx512();
@@ -121,6 +142,11 @@ bool
 cpu_support_sse4_2();
 bool
 cpu_support_f16c();
+#endif
+
+#if defined(__aarch64__)
+bool
+supports_sve();
 #endif
 
 void

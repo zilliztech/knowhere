@@ -45,8 +45,9 @@ struct IVFFastScanIteratorWorkspace : IVFIteratorWorkspace {
     IVFFastScanIteratorWorkspace() = default;
     IVFFastScanIteratorWorkspace(
             const float* query_data,
+            const size_t d,
             const IVFSearchParameters* search_params)
-            : IVFIteratorWorkspace(query_data, search_params){};
+            : IVFIteratorWorkspace(query_data, d, search_params){};
     IVFFastScanIteratorWorkspace(
             std::unique_ptr<IVFIteratorWorkspace>&& base_workspace) {
         this->query_data = base_workspace->query_data;
@@ -85,8 +86,8 @@ struct IndexIVFFastScan : IndexIVF {
     int qbs = 0;
     size_t qbs2 = 0;
 
-    // // todo aguzhva: get rid of this
-    std::vector<float> norms;
+    // Inverse L2 norms for cosine similarity computation
+    std::vector<float> inverse_norms;
 
     IndexIVFFastScan(
             Index* quantizer,

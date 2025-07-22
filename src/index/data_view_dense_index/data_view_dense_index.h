@@ -12,7 +12,6 @@
 // knowhere-specific indices
 #pragma once
 
-#include <faiss/impl/DistanceComputer.h>
 #include <knowhere/bitsetview.h>
 #include <knowhere/range_util.h>
 
@@ -26,15 +25,13 @@
 #include "faiss/impl/AuxIndexStructures.h"
 #include "faiss/impl/ResultHandler.h"
 #include "faiss/utils/distances_if.h"
+#include "index/data_view_dense_index/refine_computer.h"
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/config.h"
 #include "knowhere/operands.h"
 #include "knowhere/range_util.h"
-#include "knowhere/utils.h"
-#include "simd/hook.h"
 namespace knowhere {
-using idx_t = faiss::idx_t;
 using CMAX = faiss::CMax<float, idx_t>;
 using CMIN = faiss::CMin<float, idx_t>;
 struct RangeSearchResult;
@@ -45,8 +42,15 @@ DataViewIndexBase only keep index meta and data codes(!= raw data) in memory.
 */
 class DataViewIndexBase {
  public:
-    DataViewIndexBase(idx_t d, DataFormatEnum data_type, MetricType metric_type, ViewDataOp view, bool is_cosine)
-        : d_(d), data_type_(data_type), metric_type_(metric_type), view_data_(view), is_cosine_(is_cosine) {
+    DataViewIndexBase(idx_t d, DataFormatEnum data_type, MetricType metric_type, ViewDataOp view, bool is_cosine,
+                      RefineType refine_type, std::optional<int> build_thread_num)
+        : d_(d),
+          data_type_(data_type),
+          metric_type_(metric_type),
+          view_data_(view),
+          is_cosine_(is_cosine),
+          refine_type_(refine_type),
+          build_thread_num_(build_thread_num) {
         if (metric_type != metric::L2 && metric_type != metric::IP) {
             throw std::runtime_error("DataViewIndexBase only support L2 or IP.");
         }
@@ -59,18 +63,29 @@ class DataViewIndexBase {
         } else {
             throw std::runtime_error("data view index only support float data type.");
         }
+        // use memory quant data to refine
+        if (refine_type_ != RefineType::DATA_VIEW) {
+            quant_data_ = std::shared_ptr<QuantRefine>(new QuantRefine(d, data_type_, refine_type_, metric_type_));
+            if ((refine_type_ == RefineType::BFLOAT16_QUANT && data_type == DataFormatEnum::fp16) ||
+                (refine_type_ == RefineType::FLOAT16_QUANT && data_type == DataFormatEnum::bf16)) {
+                throw std::runtime_error(
+                    "Type fp16 can't use BFLOAT16_QUANT to refine or bf16 can't use BFLOAT16_QUANT to refine.");
+            }
+        } else {
+            quant_data_ = nullptr;
+        }
     }
     virtual ~DataViewIndexBase(){};
 
     virtual void
-    Train(idx_t n, const void* __restrict x) = 0;
+    Train(idx_t n, const void* __restrict x, bool use_knowhere_build_pool) = 0;
 
     virtual void
-    Add(idx_t n, const void* __restrict x, const float* __restrict norms_) = 0;
+    Add(idx_t n, const void* __restrict x, const float* __restrict norms_, bool use_knowhere_build_pool) = 0;
 
     virtual void
     Search(const idx_t n, const void* __restrict x, const idx_t k, float* __restrict distances,
-           idx_t* __restrict labels, const BitsetView& bitset) const = 0;
+           idx_t* __restrict labels, const BitsetView& bitset, const bool use_quant) const = 0;
 
     /** Knn Search on set of vectors
      *
@@ -84,12 +99,12 @@ class DataViewIndexBase {
      */
     virtual void
     SearchWithIds(const idx_t n, const void* __restrict x, const idx_t* __restrict ids_num_lims,
-                  const idx_t* __restrict ids, const idx_t k, float* __restrict out_dist,
-                  idx_t* __restrict out_ids) const = 0;
+                  const idx_t* __restrict ids, const idx_t k, float* __restrict out_dist, idx_t* __restrict out_ids,
+                  const bool use_quant) const = 0;
 
     virtual RangeSearchResult
     RangeSearch(const idx_t n, const void* __restrict x, const float radius, const float range_filter,
-                const BitsetView& bitset) const = 0;
+                const BitsetView& bitset, const bool use_quant) const = 0;
 
     /** Range Search on set of vectors
      *
@@ -102,11 +117,12 @@ class DataViewIndexBase {
      */
     virtual RangeSearchResult
     RangeSearchWithIds(const idx_t n, const void* __restrict x, const idx_t* __restrict ids_num_lims,
-                       const idx_t* __restrict ids, const float radius, const float range_filter) const = 0;
+                       const idx_t* __restrict ids, const float radius, const float range_filter,
+                       const bool use_quant) const = 0;
 
     virtual void
     ComputeDistanceSubset(const void* __restrict x, const idx_t sub_y_n, float* x_y_distances,
-                          const idx_t* __restrict x_y_labels) const = 0;
+                          const idx_t* __restrict x_y_labels, const bool use_quant) const = 0;
 
     auto
     Dim() const {
@@ -132,6 +148,10 @@ class DataViewIndexBase {
     Count() const {
         return ntotal_.load();
     }
+    std::shared_ptr<QuantRefine>
+    GetQuantData() const {
+        return quant_data_;
+    }
 
  protected:
     int d_;
@@ -141,22 +161,65 @@ class DataViewIndexBase {
     bool is_cosine_;
     int code_size_;
     std::atomic<idx_t> ntotal_ = 0;
+    RefineType refine_type_;
+    std::shared_ptr<QuantRefine> quant_data_ = nullptr;
+    std::optional<int> build_thread_num_ = std::nullopt;
 };
 
 class DataViewIndexFlat : public DataViewIndexBase {
  public:
-    DataViewIndexFlat(idx_t d, DataFormatEnum data_type, MetricType metric_type, ViewDataOp view, bool is_cosine)
-        : DataViewIndexBase(d, data_type, metric_type, view, is_cosine) {
+    DataViewIndexFlat(idx_t d, DataFormatEnum data_type, MetricType metric_type, ViewDataOp view, bool is_cosine,
+                      RefineType refine_type, std::optional<int> build_thread_num = std::nullopt)
+        : DataViewIndexBase(d, data_type, metric_type, view, is_cosine, refine_type, build_thread_num) {
         this->ntotal_.store(0);
     }
     void
-    Train(idx_t n, const void* x) override {
-        // do nothing
+    Train(idx_t n, const void* x, bool use_knowhere_build_pool) override {
+        if (quant_data_ != nullptr) {
+            auto build_pool_wrapper =
+                std::make_shared<ThreadPoolWrapper>(ThreadPool::GetGlobalBuildThreadPool(), use_knowhere_build_pool);
+            auto task = build_pool_wrapper
+                            ->push([&] {
+                                std::unique_ptr<ThreadPool::ScopedBuildOmpSetter> setter;
+                                if (build_thread_num_.has_value()) {
+                                    setter =
+                                        std::make_unique<ThreadPool::ScopedBuildOmpSetter>(build_thread_num_.value());
+                                } else {
+                                    setter = std::make_unique<ThreadPool::ScopedBuildOmpSetter>();
+                                }
+                                quant_data_->Train(x, n);
+                            })
+                            .getTry();
+            if (task.hasException()) {
+                std::runtime_error(std::string("faiss internal error," + task.exception().what()));
+            }
+        }
         return;
     }
 
     void
-    Add(idx_t n, const void* x, const float* __restrict in_norms) override {
+    Add(idx_t n, const void* x, const float* __restrict in_norms, bool use_knowhere_build_pool) override {
+        if (quant_data_ != nullptr) {
+            auto build_pool_wrapper =
+                std::make_shared<ThreadPoolWrapper>(ThreadPool::GetGlobalBuildThreadPool(), use_knowhere_build_pool);
+            auto task = build_pool_wrapper
+                            ->push([&] {
+                                std::unique_ptr<ThreadPool::ScopedBuildOmpSetter> setter;
+                                if (build_thread_num_.has_value()) {
+                                    setter =
+                                        std::make_unique<ThreadPool::ScopedBuildOmpSetter>(build_thread_num_.value());
+                                } else {
+                                    setter = std::make_unique<ThreadPool::ScopedBuildOmpSetter>();
+                                }
+                                std::vector<idx_t> ids(n);
+                                std::iota(ids.begin(), ids.end(), ntotal_.load());
+                                quant_data_->Add(x, ids.data(), n);
+                            })
+                            .getTry();
+            if (task.hasException()) {
+                std::runtime_error(std::string("faiss internal error," + task.exception().what()));
+            }
+        }
         if (is_cosine_) {
             if (in_norms == nullptr) {
                 std::vector<float> l2_norms;
@@ -179,24 +242,25 @@ class DataViewIndexFlat : public DataViewIndexBase {
 
     void
     Search(const idx_t n, const void* __restrict x, const idx_t k, float* __restrict distances,
-           idx_t* __restrict labels, const BitsetView& bitset) const override;
+           idx_t* __restrict labels, const BitsetView& bitset, const bool use_quant) const override;
 
     void
     SearchWithIds(const idx_t n, const void* __restrict x, const idx_t* __restrict ids_num_lims,
-                  const idx_t* __restrict ids, const idx_t k, float* __restrict out_dist,
-                  idx_t* __restrict out_ids) const override;
+                  const idx_t* __restrict ids, const idx_t k, float* __restrict out_dist, idx_t* __restrict out_ids,
+                  const bool use_quant) const override;
 
     RangeSearchResult
     RangeSearch(const idx_t n, const void* __restrict x, const float radius, const float range_filter,
-                const BitsetView& bitset) const override;
+                const BitsetView& bitset, const bool use_quant) const override;
 
     RangeSearchResult
     RangeSearchWithIds(const idx_t n, const void* __restrict x, const idx_t* __restrict ids_num_lims,
-                       const idx_t* __restrict ids, const float radius, const float range_filter) const override;
+                       const idx_t* __restrict ids, const float radius, const float range_filter,
+                       const bool use_quant) const override;
 
     void
     ComputeDistanceSubset(const void* __restrict x, const idx_t sub_y_n, float* __restrict x_y_distances,
-                          const idx_t* __restrict x_y_labels) const override;
+                          const idx_t* __restrict x_y_labels, const bool use_quant) const override;
 
     float
     GetDataNorm(idx_t id) const {
@@ -232,144 +296,6 @@ class DataViewIndexFlat : public DataViewIndexBase {
     mutable std::shared_mutex norms_mutex_;
 };
 
-template <typename DataType, typename Distance1, typename Distance4, bool NeedNormalize = false>
-struct DataViewDistanceComputer : faiss::DistanceComputer {
-    ViewDataOp view_data;
-    size_t dim;
-    const DataType* q;
-    Distance1 dist1;
-    Distance4 dist4;
-    float q_norm;
-
-    DataViewDistanceComputer(const DataViewIndexBase* index, Distance1 dist1, Distance4 dist4,
-                             const DataType* query = nullptr, std::optional<float> query_norm = std::nullopt)
-        : view_data(index->GetViewData()), dim(index->Dim()), dist1(dist1), dist4(dist4) {
-        if (query != nullptr) {
-            this->set_query((const float*)query, query_norm);
-        }
-        return;
-    }
-
-    // convert x to float* for override, still use DataType to get distance
-    void
-    set_query(const float* x) override {
-        q = (const DataType*)x;
-        if constexpr (NeedNormalize) {
-            q_norm = GetL2Norm(q, dim);
-        }
-    }
-
-    void
-    set_query(const float* x, std::optional<float> x_norm = std::nullopt) {
-        q = (const DataType*)x;
-        if constexpr (NeedNormalize) {
-            q_norm = x_norm.value_or(GetL2Norm(q, dim));
-        }
-    }
-
-    float
-    operator()(idx_t i) override {
-        auto code = view_data(i);
-        return distance_to_code(code);
-    }
-
-    float
-    distance_to_code(const void* x) {
-        if constexpr (NeedNormalize) {
-            return dist1(q, (const DataType*)x, dim) / q_norm;
-        } else {
-            return dist1(q, (const DataType*)x, dim);
-        }
-    }
-
-    void
-    distances_batch_4(const idx_t idx0, const idx_t idx1, const idx_t idx2, const idx_t idx3, float& dis0, float& dis1,
-                      float& dis2, float& dis3) override {
-        auto x0 = (DataType*)view_data(idx0);
-        auto x1 = (DataType*)view_data(idx1);
-        auto x2 = (DataType*)view_data(idx2);
-        auto x3 = (DataType*)view_data(idx3);
-        dist4(q, x0, x1, x2, x3, dim, dis0, dis1, dis2, dis3);
-        if constexpr (NeedNormalize) {
-            dis0 /= q_norm;
-            dis1 /= q_norm;
-            dis2 /= q_norm;
-            dis3 /= q_norm;
-        }
-    }
-
-    /// compute distance between two stored vectors
-    float
-    symmetric_dis(idx_t i, idx_t j) override {
-        auto x = (DataType*)view_data(i);
-        auto y = (DataType*)view_data(j);
-        return dist1(x, y, dim);
-    }
-};
-
-static std::unique_ptr<faiss::DistanceComputer>
-SelectDataViewComputer(const DataViewIndexBase* index) {
-    if (index->DataFormat() == DataFormatEnum::fp16) {
-        if (index->Metric() == metric::IP) {
-            if (index->IsCosine()) {
-                return std::unique_ptr<faiss::DistanceComputer>(
-                    new DataViewDistanceComputer<fp16, decltype(faiss::fp16_vec_inner_product),
-                                                 decltype(faiss::fp16_vec_inner_product_batch_4), true>(
-                        index, faiss::fp16_vec_inner_product, faiss::fp16_vec_inner_product_batch_4));
-            } else {
-                return std::unique_ptr<faiss::DistanceComputer>(
-                    new DataViewDistanceComputer<fp16, decltype(faiss::fp16_vec_inner_product),
-                                                 decltype(faiss::fp16_vec_inner_product_batch_4), false>(
-                        index, faiss::fp16_vec_inner_product, faiss::fp16_vec_inner_product_batch_4));
-            }
-        } else {
-            return std::unique_ptr<faiss::DistanceComputer>(
-                new DataViewDistanceComputer<fp16, decltype(faiss::fp16_vec_L2sqr),
-                                             decltype(faiss::fp16_vec_L2sqr_batch_4)>(index, faiss::fp16_vec_L2sqr,
-                                                                                      faiss::fp16_vec_L2sqr_batch_4));
-        }
-    } else if (index->DataFormat() == DataFormatEnum::bf16) {
-        if (index->Metric() == metric::IP) {
-            if (index->IsCosine()) {
-                return std::unique_ptr<faiss::DistanceComputer>(
-                    new DataViewDistanceComputer<bf16, decltype(faiss::bf16_vec_inner_product),
-                                                 decltype(faiss::bf16_vec_inner_product_batch_4), true>(
-                        index, faiss::bf16_vec_inner_product, faiss::bf16_vec_inner_product_batch_4));
-            } else {
-                return std::unique_ptr<faiss::DistanceComputer>(
-                    new DataViewDistanceComputer<bf16, decltype(faiss::bf16_vec_inner_product),
-                                                 decltype(faiss::bf16_vec_inner_product_batch_4), false>(
-                        index, faiss::bf16_vec_inner_product, faiss::bf16_vec_inner_product_batch_4));
-            }
-        } else {
-            return std::unique_ptr<faiss::DistanceComputer>(
-                new DataViewDistanceComputer<bf16, decltype(faiss::bf16_vec_L2sqr),
-                                             decltype(faiss::bf16_vec_L2sqr_batch_4)>(index, faiss::bf16_vec_L2sqr,
-                                                                                      faiss::bf16_vec_L2sqr_batch_4));
-        }
-    } else if (index->DataFormat() == DataFormatEnum::fp32) {
-        if (index->Metric() == metric::IP) {
-            if (index->IsCosine()) {
-                return std::unique_ptr<faiss::DistanceComputer>(
-                    new DataViewDistanceComputer<fp32, decltype(faiss::fvec_inner_product),
-                                                 decltype(faiss::fvec_inner_product_batch_4), true>(
-                        index, faiss::fvec_inner_product, faiss::fvec_inner_product_batch_4));
-            } else {
-                return std::unique_ptr<faiss::DistanceComputer>(
-                    new DataViewDistanceComputer<fp32, decltype(faiss::fvec_inner_product),
-                                                 decltype(faiss::fvec_inner_product_batch_4), false>(
-                        index, faiss::fvec_inner_product, faiss::fvec_inner_product_batch_4));
-            }
-        } else {
-            return std::unique_ptr<faiss::DistanceComputer>(
-                new DataViewDistanceComputer<fp32, decltype(faiss::fvec_L2sqr), decltype(faiss::fvec_L2sqr_batch_4)>(
-                    index, faiss::fvec_L2sqr, faiss::fvec_L2sqr_batch_4));
-        }
-    } else {
-        return nullptr;
-    }
-}
-
 template <class SingleResultHandler, class SelectorHelper>
 void
 DataViewIndexFlat::exhaustive_search_in_one_query_impl(const std::unique_ptr<faiss::DistanceComputer>& computer,
@@ -392,7 +318,7 @@ DataViewIndexFlat::exhaustive_search_in_one_query_impl(const std::unique_ptr<fai
 
 void
 DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k, float* __restrict distances,
-                          idx_t* __restrict labels, const BitsetView& bitset) const {
+                          idx_t* __restrict labels, const BitsetView& bitset, const bool use_quant) const {
     // todo: need more test to check
     const auto& search_pool = ThreadPool::GetGlobalSearchThreadPool();
     std::vector<folly::Future<folly::Unit>> futs;
@@ -404,7 +330,8 @@ DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k
                 futs.emplace_back(search_pool->push([&] {
                     ThreadPool::ScopedSearchOmpSetter setter(1);
                     faiss::HeapBlockResultHandler<CMAX>::SingleResultHandler resi(res);
-                    auto computer = SelectDataViewComputer(this);
+                    auto computer = SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_,
+                                                           use_quant ? quant_data_ : nullptr);
                     computer->set_query((const float*)((const char*)x + code_size_ * i));
                     resi.begin(i);
                     if (bitset.empty()) {
@@ -422,7 +349,8 @@ DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k
                 futs.emplace_back(search_pool->push([&] {
                     ThreadPool::ScopedSearchOmpSetter setter(1);
                     faiss::HeapBlockResultHandler<CMIN>::SingleResultHandler resi(res);
-                    auto computer = SelectDataViewComputer(this);
+                    auto computer = SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_,
+                                                           use_quant ? quant_data_ : nullptr);
                     computer->set_query((const float*)((const char*)x + code_size_ * i));
                     resi.begin(i);
                     if (bitset.empty()) {
@@ -443,7 +371,8 @@ DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k
                 futs.emplace_back(search_pool->push([&] {
                     ThreadPool::ScopedSearchOmpSetter setter(1);
                     faiss::ReservoirBlockResultHandler<CMAX>::SingleResultHandler resi(res);
-                    auto computer = SelectDataViewComputer(this);
+                    auto computer = SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_,
+                                                           use_quant ? quant_data_ : nullptr);
                     computer->set_query((const float*)((const char*)x + code_size_ * i));
                     resi.begin(i);
                     if (bitset.empty()) {
@@ -461,7 +390,8 @@ DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k
                 futs.emplace_back(search_pool->push([&] {
                     ThreadPool::ScopedSearchOmpSetter setter(1);
                     faiss::ReservoirBlockResultHandler<CMIN>::SingleResultHandler resi(res);
-                    auto computer = SelectDataViewComputer(this);
+                    auto computer = SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_,
+                                                           use_quant ? quant_data_ : nullptr);
                     computer->set_query((const float*)((const char*)x + code_size_ * i));
                     resi.begin(i);
                     if (bitset.empty()) {
@@ -480,7 +410,7 @@ DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k
 void
 DataViewIndexFlat::SearchWithIds(const idx_t n, const void* __restrict x, const idx_t* __restrict ids_num_lims,
                                  const idx_t* __restrict ids, const idx_t k, float* __restrict out_dist,
-                                 idx_t* __restrict out_ids) const {
+                                 idx_t* __restrict out_ids, const bool use_quant) const {
     const auto& search_pool = ThreadPool::GetGlobalSearchThreadPool();
     std::vector<folly::Future<folly::Unit>> futs;
     futs.reserve(n);
@@ -498,7 +428,7 @@ DataViewIndexFlat::SearchWithIds(const idx_t n, const void* __restrict x, const 
             auto x_i = (const char*)x + code_size_ * i;
 
             assert(base_n >= k);
-            ComputeDistanceSubset(x_i, base_n, base_dist.get(), base_ids);
+            ComputeDistanceSubset(x_i, base_n, base_dist.get(), base_ids, use_quant);
             if (is_cosine_) {
                 std::shared_lock lock(norms_mutex_);
                 for (auto j = 0; j < base_n; j++) {
@@ -522,7 +452,7 @@ DataViewIndexFlat::SearchWithIds(const idx_t n, const void* __restrict x, const 
 
 RangeSearchResult
 DataViewIndexFlat::RangeSearch(const idx_t n, const void* __restrict x, const float radius, const float range_filter,
-                               const BitsetView& bitset) const {
+                               const BitsetView& bitset, const bool use_quant) const {
     // todo: need more test to check
     std::vector<std::vector<float>> result_dist_array(n);
     std::vector<std::vector<idx_t>> result_id_array(n);
@@ -542,7 +472,8 @@ DataViewIndexFlat::RangeSearch(const idx_t n, const void* __restrict x, const fl
         for (auto i = 0; i < n; i++) {
             futs.emplace_back(search_pool->push([&, i = i] {
                 ThreadPool::ScopedSearchOmpSetter setter(1);
-                auto computer = SelectDataViewComputer(this);
+                auto computer = SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_,
+                                                       use_quant ? quant_data_ : nullptr);
                 faiss::RangeSearchResult res(1);
                 faiss::RangeSearchBlockResultHandler<CMAX> resh(&res, radius);
                 faiss::RangeSearchBlockResultHandler<CMAX>::SingleResultHandler reshi(resh);
@@ -572,7 +503,8 @@ DataViewIndexFlat::RangeSearch(const idx_t n, const void* __restrict x, const fl
         for (auto i = 0; i < n; i++) {
             futs.emplace_back(search_pool->push([&, i = i] {
                 ThreadPool::ScopedSearchOmpSetter setter(1);
-                auto computer = SelectDataViewComputer(this);
+                auto computer = SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_,
+                                                       use_quant ? quant_data_ : nullptr);
                 faiss::RangeSearchResult res(1);
                 faiss::RangeSearchBlockResultHandler<CMIN> resh(&res, radius);
                 faiss::RangeSearchBlockResultHandler<CMIN>::SingleResultHandler reshi(resh);
@@ -604,7 +536,8 @@ DataViewIndexFlat::RangeSearch(const idx_t n, const void* __restrict x, const fl
 
 RangeSearchResult
 DataViewIndexFlat::RangeSearchWithIds(const idx_t n, const void* __restrict x, const idx_t* __restrict ids_num_lims,
-                                      const idx_t* __restrict ids, const float radius, const float range_filter) const {
+                                      const idx_t* __restrict ids, const float radius, const float range_filter,
+                                      const bool use_quant) const {
     std::vector<std::vector<float>> result_dist_array(n);
     std::vector<std::vector<idx_t>> result_id_array(n);
     auto is_ip = metric_type_ == metric::IP;
@@ -618,7 +551,7 @@ DataViewIndexFlat::RangeSearchWithIds(const idx_t n, const void* __restrict x, c
             auto base_n = ids_num_lims[i + 1] - ids_num_lims[i];
             auto base_dist = std::unique_ptr<float[]>(new float[base_n]);
             auto x_i = (const char*)x + code_size_ * i;
-            ComputeDistanceSubset((const void*)x_i, base_n, base_dist.get(), base_ids);
+            ComputeDistanceSubset((const void*)x_i, base_n, base_dist.get(), base_ids, use_quant);
             if (is_cosine_) {
                 std::shared_lock lock(norms_mutex_);
                 for (auto j = 0; j < base_n; j++) {
@@ -649,8 +582,9 @@ DataViewIndexFlat::RangeSearchWithIds(const idx_t n, const void* __restrict x, c
 
 void
 DataViewIndexFlat::ComputeDistanceSubset(const void* __restrict x, const idx_t sub_y_n, float* x_y_distances,
-                                         const idx_t* __restrict x_y_labels) const {
-    auto computer = SelectDataViewComputer(this);
+                                         const idx_t* __restrict x_y_labels, const bool use_quant) const {
+    auto computer =
+        SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_, use_quant ? quant_data_ : nullptr);
 
     computer->set_query((const float*)(x));
     const idx_t* __restrict idsj = x_y_labels;

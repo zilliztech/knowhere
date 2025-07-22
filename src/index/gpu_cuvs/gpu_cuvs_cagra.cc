@@ -36,11 +36,11 @@ class GpuCuvsCagraHybridIndexNode : public GpuCuvsCagraIndexNode<DataType> {
     }
 
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         const GpuCuvsCagraConfig& cagra_cfg = static_cast<const GpuCuvsCagraConfig&>(*cfg);
         if (cagra_cfg.adapt_for_cpu.value())
             adapt_for_cpu = true;
-        return GpuCuvsCagraIndexNode<DataType>::Train(dataset, cfg);
+        return GpuCuvsCagraIndexNode<DataType>::Train(dataset, cfg, use_knowhere_build_pool);
     }
 
     expected<DataSetPtr>
@@ -125,26 +125,31 @@ class GpuCuvsCagraHybridIndexNode : public GpuCuvsCagraIndexNode<DataType> {
     Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) override {
         if (binset.Contains(std::string(this->Type()) + "_cpu")) {
             this->adapt_for_cpu = true;
-            auto binary = binset.GetByName(std::string(this->Type() + "_cpu"));
+            if constexpr (std::is_same_v<DataType, std::int8_t>) {
+                // TODO: Add HNSW support for INT8
+                LOG_KNOWHERE_ERROR_ << "CAGRA+HNSW does not support INT8 data.";
+                return Status::invalid_binary_set;
+            } else {
+                try {
+                    auto binary = binset.GetByName(std::string(this->Type()) + "_cpu");
+                    if (binary == nullptr) {
+                        LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
+                        return Status::invalid_binary_set;
+                    }
 
-            try {
-                auto binary = binset.GetByName(std::string(this->Type()) + "_cpu");
-                if (binary == nullptr) {
-                    LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
-                    return Status::invalid_binary_set;
+                    MemoryIOReader reader(binary->data.get(), binary->size);
+
+                    hnswlib::SpaceInterface<float>* space = nullptr;
+                    hnsw_index_.reset(new (std::nothrow)
+                                          hnswlib::HierarchicalNSW<DataType, float, hnswlib::None>(space));
+                    hnsw_index_->loadIndex(reader);
+                    hnsw_index_->base_layer_only = true;
+                } catch (std::exception& e) {
+                    LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
+                    return Status::hnsw_inner_error;
                 }
-
-                MemoryIOReader reader(binary->data.get(), binary->size);
-
-                hnswlib::SpaceInterface<float>* space = nullptr;
-                hnsw_index_.reset(new (std::nothrow) hnswlib::HierarchicalNSW<DataType, float, hnswlib::None>(space));
-                hnsw_index_->loadIndex(reader);
-                hnsw_index_->base_layer_only = true;
-            } catch (std::exception& e) {
-                LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
-                return Status::hnsw_inner_error;
+                return Status::success;
             }
-            return Status::success;
         }
 
         return GpuCuvsCagraIndexNode<DataType>::Deserialize(binset, std::move(cfg));
@@ -173,6 +178,31 @@ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuCuvsCagraHybridIndexNode
                                               return count * cuda_concurrent_size_per_device;
                                           }());
 
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_CAGRA, GpuCuvsCagraHybridIndexNode, fp16,
+                                          knowhere::feature::GPU | knowhere::feature::FP16, []() {
+                                              int count;
+                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
+                                              return count * cuda_concurrent_size_per_device;
+                                          }());
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuCuvsCagraHybridIndexNode, fp16,
+                                          knowhere::feature::GPU | knowhere::feature::FP16, []() {
+                                              int count;
+                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
+                                              return count * cuda_concurrent_size_per_device;
+                                          }());
+// TODO: Add HNSW support for INT8. Not using the hybrid CAGRA+HNSW for INT8
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_CAGRA, GpuCuvsCagraIndexNode, int8,
+                                          knowhere::feature::GPU | knowhere::feature::INT8, []() {
+                                              int count;
+                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
+                                              return count * cuda_concurrent_size_per_device;
+                                          }());
+KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuCuvsCagraIndexNode, int8,
+                                          knowhere::feature::GPU | knowhere::feature::INT8, []() {
+                                              int count;
+                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
+                                              return count * cuda_concurrent_size_per_device;
+                                          }());
 KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_CAGRA, GpuCuvsCagraHybridIndexNode, bin1,
                                           knowhere::feature::GPU | knowhere::feature::BINARY, []() {
                                               int count;
@@ -185,4 +215,5 @@ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuCuvsCagraHybridIndexNode
                                               RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
                                               return count * cuda_concurrent_size_per_device;
                                           }());
+
 }  // namespace knowhere

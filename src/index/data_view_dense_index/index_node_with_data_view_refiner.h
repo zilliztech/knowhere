@@ -43,16 +43,13 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
     }
 
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override;
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override;
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
 
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
-
-    expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
 
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
@@ -176,13 +173,16 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
     class iterator : public IndexIterator {
      public:
         iterator(std::shared_ptr<DataViewIndexFlat> refine_offset_index, IndexNode::IteratorPtr base_workspace,
-                 std::unique_ptr<DataType[]>&& copied_query, bool larger_is_closer, float refine_ratio = 0.5f,
-                 bool retain_iterator_order = false)
+                 std::unique_ptr<DataType[]>&& copied_query, bool larger_is_closer, bool use_quant,
+                 float refine_ratio = 0.5f, bool retain_iterator_order = false)
             : IndexIterator(larger_is_closer, false, refine_ratio, retain_iterator_order),
               refine_offset_index_(refine_offset_index),
               copied_query_(std::move(copied_query)),
               base_workspace_(base_workspace) {
-            refine_computer_ = SelectDataViewComputer(refine_offset_index.get());
+            refine_computer_ = SelectDataViewComputer(refine_offset_index->GetViewData(),
+                                                      refine_offset_index->DataFormat(), refine_offset_index->Metric(),
+                                                      refine_offset_index_->Dim(), refine_offset_index_->IsCosine(),
+                                                      use_quant ? refine_offset_index_->GetQuantData() : nullptr);
             refine_computer_->set_query((const float*)copied_query_.get());
         }
 
@@ -303,47 +303,59 @@ ConvertToBaseIndexFp32DataSet(const DataSetPtr& src, bool is_cosine = false,
 
 template <typename DataType, typename BaseIndexNode>
 Status
-IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
+IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
+                                                             bool use_knowhere_build_pool) {
     BaseConfig& base_cfg = static_cast<BaseConfig&>(*cfg);
     this->is_cosine_ = IsMetricType(base_cfg.metric_type.value(), knowhere::metric::COSINE);
     auto dim = dataset->GetDim();
     auto train_rows = dataset->GetRows();
+    auto data = dataset->GetTensor();
+    auto refine_type = (knowhere::RefineType)(base_cfg.refine_type.value());
     // construct refiner
     auto refine_metric = is_cosine_ ? metric::IP : base_cfg.metric_type.value();
-    refine_offset_index_ =
-        std::make_unique<DataViewIndexFlat>(dim, datatype_v<DataType>, refine_metric, this->view_data_op_, is_cosine_);
     // construct quant index and train:
     AdaptToBaseIndexConfig(cfg.get(), PARAM_TYPE::TRAIN, dim);
     auto base_index_dim = dynamic_cast<BaseConfig*>(cfg.get())->dim.value();
+    auto build_thread_num = dynamic_cast<BaseConfig*>(cfg.get())->num_build_thread;
 
     LOG_KNOWHERE_DEBUG_ << "Generate Base Index with dim: " << base_index_dim << std::endl;
     auto [fp32_train_ds, _] =
         ConvertToBaseIndexFp32DataSet<DataType>(dataset, this->is_cosine_, 0, train_rows, base_index_dim);
-    return base_index_->Train(
-        fp32_train_ds,
-        cfg);  // train not need base_index_lock_, all add and search will fail if train not called before
+    refine_offset_index_ = std::make_unique<DataViewIndexFlat>(
+        dim, datatype_v<DataType>, refine_metric, this->view_data_op_, is_cosine_, refine_type, build_thread_num);
+    try {
+        refine_offset_index_->Train(train_rows, data, use_knowhere_build_pool);
+    } catch (const std::exception& e) {
+        LOG_KNOWHERE_WARNING_ << "data view index inner error: " << e.what();
+        return Status::internal_error;
+    }
+    return base_index_->Train(fp32_train_ds, cfg,
+                              use_knowhere_build_pool);  // train not need base_index_lock_, all add and search will
+                                                         // fail if train not called before
 }
 
 template <typename DataType, typename BaseIndexNode>
 Status
-IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
+IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
+                                                           bool use_knowhere_build_pool) {
     auto rows = dataset->GetRows();
     auto dim = dataset->GetDim();
+    auto data = (const DataType*)dataset->GetTensor();
     AdaptToBaseIndexConfig(cfg.get(), PARAM_TYPE::TRAIN, dim);
     Status add_stat;
     for (auto blk_i = 0; blk_i < rows; blk_i += kBatchSize) {
         auto blk_size = std::min(kBatchSize, rows - blk_i);
-        auto [base_ds, norms] =
+        auto [fp32_base_ds, norms] =
             ConvertToBaseIndexFp32DataSet<DataType>(dataset, is_cosine_, blk_i, blk_size, base_index_->Dim());
-        {
-            FairWriteLockGuard guard(*this->base_index_lock_);
-            add_stat = base_index_->Add(base_ds, cfg);
-        }
         try {
-            refine_offset_index_->Add(blk_size, nullptr, norms.data());
+            refine_offset_index_->Add(blk_size, data + blk_i * dim, norms.data(), use_knowhere_build_pool);
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "data view index inner error: " << e.what();
             return Status::internal_error;
+        }
+        {
+            FairWriteLockGuard guard(*this->base_index_lock_);
+            add_stat = base_index_->Add(fp32_base_ds, cfg, use_knowhere_build_pool);
         }
 
         if (add_stat != Status::success) {
@@ -361,10 +373,11 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Search(const DataSetPtr d
         LOG_KNOWHERE_WARNING_ << "search on empty index";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not is trained.");
     }
-    BaseConfig& base_cfg = static_cast<IndexWithDataViewRefinerConfig&>(*cfg);
+    BaseConfig& base_cfg = static_cast<BaseConfig&>(*cfg);
     auto nq = dataset->GetRows();
     auto dim = dataset->GetDim();
     auto topk = base_cfg.k.value();
+    auto refine_with_quant = base_cfg.refine_with_quant.value();
     // basic search
     AdaptToBaseIndexConfig(cfg.get(), PARAM_TYPE::SEARCH, dim);
     auto base_index_ds = std::get<0>(
@@ -388,51 +401,12 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Search(const DataSetPtr d
     auto distances = std::make_unique<float[]>(nq * topk);
     try {
         refine_offset_index_->SearchWithIds(nq, dataset->GetTensor(), queries_lims.data(), refine_ids, topk,
-                                            distances.get(), labels.get());
+                                            distances.get(), labels.get(), refine_with_quant);
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "data view index inner error: " << e.what();
         return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
     }
     return GenResultDataSet(nq, topk, std::move(labels), std::move(distances));
-}
-
-template <typename DataType, typename BaseIndexNode>
-expected<DataSetPtr>
-IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::RangeSearch(const DataSetPtr dataset,
-                                                                   std::unique_ptr<Config> cfg,
-                                                                   const BitsetView& bitset) const {
-    if (this->base_index_ == nullptr || this->refine_offset_index_ == nullptr) {
-        LOG_KNOWHERE_WARNING_ << "search on empty index";
-        return expected<DataSetPtr>::Err(Status::empty_index, "index not is trained.");
-    }
-    const BaseConfig& base_cfg = static_cast<const BaseConfig&>(*cfg);
-    auto nq = dataset->GetRows();
-    auto dim = dataset->GetDim();
-    auto radius = base_cfg.radius.value();
-    auto range_filter = base_cfg.range_filter.value();
-    AdaptToBaseIndexConfig(cfg.get(), PARAM_TYPE::RANGE_SEARCH, dim);
-    auto base_index_ds = std::get<0>(
-        ConvertToBaseIndexFp32DataSet<DataType>(dataset, is_cosine_, std::nullopt, std::nullopt, base_index_->Dim()));
-
-    knowhere::expected<knowhere::DataSetPtr> quant_res;
-    {
-        FairReadLockGuard guard(*this->base_index_lock_);
-        quant_res = base_index_->RangeSearch(base_index_ds, std::move(cfg), bitset);
-    }
-    if (!quant_res.has_value()) {
-        return quant_res;
-    }
-    auto quant_res_ids = quant_res.value()->GetIds();
-    auto quant_res_lims = quant_res.value()->GetLims();
-    try {
-        auto final_res =
-            refine_offset_index_->RangeSearchWithIds(nq, dataset->GetTensor(), (const knowhere::idx_t*)quant_res_lims,
-                                                     (const knowhere::idx_t*)quant_res_ids, radius, range_filter);
-        return GenResultDataSet(nq, std::move(final_res));
-    } catch (const std::exception& e) {
-        LOG_KNOWHERE_WARNING_ << "data view index inner error: " << e.what();
-        return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
-    }
 }
 
 template <typename DataType, typename BaseIndexNode>
@@ -453,6 +427,7 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::AnnIterator(const DataSet
     const auto& base_cfg = static_cast<const BaseConfig&>(*cfg);
     auto refine_ratio = base_cfg.iterator_refine_ratio.value();
     auto larger_is_closer = IsMetricType(base_cfg.metric_type.value(), knowhere::metric::IP) || is_cosine_;
+    auto refine_with_quant = base_cfg.refine_with_quant.value();
     auto base_index_ds = std::get<0>(
         ConvertToBaseIndexFp32DataSet<DataType>(dataset, is_cosine_, std::nullopt, std::nullopt, base_index_->Dim()));
     knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>> base_index_init;
@@ -475,7 +450,8 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::AnnIterator(const DataSet
         copied_query = std::make_unique<DataType[]>(dim);
         std::copy_n(cur_query, dim, copied_query.get());
         vec[i] = std::shared_ptr<iterator>(new iterator(this->refine_offset_index_, base_workspace_iters[i],
-                                                        std::move(copied_query), larger_is_closer, refine_ratio));
+                                                        std::move(copied_query), larger_is_closer, refine_with_quant,
+                                                        refine_ratio));
     }
     return vec;
 }

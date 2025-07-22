@@ -28,7 +28,7 @@ class GpuFlatIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSetPtr dataset, const Config& cfg) override {
+    Train(const DataSetPtr dataset, const Config& cfg, bool use_knowhere_build_pool) override {
         const GpuFlatConfig& f_cfg = static_cast<const GpuFlatConfig&>(cfg);
         auto metric = Str2FaissMetricType(f_cfg.metric_type);
         if (!metric.has_value()) {
@@ -40,7 +40,7 @@ class GpuFlatIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSetPtr dataset, const Config& cfg) override {
+    Add(const DataSetPtr dataset, const Config& cfg, bool use_knowhere_build_pool) override {
         const void* x = dataset->GetTensor();
         const int64_t n = dataset->GetRows();
         try {

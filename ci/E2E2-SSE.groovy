@@ -29,6 +29,7 @@ pipeline {
                         sh "apt-get install -y libaio-dev libopenblas-dev libcurl4-openssl-dev libdouble-conversion-dev libevent-dev libgflags-dev"
                         sh "pip3 install conan==1.61.0"
                         // sh "conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local"
+                        sh "pip3 install -U setuptools"
                         sh "cmake --version"
                         sh "mkdir build"
                         sh "cd build/ && conan install .. --build=missing -o with_diskann=True -s compiler.libcxx=libstdc++11 && conan build .."

@@ -28,6 +28,7 @@
 
 #include "common/cuvs/integration/cuvs_knowhere_config.hpp"
 #include "common/cuvs/integration/cuvs_knowhere_index.hpp"
+#include "common/cuvs/integration/type_mappers.hpp"
 #include "common/cuvs/proto/cuvs_index_kind.hpp"
 #include "index/gpu_cuvs/gpu_cuvs_brute_force_config.h"
 #include "index/gpu_cuvs/gpu_cuvs_cagra_config.h"
@@ -70,12 +71,13 @@ template <typename DataType, cuvs_proto::cuvs_index_kind K>
 struct GpuCuvsIndexNode : public IndexNode {
     auto static constexpr index_kind = K;
     using knowhere_config_type = typename KnowhereConfigType<index_kind>::Type;
+    using data_type = typename cuvs_knowhere::cuvs_data_type_mapper<DataType>::data_type;
 
     GpuCuvsIndexNode(int32_t, const Object& object) : index_{} {
     }
 
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         auto result = Status::success;
         auto cuvs_cfg = cuvs_knowhere::cuvs_knowhere_config{};
         try {
@@ -90,7 +92,7 @@ struct GpuCuvsIndexNode : public IndexNode {
         if (result == Status::success) {
             auto rows = dataset->GetRows();
             auto dim = dataset->GetDim();
-            auto const* data = reinterpret_cast<const DataType*>(dataset->GetTensor());
+            auto const* data = reinterpret_cast<const data_type*>(dataset->GetTensor());
             try {
                 index_.train(cuvs_cfg, data, rows, dim);
                 index_.synchronize(true);
@@ -103,7 +105,7 @@ struct GpuCuvsIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         return Status::success;
     }
 
@@ -123,7 +125,7 @@ struct GpuCuvsIndexNode : public IndexNode {
             try {
                 auto rows = dataset->GetRows();
                 auto dim = dataset->GetDim();
-                auto const* data = reinterpret_cast<const DataType*>(dataset->GetTensor());
+                auto const* data = reinterpret_cast<const data_type*>(dataset->GetTensor());
                 auto search_result =
                     index_.search(cuvs_cfg, data, rows, dim, bitset.data(), bitset.byte_size(), bitset.size());
                 std::this_thread::yield();

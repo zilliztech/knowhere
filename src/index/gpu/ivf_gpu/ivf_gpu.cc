@@ -55,7 +55,7 @@ class GpuIvfIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSetPtr dataset, const Config& cfg) override {
+    Train(const DataSetPtr dataset, const Config& cfg, bool use_knowhere_build_pool) override {
         if (index_ && index_->is_trained) {
             LOG_KNOWHERE_WARNING_ << "index is already trained";
             return Status::index_already_trained;
@@ -108,7 +108,7 @@ class GpuIvfIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSetPtr dataset, const Config& cfg) override {
+    Add(const DataSetPtr dataset, const Config& cfg, bool use_knowhere_build_pool) override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not add data to empty GpuIvfIndex.";
             return Status::empty_index;

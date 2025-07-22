@@ -173,3 +173,8 @@ test_float_range_multi_qps_ivf_sq8:
 	./benchmark_float_range_multi_qps --gtest_filter="Benchmark_float_range_multi_qps.TEST_IVF_SQ8" | tee test_float_range_multi_qps_ivf_sq8.log
 test_float_range_multi_qps_hnsw:
 	./benchmark_float_range_multi_qps --gtest_filter="Benchmark_float_range_multi_qps.TEST_HNSW" | tee test_float_range_multi_qps_hnsw.log
+
+###################################################################################################
+# Test Knowhere SIMD APIs' qps
+test_simd_qps:
+	./benchmark_simd_qps --gtest_filter="Benchmark_simd_qps.TEST_SIMD" | tee test_simd_qps.log

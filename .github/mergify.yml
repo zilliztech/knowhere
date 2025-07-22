@@ -32,16 +32,11 @@ pull_request_rules:
           - base=main
           - base~=^2(\.\d+){1,2}$
       - title!=\[automated\]
-      - or:
-        - and:
-          - label!=kind/improvement
-          - or:
+      - label!=kind/improvement
+      - and:
+          - and:
             - body!=(\#|https://github.com/zilliztech/knowhere/issues/)[0-9]{1,6}
             - body!=\#[0-9]{1,6}(\s+|$)
-            - and:
-                - label!=kind/enhancement
-                - label!=kind/feature
-                - label!=kind/bug
     actions:
       label:
         add:
@@ -67,16 +62,15 @@ pull_request_rules:
       - or:
           - base=main
           - base~=^2(\.\d+){1,2}$
-      - or:
-        - label=kind/improvement
-        - and:
-          - or:
-            - label=kind/enhancement
-            - label=kind/feature
-            - label=kind/bug
-          - or:
-            - body~=\#[0-9]{1,6}(\s+|$)
-            - body~=https://github.com/zilliztech/knowhere/issues/[0-9]{1,6}(\s+|$)
+      - label!=kind/improvement
+      - and:
+        - or:
+          - label=kind/enhancement
+          - label=kind/feature
+          - label=kind/bug
+        - or:
+          - body~=\#[0-9]{1,6}(\s+|$)
+          - body~=https://github.com/zilliztech/knowhere/issues/[0-9]{1,6}(\s+|$)
     actions:
       label:
         remove:

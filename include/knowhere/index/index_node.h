@@ -68,9 +68,9 @@ class IndexNode : public Object {
      * shared, so `shared_ptr` is used instead.
      */
     virtual Status
-    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
-        RETURN_IF_ERROR(Train(dataset, cfg));
-        return Add(dataset, std::move(cfg));
+    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) {
+        RETURN_IF_ERROR(Train(dataset, cfg, use_knowhere_build_pool));
+        return Add(dataset, std::move(cfg), use_knowhere_build_pool);
     }
 
 /*
@@ -79,7 +79,7 @@ class IndexNode : public Object {
 #ifdef KNOWHERE_WITH_CARDINAL
     virtual Status
     BuildAsync(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const Interrupt* = nullptr) {
-        return Build(dataset, std::move(cfg));
+        return Build(dataset, std::move(cfg), true);
     }
 #endif
 
@@ -98,7 +98,7 @@ class IndexNode : public Object {
      * shared, so `shared_ptr` is used instead.
      */
     virtual Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) = 0;
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) = 0;
 
     /**
      * @brief Adds data to the trained index.
@@ -118,7 +118,7 @@ class IndexNode : public Object {
      * shared, so `shared_ptr` is used instead.
      */
     virtual Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) = 0;
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) = 0;
 
     /**
      * @brief Performs a search operation on the index.
@@ -132,6 +132,21 @@ class IndexNode : public Object {
      */
     virtual expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const = 0;
+
+    /**
+     * @brief Performs a brute-force search operation on the index for given labels. (for emb-list based index)
+     *
+     * @param dataset Query vectors.
+     * @param labels
+     * @param labels_len
+     * @return An expected<> object containing the search results or an error.
+     */
+    virtual expected<DataSetPtr>
+    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
+                  const size_t labels_len) const {
+        return expected<DataSetPtr>::Err(Status::not_implemented,
+                                         "BruteForceByIDs not supported for current index type");
+    };
 
     // not thread safe.
     class iterator {
@@ -432,6 +447,28 @@ class IndexNode : public Object {
 
     virtual std::string
     Type() const = 0;
+
+    /**
+     * @brief Gets the mapping from internal IDs to external IDs.
+     *
+     * @return A reference to the mapping vector.
+     */
+    virtual std::shared_ptr<std::vector<uint32_t>>
+    GetInternalIdToExternalIdMap() const {
+        throw std::runtime_error("GetInterIdToOuterIdMap not implemented");
+    }
+
+    /**
+     * @brief Sets the mapping from internal IDs to "most external" IDs for 1-hop bitset check!
+     * Only used for hierarchical indexnode, such as emb_list + hnsw, each index node has its own relayout mapping.
+     *
+     * @param map The mapping vector to set.
+     * @return Status indicating success or failure of the mapping.
+     */
+    virtual Status
+    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) {
+        throw std::runtime_error("SetInternalIdToMostExternalIdMap not implemented");
+    }
 
     virtual ~IndexNode() {
     }

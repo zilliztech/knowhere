@@ -19,7 +19,8 @@
 
 namespace knowhere {
 namespace KnowhereCheck {
-static bool
+
+__attribute__((unused)) static bool
 IndexTypeAndDataTypeCheck(const std::string& index_name, VecType data_type) {
     auto& static_index_table = std::get<0>(IndexFactory::StaticIndexTableInstance());
     auto key = std::pair<std::string, VecType>(index_name, data_type);
@@ -30,7 +31,7 @@ IndexTypeAndDataTypeCheck(const std::string& index_name, VecType data_type) {
     }
 }
 
-static bool
+__attribute__((unused)) static bool
 SupportMmapIndexTypeCheck(const std::string& index_name) {
     auto& mmap_index_table = std::get<1>(IndexFactory::StaticIndexTableInstance());
     if (mmap_index_table.find(index_name) != mmap_index_table.end()) {

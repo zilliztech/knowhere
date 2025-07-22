@@ -58,11 +58,22 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     {IndexEnum::INDEX_FAISS_IVFSQ_CC, VecType::VECTOR_BFLOAT16},
     // {IndexEnum::INDEX_FAISS_IVFSQ_CC, VecType::VECTOR_INT8},
 
+    {IndexEnum::INDEX_FAISS_IVFRABITQ, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_FAISS_IVFRABITQ, VecType::VECTOR_FLOAT16},
+    {IndexEnum::INDEX_FAISS_IVFRABITQ, VecType::VECTOR_BFLOAT16},
+
     // gpu index
     {IndexEnum::INDEX_GPU_BRUTEFORCE, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_GPU_BRUTEFORCE, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_GPU_IVFFLAT, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_GPU_IVFFLAT, VecType::VECTOR_FLOAT16},
+    {IndexEnum::INDEX_GPU_IVFFLAT, VecType::VECTOR_INT8},
     {IndexEnum::INDEX_GPU_IVFPQ, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_GPU_IVFPQ, VecType::VECTOR_FLOAT16},
+    {IndexEnum::INDEX_GPU_IVFPQ, VecType::VECTOR_INT8},
     {IndexEnum::INDEX_GPU_CAGRA, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_GPU_CAGRA, VecType::VECTOR_FLOAT16},
+    {IndexEnum::INDEX_GPU_CAGRA, VecType::VECTOR_INT8},
     {IndexEnum::INDEX_GPU_CAGRA, VecType::VECTOR_BINARY},
 
     // hnsw
@@ -94,6 +105,8 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     // sparse index
     {IndexEnum::INDEX_SPARSE_INVERTED_INDEX, VecType::VECTOR_SPARSE_FLOAT},
     {IndexEnum::INDEX_SPARSE_WAND, VecType::VECTOR_SPARSE_FLOAT},
+    //  minhash index
+    {IndexEnum::INDEX_MINHASH_LSH, VecType::VECTOR_BINARY},
 };
 
 static std::set<std::string> legal_support_mmap_knowhere_index = {
@@ -108,6 +121,7 @@ static std::set<std::string> legal_support_mmap_knowhere_index = {
     IndexEnum::INDEX_FAISS_SCANN,
     IndexEnum::INDEX_FAISS_IVFSQ8,
     IndexEnum::INDEX_FAISS_IVFSQ_CC,
+    IndexEnum::INDEX_FAISS_IVFRABITQ,
 
     // hnsw
     IndexEnum::INDEX_HNSW,

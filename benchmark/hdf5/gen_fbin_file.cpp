@@ -176,7 +176,7 @@ class Create_FBIN : public Benchmark_hdf5, public ::testing::Test {
             // convert golden_ids to int32
             auto elem_cnt = result.value()->GetLims()[nq];
             std::vector<uint32_t> gt_ids_int(elem_cnt);
-            for (int32_t i = 0; i < elem_cnt; i++) {
+            for (size_t i = 0; i < elem_cnt; i++) {
                 gt_ids_int[i] = result.value()->GetIds()[i];
             }
 

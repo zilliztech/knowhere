@@ -43,7 +43,7 @@ class HnswIndexNode : public IndexNode {
     }
 
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         auto rows = dataset->GetRows();
         auto dim = dataset->GetDim();
         auto hnsw_cfg = static_cast<const BaseHnswConfig&>(*cfg);
@@ -118,7 +118,7 @@ class HnswIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not add data to empty HNSW index.";
             return Status::empty_index;

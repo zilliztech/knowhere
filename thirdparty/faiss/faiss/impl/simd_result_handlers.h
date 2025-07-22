@@ -26,6 +26,18 @@
 
 namespace faiss {
 
+namespace {
+
+    // a helper that checks whether a ResultHandler has a .sel member
+    template<typename T, typename = void>
+    struct has_sel_member : std::false_type {};
+    template<typename T>
+    struct has_sel_member<T, std::void_t<decltype(T::sel)>> : std::true_type {};
+    template<typename T>
+    inline constexpr bool has_sel_member_v = has_sel_member<T>::value;
+    
+}
+
 struct SIMDResultHandler {
     // used to dispatch templates
     bool is_CMax = false;
@@ -792,7 +804,7 @@ struct RangeHandler : ResultHandlerCompare<C, with_id_map> {
         normalizers = norms;
         for (size_t q = 0; q < nq; ++q) {
             thresholds[q] =
-                    normalizers[2 * q] * (radius - normalizers[2 * q + 1]);
+                    int(normalizers[2 * q] * (radius - normalizers[2 * q + 1]));
         }
     }
 

@@ -12,6 +12,9 @@
 #include <functional>
 #include <memory>
 #include <vector>
+
+#include "folly/executors/CPUThreadPoolExecutor.h"
+
 namespace knowhere {
 
 void
@@ -26,6 +29,13 @@ size_t
 GetSearchThreadPoolSize();
 size_t
 GetBuildThreadPoolSize();
+
+folly::CPUThreadPoolExecutor&
+GetSearchThreadPool();
+
+folly::CPUThreadPoolExecutor&
+GetBuildThreadPool();
+
 class ThreadPool {
  public:
     class ScopedOmpSetter {

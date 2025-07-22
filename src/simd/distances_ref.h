@@ -1,5 +1,15 @@
-#ifndef DISTANCES_REF_H
-#define DISTANCES_REF_H
+// Copyright (C) 2019-2023 Zilliz. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance
+// with the License. You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software distributed under the License
+// is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
+// or implied. See the License for the specific language governing permissions and limitations under the License.
+
+#pragma once
 
 #include <cstdint>
 #include <cstdio>
@@ -12,27 +22,9 @@ namespace faiss {
 float
 fvec_L2sqr_ref(const float* x, const float* y, size_t d);
 
-float
-fp16_vec_L2sqr_ref(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
-
-float
-bf16_vec_L2sqr_ref(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
-
-float
-fvec_L2sqr_ref_bf16_patch(const float* x, const float* y, size_t d);
-
 /// inner product
 float
 fvec_inner_product_ref(const float* x, const float* y, size_t d);
-
-float
-fvec_inner_product_ref_bf16_patch(const float* x, const float* y, size_t d);
-
-float
-fp16_vec_inner_product_ref(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
-
-float
-bf16_vec_inner_product_ref(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
 
 /// L1 distance
 float
@@ -45,12 +37,6 @@ fvec_Linf_ref(const float* x, const float* y, size_t d);
 /// squared norm of a vector
 float
 fvec_norm_L2sqr_ref(const float* x, size_t d);
-
-float
-fp16_vec_norm_L2sqr_ref(const knowhere::fp16* x, size_t d);
-
-float
-bf16_vec_norm_L2sqr_ref(const knowhere::bf16* x, size_t d);
 
 /// compute ny square L2 distance between x and a set of contiguous y vectors
 void
@@ -92,10 +78,30 @@ void
 fvec_inner_product_batch_4_ref(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
                                const size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
 
+/// Special version of L2sqr that computes 4 distances
+/// between x and yi, which is performance oriented.
 void
-fvec_inner_product_batch_4_ref_bf16_patch(const float* x, const float* y0, const float* y1, const float* y2,
-                                          const float* y3, const size_t d, float& dis0, float& dis1, float& dis2,
-                                          float& dis3);
+fvec_L2sqr_batch_4_ref(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
+                       const size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
+
+///////////////////////////////////////////////////////////////////////////////
+// for hnsw sq, obsolete
+int32_t
+ivec_inner_product_ref(const int8_t* x, const int8_t* y, size_t d);
+
+int32_t
+ivec_L2sqr_ref(const int8_t* x, const int8_t* y, size_t d);
+
+///////////////////////////////////////////////////////////////////////////////
+// fp16
+float
+fp16_vec_inner_product_ref(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
+
+float
+fp16_vec_L2sqr_ref(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
+
+float
+fp16_vec_norm_L2sqr_ref(const knowhere::fp16* x, size_t d);
 
 void
 fp16_vec_inner_product_batch_4_ref(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
@@ -103,36 +109,94 @@ fp16_vec_inner_product_batch_4_ref(const knowhere::fp16* x, const knowhere::fp16
                                    float& dis1, float& dis2, float& dis3);
 
 void
-bf16_vec_inner_product_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                                   const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
-                                   float& dis1, float& dis2, float& dis3);
-
-/// Special version of L2sqr that computes 4 distances
-/// between x and yi, which is performance oriented.
-void
-fvec_L2sqr_batch_4_ref(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
-                       const size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
-
-void
-fvec_L2sqr_batch_4_ref_bf16_patch(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
-                                  const size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
-
-void
 fp16_vec_L2sqr_batch_4_ref(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
                            const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0, float& dis1,
                            float& dis2, float& dis3);
+
+///////////////////////////////////////////////////////////////////////////////
+// bf16
+float
+bf16_vec_inner_product_ref(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
+
+float
+bf16_vec_L2sqr_ref(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
+
+float
+bf16_vec_norm_L2sqr_ref(const knowhere::bf16* x, size_t d);
+
+void
+bf16_vec_inner_product_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
+                                   const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
+                                   float& dis1, float& dis2, float& dis3);
 
 void
 bf16_vec_L2sqr_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
                            const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0, float& dis1,
                            float& dis2, float& dis3);
 
-int32_t
-ivec_inner_product_ref(const int8_t* x, const int8_t* y, size_t d);
+///////////////////////////////////////////////////////////////////////////////
+// int8
+float
+int8_vec_inner_product_ref(const int8_t* x, const int8_t* y, size_t d);
 
-int32_t
-ivec_L2sqr_ref(const int8_t* x, const int8_t* y, size_t d);
+float
+int8_vec_L2sqr_ref(const int8_t* x, const int8_t* y, size_t d);
+
+float
+int8_vec_norm_L2sqr_ref(const int8_t* x, size_t d);
+
+void
+int8_vec_inner_product_batch_4_ref(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2,
+                                   const int8_t* y3, const size_t d, float& dis0, float& dis1, float& dis2,
+                                   float& dis3);
+
+void
+int8_vec_L2sqr_batch_4_ref(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2, const int8_t* y3,
+                           const size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
+
+///////////////////////////////////////////////////////////////////////////////
+// for cardinal
+float
+fvec_L2sqr_bf16_patch_ref(const float* x, const float* y, size_t d);
+
+float
+fvec_inner_product_bf16_patch_ref(const float* x, const float* y, size_t d);
+
+void
+fvec_inner_product_batch_4_bf16_patch_ref(const float* x, const float* y0, const float* y1, const float* y2,
+                                          const float* y3, const size_t d, float& dis0, float& dis1, float& dis2,
+                                          float& dis3);
+
+void
+fvec_L2sqr_batch_4_bf16_patch_ref(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
+                                  const size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
+
+///////////////////////////////////////////////////////////////////////////////
+// rabitq
+float
+fvec_masked_sum_ref(const float* q, const uint8_t* x, const size_t d);
+int
+rabitq_dp_popcnt_ref(const uint8_t* q, const uint8_t* x, const size_t d, const size_t nb);
+
+///////////////////////////////////////////////////////////////////////////////
+// minhash
+float
+minhash_lsh_hit_ref(const char* x, const char* y, size_t dim, size_t mh_lsh_band);
+int
+u64_binary_search_eq_ref(const uint64_t*, const size_t n, const uint64_t key);
+int
+u64_binary_search_ge_ref(const uint64_t*, const size_t n, const uint64_t key);
+uint64_t
+calculate_hash_ref(const char* data, size_t size);
+float
+u32_jaccard_distance_ref(const char*, const char*, size_t size, size_t);
+void
+u32_jaccard_distance_batch_4_ref(const char*, const char*, const char*, const char*, const char*, size_t, size_t,
+                                 float&, float&, float&, float&);
+float
+u64_jaccard_distance_ref(const char*, const char*, size_t size, size_t);
+void
+u64_jaccard_distance_batch_4_ref(const char*, const char*, const char*, const char*, const char*, size_t, size_t,
+                                 float&, float&, float&, float&);
 
 }  // namespace faiss
-
-#endif /* DISTANCES_REF_H */

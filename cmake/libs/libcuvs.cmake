@@ -1,5 +1,5 @@
 # =============================================================================
-# Copyright (c) 2023, NVIDIA CORPORATION.
+# Copyright (c) 2023-2025, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not
 # use this file except in compliance with the License. You may obtain a copy of
@@ -16,7 +16,7 @@
 add_definitions(-DKNOWHERE_WITH_CUVS)
 set(CUVS_VERSION "${RAPIDS_VERSION}")
 set(CUVS_FORK "rapidsai")
-set(CUVS_PINNED_TAG "branch-25.02")
+set(CUVS_PINNED_TAG "branch-25.06")
 
 rapids_find_package(CUDAToolkit REQUIRED BUILD_EXPORT_SET knowhere-exports
                     INSTALL_EXPORT_SET knowhere-exports)

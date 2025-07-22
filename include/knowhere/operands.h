@@ -171,11 +171,13 @@ typeCheck(uint64_t features) {
 template <typename InType, typename... Types>
 using TypeMatch = std::bool_constant<(... | std::is_same_v<InType, Types>)>;
 template <typename InType>
-using KnowhereDataTypeCheck = TypeMatch<InType, bin1, fp16, fp32, bf16, int8>;
+using KnowhereDataTypeCheck = TypeMatch<InType, bin1, fp32, fp16, bf16, int8>;
 template <typename InType>
-using KnowhereFloatTypeCheck = TypeMatch<InType, fp16, fp32, bf16>;
+using KnowhereFloatTypeCheck = TypeMatch<InType, fp32, fp16, bf16>;
 template <typename InType>
-using KnowhereHalfPrecisionFloatPointTypeCheck = TypeMatch<InType, fp16, bf16>;
+using KnowhereLowPrecisionTypeCheck = TypeMatch<InType, fp16, bf16, int8>;
+template <typename InType>
+using KnowhereIntTypeCheck = TypeMatch<InType, int8>;
 
 template <typename T>
 struct MockData {

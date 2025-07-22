@@ -116,8 +116,8 @@ IndexStaticFaced<DataType>::HasRawData(const IndexType& indexType, const IndexVe
     }
 
     static std::set<knowhere::IndexType> has_raw_data_index_set = {
-        IndexEnum::INDEX_FAISS_BIN_IDMAP,  IndexEnum::INDEX_FAISS_BIN_IVFFLAT,     IndexEnum::INDEX_FAISS_IVFFLAT,
-        IndexEnum::INDEX_FAISS_IVFFLAT_CC, IndexEnum::INDEX_SPARSE_INVERTED_INDEX, IndexEnum::INDEX_SPARSE_WAND};
+        IndexEnum::INDEX_FAISS_BIN_IDMAP, IndexEnum::INDEX_FAISS_BIN_IVFFLAT, IndexEnum::INDEX_FAISS_IVFFLAT,
+        IndexEnum::INDEX_FAISS_IVFFLAT_CC};
 
     static std::set<knowhere::IndexType> has_raw_data_index_alias_set = {"IVFBIN", "BINFLAT", "IVFFLAT", "IVFFLATCC"};
 
@@ -138,7 +138,7 @@ IndexStaticFaced<DataType>::InternalStaticHasRawData(const BaseConfig& /*config*
 template <typename DataType>
 std::unique_ptr<BaseConfig>
 IndexStaticFaced<DataType>::InternalStaticCreateConfig() {
-    return std::unique_ptr<BaseConfig>();
+    return std::make_unique<BaseConfig>();
 }
 
 template <typename DataType>

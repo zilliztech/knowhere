@@ -53,6 +53,9 @@ DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_topk, "search topk")
 DEFINE_PROMETHEUS_HISTOGRAM(search_topk, PROMETHEUS_LABEL_KNOWHERE)
 DEFINE_PROMETHEUS_HISTOGRAM(search_topk, PROMETHEUS_LABEL_CARDINAL)
 
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_level, "search level")
+DEFINE_PROMETHEUS_HISTOGRAM(search_level, PROMETHEUS_LABEL_CARDINAL)
+
 DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(bitset_ratio, "bitset ratio")
 DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(bitset_ratio, PROMETHEUS_LABEL_CARDINAL, ratioBuckets)
 
@@ -119,4 +122,7 @@ DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(diskann_range_search_iters, "DISKANN range se
 DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(diskann_range_search_iters, PROMETHEUS_LABEL_KNOWHERE,
                                          diskannRangeSearchIterBuckets)
 
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(sparse_dataset_nnz_len, "sparse dataset nnz length")
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(sparse_inverted_index_posting_list_len, "sparse inverted index posting list length")
+DEFINE_PROMETHEUS_GAUGE_FAMILY(sparse_inverted_index_size, "sparse inverted index size (MB)")
 }  // namespace knowhere

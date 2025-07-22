@@ -140,7 +140,7 @@ class Index {
     }
 
     Status
-    Build(const DataSetPtr dataset, const Json& json);
+    Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true);
 
 #ifdef KNOWHERE_WITH_CARDINAL
     const std::shared_ptr<Interrupt>
@@ -148,14 +148,14 @@ class Index {
                const std::chrono::seconds timeout = std::chrono::seconds::max());
 #else
     const std::shared_ptr<Interrupt>
-    BuildAsync(const DataSetPtr dataset, const Json& json);
+    BuildAsync(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true);
 #endif
 
     Status
-    Train(const DataSetPtr dataset, const Json& json);
+    Train(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true);
 
     Status
-    Add(const DataSetPtr dataset, const Json& json);
+    Add(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true);
 
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, const Json& json, const BitsetView& bitset) const;

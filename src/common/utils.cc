@@ -136,10 +136,11 @@ UseDiskLoad(const std::string& index_type, const int32_t& version) {
     if (version == 0) {
         return !index_type.compare(IndexEnum::INDEX_DISKANN);
     } else {
-        return !index_type.compare(IndexEnum::INDEX_DISKANN) || !index_type.compare(IndexEnum::INDEX_HNSW);
+        return !index_type.compare(IndexEnum::INDEX_DISKANN) || !index_type.compare(IndexEnum::INDEX_HNSW) ||
+               !index_type.compare(IndexEnum::INDEX_MINHASH_LSH);
     }
 #else
-    return !index_type.compare(IndexEnum::INDEX_DISKANN);
+    return !index_type.compare(IndexEnum::INDEX_DISKANN) || !index_type.compare(IndexEnum::INDEX_MINHASH_LSH);
 #endif
 }
 

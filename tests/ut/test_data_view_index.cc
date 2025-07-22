@@ -62,9 +62,63 @@ TEST_CASE("Test SCANN with data view refiner", "[float metrics]") {
         return json;
     };
 
+    auto scann_gen1 = [base_gen, topk]() {
+        knowhere::Json json = base_gen();
+        json[knowhere::indexparam::NLIST] = 16;
+        json[knowhere::indexparam::NPROBE] = 12;
+        json[knowhere::indexparam::REFINE_RATIO] = 4.0;
+        json[knowhere::indexparam::SUB_DIM] = 2;
+        json[knowhere::indexparam::WITH_RAW_DATA] = true;
+        json[knowhere::indexparam::ENSURE_TOPK_FULL] = true;
+        json[knowhere::indexparam::REFINE_TYPE] = knowhere::RefineType::BFLOAT16_QUANT;
+        json[knowhere::indexparam::REFINE_WITH_QUANT] = true;
+        return json;
+    };
+
+    auto scann_gen2 = [base_gen, topk]() {
+        knowhere::Json json = base_gen();
+        json[knowhere::indexparam::NLIST] = 16;
+        json[knowhere::indexparam::NPROBE] = 12;
+        json[knowhere::indexparam::REFINE_RATIO] = 4.0;
+        json[knowhere::indexparam::SUB_DIM] = 2;
+        json[knowhere::indexparam::WITH_RAW_DATA] = true;
+        json[knowhere::indexparam::ENSURE_TOPK_FULL] = true;
+        json[knowhere::indexparam::REFINE_TYPE] = knowhere::RefineType::FLOAT16_QUANT;
+        json[knowhere::indexparam::REFINE_WITH_QUANT] = true;
+        return json;
+    };
+
+    auto scann_gen3 = [base_gen, topk]() {
+        knowhere::Json json = base_gen();
+        json[knowhere::indexparam::NLIST] = 16;
+        json[knowhere::indexparam::NPROBE] = 12;
+        json[knowhere::indexparam::REFINE_RATIO] = 4.0;
+        json[knowhere::indexparam::SUB_DIM] = 2;
+        json[knowhere::indexparam::WITH_RAW_DATA] = true;
+        json[knowhere::indexparam::ENSURE_TOPK_FULL] = true;
+        json[knowhere::indexparam::REFINE_TYPE] = knowhere::RefineType::UINT8_QUANT;
+        json[knowhere::indexparam::REFINE_WITH_QUANT] = true;
+        return json;
+    };
+
+    auto scann_gen4 = [base_gen, topk]() {
+        knowhere::Json json = base_gen();
+        json[knowhere::indexparam::NLIST] = 16;
+        json[knowhere::indexparam::NPROBE] = 12;
+        json[knowhere::indexparam::REFINE_RATIO] = 4.0;
+        json[knowhere::indexparam::SUB_DIM] = 2;
+        json[knowhere::indexparam::WITH_RAW_DATA] = true;
+        json[knowhere::indexparam::ENSURE_TOPK_FULL] = true;
+        json[knowhere::indexparam::REFINE_TYPE] = knowhere::RefineType::UINT8_QUANT;
+        json[knowhere::indexparam::REFINE_WITH_QUANT] = false;
+        return json;
+    };
+
     auto rand = GENERATE(1);
     const auto train_ds = GenDataSet(nb, dim, rand);
     const auto query_ds = GenDataSet(nq, dim, rand + 777);
+
+    auto gen = GENERATE_REF(as<std::function<knowhere::Json()>>{}, scann_gen1, scann_gen2, scann_gen3, scann_gen4);
 
     const knowhere::Json conf = {
         {knowhere::meta::METRIC_TYPE, metric},
@@ -77,7 +131,7 @@ TEST_CASE("Test SCANN with data view refiner", "[float metrics]") {
     };
     auto data_view_pack = knowhere::Pack(data_view);
     SECTION("Accuraccy with refine") {
-        auto cfg_json = scann_gen().dump();
+        auto cfg_json = gen().dump();
         knowhere::Json json = knowhere::Json::parse(cfg_json);
 
         auto scann_with_dv_refiner =
@@ -86,7 +140,7 @@ TEST_CASE("Test SCANN with data view refiner", "[float metrics]") {
                 .value();
 
         REQUIRE(scann_with_dv_refiner.Type() == knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR);
-        REQUIRE(scann_with_dv_refiner.Build(train_ds, json) == knowhere::Status::success);
+        REQUIRE(scann_with_dv_refiner.Build(train_ds, json, false) == knowhere::Status::success);
         REQUIRE(scann_with_dv_refiner.Count() == nb);
         REQUIRE(scann_with_dv_refiner.Size() > 0);
         REQUIRE(scann_with_dv_refiner.HasRawData(metric) == false);
@@ -170,7 +224,7 @@ TEST_CASE("Ensure topk test", "[float metrics]") {
         {knowhere::meta::TOPK, topk},
     };
     knowhere::ViewDataOp data_view = [&train_ds, data_size = sizeof(float) * dim](size_t id) {
-        auto data = train_ds->GetTensor();
+        auto data = (const char*)train_ds->GetTensor();
         return data + data_size * id;
     };
     auto data_view_pack = knowhere::Pack(data_view);
@@ -183,7 +237,7 @@ TEST_CASE("Ensure topk test", "[float metrics]") {
             .value();
 
     REQUIRE(scann_with_dv_refiner.Type() == knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR);
-    REQUIRE(scann_with_dv_refiner.Build(train_ds, json) == knowhere::Status::success);
+    REQUIRE(scann_with_dv_refiner.Build(train_ds, json, false) == knowhere::Status::success);
     REQUIRE(scann_with_dv_refiner.Count() == nb);
     REQUIRE(scann_with_dv_refiner.Size() > 0);
     REQUIRE(scann_with_dv_refiner.HasRawData(metric) == false);
@@ -192,7 +246,7 @@ TEST_CASE("Ensure topk test", "[float metrics]") {
                                                                    cfg_json));
     auto scann_with_dv_refiner_results = scann_with_dv_refiner.Search(query_ds, json, nullptr);
     auto res_ids = scann_with_dv_refiner_results.value()->GetIds();
-    // check we can get all vectors in (topk = nb, nprobe = )
+    // check we can get all vectors in (topk = nb, nprobe = 1 )
     for (auto i = 0; i < nq * topk; i++) {
         REQUIRE(res_ids[i] != -1);
     }
@@ -201,12 +255,11 @@ TEST_CASE("Ensure topk test", "[float metrics]") {
 template <typename DataType>
 void
 BaseTest(const knowhere::DataSetPtr train_ds, const knowhere::DataSetPtr query_ds, const int64_t k,
-         const knowhere::MetricType metric, const knowhere::Json& conf) {
+         const knowhere::MetricType metric, const knowhere::Json& conf, const float loss_range = 1.00001) {
     auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
     auto base = knowhere::ConvertToDataTypeIfNeeded<DataType>(train_ds);
     auto query = knowhere::ConvertToDataTypeIfNeeded<DataType>(query_ds);
     auto dim = base->GetDim();
-    auto nb = base->GetRows();
     auto nq = query->GetRows();
 
     auto knn_gt = knowhere::BruteForce::Search<DataType>(base, query, conf, nullptr);
@@ -221,7 +274,7 @@ BaseTest(const knowhere::DataSetPtr train_ds, const knowhere::DataSetPtr query_d
             .value();
 
     REQUIRE(scann_with_dv_refiner.Type() == knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR);
-    REQUIRE(scann_with_dv_refiner.Build(base, conf) == knowhere::Status::success);
+    REQUIRE(scann_with_dv_refiner.Build(base, conf, false) == knowhere::Status::success);
 
     REQUIRE(scann_with_dv_refiner.Size() > 0);
     REQUIRE(scann_with_dv_refiner.HasRawData(metric) == false);
@@ -232,10 +285,11 @@ BaseTest(const knowhere::DataSetPtr train_ds, const knowhere::DataSetPtr query_d
     auto scann_with_dv_refiner_results = scann_with_dv_refiner.Search(query, conf, nullptr);
     REQUIRE(scann_with_dv_refiner_results.has_value());
     float recall = GetKNNRecall(*knn_gt.value(), *scann_with_dv_refiner_results.value());
-    REQUIRE(recall > kKnnRecallThreshold);
+
     if (metric == knowhere::metric::COSINE) {
-        REQUIRE(CheckDistanceInScope(*scann_with_dv_refiner_results.value(), k, -1.00001, 1.00001));
+        REQUIRE(CheckDistanceInScope(*scann_with_dv_refiner_results.value(), k, -loss_range, loss_range));
     }
+    REQUIRE(recall > kKnnRecallThreshold);
     // range search
     auto scann_with_dv_refiner_range_results = scann_with_dv_refiner.RangeSearch(query, conf, nullptr);
     REQUIRE(scann_with_dv_refiner_range_results.has_value());
@@ -283,4 +337,96 @@ TEST_CASE("Test difference dim with difference data type", "[multi metrics]") {
     BaseTest<knowhere::fp32>(train_ds, query_ds, topk, metric, json);
     BaseTest<knowhere::bf16>(train_ds, query_ds, topk, metric, json);
     BaseTest<knowhere::fp16>(train_ds, query_ds, topk, metric, json);
+}
+
+TEST_CASE("Test fp16/bf16 with quant refine", "[multi metrics]") {
+    if (!faiss::support_pq_fast_scan) {
+        SKIP("pass scann test");
+    }
+    const int64_t nb = 1000, nq = 1;
+    auto metric = GENERATE(as<std::string>{}, knowhere::metric::COSINE, knowhere::metric::IP, knowhere::metric::L2);
+    auto topk = GENERATE(as<int64_t>{}, 10);
+    auto dim = GENERATE(as<int64_t>{}, 120);
+
+    auto base_gen = [=]() {
+        knowhere::Json json;
+        json[knowhere::meta::DIM] = dim;
+        json[knowhere::meta::METRIC_TYPE] = metric;
+        json[knowhere::meta::TOPK] = topk;
+        json[knowhere::meta::RADIUS] = knowhere::IsMetricType(metric, knowhere::metric::L2) ? 10.0 : 0.9;
+        json[knowhere::meta::RANGE_FILTER] = knowhere::IsMetricType(metric, knowhere::metric::L2) ? 0.0 : 1.01;
+        return json;
+    };
+
+    auto scann_gen = [base_gen, topk]() {
+        knowhere::Json json = base_gen();
+        json[knowhere::indexparam::NLIST] = 24;
+        json[knowhere::indexparam::NPROBE] = 16;
+        json[knowhere::indexparam::REFINE_RATIO] = 4.0;
+        json[knowhere::indexparam::SUB_DIM] = 2;
+        return json;
+    };
+
+    const auto train_ds = GenDataSet(nb, dim);
+    const auto query_ds = GenDataSet(nq, dim);
+    // data type == bfloat16
+    // with refine_type = bfloat16, refine_with_quant = false
+    {
+        auto bf16_json = scann_gen();
+        bf16_json[knowhere::indexparam::REFINE_TYPE] = knowhere::RefineType::BFLOAT16_QUANT;
+        bf16_json[knowhere::indexparam::REFINE_WITH_QUANT] = false;
+        BaseTest<knowhere::bf16>(train_ds, query_ds, topk, metric, bf16_json);
+    }
+    // with refine_type = bfloat16, refine_with_quant = true
+    {
+        // some precision loss by the difference between knowhere fp32->bf16 and faiss fp32->bf16
+        auto bf16_json = scann_gen();
+        bf16_json[knowhere::indexparam::REFINE_TYPE] = knowhere::RefineType::BFLOAT16_QUANT;
+        bf16_json[knowhere::indexparam::REFINE_WITH_QUANT] = true;
+
+        BaseTest<knowhere::bf16>(train_ds, query_ds, topk, metric, bf16_json, 1.0001);
+    }
+    // with refine_type = uint8, refine_with_quant = false
+    {
+        auto bf16_json = scann_gen();
+        bf16_json[knowhere::indexparam::REFINE_TYPE] = knowhere::RefineType::UINT8_QUANT;
+        bf16_json[knowhere::indexparam::REFINE_WITH_QUANT] = false;
+        BaseTest<knowhere::bf16>(train_ds, query_ds, topk, metric, bf16_json);
+    }
+    // with refine_type = uint8, refine_with_quant = true
+    {
+        auto bf16_json = scann_gen();
+        bf16_json[knowhere::indexparam::REFINE_TYPE] = knowhere::RefineType::UINT8_QUANT;
+        bf16_json[knowhere::indexparam::REFINE_WITH_QUANT] = true;
+        BaseTest<knowhere::bf16>(train_ds, query_ds, topk, metric, bf16_json, 1.001);
+    }
+    // with refine_type = float16, refine_with_quant = false
+    {
+        auto fp16_json = scann_gen();
+        fp16_json[knowhere::indexparam::REFINE_TYPE] = knowhere::RefineType::FLOAT16_QUANT;
+        fp16_json[knowhere::indexparam::REFINE_WITH_QUANT] = false;
+        BaseTest<knowhere::fp16>(train_ds, query_ds, topk, metric, fp16_json);
+    }
+    // with refine_type = float16, refine_with_quant = true
+    {
+        // some precision loss by the difference between knowhere fp32->bf16 and faiss fp32->bf16
+        auto fp16_json = scann_gen();
+        fp16_json[knowhere::indexparam::REFINE_TYPE] = knowhere::RefineType::FLOAT16_QUANT;
+        fp16_json[knowhere::indexparam::REFINE_WITH_QUANT] = true;
+        BaseTest<knowhere::fp16>(train_ds, query_ds, topk, metric, fp16_json, 1.0001);
+    }
+    // with refine_type = uint8, refine_with_quant = false
+    {
+        auto fp16_json = scann_gen();
+        fp16_json[knowhere::indexparam::REFINE_TYPE] = knowhere::RefineType::UINT8_QUANT;
+        fp16_json[knowhere::indexparam::REFINE_WITH_QUANT] = false;
+        BaseTest<knowhere::fp16>(train_ds, query_ds, topk, metric, fp16_json);
+    }
+    // with refine_type = uint8, refine_with_quant = true
+    {
+        auto fp16_json = scann_gen();
+        fp16_json[knowhere::indexparam::REFINE_TYPE] = knowhere::RefineType::UINT8_QUANT;
+        fp16_json[knowhere::indexparam::REFINE_WITH_QUANT] = true;
+        BaseTest<knowhere::fp16>(train_ds, query_ds, topk, metric, fp16_json, 1.001);
+    }
 }

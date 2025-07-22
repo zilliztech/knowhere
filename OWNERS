@@ -1,7 +1,6 @@
 filters:
   ".*":
     reviewers:
-      - cydrain
       - xiaofan-luan
       - liliu-z
       - Presburger
@@ -11,9 +10,9 @@ filters:
       - cqy123456
       - zhengbuqian
       - chasingegg
+      - alexanderguzhva
 
     approvers:
-      - cydrain
       - xiaofan-luan
       - liliu-z
       - Presburger
@@ -23,6 +22,7 @@ filters:
       - cqy123456
       - zhengbuqian
       - chasingegg
+      - alexanderguzhva
 
   "tests":
     reviewers:

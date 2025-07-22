@@ -100,9 +100,8 @@ include_directories(${folly_INCLUDE_DIRS})
 find_package(nlohmann_json REQUIRED)
 find_package(glog REQUIRED)
 find_package(prometheus-cpp REQUIRED)
-if(NOT WITH_CUVS)
-  find_package(fmt REQUIRED)
-endif()
+find_package(fmt REQUIRED)
+
 if(NOT WITH_LIGHT)
   find_package(opentelemetry-cpp REQUIRED)
 endif()
@@ -205,10 +204,6 @@ if(WITH_CUVS)
     APPEND
     KNOWHERE_LINKER_LIBS
     raft::raft
-    raft::raft_logger
-    raft::raft_logger_impl
-    rmm::rmm_logger
-    rmm::rmm_logger_impl
     cuvs::cuvs
     CUDA::cublas
     CUDA::cusparse

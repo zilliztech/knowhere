@@ -33,6 +33,7 @@ constexpr const char* INDEX_FAISS_SCANN = "SCANN";
 constexpr const char* INDEX_FAISS_SCANN_DVR = "SCANN_DVR";
 constexpr const char* INDEX_FAISS_IVFSQ8 = "IVF_SQ8";
 constexpr const char* INDEX_FAISS_IVFSQ_CC = "IVF_SQ_CC";
+constexpr const char* INDEX_FAISS_IVFRABITQ = "IVF_RABITQ";
 
 constexpr const char* INDEX_FAISS_GPU_IDMAP = "GPU_FAISS_FLAT";
 constexpr const char* INDEX_FAISS_GPU_IVFFLAT = "GPU_FAISS_IVF_FLAT";
@@ -55,6 +56,9 @@ constexpr const char* INDEX_HNSW_PQ = "HNSW_PQ";
 constexpr const char* INDEX_HNSW_PRQ = "HNSW_PRQ";
 
 constexpr const char* INDEX_DISKANN = "DISKANN";
+constexpr const char* INDEX_MINHASH_LSH = "MINHASH_LSH";
+
+constexpr const char* INDEX_EMB_LIST_HNSW = "EMB_LIST_HNSW";
 
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX = "SPARSE_INVERTED_INDEX";
 constexpr const char* INDEX_SPARSE_WAND = "SPARSE_WAND";
@@ -121,6 +125,8 @@ constexpr const char* ENSURE_TOPK_FULL = "ensure_topk_full";
 constexpr const char* CODE_SIZE = "code_size";
 constexpr const char* RAW_DATA_STORE_PREFIX = "raw_data_store_prefix";
 constexpr const char* SUB_DIM = "sub_dim";
+constexpr const char* REFINE_TYPE = "refine_type";
+constexpr const char* REFINE_WITH_QUANT = "refine_with_quant";
 
 // cuVS Params
 constexpr const char* REFINE_RATIO = "refine_ratio";
@@ -180,6 +186,24 @@ constexpr const char* PRQ_NUM = "nrq";      // for PRQ, number of redisual quant
 constexpr const char* INVERTED_INDEX_ALGO = "inverted_index_algo";
 constexpr const char* DROP_RATIO_BUILD = "drop_ratio_build";
 constexpr const char* DROP_RATIO_SEARCH = "drop_ratio_search";
+
+// RaBitQ Params
+constexpr const char* RABITQ_QUERY_BITS = "rbq_bits_query";
+
+// minhash meta Params
+constexpr const char* MH_ELEMENT_BIT_WIDTH = "mh_element_bit_width";
+constexpr const char* MH_LSH_SEARCH_WITH_JACCARD = "mh_search_with_jaccard";
+// minhash lsh index params
+constexpr const char* MH_LSH_ALIGNED_BLOCK_SIZE = "mh_lsh_aligned_block_size";
+constexpr const char* MH_LSH_BAND = "mh_lsh_band";
+constexpr const char* MH_LSH_SHARED_BLOOM_FILTER = "mh_lsh_shared_bloom_filter";
+constexpr const char* MH_LSH_BLOOM_FALSE_POSITIVE_RPOB = "mh_lsh_bloom_false_positive_prob";
+constexpr const char* MH_LSH_HASH_CODE_IN_MEM = "mh_lsh_code_in_mem";
+constexpr const char* MH_LSH_REFINE_K = "refine_k";
+constexpr const char* MH_LSH_BATCH_SEARCH = "mh_lsh_batch_search";
+
+// Emb List Index Params
+constexpr const char* RETRIEVAL_ANN_RATIO = "retrieval_ann_ratio";
 }  // namespace indexparam
 
 using MetricType = std::string;
@@ -190,9 +214,15 @@ constexpr const char* L2 = "L2";
 constexpr const char* COSINE = "COSINE";
 constexpr const char* HAMMING = "HAMMING";
 constexpr const char* JACCARD = "JACCARD";
+constexpr const char* MHJACCARD = "MHJACCARD";
 constexpr const char* SUBSTRUCTURE = "SUBSTRUCTURE";
 constexpr const char* SUPERSTRUCTURE = "SUPERSTRUCTURE";
 constexpr const char* BM25 = "BM25";
+// emb list
+constexpr const char* MAX_SIM = "MAX_SIM";
+constexpr const char* ORDERED_MAX_SIM = "ORDERED_MAX_SIM";
+constexpr const char* ORDERED_MAX_SIM_WITH_WINDOW = "ORDERED_MAX_SIM_WITH_WINDOW";
+constexpr const char* DTW = "DTW";
 }  // namespace metric
 
 enum VecType {
@@ -203,5 +233,12 @@ enum VecType {
     VECTOR_SPARSE_FLOAT = 104,
     VECTOR_INT8 = 105,
 };  // keep the same value as milvus proto define
+
+enum RefineType {
+    DATA_VIEW = 0,
+    UINT8_QUANT,
+    FLOAT16_QUANT,
+    BFLOAT16_QUANT,
+};
 
 }  // namespace knowhere

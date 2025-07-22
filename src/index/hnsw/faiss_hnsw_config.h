@@ -124,8 +124,8 @@ class FaissHnswSqConfig : public FaissHnswConfig {
             // check refine
             if (refine_type.has_value()) {
                 if (!WhetherAcceptableRefineType(refine_type.value())) {
-                    std::string msg =
-                        "invalid refine type : " + refine_type.value() + ", optional types are [sq6, sq8, fp16, bf16]";
+                    std::string msg = "invalid refine type : " + refine_type.value() +
+                                      ", optional types are [sq6, sq8, fp16, bf16, fp32, flat]";
                     return HandleError(err_msg, msg, Status::invalid_args);
                 }
             }

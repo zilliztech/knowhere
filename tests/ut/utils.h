@@ -67,8 +67,9 @@ GenBinDataSet(int rows, int dim, int seed = 42) {
     std::mt19937 rng(seed);
     std::uniform_int_distribution<> distrib(0.0, 100.0);
     int uint8_num = dim / 8;
-    uint8_t* ts = new uint8_t[rows * uint8_num];
-    for (int i = 0; i < rows * uint8_num; ++i) ts[i] = (uint8_t)distrib(rng);
+    uint64_t total_size = rows * uint8_num;
+    uint8_t* ts = new uint8_t[total_size];
+    for (uint64_t i = 0; i < total_size; ++i) ts[i] = (uint8_t)distrib(rng);
     auto ds = knowhere::GenDataSet(rows, dim, ts);
     ds->SetIsOwner(true);
     return ds;
@@ -120,7 +121,6 @@ GetKNNRecall(const knowhere::DataSet& ground_truth, const knowhere::DataSet& res
     for (auto i = 0; i < nq; ++i) {
         std::vector<int64_t> ids_0(gt_ids + i * gt_k, gt_ids + i * gt_k + res_k);
         std::vector<int64_t> ids_1(res_ids + i * res_k, res_ids + i * res_k + res_k);
-
         std::sort(ids_0.begin(), ids_0.end());
         std::sort(ids_1.begin(), ids_1.end());
 
@@ -247,6 +247,20 @@ GetRelativeLoss(float gt_res, float res) {
     return std::abs((gt_res - res) / gt_res);
 }
 
+template <typename DataType>
+void
+WriteRawDataToDisk(const std::string data_path, const DataType* raw_data, const uint32_t num, const uint32_t dim) {
+    std::ofstream writer(data_path.c_str(), std::ios::binary);
+    writer.write((char*)&num, sizeof(uint32_t));
+    writer.write((char*)&dim, sizeof(uint32_t));
+    uint64_t size = sizeof(DataType) * num * dim;
+    if constexpr (std::is_same_v<DataType, knowhere::bin1>) {
+        size = num * dim / 8.0;
+    }
+    writer.write((char*)raw_data, size);
+    writer.close();
+}
+
 inline bool
 CheckDistanceInScope(const knowhere::DataSet& result, int topk, float low_bound, float high_bound) {
     auto ids = result.GetIds();
@@ -284,22 +298,37 @@ CheckDistanceInScope(const knowhere::DataSet& result, float low_bound, float hig
 }
 
 inline std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>
-GenerateScalarInfo(size_t n) {
+GenerateScalarInfo(size_t n, size_t partition_num = 2) {
     std::vector<std::vector<uint32_t>> scalar_info;
-    scalar_info.reserve(2);
-    std::vector<uint32_t> scalar1;
-    scalar1.reserve(n / 2);
-    std::vector<uint32_t> scalar2;
-    scalar2.reserve(n - n / 2);
-    for (size_t i = 0; i < n; ++i) {
-        if (i % 2 == 0) {
-            scalar2.emplace_back(i);
-        } else {
-            scalar1.emplace_back(i);
+    scalar_info.reserve(partition_num);
+    for (size_t i = 0; i < partition_num; ++i) {
+        std::vector<uint32_t> scalar;
+        scalar.reserve(n / partition_num + 1);
+        for (size_t j = 0; j < n; ++j) {
+            if (j % partition_num == i) {
+                scalar.emplace_back(j);
+            }
         }
+        scalar_info.emplace_back(std::move(scalar));
     }
-    scalar_info.emplace_back(std::move(scalar1));
-    scalar_info.emplace_back(std::move(scalar2));
+    std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_map;
+    scalar_map[0] = std::move(scalar_info);
+    return scalar_map;
+}
+
+inline std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>
+GenerateScalarInfoWithStep(size_t n, size_t partition_num = 2, size_t step = 10) {
+    assert(step * partition_num <= n);
+    std::vector<std::vector<uint32_t>> scalar_info;
+    scalar_info.reserve(partition_num);
+    for (size_t i = 0; i < partition_num; ++i) {
+        std::vector<uint32_t> scalar;
+        scalar_info.emplace_back(std::move(scalar));
+    }
+    for (size_t i = 0; i < n; i += 1) {
+        size_t j = i / step;
+        scalar_info[j % partition_num].emplace_back(i);
+    }
     std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_map;
     scalar_map[0] = std::move(scalar_info);
     return scalar_map;
@@ -325,6 +354,20 @@ GenerateBitsetByScalarInfoAndFirstTBits(const std::vector<uint32_t>& scalar, siz
         }
         data[i >> 3] |= (0x1 << (i & 0x7));
         ++count;
+    }
+    return data;
+}
+
+inline std::vector<uint8_t>
+GenerateBitsetByPartition(size_t n, float pass_rate, size_t partition_num) {
+    float acc = 0.0f;
+    std::vector<uint8_t> data((n + 8 - 1) / 8, 0xff);
+    for (size_t i = 0; i < n; i += partition_num) {
+        acc += pass_rate;
+        if (acc >= 1.0f) {
+            acc -= 1.0f;
+            data[i >> 3] &= ~(0x1 << (i & 0x7));
+        }
     }
     return data;
 }

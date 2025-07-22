@@ -354,6 +354,7 @@ TEST_F(Benchmark_float, TEST_BRUTE_FORCE) {
     test_brute_force<knowhere::fp32>(conf);
     test_brute_force<knowhere::fp16>(conf);
     test_brute_force<knowhere::bf16>(conf);
+    test_brute_force<knowhere::int8>(conf);
 }
 
 TEST_F(Benchmark_float, TEST_IDMAP) {
@@ -618,3 +619,21 @@ TEST_F(Benchmark_float, TEST_CUVS_CAGRA) {
     }
 }
 #endif
+
+TEST_F(Benchmark_float, TEST_IVF_RABITQ) {
+    index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ;
+
+    std::string index_file_name;
+    knowhere::Json conf = cfg_;
+    for (auto nlist : NLISTs_) {
+        for (auto qb : {0, 4, 6, 8}) {
+            conf[knowhere::indexparam::NLIST] = nlist;
+            conf[knowhere::indexparam::RABITQ_QUERY_BITS] = qb;
+            std::vector<int32_t> params = {nlist, qb};
+
+            TEST_INDEX(ivf, knowhere::fp32, params);
+            TEST_INDEX(ivf, knowhere::fp16, params);
+            TEST_INDEX(ivf, knowhere::bf16, params);
+        }
+    }
+}

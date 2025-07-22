@@ -164,7 +164,18 @@ struct cuvs_index {
 
         auto k = neighbors.extent(1);
         auto k_tmp = k + k_offset;
-        if (refine_ratio > 1.0f) {
+        bool do_refine_step = refine_ratio > 1.0f;
+        if (do_refine_step && !dataset.has_value()) {
+            RAFT_LOG_WARN("Refinement requested, but no dataset provided. Ignoring refinement request.");
+            do_refine_step = false;
+        }
+        if (do_refine_step && std::is_same_v<T, std::uint8_t>) {
+            RAFT_LOG_WARN(
+                "Refinement requested, but categorical/binary data is not supported. "
+                "Ignoring refinement request.");
+            do_refine_step = false;
+        }
+        if (do_refine_step) {
             k_tmp *= refine_ratio;
         }
 
@@ -192,15 +203,6 @@ struct cuvs_index {
         } else if constexpr (vector_index_kind == cuvs_index_kind::cagra) {
             cuvs::neighbors::cagra::search(res, search_params, underlying_index, queries, neighbors_tmp, distances_tmp,
                                            filter);
-        }
-        bool do_refine_step = refine_ratio > 1.0f;
-        if (do_refine_step && !dataset.has_value()) {
-            RAFT_LOG_WARN("Refinement requested, but no dataset provided. Ignoring refinement request.");
-            do_refine_step = false;
-        }
-        if (do_refine_step && !std::is_same_v<T, float>) {
-            RAFT_LOG_WARN("Refinement requested, but only float are supported. Ignoring refinement request.");
-            do_refine_step = false;
         }
         if constexpr (std::is_same_v<T, float>) {
             if (do_refine_step) {
@@ -268,6 +270,20 @@ struct cuvs_index {
                                      bool include_dataset = true) {
         auto const& underlying_index = index.get_vector_index();
         if constexpr (vector_index_kind == cuvs_index_kind::cagra) {
+            size_t metric_type;
+            if (underlying_index.metric() == cuvs::distance::DistanceType::L2Expanded) {
+                metric_type = 0;
+            } else if (underlying_index.metric() == cuvs::distance::DistanceType::InnerProduct) {
+                metric_type = 1;
+            } else if (underlying_index.metric() == cuvs::distance::DistanceType::CosineExpanded) {
+                metric_type = 2;
+            }
+
+            os.write(reinterpret_cast<char*>(&metric_type), sizeof(metric_type));
+            size_t data_size = underlying_index.dim() * sizeof(float);
+            os.write(reinterpret_cast<char*>(&data_size), sizeof(data_size));
+            size_t dim = underlying_index.dim();
+            os.write(reinterpret_cast<char*>(&dim), sizeof(dim));
             return cuvs::neighbors::cagra::serialize_to_hnswlib(res, os, underlying_index);
         }
     }
