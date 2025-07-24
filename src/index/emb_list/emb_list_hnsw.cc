@@ -220,7 +220,12 @@ class EmbListHNSWIndexNode : public IndexNode {
 
                 // Aggregate score for the emb_list (e.g., sum of max similarities)
                 // TODO: support other aggregation methods.
-                auto score = get_sum_max_sim(bf_dists, nq, vids.size());
+                auto score_or = get_sum_max_sim(bf_dists, nq, vids.size());
+                if (!score_or.has_value()) {
+                    LOG_KNOWHERE_WARNING_ << "get_sum_max_sim failed, nq: " << nq << ", vids.size(): " << vids.size();
+                    return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "get_sum_max_sim failed");
+                }
+                auto score = score_or.value();
                 if (minheap.size() < (size_t)el_k) {
                     minheap.emplace((int64_t)el_id, score);
                 } else {

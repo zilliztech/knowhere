@@ -90,12 +90,12 @@ convert_lims_to_vector(const size_t* lims, size_t rows) {
     return offset;
 }
 
-inline float
+inline std::optional<float>
 find_max_in_range(const float* dists, int start_idx, int end_idx) {
     float max_v = std::numeric_limits<float>::lowest();
-    if (start_idx < 0 || end_idx < start_idx) {
+    if (start_idx < 0 || end_idx <= start_idx) {
         LOG_KNOWHERE_WARNING_ << "invalid range, start_idx: " << start_idx << ", end_idx: " << end_idx;
-        return max_v;
+        return std::nullopt;
     }
     for (auto i = start_idx; i < end_idx; ++i) {
         if (dists[i] > max_v) {
@@ -105,17 +105,26 @@ find_max_in_range(const float* dists, int start_idx, int end_idx) {
     return max_v;
 }
 
-inline float
+inline std::optional<float>
 get_sum_max_sim(const float* dists, const size_t nq, const size_t el_len) {
     float score = 0.0f;
     for (size_t i = 0; i < nq; i++) {
-        score += find_max_in_range(dists, i * el_len, (i + 1) * el_len);
+        auto max_v = find_max_in_range(dists, i * el_len, (i + 1) * el_len);
+        if (max_v.has_value()) {
+            score += max_v.value();
+        } else {
+            return std::nullopt;
+        }
     }
     return score;
 }
 
-inline float
+inline std::optional<float>
 get_ordered_sum_max_sim(const float* dists, const size_t nq, const size_t el_len) {
+    if (nq == 0 || el_len == 0) {
+        LOG_KNOWHERE_WARNING_ << "invalid nq or el_len, nq: " << nq << ", el_len: " << el_len;
+        return std::nullopt;
+    }
     std::vector<float> scores(el_len, 0.0f);
     for (size_t i = 0; i < nq; i++) {
         scores[0] += dists[i * el_len];
