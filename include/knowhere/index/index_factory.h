@@ -37,7 +37,8 @@ class IndexFactory {
 
     static IndexFactory&
     Instance();
-    typedef std::tuple<std::set<std::pair<std::string, VecType>>, std::set<std::string>> GlobalIndexTable;
+    typedef std::tuple<std::set<std::pair<std::string, VecType>>, std::set<std::string>, std::set<std::string>>
+        GlobalIndexTable;
 
     bool
     FeatureCheck(const std::string& name, uint64_t feature) const;
