@@ -12,6 +12,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+#include <cstdint>
+
 #ifndef FEATURE_H
 #define FEATURE_H
 
@@ -30,6 +32,8 @@ constexpr uint64_t SPARSE_FLOAT32 = 1UL << 4;
 // vector datatype support : int8
 constexpr uint64_t INT8 = 1UL << 5;
 
+// This flag indicates that the index is a emb list index
+constexpr uint64_t EMB_LIST = 1UL << 15;
 // This flag indicates that there is no need to create any index structure (build stage can be skipped)
 constexpr uint64_t NO_TRAIN = 1UL << 16;
 // This flag indicates that the index defaults to KNN search, meaning the recall is 100% (no precision loss compared
