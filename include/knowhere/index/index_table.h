@@ -109,10 +109,10 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     {IndexEnum::INDEX_MINHASH_LSH, VecType::VECTOR_BINARY},
 
     // emb list hnsw
-    {IndexEnum::INDEX_EMB_LIST_HNSW, VecType::EMB_LIST_FLOAT},
-    {IndexEnum::INDEX_EMB_LIST_HNSW, VecType::EMB_LIST_FLOAT16},
-    {IndexEnum::INDEX_EMB_LIST_HNSW, VecType::EMB_LIST_BFLOAT16},
-    {IndexEnum::INDEX_EMB_LIST_HNSW, VecType::EMB_LIST_INT8},
+    {IndexEnum::INDEX_EMB_LIST_HNSW, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_EMB_LIST_HNSW, VecType::VECTOR_FLOAT16},
+    {IndexEnum::INDEX_EMB_LIST_HNSW, VecType::VECTOR_BFLOAT16},
+    {IndexEnum::INDEX_EMB_LIST_HNSW, VecType::VECTOR_INT8},
 };
 
 static std::set<std::string> legal_support_mmap_knowhere_index = {
@@ -142,8 +142,14 @@ static std::set<std::string> legal_support_mmap_knowhere_index = {
     // emb list hnsw
     IndexEnum::INDEX_EMB_LIST_HNSW,
 };
+
+static std::set<std::string> legal_support_emb_list_knowhere_index = {
+    IndexEnum::INDEX_EMB_LIST_HNSW,
+};
+
 KNOWHERE_SET_STATIC_GLOBAL_INDEX_TABLE(0, KNOWHERE_STATIC_INDEX, legal_knowhere_index)
 KNOWHERE_SET_STATIC_GLOBAL_INDEX_TABLE(1, KNOWHERE_SUPPORT_MMAP_INDEX, legal_support_mmap_knowhere_index)
+KNOWHERE_SET_STATIC_GLOBAL_INDEX_TABLE(2, KNOWHERE_SUPPORT_EMB_LIST_INDEX, legal_support_emb_list_knowhere_index)
 
 }  // namespace knowhere
 #endif /* INDEX_TABLE_H */
