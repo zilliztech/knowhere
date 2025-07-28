@@ -42,6 +42,12 @@ fvec_norm_L2sqr_neon(const float* x, size_t d);
 void
 fvec_L2sqr_ny_neon(float* dis, const float* x, const float* y, size_t d, size_t ny);
 
+/// compute ny square L2 distance between x and a set of contiguous y vectors
+/// and return the index of the nearest vector.
+/// return 0 if ny == 0.
+size_t
+fvec_L2sqr_ny_nearest_neon(float* distances_tmp_buffer, const float* x, const float* y, size_t d, size_t ny);
+
 /// compute the inner product between nx vectors x and one y
 void
 fvec_inner_products_ny_neon(float* ip, const float* x, const float* y, size_t d, size_t ny);
