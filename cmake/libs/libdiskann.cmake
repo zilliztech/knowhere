@@ -18,6 +18,9 @@ set(DISKANN_SOURCES
     thirdparty/DiskANN/src/memory_mapper.cpp
     thirdparty/DiskANN/src/partition_and_pq.cpp
     thirdparty/DiskANN/src/pq_flash_index.cpp
+    thirdparty/DiskANN/src/pq_flash_aisaq_index.cpp
+    thirdparty/DiskANN/src/aisaq_utils.cpp
+    thirdparty/DiskANN/src/aisaq_pq_reader.cpp
     thirdparty/DiskANN/src/logger.cpp
     thirdparty/DiskANN/src/utils.cpp)
 

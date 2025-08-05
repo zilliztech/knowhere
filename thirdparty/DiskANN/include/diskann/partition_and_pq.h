@@ -20,7 +20,8 @@ void gen_random_slice(const std::string base_file,
 template<typename T>
 void gen_random_slice(const std::string data_file, double p_val,
                       std::unique_ptr<float[]> &sampled_data,
-                      size_t &slice_size, size_t &ndims);
+                      size_t &slice_size, size_t &ndims,
+                      std::vector<uint32_t> *sampled_ids = nullptr);
 
 template<typename T>
 void gen_random_slice(const T *inputdata, size_t npts, size_t ndims,
@@ -69,3 +70,7 @@ int generate_pq_data_from_pivots(const std::string data_file,
                                  unsigned num_centers, unsigned num_pq_chunks,
                                  std::string pq_pivots_path,
                                  std::string pq_compressed_vectors_path);
+
+template <typename T>
+int partition_calc_kmeans(const std::string &data_file, 
+                          const std::string &output_file, size_t k);

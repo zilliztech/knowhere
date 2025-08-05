@@ -225,8 +225,8 @@ namespace diskann {
     }
 
     if (load_flag) {
-      this->destroy_thread_data();
       reader->close();
+      this->destroy_thread_data();
     }
   }
 
@@ -240,17 +240,17 @@ namespace diskann {
       diskann::alloc_aligned((void **) &scratch.coord_scratch, coord_alloc_size,
                              256);
       diskann::alloc_aligned((void **) &scratch.sector_scratch,
-                             (_u64) MAX_N_SECTOR_READS * read_len_for_node,
-                             SECTOR_LEN);
+                             (_u64) diskann::defaults::MAX_N_SECTOR_READS * read_len_for_node,
+                             diskann::defaults::SECTOR_LEN);
       diskann::alloc_aligned(
           (void **) &scratch.aligned_pq_coord_scratch,
-          (_u64) MAX_GRAPH_DEGREE * (_u64) this->aligned_dim * sizeof(_u8),
+          (_u64) diskann::defaults::MAX_GRAPH_DEGREE * (_u64) this->aligned_dim * sizeof(_u8),
           256);
       diskann::alloc_aligned((void **) &scratch.aligned_pqtable_dist_scratch,
                              256 * (_u64) this->aligned_dim * sizeof(float),
                              256);
       diskann::alloc_aligned((void **) &scratch.aligned_dist_scratch,
-                             (_u64) MAX_GRAPH_DEGREE * sizeof(float), 256);
+                             (_u64) diskann::defaults::MAX_GRAPH_DEGREE * sizeof(float), 256);
       diskann::alloc_aligned((void **) &scratch.aligned_query_T,
                              this->aligned_dim * sizeof(T), 8 * sizeof(T));
       diskann::alloc_aligned((void **) &scratch.aligned_query_float,
@@ -275,12 +275,12 @@ namespace diskann {
     _u64 thread_data_size = 0;
     thread_data_size += ROUND_UP(sizeof(T) * this->aligned_dim, 256);
     thread_data_size +=
-        ROUND_UP((_u64) MAX_N_SECTOR_READS * read_len_for_node, SECTOR_LEN);
+        ROUND_UP((_u64) diskann::defaults::MAX_N_SECTOR_READS * read_len_for_node, diskann::defaults::SECTOR_LEN);
     thread_data_size += ROUND_UP(
-        (_u64) MAX_GRAPH_DEGREE * (_u64) this->aligned_dim * sizeof(_u8), 256);
+        (_u64) diskann::defaults::MAX_GRAPH_DEGREE * (_u64) this->aligned_dim * sizeof(_u8), 256);
     thread_data_size +=
         ROUND_UP(256 * (_u64) this->aligned_dim * sizeof(float), 256);
-    thread_data_size += ROUND_UP((_u64) MAX_GRAPH_DEGREE * sizeof(float), 256);
+    thread_data_size += ROUND_UP((_u64) diskann::defaults::MAX_GRAPH_DEGREE * sizeof(float), 256);
     thread_data_size += ROUND_UP(this->aligned_dim * sizeof(T), 8 * sizeof(T));
     thread_data_size +=
         ROUND_UP(this->aligned_dim * sizeof(float), 8 * sizeof(float));
@@ -343,7 +343,7 @@ namespace diskann {
       for (_u64 node_idx = start_idx; node_idx < end_idx; node_idx++) {
         AlignedRead read;
         char       *buf = nullptr;
-        alloc_aligned((void **) &buf, read_len_for_node, SECTOR_LEN);
+        alloc_aligned((void **) &buf, read_len_for_node, diskann::defaults::SECTOR_LEN);
         nhoods.push_back(std::make_pair(node_list[node_idx], buf));
         read.len = read_len_for_node;
         read.buf = buf;
@@ -576,7 +576,7 @@ namespace diskann {
         std::vector<std::pair<_u32, char *>> nhoods;
         for (size_t cur_pt = start; cur_pt < end; cur_pt++) {
           char *buf = nullptr;
-          alloc_aligned((void **) &buf, read_len_for_node, SECTOR_LEN);
+          alloc_aligned((void **) &buf, read_len_for_node, diskann::defaults::SECTOR_LEN);
           nhoods.push_back(std::make_pair(nodes_to_expand[cur_pt], buf));
           AlignedRead read;
           read.len = read_len_for_node;
@@ -749,8 +749,8 @@ namespace diskann {
       disk_bytes_per_point =
           disk_pq_n_chunks *
           sizeof(_u8);  // revising disk_bytes_per_point since DISK PQ is used.
-      std::cout << "Disk index uses PQ data compressed down to "
-                << disk_pq_n_chunks << " bytes per point." << std::endl;
+      LOG_KNOWHERE_INFO_ << "Disk index uses PQ data compressed down to "
+                << disk_pq_n_chunks << " bytes per point.";
     }
 
     // read index metadata
@@ -780,19 +780,19 @@ namespace diskann {
     READ_U64(index_metadata, max_node_len);
     READ_U64(index_metadata, nnodes_per_sector);
 
-    if (max_node_len > SECTOR_LEN) {
+    if (max_node_len > diskann::defaults::SECTOR_LEN) {
       long_node = true;
-      nsectors_per_node = ROUND_UP(max_node_len, SECTOR_LEN) / SECTOR_LEN;
-      read_len_for_node = SECTOR_LEN * nsectors_per_node;
+      nsectors_per_node = ROUND_UP(max_node_len, diskann::defaults::SECTOR_LEN) / diskann::defaults::SECTOR_LEN;
+      read_len_for_node = diskann::defaults::SECTOR_LEN * nsectors_per_node;
     }
 
     max_degree = ((max_node_len - disk_bytes_per_point) / sizeof(unsigned)) - 1;
 
-    if (max_degree > MAX_GRAPH_DEGREE) {
+    if (max_degree > diskann::defaults::MAX_GRAPH_DEGREE) {
       std::stringstream stream;
       stream << "Error loading index. Ensure that max graph degree (R) does "
                 "not exceed "
-             << MAX_GRAPH_DEGREE << std::endl;
+             << diskann::defaults::MAX_GRAPH_DEGREE << std::endl;
       throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__,
                                   __LINE__);
     }
@@ -804,9 +804,9 @@ namespace diskann {
     if (this->num_frozen_points == 1)
       this->frozen_location = file_frozen_id;
     if (this->num_frozen_points == 1) {
-      diskann::cout << " Detected frozen point in index at location "
+      LOG_KNOWHERE_INFO_ << " Detected frozen point in index at location "
                     << this->frozen_location
-                    << ". Will not output it at search time." << std::endl;
+                    << ". Will not output it at search time.";
     }
 
     READ_U64(index_metadata, this->reorder_data_exists);
@@ -940,7 +940,8 @@ namespace diskann {
       _s64 *indices, float *distances, const _u64 beam_width_param,
       IOContext &ctx, QueryStats *stats,
       const knowhere::feder::diskann::FederResultUniq &feder,
-      knowhere::BitsetView                             bitset_view) {
+      knowhere::BitsetView                             bitset_view,
+	  PQDataGetter* pq_data_getter) {
     auto         query_scratch = &(data.scratch);
     const T     *query = data.scratch.aligned_query_T;
     auto         beam_width = beam_width_param * kRefineBeamWidthFactor;
@@ -949,7 +950,7 @@ namespace diskann {
     pq_table.populate_chunk_distances(query_float, pq_dists);
     float         *dist_scratch = query_scratch->aligned_dist_scratch;
     _u8           *pq_coord_scratch = query_scratch->aligned_pq_coord_scratch;
-    constexpr _u32 pq_batch_size = MAX_GRAPH_DEGREE;
+    constexpr _u32 pq_batch_size = diskann::defaults::MAX_GRAPH_DEGREE;
     std::vector<unsigned> pq_batch_ids;
     pq_batch_ids.reserve(pq_batch_size);
     const _u64 pq_topk = k_search * kBruteForceTopkRefineExpansionFactor;
@@ -962,26 +963,30 @@ namespace diskann {
     _u64 &sector_scratch_idx = query_scratch->sector_idx;
     knowhere::ResultMaxHeap<float, _u64> max_heap(k_search);
     Timer                                io_timer, query_timer;
-
+    size_t pq_offset = 0;
     // scan un-marked points and calculate pq dists
+
     for (_u64 id = 0; id < num_points; ++id) {
-      if (bitset_view.empty() || !bitset_view.test(id)) {
-        pq_batch_ids.push_back(id);
+      _u64 origin_id = pq_data_getter->get_origin_id(id);
+      if (bitset_view.empty() || !bitset_view.test(origin_id)) {
+    	pq_batch_ids.push_back(id);
       }
 
       if (pq_batch_ids.size() == pq_batch_size || id == num_points - 1) {
         const size_t sz = pq_batch_ids.size();
-        aggregate_coords(pq_batch_ids.data(), sz, this->data.get(),
+        aggregate_coords(pq_batch_ids.data(), sz, pq_data_getter->get_pq_data(),
                          this->n_chunks, pq_coord_scratch);
         pq_dist_lookup(pq_coord_scratch, sz, this->n_chunks, pq_dists,
                        dist_scratch);
         for (size_t i = 0; i < sz; ++i) {
           pq_max_heap.Push(dist_scratch[i], pq_batch_ids[i]);
         }
+        pq_data_getter->release_pq_data(pq_offset,id*this->n_chunks-pq_offset);
+        pq_offset = id*this->n_chunks;
         pq_batch_ids.clear();
       }
     }
-
+    pq_data_getter->release_pq_data();
     // deduplicate sectors by ids
     while (const auto opt = pq_max_heap.Pop()) {
       const auto [dist, id] = opt.value();
@@ -1055,7 +1060,7 @@ namespace diskann {
       }
       if (const auto op = max_heap.Pop()) {
         const auto [dis, id] = op.value();
-        indices[i] = id;
+        indices[i] = pq_data_getter->get_origin_id(id);
         if (distances != nullptr) {
           distances[i] = dis;
           if (metric == diskann::Metric::INNER_PRODUCT) {
@@ -1083,7 +1088,7 @@ namespace diskann {
       float *distances, const _u64 beam_width, const bool use_reorder_data,
       QueryStats *stats, const knowhere::feder::diskann::FederResultUniq &feder,
       knowhere::BitsetView bitset_view, const float filter_ratio_in) {
-    if (beam_width > MAX_N_SECTOR_READS)
+    if (beam_width > defaults::MAX_N_SECTOR_READS)
       throw ANNException("Beamwidth can not be higher than MAX_N_SECTOR_READS",
                          -1, __FUNCSIG__, __FILE__, __LINE__);
 
@@ -1124,7 +1129,7 @@ namespace diskann {
 
       if (bv_cnt >= bitset_view.size() * filter_threshold) {
         brute_force_beam_search(data, query_norm, k_search, indices, distances,
-                                beam_width, ctx, stats, feder, bitset_view);
+                                beam_width, ctx, stats, feder, bitset_view, this);
         this->thread_data.push(data);
         this->thread_data.push_notify_all();
         this->reader->put_ctx(ctx);
@@ -1135,7 +1140,7 @@ namespace diskann {
     // Turn to BF is k_search is too large
     if (k_search > 0.5 * (num_points - bv_cnt)) {
       brute_force_beam_search(data, query_norm, k_search, indices, distances,
-                              beam_width, ctx, stats, feder, bitset_view);
+                              beam_width, ctx, stats, feder, bitset_view, this);
       this->thread_data.push(data);
       this->thread_data.push_notify_all();
       this->reader->put_ctx(ctx);
@@ -1447,8 +1452,8 @@ namespace diskann {
 
       for (size_t i = 0; i < full_retset.size(); ++i) {
         vec_read_reqs.emplace_back(
-            VECTOR_SECTOR_NO(((size_t) full_retset[i].id)) * SECTOR_LEN,
-            SECTOR_LEN, sector_scratch + i * SECTOR_LEN);
+            VECTOR_SECTOR_NO(((size_t) full_retset[i].id)) * diskann::defaults::SECTOR_LEN,
+            diskann::defaults::SECTOR_LEN, sector_scratch + i * diskann::defaults::SECTOR_LEN);
 
         if (stats != nullptr) {
           stats->n_4k++;
@@ -1465,7 +1470,7 @@ namespace diskann {
       for (size_t i = 0; i < full_retset.size(); ++i) {
         auto id = full_retset[i].id;
         auto location =
-            (sector_scratch + i * SECTOR_LEN) + VECTOR_SECTOR_OFFSET(id);
+            (sector_scratch + i * diskann::defaults::SECTOR_LEN) + VECTOR_SECTOR_OFFSET(id);
         full_retset[i].distance =
             dist_cmp_wrap(query, (T *) location, this->data_dim, id);
       }
@@ -1503,7 +1508,6 @@ namespace diskann {
     this->thread_data.push(data);
     this->thread_data.push_notify_all();
     this->reader->put_ctx(ctx);
-    // std::cout << num_ios << " " <<stats << std::endl;
 
     if (stats != nullptr) {
       stats->total_us = (double) query_timer.elapsed();
@@ -1566,8 +1570,8 @@ namespace diskann {
 
     const size_t batch_size =
         std::min(AioContextPool::GetGlobalAioPool()->max_events_per_ctx(),
-                 std::min(MAX_N_SECTOR_READS / 2UL, sectors_to_visit.size()));
-    const size_t half_buf_idx = MAX_N_SECTOR_READS / 2 * read_len_for_node;
+                 std::min(defaults::MAX_N_SECTOR_READS / 2UL, sectors_to_visit.size()));
+    const size_t half_buf_idx = defaults::MAX_N_SECTOR_READS / 2 * read_len_for_node;
     char        *sector_scratch = data.scratch.sector_scratch;
     std::vector<AlignedRead> frontier_read_reqs;
     frontier_read_reqs.reserve(batch_size);
@@ -1655,7 +1659,7 @@ namespace diskann {
 
   template<typename T>
   void PQFlashIndex<T>::getIteratorNextBatch(IteratorWorkspace<T> *workspace) {
-    if (workspace->beam_width > MAX_N_SECTOR_READS)
+    if (workspace->beam_width > defaults::MAX_N_SECTOR_READS)
       throw ANNException("Beamwidth can not be higher than MAX_N_SECTOR_READS",
                          -1, __FUNCSIG__, __FILE__, __LINE__);
 

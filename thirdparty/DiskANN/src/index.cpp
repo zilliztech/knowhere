@@ -17,6 +17,7 @@
 
 #include "diskann/ann_exception.h"
 #include "diskann/common_includes.h"
+#include "diskann/defaults.h"
 #include "diskann/index.h"
 #include "diskann/logger.h"
 #include "diskann/parameters.h"
@@ -1197,7 +1198,7 @@ namespace diskann {
             _final_graph[des].end()) {
           _final_graph[des].push_back(n);
           if (_final_graph[des].size() >
-              (unsigned) (range * GRAPH_SLACK_FACTOR))
+              (unsigned) (range * diskann::defaults::GRAPH_SLACK_FACTOR))
             need_to_sync[des] = 1;
         }
       }  // des lock is released by this point
@@ -1235,7 +1236,7 @@ namespace diskann {
       {
         LockGuard guard(_locks[des]);
         if (std::find(des_pool.begin(), des_pool.end(), n) == des_pool.end()) {
-          if (des_pool.size() < (_u64) (GRAPH_SLACK_FACTOR * range)) {
+          if (des_pool.size() < (_u64) (diskann::defaults::GRAPH_SLACK_FACTOR * range)) {
             des_pool.emplace_back(n);
             if (update_in_graph) {
               LockGuard guard(_locks_in[n]);
@@ -1255,7 +1256,7 @@ namespace diskann {
         std::vector<Neighbor>    dummy_pool(0);
 
         size_t reserveSize =
-            (size_t) (std::ceil(1.05 * GRAPH_SLACK_FACTOR * range));
+            (size_t) (std::ceil(1.05 * diskann::defaults::GRAPH_SLACK_FACTOR * range));
         dummy_visited.reserve(reserveSize);
         dummy_pool.reserve(reserveSize);
 
@@ -1371,7 +1372,7 @@ namespace diskann {
 
     for (uint64_t p = 0; p < _nd; p++) {
       _final_graph[p].reserve(
-          (size_t) (std::ceil(_indexingRange * GRAPH_SLACK_FACTOR * 1.05)));
+          (size_t) (std::ceil(_indexingRange * diskann::defaults::GRAPH_SLACK_FACTOR * 1.05)));
     }
 
     std::random_device               rd;
@@ -2789,7 +2790,7 @@ namespace diskann {
 
     _final_graph[location].clear();
     _final_graph[location].shrink_to_fit();
-    _final_graph[location].reserve((_u64) (range * GRAPH_SLACK_FACTOR * 1.05));
+    _final_graph[location].reserve((_u64) (range * diskann::defaults::GRAPH_SLACK_FACTOR * 1.05));
 
     assert(!pruned_list.empty());
     {

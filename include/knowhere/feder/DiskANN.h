@@ -69,8 +69,9 @@ struct DiskANNQueryConfig {
     uint64_t k;
     uint32_t search_list_size;
     uint32_t beamwidth;
+    uint32_t vectors_beamwidth;
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DiskANNQueryConfig, k, search_list_size, beamwidth)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DiskANNQueryConfig, k, search_list_size, beamwidth, vectors_beamwidth)
 };
 
 class TopCandidateInfo {
@@ -113,10 +114,12 @@ class DiskANNVisitInfo {
     DiskANNVisitInfo() = default;
 
     void
-    SetQueryConfig(const int32_t k, const int32_t search_list_size, const int32_t beamwidth) {
+    SetQueryConfig(const int32_t k, const int32_t search_list_size, const int32_t beamwidth,
+                   const int32_t vectors_beamwidth) {
         query_params_.k = k;
         query_params_.beamwidth = beamwidth;
         query_params_.search_list_size = search_list_size;
+        query_params_.vectors_beamwidth = vectors_beamwidth;
     }
 
     const std::vector<TopCandidateInfo>&
