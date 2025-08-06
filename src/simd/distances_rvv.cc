@@ -1398,6 +1398,83 @@ fvec_L2sqr_batch_4_bf16_patch_rvv(const float* x, const float* y0, const float* 
     dis3 = __riscv_vfmv_f_s_f32m1_f32(sum_scalar);
 }
 
+void
+fvec_L2sqr_ny_transposed_rvv(float* dis, const float* x, const float* y, const float* y_sqlen, size_t d,
+                             size_t d_offset, size_t ny) {
+    // Compute squared L2 norm of input vector x
+    float x_sqlen = fvec_norm_L2sqr_rvv(x, d);
+    size_t i = 0;
+    size_t batch = 4;
+    size_t vlmax = __riscv_vsetvlmax_e32m2();
+    for (; i + batch - 1 < ny; i += batch) {
+        float acc[4] = {0, 0, 0, 0};
+        size_t j = 0;
+        for (; j + vlmax <= d; j += vlmax) {
+            size_t vl = vlmax;
+            vfloat32m2_t vx = __riscv_vle32_v_f32m2(x + j, vl);
+            // Gather transposed y elements into contiguous buffers
+            float ybuf[4][vlmax];
+            for (size_t k = 0; k < vl; ++k) {
+                ybuf[0][k] = y[i + (j + k) * d_offset];
+                ybuf[1][k] = y[i + 1 + (j + k) * d_offset];
+                ybuf[2][k] = y[i + 2 + (j + k) * d_offset];
+                ybuf[3][k] = y[i + 3 + (j + k) * d_offset];
+            }
+            vfloat32m2_t vy0 = __riscv_vle32_v_f32m2(ybuf[0], vl);
+            vfloat32m2_t vy1 = __riscv_vle32_v_f32m2(ybuf[1], vl);
+            vfloat32m2_t vy2 = __riscv_vle32_v_f32m2(ybuf[2], vl);
+            vfloat32m2_t vy3 = __riscv_vle32_v_f32m2(ybuf[3], vl);
+            vfloat32m2_t vdp0 = __riscv_vfmul_vv_f32m2(vx, vy0, vl);
+            vfloat32m2_t vdp1 = __riscv_vfmul_vv_f32m2(vx, vy1, vl);
+            vfloat32m2_t vdp2 = __riscv_vfmul_vv_f32m2(vx, vy2, vl);
+            vfloat32m2_t vdp3 = __riscv_vfmul_vv_f32m2(vx, vy3, vl);
+            vfloat32m1_t sum0 = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+            vfloat32m1_t sum1 = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+            vfloat32m1_t sum2 = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+            vfloat32m1_t sum3 = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+            sum0 = __riscv_vfredusum_vs_f32m2_f32m1(vdp0, sum0, vl);
+            sum1 = __riscv_vfredusum_vs_f32m2_f32m1(vdp1, sum1, vl);
+            sum2 = __riscv_vfredusum_vs_f32m2_f32m1(vdp2, sum2, vl);
+            sum3 = __riscv_vfredusum_vs_f32m2_f32m1(vdp3, sum3, vl);
+            acc[0] += __riscv_vfmv_f_s_f32m1_f32(sum0);
+            acc[1] += __riscv_vfmv_f_s_f32m1_f32(sum1);
+            acc[2] += __riscv_vfmv_f_s_f32m1_f32(sum2);
+            acc[3] += __riscv_vfmv_f_s_f32m1_f32(sum3);
+        }
+        for (; j < d; ++j) {
+            acc[0] += x[j] * y[i + (j)*d_offset];
+            acc[1] += x[j] * y[i + 1 + (j)*d_offset];
+            acc[2] += x[j] * y[i + 2 + (j)*d_offset];
+            acc[3] += x[j] * y[i + 3 + (j)*d_offset];
+        }
+        for (size_t b = 0; b < batch; ++b) {
+            dis[i + b] = x_sqlen + y_sqlen[i + b] - 2.0f * acc[b];
+        }
+    }
+    // Process remaining vectors (ny not multiple of 4)
+    for (; i < ny; ++i) {
+        float dp = 0.0f;
+        size_t j = 0;
+        for (; j + vlmax <= d; j += vlmax) {
+            size_t vl = vlmax;
+            vfloat32m2_t vx = __riscv_vle32_v_f32m2(x + j, vl);
+            float ybuf[vlmax];
+            for (size_t k = 0; k < vl; ++k) {
+                ybuf[k] = y[i + (j + k) * d_offset];
+            }
+            vfloat32m2_t vy = __riscv_vle32_v_f32m2(ybuf, vl);
+            vfloat32m2_t vdp = __riscv_vfmul_vv_f32m2(vx, vy, vl);
+            vfloat32m1_t sum = __riscv_vfmv_s_f_f32m1(0.0f, 1);
+            sum = __riscv_vfredusum_vs_f32m2_f32m1(vdp, sum, vl);
+            dp += __riscv_vfmv_f_s_f32m1_f32(sum);
+        }
+        for (; j < d; ++j) {
+            dp += x[j] * y[i + j * d_offset];
+        }
+        dis[i] = x_sqlen + y_sqlen[i] - 2.0f * dp;
+    }
+}
+
 }  // namespace faiss
 
 #endif

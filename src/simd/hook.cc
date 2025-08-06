@@ -546,6 +546,7 @@ fvec_hook(std::string& simd_type) {
     fvec_Linf = fvec_Linf_rvv;
 
     fvec_L2sqr = fvec_L2sqr_rvv;
+    fvec_L2sqr_ny_transposed = fvec_L2sqr_ny_transposed_rvv;
     fvec_inner_products_ny = fvec_inner_products_ny_rvv;
     fvec_inner_product_batch_4 = fvec_inner_product_batch_4_rvv;
     fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_rvv;
