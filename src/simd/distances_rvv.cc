@@ -1401,7 +1401,7 @@ fvec_L2sqr_batch_4_bf16_patch_rvv(const float* x, const float* y0, const float* 
 void
 fvec_L2sqr_ny_transposed_rvv(float* dis, const float* x, const float* y, const float* y_sqlen, size_t d,
                              size_t d_offset, size_t ny) {
-    // 计算x的L2范数平方
+    // Compute squared L2 norm of input vector x
     float x_sqlen = fvec_norm_L2sqr_rvv(x, d);
     size_t i = 0;
     size_t batch = 4;
@@ -1412,7 +1412,7 @@ fvec_L2sqr_ny_transposed_rvv(float* dis, const float* x, const float* y, const f
         for (; j + vlmax <= d; j += vlmax) {
             size_t vl = vlmax;
             vfloat32m2_t vx = __riscv_vle32_v_f32m2(x + j, vl);
-            // 用vlsseg4e32一次性加载4个y_i的分量
+            // Gather transposed y elements into contiguous buffers
             float ybuf[4][vlmax];
             for (size_t k = 0; k < vl; ++k) {
                 ybuf[0][k] = y[i + (j + k) * d_offset];
@@ -1451,7 +1451,7 @@ fvec_L2sqr_ny_transposed_rvv(float* dis, const float* x, const float* y, const f
             dis[i + b] = x_sqlen + y_sqlen[i + b] - 2.0f * acc[b];
         }
     }
-    // 处理剩余不足4个的y_i
+    // Process remaining vectors (ny not multiple of 4)
     for (; i < ny; ++i) {
         float dp = 0.0f;
         size_t j = 0;
