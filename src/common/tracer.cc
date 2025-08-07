@@ -94,8 +94,8 @@ StartSpan(const std::string& name, TraceContext* ctx) {
         }
 
         opts.parent = trace::SpanContext(trace::TraceId({ctx->traceID, trace::TraceId::kSize}),
-        trace::SpanId({ctx->spanID, trace::SpanId::kSize}),
-        trace::TraceFlags(ctx->traceFlags), true);
+                                         trace::SpanId({ctx->spanID, trace::SpanId::kSize}),
+                                         trace::TraceFlags(ctx->traceFlags), true);
     }
     return GetTracer()->StartSpan(name, opts);
 }

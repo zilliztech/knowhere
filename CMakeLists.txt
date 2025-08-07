@@ -101,6 +101,7 @@ find_package(prometheus-cpp REQUIRED)
 find_package(fmt REQUIRED)
 find_package(xxHash REQUIRED)
 include_directories(${xxHash_INCLUDE_DIRS})
+find_package(simde REQUIRED)
 
 if(NOT WITH_LIGHT)
   find_package(opentelemetry-cpp REQUIRED)
@@ -160,9 +161,9 @@ set(KNOWHERE_LINKER_LIBS "")
 
 if(WITH_CARDINAL)
   add_definitions(-DKNOWHERE_WITH_CARDINAL)
+  add_subdirectory(cmake/libs/cardinal/v1)
   add_subdirectory(cmake/libs/cardinal/v2)
-
-  list(APPEND KNOWHERE_LINKER_LIBS cardinal)
+  list(APPEND KNOWHERE_LINKER_LIBS cardinalv1 cardinalv2)
 endif()
 
 if(WITH_DISKANN)
@@ -194,6 +195,8 @@ list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
 list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt-header-only)
 list(APPEND KNOWHERE_LINKER_LIBS Folly::folly)
 list(APPEND KNOWHERE_LINKER_LIBS milvus-common)
+list(APPEND KNOWHERE_LINKER_LIBS simde::simde)
+
 if(NOT WITH_LIGHT)
   list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_trace)
   list(APPEND KNOWHERE_LINKER_LIBS

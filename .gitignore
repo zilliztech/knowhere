@@ -60,7 +60,7 @@ venv/
 **/knowhere/swigknowhere.py
 wheelhouse/*
 
-**/thirdparty/cardinal
+**/thirdparty/cardinal*
 
 *.bin
 
