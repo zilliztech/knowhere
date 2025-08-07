@@ -132,4 +132,11 @@ void
 fvec_L2sqr_ny_transposed_rvv(float* dis, const float* x, const float* y, const float* y_sqlen, size_t d,
                              size_t d_offset, size_t ny);
 
+size_t
+fvec_L2sqr_ny_nearest_rvv(float* distances_tmp_buffer, const float* x, const float* y, size_t d, size_t ny);
+
+size_t
+fvec_L2sqr_ny_nearest_y_transposed_rvv(float* distances_tmp_buffer, const float* x, const float* y,
+                                       const float* y_sqlen, size_t d, size_t d_offset, size_t ny);
+
 }  // namespace faiss
