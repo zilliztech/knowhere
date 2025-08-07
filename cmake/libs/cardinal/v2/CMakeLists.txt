@@ -2,10 +2,10 @@ cmake_minimum_required(VERSION 3.26.4 FATAL_ERROR)
 project(knowhere CXX C)
 
 # Use short SHA1 as version
-set(CARDINAL_VERSION v2_test)
+set(CARDINAL_VERSION submit_v2_with_v1)
 set(CARDINAL_REPO_URL "https://github.com/foxspy/cardinal.git")
 
-set(CARDINAL_ROOT  "${KNOWHERE_THRID_ROOT}/cardinal")
+set(CARDINAL_ROOT  "${KNOWHERE_THRID_ROOT}/cardinalv2")
 message(STATUS "Build Cardinal-${CARDINAL_VERSION}")
 
 # Clone and checkout cardinal with given repo url and version

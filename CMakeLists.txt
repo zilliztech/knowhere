@@ -105,8 +105,7 @@ include_directories(${xxHash_INCLUDE_DIRS})
 if(NOT WITH_LIGHT)
   find_package(opentelemetry-cpp REQUIRED)
 endif()
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON) # Require C++20 support
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_OSX_DEPLOYMENT_TARGET
     "10.15"
     CACHE STRING "Minimum OS X deployment version" FORCE)
@@ -162,14 +161,6 @@ set(KNOWHERE_LINKER_LIBS "")
 if(WITH_CARDINAL)
   add_definitions(-DKNOWHERE_WITH_CARDINAL)
   add_subdirectory(cmake/libs/cardinal/v2)
-
-  set(CARDINAL_ROOT  "${KNOWHERE_THRID_ROOT}/cardinal")
-  include_directories("${KNOWHERE_THRID_ROOT}/cardinal/include")
-  list(APPEND KNOWHERE_SRCS
-    ${CARDINAL_ROOT}/know/cardinal.cc
-    ${CARDINAL_ROOT}/know/cardinal_cluster.cc
-    ${CARDINAL_ROOT}/know/cardinal_index_table.cc
-  )
 
   list(APPEND KNOWHERE_LINKER_LIBS cardinal)
 endif()
