@@ -27,7 +27,7 @@
 #include "faiss/utils/distances_if.h"
 #include "index/data_view_dense_index/refine_computer.h"
 #include "knowhere/bitsetview_idselector.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/comp/task.h"
 #include "knowhere/config.h"
 #include "knowhere/operands.h"
 #include "knowhere/range_util.h"

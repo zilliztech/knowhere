@@ -24,7 +24,7 @@
 #include "pq_table.h"
 #include "utils.h"
 #include "diskann/distance.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/thread_pool.h"
 
 #define MAX_GRAPH_DEGREE 512
 #define SECTOR_LEN (_u64) 4096

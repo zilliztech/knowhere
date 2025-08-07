@@ -92,8 +92,15 @@ StartSpan(const std::string& name, TraceContext* ctx) {
         if (EmptyTraceID(ctx) || EmptySpanID(ctx)) {
             return noop_trace_provider->GetTracer("noop")->StartSpan("noop");
         }
-        opts.parent = trace::SpanContext(trace::TraceId({ctx->traceID, trace::TraceId::kSize}),
-                                         trace::SpanId({ctx->spanID, trace::SpanId::kSize}),
+
+        // Create array from bytes for TraceId and SpanId
+        std::array<uint8_t, trace::TraceId::kSize> trace_id_array;
+        std::memcpy(trace_id_array.data(), ctx->traceID, trace::TraceId::kSize);
+
+        std::array<uint8_t, trace::SpanId::kSize> span_id_array;
+        std::memcpy(span_id_array.data(), ctx->spanID, trace::SpanId::kSize);
+
+        opts.parent = trace::SpanContext(trace::TraceId(trace_id_array), trace::SpanId(span_id_array),
                                          trace::TraceFlags(ctx->traceFlags), true);
     }
     return GetTracer()->StartSpan(name, opts);

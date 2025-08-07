@@ -18,7 +18,6 @@
 #include "io/file_io.h"
 #include "io/memory_io.h"
 #include "knowhere/comp/index_param.h"
-#include "knowhere/comp/thread_pool.h"
 #include "knowhere/config.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
@@ -26,6 +25,7 @@
 #include "knowhere/index/index_node.h"
 #include "knowhere/log.h"
 #include "knowhere/sparse_utils.h"
+#include "knowhere/thread_pool.h"
 #include "knowhere/utils.h"
 
 namespace knowhere {
@@ -633,19 +633,6 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
     mutable std::vector<sparse::SparseRow<T>> raw_data_ = {};
 };  // class SparseInvertedIndexNodeCC
 
-#ifdef KNOWHERE_WITH_CARDINAL
-KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_INVERTED_INDEX_DEPRECATED, SparseInvertedIndexNode,
-                                             knowhere::feature::MMAP,
-                                             /*use_wand=*/false)
-KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_WAND_DEPRECATED, SparseInvertedIndexNode, knowhere::feature::MMAP,
-                                             /*use_wand=*/true)
-KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_INVERTED_INDEX_CC_DEPRECATED, SparseInvertedIndexNodeCC,
-                                             knowhere::feature::MMAP,
-                                             /*use_wand=*/false)
-KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_WAND_CC_DEPRECATED, SparseInvertedIndexNodeCC,
-                                             knowhere::feature::MMAP,
-                                             /*use_wand=*/true)
-#else
 KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_INVERTED_INDEX, SparseInvertedIndexNode, knowhere::feature::MMAP,
                                              /*use_wand=*/false)
 KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_WAND, SparseInvertedIndexNode, knowhere::feature::MMAP,
@@ -655,5 +642,4 @@ KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_INVERTED_INDEX_CC, SparseInv
                                              /*use_wand=*/false)
 KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_WAND_CC, SparseInvertedIndexNodeCC, knowhere::feature::MMAP,
                                              /*use_wand=*/true)
-#endif
 }  // namespace knowhere

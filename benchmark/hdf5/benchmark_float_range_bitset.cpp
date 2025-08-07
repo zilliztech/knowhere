@@ -247,7 +247,7 @@ TEST_F(Benchmark_float_range_bitset, TEST_DISKANN) {
 
     WriteRawDataToDisk(kRawDataPath, (const float*)xb_, (const uint32_t)nb_, (const uint32_t)dim_);
 
-    std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
+    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
     auto diskann_index_pack = knowhere::Pack(file_manager);
 
     auto version = knowhere::Version::GetCurrentVersion().VersionNumber();

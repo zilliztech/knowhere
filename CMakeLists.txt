@@ -39,6 +39,11 @@ knowhere_option(WITH_CCACHE "Build with ccache" ON)
 knowhere_option(WITH_PROFILER "Build with profiler" OFF)
 knowhere_option(WITH_FAISS_TESTS "Build with Faiss unit tests" OFF)
 knowhere_option(WITH_LIGHT "Build with light weight version" OFF)
+knowhere_option(WITH_COMPILE_PRUNE "Enable compile prune" OFF)
+
+
+set(KNOWHERE_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
+set(KNOWHERE_THRID_ROOT ${KNOWHERE_ROOT}/thirdparty)
 
 # cardinal is an enterprise vector search engine and can only be enabled for
 # cloud environment
@@ -82,13 +87,6 @@ if(WITH_LIGHT)
   add_definitions(-DKNOWHERE_WITH_LIGHT)
 endif()
 
-include(cmake/utils/platform_check.cmake)
-include(cmake/utils/compile_flags.cmake)
-include(cmake/libs/libfaiss.cmake)
-include(cmake/libs/libhnsw.cmake)
-
-include_directories(thirdparty/faiss)
-
 find_package(Boost REQUIRED)
 include_directories(${Boost_INCLUDE_DIRS})
 
@@ -101,11 +99,14 @@ find_package(nlohmann_json REQUIRED)
 find_package(glog REQUIRED)
 find_package(prometheus-cpp REQUIRED)
 find_package(fmt REQUIRED)
+find_package(xxHash REQUIRED)
+include_directories(${xxHash_INCLUDE_DIRS})
 
 if(NOT WITH_LIGHT)
   find_package(opentelemetry-cpp REQUIRED)
 endif()
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON) # Require C++20 support
 set(CMAKE_OSX_DEPLOYMENT_TARGET
     "10.15"
     CACHE STRING "Minimum OS X deployment version" FORCE)
@@ -115,6 +116,12 @@ if(OPENMP_FOUND)
   set(CMAKE_EXE_LINKER_FLAGS
       "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
 endif()
+
+include(cmake/utils/platform_check.cmake)
+include(cmake/utils/compile_flags.cmake)
+include(cmake/libs/libmilvus-common.cmake)
+include(cmake/libs/libhnsw.cmake)
+include(cmake/libs/libfaiss.cmake)
 
 if(WITH_COVERAGE)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fprofile-arcs -ftest-coverage")
@@ -154,7 +161,17 @@ set(KNOWHERE_LINKER_LIBS "")
 
 if(WITH_CARDINAL)
   add_definitions(-DKNOWHERE_WITH_CARDINAL)
-  include(cmake/libs/libcardinal.cmake)
+  add_subdirectory(cmake/libs/cardinal/v2)
+
+  set(CARDINAL_ROOT  "${KNOWHERE_THRID_ROOT}/cardinal")
+  include_directories("${KNOWHERE_THRID_ROOT}/cardinal/include")
+  list(APPEND KNOWHERE_SRCS
+    ${CARDINAL_ROOT}/know/cardinal.cc
+    ${CARDINAL_ROOT}/know/cardinal_cluster.cc
+    ${CARDINAL_ROOT}/know/cardinal_index_table.cc
+  )
+
+  list(APPEND KNOWHERE_LINKER_LIBS cardinal)
 endif()
 
 if(WITH_DISKANN)
@@ -185,6 +202,7 @@ list(APPEND KNOWHERE_LINKER_LIBS nlohmann_json::nlohmann_json)
 list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
 list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt-header-only)
 list(APPEND KNOWHERE_LINKER_LIBS Folly::folly)
+list(APPEND KNOWHERE_LINKER_LIBS milvus-common)
 if(NOT WITH_LIGHT)
   list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_trace)
   list(APPEND KNOWHERE_LINKER_LIBS

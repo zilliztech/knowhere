@@ -69,3 +69,5 @@ CMakeUserPresets.json
 # python
 .eggs
 *.egg-info
+
+CLAUDE.md

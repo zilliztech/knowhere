@@ -29,7 +29,7 @@
 #include "knowhere/version.h"
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/comp/task.h"
 #endif
 
 namespace knowhere {

@@ -46,7 +46,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = metric;
         json[knowhere::meta::TOPK] = topk;
-        json[knowhere::meta::RADIUS] = knowhere::IsMetricType(metric, knowhere::metric::L2) ? 10.0 : 0.99;
+        json[knowhere::meta::RADIUS] = knowhere::IsMetricType(metric, knowhere::metric::L2) ? 200.0 : 0.99;
         json[knowhere::meta::RANGE_FILTER] = knowhere::IsMetricType(metric, knowhere::metric::L2) ? 0.0 : 1.01;
         return json;
     };

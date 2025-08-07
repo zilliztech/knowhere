@@ -20,7 +20,7 @@
 #include "parameters.h"
 #include "utils.h"
 #include "concurrent_queue.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/thread_pool.h"
 
 #define GRAPH_SLACK_FACTOR 1.3
 #define OVERHEAD_FACTOR 1.1

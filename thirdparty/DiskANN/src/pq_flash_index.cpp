@@ -20,7 +20,7 @@
 #include "diskann/aux_utils.h"
 #include "diskann/timer.h"
 #include "diskann/utils.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/thread_pool.h"
 #include "knowhere/heap.h"
 #include "knowhere/prometheus_client.h"
 #include "knowhere/utils.h"

@@ -20,7 +20,7 @@
 #include "faiss/utils/distances_typed.h"
 #include "index/minhash/minhash_util.h"
 #include "knowhere/bitsetview_idselector.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/comp/task.h"
 #include "knowhere/config.h"
 #include "knowhere/emb_list_utils.h"
 #include "knowhere/expected.h"
