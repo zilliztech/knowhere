@@ -247,6 +247,7 @@ int AisaqPQReaderContext::init_context_common(const char *pq_file_path, int ofla
 
 void AisaqPQReaderContext::cleanup_context_common()
 {
+	clear_page_cache();
     if (m_buffers_pool_mgr != nullptr) {
         m_buffers_pool_mgr->put_buffers(m_free_data_buffers.size(), m_max_io_size_sectors, m_free_data_buffers);
         m_buffers_pool_mgr->put_instance();
@@ -903,18 +904,20 @@ void AisaqPQReader::calc_pq_vector_read_params(uint32_t id, uint64_t &from_secto
 
 uint8_t *AisaqPQReader::get_free_data_buffer(AisaqPQReaderContext &ctx)
 {
+	uint8_t *buff;
     if (!ctx.m_free_data_buffers.empty()) {
         /* pop from free */
-        uint8_t *buff = ctx.m_free_data_buffers.back();
+        buff = ctx.m_free_data_buffers.back();
         ctx.m_free_data_buffers.pop_back();
         return buff;
     }
     if (!ctx.m_cached_data_buffers_lru_list.empty()) {
         /* pop from cache */
         struct AisaqPQReaderContext::page_cache_node &cache_node = ctx.m_cached_data_buffers_lru_list.front();
+        buff = cache_node.m_buff;
         ctx.m_cached_data_buffers.erase(cache_node.m_page_id);
         ctx.m_cached_data_buffers_lru_list.pop_front();
-        return cache_node.m_buff;
+        return buff;
     }
     return nullptr;
 }

@@ -450,7 +450,7 @@ TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {
     fs::remove(kDir);
 }
 
-TEST_CASE("AiSAQ_dynamic_cache_test", "[diskann]") {
+TEST_CASE("Test_AiSAQ_dynamic_cache", "[diskann]") {
     std::string index_type = "AISAQ";
     constexpr uint32_t kNumRowsTest = 10000;
     constexpr uint32_t kNumQueriesTest = 10;
@@ -528,7 +528,7 @@ TEST_CASE("AiSAQ_dynamic_cache_test", "[diskann]") {
     std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
     auto diskann_index_pack = knowhere::Pack(file_manager);
     auto fp32_base_ds = GenDataSet(kNumRowsTest, kLargeDim, 30);
-    auto fp32_query_ds = GenDataSet(kNumQueriesTest, kDim, 42);
+    auto fp32_query_ds = GenDataSet(kNumQueriesTest, kLargeDim, 42);
 
     knowhere::BinarySet binset;
     auto build_json = build_gen().dump();
@@ -590,7 +590,7 @@ TEST_CASE("AiSAQ_dynamic_cache_test", "[diskann]") {
     fs::remove(kDir);
 }
 // This test case only check L2
-TEST_CASE("Test_Aisaq_GetVectorByIds", "[diskann]") {
+TEST_CASE("Test_AiSAQ_GetVectorByIds", "[diskann]") {
     auto version = GenTestVersionList();
     for (const uint32_t dim : {kDim, kLargeDim}) {
         fs::remove_all(kDir);
@@ -890,7 +890,7 @@ base_AiSAQ_param_test() {
     fs::remove(kDir);
 }
 
-TEST_CASE("Invalid_AiSAQ_Params_Test", "[diskann]") {
+TEST_CASE("Test_AiSAQ_Params", "[diskann]") {
     base_AiSAQ_param_test<knowhere::fp32>();
 }
 

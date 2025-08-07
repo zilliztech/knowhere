@@ -1382,7 +1382,7 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
                 }
                 diskann::save_bin<float>(norm_path, rearranged_norm_data, __npts, 1);  
                 float *ptr = norm_data.release();
-                delete ptr;
+                delete[] ptr;
                 aligned_free((void*)rearranged_norm_data);
             }
         }
