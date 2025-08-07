@@ -119,6 +119,17 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     auto labels = std::make_unique<int64_t[]>(nq * topk);
     auto distances = std::make_unique<float[]>(nq * topk);
 
+    const std::string metric_str = cfg.metric_type.value();
+    if ((base_dataset->GetDim() != query_dataset->GetDim()) &&
+        (IsMetricType(metric_str, metric::COSINE) || IsMetricType(metric_str, metric::IP) ||
+         IsMetricType(metric_str, metric::L2))) {
+        const std::string msg_e =
+            fmt::format("dimensionalities of the base dataset ({}) and the query ({}) do not match",
+                        base_dataset->GetDim(), query_dataset->GetDim());
+        LOG_KNOWHERE_ERROR_ << msg_e;
+        return expected<DataSetPtr>::Err(Status::invalid_args, msg_e);
+    }
+
     auto search_status =
         SearchWithBuf<DataType>(base_dataset, query_dataset, labels.get(), distances.get(), config, bitset_);
     if (search_status != Status::success) {
@@ -170,8 +181,16 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     // LCOV_EXCL_STOP
 #endif
 
-    std::string metric_str = cfg.metric_type.value();
+    const std::string metric_str = cfg.metric_type.value();
     auto topk = cfg.k.value();
+
+    if ((base_dataset->GetDim() != query_dataset->GetDim()) &&
+        (IsMetricType(metric_str, metric::COSINE) || IsMetricType(metric_str, metric::IP) ||
+         IsMetricType(metric_str, metric::L2))) {
+        LOG_KNOWHERE_ERROR_ << "dimensionalities of the base dataset (" << base_dataset->GetDim() << ") and the query ("
+                            << query_dataset->GetDim() << ") do not match";
+        return Status::invalid_args;
+    }
 
     if (is_emb_list) {
         if (!IsMetricType(metric_str, metric::MAX_SIM) && !IsMetricType(metric_str, metric::ORDERED_MAX_SIM) &&
@@ -441,7 +460,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     // LCOV_EXCL_STOP
 #endif
 
-    std::string metric_str = cfg.metric_type.value();
+    const std::string metric_str = cfg.metric_type.value();
     const bool is_bm25 = IsMetricType(metric_str, metric::BM25);
 
     faiss::MetricType faiss_metric_type;
@@ -452,6 +471,17 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
             return expected<DataSetPtr>::Err(result.error(), result.what());
         }
         faiss_metric_type = result.value();
+
+        // additionally, perform a check for dimensionalities
+        if ((base_dataset->GetDim() != query_dataset->GetDim()) &&
+            (IsMetricType(metric_str, metric::COSINE) || IsMetricType(metric_str, metric::IP) ||
+             IsMetricType(metric_str, metric::L2))) {
+            const std::string msg_e =
+                fmt::format("dimensionalities of the base dataset ({}) and the query ({}) do not match",
+                            base_dataset->GetDim(), query_dataset->GetDim());
+            LOG_KNOWHERE_ERROR_ << msg_e;
+            return expected<DataSetPtr>::Err(Status::invalid_args, msg_e);
+        }
     } else {
         auto computer_or = GetDocValueComputer<float>(cfg);
         if (!computer_or.has_value()) {

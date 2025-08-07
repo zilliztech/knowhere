@@ -748,6 +748,15 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
     const IvfConfig& ivf_cfg = static_cast<const IvfConfig&>(*cfg);
     bool is_cosine = IsMetricType(ivf_cfg.metric_type.value(), knowhere::metric::COSINE);
 
+    const std::string metric_str = ivf_cfg.metric_type.value();
+    if ((dim != Dim()) && (IsMetricType(metric_str, metric::COSINE) || IsMetricType(metric_str, metric::IP) ||
+                           IsMetricType(metric_str, metric::L2))) {
+        const std::string msg_e =
+            fmt::format("dimensionalities of the base dataset ({}) and the query ({}) do not match", Dim(), dim);
+        LOG_KNOWHERE_ERROR_ << msg_e;
+        return expected<DataSetPtr>::Err(Status::invalid_args, msg_e);
+    }
+
     auto k = ivf_cfg.k.value();
     auto nprobe = ivf_cfg.nprobe.value();
 
@@ -927,6 +936,15 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
 
     const IvfConfig& ivf_cfg = static_cast<const IvfConfig&>(*cfg);
     bool is_cosine = IsMetricType(ivf_cfg.metric_type.value(), knowhere::metric::COSINE);
+
+    const std::string metric_str = ivf_cfg.metric_type.value();
+    if ((dim != Dim()) && (IsMetricType(metric_str, metric::COSINE) || IsMetricType(metric_str, metric::IP) ||
+                           IsMetricType(metric_str, metric::L2))) {
+        const std::string msg_e =
+            fmt::format("dimensionalities of the base dataset ({}) and the query ({}) do not match", Dim(), dim);
+        LOG_KNOWHERE_ERROR_ << msg_e;
+        return expected<DataSetPtr>::Err(Status::invalid_args, msg_e);
+    }
 
     float radius = ivf_cfg.radius.value();
     float range_filter = ivf_cfg.range_filter.value();
