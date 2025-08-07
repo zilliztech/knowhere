@@ -1212,6 +1212,15 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         const auto hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
         const auto k = hnsw_cfg.k.value();
 
+        const std::string metric_str = hnsw_cfg.metric_type.value();
+        if ((dim != Dim()) && (IsMetricType(metric_str, metric::COSINE) || IsMetricType(metric_str, metric::IP) ||
+                               IsMetricType(metric_str, metric::L2))) {
+            const std::string msg_e =
+                fmt::format("dimensionalities of the base dataset ({}) and the query ({}) do not match", Dim(), dim);
+            LOG_KNOWHERE_ERROR_ << msg_e;
+            return expected<DataSetPtr>::Err(Status::invalid_args, msg_e);
+        }
+
         BitsetView bitset(bitset_);
         if (!internal_offset_to_most_external_id.empty()) {
             bitset.set_out_ids(internal_offset_to_most_external_id.data(), internal_offset_to_most_external_id.size());
@@ -1473,6 +1482,16 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         const auto* data = dataset->GetTensor();
 
         const auto hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
+
+        const std::string metric_str = hnsw_cfg.metric_type.value();
+        if ((dim != Dim()) && (IsMetricType(metric_str, metric::COSINE) || IsMetricType(metric_str, metric::IP) ||
+                               IsMetricType(metric_str, metric::L2))) {
+            const std::string msg_e =
+                fmt::format("dimensionalities of the base dataset ({}) and the query ({}) do not match", Dim(), dim);
+            LOG_KNOWHERE_ERROR_ << msg_e;
+            return expected<DataSetPtr>::Err(Status::invalid_args, msg_e);
+        }
+
         BitsetView bitset(bitset_);
         if (!internal_offset_to_most_external_id.empty()) {
             bitset.set_out_ids(internal_offset_to_most_external_id.data(), internal_offset_to_most_external_id.size());
