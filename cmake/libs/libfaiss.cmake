@@ -1,5 +1,7 @@
 include(CheckCXXCompilerFlag)
 
+include_directories(thirdparty/faiss)
+
 knowhere_file_glob(
   GLOB FAISS_SRCS thirdparty/faiss/faiss/*.cpp
   thirdparty/faiss/faiss/impl/*.cpp thirdparty/faiss/faiss/invlists/*.cpp

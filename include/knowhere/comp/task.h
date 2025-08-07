@@ -10,10 +10,11 @@
 #ifndef KNOWHERE_COMP_TASK_H
 #define KNOWHERE_COMP_TASK_H
 #include <functional>
-#include <memory>
 #include <vector>
 
 #include "folly/executors/CPUThreadPoolExecutor.h"
+#include "knowhere/expected.h"
+#include "knowhere/thread_pool.h"
 
 namespace knowhere {
 
@@ -36,18 +37,23 @@ GetSearchThreadPool();
 folly::CPUThreadPoolExecutor&
 GetBuildThreadPool();
 
-class ThreadPool {
- public:
-    class ScopedOmpSetter {
-        int omp_before;
-
-     public:
-        explicit ScopedOmpSetter(int num_threads = 0);
-        ~ScopedOmpSetter();
-    };
-};
-std::unique_ptr<ThreadPool::ScopedOmpSetter>
-CreateScopeOmpSetter(int num_threads = 0);
+// T is either folly::Unit or Status
+template <typename T>
+inline Status
+WaitAllSuccess(std::vector<folly::Future<T>>& futures) {
+    static_assert(std::is_same<T, folly::Unit>::value || std::is_same<T, Status>::value,
+                  "WaitAllSuccess can only be used with folly::Unit or knowhere::Status");
+    auto allFuts = folly::collectAll(futures.begin(), futures.end()).get();
+    for (const auto& result : allFuts) {
+        result.throwUnlessValue();
+        if constexpr (!std::is_same_v<T, folly::Unit>) {
+            if (result.value() != Status::success) {
+                return result.value();
+            }
+        }
+    }
+    return Status::success;
+}
 
 }  // namespace knowhere
 

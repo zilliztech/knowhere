@@ -19,7 +19,7 @@
 #include <utility>
 
 #include "folly/executors/CPUThreadPoolExecutor.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/comp/task.h"
 
 namespace knowhere {
 
