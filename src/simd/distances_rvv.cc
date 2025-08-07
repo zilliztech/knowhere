@@ -1475,6 +1475,35 @@ fvec_L2sqr_ny_transposed_rvv(float* dis, const float* x, const float* y, const f
     }
 }
 
+size_t
+fvec_L2sqr_ny_nearest_rvv(float* distances_tmp_buffer, const float* x, const float* y, size_t d, size_t ny) {
+    fvec_L2sqr_ny_rvv(distances_tmp_buffer, x, y, d, ny);
+    size_t nearest_idx = 0;
+    float min_dis = HUGE_VALF;
+    for (size_t i = 0; i < ny; ++i) {
+        if (distances_tmp_buffer[i] < min_dis) {
+            min_dis = distances_tmp_buffer[i];
+            nearest_idx = i;
+        }
+    }
+    return nearest_idx;
+}
+
+size_t
+fvec_L2sqr_ny_nearest_y_transposed_rvv(float* distances_tmp_buffer, const float* x, const float* y,
+                                       const float* y_sqlen, size_t d, size_t d_offset, size_t ny) {
+    fvec_L2sqr_ny_transposed_rvv(distances_tmp_buffer, x, y, y_sqlen, d, d_offset, ny);
+    size_t nearest_idx = 0;
+    float min_dis = HUGE_VALF;
+    for (size_t i = 0; i < ny; ++i) {
+        if (distances_tmp_buffer[i] < min_dis) {
+            min_dis = distances_tmp_buffer[i];
+            nearest_idx = i;
+        }
+    }
+    return nearest_idx;
+}
+
 }  // namespace faiss
 
 #endif
