@@ -105,7 +105,9 @@ void gen_random_slice(const std::string base_file,
 
 template<typename T>
 void gen_random_slice(const std::string data_file, double p_val,
-                      std::unique_ptr<float[]>& sampled_data, size_t &slice_size, size_t &ndims) {
+                      std::unique_ptr<float[]>& sampled_data,
+                      size_t &slice_size, size_t &ndims,
+                      std::vector<uint32_t> *sampled_ids) {
   size_t                          npts;
   uint32_t                        npts32, ndims32;
   std::vector<std::vector<float>> sampled_vectors;
@@ -133,6 +135,9 @@ void gen_random_slice(const std::string data_file, double p_val,
     base_reader.read((char *) cur_vector_T.get(), ndims * sizeof(T));
     float rnd_val = distribution(generator);
     if (rnd_val < p_val) {
+      if (sampled_ids) {
+          sampled_ids->push_back(i);
+      }
       std::vector<float> cur_vector_float;
       for (size_t d = 0; d < ndims; d++)
         cur_vector_float.push_back(float(cur_vector_T[d]));
@@ -1044,6 +1049,52 @@ int partition_with_ram_budget(const std::string data_file,
   return num_parts;
 }
 
+template <typename T>
+int partition_calc_kmeans(const std::string &data_file, const std::string &output_file, size_t k)
+{
+    std::ifstream base_reader(data_file, std::ios::binary);
+    uint32_t npts32, ndims32;
+    base_reader.read(reinterpret_cast<char*>(&npts32), sizeof(uint32_t));
+    base_reader.read(reinterpret_cast<char*>(&ndims32), sizeof(uint32_t));
+    base_reader.close();
+
+    std::vector<uint32_t> sampled_ids;
+    size_t train_dim, num_train;
+    //float *train_data_float;
+    std::unique_ptr<float[]> train_data_float = nullptr;
+    // Load a sample of the dataset for k-means
+    gen_random_slice<T>(data_file, 0.01, train_data_float, num_train, train_dim, &sampled_ids);
+
+    // Allocate centroids
+    std::vector<float> centroids(k * train_dim);
+    // Perform k-means clustering
+    LOG_KNOWHERE_INFO_ << "Running k-means with " << k << " clusters...";
+    kmeans::kmeanspp_selecting_pivots(train_data_float.get(), num_train, train_dim, centroids.data(), k);
+    LOG_KNOWHERE_INFO_ << "Running LLoyds " << k << " clusters...";
+    kmeans::run_lloyds(train_data_float.get(), num_train, train_dim, centroids.data(), k, 10, nullptr, nullptr);
+
+    std::vector<uint32_t> medoids(k);
+    // Parallel computation of medoids
+#pragma omp parallel for schedule(dynamic)
+    for (size_t i = 0; i < k; i++) {
+        float min_dist = std::numeric_limits<float>::max();
+        uint32_t best_idx = 0;
+        float *centroid = centroids.data() + i * train_dim;
+        for (uint32_t j = 0; j < num_train; j++) {
+            float dist = math_utils::calc_distance(train_data_float.get() + (j * train_dim), centroid, train_dim);
+            if (dist < min_dist) {
+                min_dist = dist;
+                best_idx = j;
+            }
+        }
+        medoids[i] = sampled_ids[best_idx];
+    }
+    diskann::save_bin<uint32_t>(output_file.c_str(), medoids.data(), k, 1);
+    float* temp_float = train_data_float.release();
+    delete[] temp_float;
+    return 0;
+}
+
 // Instantations of supported templates
 
 template void gen_random_slice<int8_t>(const std::string base_file,
@@ -1082,21 +1133,26 @@ template void gen_random_slice<knowhere::bf16>(
     std::unique_ptr<float[]> &sampled_data, size_t &slice_size);
 template void gen_random_slice<float>(const std::string data_file, double p_val,
                                       std::unique_ptr<float[]> &sampled_data,
-                                      size_t &slice_size, size_t &ndims);
+                                      size_t &slice_size, size_t &ndims,
+                                      std::vector<uint32_t> *sampled_ids);
 template void gen_random_slice<uint8_t>(const std::string         data_file,
                                         double                    p_val,
                                         std::unique_ptr<float[]> &sampled_data,
-                                        size_t &slice_size, size_t &ndims);
+                                        size_t &slice_size, size_t &ndims,
+                                        std::vector<uint32_t> *sampled_ids);
 template void gen_random_slice<int8_t>(const std::string         data_file,
                                        double                    p_val,
                                        std::unique_ptr<float[]> &sampled_data,
-                                       size_t &slice_size, size_t &ndims);
+                                       size_t &slice_size, size_t &ndims,
+                                       std::vector<uint32_t> *sampled_ids);
 template void gen_random_slice<knowhere::fp16>(
     const std::string data_file, double p_val,
-    std::unique_ptr<float[]> &sampled_data, size_t &slice_size, size_t &ndims);
+    std::unique_ptr<float[]> &sampled_data, size_t &slice_size, size_t &ndims,
+    std::vector<uint32_t> *sampled_ids);
 template void gen_random_slice<knowhere::bf16>(
     const std::string data_file, double p_val,
-    std::unique_ptr<float[]> &sampled_data, size_t &slice_size, size_t &ndims);
+    std::unique_ptr<float[]> &sampled_data, size_t &slice_size, size_t &ndims,
+    std::vector<uint32_t> *sampled_ids);
 
 template int partition<int8_t>(const std::string data_file,
                                const float sampling_rate, size_t num_centers,
@@ -1164,3 +1220,14 @@ template int generate_pq_data_from_pivots<knowhere::fp16>(
 template int generate_pq_data_from_pivots<knowhere::bf16>(
     const std::string data_file, unsigned num_centers, unsigned num_pq_chunks,
     std::string pq_pivots_path, std::string pq_compressed_vectors_path);
+
+template int partition_calc_kmeans<float>(const std::string &data_file,
+    const std::string &output_file, size_t k);
+template int partition_calc_kmeans<uint8_t>(const std::string &data_file,
+    const std::string &output_file, size_t k);
+template int partition_calc_kmeans<int8_t>(const std::string &data_file,
+    const std::string &output_file, size_t k);
+template int partition_calc_kmeans<knowhere::fp16>(const std::string &data_file,
+    const std::string &output_file, size_t k);
+template int partition_calc_kmeans<knowhere::bf16>(const std::string &data_file,
+    const std::string &output_file, size_t k);

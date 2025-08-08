@@ -26,8 +26,10 @@
 #include "diskann/distance.h"
 #include "knowhere/comp/thread_pool.h"
 
-#define MAX_GRAPH_DEGREE 512
-#define SECTOR_LEN (_u64) 4096
+#include "defaults.h"
+
+//#define MAX_GRAPH_DEGREE defaults::MAX_GRAPH_DEGREE
+//#define SECTOR_LEN defaults::SECTOR_LEN
 
 #define FULL_PRECISION_REORDER_MULTIPLIER 3
 
@@ -69,7 +71,8 @@ namespace diskann {
       sector_idx = 0;
       visited->clear();  // does not deallocate memory.
     }
-  };
+    
+    };
 
   template<typename T>
   struct ThreadData {
@@ -171,8 +174,16 @@ namespace diskann {
     std::vector<knowhere::DistId> backup_res;
   };
 
+  class PQDataGetter {
+   public:
+	virtual _u8* get_pq_data()=0;
+	virtual _u64 get_origin_id(_u64 id)=0;
+	virtual void release_pq_data(size_t offset=0, size_t size=0)=0;
+	virtual ~PQDataGetter() {}
+  };
+
   template<typename T>
-  class PQFlashIndex {
+  class PQFlashIndex: public PQDataGetter {
    public:
     PQFlashIndex(std::shared_ptr<AlignedFileReader> fileReader,
                  diskann::Metric metric = diskann::Metric::L2);
@@ -181,7 +192,7 @@ namespace diskann {
     // load compressed data, and obtains the handle to the disk-resident index
     int load(uint32_t num_threads, const char *index_prefix);
 
-    void load_cache_list(std::vector<uint32_t> &node_list);
+    virtual void load_cache_list(std::vector<uint32_t> &node_list);
 
     // asynchronously collect the access frequency of each node in the graph
     void async_generate_cache_list_from_sample_queries(std::string sample_bin,
@@ -189,7 +200,7 @@ namespace diskann {
                                                        _u64        beamwidth,
                                                        _u64 num_nodes_to_cache);
 
-    void cache_bfs_levels(_u64                   num_nodes_to_cache,
+    virtual void cache_bfs_levels(_u64                   num_nodes_to_cache,
                           std::vector<uint32_t> &node_list);
 
     void cached_beam_search(
@@ -228,17 +239,27 @@ namespace diskann {
     // for async cache making task
     void destroy_cache_async_task();
 
-   protected:
+    virtual _u8* get_pq_data() override {
+    	return data.get();
+    }
+
+    virtual _u64 get_origin_id(_u64 id) override {
+    	return id;
+    }
+
+    virtual void release_pq_data(size_t offset=0, size_t size=0) override {}
+
+  protected:
     void use_medoids_data_as_centroids();
     void setup_thread_data(_u64 nthreads);
     void destroy_thread_data();
     _u64 get_thread_data_size();
 
-   private:
+   //private:
     // sector # on disk where node_id is present with in the graph part
-    _u64 get_node_sector_offset(_u64 node_id) {
-      return long_node ? (node_id * nsectors_per_node + 1) * SECTOR_LEN
-                       : (node_id / nnodes_per_sector + 1) * SECTOR_LEN;
+    virtual _u64 get_node_sector_offset(_u64 node_id) {
+      return long_node ? (node_id * nsectors_per_node + 1) * diskann::defaults::SECTOR_LEN
+                       : (node_id / nnodes_per_sector + 1) * diskann::defaults::SECTOR_LEN;
     }
 
     // obtains region of sector containing node
@@ -263,7 +284,8 @@ namespace diskann {
         _s64 *indices, float *distances, const _u64 beam_width_param,
         IOContext &ctx, QueryStats *stats,
         const knowhere::feder::diskann::FederResultUniq &feder,
-        knowhere::BitsetView                             bitset_view);
+        knowhere::BitsetView                             bitset_view,
+		PQDataGetter* pq_data_getter);
 
     // Assign the index of ids to its corresponding sector and if it is in
     // cache, write to the output_data
@@ -294,7 +316,7 @@ namespace diskann {
     // data info
     bool long_node = false;
     _u64 nsectors_per_node = 0;
-    _u64 read_len_for_node = SECTOR_LEN;
+    _u64 read_len_for_node = diskann::defaults::SECTOR_LEN;
     _u64 num_points = 0;
     _u64 num_frozen_points = 0;
     _u64 frozen_location = 0;

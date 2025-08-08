@@ -5,24 +5,24 @@
 
 #include <atomic>
 #include <cassert>
+#include <functional>
 #include <map>
 #include <shared_mutex>
 #include <sstream>
 #include <stack>
 #include <string>
-#include <unordered_map>
-#include <functional>
-#include "tsl/robin_set.h"
 #include "tsl/robin_map.h"
+#include "tsl/robin_set.h"
+#include <unordered_map>
 
+#include "concurrent_queue.h"
+#include "defaults.h"
 #include "distance.h"
+#include "knowhere/comp/thread_pool.h"
 #include "neighbor.h"
 #include "parameters.h"
 #include "utils.h"
-#include "concurrent_queue.h"
-#include "knowhere/comp/thread_pool.h"
 
-#define GRAPH_SLACK_FACTOR 1.3
 #define OVERHEAD_FACTOR 1.1
 
 namespace boost {
@@ -38,7 +38,7 @@ namespace diskann {
                                    _u32 degree) {
     double size_of_data = ((double) size) * ROUND_UP(dim, 8) * datasize;
     double size_of_graph =
-        ((double) size) * degree * sizeof(unsigned) * GRAPH_SLACK_FACTOR;
+        ((double) size) * degree * sizeof(unsigned) * diskann::defaults::GRAPH_SLACK_FACTOR;
     double size_of_locks = ((double) size) * sizeof(std::mutex);
     double size_of_outer_vector = ((double) size) * sizeof(ptrdiff_t);
 

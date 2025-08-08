@@ -22,7 +22,6 @@ namespace diskann {
    public:
     MemoryMapper(const char* filename);
     MemoryMapper(const std::string& filename);
-
     char*  getBuf();
     size_t getFileSize();
 

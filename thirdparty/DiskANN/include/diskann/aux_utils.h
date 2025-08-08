@@ -3,12 +3,12 @@
 
 #pragma once
 #include <algorithm>
-#include <fcntl.h>
-#include <future>
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <memory>
 #include <random>
@@ -22,16 +22,14 @@
 
 #include "cached_io.h"
 #include "common_includes.h"
-#include "tsl/robin_set.h"
-
-#include "utils.h"
-#include "knowhere/comp/thread_pool.h"
 #include "diskann/index.h"
-
+#include "knowhere/comp/thread_pool.h"
+#include "tsl/robin_set.h"
+#include "utils.h"
+#include "diskann/defaults.h"
 typedef int FileHandle;
 
 namespace diskann {
-  constexpr size_t MAX_N_SECTOR_READS = 256;
   const size_t     MAX_PQ_TRAINING_SET_SIZE = 256000;
   const size_t     MAX_SAMPLE_POINTS_FOR_WARMUP = 100000;
   const double     PQ_TRAINING_SET_FRACTION = 0.1;
@@ -123,17 +121,29 @@ namespace diskann {
     // reorder (set true to include full precision in data file:
     // optional paramter, use only when using disk PQ
     bool reorder = false;
-    // acclerate the index build ~30% and lose ~1% recall
+    // accelerate the index build ~30% and lose ~1% recall
     bool accelerate_build = false;
     // the cached nodes number
     uint32_t num_nodes_to_cache = 0;
     // shuffle id to build index
     bool shuffle_build = false;
+    // choose AiSAQ algorithm
+    bool aisaq_mode = false;
+    uint32_t inline_pq = 0;
+    bool rearrange = false;
+    int num_entry_points = 0;
   };
 
   template<typename T>
-  int build_disk_index(const BuildConfig &config);
+  int build_disk_index(BuildConfig &config);
 
+  template <typename T>
+  void create_aisaq_layout(const std::string base_file, const std::string mem_index_file, const std::string output_file,
+                           const std::string reorder_data_file,
+                           const std::string &index_prefix_path,
+                           int inline_pq /* control num of inline pq: -1=none, 0=auto, others: num of pq vectors <= R */,
+                           bool &rearrange /* enable vectors reaarangement */);
+  
   template<typename T>
   void create_disk_layout(
       const std::string base_file, const std::string mem_index_file,

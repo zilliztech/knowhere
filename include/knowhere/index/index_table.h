@@ -102,6 +102,11 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     {IndexEnum::INDEX_DISKANN, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_DISKANN, VecType::VECTOR_BFLOAT16},
 
+    // aisaq
+    {IndexEnum::INDEX_AISAQ, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_AISAQ, VecType::VECTOR_FLOAT16},
+    {IndexEnum::INDEX_AISAQ, VecType::VECTOR_BFLOAT16},
+
     // sparse index
     {IndexEnum::INDEX_SPARSE_INVERTED_INDEX, VecType::VECTOR_SPARSE_FLOAT},
     {IndexEnum::INDEX_SPARSE_WAND, VecType::VECTOR_SPARSE_FLOAT},

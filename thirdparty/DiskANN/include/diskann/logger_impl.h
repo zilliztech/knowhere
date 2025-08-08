@@ -45,7 +45,7 @@ namespace diskann {
     int  flush();
     void logImpl(char* str, int numchars);
 
-    static const int BUFFER_SIZE = 0;
+    static const int BUFFER_SIZE = 1024;
 
     ANNStreamBuf(const ANNStreamBuf&);
     ANNStreamBuf& operator=(const ANNStreamBuf&);
