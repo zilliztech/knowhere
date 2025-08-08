@@ -1334,7 +1334,11 @@ namespace diskann {
     unsigned    L = _indexingQueueSize;
 
     std::vector<unsigned> Lvec;
-    Lvec.push_back(unsigned(0.8 * L));
+    unsigned first_L = unsigned(0.8*L);
+    if(!first_L){
+    	first_L=1;
+    }
+    Lvec.push_back(first_L);
     Lvec.push_back(L);
     const unsigned NUM_RNDS = 2;
 
