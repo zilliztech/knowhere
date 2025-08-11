@@ -200,8 +200,7 @@ class Index {
     std::string
     Type() const;
 
-    [[nodiscard]]
-    bool
+    [[nodiscard]] bool
     LoadIndexWithStream() const;
 
     ~Index() {
