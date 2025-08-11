@@ -17,7 +17,7 @@
 #include "io/memory_io.h"
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/bloomfilter.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/comp/task.h"
 #include "knowhere/expected.h"
 #include "knowhere/log.h"
 #include "knowhere/utils.h"

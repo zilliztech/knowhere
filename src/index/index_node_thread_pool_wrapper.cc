@@ -11,8 +11,8 @@
 
 #include "knowhere/index/index_node_thread_pool_wrapper.h"
 
-#include "knowhere/comp/thread_pool.h"
 #include "knowhere/index/index_node.h"
+#include "knowhere/thread_pool.h"
 
 namespace knowhere {
 

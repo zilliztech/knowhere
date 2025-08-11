@@ -35,7 +35,7 @@ typedef int FileHandle;
 #include "cached_io.h"
 #include "ann_exception.h"
 #include "common_includes.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/thread_pool.h"
 #include "knowhere/operands.h"
 #include "knowhere/utils.h"
 

@@ -36,7 +36,7 @@ typedef uint64_t size_t;
 #include "knowhere/operands.h"
 #include <knowhere/comp/brute_force.h>
 #include <knowhere/comp/knowhere_config.h>
-#include <knowhere/comp/local_file_manager.h>
+#include <filemanager/impl/LocalFileManager.h>
 #include <knowhere/comp/index_param.h>
 #include <fstream>
 #include <string>
@@ -157,7 +157,7 @@ class IndexWrap {
     IndexWrap(const std::string& name, const int32_t& version) {
         GILReleaser rel;
         if (name == std::string(knowhere::IndexEnum::INDEX_DISKANN)) {
-            std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
+            std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
             auto diskann_pack = knowhere::Pack(file_manager);
             idx = IndexFactory::Instance().Create<T>(name, version,
             diskann_pack);

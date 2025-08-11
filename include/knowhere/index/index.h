@@ -200,6 +200,10 @@ class Index {
     std::string
     Type() const;
 
+    [[nodiscard]]
+    bool
+    LoadIndexWithStream() const;
+
     ~Index() {
         if (node == nullptr)
             return;

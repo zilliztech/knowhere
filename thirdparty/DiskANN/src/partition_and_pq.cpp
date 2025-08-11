@@ -2,7 +2,6 @@
 // Licensed under the MIT license.
 
 #include "diskann/math_utils.h"
-#include "knowhere/comp/thread_pool.h"
 #include "knowhere/log.h"
 #include <omp.h>
 #include <algorithm>
@@ -33,7 +32,7 @@
 #include "diskann/parameters.h"
 #include "tsl/robin_set.h"
 #include "diskann/utils.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/comp/task.h"
 
 #include <fcntl.h>
 #include <sys/stat.h>

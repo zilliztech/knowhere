@@ -25,7 +25,7 @@
 #include "tsl/robin_set.h"
 
 #include "utils.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/thread_pool.h"
 #include "diskann/index.h"
 
 typedef int FileHandle;
