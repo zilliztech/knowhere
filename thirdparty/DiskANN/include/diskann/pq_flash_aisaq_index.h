@@ -4,8 +4,9 @@
 #ifndef PQ_FLASH_AISAQ_INDEX_H
 #define PQ_FLASH_AISAQ_INDEX_H
 
-#include "diskann/pq_flash_index.h"
 #include "diskann/aisaq_neighbor_priority_queue.h"
+#include "diskann/pq_flash_index.h"
+#include "diskann/timer.h"
 
 #pragma once
 namespace diskann {
@@ -103,16 +104,32 @@ public:
                                                    std::vector<uint8_t *> *aisaq_buffers = nullptr);
 
     void aisaq_get_vector_by_ids(const int64_t *ids, const int64_t n,
-                           T *const output_data);
+                                 T *const output_data);
     void aisaq_load_pq_cache(const std::string pq_compressed_vectors_path,
-                           uint64_t pq_cache_size_bytes, uint32_t policy);
+                             uint64_t pq_cache_size_bytes, uint32_t policy);
     bool get_rearranged_index();
     int aisaq_load(uint32_t num_threads, const char *index_prefix);
     int aisaq_load_from_separate_paths(uint32_t num_threads, const char *index_filepath,
-                                                   const char *pivots_filepath, const char *compressed_filepath);
+                                       const char *pivots_filepath, const char *compressed_filepath);
     void use_medoids_data_as_centroids();
     
     uint8_t *aisaq_pq_cache_lookup(uint32_t id);
+
+    void get_entry_point_medoid(uint32_t &best_medoid, float &best_dist,
+                                float *pq_dists, float *dist_scratch,
+                                float *query_float);
+    
+    void updata_io_stats(QueryStats &stats, size_t count, uint64_t size_in_sectors);
+    
+    void prepare_search_results(std::vector<Neighbor> &full_retset,
+                                const uint64_t k_search,
+                                float *distances, int64_t *indices,
+                                float query_norm);
+    
+    void rerank_candidate_list(std::vector<Neighbor> &full_retset, const uint64_t k_search,
+                               char *sector_scratch, QueryStats *stats,
+                               Timer &io_timer, IOContext ctx, T *aligned_query_T);
+    
     void aisaq_cached_beam_search(
         const T *query, const uint64_t k_search, const uint64_t l_search, int64_t *res_ids,
         float *res_dists, const uint64_t beam_width,
@@ -121,9 +138,13 @@ public:
         const knowhere::BitsetView bitset_view = nullptr,
         const float filter_ratio_in = -1.0f,
         const struct diskann::aisaq_search_config *aisaq_search_config = nullptr);
+    
     void load_cache_list(std::vector<uint32_t> &node_list);
+    
     void setup_thread_data(uint64_t nthreads);
+    
     uint64_t get_n_chunks();
+    
     uint32_t get_max_node_len();
     
     bool should_ignore_point(uint32_t id, float alpha, float& accumulative_alpha, const knowhere::BitsetView& bitset);
@@ -134,22 +155,22 @@ public:
                                                        uint64_t        l_search,
                                                        uint64_t        beamwidth,
                                                        uint64_t num_nodes_to_cache);
-        /* aisaq node cache addition */
+    /* AiSAQ node cache addition */
     uint8_t *_aisaq_node_cache_buf = nullptr;
     tsl::robin_map<uint32_t, uint8_t *> _aisaq_node_cache;
-    /* aisaq pq vectors reader */
+    /* AiSAQ pq vectors reader */
     class AisaqPQReader *_aisaq_pq_vectors_reader = nullptr;
-    /* aisaq static pq cache */
+    /* AiSAQ static pq cache */
     uint8_t *_aisaq_pq_vectors_cache_buf = nullptr;
     tsl::robin_map<uint32_t, uint8_t *> _aisaq_pq_vectors_cache_map;
     uint64_t _aisaq_pq_vectors_cache_count = 0;
     bool _aisaq_pq_vectors_cache_direct = true;
-    /* aisaq rearranged index */
+    /* AiSAQ rearranged index */
     bool _aisaq_rearranged_vectors = false; /* indicate whether index is reordered */
     std::unique_ptr<uint32_t[]> _aisaq_rearranged_vectors_map = nullptr;
-    /* aisaq num of inline pq vectors */
+    /* AiSAQ num of inline pq vectors */
     uint32_t _aisaq_inline_pq_vectors = 0;
-    /* aisaq multiple entry points */
+    /* AiSAQ multiple entry points */
     std::unique_ptr<uint32_t[]> _aisaq_entry_points = nullptr;
     size_t _aisaq_num_entry_points = 0;
     uint8_t *_aisaq_entry_points_pq_vectors_buff = nullptr;

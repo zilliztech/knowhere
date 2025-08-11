@@ -144,6 +144,10 @@ namespace diskann {
                            int inline_pq /* control num of inline pq: -1=none, 0=auto, others: num of pq vectors <= R */,
                            bool &rearrange /* enable vectors reaarangement */);
   
+  template <typename T>
+  void aisaq_calc_inline_layout(int inline_pq, uint32_t pq_compressed_nbytes, uint32_t max_degree, bool rearrange,
+                                uint32_t &inline_pq_vectors, uint64_t &max_node_len);
+
   template<typename T>
   void create_disk_layout(
       const std::string base_file, const std::string mem_index_file,

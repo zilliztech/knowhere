@@ -1089,6 +1089,48 @@ template static std::vector<bool> read_node_nbrs_from_vamana<uint8_t, uint32_t>(
                             std::vector<std::pair<uint32_t, uint32_t *>> &);
 
 template <typename T>
+void aisaq_calc_inline_layout(int inline_pq, uint32_t pq_compressed_nbytes, uint32_t max_degree, bool rearrange,
+                              uint32_t &inline_pq_vectors, uint64_t &max_node_len)
+{
+    if (inline_pq >= 0) {
+        if (inline_pq > 0) {
+            assert((uint32_t)inline_pq <= max_degree);
+            inline_pq_vectors = inline_pq;
+            if (rearrange && inline_pq_vectors < max_degree) {
+                max_node_len+= sizeof(uint32_t);
+            }
+        } else {
+            /* calculate the number of compressed vectors that can be appended to the node without increasing the index file size */
+            uint32_t _n_inline = aisaq_calc_max_inline_pq_vectors(max_node_len, pq_compressed_nbytes, max_degree);
+            if (rearrange && _n_inline < max_degree) {
+                /* calc with rearrange */
+                max_node_len+= sizeof(uint32_t);
+                _n_inline = aisaq_calc_max_inline_pq_vectors(max_node_len, pq_compressed_nbytes, max_degree);
+            }
+            inline_pq_vectors = _n_inline;
+        }
+        max_node_len+= inline_pq_vectors * pq_compressed_nbytes;
+        if (inline_pq_vectors == max_degree) {
+            if (rearrange) {
+                /* ignore reaarange */
+                LOG_KNOWHERE_INFO_ << "all pq vectors will be stored inline, ignoring rearrange";
+                rearrange = false;
+            } else {
+                LOG_KNOWHERE_INFO_ << "all pq vectors will be stored inline";
+            }
+        } else {
+            LOG_KNOWHERE_INFO_ << inline_pq_vectors << " (" << (inline_pq_vectors * 100) / max_degree
+                          << "%) PQ vectors will be stored inline";
+        }
+    } else {
+        inline_pq_vectors = 0;
+        if (rearrange) {
+            max_node_len+= sizeof(uint32_t);
+        }
+    }
+}
+
+template <typename T>
 void create_aisaq_layout(const std::string base_file, const std::string mem_index_file, const std::string output_file,
                         const std::string reorder_data_file,
                         const std::string &index_prefix_path,
@@ -1190,42 +1232,11 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
     }
 
     /* calculate num of inline vectors */
-    uint32_t inline_pq_vectors = 0;
-    if (inline_pq >= 0) {
-        if (inline_pq > 0) {
-            assert((uint32_t)inline_pq <= width_u32);
-            inline_pq_vectors = inline_pq;
-            if (rearrange && inline_pq_vectors < width_u32) {
-                max_node_len+= sizeof(uint32_t);
-            }
-        } else {
-            /* calculate the number of compressed vectors that can be appended to the node without increasing the index file size */
-            uint32_t _n_inline = aisaq_calc_max_inline_pq_vectors(max_node_len, pq_compressed_nbytes, width_u32);
-            if (rearrange && _n_inline < width_u32) {
-                /* calc with rearrange */
-                max_node_len+= sizeof(uint32_t);
-                _n_inline = aisaq_calc_max_inline_pq_vectors(max_node_len, pq_compressed_nbytes, width_u32);
-            }
-            inline_pq_vectors = _n_inline;
-        }
-        max_node_len+= inline_pq_vectors * pq_compressed_nbytes;
-        if (inline_pq_vectors == width_u32) {
-            if (rearrange) {
-                /* ignore reaarange */
-                LOG_KNOWHERE_INFO_ << "all pq vectors will be stored inline, ignoring rearrange";
-                rearrange = false;
-            } else {
-                LOG_KNOWHERE_INFO_ << "all pq vectors will be stored inline";
-            }
-        } else {
-            LOG_KNOWHERE_INFO_ << inline_pq_vectors << " (" << (inline_pq_vectors * 100) / width_u32
-                          << "%) PQ vectors will be stored inline";
-        }
-    } else {
-        if (rearrange) {
-            max_node_len+= sizeof(uint32_t);
-        }
-    }
+    uint32_t inline_pq_vectors;
+    aisaq_calc_inline_layout<T>(inline_pq, pq_compressed_nbytes, width_u32, rearrange,
+                                inline_pq_vectors, max_node_len);
+    
+
     uint32_t __nnodes, __nsectors, __remainder;
     if (max_node_len >= defaults::SECTOR_LEN) {
         __nnodes = 1;

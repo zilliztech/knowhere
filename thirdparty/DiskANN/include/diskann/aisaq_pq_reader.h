@@ -7,6 +7,7 @@
 #include <tsl/robin_map.h>
 
 #include "aisaq.h"
+#include "aligned_file_reader.h"
 
 namespace diskann {
     class AisaqPQReaderContext;
@@ -27,6 +28,7 @@ namespace diskann {
         bool set_page_cache_size(AisaqPQReaderContext &ctx, uint64_t page_cache_size_bytes);
         void hibernate(AisaqPQReaderContext &ctx);
         static void get_buffers_pool_info(uint64_t &total_allocated /* in bytes */, uint64_t &total_in_pool /* in bytes */);
+        void set_io_ctx(AisaqPQReaderContext &ctx, IOContext io_ctx);
     protected:
         AisaqPQReader();
         virtual int init_reader(const char *pq_file_path, bool rearranged) = 0;

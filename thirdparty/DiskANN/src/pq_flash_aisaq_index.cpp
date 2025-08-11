@@ -10,12 +10,11 @@
 #include "diskann/aisaq_utils.h"
 #include "diskann/defaults.h"
 #include "diskann/pq_flash_aisaq_index.h"
-#include "diskann/timer.h"
 #include "diskann/utils.h"
 #include "knowhere/log.h"
 #include "knowhere/prometheus_client.h"
 #include "diskann/memory_mapper.h"
-
+#include "diskann/aio_context_pool.h"
 
 #define READ_U64(stream, val) stream.read((char *)&val, sizeof(uint64_t))
 #define READ_U32(stream, val) stream.read((char *)&val, sizeof(uint32_t))
@@ -434,7 +433,7 @@ int PQFlashAisaqIndex<T>::aisaq_init(
             return -1;
         }
     }
-
+    auto ctx_pool = AioContextPool::GetGlobalAioPool();
     std::string pq_file_path =
         _aisaq_rearranged_vectors
             ? (std::string(index_prefix) + "_pq_compressed_rearranged.bin")
@@ -446,13 +445,15 @@ int PQFlashAisaqIndex<T>::aisaq_init(
         return -1;
     }
     /* create local read context */
-    uint32_t max_ios = 256;
+    uint32_t max_ios = ctx_pool->max_events_per_ctx();
     AisaqPQReaderContext *ctx =
         _aisaq_pq_vectors_reader->create_context(max_ios);
     if (ctx == nullptr) {
         LOG_KNOWHERE_ERROR_ << "failed to initialize temp pq reader context";
         return -1;
     }
+    auto io_ctx = ctx_pool->pop();
+    _aisaq_pq_vectors_reader->set_io_ctx(*ctx, io_ctx);
     /* allocate memory for medoids pq vectors */
     _aisaq_medoids_pq_vectors_buff =
         new uint8_t[this->num_medoids * this->n_chunks * sizeof(uint8_t)];
@@ -460,6 +461,7 @@ int PQFlashAisaqIndex<T>::aisaq_init(
         LOG_KNOWHERE_ERROR_
             << "failed to allocate memory for medoids pq vectors";
         _aisaq_pq_vectors_reader->destroy_context(*ctx);
+        ctx_pool->push(io_ctx);
         return -1;
     }
     /* load medoids pq vectors from media */
@@ -469,6 +471,7 @@ int PQFlashAisaqIndex<T>::aisaq_init(
                               _aisaq_medoids_pq_vectors_buff) != 0) {
         LOG_KNOWHERE_ERROR_ << "failed to read medoids pq vectors";
         _aisaq_pq_vectors_reader->destroy_context(*ctx);
+        ctx_pool->push(io_ctx);
         return -1;
     }
     /* handle multiple entry points */
@@ -490,6 +493,7 @@ int PQFlashAisaqIndex<T>::aisaq_init(
             LOG_KNOWHERE_ERROR_
                 << "failed to allocate memory for entry points pq vectors";
             _aisaq_pq_vectors_reader->destroy_context(*ctx);
+            ctx_pool->push(io_ctx);
             return -1;
         }
         if (aisaq_read_pq_vectors(*_aisaq_pq_vectors_reader, *ctx, max_ios,
@@ -499,15 +503,20 @@ int PQFlashAisaqIndex<T>::aisaq_init(
                                   _aisaq_entry_points_pq_vectors_buff) != 0) {
             LOG_KNOWHERE_ERROR_ << "failed to read entry points pq vectors";
             _aisaq_pq_vectors_reader->destroy_context(*ctx);
+            ctx_pool->push(io_ctx);
             return -1;
         }
     }
+    ctx_pool->push(io_ctx);
     _aisaq_pq_vectors_reader->destroy_context(*ctx);
 
     if (_aisaq_inline_pq_vectors <= this->max_degree) {
         /* some or none inline, minimal number of 16 ios is needed */
         max_ios = (this->max_degree - _aisaq_inline_pq_vectors) *
                   diskann::defaults::MAX_AISAQ_VECTORS_BEAMWIDTH;
+        if(max_ios > ctx_pool->max_events_per_ctx()){
+        	max_ios = ctx_pool->max_events_per_ctx();
+        }
     } else {
         max_ios = 0;
     }
@@ -1236,6 +1245,70 @@ uint8_t *PQFlashAisaqIndex<T>::aisaq_pq_cache_lookup(uint32_t id) {
 }
 
 template <typename T>
+void PQFlashAisaqIndex<T>::get_entry_point_medoid(uint32_t &best_medoid, float &best_dist,
+                                                  float *pq_dists, float *dist_scratch,
+                                                  float *query_float)
+{
+    best_medoid = 0;
+    best_dist = (std::numeric_limits<float>::max)();
+    if (_aisaq_num_entry_points > 0) {
+        /* in this case, best_medoid is determined in pq space */
+        uint32_t offset = 0;
+        while (offset < _aisaq_num_entry_points) {
+            /* dist_scratch size is limited to MAX_GRAPH_DEGREE */
+            uint32_t count =
+                std::min((uint32_t)defaults::MAX_GRAPH_DEGREE,
+                         (uint32_t)_aisaq_num_entry_points - offset);
+            diskann::pq_dist_lookup(
+                _aisaq_entry_points_pq_vectors_buff +
+                    (offset * this->n_chunks * sizeof(uint8_t)),
+                count, this->n_chunks, pq_dists, dist_scratch);
+            for (uint32_t i = 0; i < count; i++) {
+                if (dist_scratch[i] < best_dist) {
+                    best_dist = dist_scratch[i];
+                    best_medoid = _aisaq_entry_points[offset + i];
+                }
+            }
+            offset += count;
+        }
+    }else {
+        uint32_t best_medoid_index;
+        for (uint64_t cur_m = 0; cur_m < this->num_medoids; cur_m++) {
+            float cur_expanded_dist = this->dist_cmp_float_wrap(
+                query_float, this->centroid_data + this->aligned_dim * cur_m,
+                (size_t)this->aligned_dim, this->medoids[cur_m]);
+            if (cur_expanded_dist < best_dist) {
+                best_medoid_index = cur_m;
+                best_dist = cur_expanded_dist;
+            }
+        }
+        /* now calc best_medoid distance in pq space */
+        best_medoid = this->medoids[best_medoid_index];
+        diskann::pq_dist_lookup(
+            _aisaq_medoids_pq_vectors_buff +
+                (best_medoid_index * this->n_chunks * sizeof(uint8_t)),
+            1, this->n_chunks, pq_dists, &best_dist);
+    }
+   
+}
+
+template <typename T>
+void PQFlashAisaqIndex<T>::updata_io_stats(QueryStats &stats, size_t count, uint64_t size_in_sectors){
+    switch (size_in_sectors) {
+    case 1:
+        stats.n_4k += count;
+        break;
+    case 2:
+        stats.n_8k += count;
+        break;
+    default:
+        stats.n_12k += count;
+        break;
+    }
+    stats.n_ios += count;    
+}
+
+template <typename T>
 void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
     const T *query1, const uint64_t k_search, const uint64_t l_search,
     int64_t *indices, float *distances, const uint64_t beam_width,
@@ -1267,11 +1340,13 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
     float query_norm = query_norm_opt.value();
     AisaqThreadData aisaq_data = aisaq_thread_data.pop();
     auto ctx = this->reader->get_ctx();
+    _aisaq_pq_vectors_reader->set_io_ctx(*aisaq_data.aisaq_pq_reader_ctx, ctx);
     auto release_data = [this, data, aisaq_data, ctx]() mutable {
         this->thread_data.push(data);
         this->thread_data.push_notify_all();
         this->aisaq_thread_data.push(aisaq_data);
         this->aisaq_thread_data.push_notify_all();
+        _aisaq_pq_vectors_reader->set_io_ctx(*aisaq_data.aisaq_pq_reader_ctx, nullptr);
         this->reader->put_ctx(ctx);
     };
     size_t bv_cnt = 0;
@@ -1404,6 +1479,8 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
         /* done */
         _aisaq_pq_vectors_reader->read_pq_vectors_done(ctx);
     };
+    auto ctx_pool = AioContextPool::GetGlobalAioPool();
+    auto max_ios = ctx_pool->max_events_per_ctx();
 
     Timer query_timer, io_timer, cpu_timer;
     if (aisaq_data.aisaq_pq_reader_ctx != nullptr) 
@@ -1413,51 +1490,13 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
     NeighborPriorityQueue &retset = aisaq_data.retset;
     retset.reserve(local_l_search);
     std::vector<Neighbor> &full_retset = aisaq_data.full_retset;
-
-    uint32_t best_medoid = 0;
-    float best_dist = (std::numeric_limits<float>::max)();
-    if (_aisaq_num_entry_points > 0) {
-        /* in this case, best_medoid is determined in pq space */
-        uint32_t offset = 0;
-        while (offset < _aisaq_num_entry_points) {
-            /* dist_scratch size is limited to MAX_GRAPH_DEGREE */
-            uint32_t count =
-                std::min((uint32_t)defaults::MAX_GRAPH_DEGREE,
-                         (uint32_t)_aisaq_num_entry_points - offset);
-            diskann::pq_dist_lookup(
-                _aisaq_entry_points_pq_vectors_buff +
-                    (offset * this->n_chunks * sizeof(uint8_t)),
-                count, this->n_chunks, pq_dists, dist_scratch);
-            for (uint32_t i = 0; i < count; i++) {
-                if (dist_scratch[i] < best_dist) {
-                    best_dist = dist_scratch[i];
-                    best_medoid = _aisaq_entry_points[offset + i];
-                }
-            }
-            offset += count;
-        }
-    }else {
-        uint32_t best_medoid_index;
-        for (uint64_t cur_m = 0; cur_m < this->num_medoids; cur_m++) {
-            float cur_expanded_dist = this->dist_cmp_float_wrap(
-                query_float, this->centroid_data + this->aligned_dim * cur_m,
-                (size_t)this->aligned_dim, this->medoids[cur_m]);
-            if (cur_expanded_dist < best_dist) {
-                best_medoid_index = cur_m;
-                best_dist = cur_expanded_dist;
-            }
-        }
-        /* now calc best_medoid distance in pq space */
-        best_medoid = this->medoids[best_medoid_index];
-        diskann::pq_dist_lookup(
-            _aisaq_medoids_pq_vectors_buff +
-                (best_medoid_index * this->n_chunks * sizeof(uint8_t)),
-            1, this->n_chunks, pq_dists, &best_dist);
-    }
+    
+    uint32_t best_medoid;
+    float best_dist;
+    get_entry_point_medoid(best_medoid, best_dist, pq_dists, dist_scratch, query_float);
+    
     retset.insert(Neighbor(best_medoid, best_dist));
     visited->insert(best_medoid);
-
-    uint32_t num_ios = 0;
 
     // cleared every iteration
     std::vector<uint32_t> frontier;
@@ -1590,23 +1629,13 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
         if (!frontier_read_reqs.empty()) {
             io_timer.reset();
             this->reader->read(frontier_read_reqs, ctx); // synchronous IO linux
+
             if (stats != nullptr) {
                 stats->io_us += (float)io_timer.elapsed();
                 stats->n_hops++;
-                switch (num_sectors_per_node) {
-                case 1:
-                    stats->n_4k += frontier_read_reqs.size();
-                    break;
-                case 2:
-                    stats->n_8k += frontier_read_reqs.size();
-                    break;
-                default:
-                    stats->n_12k += frontier_read_reqs.size();
-                    break;
-                }
-                stats->n_ios += frontier_read_reqs.size();
+                updata_io_stats(*stats, frontier_read_reqs.size(), num_sectors_per_node);
             }
-            num_ios += frontier_read_reqs.size();
+
             frontier_read_reqs.clear();
         }
 
@@ -1658,9 +1687,6 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
                 cur_expanded_dist =
                     this->dist_cmp_wrap(aligned_query_T, node_fp_coords,
                                         (size_t)this->aligned_dim, id);
-                if (stats != nullptr) {
-                    stats->n_cmps++;
-                }
             } else {
                 if (this->metric == diskann::Metric::INNER_PRODUCT ||
                         this->metric == diskann::Metric::COSINE) {
@@ -1672,9 +1698,10 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
                                                          // support OPQ yet
                             query_float, (uint8_t *)node_fp_coords);
                 }
-                if (stats != nullptr) {
-                    stats->n_cmps++;
-                }
+ 
+            }
+            if (stats != nullptr) {
+                 stats->n_cmps++;
             }
             /* Insert node to full_retset */
             float temp_alpha=0;
@@ -1754,8 +1781,12 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
             stats->cpu_us += (float)cpu_timer.elapsed();
         }
         if (agg_nnbrs > 0) {
-            compute_dists(agg_node_nbrs, agg_nnbrs, agg_dist_scratch,
-                          *aisaq_data.aisaq_pq_reader_ctx, stats);
+               uint32_t computed_count = 0;
+               do {
+				  uint32_t _nids = std::min(agg_nnbrs - computed_count, (uint32_t)max_ios);
+				  compute_dists(agg_node_nbrs + computed_count, _nids, agg_dist_scratch + computed_count, *aisaq_data.aisaq_pq_reader_ctx, stats);
+				  computed_count +=  _nids;
+               } while (computed_count < agg_nnbrs);
         }
         //}
         cpu_timer.reset();
@@ -1803,46 +1834,29 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
                                -1, __FUNCSIG__, __FILE__, __LINE__);
         }
 
-        std::vector<AlignedRead> vec_read_reqs;
-
-        if (full_retset.size() > k_search * FULL_PRECISION_REORDER_MULTIPLIER)
-            full_retset.erase(full_retset.begin() +
-                                  k_search * FULL_PRECISION_REORDER_MULTIPLIER,
-                              full_retset.end());
-
-        for (size_t i = 0; i < full_retset.size(); ++i) {
-            // MULTISECTORFIX
-            vec_read_reqs.emplace_back(
-                VECTOR_SECTOR_NO(((size_t)full_retset[i].id)) *
-                    defaults::SECTOR_LEN,
-                defaults::SECTOR_LEN,
-                sector_scratch + i * defaults::SECTOR_LEN);
-
-            if (stats != nullptr) {
-                stats->n_4k++;
-                stats->n_ios++;
-            }
-        }
-
-        io_timer.reset();
-        this->reader->read(vec_read_reqs, ctx); // synchronous IO linux
-        if (stats != nullptr) {
-            stats->io_us += io_timer.elapsed();
-        }
-
-        for (size_t i = 0; i < full_retset.size(); ++i) {
-            auto id = full_retset[i].id;
-            // MULTISECTORFIX
-            auto location = (sector_scratch + i * defaults::SECTOR_LEN) +
-                            VECTOR_SECTOR_OFFSET(id);
-            full_retset[i].distance = this->dist_cmp_wrap(
-                aligned_query_T, (T *)location, (size_t)this->aligned_dim, id);
-        }
-
-        std::sort(full_retset.begin(), full_retset.end());
+        rerank_candidate_list(full_retset, k_search,
+                              sector_scratch, stats,
+                              io_timer, ctx, aligned_query_T);
+        
     }
 
-    // copy k_search values
+    prepare_search_results(full_retset, k_search, distances, indices, query_norm);
+
+    if (stats != nullptr) {
+        stats->total_us = (float)query_timer.elapsed();
+    }
+    if (aisaq_data.aisaq_pq_reader_ctx != nullptr)
+        _aisaq_pq_vectors_reader->hibernate(*aisaq_data.aisaq_pq_reader_ctx);
+
+    release_data();
+}
+
+template <typename T>
+void PQFlashAisaqIndex<T>::prepare_search_results(std::vector<Neighbor> &full_retset,
+                                                  const uint64_t k_search,
+                                                  float *distances, int64_t *indices,
+                                                  float query_norm)
+{
     for (uint64_t i = 0; i < k_search; i++) {
         if (i >= full_retset.size()) {
             indices[i] = -1;
@@ -1868,14 +1882,49 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
             }
         }
     }
+}
 
-    if (stats != nullptr) {
-        stats->total_us = (float)query_timer.elapsed();
+template <typename T>
+void PQFlashAisaqIndex<T>::rerank_candidate_list(std::vector<Neighbor> &full_retset, const uint64_t k_search,
+                                                 char *sector_scratch, QueryStats *stats,
+                                                 Timer &io_timer, IOContext ctx, T *aligned_query_T){
+    std::vector<AlignedRead> vec_read_reqs;
+
+    if (full_retset.size() > k_search * FULL_PRECISION_REORDER_MULTIPLIER)
+        full_retset.erase(full_retset.begin() +
+                              k_search * FULL_PRECISION_REORDER_MULTIPLIER,
+                          full_retset.end());
+
+    for (size_t i = 0; i < full_retset.size(); ++i) {
+        // MULTISECTORFIX
+        vec_read_reqs.emplace_back(
+            VECTOR_SECTOR_NO(((size_t)full_retset[i].id)) *
+                defaults::SECTOR_LEN,
+            defaults::SECTOR_LEN,
+            sector_scratch + i * defaults::SECTOR_LEN);
+
+        if (stats != nullptr) {
+            stats->n_4k++;
+            stats->n_ios++;
+        }
     }
-    if (aisaq_data.aisaq_pq_reader_ctx != nullptr)
-        _aisaq_pq_vectors_reader->hibernate(*aisaq_data.aisaq_pq_reader_ctx);
 
-    release_data();
+    io_timer.reset();
+    this->reader->read(vec_read_reqs, ctx); // synchronous IO linux
+    if (stats != nullptr) {
+        stats->io_us += io_timer.elapsed();
+    }
+
+    for (size_t i = 0; i < full_retset.size(); ++i) {
+        auto id = full_retset[i].id;
+        // MULTISECTORFIX
+        auto location = (sector_scratch + i * defaults::SECTOR_LEN) +
+                        VECTOR_SECTOR_OFFSET(id);
+        full_retset[i].distance = this->dist_cmp_wrap(
+            aligned_query_T, (T *)location, (size_t)this->aligned_dim, id);
+    }
+
+    std::sort(full_retset.begin(), full_retset.end());
 }
 
 template <typename T>

@@ -166,6 +166,8 @@ public:
     virtual ~AisaqPQReaderContext();
     virtual int init_context(const char *pq_file_path, uint32_t max_ios, uint32_t max_io_size_sectors) = 0;
     virtual void cleanup_context() = 0;
+    virtual void set_io_ctx(io_context_t& io_ctx)=0;
+
 private:
     void clear_page_cache();
     bool set_page_cache_size(uint64_t page_cache_size_bytes);
@@ -348,6 +350,7 @@ bool AisaqPQReaderContext::wakeup()
 class AisaqPQReaderContext_aio : public AisaqPQReaderContext {
 public:
     AisaqPQReaderContext_aio();
+    void set_io_ctx(io_context_t& io_ctx);
 protected:
     virtual ~AisaqPQReaderContext_aio();
     virtual int init_context(const char *pq_file_path, uint32_t max_ios, uint32_t max_io_size_sectors);
@@ -382,15 +385,14 @@ AisaqPQReaderContext_aio::~AisaqPQReaderContext_aio()
 {
 }
 
+void AisaqPQReaderContext_aio::set_io_ctx(io_context_t& io_ctx){
+	m_aio_ctx = io_ctx;
+}
+
 int AisaqPQReaderContext_aio::init_context(const char *pq_file_path, uint32_t max_ios, uint32_t max_io_size_sectors)
 {
 	if (init_context_common(pq_file_path, O_RDONLY | O_LARGEFILE | O_NONBLOCK | O_DIRECT,
                     max_ios, max_io_size_sectors) != 0) {
-        return -1;
-    }
-    if (io_setup(max_ios, &m_aio_ctx) != 0) {
-        cleanup_context();
-        LOG_KNOWHERE_ERROR_ << "failed to setup aio context";
         return -1;
     }
     m_io_data = new struct AisaqPQReaderContext_aio::io_data[max_ios];
@@ -415,10 +417,6 @@ void AisaqPQReaderContext_aio::cleanup_context()
     if (m_io_data != nullptr) {
         delete [] m_io_data;
         m_io_data = nullptr;
-    }
-    if (m_aio_ctx != nullptr) {
-    	io_destroy(m_aio_ctx);
-        m_aio_ctx = nullptr;
     }
     cleanup_context_common();
 }
@@ -939,6 +937,10 @@ void AisaqPQReader::get_buffers_pool_info(uint64_t &total_allocated /* in bytes 
         total_allocated = 0;
         total_in_pool = 0;
     }
+}
+
+void AisaqPQReader::set_io_ctx(AisaqPQReaderContext &ctx, IOContext io_ctx) {
+	ctx.set_io_ctx(io_ctx);
 }
 
 }
