@@ -23,7 +23,6 @@
 #include "cached_io.h"
 #include "common_includes.h"
 #include "diskann/index.h"
-#include "knowhere/comp/thread_pool.h"
 #include "tsl/robin_set.h"
 #include "utils.h"
 #include "diskann/defaults.h"

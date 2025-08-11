@@ -18,7 +18,6 @@
 #include "hnswlib/hnswlib.h"
 #include "index/hnsw/hnsw_config.h"
 #include "knowhere/comp/index_param.h"
-#include "knowhere/comp/thread_pool.h"
 #include "knowhere/comp/time_recorder.h"
 #include "knowhere/config.h"
 #include "knowhere/expected.h"
@@ -28,6 +27,7 @@
 #include "knowhere/index/index_node_data_mock_wrapper.h"
 #include "knowhere/log.h"
 #include "knowhere/range_util.h"
+#include "knowhere/thread_pool.h"
 #include "knowhere/utils.h"
 
 namespace knowhere {

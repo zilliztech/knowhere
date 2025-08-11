@@ -18,8 +18,8 @@
 #endif
 #include "faiss/Clustering.h"
 #include "faiss/utils/distances.h"
-#include "knowhere/comp/thread_pool.h"
 #include "knowhere/log.h"
+#include "knowhere/thread_pool.h"
 #ifdef KNOWHERE_WITH_GPU
 #include "index/gpu/gpu_res_mgr.h"
 #endif

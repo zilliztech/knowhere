@@ -17,10 +17,11 @@
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "filemanager/FileManager.h"
+#include "filemanager/impl/LocalFileManager.h"
 #include "index/diskann/diskann_config.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/knowhere_check.h"
-#include "knowhere/comp/local_file_manager.h"
 #include "knowhere/expected.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/utils.h"
@@ -130,7 +131,7 @@ TEST_CASE("Invalid diskann params test", "[diskann]") {
         json["max_k"] = 8000;
         return json;
     };
-    std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
+    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
     auto diskann_index_pack = knowhere::Pack(file_manager);
     auto base_ds = GenDataSet(rows_num, kDim, 30);
     auto base_ptr = static_cast<const float*>(base_ds->GetTensor());
@@ -278,7 +279,7 @@ base_search() {
     }
 
     SECTION("Test search and range search") {
-        std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
+        std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
         auto diskann_index_pack = knowhere::Pack(file_manager);
         knowhere::Json deserialize_json = knowhere::Json::parse(deserialize_gen().dump());
         knowhere::BinarySet binset;
@@ -306,6 +307,7 @@ base_search() {
             auto res = diskann.Search(query_ds, knn_json, nullptr);
             REQUIRE(res.has_value());
             auto knn_recall = GetKNNRecall(*knn_gt_ptr, *res.value());
+            CAPTURE(knn_json.dump());
             REQUIRE(knn_recall > kKnnRecall);
             // knn search without cache file
             {
@@ -397,7 +399,7 @@ TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {
         auto base_ptr = static_cast<const float*>(base_ds->GetTensor());
         WriteRawDataToDisk<float>(kRawDataPath, base_ptr, kNumRows, dim);
 
-        std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
+        std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
         auto diskann_index_pack = knowhere::Pack(file_manager);
 
         knowhere::DataSetPtr ds_ptr = nullptr;

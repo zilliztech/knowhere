@@ -18,7 +18,7 @@
 #include <iostream>
 #include <memory>
 
-#include "knowhere/file_manager.h"
+#include "filemanager/FileManager.h"
 
 namespace knowhere {
 
@@ -80,8 +80,8 @@ template <typename T>
 class Pack : public Object {
     // Currently, DataViewIndex and DiskIndex are mutually exclusive, they can share one object.
     // todo: pack can hold more object
-    static_assert(std::is_same_v<T, std::shared_ptr<knowhere::FileManager>> || std::is_same_v<T, knowhere::ViewDataOp>,
-                  "IndexPack only support std::shared_ptr<knowhere::FileManager> or ViewDataOp == std::function<const "
+    static_assert(std::is_same_v<T, knowhere::ViewDataOp> || std::is_same_v<T, std::shared_ptr<milvus::FileManager>>,
+                  "IndexPack only support std::shared_ptr<milvus::FileManager> or ViewDataOp == std::function<const "
                   "void*(size_t)> by far.");
 
  public:

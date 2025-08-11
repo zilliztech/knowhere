@@ -22,6 +22,8 @@
 #include "neighbor.h"
 #include "parameters.h"
 #include "utils.h"
+#include "concurrent_queue.h"
+#include "knowhere/thread_pool.h"
 
 #define OVERHEAD_FACTOR 1.1
 

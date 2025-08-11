@@ -5,7 +5,7 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/thread_pool.h"
 
 namespace hnswlib {
 

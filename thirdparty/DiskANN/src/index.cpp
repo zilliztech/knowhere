@@ -24,7 +24,7 @@
 #include "diskann/partition_and_pq.h"
 #include "diskann/timer.h"
 #include "diskann/utils.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/comp/task.h"
 #include "knowhere/log.h"
 
 #if defined(RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && \

@@ -24,9 +24,7 @@
 #include "diskann/partition_and_pq.h"
 #include "diskann/percentile_stats.h"
 #include "diskann/pq_flash_index.h"
-#include "diskann/utils.h"
-#include "omp.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/comp/task.h"
 #include "tsl/robin_set.h"
 
 

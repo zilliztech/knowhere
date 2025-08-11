@@ -18,7 +18,6 @@
 #include "io/file_io.h"
 #include "io/memory_io.h"
 #include "knowhere/comp/index_param.h"
-#include "knowhere/comp/thread_pool.h"
 #include "knowhere/config.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
@@ -26,6 +25,7 @@
 #include "knowhere/index/index_node.h"
 #include "knowhere/log.h"
 #include "knowhere/sparse_utils.h"
+#include "knowhere/thread_pool.h"
 #include "knowhere/utils.h"
 
 namespace knowhere {

@@ -34,6 +34,7 @@ class KnowhereConan(ConanFile):
         "with_coverage": [True, False],
         "with_faiss_tests": [True, False],
         "with_light": [True, False],
+        "with_compile_prune": [True, False],
     }
     default_options = {
         "shared": True,
@@ -57,6 +58,8 @@ class KnowhereConan(ConanFile):
         "with_faiss_tests": False,
         "libcurl:with_ssl": False,
         "with_light": False,
+        "with_compile_prune": False,
+        "folly:shared": True,
     }
 
     exports_sources = (
@@ -94,6 +97,7 @@ class KnowhereConan(ConanFile):
 
     def requirements(self):
         self.requires("boost/1.83.0")
+        self.requires("gflags/2.2.2")
         self.requires("glog/0.6.0")
         self.requires("nlohmann_json/3.11.2")
         self.requires("openssl/1.1.1t")
@@ -103,7 +107,7 @@ class KnowhereConan(ConanFile):
         self.requires("xz_utils/5.2.5")
         self.requires("protobuf/3.21.4")
         self.requires("fmt/9.1.0")
-        self.requires("folly/2023.10.30.09@milvus/dev")
+        self.requires("folly/2023.10.30.10@milvus/dev")
         self.requires("libcurl/8.2.1")
         self.requires("simde/0.8.2")
         self.requires("xxhash/0.8.3")
@@ -180,6 +184,7 @@ class KnowhereConan(ConanFile):
         tc.variables["WITH_COVERAGE"] = self.options.with_coverage
         tc.variables["WITH_FAISS_TESTS"] = self.options.with_faiss_tests
         tc.variables["WITH_LIGHT"] = self.options.with_light
+        tc.variables["WITH_COMPILE_PRUNE"] = self.options.with_compile_prune
         tc.generate()
 
         deps = CMakeDeps(self)

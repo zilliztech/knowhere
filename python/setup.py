@@ -51,6 +51,7 @@ INCLUDE_DIRS = [
     get_numpy_include(),
     os.path.join("..", "include"),
     os.path.join("..", "thirdparty"),
+    os.path.join("..", "build", "Release", "milvus-common-src", "include"),
     get_thirdparty_prefix("boost-headers") + "/include",
     get_thirdparty_prefix("nlohmann_json") + "/include",
     get_thirdparty_prefix("libglog") + "/include",

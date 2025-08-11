@@ -13,11 +13,11 @@
 
 #include "fmt/format.h"
 #include "folly/futures/Future.h"
-#include "knowhere/comp/thread_pool.h"
 #include "knowhere/comp/time_recorder.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/log.h"
+#include "knowhere/thread_pool.h"
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
 #include "knowhere/prometheus_client.h"
@@ -379,6 +379,12 @@ template <typename T>
 inline std::string
 Index<T>::Type() const {
     return this->node->Type();
+}
+
+template <typename T>
+inline bool
+Index<T>::LoadIndexWithStream() const {
+    return this->node->LoadIndexWithStream();
 }
 
 template class Index<IndexNode>;
