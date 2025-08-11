@@ -350,7 +350,7 @@ bool AisaqPQReaderContext::wakeup()
 class AisaqPQReaderContext_aio : public AisaqPQReaderContext {
 public:
     AisaqPQReaderContext_aio();
-    void set_io_ctx(io_context_t& io_ctx);
+    virtual void set_io_ctx(io_context_t& io_ctx);
 protected:
     virtual ~AisaqPQReaderContext_aio();
     virtual int init_context(const char *pq_file_path, uint32_t max_ios, uint32_t max_io_size_sectors);
@@ -386,6 +386,7 @@ AisaqPQReaderContext_aio::~AisaqPQReaderContext_aio()
 }
 
 void AisaqPQReaderContext_aio::set_io_ctx(io_context_t& io_ctx){
+	assert(m_pending_io_count == 0);
 	m_aio_ctx = io_ctx;
 }
 
@@ -508,6 +509,10 @@ int AisaqPQReader_aio::read_pq_vectors_submit(AisaqPQReaderContext &ctx,
         return -1;
     }
     AisaqPQReaderContext_aio &aio_ctx = reinterpret_cast<AisaqPQReaderContext_aio &>(ctx);
+    if(!aio_ctx.m_aio_ctx) {
+    	LOG_KNOWHERE_ERROR_ << "Requested io without io context";
+    	return -1;
+    }
     std::map<uint64_t, uint32_t> sectors_map; /* start sector -> index map */
     uint32_t read_sector_count;
     struct AisaqPQReaderContext_aio::io_data *io_data;
