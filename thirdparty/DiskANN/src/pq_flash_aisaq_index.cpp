@@ -1340,13 +1340,17 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
     float query_norm = query_norm_opt.value();
     AisaqThreadData aisaq_data = aisaq_thread_data.pop();
     auto ctx = this->reader->get_ctx();
-    _aisaq_pq_vectors_reader->set_io_ctx(*aisaq_data.aisaq_pq_reader_ctx, ctx);
+    if(aisaq_data.aisaq_pq_reader_ctx) {
+    	_aisaq_pq_vectors_reader->set_io_ctx(*aisaq_data.aisaq_pq_reader_ctx, ctx);
+    }
     auto release_data = [this, data, aisaq_data, ctx]() mutable {
         this->thread_data.push(data);
         this->thread_data.push_notify_all();
         this->aisaq_thread_data.push(aisaq_data);
         this->aisaq_thread_data.push_notify_all();
-        _aisaq_pq_vectors_reader->set_io_ctx(*aisaq_data.aisaq_pq_reader_ctx, nullptr);
+        if(aisaq_data.aisaq_pq_reader_ctx){
+        	_aisaq_pq_vectors_reader->set_io_ctx(*aisaq_data.aisaq_pq_reader_ctx, nullptr);
+        }
         this->reader->put_ctx(ctx);
     };
     size_t bv_cnt = 0;
