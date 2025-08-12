@@ -553,6 +553,8 @@ fvec_hook(std::string& simd_type) {
 
     fvec_norm_L2sqr = fvec_norm_L2sqr_rvv;
     fvec_L2sqr_ny = fvec_L2sqr_ny_rvv;
+    fvec_L2sqr_ny_nearest = fvec_L2sqr_ny_nearest_rvv;
+    fvec_L2sqr_ny_nearest_y_transposed = fvec_L2sqr_ny_nearest_y_transposed_rvv;
     fvec_madd = fvec_madd_rvv;
     fvec_madd_and_argmin = fvec_madd_and_argmin_rvv;
 
