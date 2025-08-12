@@ -1308,10 +1308,6 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
             throw ANNException("failed to generate rearranged vectors data"
                    , -1, __FUNCSIG__, __FILE__, __LINE__);
         }
-        if (n_entry_points > 0) {
-            uint32_t *ptr = entry_points.release();
-            delete [] ptr;
-        }        
         /* restore last position */
         vamana_reader.seekg(pos, vamana_reader.beg);
         /* create reversed vectors map */
@@ -1392,8 +1388,6 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
                     rearranged_norm_data[i] = norm_data[rearranged_vectors_map[i]];
                 }
                 diskann::save_bin<float>(norm_path, rearranged_norm_data, __npts, 1);  
-                float *ptr = norm_data.release();
-                delete[] ptr;
                 aligned_free((void*)rearranged_norm_data);
             }
         }
