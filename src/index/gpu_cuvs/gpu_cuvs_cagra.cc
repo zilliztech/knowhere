@@ -123,26 +123,30 @@ class GpuCuvsCagraHybridIndexNode : public GpuCuvsCagraIndexNode<DataType> {
 
     Status
     Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) override {
-        if (binset.Contains(std::string(this->Type()) + "_cpu")) {
-            this->adapt_for_cpu = true;
+        const GpuCuvsCagraConfig& cagra_cfg = static_cast<const GpuCuvsCagraConfig&>(*cfg);
+        if (cagra_cfg.adapt_for_cpu.value()) {
+            adapt_for_cpu = true;
             if constexpr (std::is_same_v<DataType, std::int8_t>) {
                 // TODO: Add HNSW support for INT8
                 LOG_KNOWHERE_ERROR_ << "CAGRA+HNSW does not support INT8 data.";
                 return Status::invalid_binary_set;
             } else {
+                BinaryPtr binary = nullptr;
+                hnswlib::SpaceInterface<float>* space = nullptr;
+                hnsw_index_.reset(new (std::nothrow) hnswlib::HierarchicalNSW<DataType, float, hnswlib::None>(space));
                 try {
-                    auto binary = binset.GetByName(std::string(this->Type()) + "_cpu");
-                    if (binary == nullptr) {
+                    if ((binary = binset.GetByName(std::string(this->Type()) + "_cpu")) != nullptr) {
+                        MemoryIOReader reader(binary->data.get(), binary->size);
+                        hnsw_index_->loadIndex(reader);
+                    } else if ((binary = binset.GetByName(std::string(this->Type()))) != nullptr) {
+                        std::stringbuf buf;
+                        buf.sputn((char*)binary->data.get(), binary->size);
+                        std::istream stream(&buf);
+                        hnsw_index_->loadIndexFromGpuFormat(stream);
+                    } else {
                         LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
                         return Status::invalid_binary_set;
                     }
-
-                    MemoryIOReader reader(binary->data.get(), binary->size);
-
-                    hnswlib::SpaceInterface<float>* space = nullptr;
-                    hnsw_index_.reset(new (std::nothrow)
-                                          hnswlib::HierarchicalNSW<DataType, float, hnswlib::None>(space));
-                    hnsw_index_->loadIndex(reader);
                     hnsw_index_->base_layer_only = true;
                 } catch (std::exception& e) {
                     LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();

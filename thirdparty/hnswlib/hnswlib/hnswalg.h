@@ -24,6 +24,13 @@
 #include <random>
 #include <unordered_set>
 
+#ifdef KNOWHERE_WITH_CUVS
+#include <raft/core/detail/mdspan_numpy_serializer.hpp>
+#include <raft/neighbors/detail/cagra/cagra_serialize.cuh>
+#include <cuvs/distance/distance.hpp>
+#include "common/cuvs/integration/type_mappers.hpp"
+#endif
+
 #include "hnswlib.h"
 #include "io/memory_io.h"
 #include "knowhere/config.h"
@@ -1038,6 +1045,129 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             }
         }
     }
+
+#ifdef KNOWHERE_WITH_CUVS
+    void
+    loadIndexFromGpuFormat(std::istream& input, size_t max_elements_i = 0) {
+        using idxt = cuvs_knowhere::cuvs_indexing_t<cuvs_proto::cuvs_index_kind::cagra>;
+        
+        char dtype_string[4];
+        input.read(dtype_string, 4);
+        auto ver = raft::detail::numpy_serializer::deserialize_scalar<int>(input);
+        if (ver != raft::neighbors::cagra::detail::serialization_version) {
+            throw std::runtime_error("serialization version mismatch, expected " + 
+                                std::to_string(raft::neighbors::cagra::detail::serialization_version) +
+                                ", got " + std::to_string(ver));
+        }
+        
+        auto n_rows = raft::detail::numpy_serializer::deserialize_scalar<idxt>(input);
+        auto dim = raft::detail::numpy_serializer::deserialize_scalar<std::uint32_t>(input);
+        auto graph_degree = raft::detail::numpy_serializer::deserialize_scalar<std::uint32_t>(input);
+        auto metric = raft::detail::numpy_serializer::deserialize_scalar<cuvs::distance::DistanceType>(input);
+
+        if (metric == cuvs::distance::DistanceType::L2Expanded) {
+            metric_type_ = Metric::L2;
+        } else if (metric == cuvs::distance::DistanceType::InnerProduct) {
+            metric_type_ = Metric::INNER_PRODUCT;
+        } else if (metric == cuvs::distance::DistanceType::CosineExpanded) {
+            metric_type_ = Metric::COSINE;
+        } else {
+            metric_type_ = Metric::UNKNOWN;
+        }
+
+        if constexpr (knowhere::KnowhereFloatTypeCheck<data_t>::value) {
+            if (metric_type_ == Metric::L2) {
+                space_ = new hnswlib::L2Space<data_t, dist_t>(dim);
+            } else if (metric_type_ == Metric::INNER_PRODUCT) {
+                space_ = new hnswlib::InnerProductSpace<data_t, dist_t>(dim);
+            } else if (metric_type_ == Metric::COSINE) {
+                space_ = new hnswlib::CosineSpace<data_t, dist_t>(dim);
+            } else {
+                throw std::runtime_error("Invalid metric type for float data type(float32, float16 and bfloat16):" +
+                                         std::to_string(metric_type_));
+            }
+        } else {
+            if (metric_type_ == Metric::HAMMING) {
+                space_ = new hnswlib::HammingSpace(dim);
+            } else if (metric_type_ == Metric::JACCARD) {
+                space_ = new hnswlib::JaccardSpace(dim);
+            } else {
+                throw std::runtime_error("Invalid metric type for binary data type :" + std::to_string(metric_type_));
+            }
+        }
+
+        data_size_ = dim * sizeof(float);
+        fstdistfunc_ = space_->get_dist_func();
+        dist_func_param_ = space_->get_dist_func_param();
+        offsetLevel0_ = 0;
+        max_elements_ = n_rows;
+        cur_element_count = n_rows;
+        size_t max_elements = max_elements_i;
+        if (max_elements < cur_element_count) {
+            max_elements = max_elements_;
+        }
+        max_elements_ = max_elements;
+
+        size_data_per_element_ = static_cast<std::size_t>(graph_degree * sizeof(idxt) + 4 + (n_rows > 0 ? dim * sizeof(data_t) : 0) + 8);
+        label_offset_ = size_data_per_element_ - 8;
+        offsetData_ = graph_degree * sizeof(idxt) + 4;
+        maxlevel_ = 1;
+        enterpoint_node_ = n_rows / 2;
+        maxM_ = graph_degree / 2;
+        maxM0_ = graph_degree;
+        M_ = graph_degree / 2;
+        mult_ = 0.42424242;
+        ef_construction_ = 500;
+        
+        data_level0_memory_ = (char*)malloc(max_elements * size_data_per_element_);  // NOLINT
+        if (data_level0_memory_ == nullptr)
+            throw std::runtime_error("Not enough memory: loadIndex failed to allocate level0");
+        
+        [[maybe_unused]] auto header = raft::detail::numpy_serializer::read_header(input);
+        for (size_t i = 0; i < max_elements; i++) {
+            auto offset = i * size_data_per_element_;
+            memcpy(data_level0_memory_ + offset, &graph_degree, sizeof(int));
+            offset += sizeof(int);
+            input.read(data_level0_memory_ + offset, graph_degree * sizeof(idxt));
+        }
+        auto include_dataset = raft::detail::numpy_serializer::deserialize_scalar<bool>(input);
+        if (include_dataset) {
+            constexpr uint32_t kSerializeEmptyDataset   = 1;
+            if (kSerializeEmptyDataset == raft::detail::numpy_serializer::deserialize_scalar<uint32_t>(input)) {
+                [[maybe_unused]] auto suggested_dim = raft::detail::numpy_serializer::deserialize_scalar<uint32_t>(input);
+            } else {
+                [[maybe_unused]] auto data_type = raft::detail::numpy_serializer::deserialize_scalar<cudaDataType_t>(input);
+                [[maybe_unused]] auto n_rows = raft::detail::numpy_serializer::deserialize_scalar<int64_t>(input);
+                auto dim = raft::detail::numpy_serializer::deserialize_scalar<uint32_t>(input);
+                [[maybe_unused]] auto stride = raft::detail::numpy_serializer::deserialize_scalar<uint32_t>(input);
+                [[maybe_unused]] auto header = raft::detail::numpy_serializer::read_header(input);
+                for (size_t i = 0; i < max_elements; i++) {
+                    auto offset = i * size_data_per_element_ + sizeof(int) + graph_degree * sizeof(idxt);
+                    input.read(data_level0_memory_ + offset, dim * sizeof(data_t));
+                }
+            }
+        }
+        for (size_t i = 0; i < max_elements; i++) {
+            auto offset = i * size_data_per_element_ + sizeof(int) + graph_degree * sizeof(idxt) + (n_rows > 0 ? dim * sizeof(data_t) : 0);
+            memcpy(data_level0_memory_ + offset, &i, sizeof(size_t));
+        }
+
+        size_links_per_element_ = maxM_ * sizeof(tableint) + sizeof(linklistsizeint);
+
+        size_links_level0_ = maxM0_ * sizeof(tableint) + sizeof(linklistsizeint);
+
+        visited_list_pool_ = new VisitedListPool(max_elements);
+
+        linkLists_ = (char**)malloc(sizeof(void*) * max_elements);
+        if (linkLists_ == nullptr)
+            throw std::runtime_error("Not enough memory: loadIndex failed to allocate linklists");
+        element_levels_ = std::vector<int>(max_elements);
+        revSize_ = 1.0 / mult_;
+        ef_ = 10;
+
+        input.sync();
+    }
+#endif
 
     unsigned short int
     getListCount(linklistsizeint* ptr) const {
