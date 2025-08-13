@@ -15,19 +15,20 @@
 #include "gperftools/malloc_extension.h"
 #endif
 
-#include "diskann/logger.h"
 #include "boost/dynamic_bitset.hpp"
+#include "diskann/aisaq_utils.h"
 #include "diskann/aux_utils.h"
 #include "diskann/cached_io.h"
 #include "diskann/index.h"
-#include "omp.h"
+#include "diskann/logger.h"
 #include "diskann/partition_and_pq.h"
 #include "diskann/percentile_stats.h"
 #include "diskann/pq_flash_index.h"
+#include "diskann/utils.h"
+#include "omp.h"
 #include "knowhere/comp/thread_pool.h"
 #include "tsl/robin_set.h"
 
-#include "diskann/utils.h"
 
 namespace diskann {
   namespace {
@@ -161,12 +162,10 @@ namespace diskann {
 
       if ((active_points_count < recall_at && !active_tags.empty()) &&
           !printed) {
-        diskann::cout << "Warning: Couldn't find enough closest neighbors "
+        LOG_KNOWHERE_INFO_ << "Warning: Couldn't find enough closest neighbors "
                       << active_points_count << "/" << recall_at
-                      << " from "
-                         "truthset for query # "
-                      << i << ". Will result in under-reported value of recall."
-                      << std::endl;
+                      << " from truthset for query # "
+                      << i << ". Will result in under-reported value of recall.";
         printed = true;
       }
       if (gs_dist != nullptr) {
@@ -237,7 +236,7 @@ namespace diskann {
         warmup[i * warmup_aligned_dim + d] = (T) dis(gen);
       }
     }
-    diskann::cout << "..done" << std::endl;
+    LOG_KNOWHERE_INFO_ << "..done";
     return warmup;
   }
 
@@ -606,8 +605,7 @@ namespace diskann {
     if (file_exists(sample_file)) {
       diskann::load_bin<T>(sample_file, samples, sample_num, sample_dim);
     } else {
-      LOG_KNOWHERE_ERROR_ << "Sample bin file not found. Not generating cache."
-                          << std::endl;
+      LOG_KNOWHERE_ERROR_ << "Sample bin file not found. Not generating cache.";
       return;
     }
 
@@ -631,8 +629,7 @@ namespace diskann {
       pq_table.load_pq_centroid_bin(pq_pivots_path.c_str(), pq_chunks);
     } else {
       LOG_KNOWHERE_ERROR_
-          << "PQ pivots and compressed code not found. Not generating cache."
-          << std::endl;
+          << "PQ pivots and compressed code not found. Not generating cache.";
       return;
     }
     LOG_KNOWHERE_INFO_ << "Use " << sample_num << " sampled quries to generate "
@@ -909,20 +906,20 @@ namespace diskann {
     max_node_len =
         (((_u64) width_u32 + 1) * sizeof(unsigned)) + (ndims_64 * sizeof(T));
 
-    bool long_node = max_node_len > SECTOR_LEN;
+    bool long_node = max_node_len > diskann::defaults::SECTOR_LEN;
     if (long_node) {
       if (append_reorder_data) {
         throw diskann::ANNException(
             "Reorder data for long node is not supported.", -1, __FUNCSIG__,
             __FILE__, __LINE__);
       }
-      nsector_per_node = ROUND_UP(max_node_len, SECTOR_LEN) / SECTOR_LEN;
+      nsector_per_node = ROUND_UP(max_node_len, diskann::defaults::SECTOR_LEN) / diskann::defaults::SECTOR_LEN;
       nnodes_per_sector = -1;
       LOG_KNOWHERE_DEBUG_ << "medoid: " << medoid << "B"
                           << "max_node_len: " << max_node_len << "B"
                           << "nsector_per_node: " << nsector_per_node << "B";
     } else {
-      nnodes_per_sector = SECTOR_LEN / max_node_len;
+      nnodes_per_sector = diskann::defaults::SECTOR_LEN / max_node_len;
       nsector_per_node = -1;
       LOG_KNOWHERE_DEBUG_ << "medoid: " << medoid << "B"
                           << "max_node_len: " << max_node_len << "B"
@@ -938,16 +935,16 @@ namespace diskann {
 
     if (append_reorder_data) {
       n_data_nodes_per_sector =
-          SECTOR_LEN / (ndims_reorder_file * sizeof(float));
+          diskann::defaults::SECTOR_LEN / (ndims_reorder_file * sizeof(float));
       n_reorder_sectors =
           ROUND_UP(npts_64, n_data_nodes_per_sector) / n_data_nodes_per_sector;
     }
     _u64 disk_index_file_size =
-        (n_sectors + n_reorder_sectors + 1) * SECTOR_LEN;
+        (n_sectors + n_reorder_sectors + 1) * diskann::defaults::SECTOR_LEN;
 
     // SECTOR_LEN buffer for each sector
     _u64 sector_buf_size =
-        long_node ? nsector_per_node * SECTOR_LEN : SECTOR_LEN;
+        long_node ? nsector_per_node * diskann::defaults::SECTOR_LEN : diskann::defaults::SECTOR_LEN;
     std::unique_ptr<char[]> sector_buf =
         std::make_unique<char[]>(sector_buf_size);
 
@@ -967,7 +964,7 @@ namespace diskann {
           n_data_nodes_per_sector;
     }
 
-    diskann_writer.write(sector_buf.get(), SECTOR_LEN);
+    diskann_writer.write(sector_buf.get(), diskann::defaults::SECTOR_LEN);
 
     if (long_node) {
       for (_u64 node_id = 0; node_id < npts_64; ++node_id) {
@@ -1001,7 +998,7 @@ namespace diskann {
       if (sector % 100000 == 0) {
         LOG_KNOWHERE_DEBUG_ << "Sector #" << sector << "written";
       }
-      memset(sector_buf.get(), 0, SECTOR_LEN);
+      memset(sector_buf.get(), 0, diskann::defaults::SECTOR_LEN);
       for (_u64 sector_node_id = 0;
            sector_node_id < nnodes_per_sector && cur_node_id < npts_64;
            sector_node_id++) {
@@ -1027,21 +1024,20 @@ namespace diskann {
         cur_node_id++;
       }
       // flush sector to disk
-      diskann_writer.write(sector_buf.get(), SECTOR_LEN);
+      diskann_writer.write(sector_buf.get(), diskann::defaults::SECTOR_LEN);
     }
     if (append_reorder_data) {
-      diskann::cout << "Index written. Appending reorder data..." << std::endl;
+      LOG_KNOWHERE_INFO_ << "Index written. Appending reorder data...";
 
       auto                    vec_len = ndims_reorder_file * sizeof(float);
       std::unique_ptr<char[]> vec_buf = std::make_unique<char[]>(vec_len);
 
       for (_u64 sector = 0; sector < n_reorder_sectors; sector++) {
         if (sector % 100000 == 0) {
-          diskann::cout << "Reorder data Sector #" << sector << "written"
-                        << std::endl;
+          LOG_KNOWHERE_INFO_ << "Reorder data Sector #" << sector << "written";
         }
 
-        memset(sector_buf.get(), 0, SECTOR_LEN);
+        memset(sector_buf.get(), 0, diskann::defaults::SECTOR_LEN);
 
         for (_u64 sector_node_id = 0;
              sector_node_id < n_data_nodes_per_sector &&
@@ -1055,14 +1051,632 @@ namespace diskann {
                  vec_len);
         }
         // flush sector to disk
-        diskann_writer.write(sector_buf.get(), SECTOR_LEN);
+        diskann_writer.write(sector_buf.get(), diskann::defaults::SECTOR_LEN);
       }
     }
     LOG_KNOWHERE_DEBUG_ << "Output file written.";
   }
 
-  template<typename T>
-  int build_disk_index(const BuildConfig &config) {
+struct vamana_read_context {
+    vamana_read_context(std::ifstream &vamana_reader, uint64_t *node_to_pos_map)
+        : vamana_reader(vamana_reader), node_to_pos_map(node_to_pos_map) {
+    }
+    std::ifstream &vamana_reader;
+    uint64_t *node_to_pos_map;
+};
+
+template <typename T, typename LabelT>
+static std::vector<bool> read_node_nbrs_from_vamana(void *context, const std::vector<uint32_t> &node_ids,
+                        std::vector<std::pair<uint32_t, uint32_t *>> &nbr_buffers)
+{
+    struct vamana_read_context *ctx = reinterpret_cast<struct vamana_read_context *>(context);
+    std::vector<bool> retval(node_ids.size(), false);
+    for (uint32_t i = 0; i < node_ids.size(); i++) {
+        auto node_id = node_ids[i];
+        ctx->vamana_reader.seekg(ctx->node_to_pos_map[node_id], ctx->vamana_reader.beg);
+        ctx->vamana_reader.read((char *)&nbr_buffers[i].first, sizeof(uint32_t));
+        ctx->vamana_reader.read((char *)nbr_buffers[i].second, nbr_buffers[i].first * sizeof(uint32_t));
+        retval[i] = true;
+    }
+    return retval;
+}
+
+template static std::vector<bool>read_node_nbrs_from_vamana<float, uint32_t>(void *, const std::vector<uint32_t> &,
+                            std::vector<std::pair<uint32_t, uint32_t *>> &);
+template static std::vector<bool> read_node_nbrs_from_vamana<int8_t, uint32_t>(void *, const std::vector<uint32_t> &,
+                            std::vector<std::pair<uint32_t, uint32_t *>> &);
+template static std::vector<bool> read_node_nbrs_from_vamana<uint8_t, uint32_t>(void *, const std::vector<uint32_t> &,
+                            std::vector<std::pair<uint32_t, uint32_t *>> &);
+
+template <typename T>
+void aisaq_calc_inline_layout(int inline_pq, uint32_t pq_compressed_nbytes, uint32_t max_degree, bool rearrange,
+                              uint32_t &inline_pq_vectors, uint64_t &max_node_len)
+{
+    if (inline_pq >= 0) {
+        if (inline_pq > 0) {
+            assert((uint32_t)inline_pq <= max_degree);
+            inline_pq_vectors = inline_pq;
+            if (rearrange && inline_pq_vectors < max_degree) {
+                max_node_len+= sizeof(uint32_t);
+            }
+        } else {
+            /* calculate the number of compressed vectors that can be appended to the node without increasing the index file size */
+            uint32_t _n_inline = aisaq_calc_max_inline_pq_vectors(max_node_len, pq_compressed_nbytes, max_degree);
+            if (rearrange && _n_inline < max_degree) {
+                /* calc with rearrange */
+                max_node_len+= sizeof(uint32_t);
+                _n_inline = aisaq_calc_max_inline_pq_vectors(max_node_len, pq_compressed_nbytes, max_degree);
+            }
+            inline_pq_vectors = _n_inline;
+        }
+        max_node_len+= inline_pq_vectors * pq_compressed_nbytes;
+        if (inline_pq_vectors == max_degree) {
+            if (rearrange) {
+                /* ignore reaarange */
+                LOG_KNOWHERE_INFO_ << "all pq vectors will be stored inline, ignoring rearrange";
+                rearrange = false;
+            } else {
+                LOG_KNOWHERE_INFO_ << "all pq vectors will be stored inline";
+            }
+        } else {
+            LOG_KNOWHERE_INFO_ << inline_pq_vectors << " (" << (inline_pq_vectors * 100) / max_degree
+                          << "%) PQ vectors will be stored inline";
+        }
+    } else {
+        inline_pq_vectors = 0;
+        if (rearrange) {
+            max_node_len+= sizeof(uint32_t);
+        }
+    }
+}
+
+template <typename T>
+void create_aisaq_layout(const std::string base_file, const std::string mem_index_file, const std::string output_file,
+                        const std::string reorder_data_file,
+                        const std::string &index_prefix_path,
+                        const diskann::Metric metric,
+                        int inline_pq /* control num of inline pq: -1=none, 0=auto, others: num of pq vectors <= R */,
+                        bool &rearrange /* enable vectors rearangement */)
+{
+    uint32_t npts, ndims;
+
+    // amount to read or write in one shot
+    size_t read_blk_size = 64 * 1024 * 1024;
+    size_t write_blk_size = read_blk_size;
+    cached_ifstream base_reader(base_file, read_blk_size);
+    base_reader.read((char *)&npts, sizeof(uint32_t));
+    base_reader.read((char *)&ndims, sizeof(uint32_t));
+
+    size_t npts_64, ndims_64;
+    npts_64 = npts;
+    ndims_64 = ndims;
+
+    // Check if we need to append data for re-ordering
+    bool append_reorder_data = false;
+    std::ifstream reorder_data_reader;
+
+    uint32_t npts_reorder_file = 0, ndims_reorder_file = 0;
+    if (reorder_data_file != std::string(""))
+    {
+        append_reorder_data = true;
+        size_t reorder_data_file_size = get_file_size(reorder_data_file);
+        reorder_data_reader.exceptions(std::ofstream::failbit | std::ofstream::badbit);
+
+        try
+        {
+            reorder_data_reader.open(reorder_data_file, std::ios::binary);
+            reorder_data_reader.read((char *)&npts_reorder_file, sizeof(uint32_t));
+            reorder_data_reader.read((char *)&ndims_reorder_file, sizeof(uint32_t));
+            if (npts_reorder_file != npts)
+                throw ANNException("Mismatch in num_points between reorder "
+                                   "data file and base file",
+                                   -1, __FUNCSIG__, __FILE__, __LINE__);
+            if (reorder_data_file_size != 8 + sizeof(float) * (size_t)npts_reorder_file * (size_t)ndims_reorder_file)
+                throw ANNException("Discrepancy in reorder data file size ", -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+        catch (std::system_error &e)
+        {
+            throw FileException(reorder_data_file, e, __FUNCSIG__, __FILE__, __LINE__);
+        }
+    }
+
+    // create cached reader + writer
+    size_t actual_file_size = get_file_size(mem_index_file);
+    LOG_KNOWHERE_INFO_ << "Vamana index file size=" << actual_file_size;
+    std::ifstream vamana_reader(mem_index_file, std::ios::binary);
+    cached_ofstream diskann_writer(output_file, write_blk_size);
+
+    // metadata: width, medoid
+    uint32_t width_u32, medoid_u32;
+    size_t index_file_size;
+
+    vamana_reader.read((char *)&index_file_size, sizeof(uint64_t));
+    if (index_file_size != actual_file_size)
+    {
+        std::stringstream stream;
+        stream << "Vamana Index file size does not match expected size per "
+                  "meta-data."
+               << " file size from file: " << index_file_size << " actual file size: " << actual_file_size << std::endl;
+
+        throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
+    }
+    uint64_t vamana_frozen_num = false, vamana_frozen_loc = 0;
+
+    vamana_reader.read((char *)&width_u32, sizeof(uint32_t));
+    vamana_reader.read((char *)&medoid_u32, sizeof(uint32_t));
+    vamana_reader.read((char *)&vamana_frozen_num, sizeof(uint64_t));
+    // compute
+    uint64_t medoid, max_node_len, nnodes_per_sector;
+    npts_64 = (uint64_t)npts;
+    max_node_len = (((uint64_t)width_u32 + 1) * sizeof(uint32_t)) + (ndims_64 * sizeof(T));
+
+    /* open and validate compressed vectors file */
+    std::string pq_compressed_vectors_path = index_prefix_path + "_pq_compressed.bin";
+    uint32_t pq_compressed_nbytes, pq_compressed_vectors_npts;
+    std::ifstream pq_compressed_vectors_reader;
+    size_t pq_compressed_vectors_file_size = get_file_size(pq_compressed_vectors_path);
+    pq_compressed_vectors_reader.exceptions(std::ofstream::failbit | std::ofstream::badbit);
+    try {
+        pq_compressed_vectors_reader.open(pq_compressed_vectors_path, std::ios::binary);
+        pq_compressed_vectors_reader.read((char *)&pq_compressed_vectors_npts, sizeof(uint32_t));
+        pq_compressed_vectors_reader.read((char *)&pq_compressed_nbytes, sizeof(uint32_t));
+        if (pq_compressed_vectors_npts != npts) {
+            throw ANNException("Mismatch in num_points between pq compressed vectors file and base file",
+                               -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+        if (pq_compressed_vectors_file_size != 8 + (size_t)pq_compressed_nbytes * (size_t)pq_compressed_vectors_npts) {
+            throw ANNException("Discrepancy in pq compressed vectors file size", -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+    } catch (std::system_error &e) {
+        throw FileException(pq_compressed_vectors_path, e, __FUNCSIG__, __FILE__, __LINE__);
+    }
+
+    /* calculate num of inline vectors */
+    uint32_t inline_pq_vectors;
+    aisaq_calc_inline_layout<T>(inline_pq, pq_compressed_nbytes, width_u32, rearrange,
+                                inline_pq_vectors, max_node_len);
+    
+
+    uint32_t __nnodes, __nsectors, __remainder;
+    if (max_node_len >= defaults::SECTOR_LEN) {
+        __nnodes = 1;
+        __nsectors = DIV_ROUND_UP(max_node_len, defaults::SECTOR_LEN);
+    } else {
+        __nnodes = defaults::SECTOR_LEN / max_node_len;
+        __nsectors = 1;
+    }
+    __remainder = (defaults::SECTOR_LEN * __nsectors) - (__nnodes * max_node_len);
+    LOG_KNOWHERE_DEBUG_ << "[ node: " << max_node_len << "B ] x " << __nnodes
+                  << " + [ remainder: " << __remainder << "B ] --> [ "
+                  << (defaults::SECTOR_LEN >> 10) << "KiB ] x " << __nsectors;
+    double wasted_disk_space_pcnt = (__remainder * 100) / (defaults::SECTOR_LEN * __nsectors);
+    if (wasted_disk_space_pcnt > 0) {
+        LOG_KNOWHERE_INFO_ << wasted_disk_space_pcnt << "% wasted disk space, optimal node size may reduce wasted disk space, "
+                         "node size is derived from disk-pq-bytes, max-degree and pq-inline parameters";
+    }
+
+    uint64_t *vamana_reader_node_to_pos_map = nullptr;
+    uint32_t *rearranged_vectors_map = nullptr;
+    uint32_t *reversed_rearranged_vectors_map = nullptr;
+    if (rearrange) {
+        /* with rearrange enabled, base reader is not reading the vectors sequentially.
+           reduce the cache size to a single vector data aligned to sector size */
+        base_reader.set_cache_size(ROUND_UP(sizeof(T) * ndims_64, defaults::SECTOR_LEN));
+        /* generate vamana graph helper
+           map node_id to its offset within vamana reader */
+        vamana_reader_node_to_pos_map = new uint64_t[npts_64];
+        if (vamana_reader_node_to_pos_map == nullptr) {
+            throw ANNException("memory allocation failed"
+                   , -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+        /* save current position */
+        auto pos = vamana_reader.tellg();
+        uint64_t offset = pos;
+        uint32_t nnbrs;
+        vamana_reader_node_to_pos_map[0] = offset;
+        for (uint64_t i = 1; i < npts_64; i++) {
+            vamana_reader.read((char *)&nnbrs, sizeof(uint32_t));
+            assert(nnbrs > 0);
+            assert(nnbrs <= width_u32);
+            /* skip nhood */
+            vamana_reader.seekg(nnbrs * sizeof(uint32_t), vamana_reader.cur);
+            offset+= (nnbrs + 1) * sizeof(uint32_t);
+            vamana_reader_node_to_pos_map[i] = offset;
+        }
+        
+        std::string medoids_path = index_prefix_path + "_disk.index_medoids.bin";
+        std::string entry_points_path = index_prefix_path + "_disk.index_entry_points.bin";
+        std::unique_ptr <uint32_t[]> entry_points = nullptr;
+        size_t n_entry_points, __dim;
+        if (file_exists(entry_points_path)) {
+            diskann::load_bin<uint32_t>(entry_points_path, entry_points, n_entry_points, __dim);
+        } else {
+            if (file_exists(medoids_path)) {
+                diskann::load_bin<uint32_t>(medoids_path, entry_points, n_entry_points, __dim);
+            } else {
+                entry_points = std::make_unique < uint32_t[]>(1);
+                entry_points[0] = medoid_u32;
+                n_entry_points = 1;
+            }
+        }
+        
+        std::unordered_map<uint32_t, std::vector<uint32_t>> filter_to_medoid_ids;
+        struct vamana_read_context context(vamana_reader, vamana_reader_node_to_pos_map);
+        if (aisaq_generate_vectors_rearrange_map<T, uint32_t>(aisaq_rearrange_sorter_default, rearranged_vectors_map, (uint32_t)npts_64,
+            pq_compressed_nbytes , width_u32, entry_points.get(), n_entry_points, filter_to_medoid_ids,
+            read_node_nbrs_from_vamana<T, uint32_t>, &context) != 0) {
+            throw ANNException("failed to generate rearranged vectors data"
+                   , -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+        /* restore last position */
+        vamana_reader.seekg(pos, vamana_reader.beg);
+        /* create reversed vectors map */
+        if (aisaq_create_reversed_vectors_map(reversed_rearranged_vectors_map, rearranged_vectors_map, (uint32_t)npts_64) != 0) {
+            throw ANNException("failed to generate reversed rearranged vectors map"
+                   , -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+        /* generate rearranged pq compressed vectors file instead of existing non-rearranged
+           (unaligned for DiskANN to load into DRAM) */
+        std::string pq_compressed_rearranged_vectors_path_tmp = pq_compressed_vectors_path + ".tmp";
+        LOG_KNOWHERE_INFO_ << "generating pq compressed vectors file " << pq_compressed_vectors_path;
+        cached_ofstream pq_compressed_rearranged_vectors_writer(pq_compressed_rearranged_vectors_path_tmp, write_blk_size);
+        std::unique_ptr<char[]> pq_vector_buf = std::make_unique<char[]>(pq_compressed_nbytes);
+        /* write the header */
+        uint32_t num_points_u32 = (uint32_t)npts_64;
+        pq_compressed_rearranged_vectors_writer.write((char *)&num_points_u32, sizeof(uint32_t));
+        pq_compressed_rearranged_vectors_writer.write((char *)&pq_compressed_nbytes, sizeof(uint32_t));
+        uint32_t progress_step = npts_64 / 100;
+        for (uint32_t i = 0; i < npts_64; i++) {
+            if ((i % progress_step) == 0) {
+                diskann::cout << "." << std::flush;
+            }
+            uint32_t rid = reversed_rearranged_vectors_map[i];
+            assert(rid < npts_64);
+            pq_compressed_vectors_reader.seekg((sizeof(uint32_t) * 2) + ((uint64_t)rid * pq_compressed_nbytes),
+                                               pq_compressed_vectors_reader.beg);
+            pq_compressed_vectors_reader.read(pq_vector_buf.get(), pq_compressed_nbytes);
+            pq_compressed_rearranged_vectors_writer.write(pq_vector_buf.get(), pq_compressed_nbytes);
+        }
+        LOG_KNOWHERE_INFO_ << "done";
+        pq_compressed_rearranged_vectors_writer.close();
+        pq_compressed_vectors_reader.close();
+        delete_file(pq_compressed_vectors_path);
+        rename(pq_compressed_rearranged_vectors_path_tmp.c_str(), pq_compressed_vectors_path.c_str());
+        pq_compressed_vectors_reader.open(pq_compressed_vectors_path, std::ios::binary);
+
+        /* create aligned pq compressed rearranged file */
+        std::string rearranged_pq_compressed_vectors_path = index_prefix_path + "_pq_compressed_rearranged.bin";
+        if (aisaq_create_aligned_rearranged_pq_compressed_vectors_file(pq_compressed_vectors_reader,
+            rearranged_pq_compressed_vectors_path, AISAQ_REARRANGED_PQ_FILE_PAGE_SIZE_DEFAULT,
+            nullptr /*reversed_rearranged_vectors_map*/, npts_64, pq_compressed_nbytes) != 0) {
+            throw ANNException("failed to create aligned rearranged pq vectors file"
+                   , -1, __FUNCSIG__, __FILE__, __LINE__);
+        };
+        
+        /* create rearrange map that can be used by filter search
+           rearrange map contains mapping from new_id --> origin_id */
+        std::string rearrange_map_path = index_prefix_path + "_disk.index_rearrange.bin";
+        diskann::save_bin<uint32_t>(rearrange_map_path, reversed_rearranged_vectors_map, npts_64, 1, 0);
+        
+        /* translate medoid */
+        medoid_u32 = rearranged_vectors_map[medoid_u32];
+        /* generate rearranged medoid file - translated inline */
+        if (file_exists(medoids_path)) {
+            LOG_KNOWHERE_INFO_ << "rearranging medoids file " << medoids_path;
+            aisaq_rearrange_vectors_file(medoids_path, rearranged_vectors_map, npts_64);
+        }
+        /* generate rearranged entry points file - translated inline */
+        if (file_exists(entry_points_path)) {
+            LOG_KNOWHERE_INFO_ << "rearranging entry points file " << entry_points_path;
+            aisaq_rearrange_vectors_file(entry_points_path, rearranged_vectors_map, npts_64);
+        }
+        /* rearrange norm file */
+        if (metric == diskann::Metric::COSINE) {
+            std::string norm_path =
+                get_disk_index_max_base_norm_file(std::string(index_prefix_path + "_disk.index"));
+            if (file_exists(norm_path)) {
+                LOG_KNOWHERE_INFO_ << "rearranging normalization file " << norm_path;
+                std::unique_ptr<float[]> norm_data = nullptr;
+                size_t __npts, __sz;
+                diskann::load_bin<float>(norm_path, norm_data, __npts, __sz);
+                assert(npts_64 == __npts);
+                float *rearranged_norm_data = nullptr;
+                diskann::alloc_aligned(((void **) &rearranged_norm_data),
+                           __npts * sizeof(float),
+                           sizeof(float));
+                for (unsigned int i = 0; i < __npts; i++) {
+                    rearranged_norm_data[i] = norm_data[rearranged_vectors_map[i]];
+                }
+                diskann::save_bin<float>(norm_path, rearranged_norm_data, __npts, 1);  
+                aligned_free((void*)rearranged_norm_data);
+            }
+        }
+    }
+
+    medoid = (uint64_t)medoid_u32;
+    if (vamana_frozen_num == 1)
+        vamana_frozen_loc = medoid;
+    nnodes_per_sector = defaults::SECTOR_LEN / max_node_len; // 0 if max_node_len > SECTOR_LEN
+
+    LOG_KNOWHERE_INFO_ << "medoid: " << medoid
+                       << " max_node_len: " << max_node_len << "B"
+                       << " nnodes_per_sector: " << nnodes_per_sector
+                       << " inline_pq: " << inline_pq
+                       << " rearrange: " << rearrange;
+
+    // defaults::SECTOR_LEN buffer for each sector
+    std::unique_ptr<char[]> sector_buf = std::make_unique<char[]>(defaults::SECTOR_LEN);
+    std::unique_ptr<char[]> multisector_buf = std::make_unique<char[]>(ROUND_UP(max_node_len, defaults::SECTOR_LEN));
+    std::unique_ptr<char[]> node_buf = std::make_unique<char[]>(max_node_len);
+    uint32_t &nnbrs = *(uint32_t *)(node_buf.get() + (ndims_64 * sizeof(T)));
+    uint32_t *nhood_buf = (uint32_t *)(node_buf.get() + (ndims_64 * sizeof(T)) + sizeof(uint32_t));
+
+    // number of sectors (1 for meta data)
+    uint64_t n_sectors = nnodes_per_sector > 0 ? ROUND_UP(npts_64, nnodes_per_sector) / nnodes_per_sector
+                                               : npts_64 * DIV_ROUND_UP(max_node_len, defaults::SECTOR_LEN);
+    uint64_t n_reorder_sectors = 0;
+    uint64_t n_data_nodes_per_sector = 0;
+
+    if (append_reorder_data)
+    {
+        n_data_nodes_per_sector = defaults::SECTOR_LEN / (ndims_reorder_file * sizeof(float));
+        n_reorder_sectors = ROUND_UP(npts_64, n_data_nodes_per_sector) / n_data_nodes_per_sector;
+    }
+    uint64_t disk_index_file_size = (n_sectors + n_reorder_sectors + 1) * defaults::SECTOR_LEN;
+
+    std::vector<uint64_t> output_file_meta;
+    output_file_meta.push_back(npts_64);
+    output_file_meta.push_back(ndims_64);
+    output_file_meta.push_back(medoid);
+    output_file_meta.push_back(max_node_len);
+    output_file_meta.push_back(nnodes_per_sector);
+    output_file_meta.push_back(vamana_frozen_num);
+    output_file_meta.push_back(vamana_frozen_loc);
+    output_file_meta.push_back((uint64_t)append_reorder_data);
+    if (append_reorder_data)
+    {
+        output_file_meta.push_back(n_sectors + 1);
+        output_file_meta.push_back(ndims_reorder_file);
+        output_file_meta.push_back(n_data_nodes_per_sector);
+    }
+    output_file_meta.push_back(disk_index_file_size);
+
+    /* update metadata with backward compatibility */
+    uint64_t val = 0;
+    if (inline_pq_vectors > 0) {
+        val = width_u32;
+    }
+    output_file_meta.push_back(val);
+    val = (uint64_t)rearrange;
+    output_file_meta.push_back(val);
+
+    diskann_writer.write(sector_buf.get(), defaults::SECTOR_LEN);
+
+    std::unique_ptr<T[]> cur_node_coords = std::make_unique<T[]>(ndims_64);
+    LOG_KNOWHERE_INFO_ << "# sectors: " << n_sectors;
+    uint64_t cur_node_id = 0;
+
+    if (nnodes_per_sector > 0)
+    { // Write multiple nodes per sector
+        for (uint64_t sector = 0; sector < n_sectors; sector++)
+        {
+            if (sector % 100000 == 0)
+            {
+                LOG_KNOWHERE_ERROR_ << "Sector #" << sector << "written";
+            }
+            memset(sector_buf.get(), 0, defaults::SECTOR_LEN);
+            for (uint64_t sector_node_id = 0; sector_node_id < nnodes_per_sector && cur_node_id < npts_64;
+                 sector_node_id++)
+            {
+                memset(node_buf.get(), 0, max_node_len);
+                uint32_t rid;
+                if (rearrange) {
+                    rid = reversed_rearranged_vectors_map[cur_node_id];
+                    assert(rid < npts_64);
+                    vamana_reader.seekg(vamana_reader_node_to_pos_map[rid],vamana_reader.beg);
+                    vamana_reader.read((char *)&nnbrs, sizeof(uint32_t));
+                    assert(nnbrs > 0);
+                    assert(nnbrs <= width_u32);
+                    vamana_reader.read((char *)nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(uint32_t));
+                    for (uint32_t j = 0; j < nnbrs; j++) {
+                        assert(nhood_buf[j] < npts_64);
+                        nhood_buf[j] = rearranged_vectors_map[nhood_buf[j]];
+                    }
+                    base_reader.seek((sizeof(uint32_t) * 2) + (rid * sizeof(T) * ndims_64));
+                    base_reader.read((char *)cur_node_coords.get(), sizeof(T) * ndims_64);
+                } else {
+                    // read cur node's nnbrs
+                    vamana_reader.read((char *)&nnbrs, sizeof(uint32_t));
+
+                    // sanity checks on nnbrs
+                    assert(nnbrs > 0);
+                    assert(nnbrs <= width_u32);
+
+                    // read node's nhood
+                    vamana_reader.read((char *)nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(uint32_t));
+                    if (nnbrs > width_u32)
+                    {
+                        vamana_reader.seekg((nnbrs - width_u32) * sizeof(uint32_t), vamana_reader.cur);
+                    }
+
+                    // write coords of node first
+                    //  T *node_coords = data + ((uint64_t) ndims_64 * cur_node_id);
+                    base_reader.read((char *)cur_node_coords.get(), sizeof(T) * ndims_64);
+                }
+                memcpy(node_buf.get(), cur_node_coords.get(), ndims_64 * sizeof(T));
+
+                // write nnbrs
+                *(uint32_t *)(node_buf.get() + ndims_64 * sizeof(T)) = (std::min)(nnbrs, width_u32);
+
+                // write nhood next
+                memcpy(node_buf.get() + ndims_64 * sizeof(T) + sizeof(uint32_t), nhood_buf,
+                       (std::min)(nnbrs, width_u32) * sizeof(uint32_t));
+
+                if (rearrange) {
+                    memcpy(node_buf.get() + (ndims_64 * sizeof(T)) + ((width_u32 + 1) * sizeof(uint32_t)),
+                                &rid, sizeof(uint32_t));
+                }
+                // write compressed vectors
+                if (inline_pq_vectors > 0) {
+                    char *comp_vec_buf = (char *)(node_buf.get() + (ndims_64 * sizeof(T)) +
+                                                         ((width_u32 + 1) * sizeof(uint32_t)));
+                    if (rearrange) {
+                        comp_vec_buf+= sizeof(uint32_t);
+                    }
+                    for (uint32_t cv = 0; cv < inline_pq_vectors && cv < nnbrs; cv++) {
+                        /* read compressed vector nhood_buf[i] into comp_vec_buf */
+                        /* note that when rearrange is enabled, pq_compressed_vectors_reader is already rearranged */
+                        pq_compressed_vectors_reader.seekg((sizeof(uint32_t) * 2) + ((uint64_t)nhood_buf[cv] * pq_compressed_nbytes),
+                                                           pq_compressed_vectors_reader.beg);
+                        pq_compressed_vectors_reader.read(comp_vec_buf, pq_compressed_nbytes);
+                        comp_vec_buf+= pq_compressed_nbytes;
+                    }
+                }
+                // get offset into sector_buf
+                char *sector_node_buf = sector_buf.get() + (sector_node_id * max_node_len);
+
+                // copy node buf into sector_node_buf
+                memcpy(sector_node_buf, node_buf.get(), max_node_len);
+                cur_node_id++;
+            }
+            // flush sector to disk
+            diskann_writer.write(sector_buf.get(), defaults::SECTOR_LEN);
+        }
+    }
+    else
+    { // Write multi-sector nodes
+        uint64_t nsectors_per_node = DIV_ROUND_UP(max_node_len, defaults::SECTOR_LEN);
+        for (uint64_t i = 0; i < npts_64; i++)
+        {
+            if ((i * nsectors_per_node) % 100000 == 0)
+            {
+                LOG_KNOWHERE_ERROR_ << "Sector #" << i * nsectors_per_node << "written";
+            }
+            memset(multisector_buf.get(), 0, nsectors_per_node * defaults::SECTOR_LEN);
+
+            memset(node_buf.get(), 0, max_node_len);
+            uint32_t rid;
+            if (rearrange) {
+                rid = reversed_rearranged_vectors_map[i];
+                assert(rid < npts_64);
+                vamana_reader.seekg(vamana_reader_node_to_pos_map[rid],vamana_reader.beg);
+                vamana_reader.read((char *)&nnbrs, sizeof(uint32_t));
+                assert(nnbrs > 0);
+                assert(nnbrs <= width_u32);
+                vamana_reader.read((char *)nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(uint32_t));
+                for (uint32_t j = 0; j < nnbrs; j++) {
+                    assert(nhood_buf[j] < npts_64);
+                    nhood_buf[j] = rearranged_vectors_map[nhood_buf[j]];
+                }
+                base_reader.seek((sizeof(uint32_t) * 2) + (rid * sizeof(T) * ndims_64));
+                base_reader.read((char *)cur_node_coords.get(), sizeof(T) * ndims_64);
+            } else {
+                // read cur node's nnbrs
+                vamana_reader.read((char *)&nnbrs, sizeof(uint32_t));
+
+                // sanity checks on nnbrs
+                assert(nnbrs > 0);
+                assert(nnbrs <= width_u32);
+
+                // read node's nhood
+                vamana_reader.read((char *)nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(uint32_t));
+                if (nnbrs > width_u32)
+                {
+                    vamana_reader.seekg((nnbrs - width_u32) * sizeof(uint32_t), vamana_reader.cur);
+                }
+
+                // write coords of node first
+                //  T *node_coords = data + ((uint64_t) ndims_64 * cur_node_id);
+                base_reader.read((char *)cur_node_coords.get(), sizeof(T) * ndims_64);
+            }
+            memcpy(multisector_buf.get(), cur_node_coords.get(), ndims_64 * sizeof(T));
+
+            // write nnbrs
+            *(uint32_t *)(multisector_buf.get() + ndims_64 * sizeof(T)) = (std::min)(nnbrs, width_u32);
+
+            // write nhood next
+            memcpy(multisector_buf.get() + ndims_64 * sizeof(T) + sizeof(uint32_t), nhood_buf,
+                   (std::min)(nnbrs, width_u32) * sizeof(uint32_t));
+            if (rearrange) {
+                memcpy(multisector_buf.get() + (ndims_64 * sizeof(T)) + ((width_u32 + 1) * sizeof(uint32_t)),
+                            &rid, sizeof(uint32_t));
+            }
+            if (inline_pq_vectors > 0) {
+                char *comp_vec_buf = (char *) (multisector_buf.get() + (ndims_64 * sizeof(T)) +
+                                               ((width_u32 + 1) * sizeof(uint32_t)));
+                if (rearrange) {
+                    comp_vec_buf+= sizeof(uint32_t);
+                }
+                for (uint32_t cv = 0; cv < inline_pq_vectors && cv < nnbrs; cv++) {
+                    /* copy compressed vector nhood_buf[cv] into comp_vec_buf */
+                    /* note that when rearrange is enabled, pq_compressed_vectors_reader is already rearranged */
+                    pq_compressed_vectors_reader.seekg(
+                            (sizeof(uint32_t) * 2) + ((uint64_t)nhood_buf[cv] * pq_compressed_nbytes),
+                            pq_compressed_vectors_reader.beg);
+                    pq_compressed_vectors_reader.read(comp_vec_buf, pq_compressed_nbytes);
+                    comp_vec_buf += pq_compressed_nbytes;
+                }
+            }
+            // flush sector to disk
+            diskann_writer.write(multisector_buf.get(), nsectors_per_node * defaults::SECTOR_LEN);
+        }
+    }
+
+    if (vamana_reader_node_to_pos_map != nullptr) {
+        delete [] vamana_reader_node_to_pos_map;
+        vamana_reader_node_to_pos_map = nullptr;
+    }
+    if (rearranged_vectors_map != nullptr) {
+        delete [] rearranged_vectors_map;
+        rearranged_vectors_map = nullptr;
+    }
+
+    if (append_reorder_data)
+    {
+        LOG_KNOWHERE_INFO_ << "Index written. Appending reorder data...";
+
+        auto vec_len = ndims_reorder_file * sizeof(float);
+        std::unique_ptr<char[]> vec_buf = std::make_unique<char[]>(vec_len);
+        cur_node_id = 0;
+        for (uint64_t sector = 0; sector < n_reorder_sectors; sector++)
+        {
+            if (sector % 100000 == 0)
+            {
+                LOG_KNOWHERE_ERROR_ << "Reorder data Sector #" << sector << "written";
+            }
+
+            memset(sector_buf.get(), 0, defaults::SECTOR_LEN);
+
+            for (uint64_t sector_node_id = 0; sector_node_id < n_data_nodes_per_sector && cur_node_id < npts_64;
+                 sector_node_id++)
+            {
+                memset(vec_buf.get(), 0, vec_len);
+                if (rearrange) {
+                    uint32_t rid = reversed_rearranged_vectors_map[cur_node_id];
+                    assert(rid < npts_64);
+                    reorder_data_reader.seekg((sizeof(uint32_t) * 2) + (rid * vec_len), reorder_data_reader.beg);
+                }
+                reorder_data_reader.read(vec_buf.get(), vec_len);
+
+                // copy node buf into sector_node_buf
+                memcpy(sector_buf.get() + (sector_node_id * vec_len), vec_buf.get(), vec_len);
+                cur_node_id++;
+            }
+            // flush sector to disk
+            diskann_writer.write(sector_buf.get(), defaults::SECTOR_LEN);
+        }
+    }
+    diskann_writer.close();
+    if (reversed_rearranged_vectors_map != nullptr) {
+        delete [] reversed_rearranged_vectors_map;
+        reversed_rearranged_vectors_map = nullptr;
+    }
+    diskann::save_bin<uint64_t>(output_file, output_file_meta.data(), output_file_meta.size(), 1);
+    LOG_KNOWHERE_ERROR_ << "Output disk index file written to " << output_file;
+}
+
+template<typename T>
+  int build_disk_index(BuildConfig &config) {
     if (!knowhere::KnowhereFloatTypeCheck<T>::value &&
         (config.compare_metric == diskann::Metric::INNER_PRODUCT ||
          config.compare_metric == diskann::Metric::COSINE)) {
@@ -1168,6 +1782,7 @@ namespace diskann {
 
     num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;
     num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks;
+    num_pq_chunks = num_pq_chunks > diskann::defaults::MAX_PQ_CHUNKS ? diskann::defaults::MAX_PQ_CHUNKS : num_pq_chunks;
 
     LOG_KNOWHERE_INFO_ << "Compressing " << dim << "-dimensional data into "
                        << num_pq_chunks << " bytes per vector.";
@@ -1237,19 +1852,69 @@ namespace diskann {
     auto graph_e = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> graph_diff = graph_e - graph_s;
     LOG_KNOWHERE_INFO_ << "Training graph cost: " << graph_diff.count() << "s";
-    if (!use_disk_pq) {
-      diskann::create_disk_layout<T>(data_file_to_save.c_str(), mem_index_path,
-                                     disk_index_path);
-    } else {
-      if (!reorder_data)
-        diskann::create_disk_layout<_u8>(disk_pq_compressed_vectors_path,
-                                         mem_index_path, disk_index_path);
-      else
-        diskann::create_disk_layout<_u8>(disk_pq_compressed_vectors_path,
-                                         mem_index_path, disk_index_path,
-                                         data_file_to_save.c_str());
+    if (config.aisaq_mode) {
+        bool rearrange = config.rearrange;
+        int inline_pq = config.inline_pq;
+        int num_entry_points = config.num_entry_points;
+        LOG_KNOWHERE_INFO_ << "AiSAQ build mode enabled, inline pq is " << inline_pq
+                << ", rearrange is " << rearrange << ", entry points: " << num_entry_points;
+        if (num_entry_points > 0) {
+            std::string entry_points_path = index_prefix_path + "_disk.index_entry_points.bin";
+            LOG_KNOWHERE_INFO_ << "generating entry points file: " << entry_points_path;
+            if (file_exists(entry_points_path)) {
+                delete_file(entry_points_path);
+            }
+            if (partition_calc_kmeans<T>(data_file_to_use, entry_points_path, num_entry_points) != 0) {
+                LOG_KNOWHERE_ERROR_ << "failed to generate entry points file";
+                return -1;
+            }
+        }
+        LOG_KNOWHERE_INFO_ << "Call create_aisaq_layout";
+        if (!use_disk_pq) {
+            diskann::create_aisaq_layout<T>(data_file_to_use.c_str(), mem_index_path, disk_index_path
+                                       , std::string("")
+                                       , index_prefix_path
+                                       , config.compare_metric
+                                       , inline_pq
+                                       , rearrange
+           );
+        } else {
+              LOG_KNOWHERE_INFO_ << "create_disk_layout use_disk_pq: " << use_disk_pq << " reorder_data: " << reorder_data;
+          if (!reorder_data)
+                diskann::create_aisaq_layout<_u8>(disk_pq_compressed_vectors_path
+                                        , mem_index_path, disk_index_path, std::string("")
+                                        , index_prefix_path
+                                        , config.compare_metric
+                                        , inline_pq
+                                        , rearrange
+                );
+         else
+                diskann::create_aisaq_layout<_u8>(disk_pq_compressed_vectors_path,
+                                             mem_index_path, disk_index_path,
+											 data_file_to_save.c_str()
+                                            , index_prefix_path
+                                            , config.compare_metric
+                                            , inline_pq
+                                            , rearrange
+                );
+        }
+        config.rearrange = rearrange;
     }
-
+    else
+    {
+        if (!use_disk_pq) {
+          diskann::create_disk_layout<T>(data_file_to_save.c_str(), mem_index_path,
+                                         disk_index_path);
+        } else {
+          if (!reorder_data)
+            diskann::create_disk_layout<_u8>(disk_pq_compressed_vectors_path,
+                                             mem_index_path, disk_index_path);
+          else
+            diskann::create_disk_layout<_u8>(disk_pq_compressed_vectors_path,
+                                             mem_index_path, disk_index_path,
+                                             data_file_to_save.c_str());
+        }
+    }
     double ten_percent_points = std::ceil(points_num * 0.1);
     double num_sample_points = ten_percent_points > MAX_SAMPLE_POINTS_FOR_WARMUP
                                    ? MAX_SAMPLE_POINTS_FOR_WARMUP
@@ -1279,7 +1944,7 @@ namespace diskann {
     }
     auto                          e = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> diff = e - s;
-    LOG_KNOWHERE_INFO_ << "Indexing time: " << diff.count() << std::endl;
+    LOG_KNOWHERE_INFO_ << "Indexing time: " << diff.count();
 
     if (config.compare_metric == diskann::Metric::INNER_PRODUCT) {
       std::remove(data_file_to_use.c_str());
@@ -1354,11 +2019,11 @@ namespace diskann {
       uint32_t start_bw);
 
   // not support build uint8/int8 diskindex in knowhere
-  // template int build_disk_index<int8_t>(const BuildConfig &config);
-  // template int build_disk_index<uint8_t>(const BuildConfig &config);
-  template int build_disk_index<float>(const BuildConfig &config);
-  template int build_disk_index<knowhere::fp16>(const BuildConfig &config);
-  template int build_disk_index<knowhere::bf16>(const BuildConfig &config);
+  // template int build_disk_index<int8_t>(BuildConfig &config);
+  // template int build_disk_index<uint8_t>(BuildConfig &config);
+  template int build_disk_index<float>(BuildConfig &config);
+  template int build_disk_index<knowhere::fp16>(BuildConfig &config);
+  template int build_disk_index<knowhere::bf16>(BuildConfig &config);
 
   template std::unique_ptr<diskann::Index<int8_t>>
   build_merged_vamana_index<int8_t>(
@@ -1421,4 +2086,54 @@ namespace diskann {
       const std::string &pq_compressed_code_path, const unsigned entry_point,
       const std::vector<std::vector<unsigned>> &graph,
       const std::string                        &cache_file);
+  template void create_aisaq_layout<float>(
+            const std::string base_file,
+            const std::string mem_index_file,
+            const std::string output_file,
+            const std::string reorder_data_file,
+            const std::string &index_prefix_path,
+            const diskann::Metric metric,  
+            int inline_pq,
+            bool &rearrange
+    );
+  template void create_aisaq_layout<int8_t>(
+            const std::string base_file,
+            const std::string mem_index_file,
+            const std::string output_file,
+            const std::string reorder_data_file,
+            const std::string &index_prefix_path,
+            const diskann::Metric metric,  
+            int inline_pq,
+            bool &rearrange
+    );
+  template void create_aisaq_layout<uint8_t>(
+            const std::string base_file,
+            const std::string mem_index_file,
+            const std::string output_file,
+            const std::string reorder_data_file,
+            const std::string &index_prefix_path,
+            const diskann::Metric metric,  
+            int inline_pq,
+            bool &rearrange
+    );
+  template void create_aisaq_layout<knowhere::bf16>(
+            const std::string base_file,
+            const std::string mem_index_file,
+            const std::string output_file,
+            const std::string reorder_data_file,
+            const std::string &index_prefix_path,
+            const diskann::Metric metric,  
+            int inline_pq,
+            bool &rearrange
+    );
+  template void create_aisaq_layout<knowhere::fp16>(
+            const std::string base_file,
+            const std::string mem_index_file,
+            const std::string output_file,
+            const std::string reorder_data_file,
+            const std::string &index_prefix_path,
+            const diskann::Metric metric,  
+            int inline_pq,
+            bool &rearrange
+    );
 };  // namespace diskann

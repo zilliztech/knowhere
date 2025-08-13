@@ -140,7 +140,8 @@ UseDiskLoad(const std::string& index_type, const int32_t& version) {
                !index_type.compare(IndexEnum::INDEX_MINHASH_LSH);
     }
 #else
-    return !index_type.compare(IndexEnum::INDEX_DISKANN) || !index_type.compare(IndexEnum::INDEX_MINHASH_LSH);
+    return !index_type.compare(IndexEnum::INDEX_DISKANN) || !index_type.compare(IndexEnum::INDEX_MINHASH_LSH) ||
+           !index_type.compare(IndexEnum::INDEX_AISAQ);
 #endif
 }
 

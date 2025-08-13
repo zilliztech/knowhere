@@ -51,6 +51,7 @@ enum class Status {
     sparse_inner_error = 29,
     brute_force_inner_error = 30,
     emb_list_inner_error = 31,
+    aisaq_error = 32,
 };
 
 inline std::string
@@ -108,6 +109,8 @@ Status2String(knowhere::Status status) {
             return "sparse index inner error";
         case knowhere::Status::brute_force_inner_error:
             return "brute_force inner error";
+        case knowhere::Status::aisaq_error:
+            return "internal AiSAQ error";
         default:
             return "unexpected status";
     }

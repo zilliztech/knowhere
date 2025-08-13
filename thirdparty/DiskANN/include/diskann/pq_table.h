@@ -5,7 +5,6 @@
 
 #include "utils.h"
 #include "concurrent_queue.h"
-#define NUM_PQ_CENTROIDS 256
 
 namespace diskann {
   inline void aggregate_coords(const unsigned* ids, const _u64 n_ids,
@@ -55,6 +54,8 @@ namespace diskann {
     //    _u64   chunk_size;  // chunk_size = chunk size of each dimension chunk
     _u64   ndims = 0;  // ndims = chunk_size * n_chunks
     _u64   n_chunks = 0;
+    bool use_rotation = false;
+    float *rotmat_tr = nullptr;
     std::unique_ptr<_u32[]>  chunk_offsets = nullptr;
     std::unique_ptr<_u32[]>  rearrangement = nullptr;
     std::unique_ptr<float[]> centroid = nullptr;
@@ -157,8 +158,8 @@ namespace diskann {
       }
     }
   }
-
-  float l2_distance(const float* query_vec, _u8* base_vec) {
+    
+float l2_distance(const float* query_vec, _u8* base_vec) {
     float res = 0;
     for (_u64 chunk = 0; chunk < n_chunks; chunk++) {
       for (_u64 j = chunk_offsets[chunk]; j < chunk_offsets[chunk + 1]; j++) {
@@ -224,5 +225,24 @@ namespace diskann {
       }
     }
   }
+void preprocess_query(float *query_vec)
+{
+    for (uint32_t d = 0; d < ndims; d++)
+    {
+        query_vec[d] -= centroid[d];
+    }
+    std::vector<float> tmp(ndims, 0);
+    if (use_rotation)
+    {
+        for (uint32_t d = 0; d < ndims; d++)
+        {
+            for (uint32_t d1 = 0; d1 < ndims; d1++)
+            {
+                tmp[d] += query_vec[d1] * rotmat_tr[d1 * ndims + d];
+            }
+        }
+        std::memcpy(query_vec, tmp.data(), ndims * sizeof(float));
+    }
+}
 };  // namespace diskann
 }  // namespace diskann

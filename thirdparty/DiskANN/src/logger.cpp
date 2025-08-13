@@ -1,16 +1,17 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT license.
 
+#include <mutex>
+#include <memory>
 #include <cstring>
-#include <iostream>
-
+#include <cstdio>
 #include "diskann/logger_impl.h"
 
 namespace diskann {
 
+  // Global logger objects (unchanged)
   ANNStreamBuf coutBuff(stdout);
   ANNStreamBuf cerrBuff(stderr);
-
   std::basic_ostream<char> cout(&coutBuff);
   std::basic_ostream<char> cerr(&cerrBuff);
 
@@ -23,27 +24,30 @@ namespace diskann {
       throw diskann::ANNException(
           "The custom logger only supports stdout and stderr.", -1);
     }
+
     _fp = fp;
     _logLevel = (_fp == stdout) ? ANNIndex::LogLevel::LL_Info
                                 : ANNIndex::LogLevel::LL_Error;
-    _buf = std::make_unique<char[]>(BUFFER_SIZE);
 
-    std::memset(_buf.get(), 0, (BUFFER_SIZE) * sizeof(char));
+    _buf = std::make_unique<char[]>(BUFFER_SIZE);
+    std::memset(_buf.get(), 0, BUFFER_SIZE);
     setp(_buf.get(), _buf.get() + BUFFER_SIZE);
   }
 
   ANNStreamBuf::~ANNStreamBuf() {
-    sync();
-    _fp = nullptr;  // we'll not close because we can't.
+    sync();  // flush remaining data
+    _fp = nullptr;  // don't close stdout/stderr
   }
 
   int ANNStreamBuf::overflow(int c) {
     std::lock_guard<std::mutex> lock(_mutex);
+
     if (c != EOF) {
-      *pptr() = (char) c;
+      *pptr() = static_cast<char>(c);
       pbump(1);
     }
-    flush();
+
+    flush();  // flush the buffer
     return c;
   }
 
@@ -54,16 +58,18 @@ namespace diskann {
   }
 
   int ANNStreamBuf::underflow() {
-    throw diskann::ANNException(
-        "Attempt to read on streambuf meant only for writing.", -1);
+    throw diskann::ANNException("Attempt to read from write-only streambuf", -1);
   }
 
   int ANNStreamBuf::flush() {
-    const int num = (int) (pptr() - pbase());
-    logImpl(pbase(), num);
-    pbump(-num);
+    int num = static_cast<int>(pptr() - pbase());
+    if (num > 0) {
+      logImpl(pbase(), num);
+      pbump(-num);  // reset buffer pointer
+    }
     return num;
   }
+
   void ANNStreamBuf::logImpl(char* str, int num) {
     fwrite(str, sizeof(char), num, _fp);
     fflush(_fp);
