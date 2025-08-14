@@ -112,7 +112,7 @@ class KnowhereConan(ConanFile):
         if not self.options.with_light:
             self.requires("opentelemetry-cpp/1.8.1.1@milvus/dev")
         if self.settings.os not in ["Macos", "Android"]:
-            self.requires("libunwind/1.7.2")
+            self.requires("libunwind/1.8.0")
         if self.options.with_ut:
             self.requires("catch2/3.3.1")
         if self.options.with_benchmark:
