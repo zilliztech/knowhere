@@ -8,18 +8,18 @@
 #include "diskann/linux_aligned_file_reader.h"
 #include "diskann/pq_flash_aisaq_index.h"
 #include "diskann/pq_flash_index.h"
+#include "filemanager/FileManager.h"
 #include "fmt/core.h"
 #include "index/diskann/aisaq_config.h"
 #include "knowhere/comp/index_param.h"
-#include "knowhere/comp/thread_pool.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/feder/DiskANN.h"
-#include "knowhere/file_manager.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
 #include "knowhere/prometheus_client.h"
 #include "knowhere/range_util.h"
+#include "knowhere/thread_pool.h"
 #include "knowhere/utils.h"
 
 namespace knowhere {
@@ -33,8 +33,8 @@ class AisaqIndexNode : public IndexNode {
     using DistType = float;
 
     AisaqIndexNode(const int32_t& version, const Object& object) : is_prepared_(false), dim_(-1), count_(-1) {
-        assert(typeid(object) == typeid(Pack<std::shared_ptr<FileManager>>));
-        auto diskann_index_pack = dynamic_cast<const Pack<std::shared_ptr<FileManager>>*>(&object);
+        assert(typeid(object) == typeid(Pack<std::shared_ptr<milvus::FileManager>>));
+        auto diskann_index_pack = dynamic_cast<const Pack<std::shared_ptr<milvus::FileManager>>*>(&object);
         assert(diskann_index_pack != nullptr);
         file_manager_ = diskann_index_pack->GetPack();
     }
@@ -104,7 +104,7 @@ class AisaqIndexNode : public IndexNode {
     }
 
     Status
-    SetFileManager(std::shared_ptr<FileManager> file_manager) {
+    SetFileManager(std::shared_ptr<milvus::FileManager> file_manager) {
         if (file_manager == nullptr) {
             LOG_KNOWHERE_ERROR_ << "Malloc error, file_manager = nullptr.";
             return Status::malloc_error;
@@ -170,7 +170,7 @@ class AisaqIndexNode : public IndexNode {
     std::string index_prefix_;
     mutable std::mutex preparation_lock_;
     std::atomic_bool is_prepared_;
-    std::shared_ptr<FileManager> file_manager_;
+    std::shared_ptr<milvus::FileManager> file_manager_;
     std::unique_ptr<diskann::PQFlashAisaqIndex<DataType>> pq_flash_index_;
     std::atomic_int64_t dim_;
     std::atomic_int64_t count_;

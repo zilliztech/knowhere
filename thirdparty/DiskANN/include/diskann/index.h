@@ -18,7 +18,6 @@
 #include "concurrent_queue.h"
 #include "defaults.h"
 #include "distance.h"
-#include "knowhere/comp/thread_pool.h"
 #include "neighbor.h"
 #include "parameters.h"
 #include "utils.h"

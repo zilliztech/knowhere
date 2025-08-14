@@ -527,7 +527,7 @@ TEST_CASE("Test_AiSAQ_dynamic_cache", "[diskann]") {
         return json;
     };
 
-    std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
+    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
     auto diskann_index_pack = knowhere::Pack(file_manager);
     auto fp32_base_ds = GenDataSet(kNumRowsTest, kLargeDim, 30);
     auto fp32_query_ds = GenDataSet(kNumQueriesTest, kLargeDim, 42);
@@ -625,7 +625,7 @@ TEST_CASE("Test_AiSAQ_GetVectorByIds", "[diskann]") {
         auto base_ptr = static_cast<const float*>(base_ds->GetTensor());
         WriteRawDataToDisk<float>(kRawDataPath, base_ptr, kNumRows, dim);
 
-        std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
+        std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
         auto diskann_index_pack = knowhere::Pack(file_manager);
 
         knowhere::DataSetPtr ds_ptr = nullptr;
@@ -773,7 +773,7 @@ base_AiSAQ_param_test() {
     }
 
     SECTION("Test search and range search") {
-        std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
+        std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
         auto diskann_index_pack = knowhere::Pack(file_manager);
         knowhere::Json deserialize_json = knowhere::Json::parse(deserialize_gen().dump());
         knowhere::BinarySet binset;
@@ -1000,8 +1000,8 @@ base_AiSAQ_search() {
             for (const int inline_pq : inline_pq_list) {
                 for (const int pq_cache_size : pq_cache_size_list) {
                     for (const int num_entry_points : num_entry_points_list) {
-                        std::shared_ptr<knowhere::FileManager> file_manager =
-                            std::make_shared<knowhere::LocalFileManager>();
+                        std::shared_ptr<milvus::FileManager> file_manager =
+                            std::make_shared<milvus::LocalFileManager>();
                         auto diskann_index_pack = knowhere::Pack(file_manager);
                         knowhere::Json deserialize_json = knowhere::Json::parse(deserialize_gen().dump());
                         knowhere::BinarySet binset;
