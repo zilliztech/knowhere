@@ -569,8 +569,8 @@ namespace diskann {
         out_writer.write((char*) &npts32, sizeof (uint32_t));
         out_writer.write((char*) &outdims32, sizeof (uint32_t));
 
-        size_t BLOCK_SIZE = 100000;
-        size_t block_size = npts <= BLOCK_SIZE ? npts : BLOCK_SIZE;
+        size_t MAX_BLOCK_SIZE = 100000;
+        size_t block_size = npts <= MAX_BLOCK_SIZE ? npts : MAX_BLOCK_SIZE;
         std::unique_ptr < T[] > in_block_data =
                 std::make_unique < T[]>(block_size * in_dims);
         std::unique_ptr < T[] > out_block_data =
@@ -645,8 +645,8 @@ namespace diskann {
         out_writer.write((char*) &npts32, sizeof (uint32_t));
         out_writer.write((char*) &outdims32, sizeof (uint32_t));
 
-        size_t BLOCK_SIZE = 100000;
-        size_t block_size = npts <= BLOCK_SIZE ? npts : BLOCK_SIZE;
+        size_t MAX_BLOCK_SIZE = 100000;
+        size_t block_size = npts <= MAX_BLOCK_SIZE ? npts : MAX_BLOCK_SIZE;
         std::unique_ptr < T[] > in_block_data =
                 std::make_unique < T[]>(block_size * in_dims);
         std::unique_ptr < T[] > out_block_data =
