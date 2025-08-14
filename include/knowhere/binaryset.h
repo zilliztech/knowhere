@@ -12,6 +12,7 @@
 #ifndef BINARYSET_H
 #define BINARYSET_H
 
+#include <cstdint>
 #include <cstring>
 #include <map>
 #include <memory>
