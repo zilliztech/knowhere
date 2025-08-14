@@ -446,7 +446,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
 
     faiss::MetricType faiss_metric_type;
     sparse::DocValueComputer<float> sparse_computer;
-    if constexpr (!std::is_same_v<DataType, knowhere::sparse::SparseRow<float>>) {
+    if constexpr (!std::is_same_v<DataType, knowhere::sparse::SparseRow<knowhere::sparsefp32>>) {
         auto result = Str2FaissMetricType(metric_str);
         if (result.error() != Status::success) {
             return expected<DataSetPtr>::Err(result.error(), result.what());
@@ -482,9 +482,9 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     futs.reserve(nq);
     for (int i = 0; i < nq; ++i) {
         futs.emplace_back(pool->push([&, index = i] {
-            if constexpr (std::is_same_v<DataType, knowhere::sparse::SparseRow<float>>) {
-                auto cur_query = (const sparse::SparseRow<float>*)xq + index;
-                auto xb_sparse = (const sparse::SparseRow<float>*)xb;
+            if constexpr (std::is_same_v<DataType, knowhere::sparse::SparseRow<knowhere::sparsefp32>>) {
+                auto cur_query = (const sparse::SparseRow<knowhere::sparsefp32>*)xq + index;
+                auto xb_sparse = (const sparse::SparseRow<knowhere::sparsefp32>*)xb;
                 std::set<std::pair<float, int64_t>, std::greater<>> result;
                 for (int j = 0; j < nb; ++j) {
                     auto xid = xb_id_offset + j;
@@ -620,11 +620,11 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
 Status
 BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, sparse::label_t* labels,
                                 float* distances, const Json& config, const BitsetView& bitset) {
-    auto base = static_cast<const sparse::SparseRow<float>*>(base_dataset->GetTensor());
+    auto base = static_cast<const sparse::SparseRow<knowhere::sparsefp32>*>(base_dataset->GetTensor());
     auto rows = base_dataset->GetRows();
     auto xb_id_offset = base_dataset->GetTensorBeginId();
 
-    auto xq = static_cast<const sparse::SparseRow<float>*>(query_dataset->GetTensor());
+    auto xq = static_cast<const sparse::SparseRow<knowhere::sparsefp32>*>(query_dataset->GetTensor());
     auto nq = query_dataset->GetRows();
 
     BruteForceConfig cfg;
@@ -876,9 +876,10 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
 
 template <>
 expected<std::vector<IndexNode::IteratorPtr>>
-BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr base_dataset,
-                                                            const DataSetPtr query_dataset, const Json& config,
-                                                            const BitsetView& bitset, bool use_knowhere_search_pool) {
+BruteForce::AnnIterator<knowhere::sparse::SparseRow<knowhere::sparsefp32>>(const DataSetPtr base_dataset,
+                                                                           const DataSetPtr query_dataset,
+                                                                           const Json& config, const BitsetView& bitset,
+                                                                           bool use_knowhere_search_pool) {
     auto rows = base_dataset->GetRows();
     auto xb_id_offset = base_dataset->GetTensorBeginId();
     auto nq = query_dataset->GetRows();
@@ -925,8 +926,8 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
         for (int64_t i = 0; i < nq; ++i) {
             // Heavy computations with `compute_dist_func` will be deferred until the first call to 'Iterator->Next()'.
             auto compute_dist_func = [=]() -> std::vector<DistId> {
-                auto xq = static_cast<const sparse::SparseRow<float>*>(query_dataset->GetTensor());
-                auto base = static_cast<const sparse::SparseRow<float>*>(base_dataset->GetTensor());
+                auto xq = static_cast<const sparse::SparseRow<knowhere::sparsefp32>*>(query_dataset->GetTensor());
+                auto base = static_cast<const sparse::SparseRow<knowhere::sparsefp32>*>(base_dataset->GetTensor());
                 const auto& row = xq[i];
                 std::vector<DistId> distances_ids;
                 if (row.size() > 0) {
@@ -1031,10 +1032,9 @@ knowhere::BruteForce::RangeSearch<knowhere::bin1>(const knowhere::DataSetPtr bas
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset);
 template knowhere::expected<knowhere::DataSetPtr>
-knowhere::BruteForce::RangeSearch<knowhere::sparse::SparseRow<float>>(const knowhere::DataSetPtr base_dataset,
-                                                                      const knowhere::DataSetPtr query_dataset,
-                                                                      const knowhere::Json& config,
-                                                                      const knowhere::BitsetView& bitset);
+knowhere::BruteForce::RangeSearch<knowhere::sparse::SparseRow<knowhere::sparsefp32>>(
+    const knowhere::DataSetPtr base_dataset, const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
+    const knowhere::BitsetView& bitset);
 
 template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
 knowhere::BruteForce::AnnIterator<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,

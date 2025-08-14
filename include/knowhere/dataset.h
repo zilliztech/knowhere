@@ -57,7 +57,7 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
                 auto ptr = std::get_if<3>(&x.second);
                 if (ptr != nullptr) {
                     if (is_sparse) {
-                        delete[](sparse::SparseRow<float>*)(*ptr);
+                        delete[](sparse::SparseRow<knowhere::sparsefp32>*)(*ptr);
                     } else {
                         delete[](char*)(*ptr);
                     }

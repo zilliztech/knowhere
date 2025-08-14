@@ -421,13 +421,13 @@ GenTestVersionList() {
 inline knowhere::DataSetPtr
 GenSparseDataSet(const std::vector<std::map<int32_t, float>>& data, int32_t cols) {
     int32_t rows = data.size();
-    auto tensor = std::make_unique<knowhere::sparse::SparseRow<float>[]>(rows);
+    auto tensor = std::make_unique<knowhere::sparse::SparseRow<knowhere::sparsefp32>[]>(rows);
 
     for (int32_t i = 0; i < rows; ++i) {
         if (data[i].size() == 0) {
             continue;
         }
-        knowhere::sparse::SparseRow<float> row(data[i].size());
+        knowhere::sparse::SparseRow<knowhere::sparsefp32> row(data[i].size());
         size_t j = 0;
         for (auto& [idx, val] : data[i]) {
             row.set_at(j++, idx, val);

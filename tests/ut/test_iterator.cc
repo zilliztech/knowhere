@@ -611,9 +611,9 @@ TEST_CASE("Test Iterator BruteForce With Sparse Float Vector", "[IP metric]") {
 
     SECTION("Test Iterator BruteForce") {
         auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, conf, nullptr);
-        auto iterators =
-            knowhere::BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(train_ds, query_ds, conf, nullptr)
-                .value();
+        auto iterators = knowhere::BruteForce::AnnIterator<knowhere::sparse::SparseRow<knowhere::sparsefp32>>(
+                             train_ds, query_ds, conf, nullptr)
+                             .value();
         AssertBruteForceIteratorResultCorrect(nb, iterators, gt.value());
     }
 
@@ -625,7 +625,7 @@ TEST_CASE("Test Iterator BruteForce With Sparse Float Vector", "[IP metric]") {
             for (const auto& gen_func : gen_bitset_funcs) {
                 auto bitset_data = gen_func(nb, percentage * nb);
                 knowhere::BitsetView bitset(bitset_data.data(), nb);
-                auto iterators = knowhere::BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(
+                auto iterators = knowhere::BruteForce::AnnIterator<knowhere::sparse::SparseRow<knowhere::sparsefp32>>(
                                      train_ds, query_ds, conf, bitset)
                                      .value();
                 auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, conf, bitset);

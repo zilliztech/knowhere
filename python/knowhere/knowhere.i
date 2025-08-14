@@ -373,7 +373,7 @@ Array2SparseDataSet(float* data, int nb1, int* ids, int nb2, int64_t* indptr, in
         cols = std::max(ids[i] + 1, cols);
     }
     auto ds = std::make_shared<DataSet>();
-    auto tensor = std::make_unique<knowhere::sparse::SparseRow<float>[]>(rows);
+    auto tensor = std::make_unique<knowhere::sparse::SparseRow<knowhere::sparsefp32>[]>(rows);
 
     for (int32_t i = 0; i < rows; ++i) {
         int64_t start = indptr[i];
@@ -381,7 +381,7 @@ Array2SparseDataSet(float* data, int nb1, int* ids, int nb2, int64_t* indptr, in
         if (start == end) {
             throw std::runtime_error("sparse matrix indptr wrong");
         }
-        knowhere::sparse::SparseRow<float> row(end - start);
+        knowhere::sparse::SparseRow<knowhere::sparsefp32> row(end - start);
         for (auto j = start; j < end; ++j) {
             row.set_at(j - start, ids[j], data[j]);
         }

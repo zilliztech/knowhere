@@ -280,8 +280,8 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         auto results = idx.RangeSearch(query_ds, json, nullptr);
         REQUIRE(results.has_value());
 
-        auto gt =
-            knowhere::BruteForce::RangeSearch<knowhere::sparse::SparseRow<float>>(train_ds, query_ds, json, nullptr);
+        auto gt = knowhere::BruteForce::RangeSearch<knowhere::sparse::SparseRow<knowhere::sparsefp32>>(
+            train_ds, query_ds, json, nullptr);
         REQUIRE(gt.has_value());
 
         auto ids = results.value()->GetIds();
@@ -434,8 +434,8 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
         json[knowhere::meta::RADIUS] = 0.0f;
         json[knowhere::meta::RANGE_FILTER] = 10000.0f;
 
-        auto bf_res =
-            knowhere::BruteForce::RangeSearch<knowhere::sparse::SparseRow<float>>(train_ds, query_ds, json, nullptr);
+        auto bf_res = knowhere::BruteForce::RangeSearch<knowhere::sparse::SparseRow<knowhere::sparsefp32>>(
+            train_ds, query_ds, json, nullptr);
         REQUIRE(bf_res.has_value());
         check_result(*bf_res.value());
 
@@ -567,8 +567,8 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
         REQUIRE(idx.HasRawData(metric) == knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
         auto results = idx.GetVectorByIds(GenIdsDataSet(3, ids));
         REQUIRE(results.has_value());
-        auto xb = (knowhere::sparse::SparseRow<float>*)train_ds->GetTensor();
-        auto res_data = (knowhere::sparse::SparseRow<float>*)results.value()->GetTensor();
+        auto xb = (knowhere::sparse::SparseRow<knowhere::sparsefp32>*)train_ds->GetTensor();
+        auto res_data = (knowhere::sparse::SparseRow<knowhere::sparsefp32>*)results.value()->GetTensor();
         for (int i = 0; i < 3; ++i) {
             const auto& truth_row = xb[i];
             const auto& res_row = res_data[i];

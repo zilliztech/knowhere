@@ -173,7 +173,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         bm25_params_ = std::make_unique<BM25Params>(k1, b, avgdl);
     }
 
-    expected<DocValueComputer<float>>
+    expected<DocValueComputer<DType>>
     GetDocValueComputer(const SparseInvertedIndexConfig& cfg) const override {
         // if metric_type is set in config, it must match with how the index was built.
         auto metric_type = cfg.metric_type;
@@ -181,18 +181,18 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             if (metric_type.has_value() && !IsMetricType(metric_type.value(), metric::IP)) {
                 auto msg =
                     "metric type not match, expected: " + std::string(metric::IP) + ", got: " + metric_type.value();
-                return expected<DocValueComputer<float>>::Err(Status::invalid_metric_type, msg);
+                return expected<DocValueComputer<DType>>::Err(Status::invalid_metric_type, msg);
             }
-            return GetDocValueOriginalComputer<float>();
+            return GetDocValueOriginalComputer<DType>();
         }
         if (metric_type.has_value() && !IsMetricType(metric_type.value(), metric::BM25)) {
             auto msg =
                 "metric type not match, expected: " + std::string(metric::BM25) + ", got: " + metric_type.value();
-            return expected<DocValueComputer<float>>::Err(Status::invalid_metric_type, msg);
+            return expected<DocValueComputer<DType>>::Err(Status::invalid_metric_type, msg);
         }
         // avgdl must be supplied during search
         if (!cfg.bm25_avgdl.has_value()) {
-            return expected<DocValueComputer<float>>::Err(Status::invalid_args,
+            return expected<DocValueComputer<DType>>::Err(Status::invalid_args,
                                                           "avgdl must be supplied during searching");
         }
         auto avgdl = cfg.bm25_avgdl.value();
@@ -201,16 +201,16 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             // daat_wand and daat_maxscore: search time k1/b must equal load time config.
             if ((cfg.bm25_k1.has_value() && cfg.bm25_k1.value() != bm25_params_->k1) ||
                 ((cfg.bm25_b.has_value() && cfg.bm25_b.value() != bm25_params_->b))) {
-                return expected<DocValueComputer<float>>::Err(
+                return expected<DocValueComputer<DType>>::Err(
                     Status::invalid_args,
                     "search time k1/b must equal load time config for DAAT_WAND or DAAT_MAXSCORE algorithm.");
             }
-            return GetDocValueBM25Computer<float>(bm25_params_->k1, bm25_params_->b, avgdl);
+            return GetDocValueBM25Computer<DType>(bm25_params_->k1, bm25_params_->b, avgdl);
         } else {
             // inverted index: search time k1/b may override load time config.
             auto k1 = cfg.bm25_k1.has_value() ? cfg.bm25_k1.value() : bm25_params_->k1;
             auto b = cfg.bm25_b.has_value() ? cfg.bm25_b.value() : bm25_params_->b;
-            return GetDocValueBM25Computer<float>(k1, b, avgdl);
+            return GetDocValueBM25Computer<DType>(k1, b, avgdl);
         }
     }
 
@@ -823,7 +823,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
     void
     Search(const SparseRow<DType>& query, size_t k, float* distances, label_t* labels, const BitsetView& bitset,
-           const DocValueComputer<float>& computer, InvertedIndexApproxSearchParams& approx_params) const override {
+           const DocValueComputer<DType>& computer, InvertedIndexApproxSearchParams& approx_params) const override {
         // initially set result distances to NaN and labels to -1
         std::fill(distances, distances + k, std::numeric_limits<float>::quiet_NaN());
         std::fill(labels, labels + k, -1);
@@ -856,7 +856,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     // Returned distances are inaccurate based on the drop_ratio.
     std::vector<float>
     GetAllDistances(const SparseRow<DType>& query, float drop_ratio_search, const BitsetView& bitset,
-                    const DocValueComputer<float>& computer) const override {
+                    const DocValueComputer<DType>& computer) const override {
         if (query.size() == 0) {
             return {};
         }
@@ -879,7 +879,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
     float
     GetRawDistance(const label_t vec_id, const SparseRow<DType>& query,
-                   const DocValueComputer<float>& computer) const override {
+                   const DocValueComputer<DType>& computer) const override {
         float distance = 0.0f;
 
         for (size_t i = 0; i < query.size(); ++i) {
@@ -958,7 +958,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
     std::vector<float>
     compute_all_distances(const std::vector<std::pair<size_t, DType>>& q_vec,
-                          const DocValueComputer<float>& computer) const {
+                          const DocValueComputer<DType>& computer) const {
         std::vector<float> scores(n_rows_internal_, 0.0f);
         for (size_t i = 0; i < q_vec.size(); ++i) {
             auto& plist_ids = inverted_index_ids_spans_[q_vec[i].first];
@@ -1063,7 +1063,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
     template <typename DocIdFilter>
     std::vector<Cursor<DocIdFilter>>
-    make_cursors(const std::vector<std::pair<size_t, DType>>& q_vec, const DocValueComputer<float>& computer,
+    make_cursors(const std::vector<std::pair<size_t, DType>>& q_vec, const DocValueComputer<DType>& computer,
                  DocIdFilter& filter, float dim_max_score_ratio) const {
         std::vector<Cursor<DocIdFilter>> cursors;
         cursors.reserve(q_vec.size());
@@ -1083,7 +1083,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     template <typename DocIdFilter>
     void
     search_taat_naive(const std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
-                      const DocValueComputer<float>& computer) const {
+                      const DocValueComputer<DType>& computer) const {
         auto scores = compute_all_distances(q_vec, computer);
         for (size_t i = 0; i < n_rows_internal_; ++i) {
             if ((filter.empty() || !filter.test(i)) && scores[i] != 0) {
@@ -1095,7 +1095,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     template <typename DocIdFilter>
     void
     search_daat_wand(const std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
-                     const DocValueComputer<float>& computer, float dim_max_score_ratio) const {
+                     const DocValueComputer<DType>& computer, float dim_max_score_ratio) const {
         std::vector<Cursor<DocIdFilter>> cursors = make_cursors(q_vec, computer, filter, dim_max_score_ratio);
         std::vector<Cursor<DocIdFilter>*> cursor_ptrs(cursors.size());
         for (size_t i = 0; i < cursors.size(); ++i) {
@@ -1160,7 +1160,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     template <typename DocIdFilter>
     void
     search_daat_maxscore(std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
-                         const DocValueComputer<float>& computer, float dim_max_score_ratio) const {
+                         const DocValueComputer<DType>& computer, float dim_max_score_ratio) const {
         std::sort(q_vec.begin(), q_vec.end(), [this](auto& a, auto& b) {
             return a.second * max_score_in_dim_spans_[a.first] > b.second * max_score_in_dim_spans_[b.first];
         });
@@ -1249,7 +1249,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
     void
     refine_and_collect(const SparseRow<DType>& query, MaxMinHeap<float>& inacc_heap, size_t k, float* distances,
-                       label_t* labels, const DocValueComputer<float>& computer,
+                       label_t* labels, const DocValueComputer<DType>& computer,
                        InvertedIndexApproxSearchParams& approx_params) const {
         std::vector<table_t> docids;
         MaxMinHeap<float> heap(k);

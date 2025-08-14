@@ -94,7 +94,7 @@ class DocIdFilterByVector {
 
 template <typename T>
 class SparseRow {
-    static_assert(std::is_same_v<T, fp32>, "SparseRow supports float only");
+    static_assert(std::is_same_v<T, knowhere::sparsefp32>, "SparseRow supports sparsefp32 only");
 
  public:
     // construct an SparseRow with memory allocated to hold `count` elements.

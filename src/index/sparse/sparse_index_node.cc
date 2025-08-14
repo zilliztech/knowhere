@@ -25,6 +25,7 @@
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/index_node.h"
 #include "knowhere/log.h"
+#include "knowhere/operands.h"
 #include "knowhere/sparse_utils.h"
 #include "knowhere/utils.h"
 
@@ -37,7 +38,7 @@ namespace knowhere {
 // Thread safety: not thread safe.
 template <typename T, bool use_wand>
 class SparseInvertedIndexNode : public IndexNode {
-    static_assert(std::is_same_v<T, fp32>, "SparseInvertedIndexNode only support float");
+    static_assert(std::is_same_v<T, knowhere::sparsefp32>, "SparseInvertedIndexNode only support sparsefp32");
 
  public:
     explicit SparseInvertedIndexNode(const int32_t& version, const Object& /*object*/)
