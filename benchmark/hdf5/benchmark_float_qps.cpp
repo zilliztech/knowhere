@@ -16,6 +16,7 @@
 
 #include "benchmark_knowhere.h"
 #include "filemanager/FileManager.h"
+#include "filemanager/impl/LocalFileManager.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/dataset.h"
@@ -541,7 +542,7 @@ TEST_F(Benchmark_float_qps, TEST_DISKANN) {
 
     WriteRawDataToDisk(kRawDataPath, (const float*)xb_, (const uint32_t)nb_, (const uint32_t)dim_);
 
-    std::shared_ptr<milvus ::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
     auto diskann_index_pack = knowhere::Pack(file_manager);
 
     index_ = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(

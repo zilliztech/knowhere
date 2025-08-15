@@ -1079,11 +1079,11 @@ static std::vector<bool> read_node_nbrs_from_vamana(void *context, const std::ve
     return retval;
 }
 
-template static std::vector<bool>read_node_nbrs_from_vamana<float, uint32_t>(void *, const std::vector<uint32_t> &,
+template std::vector<bool> read_node_nbrs_from_vamana<float, uint32_t>(void *, const std::vector<uint32_t> &,
                             std::vector<std::pair<uint32_t, uint32_t *>> &);
-template static std::vector<bool> read_node_nbrs_from_vamana<int8_t, uint32_t>(void *, const std::vector<uint32_t> &,
+template std::vector<bool> read_node_nbrs_from_vamana<int8_t, uint32_t>(void *, const std::vector<uint32_t> &,
                             std::vector<std::pair<uint32_t, uint32_t *>> &);
-template static std::vector<bool> read_node_nbrs_from_vamana<uint8_t, uint32_t>(void *, const std::vector<uint32_t> &,
+template std::vector<bool> read_node_nbrs_from_vamana<uint8_t, uint32_t>(void *, const std::vector<uint32_t> &,
                             std::vector<std::pair<uint32_t, uint32_t *>> &);
 
 template <typename T>

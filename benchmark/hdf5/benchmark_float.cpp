@@ -14,10 +14,11 @@
 #include <vector>
 
 #include "benchmark_knowhere.h"
+#include "filemanager/FileManager.h"
+#include "filemanager/impl/LocalFileManager.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_config.h"
-#include "knowhere/comp/local_file_manager.h"
 #include "knowhere/dataset.h"
 
 class Benchmark_float : public Benchmark_knowhere, public ::testing::Test {

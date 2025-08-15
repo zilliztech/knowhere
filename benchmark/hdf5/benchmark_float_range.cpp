@@ -14,8 +14,9 @@
 #include <vector>
 
 #include "benchmark_knowhere.h"
+#include "filemanager/FileManager.h"
+#include "filemanager/impl/LocalFileManager.h"
 #include "knowhere/comp/knowhere_config.h"
-#include "knowhere/comp/local_file_manager.h"
 #include "knowhere/dataset.h"
 
 class Benchmark_float_range : public Benchmark_knowhere, public ::testing::Test {
