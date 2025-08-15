@@ -15,6 +15,7 @@
 
 #include "benchmark_knowhere.h"
 #include "filemanager/FileManager.h"
+#include "filemanager/impl/LocalFileManager.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/dataset.h"
