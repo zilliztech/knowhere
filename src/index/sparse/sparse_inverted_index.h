@@ -34,6 +34,7 @@
 #include "knowhere/prometheus_client.h"
 #include "knowhere/sparse_utils.h"
 #include "knowhere/utils.h"
+#include "knowhere/operands.h"
 
 namespace knowhere::sparse {
 
@@ -71,6 +72,9 @@ struct InvertedIndexApproxSearchParams {
 
 template <typename T>
 class BaseInvertedIndex {
+    static_assert(std::is_same_v<T, knowhere::sparse_fp32>, "BaseInvertedIndex only support sparse_fp32");
+    using value_type = typename T::type;
+    
  public:
     virtual ~BaseInvertedIndex() = default;
 
@@ -89,23 +93,23 @@ class BaseInvertedIndex {
     Deserialize(MemoryIOReader& reader) = 0;
 
     virtual Status
-    Train(const SparseRow<T>* data, size_t rows) = 0;
+    Train(const SparseRow<value_type>* data, size_t rows) = 0;
 
     virtual Status
-    Add(const SparseRow<T>* data, size_t rows, int64_t dim) = 0;
+    Add(const SparseRow<value_type>* data, size_t rows, int64_t dim) = 0;
 
     virtual void
-    Search(const SparseRow<T>& query, size_t k, float* distances, label_t* labels, const BitsetView& bitset,
-           const DocValueComputer<T>& computer, InvertedIndexApproxSearchParams& approx_params) const = 0;
+    Search(const SparseRow<value_type>& query, size_t k, float* distances, label_t* labels, const BitsetView& bitset,
+           const DocValueComputer<value_type>& computer, InvertedIndexApproxSearchParams& approx_params) const = 0;
 
     virtual std::vector<float>
-    GetAllDistances(const SparseRow<T>& query, float drop_ratio_search, const BitsetView& bitset,
-                    const DocValueComputer<T>& computer) const = 0;
+    GetAllDistances(const SparseRow<value_type>& query, float drop_ratio_search, const BitsetView& bitset,
+                    const DocValueComputer<value_type>& computer) const = 0;
 
     virtual float
-    GetRawDistance(const label_t vec_id, const SparseRow<T>& query, const DocValueComputer<T>& computer) const = 0;
+    GetRawDistance(const label_t vec_id, const SparseRow<value_type>& query, const DocValueComputer<value_type>& computer) const = 0;
 
-    virtual expected<DocValueComputer<T>>
+    virtual expected<DocValueComputer<value_type>>
     GetDocValueComputer(const SparseInvertedIndexConfig& cfg) const = 0;
 
     [[nodiscard]] virtual size_t
@@ -120,6 +124,10 @@ class BaseInvertedIndex {
 
 template <typename DType, typename QType, InvertedIndexAlgo algo, bool mmapped = false>
 class InvertedIndex : public BaseInvertedIndex<DType> {
+    static_assert(std::is_same_v<DType, knowhere::sparse_fp32>, "InvertedIndex DType only support sparse_fp32");
+    using d_type = typename DType::type;
+    using q_type = typename std::conditional_t<std::is_same_v<QType, DType>, d_type, QType>;
+    
  public:
     explicit InvertedIndex(SparseMetricType metric_type) : metric_type_(metric_type) {
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
@@ -235,7 +243,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
          *
          * Data are densely packed in serialized bytes and no padding is added.
          */
-        DType deprecated_value_threshold = 0;
+        d_type deprecated_value_threshold = 0;
         writeBinaryPOD(writer, n_rows_internal_);
         writeBinaryPOD(writer, max_dim_);
         writeBinaryPOD(writer, deprecated_value_threshold);
@@ -253,9 +261,9 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             }
         }
 
-        std::vector<SparseRow<DType>> raw_rows(n_rows_internal_);
+        std::vector<SparseRow<d_type>> raw_rows(n_rows_internal_);
         for (size_t i = 0; i < n_rows_internal_; ++i) {
-            raw_rows[i] = std::move(SparseRow<DType>(row_sizes[i]));
+            raw_rows[i] = std::move(SparseRow<d_type>(row_sizes[i]));
         }
 
         for (size_t i = 0; i < inverted_index_ids_spans_.size(); ++i) {
@@ -271,7 +279,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         for (table_t vec_id = 0; vec_id < n_rows_internal_; ++vec_id) {
             writeBinaryPOD(writer, raw_rows[vec_id].size());
             if (raw_rows[vec_id].size() > 0) {
-                writer.write(raw_rows[vec_id].data(), raw_rows[vec_id].size() * SparseRow<DType>::element_size());
+                writer.write(raw_rows[vec_id].data(), raw_rows[vec_id].size() * SparseRow<d_type>::element_size());
             }
         }
 
@@ -280,7 +288,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
     Status
     DeserializeV0(MemoryIOReader& reader, int map_flags, const std::string& supplement_target_filename) override {
-        DType deprecated_value_threshold;
+        d_type deprecated_value_threshold;
         int64_t rows;
         readBinaryPOD(reader, rows);
         // previous versions used the signness of rows to indicate whether to
@@ -307,14 +315,14 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
             size_t count;
             readBinaryPOD(reader, count);
-            SparseRow<DType> raw_row;
+            SparseRow<d_type> raw_row;
             if constexpr (mmapped) {
-                raw_row = std::move(SparseRow<DType>(count, reader.data() + reader.tellg(), false));
-                reader.advance(count * SparseRow<DType>::element_size());
+                raw_row = std::move(SparseRow<d_type>(count, reader.data() + reader.tellg(), false));
+                reader.advance(count * SparseRow<d_type>::element_size());
             } else {
-                raw_row = std::move(SparseRow<DType>(count));
+                raw_row = std::move(SparseRow<d_type>(count));
                 if (count > 0) {
-                    reader.read(raw_row.data(), count * SparseRow<DType>::element_size());
+                    reader.read(raw_row.data(), count * SparseRow<d_type>::element_size());
                 }
             }
             add_row_to_index(raw_row, i);
@@ -428,7 +436,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         posting_lists_size += sizeof(uint64_t) * (this->nr_inner_dims_ + 1);  // used to store dim offsets
         for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
             posting_lists_size += this->inverted_index_ids_spans_[i].size() * sizeof(uint32_t) +
-                                  this->inverted_index_vals_spans_[i].size() * sizeof(QType);
+                                  this->inverted_index_vals_spans_[i].size() * sizeof(q_type);
         }
         section_headers[0].size = posting_lists_size;
         used_offset += section_headers[0].size;
@@ -483,7 +491,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                          this->inverted_index_ids_spans_[i].size());
         }
         for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
-            writer.write(this->inverted_index_vals_spans_[i].data(), sizeof(QType),
+            writer.write(this->inverted_index_vals_spans_[i].data(), sizeof(q_type),
                          this->inverted_index_vals_spans_[i].size());
         }
 
@@ -563,10 +571,10 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                             reader.advance(inverted_index_ids_spans_[i].size() * sizeof(uint32_t));
                         }
                         for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
-                            inverted_index_vals_spans_[i] = boost::span<const QType>(
-                                reinterpret_cast<QType*>(reader.data() + reader.tellg()),
+                            inverted_index_vals_spans_[i] = boost::span<const q_type>(
+                                reinterpret_cast<q_type*>(reader.data() + reader.tellg()),
                                 inverted_index_offsets_span[i + 1] - inverted_index_offsets_span[i]);
-                            reader.advance(inverted_index_vals_spans_[i].size() * sizeof(QType));
+                            reader.advance(inverted_index_vals_spans_[i].size() * sizeof(q_type));
                         }
                         break;
                     }
@@ -637,7 +645,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     Status
     PrepareMmap(MemoryIOReader& reader, size_t rows, int map_flags, const std::string& supplement_target_filename) {
         const auto initial_reader_location = reader.tellg();
-        const auto nnz = (reader.remaining() - (rows * sizeof(size_t))) / SparseRow<DType>::element_size();
+        const auto nnz = (reader.remaining() - (rows * sizeof(size_t))) / SparseRow<d_type>::element_size();
 
         // count raw vector idx occurrences
         std::unordered_map<table_t, size_t> idx_counts;
@@ -652,7 +660,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                 readBinaryPOD(reader, idx);
                 idx_counts[idx]++;
                 // skip value
-                reader.advance(sizeof(DType));
+                reader.advance(sizeof(d_type));
             }
         }
         // reset reader to the beginning
@@ -762,7 +770,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     // Non zero drop ratio is only supported for static index, i.e. data should
     // include all rows that'll be added to the index.
     Status
-    Train(const SparseRow<DType>* data, size_t rows) override {
+    Train(const SparseRow<d_type>* data, size_t rows) override {
         if constexpr (mmapped) {
             throw std::invalid_argument("mmapped InvertedIndex does not support Train");
         } else {
@@ -771,7 +779,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     }
 
     Status
-    Add(const SparseRow<DType>* data, size_t rows, int64_t dim) override {
+    Add(const SparseRow<d_type>* data, size_t rows, int64_t dim) override {
         if constexpr (mmapped) {
             throw std::invalid_argument("mmapped InvertedIndex does not support Add");
         } else {
@@ -822,7 +830,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     }
 
     void
-    Search(const SparseRow<DType>& query, size_t k, float* distances, label_t* labels, const BitsetView& bitset,
+    Search(const SparseRow<d_type>& query, size_t k, float* distances, label_t* labels, const BitsetView& bitset,
            const DocValueComputer<float>& computer, InvertedIndexApproxSearchParams& approx_params) const override {
         // initially set result distances to NaN and labels to -1
         std::fill(distances, distances + k, std::numeric_limits<float>::quiet_NaN());
@@ -855,12 +863,12 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
     // Returned distances are inaccurate based on the drop_ratio.
     std::vector<float>
-    GetAllDistances(const SparseRow<DType>& query, float drop_ratio_search, const BitsetView& bitset,
+    GetAllDistances(const SparseRow<d_type>& query, float drop_ratio_search, const BitsetView& bitset,
                     const DocValueComputer<float>& computer) const override {
         if (query.size() == 0) {
             return {};
         }
-        std::vector<DType> values(query.size());
+        std::vector<d_type> values(query.size());
         for (size_t i = 0; i < query.size(); ++i) {
             values[i] = std::abs(query[i].val);
         }
@@ -878,7 +886,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     }
 
     float
-    GetRawDistance(const label_t vec_id, const SparseRow<DType>& query,
+    GetRawDistance(const label_t vec_id, const SparseRow<d_type>& query,
                    const DocValueComputer<float>& computer) const override {
         float distance = 0.0f;
 
@@ -943,8 +951,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     // Given a vector of values, returns the threshold value.
     // All values strictly smaller than the threshold will be ignored.
     // values will be modified in this function.
-    inline DType
-    get_threshold(std::vector<DType>& values, float drop_ratio) const {
+    inline d_type
+    get_threshold(std::vector<d_type>& values, float drop_ratio) const {
         // drop_ratio is in [0, 1) thus drop_count is guaranteed to be less
         // than values.size().
         auto drop_count = static_cast<size_t>(drop_ratio * values.size());
@@ -957,7 +965,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     }
 
     std::vector<float>
-    compute_all_distances(const std::vector<std::pair<size_t, DType>>& q_vec,
+    compute_all_distances(const std::vector<std::pair<size_t, d_type>>& q_vec,
                           const DocValueComputer<float>& computer) const {
         std::vector<float> scores(n_rows_internal_, 0.0f);
         for (size_t i = 0; i < q_vec.size(); ++i) {
@@ -977,7 +985,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     template <typename DocIdFilter>
     struct Cursor {
      public:
-        Cursor(const boost::span<const table_t>& plist_ids, const boost::span<const QType>& plist_vals, size_t num_vec,
+        Cursor(const boost::span<const table_t>& plist_ids, const boost::span<const q_type>& plist_vals, size_t num_vec,
                float max_score, float q_value, DocIdFilter filter)
             : plist_ids_(plist_ids),
               plist_vals_(plist_vals),
@@ -1008,13 +1016,13 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             update_cur_vec_id();
         }
 
-        QType
+        q_type
         cur_vec_val() const {
             return plist_vals_[loc_];
         }
 
         const boost::span<const table_t>& plist_ids_;
-        const boost::span<const QType>& plist_vals_;
+        const boost::span<const q_type>& plist_vals_;
         const size_t plist_size_;
         size_t loc_ = 0;
         size_t total_num_vec_ = 0;
@@ -1037,18 +1045,18 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
     };  // struct Cursor
 
-    std::vector<std::pair<size_t, DType>>
-    parse_query(const SparseRow<DType>& query, float drop_ratio_search) const {
-        DType q_threshold = 0;
+    std::vector<std::pair<size_t, d_type>>
+    parse_query(const SparseRow<d_type>& query, float drop_ratio_search) const {
+        d_type q_threshold = 0;
         if (drop_ratio_search != 0) {
-            std::vector<DType> values(query.size());
+            std::vector<d_type> values(query.size());
             for (size_t i = 0; i < query.size(); ++i) {
                 values[i] = std::abs(query[i].val);
             }
             q_threshold = get_threshold(values, drop_ratio_search);
         }
 
-        std::vector<std::pair<size_t, DType>> filtered_query;
+        std::vector<std::pair<size_t, d_type>> filtered_query;
         for (size_t i = 0; i < query.size(); ++i) {
             auto [dim, val] = query[i];
             auto dim_it = dim_map_.find(dim);
@@ -1063,7 +1071,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
     template <typename DocIdFilter>
     std::vector<Cursor<DocIdFilter>>
-    make_cursors(const std::vector<std::pair<size_t, DType>>& q_vec, const DocValueComputer<float>& computer,
+    make_cursors(const std::vector<std::pair<size_t, d_type>>& q_vec, const DocValueComputer<float>& computer,
                  DocIdFilter& filter, float dim_max_score_ratio) const {
         std::vector<Cursor<DocIdFilter>> cursors;
         cursors.reserve(q_vec.size());
@@ -1082,7 +1090,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     // TODO: may switch to row-wise brute force if filter rate is high. Benchmark needed.
     template <typename DocIdFilter>
     void
-    search_taat_naive(const std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
+    search_taat_naive(const std::vector<std::pair<size_t, d_type>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
                       const DocValueComputer<float>& computer) const {
         auto scores = compute_all_distances(q_vec, computer);
         for (size_t i = 0; i < n_rows_internal_; ++i) {
@@ -1094,7 +1102,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
     template <typename DocIdFilter>
     void
-    search_daat_wand(const std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
+    search_daat_wand(const std::vector<std::pair<size_t, d_type>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
                      const DocValueComputer<float>& computer, float dim_max_score_ratio) const {
         std::vector<Cursor<DocIdFilter>> cursors = make_cursors(q_vec, computer, filter, dim_max_score_ratio);
         std::vector<Cursor<DocIdFilter>*> cursor_ptrs(cursors.size());
@@ -1159,7 +1167,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
     template <typename DocIdFilter>
     void
-    search_daat_maxscore(std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
+    search_daat_maxscore(std::vector<std::pair<size_t, d_type>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
                          const DocValueComputer<float>& computer, float dim_max_score_ratio) const {
         std::sort(q_vec.begin(), q_vec.end(), [this](auto& a, auto& b) {
             return a.second * max_score_in_dim_spans_[a.first] > b.second * max_score_in_dim_spans_[b.first];
@@ -1248,7 +1256,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     }
 
     void
-    refine_and_collect(const SparseRow<DType>& query, MaxMinHeap<float>& inacc_heap, size_t k, float* distances,
+    refine_and_collect(const SparseRow<d_type>& query, MaxMinHeap<float>& inacc_heap, size_t k, float* distances,
                        label_t* labels, const DocValueComputer<float>& computer,
                        InvertedIndexApproxSearchParams& approx_params) const {
         std::vector<table_t> docids;
@@ -1291,7 +1299,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     }
 
     inline void
-    add_row_to_index(const SparseRow<DType>& row, table_t vec_id) {
+    add_row_to_index(const SparseRow<d_type>& row, table_t vec_id) {
         [[maybe_unused]] float row_sum = 0;
         for (size_t j = 0; j < row.size(); ++j) {
             auto [dim, val] = row[j];
@@ -1344,16 +1352,16 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
     }
 
-    inline QType
-    get_quant_val(DType val) const {
-        if constexpr (!std::is_same_v<QType, DType>) {
-            const DType max_val = static_cast<DType>(std::numeric_limits<QType>::max());
+    inline q_type
+    get_quant_val(d_type val) const {
+        if constexpr (!std::is_same_v<q_type, d_type>) {
+            const d_type max_val = static_cast<d_type>(std::numeric_limits<q_type>::max());
             if (val >= max_val) {
-                return std::numeric_limits<QType>::max();
-            } else if (val <= std::numeric_limits<QType>::min()) {
-                return std::numeric_limits<QType>::min();
+                return std::numeric_limits<q_type>::max();
+            } else if (val <= std::numeric_limits<q_type>::min()) {
+                return std::numeric_limits<q_type>::min();
             } else {
-                return static_cast<QType>(val);
+                return static_cast<q_type>(val);
             }
         } else {
             return val;
@@ -1366,9 +1374,9 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
     // reserve, [], size, emplace_back
     Vector<Vector<table_t>> inverted_index_ids_;
-    Vector<Vector<QType>> inverted_index_vals_;
+    Vector<Vector<q_type>> inverted_index_vals_;
     std::vector<boost::span<const table_t>> inverted_index_ids_spans_;
-    std::vector<boost::span<const QType>> inverted_index_vals_spans_;
+    std::vector<boost::span<const q_type>> inverted_index_vals_spans_;
     Vector<float> max_score_in_dim_;
     boost::span<const float> max_score_in_dim_spans_;
 
