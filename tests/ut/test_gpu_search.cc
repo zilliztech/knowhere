@@ -279,6 +279,37 @@ TEST_CASE("Test All GPU Index", "[search]") {
         }
     }
 
+    SECTION("Test Gpu Index Cagra Adapt For Cpu") {
+        using std::make_tuple;
+        auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+            make_tuple(knowhere::IndexEnum::INDEX_CUVS_CAGRA, cagra_gen),
+        }));
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto cfg_json = gen().dump();
+        CAPTURE(name, cfg_json);
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        auto train_ds = GenDataSet(nb, dim, seed);
+        auto query_ds = GenDataSet(nq, dim, seed);
+        REQUIRE(idx.Type() == name);
+        auto res = idx.Build(train_ds, json);
+        REQUIRE(res == knowhere::Status::success);
+        knowhere::BinarySet bs;
+        idx.Serialize(bs);
+        auto idx_ = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        json[knowhere::indexparam::ADAPT_FOR_CPU] = true;
+        json[knowhere::indexparam::EF] = 128;
+        idx_.Deserialize(bs, json);
+        REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
+                knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
+        auto results = idx_.Search(query_ds, json, nullptr);
+        REQUIRE(results.has_value());
+        auto ids = results.value()->GetIds();
+        // Due to issues with the filtering of invalid values, index 0 is temporarily not being checked.
+        for (int i = 1; i < nq; ++i) {
+            CHECK(ids[i] == i);
+        }
+    }
+
     SECTION("Test Gpu Index Search Simple Bitset") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(

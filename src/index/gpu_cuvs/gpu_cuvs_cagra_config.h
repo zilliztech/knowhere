@@ -113,7 +113,8 @@ struct GpuCuvsCagraConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(adapt_for_cpu)
             .description("train on GPU search on CPU")
             .set_default(false)
-            .for_train();
+            .for_train()
+            .for_deserialize();
         KNOWHERE_CONFIG_DECLARE_FIELD(ef)
             .description("hnsw ef")
             .allow_empty_without_default()
