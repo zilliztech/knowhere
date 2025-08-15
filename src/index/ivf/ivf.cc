@@ -28,7 +28,6 @@
 #include "index/ivf/ivfrbq_wrapper.h"
 #include "io/memory_io.h"
 #include "knowhere/bitsetview_idselector.h"
-#include "knowhere/comp/thread_pool.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/feature.h"
@@ -37,6 +36,7 @@
 #include "knowhere/index/index_node_data_mock_wrapper.h"
 #include "knowhere/log.h"
 #include "knowhere/range_util.h"
+#include "knowhere/thread_pool.h"
 #include "knowhere/utils.h"
 
 namespace knowhere {

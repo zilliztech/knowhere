@@ -15,7 +15,7 @@
 
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/comp/task.h"
 #include "knowhere/comp/time_recorder.h"
 #include "knowhere/expected.h"
 #include "knowhere/heap.h"

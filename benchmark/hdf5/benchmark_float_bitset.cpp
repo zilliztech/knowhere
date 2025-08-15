@@ -14,9 +14,9 @@
 #include <vector>
 
 #include "benchmark_knowhere.h"
+#include "filemanager/FileManager.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_config.h"
-#include "knowhere/comp/local_file_manager.h"
 #include "knowhere/dataset.h"
 
 const int32_t GPU_DEVICE_ID = 0;
@@ -251,7 +251,7 @@ TEST_F(Benchmark_float_bitset, TEST_DISKANN) {
 
     WriteRawDataToDisk(kRawDataPath, (const float*)xb_, (const uint32_t)nb_, (const uint32_t)dim_);
 
-    std::shared_ptr<knowhere::FileManager> file_manager = std::make_shared<knowhere::LocalFileManager>();
+    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
     auto diskann_index_pack = knowhere::Pack(file_manager);
 
     auto version = knowhere::Version::GetCurrentVersion().VersionNumber();

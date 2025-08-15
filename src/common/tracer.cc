@@ -92,6 +92,7 @@ StartSpan(const std::string& name, TraceContext* ctx) {
         if (EmptyTraceID(ctx) || EmptySpanID(ctx)) {
             return noop_trace_provider->GetTracer("noop")->StartSpan("noop");
         }
+
         opts.parent = trace::SpanContext(trace::TraceId({ctx->traceID, trace::TraceId::kSize}),
                                          trace::SpanId({ctx->spanID, trace::SpanId::kSize}),
                                          trace::TraceFlags(ctx->traceFlags), true);

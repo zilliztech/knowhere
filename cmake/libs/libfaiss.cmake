@@ -1,5 +1,7 @@
 include(CheckCXXCompilerFlag)
 
+include_directories(thirdparty/faiss)
+
 knowhere_file_glob(
   GLOB FAISS_SRCS thirdparty/faiss/faiss/*.cpp
   thirdparty/faiss/faiss/impl/*.cpp thirdparty/faiss/faiss/invlists/*.cpp
@@ -175,6 +177,7 @@ if(__X86_64)
   add_library(faiss_avx2 OBJECT ${FAISS_AVX2_SRCS})
   target_compile_options(faiss_avx2 PRIVATE $<$<COMPILE_LANGUAGE:CXX>: -msse4.2
                                             -mavx2 -mfma -mf16c -mpopcnt>)
+  target_include_directories(faiss_avx2 PRIVATE ${Boost_INCLUDE_DIRS})
   add_library(faiss_avx512 OBJECT ${FAISS_AVX512_SRCS})
   target_compile_options(
     faiss_avx512
@@ -188,8 +191,10 @@ if(__X86_64)
             -mavx512bw
             -mavx512vl
             -mpopcnt>)
+  target_include_directories(faiss_avx512 PRIVATE ${Boost_INCLUDE_DIRS})
 
   add_library(faiss STATIC ${FAISS_SRCS})
+  target_include_directories(faiss PRIVATE ${Boost_INCLUDE_DIRS})
 
   add_dependencies(faiss faiss_avx2 faiss_avx512 knowhere_utils)
   target_compile_options(
@@ -214,6 +219,7 @@ if(__AARCH64)
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX_SRCS})
 
   add_library(faiss STATIC ${FAISS_SRCS})
+  target_include_directories(faiss PRIVATE ${Boost_INCLUDE_DIRS})
 
   target_compile_options(
     faiss
@@ -239,6 +245,7 @@ if(__RISCV64)
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_NEON_SRCS})
 
   add_library(faiss STATIC ${FAISS_SRCS})
+  target_include_directories(faiss PRIVATE ${Boost_INCLUDE_DIRS})
 
   target_compile_options(
     faiss
@@ -266,6 +273,7 @@ if(__PPC64)
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_NEON_SRCS})
 
   add_library(faiss STATIC ${FAISS_SRCS})
+  target_include_directories(faiss PRIVATE ${Boost_INCLUDE_DIRS})
 
   target_compile_options(
     faiss

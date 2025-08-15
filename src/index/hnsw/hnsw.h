@@ -18,7 +18,7 @@
 #include "hnswlib/hnswlib.h"
 #include "index/hnsw/hnsw_config.h"
 #include "knowhere/comp/index_param.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/comp/task.h"
 #include "knowhere/comp/time_recorder.h"
 #include "knowhere/config.h"
 #include "knowhere/expected.h"

@@ -29,7 +29,7 @@
 #include "knowhere/version.h"
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/comp/task.h"
 #endif
 
 namespace knowhere {
@@ -468,6 +468,11 @@ class IndexNode : public Object {
     virtual Status
     SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) {
         throw std::runtime_error("SetInternalIdToMostExternalIdMap not implemented");
+    }
+
+    virtual bool
+    LoadIndexWithStream() {
+        return false;
     }
 
     virtual ~IndexNode() {

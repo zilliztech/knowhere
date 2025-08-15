@@ -16,6 +16,7 @@ class CustomBuildPy(build_py):
     """Run build_ext before build_py to compile swig code."""
 
     def run(self):
+        # Verify that libknowhere exists but don't copy it
         so_src = os.path.join("..", "build", "Release", "libknowhere.so")
         dylib_src = os.path.join("..", "build", "Release", "libknowhere.dylib")
         if os.path.exists(so_src):
@@ -51,17 +52,26 @@ INCLUDE_DIRS = [
     get_numpy_include(),
     os.path.join("..", "include"),
     os.path.join("..", "thirdparty"),
+    os.path.join("..", "build", "Release", "milvus-common-src", "include"),
     get_thirdparty_prefix("boost-headers") + "/include",
     get_thirdparty_prefix("nlohmann_json") + "/include",
     get_thirdparty_prefix("libglog") + "/include",
     get_thirdparty_prefix("gflags") + "/include"
 ]
 
-LIBRARY_DIRS = [os.path.join("..", "build", "Release")]
+BUILD_DIR = os.path.abspath(os.path.join("..", "build", "Release"))
+MILVUS_COMMON_LIB_DIR = os.path.join(BUILD_DIR, "milvus-common-build")
+
+LIBRARY_DIRS = [
+    BUILD_DIR,
+    MILVUS_COMMON_LIB_DIR
+]
 EXTRA_COMPILE_ARGS = ["-fPIC", "-std=gnu++17"]
 EXTRA_LINK_ARGS = [
     "-lknowhere",
-    "-Wl,-rpath,$ORIGIN",
+    "-lmilvus-common",
+    f"-Wl,-rpath,{BUILD_DIR}",
+    f"-Wl,-rpath,{MILVUS_COMMON_LIB_DIR}",
 ]
 
 SWIG_OPTS = [

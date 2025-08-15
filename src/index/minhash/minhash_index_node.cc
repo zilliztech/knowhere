@@ -11,18 +11,18 @@
 
 #include <cstdint>
 
+#include "filemanager/FileManager.h"
 #include "index/minhash/minhash_lsh.h"
 #include "index/minhash/minhash_lsh_config.h"
 #include "index/minhash/minhash_util.h"
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/index_param.h"
-#include "knowhere/comp/thread_pool.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/feature.h"
-#include "knowhere/file_manager.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
+#include "knowhere/thread_pool.h"
 #include "knowhere/utils.h"
 
 namespace knowhere {
@@ -31,8 +31,8 @@ class MinHashLSHNode : public IndexNode {
  public:
     using DistType = float;
     MinHashLSHNode(const int32_t& version, const Object& object) {
-        if (typeid(object) == typeid(Pack<std::shared_ptr<FileManager>>)) {
-            auto disk_index_pack = dynamic_cast<const Pack<std::shared_ptr<FileManager>>*>(&object);
+        if (typeid(object) == typeid(Pack<std::shared_ptr<milvus::FileManager>>)) {
+            auto disk_index_pack = dynamic_cast<const Pack<std::shared_ptr<milvus::FileManager>>*>(&object);
             if (disk_index_pack != nullptr) {
                 file_manager_ = disk_index_pack->GetPack();
             }
@@ -132,7 +132,7 @@ class MinHashLSHNode : public IndexNode {
     }
 
     Status
-    SetFileManager(std::shared_ptr<FileManager> file_manager) {
+    SetFileManager(std::shared_ptr<milvus::FileManager> file_manager) {
         if (file_manager == nullptr) {
             LOG_KNOWHERE_ERROR_ << "Malloc error, file_manager = nullptr.";
             return Status::malloc_error;
@@ -199,7 +199,7 @@ class MinHashLSHNode : public IndexNode {
     }
 
     std::string index_prefix_;
-    std::shared_ptr<FileManager> file_manager_ = nullptr;
+    std::shared_ptr<milvus::FileManager> file_manager_ = nullptr;
     std::unique_ptr<minhash::MinHashLSH> minhash_lsh_ = nullptr;
     std::shared_ptr<ThreadPool> search_pool_;
     bool is_loaded_ = false;

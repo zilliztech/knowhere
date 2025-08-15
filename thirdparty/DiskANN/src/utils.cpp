@@ -1,5 +1,5 @@
 #include "diskann/utils.h"
-#include "knowhere/comp/thread_pool.h"
+#include "knowhere/comp/task.h"
 
 #include <stdio.h>
 #include <memory>

@@ -18,10 +18,11 @@
 #include "concurrent_queue.h"
 #include "defaults.h"
 #include "distance.h"
-#include "knowhere/comp/thread_pool.h"
 #include "neighbor.h"
 #include "parameters.h"
 #include "utils.h"
+#include "concurrent_queue.h"
+#include "knowhere/thread_pool.h"
 
 #define OVERHEAD_FACTOR 1.1
 
