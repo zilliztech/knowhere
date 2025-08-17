@@ -14,9 +14,10 @@
 #include <vector>
 
 #include "benchmark_knowhere.h"
+#include "filemanager/FileManager.h"
+#include "filemanager/impl/LocalFileManager.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_config.h"
-#include "knowhere/comp/local_file_manager.h"
 #include "knowhere/dataset.h"
 
 const int32_t GPU_DEVICE_ID = 0;
