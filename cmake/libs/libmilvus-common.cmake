@@ -8,7 +8,7 @@ message(STATUS "milvus-common version: ${MILVUS-COMMON-VERSION}")
 message(STATUS "Building milvus-common-${MILVUS-COMMON-VERSION} from source")
 message(STATUS ${CMAKE_BUILD_TYPE})
 
-set( CMAKE_PREFIX_PATH ${CONAN_BOOST_ROOT} )
+list(APPEND CMAKE_PREFIX_PATH ${CONAN_BOOST_ROOT} )
 
 include( FetchContent )
 

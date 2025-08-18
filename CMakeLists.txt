@@ -226,6 +226,7 @@ target_link_libraries(knowhere PUBLIC ${KNOWHERE_LINKER_LIBS})
 target_include_directories(knowhere PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 if(WITH_UT)
+  find_package(Catch2 REQUIRED)
   add_subdirectory(tests/ut)
 endif()
 

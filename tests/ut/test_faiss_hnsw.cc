@@ -294,8 +294,7 @@ test_hnsw(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::DataSetPtr
 
     REQUIRE(recall >= 0.8);
     REQUIRE(recall_loaded >= 0.8);
-    // TODO: this recall is not stable, and it should be verified later
-    REQUIRE(std::abs(recall - recall_loaded) < 0.01);
+    REQUIRE(recall == recall_loaded);
 
     // test HasRawData()
     auto metric_type = conf[knowhere::meta::METRIC_TYPE];

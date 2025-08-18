@@ -1,0 +1,17 @@
+name: 'Knowhere Cache'
+description: ''
+inputs:
+  os:
+    description: 'OS name'
+    required: true
+    default: 'ubuntu22.04'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Restore Conan Packages
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.conan
+        key: knowhere-${{ inputs.os }}-${{ hashFiles('conanfile.py')}}
+        restore-keys: knowhere-${{ inputs.os }}-
