@@ -369,8 +369,8 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
 
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
         knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);
-        knowhere::KnowhereConfig::SetBuildThreadPoolSize(32);
-        knowhere::KnowhereConfig::SetSearchThreadPoolSize(32);
+        knowhere::KnowhereConfig::SetBuildThreadPoolSize(default_build_thread_num);
+        knowhere::KnowhereConfig::SetSearchThreadPoolSize(default_search_thread_num);
         printf("faiss::distance_compute_blas_threshold: %ld\n", knowhere::KnowhereConfig::GetBlasThreshold());
 #ifdef KNOWHERE_WITH_GPU
         knowhere::KnowhereConfig::InitGPUResource(GPU_DEVICE_ID, 2);
@@ -392,7 +392,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
  protected:
     const int32_t topk_ = 100;
     const std::vector<float> EXPECTED_RECALLs_ = {0.8, 0.95};
-    const std::vector<int32_t> THREAD_NUMs_ = {1, 2, 4, 8, 16, 32};
+    const std::vector<int32_t> THREAD_NUMs_ = {1, 2, 4, 8};
 
     // IVF index params
     const std::vector<int32_t> NLISTs_ = {1024};
