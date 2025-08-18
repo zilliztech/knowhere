@@ -637,7 +637,7 @@ int AisaqPQReader_aio::read_pq_vectors_wait_completion(AisaqPQReaderContext &ctx
                       << ", ernno=" << errno << "=" << ::strerror(-ret);
             return -1;
         }
-        for (uint32_t i = 0; i < ret; i++) {
+        for (uint32_t i = 0; i < (uint32_t)ret; i++) {
             io_data = (struct AisaqPQReaderContext_aio::io_data *) (evts[i].data);
             do {
                 if (rcount < max_events) {
@@ -755,6 +755,7 @@ static bool __get_device_logical_block_size(int major, int minor, uint32_t &bloc
 int AisaqPQReader::init_reader_common(const char *pq_file_path, bool rearranged)
 {
     struct stat file_stat;
+    size_t fileSize;
     if (stat(pq_file_path, &file_stat) != 0) {
         LOG_KNOWHERE_ERROR_ << "failed to stat PQ vectors file";
     	return -1;
@@ -788,7 +789,8 @@ int AisaqPQReader::init_reader_common(const char *pq_file_path, bool rearranged)
 	close(fd);
 
     /* init m_rearranged_pq_vectors_per_page, m_rearranged_pq_sectors_per_page, m_max_io_size_sectors */
-    uint64_t expected_file_size;
+    fileSize = file_stat.st_size;
+    size_t expected_file_size;
     if (rearranged) {
     	m_rearranged_pq_vectors_per_page = m_rearranged_pq_page_size / m_pq_vector_size;
         m_rearranged_pq_sectors_per_page = m_rearranged_pq_page_size / SECTOR_SIZE;
@@ -808,7 +810,7 @@ int AisaqPQReader::init_reader_common(const char *pq_file_path, bool rearranged)
         expected_file_size = (sizeof(uint32_t) * 2) + ((uint64_t) m_num_vectors * m_pq_vector_size);
     }
 	/* validate file size */
-    if (file_stat.st_size != expected_file_size) {
+    if (fileSize != expected_file_size) {
         LOG_KNOWHERE_ERROR_ << "pq vectors file " << pq_file_path << " does not match meta data";
         return -1;
     }

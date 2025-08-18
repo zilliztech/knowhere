@@ -175,6 +175,13 @@ constexpr const char* BUILD_DRAM_BUDGET_GB = "build_dram_budget_gb";
 constexpr const char* BEAMWIDTH = "beamwidth";
 constexpr const char* SEARCH_CACHE_BUDGET_GB = "search_cache_budget_gb";
 constexpr const char* SEARCH_LIST_SIZE = "search_list_size";
+constexpr const char* DISK_PQ_DIMS = "disk_pq_dims";
+
+// AISAQ Params
+constexpr const char* REARRANGE = "rearrange";
+constexpr const char* NUM_ENTRY_POINTS = "num_entry_points";
+constexpr const char* INLINE_PQ = "inline_pq";
+constexpr const char* PQ_CACHE_SIZE = "pq_cache_size";
 
 // FAISS additional Params
 constexpr const char* HNSW_REFINE = "refine";
