@@ -28,18 +28,26 @@ jobs:
       - name: Install Dependency
         run: |
           ./scripts/install_deps.sh
+      - name: Restore Cache
+        uses: ./.github/actions/restore-cache
+        with:
+          os: ubuntu-22.04
       - name: Build
         env:
           ARTIFACT_NAME: ${{ env.RELEASE_NAME }}-${{ matrix.os }}
         run: |
           mkdir build && cd build \
-          && conan install .. --build=missing -s build_type=Release -o with_diskann=True \
+          && conan install .. --build=missing -s build_type=Release -o with_diskann=True -s compiler.libcxx=libstdc++11 \
           && conan build .. \
           && cd ..
           mkdir -p artifacts/${{ env.ARTIFACT_NAME }}/lib
           mv build/Release/*.a artifacts/${{ env.ARTIFACT_NAME }}/lib
           mv build/Release/*.so artifacts/${{ env.ARTIFACT_NAME }}/lib
           cd artifacts && tar -zcvf ${{ env.ARTIFACT_NAME }}.tar.gz ${{ env.ARTIFACT_NAME }}/
+      - name: Save Cache
+        uses: ./.github/actions/save-cache
+        with:
+          os: ubuntu-22.04
       - name: Upload Artifact
         uses: actions/upload-artifact@v2
         with:

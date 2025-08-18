@@ -38,40 +38,19 @@ jobs:
           && sudo apt install -y cmake g++ gcc libopenblas-openmp-dev libcurl4-openssl-dev libaio-dev libevent-dev python3 python3-pip lcov \
           && pip3 install conan==1.61.0 \
           && conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local
-      - name: Download Conan Artifact
-        uses: actions/download-artifact@v4
+      - name: Restore Cache
+        uses: ./.github/actions/restore-cache
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          # this run-id is got from a successful "Upload Conan Artifact" workflow run on 2024/12/18,
-          # it will be valid till 2025/03/18
-          run-id: 12389729999
-          name: conan-asan
-          path: downloaded
-        continue-on-error: true
-      - name: Unpack Conan Data
-        run: |
-          if [ -f downloaded/conan.tar.gz ]; then
-            echo "download conan.tar.gz successfully"
-            cd downloaded \
-            && tar xfz conan.tar.gz \
-            && rm -rf conan.tar.gz /home/runner/.conan \
-            && mv ./.conan /home/runner/.conan
-          else
-            echo "download conan.tar.gz fail"
-          fi
+          os: ubuntu-22.04
       - name: Build
         run: |
           mkdir build && cd build \
-          && conan install .. --build=missing -s build_type=Release -o with_ut=True -o with_diskann=True -o with_asan=True -o with_coverage=True \
+          && conan install .. --build=missing -s build_type=Release -o with_ut=True -o with_diskann=True -o with_asan=True -o with_coverage=True -s compiler.libcxx=libstdc++11 \
           && conan build ..
-#      - name: Pack Conan Data
-#        run: |
-#          cd /home/runner && tar cfz conan.tar.gz .conan/
-#      - name: Upload Conan Artifact
-#        uses: actions/upload-artifact@v4
-#        with:
-#          name: conan-asan
-#          path: /home/runner/conan.tar.gz
+      - name: Save Cache
+        uses: ./.github/actions/save-cache
+        with:
+          os: ubuntu-22.04
       - name: Run
         run: |
           ./scripts/run_codecov.sh
