@@ -1087,7 +1087,7 @@ template std::vector<bool> read_node_nbrs_from_vamana<uint8_t, uint32_t>(void *,
                             std::vector<std::pair<uint32_t, uint32_t *>> &);
 
 template <typename T>
-void aisaq_calc_inline_layout(int inline_pq, uint32_t pq_compressed_nbytes, uint32_t max_degree, bool rearrange,
+void aisaq_calc_inline_layout(int inline_pq, uint32_t pq_compressed_nbytes, uint32_t max_degree, bool &rearrange,
                               uint32_t &inline_pq_vectors, uint64_t &max_node_len)
 {
     if (inline_pq >= 0) {

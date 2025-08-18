@@ -260,7 +260,7 @@ std::vector<bool> PQFlashAisaqIndex<T>::read_nodes(
     std::vector<uint8_t *> *aisaq_buffers) {
     std::vector<AlignedRead> read_reqs;
     std::vector<bool> retval(node_ids.size(), true);
-    uint32_t aisaq_data_size;
+    uint32_t aisaq_data_size=0;
 
     if (aisaq_buffers != nullptr) {
         aisaq_data_size =
@@ -1272,7 +1272,7 @@ void PQFlashAisaqIndex<T>::get_entry_point_medoid(uint32_t &best_medoid, float &
             offset += count;
         }
     }else {
-        uint32_t best_medoid_index;
+        uint32_t best_medoid_index=0;
         for (uint64_t cur_m = 0; cur_m < this->num_medoids; cur_m++) {
             float cur_expanded_dist = this->dist_cmp_float_wrap(
                 query_float, this->centroid_data + this->aligned_dim * cur_m,
@@ -1428,9 +1428,13 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
     uint32_t bv = diskann::defaults::DEFAULT_AISAQ_VECTORS_BEAMWIDTH;
     uint64_t pq_read_page_cache_size = 0;
     if (aisaq_search_config != nullptr) {
-        bv = aisaq_search_config->vector_beamwidth;
+   		bv = aisaq_search_config->vector_beamwidth;
         pq_read_page_cache_size = aisaq_search_config->pq_read_page_cache_size;
     }
+    //in aisaq p vectors beamwidth must equal beamwith
+	if(_aisaq_inline_pq_vectors == this->max_degree) {
+		bv = beam_width;
+	}
     // query <-> neighbor list
     float *dist_scratch = query_scratch->aligned_dist_scratch;
     uint8_t *pq_coord_scratch = query_scratch->aligned_pq_coord_scratch;
@@ -1655,7 +1659,7 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
              * index - full or disk_pq) */
             /* Insert node to full_retset */
             id = np[i].id;
-            uint32_t rid;
+            uint32_t rid=0;
             if (np[i].is_in_cache) {
                 std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
                 auto global_cache_iter = this->coord_cache.find(id);
