@@ -29,7 +29,7 @@ jobs:
         run: |
           ./scripts/install_deps.sh
       - name: Restore Cache
-        uses: ./.github/actions/restore-cache
+        uses: ./.github/actions/cache-restore
         with:
           os: ubuntu-22.04
       - name: Build
@@ -45,7 +45,7 @@ jobs:
           mv build/Release/*.so artifacts/${{ env.ARTIFACT_NAME }}/lib
           cd artifacts && tar -zcvf ${{ env.ARTIFACT_NAME }}.tar.gz ${{ env.ARTIFACT_NAME }}/
       - name: Save Cache
-        uses: ./.github/actions/save-cache
+        uses: ./.github/actions/cache-save
         with:
           os: ubuntu-22.04
       - name: Upload Artifact
