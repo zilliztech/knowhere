@@ -24,7 +24,7 @@ jobs:
       - name: Install Dependency
         run: |
           sudo apt update && sudo apt install -y cmake g++ gcc libopenblas-openmp-dev libaio-dev libcurl4-openssl-dev libevent-dev clang-tidy-14 python3-pip libomp-dev && \
-          pip3 install conan==1.61.0 && conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local
+          pip3 install conan==1.61.0 && (conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local || true)
       - name: Build & Analyzer
         run: |
           mkdir build && cd build && conan install .. --build=missing -o with_ut=True -o with_diskann=True -s compiler.libcxx=libstdc++11 && conan build .. \
