@@ -129,7 +129,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         auto use_mmap = GENERATE(true, false);
         auto tmp_file = "/tmp/knowhere_sparse_inverted_index_test";
         {
-            auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+            auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
             auto cfg_json = gen().dump();
             CAPTURE(name, cfg_json);
             knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -138,7 +138,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
             REQUIRE(idx.Size() > 0);
             REQUIRE(idx.Count() == nb);
             REQUIRE(idx.HasRawData(metric) ==
-                    knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
+                    knowhere::IndexStaticFaced<knowhere::sparse_u32_f32>::HasRawData(name, version, json));
 
             knowhere::BinarySet bs;
             REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
@@ -173,7 +173,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -211,7 +211,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
         }));
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -256,7 +256,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
         }));
 
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -367,7 +367,7 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
     std::vector<std::map<int32_t, float>> query_data = {{{1, 1.1f}}, {{5, 1.1f}}, {}};
     const auto query_ds = GenSparseDataSet(query_data, dim);
 
-    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
     auto cfg_json = gen().dump();
     CAPTURE(name, cfg_json);
     knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -522,7 +522,7 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
         make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND_CC, sparse_inverted_index_gen),
     }));
 
-    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
     auto cfg_json = gen().dump();
     CAPTURE(name, cfg_json);
     knowhere::Json json = knowhere::Json::parse(cfg_json);
@@ -564,7 +564,8 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
 
     SECTION("Test GetVectorByIds") {
         std::vector<int64_t> ids = {0, 1, 2};
-        REQUIRE(idx.HasRawData(metric) == knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
+        REQUIRE(idx.HasRawData(metric) ==
+                knowhere::IndexStaticFaced<knowhere::sparse_u32_f32>::HasRawData(name, version, json));
         auto results = idx.GetVectorByIds(GenIdsDataSet(3, ids));
         REQUIRE(results.has_value());
         auto xb = (knowhere::sparse::SparseRow<float>*)train_ds->GetTensor();

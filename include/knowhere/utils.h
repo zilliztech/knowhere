@@ -119,6 +119,8 @@ GetKey(const std::string& name) {
         return name + std::string("_bin1");
     } else if (std::is_same_v<DataType, int8>) {
         return name + std::string("_int8");
+    } else if (std::is_same_v<DataType, sparse_u32_f32>) {
+        return name + std::string("_sparse_u32_f32");
     }
 }
 

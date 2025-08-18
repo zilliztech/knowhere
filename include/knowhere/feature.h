@@ -27,8 +27,8 @@ constexpr uint64_t FLOAT32 = 1UL << 1;
 constexpr uint64_t FP16 = 1UL << 2;
 // vector datatype support : bf16
 constexpr uint64_t BF16 = 1UL << 3;
-// vector datatype support : sparse_float32
-constexpr uint64_t SPARSE_FLOAT32 = 1UL << 4;
+// vector datatype support : sparse_u32_f32
+constexpr uint64_t SPARSE_U32_F32 = 1UL << 4;
 // vector datatype support : int8
 constexpr uint64_t INT8 = 1UL << 5;
 
@@ -51,7 +51,7 @@ constexpr uint64_t DISK = 1UL << 21;
 
 constexpr uint64_t NONE = 0UL;
 
-constexpr uint64_t ALL_TYPE = BINARY | FLOAT32 | FP16 | BF16 | SPARSE_FLOAT32 | INT8;
+constexpr uint64_t ALL_TYPE = BINARY | FLOAT32 | FP16 | BF16 | SPARSE_U32_F32 | INT8;
 constexpr uint64_t ALL_DENSE_TYPE = BINARY | FLOAT32 | FP16 | BF16 | INT8;
 constexpr uint64_t ALL_DENSE_FLOAT_TYPE = FLOAT32 | FP16 | BF16;
 

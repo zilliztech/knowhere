@@ -24,6 +24,7 @@
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/index_node.h"
 #include "knowhere/log.h"
+#include "knowhere/operands.h"
 #include "knowhere/sparse_utils.h"
 #include "knowhere/thread_pool.h"
 #include "knowhere/utils.h"
@@ -37,7 +38,8 @@ namespace knowhere {
 // Thread safety: not thread safe.
 template <typename T, bool use_wand>
 class SparseInvertedIndexNode : public IndexNode {
-    static_assert(std::is_same_v<T, fp32>, "SparseInvertedIndexNode only support float");
+    static_assert(std::is_same_v<T, knowhere::sparse_u32_f32>, "SparseInvertedIndexNode only support sparse_u32_f32");
+    using value_type = typename T::ValueType;
 
  public:
     explicit SparseInvertedIndexNode(const int32_t& version, const Object& /*object*/)
@@ -63,7 +65,7 @@ class SparseInvertedIndexNode : public IndexNode {
             return index_or.error();
         }
         auto index = index_or.value();
-        index->Train(static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor()), dataset->GetRows());
+        index->Train(static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor()), dataset->GetRows());
         if (index_ != nullptr) {
             LOG_KNOWHERE_WARNING_ << Type() << " has already been created, deleting old";
             DeleteExistingIndex();
@@ -79,12 +81,13 @@ class SparseInvertedIndexNode : public IndexNode {
             return Status::empty_index;
         }
         auto build_pool_wrapper = std::make_shared<ThreadPoolWrapper>(build_pool_, use_knowhere_build_pool);
-        auto tryObj = build_pool_wrapper
-                          ->push([&] {
-                              return index_->Add(static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor()),
-                                                 dataset->GetRows(), dataset->GetDim());
-                          })
-                          .getTry();
+        auto tryObj =
+            build_pool_wrapper
+                ->push([&] {
+                    return index_->Add(static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor()),
+                                       dataset->GetRows(), dataset->GetDim());
+                })
+                .getTry();
         if (!tryObj.hasValue()) {
             LOG_KNOWHERE_WARNING_ << "failed to add data to index " << Type() << ": " << tryObj.exception().what();
             return Status::sparse_inner_error;
@@ -120,7 +123,7 @@ class SparseInvertedIndexNode : public IndexNode {
             .dim_max_score_ratio = dim_max_score_ratio,
         };
 
-        auto queries = static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor());
+        auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
         auto nq = dataset->GetRows();
         auto k = cfg.k.value();
         auto p_id = std::make_unique<sparse::label_t[]>(nq * k);
@@ -140,7 +143,7 @@ class SparseInvertedIndexNode : public IndexNode {
  private:
     class RefineIterator : public IndexIterator {
      public:
-        RefineIterator(const sparse::BaseInvertedIndex<T>* index, sparse::SparseRow<T>&& query,
+        RefineIterator(const sparse::BaseInvertedIndex<value_type>* index, sparse::SparseRow<value_type>&& query,
                        std::shared_ptr<PrecomputedDistanceIterator> precomputed_it,
                        const sparse::DocValueComputer<float>& computer, bool use_knowhere_search_pool = true,
                        const float refine_ratio = 0.5f)
@@ -171,8 +174,8 @@ class SparseInvertedIndexNode : public IndexNode {
         }
 
      private:
-        const sparse::BaseInvertedIndex<T>* index_;
-        sparse::SparseRow<T> query_;
+        const sparse::BaseInvertedIndex<value_type>* index_;
+        sparse::SparseRow<value_type> query_;
         const sparse::DocValueComputer<float> computer_;
         std::shared_ptr<PrecomputedDistanceIterator> precomputed_it_;
         bool first_return_ = true;
@@ -189,7 +192,7 @@ class SparseInvertedIndexNode : public IndexNode {
                                                                                     "index not loaded");
         }
         auto nq = dataset->GetRows();
-        auto queries = static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor());
+        auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
 
         auto cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
         auto computer_or = index_->GetDocValueComputer(cfg);
@@ -209,7 +212,7 @@ class SparseInvertedIndexNode : public IndexNode {
                 // Heavy computations with `compute_dist_func` will be deferred until the first call to
                 // 'Iterator->Next()'.
                 auto compute_dist_func = [=]() -> std::vector<DistId> {
-                    auto queries = static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor());
+                    auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
                     std::vector<float> distances =
                         index_->GetAllDistances(queries[i], drop_ratio_search, bitset, computer);
                     std::vector<DistId> distances_ids;
@@ -229,7 +232,7 @@ class SparseInvertedIndexNode : public IndexNode {
                                                                             use_knowhere_search_pool);
                     vec[i] = it;
                 } else {
-                    sparse::SparseRow<T> query_copy(queries[i]);
+                    sparse::SparseRow<value_type> query_copy(queries[i]);
                     auto it = std::make_shared<PrecomputedDistanceIterator>(compute_dist_func, true, false);
                     vec[i] = std::make_shared<RefineIterator>(index_, std::move(query_copy), it, computer,
                                                               use_knowhere_search_pool);
@@ -376,11 +379,11 @@ class SparseInvertedIndexNode : public IndexNode {
 
  private:
     template <bool mmapped>
-    expected<sparse::BaseInvertedIndex<T>*>
+    expected<sparse::BaseInvertedIndex<value_type>*>
     CreateIndex(const SparseInvertedIndexConfig& cfg) const {
         if (IsMetricType(cfg.metric_type.value(), metric::BM25)) {
             if (!cfg.bm25_k1.has_value() || !cfg.bm25_b.has_value() || !cfg.bm25_avgdl.has_value()) {
-                return expected<sparse::BaseInvertedIndex<T>*>::Err(
+                return expected<sparse::BaseInvertedIndex<value_type>*>::Err(
                     Status::invalid_args, "BM25 parameters k1, b, and avgdl must be set when building/loading");
             }
             auto k1 = cfg.bm25_k1.value();
@@ -391,40 +394,46 @@ class SparseInvertedIndexNode : public IndexNode {
             avgdl = std::max(avgdl, 1.0f);
 
             if (use_wand || cfg.inverted_index_algo.value() == "DAAT_WAND") {
-                auto index = new sparse::InvertedIndex<T, uint16_t, sparse::InvertedIndexAlgo::DAAT_WAND, mmapped>(
-                    sparse::SparseMetricType::METRIC_BM25);
+                auto index =
+                    new sparse::InvertedIndex<value_type, uint16_t, sparse::InvertedIndexAlgo::DAAT_WAND, mmapped>(
+                        sparse::SparseMetricType::METRIC_BM25);
                 index->SetBM25Params(k1, b, avgdl);
                 return index;
             } else if (cfg.inverted_index_algo.value() == "DAAT_MAXSCORE") {
-                auto index = new sparse::InvertedIndex<T, uint16_t, sparse::InvertedIndexAlgo::DAAT_MAXSCORE, mmapped>(
-                    sparse::SparseMetricType::METRIC_BM25);
+                auto index =
+                    new sparse::InvertedIndex<value_type, uint16_t, sparse::InvertedIndexAlgo::DAAT_MAXSCORE, mmapped>(
+                        sparse::SparseMetricType::METRIC_BM25);
                 index->SetBM25Params(k1, b, avgdl);
                 return index;
             } else if (cfg.inverted_index_algo.value() == "TAAT_NAIVE") {
-                auto index = new sparse::InvertedIndex<T, uint16_t, sparse::InvertedIndexAlgo::TAAT_NAIVE, mmapped>(
-                    sparse::SparseMetricType::METRIC_BM25);
+                auto index =
+                    new sparse::InvertedIndex<value_type, uint16_t, sparse::InvertedIndexAlgo::TAAT_NAIVE, mmapped>(
+                        sparse::SparseMetricType::METRIC_BM25);
                 index->SetBM25Params(k1, b, avgdl);
                 return index;
             } else {
-                return expected<sparse::BaseInvertedIndex<T>*>::Err(Status::invalid_args,
-                                                                    "Invalid search algorithm for SparseInvertedIndex");
+                return expected<sparse::BaseInvertedIndex<value_type>*>::Err(
+                    Status::invalid_args, "Invalid search algorithm for SparseInvertedIndex");
             }
         } else {
             if (use_wand || cfg.inverted_index_algo.value() == "DAAT_WAND") {
-                auto index = new sparse::InvertedIndex<T, T, sparse::InvertedIndexAlgo::DAAT_WAND, mmapped>(
-                    sparse::SparseMetricType::METRIC_IP);
+                auto index =
+                    new sparse::InvertedIndex<value_type, float, sparse::InvertedIndexAlgo::DAAT_WAND, mmapped>(
+                        sparse::SparseMetricType::METRIC_IP);
                 return index;
             } else if (cfg.inverted_index_algo.value() == "DAAT_MAXSCORE") {
-                auto index = new sparse::InvertedIndex<T, T, sparse::InvertedIndexAlgo::DAAT_MAXSCORE, mmapped>(
-                    sparse::SparseMetricType::METRIC_IP);
+                auto index =
+                    new sparse::InvertedIndex<value_type, float, sparse::InvertedIndexAlgo::DAAT_MAXSCORE, mmapped>(
+                        sparse::SparseMetricType::METRIC_IP);
                 return index;
             } else if (cfg.inverted_index_algo.value() == "TAAT_NAIVE") {
-                auto index = new sparse::InvertedIndex<T, T, sparse::InvertedIndexAlgo::TAAT_NAIVE, mmapped>(
-                    sparse::SparseMetricType::METRIC_IP);
+                auto index =
+                    new sparse::InvertedIndex<value_type, float, sparse::InvertedIndexAlgo::TAAT_NAIVE, mmapped>(
+                        sparse::SparseMetricType::METRIC_IP);
                 return index;
             } else {
-                return expected<sparse::BaseInvertedIndex<T>*>::Err(Status::invalid_args,
-                                                                    "Invalid search algorithm for SparseInvertedIndex");
+                return expected<sparse::BaseInvertedIndex<value_type>*>::Err(
+                    Status::invalid_args, "Invalid search algorithm for SparseInvertedIndex");
             }
         }
     }
@@ -457,7 +466,7 @@ class SparseInvertedIndexNode : public IndexNode {
         }
     };
 
-    sparse::BaseInvertedIndex<T>* index_{};
+    sparse::BaseInvertedIndex<value_type>* index_{};
     std::shared_ptr<ThreadPool> search_pool_;
     std::shared_ptr<ThreadPool> build_pool_;
     const int32_t index_version_;
@@ -470,6 +479,9 @@ class SparseInvertedIndexNode : public IndexNode {
 // Thread safety: only the overridden methods are allowed to be called concurrently.
 template <typename T, bool use_wand>
 class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
+    static_assert(std::is_same_v<T, knowhere::sparse_u32_f32>, "SparseInvertedIndexNode only support sparse_u32_f32");
+    using value_type = typename T::ValueType;
+
  public:
     explicit SparseInvertedIndexNodeCC(const int32_t& version, const Object& object)
         : SparseInvertedIndexNode<T, use_wand>(version, object) {
@@ -489,7 +501,7 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
         auto cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
         if (IsMetricType(cfg.metric_type.value(), metric::IP)) {
             // insert dataset to raw data if metric type is IP
-            auto data = static_cast<const sparse::SparseRow<T>*>(dataset->GetTensor());
+            auto data = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
             auto rows = dataset->GetRows();
             raw_data_.insert(raw_data_.end(), data, data + rows);
         }
@@ -560,7 +572,7 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
 
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
-        auto data = std::make_unique<sparse::SparseRow<T>[]>(rows);
+        auto data = std::make_unique<sparse::SparseRow<value_type>[]>(rows);
         int64_t dim = 0;
 
         try {
@@ -630,7 +642,7 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
     mutable std::queue<uint64_t> add_tasks_;
     mutable uint64_t next_task_id_ = 0;
     mutable uint64_t current_task_id_ = 0;
-    mutable std::vector<sparse::SparseRow<T>> raw_data_ = {};
+    mutable std::vector<sparse::SparseRow<value_type>> raw_data_ = {};
 };  // class SparseInvertedIndexNodeCC
 
 #ifdef KNOWHERE_WITH_CARDINAL
