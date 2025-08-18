@@ -44,16 +44,7 @@ jobs:
           mv build/Release/*.a artifacts/${{ env.ARTIFACT_NAME }}/lib
           mv build/Release/*.so artifacts/${{ env.ARTIFACT_NAME }}/lib
           cd artifacts && tar -zcvf ${{ env.ARTIFACT_NAME }}.tar.gz ${{ env.ARTIFACT_NAME }}/
-      - name: Save Cache
-        uses: ./.github/actions/cache-save
-        with:
-          os: ubuntu-22.04
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v2
-        with:
-          name: release build
-          path: artifacts/*.tar.gz
-          if-no-files-found: error
+
   Release:
     needs: Build
     name: Create a Release

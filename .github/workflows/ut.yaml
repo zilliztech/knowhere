@@ -115,41 +115,16 @@ jobs:
           && pip3 install bfloat16 \
           && conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local \
           && pip3 install -U setuptools
-      - name: Download Conan Artifact
-        uses: actions/download-artifact@v4
+      - name: Restore Cache
+        uses: ./.github/actions/cache-restore
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          # this run-id is got from a successful "Upload Conan Artifact" workflow run on 2024/12/18,
-          # it will be valid till 2025/03/18
-          run-id: 12389729999
-          name: conan-wheel
-          path: downloaded
-        continue-on-error: true
-      - name: Unpack Conan Data
-        run: |
-          if [ -f downloaded/conan.tar.gz ]; then
-            echo "download conan.tar.gz successfully"
-            cd downloaded \
-            && tar xfz conan.tar.gz \
-            && rm -rf conan.tar.gz /home/runner/.conan \
-            && mv ./.conan /home/runner/.conan
-          else
-            echo "download conan.tar.gz fail"
-          fi
+          os: ubuntu-22.04
       - name: Build
         run: |
           mkdir build \
           && cd build \
           && conan install .. --build=missing -o with_diskann=True -s compiler.libcxx=libstdc++11 -s build_type=Release \
           && conan build ..
-#      - name: Pack Conan Data
-#        run: |
-#          cd /home/runner && tar cfz conan.tar.gz .conan/
-#      - name: Upload Conan Artifact
-#        uses: actions/upload-artifact@v4
-#        with:
-#          name: conan-wheel
-#          path: /home/runner/conan.tar.gz
       - name: Swig Build
         run: |
           cd python && python3 setup.py bdist_wheel
