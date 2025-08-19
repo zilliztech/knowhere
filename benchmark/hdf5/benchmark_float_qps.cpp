@@ -527,7 +527,7 @@ TEST_F(Benchmark_float_qps, TEST_DISKANN) {
     index_type_ = knowhere::IndexEnum::INDEX_DISKANN;
 
     knowhere::Json conf = cfg_;
-
+    conf[knowhere::meta::DIM] = dim_;
     conf[knowhere::meta::INDEX_PREFIX] = (metric_type_ == knowhere::metric::L2 ? kL2IndexPrefix : kIPIndexPrefix);
     conf[knowhere::meta::DATA_PATH] = kRawDataPath;
     conf[knowhere::indexparam::MAX_DEGREE] = 56;
@@ -557,6 +557,82 @@ TEST_F(Benchmark_float_qps, TEST_DISKANN) {
 
     test_diskann<knowhere::fp32>(conf);
 }
+
+TEST_F(Benchmark_float_qps, TEST_AISAQ_P) {
+    index_type_ = knowhere::IndexEnum::INDEX_AISAQ;
+
+    knowhere::Json conf = cfg_;
+    conf[knowhere::meta::DIM] = dim_;
+    conf[knowhere::meta::INDEX_PREFIX] = (metric_type_ == knowhere::metric::L2 ? kL2IndexPrefix : kIPIndexPrefix);
+    conf[knowhere::meta::DATA_PATH] = kRawDataPath;
+    conf[knowhere::indexparam::MAX_DEGREE] = 56;
+    conf[knowhere::indexparam::INLINE_PQ] = 56;
+    conf[knowhere::indexparam::PQ_CODE_BUDGET_GB] = sizeof(float) * dim_ * nb_ * 0.125 / (1024 * 1024 * 1024);
+    conf[knowhere::indexparam::BUILD_DRAM_BUDGET_GB] = 32.0;
+    conf[knowhere::indexparam::SEARCH_CACHE_BUDGET_GB] = 0;
+    conf[knowhere::indexparam::BEAMWIDTH] = 8;
+    fs::remove_all(kDir);
+    fs::remove(kDir);
+
+    fs::create_directory(kDir);
+    fs::create_directory(kL2IndexDir);
+    fs::create_directory(kIPIndexDir);
+
+    WriteRawDataToDisk(kRawDataPath, (const float*)xb_, (const uint32_t)nb_, (const uint32_t)dim_);
+
+    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+    auto diskann_index_pack = knowhere::Pack(file_manager);
+
+    index_ = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
+        index_type_, knowhere::Version::GetCurrentVersion().VersionNumber(), diskann_index_pack);
+    printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
+    knowhere::DataSetPtr ds_ptr = nullptr;
+    index_.value().Build(ds_ptr, conf);
+
+    knowhere::BinarySet binset;
+    index_.value().Serialize(binset);
+    index_.value().Deserialize(binset, conf);
+
+    test_diskann<knowhere::fp32>(conf);
+}
+
+TEST_F(Benchmark_float_qps, TEST_AISAQ_S) {
+    index_type_ = knowhere::IndexEnum::INDEX_AISAQ;
+
+    knowhere::Json conf = cfg_;
+    conf[knowhere::meta::DIM] = dim_;
+    conf[knowhere::meta::INDEX_PREFIX] = (metric_type_ == knowhere::metric::L2 ? kL2IndexPrefix : kIPIndexPrefix);
+    conf[knowhere::meta::DATA_PATH] = kRawDataPath;
+    conf[knowhere::indexparam::MAX_DEGREE] = 56;
+    conf[knowhere::indexparam::INLINE_PQ] = -1;
+    conf[knowhere::indexparam::PQ_CODE_BUDGET_GB] = sizeof(float) * dim_ * nb_ * 0.125 / (1024 * 1024 * 1024);
+    conf[knowhere::indexparam::BUILD_DRAM_BUDGET_GB] = 32.0;
+    conf[knowhere::indexparam::BEAMWIDTH] = 8;
+
+    fs::remove_all(kDir);
+    fs::remove(kDir);
+    fs::create_directory(kDir);
+    fs::create_directory(kL2IndexDir);
+    fs::create_directory(kIPIndexDir);
+
+    WriteRawDataToDisk(kRawDataPath, (const float*)xb_, (const uint32_t)nb_, (const uint32_t)dim_);
+
+    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+    auto diskann_index_pack = knowhere::Pack(file_manager);
+
+    index_ = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
+        index_type_, knowhere::Version::GetCurrentVersion().VersionNumber(), diskann_index_pack);
+    printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
+    knowhere::DataSetPtr ds_ptr = nullptr;
+    index_.value().Build(ds_ptr, conf);
+
+    knowhere::BinarySet binset;
+    index_.value().Serialize(binset);
+    index_.value().Deserialize(binset, conf);
+
+    test_diskann<knowhere::fp32>(conf);
+}
+
 #endif
 
 #ifdef KNOWHERE_WITH_CUVS
