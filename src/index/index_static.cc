@@ -153,5 +153,6 @@ template class IndexStaticFaced<knowhere::fp16>;
 template class IndexStaticFaced<knowhere::bf16>;
 template class IndexStaticFaced<knowhere::bin1>;
 template class IndexStaticFaced<knowhere::int8>;
+template class IndexStaticFaced<knowhere::sparse_u32_f32>;
 
 }  // namespace knowhere

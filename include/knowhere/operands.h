@@ -146,6 +146,11 @@ struct bf16 {
     }
 };
 
+struct sparse_u32_f32 {
+    using IdxType = uint32_t;
+    using ValueType = float;
+};
+
 template <typename T>
 bool
 typeCheck(uint64_t features) {
@@ -158,9 +163,11 @@ typeCheck(uint64_t features) {
     if constexpr (std::is_same_v<T, bf16>) {
         return features & knowhere::feature::BF16;
     }
-    // TODO : add sparse_fp32 data type
     if constexpr (std::is_same_v<T, fp32>) {
-        return (features & knowhere::feature::FLOAT32) || (features & knowhere::feature::SPARSE_FLOAT32);
+        return features & knowhere::feature::FLOAT32;
+    }
+    if constexpr (std::is_same_v<T, sparse_u32_f32>) {
+        return features & knowhere::feature::SPARSE_U32_F32;
     }
     if constexpr (std::is_same_v<T, int8>) {
         return features & knowhere::feature::INT8;
@@ -171,9 +178,9 @@ typeCheck(uint64_t features) {
 template <typename InType, typename... Types>
 using TypeMatch = std::bool_constant<(... | std::is_same_v<InType, Types>)>;
 template <typename InType>
-using KnowhereDataTypeCheck = TypeMatch<InType, bin1, fp32, fp16, bf16, int8>;
+using KnowhereDataTypeCheck = TypeMatch<InType, bin1, fp32, sparse_u32_f32, fp16, bf16, int8>;
 template <typename InType>
-using KnowhereFloatTypeCheck = TypeMatch<InType, fp32, fp16, bf16>;
+using KnowhereFloatTypeCheck = TypeMatch<InType, fp32, sparse_u32_f32, fp16, bf16>;
 template <typename InType>
 using KnowhereLowPrecisionTypeCheck = TypeMatch<InType, fp16, bf16, int8>;
 template <typename InType>
@@ -200,7 +207,7 @@ struct MockData<knowhere::int8> {
 };
 
 //
-enum class DataFormatEnum { fp32, fp16, bf16, int8, bin1 };
+enum class DataFormatEnum { fp32, fp16, bf16, int8, bin1, sparse_u32_f32 };
 
 template <typename T>
 struct DataType2EnumHelper {};
@@ -224,6 +231,10 @@ struct DataType2EnumHelper<knowhere::int8> {
 template <>
 struct DataType2EnumHelper<knowhere::bin1> {
     static constexpr DataFormatEnum value = DataFormatEnum::bin1;
+};
+template <>
+struct DataType2EnumHelper<knowhere::sparse_u32_f32> {
+    static constexpr DataFormatEnum value = DataFormatEnum::sparse_u32_f32;
 };
 
 template <typename T>

@@ -52,7 +52,7 @@ checkBuildConfig(knowhere::IndexType indexType, knowhere::Json& json) {
               knowhere::Status::success);
         CHECK(msg.empty());
     }
-    if (knowhere::IndexFactory::Instance().FeatureCheck(indexType, knowhere::feature::SPARSE_FLOAT32)) {
+    if (knowhere::IndexFactory::Instance().FeatureCheck(indexType, knowhere::feature::SPARSE_U32_F32)) {
         CHECK(knowhere::IndexStaticFaced<float>::ConfigCheck(indexType,
                                                              knowhere::Version::GetCurrentVersion().VersionNumber(),
                                                              json, msg) == knowhere::Status::success);

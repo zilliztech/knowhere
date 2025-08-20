@@ -45,7 +45,6 @@ jobs:
       - name: Build
         run: |
           mkdir build && cd build \
-          && ls -al ~/.conan/data \
           && conan install .. --build=missing -s build_type=Release -o with_ut=True -o with_diskann=True -o with_asan=True -o with_coverage=True -s compiler.libcxx=libstdc++11 \
           && conan build ..
       - name: Save Cache
@@ -124,7 +123,6 @@ jobs:
         run: |
           mkdir build \
           && cd build \
-          && ls -al ~/.conan/data \
           && conan install .. --build=missing -o with_diskann=True -s compiler.libcxx=libstdc++11 -s build_type=Release \
           && conan build ..
       - name: Swig Build
