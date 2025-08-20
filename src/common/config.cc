@@ -90,14 +90,11 @@ Config::FormatAndCheck(const Config& cfg, Json& json, std::string* const err_msg
                     auto key_str = it.first;
                     auto value_str = json[key_str].get<std::string>();
                     try {
-                        // use stod to be able to parse numbers like 5.8e+06 etc
-                        double d = std::stod(value_str, &sz);
-                        double intd = trunc(d);
-                        if (sz < value_str.length() || d != intd) {
+                        int64_t v = std::stoll(value_str, &sz);
+                        if (sz < value_str.length()) {
                             KNOWHERE_THROW_MSG("wrong data type in json, key: '" + key_str + "', value: '" + value_str +
                                                "'");
                         }
-                        int64_t v = static_cast<int64_t>(d);
                         if (v < std::numeric_limits<CFG_INT::value_type>::min() ||
                             v > std::numeric_limits<CFG_INT::value_type>::max()) {
                             std::string msg =
