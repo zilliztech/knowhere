@@ -168,13 +168,13 @@ KnowhereConfig::GetSearchThreadPoolSize() {
 }
 
 size_t
-KnowhereConfig::SetFetchThreadPoolSize(size_t num_threads) {
-    knowhere::ThreadPool::SetGlobalFetchThreadPoolSize(num_threads);
+KnowhereConfig::SetFetchObjectThreadPoolSize(size_t num_threads) {
+    knowhere::ThreadPool::SetGlobalFetchObjectThreadPoolSize(num_threads);
 }
 
 size_t
-KnowhereConfig::GetFetchThreadPoolSize() {
-    return knowhere::ThreadPool::GetGlobalFetchThreadPoolSize();
+KnowhereConfig::GetFetchObjectThreadPoolSize() {
+    return knowhere::ThreadPool::GetGlobalFetchObjectThreadPoolSize();
 }
 
 void
