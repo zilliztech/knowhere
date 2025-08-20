@@ -11,6 +11,7 @@
 
 #include "knowhere/comp/knowhere_config.h"
 
+#include <cstddef>
 #include <string>
 
 #ifdef KNOWHERE_WITH_DISKANN
@@ -164,6 +165,16 @@ KnowhereConfig::SetSearchThreadPoolSize(size_t num_threads) {
 size_t
 KnowhereConfig::GetSearchThreadPoolSize() {
     return knowhere::ThreadPool::GetGlobalSearchThreadPoolSize();
+}
+
+size_t
+KnowhereConfig::SetFetchThreadPoolSize(size_t num_threads) {
+    knowhere::ThreadPool::SetGlobalFetchThreadPoolSize(num_threads);
+}
+
+size_t
+KnowhereConfig::GetFetchThreadPoolSize() {
+    return knowhere::ThreadPool::GetGlobalFetchThreadPoolSize();
 }
 
 void
