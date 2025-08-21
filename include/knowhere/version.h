@@ -21,7 +21,7 @@ namespace knowhere {
 namespace {
 static constexpr int32_t default_version = 0;
 static constexpr int32_t minimal_version = 0;
-static constexpr int32_t current_version = 8;
+static constexpr int32_t current_version = 9;
 static constexpr int32_t maximum_version = 9;
 }  // namespace
 
