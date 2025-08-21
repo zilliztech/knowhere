@@ -9,9 +9,13 @@ inputs:
 runs:
   using: 'composite'
   steps:
+    - name: Cache CCache Volumes
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.ccache
+        key: knowhere-${{ inputs.os }}-${{ github.job }}-ccache-${{ hashFiles( '**/*.cpp', '**/*.cc', '**/*.c', '**/*.h', '**/*.hpp', '**/CMakeLists.txt') }}
     - name: Cache Conan Packages
-      uses: actions/cache@v4
+      uses: actions/cache/save@v4
       with:
         path: ~/.conan
-        key: knowhere-${{ inputs.os }}-${{ hashFiles('conanfile.py')}}
-        restore-keys: knowhere-${{ inputs.os }}-
+        key: knowhere-${{ inputs.os }}-${{ github.job }}-conan-${{ hashFiles('conanfile.py') }}

@@ -76,6 +76,12 @@ if(WITH_CCACHE)
     # let ccache preserve C++ comments, because some of them may be meaningful
     # to the compiler
     set(ENV{CCACHE_COMMENTS} "1")
+
+    # Set ccache environment variables
+    set(ENV{CCACHE_DIR} "$ENV{HOME}/.ccache")
+    set(ENV{CCACHE_MAXSIZE} "2G")
+    set(ENV{CCACHE_COMPRESS} "1")
+    set(ENV(CCACHE_COMPRESSLEVEL) "5")
   endif()
 endif()
 

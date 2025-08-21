@@ -185,6 +185,11 @@ class KnowhereConan(ConanFile):
         tc.variables["WITH_FAISS_TESTS"] = self.options.with_faiss_tests
         tc.variables["WITH_LIGHT"] = self.options.with_light
         tc.variables["WITH_COMPILE_PRUNE"] = self.options.with_compile_prune
+
+        # Configure ccache
+        tc.variables["CMAKE_CXX_COMPILER_LAUNCHER"] = "ccache"
+        tc.variables["CMAKE_C_COMPILER_LAUNCHER"] = "ccache"
+
         tc.generate()
 
         deps = CMakeDeps(self)
