@@ -174,11 +174,25 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     auto topk = cfg.k.value();
 
     if (is_emb_list) {
-        if (!IsMetricType(metric_str, metric::MAX_SIM) && !IsMetricType(metric_str, metric::ORDERED_MAX_SIM) &&
-            !IsMetricType(metric_str, metric::ORDERED_MAX_SIM_WITH_WINDOW) && !IsMetricType(metric_str, metric::DTW)) {
+        auto el_metric_type_or = get_el_metric_type(metric_str);
+        if (!el_metric_type_or.has_value()) {
             LOG_KNOWHERE_ERROR_ << "metric type not supported for emb_list: " << metric_str;
             return Status::invalid_metric_type;
         }
+        auto el_metric_type = el_metric_type_or.value();
+        auto el_agg_func_or = get_emb_list_agg_func(el_metric_type);
+        if (!el_agg_func_or.has_value()) {
+            LOG_KNOWHERE_ERROR_ << "Invalid emb list aggeration function for metric type: " << el_metric_type;
+            return Status::brute_force_inner_error;
+        }
+        auto el_agg_func = el_agg_func_or.value();
+        auto el_sub_metric_type_or = get_sub_metric_type(el_metric_type);
+        if (!el_sub_metric_type_or.has_value()) {
+            LOG_KNOWHERE_ERROR_ << "Invalid emb list sub metric type for metric type: " << el_metric_type;
+            return Status::brute_force_inner_error;
+        }
+        auto el_sub_metric_type = el_sub_metric_type_or.value();
+        bool is_cosine = IsMetricType(el_sub_metric_type, metric::COSINE);
         auto base_el_offset = EmbListOffset(base_dataset->GetLims(), nb);
         auto query_el_offset = EmbListOffset(query_dataset->GetLims(), nq);
         auto num_base_el = base_el_offset.num_el();
@@ -205,18 +219,31 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                         auto cur_query = (const DataType*)xq + query_el_offset.offset[query_el_idx] * dim;
                         auto cur_base = (const DataType*)xb + base_el_offset.offset[base_el_idx] * dim;
 
-                        if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                            faiss::all_inner_product_distances(cur_query, cur_base, dim, num_query_vectors,
-                                                               num_base_vectors, distances.get(), nullptr);
-                        } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
-                            faiss::all_inner_product_distances_typed(cur_query, cur_base, dim, num_query_vectors,
-                                                                     num_base_vectors, distances.get(), nullptr);
+                        if (is_cosine) {
+                            if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
+                                faiss::all_cosine_distances(cur_query, cur_base, nullptr, dim, num_query_vectors,
+                                                            num_base_vectors, distances.get(), nullptr);
+                            } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
+                                faiss::all_cosine_distances_typed(cur_query, cur_base, nullptr, dim, num_query_vectors,
+                                                                  num_base_vectors, distances.get(), nullptr);
+                            } else {
+                                LOG_KNOWHERE_ERROR_ << "Metric COSINE not supported for current vector type";
+                                return Status::faiss_inner_error;
+                            }
                         } else {
-                            LOG_KNOWHERE_ERROR_ << "Metric IP not supported for current vector type";
-                            return Status::faiss_inner_error;
+                            if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
+                                faiss::all_inner_product_distances(cur_query, cur_base, dim, num_query_vectors,
+                                                                   num_base_vectors, distances.get(), nullptr);
+                            } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
+                                faiss::all_inner_product_distances_typed(cur_query, cur_base, dim, num_query_vectors,
+                                                                         num_base_vectors, distances.get(), nullptr);
+                            } else {
+                                LOG_KNOWHERE_ERROR_ << "Metric IP not supported for current vector type";
+                                return Status::faiss_inner_error;
+                            }
                         }
 
-                        auto score_or = get_sum_max_sim(distances.get(), num_query_vectors, num_base_vectors);
+                        auto score_or = el_agg_func(distances.get(), num_query_vectors, num_base_vectors);
                         if (!score_or.has_value()) {
                             LOG_KNOWHERE_WARNING_ << "get_sum_max_sim failed, num_query_vectors: " << num_query_vectors
                                                   << ", num_base_vectors: " << num_base_vectors;

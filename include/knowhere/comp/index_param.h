@@ -229,10 +229,14 @@ constexpr const char* SUBSTRUCTURE = "SUBSTRUCTURE";
 constexpr const char* SUPERSTRUCTURE = "SUPERSTRUCTURE";
 constexpr const char* BM25 = "BM25";
 // emb list
-constexpr const char* MAX_SIM = "MAX_SIM";
-constexpr const char* ORDERED_MAX_SIM = "ORDERED_MAX_SIM";
-constexpr const char* ORDERED_MAX_SIM_WITH_WINDOW = "ORDERED_MAX_SIM_WITH_WINDOW";
-constexpr const char* DTW = "DTW";
+constexpr const char* MAX_SIM = "MAX_SIM";  // same as MAX_SIM_COSINE
+constexpr const char* MAX_SIM_COSINE = "MAX_SIM_COSINE";
+constexpr const char* MAX_SIM_IP = "MAX_SIM_IP";
+constexpr const char* MAX_SIM_L2 = "MAX_SIM_L2";
+constexpr const char* DTW = "DTW";  // same as DTW_COSINE
+constexpr const char* DTW_COSINE = "DTW_COSINE";
+constexpr const char* DTW_IP = "DTW_IP";
+constexpr const char* DTW_L2 = "DTW_L2";
 }  // namespace metric
 
 enum VecType {
