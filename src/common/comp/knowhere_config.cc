@@ -167,6 +167,16 @@ KnowhereConfig::GetSearchThreadPoolSize() {
 }
 
 void
+KnowhereConfig::SetFetchThreadPoolSize(size_t num_threads) {
+    knowhere::ThreadPool::SetGlobalFetchThreadPoolSize(num_threads);
+}
+
+size_t
+KnowhereConfig::GetFetchThreadPoolSize() {
+    return knowhere::ThreadPool::GetGlobalFetchThreadPoolSize();
+}
+
+void
 KnowhereConfig::InitGPUResource(int64_t gpu_id, int64_t res_num) {
 #ifdef KNOWHERE_WITH_GPU
     LOG_KNOWHERE_INFO_ << "init GPU resource for gpu id " << gpu_id << ", resource num " << res_num;

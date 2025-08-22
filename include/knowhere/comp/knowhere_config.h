@@ -105,6 +105,11 @@ class KnowhereConfig {
     static size_t
     GetSearchThreadPoolSize();
 
+    static void
+    SetFetchThreadPoolSize(size_t num_threads);
+    static size_t
+    GetFetchThreadPoolSize();
+
     /**
      * init GPU Resource
      */
