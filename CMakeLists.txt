@@ -164,13 +164,14 @@ if(WITH_LIGHT)
 endif()
 
 set(KNOWHERE_LINKER_LIBS "")
+set(CARDINAL_LIBS "")
 
 if(WITH_CARDINAL)
   add_definitions(-DKNOWHERE_WITH_CARDINAL)
   add_subdirectory(cmake/libs/cardinal/v1)
-  list(APPEND KNOWHERE_LINKER_LIBS cardinalv1)
+  list(APPEND CARDINAL_LIBS cardinalv1)
   add_subdirectory(cmake/libs/cardinal/v2)
-  list(APPEND KNOWHERE_LINKER_LIBS cardinalv2)
+  list(APPEND CARDINAL_LIBS cardinalv2)
 endif()
 
 if(WITH_DISKANN)
@@ -228,7 +229,13 @@ if(WITH_CUVS)
     CUDA::cusparse
     CUDA::cusolver)
 endif()
+
 target_link_libraries(knowhere PUBLIC ${KNOWHERE_LINKER_LIBS})
+
+if (WITH_CARDINAL)
+  target_link_libraries(knowhere PRIVATE "-Wl,--no-as-needed" ${CARDINAL_LIBS} "-Wl,--as-needed")
+endif()
+
 target_include_directories(knowhere PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 if(WITH_UT)
