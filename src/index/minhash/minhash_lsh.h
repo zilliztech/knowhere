@@ -581,8 +581,8 @@ MinHashLSH::BatchSearch(const char* query, size_t nq, float* distances, idx_t* l
                                               this->mh_vec_elememt_size_, refine_k, topk, res_dis, res_ids);
                 return;
             }));
-            WaitAllSuccess(futures);
         }
+        WaitAllSuccess(futures);
     }
     return Status::success;
 }

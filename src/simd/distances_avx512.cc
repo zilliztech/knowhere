@@ -914,70 +914,120 @@ rabitq_dp_popcnt_avx512(const uint8_t* q, const uint8_t* x, const size_t d, cons
 // minhash
 int
 u64_binary_search_eq_avx512(const uint64_t* arr, const size_t size, const uint64_t key) {
+    if (size == 0) {
+        return -1;
+    }
+    constexpr int CHUNK_SIZE = 8;
     const __m512i vtarget = _mm512_set1_epi64(key);
-    intptr_t low = 0;
-    intptr_t high = static_cast<intptr_t>(size) - 1;
-    intptr_t found_idx = -1;
 
-    while (low <= high) {
-        intptr_t mid = low + (high - low) / 2;
-        mid = mid & ~0x7;
-        if (mid + 7 >= size) {
-            mid = size - 8;
+    if (size <= 32) {
+        for (size_t i = 0; i + CHUNK_SIZE <= size; i += CHUNK_SIZE) {
+            __m512i vdata = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(&arr[i]));
+            __mmask8 eq_mask = _mm512_cmpeq_epu64_mask(vdata, vtarget);
+            if (eq_mask != 0) {
+                return static_cast<int>(i + __builtin_ctz(eq_mask));
+            }
         }
-        __m512i vdata = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(&arr[mid]));
-        __mmask8 eq_mask = _mm512_cmpeq_epu64_mask(vdata, vtarget);
-        __mmask8 gt_mask = _mm512_cmpgt_epu64_mask(vdata, vtarget);
-        if (eq_mask != 0) {
-            const int offset = __builtin_ctz(eq_mask);
-            found_idx = mid + offset;
-            high = found_idx - 1;
-            break;
+
+        for (size_t i = (size / CHUNK_SIZE) * CHUNK_SIZE; i < size; ++i) {
+            if (arr[i] == key) {
+                return static_cast<int>(i);
+            }
         }
-        if (gt_mask != 0) {
-            high = mid - 1;
+        return -1;
+    }
+
+    intptr_t left = 0;
+    intptr_t right = static_cast<intptr_t>(size) - 1;
+
+    while (right - left + 1 >= CHUNK_SIZE * 2) {
+        intptr_t mid = left + (right - left) / 2;
+
+        intptr_t chunk_start = std::max(left, mid - CHUNK_SIZE / 2);
+        chunk_start = (chunk_start / CHUNK_SIZE) * CHUNK_SIZE;
+
+        if (chunk_start + CHUNK_SIZE <= static_cast<intptr_t>(size) && chunk_start + CHUNK_SIZE - 1 <= right) {
+            __m512i vdata = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(&arr[chunk_start]));
+
+            __mmask8 eq_mask = _mm512_cmpeq_epu64_mask(vdata, vtarget);
+            if (eq_mask != 0) {
+                return static_cast<int>(chunk_start + __builtin_ctz(eq_mask));
+            }
+
+            uint64_t chunk_mid_value = arr[chunk_start + CHUNK_SIZE / 2];
+
+            if (chunk_mid_value < key) {
+                left = chunk_start + CHUNK_SIZE;
+            } else {
+                right = chunk_start - 1;
+            }
         } else {
-            low = mid + 8;
+            if (arr[mid] == key) {
+                return static_cast<int>(mid);
+            } else if (arr[mid] < key) {
+                left = mid + 1;
+            } else {
+                right = mid - 1;
+            }
         }
-    }
-    if (found_idx != -1 && arr[found_idx] == key) {
-        return static_cast<int>(found_idx);
     }
 
-    for (intptr_t i = low; i <= high; ++i) {
-        if (arr[i] == key) {
-            return static_cast<int>(i);
-        }
-        if (arr[i] > key) {
-            break;
+    while (left <= right) {
+        intptr_t mid = left + (right - left) / 2;
+        if (arr[mid] == key) {
+            return static_cast<int>(mid);
+        } else if (arr[mid] < key) {
+            left = mid + 1;
+        } else {
+            right = mid - 1;
         }
     }
+
     return -1;
 }
 int
 u64_binary_search_ge_avx512(const uint64_t* data, const size_t size, const uint64_t target) {
-    constexpr int SIMD_WIDTH = 8;
+    if (size == 0) {
+        return -1;
+    }
+
+    constexpr int CHUNK_SIZE = 8;
     const __m512i v_target = _mm512_set1_epi64(target);
     int left = 0;
     int right = static_cast<int>(size) - 1;
     int result = -1;
 
-    while (left + SIMD_WIDTH - 1 <= right) {
+    while (right - left + 1 >= CHUNK_SIZE * 4) {
         int mid = left + (right - left) / 2;
-        mid = mid & ~(SIMD_WIDTH - 1);
 
-        __m512i v_data = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(&data[mid]));
-        __mmask8 ge_mask = _mm512_cmpge_epu64_mask(v_data, v_target);
+        int aligned_mid = (mid / CHUNK_SIZE) * CHUNK_SIZE;
 
-        if (ge_mask != 0) {
-            const int offset = __builtin_ctz(ge_mask);
-            result = mid + offset;
-            right = mid - 1;
-            break;
+        if (aligned_mid + CHUNK_SIZE - 1 >= static_cast<int>(size)) {
+            aligned_mid = static_cast<int>(size) - CHUNK_SIZE;
+        }
+        if (aligned_mid < left) {
+            aligned_mid = left;
+        }
+
+        if (aligned_mid + CHUNK_SIZE <= static_cast<int>(size)) {
+            __m512i v_data = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(&data[aligned_mid]));
+            __mmask8 ge_mask = _mm512_cmpge_epu64_mask(v_data, v_target);
+
+            if (ge_mask != 0) {
+                right = aligned_mid + CHUNK_SIZE - 1;
+            } else {
+                left = aligned_mid + CHUNK_SIZE;
+            }
         } else {
-            left = mid + SIMD_WIDTH;
+            if (data[mid] >= target) {
+                result = mid;
+                right = mid - 1;
+            } else {
+                left = mid + 1;
+            }
         }
     }
+
     while (left <= right) {
         int mid = left + (right - left) / 2;
         if (data[mid] >= target) {

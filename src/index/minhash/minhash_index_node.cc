@@ -308,9 +308,9 @@ MinHashLSHNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
         } else {
             std::vector<folly::Future<folly::Unit>> futures;
             constexpr size_t batch_size = 64;
-            size_t run_time = (nq + batch_size - 1) / batch_size;
-            futures.reserve(nq);
-            for (size_t row = 0; row < run_time; ++row) {
+            size_t run_times = (nq + batch_size - 1) / batch_size;
+            futures.reserve(run_times);
+            for (size_t row = 0; row < run_times; ++row) {
                 futures.emplace_back(
                     search_pool_->push([&, beg = row * batch_size, end = std::min(int64_t((row + 1) * batch_size), nq),
                                         p_id_ptr = p_id.get(), p_dist_ptr = p_dist.get()]() {
