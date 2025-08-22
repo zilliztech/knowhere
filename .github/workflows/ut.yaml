@@ -45,54 +45,13 @@ jobs:
       - name: Build
         run: |
           mkdir build && cd build \
-          && conan install .. --build=missing -s build_type=Release -o with_ut=True -o with_diskann=True -o with_asan=True -o with_coverage=True -s compiler.libcxx=libstdc++11 \
-          && conan build ..
+          && conan install .. --build=missing -s build_type=Release -o with_ut=True -o with_diskann=True -o with_asan=True -s compiler.libcxx=libstdc++11 \
+          && conan build .. \
+          && ./Release/tests/ut/knowhere_tests
       - name: Save Cache
         uses: ./.github/actions/cache-save
         with:
           os: ubuntu-22.04
-      - name: Run
-        run: |
-          ./scripts/run_codecov.sh
-      - name: Archive result
-        uses: actions/upload-artifact@v4
-        with:
-          name: codecov-result
-          path: |
-            ./lcov_output.info
-            *.info
-            *.out
-  codecov:
-    name: Upload Code Coverage
-    needs: [ut]
-    runs-on: ubuntu-22.04
-    timeout-minutes: 5
-    steps:
-      - name: Download code coverage results
-        uses: actions/download-artifact@v4.1.0
-        with:
-          name: codecov-result
-      - name: Display structure of code coverage results
-        run: |
-          ls -lah
-      - name: Upload coverage to Codecov
-        if: "github.repository == 'zilliztech/knowhere'"
-        uses: codecov/codecov-action@v4
-        id: upload_cov
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./lcov_output.info
-          name: ubuntu-22.04-unittests
-          fail_ci_if_error: true
-      - name: Retry Upload coverage to Codecov
-        if: "${{ failure() }} && github.repository == 'zilliztech/knowhere'"
-        uses: codecov/codecov-action@v4
-        id: retry_upload_cov
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./lcov_output.info
-          name: ubuntu-22.04-unittests
-          fail_ci_if_error: true
 
   swig-build:
     name: python3 wheel
