@@ -393,4 +393,6 @@ class EmbListHNSWIndexNode : public IndexNode {
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(EMB_LIST_HNSW, EmbListHNSWIndexNode,
                                                 knowhere::feature::MMAP | knowhere::feature::MV |
                                                     knowhere::feature::EMB_LIST)
+KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(EMB_LIST_HNSW, EmbListHNSWIndexNode,
+                                          knowhere::feature::MMAP | knowhere::feature::MV | knowhere::feature::EMB_LIST)
 }  // namespace knowhere
