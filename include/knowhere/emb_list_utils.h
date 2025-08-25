@@ -135,4 +135,55 @@ get_ordered_sum_max_sim(const float* dists, const size_t nq, const size_t el_len
     return scores[el_len - 1];
 }
 
+/*
+ * Get the aggregation function of the emb_list
+ * @note current only support MAX_SIM
+ * @param el_metric_type: the metric type of the emb_list
+ * @return the aggregation function of the emb_list
+ */
+inline std::optional<std::function<std::optional<float>(const float*, size_t, size_t)>>
+get_emb_list_agg_func(const std::string& el_metric_type) {
+    if (el_metric_type == metric::MAX_SIM) {
+        return get_sum_max_sim;
+    }
+    return nullptr;
+}
+
+/*
+ * Get the metric type of the emb_list (MAX_SIM -> MAX_SIM; MAX_SIM_IP -> MAX_SIM; DTW_COSINE -> DTW)
+ * @param metric_type: the metric type of the emb_list
+ * @return the metric type of the emb_list
+ */
+inline std::optional<std::string>
+get_el_metric_type(const std::string& metric_type) {
+    if (metric_type == metric::MAX_SIM || metric_type == metric::MAX_SIM_IP || metric_type == metric::MAX_SIM_L2 ||
+        metric_type == metric::MAX_SIM_COSINE) {
+        return metric::MAX_SIM;
+    } else if (metric_type == metric::DTW || metric_type == metric::DTW_IP || metric_type == metric::DTW_L2 ||
+               metric_type == metric::DTW_COSINE) {
+        return metric::DTW;
+    }
+    return std::nullopt;
+}
+
+/*
+ * Get the sub metric type of the emb_list (MAX_SIM_IP -> IP; DTW -> COSINE; DTW_IP -> IP)
+ * @param metric_type: the metric type of the emb_list
+ * @return the sub metric type of the emb_list (default: cosine)
+ */
+inline std::optional<std::string>
+get_sub_metric_type(const std::string& metric_type) {
+    if (metric_type == metric::MAX_SIM_COSINE || metric_type == metric::MAX_SIM || metric_type == metric::DTW_COSINE ||
+        metric_type == metric::DTW) {
+        return metric::COSINE;
+    }
+    if (metric_type == metric::MAX_SIM_IP || metric_type == metric::DTW_IP) {
+        return metric::IP;
+    }
+    if (metric_type == metric::MAX_SIM_L2 || metric_type == metric::DTW_L2) {
+        return metric::L2;
+    }
+    return std::nullopt;
+}
+
 }  // namespace knowhere

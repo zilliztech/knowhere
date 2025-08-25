@@ -340,6 +340,16 @@ void all_cosine(
         std::vector<knowhere::DistId>& output,
         const IDSelector* sel);
 
+void all_cosine_distances(
+        const float* x,
+        const float* y,
+        const float* y_norms,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* output,
+        const IDSelector* sel);
+
 // Knowhere-specific function
 void knn_jaccard(
         const float* x,

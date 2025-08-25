@@ -1233,6 +1233,35 @@ void all_cosine(
     }
 }
 
+// compute and store all cosine distances into output. (only distances, no ids)
+// Output should be preallocated of size nx * ny, each element should be initialized to
+// lowest distance.
+void all_cosine_distances(
+        const float* x,
+        const float* y,
+        const float* y_norms,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* output,
+        const IDSelector* sel) {
+    if (sel == nullptr) {
+        CollectAllDistancesHandler<CMax<float, int64_t>, false> res(nx, ny, output);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, res);
+        } else {
+            exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, res);
+        }
+    } else {
+        CollectAllDistancesHandler<CMax<float, int64_t>, true> res(nx, ny, output, sel);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, res);
+        } else {
+            exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, res);
+        }
+    }
+}
+
 struct NopDistanceCorrection {
     float operator()(float dis, size_t /*qno*/, size_t /*bno*/) const {
         return dis;

@@ -84,8 +84,13 @@ class EmbListHNSWIndexNode : public IndexNode {
             LOG_KNOWHERE_WARNING_ << "Missing emb_list offset, could not train index";
             return Status::emb_list_inner_error;
         }
-        auto& el_hnsw_config = static_cast<BaseConfig&>(*cfg);
-        el_hnsw_config.metric_type = metric::IP;
+        auto& hnsw_config = static_cast<BaseConfig&>(*cfg);
+        auto sub_metric_type_or = get_sub_metric_type(hnsw_config.metric_type.value());
+        if (!sub_metric_type_or.has_value()) {
+            LOG_KNOWHERE_WARNING_ << "Invalid metric type: " << hnsw_config.metric_type.value();
+            return Status::emb_list_inner_error;
+        }
+        hnsw_config.metric_type = sub_metric_type_or.value();
         emb_list_offset_ = std::make_unique<EmbListOffset>(lims, static_cast<size_t>(dataset->GetRows()));
         return base_index_.Node()->Train(dataset, cfg, use_knowhere_build_pool);
     }
@@ -155,15 +160,36 @@ class EmbListHNSWIndexNode : public IndexNode {
         EmbListOffset query_emb_list_offset(lims, num_q_vecs);
         auto num_q_el = query_emb_list_offset.num_el();
         auto& config = static_cast<EmbListHNSWConfig&>(*cfg);
-        auto el_metric_type = config.metric_type.value();
+        auto metric_type = config.metric_type.value();
+        auto el_metric_type_or = get_el_metric_type(metric_type);
+        if (!el_metric_type_or.has_value()) {
+            LOG_KNOWHERE_WARNING_ << "Invalid metric type: " << metric_type;
+            return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "invalid metric type");
+        }
+        auto el_metric_type = el_metric_type_or.value();
+        auto el_agg_func_or = get_emb_list_agg_func(el_metric_type);
+        if (!el_agg_func_or.has_value()) {
+            LOG_KNOWHERE_ERROR_ << "Invalid emb list aggeration function for metric type: " << el_metric_type;
+            return expected<DataSetPtr>::Err(Status::emb_list_inner_error,
+                                             "invalid emb list aggeration function for metric type: " + el_metric_type);
+        }
+        auto el_agg_func = el_agg_func_or.value();
+
+        auto sub_metric_type_or = get_sub_metric_type(metric_type);
+        if (!sub_metric_type_or.has_value()) {
+            LOG_KNOWHERE_WARNING_ << "Invalid metric type: " << metric_type;
+            return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "invalid metric type");
+        }
+        auto sub_metric_type = sub_metric_type_or.value();
+        LOG_KNOWHERE_DEBUG_ << "sub metric_type: " << sub_metric_type;
         auto el_k = config.k.value();
 
         // Allocate result arrays
         auto ids = std::make_unique<int64_t[]>(num_q_el * el_k);
         auto dists = std::make_unique<float[]>(num_q_el * el_k);
 
-        // Stage 1: HNSW search, force IP metric in the sub-hnsw index
-        config.metric_type = metric::IP;
+        // Stage 1: HNSW search - top k' = k * retrieval_ann_ratio
+        config.metric_type = sub_metric_type;
         int32_t vec_topk = std::max((int32_t)(el_k * config.retrieval_ann_ratio.value()), 1);
         config.k = vec_topk;
         auto ann_search_res = base_index_.Node()->Search(dataset, std::move(cfg), bitset).value();
@@ -219,8 +245,7 @@ class EmbListHNSWIndexNode : public IndexNode {
                 const auto bf_dists = bf_search_res.value()->GetDistance();
 
                 // Aggregate score for the emb_list (e.g., sum of max similarities)
-                // TODO: support other aggregation methods.
-                auto score_or = get_sum_max_sim(bf_dists, nq, vids.size());
+                auto score_or = el_agg_func(bf_dists, nq, vids.size());
                 if (!score_or.has_value()) {
                     LOG_KNOWHERE_WARNING_ << "get_sum_max_sim failed, nq: " << nq << ", vids.size(): " << vids.size();
                     return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "get_sum_max_sim failed");
