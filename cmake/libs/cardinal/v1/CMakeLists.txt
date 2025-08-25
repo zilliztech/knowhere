@@ -2,7 +2,8 @@ cmake_minimum_required(VERSION 3.26.4 FATAL_ERROR)
 project(knowhere CXX C)
 
 # Use short SHA1 as version
-set(CARDINAL_VERSION v2.6.1-v1)
+# v2.5 tag is used for cardinal v1
+set(CARDINAL_VERSION v2.5.99)
 set(CARDINAL_REPO_URL "https://github.com/zilliztech/cardinal.git")
 
 set(CARDINAL_ROOT  "${KNOWHERE_THRID_ROOT}/cardinalv1")
