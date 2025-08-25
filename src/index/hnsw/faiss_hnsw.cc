@@ -1773,7 +1773,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     bool
     is_ann_iterator_supported() const {
         if (data_format != DataFormatEnum::fp32 && data_format != DataFormatEnum::fp16 &&
-            data_format != DataFormatEnum::bf16) {
+            data_format != DataFormatEnum::bf16 && data_format != DataFormatEnum::int8) {
             return false;
         }
         return true;
