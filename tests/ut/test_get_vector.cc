@@ -128,7 +128,6 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
         knowhere::Json json;
         json[knowhere::meta::DIM] = dim;
         json[knowhere::meta::METRIC_TYPE] = metric;
-        json[knowhere::meta::RETRIEVE_FRIENDLY] = true;
         json[knowhere::meta::TOPK] = 1;
         return json;
     };

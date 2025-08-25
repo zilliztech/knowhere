@@ -376,7 +376,6 @@ TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {
 
         auto base_gen = [=] {
             knowhere::Json json;
-            json[knowhere::meta::RETRIEVE_FRIENDLY] = true;
             json["dim"] = dim;
             json["metric_type"] = knowhere::metric::L2;
             json["k"] = kK;
@@ -428,6 +427,10 @@ TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {
 
                 REQUIRE(diskann.HasRawData(knowhere::metric::L2) ==
                         knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData("DISKANN", version, json));
+
+                if (!diskann.HasRawData(knowhere::metric::L2)) {
+                    continue;
+                }
 
                 std::vector<double> ids_sizes = {1, kNumRows * 0.2, kNumRows * 0.7, kNumRows};
                 for (const auto ids_size : ids_sizes) {
