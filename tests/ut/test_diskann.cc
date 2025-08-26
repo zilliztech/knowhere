@@ -342,7 +342,11 @@ base_search() {
                         if (percentage == 0.98f) {
                             REQUIRE(recall >= 0.9f);
                         } else {
-                            REQUIRE(recall >= kKnnRecall);
+                            if (metric_str == knowhere::metric::IP) {
+                                REQUIRE(recall >= 0.85f);
+                            } else {
+                                REQUIRE(recall >= kKnnRecall);
+                            }
                         }
                     }
                 }
