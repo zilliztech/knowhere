@@ -105,6 +105,17 @@ void all_cosine_typed(
         std::vector<knowhere::DistId>& output,
         const IDSelector* sel = nullptr);
 
+template <typename DataType>
+void all_cosine_distances_typed(
+        const DataType* x,
+        const DataType* y,
+        const float* y_norms,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* distances,
+        const IDSelector* sel = nullptr);
+
 /***************************************************************************
  * Range search
  ***************************************************************************/

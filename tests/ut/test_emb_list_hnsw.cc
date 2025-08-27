@@ -336,7 +336,7 @@ TEST_CASE("Search for EMBList HNSW Indices", "Benchmark and validation") {
     // various constants and restrictions
 
     // metrics to test
-    const std::vector<std::string> DISTANCE_TYPES = {"MAX_SIM"};
+    const std::vector<std::string> DISTANCE_TYPES = {"MAX_SIM", "MAX_SIM_IP", "MAX_SIM_COSINE"};
 
     // for unit tests
     const std::vector<int32_t> DIMS = {64};

@@ -448,6 +448,30 @@ void all_cosine_typed(
     return;
 }
 
+template <typename DataType>
+void all_cosine_distances_typed(
+        const DataType* x,
+        const DataType* y,
+        const float* y_norms,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* distances,
+        const IDSelector* sel) {
+    CollectAllDistancesHandler<CMax<float, int64_t>> res(nx, ny, distances);
+    if (const auto* sel_bs =
+                dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel)) {
+        exhaustive_cosine_seq_impl_typed(
+                x, y, y_norms, d, nx, ny, res, *sel_bs);
+    } else if (sel == nullptr) {
+        exhaustive_cosine_seq_impl_typed(
+                x, y, y_norms, d, nx, ny, res, IDSelectorAll());
+    } else {
+        exhaustive_cosine_seq_impl_typed(x, y, y_norms, d, nx, ny, res, *sel);
+    }
+    return;
+}
+
 /***************************************************************************
  * Range search
  ***************************************************************************/
@@ -598,6 +622,16 @@ template void faiss::all_cosine_typed<knowhere::fp16>(
         std::vector<knowhere::DistId>&,
         const IDSelector*);
 
+template void faiss::all_cosine_distances_typed<knowhere::fp16>(
+        const knowhere::fp16*,
+        const knowhere::fp16*,
+        const float*,
+        size_t,
+        size_t,
+        size_t,
+        float*,
+        const IDSelector*);
+
 // bf16 knn functions
 template void faiss::knn_inner_product_typed<knowhere::bf16>(
         const knowhere::bf16*,
@@ -672,6 +706,16 @@ template void faiss::all_cosine_typed<knowhere::bf16>(
         std::vector<knowhere::DistId>&,
         const IDSelector*);
 
+template void faiss::all_cosine_distances_typed<knowhere::bf16>(
+        const knowhere::bf16*,
+        const knowhere::bf16*,
+        const float*,
+        size_t,
+        size_t,
+        size_t,
+        float*,
+        const IDSelector*);
+
 // int8 knn functions
 template void faiss::knn_inner_product_typed<knowhere::int8>(
         const knowhere::int8*,
@@ -744,6 +788,16 @@ template void faiss::all_cosine_typed<knowhere::int8>(
         size_t,
         size_t,
         std::vector<knowhere::DistId>&,
+        const IDSelector*);
+
+template void faiss::all_cosine_distances_typed<knowhere::int8>(
+        const knowhere::int8*,
+        const knowhere::int8*,
+        const float*,
+        size_t,
+        size_t,
+        size_t,
+        float*,
         const IDSelector*);
 
 // fp16 range search functions
