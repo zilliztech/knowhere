@@ -48,6 +48,8 @@ constexpr uint64_t MMAP = 1UL << 19;
 constexpr uint64_t MV = 1UL << 20;
 // This flag indicates that the index need disk during search stage
 constexpr uint64_t DISK = 1UL << 21;
+// This flag indicates that the index will be lazy loaded
+constexpr uint64_t LAZY_LOAD = 1UL << 22;
 
 constexpr uint64_t NONE = 0UL;
 
