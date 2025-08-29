@@ -1,11 +1,11 @@
-// int total_timeout_minutes = 120
+//int total_timeout_minutes = 120
 def knowhere_wheel=''
 pipeline {
     agent {
         kubernetes {
             cloud "new_ci_idc"
             inheritFrom 'default'
-            yamlFile 'ci/pod/e2e-cpu.yaml'
+            yamlFile 'ci/pod/e2e-sse.yaml'
             defaultContainer 'main'
         }
     }
@@ -46,14 +46,6 @@ pipeline {
             }
         }
         stage("Test"){
-            agent {
-                kubernetes {
-                    cloud "new_ci_idc"
-                    inheritFrom 'default'
-                    yamlFile 'ci/pod/e2e-sse.yaml'
-                    defaultContainer 'main'
-                }
-            }
             steps {
                 script{
                     if ("${knowhere_wheel}"==''){
