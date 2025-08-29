@@ -639,6 +639,11 @@ class BaseConfig : public Config {
     CFG_INT mh_lsh_band;
     CFG_BOOL mh_search_with_jaccard;
     CFG_INT mh_element_bit_width;
+    /*
+     * retrieval_ann_ratio only used for emb_list index search.
+     * - A factor for top-k in the first ANNS round.
+     */
+    CFG_FLOAT retrieval_ann_ratio;
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(dim).allow_empty_without_default().description("vector dim").for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
@@ -801,6 +806,11 @@ class BaseConfig : public Config {
         KNOWHERE_CONFIG_DECLARE_FIELD(mh_search_with_jaccard)
             .description("return the jaccard distance of minhash vector search or minhashlsh hit flag.")
             .set_default(false)
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(retrieval_ann_ratio)
+            .description("Factor for top-k in the first ANNS round, only used for emb_list")
+            .set_default(1.0f)
+            .set_range(0.01f, 100.0f)
             .for_search();
     }
 };

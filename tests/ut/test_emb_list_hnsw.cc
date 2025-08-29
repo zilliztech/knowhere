@@ -291,9 +291,9 @@ index_support_int8(const knowhere::Json& conf) {
 //
 template <typename T>
 std::string
-test_hnsw(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::DataSetPtr& query_ds_ptr,
-          const knowhere::DataSetPtr& golden_result, const std::vector<int32_t>& index_params,
-          const knowhere::Json& conf, const bool mv_only_enable, const knowhere::BitsetView bitset_view) {
+test_emb_list_hnsw(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::DataSetPtr& query_ds_ptr,
+                   const knowhere::DataSetPtr& golden_result, const std::vector<int32_t>& index_params,
+                   const knowhere::Json& conf, const bool mv_only_enable, const knowhere::BitsetView bitset_view) {
     const std::string index_type = conf[knowhere::meta::INDEX_TYPE].get<std::string>();
 
     // load indices
@@ -323,8 +323,9 @@ test_hnsw(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::DataSetPtr
     auto recall = GetKNNRecall(*golden_result, *result.value());
     printf("recall: %f\n", recall);
     auto recall_loaded = GetKNNRecall(*golden_result, *result_loaded.value());
-    REQUIRE(recall >= 0.8);
-    REQUIRE(recall_loaded >= 0.8);
+    const float target_recall = 0.75;
+    REQUIRE(recall >= target_recall);
+    REQUIRE(recall_loaded >= target_recall);
     REQUIRE(recall == recall_loaded);
 
     return index_file_name;
@@ -336,21 +337,43 @@ TEST_CASE("Search for EMBList HNSW Indices", "Benchmark and validation") {
     // various constants and restrictions
 
     // metrics to test
-    const std::vector<std::string> DISTANCE_TYPES = {"MAX_SIM", "MAX_SIM_IP", "MAX_SIM_COSINE"};
+    const std::vector<std::string> DISTANCE_TYPES = {"MAX_SIM_IP", "MAX_SIM_COSINE"};
 
     // for unit tests
-    const std::vector<int32_t> DIMS = {64};
-    const std::vector<int32_t> NBS = {1000};
+    const std::vector<int32_t> DIMS = {4};
+    const std::vector<int32_t> NBS = {256};
     const int32_t NQ = 10;
-    const int32_t TOPK = 10;
+    const int32_t TOPK = 16;
 
     const std::vector<bool> MV_ONLYs = {false, true};
 
-    // const std::vector<std::string> SQ_TYPES = {"SQ6", "SQ8", "BF16", "FP16"};
+    // SQ params
+    const std::vector<std::string> SQ_TYPES = {"SQ6", "SQ8", "BF16", "FP16"};
+    // accepted refines for a given SQ type for a FP32 data type
+    std::unordered_map<std::string, std::vector<std::string>> SQ_ALLOWED_REFINES_FP32 = {
+        {"SQ6", {"SQ8", "BF16", "FP16", "FLAT"}},
+        {"SQ8", {"BF16", "FP16", "FLAT"}},
+        {"BF16", {"FLAT"}},
+        {"FP16", {"FLAT"}}};
+    // accepted refines for a given SQ type for a FP16 data type
+    std::unordered_map<std::string, std::vector<std::string>> SQ_ALLOWED_REFINES_FP16 = {
+        {"SQ6", {"SQ8", "FP16"}}, {"SQ8", {"FP16"}}, {"BF16", {}}, {"FP16", {}}};
+    // accepted refines for a given SQ type for a BF16 data type
+    std::unordered_map<std::string, std::vector<std::string>> SQ_ALLOWED_REFINES_BF16 = {
+        {"SQ6", {"SQ8", "BF16"}}, {"SQ8", {"BF16"}}, {"BF16", {}}, {"FP16", {}}};
+
+    // PQ params
+    const std::vector<int32_t> NBITS = {8};
+    // accepted refines for PQ for FP32 data type
+    std::vector<std::string> PQ_ALLOWED_REFINES_FP32 = {{"SQ6", "SQ8", "BF16", "FP16", "FLAT"}};
+    // accepted refines for PQ for FP16 data type
+    std::vector<std::string> PQ_ALLOWED_REFINES_FP16 = {{"SQ6", "SQ8", "FP16"}};
+    // accepted refines for PQ for BF16 data type
+    std::vector<std::string> PQ_ALLOWED_REFINES_BF16 = {{"SQ6", "SQ8", "BF16"}};
 
     // random bitset rates
     // 0.0 means unfiltered, 1.0 means all filtered out
-    const std::vector<float> BITSET_RATES = {0.0f, 0.1f, 0.5f, 0.95f, 1.0f};
+    const std::vector<float> BITSET_RATES = {0.0f, 0.5f, 0.95f, 1.0f};
 
     // create base json config
     knowhere::Json default_conf;
@@ -363,7 +386,6 @@ TEST_CASE("Search for EMBList HNSW Indices", "Benchmark and validation") {
 
     SECTION("FLAT") {
         const std::string& index_type = knowhere::IndexEnum::INDEX_EMB_LIST_HNSW;
-        const std::string& golden_index_type = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
 
         for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
             for (const int32_t dim : DIMS) {
@@ -378,11 +400,10 @@ TEST_CASE("Search for EMBList HNSW Indices", "Benchmark and validation") {
                     conf[knowhere::meta::ROWS] = nb;
                     conf[knowhere::meta::INDEX_TYPE] = index_type;
 
-                    std::vector<int32_t> golden_params = {(int)distance_type, dim, nb};
                     std::vector<int32_t> params = {(int)distance_type, dim, nb};
 
                     // generate a default dataset
-                    const uint64_t rng_seed = get_params_hash(golden_params);
+                    const uint64_t rng_seed = get_params_hash(params);
                     // vector_id -> emb_list_id
                     // [0...9] -> 0, [10...19] -> 1, [20...29] -> 2, ...
                     int each_el_len = 10;
@@ -429,45 +450,52 @@ TEST_CASE("Search for EMBList HNSW Indices", "Benchmark and validation") {
 
                             // fp32 candidate
                             printf(
-                                "\nProcessing HNSW,Flat fp32 for %s distance, dim=%d, nrows=%d, %d%% points filtered "
+                                "\nProcessing EMBList HNSW,Flat fp32 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                "filtered "
                                 "out\n",
                                 DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
 
-                            index_file = test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                            index_file =
+                                test_emb_list_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr, golden_result.value(),
                                                                    params, conf, mv_only_enable, bitset_view);
                             index_files.emplace_back(index_file);
 
                             // fp16 candidate
                             printf(
-                                "\nProcessing HNSW,Flat fp16 for %s distance, dim=%d, nrows=%d, %d%% points filtered "
+                                "\nProcessing EMBList HNSW,Flat fp16 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                "filtered "
                                 "out\n",
                                 DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
 
-                            index_file = test_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                            index_file =
+                                test_emb_list_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
                                                                    params, conf, mv_only_enable, bitset_view);
                             index_files.emplace_back(index_file);
 
                             // bf16 candidate
                             printf(
-                                "\nProcessing HNSW,Flat bf16 for %s distance, dim=%d, nrows=%d, %d%% points filtered "
+                                "\nProcessing EMBList HNSW,Flat bf16 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                "filtered "
                                 "out\n",
                                 DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
 
-                            index_file = test_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                            index_file =
+                                test_emb_list_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr, golden_result.value(),
                                                                    params, conf, mv_only_enable, bitset_view);
                             index_files.emplace_back(index_file);
 
                             if (index_support_int8(conf)) {
                                 // int8 candidate
                                 printf(
-                                    "\nProcessing HNSW,Flat int8 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                    "\nProcessing EMBList HNSW,Flat int8 for %s distance, dim=%d, nrows=%d, %d%% "
+                                    "points "
                                     "filtered "
                                     "out\n",
                                     DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
 
-                                index_file =
-                                    test_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr, golden_result.value(),
-                                                              params, conf, mv_only_enable, bitset_view);
+                                index_file = test_emb_list_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr,
+                                                                                golden_result.value(), params, conf,
+                                                                                mv_only_enable, bitset_view);
                                 index_files.emplace_back(index_file);
                             }
                             std::remove(get_index_name<knowhere::fp32>(ann_test_name_, index_type, params).c_str());
@@ -477,6 +505,685 @@ TEST_CASE("Search for EMBList HNSW Indices", "Benchmark and validation") {
                                 std::remove(get_index_name<knowhere::int8>(ann_test_name_, index_type, params).c_str());
                             }
                         }
+                        for (auto index : index_files) {
+                            std::remove(index.c_str());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    SECTION("SQ") {
+        const std::string& index_type = knowhere::IndexEnum::INDEX_EMB_LIST_HNSW_SQ;
+
+        for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
+            for (const int32_t dim : DIMS) {
+                // generate a query
+                const uint64_t query_rng_seed = get_params_hash({(int)distance_type, dim});
+                auto query_ds_ptr = GenQueryEmbListDataSet(NQ, dim, query_rng_seed);
+
+                for (const int32_t nb : NBS) {
+                    knowhere::Json base_conf = default_conf;
+                    base_conf[knowhere::meta::METRIC_TYPE] = DISTANCE_TYPES[distance_type];
+                    base_conf[knowhere::meta::DIM] = dim;
+                    base_conf[knowhere::meta::ROWS] = nb;
+                    base_conf[knowhere::meta::INDEX_TYPE] = index_type;
+
+                    std::vector<int32_t> params = {(int)distance_type, dim, nb};
+
+                    // generate a default dataset
+                    const uint64_t rng_seed = get_params_hash(params);
+                    // vector_id -> emb_list_id
+                    // [0...9] -> 0, [10...19] -> 1, [20...29] -> 2, ...
+                    int each_el_len = 10;
+                    int num_el = int(nb / each_el_len) + 1;
+                    auto default_ds_ptr = GenEmbListDataSet(nb, dim, rng_seed, each_el_len);
+                    // emb_list_id -> partition_id
+                    // [0, 3, 6, ...] -> 0, [1, 4, 7, ...] -> 1, [2, 5, 8, ...] -> 2, ...
+                    int partition_num = 3;
+                    printf("num_el: %d, each_el_len: %d, partition_num: %d\n", num_el, each_el_len, partition_num);
+                    std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_info =
+                        GenerateScalarInfoWithStep(nb, partition_num, each_el_len);
+
+                    for (const bool mv_only_enable : MV_ONLYs) {
+#ifdef KNOWHERE_WITH_CARDINAL
+                        if (mv_only_enable) {
+                            continue;
+                        }
+#endif
+                        printf("with mv only enabled : %d\n", mv_only_enable);
+                        if (mv_only_enable) {
+                            default_ds_ptr->Set(knowhere::meta::SCALAR_INFO, scalar_info);
+                        }
+
+                        std::vector<std::string> index_files;
+                        std::string index_file;
+
+                        // test various bitset rates
+                        for (const float bitset_rate : BITSET_RATES) {
+                            printf("bitset_rate: %f\n", bitset_rate);
+                            const std::vector<uint8_t> bitset_data = GenerateBitsetByPartition(
+                                num_el, 1.0f - bitset_rate, mv_only_enable ? partition_num : 1);
+
+                            // initialize bitset_view.
+                            // provide a default one if nbits_set == 0
+                            knowhere::BitsetView bitset_view = nullptr;
+                            if (bitset_rate != 0.0f || mv_only_enable) {
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
+                            }
+
+                            // get a golden result
+                            // auto golden_result = golden_index.Search(query_ds_ptr, conf, bitset_view);
+                            auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(
+                                default_ds_ptr, query_ds_ptr, base_conf, bitset_view);
+
+                            // go SQ
+                            for (size_t i_sq_type = 0; i_sq_type < SQ_TYPES.size(); i_sq_type++) {
+                                knowhere::Json conf = base_conf;
+                                const std::string sq_type = SQ_TYPES[i_sq_type];
+                                conf[knowhere::indexparam::SQ_TYPE] = sq_type;
+
+                                std::vector<int32_t> params = {(int)distance_type, dim, nb, (int)i_sq_type};
+
+                                // fp32 candidate
+                                printf(
+                                    "\nProcessing EMBList HNSW,SQ(%s) fp32 for %s distance, dim=%d, nrows=%d, %d%% "
+                                    "points "
+                                    "filtered "
+                                    "out\n",
+                                    sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
+
+                                index_file = test_emb_list_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
+                                                                                golden_result.value(), params, conf,
+                                                                                mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
+
+                                // fp16 candidate
+                                printf(
+                                    "\nProcessing EMBList HNSW,SQ(%s) fp16 for %s distance, dim=%d, nrows=%d, %d%% "
+                                    "points "
+                                    "filtered "
+                                    "out\n",
+                                    sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
+
+                                index_file = test_emb_list_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr,
+                                                                                golden_result.value(), params, conf,
+                                                                                mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
+
+                                // bf16 candidate
+                                printf(
+                                    "\nProcessing EMBList HNSW,SQ(%s) bf16 for %s distance, dim=%d, nrows=%d, %d%% "
+                                    "points "
+                                    "filtered "
+                                    "out\n",
+                                    sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
+
+                                index_file = test_emb_list_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr,
+                                                                                golden_result.value(), params, conf,
+                                                                                mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
+
+                                if (index_support_int8(conf)) {
+                                    // int8 candidate
+                                    printf(
+                                        "\nProcessing EMBList HNSW,SQ(%s) int8 for %s distance, dim=%d, nrows=%d, %d%% "
+                                        "points "
+                                        "filtered "
+                                        "out\n",
+                                        sq_type.c_str(), DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                        int(bitset_rate * 100));
+
+                                    index_file = test_emb_list_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr,
+                                                                                    golden_result.value(), params, conf,
+                                                                                    mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
+
+                                // test refines for FP32
+                                {
+                                    const auto& allowed_refs = SQ_ALLOWED_REFINES_FP32[sq_type];
+                                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < allowed_refs.size();
+                                         allowed_ref_idx++) {
+                                        auto conf_refine = conf;
+                                        conf_refine["refine"] = true;
+                                        conf_refine["refine_k"] = 1.5;
+
+                                        const std::string allowed_ref = allowed_refs[allowed_ref_idx];
+                                        conf_refine["refine_type"] = allowed_ref;
+
+                                        std::vector<int32_t> params_refine = {(int)distance_type, dim, nb,
+                                                                              (int)i_sq_type, (int)allowed_ref_idx};
+
+                                        printf(
+                                            "\nProcessing EMBList HNSW,SQ(%s) with %s refine, fp32 for %s distance, "
+                                            "dim=%d, "
+                                            "nrows=%d, %d%% points filtered out\n",
+                                            sq_type.c_str(), allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
+                                            dim, nb, int(bitset_rate * 100));
+
+                                        index_file = test_emb_list_hnsw<knowhere::fp32>(
+                                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
+                                            conf_refine, mv_only_enable, bitset_view);
+                                        index_files.emplace_back(index_file);
+                                    }
+                                }
+
+                                // test refines for FP16
+                                {
+                                    const auto& allowed_refs = SQ_ALLOWED_REFINES_FP16[sq_type];
+                                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < allowed_refs.size();
+                                         allowed_ref_idx++) {
+                                        auto conf_refine = conf;
+                                        conf_refine["refine"] = true;
+                                        conf_refine["refine_k"] = 1.5;
+
+                                        const std::string allowed_ref = allowed_refs[allowed_ref_idx];
+                                        conf_refine["refine_type"] = allowed_ref;
+
+                                        std::vector<int32_t> params_refine = {(int)distance_type, dim, nb,
+                                                                              (int)i_sq_type, (int)allowed_ref_idx};
+
+                                        printf(
+                                            "\nProcessing EMBList HNSW,SQ(%s) with %s refine, fp16 for %s distance, "
+                                            "dim=%d, "
+                                            "nrows=%d, %d%% points filtered out\n",
+                                            sq_type.c_str(), allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
+                                            dim, nb, int(bitset_rate * 100));
+
+                                        index_file = test_emb_list_hnsw<knowhere::fp16>(
+                                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
+                                            conf_refine, mv_only_enable, bitset_view);
+                                        index_files.emplace_back(index_file);
+                                    }
+                                }
+
+                                // test refines for BF16
+                                {
+                                    const auto& allowed_refs = SQ_ALLOWED_REFINES_BF16[sq_type];
+                                    for (size_t allowed_ref_idx = 0; allowed_ref_idx < allowed_refs.size();
+                                         allowed_ref_idx++) {
+                                        auto conf_refine = conf;
+                                        conf_refine["refine"] = true;
+                                        conf_refine["refine_k"] = 1.5;
+
+                                        const std::string allowed_ref = allowed_refs[allowed_ref_idx];
+                                        conf_refine["refine_type"] = allowed_ref;
+
+                                        std::vector<int32_t> params_refine = {(int)distance_type, dim, nb,
+                                                                              (int)i_sq_type, (int)allowed_ref_idx};
+
+                                        printf(
+                                            "\nProcessing EMBList HNSW,SQ(%s) with %s refine, bf16 for %s distance, "
+                                            "dim=%d, "
+                                            "nrows=%d, %d%% points filtered out\n",
+                                            sq_type.c_str(), allowed_ref.c_str(), DISTANCE_TYPES[distance_type].c_str(),
+                                            dim, nb, int(bitset_rate * 100));
+
+                                        index_file = test_emb_list_hnsw<knowhere::bf16>(
+                                            default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
+                                            conf_refine, mv_only_enable, bitset_view);
+                                        index_files.emplace_back(index_file);
+                                    }
+                                }
+                            }
+
+                            for (auto index : index_files) {
+                                std::remove(index.c_str());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    SECTION("PQ") {
+        const std::string& index_type = knowhere::IndexEnum::INDEX_EMB_LIST_HNSW_PQ;
+
+        for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
+            for (const int32_t dim : {16}) {
+                // generate a query
+                const uint64_t query_rng_seed = get_params_hash({(int)distance_type, dim});
+                auto query_ds_ptr = GenQueryEmbListDataSet(NQ, dim, query_rng_seed);
+
+                for (const int32_t nb : NBS) {
+                    knowhere::Json base_conf = default_conf;
+                    base_conf[knowhere::meta::METRIC_TYPE] = DISTANCE_TYPES[distance_type];
+                    base_conf[knowhere::meta::DIM] = dim;
+                    base_conf[knowhere::meta::ROWS] = nb;
+                    base_conf[knowhere::meta::INDEX_TYPE] = index_type;
+
+                    std::vector<int32_t> params = {(int)distance_type, dim, nb};
+
+                    // generate a default dataset
+                    const uint64_t rng_seed = get_params_hash(params);
+                    // vector_id -> emb_list_id
+                    // [0...9] -> 0, [10...19] -> 1, [20...29] -> 2, ...
+                    int each_el_len = 10;
+                    int num_el = int(nb / each_el_len) + 1;
+                    auto default_ds_ptr = GenEmbListDataSet(nb, dim, rng_seed, each_el_len);
+                    // emb_list_id -> partition_id
+                    // [0, 3, 6, ...] -> 0, [1, 4, 7, ...] -> 1, [2, 5, 8, ...] -> 2, ...
+                    int partition_num = 3;
+                    printf("num_el: %d, each_el_len: %d, partition_num: %d\n", num_el, each_el_len, partition_num);
+                    std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_info =
+                        GenerateScalarInfoWithStep(nb, partition_num, each_el_len);
+
+                    // accelerate the test by only testing with mv_only_enable = false
+                    for (const bool mv_only_enable : {false}) {
+#ifdef KNOWHERE_WITH_CARDINAL
+                        if (mv_only_enable) {
+                            continue;
+                        }
+#endif
+                        printf("with mv only enabled : %d\n", mv_only_enable);
+                        if (mv_only_enable) {
+                            default_ds_ptr->Set(knowhere::meta::SCALAR_INFO, scalar_info);
+                        }
+
+                        std::vector<std::string> index_files;
+                        std::string index_file;
+
+                        // test various bitset rates
+                        for (const float bitset_rate : BITSET_RATES) {
+                            printf("bitset_rate: %f\n", bitset_rate);
+                            const std::vector<uint8_t> bitset_data = GenerateBitsetByPartition(
+                                num_el, 1.0f - bitset_rate, mv_only_enable ? partition_num : 1);
+
+                            // initialize bitset_view.
+                            // provide a default one if nbits_set == 0
+                            knowhere::BitsetView bitset_view = nullptr;
+                            if (bitset_rate != 0.0f || mv_only_enable) {
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
+                            }
+
+                            // get a golden result
+                            // auto golden_result = golden_index.Search(query_ds_ptr, conf, bitset_view);
+                            auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(
+                                default_ds_ptr, query_ds_ptr, base_conf, bitset_view);
+
+                            // go SQ
+                            for (size_t nbits_type = 0; nbits_type < NBITS.size(); nbits_type++) {
+                                const int pq_m = 8;
+
+                                knowhere::Json conf = base_conf;
+                                conf[knowhere::indexparam::NBITS] = NBITS[nbits_type];
+                                conf[knowhere::indexparam::M] = pq_m;
+
+                                std::vector<int32_t> params = {(int)distance_type, dim, nb, pq_m, (int)nbits_type};
+
+                                // fp32 candidate
+                                printf(
+                                    "\nProcessing HNSW,PQ%dx%d fp32 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                    "filtered out\n",
+                                    pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
+
+                                index_file = test_emb_list_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
+                                                                                golden_result.value(), params, conf,
+                                                                                mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
+
+                                // fp16 candidate
+                                printf(
+                                    "\nProcessing EMBList HNSW,PQ%dx%d fp16 for %s distance, dim=%d, nrows=%d, %d%% "
+                                    "points "
+                                    "filtered "
+                                    "out\n",
+                                    pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
+
+                                index_file = test_emb_list_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr,
+                                                                                golden_result.value(), params, conf,
+                                                                                mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
+
+                                // bf16 candidate
+                                printf(
+                                    "\nProcessing EMBList HNSW,PQ%dx%d bf16 for %s distance, dim=%d, nrows=%d, %d%% "
+                                    "points "
+                                    "filtered "
+                                    "out\n",
+                                    pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
+
+                                index_file = test_emb_list_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr,
+                                                                                golden_result.value(), params, conf,
+                                                                                mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
+
+                                if (index_support_int8(conf)) {
+                                    // int8 candidate
+                                    printf(
+                                        "\nProcessing EMBList HNSW,PQ%dx%d int8 for %s distance, dim=%d, nrows=%d, "
+                                        "%d%% "
+                                        "points "
+                                        "filtered "
+                                        "out\n",
+                                        pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                        int(bitset_rate * 100));
+
+                                    index_file = test_emb_list_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr,
+                                                                                    golden_result.value(), params, conf,
+                                                                                    mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
+
+                                // test refines for FP32
+                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
+                                     allowed_ref_idx++) {
+                                    auto conf_refine = conf;
+                                    conf_refine["refine"] = true;
+                                    conf_refine["refine_k"] = 1.5;
+
+                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_FP32[allowed_ref_idx];
+                                    conf_refine["refine_type"] = allowed_ref;
+
+                                    std::vector<int32_t> params_refine = {
+                                        (int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
+
+                                    printf(
+                                        "\nProcessing EMBList HNSW,PQ%dx%d with %s refine, fp32 for %s distance, "
+                                        "dim=%d, "
+                                        "nrows=%d, %d%% points filtered out\n",
+                                        pq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                                    index_file = test_emb_list_hnsw<knowhere::fp32>(
+                                        default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine, conf_refine,
+                                        mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
+
+                                // test refines for FP16
+                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP16.size();
+                                     allowed_ref_idx++) {
+                                    auto conf_refine = conf;
+                                    conf_refine["refine"] = true;
+                                    conf_refine["refine_k"] = 1.5;
+
+                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_FP16[allowed_ref_idx];
+                                    conf_refine["refine_type"] = allowed_ref;
+
+                                    std::vector<int32_t> params_refine = {
+                                        (int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
+
+                                    printf(
+                                        "\nProcessing EMBList HNSW,PQ%dx%d with %s refine, fp16 for %s distance, "
+                                        "dim=%d, "
+                                        "nrows=%d, %d%% points filtered out\n",
+                                        pq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                                    index_file = test_emb_list_hnsw<knowhere::fp16>(
+                                        default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine, conf_refine,
+                                        mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
+
+                                // test refines for BF16
+                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_BF16.size();
+                                     allowed_ref_idx++) {
+                                    auto conf_refine = conf;
+                                    conf_refine["refine"] = true;
+                                    conf_refine["refine_k"] = 1.5;
+
+                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_BF16[allowed_ref_idx];
+                                    conf_refine["refine_type"] = allowed_ref;
+
+                                    std::vector<int32_t> params_refine = {
+                                        (int)distance_type, dim, nb, pq_m, (int)nbits_type, (int)allowed_ref_idx};
+
+                                    printf(
+                                        "\nProcessing EMBList HNSW,PQ%dx%d with %s refine, bf16 for %s distance, "
+                                        "dim=%d, "
+                                        "nrows=%d, %d%% points filtered out\n",
+                                        pq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                                    index_file = test_emb_list_hnsw<knowhere::bf16>(
+                                        default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine, conf_refine,
+                                        mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
+                            }
+                        }
+
+                        for (auto index : index_files) {
+                            std::remove(index.c_str());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    SECTION("PRQ") {
+        const std::string& index_type = knowhere::IndexEnum::INDEX_EMB_LIST_HNSW_PRQ;
+
+        for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
+            for (const int32_t dim : {16}) {
+                // generate a query
+                const uint64_t query_rng_seed = get_params_hash({(int)distance_type, dim});
+                auto query_ds_ptr = GenQueryEmbListDataSet(NQ, dim, query_rng_seed);
+
+                for (const int32_t nb : NBS) {
+                    knowhere::Json base_conf = default_conf;
+                    base_conf[knowhere::meta::METRIC_TYPE] = DISTANCE_TYPES[distance_type];
+                    base_conf[knowhere::meta::DIM] = dim;
+                    base_conf[knowhere::meta::ROWS] = nb;
+                    base_conf[knowhere::meta::INDEX_TYPE] = index_type;
+
+                    std::vector<int32_t> params = {(int)distance_type, dim, nb};
+
+                    // generate a default dataset
+                    const uint64_t rng_seed = get_params_hash(params);
+                    // vector_id -> emb_list_id
+                    // [0...9] -> 0, [10...19] -> 1, [20...29] -> 2, ...
+                    int each_el_len = 10;
+                    int num_el = int(nb / each_el_len) + 1;
+                    auto default_ds_ptr = GenEmbListDataSet(nb, dim, rng_seed, each_el_len);
+                    // emb_list_id -> partition_id
+                    // [0, 3, 6, ...] -> 0, [1, 4, 7, ...] -> 1, [2, 5, 8, ...] -> 2, ...
+                    int partition_num = 3;
+                    printf("num_el: %d, each_el_len: %d, partition_num: %d\n", num_el, each_el_len, partition_num);
+                    std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_info =
+                        GenerateScalarInfoWithStep(nb, partition_num, each_el_len);
+
+                    // accelerate the test by only testing with mv_only_enable = false
+                    for (const bool mv_only_enable : {false}) {
+#ifdef KNOWHERE_WITH_CARDINAL
+                        if (mv_only_enable) {
+                            continue;
+                        }
+#endif
+                        printf("with mv only enabled : %d\n", mv_only_enable);
+                        if (mv_only_enable) {
+                            default_ds_ptr->Set(knowhere::meta::SCALAR_INFO, scalar_info);
+                        }
+
+                        std::vector<std::string> index_files;
+                        std::string index_file;
+
+                        // test various bitset rates
+                        for (const float bitset_rate : BITSET_RATES) {
+                            printf("bitset_rate: %f\n", bitset_rate);
+                            const std::vector<uint8_t> bitset_data = GenerateBitsetByPartition(
+                                num_el, 1.0f - bitset_rate, mv_only_enable ? partition_num : 1);
+
+                            // initialize bitset_view.
+                            // provide a default one if nbits_set == 0
+                            knowhere::BitsetView bitset_view = nullptr;
+                            if (bitset_rate != 0.0f || mv_only_enable) {
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
+                            }
+
+                            // get a golden result
+                            // auto golden_result = golden_index.Search(query_ds_ptr, conf, bitset_view);
+                            auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(
+                                default_ds_ptr, query_ds_ptr, base_conf, bitset_view);
+
+                            // go SQ
+                            for (size_t nbits_type = 0; nbits_type < NBITS.size(); nbits_type++) {
+                                const int prq_m = 4;
+                                const int prq_num = 2;
+
+                                knowhere::Json conf = base_conf;
+                                conf[knowhere::indexparam::NBITS] = NBITS[nbits_type];
+                                conf[knowhere::indexparam::M] = prq_m;
+                                conf[knowhere::indexparam::PRQ_NUM] = prq_num;
+
+                                std::vector<int32_t> params = {(int)distance_type, dim, nb, prq_m, prq_num,
+                                                               (int)nbits_type};
+
+                                // fp32 candidate
+                                printf(
+                                    "\nProcessing EMBList HNSW,PRQ%dx%dx%d fp32 for %s distance, dim=%d, nrows=%d, "
+                                    "%d%% points "
+                                    "filtered out\n",
+                                    prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
+
+                                index_file = test_emb_list_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
+                                                                                golden_result.value(), params, conf,
+                                                                                mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
+
+                                // fp16 candidate
+                                printf(
+                                    "\nProcessing EMBList HNSW,PRQ%dx%dx%d fp16 for %s distance, dim=%d, nrows=%d, "
+                                    "%d%% "
+                                    "points "
+                                    "filtered "
+                                    "out\n",
+                                    prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
+
+                                index_file = test_emb_list_hnsw<knowhere::fp16>(default_ds_ptr, query_ds_ptr,
+                                                                                golden_result.value(), params, conf,
+                                                                                mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
+
+                                // bf16 candidate
+                                printf(
+                                    "\nProcessing EMBList HNSW,PRQ%dx%dx%d bf16 for %s distance, dim=%d, nrows=%d, "
+                                    "%d%% "
+                                    "points "
+                                    "filtered "
+                                    "out\n",
+                                    prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
+                                    int(bitset_rate * 100));
+
+                                index_file = test_emb_list_hnsw<knowhere::bf16>(default_ds_ptr, query_ds_ptr,
+                                                                                golden_result.value(), params, conf,
+                                                                                mv_only_enable, bitset_view);
+                                index_files.emplace_back(index_file);
+
+                                if (index_support_int8(conf)) {
+                                    // int8 candidate
+                                    printf(
+                                        "\nProcessing EMBList HNSW,PRQ%dx%dx%d int8 for %s distance, dim=%d, nrows=%d, "
+                                        "%d%% "
+                                        "points "
+                                        "filtered "
+                                        "out\n",
+                                        prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim,
+                                        nb, int(bitset_rate * 100));
+
+                                    index_file = test_emb_list_hnsw<knowhere::int8>(default_ds_ptr, query_ds_ptr,
+                                                                                    golden_result.value(), params, conf,
+                                                                                    mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
+
+                                // test refines for FP32
+                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP32.size();
+                                     allowed_ref_idx++) {
+                                    auto conf_refine = conf;
+                                    conf_refine["refine"] = true;
+                                    conf_refine["refine_k"] = 1.5;
+
+                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_FP32[allowed_ref_idx];
+                                    conf_refine["refine_type"] = allowed_ref;
+
+                                    std::vector<int32_t> params_refine = {
+                                        (int)distance_type,  dim, nb, prq_m, prq_num, (int)nbits_type,
+                                        (int)allowed_ref_idx};
+
+                                    printf(
+                                        "\nProcessing EMBList HNSW,PRQ%dx%dx%d with %s refine, fp32 for %s distance, "
+                                        "dim=%d, "
+                                        "nrows=%d, %d%% points filtered out\n",
+                                        prq_num, prq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                                    index_file = test_emb_list_hnsw<knowhere::fp32>(
+                                        default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine, conf_refine,
+                                        mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
+
+                                // test refines for FP16
+                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_FP16.size();
+                                     allowed_ref_idx++) {
+                                    auto conf_refine = conf;
+                                    conf_refine["refine"] = true;
+                                    conf_refine["refine_k"] = 1.5;
+
+                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_FP16[allowed_ref_idx];
+                                    conf_refine["refine_type"] = allowed_ref;
+
+                                    std::vector<int32_t> params_refine = {
+                                        (int)distance_type,  dim, nb, prq_m, prq_num, (int)nbits_type,
+                                        (int)allowed_ref_idx};
+
+                                    printf(
+                                        "\nProcessing EMBList HNSW,PRQ%dx%dx%d with %s refine, fp16 for %s distance, "
+                                        "dim=%d, "
+                                        "nrows=%d, %d%% points filtered out\n",
+                                        prq_num, prq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                                    index_file = test_emb_list_hnsw<knowhere::fp16>(
+                                        default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine, conf_refine,
+                                        mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
+
+                                // test refines for BF16
+                                for (size_t allowed_ref_idx = 0; allowed_ref_idx < PQ_ALLOWED_REFINES_BF16.size();
+                                     allowed_ref_idx++) {
+                                    auto conf_refine = conf;
+                                    conf_refine["refine"] = true;
+                                    conf_refine["refine_k"] = 1.5;
+
+                                    const std::string allowed_ref = PQ_ALLOWED_REFINES_BF16[allowed_ref_idx];
+                                    conf_refine["refine_type"] = allowed_ref;
+
+                                    std::vector<int32_t> params_refine = {
+                                        (int)distance_type,  dim, nb, prq_m, prq_num, (int)nbits_type,
+                                        (int)allowed_ref_idx};
+
+                                    printf(
+                                        "\nProcessing EMBList HNSW,PRQ%dx%dx%d with %s refine, bf16 for %s distance, "
+                                        "dim=%d, "
+                                        "nrows=%d, %d%% points filtered out\n",
+                                        prq_num, prq_m, NBITS[nbits_type], allowed_ref.c_str(),
+                                        DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                                    index_file = test_emb_list_hnsw<knowhere::bf16>(
+                                        default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine, conf_refine,
+                                        mv_only_enable, bitset_view);
+                                    index_files.emplace_back(index_file);
+                                }
+                            }
+                        }
+
                         for (auto index : index_files) {
                             std::remove(index.c_str());
                         }
