@@ -1,4 +1,4 @@
-// int total_timeout_minutes = 120
+int total_timeout_minutes = 120
 def knowhere_wheel=''
 pipeline {
     agent {
@@ -73,6 +73,7 @@ pipeline {
                       sh "apt-get update || true"
                       sh "apt-get install -y libopenblas-dev libaio-dev libdouble-conversion-dev libevent-dev"
                       sh "pip3 install ${knowhere_wheel}"
+                      sh "sleep 7200"
                       sh "cat requirements.txt | xargs -n 1 pip3 install"
                       sh "cp -r /home/data/milvus/ann_fbin/ ."
                       sh "pytest -v -m 'L0'"
