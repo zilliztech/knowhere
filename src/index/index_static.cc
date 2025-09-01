@@ -67,6 +67,7 @@ template <typename DataType>
 expected<Resource>
 IndexStaticFaced<DataType>::EstimateLoadResource(const knowhere::IndexType& indexType,
                                                  const knowhere::IndexVersion& version, const float file_size,
+                                                 const int64_t num_rows, const int64_t dim,
                                                  const knowhere::Json& params) {
     auto cfg = IndexStaticFaced<DataType>::CreateConfig(indexType, version);
 
@@ -78,15 +79,15 @@ IndexStaticFaced<DataType>::EstimateLoadResource(const knowhere::IndexType& inde
     }
 
     if (Instance().staticEstimateLoadResourceMap.find(indexType) != Instance().staticEstimateLoadResourceMap.end()) {
-        return Instance().staticEstimateLoadResourceMap[indexType](file_size, *cfg, version);
+        return Instance().staticEstimateLoadResourceMap[indexType](file_size, num_rows, dim, *cfg, version);
     }
 
-    return InternalEstimateLoadResource(file_size, *cfg, version);
+    return InternalEstimateLoadResource(file_size, num_rows, dim, *cfg, version);
 }
 
 template <typename DataType>
 expected<Resource>
-IndexStaticFaced<DataType>::InternalEstimateLoadResource(const float file_size, const BaseConfig& config,
+IndexStaticFaced<DataType>::InternalEstimateLoadResource(const float file_size, const int64_t num_rows, const int64_t dim, const BaseConfig& config,
                                                          const IndexVersion& version) {
     Resource resource;
     if (config.enable_mmap.has_value() && config.enable_mmap.value()) {

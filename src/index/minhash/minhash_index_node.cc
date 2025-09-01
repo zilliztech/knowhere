@@ -90,7 +90,7 @@ class MinHashLSHNode : public IndexNode {
     }
 
     static expected<Resource>
-    StaticEstimateLoadResource(const float file_size, const knowhere::BaseConfig& config, const IndexVersion& version) {
+    StaticEstimateLoadResource(const float file_size, const int64_t num_rows, const int64_t dim, const knowhere::BaseConfig& config, const IndexVersion& version) {
         const MinHashLSHConfig& mh_lsh_cfg = static_cast<const MinHashLSHConfig&>(config);
         auto code_in_mem = mh_lsh_cfg.mh_lsh_code_in_mem.value();
         if (code_in_mem) {
