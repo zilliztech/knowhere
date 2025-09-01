@@ -124,8 +124,8 @@ class IndexStaticFaced {
 
  private:
     static expected<Resource>
-    InternalEstimateLoadResource(const float file_size, const int64_t num_rows, const int64_t dim, const knowhere::BaseConfig& config,
-                                 const IndexVersion& version);
+    InternalEstimateLoadResource(const float file_size, const int64_t num_rows, const int64_t dim,
+                                 const knowhere::BaseConfig& config, const IndexVersion& version);
 
     static bool
     InternalStaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version);

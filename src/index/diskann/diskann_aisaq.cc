@@ -79,7 +79,8 @@ class AisaqIndexNode : public IndexNode {
     }
 
     static expected<Resource>
-    StaticEstimateLoadResource(const float file_size, const int64_t num_rows, const int64_t dim, const knowhere::BaseConfig& config, const IndexVersion& version) {
+    StaticEstimateLoadResource(const float file_size, const int64_t num_rows, const int64_t dim,
+                               const knowhere::BaseConfig& config, const IndexVersion& version) {
         float s = file_size / 1024;
         return Resource{s, file_size};
     }

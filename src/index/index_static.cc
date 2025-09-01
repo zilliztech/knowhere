@@ -87,7 +87,8 @@ IndexStaticFaced<DataType>::EstimateLoadResource(const knowhere::IndexType& inde
 
 template <typename DataType>
 expected<Resource>
-IndexStaticFaced<DataType>::InternalEstimateLoadResource(const float file_size, const int64_t num_rows, const int64_t dim, const BaseConfig& config,
+IndexStaticFaced<DataType>::InternalEstimateLoadResource(const float file_size, const int64_t num_rows,
+                                                         const int64_t dim, const BaseConfig& config,
                                                          const IndexVersion& version) {
     Resource resource;
     if (config.enable_mmap.has_value() && config.enable_mmap.value()) {
