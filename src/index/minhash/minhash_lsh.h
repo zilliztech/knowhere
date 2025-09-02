@@ -24,9 +24,6 @@
 #include "simd/hook.h"
 #include "sys/stat.h"
 namespace knowhere::minhash {
-using KeyType = uint64_t;
-using ValueType = idx_t;
-
 struct MinHashLSHBuildParams {
     std::string data_path;
     std::string index_file_path;
@@ -51,10 +48,6 @@ struct MinHashLSHSearchParams {
     faiss::IDSelector* id_selector = nullptr;
 };
 
-struct KVPair {
-    KeyType Key;
-    ValueType Value;
-};
 // index of each band
 class MinHashBandIndex {
  public:
@@ -153,55 +146,6 @@ class MinHashLSH {
     size_t mh_vec_length_ = 0;
     size_t ntotal_ = 0;
 };
-
-namespace {
-constexpr int kBatch = 4096;
-constexpr int kQueryBatch = 64;
-constexpr int kQueryBandBatch = 4;
-
-inline KeyType
-get_hash_key(const char* data, size_t size /*in bytes*/, size_t band, size_t band_i) {
-    const size_t r = size / band;
-    auto band_i_data = data + r * band_i;
-    return faiss::calculate_hash((const char*)band_i_data, r);
-}
-
-inline std::shared_ptr<KVPair[]>
-gen_transposed_hash_kv(const char* data, size_t rows, size_t data_size, size_t band) {
-    auto res_kv = std::shared_ptr<KVPair[]>(new KVPair[band * rows]);
-    auto batch_num = (rows + kBatch - 1) / kBatch;
-    auto build_pool = ThreadPool::GetGlobalBuildThreadPool();
-    std::vector<folly::Future<folly::Unit>> futures;
-    for (size_t i = 0; i < batch_num; i++) {
-        futures.emplace_back(build_pool->push([&, idx = i]() {
-            auto beg_id = idx * kBatch;
-            auto end_id = std::min((idx + 1) * kBatch, rows);
-            for (size_t j = beg_id; j < end_id; j++) {
-                const char* data_j = data + data_size * j;
-                for (size_t b = 0; b < band; b++) {
-                    KVPair kv = {get_hash_key(data_j, data_size, band, b), ValueType(j)};
-                    res_kv.get()[b * rows + j] = kv;
-                }
-            }
-        }));
-    }
-    WaitAllSuccess(futures);
-    return res_kv;
-}
-
-void
-sort_kv(const std::shared_ptr<KVPair[]> kv_code, size_t rows, size_t band) {
-    auto build_pool = ThreadPool::GetGlobalBuildThreadPool();
-    std::vector<folly::Future<folly::Unit>> futures;
-    for (size_t i = 0; i < band; i++) {
-        futures.emplace_back(build_pool->push([&, idx = i]() {
-            std::sort(kv_code.get() + rows * idx, kv_code.get() + rows * (idx + 1),
-                      [](const KVPair& a, const KVPair& b) { return a.Key < b.Key; });
-        }));
-    }
-    WaitAllSuccess(futures);
-}
-}  // namespace
 
 size_t
 MinHashBandIndex::FormatAndSave(faiss::BlockFileIOWriter& writer, const KVPair* sorted_kv, const size_t block_size,
@@ -343,7 +287,7 @@ MinHashLSH::BuildAndSave(MinHashLSHBuildParams* params) {
             return Status::invalid_args;
         }
 
-        total_kv_pair = gen_transposed_hash_kv(data.get(), ntotal, data_size, band_index_n);
+        total_kv_pair = GenTransposedHashKV(data.get(), ntotal, data_size, band_index_n);
         if (params->with_raw_data) {
             data_pos = writer.tellg();
             // todo: @cqy123456 format raw data if use disk index
@@ -359,7 +303,7 @@ MinHashLSH::BuildAndSave(MinHashLSHBuildParams* params) {
     // save hash kv as MinHashBandIndex format
     std::vector<size_t> band_index_ofs(band_index_n);
     {
-        sort_kv(total_kv_pair, ntotal, band_index_n);
+        SortHashKV(total_kv_pair, ntotal, band_index_n);
 
         for (size_t index_i = 0; index_i < band_index_n; index_i++) {
             band_index_ofs[index_i] =
@@ -408,11 +352,24 @@ MinHashLSH::Load(MinHashLSHLoadParams* params) {
 
     if (!params->hash_code_in_memory || this->with_raw_data_) {
         auto f = std::unique_ptr<FILE, decltype(&fclose)>(fopen(params->index_file_path.c_str(), "r"), &fclose);
+        if (!f) {
+            LOG_KNOWHERE_ERROR_ << "Failed to open file: " << params->index_file_path << " Error: " << strerror(errno);
+            return Status::disk_file_error;
+        }
         struct stat s;
-        fstat(fileno(f.get()), &s);
+        if (fstat(fileno(f.get()), &s) != 0) {
+            LOG_KNOWHERE_ERROR_ << "Failed to stat file: " << strerror(errno);
+            return Status::disk_file_error;
+        }
+
         this->file_size_ = s.st_size;
+        if (this->file_size_ == 0) {
+            LOG_KNOWHERE_ERROR_ << "empty index file";
+            return Status::disk_file_error;
+        }
         this->mmap_data_ = static_cast<char*>(mmap(NULL, file_size_, PROT_READ, MAP_SHARED, fileno(f.get()), 0));
         if (mmap_data_ == MAP_FAILED) {
+            mmap_data_ = nullptr;
             LOG_KNOWHERE_ERROR_ << "fail to mmap data ." << errno << " " << strerror(errno);
             return Status::disk_file_error;
         }
@@ -469,7 +426,7 @@ MinHashLSH::Search(const char* query, float* distances, idx_t* labels, MinHashLS
         res = std::shared_ptr<MinHashLSHResultHandler>(new MinHashLSHResultHandler(labels, distances, topk));
     }
     for (size_t i = 0; i < band_; i++) {
-        const auto hash = get_hash_key(query, this->mh_vec_elememt_size_ * this->mh_vec_length_, band_, i);
+        const auto hash = GetHashKey(query, this->mh_vec_elememt_size_ * this->mh_vec_length_, band_, i);
         auto& band = band_index_[i];
         auto& bloom = bloom_[i % bloom_.size()];
         if (bloom.contains(hash)) {
@@ -479,8 +436,8 @@ MinHashLSH::Search(const char* query, float* distances, idx_t* labels, MinHashLS
             break;
     }
     if (search_with_jaccard) {
-        minhash_jaccard_knn_ny_by_ids(query, this->raw_data_, reorder_ids.get(), this->mh_vec_length_,
-                                      this->mh_vec_elememt_size_, res->topk_, topk, distances, labels);
+        MinHashJaccardKNNSearchByIDs(query, this->raw_data_, reorder_ids.get(), this->mh_vec_length_,
+                                     this->mh_vec_elememt_size_, res->topk_, topk, distances, labels);
     }
     return Status::success;
 }
@@ -517,19 +474,20 @@ MinHashLSH::BatchSearch(const char* query, size_t nq, float* distances, idx_t* l
             all_res.emplace_back(labels + i * topk, distances + i * topk, topk);
         }
     }
-    // search bands
-    auto search_bands_list = [&](const char* query, size_t beg, size_t end, MinHashLSHResultHandler* res) {
-        for (auto i = beg; i < end; i++) {
-            const auto hash = get_hash_key(query, this->mh_vec_elememt_size_ * this->mh_vec_length_, band_, i);
-            auto& band = band_index_[i];
-            auto& bloom = bloom_[i % bloom_.size()];
-            if (bloom.contains(hash)) {
-                band.Search(hash, res, id_selector);
-            }
-            if (res->full())
-                break;
+    // prepare query key
+    std::vector<minhash::KeyType> query_hash_v;
+    query_hash_v.reserve(nq * band_);
+    {
+        auto query_kv = minhash::GenTransposedHashKV((const char*)query, nq,
+                                                     this->mh_vec_elememt_size_ * this->mh_vec_length_, this->band_);
+        for (auto i = 0; i < nq * band_; i++) {
+            query_hash_v.emplace_back(query_kv[i].Key);
         }
-    };
+    }
+    if (query_hash_v.size() != nq * band_) {
+        return Status::internal_error;
+    }
+    // search bands
     std::vector<folly::Future<folly::Unit>> futures;
     std::vector<size_t> access_list(nq);
     for (size_t i = 0; i < nq; i++) {
@@ -538,23 +496,34 @@ MinHashLSH::BatchSearch(const char* query, size_t nq, float* distances, idx_t* l
     size_t band_ofs = 0;
     while (access_list.size() && band_ofs < this->band_) {
         size_t band_beg = band_ofs;
-        size_t bend_end = std::min(band_beg + kQueryBandBatch, band_);
-        for (size_t i = band_beg; i < bend_end; i++) {
+        size_t band_end = std::min(band_beg + kQueryBandBatch, band_);
+        for (size_t i = band_beg; i < band_end; i++) {
             band_index_[i].WarmUp();
         }
         size_t access_num = access_list.size();
-        size_t run_time = (access_num + kQueryBatch - 1) / kQueryBatch;
-        futures.reserve(run_time);
-        for (size_t row = 0; row < run_time; ++row) {
-            futures.emplace_back(
-                pool->push([&, beg = row * kQueryBatch, end = std::min((size_t)((row + 1) * kQueryBatch), access_num),
-                            p_id_ptr = labels, p_dist_ptr = distances]() {
-                    for (size_t index = beg; index < end; index++) {
-                        auto query_id = access_list[index];
-                        search_bands_list(query + mh_vec_elememt_size_ * mh_vec_length_ * query_id, beg, end,
-                                          &all_res[query_id]);
+        size_t run_times = (access_num + kQueryBatch - 1) / kQueryBatch;
+        futures.reserve(run_times);
+        // avoid lots of page miss in mmap mode, all thread only access band from band_beg to band_end
+        for (size_t row = 0; row < run_times; ++row) {
+            futures.emplace_back(pool->push([&, query_id_beg = row * kQueryBatch,
+                                             query_id_end = std::min((size_t)((row + 1) * kQueryBatch), access_num)]() {
+                for (auto i = band_beg; i < band_end; i++) {
+                    auto& band = band_index_[i];
+                    auto& bloom = bloom_[i % bloom_.size()];
+                    const minhash::KeyType* band_i_q_hash = query_hash_v.data() + nq * i;
+                    for (auto j = query_id_beg; j < query_id_end; j++) {
+                        auto index = access_list[j];
+                        const auto hash = band_i_q_hash[index];
+                        auto& res = all_res[index];
+                        if (res.full()) {
+                            continue;
+                        }
+                        if (bloom.contains(hash)) {
+                            band.Search(hash, &res, id_selector);
+                        }
                     }
-                }));
+                }
+            }));
         }
         WaitAllSuccess(futures);
         futures.clear();
@@ -577,8 +546,8 @@ MinHashLSH::BatchSearch(const char* query, size_t nq, float* distances, idx_t* l
                 auto refine_k = all_res[i].topk_;
                 auto res_ids = labels + i * topk;
                 auto res_dis = distances + i * topk;
-                minhash_jaccard_knn_ny_by_ids(q, this->raw_data_, reorder_ids, this->mh_vec_length_,
-                                              this->mh_vec_elememt_size_, refine_k, topk, res_dis, res_ids);
+                MinHashJaccardKNNSearchByIDs(q, this->raw_data_, reorder_ids, this->mh_vec_length_,
+                                             this->mh_vec_elememt_size_, refine_k, topk, res_dis, res_ids);
                 return;
             }));
         }
@@ -601,6 +570,5 @@ MinHashLSH::GetDataByIds(const idx_t* ids, size_t n, char* data) const {
         return Status::not_implemented;
     }
 }
-
 }  // namespace knowhere::minhash
 #endif

@@ -115,6 +115,7 @@ decltype(calculate_hash) calculate_hash = calculate_hash_ref;
 decltype(u32_jaccard_distance) u32_jaccard_distance = u32_jaccard_distance_ref;
 decltype(u32_jaccard_distance_batch_4) u32_jaccard_distance_batch_4 = u32_jaccard_distance_batch_4_ref;
 decltype(u64_jaccard_distance) u64_jaccard_distance = u64_jaccard_distance_ref;
+decltype(minhash_lsh_hit) minhash_lsh_hit = minhash_lsh_hit_ref;
 decltype(u64_jaccard_distance_batch_4) u64_jaccard_distance_batch_4 = u64_jaccard_distance_batch_4_ref;
 ///////////////////////////////////////////////////////////////////////////////
 #if defined(__x86_64__)

@@ -277,6 +277,29 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
         }
 
         RETURN_IF_ERROR(WaitAllSuccess(futs));
+    } else if (IsMetricType(metric_str, metric::MHJACCARD)) {
+        auto labels = ids;
+        auto distances = dis;
+        size_t mh_lsh_band = cfg.mh_lsh_band.value();
+        bool mh_search_with_jaccard = cfg.mh_search_with_jaccard.value();
+        size_t mh_element_bit_width = cfg.mh_element_bit_width.value();
+        auto mh_valid_stat = minhash::MinhashConfigCheck(dim, datatype_v<DataType>,
+                                                         PARAM_TYPE::SEARCH | PARAM_TYPE::TRAIN, &cfg, &bitset);
+        if (mh_valid_stat != Status::success) {
+            return mh_valid_stat;
+        }
+        int u8_dim = dim / 8;
+        auto search_status =
+            minhash::MinHashVecSearch((const char*)xq, (const char*)xb, u8_dim, mh_lsh_band, mh_element_bit_width, nq,
+                                      nb, topk, mh_search_with_jaccard, bitset, distances, labels);
+        if (search_status != Status::success) {
+            return search_status;
+        }
+        if (xb_id_offset != 0) {
+            for (auto i = 0; i < nq * topk; i++) {
+                labels[i] = labels[i] == -1 ? -1 : labels[i] + xb_id_offset;
+            }
+        }
     } else {
         auto result = Str2FaissMetricType(cfg.metric_type.value());
         if (result.error() != Status::success) {
@@ -287,14 +310,6 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
 
         auto labels = ids;
         auto distances = dis;
-        // some check for minhash metric
-        if (faiss_metric_type == faiss::METRIC_MinHash_Jaccard) {
-            auto mh_valid_stat =
-                MinhashConfigCheck(dim, datatype_v<DataType>, PARAM_TYPE::SEARCH | PARAM_TYPE::TRAIN, &cfg, &bitset);
-            if (mh_valid_stat != Status::success) {
-                return mh_valid_stat;
-            }
-        }
 
         std::unique_ptr<float[]> norms = is_cosine ? GetVecNorms<DataType>(base_dataset) : nullptr;
         auto pool = ThreadPool::GetGlobalSearchThreadPool();
@@ -350,23 +365,6 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                                 LOG_KNOWHERE_ERROR_ << "Metric IP not supported for current vector type";
                                 return Status::faiss_inner_error;
                             }
-                        }
-                        break;
-                    }
-                    case faiss::METRIC_MinHash_Jaccard: {
-                        size_t mh_lsh_band = cfg.mh_lsh_band.value();
-                        bool mh_search_with_jaccard = cfg.mh_search_with_jaccard.value();
-                        if (mh_search_with_jaccard) {
-                            size_t hash_element_size = cfg.mh_element_bit_width.value() / 8;  // in bytes
-                            size_t hash_element_length = dim / (hash_element_size * 8);
-                            auto cur_query = (const char*)xq + (dim / 8) * index;
-                            minhash_jaccard_knn_ny(cur_query, (const char*)xb, hash_element_length, hash_element_size,
-                                                   nb, topk, bitset, cur_distances, cur_labels);
-                        } else {
-                            size_t u8_dim = dim / 8;
-                            auto cur_query = (const char*)xq + u8_dim * index;
-                            minhash_lsh_hit_ny(cur_query, (const char*)xb, u8_dim, mh_lsh_band, nb, topk, bitset,
-                                               cur_distances, cur_labels);
                         }
                         break;
                     }

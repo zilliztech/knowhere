@@ -940,34 +940,36 @@ u64_binary_search_eq_avx512(const uint64_t* arr, const size_t size, const uint64
     intptr_t left = 0;
     intptr_t right = static_cast<intptr_t>(size) - 1;
 
-    while (right - left + 1 >= CHUNK_SIZE * 2) {
-        intptr_t mid = left + (right - left) / 2;
+    if (size > 128) {
+        while (right - left + 1 >= CHUNK_SIZE * 2) {
+            intptr_t mid = left + (right - left) / 2;
 
-        intptr_t chunk_start = std::max(left, mid - CHUNK_SIZE / 2);
-        chunk_start = (chunk_start / CHUNK_SIZE) * CHUNK_SIZE;
+            intptr_t chunk_start = std::max(left, mid - CHUNK_SIZE / 2);
+            chunk_start = (chunk_start / CHUNK_SIZE) * CHUNK_SIZE;
 
-        if (chunk_start + CHUNK_SIZE <= static_cast<intptr_t>(size) && chunk_start + CHUNK_SIZE - 1 <= right) {
-            __m512i vdata = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(&arr[chunk_start]));
+            if (chunk_start + CHUNK_SIZE <= static_cast<intptr_t>(size) && chunk_start + CHUNK_SIZE - 1 <= right) {
+                __m512i vdata = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(&arr[chunk_start]));
 
-            __mmask8 eq_mask = _mm512_cmpeq_epu64_mask(vdata, vtarget);
-            if (eq_mask != 0) {
-                return static_cast<int>(chunk_start + __builtin_ctz(eq_mask));
-            }
+                __mmask8 eq_mask = _mm512_cmpeq_epu64_mask(vdata, vtarget);
+                if (eq_mask != 0) {
+                    return static_cast<int>(chunk_start + __builtin_ctz(eq_mask));
+                }
 
-            uint64_t chunk_mid_value = arr[chunk_start + CHUNK_SIZE / 2];
+                uint64_t chunk_mid_value = arr[chunk_start + CHUNK_SIZE / 2];
 
-            if (chunk_mid_value < key) {
-                left = chunk_start + CHUNK_SIZE;
+                if (chunk_mid_value < key) {
+                    left = chunk_start + CHUNK_SIZE;
+                } else {
+                    right = chunk_start - 1;
+                }
             } else {
-                right = chunk_start - 1;
-            }
-        } else {
-            if (arr[mid] == key) {
-                return static_cast<int>(mid);
-            } else if (arr[mid] < key) {
-                left = mid + 1;
-            } else {
-                right = mid - 1;
+                if (arr[mid] == key) {
+                    return static_cast<int>(mid);
+                } else if (arr[mid] < key) {
+                    left = mid + 1;
+                } else {
+                    right = mid - 1;
+                }
             }
         }
     }
