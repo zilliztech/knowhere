@@ -66,7 +66,7 @@ IndexStaticFaced<DataType>::ConfigCheck(const IndexType& indexType, const IndexV
 template <typename DataType>
 expected<Resource>
 IndexStaticFaced<DataType>::EstimateLoadResource(const knowhere::IndexType& indexType,
-                                                 const knowhere::IndexVersion& version, const float file_size,
+                                                 const knowhere::IndexVersion& version, const float file_size_gb,
                                                  const int64_t num_rows, const int64_t dim,
                                                  const knowhere::Json& params) {
     auto cfg = IndexStaticFaced<DataType>::CreateConfig(indexType, version);
@@ -79,24 +79,24 @@ IndexStaticFaced<DataType>::EstimateLoadResource(const knowhere::IndexType& inde
     }
 
     if (Instance().staticEstimateLoadResourceMap.find(indexType) != Instance().staticEstimateLoadResourceMap.end()) {
-        return Instance().staticEstimateLoadResourceMap[indexType](file_size, num_rows, dim, *cfg, version);
+        return Instance().staticEstimateLoadResourceMap[indexType](file_size_gb, num_rows, dim, *cfg, version);
     }
 
-    return InternalEstimateLoadResource(file_size, num_rows, dim, *cfg, version);
+    return InternalEstimateLoadResource(file_size_gb, num_rows, dim, *cfg, version);
 }
 
 template <typename DataType>
 expected<Resource>
-IndexStaticFaced<DataType>::InternalEstimateLoadResource(const float file_size, const int64_t num_rows,
+IndexStaticFaced<DataType>::InternalEstimateLoadResource(const float file_size_gb, const int64_t num_rows,
                                                          const int64_t dim, const BaseConfig& config,
                                                          const IndexVersion& version) {
     Resource resource;
     if (config.enable_mmap.has_value() && config.enable_mmap.value()) {
-        resource.diskCost = file_size;
+        resource.diskCost = file_size_gb;
         resource.memoryCost = 0.0f;
     } else {
         resource.diskCost = 0;
-        resource.memoryCost = 1.0f * file_size;
+        resource.memoryCost = 1.0f * file_size_gb;
     }
     return resource;
 }
