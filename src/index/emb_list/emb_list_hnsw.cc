@@ -180,7 +180,13 @@ class EmbListIndexNode : public IndexNode {
             LOG_KNOWHERE_WARNING_ << "Invalid metric type: " << metric_type;
             return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "invalid metric type");
         }
+        // TODO: support sub metric type L2
         auto sub_metric_type = sub_metric_type_or.value();
+        if (sub_metric_type == metric::L2) {
+            LOG_KNOWHERE_WARNING_ << "sub metric type [L2] is not supported for emb_list based index";
+            return expected<DataSetPtr>::Err(Status::emb_list_inner_error,
+                                             "sub metric type [L2] is not supported for emb_list based index");
+        }
         LOG_KNOWHERE_DEBUG_ << "sub metric_type: " << sub_metric_type;
         auto el_k = config.k.value();
 
