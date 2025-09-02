@@ -11,9 +11,6 @@
 
 #include "faiss/impl/mapped_io.h"
 #include "faiss/index_io.h"
-#include "index/emb_list/emb_list_config.h"
-#include "index/hnsw/base_hnsw_config.h"
-#include "index/ivf/ivf_config.h"
 #include "knowhere/config.h"
 #include "knowhere/dataset.h"
 #include "knowhere/emb_list_utils.h"
@@ -29,7 +26,8 @@
 namespace knowhere {
 
 /**
- * @brief EmbListHNSWIndexNode: An embedding-list-based index node utilizing HNSW as the underlying ANN engine.
+ * @brief EmbListIndexNode: An embedding-list-based index node utilizing other vector-based indexes as the base ANN
+ * engine.
  *
  * This class is intended for scenarios where vectors are organized into embedding lists (emb_lists).
  * Both the build and search operations are performed at the emb_list level, rather than on individual vectors.
@@ -43,7 +41,7 @@ namespace knowhere {
  *   - The third emb_list starts at 9 and contains 91 vectors (indices 9-99)
  *
  * The class manages the mapping between vector IDs and emb_list IDs, and handles
- * serialization/deserialization for both the emb_list structure and the underlying HNSW index.
+ * serialization/deserialization for both the emb_list structure and the base-index.
  *
  * In Milvus, all vectors within the same emb_list share the same scalar value, and correspond to the same bit in the
  * bitset. Therefore, the bitset length equals the number of emb_lists, which may be much smaller than the total number
@@ -52,52 +50,54 @@ namespace knowhere {
  * Note: In the future, EmbListIndexNode should support not only HNSW, but also other vector-based indexes such as IVF,
  * DiskANN, etc.
  *
- * @tparam DataType The data type of the vectors (e.g., fp32, fp16, bf16).
+ * @tparam DataType The data type of the vectors (e.g., fp32, fp16, bf16, int8).
  */
-template <typename DataType>
-class EmbListHNSWIndexNode : public IndexNode {
+template <typename DataType, EmbListBaseIndexType base_index_type>
+class EmbListIndexNode : public IndexNode {
  public:
-    EmbListHNSWIndexNode(const int32_t& version, const Object& object) : IndexNode(version) {
+    EmbListIndexNode(const int32_t& version, const Object& object) : IndexNode(version) {
         build_pool_ = ThreadPool::GetGlobalBuildThreadPool();
         search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
-        base_index_ = std::move(IndexFactory::Instance().Create<DataType>("HNSW", version, object).value());
+        base_index_ = std::move(IndexFactory::Instance()
+                                    .Create<DataType>(EMB_LIST_BASE_INDEX_TYPE_MAP.at(base_index_type), version, object)
+                                    .value());
         data_format_ = datatype_v<DataType>;
     }
 
     /**
-     * @brief Train the emb_list_hnsw index.
+     * @brief Train the emb_list index and the base-index.
      * @param dataset Training dataset
      * @param cfg     Configuration parameters
      * @param use_knowhere_build_pool Whether to use the global build thread pool
      *
      * Main steps:
      * 1. Check that the dataset contains emb_list offset information (group boundaries).
-     * 2. Force the underlying HNSW to use IP as the metric.
+     * 2. Set the base-index metric.
      * 3. Build the EmbListOffset structure (group offsets).
-     * 4. Call the underlying HNSW's Train.
+     * 4. Call the base-index's Train.
      */
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
-        LOG_KNOWHERE_INFO_ << "train";
+        LOG_KNOWHERE_INFO_ << "emb_list index train.";
         const size_t* lims = dataset->GetLims();
         if (lims == nullptr) {
             LOG_KNOWHERE_WARNING_ << "Missing emb_list offset, could not train index";
             return Status::emb_list_inner_error;
         }
-        auto& hnsw_config = static_cast<BaseConfig&>(*cfg);
-        auto sub_metric_type_or = get_sub_metric_type(hnsw_config.metric_type.value());
+        auto& config = static_cast<BaseConfig&>(*cfg);
+        auto sub_metric_type_or = get_sub_metric_type(config.metric_type.value());
         if (!sub_metric_type_or.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "Invalid metric type: " << hnsw_config.metric_type.value();
+            LOG_KNOWHERE_WARNING_ << "Invalid metric type: " << config.metric_type.value();
             return Status::emb_list_inner_error;
         }
-        hnsw_config.metric_type = sub_metric_type_or.value();
+        config.metric_type = sub_metric_type_or.value();
         emb_list_offset_ = std::make_unique<EmbListOffset>(lims, static_cast<size_t>(dataset->GetRows()));
         return base_index_.Node()->Train(dataset, cfg, use_knowhere_build_pool);
     }
 
     Status
     Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
-        LOG_KNOWHERE_INFO_ << "add";
+        LOG_KNOWHERE_INFO_ << "emb_list index add.";
         auto base_index_add_res = base_index_.Node()->Add(dataset, cfg, use_knowhere_build_pool);
         if (base_index_add_res != Status::success) {
             LOG_KNOWHERE_WARNING_ << "base index add failed";
@@ -109,13 +109,13 @@ class EmbListHNSWIndexNode : public IndexNode {
     }
 
     /**
-     * @brief Establishes the mapping from internal HNSW IDs to emb_list IDs.
+     * @brief Establishes the mapping from internal base-index IDs to emb_list IDs.
      *
-     * This mapping is essential for sub indexes to correctly apply bitset filtering using only a 1-hop mapping during
-     * search. In some cases, such as with mv-only *relayout*, a sub-HNSW index may have its own
+     * This mapping is essential for base indexes to correctly apply bitset filtering using only a 1-hop mapping during
+     * search. In some cases, such as with mv-only *relayout*, a base-index may have its own
      * (base)internal-to-external ID mapping.
      * However, the emb_list search bitset operates on emb_list IDs, which we refer to as the "most external" IDs.
-     * Therefore, we need to create a mapping from the base_internal_id (used by the sub-HNSW) to the most external
+     * Therefore, we need to create a mapping from the base_internal_id (used by the base-index) to the most external
      * emb_list_id, ensuring that bitset checks and search results are consistent at the emb_list level.
      */
     void
@@ -141,13 +141,13 @@ class EmbListHNSWIndexNode : public IndexNode {
      *
      * Search process:
      * 1. Check emb_list offset information and build the query group structure.
-     * 2. Stage 1: Call underlying HNSW to retrieve candidate vector IDs for each query emb_list.
-     * 3. Stage 2: For each emb_list, collect candidate emb_list IDs, and for each emb_list, perform brute-force
+     * 2. Stage 1: Call base-index to retrieve candidate vector IDs for each query emb_list.
+     * 3. Stage 2: For each query emb_list, collect candidate emb_list IDs and its vectors, and perform brute-force
      *    distance calculation to aggregate scores at the emb_list level.
      * 4. Return top-k emb_list results.
      *
      * Note: The emb_list index node does not need to split tasks by nq and dispatch them to the search thread pool for
-     * parallel processing, because the sub-index_node already handles this.
+     * parallel processing, because the base-index_node already handles this.
      */
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
@@ -159,7 +159,7 @@ class EmbListHNSWIndexNode : public IndexNode {
         auto num_q_vecs = static_cast<size_t>(dataset->GetRows());
         EmbListOffset query_emb_list_offset(lims, num_q_vecs);
         auto num_q_el = query_emb_list_offset.num_el();
-        auto& config = static_cast<EmbListHNSWConfig&>(*cfg);
+        auto& config = static_cast<BaseConfig&>(*cfg);
         auto metric_type = config.metric_type.value();
         auto el_metric_type_or = get_el_metric_type(metric_type);
         if (!el_metric_type_or.has_value()) {
@@ -188,15 +188,15 @@ class EmbListHNSWIndexNode : public IndexNode {
         auto ids = std::make_unique<int64_t[]>(num_q_el * el_k);
         auto dists = std::make_unique<float[]>(num_q_el * el_k);
 
-        // Stage 1: HNSW search - top k' = k * retrieval_ann_ratio
+        // Stage 1: base-index search - retrieve top k' vectors
+        //  top k' = k * retrieval_ann_ratio
         config.metric_type = sub_metric_type;
         int32_t vec_topk = std::max((int32_t)(el_k * config.retrieval_ann_ratio.value()), 1);
         config.k = vec_topk;
         auto ann_search_res = base_index_.Node()->Search(dataset, std::move(cfg), bitset).value();
-        // Get vector IDs from stage 1
         const auto stage1_ids = ann_search_res->GetIds();
 
-        // For each query emb_list, perform stage 2 aggregation
+        // Stage 2: For each query emb_list, perform brute-force distance calculation and aggregate scores
         for (size_t i = 0; i < num_q_el; i++) {
             auto start_offset = query_emb_list_offset.offset[i];
             auto end_offset = query_emb_list_offset.offset[i + 1];
@@ -375,12 +375,20 @@ class EmbListHNSWIndexNode : public IndexNode {
 
     static std::unique_ptr<BaseConfig>
     StaticCreateConfig() {
-        return std::make_unique<EmbListHNSWConfig>();
+        return IndexStaticFaced<DataType>::CreateConfig(EMB_LIST_BASE_INDEX_TYPE_MAP.at(base_index_type),
+                                                        Version::GetCurrentVersion().VersionNumber());
     }
 
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
         return StaticCreateConfig();
+    }
+
+    static Status
+    StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {
+        return IndexStaticFaced<DataType>::ConfigCheck(EMB_LIST_BASE_INDEX_TYPE_MAP.at(base_index_type),
+                                                       Version::GetCurrentVersion().VersionNumber(), cfg, paramType,
+                                                       msg);
     }
 
     int64_t
@@ -402,22 +410,36 @@ class EmbListHNSWIndexNode : public IndexNode {
         return base_index_.Node()->Count();
     }
 
+    /**
+     * @brief Get the type string of the current index.
+     *
+     * This function returns the type string of the emb_list index, in the format "EMB_LIST_"
+     * followed by the type name of the underlying base index.
+     * For example, if the base index type is "HNSW", it returns "EMB_LIST_HNSW".
+     */
     std::string
     Type() const override {
-        return knowhere::IndexEnum::INDEX_EMB_LIST_HNSW;
+        return "EMB_LIST_" + EMB_LIST_BASE_INDEX_TYPE_MAP.at(base_index_type);
     }
 
  protected:
-    Index<IndexNode> base_index_;                     ///< Underlying HNSW index node
-    std::unique_ptr<EmbListOffset> emb_list_offset_;  ///< emb_list group offset structure
+    Index<IndexNode> base_index_;                     // base index node
+    std::unique_ptr<EmbListOffset> emb_list_offset_;  // emb_list group offset structure
     std::shared_ptr<ThreadPool> build_pool_;
     std::shared_ptr<ThreadPool> search_pool_;
-    DataFormatEnum data_format_;  ///< Data format (e.g., fp32, fp16, bf16)
+    DataFormatEnum data_format_;  // Data format (e.g., fp32, fp16, bf16)
 };
 
-KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(EMB_LIST_HNSW, EmbListHNSWIndexNode,
-                                                knowhere::feature::MMAP | knowhere::feature::MV |
-                                                    knowhere::feature::EMB_LIST)
-KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(EMB_LIST_HNSW, EmbListHNSWIndexNode,
-                                          knowhere::feature::MMAP | knowhere::feature::MV | knowhere::feature::EMB_LIST)
+#define KNOWHERE_REGISTER_EMB_LIST_HNSW_ALL(name, base_index_type)                                             \
+    KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(                                                           \
+        name, EmbListIndexNode, knowhere::feature::MMAP | knowhere::feature::MV | knowhere::feature::EMB_LIST, \
+        base_index_type)                                                                                       \
+    KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(                                                                 \
+        name, EmbListIndexNode, knowhere::feature::MMAP | knowhere::feature::MV | knowhere::feature::EMB_LIST, \
+        base_index_type)
+
+KNOWHERE_REGISTER_EMB_LIST_HNSW_ALL(EMB_LIST_HNSW, EmbListBaseIndexType::HNSW)
+KNOWHERE_REGISTER_EMB_LIST_HNSW_ALL(EMB_LIST_HNSW_SQ, EmbListBaseIndexType::HNSW_SQ)
+KNOWHERE_REGISTER_EMB_LIST_HNSW_ALL(EMB_LIST_HNSW_PQ, EmbListBaseIndexType::HNSW_PQ)
+KNOWHERE_REGISTER_EMB_LIST_HNSW_ALL(EMB_LIST_HNSW_PRQ, EmbListBaseIndexType::HNSW_PRQ)
 }  // namespace knowhere

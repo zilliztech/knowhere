@@ -11,7 +11,9 @@
 
 #pragma once
 
+#include <map>
 #include <string>
+#include <unordered_map>
 
 namespace knowhere {
 
@@ -60,6 +62,9 @@ constexpr const char* INDEX_AISAQ = "AISAQ";
 constexpr const char* INDEX_MINHASH_LSH = "MINHASH_LSH";
 
 constexpr const char* INDEX_EMB_LIST_HNSW = "EMB_LIST_HNSW";
+constexpr const char* INDEX_EMB_LIST_HNSW_SQ = "EMB_LIST_HNSW_SQ";
+constexpr const char* INDEX_EMB_LIST_HNSW_PQ = "EMB_LIST_HNSW_PQ";
+constexpr const char* INDEX_EMB_LIST_HNSW_PRQ = "EMB_LIST_HNSW_PRQ";
 
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX = "SPARSE_INVERTED_INDEX";
 constexpr const char* INDEX_SPARSE_WAND = "SPARSE_WAND";
@@ -254,5 +259,17 @@ enum RefineType {
     FLOAT16_QUANT,
     BFLOAT16_QUANT,
 };
+
+// This enum serves as the template parameter for `EmbListIndexNode` to specify the type of base index used.
+//
+// NOTE: The emb_list index is designed to support a wide range of vector indexes as its base_index through templates.
+// However, since C++ template parameters cannot accept the current `IndexEnum` (which is actually a set of string
+// constants, not a true enum), we define a dedicated enum here.
+enum class EmbListBaseIndexType { HNSW, HNSW_SQ, HNSW_PQ, HNSW_PRQ };
+const std::unordered_map<EmbListBaseIndexType, knowhere::IndexType> EMB_LIST_BASE_INDEX_TYPE_MAP = {
+    {EmbListBaseIndexType::HNSW, IndexEnum::INDEX_HNSW},
+    {EmbListBaseIndexType::HNSW_SQ, IndexEnum::INDEX_HNSW_SQ},
+    {EmbListBaseIndexType::HNSW_PQ, IndexEnum::INDEX_HNSW_PQ},
+    {EmbListBaseIndexType::HNSW_PRQ, IndexEnum::INDEX_HNSW_PRQ}};
 
 }  // namespace knowhere

@@ -1418,6 +1418,16 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             futs.reserve(rows);
             for (auto i = 0; i < rows; i++) {
                 futs.emplace_back(search_pool->push([&, idx = i, index_id = index_id]() {
+                    // set up a distance computer
+                    std::unique_ptr<faiss::DistanceComputer> dist_computer;
+                    const faiss::IndexRefine* index_refine =
+                        dynamic_cast<const faiss::IndexRefine*>(indexes[index_id].get());
+                    if (index_refine != nullptr) {
+                        dist_computer.reset(index_refine->refine_index->get_distance_computer());
+                    } else {
+                        dist_computer.reset(indexes[index_id]->get_distance_computer());
+                    }
+
                     // set up a query
                     const float* cur_query = nullptr;
                     std::vector<float> cur_query_tmp(dim);
@@ -1427,7 +1437,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                         convert_rows_to_fp32(data, cur_query_tmp.data(), data_format, idx, 1, dim);
                         cur_query = cur_query_tmp.data();
                     }
-                    std::unique_ptr<faiss::DistanceComputer> dist_computer(indexes[index_id]->get_distance_computer());
+
                     dist_computer->set_query(cur_query);
                     for (auto j = 0; j < labels_len; j++) {
                         auto id = labels[j];
