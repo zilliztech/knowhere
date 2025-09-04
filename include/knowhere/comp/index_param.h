@@ -70,6 +70,8 @@ constexpr const char* INDEX_SPARSE_INVERTED_INDEX = "SPARSE_INVERTED_INDEX";
 constexpr const char* INDEX_SPARSE_WAND = "SPARSE_WAND";
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX_CC = "SPARSE_INVERTED_INDEX_CC";
 constexpr const char* INDEX_SPARSE_WAND_CC = "SPARSE_WAND_CC";
+
+constexpr const char* INDEX_CARDINAL_TIERED = "CARDINAL_TIERED";
 }  // namespace IndexEnum
 
 namespace ClusterEnum {

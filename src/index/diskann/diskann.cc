@@ -85,8 +85,9 @@ class DiskANNIndexNode : public IndexNode {
     }
 
     static expected<Resource>
-    StaticEstimateLoadResource(const float file_size, const knowhere::BaseConfig& config, const IndexVersion& version) {
-        return Resource{file_size * 0.25f, file_size};
+    StaticEstimateLoadResource(const uint64_t file_size_in_bytes, const int64_t num_rows, const int64_t dim,
+                               const knowhere::BaseConfig& config, const IndexVersion& version) {
+        return Resource{file_size_in_bytes / 4, file_size_in_bytes};
     }
 
     Status

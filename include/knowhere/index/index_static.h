@@ -19,8 +19,8 @@
 namespace knowhere {
 
 struct Resource {
-    float memoryCost;
-    float diskCost;
+    uint64_t memoryCost;  // in bytes
+    uint64_t diskCost;    // in bytes
 };
 
 #define DEFINE_HAS_STATIC_FUNC(func_name)                                               \
@@ -70,13 +70,16 @@ class IndexStaticFaced {
      * @brief estimate the memory and disk resource usage before index loading by index params
      * @param indexType vector index type (HNSW, IVFFLAT, etc)
      * @param version  vector index version (see version.h)
-     * @param file_size sum of all index file/binary sizes (in GB)
+     * @param file_size_in_bytes sum of all index file/binary sizes (in bytes)
+     * @param num_rows number of rows in the index
+     * @param dim dimension of the vector
      * @param params the union of the index build and load parameters
      * @return memory and disk usage for loading the index
      */
     static expected<Resource>
     EstimateLoadResource(const knowhere::IndexType& indexType, const knowhere::IndexVersion& version,
-                         const float file_size, const knowhere::Json& params);
+                         const uint64_t file_size_in_bytes, const int64_t num_rows, const int64_t dim,
+                         const knowhere::Json& params);
 
     /**
      * @brief determine whether the index contains the raw data before loading the index by index params
@@ -121,8 +124,8 @@ class IndexStaticFaced {
 
  private:
     static expected<Resource>
-    InternalEstimateLoadResource(const float file_size, const knowhere::BaseConfig& config,
-                                 const IndexVersion& version);
+    InternalEstimateLoadResource(const uint64_t file_size_in_bytes, const int64_t num_rows, const int64_t dim,
+                                 const knowhere::BaseConfig& config, const IndexVersion& version);
 
     static bool
     InternalStaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version);

@@ -90,14 +90,16 @@ class MinHashLSHNode : public IndexNode {
     }
 
     static expected<Resource>
-    StaticEstimateLoadResource(const float file_size, const knowhere::BaseConfig& config, const IndexVersion& version) {
+    StaticEstimateLoadResource(const uint64_t file_size_in_bytes, const int64_t num_rows, const int64_t dim,
+                               const knowhere::BaseConfig& config, const IndexVersion& version) {
         const MinHashLSHConfig& mh_lsh_cfg = static_cast<const MinHashLSHConfig&>(config);
         auto code_in_mem = mh_lsh_cfg.mh_lsh_code_in_mem.value();
         if (code_in_mem) {
+            // TODO: more precise estimation to resolve the following comments
             // unknown dim and rows number, incorrect mem size if code_in_mem == true.
-            return Resource{file_size * 1.0f, file_size * 1.0f};
+            return Resource{file_size_in_bytes, file_size_in_bytes};
         } else {
-            return Resource{0.0f, file_size * 1.0f};
+            return Resource{0, file_size_in_bytes};
         }
     }
 

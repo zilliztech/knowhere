@@ -66,8 +66,9 @@ IndexStaticFaced<DataType>::ConfigCheck(const IndexType& indexType, const IndexV
 template <typename DataType>
 expected<Resource>
 IndexStaticFaced<DataType>::EstimateLoadResource(const knowhere::IndexType& indexType,
-                                                 const knowhere::IndexVersion& version, const float file_size,
-                                                 const knowhere::Json& params) {
+                                                 const knowhere::IndexVersion& version,
+                                                 const uint64_t file_size_in_bytes, const int64_t num_rows,
+                                                 const int64_t dim, const knowhere::Json& params) {
     auto cfg = IndexStaticFaced<DataType>::CreateConfig(indexType, version);
 
     std::string msg;
@@ -78,23 +79,24 @@ IndexStaticFaced<DataType>::EstimateLoadResource(const knowhere::IndexType& inde
     }
 
     if (Instance().staticEstimateLoadResourceMap.find(indexType) != Instance().staticEstimateLoadResourceMap.end()) {
-        return Instance().staticEstimateLoadResourceMap[indexType](file_size, *cfg, version);
+        return Instance().staticEstimateLoadResourceMap[indexType](file_size_in_bytes, num_rows, dim, *cfg, version);
     }
 
-    return InternalEstimateLoadResource(file_size, *cfg, version);
+    return InternalEstimateLoadResource(file_size_in_bytes, num_rows, dim, *cfg, version);
 }
 
 template <typename DataType>
 expected<Resource>
-IndexStaticFaced<DataType>::InternalEstimateLoadResource(const float file_size, const BaseConfig& config,
+IndexStaticFaced<DataType>::InternalEstimateLoadResource(const uint64_t file_size_in_bytes, const int64_t num_rows,
+                                                         const int64_t dim, const BaseConfig& config,
                                                          const IndexVersion& version) {
     Resource resource;
     if (config.enable_mmap.has_value() && config.enable_mmap.value()) {
-        resource.diskCost = file_size;
-        resource.memoryCost = 0.0f;
+        resource.diskCost = file_size_in_bytes;
+        resource.memoryCost = 0;
     } else {
         resource.diskCost = 0;
-        resource.memoryCost = 1.0f * file_size;
+        resource.memoryCost = file_size_in_bytes;
     }
     return resource;
 }

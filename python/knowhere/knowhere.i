@@ -156,7 +156,7 @@ class IndexWrap {
  public:
     IndexWrap(const std::string& name, const int32_t& version) {
         GILReleaser rel;
-        if (name == std::string(knowhere::IndexEnum::INDEX_DISKANN)) {
+        if (name == std::string(knowhere::IndexEnum::INDEX_DISKANN) || name == std::string(knowhere::IndexEnum::INDEX_CARDINAL_TIERED)) {
             std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
             auto diskann_pack = knowhere::Pack(file_manager);
             idx = IndexFactory::Instance().Create<T>(name, version,
