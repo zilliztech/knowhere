@@ -102,6 +102,13 @@ TEST_CASE("Test MinHashLSHIndexNode with MinHashLSH hit", "[minhash_lsh_index]")
         auto base_json = base_gen();
         auto result_knn = knowhere::BruteForce::Search<knowhere::bin1>(base_ds, query_ds, base_json, nullptr);
         lsh_gt_ptr = result_knn.value();
+        float lsh_recall = 0;
+        auto res_dis = lsh_gt_ptr->GetDistance();
+        for (int64_t i = 0; i < query_ds->GetRows(); i++) {
+            lsh_recall += (res_dis[i * kK] == 1.0);
+        }
+        lsh_recall /= query_ds->GetRows();
+        REQUIRE(lsh_recall == 1.0);
     }
 
     SECTION("Basic Test") {

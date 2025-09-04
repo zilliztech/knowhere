@@ -286,7 +286,8 @@ MinHashLSHNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
         return expected<DataSetPtr>::Err(Status::empty_index, "Minhash index not loaded");
     }
     auto search_conf = static_cast<const MinHashLSHConfig&>(*cfg);
-    auto stat = MinhashConfigCheck(dataset->GetDim(), DataFormatEnum::bin1, PARAM_TYPE::SEARCH, &search_conf, &bitset);
+    auto stat =
+        minhash::MinhashConfigCheck(dataset->GetDim(), DataFormatEnum::bin1, PARAM_TYPE::SEARCH, &search_conf, &bitset);
     if (stat != Status::success) {
         return expected<DataSetPtr>::Err(Status::invalid_args, "MinhashConfigCheck() failed, please check the config.");
     }
