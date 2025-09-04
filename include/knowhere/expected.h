@@ -109,6 +109,8 @@ Status2String(knowhere::Status status) {
             return "sparse index inner error";
         case knowhere::Status::brute_force_inner_error:
             return "brute_force inner error";
+        case knowhere::Status::emb_list_inner_error:
+            return "emb_list inner error";
         case knowhere::Status::aisaq_error:
             return "internal AiSAQ error";
         default:
