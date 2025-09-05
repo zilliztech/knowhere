@@ -36,15 +36,18 @@ IndexNodeThreadPoolWrapper::IndexNodeThreadPoolWrapper(std::unique_ptr<IndexNode
 }
 
 expected<DataSetPtr>
-IndexNodeThreadPoolWrapper::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
-                                   const BitsetView& bitset) const {
-    return thread_pool_->push([&]() { return this->index_node_->Search(dataset, std::move(cfg), bitset); }).get();
+IndexNodeThreadPoolWrapper::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                                   milvus::OpContext* op_context) const {
+    return thread_pool_->push([&]() { return this->index_node_->Search(dataset, std::move(cfg), bitset, op_context); })
+        .get();
 }
 
 expected<DataSetPtr>
-IndexNodeThreadPoolWrapper::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
-                                        const BitsetView& bitset) const {
-    return thread_pool_->push([&]() { return this->index_node_->RangeSearch(dataset, std::move(cfg), bitset); }).get();
+IndexNodeThreadPoolWrapper::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                                        milvus::OpContext* op_context) const {
+    return thread_pool_
+        ->push([&]() { return this->index_node_->RangeSearch(dataset, std::move(cfg), bitset, op_context); })
+        .get();
 }
 
 }  // namespace knowhere
