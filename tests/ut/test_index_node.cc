@@ -45,27 +45,29 @@ class BaseFlatIndexNode : public IndexNode {
     }
 
     virtual expected<DataSetPtr>
-    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+           milvus::OpContext* op_context = nullptr) const override {
         LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::Search()";
         return expected<DataSetPtr>::Err(Status::not_implemented, "BaseFlatIndexNode::Search() not implemented");
     }
 
     virtual expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                milvus::OpContext* op_context = nullptr) const override {
         LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::RangeSearch()";
         return expected<DataSetPtr>::Err(Status::not_implemented, "BaseFlatIndexNode::RangeSearch() not implemented");
     }
 
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                bool use_knowhere_search_pool) const override {
+                bool use_knowhere_search_pool, milvus::OpContext* op_context = nullptr) const override {
         LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::AnnIterator()";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::not_implemented,
                                                                   "BaseFlatIndexNode::AnnIterator() not implemented");
     }
 
     virtual expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context = nullptr) const override {
         LOG_KNOWHERE_INFO_ << "BaseFlatIndexNode::GetVectorByIds()";
         return expected<DataSetPtr>::Err(Status::not_implemented,
                                          "BaseFlatIndexNode::GetVectorByIds() not implemented");

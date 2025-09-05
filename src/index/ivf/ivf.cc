@@ -76,9 +76,11 @@ class IvfIndexNode : public IndexNode {
     Status
     Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+           milvus::OpContext* op_context = nullptr) const override;
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                milvus::OpContext* op_context = nullptr) const override;
     static constexpr bool
     is_ann_iterator_supported() {
         return (std::is_same<faiss::IndexIVFFlatCC, IndexType>::value ||
@@ -90,9 +92,9 @@ class IvfIndexNode : public IndexNode {
     }
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                bool use_knowhere_search_pool) const override;
+                bool use_knowhere_search_pool, milvus::OpContext* op_context = nullptr) const override;
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override;
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context = nullptr) const override;
 
     static Status
     StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {
@@ -731,7 +733,7 @@ IvfIndexNode<DataType, IndexType>::Add(const DataSetPtr dataset, std::shared_ptr
 template <typename DataType, typename IndexType>
 expected<DataSetPtr>
 IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
-                                          const BitsetView& bitset) const {
+                                          const BitsetView& bitset, milvus::OpContext* op_context) const {
     if (!this->index_) {
         LOG_KNOWHERE_WARNING_ << "search on empty index";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -906,7 +908,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
 template <typename DataType, typename IndexType>
 expected<DataSetPtr>
 IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
-                                               const BitsetView& bitset) const {
+                                               const BitsetView& bitset, milvus::OpContext* op_context) const {
     // if support ann_iterator, use iterator-based range_search (IndexNode::RangeSearch)
     constexpr bool use_iterator_for_range_search = is_ann_iterator_supported();
     if (use_iterator_for_range_search) {
@@ -1066,7 +1068,8 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
 template <typename DataType, typename IndexType>
 expected<std::vector<IndexNode::IteratorPtr>>
 IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
-                                               const BitsetView& bitset, bool use_knowhere_search_pool) const {
+                                               const BitsetView& bitset, bool use_knowhere_search_pool,
+                                               milvus::OpContext* op_context) const {
     if (!index_) {
         LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "index not loaded");
@@ -1126,7 +1129,7 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::un
 
 template <typename DataType, typename IndexType>
 expected<DataSetPtr>
-IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSetPtr dataset) const {
+IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const {
     if (!this->index_) {
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }

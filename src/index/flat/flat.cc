@@ -67,7 +67,8 @@ class FlatIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+           milvus::OpContext* op_context) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "search on empty index";
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -141,7 +142,8 @@ class FlatIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                milvus::OpContext* op_context) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "range search on empty index";
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -220,7 +222,7 @@ class FlatIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
         auto dim = Dim();
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();

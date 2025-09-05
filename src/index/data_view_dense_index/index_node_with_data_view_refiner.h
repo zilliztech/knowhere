@@ -49,14 +49,15 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
     Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+           milvus::OpContext* op_context = nullptr) const override;
 
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                bool use_knowhere_search_pool) const override;
+                bool use_knowhere_search_pool, milvus::OpContext* op_context = nullptr) const override;
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
         return expected<DataSetPtr>::Err(Status::not_implemented, "Data View Index not maintain raw data.");
     }
 
@@ -368,7 +369,8 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Add(const DataSetPtr data
 template <typename DataType, typename BaseIndexNode>
 expected<DataSetPtr>
 IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
-                                                              const BitsetView& bitset) const {
+                                                              const BitsetView& bitset,
+                                                              milvus::OpContext* op_context) const {
     if (this->base_index_ == nullptr || this->refine_offset_index_ == nullptr) {
         LOG_KNOWHERE_WARNING_ << "search on empty index";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not is trained.");
@@ -385,7 +387,7 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Search(const DataSetPtr d
     knowhere::expected<knowhere::DataSetPtr> quant_res;
     {
         FairReadLockGuard guard(*this->base_index_lock_);
-        quant_res = base_index_->Search(base_index_ds, std::move(cfg), bitset);
+        quant_res = base_index_->Search(base_index_ds, std::move(cfg), bitset, op_context);
     }
     if (!quant_res.has_value()) {
         return quant_res;
@@ -414,7 +416,8 @@ expected<std::vector<IndexNode::IteratorPtr>>
 IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::AnnIterator(const DataSetPtr dataset,
                                                                    std::unique_ptr<Config> cfg,
                                                                    const BitsetView& bitset,
-                                                                   bool use_knowhere_search_pool) const {
+                                                                   bool use_knowhere_search_pool,
+                                                                   milvus::OpContext* op_context) const {
     if (this->base_index_ == nullptr || this->refine_offset_index_ == nullptr) {
         LOG_KNOWHERE_WARNING_ << "search on empty index";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "index not is trained.");
@@ -433,7 +436,8 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::AnnIterator(const DataSet
     knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>> base_index_init;
     {
         FairReadLockGuard guard(*this->base_index_lock_);
-        base_index_init = base_index_->AnnIterator(base_index_ds, std::move(cfg), bitset, use_knowhere_search_pool);
+        base_index_init =
+            base_index_->AnnIterator(base_index_ds, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
     }
     if (!base_index_init.has_value()) {
         return base_index_init;

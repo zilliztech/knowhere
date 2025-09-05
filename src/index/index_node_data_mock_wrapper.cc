@@ -47,31 +47,32 @@ IndexNodeDataMockWrapper<DataType>::Add(const DataSetPtr dataset, std::shared_pt
 template <typename DataType>
 expected<DataSetPtr>
 IndexNodeDataMockWrapper<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
-                                           const BitsetView& bitset) const {
+                                           const BitsetView& bitset, milvus::OpContext* op_context) const {
     auto ds_ptr = ConvertFromDataTypeIfNeeded<DataType>(dataset);
-    return index_node_->Search(ds_ptr, std::move(cfg), bitset);
+    return index_node_->Search(ds_ptr, std::move(cfg), bitset, op_context);
 }
 
 template <typename DataType>
 expected<DataSetPtr>
 IndexNodeDataMockWrapper<DataType>::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
-                                                const BitsetView& bitset) const {
+                                                const BitsetView& bitset, milvus::OpContext* op_context) const {
     auto ds_ptr = ConvertFromDataTypeIfNeeded<DataType>(dataset);
-    return index_node_->RangeSearch(ds_ptr, std::move(cfg), bitset);
+    return index_node_->RangeSearch(ds_ptr, std::move(cfg), bitset, op_context);
 }
 
 template <typename DataType>
 expected<std::vector<IndexNode::IteratorPtr>>
 IndexNodeDataMockWrapper<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
-                                                const BitsetView& bitset, bool use_knowhere_search_pool) const {
+                                                const BitsetView& bitset, bool use_knowhere_search_pool,
+                                                milvus::OpContext* op_context) const {
     auto ds_ptr = ConvertFromDataTypeIfNeeded<DataType>(dataset);
-    return index_node_->AnnIterator(ds_ptr, std::move(cfg), bitset, use_knowhere_search_pool);
+    return index_node_->AnnIterator(ds_ptr, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
 }
 
 template <typename DataType>
 expected<DataSetPtr>
-IndexNodeDataMockWrapper<DataType>::GetVectorByIds(const DataSetPtr dataset) const {
-    auto res = index_node_->GetVectorByIds(dataset);
+IndexNodeDataMockWrapper<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const {
+    auto res = index_node_->GetVectorByIds(dataset, op_context);
     if constexpr (!std::is_same_v<DataType, typename MockData<DataType>::type>) {
         if (res.has_value()) {
             auto res_v = data_type_conversion<typename MockData<DataType>::type, DataType>(*res.value());
