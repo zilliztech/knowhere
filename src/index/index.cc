@@ -108,7 +108,8 @@ Index<T>::Add(const DataSetPtr dataset, const Json& json, bool use_knowhere_buil
 
 template <typename T>
 inline expected<DataSetPtr>
-Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& bitset_) const {
+Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& bitset_,
+                 milvus::OpContext* op_context) const {
     auto cfg = this->node->CreateConfig();
     std::string msg;
     const Status load_status = LoadConfig(cfg.get(), json, knowhere::SEARCH, "Search", &msg);
@@ -149,7 +150,7 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
     TimeRecorder rc("Search");
     bool has_trace_id = b_cfg.trace_id.has_value();
     auto k = cfg->k.value();
-    auto res = this->node->Search(dataset, std::move(cfg), bitset);
+    auto res = this->node->Search(dataset, std::move(cfg), bitset, op_context);
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
     knowhere_search_latency.Observe(time);
@@ -161,7 +162,7 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
     }
     // LCOV_EXCL_STOP
 #else
-    auto res = this->node->Search(dataset, std::move(cfg), bitset);
+    auto res = this->node->Search(dataset, std::move(cfg), bitset, op_context);
 #endif
     return res;
 }
@@ -169,7 +170,7 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
 template <typename T>
 inline expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
 Index<T>::AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetView& bitset_,
-                      bool use_knowhere_search_pool) const {
+                      bool use_knowhere_search_pool, milvus::OpContext* op_context) const {
     auto cfg = this->node->CreateConfig();
     std::string msg;
     Status status = LoadConfig(cfg.get(), json, knowhere::ITERATOR, "Iterator", &msg);
@@ -192,19 +193,20 @@ Index<T>::AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetVi
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // note that this time includes only the initial search phase of iterator.
     TimeRecorder rc("AnnIterator");
-    auto res = this->node->AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool);
+    auto res = this->node->AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
     knowhere_search_latency.Observe(time);
 #else
-    auto res = this->node->AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool);
+    auto res = this->node->AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
 #endif
     return res;
 }
 
 template <typename T>
 inline expected<DataSetPtr>
-Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetView& bitset_) const {
+Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetView& bitset_,
+                      milvus::OpContext* op_context) const {
     auto cfg = this->node->CreateConfig();
     std::string msg;
     auto status = LoadConfig(cfg.get(), json, knowhere::RANGE_SEARCH, "RangeSearch", &msg);
@@ -247,7 +249,7 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
 
     TimeRecorder rc("Range Search");
     bool has_trace_id = b_cfg.trace_id.has_value();
-    auto res = this->node->RangeSearch(dataset, std::move(cfg), bitset);
+    auto res = this->node->RangeSearch(dataset, std::move(cfg), bitset, op_context);
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
     knowhere_range_search_latency.Observe(time);
@@ -258,15 +260,15 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
     }
     // LCOV_EXCL_STOP
 #else
-    auto res = this->node->RangeSearch(dataset, std::move(cfg), bitset);
+    auto res = this->node->RangeSearch(dataset, std::move(cfg), bitset, op_context);
 #endif
     return res;
 }
 
 template <typename T>
 inline expected<DataSetPtr>
-Index<T>::GetVectorByIds(const DataSetPtr dataset) const {
-    return this->node->GetVectorByIds(dataset);
+Index<T>::GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const {
+    return this->node->GetVectorByIds(dataset, op_context);
 }
 
 template <typename T>
