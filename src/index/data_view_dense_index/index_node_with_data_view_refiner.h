@@ -50,11 +50,11 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
 
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-           milvus::OpContext* op_context = nullptr) const override;
+           milvus::OpContext* op_context) const override;
 
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                bool use_knowhere_search_pool, milvus::OpContext* op_context = nullptr) const override;
+                bool use_knowhere_search_pool, milvus::OpContext* op_context) const override;
 
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {

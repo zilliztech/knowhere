@@ -77,10 +77,10 @@ class IvfIndexNode : public IndexNode {
     Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-           milvus::OpContext* op_context = nullptr) const override;
+           milvus::OpContext* op_context) const override;
     expected<DataSetPtr>
     RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                milvus::OpContext* op_context = nullptr) const override;
+                milvus::OpContext* op_context) const override;
     static constexpr bool
     is_ann_iterator_supported() {
         return (std::is_same<faiss::IndexIVFFlatCC, IndexType>::value ||
@@ -92,9 +92,9 @@ class IvfIndexNode : public IndexNode {
     }
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                bool use_knowhere_search_pool, milvus::OpContext* op_context = nullptr) const override;
+                bool use_knowhere_search_pool, milvus::OpContext* op_context) const override;
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context = nullptr) const override;
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override;
 
     static Status
     StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {

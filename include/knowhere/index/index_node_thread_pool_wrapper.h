@@ -35,14 +35,14 @@ class IndexNodeThreadPoolWrapper : public IndexNode {
 
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-           milvus::OpContext* op_context = nullptr) const override;
+           milvus::OpContext* op_context) const override;
 
     expected<DataSetPtr>
     RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                milvus::OpContext* op_context = nullptr) const override;
+                milvus::OpContext* op_context) const override;
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context = nullptr) const override {
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
         return index_node_->GetVectorByIds(dataset, op_context);
     }
 

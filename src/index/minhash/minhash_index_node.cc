@@ -55,7 +55,7 @@ class MinHashLSHNode : public IndexNode {
 
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-           milvus::OpContext* op_context = nullptr) const override;
+           milvus::OpContext* op_context) const override;
 
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {

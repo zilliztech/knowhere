@@ -107,7 +107,7 @@ GetVecNorms(const DataSetPtr& base) {
 template <typename DataType>
 expected<DataSetPtr>
 BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                   const BitsetView& bitset_) {
+                   const BitsetView& bitset_, milvus::OpContext* op_context) {
     BruteForceConfig cfg;
     std::string msg;
     auto status = Config::Load(cfg, config, knowhere::SEARCH, &msg);
@@ -119,8 +119,8 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     auto labels = std::make_unique<int64_t[]>(nq * topk);
     auto distances = std::make_unique<float[]>(nq * topk);
 
-    auto search_status =
-        SearchWithBuf<DataType>(base_dataset, query_dataset, labels.get(), distances.get(), config, bitset_);
+    auto search_status = SearchWithBuf<DataType>(base_dataset, query_dataset, labels.get(), distances.get(), config,
+                                                 bitset_, op_context);
     if (search_status != Status::success) {
         return expected<DataSetPtr>::Err(search_status, "search with buf failed");
     }
@@ -132,7 +132,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
 template <typename DataType>
 Status
 BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids, float* dis,
-                          const Json& config, const BitsetView& bitset_) {
+                          const Json& config, const BitsetView& bitset_, milvus::OpContext* op_context) {
     auto xb = base_dataset->GetTensor();
     auto nb = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
@@ -433,7 +433,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
 template <typename DataType>
 expected<DataSetPtr>
 BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                        const BitsetView& bitset_) {
+                        const BitsetView& bitset_, milvus::OpContext* op_context) {
     DataSetPtr query(query_dataset);
     auto xb = base_dataset->GetTensor();
     auto nb = base_dataset->GetRows();
@@ -650,7 +650,8 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
 
 Status
 BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, sparse::label_t* labels,
-                                float* distances, const Json& config, const BitsetView& bitset) {
+                                float* distances, const Json& config, const BitsetView& bitset,
+                                milvus::OpContext* op_context) {
     auto base = static_cast<const sparse::SparseRow<float>*>(base_dataset->GetTensor());
     auto rows = base_dataset->GetRows();
     auto xb_id_offset = base_dataset->GetTensorBeginId();
@@ -751,7 +752,7 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
 
 expected<DataSetPtr>
 BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                         const BitsetView& bitset) {
+                         const BitsetView& bitset, milvus::OpContext* op_context) {
     auto nq = query_dataset->GetRows();
     BruteForceConfig cfg;
     std::string msg;
@@ -764,14 +765,14 @@ BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_d
     auto labels = std::make_unique<sparse::label_t[]>(nq * topk);
     auto distances = std::make_unique<float[]>(nq * topk);
 
-    SearchSparseWithBuf(base_dataset, query_dataset, labels.get(), distances.get(), config, bitset);
+    SearchSparseWithBuf(base_dataset, query_dataset, labels.get(), distances.get(), config, bitset, op_context);
     return GenResultDataSet(nq, topk, std::move(labels), std::move(distances));
 }
 
 template <typename DataType>
 expected<std::vector<IndexNode::IteratorPtr>>
 BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                        const BitsetView& bitset_, bool use_knowhere_search_pool) {
+                        const BitsetView& bitset_, bool use_knowhere_search_pool, milvus::OpContext* op_context) {
     auto nb = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
     auto nq = query_dataset->GetRows();
@@ -909,7 +910,8 @@ template <>
 expected<std::vector<IndexNode::IteratorPtr>>
 BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr base_dataset,
                                                             const DataSetPtr query_dataset, const Json& config,
-                                                            const BitsetView& bitset, bool use_knowhere_search_pool) {
+                                                            const BitsetView& bitset, bool use_knowhere_search_pool,
+                                                            milvus::OpContext* op_context) {
     auto rows = base_dataset->GetRows();
     auto xb_id_offset = base_dataset->GetTensorBeginId();
     auto nq = query_dataset->GetRows();
@@ -1002,90 +1004,101 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::Search<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
                                              const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
-                                             const knowhere::BitsetView& bitset);
+                                             const knowhere::BitsetView& bitset, milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::Search<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
                                              const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
-                                             const knowhere::BitsetView& bitset);
+                                             const knowhere::BitsetView& bitset, milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::Search<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
                                              const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
-                                             const knowhere::BitsetView& bitset);
+                                             const knowhere::BitsetView& bitset, milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::Search<knowhere::int8>(const knowhere::DataSetPtr base_dataset,
                                              const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
-                                             const knowhere::BitsetView& bitset);
+                                             const knowhere::BitsetView& bitset, milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::Search<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
                                              const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
-                                             const knowhere::BitsetView& bitset);
+                                             const knowhere::BitsetView& bitset, milvus::OpContext* op_context);
 
 template knowhere::Status
 knowhere::BruteForce::SearchWithBuf<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
                                                     const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
-                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset);
+                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                    milvus::OpContext* op_context);
 template knowhere::Status
 knowhere::BruteForce::SearchWithBuf<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
                                                     const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
-                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset);
+                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                    milvus::OpContext* op_context);
 template knowhere::Status
 knowhere::BruteForce::SearchWithBuf<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
                                                     const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
-                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset);
+                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                    milvus::OpContext* op_context);
 template knowhere::Status
 knowhere::BruteForce::SearchWithBuf<knowhere::int8>(const knowhere::DataSetPtr base_dataset,
                                                     const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
-                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset);
+                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                    milvus::OpContext* op_context);
 template knowhere::Status
 knowhere::BruteForce::SearchWithBuf<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
                                                     const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
-                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset);
+                                                    const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                    milvus::OpContext* op_context);
 
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
-                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                  milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
-                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                  milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
-                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                  milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::int8>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
-                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                  milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
-                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset);
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                  milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::sparse::SparseRow<float>>(const knowhere::DataSetPtr base_dataset,
                                                                       const knowhere::DataSetPtr query_dataset,
                                                                       const knowhere::Json& config,
-                                                                      const knowhere::BitsetView& bitset);
+                                                                      const knowhere::BitsetView& bitset,
+                                                                      milvus::OpContext* op_context);
 
 template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
 knowhere::BruteForce::AnnIterator<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset,
-                                                  bool use_knowhere_search_pool = true);
+                                                  bool use_knowhere_search_pool, milvus::OpContext* op_context);
 template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
 knowhere::BruteForce::AnnIterator<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset,
-                                                  bool use_knowhere_search_pool = true);
+                                                  bool use_knowhere_search_pool, milvus::OpContext* op_context);
 template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
 knowhere::BruteForce::AnnIterator<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset,
-                                                  bool use_knowhere_search_pool = true);
+                                                  bool use_knowhere_search_pool, milvus::OpContext* op_context);
 template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
 knowhere::BruteForce::AnnIterator<knowhere::int8>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset,
-                                                  bool use_knowhere_search_pool = true);
+                                                  bool use_knowhere_search_pool, milvus::OpContext* op_context);
 
 }  // namespace knowhere
