@@ -199,7 +199,7 @@ class HnswIndexNode : public IndexNode {
 
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-           milvus::OpContext* op_context = nullptr) const override {
+           milvus::OpContext* op_context) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "search on empty index";
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -306,7 +306,7 @@ class HnswIndexNode : public IndexNode {
  public:
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                bool use_knowhere_search_pool = true, milvus::OpContext* op_context = nullptr) const override {
+                bool use_knowhere_search_pool, milvus::OpContext* op_context) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
             return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "index not loaded");
@@ -336,7 +336,7 @@ class HnswIndexNode : public IndexNode {
 
     expected<DataSetPtr>
     RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                milvus::OpContext* op_context = nullptr) const override {
+                milvus::OpContext* op_context) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "range search on empty index";
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -406,7 +406,7 @@ class HnswIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context = nullptr) const override {
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
         if (!index_) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
