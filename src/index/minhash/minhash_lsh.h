@@ -137,6 +137,7 @@ class MinHashLSH {
     bool is_loaded_ = false;
     size_t block_size_ = 0;
     size_t band_ = 1;
+    size_t r_ = 0;
     char* mmap_data_ = nullptr;
     size_t file_size_ = 0;
     bool with_raw_data_ = false;
@@ -257,11 +258,15 @@ MinHashLSH::BuildAndSave(MinHashLSHBuildParams* params) {
         LOG_KNOWHERE_ERROR_ << "build parameters is null.";
         return Status::invalid_args;
     }
-    size_t band_index_n = params->band;
+
     size_t block_size = params->block_size;
     size_t mh_vec_element_size = params->mh_vec_element_size;
     size_t mh_vec_length = params->mh_vec_length;
     size_t data_size = mh_vec_element_size * mh_vec_length;
+    auto [band_num, band_size] = OptimizeMinHashLSHParams(mh_vec_length, params->band);
+    auto waste_percentage = (1.0f - float(band_num * band_size) / float(mh_vec_length)) * 100.0f;
+    LOG_KNOWHERE_INFO_ << "Build MinHash LSH with band_num, band_size = [" << band_num << ", " << band_size
+                       << "], waste_percentage = " << waste_percentage << "%";
     size_t ntotal, bin_vec_dim;
     int64_t data_pos = -1;
     if (params->with_raw_data) {
@@ -269,7 +274,7 @@ MinHashLSH::BuildAndSave(MinHashLSHBuildParams* params) {
     }
     std::shared_ptr<KVPair[]> total_kv_pair;
 
-    size_t header_size = DIV_ROUND_UP(sizeof(MinHashLSH) + band_index_n * sizeof(size_t), block_size);
+    size_t header_size = DIV_ROUND_UP(sizeof(MinHashLSH) + band_num * sizeof(size_t), block_size);
     faiss::BlockFileIOWriter writer(params->index_file_path.c_str(), block_size, header_size);
     // load raw data, generate hash kv for each band and save raw data
     {
@@ -282,12 +287,7 @@ MinHashLSH::BuildAndSave(MinHashLSHBuildParams* params) {
                                 << params->mh_vec_element_size * params->mh_vec_length * 8;
             return Status::disk_file_error;
         }
-        if (mh_vec_length % band_index_n != 0) {
-            LOG_KNOWHERE_ERROR_ << "params->mh_vec_length % params.band != 0";
-            return Status::invalid_args;
-        }
-
-        total_kv_pair = GenTransposedHashKV(data.get(), ntotal, data_size, band_index_n);
+        total_kv_pair = GenTransposedHashKV(data.get(), ntotal, data_size, mh_vec_element_size, band_num, band_size);
         if (params->with_raw_data) {
             data_pos = writer.tellg();
             // todo: @cqy123456 format raw data if use disk index
@@ -301,11 +301,10 @@ MinHashLSH::BuildAndSave(MinHashLSHBuildParams* params) {
     }
 
     // save hash kv as MinHashBandIndex format
-    std::vector<size_t> band_index_ofs(band_index_n);
+    std::vector<size_t> band_index_ofs(band_num);
     {
-        SortHashKV(total_kv_pair, ntotal, band_index_n);
-
-        for (size_t index_i = 0; index_i < band_index_n; index_i++) {
+        SortHashKV(total_kv_pair, ntotal, band_num);
+        for (size_t index_i = 0; index_i < band_num; index_i++) {
             band_index_ofs[index_i] =
                 MinHashBandIndex::FormatAndSave(writer, total_kv_pair.get() + index_i * ntotal, block_size, ntotal);
         }
@@ -318,7 +317,7 @@ MinHashLSH::BuildAndSave(MinHashLSHBuildParams* params) {
         writeBinaryPOD(header_writer, mh_vec_length);
         writeBinaryPOD(header_writer, mh_vec_element_size);
         writeBinaryPOD(header_writer, block_size);
-        writeBinaryPOD(header_writer, band_index_n);
+        writeBinaryPOD(header_writer, band_num);
         writeBinaryPOD(header_writer, data_pos);
         header_writer.write((char*)band_index_ofs.data(), band_index_ofs.size() * sizeof(size_t));
         writer.write_header((char*)header_writer.data_, header_writer.rp_);
@@ -349,7 +348,13 @@ MinHashLSH::Load(MinHashLSHLoadParams* params) {
     } else {
         this->with_raw_data_ = true;
     }
-
+    auto [b, r] = OptimizeMinHashLSHParams(this->mh_vec_length_, this->band_);
+    auto waste_percentage = (1.0f - float(b * r) / float(this->mh_vec_length_)) * 100.0f;
+    LOG_KNOWHERE_INFO_ << "Load MinHash LSH with band_num, band_size = [" << b << ", " << r
+                       << "], waste_percentage = " << waste_percentage << "%";
+    // old version should meet mh_vec_length_ % band_ == 0, OptimizeMinHashLSHParams will not change the params
+    this->band_ = b;
+    this->r_ = r;
     if (!params->hash_code_in_memory || this->with_raw_data_) {
         auto f = std::unique_ptr<FILE, decltype(&fclose)>(fopen(params->index_file_path.c_str(), "r"), &fclose);
         if (!f) {
@@ -426,7 +431,7 @@ MinHashLSH::Search(const char* query, float* distances, idx_t* labels, MinHashLS
         res = std::shared_ptr<MinHashLSHResultHandler>(new MinHashLSHResultHandler(labels, distances, topk));
     }
     for (size_t i = 0; i < band_; i++) {
-        const auto hash = GetHashKey(query, this->mh_vec_elememt_size_ * this->mh_vec_length_, band_, i);
+        const auto hash = GetHashKey(query, this->mh_vec_elememt_size_ * this->band_ * this->r_, band_, i);
         auto& band = band_index_[i];
         auto& bloom = bloom_[i % bloom_.size()];
         if (bloom.contains(hash)) {
@@ -478,8 +483,9 @@ MinHashLSH::BatchSearch(const char* query, size_t nq, float* distances, idx_t* l
     std::vector<minhash::KeyType> query_hash_v;
     query_hash_v.reserve(nq * band_);
     {
-        auto query_kv = minhash::GenTransposedHashKV((const char*)query, nq,
-                                                     this->mh_vec_elememt_size_ * this->mh_vec_length_, this->band_);
+        auto query_kv =
+            minhash::GenTransposedHashKV((const char*)query, nq, this->mh_vec_elememt_size_ * this->mh_vec_length_,
+                                         this->mh_vec_elememt_size_, this->band_, this->r_);
         for (auto i = 0; i < nq * band_; i++) {
             query_hash_v.emplace_back(query_kv[i].Key);
         }
