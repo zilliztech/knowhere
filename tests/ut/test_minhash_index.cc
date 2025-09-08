@@ -53,17 +53,18 @@ TEST_CASE("Test MinHashLSHIndexNode with MinHashLSH hit", "[minhash_lsh_index]")
     auto metric_str = knowhere::metric::MHJACCARD;
     auto version = GenTestVersionList();
     auto hash_bit = GENERATE(as<uint32_t>{}, 32, 64, 128);
+    auto band = GENERATE(as<uint32_t>{}, 6, 32);
     auto use_mmap = GENERATE(as<bool>{}, true, false);
     auto batch_search_flag = GENERATE(as<bool>{}, true, false);
-    auto mh_search_with_jaccard = GENERATE(as<bool>{}, true, false);
+    auto mh_search_with_jaccard = GENERATE(as<bool>{}, false, true);
     size_t bin_vec_dim = kHashDim * hash_bit;
-    auto base_gen = [&metric_str, &hash_bit, &mh_search_with_jaccard, &dim = bin_vec_dim]() {
+    auto base_gen = [&metric_str, &hash_bit, &mh_search_with_jaccard, &dim = bin_vec_dim, &mh_lsh_band = band]() {
         knowhere::Json json;
         json["dim"] = dim;
         json["metric_type"] = metric_str;
         json["k"] = kK;
-        json["refine_k"] = int(kK * 4);
-        json["mh_lsh_band"] = 32;
+        json["refine_k"] = int(kK * 5);
+        json["mh_lsh_band"] = mh_lsh_band;
         json["mh_element_bit_width"] = hash_bit;
         json["mh_search_with_jaccard"] = mh_search_with_jaccard;
         return json;

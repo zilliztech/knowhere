@@ -280,18 +280,24 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     } else if (IsMetricType(metric_str, metric::MHJACCARD)) {
         auto labels = ids;
         auto distances = dis;
+        size_t mh_vec_size_in_bytes = dim / 8;
+        size_t mh_vec_element_size_in_bytes = cfg.mh_element_bit_width.value() / 8;
+        size_t mh_vec_dim = mh_vec_size_in_bytes / mh_vec_element_size_in_bytes;
         size_t mh_lsh_band = cfg.mh_lsh_band.value();
+        auto [b, r] = minhash::OptimizeMinHashLSHParams(mh_vec_dim, mh_lsh_band);
+        mh_lsh_band = b;
+        size_t mh_lsh_r = r;
+        LOG_KNOWHERE_DEBUG_ << "Search with minhash vector with band_num, band_size = [" << mh_lsh_band << " "
+                            << mh_lsh_r << "]" << std::endl;
         bool mh_search_with_jaccard = cfg.mh_search_with_jaccard.value();
-        size_t mh_element_bit_width = cfg.mh_element_bit_width.value();
         auto mh_valid_stat = minhash::MinhashConfigCheck(dim, datatype_v<DataType>,
                                                          PARAM_TYPE::SEARCH | PARAM_TYPE::TRAIN, &cfg, &bitset);
         if (mh_valid_stat != Status::success) {
             return mh_valid_stat;
         }
-        int u8_dim = dim / 8;
-        auto search_status =
-            minhash::MinHashVecSearch((const char*)xq, (const char*)xb, u8_dim, mh_lsh_band, mh_element_bit_width, nq,
-                                      nb, topk, mh_search_with_jaccard, bitset, distances, labels);
+        auto search_status = minhash::MinHashVecSearch((const char*)xq, (const char*)xb, mh_vec_size_in_bytes,
+                                                       mh_vec_element_size_in_bytes, mh_lsh_band, mh_lsh_r, nq, nb,
+                                                       topk, mh_search_with_jaccard, bitset, distances, labels);
         if (search_status != Status::success) {
             return search_status;
         }
