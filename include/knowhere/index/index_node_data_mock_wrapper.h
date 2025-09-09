@@ -36,17 +36,19 @@ class IndexNodeDataMockWrapper : public IndexNode {
     Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+           milvus::OpContext* op_context) const override;
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                milvus::OpContext* op_context) const override;
 
     expected<std::vector<IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                bool use_knowhere_search_pool) const override;
+                bool use_knowhere_search_pool, milvus::OpContext* op_context) const override;
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override;
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override;
 
     bool
     HasRawData(const std::string& metric_type) const override {

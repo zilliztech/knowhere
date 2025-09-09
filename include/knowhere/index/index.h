@@ -158,17 +158,19 @@ class Index {
     Add(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true);
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, const Json& json, const BitsetView& bitset) const;
+    Search(const DataSetPtr dataset, const Json& json, const BitsetView& bitset,
+           milvus::OpContext* op_context = nullptr) const;
 
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetView& bitset,
-                bool use_knowhere_search_pool = true) const;
+                bool use_knowhere_search_pool = true, milvus::OpContext* op_context = nullptr) const;
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetView& bitset) const;
+    RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetView& bitset,
+                milvus::OpContext* op_context = nullptr) const;
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const;
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context = nullptr) const;
 
     bool
     HasRawData(const std::string& metric_type) const;

@@ -150,7 +150,8 @@ class EmbListIndexNode : public IndexNode {
      * parallel processing, because the base-index_node already handles this.
      */
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+           milvus::OpContext* op_context) const override {
         auto dim = dataset->GetDim();
         const size_t* lims = dataset->GetLims();
         if (lims == nullptr) {
@@ -199,7 +200,7 @@ class EmbListIndexNode : public IndexNode {
         config.metric_type = sub_metric_type;
         int32_t vec_topk = std::max((int32_t)(el_k * config.retrieval_ann_ratio.value()), 1);
         config.k = vec_topk;
-        auto ann_search_res = base_index_.Node()->Search(dataset, std::move(cfg), bitset).value();
+        auto ann_search_res = base_index_.Node()->Search(dataset, std::move(cfg), bitset, op_context).value();
         const auto stage1_ids = ann_search_res->GetIds();
 
         // Stage 2: For each query emb_list, perform brute-force distance calculation and aggregate scores
@@ -286,13 +287,13 @@ class EmbListIndexNode : public IndexNode {
     // TODO: support AnnIterator
     expected<std::vector<IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                bool use_knowhere_search_pool) const override {
+                bool use_knowhere_search_pool, milvus::OpContext* op_context) const override {
         return expected<std::vector<IteratorPtr>>::Err(Status::not_implemented,
                                                        "AnnIterator not supported for emb_list based index");
     }
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
         return expected<DataSetPtr>::Err(Status::not_implemented,
                                          "GetVectorByIds not supported for emb_list based index");
     }
