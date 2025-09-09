@@ -72,6 +72,10 @@ struct MinHashLSHResultHandler {
     }
 };
 
+// get the best minhash lsh params (b, r), number of bands and size of each bands
+std::pair<size_t, size_t>
+OptimizeMinHashLSHParams(size_t original_dim, size_t band);
+
 inline minhash::KeyType
 GetHashKey(const char* data, size_t size /*in bytes*/, size_t band, size_t band_i) {
     const size_t r = size / band;
@@ -80,10 +84,11 @@ GetHashKey(const char* data, size_t size /*in bytes*/, size_t band, size_t band_
 }
 
 std::shared_ptr<minhash::KVPair[]>
-GenHashKV(const char* data, size_t rows, size_t data_size, size_t band);
+GenHashKV(const char* data, size_t rows, size_t data_size, size_t data_element_size, size_t band_num, size_t band_size);
 
 std::shared_ptr<minhash::KVPair[]>
-GenTransposedHashKV(const char* data, size_t rows, size_t data_size, size_t band);
+GenTransposedHashKV(const char* data, size_t rows, size_t data_size, size_t data_element_size, size_t band_num,
+                    size_t band_size);
 
 void
 SortHashKV(const std::shared_ptr<KVPair[]> kv_code, size_t rows, size_t band);
@@ -96,8 +101,10 @@ MinhashConfigCheck(const size_t dim, const DataFormatEnum data_type, const uint3
  *
  * @param x Pointer to query vector data containing vectors to search for
  * @param y Pointer to base dataset
- * @param dim  vector dimension size
+ * @param size_in_bytes minhash vector size in bytes
+ * @param element_size_in_bytes sizeof (minhash vector element)
  * @param mh_lsh_band Number of LSH bands, used to control the balance between recall and precision
+ * @param mh_lsh_r Size of LSH band
  * @param ny Number of vectors in the base dataset
  * @param topk Number of most similar results to return
  * @param bitset Bitset view for filtering vectors that should not be searched (marked vectors will be skipped)
@@ -105,8 +112,8 @@ MinhashConfigCheck(const size_t dim, const DataFormatEnum data_type, const uint3
  * @param ids Output parameter: array to store returned vector IDs
  */
 void
-MinHashLSHHitByNy(const char* x, const char* y, size_t u8_dim, size_t mh_lsh_band, size_t ny, size_t topk,
-                  const BitsetView& bitset, float* vals, int64_t* ids);
+MinHashLSHHitByNy(const char* x, const char* y, size_t size_in_bytes, size_t element_size_in_bytes, size_t mh_lsh_band,
+                  size_t mh_lsh_r, size_t ny, size_t topk, const BitsetView& bitset, float* vals, int64_t* ids);
 /**
  * @brief Returns the top-k vectors with smallest Jaccard distances to the query MinHash vector
  *
@@ -148,21 +155,22 @@ MinHashJaccardKNNSearchByIDs(const char* x, const char* y, const int64_t* sel_id
  *
  * @param x Pointer to query vectors
  * @param y Pointer to base dataset vectors
- * @param u8_dim Vector dimension in uint8 units
+ * @param size_in_bytes minhash vector size in bytes
+ * @param element_size_in_bytes sizeof (minhash vector element)
  * @param mh_lsh_band Number of LSH bands for locality sensitive hashing
- * @param mh_element_bit_width Bit width for each MinHash element
+ * @param mh_lsh_r Size of LSH band for locality sensitive hashing
  * @param nx Number of query vectors
  * @param ny Number of base vectors
  * @param topk Number of most similar results to return for each query
  * @param mh_search_with_jaccard Flag to enable Jaccard similarity calculation in search
  * @param bitset Bitset view for filtering vectors during search
- * @param vals Output parameter: array to store similarity scores
- * @param ids Output parameter: array to store corresponding vector IDs
+ * @param distances Output parameter: array to store similarity scores
+ * @param labels Output parameter: array to store corresponding vector IDs
  * @return Status indicating success or failure of the operation
  */
 Status
-MinHashVecSearch(const char* x, const char* y, size_t u8_dim, size_t mh_lsh_band, size_t mh_element_bit_width,
-                 size_t nx, size_t ny, size_t topk, bool mh_search_with_jaccard, const BitsetView& bitset, float* vals,
-                 int64_t* ids);
+MinHashVecSearch(const char* x, const char* y, size_t size_in_bytes, size_t element_size_in_bytes, size_t mh_lsh_band,
+                 size_t mh_lsh_r, size_t nx, size_t ny, size_t topk, bool mh_search_with_jaccard,
+                 const BitsetView& bitset, float* distances, int64_t* labels);
 
 }  // namespace knowhere::minhash
