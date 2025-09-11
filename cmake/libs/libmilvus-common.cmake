@@ -1,6 +1,6 @@
 
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES "")
-set( MILVUS-COMMON-VERSION 2008bac )
+set( MILVUS-COMMON-VERSION aaff302 )
 set( GIT_REPOSITORY  "https://github.com/zilliztech/milvus-common.git")
 
 message(STATUS "milvus-common repo: ${GIT_REPOSITORY}")
