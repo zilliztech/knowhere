@@ -1067,7 +1067,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     }
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
         if (indexes.empty()) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
@@ -1192,7 +1192,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset_) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset_,
+           milvus::OpContext* op_context) const override {
         if (this->indexes.empty()) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
@@ -1461,10 +1462,11 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     };
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset_) const override {
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset_,
+                milvus::OpContext* op_context) const override {
         // if support ann_iterator, use iterator-based range_search (IndexNode::RangeSearch)
         if (is_ann_iterator_supported()) {
-            return IndexNode::RangeSearch(dataset, std::move(cfg), bitset_);
+            return IndexNode::RangeSearch(dataset, std::move(cfg), bitset_, op_context);
         }
         if (this->indexes.empty()) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -1791,7 +1793,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset_,
-                bool use_knowhere_search_pool) const override {
+                bool use_knowhere_search_pool, milvus::OpContext* op_context) const override {
         if (isIndexEmpty()) {
             LOG_KNOWHERE_ERROR_ << "creating iterator on empty index";
             return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "index not loaded");
@@ -2135,39 +2137,42 @@ class HNSWIndexNodeWithFallback : public IndexNode {
     }
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
         if (use_base_index) {
-            return base_index->GetVectorByIds(dataset);
+            return base_index->GetVectorByIds(dataset, op_context);
         } else {
-            return fallback_search_index->GetVectorByIds(dataset);
+            return fallback_search_index->GetVectorByIds(dataset, op_context);
         }
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+           milvus::OpContext* op_context) const override {
         if (use_base_index) {
-            return base_index->Search(dataset, std::move(cfg), bitset);
+            return base_index->Search(dataset, std::move(cfg), bitset, op_context);
         } else {
-            return fallback_search_index->Search(dataset, std::move(cfg), bitset);
+            return fallback_search_index->Search(dataset, std::move(cfg), bitset, op_context);
         }
     }
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                milvus::OpContext* op_context) const override {
         if (use_base_index) {
-            return base_index->RangeSearch(dataset, std::move(cfg), bitset);
+            return base_index->RangeSearch(dataset, std::move(cfg), bitset, op_context);
         } else {
-            return fallback_search_index->RangeSearch(dataset, std::move(cfg), bitset);
+            return fallback_search_index->RangeSearch(dataset, std::move(cfg), bitset, op_context);
         }
     }
 
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                bool use_knowhere_search_pool) const override {
+                bool use_knowhere_search_pool, milvus::OpContext* op_context) const override {
         if (use_base_index) {
-            return base_index->AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool);
+            return base_index->AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
         } else {
-            return fallback_search_index->AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool);
+            return fallback_search_index->AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool,
+                                                      op_context);
         }
     }
 

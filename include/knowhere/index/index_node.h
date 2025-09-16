@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include "common/OpContext.h"
 #include "knowhere/binaryset.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/config.h"
@@ -131,7 +132,8 @@ class IndexNode : public Object {
      * delay its release.
      */
     virtual expected<DataSetPtr>
-    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const = 0;
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+           milvus::OpContext* op_context = nullptr) const = 0;
 
     /**
      * @brief Performs a brute-force search operation on the index for given labels. (for emb-list based index)
@@ -162,7 +164,7 @@ class IndexNode : public Object {
 
     virtual expected<std::vector<IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                bool use_knowhere_search_pool = true) const {
+                bool use_knowhere_search_pool = true, milvus::OpContext* op_context = nullptr) const {
         return expected<std::vector<std::shared_ptr<iterator>>>::Err(
             Status::not_implemented, "annIterator not supported for current index type");
     }
@@ -182,10 +184,11 @@ class IndexNode : public Object {
      * delay its release.
      */
     virtual expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
-                const BitsetView& bitset) const {  // TODO: @alwayslove2013 test with mock AnnIterator after we
-                                                   // introduced mock framework into knowhere. Currently this is tested
-                                                   // in test_sparse.cc with real sparse vector index.
+    RangeSearch(
+        const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+        milvus::OpContext* op_context = nullptr) const {  // TODO: @alwayslove2013 test with mock AnnIterator after we
+        // introduced mock framework into knowhere. Currently this is tested
+        // in test_sparse.cc with real sparse vector index.
         const auto base_cfg = static_cast<const BaseConfig&>(*cfg);
         const float closer_bound = base_cfg.range_filter.value();
         const bool has_closer_bound = closer_bound != defaultRangeFilter;
@@ -353,7 +356,7 @@ class IndexNode : public Object {
      * 2. It doesn't guarantee the index contains raw data, so it's better to check with @see HasRawData() before
      */
     virtual expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const = 0;
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context = nullptr) const = 0;
 
     /**
      * @brief Checks if the index contains raw vector data.

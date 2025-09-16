@@ -54,10 +54,11 @@ class MinHashLSHNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override;
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+           milvus::OpContext* op_context) const override;
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
         if (minhash_lsh_ == nullptr) {
             return expected<DataSetPtr>::Err(Status::empty_index,
                                              "plz build and load index before calling GetVectorByIds.");
@@ -177,7 +178,7 @@ class MinHashLSHNode : public IndexNode {
 
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                bool use_knowhere_search_pool) const override {
+                bool use_knowhere_search_pool, milvus::OpContext* op_context) const override {
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::not_implemented, "index not_implemented ");
     }
 
@@ -281,8 +282,8 @@ MinHashLSHNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
 
 template <typename DataType>
 expected<DataSetPtr>
-MinHashLSHNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
-                                 const BitsetView& bitset) const {
+MinHashLSHNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                                 milvus::OpContext* op_context) const {
     if (!is_loaded_ || !minhash_lsh_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load minhash index.";
         return expected<DataSetPtr>::Err(Status::empty_index, "Minhash index not loaded");

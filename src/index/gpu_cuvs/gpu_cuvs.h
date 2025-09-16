@@ -110,7 +110,8 @@ struct GpuCuvsIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+           milvus::OpContext* op_context) const override {
         auto result = Status::success;
         auto cuvs_cfg = cuvs_knowhere::cuvs_knowhere_config{};
         auto err_msg = std::string{};

@@ -96,7 +96,8 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     [[nodiscard]] expected<DataSetPtr>
-    Search(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
+           milvus::OpContext* op_context) const override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Could not search empty " << Type();
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -185,7 +186,7 @@ class SparseInvertedIndexNode : public IndexNode {
     // TODO: for now inverted index and wand use the same impl for AnnIterator.
     [[nodiscard]] expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
-                bool use_knowhere_search_pool) const override {
+                bool use_knowhere_search_pool, milvus::OpContext* op_context) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
             return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::empty_index,
@@ -246,7 +247,7 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     [[nodiscard]] expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
         return expected<DataSetPtr>::Err(Status::not_implemented, "GetVectorByIds not implemented");
     }
 
@@ -514,14 +515,15 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+           milvus::OpContext* op_context) const override {
         ReadPermission permission(*this);
-        return SparseInvertedIndexNode<T, use_wand>::Search(dataset, std::move(cfg), bitset);
+        return SparseInvertedIndexNode<T, use_wand>::Search(dataset, std::move(cfg), bitset, op_context);
     }
 
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                bool use_knowhere_search_pool) const override {
+                bool use_knowhere_search_pool, milvus::OpContext* op_context) const override {
         ReadPermission permission(*this);
         // Always uses PrecomputedDistanceIterator for SparseInvertedIndexNodeCC:
         // If we want to use RefineIterator, it needs to get another ReadPermission when calling
@@ -529,13 +531,14 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
         auto config = static_cast<const knowhere::SparseInvertedIndexConfig&>(*cfg);
         config.drop_ratio_search = 0.0f;
         return SparseInvertedIndexNode<T, use_wand>::AnnIterator(dataset, std::move(cfg), bitset,
-                                                                 use_knowhere_search_pool);
+                                                                 use_knowhere_search_pool, op_context);
     }
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                milvus::OpContext* op_context) const override {
         ReadPermission permission(*this);
-        return SparseInvertedIndexNode<T, use_wand>::RangeSearch(dataset, std::move(cfg), bitset);
+        return SparseInvertedIndexNode<T, use_wand>::RangeSearch(dataset, std::move(cfg), bitset, op_context);
     }
 
     int64_t
@@ -563,7 +566,7 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
     }
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
         ReadPermission permission(*this);
 
         if (raw_data_.empty()) {
