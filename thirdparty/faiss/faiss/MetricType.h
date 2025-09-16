@@ -52,8 +52,7 @@ using idx_t = int64_t;
 /// this function is used to distinguish between min and max indexes since
 /// we need to support similarity and dis-similarity metrics in a flexible way
 constexpr bool is_similarity_metric(MetricType metric_type) {
-    return ((metric_type == METRIC_INNER_PRODUCT) ||
-            (metric_type == METRIC_Jaccard));
+    return metric_type == METRIC_INNER_PRODUCT;
 }
 
 } // namespace faiss

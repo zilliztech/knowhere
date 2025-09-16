@@ -96,6 +96,10 @@ void ScalarQuantizer::set_derived_sizes() {
             code_size = d * 2;
             bits = 16;
             break;
+        case QT_1bit_direct:
+            code_size = (d + 7) / 8;
+            bits = 1;
+            break;
     }
 }
 
@@ -105,6 +109,7 @@ void ScalarQuantizer::train(size_t n, const float* x) {
             : qtype == QT_6bit                 ? 6
             : qtype == QT_8bit_uniform         ? 8
             : qtype == QT_8bit                 ? 8
+            : qtype == QT_1bit_direct          ? 1
                                                : -1;
 
     switch (qtype) {
@@ -134,6 +139,7 @@ void ScalarQuantizer::train(size_t n, const float* x) {
         case QT_8bit_direct:
         case QT_bf16:
         case QT_8bit_direct_signed:
+        case QT_1bit_direct:
             // no training necessary
             break;
     }
@@ -164,8 +170,18 @@ void ScalarQuantizer::decode(const uint8_t* codes, float* x, size_t n) const {
 
 SQDistanceComputer* ScalarQuantizer::get_distance_computer(
         MetricType metric) const {
-    FAISS_THROW_IF_NOT(metric == METRIC_L2 || metric == METRIC_INNER_PRODUCT);
+    FAISS_THROW_IF_NOT(
+            metric == METRIC_L2 || metric == METRIC_INNER_PRODUCT ||
+            metric == METRIC_Hamming || metric == METRIC_Jaccard);
     /* use hook to decide use AVX512 or not */
+    if (metric == METRIC_Hamming) {
+        assert(qtype == QT_1bit_direct);
+        return sq_get_hamming_distance_computer(metric, qtype, d, trained);
+    }
+    if (metric == METRIC_Jaccard) {
+        assert(qtype == QT_1bit_direct);
+        return sq_get_jaccard_distance_computer(metric, qtype, d, trained);
+    }
     return sq_get_distance_computer(metric, qtype, d, trained);
 }
 
