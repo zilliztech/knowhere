@@ -11,6 +11,7 @@
 
 #include <unordered_set>
 
+#include "cachinglayer/Manager.h"
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
@@ -23,7 +24,6 @@
 #include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
 #include "utils.h"
-#include "cachinglayer/Manager.h"
 
 namespace {
 constexpr float kKnnRecallThreshold = 0.8f;
@@ -101,14 +101,9 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
     static const int64_t mb = 1024 * 1024;
 
     milvus::cachinglayer::Manager::ConfigureTieredStorage(
-        {CacheWarmupPolicy::CacheWarmupPolicy_Disable,
-            CacheWarmupPolicy::CacheWarmupPolicy_Disable,
-            CacheWarmupPolicy::CacheWarmupPolicy_Disable,
-            CacheWarmupPolicy::CacheWarmupPolicy_Disable},
-        {1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb},
-        true,
-        {10, false, 30}
-    );
+        {CacheWarmupPolicy::CacheWarmupPolicy_Disable, CacheWarmupPolicy::CacheWarmupPolicy_Disable,
+         CacheWarmupPolicy::CacheWarmupPolicy_Disable, CacheWarmupPolicy::CacheWarmupPolicy_Disable},
+        {1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb}, true, {10, false, 30});
 
     auto base_gen = [=]() {
         knowhere::Json json;
