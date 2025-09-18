@@ -11,6 +11,7 @@
 
 #include <unordered_set>
 
+#include "cachinglayer/Manager.h"
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
@@ -96,6 +97,13 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
 
     auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::COSINE, knowhere::metric::IP);
     auto version = GenTestVersionList();
+
+    static const int64_t mb = 1024 * 1024;
+
+    milvus::cachinglayer::Manager::ConfigureTieredStorage(
+        {CacheWarmupPolicy::CacheWarmupPolicy_Disable, CacheWarmupPolicy::CacheWarmupPolicy_Disable,
+         CacheWarmupPolicy::CacheWarmupPolicy_Disable, CacheWarmupPolicy::CacheWarmupPolicy_Disable},
+        {1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb}, true, {10, false, 30});
 
     auto base_gen = [=]() {
         knowhere::Json json;
@@ -225,6 +233,9 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, ivfflatcc_gen),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ8, ivf_base_gen),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC, ivf_sq_cc_gen),
+#ifdef KNOWHERE_WITH_CARDINAL
+             make_tuple(knowhere::IndexEnum::INDEX_CARDINAL_TIERED, hnsw_gen),
+#endif
              make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
              make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_gen),
              make_tuple(knowhere::IndexEnum::INDEX_HNSW_SQ, hnsw_sq_refine_flat_gen),
