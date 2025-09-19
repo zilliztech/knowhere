@@ -20,6 +20,18 @@ ScalarQuantizer::SQDistanceComputer* sq_get_distance_computer_ref(
         size_t dim,
         const std::vector<float>& trained);
 
+ScalarQuantizer::SQDistanceComputer* sq_get_hamming_distance_computer_ref(
+        MetricType metric,
+        ScalarQuantizer::QuantizerType qtype,
+        size_t dim,
+        const std::vector<float>& trained);
+
+ScalarQuantizer::SQDistanceComputer* sq_get_jaccard_distance_computer_ref(
+        MetricType metric,
+        ScalarQuantizer::QuantizerType qtype,
+        size_t dim,
+        const std::vector<float>& trained);
+
 ScalarQuantizer::SQuantizer* sq_select_quantizer_ref(
         ScalarQuantizer::QuantizerType qtype,
         size_t dim,

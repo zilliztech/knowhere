@@ -328,6 +328,34 @@ struct Quantizer8bitDirectSigned<1> : ScalarQuantizer::SQuantizer {
     }
 };
 
+/*******************************************************************
+ * 1bit_direct quantizer
+ *
+ * Note: The 1bit_direct quantizer currently does not support the
+ *`reconstruct_component` method and does not provide SIMDWIDTH support.
+ *******************************************************************/
+
+struct Quantizer1bitDirect : SQuantizer {
+    const size_t d;
+
+    Quantizer1bitDirect(size_t d, const std::vector<float>& /* unused */)
+            : d(d) {}
+
+    void encode_vector(const float* x, uint8_t* code) const final {
+        size_t code_size = (d + 7) / 8;
+        for (size_t i = 0; i < code_size; i++) {
+            code[i] = (uint8_t)x[i];
+        }
+    }
+
+    void decode_vector(const uint8_t* code, float* x) const final {
+        size_t code_size = (d + 7) / 8;
+        for (size_t i = 0; i < code_size; i++) {
+            x[i] = (float)code[i];
+        }
+    }
+};
+
 template <int SIMDWIDTH>
 SQuantizer* select_quantizer_1(
         QuantizerType qtype,
@@ -357,6 +385,8 @@ SQuantizer* select_quantizer_1(
             return new Quantizer8bitDirect<SIMDWIDTH>(d, trained);
         case ScalarQuantizer::QT_8bit_direct_signed:
             return new Quantizer8bitDirectSigned<SIMDWIDTH>(d, trained);
+        case ScalarQuantizer::QT_1bit_direct:
+            return new Quantizer1bitDirect(d, trained);
     }
     FAISS_THROW_MSG("unknown qtype");
 }
@@ -607,6 +637,46 @@ SQDistanceComputer* select_distance_computer(
     FAISS_THROW_MSG("unknown qtype");
     return nullptr;
 }
+
+// This wrapper adapts Jaccard and Hamming binary computers to the
+// SQDistanceComputer interface
+template <class BinaryComputerType>
+struct BinarySQDistanceComputerWrapper : SQDistanceComputer {
+    BinaryComputerType binary_computer;
+    size_t code_size;
+    std::vector<uint8_t> tmp;
+
+    BinarySQDistanceComputerWrapper(size_t code_size, const std::vector<float>&)
+            : code_size(code_size), tmp(code_size) {}
+
+    void set_query(const float* x) final {
+        for (size_t i = 0; i < code_size; ++i) {
+            tmp[i] = (uint8_t)x[i];
+        }
+        binary_computer.set(tmp.data(), code_size);
+    }
+
+    float query_to_code(const uint8_t* code) const override final {
+        return binary_computer.compute(code);
+    }
+
+    float symmetric_dis(idx_t i, idx_t j) override {
+        const uint8_t* code_i = codes + i * code_size;
+        const uint8_t* code_j = codes + j * code_size;
+
+        BinaryComputerType temp_computer;
+        temp_computer.set(code_i, code_size);
+        return temp_computer.compute(code_j);
+    }
+};
+
+SQDistanceComputer* select_hamming_distance_computer(
+    size_t d,
+    const std::vector<float>& trained);
+
+SQDistanceComputer* select_jaccard_distance_computer(
+        size_t d,
+        const std::vector<float>& trained);
 
 template <class DCClass, int use_sel>
 InvertedListScanner* sel3_InvertedListScanner(

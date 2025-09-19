@@ -300,6 +300,9 @@ SQuantizer* select_quantizer_1_avx(
             return new Quantizer8bitDirect_avx<SIMDWIDTH>(d, trained);
         case QuantizerType::QT_8bit_direct_signed:
             return new Quantizer8bitDirectSigned_avx<SIMDWIDTH>(d, trained);
+        case QuantizerType::QT_1bit_direct:
+            // todo: add more SIMDWIDTH support for avx if needed
+            return new Quantizer1bitDirect(d, trained);
     }
     FAISS_THROW_MSG("unknown qtype");
 }

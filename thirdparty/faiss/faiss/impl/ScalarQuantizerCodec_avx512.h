@@ -395,6 +395,9 @@ SQuantizer* select_quantizer_1_avx512(
             return new Quantizer8bitDirect_avx512<SIMDWIDTH>(d, trained);
         case QuantizerType::QT_8bit_direct_signed:
             return new Quantizer8bitDirectSigned_avx512<SIMDWIDTH>(d, trained);
+        case QuantizerType::QT_1bit_direct:
+            // todo: add more SIMDWIDTH support for avx512 if needed
+            return new Quantizer1bitDirect(d, trained);
     }
     FAISS_THROW_MSG("unknown qtype");
 }

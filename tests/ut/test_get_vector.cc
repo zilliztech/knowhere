@@ -45,7 +45,6 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
         return json;
     };
 
-#ifdef KNOWHERE_WITH_CARDINAL
     auto bin_hnsw_gen = [base_bin_gen]() {
         knowhere::Json json = base_bin_gen();
         json[knowhere::indexparam::HNSW_M] = 128;
@@ -53,7 +52,6 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
         json[knowhere::indexparam::EF] = 64;
         return json;
     };
-#endif
 
     auto bin_flat_gen = base_bin_gen;
 
@@ -62,9 +60,7 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IDMAP, bin_flat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT, bin_ivfflat_gen),
-#ifdef KNOWHERE_WITH_CARDINAL
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, bin_hnsw_gen),
-#endif
         }));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::bin1>(name, version).value();
         auto cfg_json = gen().dump();

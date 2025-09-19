@@ -603,9 +603,7 @@ TEST_CASE("Test Mem Index With Binary Vector", "[float metrics]") {
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IDMAP, flat_gen),
             make_tuple(knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT, ivfflat_gen),
-#ifdef KNOWHERE_WITH_CARDINAL
             make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
-#endif
         }));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::bin1>(name, version).value();
         auto cfg_json = gen().dump();
