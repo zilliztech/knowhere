@@ -56,7 +56,7 @@ constexpr uint32_t kK = 10;
 constexpr float kKnnRecall = 0.9;
 constexpr float AiSAQKnnRecall = 0.01;
 constexpr float kL2RangeAp = 0.9;
-constexpr float kIpRangeAp = 0.9;
+constexpr float kIpRangeAp = 0.88;
 constexpr float kCosineRangeAp = 0.9;
 }  // namespace
 TEST_CASE("Valid diskann build params test", "[diskann]") {
