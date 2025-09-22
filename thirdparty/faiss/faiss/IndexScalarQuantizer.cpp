@@ -34,7 +34,8 @@ IndexScalarQuantizer::IndexScalarQuantizer(
     is_trained = qtype == ScalarQuantizer::QT_fp16 ||
             qtype == ScalarQuantizer::QT_8bit_direct ||
             qtype == ScalarQuantizer::QT_bf16 ||
-            qtype == ScalarQuantizer::QT_8bit_direct_signed;
+            qtype == ScalarQuantizer::QT_8bit_direct_signed ||
+            qtype == ScalarQuantizer::QT_1bit_direct;
     code_size = sq.code_size;
 }
 

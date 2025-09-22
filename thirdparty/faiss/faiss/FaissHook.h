@@ -33,6 +33,8 @@ typedef InvertedListScanner* (*sq_sel_inv_list_scanner_func_ptr)(
         bool);
 
 extern sq_get_distance_computer_func_ptr sq_get_distance_computer;
+extern sq_get_distance_computer_func_ptr sq_get_hamming_distance_computer;
+extern sq_get_distance_computer_func_ptr sq_get_jaccard_distance_computer;
 extern sq_sel_quantizer_func_ptr sq_sel_quantizer;
 extern sq_sel_inv_list_scanner_func_ptr sq_sel_inv_list_scanner;
 void sq_hook();

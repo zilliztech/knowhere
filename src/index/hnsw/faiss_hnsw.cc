@@ -490,6 +490,15 @@ convert_rows_to_fp32(const void* const __restrict src_in, float* const __restric
             }
         }
         return true;
+    } else if (src_data_format == DataFormatEnum::bin1) {
+        const knowhere::bin1* const src = reinterpret_cast<const knowhere::bin1*>(src_in);
+        auto uint8_dim = (dim + 7) / 8;
+        for (size_t i = 0; i < nrows; i++) {
+            for (size_t j = 0; j < uint8_dim; ++j) {
+                dst[i * dim + j] = (float)(src[offsets[i] * uint8_dim + j]);
+            }
+        }
+        return true;
     } else {
         // unknown
         return false;
@@ -522,6 +531,23 @@ convert_rows_to_fp32(const void* const __restrict src_in, float* const __restric
         const knowhere::int8* const src = reinterpret_cast<const knowhere::int8*>(src_in);
         for (size_t i = 0; i < nrows * dim; i++) {
             dst[i] = (float)(src[i + start_row * dim]);
+        }
+        return true;
+    } else if (src_data_format == DataFormatEnum::bin1) {
+        // NOTE: This is a little bit weird conversion. The source (`src_in`) is a uint8_t byte stream,
+        // where each query_row has ((dim + 7) / 8) * 8 bits, and the total is nrows * ((dim + 7) / 8) * 8 bits.
+        // But the final format required is nrows * dim * 32 bits (float).
+        // There are actually two conversions happening here:
+        // 1. Each uint8_t value must be converted to float (in `BinarySQDistanceComputerWrapper::set_query`
+        //    and `ScalarQuantizer::compute_codes`), it will be converted back to uint8_t). [same as int8]
+        // 2. Each row must occupy dim * 32 bits of space, even if not all bits are filled;
+        //    this is required by the convention set in `ScalarQuantizer::compute_codes`.
+        const knowhere::bin1* const src = reinterpret_cast<const knowhere::bin1*>(src_in);
+        auto uint8_dim = (dim + 7) / 8;
+        for (size_t i = 0; i < nrows; i++) {
+            for (size_t j = 0; j < uint8_dim; j++) {
+                dst[i * dim + j] = (float)(src[(start_row + i) * uint8_dim + j]);
+            }
         }
         return true;
     } else {
@@ -561,6 +587,16 @@ convert_rows_from_fp32(const float* const __restrict src, void* const __restrict
             dst[i + start_row * dim] = (knowhere::int8)src[i];
         }
         return true;
+    } else if (dst_data_format == DataFormatEnum::bin1) {
+        knowhere::bin1* const dst = reinterpret_cast<knowhere::bin1*>(dst_in);
+        auto uint8_dim = (dim + 7) / 8;
+        for (size_t i = 0; i < nrows * uint8_dim; i++) {
+            KNOWHERE_THROW_IF_NOT_MSG(src[i] >= std::numeric_limits<knowhere::bin1>::min() &&
+                                          src[i] <= std::numeric_limits<knowhere::bin1>::max(),
+                                      "convert float to bin1(uint8_t) overflow");
+            dst[i + start_row * uint8_dim] = (knowhere::bin1)src[i];
+        }
+        return true;
     } else {
         // unknown
         return false;
@@ -578,6 +614,8 @@ convert_ds_to_float(const DataSetPtr& src, DataFormatEnum data_format) {
         return ConvertFromDataTypeIfNeeded<knowhere::bf16>(src);
     } else if (data_format == DataFormatEnum::int8) {
         return ConvertFromDataTypeIfNeeded<knowhere::int8>(src);
+    } else if (data_format == DataFormatEnum::bin1) {
+        return ConvertFromDataTypeIfNeeded<knowhere::bin1>(src);
     }
     return nullptr;
 }
@@ -675,6 +713,8 @@ get_index_data_format(const faiss::Index* index) {
             return DataFormatEnum::fp16;
         } else if (index_sq->sq.qtype == faiss::ScalarQuantizer::QT_8bit_direct_signed) {
             return DataFormatEnum::int8;
+        } else if (index_sq->sq.qtype == faiss::ScalarQuantizer::QT_1bit_direct) {
+            return DataFormatEnum::bin1;
         } else {
             return std::nullopt;
         }
@@ -1170,6 +1210,24 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                 // faiss produces fp32 data format, we need some other format.
                 // Let's create a temporary fp32 buffer for this.
                 auto tmp = std::make_unique<float[]>(dim);
+                for (int64_t i = 0; i < rows; i++) {
+                    const int64_t id = ids[i];
+                    assert(id >= 0 && id < Count());
+                    if (!get_vector(id, tmp.get())) {
+                        return expected<DataSetPtr>::Err(Status::invalid_index_error,
+                                                         "index inner error, cannot proceed with GetVectorByIds");
+                    }
+                    if (!convert_rows_from_fp32(tmp.get(), data.get(), data_format, i, 1, dim)) {
+                        return expected<DataSetPtr>::Err(Status::invalid_args, "Unsupported data format");
+                    }
+                }
+                return GenResultDataSet(rows, dim, std::move(data));
+            } else if (data_format == DataFormatEnum::bin1) {
+                auto uint8_dim = (dim + 7) / 8;
+                auto data = std::make_unique<knowhere::bin1[]>(uint8_dim * rows);
+                // faiss produces fp32 data format, we need some other format.
+                // Let's create a temporary fp32 buffer for this.
+                auto tmp = std::make_unique<float[]>(uint8_dim);
                 for (int64_t i = 0; i < rows; i++) {
                     const int64_t id = ids[i];
                     assert(id >= 0 && id < Count());
@@ -1785,7 +1843,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     bool
     is_ann_iterator_supported() const {
         if (data_format != DataFormatEnum::fp32 && data_format != DataFormatEnum::fp16 &&
-            data_format != DataFormatEnum::bf16 && data_format != DataFormatEnum::int8) {
+            data_format != DataFormatEnum::bf16 && data_format != DataFormatEnum::int8 &&
+            data_format != DataFormatEnum::bin1) {
             return false;
         }
         return true;
@@ -1848,6 +1907,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     case DataFormatEnum::fp16:
                     case DataFormatEnum::bf16:
                     case DataFormatEnum::int8:
+                    case DataFormatEnum::bin1:
                         convert_rows_to_fp32(data, cur_query.get(), data_format, i, 1, dim);
                         break;
                     default:
@@ -1925,42 +1985,55 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
 
         // create an index
         const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
+        const bool is_binary = data_format == DataFormatEnum::bin1;
 
         std::unique_ptr<faiss::IndexHNSW> hnsw_index;
         auto train_index = [&](const float* data, const int i, const int64_t rows) {
-            if (is_cosine) {
-                if (data_format == DataFormatEnum::fp32) {
-                    hnsw_index = std::make_unique<faiss::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
-                } else if (data_format == DataFormatEnum::fp16) {
-                    hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, faiss::ScalarQuantizer::QT_fp16,
-                                                                            hnsw_cfg.M.value());
-                } else if (data_format == DataFormatEnum::bf16) {
-                    hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, faiss::ScalarQuantizer::QT_bf16,
-                                                                            hnsw_cfg.M.value());
-                } else if (data_format == DataFormatEnum::int8) {
-                    hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(
-                        dim, faiss::ScalarQuantizer::QT_8bit_direct_signed, hnsw_cfg.M.value());
+            if (is_binary) {
+                if (metric.value() == faiss::MetricType::METRIC_Hamming ||
+                    metric.value() == faiss::MetricType::METRIC_Jaccard) {
+                    hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(dim, faiss::ScalarQuantizer::QT_1bit_direct,
+                                                                      hnsw_cfg.M.value(), metric.value());
                 } else {
-                    LOG_KNOWHERE_ERROR_ << "Unsupported metric type: " << hnsw_cfg.metric_type.value();
+                    LOG_KNOWHERE_ERROR_ << "Unsupported metric for binary data: " << hnsw_cfg.metric_type.value();
                     return Status::invalid_metric_type;
                 }
             } else {
-                if (data_format == DataFormatEnum::fp32) {
-                    hnsw_index = std::make_unique<faiss::IndexHNSWFlat>(dim, hnsw_cfg.M.value(), metric.value());
-                } else if (data_format == DataFormatEnum::fp16) {
-                    hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(dim, faiss::ScalarQuantizer::QT_fp16,
-                                                                      hnsw_cfg.M.value(), metric.value());
-                } else if (data_format == DataFormatEnum::bf16) {
-                    hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(dim, faiss::ScalarQuantizer::QT_bf16,
-                                                                      hnsw_cfg.M.value(), metric.value());
-                } else if (data_format == DataFormatEnum::int8) {
-                    hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(
-                        dim, faiss::ScalarQuantizer::QT_8bit_direct_signed, hnsw_cfg.M.value(), metric.value());
+                if (is_cosine) {
+                    if (data_format == DataFormatEnum::fp32) {
+                        hnsw_index = std::make_unique<faiss::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
+                    } else if (data_format == DataFormatEnum::fp16) {
+                        hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, faiss::ScalarQuantizer::QT_fp16,
+                                                                                hnsw_cfg.M.value());
+                    } else if (data_format == DataFormatEnum::bf16) {
+                        hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, faiss::ScalarQuantizer::QT_bf16,
+                                                                                hnsw_cfg.M.value());
+                    } else if (data_format == DataFormatEnum::int8) {
+                        hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(
+                            dim, faiss::ScalarQuantizer::QT_8bit_direct_signed, hnsw_cfg.M.value());
+                    } else {
+                        LOG_KNOWHERE_ERROR_ << "Unsupported metric type: " << hnsw_cfg.metric_type.value();
+                        return Status::invalid_metric_type;
+                    }
                 } else {
-                    LOG_KNOWHERE_ERROR_ << "Unsupported metric type: " << hnsw_cfg.metric_type.value();
-                    return Status::invalid_metric_type;
+                    if (data_format == DataFormatEnum::fp32) {
+                        hnsw_index = std::make_unique<faiss::IndexHNSWFlat>(dim, hnsw_cfg.M.value(), metric.value());
+                    } else if (data_format == DataFormatEnum::fp16) {
+                        hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(dim, faiss::ScalarQuantizer::QT_fp16,
+                                                                          hnsw_cfg.M.value(), metric.value());
+                    } else if (data_format == DataFormatEnum::bf16) {
+                        hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(dim, faiss::ScalarQuantizer::QT_bf16,
+                                                                          hnsw_cfg.M.value(), metric.value());
+                    } else if (data_format == DataFormatEnum::int8) {
+                        hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(
+                            dim, faiss::ScalarQuantizer::QT_8bit_direct_signed, hnsw_cfg.M.value(), metric.value());
+                    } else {
+                        LOG_KNOWHERE_ERROR_ << "Unsupported metric type: " << hnsw_cfg.metric_type.value();
+                        return Status::invalid_metric_type;
+                    }
                 }
             }
+
             hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
             // train
             LOG_KNOWHERE_INFO_ << "Training HNSW Index";
@@ -2946,6 +3019,8 @@ KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(HNSW_DEPRECATED, BaseFaissRegularIndex
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW, BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback,
                                                 knowhere::feature::MMAP | knowhere::feature::MV)
 KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(HNSW, BaseFaissRegularIndexHNSWFlatNodeTemplate,
+                                          knowhere::feature::MMAP | knowhere::feature::MV)
+KNOWHERE_SIMPLE_REGISTER_DENSE_BIN_GLOBAL(HNSW, BaseFaissRegularIndexHNSWFlatNodeTemplate,
                                           knowhere::feature::MMAP | knowhere::feature::MV)
 #endif
 

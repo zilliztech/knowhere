@@ -17,6 +17,19 @@ sq_sel_quantizer_func_ptr sq_sel_quantizer = sq_select_quantizer_ref;
 sq_sel_inv_list_scanner_func_ptr sq_sel_inv_list_scanner =
         sq_select_inverted_list_scanner_ref;
 
+// Note: The Hamming computer implementation is selected at compile time
+// based on the instruction set in `hamdis-inl.h`, not by runtime hook.
+sq_get_distance_computer_func_ptr sq_get_hamming_distance_computer =
+        sq_get_hamming_distance_computer_ref;
+
+// Note: The Jaccard distance computer uses `__builtin_popcount` for 
+// computation. This function is efficiently implemented by the
+// compiler and automatically utilizes the best available instruction set.
+// Therefore, there is no need to manually adjust or hook the Jaccard computer
+// for different SIMD instruction sets.
+sq_get_distance_computer_func_ptr sq_get_jaccard_distance_computer =
+        sq_get_jaccard_distance_computer_ref;
+
 void sq_hook() {
     // SQ8 always hook best SIMD
 #ifdef __x86_64__
