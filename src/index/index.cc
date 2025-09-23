@@ -78,12 +78,12 @@ Index<T>::Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_bu
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     TimeRecorder rc("Build index", 2);
-    auto res = this->node->Build(dataset, std::move(cfg), use_knowhere_build_pool);
+    auto res = this->node->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
     auto time = rc.ElapseFromBegin("done");
     time *= 0.000001;  // convert to s
     knowhere_build_latency.Observe(time);
 #else
-    auto res = this->node->Build(dataset, std::move(cfg), use_knowhere_build_pool);
+    auto res = this->node->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
 #endif
     return res;
 }
@@ -91,6 +91,12 @@ Index<T>::Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_bu
 template <typename T>
 inline Status
 Index<T>::Train(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool) {
+    bool is_emb_list = dataset->Get<size_t*>(knowhere::meta::EMB_LIST_OFFSET) != nullptr;
+    if (is_emb_list) {
+        // should use Index::Build instead.
+        LOG_KNOWHERE_WARNING_ << "EmbList should use Index::Build instead.";
+        return Status::emb_list_inner_error;
+    }
     auto cfg = this->node->CreateConfig();
     std::string msg;
     RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Train", &msg));
@@ -100,6 +106,12 @@ Index<T>::Train(const DataSetPtr dataset, const Json& json, bool use_knowhere_bu
 template <typename T>
 inline Status
 Index<T>::Add(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool) {
+    bool is_emb_list = dataset->Get<size_t*>(knowhere::meta::EMB_LIST_OFFSET) != nullptr;
+    if (is_emb_list) {
+        // should use Index::Build instead.
+        LOG_KNOWHERE_WARNING_ << "EmbList should use Index::Build instead.";
+        return Status::emb_list_inner_error;
+    }
     auto cfg = this->node->CreateConfig();
     std::string msg;
     RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Add", &msg));
@@ -150,7 +162,7 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
     TimeRecorder rc("Search");
     bool has_trace_id = b_cfg.trace_id.has_value();
     auto k = cfg->k.value();
-    auto res = this->node->Search(dataset, std::move(cfg), bitset, op_context);
+    auto res = this->node->SearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
     knowhere_search_latency.Observe(time);
@@ -162,7 +174,7 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
     }
     // LCOV_EXCL_STOP
 #else
-    auto res = this->node->Search(dataset, std::move(cfg), bitset, op_context);
+    auto res = this->node->SearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
 #endif
     return res;
 }
@@ -193,12 +205,14 @@ Index<T>::AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetVi
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // note that this time includes only the initial search phase of iterator.
     TimeRecorder rc("AnnIterator");
-    auto res = this->node->AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
+    auto res =
+        this->node->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
     knowhere_search_latency.Observe(time);
 #else
-    auto res = this->node->AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
+    auto res =
+        this->node->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
 #endif
     return res;
 }
@@ -249,7 +263,7 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
 
     TimeRecorder rc("Range Search");
     bool has_trace_id = b_cfg.trace_id.has_value();
-    auto res = this->node->RangeSearch(dataset, std::move(cfg), bitset, op_context);
+    auto res = this->node->RangeSearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
     knowhere_range_search_latency.Observe(time);
@@ -260,7 +274,7 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
     }
     // LCOV_EXCL_STOP
 #else
-    auto res = this->node->RangeSearch(dataset, std::move(cfg), bitset, op_context);
+    auto res = this->node->RangeSearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
 #endif
     return res;
 }
@@ -298,7 +312,7 @@ Index<T>::GetIndexMeta(const Json& json) const {
 template <typename T>
 inline Status
 Index<T>::Serialize(BinarySet& binset) const {
-    return this->node->Serialize(binset);
+    return this->node->SerializeEmbListIfNeed(binset);
 }
 
 template <typename T>
@@ -320,12 +334,12 @@ Index<T>::Deserialize(const BinarySet& binset, const Json& json) {
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     TimeRecorder rc("Load index", 2);
-    res = this->node->Deserialize(binset, std::move(cfg));
+    res = this->node->DeserializeEmbListIfNeed(binset, std::move(cfg));
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
     knowhere_load_latency.Observe(time);
 #else
-    res = this->node->Deserialize(binset, std::move(cfg));
+    res = this->node->DeserializeEmbListIfNeed(binset, std::move(cfg));
 #endif
     return res;
 }
@@ -349,12 +363,12 @@ Index<T>::DeserializeFromFile(const std::string& filename, const Json& json) {
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     TimeRecorder rc("Load index from file", 2);
-    res = this->node->DeserializeFromFile(filename, std::move(cfg));
+    res = this->node->DeserializeFromFileIfNeed(filename, std::move(cfg));
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
     knowhere_load_latency.Observe(time);
 #else
-    res = this->node->DeserializeFromFile(filename, std::move(cfg));
+    res = this->node->DeserializeFromFileIfNeed(filename, std::move(cfg));
 #endif
     return res;
 }
