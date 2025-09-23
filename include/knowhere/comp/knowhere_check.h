@@ -23,13 +23,12 @@ namespace KnowhereCheck {
 __attribute__((unused)) static bool
 IndexTypeAndDataTypeCheck(const std::string& index_name, VecType data_type, bool is_emb_list_data = false) {
     auto& index_table = IndexFactory::StaticIndexTableInstance();
-    auto& emb_list_index_table = std::get<2>(index_table);
-    bool is_emb_list_index = emb_list_index_table.find(index_name) != emb_list_index_table.end();
-    if (is_emb_list_index != is_emb_list_data) {
-        // return false if index and data type are not consistent,
-        // TODO: maybe we can support vector-based index_type with emb_list data
-        //      by treating emb_list data as normal vectors (ignoring offset)
-        return false;
+    if (is_emb_list_data) {
+        auto& emb_list_index_table = std::get<2>(index_table);
+        bool is_emb_list_index = emb_list_index_table.find(index_name) != emb_list_index_table.end();
+        if (!is_emb_list_index) {
+            return false;
+        }
     }
     auto& static_index_table = std::get<0>(index_table);
     auto key = std::pair<std::string, VecType>(index_name, data_type);
