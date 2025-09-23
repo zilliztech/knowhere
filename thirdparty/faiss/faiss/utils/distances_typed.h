@@ -82,6 +82,18 @@ void all_L2sqr_typed(
         const IDSelector* sel = nullptr);
 
 template <typename DataType>
+void all_L2sqr_distances_typed(
+        const DataType* x,
+        const DataType* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* output,
+        const float* y_norms = nullptr,
+        const IDSelector* sel = nullptr);
+
+
+template <typename DataType>
 void knn_cosine_typed(
         const DataType* x,
         const DataType* y,

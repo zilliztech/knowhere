@@ -368,6 +368,28 @@ void all_L2sqr_typed(
 }
 
 template <typename DataType>
+void all_L2sqr_distances_typed(
+        const DataType* x,
+        const DataType* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* output,
+        const float* y_norms,
+        const IDSelector* sel) {
+    CollectAllDistancesHandler<CMax<float, int64_t>> res(nx, ny, output);
+    if (const auto* sel_bs =
+                dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel)) {
+        exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, res, *sel_bs);
+    } else if (sel == nullptr) {
+        exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, res, IDSelectorAll());
+    } else {
+        exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, res, *sel);
+    }
+    return;
+}
+
+template <typename DataType>
 void knn_cosine_typed(
         const DataType* x,
         const DataType* y,
@@ -600,6 +622,16 @@ template void faiss::all_L2sqr_typed<knowhere::fp16>(
         const float*,
         const IDSelector*);
 
+template void faiss::all_L2sqr_distances_typed<knowhere::fp16>(
+        const knowhere::fp16*,
+        const knowhere::fp16*,
+        size_t,
+        size_t,
+        size_t,
+        float*,
+        const float*,
+        const IDSelector*);
+
 template void faiss::knn_cosine_typed<knowhere::fp16>(
         const knowhere::fp16*,
         const knowhere::fp16*,
@@ -684,6 +716,16 @@ template void faiss::all_L2sqr_typed<knowhere::bf16>(
         const float*,
         const IDSelector*);
 
+template void faiss::all_L2sqr_distances_typed<knowhere::bf16>(
+        const knowhere::bf16*,
+        const knowhere::bf16*,
+        size_t,
+        size_t,
+        size_t,
+        float*,
+        const float*,
+        const IDSelector*);
+
 template void faiss::knn_cosine_typed<knowhere::bf16>(
         const knowhere::bf16*,
         const knowhere::bf16*,
@@ -765,6 +807,16 @@ template void faiss::all_L2sqr_typed<knowhere::int8>(
         size_t,
         size_t,
         std::vector<knowhere::DistId>&,
+        const float*,
+        const IDSelector*);
+
+template void faiss::all_L2sqr_distances_typed<knowhere::int8>(
+        const knowhere::int8*,
+        const knowhere::int8*,
+        size_t,
+        size_t,
+        size_t,
+        float*,
         const float*,
         const IDSelector*);
 

@@ -94,12 +94,11 @@ TEST_CASE("Test index and data type check", "[IndexCheckTest]") {
         CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_FLOAT16));
         CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_BFLOAT16));
         CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_INT8));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_BINARY));
 
 #ifdef KNOWHERE_WITH_CARDINAL
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_BINARY));
         CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_SPARSE_FLOAT));
 #else
-        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_BINARY));
         CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_SPARSE_FLOAT));
 #endif
 
@@ -129,62 +128,27 @@ TEST_CASE("Test index and data type check", "[IndexCheckTest]") {
         CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_SPARSE_WAND, VecType::VECTOR_SPARSE_FLOAT));
 
         // emb list - hnsw
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW, VecType::VECTOR_FLOAT, true));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW, VecType::VECTOR_FLOAT16, true));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW, VecType::VECTOR_BFLOAT16, true));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW, VecType::VECTOR_INT8, true));
-        CHECK_FALSE(
-            KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW, VecType::VECTOR_FLOAT, false));
-        CHECK_FALSE(
-            KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW, VecType::VECTOR_FLOAT16, false));
-        CHECK_FALSE(
-            KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW, VecType::VECTOR_BFLOAT16, false));
-        CHECK_FALSE(
-            KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW, VecType::VECTOR_INT8, false));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_FLOAT, true));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_FLOAT16, true));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_BFLOAT16, true));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_INT8, true));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW, VecType::VECTOR_BINARY, true));
 
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_SQ, VecType::VECTOR_FLOAT, true));
-        CHECK(
-            KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_SQ, VecType::VECTOR_FLOAT16, true));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_SQ, VecType::VECTOR_BFLOAT16,
-                                                       true));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_SQ, VecType::VECTOR_INT8, true));
-        CHECK_FALSE(
-            KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_SQ, VecType::VECTOR_FLOAT, false));
-        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_SQ, VecType::VECTOR_FLOAT16,
-                                                             false));
-        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_SQ,
-                                                             VecType::VECTOR_BFLOAT16, false));
-        CHECK_FALSE(
-            KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_SQ, VecType::VECTOR_INT8, false));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PQ, VecType::VECTOR_FLOAT, true));
-        CHECK(
-            KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PQ, VecType::VECTOR_FLOAT16, true));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PQ, VecType::VECTOR_BFLOAT16,
-                                                       true));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PQ, VecType::VECTOR_INT8, true));
-        CHECK_FALSE(
-            KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PQ, VecType::VECTOR_FLOAT, false));
-        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PQ, VecType::VECTOR_FLOAT16,
-                                                             false));
-        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PQ,
-                                                             VecType::VECTOR_BFLOAT16, false));
-        CHECK_FALSE(
-            KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PQ, VecType::VECTOR_INT8, false));
-        CHECK(
-            KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PRQ, VecType::VECTOR_FLOAT, true));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PRQ, VecType::VECTOR_FLOAT16,
-                                                       true));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PRQ, VecType::VECTOR_BFLOAT16,
-                                                       true));
-        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PRQ, VecType::VECTOR_INT8, true));
-        CHECK_FALSE(
-            KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PRQ, VecType::VECTOR_FLOAT, false));
-        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PRQ,
-                                                             VecType::VECTOR_FLOAT16, false));
-        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PRQ,
-                                                             VecType::VECTOR_BFLOAT16, false));
-        CHECK_FALSE(
-            KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PRQ, VecType::VECTOR_INT8, false));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ, VecType::VECTOR_FLOAT, true));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ, VecType::VECTOR_FLOAT16, true));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ, VecType::VECTOR_BFLOAT16, true));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_SQ, VecType::VECTOR_INT8, true));
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_PQ, VecType::VECTOR_FLOAT, true));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_PQ, VecType::VECTOR_FLOAT16, true));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_PQ, VecType::VECTOR_BFLOAT16, true));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_PQ, VecType::VECTOR_INT8, true));
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_PRQ, VecType::VECTOR_FLOAT, true));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_PRQ, VecType::VECTOR_FLOAT, true));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_PRQ, VecType::VECTOR_FLOAT16, true));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_PRQ, VecType::VECTOR_BFLOAT16, true));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_HNSW_PRQ, VecType::VECTOR_INT8, true));
     }
 }
 
@@ -216,12 +180,6 @@ TEST_CASE("Test support mmap index", "[IndexCheckTest]") {
 #else
         CHECK_FALSE(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_DISKANN));
 #endif
-
-        // emb list - hnsw
-        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW));
-        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_SQ));
-        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PQ));
-        CHECK(KnowhereCheck::SupportMmapIndexTypeCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PRQ));
     }
 }
 
@@ -330,10 +288,6 @@ TEST_CASE("Test index feature check", "[IndexFeatureCheck]") {
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_FAISS_IVFSQ8, knowhere::feature::MMAP));
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_FAISS_IVFSQ_CC, knowhere::feature::MMAP));
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW, knowhere::feature::MMAP));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW, knowhere::feature::MMAP));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_SQ, knowhere::feature::MMAP));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PQ, knowhere::feature::MMAP));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PRQ, knowhere::feature::MMAP));
 
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_FAISS_BIN_IDMAP, knowhere::feature::MMAP));
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_FAISS_BIN_IVFFLAT, knowhere::feature::MMAP));
@@ -590,36 +544,13 @@ TEST_CASE("Test index feature check", "[IndexFeatureCheck]") {
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_IVFPQ, knowhere::feature::MV));
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_CAGRA, knowhere::feature::MV));
 #endif
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW, knowhere::feature::MV));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_SQ, knowhere::feature::MV));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PQ, knowhere::feature::MV));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PRQ, knowhere::feature::MV));
     }
 
     SECTION("Check EMB_LIST") {
         // EMB_LIST_HNSW Index
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW, knowhere::feature::FLOAT32));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW, knowhere::feature::FP16));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW, knowhere::feature::BF16));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW, knowhere::feature::INT8));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW, knowhere::feature::EMB_LIST));
-
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_SQ, knowhere::feature::FLOAT32));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_SQ, knowhere::feature::FP16));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_SQ, knowhere::feature::BF16));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_SQ, knowhere::feature::INT8));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_SQ, knowhere::feature::EMB_LIST));
-
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PQ, knowhere::feature::FLOAT32));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PQ, knowhere::feature::FP16));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PQ, knowhere::feature::BF16));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PQ, knowhere::feature::INT8));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PQ, knowhere::feature::EMB_LIST));
-
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PRQ, knowhere::feature::FLOAT32));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PRQ, knowhere::feature::FP16));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PRQ, knowhere::feature::BF16));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PRQ, knowhere::feature::INT8));
-        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_EMB_LIST_HNSW_PRQ, knowhere::feature::EMB_LIST));
+        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW, knowhere::feature::EMB_LIST));
+        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW_SQ, knowhere::feature::EMB_LIST));
+        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW_PQ, knowhere::feature::EMB_LIST));
+        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_HNSW_PRQ, knowhere::feature::EMB_LIST));
     }
 }
