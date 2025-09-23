@@ -106,30 +106,65 @@ find_max_in_range(const float* dists, int start_idx, int end_idx) {
 }
 
 inline std::optional<float>
-get_sum_max_sim(const float* dists, const size_t nq, const size_t el_len) {
+find_min_in_range(const float* dists, int start_idx, int end_idx) {
+    float min_v = std::numeric_limits<float>::max();
+    if (start_idx < 0 || end_idx <= start_idx) {
+        LOG_KNOWHERE_WARNING_ << "invalid range, start_idx: " << start_idx << ", end_idx: " << end_idx;
+        return std::nullopt;
+    }
+    for (auto i = start_idx; i < end_idx; ++i) {
+        if (dists[i] < min_v) {
+            min_v = dists[i];
+        }
+    }
+    return min_v;
+}
+
+inline std::optional<float>
+get_sum_max_sim(const float* dists, const size_t nq, const size_t el_len, bool larger_is_closer = true) {
     float score = 0.0f;
-    for (size_t i = 0; i < nq; i++) {
-        auto max_v = find_max_in_range(dists, i * el_len, (i + 1) * el_len);
-        if (max_v.has_value()) {
-            score += max_v.value();
-        } else {
-            return std::nullopt;
+    if (larger_is_closer) {
+        for (size_t i = 0; i < nq; i++) {
+            auto max_v = find_max_in_range(dists, i * el_len, (i + 1) * el_len);
+            if (max_v.has_value()) {
+                score += max_v.value();
+            } else {
+                return std::nullopt;
+            }
+        }
+    } else {
+        for (size_t i = 0; i < nq; i++) {
+            auto min_v = find_min_in_range(dists, i * el_len, (i + 1) * el_len);
+            if (min_v.has_value()) {
+                score += min_v.value();
+            } else {
+                return std::nullopt;
+            }
         }
     }
     return score;
 }
 
 inline std::optional<float>
-get_ordered_sum_max_sim(const float* dists, const size_t nq, const size_t el_len) {
+get_ordered_sum_max_sim(const float* dists, const size_t nq, const size_t el_len, bool larger_is_closer = true) {
     if (nq == 0 || el_len == 0) {
         LOG_KNOWHERE_WARNING_ << "invalid nq or el_len, nq: " << nq << ", el_len: " << el_len;
         return std::nullopt;
     }
     std::vector<float> scores(el_len, 0.0f);
-    for (size_t i = 0; i < nq; i++) {
-        scores[0] += dists[i * el_len];
-        for (size_t j = 1; j < el_len; j++) {
-            scores[j] = std::max(scores[j - 1], scores[j] + dists[i * el_len + j]);
+    if (larger_is_closer) {
+        for (size_t i = 0; i < nq; i++) {
+            scores[0] += dists[i * el_len];
+            for (size_t j = 1; j < el_len; j++) {
+                scores[j] = std::max(scores[j - 1], scores[j] + dists[i * el_len + j]);
+            }
+        }
+    } else {
+        for (size_t i = 0; i < nq; i++) {
+            scores[0] += dists[i * el_len];
+            for (size_t j = 1; j < el_len; j++) {
+                scores[j] = std::min(scores[j - 1], scores[j] + dists[i * el_len + j]);
+            }
         }
     }
     return scores[el_len - 1];
@@ -141,7 +176,7 @@ get_ordered_sum_max_sim(const float* dists, const size_t nq, const size_t el_len
  * @param el_metric_type: the metric type of the emb_list
  * @return the aggregation function of the emb_list
  */
-inline std::optional<std::function<std::optional<float>(const float*, size_t, size_t)>>
+inline std::optional<std::function<std::optional<float>(const float*, size_t, size_t, bool)>>
 get_emb_list_agg_func(const std::string& el_metric_type) {
     if (el_metric_type == metric::MAX_SIM) {
         return get_sum_max_sim;
@@ -157,10 +192,12 @@ get_emb_list_agg_func(const std::string& el_metric_type) {
 inline std::optional<std::string>
 get_el_metric_type(const std::string& metric_type) {
     if (metric_type == metric::MAX_SIM || metric_type == metric::MAX_SIM_IP || metric_type == metric::MAX_SIM_L2 ||
-        metric_type == metric::MAX_SIM_COSINE) {
+        metric_type == metric::MAX_SIM_COSINE || metric_type == metric::MAX_SIM_HAMMING ||
+        metric_type == metric::MAX_SIM_JACCARD) {
         return metric::MAX_SIM;
     } else if (metric_type == metric::DTW || metric_type == metric::DTW_IP || metric_type == metric::DTW_L2 ||
-               metric_type == metric::DTW_COSINE) {
+               metric_type == metric::DTW_COSINE || metric_type == metric::DTW_HAMMING ||
+               metric_type == metric::DTW_JACCARD) {
         return metric::DTW;
     }
     return std::nullopt;
@@ -182,6 +219,12 @@ get_sub_metric_type(const std::string& metric_type) {
     }
     if (metric_type == metric::MAX_SIM_L2 || metric_type == metric::DTW_L2) {
         return metric::L2;
+    }
+    if (metric_type == metric::MAX_SIM_HAMMING || metric_type == metric::DTW_HAMMING) {
+        return metric::HAMMING;
+    }
+    if (metric_type == metric::MAX_SIM_JACCARD || metric_type == metric::DTW_JACCARD) {
+        return metric::JACCARD;
     }
     return std::nullopt;
 }

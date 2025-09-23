@@ -307,6 +307,16 @@ void all_L2sqr(
         const float* y_norms,
         const IDSelector* sel);
 
+void all_L2sqr_distances(
+        const float* x,
+        const float* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* output,
+        const float* y_norms,
+        const IDSelector* sel);
+
 // Knowhere-specific function
 void knn_cosine(
         const float* x,

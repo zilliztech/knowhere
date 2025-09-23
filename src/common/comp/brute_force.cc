@@ -136,14 +136,14 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     auto xb = base_dataset->GetTensor();
     auto nb = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
-    bool is_emb_list = base_dataset->GetLims() != nullptr;
+    bool is_emb_list = base_dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET) != nullptr;
     auto xb_id_offset = base_dataset->GetTensorBeginId();
     BitsetView bitset = bitset_;
     bitset.set_id_offset(xb_id_offset);
 
     auto xq = query_dataset->GetTensor();
     auto nq = query_dataset->GetRows();
-    bool query_is_emb_list = query_dataset->GetLims() != nullptr;
+    bool query_is_emb_list = query_dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET) != nullptr;
     if (is_emb_list != query_is_emb_list) {
         LOG_KNOWHERE_ERROR_ << "base dataset and query must be both emb_list or not";
         return Status::invalid_args;
@@ -186,15 +186,19 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
             return Status::brute_force_inner_error;
         }
         auto el_agg_func = el_agg_func_or.value();
-        auto el_sub_metric_type_or = get_sub_metric_type(el_metric_type);
+        auto el_sub_metric_type_or = get_sub_metric_type(metric_str);
         if (!el_sub_metric_type_or.has_value()) {
             LOG_KNOWHERE_ERROR_ << "Invalid emb list sub metric type for metric type: " << el_metric_type;
             return Status::brute_force_inner_error;
         }
         auto el_sub_metric_type = el_sub_metric_type_or.value();
-        bool is_cosine = IsMetricType(el_sub_metric_type, metric::COSINE);
-        auto base_el_offset = EmbListOffset(base_dataset->GetLims(), nb);
-        auto query_el_offset = EmbListOffset(query_dataset->GetLims(), nq);
+        bool larger_is_closer = true;
+        if (el_sub_metric_type == metric::L2 || el_sub_metric_type == metric::HAMMING ||
+            el_sub_metric_type == metric::JACCARD) {
+            larger_is_closer = false;
+        }
+        auto base_el_offset = EmbListOffset(base_dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET), nb);
+        auto query_el_offset = EmbListOffset(query_dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET), nq);
         auto num_base_el = base_el_offset.num_el();
         auto num_query_el = query_el_offset.num_el();
 
@@ -206,6 +210,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
             futs.emplace_back(pool->push([&, query_el_idx = query_el_i] {
                 ThreadPool::ScopedSearchOmpSetter setter(1);
                 std::priority_queue<DistId, std::vector<DistId>, std::greater<>> minheap;
+                std::priority_queue<DistId, std::vector<DistId>, std::less<>> maxheap;
                 for (size_t base_el_idx = 0; base_el_idx < num_base_el; base_el_idx++) {
                     if (bitset.empty() || !bitset.test(base_el_idx)) {
                         auto num_base_vectors =
@@ -216,13 +221,19 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                         assert(num_query_vectors >= 0);
                         auto distances = std::make_unique<float[]>(num_query_vectors * num_base_vectors);
 
-                        auto cur_query = (const DataType*)xq + query_el_offset.offset[query_el_idx] * dim;
-                        auto cur_base = (const DataType*)xb + base_el_offset.offset[base_el_idx] * dim;
+                        auto code_size = dim;
+                        if constexpr (std::is_same_v<DataType, knowhere::bin1>) {
+                            code_size = (dim + 7) / 8;
+                        }
+                        auto cur_query = (const DataType*)xq + query_el_offset.offset[query_el_idx] * code_size;
+                        auto cur_base = (const DataType*)xb + base_el_offset.offset[base_el_idx] * code_size;
 
-                        if (is_cosine) {
+                        if (IsMetricType(el_sub_metric_type, metric::COSINE)) {
                             if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                                faiss::all_cosine_distances(cur_query, cur_base, nullptr, dim, num_query_vectors,
-                                                            num_base_vectors, distances.get(), nullptr);
+                                auto copied_query = CopyAndNormalizeVecs(cur_query, num_query_vectors, dim);
+                                faiss::all_cosine_distances(copied_query.get(), cur_base, nullptr, dim,
+                                                            num_query_vectors, num_base_vectors, distances.get(),
+                                                            nullptr);
                             } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                                 faiss::all_cosine_distances_typed(cur_query, cur_base, nullptr, dim, num_query_vectors,
                                                                   num_base_vectors, distances.get(), nullptr);
@@ -230,7 +241,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                                 LOG_KNOWHERE_ERROR_ << "Metric COSINE not supported for current vector type";
                                 return Status::faiss_inner_error;
                             }
-                        } else {
+                        } else if (IsMetricType(el_sub_metric_type, metric::IP)) {
                             if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                                 faiss::all_inner_product_distances(cur_query, cur_base, dim, num_query_vectors,
                                                                    num_base_vectors, distances.get(), nullptr);
@@ -241,35 +252,92 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                                 LOG_KNOWHERE_ERROR_ << "Metric IP not supported for current vector type";
                                 return Status::faiss_inner_error;
                             }
+                        } else if (IsMetricType(el_sub_metric_type, metric::L2)) {
+                            if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
+                                faiss::all_L2sqr_distances(cur_query, cur_base, dim, num_query_vectors,
+                                                           num_base_vectors, distances.get(), nullptr, nullptr);
+                            } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
+                                faiss::all_L2sqr_distances_typed(cur_query, cur_base, dim, num_query_vectors,
+                                                                 num_base_vectors, distances.get(), nullptr, nullptr);
+                            } else {
+                                LOG_KNOWHERE_ERROR_ << "Metric L2 not supported for current vector type";
+                                return Status::faiss_inner_error;
+                            }
+                        } else if (IsMetricType(el_sub_metric_type, metric::JACCARD)) {
+                            if constexpr (std::is_same_v<DataType, knowhere::bin1>) {
+                                faiss::all_jaccard_distances(cur_query, cur_base, code_size, num_query_vectors,
+                                                             num_base_vectors, distances.get(), nullptr);
+                            } else {
+                                LOG_KNOWHERE_ERROR_ << "Metric JACCARD not supported for current vector type";
+                                return Status::faiss_inner_error;
+                            }
+                        } else if (IsMetricType(el_sub_metric_type, metric::HAMMING)) {
+                            if constexpr (std::is_same_v<DataType, knowhere::bin1>) {
+                                faiss::all_hamming_distances(cur_query, cur_base, code_size, num_query_vectors,
+                                                             num_base_vectors, distances.get(), nullptr);
+                            } else {
+                                LOG_KNOWHERE_ERROR_ << "Metric HAMMING not supported for current vector type";
+                                return Status::faiss_inner_error;
+                            }
+                        } else {
+                            LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << el_sub_metric_type;
+                            return Status::invalid_metric_type;
                         }
 
-                        auto score_or = el_agg_func(distances.get(), num_query_vectors, num_base_vectors);
+                        auto score_or =
+                            el_agg_func(distances.get(), num_query_vectors, num_base_vectors, larger_is_closer);
                         if (!score_or.has_value()) {
                             LOG_KNOWHERE_WARNING_ << "get_sum_max_sim failed, num_query_vectors: " << num_query_vectors
                                                   << ", num_base_vectors: " << num_base_vectors;
                             return Status::brute_force_inner_error;
                         }
                         auto score = score_or.value();
-                        if (minheap.size() < (size_t)topk) {
-                            minheap.emplace((int64_t)base_el_idx + xb_id_offset, score);
-                        } else {
-                            if (score > minheap.top().val) {
-                                minheap.pop();
+                        if (larger_is_closer) {
+                            if (minheap.size() < (size_t)topk) {
                                 minheap.emplace((int64_t)base_el_idx + xb_id_offset, score);
+                            } else {
+                                if (score > minheap.top().val) {
+                                    minheap.pop();
+                                    minheap.emplace((int64_t)base_el_idx + xb_id_offset, score);
+                                }
+                            }
+                        } else {
+                            if (maxheap.size() < (size_t)topk) {
+                                maxheap.emplace((int64_t)base_el_idx + xb_id_offset, score);
+                            } else {
+                                if (score < maxheap.top().val) {
+                                    maxheap.pop();
+                                    maxheap.emplace((int64_t)base_el_idx + xb_id_offset, score);
+                                }
                             }
                         }
                     }
                 }
-                auto real_el_k = minheap.size();
-                for (size_t j = 0; j < real_el_k; j++) {
-                    auto& a = minheap.top();
-                    ids[query_el_idx * topk + real_el_k - j - 1] = a.id;
-                    dis[query_el_idx * topk + real_el_k - j - 1] = a.val;
-                    minheap.pop();
-                }
-                for (size_t j = real_el_k; j < (size_t)topk; j++) {
-                    ids[query_el_idx * topk + j] = -1;
-                    dis[query_el_idx * topk + j] = std::numeric_limits<float>::min();
+                size_t real_el_k = 0;
+                if (larger_is_closer) {
+                    real_el_k = minheap.size();
+                    for (size_t j = 0; j < real_el_k; j++) {
+                        auto& a = minheap.top();
+                        ids[query_el_idx * topk + real_el_k - j - 1] = a.id;
+                        dis[query_el_idx * topk + real_el_k - j - 1] = a.val;
+                        minheap.pop();
+                    }
+                    for (size_t j = real_el_k; j < (size_t)topk; j++) {
+                        ids[query_el_idx * topk + j] = -1;
+                        dis[query_el_idx * topk + j] = std::numeric_limits<float>::min();
+                    }
+                } else {
+                    real_el_k = maxheap.size();
+                    for (size_t j = 0; j < real_el_k; j++) {
+                        auto& a = maxheap.top();
+                        ids[query_el_idx * topk + real_el_k - j - 1] = a.id;
+                        dis[query_el_idx * topk + real_el_k - j - 1] = a.val;
+                        maxheap.pop();
+                    }
+                    for (size_t j = real_el_k; j < (size_t)topk; j++) {
+                        ids[query_el_idx * topk + j] = -1;
+                        dis[query_el_idx * topk + j] = std::numeric_limits<float>::max();
+                    }
                 }
 
                 return Status::success;
@@ -830,7 +898,11 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                 auto max_dis =
                     larger_is_closer ? std::numeric_limits<float>::lowest() : std::numeric_limits<float>::max();
                 std::vector<DistId> distances_ids(nb, {-1, max_dis});
-                [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * i;
+                auto code_size = dim;
+                if constexpr (std::is_same_v<DataType, knowhere::bin1>) {
+                    code_size = (dim + 7) / 8;
+                }
+                [[maybe_unused]] auto cur_query = (const DataType*)xq + code_size * i;
                 switch (faiss_metric_type) {
                     case faiss::METRIC_L2: {
                         if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
@@ -873,6 +945,36 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                                 LOG_KNOWHERE_ERROR_ << err_msg;
                                 KNOWHERE_THROW_MSG(err_msg);
                             }
+                        }
+                        break;
+                    }
+                    case faiss::METRIC_Hamming: {
+                        if constexpr (std::is_same_v<DataType, knowhere::bin1>) {
+                            std::vector<float> distances(nb, max_dis);
+                            faiss::all_hamming_distances(cur_query, (const DataType*)xb, code_size, 1, nb,
+                                                         distances.data(), id_selector);
+                            for (int j = 0; j < nb; ++j) {
+                                distances_ids[j] = {j, distances[j]};
+                            }
+                        } else {
+                            std::string err_msg = "Metric HAMMING not supported for current vector type";
+                            LOG_KNOWHERE_ERROR_ << err_msg;
+                            KNOWHERE_THROW_MSG(err_msg);
+                        }
+                        break;
+                    }
+                    case faiss::METRIC_Jaccard: {
+                        if constexpr (std::is_same_v<DataType, knowhere::bin1>) {
+                            std::vector<float> distances(nb, max_dis);
+                            faiss::all_jaccard_distances(cur_query, (const DataType*)xb, code_size, 1, nb,
+                                                         distances.data(), id_selector);
+                            for (int j = 0; j < nb; ++j) {
+                                distances_ids[j] = {j, distances[j]};
+                            }
+                        } else {
+                            std::string err_msg = "Metric JACCARD not supported for current vector type";
+                            LOG_KNOWHERE_ERROR_ << err_msg;
+                            KNOWHERE_THROW_MSG(err_msg);
                         }
                         break;
                     }
@@ -1097,6 +1199,11 @@ knowhere::BruteForce::AnnIterator<knowhere::bf16>(const knowhere::DataSetPtr bas
                                                   bool use_knowhere_search_pool, milvus::OpContext* op_context);
 template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
 knowhere::BruteForce::AnnIterator<knowhere::int8>(const knowhere::DataSetPtr base_dataset,
+                                                  const knowhere::DataSetPtr query_dataset,
+                                                  const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                  bool use_knowhere_search_pool, milvus::OpContext* op_context);
+template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
+knowhere::BruteForce::AnnIterator<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset,
                                                   bool use_knowhere_search_pool, milvus::OpContext* op_context);

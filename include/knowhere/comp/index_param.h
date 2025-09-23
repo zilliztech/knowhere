@@ -61,11 +61,6 @@ constexpr const char* INDEX_DISKANN = "DISKANN";
 constexpr const char* INDEX_AISAQ = "AISAQ";
 constexpr const char* INDEX_MINHASH_LSH = "MINHASH_LSH";
 
-constexpr const char* INDEX_EMB_LIST_HNSW = "EMB_LIST_HNSW";
-constexpr const char* INDEX_EMB_LIST_HNSW_SQ = "EMB_LIST_HNSW_SQ";
-constexpr const char* INDEX_EMB_LIST_HNSW_PQ = "EMB_LIST_HNSW_PQ";
-constexpr const char* INDEX_EMB_LIST_HNSW_PRQ = "EMB_LIST_HNSW_PRQ";
-
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX = "SPARSE_INVERTED_INDEX";
 constexpr const char* INDEX_SPARSE_WAND = "SPARSE_WAND";
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX_CC = "SPARSE_INVERTED_INDEX_CC";
@@ -117,6 +112,10 @@ constexpr const char* BM25_B = "bm25_b";
 // average document length
 constexpr const char* BM25_AVGDL = "bm25_avgdl";
 constexpr const char* DIM_MAX_SCORE_RATIO = "dim_max_score_ratio";
+
+// emb list meta
+constexpr const char* EMB_LIST_META = "EMB_LIST_META";
+constexpr const char* EMB_LIST_OFFSET = "EMB_LIST_OFFSET";
 };  // namespace meta
 
 namespace indexparam {
@@ -240,10 +239,14 @@ constexpr const char* MAX_SIM = "MAX_SIM";  // same as MAX_SIM_COSINE
 constexpr const char* MAX_SIM_COSINE = "MAX_SIM_COSINE";
 constexpr const char* MAX_SIM_IP = "MAX_SIM_IP";
 constexpr const char* MAX_SIM_L2 = "MAX_SIM_L2";
+constexpr const char* MAX_SIM_HAMMING = "MAX_SIM_HAMMING";
+constexpr const char* MAX_SIM_JACCARD = "MAX_SIM_JACCARD";
 constexpr const char* DTW = "DTW";  // same as DTW_COSINE
 constexpr const char* DTW_COSINE = "DTW_COSINE";
 constexpr const char* DTW_IP = "DTW_IP";
 constexpr const char* DTW_L2 = "DTW_L2";
+constexpr const char* DTW_HAMMING = "DTW_HAMMING";
+constexpr const char* DTW_JACCARD = "DTW_JACCARD";
 }  // namespace metric
 
 enum VecType {
@@ -261,17 +264,4 @@ enum RefineType {
     FLOAT16_QUANT,
     BFLOAT16_QUANT,
 };
-
-// This enum serves as the template parameter for `EmbListIndexNode` to specify the type of base index used.
-//
-// NOTE: The emb_list index is designed to support a wide range of vector indexes as its base_index through templates.
-// However, since C++ template parameters cannot accept the current `IndexEnum` (which is actually a set of string
-// constants, not a true enum), we define a dedicated enum here.
-enum class EmbListBaseIndexType { HNSW, HNSW_SQ, HNSW_PQ, HNSW_PRQ };
-const std::unordered_map<EmbListBaseIndexType, knowhere::IndexType> EMB_LIST_BASE_INDEX_TYPE_MAP = {
-    {EmbListBaseIndexType::HNSW, IndexEnum::INDEX_HNSW},
-    {EmbListBaseIndexType::HNSW_SQ, IndexEnum::INDEX_HNSW_SQ},
-    {EmbListBaseIndexType::HNSW_PQ, IndexEnum::INDEX_HNSW_PQ},
-    {EmbListBaseIndexType::HNSW_PRQ, IndexEnum::INDEX_HNSW_PRQ}};
-
 }  // namespace knowhere

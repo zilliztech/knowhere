@@ -644,6 +644,7 @@ class BaseConfig : public Config {
      * - A factor for top-k in the first ANNS round.
      */
     CFG_FLOAT retrieval_ann_ratio;
+    CFG_STRING emb_list_meta_file_path;
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(dim).allow_empty_without_default().description("vector dim").for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
@@ -812,6 +813,11 @@ class BaseConfig : public Config {
             .set_default(1.0f)
             .set_range(0.01f, 100.0f)
             .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(emb_list_meta_file_path)
+            .description("file name of emb_list meta")
+            .allow_empty_without_default()
+            .for_deserialize()
+            .for_deserialize_from_file();
     }
 };
 }  // namespace knowhere

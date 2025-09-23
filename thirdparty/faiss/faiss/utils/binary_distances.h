@@ -136,6 +136,42 @@ void binary_range_search(
         RangeSearchResult* res,
         const IDSelector* sel = nullptr);
 
+/** Compute all pairwise Jaccard distances between query vectors and database vectors
+ * @param x       query vectors, size nx * d
+ * @param y       database vectors, size ny * d  
+ * @param d       dimension of the vectors (in bytes)
+ * @param nx      number of query vectors
+ * @param ny      number of database vectors
+ * @param output  output distances, size nx * ny
+ * @param sel     selector for database vectors (nullptr means all)
+ */
+void all_jaccard_distances(
+        const uint8_t* x,
+        const uint8_t* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* output,
+        const IDSelector* sel = nullptr);
+
+/** Compute all pairwise Hamming distances between query vectors and database vectors
+ * @param x       query vectors, size nx * d
+ * @param y       database vectors, size ny * d  
+ * @param d       dimension of the vectors (in bytes)
+ * @param nx      number of query vectors
+ * @param ny      number of database vectors
+ * @param output  output distances, size nx * ny
+ * @param sel     selector for database vectors (nullptr means all)
+ */
+void all_hamming_distances(
+        const uint8_t* x,
+        const uint8_t* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* output,
+        const IDSelector* sel = nullptr);
+
 } // namespace faiss
 
 #endif // FAISS_BINARY_DISTANCE_H
