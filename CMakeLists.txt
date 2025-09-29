@@ -205,6 +205,18 @@ list(APPEND KNOWHERE_LINKER_LIBS Folly::folly)
 list(APPEND KNOWHERE_LINKER_LIBS milvus-common)
 list(APPEND KNOWHERE_LINKER_LIBS simde::simde)
 
+if(NOT WITH_LIGHT)
+  list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_trace)
+  list(APPEND KNOWHERE_LINKER_LIBS
+       opentelemetry-cpp::opentelemetry_exporter_ostream_span)
+  list(APPEND KNOWHERE_LINKER_LIBS
+       opentelemetry-cpp::opentelemetry_exporter_jaeger_trace)
+  list(APPEND KNOWHERE_LINKER_LIBS
+       opentelemetry-cpp::opentelemetry_exporter_otlp_grpc)
+  list(APPEND KNOWHERE_LINKER_LIBS
+       opentelemetry-cpp::opentelemetry_exporter_otlp_http)
+endif()
+
 add_library(knowhere SHARED ${KNOWHERE_SRCS})
 add_dependencies(knowhere ${KNOWHERE_LINKER_LIBS})
 if(WITH_CUVS)
