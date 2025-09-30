@@ -16,6 +16,11 @@
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "common/EasyAssert.h"
+#include "common/Tracer.h"
+#include "knowhere/comp/index_param.h"
+#include "knowhere/comp/knowhere_config.h"
+#include "knowhere/config.h"
 #include "knowhere/tracer.h"
 
 using namespace knowhere::tracer;
@@ -53,6 +58,31 @@ TEST_CASE("Test Tracer init", "Init test") {
         usleep(20000);
         CloseRootSpan();
     }
+}
+
+TEST_CASE("Test Tracer hex", "Hex test") {
+    auto ctx = std::make_shared<milvus::tracer::TraceContext>();
+    ctx->traceID =
+        new uint8_t[16]{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10};
+    ctx->spanID = new uint8_t[8]{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef};
+    ctx->traceFlags = 1;
+
+    knowhere::Json search_cfg = {};
+
+    // save trace context into search conf
+    search_cfg[knowhere::meta::TRACE_ID] = milvus::tracer::GetTraceIDAsHexStr(ctx.get());
+    search_cfg[knowhere::meta::SPAN_ID] = milvus::tracer::GetSpanIDAsHexStr(ctx.get());
+    search_cfg[knowhere::meta::TRACE_FLAGS] = ctx->traceFlags;
+    std::cout << "search config: " << search_cfg.dump() << std::endl;
+
+    auto trace_id_str = GetIDFromHexStr(search_cfg[knowhere::meta::TRACE_ID]);
+    auto span_id_str = GetIDFromHexStr(search_cfg[knowhere::meta::SPAN_ID]);
+
+    REQUIRE(strncmp((char*)ctx->traceID, trace_id_str.c_str(), 16) == 0);
+    REQUIRE(strncmp((char*)ctx->spanID, span_id_str.c_str(), 8) == 0);
+
+    delete[] ctx->traceID;
+    delete[] ctx->spanID;
 }
 
 TEST_CASE("Test Tracer span", "Span test") {
