@@ -1444,9 +1444,28 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         return res;
     }
 
+    std::optional<size_t>
+    GetQueryCodeSize(const DataSetPtr dataset) const override {
+        auto dim = dataset->GetDim();
+        switch (data_format) {
+            case DataFormatEnum::fp32:
+                return dim * 4;
+            case DataFormatEnum::fp16:
+            case DataFormatEnum::bf16:
+                return dim * 2;
+            case DataFormatEnum::int8:
+                return dim;
+            case DataFormatEnum::bin1:
+                return (dim + 7) / 8;
+            default:
+                LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+                return std::nullopt;
+        }
+    }
+
     expected<DataSetPtr>
-    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset_, const int64_t* labels,
-                  const size_t labels_len) const override {
+    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset_, const int64_t* labels, const size_t labels_len,
+                  milvus::OpContext* op_context) const override {
         if (this->indexes.empty()) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
@@ -2267,13 +2286,22 @@ class HNSWIndexNodeWithFallback : public IndexNode {
         }
     }
 
-    expected<DataSetPtr>
-    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
-                  const size_t labels_len) const override {
+    std::optional<size_t>
+    GetQueryCodeSize(const DataSetPtr dataset) const override {
         if (use_base_index) {
-            return base_index->CalcDistByIDs(dataset, bitset, labels, labels_len);
+            return base_index->GetQueryCodeSize(dataset);
         } else {
-            return fallback_search_index->CalcDistByIDs(dataset, bitset, labels, labels_len);
+            return fallback_search_index->GetQueryCodeSize(dataset);
+        }
+    }
+
+    expected<DataSetPtr>
+    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
+                  milvus::OpContext* op_context) const override {
+        if (use_base_index) {
+            return base_index->CalcDistByIDs(dataset, bitset, labels, labels_len, op_context);
+        } else {
+            return fallback_search_index->CalcDistByIDs(dataset, bitset, labels, labels_len, op_context);
         }
     };
 
@@ -3017,24 +3045,28 @@ KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(HNSW_DEPRECATED, BaseFaissRegularIndex
                                           knowhere::feature::MMAP | knowhere::feature::MV)
 #else
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW, BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback,
-                                                knowhere::feature::MMAP | knowhere::feature::MV)
+                                                knowhere::feature::MMAP | knowhere::feature::MV |
+                                                    knowhere::feature::EMB_LIST)
 KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(HNSW, BaseFaissRegularIndexHNSWFlatNodeTemplate,
-                                          knowhere::feature::MMAP | knowhere::feature::MV)
+                                          knowhere::feature::MMAP | knowhere::feature::MV | knowhere::feature::EMB_LIST)
 KNOWHERE_SIMPLE_REGISTER_DENSE_BIN_GLOBAL(HNSW, BaseFaissRegularIndexHNSWFlatNodeTemplate,
-                                          knowhere::feature::MMAP | knowhere::feature::MV)
+                                          knowhere::feature::MMAP | knowhere::feature::MV | knowhere::feature::EMB_LIST)
 #endif
 
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_SQ, BaseFaissRegularIndexHNSWSQNodeTemplate,
-                                                knowhere::feature::MMAP | knowhere::feature::MV)
+                                                knowhere::feature::MMAP | knowhere::feature::MV |
+                                                    knowhere::feature::EMB_LIST)
 KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(HNSW_SQ, BaseFaissRegularIndexHNSWSQNodeTemplate,
-                                          knowhere::feature::MMAP | knowhere::feature::MV)
+                                          knowhere::feature::MMAP | knowhere::feature::MV | knowhere::feature::EMB_LIST)
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTemplate,
-                                                knowhere::feature::MMAP | knowhere::feature::MV)
+                                                knowhere::feature::MMAP | knowhere::feature::MV |
+                                                    knowhere::feature::EMB_LIST)
 KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTemplate,
-                                          knowhere::feature::MMAP | knowhere::feature::MV)
+                                          knowhere::feature::MMAP | knowhere::feature::MV | knowhere::feature::EMB_LIST)
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNodeTemplate,
-                                                knowhere::feature::MMAP | knowhere::feature::MV)
+                                                knowhere::feature::MMAP | knowhere::feature::MV |
+                                                    knowhere::feature::EMB_LIST)
 KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNodeTemplate,
-                                          knowhere::feature::MMAP | knowhere::feature::MV)
+                                          knowhere::feature::MMAP | knowhere::feature::MV | knowhere::feature::EMB_LIST)
 
 }  // namespace knowhere

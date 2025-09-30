@@ -63,6 +63,20 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
                     }
                 }
             }
+            {
+                auto any_ptr = std::get_if<6>(&x.second);
+                if (any_ptr != nullptr) {
+                    try {
+                        // handle knowhere::meta::EMB_LIST_OFFSET
+                        auto ptr = std::any_cast<size_t*>(*any_ptr);
+                        if (ptr != nullptr) {
+                            delete[] ptr;
+                        }
+                    } catch (const std::bad_any_cast&) {
+                        // Not a size_t*, ignore
+                    }
+                }
+            }
         }
     }
 
@@ -287,7 +301,7 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
 
     template <typename T>
     T
-    Get(const std::string& k) {
+    Get(const std::string& k) const {
         std::shared_lock lock(mutex_);
         auto it = this->data_.find(k);
         if (it != this->data_.end()) {
