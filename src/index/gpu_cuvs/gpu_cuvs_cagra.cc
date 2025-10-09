@@ -44,9 +44,10 @@ class GpuCuvsCagraHybridIndexNode : public GpuCuvsCagraIndexNode<DataType> {
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+           milvus::OpContext* op_context) const override {
         if (!adapt_for_cpu || hnsw_index_ == nullptr)
-            return GpuCuvsCagraIndexNode<DataType>::Search(dataset, std::move(cfg), bitset);
+            return GpuCuvsCagraIndexNode<DataType>::Search(dataset, std::move(cfg), bitset, op_context);
         auto nq = dataset->GetRows();
         auto xq = dataset->GetTensor();
 
