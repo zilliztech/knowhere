@@ -54,7 +54,8 @@ class GpuFlatIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset,
+           milvus::OpContext* op_context) const override {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "index not empty, deleted old index.";
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -83,12 +84,13 @@ class GpuFlatIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset,
+                milvus::OpContext* op_context) const override {
         return Status::not_implemented;
     }
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
         DataSetPtr results = std::make_shared<DataSet>();
         auto nq = dataset->GetRows();
         auto dim = dataset->GetDim();

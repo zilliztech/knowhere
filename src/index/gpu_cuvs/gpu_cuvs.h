@@ -142,12 +142,13 @@ struct GpuCuvsIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset) const override {
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                milvus::OpContext* op_context) const override {
         return expected<DataSetPtr>::Err(Status::not_implemented, "RangeSearch not implemented");
     }
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
         return expected<DataSetPtr>::Err(Status::not_implemented, "GetVectorByIds not implemented");
     }
 

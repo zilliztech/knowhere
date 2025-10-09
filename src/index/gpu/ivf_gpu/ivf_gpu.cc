@@ -130,7 +130,8 @@ class GpuIvfIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+    Search(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset,
+           milvus::OpContext* op_context) const override {
         auto ivf_gpu_cfg = static_cast<const typename KnowhereConfigType<T>::Type&>(cfg);
 
         constexpr int64_t block_size = 2048;
@@ -159,12 +160,13 @@ class GpuIvfIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset) const override {
+    RangeSearch(const DataSetPtr dataset, const Config& cfg, const BitsetView& bitset,
+                milvus::OpContext* op_context) const override {
         return Status::not_implemented;
     }
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset) const override {
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
         return Status::not_implemented;
     }
 
