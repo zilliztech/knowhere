@@ -521,3 +521,116 @@ struct StopWatch {
         return elapsed.count();
     }
 };
+
+inline knowhere::DataSetPtr
+GenEmbListDataSet(int rows, int dim, const uint64_t seed = 42, int each_el_len = 10) {
+    std::mt19937 rng(seed);
+    // use int type to cover test cases for fb16, bf16, int8
+    std::uniform_int_distribution<> distrib(-100.0, 100.0);
+    float* ts = new float[rows * dim];
+    for (int i = 0; i < rows * dim; ++i) {
+        ts[i] = (float)distrib(rng);
+    }
+    auto ds = knowhere::GenDataSet(rows, dim, ts);
+    auto ptr = std::make_unique<size_t[]>(size_t(rows / each_el_len) + 2);
+    size_t i = 0;
+    for (; i * each_el_len < (size_t)rows; i += 1) {
+        ptr[i] = i * each_el_len;
+    }
+    ptr[i] = (size_t)rows;
+    const size_t* ptr_const = ptr.release();
+    ds->Set(knowhere::meta::EMB_LIST_OFFSET, ptr_const);
+    ds->SetIsOwner(true);
+    return ds;
+}
+
+inline knowhere::DataSetPtr
+GenEmbListBinDataSet(int rows, int dim, int seed = 42, int each_el_len = 10) {
+    std::mt19937 rng(seed);
+    std::uniform_int_distribution<> distrib(0.0, 100.0);
+    int uint8_dim = dim / 8;
+    uint64_t total_size = rows * uint8_dim;
+    uint8_t* ts = new uint8_t[total_size];
+    for (uint64_t i = 0; i < total_size; ++i) ts[i] = (uint8_t)distrib(rng);
+    auto ds = knowhere::GenDataSet(rows, dim, ts);
+    auto ptr = std::make_unique<size_t[]>(size_t(rows / each_el_len) + 2);
+    size_t i = 0;
+    for (; i * each_el_len < (size_t)rows; i += 1) {
+        ptr[i] = i * each_el_len;
+    }
+    ptr[i] = (size_t)rows;
+    const size_t* ptr_const = ptr.release();
+    ds->Set(knowhere::meta::EMB_LIST_OFFSET, ptr_const);
+    ds->SetIsOwner(true);
+    return ds;
+}
+
+inline knowhere::DataSetPtr
+GenQueryEmbListDataSet(int rows, int dim, const uint64_t seed = 42) {
+    std::mt19937 rng(seed);
+    // use int type to cover test cases for fb16, bf16, int8
+    std::uniform_int_distribution<> distrib(-100.0, 100.0);
+    float* ts = new float[rows * dim];
+    for (int i = 0; i < rows * dim; ++i) {
+        ts[i] = (float)distrib(rng);
+    }
+    auto ds = knowhere::GenDataSet(rows, dim, ts);
+    auto ptr = std::make_unique<size_t[]>(int(sqrt(rows)) + 2);
+    size_t i = 0;
+    while (true) {
+        if (i * i >= (size_t)rows) {
+            break;
+        }
+        ptr[i] = i * i;
+        i += 1;
+    }
+    ptr[i] = (size_t)rows;
+    const size_t* ptr_const = ptr.release();
+    ds->Set(knowhere::meta::EMB_LIST_OFFSET, ptr_const);
+    ds->SetIsOwner(true);
+    return ds;
+}
+
+inline knowhere::DataSetPtr
+GenQueryEmbListBinDataSet(int rows, int dim, const uint64_t seed = 42) {
+    std::mt19937 rng(seed);
+    // use int type to cover test cases for fb16, bf16, int8
+    std::uniform_int_distribution<> distrib(0.0, 100.0);
+    int uint8_dim = dim / 8;
+    uint64_t total_size = rows * uint8_dim;
+    uint8_t* ts = new uint8_t[total_size];
+    for (int i = 0; i < rows * uint8_dim; ++i) {
+        ts[i] = (uint8_t)distrib(rng);
+    }
+    auto ds = knowhere::GenDataSet(rows, dim, ts);
+    auto ptr = std::make_unique<size_t[]>(int(sqrt(rows)) + 2);
+    size_t i = 0;
+    while (true) {
+        if (i * i >= (size_t)rows) {
+            break;
+        }
+        ptr[i] = i * i;
+        i += 1;
+    }
+    ptr[i] = (size_t)rows;
+    const size_t* ptr_const = ptr.release();
+    ds->Set(knowhere::meta::EMB_LIST_OFFSET, ptr_const);
+    ds->SetIsOwner(true);
+    return ds;
+}
+
+inline knowhere::DataSetPtr
+GenEmptyDataSetWithEmbListOffset(int rows, int each_el_len = 10) {
+    auto ds = std::make_shared<knowhere::DataSet>();
+    auto ptr = std::make_unique<size_t[]>(size_t(rows / each_el_len) + 2);
+    size_t i = 0;
+    for (; i * each_el_len < (size_t)rows; i += 1) {
+        ptr[i] = i * each_el_len;
+    }
+    ptr[i] = (size_t)rows;
+    const size_t* ptr_const = ptr.release();
+    ds->SetRows(rows);
+    ds->Set(knowhere::meta::EMB_LIST_OFFSET, ptr_const);
+    ds->SetIsOwner(true);
+    return ds;
+}
