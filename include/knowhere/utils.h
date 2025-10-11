@@ -168,7 +168,7 @@ data_type_conversion(const DataSet& src, const std::optional<int64_t> start = st
     des->SetTensorBeginId(src.GetTensorBeginId() + start_row);
 
     // for emb_list
-    auto lims = src.GetLims();
+    auto lims = src.Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
     if (lims != nullptr) {
         size_t lims_size = 0;
         while (lims[lims_size] < (size_t)rows && lims_size < (size_t)rows) {
@@ -179,7 +179,8 @@ data_type_conversion(const DataSet& src, const std::optional<int64_t> start = st
         for (size_t i = 0; i < lims_size + 1; i++) {
             lims_data[i] = lims[i];
         }
-        des->SetLims(std::move(lims_data));
+        const size_t* lims_data_const = lims_data.release();
+        des->Set(knowhere::meta::EMB_LIST_OFFSET, lims_data_const);
     }
     return des;
 }

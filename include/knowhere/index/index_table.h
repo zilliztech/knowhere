@@ -81,6 +81,7 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     {IndexEnum::INDEX_HNSW, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_HNSW, VecType::VECTOR_BFLOAT16},
     {IndexEnum::INDEX_HNSW, VecType::VECTOR_INT8},
+    {IndexEnum::INDEX_HNSW, VecType::VECTOR_BINARY},
 
     {IndexEnum::INDEX_HNSW_SQ, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_HNSW_SQ, VecType::VECTOR_FLOAT16},
@@ -112,27 +113,6 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     {IndexEnum::INDEX_SPARSE_WAND, VecType::VECTOR_SPARSE_FLOAT},
     //  minhash index
     {IndexEnum::INDEX_MINHASH_LSH, VecType::VECTOR_BINARY},
-
-    // emb list hnsw
-    {IndexEnum::INDEX_EMB_LIST_HNSW, VecType::VECTOR_FLOAT},
-    {IndexEnum::INDEX_EMB_LIST_HNSW, VecType::VECTOR_FLOAT16},
-    {IndexEnum::INDEX_EMB_LIST_HNSW, VecType::VECTOR_BFLOAT16},
-    {IndexEnum::INDEX_EMB_LIST_HNSW, VecType::VECTOR_INT8},
-
-    {IndexEnum::INDEX_EMB_LIST_HNSW_SQ, VecType::VECTOR_FLOAT},
-    {IndexEnum::INDEX_EMB_LIST_HNSW_SQ, VecType::VECTOR_FLOAT16},
-    {IndexEnum::INDEX_EMB_LIST_HNSW_SQ, VecType::VECTOR_BFLOAT16},
-    {IndexEnum::INDEX_EMB_LIST_HNSW_SQ, VecType::VECTOR_INT8},
-
-    {IndexEnum::INDEX_EMB_LIST_HNSW_PQ, VecType::VECTOR_FLOAT},
-    {IndexEnum::INDEX_EMB_LIST_HNSW_PQ, VecType::VECTOR_FLOAT16},
-    {IndexEnum::INDEX_EMB_LIST_HNSW_PQ, VecType::VECTOR_BFLOAT16},
-    {IndexEnum::INDEX_EMB_LIST_HNSW_PQ, VecType::VECTOR_INT8},
-
-    {IndexEnum::INDEX_EMB_LIST_HNSW_PRQ, VecType::VECTOR_FLOAT},
-    {IndexEnum::INDEX_EMB_LIST_HNSW_PRQ, VecType::VECTOR_FLOAT16},
-    {IndexEnum::INDEX_EMB_LIST_HNSW_PRQ, VecType::VECTOR_BFLOAT16},
-    {IndexEnum::INDEX_EMB_LIST_HNSW_PRQ, VecType::VECTOR_INT8},
 };
 
 static std::set<std::string> legal_support_mmap_knowhere_index = {
@@ -158,19 +138,13 @@ static std::set<std::string> legal_support_mmap_knowhere_index = {
     // sparse index
     IndexEnum::INDEX_SPARSE_INVERTED_INDEX,
     IndexEnum::INDEX_SPARSE_WAND,
-
-    // emb list hnsw
-    IndexEnum::INDEX_EMB_LIST_HNSW,
-    IndexEnum::INDEX_EMB_LIST_HNSW_SQ,
-    IndexEnum::INDEX_EMB_LIST_HNSW_PQ,
-    IndexEnum::INDEX_EMB_LIST_HNSW_PRQ,
 };
 
 static std::set<std::string> legal_support_emb_list_knowhere_index = {
-    IndexEnum::INDEX_EMB_LIST_HNSW,
-    IndexEnum::INDEX_EMB_LIST_HNSW_SQ,
-    IndexEnum::INDEX_EMB_LIST_HNSW_PQ,
-    IndexEnum::INDEX_EMB_LIST_HNSW_PRQ,
+    IndexEnum::INDEX_HNSW,
+    IndexEnum::INDEX_HNSW_SQ,
+    IndexEnum::INDEX_HNSW_PQ,
+    IndexEnum::INDEX_HNSW_PRQ,
 };
 
 KNOWHERE_SET_STATIC_GLOBAL_INDEX_TABLE(0, KNOWHERE_STATIC_INDEX, legal_knowhere_index)

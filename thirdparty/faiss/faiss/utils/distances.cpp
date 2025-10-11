@@ -1133,6 +1133,32 @@ void all_L2sqr(
     }
 }
 
+void all_L2sqr_distances(
+        const float* x,
+        const float* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* output,
+        const float* y_norms,
+        const IDSelector* sel) {
+    if (sel == nullptr) {
+        CollectAllDistancesHandler<CMax<float, int64_t>, false> res(nx, ny, output);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_L2sqr_seq(x, y, d, nx, ny, res);
+        } else {
+            exhaustive_L2sqr_blas(x, y, d, nx, ny, res, y_norms);
+        }
+    } else {
+        CollectAllDistancesHandler<CMax<float, int64_t>, true> res(nx, ny, output, sel);
+        if (nx < distance_compute_blas_threshold) {
+            exhaustive_L2sqr_seq(x, y, d, nx, ny, res);
+        } else {
+            exhaustive_L2sqr_blas(x, y, d, nx, ny, res, y_norms);
+        }
+    }
+}
+
 void knn_cosine(
         const float* x,
         const float* y,

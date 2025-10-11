@@ -361,13 +361,17 @@ GenerateBitsetByScalarInfoAndFirstTBits(const std::vector<uint32_t>& scalar, siz
 inline std::vector<uint8_t>
 GenerateBitsetByPartition(size_t n, float pass_rate, size_t partition_num) {
     float acc = 0.0f;
-    std::vector<uint8_t> data((n + 8 - 1) / 8, 0xff);
+    std::vector<uint8_t> data((n + 7) / 8, 0xff);
     for (size_t i = 0; i < n; i += partition_num) {
         acc += pass_rate;
         if (acc >= 1.0f) {
             acc -= 1.0f;
             data[i >> 3] &= ~(0x1 << (i & 0x7));
         }
+    }
+    if (n % 8 != 0) {
+        uint8_t mask = (1u << (n % 8)) - 1;
+        data[data.size() - 1] &= mask;
     }
     return data;
 }

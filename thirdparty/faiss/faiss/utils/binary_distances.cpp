@@ -688,4 +688,139 @@ template void binary_range_search<CMin<float, int64_t>, float>(
         RangeSearchResult* res,
         const IDSelector* sel);
 
+template <class JaccardComputer>
+void all_jaccard_distances_template(
+        const uint8_t* x,
+        const uint8_t* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* output,
+        const IDSelector* sel) {
+    if (sel == nullptr) {
+        // No IDSelector - compute all distances
+        for (size_t i = 0; i < nx; i++) {
+            const uint8_t* x_i = x + i * d;
+            float* output_i = output + i * ny;
+            JaccardComputer jc(x_i, d);
+            for (size_t j = 0; j < ny; j++) {
+                const uint8_t* y_j = y + j * d;
+                output_i[j] = jc.compute(y_j);
+            }
+        }
+    } else {
+        // With IDSelector - only compute distances for selected vectors
+        for (size_t i = 0; i < nx; i++) {
+            const uint8_t* x_i = x + i * d;
+            float* output_i = output + i * ny;
+            JaccardComputer jc(x_i, d);
+            for (size_t j = 0; j < ny; j++) {
+                if (sel->is_member(j)) {
+                    const uint8_t* y_j = y + j * d;
+                    output_i[j] = jc.compute(y_j);
+                } else {
+                    // Set to a large value for non-selected vectors
+                    output_i[j] = std::numeric_limits<float>::infinity();
+                }
+            }
+        }
+    }
+}
+
+void all_jaccard_distances(
+        const uint8_t* x,
+        const uint8_t* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* output,
+        const IDSelector* sel) {
+    switch (d) {
+#define all_jaccard_distances_jaccard(ncodes)                        \
+    case ncodes:                                                     \
+        all_jaccard_distances_template<faiss::JaccardComputer##ncodes>( \
+                x, y, d, nx, ny, output, sel);                   \
+        break;
+        all_jaccard_distances_jaccard(8);
+        all_jaccard_distances_jaccard(16);
+        all_jaccard_distances_jaccard(32);
+        all_jaccard_distances_jaccard(64);
+        all_jaccard_distances_jaccard(128);
+        all_jaccard_distances_jaccard(256);
+        all_jaccard_distances_jaccard(512);
+#undef all_jaccard_distances_jaccard
+        default:
+            all_jaccard_distances_template<faiss::JaccardComputerDefault>(
+                    x, y, d, nx, ny, output, sel);
+            break;
+    }
+}
+
+template <class HammingComputer>
+void all_hamming_distances_template(
+        const uint8_t* x,
+        const uint8_t* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* output,
+        const IDSelector* sel) {
+    if (sel == nullptr) {
+        // No IDSelector - compute all distances
+        for (size_t i = 0; i < nx; i++) {
+            const uint8_t* x_i = x + i * d;
+            float* output_i = output + i * ny;
+            HammingComputer hc(x_i, d);
+            for (size_t j = 0; j < ny; j++) {
+                const uint8_t* y_j = y + j * d;
+                output_i[j] = hc.compute(y_j);
+            }
+        }
+    } else {
+        // With IDSelector - only compute distances for selected vectors
+        for (size_t i = 0; i < nx; i++) {
+            const uint8_t* x_i = x + i * d;
+            float* output_i = output + i * ny;
+            HammingComputer hc(x_i, d);
+            for (size_t j = 0; j < ny; j++) {
+                if (sel->is_member(j)) {
+                    const uint8_t* y_j = y + j * d;
+                    output_i[j] = hc.compute(y_j);
+                } else {
+                    // Set to a large value for non-selected vectors
+                    output_i[j] = std::numeric_limits<int>::max();
+                }
+            }
+        }
+    }
+}
+
+void all_hamming_distances(
+        const uint8_t* x,
+        const uint8_t* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        float* output,
+        const IDSelector* sel) {
+    switch (d) {
+#define all_hamming_distances_hamming(ncodes)                        \
+    case ncodes:                                                     \
+        all_hamming_distances_template<faiss::HammingComputer##ncodes>( \
+                x, y, d, nx, ny, output, sel);                   \
+        break;
+        all_hamming_distances_hamming(4);
+        all_hamming_distances_hamming(8);
+        all_hamming_distances_hamming(16);
+        all_hamming_distances_hamming(20);
+        all_hamming_distances_hamming(32);
+        all_hamming_distances_hamming(64);
+#undef all_hamming_distances_hamming
+        default:
+            all_hamming_distances_template<faiss::HammingComputerDefault>(
+                    x, y, d, nx, ny, output, sel);
+            break;
+    }
+}
+
 } // namespace faiss

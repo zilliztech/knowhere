@@ -52,7 +52,29 @@ GenEmbListDataSet(int rows, int dim, const uint64_t seed = 42, int each_el_len =
         ptr[i] = i * each_el_len;
     }
     ptr[i] = (size_t)rows;
-    ds->SetLims(std::move(ptr));
+    const size_t* ptr_const = ptr.release();
+    ds->Set(knowhere::meta::EMB_LIST_OFFSET, ptr_const);
+    ds->SetIsOwner(true);
+    return ds;
+}
+
+inline knowhere::DataSetPtr
+GenEmbListBinDataSet(int rows, int dim, int seed = 42, int each_el_len = 10) {
+    std::mt19937 rng(seed);
+    std::uniform_int_distribution<> distrib(0.0, 100.0);
+    int uint8_dim = dim / 8;
+    uint64_t total_size = rows * uint8_dim;
+    uint8_t* ts = new uint8_t[total_size];
+    for (uint64_t i = 0; i < total_size; ++i) ts[i] = (uint8_t)distrib(rng);
+    auto ds = knowhere::GenDataSet(rows, dim, ts);
+    auto ptr = std::make_unique<size_t[]>(size_t(rows / each_el_len) + 2);
+    size_t i = 0;
+    for (; i * each_el_len < (size_t)rows; i += 1) {
+        ptr[i] = i * each_el_len;
+    }
+    ptr[i] = (size_t)rows;
+    const size_t* ptr_const = ptr.release();
+    ds->Set(knowhere::meta::EMB_LIST_OFFSET, ptr_const);
     ds->SetIsOwner(true);
     return ds;
 }
@@ -77,7 +99,36 @@ GenQueryEmbListDataSet(int rows, int dim, const uint64_t seed = 42) {
         i += 1;
     }
     ptr[i] = (size_t)rows;
-    ds->SetLims(std::move(ptr));
+    const size_t* ptr_const = ptr.release();
+    ds->Set(knowhere::meta::EMB_LIST_OFFSET, ptr_const);
+    ds->SetIsOwner(true);
+    return ds;
+}
+
+knowhere::DataSetPtr
+GenQueryEmbListBinDataSet(int rows, int dim, const uint64_t seed = 42) {
+    std::mt19937 rng(seed);
+    // use int type to cover test cases for fb16, bf16, int8
+    std::uniform_int_distribution<> distrib(0.0, 100.0);
+    int uint8_dim = dim / 8;
+    uint64_t total_size = rows * uint8_dim;
+    uint8_t* ts = new uint8_t[total_size];
+    for (int i = 0; i < rows * uint8_dim; ++i) {
+        ts[i] = (uint8_t)distrib(rng);
+    }
+    auto ds = knowhere::GenDataSet(rows, dim, ts);
+    auto ptr = std::make_unique<size_t[]>(int(sqrt(rows)) + 2);
+    size_t i = 0;
+    while (true) {
+        if (i * i >= (size_t)rows) {
+            break;
+        }
+        ptr[i] = i * i;
+        i += 1;
+    }
+    ptr[i] = (size_t)rows;
+    const size_t* ptr_const = ptr.release();
+    ds->Set(knowhere::meta::EMB_LIST_OFFSET, ptr_const);
     ds->SetIsOwner(true);
     return ds;
 }
@@ -337,7 +388,7 @@ TEST_CASE("Search for EMBList HNSW Indices", "Benchmark and validation") {
     // various constants and restrictions
 
     // metrics to test
-    const std::vector<std::string> DISTANCE_TYPES = {"MAX_SIM_IP", "MAX_SIM_COSINE"};
+    const std::vector<std::string> DISTANCE_TYPES = {"MAX_SIM_IP", "MAX_SIM_COSINE", "MAX_SIM_L2"};
 
     // for unit tests
     const std::vector<int32_t> DIMS = {4};
@@ -382,10 +433,10 @@ TEST_CASE("Search for EMBList HNSW Indices", "Benchmark and validation") {
     default_conf[knowhere::indexparam::EFCONSTRUCTION] = 96;
     default_conf[knowhere::indexparam::EF] = 64;
     default_conf[knowhere::meta::TOPK] = TOPK;
-    default_conf[knowhere::indexparam::RETRIEVAL_ANN_RATIO] = 1.0f;
+    default_conf[knowhere::indexparam::RETRIEVAL_ANN_RATIO] = 2.0f;
 
     SECTION("FLAT") {
-        const std::string& index_type = knowhere::IndexEnum::INDEX_EMB_LIST_HNSW;
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW;
 
         for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
             for (const int32_t dim : DIMS) {
@@ -440,7 +491,7 @@ TEST_CASE("Search for EMBList HNSW Indices", "Benchmark and validation") {
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
                             if (bitset_rate != 0.0f || mv_only_enable) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
                             }
 
                             // get a golden result
@@ -515,7 +566,7 @@ TEST_CASE("Search for EMBList HNSW Indices", "Benchmark and validation") {
     }
 
     SECTION("SQ") {
-        const std::string& index_type = knowhere::IndexEnum::INDEX_EMB_LIST_HNSW_SQ;
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW_SQ;
 
         for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
             for (const int32_t dim : DIMS) {
@@ -743,7 +794,7 @@ TEST_CASE("Search for EMBList HNSW Indices", "Benchmark and validation") {
     }
 
     SECTION("PQ") {
-        const std::string& index_type = knowhere::IndexEnum::INDEX_EMB_LIST_HNSW_PQ;
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW_PQ;
 
         for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
             for (const int32_t dim : {16}) {
@@ -964,7 +1015,7 @@ TEST_CASE("Search for EMBList HNSW Indices", "Benchmark and validation") {
     }
 
     SECTION("PRQ") {
-        const std::string& index_type = knowhere::IndexEnum::INDEX_EMB_LIST_HNSW_PRQ;
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW_PRQ;
 
         for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
             for (const int32_t dim : {16}) {
@@ -1186,6 +1237,100 @@ TEST_CASE("Search for EMBList HNSW Indices", "Benchmark and validation") {
 
                         for (auto index : index_files) {
                             std::remove(index.c_str());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("Search for EMBList HNSW (Binary)", "Benchmark and validation on binary vectors") {
+    const std::vector<std::string> DISTANCE_TYPES = {"MAX_SIM_HAMMING", "MAX_SIM_JACCARD"};
+
+    const std::vector<int32_t> DIMS = {32};
+    const std::vector<int32_t> NBS = {256};
+    const int32_t NQ = 10;
+    const int32_t TOPK = 16;
+
+    const std::vector<bool> MV_ONLYs = {false, true};
+
+    const std::vector<float> BITSET_RATES = {0.0f, 0.5f, 0.95f, 1.0f};
+
+    knowhere::Json default_conf;
+
+    default_conf[knowhere::indexparam::HNSW_M] = 16;
+    default_conf[knowhere::indexparam::EFCONSTRUCTION] = 96;
+    default_conf[knowhere::indexparam::EF] = 64;
+    default_conf[knowhere::meta::TOPK] = TOPK;
+    default_conf[knowhere::indexparam::RETRIEVAL_ANN_RATIO] = 2.0f;
+
+    // vector_id -> emb_list_id
+    // [0...9] -> 0; [10...19] -> 1; [20...29] -> 2; ...
+    int each_el_len = 10;
+    // emb_list_id -> partition_id
+    // [0, 3, 6, ...] -> 0; [1, 4, 7, ...] -> 1; [2, 5, 8, ...] -> 2
+    int partition_num = 3;
+
+    SECTION("FLAT") {
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW;
+
+        for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
+            for (const int32_t dim : DIMS) {
+                // generate query dataset
+                const uint64_t query_rng_seed = get_params_hash({(int)distance_type, dim});
+                auto query_ds_ptr = GenQueryEmbListBinDataSet(NQ, dim, query_rng_seed);
+
+                for (const int32_t nb : NBS) {
+                    // generate base dataset
+                    std::vector<int32_t> params = {(int)distance_type, dim, nb};
+                    const uint64_t rng_seed = get_params_hash(params);
+                    int num_el = int(nb / each_el_len) + 1;
+                    auto default_ds_ptr = GenEmbListBinDataSet(nb, dim, rng_seed, each_el_len);
+
+                    knowhere::Json conf = default_conf;
+                    conf[knowhere::meta::INDEX_TYPE] = index_type;
+                    conf[knowhere::meta::METRIC_TYPE] = DISTANCE_TYPES[distance_type];
+                    conf[knowhere::meta::DIM] = dim;
+                    conf[knowhere::meta::ROWS] = nb;
+                    printf("conf: %s\n", conf.dump().c_str());
+
+                    std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_info =
+                        GenerateScalarInfoWithStep(nb, partition_num, each_el_len);
+
+                    for (const bool mv_only_enable : MV_ONLYs) {
+                        printf("mv_only_enable: %d\n", mv_only_enable);
+                        if (mv_only_enable) {
+                            default_ds_ptr->Set(knowhere::meta::SCALAR_INFO, scalar_info);
+                        }
+
+                        // test various bitset rates
+                        for (const float bitset_rate : BITSET_RATES) {
+                            printf("bitset_rate: %f\n", bitset_rate);
+                            const std::vector<uint8_t> bitset_data = GenerateBitsetByPartition(
+                                num_el, 1.0f - bitset_rate, mv_only_enable ? partition_num : 1);
+
+                            // initialize bitset_view.
+                            // provide a default one if nbits_set == 0
+                            knowhere::BitsetView bitset_view = nullptr;
+                            if (bitset_rate != 0.0f || mv_only_enable) {
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
+                            }
+
+                            // get a golden result
+                            auto golden_result = knowhere::BruteForce::Search<knowhere::bin1>(
+                                default_ds_ptr, query_ds_ptr, conf, bitset_view);
+
+                            printf(
+                                "\nProcessing EMBList HNSW,Flat bin1 for %s distance, dim=%d, nrows=%d, %d%% points "
+                                "filtered "
+                                "out\n",
+                                DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                            auto index_file =
+                                test_emb_list_hnsw<knowhere::bin1>(default_ds_ptr, query_ds_ptr, golden_result.value(),
+                                                                   params, conf, mv_only_enable, bitset_view);
+                            std::remove(index_file.c_str());
                         }
                     }
                 }
