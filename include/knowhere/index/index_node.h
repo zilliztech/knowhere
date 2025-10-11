@@ -512,9 +512,14 @@ class IndexNode : public Object {
             // if not emb_list, use the default build method
             return Build(dataset, std::move(cfg), use_knowhere_build_pool);
         }
+        if (dataset == nullptr) {
+            LOG_KNOWHERE_WARNING_
+                << "Dataset is nullptr, but metric type is emb_list, need emb_list_offset from dataset";
+            return Status::emb_list_inner_error;
+        }
         auto lims = dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
         if (lims == nullptr) {
-            LOG_KNOWHERE_WARNING_ << "Could not find emb list offset, but metric type is emb_list";
+            LOG_KNOWHERE_WARNING_ << "Could not find emb list offset from dataset, but metric type is emb_list";
             return Status::emb_list_inner_error;
         }
 

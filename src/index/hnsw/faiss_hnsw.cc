@@ -3040,9 +3040,12 @@ class BaseFaissRegularIndexHNSWPRQNodeTemplate : public BaseFaissRegularIndexHNS
 #ifdef KNOWHERE_WITH_CARDINAL
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_DEPRECATED,
                                                 BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback,
-                                                knowhere::feature::MMAP | knowhere::feature::MV)
+                                                knowhere::feature::MMAP | knowhere::feature::MV |
+                                                    knowhere::feature::EMB_LIST)
 KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(HNSW_DEPRECATED, BaseFaissRegularIndexHNSWFlatNodeTemplate,
-                                          knowhere::feature::MMAP | knowhere::feature::MV)
+                                          knowhere::feature::MMAP | knowhere::feature::MV | knowhere::feature::EMB_LIST)
+KNOWHERE_SIMPLE_REGISTER_DENSE_BIN_GLOBAL(HNSW_DEPRECATED, BaseFaissRegularIndexHNSWFlatNodeTemplate,
+                                          knowhere::feature::MMAP | knowhere::feature::MV | knowhere::feature::EMB_LIST)
 #else
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW, BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback,
                                                 knowhere::feature::MMAP | knowhere::feature::MV |

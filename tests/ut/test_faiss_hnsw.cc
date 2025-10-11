@@ -522,11 +522,6 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                     auto partition_size = scalar_info[0][0].size();  // will be masked by partition key value
 
                     for (const bool mv_only_enable : MV_ONLYs) {
-#ifdef KNOWHERE_WITH_CARDINAL
-                        if (mv_only_enable) {
-                            continue;
-                        }
-#endif
                         printf("with mv only enabled : %d\n", mv_only_enable);
                         if (mv_only_enable) {
                             default_ds_ptr->Set(knowhere::meta::SCALAR_INFO, scalar_info);
