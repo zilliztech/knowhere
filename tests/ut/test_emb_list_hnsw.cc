@@ -1212,7 +1212,7 @@ TEST_CASE("Search for EMBList HNSW (Binary)", "Benchmark and validation on binar
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
                             if (bitset_rate != 0.0f || mv_only_enable) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
                             }
 
                             // get a golden result
