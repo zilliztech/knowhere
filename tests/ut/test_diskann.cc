@@ -506,8 +506,8 @@ emb_list_search() {
             const auto bitset_percentages = {0.1f, 0.5f, 0.9f, 0.98f};
             for (const float percentage : bitset_percentages) {
                 for (const auto& gen_func : gen_bitset_funcs) {
-                    auto bitset_data = gen_func(num_el, percentage, 1);
-                    knowhere::BitsetView bitset(bitset_data.data(), kNumRows);
+                    auto bitset_data = gen_func(num_el, 1 - percentage, 1);
+                    knowhere::BitsetView bitset(bitset_data.data(), num_el);
                     auto results = diskann.Search(query_ds, knn_json, bitset);
                     auto gt = knowhere::BruteForce::Search<DataType>(base_ds, query_ds, knn_json, bitset);
                     float recall = GetKNNRecall(*gt.value(), *results.value());
