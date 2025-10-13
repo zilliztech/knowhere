@@ -48,12 +48,20 @@ std::string kL2IndexPrefix = kL2IndexDir + "/l2";
 std::string kIPIndexPrefix = kIPIndexDir + "/ip";
 std::string kCOSINEIndexPrefix = kCOSINEIndexDir + "/cosine";
 
+std::string kEmbListL2IndexDir = kDir + "/emb_list_l2_index";
+std::string kEmbListIPIndexDir = kDir + "/emb_list_ip_index";
+std::string kEmbListCOSINEIndexDir = kDir + "/emb_list_cosine_index";
+std::string kEmbListL2IndexPrefix = kEmbListL2IndexDir + "/max_sim_l2";
+std::string kEmbListIPIndexPrefix = kEmbListIPIndexDir + "/max_sim_ip";
+std::string kEmbListCOSINEIndexPrefix = kEmbListCOSINEIndexDir + "/max_sim_cosine";
+
 constexpr uint32_t kNumRows = 1000;
 constexpr uint32_t kNumQueries = 10;
 constexpr uint32_t kDim = 128;
 constexpr uint32_t kLargeDim = 256;
 constexpr uint32_t kK = 10;
 constexpr float kKnnRecall = 0.9;
+constexpr float kEmbListKnnRecall = 0.75;
 constexpr float AiSAQKnnRecall = 0.01;
 constexpr float kL2RangeAp = 0.9;
 constexpr float kIpRangeAp = 0.9;
@@ -365,6 +373,154 @@ base_search() {
 TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
     base_search<knowhere::fp32>();
 }
+
+template <typename DataType>
+inline void
+emb_list_search() {
+    fs::remove_all(kDir);
+    fs::remove(kDir);
+    REQUIRE_NOTHROW(fs::create_directory(kDir));
+    REQUIRE_NOTHROW(fs::create_directory(kEmbListL2IndexDir));
+    REQUIRE_NOTHROW(fs::create_directory(kEmbListIPIndexDir));
+    REQUIRE_NOTHROW(fs::create_directory(kEmbListCOSINEIndexDir));
+
+    auto metric_str = GENERATE(as<std::string>{}, knowhere::metric::MAX_SIM_COSINE, knowhere::metric::MAX_SIM_IP,
+                               knowhere::metric::MAX_SIM_L2);
+    auto version = GenTestVersionList();
+
+    std::unordered_map<knowhere::MetricType, std::string> metric_dir_map = {
+        {knowhere::metric::L2, kEmbListL2IndexPrefix},
+        {knowhere::metric::IP, kEmbListIPIndexPrefix},
+        {knowhere::metric::COSINE, kEmbListCOSINEIndexPrefix},
+    };
+
+    auto base_gen = [&metric_str]() {
+        knowhere::Json json;
+        json["dim"] = kDim;
+        json["metric_type"] = metric_str;
+        json["k"] = kK;
+        return json;
+    };
+
+    auto build_gen = [&base_gen, &metric_str, &metric_dir_map]() {
+        knowhere::Json json = base_gen();
+        json["index_prefix"] = metric_dir_map[metric_str];
+        json["data_path"] = kRawDataPath;
+        json["max_degree"] = 56;
+        json["search_list_size"] = 128;
+        json["pq_code_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
+        json["search_cache_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
+        json["build_dram_budget_gb"] = 32.0;
+        return json;
+    };
+
+    auto deserialize_gen = [&base_gen, &metric_str, &metric_dir_map]() {
+        knowhere::Json json = base_gen();
+        json["index_prefix"] = metric_dir_map[metric_str];
+        json["search_cache_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
+        return json;
+    };
+
+    auto knn_search_gen = [&base_gen, &metric_str, &metric_dir_map]() {
+        knowhere::Json json = base_gen();
+        json["index_prefix"] = metric_dir_map[metric_str];
+        json["search_list_size"] = 36;
+        json["beamwidth"] = 8;
+        json["retrieval_ann_ratio"] = 2.0f;
+        return json;
+    };
+
+    int each_el_len = 10;
+    int num_el = int(kNumRows / each_el_len) + 1;
+    auto fp32_query_ds = GenQueryEmbListDataSet(kNumQueries, kDim, 42);
+    knowhere::DataSetPtr knn_gt_ptr = nullptr;
+    auto fp32_base_ds = GenEmbListDataSet(kNumRows, kDim, 42, each_el_len);
+    auto empty_ds_with_emb_list_offset = GenEmptyDataSetWithEmbListOffset(kNumRows, each_el_len);
+
+    auto base_ds = knowhere::ConvertToDataTypeIfNeeded<DataType>(fp32_base_ds);
+    auto query_ds = knowhere::ConvertToDataTypeIfNeeded<DataType>(fp32_query_ds);
+
+    {
+        auto base_ptr = static_cast<const DataType*>(base_ds->GetTensor());
+        WriteRawDataToDisk<DataType>(kRawDataPath, base_ptr, kNumRows, kDim);
+
+        // generate the gt of knn search
+        auto base_json = base_gen();
+        auto result_knn = knowhere::BruteForce::Search<DataType>(base_ds, query_ds, base_json, nullptr);
+        knn_gt_ptr = result_knn.value();
+    }
+
+    SECTION("Test EmbList knn search") {
+        std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+        auto diskann_index_pack = knowhere::Pack(file_manager);
+        knowhere::Json deserialize_json = knowhere::Json::parse(deserialize_gen().dump());
+        knowhere::BinarySet binset;
+
+        auto build_json = build_gen().dump();
+        knowhere::Json json = knowhere::Json::parse(build_json);
+        // build process
+        {
+            auto diskann =
+                knowhere::IndexFactory::Instance().Create<DataType>("DISKANN", version, diskann_index_pack).value();
+            diskann.Build(empty_ds_with_emb_list_offset, json);
+            diskann.Serialize(binset);
+        }
+        {
+            // knn search
+            auto diskann =
+                knowhere::IndexFactory::Instance().Create<DataType>("DISKANN", version, diskann_index_pack).value();
+            diskann.Deserialize(binset, deserialize_json);
+            REQUIRE(diskann.HasRawData(metric_str) ==
+                    knowhere::IndexStaticFaced<DataType>::HasRawData("DISKANN", version, json));
+
+            auto knn_search_json = knn_search_gen().dump();
+            knowhere::Json knn_json = knowhere::Json::parse(knn_search_json);
+            auto res = diskann.Search(query_ds, knn_json, nullptr);
+            REQUIRE(res.has_value());
+            auto knn_recall = GetKNNRecall(*knn_gt_ptr, *res.value());
+            CAPTURE(knn_json.dump());
+            REQUIRE(knn_recall > kEmbListKnnRecall);
+            // knn search without cache file
+            {
+                std::string cached_nodes_file_path =
+                    std::string(build_gen()["index_prefix"]) + std::string("_cached_nodes.bin");
+                if (fs::exists(cached_nodes_file_path)) {
+                    fs::remove(cached_nodes_file_path);
+                }
+                auto diskann_tmp =
+                    knowhere::IndexFactory::Instance().Create<DataType>("DISKANN", version, diskann_index_pack).value();
+                diskann_tmp.Deserialize(binset, deserialize_json);
+                auto knn_search_json = knn_search_gen().dump();
+                knowhere::Json knn_json = knowhere::Json::parse(knn_search_json);
+                auto res = diskann_tmp.Search(query_ds, knn_json, nullptr);
+                REQUIRE(res.has_value());
+                REQUIRE(GetKNNRecall(*knn_gt_ptr, *res.value()) >= kEmbListKnnRecall);
+            }
+            // knn search with bitset
+            std::vector<std::function<std::vector<uint8_t>(size_t, float, size_t)>> gen_bitset_funcs = {
+                GenerateBitsetByPartition};
+            const auto bitset_percentages = {0.1f, 0.5f, 0.9f, 0.98f};
+            for (const float percentage : bitset_percentages) {
+                for (const auto& gen_func : gen_bitset_funcs) {
+                    auto bitset_data = gen_func(num_el, percentage, 1);
+                    knowhere::BitsetView bitset(bitset_data.data(), kNumRows);
+                    auto results = diskann.Search(query_ds, knn_json, bitset);
+                    auto gt = knowhere::BruteForce::Search<DataType>(base_ds, query_ds, knn_json, bitset);
+                    float recall = GetKNNRecall(*gt.value(), *results.value());
+                    REQUIRE(recall >= kEmbListKnnRecall);
+                }
+            }
+        }
+    }
+    fs::remove_all(kDir);
+    fs::remove(kDir);
+}
+
+#ifdef KNOWHERE_WITH_CARDINAL
+TEST_CASE("Test DISKANN for EmbList", "[diskann]") {
+    emb_list_search<knowhere::fp32>();
+}
+#endif
 
 // This test case only check L2
 TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {
