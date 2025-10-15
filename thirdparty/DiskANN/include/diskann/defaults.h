@@ -43,7 +43,7 @@ const float GRAPH_SLACK_FACTOR = 1.3;
 // SSD Index related limits
 const uint64_t MAX_GRAPH_DEGREE = 512;
 const uint64_t SECTOR_LEN = 4096;
-const uint64_t MAX_N_SECTOR_READS = 1024;
+const uint64_t MAX_N_SECTOR_READS = 256;
 
 
 // following constants should always be specified, but are useful as a
