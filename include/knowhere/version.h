@@ -64,6 +64,13 @@ class Version {
         return std::make_pair(Version(minimal_version), Version(maximum_version));
     }
 
+#ifdef KNOWHERE_WITH_CARDINAL
+    static inline bool
+    VersionEmbListSupport(const Version version) {
+        return version >= Version(9);
+    }
+#endif
+
     // the version number
     IndexVersion
     VersionNumber() const {
@@ -73,6 +80,11 @@ class Version {
     friend bool
     operator<=(const Version& lhs, const Version& rhs) {
         return lhs.version_ <= rhs.version_;
+    }
+
+    friend bool
+    operator>=(const Version& lhs, const Version& rhs) {
+        return lhs.version_ >= rhs.version_;
     }
 
  private:
