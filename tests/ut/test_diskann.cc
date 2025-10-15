@@ -25,6 +25,7 @@
 #include "knowhere/expected.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/utils.h"
+#include "knowhere/version.h"
 #include "utils.h"
 
 #if __has_include(<filesystem>)
@@ -374,9 +375,15 @@ TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
     base_search<knowhere::fp32>();
 }
 
+#ifdef KNOWHERE_WITH_CARDINAL
 template <typename DataType>
 inline void
 emb_list_search() {
+    auto version = GenTestVersionList();
+    if (!knowhere::Version::VersionEmbListSupport(knowhere::Version(version))) {
+        return;
+    }
+
     fs::remove_all(kDir);
     fs::remove(kDir);
     REQUIRE_NOTHROW(fs::create_directory(kDir));
@@ -386,7 +393,6 @@ emb_list_search() {
 
     auto metric_str = GENERATE(as<std::string>{}, knowhere::metric::MAX_SIM_COSINE, knowhere::metric::MAX_SIM_IP,
                                knowhere::metric::MAX_SIM_L2);
-    auto version = GenTestVersionList();
 
     std::unordered_map<knowhere::MetricType, std::string> metric_dir_map = {
         {knowhere::metric::L2, kEmbListL2IndexPrefix},
@@ -515,6 +521,7 @@ emb_list_search() {
     fs::remove_all(kDir);
     fs::remove(kDir);
 }
+#endif
 
 #ifdef KNOWHERE_WITH_CARDINAL
 TEST_CASE("Test DISKANN for EmbList", "[diskann]") {
