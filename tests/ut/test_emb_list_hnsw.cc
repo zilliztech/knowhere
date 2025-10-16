@@ -182,7 +182,7 @@ create_index(const std::string& index_type, const std::string& index_file_name,
 
     printf("Creating %sindex \"%s\"\n", additional_name_s.c_str(), index_type.c_str());
 
-    auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+    auto version = GenTestEmbListVersionList();
     auto index = knowhere::IndexFactory::Instance().Create<T>(index_type, version);
 
     try {
