@@ -64,13 +64,6 @@ class Version {
         return std::make_pair(Version(minimal_version), Version(maximum_version));
     }
 
-#ifdef KNOWHERE_WITH_CARDINAL
-    static inline bool
-    VersionEmbListSupport(const Version version) {
-        return version >= Version(9);
-    }
-#endif
-
     // the version number
     IndexVersion
     VersionNumber() const {

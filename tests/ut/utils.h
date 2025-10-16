@@ -422,6 +422,15 @@ GenTestVersionList() {
     return GENERATE(as<int32_t>{}, knowhere::Version::GetCurrentVersion().VersionNumber());
 }
 
+inline auto
+GenTestEmbListVersionList() {
+#ifdef KNOWHERE_WITH_CARDINAL
+    return GENERATE(as<int32_t>{}, std::max(knowhere::Version::GetCurrentVersion().VersionNumber(), 9));
+#else
+    return GENERATE(as<int32_t>{}, knowhere::Version::GetCurrentVersion().VersionNumber());
+#endif
+}
+
 inline knowhere::DataSetPtr
 GenSparseDataSet(const std::vector<std::map<int32_t, float>>& data, int32_t cols) {
     int32_t rows = data.size();
