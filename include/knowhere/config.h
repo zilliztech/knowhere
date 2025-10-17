@@ -810,7 +810,7 @@ class BaseConfig : public Config {
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(retrieval_ann_ratio)
             .description("Factor for top-k in the first ANNS round, only used for emb_list")
-            .set_default(1.0f)
+            .set_default(3.0f)
             .set_range(0.01f, 100.0f)
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(emb_list_meta_file_path)

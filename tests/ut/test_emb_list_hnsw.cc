@@ -336,7 +336,7 @@ TEST_CASE("Search for EMBList HNSW Indices", "Benchmark and validation") {
     default_conf[knowhere::indexparam::EFCONSTRUCTION] = 96;
     default_conf[knowhere::indexparam::EF] = 64;
     default_conf[knowhere::meta::TOPK] = TOPK;
-    default_conf[knowhere::indexparam::RETRIEVAL_ANN_RATIO] = 2.0f;
+    default_conf[knowhere::indexparam::RETRIEVAL_ANN_RATIO] = 3.0f;
 
     SECTION("FLAT") {
         const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW;
@@ -1161,7 +1161,7 @@ TEST_CASE("Search for EMBList HNSW (Binary)", "Benchmark and validation on binar
     default_conf[knowhere::indexparam::EFCONSTRUCTION] = 96;
     default_conf[knowhere::indexparam::EF] = 64;
     default_conf[knowhere::meta::TOPK] = TOPK;
-    default_conf[knowhere::indexparam::RETRIEVAL_ANN_RATIO] = 2.0f;
+    default_conf[knowhere::indexparam::RETRIEVAL_ANN_RATIO] = 3.0f;
 
     // vector_id -> emb_list_id
     // [0...9] -> 0; [10...19] -> 1; [20...29] -> 2; ...
