@@ -114,7 +114,15 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     if (status != Status::success) {
         return expected<DataSetPtr>::Err(status, msg);
     }
-    auto nq = query_dataset->GetRows();
+    auto metric_is_emb_list = get_el_metric_type(cfg.metric_type.value()).has_value();
+    auto query_emb_list_offset = query_dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+    if (metric_is_emb_list && query_emb_list_offset == nullptr) {
+        return expected<DataSetPtr>::Err(Status::invalid_args,
+                                         "metric type is emb_list, but missing emb_list offset in query dataset");
+    }
+    // if emb_list, nq = num of emb_list; if not, nq = num of query vectors
+    auto nq = metric_is_emb_list ? EmbListOffset(query_emb_list_offset, query_dataset->GetRows()).num_el()
+                                 : query_dataset->GetRows();
     int topk = cfg.k.value();
     auto labels = std::make_unique<int64_t[]>(nq * topk);
     auto distances = std::make_unique<float[]>(nq * topk);
@@ -136,7 +144,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     auto xb = base_dataset->GetTensor();
     auto nb = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
-    bool is_emb_list = base_dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET) != nullptr;
+    bool base_data_is_emb_list = base_dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET) != nullptr;
     auto xb_id_offset = base_dataset->GetTensorBeginId();
     BitsetView bitset = bitset_;
     bitset.set_id_offset(xb_id_offset);
@@ -144,10 +152,11 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     auto xq = query_dataset->GetTensor();
     auto nq = query_dataset->GetRows();
     bool query_is_emb_list = query_dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET) != nullptr;
-    if (is_emb_list != query_is_emb_list) {
+    if (base_data_is_emb_list != query_is_emb_list) {
         LOG_KNOWHERE_ERROR_ << "base dataset and query must be both emb_list or not";
         return Status::invalid_args;
     }
+    auto base_and_query_are_emb_list = base_data_is_emb_list;
 
     BruteForceConfig cfg;
     RETURN_IF_ERROR(Config::Load(cfg, config, knowhere::SEARCH));
@@ -173,10 +182,11 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     std::string metric_str = cfg.metric_type.value();
     auto topk = cfg.k.value();
 
-    if (is_emb_list) {
+    if (base_and_query_are_emb_list) {
         auto el_metric_type_or = get_el_metric_type(metric_str);
         if (!el_metric_type_or.has_value()) {
-            LOG_KNOWHERE_ERROR_ << "metric type not supported for emb_list: " << metric_str;
+            LOG_KNOWHERE_ERROR_ << "base data and query data are emb_list, but metric type not supported for emb_list: "
+                                << metric_str;
             return Status::invalid_metric_type;
         }
         auto el_metric_type = el_metric_type_or.value();
