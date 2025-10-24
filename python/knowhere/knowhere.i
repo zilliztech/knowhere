@@ -88,6 +88,8 @@ import_array();
 %apply (int *INPLACE_ARRAY2, int DIM1, int DIM2){(int *ids,int nq_2,int k_2)}
 %apply (float* INPLACE_ARRAY2, int DIM1, int DIM2){(float *data,int rows,int dim)}
 %apply (int32_t *INPLACE_ARRAY2, int DIM1, int DIM2){(int32_t *data,int rows,int dim)}
+%apply (float* IN_ARRAY2, int DIM1, int DIM2){(float* xb, int nb, int dim)}
+%apply (int *IN_ARRAY1, int DIM1){(int* offsets, int offset_size)}
 
 %typemap(in, numinputs=0) knowhere::Status& status(knowhere::Status tmp) %{
     $1 = &tmp;
@@ -313,18 +315,37 @@ GetNullBitSetView() {
     return nullptr;
 };
 
+void setOffsets(knowhere::DataSetPtr ds, int* offsets, int offset_size) {
+    size_t* offsets_ = new size_t[offset_size];
+    for (int i = 0; i < offset_size; ++i) {
+        offsets_[i] = (size_t)(offsets[i]);
+    }
+    ds->Set(knowhere::meta::EMB_LIST_OFFSET, const_cast<const size_t*>(offsets_));
+}
+
 knowhere::DataSetPtr
-Array2DataSetF(float* xb, int nb, int dim) {
+Array2DataSetF(float* xb, int nb, int dim, int* offsets=nullptr, int offset_size=0) {
     auto ds = std::make_shared<DataSet>();
-    ds->SetIsOwner(false);
     ds->SetRows(nb);
     ds->SetDim(dim);
-    ds->SetTensor(xb);
+
+    if (offsets != nullptr) {
+        ds->SetIsOwner(true);
+        float* xb_ = new float[nb * dim];
+        for (int i = 0; i < nb * dim; ++i) {
+            xb_[i] = (float)xb[i];
+        }
+        ds->SetTensor(xb_);
+        setOffsets(ds, offsets, offset_size);
+    } else {
+        ds->SetIsOwner(false);
+        ds->SetTensor(xb);
+    }
     return ds;
 };
 
 knowhere::DataSetPtr
-Array2DataSetFP16(float* xb, int nb, int dim) {
+Array2DataSetFP16(float* xb, int nb, int dim, int* offsets=nullptr, int offset_size=0) {
     auto ds = std::make_shared<DataSet>();
     ds->SetIsOwner(true);
     ds->SetRows(nb);
@@ -335,13 +356,16 @@ Array2DataSetFP16(float* xb, int nb, int dim) {
         fp16_data[i] = knowhere::fp16(xb[i]);
     }
     ds->SetTensor(fp16_data);
+    if (offsets != nullptr) {
+        setOffsets(ds, offsets, offset_size);
+    }
     return ds;
 };
 
 #pragma GCC push_options
 #pragma GCC optimize("O0")
 knowhere::DataSetPtr
-Array2DataSetBF16(float* xb, int nb, int dim) {
+Array2DataSetBF16(float* xb, int nb, int dim, int* offsets=nullptr, int offset_size=0) {
     using bf16 = knowhere::bf16;
     auto ds = std::make_shared<DataSet>();
     ds->SetIsOwner(true);
@@ -351,8 +375,10 @@ Array2DataSetBF16(float* xb, int nb, int dim) {
     for (int i = 0; i < nb * dim; ++i) {
         bf16_data[i] = knowhere::bf16(xb[i]);
     }
-
     ds->SetTensor(bf16_data);
+    if (offsets != nullptr) {
+        setOffsets(ds, offsets, offset_size);
+    }
     return ds;
 };
 #pragma GCC pop_options
@@ -396,22 +422,28 @@ Array2SparseDataSet(float* data, int nb1, int* ids, int nb2, int64_t* indptr, in
 }
 
 knowhere::DataSetPtr
-Array2DataSetU(uint8_t* xb, int nb, int dim) {
+Array2DataSetU(uint8_t* xb, int nb, int dim, int* offsets=nullptr, int offset_size=0) {
     auto ds = std::make_shared<DataSet>();
     ds->SetIsOwner(false);
     ds->SetRows(nb);
     ds->SetDim(dim*8);
     ds->SetTensor(xb);
+    if (offsets != nullptr) {
+        setOffsets(ds, offsets, offset_size);
+    }
     return ds;
 };
 
 knowhere::DataSetPtr
-Array2DataSetI(int8_t* xb, int nb, int dim) {
+Array2DataSetI(int8_t* xb, int nb, int dim, int* offsets=nullptr, int offset_size=0) {
     auto ds = std::make_shared<DataSet>();
     ds->SetIsOwner(false);
     ds->SetRows(nb);
     ds->SetDim(dim);
     ds->SetTensor(xb);
+    if (offsets != nullptr) {
+        setOffsets(ds, offsets, offset_size);
+    }
     return ds;
 };
 
@@ -614,6 +646,7 @@ Load(knowhere::BinarySetPtr binset, const std::string& file_name) {
                 std::shared_ptr<uint8_t[]> data_ptr(data);
                 infile.read(reinterpret_cast<char*>(data_ptr.get()), size);
                 binset->Append(name, data_ptr, size);
+                printf("name: %s, size: %ld\n", name.c_str(), size);
             }
         }
     }

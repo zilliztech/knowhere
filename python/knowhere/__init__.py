@@ -94,7 +94,27 @@ def ArrayToDataSet(arr):
             return swigknowhere.Array2DataSetBF16(arr)
     raise ValueError(
         """
-        ArrayToDataSet only support numpy array dtype float32,uint8,float16 and bfloat16.
+        ArrayToDataSet only support numpy array dtype float32, uint8, int8, float16 and bfloat16.
+        """
+    )
+
+def ArrayToDataSetWithOffsets(arr, offsets):
+    if arr.ndim == 2:
+        if arr.dtype == np.uint8:
+            return swigknowhere.Array2DataSetU(arr, offsets)
+        if arr.dtype == np.int8:
+            return swigknowhere.Array2DataSetI(arr, offsets)
+        if arr.dtype == np.float32:
+            return swigknowhere.Array2DataSetF(arr, offsets)
+        if arr.dtype == np.float16:
+            arr = arr.astype(np.float32)
+            return swigknowhere.Array2DataSetFP16(arr, offsets)
+        if arr.dtype == bfloat16:
+            arr = arr.astype(np.float32)
+            return swigknowhere.Array2DataSetBF16(arr, offsets)
+    raise ValueError(
+        """
+        ArrayToDataSetWithOffsets only support numpy array dtype float32, uint8, int8, float16 and bfloat16.
         """
     )
 
