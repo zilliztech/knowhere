@@ -53,6 +53,19 @@ DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_topk, "search topk")
 DEFINE_PROMETHEUS_HISTOGRAM(search_topk, PROMETHEUS_LABEL_KNOWHERE)
 DEFINE_PROMETHEUS_HISTOGRAM(search_topk, PROMETHEUS_LABEL_CARDINAL)
 
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_emb_list_1st_ann_latency, "emb_list search 1st ann latency (ms)")
+DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_1st_ann_latency, PROMETHEUS_LABEL_KNOWHERE)
+DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_1st_ann_latency, PROMETHEUS_LABEL_CARDINAL)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_emb_list_2nd_bf_agg_latency, "emb_list search 2nd bf and agg latency (ms)")
+DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_2nd_bf_agg_latency, PROMETHEUS_LABEL_KNOWHERE)
+DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_2nd_bf_agg_latency, PROMETHEUS_LABEL_CARDINAL)
+
+DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_emb_list_retrieval_ann_ratio,
+                                   "retrieval ann ratio of emb_list search (default 3.0)")
+DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_retrieval_ann_ratio, PROMETHEUS_LABEL_KNOWHERE)
+DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_retrieval_ann_ratio, PROMETHEUS_LABEL_CARDINAL)
+
 DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_level, "search level")
 DEFINE_PROMETHEUS_HISTOGRAM(search_level, PROMETHEUS_LABEL_CARDINAL)
 

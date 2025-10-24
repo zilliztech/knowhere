@@ -33,6 +33,8 @@
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
 #include "knowhere/comp/task.h"
+#include "knowhere/comp/time_recorder.h"
+#include "knowhere/prometheus_client.h"
 #endif
 
 namespace knowhere {
@@ -817,9 +819,18 @@ class IndexNode : public Object {
         config.metric_type = sub_metric_type;
         int32_t vec_topk = std::max((int32_t)(el_k * config.retrieval_ann_ratio.value()), 1);
         config.k = vec_topk;
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        knowhere_search_emb_list_retrieval_ann_ratio.Observe(config.retrieval_ann_ratio.value());
+        TimeRecorder rc("Emb List Search - 1st round ann search");
+#endif
         auto ann_search_res = Search(dataset, std::move(cfg), bitset, op_context).value();
         const auto stage1_ids = ann_search_res->GetIds();
 
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        auto time = rc.ElapseFromBegin("done");
+        time *= 0.001;  // convert to ms
+        knowhere_search_emb_list_1st_ann_latency.Observe(time);
+#endif
         // Stage 2: For each query emb_list, perform brute-force distance calculation and aggregate scores
         auto query_code_size_or = GetQueryCodeSize(dataset);
         if (!query_code_size_or.has_value()) {
@@ -827,6 +838,9 @@ class IndexNode : public Object {
             return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "could not get query code size");
         }
         auto query_code_size = query_code_size_or.value();
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        TimeRecorder rc2("Emb List Search - 2nd round bf and agg");
+#endif
         for (size_t i = 0; i < num_q_el; i++) {
             auto start_offset = query_emb_list_offset.offset[i];
             auto end_offset = query_emb_list_offset.offset[i + 1];
@@ -915,6 +929,11 @@ class IndexNode : public Object {
                       larger_is_closer ? std::numeric_limits<float>::min() : std::numeric_limits<float>::max());
         }
 
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        time = rc2.ElapseFromBegin("done");
+        time *= 0.001;  // convert to ms
+        knowhere_search_emb_list_2nd_bf_agg_latency.Observe(time);
+#endif
         return GenResultDataSet((int64_t)num_q_el, (int64_t)el_k, std::move(ids), std::move(dists));
     }
 
