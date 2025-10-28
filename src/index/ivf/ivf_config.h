@@ -29,6 +29,14 @@ class IvfConfig : public BaseConfig {
     CFG_BOOL use_elkan;
     CFG_BOOL ensure_topk_full;  // internal config, used for temp index
     CFG_INT max_empty_result_buckets;
+
+    // whether an index is built with a refine support
+    CFG_BOOL refine;
+    // undefined value leads to a search without a refine
+    CFG_FLOAT refine_k;
+    // type of refine
+    CFG_STRING refine_type;
+
     KNOHWERE_DECLARE_CONFIG(IvfConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(nlist)
             .description("number of inverted lists.")
@@ -55,8 +63,37 @@ class IvfConfig : public BaseConfig {
             .description("the maximum of continuous buckets with empty result")
             .for_range_search()
             .set_range(1, 65536);
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine)
+            .description("whether the refine is used during the train")
+            .set_default(false)
+            .for_train()
+            .for_static();
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine_k)
+            .description("refine k")
+            .set_default(1)
+            .set_range(1, std::numeric_limits<CFG_FLOAT::value_type>::max())
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine_type)
+            .description("the type of a refine index")
+            .allow_empty_without_default()
+            .for_train()
+            .for_static();
     }
 };
+
+inline bool WhetherAcceptableRefineType(const std::string& refine_type) {
+    // 'flat' is identical to 'fp32'
+    std::vector<std::string> allowed_list = {"sq6", "sq8", "fp16", "bf16", "fp32", "flat"};
+    std::string refine_type_tolower = str_to_lower(refine_type);
+
+    for (const auto& allowed : allowed_list) {
+        if (refine_type_tolower == allowed) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 class IvfFlatConfig : public IvfConfig {};
 
@@ -100,6 +137,18 @@ class IvfPqConfig : public IvfConfig {
             }
             default:
                 break;
+        }
+
+        // check our parameters
+        if (param_type == PARAM_TYPE::TRAIN) {
+            // check refine
+            if (refine_type.has_value()) {
+                if (!WhetherAcceptableRefineType(refine_type.value())) {
+                    std::string msg = "invalid refine type : " + refine_type.value() +
+                                      ", optional types are [sq6, sq8, fp16, bf16, fp32, flat]";
+                    return HandleError(err_msg, msg, Status::invalid_args);
+                }
+            }
         }
         return Status::success;
     }
@@ -181,7 +230,35 @@ class ScannConfig : public IvfFlatConfig {
     }
 };
 
-class IvfSqConfig : public IvfConfig {};
+class IvfSqConfig : public IvfConfig {
+ public:
+    CFG_INT nbits;
+    KNOHWERE_DECLARE_CONFIG(IvfSqConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(nbits).description("nbits").set_default(8).for_train().set_range(4, 8);
+    }
+
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        // check the base class
+        const auto base_status = IvfConfig::CheckAndAdjust(param_type, err_msg);
+        if (base_status != Status::success) {
+            return base_status;
+        }
+
+        // check our parameters
+        if (param_type == PARAM_TYPE::TRAIN) {
+            // check nbits
+            if (nbits.has_value()) {
+                if (nbits.value() != 4 && nbits.value() != 6 && nbits.value() != 8) {
+                    std::string msg = "invalid nbits : " + std::to_string(nbits.value()) +
+                                      ", optional values are [4, 6, 8]";
+                    return HandleError(err_msg, msg, Status::invalid_args);
+                }
+            }
+        }
+        return Status::success;
+    }
+};
 
 class IvfBinConfig : public IvfConfig {
     Status
@@ -235,13 +312,6 @@ class IvfSqCcConfig : public IvfFlatCcConfig {
 
 class IvfRaBitQConfig : public IvfConfig {
  public:
-    // whether an index is built with a refine support
-    CFG_BOOL refine;
-    // undefined value leads to a search without a refine
-    CFG_FLOAT refine_k;
-    // type of refine
-    CFG_STRING refine_type;
-
     // the value `0` means that the query won't be quantized and will
     //   be processed as is.
     CFG_INT rbq_bits_query;
@@ -252,21 +322,6 @@ class IvfRaBitQConfig : public IvfConfig {
             .set_range(0, 8)
             .for_search()
             .for_range_search();
-        KNOWHERE_CONFIG_DECLARE_FIELD(refine)
-            .description("whether the refine is used during the train")
-            .set_default(false)
-            .for_train()
-            .for_static();
-        KNOWHERE_CONFIG_DECLARE_FIELD(refine_k)
-            .description("refine k")
-            .set_default(1)
-            .set_range(1, std::numeric_limits<CFG_FLOAT::value_type>::max())
-            .for_search();
-        KNOWHERE_CONFIG_DECLARE_FIELD(refine_type)
-            .description("the type of a refine index")
-            .allow_empty_without_default()
-            .for_train()
-            .for_static();
     }
 
     Status
@@ -289,22 +344,6 @@ class IvfRaBitQConfig : public IvfConfig {
             }
         }
         return Status::success;
-    }
-
- protected:
-    bool
-    WhetherAcceptableRefineType(const std::string& refine_type) {
-        // 'flat' is identical to 'fp32'
-        std::vector<std::string> allowed_list = {"sq6", "sq8", "fp16", "bf16", "fp32", "flat"};
-        std::string refine_type_tolower = str_to_lower(refine_type);
-
-        for (const auto& allowed : allowed_list) {
-            if (refine_type_tolower == allowed) {
-                return true;
-            }
-        }
-
-        return false;
     }
 };
 
