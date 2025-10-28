@@ -123,8 +123,9 @@ namespace indexparam {
 constexpr const char* NPROBE = "nprobe";
 constexpr const char* NLIST = "nlist";
 constexpr const char* USE_ELKAN = "use_elkan";
-constexpr const char* NBITS = "nbits";  // PQ/SQ
-constexpr const char* M = "m";          // PQ param for IVFPQ
+constexpr const char* NBITS = "nbits";          // PQ/SQ
+constexpr const char* M = "m";                  // PQ param for IVFPQ
+constexpr const char* IVF_SQ_TYPE = "sq_type";  // SQ param for IVFSQ
 constexpr const char* SSIZE = "ssize";
 constexpr const char* REORDER_K = "reorder_k";
 constexpr const char* WITH_RAW_DATA = "with_raw_data";
@@ -132,7 +133,9 @@ constexpr const char* ENSURE_TOPK_FULL = "ensure_topk_full";
 constexpr const char* CODE_SIZE = "code_size";
 constexpr const char* RAW_DATA_STORE_PREFIX = "raw_data_store_prefix";
 constexpr const char* SUB_DIM = "sub_dim";
+constexpr const char* REFINE = "refine";
 constexpr const char* REFINE_TYPE = "refine_type";
+constexpr const char* REFINE_K = "refine_k";
 constexpr const char* REFINE_WITH_QUANT = "refine_with_quant";
 
 // cuVS Params
