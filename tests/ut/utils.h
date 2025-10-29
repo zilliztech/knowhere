@@ -261,6 +261,14 @@ WriteRawDataToDisk(const std::string data_path, const DataType* raw_data, const 
     writer.close();
 }
 
+inline void
+WriteEmbListOffsetToDisk(const std::string data_path, const size_t* lims, const size_t num) {
+    std::ofstream writer(data_path.c_str(), std::ios::binary);
+    writer.write((char*)&num, sizeof(size_t));
+    writer.write((char*)lims, num * sizeof(size_t));
+    writer.close();
+}
+
 inline bool
 CheckDistanceInScope(const knowhere::DataSet& result, int topk, float low_bound, float high_bound) {
     auto ids = result.GetIds();
@@ -619,18 +627,13 @@ GenQueryEmbListBinDataSet(int rows, int dim, const uint64_t seed = 42) {
     return ds;
 }
 
-inline knowhere::DataSetPtr
-GenEmptyDataSetWithEmbListOffset(int rows, int each_el_len = 10) {
-    auto ds = std::make_shared<knowhere::DataSet>();
-    auto ptr = std::make_unique<size_t[]>(size_t(rows / each_el_len) + 2);
-    size_t i = 0;
-    for (; i * each_el_len < (size_t)rows; i += 1) {
-        ptr[i] = i * each_el_len;
+inline std::vector<size_t>
+GenEmbListOffset(int rows, int each_el_len = 10) {
+    size_t num_el = int((rows + each_el_len - 1) / each_el_len);
+    std::vector<size_t> lims(num_el + 1);
+    for (size_t i = 0; i < num_el; i += 1) {
+        lims[i] = i * each_el_len;
     }
-    ptr[i] = (size_t)rows;
-    const size_t* ptr_const = ptr.release();
-    ds->SetRows(rows);
-    ds->Set(knowhere::meta::EMB_LIST_OFFSET, ptr_const);
-    ds->SetIsOwner(true);
-    return ds;
+    lims[num_el] = rows;
+    return lims;
 }
