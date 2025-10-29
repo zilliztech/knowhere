@@ -464,7 +464,7 @@ class IndexIterator : public IndexNode::iterator {
         if (!initialized_) {
             initialize();
         }
-        auto& q = refined_res_.empty() ? res_ : refined_res_;
+        auto& q = !refine_ ? res_ : refined_res_;
         if (q.empty()) {
             throw std::runtime_error("No more elements");
         }
@@ -475,7 +475,7 @@ class IndexIterator : public IndexNode::iterator {
             UpdateNext();
             if (retain_iterator_order_) {
                 while (HasNext()) {
-                    auto& q = refined_res_.empty() ? res_ : refined_res_;
+                    auto& q = !refine_ ? res_ : refined_res_;
                     auto next_ret = q.top();
                     // with the help of `sign_`, both `res_` and `refine_res` are min-heap.
                     //   such as `COSINE`, `-dist` will be inserted to `res_` or `refine_res`.
@@ -557,9 +557,6 @@ class IndexIterator : public IndexNode::iterator {
     void
     UpdateNext() {
         auto batch_handler = [this](const std::vector<DistId>& batch) {
-            if (batch.empty()) {
-                return;
-            }
             for (const auto& dist_id : batch) {
                 res_.emplace(dist_id.id, dist_id.val * sign_);
             }
