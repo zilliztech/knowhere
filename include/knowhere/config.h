@@ -644,7 +644,8 @@ class BaseConfig : public Config {
      * - A factor for top-k in the first ANNS round.
      */
     CFG_FLOAT retrieval_ann_ratio;
-    CFG_STRING emb_list_meta_file_path;
+    CFG_STRING emb_list_meta_file_path;    // for mmap
+    CFG_STRING emb_list_offset_file_path;  // for build
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(dim).allow_empty_without_default().description("vector dim").for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
@@ -814,10 +815,14 @@ class BaseConfig : public Config {
             .set_range(0.01f, 100.0f)
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(emb_list_meta_file_path)
-            .description("file name of emb_list meta")
+            .description("file name of emb_list meta for mmap load")
             .allow_empty_without_default()
             .for_deserialize()
             .for_deserialize_from_file();
+        KNOWHERE_CONFIG_DECLARE_FIELD(emb_list_offset_file_path)
+            .description("file name of emb_list offsets for build")
+            .allow_empty_without_default()
+            .for_train();
     }
 };
 }  // namespace knowhere
