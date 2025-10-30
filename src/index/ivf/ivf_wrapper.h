@@ -105,7 +105,7 @@ class IndexIvfFactory {
 
     static expected<std::unique_ptr<IndexIVFSQWrapper>>
     create_for_sq(faiss::IndexFlat* qzr_raw_ptr,
-                  const faiss::idx_t d, const size_t nlist, const size_t nbits, const IvfSqConfig& ivf_sq_cfg,
+                  const faiss::idx_t d, const size_t nlist, const IvfSqConfig& ivf_sq_cfg,
                   // this is the data format of the raw data (if the refine is used)
                   const DataFormatEnum raw_data_format, const faiss::MetricType metric = faiss::METRIC_L2);
 };

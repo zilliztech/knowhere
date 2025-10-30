@@ -239,7 +239,7 @@ IndexIvfFactory::create_for_pq(faiss::IndexFlat* qzr_raw_ptr,
 
 expected<std::unique_ptr<IndexIVFSQWrapper>>
 IndexIvfFactory::create_for_sq(faiss::IndexFlat* qzr_raw_ptr,
-                               const faiss::idx_t d, const size_t nlist, const size_t nbits, const IvfSqConfig& ivf_sq_cfg,
+                               const faiss::idx_t d, const size_t nlist, const IvfSqConfig& ivf_sq_cfg,
                                const DataFormatEnum raw_data_format, const faiss::MetricType metric) {
     // the index factory string is either `IVFx,SQ,Refine(y)` or `IVFx,SQ`,
     //   depends on the refine parameters
@@ -247,11 +247,11 @@ IndexIvfFactory::create_for_sq(faiss::IndexFlat* qzr_raw_ptr,
     // create IndexIVFSQ
     // Index does not own qzr
     faiss::ScalarQuantizer::QuantizerType quantizer_type;
-    if (nbits == 4) {
+    if (ivf_sq_cfg.sq_type.value() == "SQ4") {
         quantizer_type = faiss::ScalarQuantizer::QuantizerType::QT_4bit;
-    } else if (nbits == 6) {
+    } else if (ivf_sq_cfg.sq_type.value() == "SQ6") {
         quantizer_type = faiss::ScalarQuantizer::QuantizerType::QT_6bit;
-    } else {
+    } else if (ivf_sq_cfg.sq_type.value() == "SQ8") {
         quantizer_type = faiss::ScalarQuantizer::QuantizerType::QT_8bit;
     }
     auto index = std::make_unique<faiss::IndexIVFScalarQuantizer>(

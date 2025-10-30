@@ -95,6 +95,19 @@ inline bool WhetherAcceptableRefineType(const std::string& refine_type) {
     return false;
 }
 
+inline bool WhetherAcceptableSQType(const std::string& sq_type) {
+    std::vector<std::string> allowed_list = {"sq4", "sq6", "sq8"};
+    std::string sq_type_tolower = str_to_lower(sq_type);
+
+    for (const auto& allowed : allowed_list) {
+        if (sq_type_tolower == allowed) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 class IvfFlatConfig : public IvfConfig {};
 
 class IvfFlatCcConfig : public IvfFlatConfig {
@@ -232,9 +245,13 @@ class ScannConfig : public IvfFlatConfig {
 
 class IvfSqConfig : public IvfConfig {
  public:
-    CFG_INT nbits;
+    CFG_STRING sq_type;
     KNOHWERE_DECLARE_CONFIG(IvfSqConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(nbits).description("nbits").set_default(8).for_train().set_range(4, 8);
+        KNOWHERE_CONFIG_DECLARE_FIELD(sq_type)
+            .description("the type of sq")
+            .set_default("SQ8")
+            .for_train()
+            .for_static();
     }
 
     Status
@@ -247,11 +264,20 @@ class IvfSqConfig : public IvfConfig {
 
         // check our parameters
         if (param_type == PARAM_TYPE::TRAIN) {
-            // check nbits
-            if (nbits.has_value()) {
-                if (nbits.value() != 4 && nbits.value() != 6 && nbits.value() != 8) {
-                    std::string msg = "invalid nbits : " + std::to_string(nbits.value()) +
-                                      ", optional values are [4, 6, 8]";
+            // check sq_type
+            if (sq_type.has_value()) {
+                if (!WhetherAcceptableSQType(sq_type.value())) {
+                    std::string msg = "invalid sq_type : " + sq_type.value() +
+                                      ", optional types are [sq4, sq6, sq8]";
+                    return HandleError(err_msg, msg, Status::invalid_args);
+                }
+            }
+
+            // check refine
+            if (refine_type.has_value()) {
+                if (!WhetherAcceptableRefineType(refine_type.value())) {
+                    std::string msg = "invalid refine type : " + refine_type.value() +
+                                      ", optional types are [sq6, sq8, fp16, bf16, fp32, flat]";
                     return HandleError(err_msg, msg, Status::invalid_args);
                 }
             }

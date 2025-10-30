@@ -614,7 +614,6 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
     if constexpr (std::is_same<IndexIVFSQWrapper, IndexType>::value) {
         const IvfSqConfig& ivf_sq_cfg = static_cast<const IvfSqConfig&>(*cfg);
         auto nlist = MatchNlist(rows, ivf_sq_cfg.nlist.value());
-        auto nbits = MatchNbits(rows, ivf_sq_cfg.nbits.value());
 
         const bool use_elkan = ivf_sq_cfg.use_elkan.value_or(true);
 
@@ -624,7 +623,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
 
         DataFormatEnum data_format = DataType2EnumHelper<DataType>::value;
 
-        auto result = IndexIvfFactory::create_for_sq(qzr.get(), dim, nlist, nbits, ivf_sq_cfg, data_format, metric.value());
+        auto result = IndexIvfFactory::create_for_sq(qzr.get(), dim, nlist, ivf_sq_cfg, data_format, metric.value());
         if (!result.has_value()) {
             return result.error();
         }
