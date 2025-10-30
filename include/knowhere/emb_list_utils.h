@@ -27,6 +27,7 @@ class EmbListOffset {
         assert(lims[idx] == 0);
         assert(rows > 0);
         while (lims[idx] < rows) {
+            assert(idx == 0 || lims[idx] >= lims[idx - 1]);
             offset.push_back(lims[idx]);
             idx++;
         }
