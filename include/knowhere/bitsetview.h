@@ -93,6 +93,7 @@ class BitsetView {
         id_offset_ = id_offset;
     }
 
+    // if the test succeeds, then the index should be skipped during search; otherwise, it should be included.
     bool
     test(int64_t index) const {
         int64_t out_id = index + id_offset_;

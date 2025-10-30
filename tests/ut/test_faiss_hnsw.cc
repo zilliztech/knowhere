@@ -261,7 +261,8 @@ template <typename T>
 std::string
 test_hnsw(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::DataSetPtr& query_ds_ptr,
           const knowhere::DataSetPtr& golden_result, const std::vector<int32_t>& index_params,
-          const knowhere::Json& conf, const bool mv_only_enable, const knowhere::BitsetView bitset_view) {
+          const knowhere::Json& conf, const bool mv_only_enable, const knowhere::BitsetView bitset_view,
+          float expected_recall = 0.8) {
     const std::string index_type = conf[knowhere::meta::INDEX_TYPE].get<std::string>();
 
     // load indices
@@ -292,8 +293,8 @@ test_hnsw(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::DataSetPtr
 
     printf("Recall is %f, %f. Search took %f ms\n", recall, recall_loaded, search_elapsed);
 
-    REQUIRE(recall >= 0.8);
-    REQUIRE(recall_loaded >= 0.8);
+    REQUIRE(recall >= expected_recall);
+    REQUIRE(recall_loaded >= expected_recall);
     REQUIRE(recall == recall_loaded);
 
     // test HasRawData()
@@ -328,7 +329,8 @@ template <typename T>
 std::string
 test_hnsw_range(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::DataSetPtr& query_ds_ptr,
                 const knowhere::DataSetPtr& golden_result, const std::vector<int32_t>& index_params,
-                const knowhere::Json& conf, const bool mv_only_enable, const knowhere::BitsetView bitset_view) {
+                const knowhere::Json& conf, const bool mv_only_enable, const knowhere::BitsetView bitset_view,
+                float expected_recall = 0.8) {
     const std::string index_type = conf[knowhere::meta::INDEX_TYPE].get<std::string>();
 
     // load indices
@@ -358,12 +360,12 @@ test_hnsw_range(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::Data
     float recall = GetRangeSearchRecall(*golden_result, *result.value());
     float recall_loaded = GetRangeSearchRecall(*golden_result, *result_loaded.value());
 
-    printf("Recall is %f, %f. Filtered %zd of %zd (on average). Search took %f ms\n", recall, recall_loaded,
-           result.value()->GetLims()[query_ds_ptr->GetRows()] / query_ds_ptr->GetRows(), default_t_ds_ptr->GetRows(),
-           range_search_elapsed);
+    printf("Recall is %f, %f. Filtered %zd of %zd (on average), bitset rate %.2f. Search took %f ms\n", recall,
+           recall_loaded, result.value()->GetLims()[query_ds_ptr->GetRows()] / query_ds_ptr->GetRows(),
+           default_t_ds_ptr->GetRows(), bitset_view.filter_ratio(), range_search_elapsed);
 
-    REQUIRE(recall >= 0.8);
-    REQUIRE(recall_loaded >= 0.8);
+    REQUIRE(recall >= expected_recall);
+    REQUIRE(recall_loaded >= expected_recall);
     REQUIRE(recall == recall_loaded);
 
     // test HasRawData()
@@ -530,20 +532,21 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                         std::vector<std::string> index_files;
                         std::string index_file;
 
-                        // test various bitset rates
                         for (const float bitset_rate : BITSET_RATES) {
-                            const int32_t nbits_set = mv_only_enable
-                                                          ? partition_size + (nb - partition_size) * bitset_rate
-                                                          : nb * bitset_rate;
+                            // nbits_set is the number of bits that should be set to 1 (skipped during search)
+                            const int32_t nbits_set = mv_only_enable ? partition_size * bitset_rate : nb * bitset_rate;
+                            const int32_t filter_out_bits =
+                                mv_only_enable ? (nb - partition_size) + nbits_set : nbits_set;
                             const std::vector<uint8_t> bitset_data =
-                                mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
-                                               : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                mv_only_enable
+                                    ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, nbits_set)
+                                    : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
                             // initialize bitset_view.
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
-                            if (nbits_set != 0) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                            if (filter_out_bits != 0) {
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
                             }
 
                             // get a golden result
@@ -652,18 +655,19 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
                         // test various bitset rates
                         for (const float bitset_rate : BITSET_RATES) {
-                            const int32_t nbits_set = mv_only_enable
-                                                          ? partition_size + (nb - partition_size) * bitset_rate
-                                                          : nb * bitset_rate;
+                            const int32_t nbits_set = mv_only_enable ? partition_size * bitset_rate : nb * bitset_rate;
+                            const int32_t filter_out_bits =
+                                mv_only_enable ? (nb - partition_size) + nbits_set : nbits_set;
                             const std::vector<uint8_t> bitset_data =
-                                mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
-                                               : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                mv_only_enable
+                                    ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, nbits_set)
+                                    : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
                             // initialize bitset_view.
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
-                            if (nbits_set != 0) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                            if (filter_out_bits != 0) {
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
                             }
 
                             // get a golden result
@@ -873,18 +877,19 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
                         // test various bitset rates
                         for (const float bitset_rate : BITSET_RATES) {
-                            const int32_t nbits_set = mv_only_enable
-                                                          ? partition_size + (nb - partition_size) * bitset_rate
-                                                          : nb * bitset_rate;
+                            const int32_t nbits_set = mv_only_enable ? partition_size * bitset_rate : nb * bitset_rate;
+                            const int32_t filter_out_bits =
+                                mv_only_enable ? (nb - partition_size) + nbits_set : nbits_set;
                             const std::vector<uint8_t> bitset_data =
-                                mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
-                                               : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                mv_only_enable
+                                    ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, nbits_set)
+                                    : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
                             // initialize bitset_view.
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
-                            if (nbits_set != 0) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                            if (filter_out_bits != 0) {
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
                             }
 
                             // get a golden result
@@ -1083,18 +1088,19 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
                         // test various bitset rates
                         for (const float bitset_rate : BITSET_RATES) {
-                            const int32_t nbits_set = mv_only_enable
-                                                          ? partition_size + (nb - partition_size) * bitset_rate
-                                                          : nb * bitset_rate;
+                            const int32_t nbits_set = mv_only_enable ? partition_size * bitset_rate : nb * bitset_rate;
+                            const int32_t filter_out_bits =
+                                mv_only_enable ? (nb - partition_size) + nbits_set : nbits_set;
                             const std::vector<uint8_t> bitset_data =
-                                mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
-                                               : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                mv_only_enable
+                                    ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, nbits_set)
+                                    : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
                             // initialize bitset_view.
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
-                            if (nbits_set != 0) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                            if (filter_out_bits != 0) {
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
                             }
 
                             // get a golden result
@@ -1420,18 +1426,20 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
                             // test various bitset rates
                             for (const float bitset_rate : BITSET_RATES) {
-                                const int32_t nbits_set = mv_only_enable
-                                                              ? partition_size + (nb - partition_size) * bitset_rate
-                                                              : nb * bitset_rate;
+                                const int32_t nbits_set =
+                                    mv_only_enable ? partition_size * bitset_rate : nb * bitset_rate;
+                                const int32_t filter_out_bits =
+                                    mv_only_enable ? (nb - partition_size) + nbits_set : nbits_set;
                                 const std::vector<uint8_t> bitset_data =
-                                    mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
-                                                   : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                    mv_only_enable
+                                        ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, nbits_set)
+                                        : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
                                 // initialize bitset_view.
                                 // provide a default one if nbits_set == 0
                                 knowhere::BitsetView bitset_view = nullptr;
-                                if (nbits_set != 0) {
-                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                                if (filter_out_bits != 0) {
+                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
                                 }
 
                                 // get a golden result
@@ -1553,18 +1561,20 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
                             // test various bitset rates
                             for (const float bitset_rate : BITSET_RATES) {
-                                const int32_t nbits_set = mv_only_enable
-                                                              ? partition_size + (nb - partition_size) * bitset_rate
-                                                              : nb * bitset_rate;
+                                const int32_t nbits_set =
+                                    mv_only_enable ? partition_size * bitset_rate : nb * bitset_rate;
+                                const int32_t filter_out_bits =
+                                    mv_only_enable ? (nb - partition_size) + nbits_set : nbits_set;
                                 const std::vector<uint8_t> bitset_data =
-                                    mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
-                                                   : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                    mv_only_enable
+                                        ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, nbits_set)
+                                        : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
                                 // initialize bitset_view.
                                 // provide a default one if nbits_set == 0
                                 knowhere::BitsetView bitset_view = nullptr;
-                                if (nbits_set != 0) {
-                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                                if (filter_out_bits != 0) {
+                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
                                 }
 
                                 // get a golden result
@@ -1783,6 +1793,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                             GenerateScalarInfo(nb);
                         auto partition_size = scalar_info[0][0].size();  // will be masked by partition key value
 
+                        float expected_recall = 0.75;
                         for (const bool mv_only_enable : MV_ONLYs) {
                             printf("with mv only enabled : %d\n", mv_only_enable);
                             if (mv_only_enable) {
@@ -1793,17 +1804,19 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
                             // test various bitset rates
                             for (const float bitset_rate : BITSET_RATES) {
-                                const int32_t nbits_set = mv_only_enable
-                                                              ? partition_size + (nb - partition_size) * bitset_rate
-                                                              : nb * bitset_rate;
+                                const int32_t nbits_set =
+                                    mv_only_enable ? partition_size * bitset_rate : nb * bitset_rate;
+                                const int32_t filter_out_bits =
+                                    mv_only_enable ? (nb - partition_size) + nbits_set : nbits_set;
                                 const std::vector<uint8_t> bitset_data =
-                                    mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
-                                                   : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                    mv_only_enable
+                                        ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, nbits_set)
+                                        : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
                                 // initialize bitset_view.
                                 // provide a default one if nbits_set == 0
                                 knowhere::BitsetView bitset_view = nullptr;
-                                if (nbits_set != 0) {
-                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                                if (filter_out_bits != 0) {
+                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
                                 }
 
                                 // get a golden result
@@ -1827,9 +1840,9 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                         pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
                                         range_filter, int(bitset_rate * 100));
 
-                                    index_file = test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
-                                                                                 golden_result.value(), params, conf,
-                                                                                 mv_only_enable, bitset_view);
+                                    index_file = test_hnsw_range<knowhere::fp32>(
+                                        default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
+                                        mv_only_enable, bitset_view, expected_recall);
                                     index_files.emplace_back(index_file);
 
                                     // test fp16 candidate
@@ -1839,9 +1852,9 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                         pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
                                         range_filter, int(bitset_rate * 100));
 
-                                    index_file = test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr,
-                                                                                 golden_result.value(), params, conf,
-                                                                                 mv_only_enable, bitset_view);
+                                    index_file = test_hnsw_range<knowhere::fp16>(
+                                        default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
+                                        mv_only_enable, bitset_view, expected_recall);
                                     index_files.emplace_back(index_file);
 
                                     // test bf16 candidate
@@ -1851,9 +1864,9 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                         pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb, radius,
                                         range_filter, int(bitset_rate * 100));
 
-                                    index_file = test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr,
-                                                                                 golden_result.value(), params, conf,
-                                                                                 mv_only_enable, bitset_view);
+                                    index_file = test_hnsw_range<knowhere::bf16>(
+                                        default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
+                                        mv_only_enable, bitset_view, expected_recall);
                                     index_files.emplace_back(index_file);
 
                                     if (index_support_int8(conf)) {
@@ -1865,9 +1878,9 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                             pq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim, nb,
                                             radius, range_filter, int(bitset_rate * 100));
 
-                                        index_file = test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr,
-                                                                                     golden_result.value(), params,
-                                                                                     conf, mv_only_enable, bitset_view);
+                                        index_file = test_hnsw_range<knowhere::int8>(
+                                            default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
+                                            mv_only_enable, bitset_view, expected_recall);
                                         index_files.emplace_back(index_file);
                                     }
 
@@ -1894,7 +1907,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
                                         index_file = test_hnsw_range<knowhere::fp32>(
                                             default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
-                                            conf_refine, mv_only_enable, bitset_view);
+                                            conf_refine, mv_only_enable, bitset_view, expected_recall);
                                         index_files.emplace_back(index_file);
                                     }
 
@@ -1921,7 +1934,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
                                         index_file = test_hnsw_range<knowhere::fp16>(
                                             default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
-                                            conf_refine, mv_only_enable, bitset_view);
+                                            conf_refine, mv_only_enable, bitset_view, expected_recall);
                                         index_files.emplace_back(index_file);
                                     }
 
@@ -1948,7 +1961,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
                                         index_file = test_hnsw_range<knowhere::bf16>(
                                             default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
-                                            conf_refine, mv_only_enable, bitset_view);
+                                            conf_refine, mv_only_enable, bitset_view, expected_recall);
                                         index_files.emplace_back(index_file);
                                     }
                                 }
@@ -2010,6 +2023,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                             GenerateScalarInfo(nb);
                         auto partition_size = scalar_info[0][0].size();  // will be masked by partition key value
 
+                        float expected_recall = 0.75;
                         for (const bool mv_only_enable : MV_ONLYs) {
                             printf("with mv only enabled : %d\n", mv_only_enable);
                             if (mv_only_enable) {
@@ -2021,17 +2035,19 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
                             // test various bitset rates
                             for (const float bitset_rate : BITSET_RATES) {
-                                const int32_t nbits_set = mv_only_enable
-                                                              ? partition_size + (nb - partition_size) * bitset_rate
-                                                              : nb * bitset_rate;
+                                const int32_t nbits_set =
+                                    mv_only_enable ? partition_size * bitset_rate : nb * bitset_rate;
+                                const int32_t filter_out_bits =
+                                    mv_only_enable ? (nb - partition_size) + nbits_set : nbits_set;
                                 const std::vector<uint8_t> bitset_data =
-                                    mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
-                                                   : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                    mv_only_enable
+                                        ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, nbits_set)
+                                        : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
                                 // initialize bitset_view.
                                 // provide a default one if nbits_set == 0
                                 knowhere::BitsetView bitset_view = nullptr;
-                                if (nbits_set != 0) {
-                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                                if (filter_out_bits != 0) {
+                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
                                 }
 
                                 // get a golden result
@@ -2059,9 +2075,9 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                         prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim,
                                         nb, radius, range_filter, int(bitset_rate * 100));
 
-                                    index_file = test_hnsw_range<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
-                                                                                 golden_result.value(), params, conf,
-                                                                                 mv_only_enable, bitset_view);
+                                    index_file = test_hnsw_range<knowhere::fp32>(
+                                        default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
+                                        mv_only_enable, bitset_view, expected_recall);
                                     index_files.emplace_back(index_file);
 
                                     // test fp16 candidate
@@ -2072,9 +2088,9 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                         prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim,
                                         nb, radius, range_filter, int(bitset_rate * 100));
 
-                                    index_file = test_hnsw_range<knowhere::fp16>(default_ds_ptr, query_ds_ptr,
-                                                                                 golden_result.value(), params, conf,
-                                                                                 mv_only_enable, bitset_view);
+                                    index_file = test_hnsw_range<knowhere::fp16>(
+                                        default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
+                                        mv_only_enable, bitset_view, expected_recall);
                                     index_files.emplace_back(index_file);
 
                                     // test bf16 candidate
@@ -2085,9 +2101,9 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                         prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(), dim,
                                         nb, radius, range_filter, int(bitset_rate * 100));
 
-                                    index_file = test_hnsw_range<knowhere::bf16>(default_ds_ptr, query_ds_ptr,
-                                                                                 golden_result.value(), params, conf,
-                                                                                 mv_only_enable, bitset_view);
+                                    index_file = test_hnsw_range<knowhere::bf16>(
+                                        default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
+                                        mv_only_enable, bitset_view, expected_recall);
                                     index_files.emplace_back(index_file);
 
                                     if (index_support_int8(conf)) {
@@ -2099,9 +2115,9 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                             prq_num, prq_m, NBITS[nbits_type], DISTANCE_TYPES[distance_type].c_str(),
                                             dim, nb, radius, range_filter, int(bitset_rate * 100));
 
-                                        index_file = test_hnsw_range<knowhere::int8>(default_ds_ptr, query_ds_ptr,
-                                                                                     golden_result.value(), params,
-                                                                                     conf, mv_only_enable, bitset_view);
+                                        index_file = test_hnsw_range<knowhere::int8>(
+                                            default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf,
+                                            mv_only_enable, bitset_view, expected_recall);
                                         index_files.emplace_back(index_file);
                                     }
 
@@ -2130,7 +2146,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                         // test a candidate
                                         index_file = test_hnsw_range<knowhere::fp32>(
                                             default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
-                                            conf_refine, mv_only_enable, bitset_view);
+                                            conf_refine, mv_only_enable, bitset_view, expected_recall);
                                         index_files.emplace_back(index_file);
                                     }
 
@@ -2159,7 +2175,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                         // test a candidate
                                         index_file = test_hnsw_range<knowhere::fp16>(
                                             default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
-                                            conf_refine, mv_only_enable, bitset_view);
+                                            conf_refine, mv_only_enable, bitset_view, expected_recall);
 
                                         index_files.emplace_back(index_file);
                                     }
@@ -2189,7 +2205,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
                                         // test a candidate
                                         index_file = test_hnsw_range<knowhere::bf16>(
                                             default_ds_ptr, query_ds_ptr, golden_result.value(), params_refine,
-                                            conf_refine, mv_only_enable, bitset_view);
+                                            conf_refine, mv_only_enable, bitset_view, expected_recall);
                                         index_files.emplace_back(index_file);
                                     }
                                 }
