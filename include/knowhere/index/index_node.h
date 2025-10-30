@@ -528,7 +528,7 @@ class IndexNode : public Object {
         // 2. build index
         LOG_KNOWHERE_INFO_ << "Build EmbList-Index with metric type: " << original_metric_type
                            << ", el metric type: " << el_metric_type << ", sub metric type: " << sub_metric_type;
-        RETURN_IF_ERROR(Build(dataset, std::move(cfg), use_knowhere_build_pool));
+        RETURN_IF_ERROR(Build(dataset, cfg, use_knowhere_build_pool));
 
         // 3. create emb_list_offset
         emb_list_offset_ = std::make_unique<EmbListOffset>(lims, num_rows);
