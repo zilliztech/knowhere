@@ -530,20 +530,21 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                         std::vector<std::string> index_files;
                         std::string index_file;
 
-                        // test various bitset rates
                         for (const float bitset_rate : BITSET_RATES) {
-                            const int32_t nbits_set = mv_only_enable
-                                                          ? partition_size + (nb - partition_size) * bitset_rate
-                                                          : nb * bitset_rate;
+                            // nbits_set is the number of bits that should be set to 1 (skipped during search)
+                            const int32_t nbits_set = mv_only_enable ? partition_size * bitset_rate : nb * bitset_rate;
+                            const int32_t filter_out_bits =
+                                mv_only_enable ? (nb - partition_size) + nbits_set : nbits_set;
                             const std::vector<uint8_t> bitset_data =
-                                mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
-                                               : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                mv_only_enable
+                                    ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, nbits_set)
+                                    : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
                             // initialize bitset_view.
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
-                            if (nbits_set != 0) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                            if (filter_out_bits != 0) {
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
                             }
 
                             // get a golden result
@@ -652,18 +653,19 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
                         // test various bitset rates
                         for (const float bitset_rate : BITSET_RATES) {
-                            const int32_t nbits_set = mv_only_enable
-                                                          ? partition_size + (nb - partition_size) * bitset_rate
-                                                          : nb * bitset_rate;
+                            const int32_t nbits_set = mv_only_enable ? partition_size * bitset_rate : nb * bitset_rate;
+                            const int32_t filter_out_bits =
+                                mv_only_enable ? (nb - partition_size) + nbits_set : nbits_set;
                             const std::vector<uint8_t> bitset_data =
-                                mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
-                                               : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                mv_only_enable
+                                    ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, nbits_set)
+                                    : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
                             // initialize bitset_view.
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
-                            if (nbits_set != 0) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                            if (filter_out_bits != 0) {
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
                             }
 
                             // get a golden result
@@ -873,18 +875,19 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
                         // test various bitset rates
                         for (const float bitset_rate : BITSET_RATES) {
-                            const int32_t nbits_set = mv_only_enable
-                                                          ? partition_size + (nb - partition_size) * bitset_rate
-                                                          : nb * bitset_rate;
+                            const int32_t nbits_set = mv_only_enable ? partition_size * bitset_rate : nb * bitset_rate;
+                            const int32_t filter_out_bits =
+                                mv_only_enable ? (nb - partition_size) + nbits_set : nbits_set;
                             const std::vector<uint8_t> bitset_data =
-                                mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
-                                               : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                mv_only_enable
+                                    ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, nbits_set)
+                                    : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
                             // initialize bitset_view.
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
-                            if (nbits_set != 0) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                            if (filter_out_bits != 0) {
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
                             }
 
                             // get a golden result
@@ -1083,18 +1086,19 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
                         // test various bitset rates
                         for (const float bitset_rate : BITSET_RATES) {
-                            const int32_t nbits_set = mv_only_enable
-                                                          ? partition_size + (nb - partition_size) * bitset_rate
-                                                          : nb * bitset_rate;
+                            const int32_t nbits_set = mv_only_enable ? partition_size * bitset_rate : nb * bitset_rate;
+                            const int32_t filter_out_bits =
+                                mv_only_enable ? (nb - partition_size) + nbits_set : nbits_set;
                             const std::vector<uint8_t> bitset_data =
-                                mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
-                                               : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                mv_only_enable
+                                    ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, nbits_set)
+                                    : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
                             // initialize bitset_view.
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
-                            if (nbits_set != 0) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                            if (filter_out_bits != 0) {
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
                             }
 
                             // get a golden result
@@ -1420,18 +1424,20 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
                             // test various bitset rates
                             for (const float bitset_rate : BITSET_RATES) {
-                                const int32_t nbits_set = mv_only_enable
-                                                              ? partition_size + (nb - partition_size) * bitset_rate
-                                                              : nb * bitset_rate;
+                                const int32_t nbits_set =
+                                    mv_only_enable ? partition_size * bitset_rate : nb * bitset_rate;
+                                const int32_t filter_out_bits =
+                                    mv_only_enable ? (nb - partition_size) + nbits_set : nbits_set;
                                 const std::vector<uint8_t> bitset_data =
-                                    mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
-                                                   : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                    mv_only_enable
+                                        ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, nbits_set)
+                                        : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
                                 // initialize bitset_view.
                                 // provide a default one if nbits_set == 0
                                 knowhere::BitsetView bitset_view = nullptr;
-                                if (nbits_set != 0) {
-                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                                if (filter_out_bits != 0) {
+                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
                                 }
 
                                 // get a golden result
@@ -1553,18 +1559,20 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
                             // test various bitset rates
                             for (const float bitset_rate : BITSET_RATES) {
-                                const int32_t nbits_set = mv_only_enable
-                                                              ? partition_size + (nb - partition_size) * bitset_rate
-                                                              : nb * bitset_rate;
+                                const int32_t nbits_set =
+                                    mv_only_enable ? partition_size * bitset_rate : nb * bitset_rate;
+                                const int32_t filter_out_bits =
+                                    mv_only_enable ? (nb - partition_size) + nbits_set : nbits_set;
                                 const std::vector<uint8_t> bitset_data =
-                                    mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
-                                                   : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                    mv_only_enable
+                                        ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, nbits_set)
+                                        : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
 
                                 // initialize bitset_view.
                                 // provide a default one if nbits_set == 0
                                 knowhere::BitsetView bitset_view = nullptr;
-                                if (nbits_set != 0) {
-                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                                if (filter_out_bits != 0) {
+                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
                                 }
 
                                 // get a golden result
@@ -1793,17 +1801,19 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
                             // test various bitset rates
                             for (const float bitset_rate : BITSET_RATES) {
-                                const int32_t nbits_set = mv_only_enable
-                                                              ? partition_size + (nb - partition_size) * bitset_rate
-                                                              : nb * bitset_rate;
+                                const int32_t nbits_set =
+                                    mv_only_enable ? partition_size * bitset_rate : nb * bitset_rate;
+                                const int32_t filter_out_bits =
+                                    mv_only_enable ? (nb - partition_size) + nbits_set : nbits_set;
                                 const std::vector<uint8_t> bitset_data =
-                                    mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
-                                                   : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                    mv_only_enable
+                                        ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, nbits_set)
+                                        : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
                                 // initialize bitset_view.
                                 // provide a default one if nbits_set == 0
                                 knowhere::BitsetView bitset_view = nullptr;
-                                if (nbits_set != 0) {
-                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                                if (filter_out_bits != 0) {
+                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
                                 }
 
                                 // get a golden result
@@ -2021,17 +2031,19 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
                             // test various bitset rates
                             for (const float bitset_rate : BITSET_RATES) {
-                                const int32_t nbits_set = mv_only_enable
-                                                              ? partition_size + (nb - partition_size) * bitset_rate
-                                                              : nb * bitset_rate;
+                                const int32_t nbits_set =
+                                    mv_only_enable ? partition_size * bitset_rate : nb * bitset_rate;
+                                const int32_t filter_out_bits =
+                                    mv_only_enable ? (nb - partition_size) + nbits_set : nbits_set;
                                 const std::vector<uint8_t> bitset_data =
-                                    mv_only_enable ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, 0)
-                                                   : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+                                    mv_only_enable
+                                        ? GenerateBitsetByScalarInfoAndFirstTBits(scalar_info[0][0], nb, nbits_set)
+                                        : GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
                                 // initialize bitset_view.
                                 // provide a default one if nbits_set == 0
                                 knowhere::BitsetView bitset_view = nullptr;
-                                if (nbits_set != 0) {
-                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, nb - nbits_set);
+                                if (filter_out_bits != 0) {
+                                    bitset_view = knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
                                 }
 
                                 // get a golden result

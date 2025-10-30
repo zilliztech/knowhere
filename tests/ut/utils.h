@@ -338,22 +338,14 @@ inline std::vector<uint8_t>
 GenerateBitsetByScalarInfoAndFirstTBits(const std::vector<uint32_t>& scalar, size_t n, size_t t) {
     assert(scalar.size() <= n);
     assert(t >= 0 && t <= n - scalar.size());
-    std::vector<uint8_t> data((n + 8 - 1) / 8, 0);
-    // set bits by scalar info
-    for (size_t i = 0; i < scalar.size(); ++i) {
-        data[scalar[i] >> 3] |= (0x1 << (scalar[i] & 0x7));
-    }
-    size_t count = 0;
-    for (size_t i = 0; i < n; ++i) {
-        if (count == t) {
-            break;
+    // initialize all bits to 1 (set the unrelevant partition data to 1)
+    std::vector<uint8_t> data((n + 8 - 1) / 8, 0xff);
+    // set the scalar data to 0 first
+    if (scalar.size() > t) {
+        // reset the [t, scalar.size()) bits to 0
+        for (size_t i = t; i < scalar.size(); ++i) {
+            data[scalar[i] >> 3] &= ~(0x1 << (scalar[i] & 0x7));
         }
-        // already set, skip
-        if (data[i >> 3] & (0x1 << (i & 0x7))) {
-            continue;
-        }
-        data[i >> 3] |= (0x1 << (i & 0x7));
-        ++count;
     }
     return data;
 }
