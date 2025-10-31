@@ -825,10 +825,16 @@ class IndexNode : public Object {
         // Stage 1: base-index search - retrieve top k' vectors
         //  top k' = k * retrieval_ann_ratio
         config.metric_type = sub_metric_type;
-        int32_t vec_topk = std::max((int32_t)(el_k * config.retrieval_ann_ratio.value()), 1);
+        auto retrieval_ann_ratio = config.retrieval_ann_ratio.value();
+        if (retrieval_ann_ratio <= 0.0f) {
+            auto err_msg = "retrieval_ann_ratio could not be less than or equal to 0";
+            LOG_KNOWHERE_WARNING_ << err_msg;
+            return expected<DataSetPtr>::Err(Status::emb_list_inner_error, err_msg);
+        }
+        int32_t vec_topk = std::min(std::max((int32_t)(el_k * retrieval_ann_ratio), 1), (int32_t)Count());
         config.k = vec_topk;
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-        knowhere_search_emb_list_retrieval_ann_ratio.Observe(config.retrieval_ann_ratio.value());
+        knowhere_search_emb_list_retrieval_ann_ratio.Observe(retrieval_ann_ratio);
         TimeRecorder rc("Emb List Search - 1st round ann search");
 #endif
         auto ann_search_res = Search(dataset, std::move(cfg), bitset, op_context).value();

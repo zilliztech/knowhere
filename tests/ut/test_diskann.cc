@@ -431,7 +431,7 @@ emb_list_search() {
         json["index_prefix"] = metric_dir_map[metric_str];
         json["search_list_size"] = 36;
         json["beamwidth"] = 8;
-        json["retrieval_ann_ratio"] = 2.0f;
+        json["retrieval_ann_ratio"] = 3.0f;
         return json;
     };
 
