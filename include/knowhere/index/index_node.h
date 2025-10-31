@@ -507,6 +507,42 @@ class IndexNode : public Object {
     }
 
     virtual Status
+    BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
+                 bool use_knowhere_build_pool = true) {
+        // 1. split metric_type to el_metric_type and sub_metric_type
+        auto& config = static_cast<BaseConfig&>(*cfg);
+        auto original_metric_type = config.metric_type.value();
+        auto el_metric_type_or = get_el_metric_type(original_metric_type);
+        if (!el_metric_type_or.has_value()) {
+            LOG_KNOWHERE_WARNING_ << "Invalid metric type for emb_list: " << original_metric_type;
+            return Status::emb_list_inner_error;
+        }
+        auto el_metric_type = el_metric_type_or.value();
+        auto sub_metric_type_or = get_sub_metric_type(original_metric_type);
+        if (!sub_metric_type_or.has_value()) {
+            LOG_KNOWHERE_WARNING_ << "Invalid sub metric type for emb_list: " << original_metric_type;
+            return Status::emb_list_inner_error;
+        }
+        // set sub metric type as the metric type for build
+        auto sub_metric_type = sub_metric_type_or.value();
+        config.metric_type = sub_metric_type;
+
+        // 2. build index
+        LOG_KNOWHERE_INFO_ << "Build EmbList-Index with metric type: " << original_metric_type
+                           << ", el metric type: " << el_metric_type << ", sub metric type: " << sub_metric_type;
+        RETURN_IF_ERROR(Build(dataset, cfg, use_knowhere_build_pool));
+
+        // 3. create emb_list_offset
+        emb_list_offset_ = std::make_unique<EmbListOffset>(lims, num_rows);
+
+        // 4. Set the mapping from base index internal vector IDs to emb_list IDs.
+        // When using emb_list, all filtering bitset checks are performed at the emb_list level,
+        // not at the individual vector level. This means that whenever the index needs to check whether
+        // a vector is masked (filtered out), it must first map the vector's idx to its corresponding emb_list idx.
+        return SetBaseIndexIDMap();
+    }
+
+    virtual Status
     BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) {
         auto& config = static_cast<BaseConfig&>(*cfg);
         auto el_metric_type_or = get_el_metric_type(config.metric_type.value());
@@ -519,41 +555,13 @@ class IndexNode : public Object {
                 << "Dataset is nullptr, but metric type is emb_list, need emb_list_offset from dataset";
             return Status::emb_list_inner_error;
         }
-        auto lims = dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+        const size_t* lims = dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
         if (lims == nullptr) {
             LOG_KNOWHERE_WARNING_ << "Could not find emb list offset from dataset, but metric type is emb_list";
             return Status::emb_list_inner_error;
         }
 
-        // if is emb_list,
-        //   1. split metric_type into el_metric_type and sub_metric_type
-        //   2. build index
-        //   3. create emb_list_offset
-        //   4. set id_map
-
-        // 1. split metric_type to el_metric_type and sub_metric_type
-        el_metric_type_ = el_metric_type_or.value();
-        auto sub_metric_type_or = get_sub_metric_type(config.metric_type.value());
-        if (!sub_metric_type_or.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "Invalid metric type: " << config.metric_type.value();
-            return Status::emb_list_inner_error;
-        }
-        config.metric_type = sub_metric_type_or.value();
-
-        // 2. build index
-        LOG_KNOWHERE_INFO_ << "Build EmbList-Index with metric type: " << config.metric_type.value()
-                           << ", el metric type: " << el_metric_type_
-                           << ", sub metric type: " << sub_metric_type_or.value();
-        RETURN_IF_ERROR(Build(dataset, std::move(cfg), use_knowhere_build_pool));
-
-        // 3. create emb_list_offset
-        emb_list_offset_ = std::make_unique<EmbListOffset>(lims, static_cast<size_t>(dataset->GetRows()));
-
-        // 4. Set the mapping from base index internal vector IDs to emb_list IDs.
-        // When using emb_list, all filtering bitset checks are performed at the emb_list level,
-        // not at the individual vector level. This means that whenever the index needs to check whether
-        // a vector is masked (filtered out), it must first map the vector's idx to its corresponding emb_list idx.
-        return SetBaseIndexIDMap();
+        return BuildEmbList(dataset, std::move(cfg), lims, dataset->GetRows(), use_knowhere_build_pool);
     }
 
     virtual Status

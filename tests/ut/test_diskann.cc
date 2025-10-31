@@ -55,6 +55,7 @@ std::string kEmbListCOSINEIndexDir = kDir + "/emb_list_cosine_index";
 std::string kEmbListL2IndexPrefix = kEmbListL2IndexDir + "/max_sim_l2";
 std::string kEmbListIPIndexPrefix = kEmbListIPIndexDir + "/max_sim_ip";
 std::string kEmbListCOSINEIndexPrefix = kEmbListCOSINEIndexDir + "/max_sim_cosine";
+std::string kEmbListOffsetPath = kDir + "/emb_list_offset.bin";
 
 constexpr uint32_t kNumRows = 1000;
 constexpr uint32_t kNumQueries = 10;
@@ -409,6 +410,7 @@ emb_list_search() {
         knowhere::Json json = base_gen();
         json["index_prefix"] = metric_dir_map[metric_str];
         json["data_path"] = kRawDataPath;
+        json["emb_list_offset_file_path"] = kEmbListOffsetPath;
         json["max_degree"] = 56;
         json["search_list_size"] = 128;
         json["pq_code_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
@@ -434,11 +436,11 @@ emb_list_search() {
     };
 
     int each_el_len = 10;
-    int num_el = int(kNumRows / each_el_len) + 1;
+    int num_el = int((kNumRows + each_el_len - 1) / each_el_len);
     auto fp32_query_ds = GenQueryEmbListDataSet(kNumQueries, kDim, 42);
     knowhere::DataSetPtr knn_gt_ptr = nullptr;
     auto fp32_base_ds = GenEmbListDataSet(kNumRows, kDim, 42, each_el_len);
-    auto empty_ds_with_emb_list_offset = GenEmptyDataSetWithEmbListOffset(kNumRows, each_el_len);
+    auto emb_list_offset = GenEmbListOffset(kNumRows, each_el_len);
 
     auto base_ds = knowhere::ConvertToDataTypeIfNeeded<DataType>(fp32_base_ds);
     auto query_ds = knowhere::ConvertToDataTypeIfNeeded<DataType>(fp32_query_ds);
@@ -446,7 +448,7 @@ emb_list_search() {
     {
         auto base_ptr = static_cast<const DataType*>(base_ds->GetTensor());
         WriteRawDataToDisk<DataType>(kRawDataPath, base_ptr, kNumRows, kDim);
-
+        WriteEmbListOffsetToDisk(kEmbListOffsetPath, emb_list_offset.data(), emb_list_offset.size());
         // generate the gt of knn search
         auto base_json = base_gen();
         auto result_knn = knowhere::BruteForce::Search<DataType>(base_ds, query_ds, base_json, nullptr);
@@ -465,7 +467,7 @@ emb_list_search() {
         {
             auto diskann =
                 knowhere::IndexFactory::Instance().Create<DataType>("DISKANN", version, diskann_index_pack).value();
-            diskann.Build(empty_ds_with_emb_list_offset, json);
+            diskann.Build(nullptr, json);
             diskann.Serialize(binset);
         }
         {
