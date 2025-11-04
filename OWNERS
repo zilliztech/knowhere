@@ -11,6 +11,9 @@ filters:
       - zhengbuqian
       - chasingegg
       - alexanderguzhva
+      - alwayslove2013
+      - CLiqing
+      - marcelo-cjl
 
     approvers:
       - xiaofan-luan
@@ -23,6 +26,9 @@ filters:
       - zhengbuqian
       - chasingegg
       - alexanderguzhva
+      - alwayslove2013
+      - CLiqing
+      - marcelo-cjl
 
   "tests":
     reviewers:
