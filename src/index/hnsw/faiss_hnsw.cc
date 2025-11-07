@@ -1273,7 +1273,20 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         BitsetView bitset(bitset_);
         if (!internal_offset_to_most_external_id.empty()) {
-            bitset.set_out_ids(internal_offset_to_most_external_id.data(), internal_offset_to_most_external_id.size());
+            if (emb_list_offset_ != nullptr) {
+                // if emb list, manually calculate the number of filtered out ids
+                size_t num_filtered_out_ids = 0;
+                for (size_t i = 0; i < bitset.size(); i++) {
+                    if (bitset.test(i)) {
+                        num_filtered_out_ids += emb_list_offset_->offset[i + 1] - emb_list_offset_->offset[i];
+                    }
+                }
+                bitset.set_out_ids(internal_offset_to_most_external_id.data(),
+                                   internal_offset_to_most_external_id.size(), num_filtered_out_ids);
+            } else {
+                bitset.set_out_ids(internal_offset_to_most_external_id.data(),
+                                   internal_offset_to_most_external_id.size());
+            }
         }
         auto index_id = getIndexToSearchByScalarInfo(bitset);
         if (index_id < 0) {
@@ -1484,7 +1497,11 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         BitsetView bitset(bitset_);
         if (!internal_offset_to_most_external_id.empty()) {
-            bitset.set_out_ids(internal_offset_to_most_external_id.data(), internal_offset_to_most_external_id.size());
+            // Note: We do not need to calculate the actual number of filtered ids here;
+            // we only need the bitset to determine the index_id.
+            int32_t num_filtered_out_ids = 0;
+            bitset.set_out_ids(internal_offset_to_most_external_id.data(), internal_offset_to_most_external_id.size(),
+                               num_filtered_out_ids);
         }
         auto index_id = getIndexToSearchByScalarInfo(bitset);
         if (index_id < 0) {

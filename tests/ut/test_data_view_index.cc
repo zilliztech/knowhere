@@ -25,6 +25,7 @@
 
 namespace {
 constexpr float kKnnRecallThreshold = 0.6f;
+constexpr float kEmbListRecallThreshold = 0.6f;  // same as kKnnRecallThreshold
 constexpr float kBruteForceRecallThreshold = 0.95f;
 constexpr int kCosineMaxMissNum = 5;
 }  // namespace
@@ -299,6 +300,220 @@ BaseTest(const knowhere::DataSetPtr train_ds, const knowhere::DataSetPtr query_d
         for (int i = 0; i < nq; ++i) {
             CHECK(scann_with_dv_ids[scann_with_dv_lims[i]] == i);
         }
+    }
+}
+
+template <typename DataType>
+void
+EmbListTest(const knowhere::DataSetPtr train_ds, const knowhere::DataSetPtr query_ds, const int64_t k,
+            const knowhere::MetricType metric, const knowhere::Json& conf, const size_t num_el) {
+    auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+    auto base = knowhere::ConvertToDataTypeIfNeeded<DataType>(train_ds);
+    auto query = knowhere::ConvertToDataTypeIfNeeded<DataType>(query_ds);
+    auto dim = base->GetDim();
+    auto nq = query->GetRows();
+
+    knowhere::ViewDataOp data_view = [&base, data_size = dim](size_t id) {
+        auto data = (const DataType*)base->GetTensor();
+        return data + data_size * id;
+    };
+    auto data_view_pack = knowhere::Pack(data_view);
+    auto scann_with_dv_refiner =
+        knowhere::IndexFactory::Instance()
+            .Create<DataType>(knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, version, data_view_pack)
+            .value();
+    REQUIRE(scann_with_dv_refiner.Type() == knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR);
+    REQUIRE(scann_with_dv_refiner.Build(base, conf, false) == knowhere::Status::success);
+    REQUIRE(scann_with_dv_refiner.Size() > 0);
+    REQUIRE(scann_with_dv_refiner.HasRawData(metric) == false);
+    REQUIRE(scann_with_dv_refiner.HasRawData(metric) == knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(
+                                                            knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, version, conf));
+
+    // emb list search
+    auto knn_gt = knowhere::BruteForce::Search<DataType>(base, query, conf, nullptr);
+    auto scann_with_dv_refiner_emb_list_results = scann_with_dv_refiner.Search(query, conf, nullptr);
+    REQUIRE(scann_with_dv_refiner_emb_list_results.has_value());
+    float recall = GetKNNRecall(*knn_gt.value(), *scann_with_dv_refiner_emb_list_results.value());
+    printf("recall: %f\n", recall);
+    REQUIRE(recall > kEmbListRecallThreshold);
+
+    // emb list search with bitset
+    const auto bitset_percentages = {0.5f, 0.9f, 0.98f};
+    for (const float percentage : bitset_percentages) {
+        auto bitset_data = GenerateBitsetByPartition(num_el, 1 - percentage, 1);
+        knowhere::BitsetView bitset(bitset_data.data(), num_el);
+        auto knn_gt = knowhere::BruteForce::Search<DataType>(base, query, conf, bitset);
+        auto scann_with_dv_refiner_results = scann_with_dv_refiner.Search(query, conf, bitset);
+        REQUIRE(scann_with_dv_refiner_results.has_value());
+        float recall = GetKNNRecall(*knn_gt.value(), *scann_with_dv_refiner_results.value());
+        REQUIRE(recall > kEmbListRecallThreshold);
+    }
+}
+
+template <typename DataType>
+void
+EmbListAddTest(const knowhere::DataSetPtr train_ds_in, const knowhere::DataSetPtr query_ds, const int64_t k,
+               const knowhere::MetricType metric, const knowhere::Json& conf, const size_t each_el_len) {
+    auto train_ds = knowhere::ConvertToDataTypeIfNeeded<DataType>(train_ds_in);
+    auto partition_num = 3;
+    auto train_ds_list = SplitEmbListDataSet<DataType>(train_ds, partition_num, each_el_len);
+    auto query = knowhere::ConvertToDataTypeIfNeeded<DataType>(query_ds);
+    auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+    auto dim = train_ds->GetDim();
+    auto rows = train_ds->GetRows();
+    auto num_el = (rows + each_el_len - 1) / each_el_len;
+
+    knowhere::ViewDataOp data_view = [&train_ds, data_size = dim](size_t id) {
+        auto data = (const DataType*)train_ds->GetTensor();
+        return data + data_size * id;
+    };
+    auto data_view_pack = knowhere::Pack(data_view);
+
+    auto scann_with_dv_refiner =
+        knowhere::IndexFactory::Instance()
+            .Create<DataType>(knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, version, data_view_pack)
+            .value();
+    for (size_t i = 0; i < train_ds_list.size(); i++) {
+        auto& base = train_ds_list[i];
+        if (i == 0) {
+            REQUIRE(scann_with_dv_refiner.Build(base, conf, false) == knowhere::Status::success);
+        } else {
+            REQUIRE(scann_with_dv_refiner.Add(base, conf, false) == knowhere::Status::success);
+        }
+    }
+
+    auto knn_gt = knowhere::BruteForce::Search<DataType>(train_ds, query, conf, nullptr);
+
+    auto scann_with_dv_refiner_emb_list_results = scann_with_dv_refiner.Search(query, conf, nullptr);
+    REQUIRE(scann_with_dv_refiner_emb_list_results.has_value());
+
+    float recall = GetKNNRecall(*knn_gt.value(), *scann_with_dv_refiner_emb_list_results.value());
+    printf("recall: %f\n", recall);
+    REQUIRE(recall > kEmbListRecallThreshold);
+
+    const auto bitset_percentages = {0.5f, 0.9f, 0.98f};
+    for (const float percentage : bitset_percentages) {
+        auto bitset_data = GenerateBitsetByPartition(num_el, 1 - percentage, 1);
+        knowhere::BitsetView bitset(bitset_data.data(), num_el);
+        auto knn_gt = knowhere::BruteForce::Search<DataType>(train_ds, query, conf, bitset);
+        auto scann_with_dv_refiner_results = scann_with_dv_refiner.Search(query, conf, bitset);
+        REQUIRE(scann_with_dv_refiner_results.has_value());
+        float recall = GetKNNRecall(*knn_gt.value(), *scann_with_dv_refiner_results.value());
+        printf("bitset_rate: %f, recall: %f\n", percentage, recall);
+        REQUIRE(recall > kEmbListRecallThreshold);
+    }
+}
+
+TEST_CASE("Test SCANN_DVR with emb list", "[multi metrics]") {
+    if (!faiss::support_pq_fast_scan) {
+        SKIP("pass scann test");
+    }
+    const int64_t nb = 1000, nq = 1;
+    size_t each_el_len = 10;
+    size_t num_el = (nb + each_el_len - 1) / each_el_len;
+    auto metric = GENERATE(as<std::string>{}, knowhere::metric::MAX_SIM_COSINE, knowhere::metric::MAX_SIM_IP,
+                           knowhere::metric::MAX_SIM_L2);
+    auto topk = GENERATE(as<int64_t>{}, 10);
+    auto dim = GENERATE(as<int64_t>{}, 31);
+
+    auto base_gen = [=]() {
+        knowhere::Json json;
+        json[knowhere::meta::DIM] = dim;
+        json[knowhere::meta::METRIC_TYPE] = metric;
+        json[knowhere::meta::TOPK] = topk;
+        return json;
+    };
+
+    auto scann_gen = [base_gen, topk]() {
+        knowhere::Json json = base_gen();
+        json[knowhere::indexparam::NLIST] = 16;
+        json[knowhere::indexparam::NPROBE] = 12;
+        json[knowhere::indexparam::REFINE_RATIO] = 4.0;
+        json[knowhere::indexparam::SUB_DIM] = 2;
+        json[knowhere::indexparam::WITH_RAW_DATA] = true;
+        json[knowhere::indexparam::ENSURE_TOPK_FULL] = true;
+        return json;
+    };
+
+    uint64_t seed = 42;
+    auto train_ds = GenEmbListDataSet(nb, dim, seed, each_el_len);
+    auto query_ds = GenQueryEmbListDataSet(nq, dim, seed);
+
+    SECTION("Test with different data type") {
+        auto cfg_json = scann_gen().dump();
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        EmbListTest<knowhere::fp32>(train_ds, query_ds, topk, metric, json, num_el);
+        EmbListTest<knowhere::bf16>(train_ds, query_ds, topk, metric, json, num_el);
+        EmbListTest<knowhere::fp16>(train_ds, query_ds, topk, metric, json, num_el);
+    }
+
+    SECTION("Test with different scann config") {
+        auto scann_gen1 = [base_gen, topk]() {
+            knowhere::Json json = base_gen();
+            json[knowhere::indexparam::NLIST] = 16;
+            json[knowhere::indexparam::NPROBE] = 12;
+            json[knowhere::indexparam::REFINE_RATIO] = 4.0;
+            json[knowhere::indexparam::SUB_DIM] = 2;
+            json[knowhere::indexparam::WITH_RAW_DATA] = true;
+            json[knowhere::indexparam::ENSURE_TOPK_FULL] = true;
+            json[knowhere::indexparam::REFINE_TYPE] = knowhere::RefineType::BFLOAT16_QUANT;
+            json[knowhere::indexparam::REFINE_WITH_QUANT] = true;
+            return json;
+        };
+
+        auto scann_gen2 = [base_gen, topk]() {
+            knowhere::Json json = base_gen();
+            json[knowhere::indexparam::NLIST] = 16;
+            json[knowhere::indexparam::NPROBE] = 12;
+            json[knowhere::indexparam::REFINE_RATIO] = 4.0;
+            json[knowhere::indexparam::SUB_DIM] = 2;
+            json[knowhere::indexparam::WITH_RAW_DATA] = true;
+            json[knowhere::indexparam::ENSURE_TOPK_FULL] = true;
+            json[knowhere::indexparam::REFINE_TYPE] = knowhere::RefineType::FLOAT16_QUANT;
+            json[knowhere::indexparam::REFINE_WITH_QUANT] = true;
+            return json;
+        };
+
+        auto scann_gen3 = [base_gen, topk]() {
+            knowhere::Json json = base_gen();
+            json[knowhere::indexparam::NLIST] = 16;
+            json[knowhere::indexparam::NPROBE] = 12;
+            json[knowhere::indexparam::REFINE_RATIO] = 4.0;
+            json[knowhere::indexparam::SUB_DIM] = 2;
+            json[knowhere::indexparam::WITH_RAW_DATA] = true;
+            json[knowhere::indexparam::ENSURE_TOPK_FULL] = true;
+            json[knowhere::indexparam::REFINE_TYPE] = knowhere::RefineType::UINT8_QUANT;
+            json[knowhere::indexparam::REFINE_WITH_QUANT] = true;
+            return json;
+        };
+
+        auto scann_gen4 = [base_gen, topk]() {
+            knowhere::Json json = base_gen();
+            json[knowhere::indexparam::NLIST] = 16;
+            json[knowhere::indexparam::NPROBE] = 12;
+            json[knowhere::indexparam::REFINE_RATIO] = 4.0;
+            json[knowhere::indexparam::SUB_DIM] = 2;
+            json[knowhere::indexparam::WITH_RAW_DATA] = true;
+            json[knowhere::indexparam::ENSURE_TOPK_FULL] = true;
+            json[knowhere::indexparam::REFINE_TYPE] = knowhere::RefineType::UINT8_QUANT;
+            json[knowhere::indexparam::REFINE_WITH_QUANT] = false;
+            return json;
+        };
+
+        auto gen = GENERATE_REF(as<std::function<knowhere::Json()>>{}, scann_gen1, scann_gen2, scann_gen3, scann_gen4);
+        auto cfg_json = gen().dump();
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        EmbListTest<knowhere::fp32>(train_ds, query_ds, topk, metric, json, num_el);
+    }
+
+    SECTION("Add Test emb list with different data type") {
+        auto cfg_json = scann_gen().dump();
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        auto total_nb = nb * 2;
+        auto train_ds = GenEmbListDataSet(total_nb, dim, seed, each_el_len);
+        EmbListAddTest<knowhere::fp32>(train_ds, query_ds, topk, metric, json, each_el_len);
+        EmbListAddTest<knowhere::bf16>(train_ds, query_ds, topk, metric, json, each_el_len);
+        EmbListAddTest<knowhere::fp16>(train_ds, query_ds, topk, metric, json, each_el_len);
     }
 }
 
