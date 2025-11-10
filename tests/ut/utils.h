@@ -553,6 +553,33 @@ GenEmbListDataSet(int rows, int dim, const uint64_t seed = 42, int each_el_len =
     return ds;
 }
 
+template <typename DataType>
+std::vector<knowhere::DataSetPtr>
+SplitEmbListDataSet(const knowhere::DataSetPtr ds, size_t partition_num, int each_el_len = 10) {
+    auto data = ds->GetTensor();
+    auto rows = ds->GetRows();
+    auto dim = ds->GetDim();
+    auto ptr = ds->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+    auto num_el = (rows + each_el_len - 1) / each_el_len;
+
+    auto res = std::vector<knowhere::DataSetPtr>(partition_num);
+    auto each_part_el = num_el / partition_num;
+    for (size_t i = 0; i < partition_num; i++) {
+        auto start_el = i * each_part_el;
+        auto end_el = start_el + each_part_el;
+        if (i == partition_num - 1) {
+            end_el = num_el;
+        }
+        auto cur_rows = (end_el - start_el) * each_el_len;
+        auto ds = knowhere::GenDataSet(cur_rows, dim, (const DataType*)data + start_el * each_el_len * dim);
+        const size_t* ptr_const = ptr + start_el;
+        ds->Set(knowhere::meta::EMB_LIST_OFFSET, ptr_const);
+        ds->SetIsOwner(false);
+        res[i] = std::move(ds);
+    }
+    return res;
+}
+
 inline knowhere::DataSetPtr
 GenEmbListBinDataSet(int rows, int dim, int seed = 42, int each_el_len = 10) {
     std::mt19937 rng(seed);

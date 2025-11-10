@@ -61,6 +61,29 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
         return expected<DataSetPtr>::Err(Status::not_implemented, "Data View Index not maintain raw data.");
     }
 
+    Status
+    AddEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
+               bool use_knowhere_build_pool = true) override;
+
+    std::optional<size_t>
+    GetQueryCodeSize(const DataSetPtr dataset) const override {
+        return refine_offset_index_->GetQueryCodeSize();
+    }
+
+    Status
+    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) override {
+        internal_offset_to_most_external_id_ = std::move(map);
+        return Status::success;
+    }
+
+    expected<DataSetPtr>
+    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
+                  milvus::OpContext* op_context) const override;
+
+    expected<DataSetPtr>
+    SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                  milvus::OpContext* op_context = nullptr) const override;
+
     static Status
     StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {
         auto base_cfg = static_cast<const BaseConfig&>(cfg);
@@ -273,6 +296,7 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
     std::unique_ptr<IndexNode> base_index_;  // base_index will hold data codes in memory, datatype is fp32
     std::unique_ptr<FairRWLock>
         base_index_lock_;  // base_index_lock_ protect all concurrent writes/reads access of base_index_
+    std::vector<uint32_t> internal_offset_to_most_external_id_;
 };
 
 namespace {
@@ -367,6 +391,72 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Add(const DataSetPtr data
 }
 
 template <typename DataType, typename BaseIndexNode>
+Status
+IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::AddEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
+                                                                  const size_t* lims, size_t num_rows,
+                                                                  bool use_knowhere_build_pool) {
+    // 1. split metric_type to el_metric_type and sub_metric_type
+    auto& config = static_cast<BaseConfig&>(*cfg);
+    auto original_metric_type = config.metric_type.value();
+    auto el_metric_type_or = get_el_metric_type(original_metric_type);
+    if (!el_metric_type_or.has_value()) {
+        LOG_KNOWHERE_WARNING_ << "Invalid metric type for emb_list: " << original_metric_type;
+        return Status::emb_list_inner_error;
+    }
+    auto el_metric_type = el_metric_type_or.value();
+    auto sub_metric_type_or = get_sub_metric_type(original_metric_type);
+    if (!sub_metric_type_or.has_value()) {
+        LOG_KNOWHERE_WARNING_ << "Invalid sub metric type for emb_list: " << original_metric_type;
+        return Status::emb_list_inner_error;
+    }
+    // set sub metric type as the metric type for build
+    auto sub_metric_type = sub_metric_type_or.value();
+    config.metric_type = sub_metric_type;
+
+    // 2. add to index
+    size_t old_rows_cnt = Count();
+    RETURN_IF_ERROR(Add(dataset, std::move(cfg), use_knowhere_build_pool));
+
+    if (emb_list_offset_ == nullptr || emb_list_offset_->offset.empty()) {
+        LOG_KNOWHERE_WARNING_ << "emb_list offset is empty, should call BuildEmbList first";
+        return Status::emb_list_inner_error;
+    }
+    // 3. update emb list offset and id map
+    size_t old_num_el = emb_list_offset_->num_el();
+    size_t new_rows_cnt = Count();
+    {
+        FairWriteLockGuard guard(*this->base_index_lock_);
+        size_t idx = 0;
+        if (lims[0] != emb_list_offset_->offset[old_num_el]) {
+            LOG_KNOWHERE_WARNING_ << "emb list offset is not continuous";
+            return Status::emb_list_inner_error;
+        }
+        idx++;
+        internal_offset_to_most_external_id_.resize(new_rows_cnt);
+        while (lims[idx] < new_rows_cnt) {
+            if (lims[idx] < lims[idx - 1]) {
+                LOG_KNOWHERE_WARNING_ << "emb list offset is not increasing";
+                return Status::emb_list_inner_error;
+            }
+            emb_list_offset_->offset.push_back(lims[idx]);
+            auto cur_el_id = old_num_el + idx - 1;
+            std::fill_n(internal_offset_to_most_external_id_.begin() + lims[idx - 1], lims[idx] - lims[idx - 1],
+                        cur_el_id);
+            idx++;
+        }
+        if (lims[idx] != new_rows_cnt) {
+            LOG_KNOWHERE_WARNING_ << "emb list offset should end with the total_cnt of the whole index";
+            return Status::emb_list_inner_error;
+        }
+        emb_list_offset_->offset.push_back(new_rows_cnt);
+        auto cur_el_id = old_num_el + idx - 1;
+        std::fill_n(internal_offset_to_most_external_id_.begin() + lims[idx - 1], new_rows_cnt - lims[idx - 1],
+                    cur_el_id);
+    }
+    return Status::success;
+}
+
+template <typename DataType, typename BaseIndexNode>
 expected<DataSetPtr>
 IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
                                                               const BitsetView& bitset,
@@ -387,7 +477,21 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Search(const DataSetPtr d
     knowhere::expected<knowhere::DataSetPtr> quant_res;
     {
         FairReadLockGuard guard(*this->base_index_lock_);
-        quant_res = base_index_->Search(base_index_ds, std::move(cfg), bitset, op_context);
+        BitsetView new_bitset(bitset);
+        if (!internal_offset_to_most_external_id_.empty()) {
+            size_t num_filtered_out_ids = 0;
+            if (!bitset.empty()) {
+                // todo: optimize the calculation
+                for (size_t i = 0; i < new_bitset.size(); i++) {
+                    if (new_bitset.test(i)) {
+                        num_filtered_out_ids += emb_list_offset_->offset[i + 1] - emb_list_offset_->offset[i];
+                    }
+                }
+            }
+            new_bitset.set_out_ids(internal_offset_to_most_external_id_.data(),
+                                   internal_offset_to_most_external_id_.size(), num_filtered_out_ids);
+        }
+        quant_res = base_index_->Search(base_index_ds, std::move(cfg), new_bitset, op_context);
     }
     if (!quant_res.has_value()) {
         return quant_res;
@@ -410,6 +514,37 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Search(const DataSetPtr d
     }
     return GenResultDataSet(nq, topk, std::move(labels), std::move(distances));
 }
+
+template <typename DataType, typename BaseIndexNode>
+expected<DataSetPtr>
+IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::SearchEmbList(const DataSetPtr dataset,
+                                                                     std::unique_ptr<Config> cfg,
+                                                                     const BitsetView& bitset,
+                                                                     milvus::OpContext* op_context) const {
+    FairReadLockGuard guard(*this->base_index_lock_);
+    return IndexNode::SearchEmbList(dataset, std::move(cfg), bitset, op_context);
+}
+
+template <typename DataType, typename BaseIndexNode>
+expected<DataSetPtr>
+IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::CalcDistByIDs(const DataSetPtr dataset,
+                                                                     const BitsetView& /*bitset*/,
+                                                                     const int64_t* labels, const size_t labels_len,
+                                                                     milvus::OpContext* op_context) const {
+    auto num_queries = dataset->GetRows();
+    auto query_data = dataset->GetTensor();
+    auto distances = std::make_unique<float[]>(num_queries * labels_len);
+    try {
+        bool refine_with_quant = false;
+        refine_offset_index_->CalcDistByIDs(num_queries, query_data, labels_len, labels, distances.get(),
+                                            refine_with_quant);
+    } catch (const std::exception& e) {
+        LOG_KNOWHERE_WARNING_ << "data view index inner error: " << e.what();
+        return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
+    }
+    // ids is not used in this context, so we pass an empty unique_ptr
+    return GenResultDataSet(num_queries, labels_len, std::unique_ptr<faiss::idx_t[]>{}, std::move(distances));
+};
 
 template <typename DataType, typename BaseIndexNode>
 expected<std::vector<IndexNode::IteratorPtr>>

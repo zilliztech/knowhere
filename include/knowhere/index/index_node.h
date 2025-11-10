@@ -498,7 +498,7 @@ class IndexNode : public Object {
     SetBaseIndexIDMap() {
         auto internal_id_to_external_id_map = GetInternalIdToExternalIdMap();
         size_t id_map_size = internal_id_to_external_id_map->size();
-        assert(id_map_size == Count());
+        assert(id_map_size == static_cast<size_t>(Count()));
         std::vector<uint32_t> internal_id_to_most_external_id_map(id_map_size);
         for (size_t i = 0; i < id_map_size; i++) {
             internal_id_to_most_external_id_map[i] = emb_list_offset_->get_el_id(internal_id_to_external_id_map->at(i));
@@ -562,6 +562,34 @@ class IndexNode : public Object {
         }
 
         return BuildEmbList(dataset, std::move(cfg), lims, dataset->GetRows(), use_knowhere_build_pool);
+    }
+
+    virtual Status
+    AddEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) {
+        auto& config = static_cast<BaseConfig&>(*cfg);
+        auto el_metric_type_or = get_el_metric_type(config.metric_type.value());
+        if (!el_metric_type_or.has_value()) {
+            // if not emb_list, use the default build method
+            return Add(dataset, std::move(cfg), use_knowhere_build_pool);
+        }
+        if (dataset == nullptr) {
+            LOG_KNOWHERE_WARNING_
+                << "Dataset is nullptr, but metric type is emb_list, need emb_list_offset from dataset";
+            return Status::emb_list_inner_error;
+        }
+        const size_t* lims = dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+        if (lims == nullptr) {
+            LOG_KNOWHERE_WARNING_ << "Could not find emb list offset from dataset, but metric type is emb_list";
+            return Status::emb_list_inner_error;
+        }
+        return AddEmbList(dataset, std::move(cfg), lims, dataset->GetRows(), use_knowhere_build_pool);
+    }
+
+    virtual Status
+    AddEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
+               bool use_knowhere_build_pool = true) {
+        LOG_KNOWHERE_WARNING_ << "AddEmbList not implemented for current index type";
+        return Status::not_implemented;
     }
 
     virtual Status

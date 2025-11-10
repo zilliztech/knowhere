@@ -102,6 +102,19 @@ class DataViewIndexBase {
                   const idx_t* __restrict ids, const idx_t k, float* __restrict out_dist, idx_t* __restrict out_ids,
                   const bool use_quant) const = 0;
 
+    /**
+     * @brief Calculate distances between query vectors and reference vectors by IDs
+     *
+     * @param num_queries  number of query vectors
+     * @param queries      query vectors, size num_queries * d
+     * @param num_ids      total number of selected ids
+     * @param ids          selected ids for each query
+     * @param out_dist     result distances, size num_queries * num_ids
+     */
+    virtual void
+    CalcDistByIDs(const idx_t num_queries, const void* __restrict queries, const idx_t num_ids,
+                  const idx_t* __restrict ids, float* __restrict out_dist, const bool use_quant) const = 0;
+
     virtual RangeSearchResult
     RangeSearch(const idx_t n, const void* __restrict x, const float radius, const float range_filter,
                 const BitsetView& bitset, const bool use_quant) const = 0;
@@ -151,6 +164,10 @@ class DataViewIndexBase {
     std::shared_ptr<QuantRefine>
     GetQuantData() const {
         return quant_data_;
+    }
+    std::optional<size_t>
+    GetQueryCodeSize() const {
+        return code_size_;
     }
 
  protected:
@@ -248,6 +265,10 @@ class DataViewIndexFlat : public DataViewIndexBase {
     SearchWithIds(const idx_t n, const void* __restrict x, const idx_t* __restrict ids_num_lims,
                   const idx_t* __restrict ids, const idx_t k, float* __restrict out_dist, idx_t* __restrict out_ids,
                   const bool use_quant) const override;
+
+    void
+    CalcDistByIDs(const idx_t num_queries, const void* __restrict queries, const idx_t num_ids,
+                  const idx_t* __restrict ids, float* __restrict out_dist, const bool use_quant) const override;
 
     RangeSearchResult
     RangeSearch(const idx_t n, const void* __restrict x, const float radius, const float range_filter,
@@ -433,7 +454,7 @@ DataViewIndexFlat::SearchWithIds(const idx_t n, const void* __restrict x, const 
                 std::shared_lock lock(norms_mutex_);
                 for (auto j = 0; j < base_n; j++) {
                     if (base_ids[j] != -1) {
-                        base_dist[j] = base_dist[j] / norms_[base_ids[j]];
+                        base_dist[j] /= norms_[base_ids[j]];
                     }
                 }
             }
@@ -443,6 +464,29 @@ DataViewIndexFlat::SearchWithIds(const idx_t n, const void* __restrict x, const 
             } else {
                 faiss::reorder_2_heaps<CMIN>(1, k, out_ids + i * k, out_dist + i * k, base_n, base_ids,
                                              base_dist.get());
+            }
+        }));
+    }
+    WaitAllSuccess(futs);
+    return;
+}
+
+void
+DataViewIndexFlat::CalcDistByIDs(const idx_t num_queries, const void* __restrict queries, const idx_t num_ids,
+                                 const idx_t* __restrict ids, float* __restrict out_dist, const bool use_quant) const {
+    const auto& search_pool = ThreadPool::GetGlobalSearchThreadPool();
+    std::vector<folly::Future<folly::Unit>> futs;
+    futs.reserve(num_queries);
+    for (auto i = 0; i < num_queries; i++) {
+        futs.emplace_back(search_pool->push([&, idx = i] {
+            ThreadPool::ScopedSearchOmpSetter setter(1);
+            auto query = (const char*)queries + code_size_ * idx;
+            ComputeDistanceSubset(query, num_ids, out_dist + idx * num_ids, ids, use_quant);
+            if (is_cosine_) {
+                std::shared_lock lock(norms_mutex_);
+                for (auto j = 0; j < num_ids; j++) {
+                    out_dist[idx * num_ids + j] /= norms_[ids[j]];
+                }
             }
         }));
     }

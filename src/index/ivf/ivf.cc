@@ -1392,6 +1392,7 @@ KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVF_SQ8, IvfIndexNode, knowhere::feature
 KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVF_SQ_CC, IvfIndexNode, knowhere::feature::NONE,
                                         faiss::IndexIVFScalarQuantizerCC)
 // faiss index + data view refiner combination
-KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(SCANN_DVR, IndexNodeWithDataViewRefiner, knowhere::feature::NONE,
+KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(SCANN_DVR, IndexNodeWithDataViewRefiner,
+                                                knowhere::feature::NONE | knowhere::feature::EMB_LIST,
                                                 IvfIndexNode<fp32, faiss::IndexScaNN>)
 }  // namespace knowhere
