@@ -144,7 +144,7 @@ static std::set<std::string> legal_support_emb_list_knowhere_index = {
     IndexEnum::INDEX_HNSW,     IndexEnum::INDEX_HNSW_SQ,         IndexEnum::INDEX_HNSW_PQ,
     IndexEnum::INDEX_HNSW_PRQ, IndexEnum::INDEX_FAISS_SCANN_DVR,
 #ifdef KNOWHERE_WITH_CARDINAL
-    IndexEnum::INDEX_DISKANN,
+    IndexEnum::INDEX_DISKANN,  IndexEnum::INDEX_CARDINAL_TIERED,
 #endif
 };
 
