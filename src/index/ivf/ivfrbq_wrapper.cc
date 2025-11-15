@@ -176,11 +176,16 @@ IndexIVFRaBitQWrapper::size() const {
         return 0;
     }
 
+    if (size_cache_.has_value()) {
+        return size_cache_.value();
+    }
+
     // a temporary yet expensive workaround
     faiss::cppcontrib::knowhere::CountSizeIOWriter writer;
     faiss::write_index(index.get(), &writer);
 
-    // todo
+    // cache the size
+    size_cache_ = writer.total_size;
     return writer.total_size;
 }
 
