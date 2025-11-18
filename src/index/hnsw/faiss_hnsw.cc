@@ -35,6 +35,7 @@
 #include "faiss/index_io.h"
 #include "index/hnsw/faiss_hnsw_config.h"
 #include "index/hnsw/hnsw.h"
+#include "index/ivf/ivf_config.h"
 #include "index/hnsw/impl/DummyVisitor.h"
 #include "index/hnsw/impl/FederVisitor.h"
 #include "index/hnsw/impl/IndexBruteForceWrapper.h"
@@ -59,20 +60,7 @@
 #include "knowhere/prometheus_client.h"
 #endif
 
-namespace {
-// Wrapper class for IndexIVFRaBitQ to enable rotation support (by_residual)
-class IndexIVFRaBitQWrapper : public faiss::IndexIVFRaBitQ {
- public:
-    IndexIVFRaBitQWrapper(faiss::Index* quantizer, size_t d, size_t nlist, 
-                          faiss::MetricType metric = faiss::METRIC_L2)
-        : faiss::IndexIVFRaBitQ(quantizer, d, nlist, metric) {
-        // Enable rotation by default for better accuracy
-        this->by_residual = true;
-    }
-    
-    virtual ~IndexIVFRaBitQWrapper() = default;
-};
-}  // anonymous namespace
+#include "index/ivf/ivfrbq_wrapper.h"
 
 namespace knowhere {
 
@@ -2810,7 +2798,7 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
     }
 
  public:
-    std::vector<std::unique_ptr<IndexIVFRaBitQWrapper>> tmp_index_ivfrabitq;
+    std::vector<std::unique_ptr<knowhere::IndexIVFRaBitQWrapper>> tmp_index_ivfrabitq;
 
  protected:
     Status
@@ -2845,17 +2833,24 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
 
             hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
 
-            // ivf_rabitq
+            // ivf_rabitq - use knowhere::IndexIVFRaBitQWrapper which includes rotation
+            // Note: We don't use IndexIVFRaBitQWrapper's internal refine because HNSW manages refine itself
             auto nlist = hnsw_cfg.nlist.value();
-            std::unique_ptr<faiss::IndexFlat> quantizer;
-            if (is_cosine) {
-                quantizer = std::make_unique<faiss::IndexFlatCosine>(dim);
-            } else {
-                quantizer = std::make_unique<faiss::IndexFlat>(dim, metric.value());
+            
+            // Create IvfRaBitQConfig without refine (HNSW handles refine separately)
+            IvfRaBitQConfig ivf_cfg;
+            ivf_cfg.rbq_bits_query = hnsw_cfg.rbq_query_nbits.value_or(0);
+            ivf_cfg.refine = false;  // Don't use wrapper's refine, HNSW manages it
+            
+            auto ivfrabitq_result = knowhere::IndexIVFRaBitQWrapper::create(
+                dim, nlist, ivf_cfg, data_format, metric.value());
+            
+            if (!ivfrabitq_result.has_value()) {
+                LOG_KNOWHERE_ERROR_ << "Failed to create IndexIVFRaBitQWrapper";
+                return Status::invalid_args;
             }
             
-            auto ivfrabitq_index = std::make_unique<IndexIVFRaBitQWrapper>(
-                quantizer.release(), dim, nlist, metric.value());
+            auto ivfrabitq_index = std::move(ivfrabitq_result.value());
 
             // should refine be used?
             std::unique_ptr<faiss::Index> final_index;
@@ -2949,9 +2944,12 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
             }
             
             if (index_hnsw != nullptr) {
-                IndexIVFRaBitQWrapper* ivfrabitq_storage = dynamic_cast<IndexIVFRaBitQWrapper*>(index_hnsw->storage);
-                if (ivfrabitq_storage != nullptr) {
-                    ivfrabitq_storage->qb = qb;
+                auto* wrapper_storage = dynamic_cast<knowhere::IndexIVFRaBitQWrapper*>(index_hnsw->storage);
+                if (wrapper_storage != nullptr) {
+                    auto* ivfrabitq_idx = wrapper_storage->get_ivfrabitq_index();
+                    if (ivfrabitq_idx != nullptr) {
+                        ivfrabitq_idx->qb = qb;
+                    }
                 }
             }
         }
@@ -3003,9 +3001,12 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
             index_hnsw->storage = nullptr;
             index_hnsw_rabitq->storage = nullptr;
 
-            // Initialize DirectMap for IVF_RABITQ to enable reconstruct()
-            IndexIVFRaBitQWrapper* ivf_rabitq = tmp_index_ivfrabitq[i].get();
-            ivf_rabitq->make_direct_map();
+            // IndexIVFRaBitQWrapper already initializes DirectMap in from_deserialized,
+            // but we need to ensure it's initialized after adding data
+            auto* ivf_rabitq_idx = tmp_index_ivfrabitq[i]->get_ivfrabitq_index();
+            if (ivf_rabitq_idx != nullptr) {
+                ivf_rabitq_idx->make_direct_map();
+            }
 
             // replace storage
             index_hnsw_rabitq->storage = tmp_index_ivfrabitq[i].release();
