@@ -28,6 +28,7 @@
 #include "faiss/IndexBinaryHNSW.h"
 #include "faiss/IndexCosine.h"
 #include "faiss/IndexHNSW.h"
+#include "faiss/IndexIVFRaBitQ.h"
 #include "faiss/IndexRefine.h"
 #include "faiss/impl/ScalarQuantizer.h"
 #include "faiss/impl/mapped_io.h"
@@ -2771,6 +2772,317 @@ class BaseFaissRegularIndexHNSWPQNodeTemplate : public BaseFaissRegularIndexHNSW
     }
 };
 
+// this index trains IVF_RABITQ and HNSW+FLAT separately, then constructs HNSW+IVF_RABITQ
+class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode {
+ public:
+    BaseFaissRegularIndexHNSWRaBitQNode(const int32_t& version, const Object& object, DataFormatEnum data_format)
+        : BaseFaissRegularIndexHNSWNode(version, object, data_format) {
+    }
+
+    static std::unique_ptr<BaseConfig>
+    StaticCreateConfig() {
+        return std::make_unique<FaissHnswRabitqConfig>();
+    }
+
+    std::unique_ptr<BaseConfig>
+    CreateConfig() const override {
+        return StaticCreateConfig();
+    }
+
+    std::string
+    Type() const override {
+        return knowhere::IndexEnum::INDEX_HNSW_RABITQ;
+    }
+
+ public:
+    std::vector<std::unique_ptr<faiss::IndexIVFRaBitQ>> tmp_index_ivfrabitq;
+
+ protected:
+    Status
+    TrainInternal(const DataSetPtr dataset, const Config& cfg) override {
+        // number of rows
+        auto rows = dataset->GetRows();
+        // dimensionality of the data
+        auto dim = dataset->GetDim();
+        // data
+        const void* data = dataset->GetTensor();
+
+        // config
+        auto hnsw_cfg = static_cast<const FaissHnswRabitqConfig&>(cfg);
+
+        auto metric = Str2FaissMetricType(hnsw_cfg.metric_type.value());
+        if (!metric.has_value()) {
+            LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << hnsw_cfg.metric_type.value();
+            return Status::invalid_metric_type;
+        }
+
+        // create an index
+        const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
+
+        // HNSW + IVF_RABITQ index should build HNSW+FLAT first, then replace FLAT with IVF_RABITQ
+        auto train_index = [&](const float* data, const int i, const int64_t rows) {
+            std::unique_ptr<faiss::IndexHNSW> hnsw_index;
+            if (is_cosine) {
+                hnsw_index = std::make_unique<faiss::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
+            } else {
+                hnsw_index = std::make_unique<faiss::IndexHNSWFlat>(dim, hnsw_cfg.M.value(), metric.value());
+            }
+
+            hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
+
+            // ivf_rabitq
+            auto nlist = hnsw_cfg.nlist.value();
+            std::unique_ptr<faiss::IndexFlat> quantizer;
+            if (is_cosine) {
+                quantizer = std::make_unique<faiss::IndexFlatCosine>(dim);
+            } else {
+                quantizer = std::make_unique<faiss::IndexFlat>(dim, metric.value());
+            }
+            
+            auto ivfrabitq_index = std::make_unique<faiss::IndexIVFRaBitQ>(
+                quantizer.release(), dim, nlist, metric.value());
+
+            // should refine be used?
+            std::unique_ptr<faiss::Index> final_index;
+            if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
+                // yes
+                const auto hnsw_d = hnsw_index->storage->d;
+                const auto hnsw_metric_type = hnsw_index->storage->metric_type;
+                auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index),
+                                                         hnsw_d, hnsw_metric_type);
+                if (!final_index_cnd.has_value()) {
+                    return Status::invalid_args;
+                }
+
+                // assign
+                final_index = std::move(final_index_cnd.value());
+            } else {
+                // no refine
+
+                // assign
+                final_index = std::move(hnsw_index);
+            }
+
+            // train hnswflat
+            LOG_KNOWHERE_INFO_ << "Training HNSW Index";
+
+            final_index->train(rows, data);
+
+            // train ivf_rabitq
+            LOG_KNOWHERE_INFO_ << "Training IVF_RABITQ Index";
+
+            ivfrabitq_index->train(rows, data);
+
+            // done
+            indexes[i] = std::move(final_index);
+            tmp_index_ivfrabitq[i] = std::move(ivfrabitq_index);
+            return Status::success;
+        };
+
+        const std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>& scalar_info_map =
+            dataset->Get<std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>>(meta::SCALAR_INFO);
+        if (scalar_info_map.size() > 1) {
+            LOG_KNOWHERE_WARNING_ << "vector index build with multiple scalar info is not supported";
+            return Status::invalid_args;
+        }
+        for (const auto& [field_id, scalar_info] : scalar_info_map) {
+            tmp_combined_scalar_ids = scalar_info.size() > 1
+                                          ? combine_partitions(scalar_info, hnsw_cfg.nlist.value())
+                                          : std::vector<std::vector<int>>();
+        }
+
+        // no scalar info or just one partition(after possible combination), build index on whole data
+        if (scalar_info_map.empty() || tmp_combined_scalar_ids.size() <= 1) {
+            tmp_index_ivfrabitq.resize(1);
+            // we have to convert the data to float, unfortunately, which costs extra RAM
+            auto float_ds_ptr = convert_ds_to_float(dataset, data_format);
+            if (float_ds_ptr == nullptr) {
+                LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+                return Status::invalid_args;
+            }
+            return train_index((const float*)(float_ds_ptr->GetTensor()), 0, rows);
+        }
+
+        LOG_KNOWHERE_INFO_ << "Train HNSW_RABITQ Index with Scalar Info";
+        tmp_index_ivfrabitq.resize(tmp_combined_scalar_ids.size());
+        for (const auto& [field_id, scalar_info] : scalar_info_map) {
+            return TrainIndexByScalarInfo(train_index, scalar_info, data, rows, dim);
+        }
+        return Status::success;
+    }
+
+    expected<DataSetPtr>
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+           milvus::OpContext* op_context) const override {
+        // Set the rbq_query_nbits parameter on the IndexIVFRaBitQ storage before searching
+        auto hnsw_cfg = static_cast<const FaissHnswRabitqConfig&>(*cfg);
+        auto qb = hnsw_cfg.rbq_query_nbits.value_or(0);
+        
+        // Set qb parameter on all IVF_RABITQ storage indexes
+        for (auto& index : indexes) {
+            if (index == nullptr) {
+                continue;
+            }
+            
+            faiss::IndexHNSW* index_hnsw = nullptr;
+            faiss::IndexRefine* const index_refine = dynamic_cast<faiss::IndexRefine*>(index.get());
+            
+            if (index_refine != nullptr) {
+                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index_refine->base_index);
+            } else {
+                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index.get());
+            }
+            
+            if (index_hnsw != nullptr) {
+                faiss::IndexIVFRaBitQ* ivfrabitq_storage = dynamic_cast<faiss::IndexIVFRaBitQ*>(index_hnsw->storage);
+                if (ivfrabitq_storage != nullptr) {
+                    ivfrabitq_storage->qb = qb;
+                }
+            }
+        }
+        
+        // Call the parent class Search method
+        return BaseFaissRegularIndexHNSWNode::Search(dataset, std::move(cfg), bitset, op_context);
+    }
+
+    Status
+    AddInternal(const DataSetPtr dataset, const Config& cfg) override {
+        if (isIndexEmpty()) {
+            LOG_KNOWHERE_ERROR_ << "Can not add data to an empty index.";
+            return Status::empty_index;
+        }
+
+        auto rows = dataset->GetRows();
+
+        auto finalize_index = [&](int i) {
+            // we're done.
+            // throw away flat and replace it with ivf_rabitq
+
+            // check if we have a refine available.
+            faiss::IndexHNSW* index_hnsw = nullptr;
+
+            faiss::IndexRefine* const index_refine = dynamic_cast<faiss::IndexRefine*>(indexes[i].get());
+
+            if (index_refine != nullptr) {
+                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index_refine->base_index);
+            } else {
+                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(indexes[i].get());
+            }
+
+            // We need to create a custom HNSW wrapper that holds IVF_RABITQ as storage
+            // Since there's no IndexHNSWRaBitQ in FAISS, we use IndexHNSW with custom storage
+            std::unique_ptr<faiss::IndexHNSW> index_hnsw_rabitq;
+
+            if (index_hnsw->storage->is_cosine) {
+                index_hnsw_rabitq = std::make_unique<faiss::IndexHNSWFlatCosine>();
+            } else {
+                index_hnsw_rabitq = std::make_unique<faiss::IndexHNSWFlat>();
+            }
+
+            // C++ slicing.
+            // we can't use move, because faiss::IndexHNSW overrides a destructor.
+            static_cast<faiss::IndexHNSW&>(*index_hnsw_rabitq) = static_cast<faiss::IndexHNSW&>(*index_hnsw);
+
+            // clear out the storage
+            delete index_hnsw->storage;
+            index_hnsw->storage = nullptr;
+            index_hnsw_rabitq->storage = nullptr;
+
+            // Initialize DirectMap for IVF_RABITQ to enable reconstruct()
+            faiss::IndexIVFRaBitQ* ivf_rabitq = tmp_index_ivfrabitq[i].get();
+            ivf_rabitq->make_direct_map();
+
+            // replace storage
+            index_hnsw_rabitq->storage = tmp_index_ivfrabitq[i].release();
+
+            // replace if refine
+            if (index_refine != nullptr) {
+                delete index_refine->base_index;
+                index_refine->base_index = index_hnsw_rabitq.release();
+            } else {
+                indexes[i] = std::move(index_hnsw_rabitq);
+            }
+            return Status::success;
+        };
+        
+        try {
+            const std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>& scalar_info_map =
+                dataset->Get<std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>>(meta::SCALAR_INFO);
+
+            if (scalar_info_map.empty() || tmp_combined_scalar_ids.size() <= 1) {
+                // hnsw
+                LOG_KNOWHERE_INFO_ << "Adding " << rows << " to HNSW Index";
+
+                auto status_reg = add_to_index(indexes[0].get(), dataset, data_format);
+                if (status_reg != Status::success) {
+                    return status_reg;
+                }
+
+                // ivf_rabitq
+                LOG_KNOWHERE_INFO_ << "Adding " << rows << " to IVF_RABITQ Index";
+
+                auto status_rabitq = add_to_index(tmp_index_ivfrabitq[0].get(), dataset, data_format);
+                if (status_rabitq != Status::success) {
+                    return status_rabitq;
+                }
+                return finalize_index(0);
+            }
+            if (scalar_info_map.size() > 1) {
+                LOG_KNOWHERE_WARNING_ << "vector index build with multiple scalar info is not supported";
+                return Status::invalid_args;
+            }
+            LOG_KNOWHERE_INFO_ << "Add data to Index with Scalar Info";
+
+            for (const auto& [field_id, scalar_info] : scalar_info_map) {
+                for (auto i = 0; i < tmp_combined_scalar_ids.size(); ++i) {
+                    for (auto j = 0; j < tmp_combined_scalar_ids[i].size(); ++j) {
+                        auto id = tmp_combined_scalar_ids[i][j];
+                        // hnsw
+                        LOG_KNOWHERE_INFO_ << "Adding " << scalar_info[id].size() << " to HNSW Index";
+
+                        auto status_reg =
+                            add_partial_dataset_to_index(indexes[i].get(), dataset, data_format, scalar_info[id]);
+                        if (status_reg != Status::success) {
+                            return status_reg;
+                        }
+
+                        // ivf_rabitq
+                        LOG_KNOWHERE_INFO_ << "Adding " << scalar_info[id].size() << " to IVF_RABITQ Index";
+
+                        auto status_rabitq =
+                            add_partial_dataset_to_index(tmp_index_ivfrabitq[i].get(), dataset, data_format, scalar_info[id]);
+
+                        if (status_rabitq != Status::success) {
+                            return status_rabitq;
+                        }
+                    }
+                    finalize_index(i);
+                }
+            }
+
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+            return Status::faiss_inner_error;
+        }
+
+        return Status::success;
+    }
+};
+
+template <typename DataType>
+class BaseFaissRegularIndexHNSWRaBitQNodeTemplate : public BaseFaissRegularIndexHNSWRaBitQNode {
+ public:
+    BaseFaissRegularIndexHNSWRaBitQNodeTemplate(const int32_t& version, const Object& object)
+        : BaseFaissRegularIndexHNSWRaBitQNode(version, object, datatype_v<DataType>) {
+    }
+
+    static bool
+    StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
+        auto hnsw_cfg = static_cast<const FaissHnswConfig&>(config);
+        return has_lossless_refine_index(hnsw_cfg.refine, hnsw_cfg.refine_type, datatype_v<DataType>);
+    }
+};
+
 // this index trains PRQ and HNSW+FLAT separately, then constructs HNSW+PRQ
 class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
  public:
@@ -3082,6 +3394,11 @@ KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_PQ, BaseFaissRegularIndexHN
                                                 knowhere::feature::MMAP | knowhere::feature::MV |
                                                     knowhere::feature::EMB_LIST)
 KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(HNSW_PQ, BaseFaissRegularIndexHNSWPQNodeTemplate,
+                                          knowhere::feature::MMAP | knowhere::feature::MV | knowhere::feature::EMB_LIST)
+KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_RABITQ, BaseFaissRegularIndexHNSWRaBitQNodeTemplate,
+                                                knowhere::feature::MMAP | knowhere::feature::MV |
+                                                    knowhere::feature::EMB_LIST)
+KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(HNSW_RABITQ, BaseFaissRegularIndexHNSWRaBitQNodeTemplate,
                                           knowhere::feature::MMAP | knowhere::feature::MV | knowhere::feature::EMB_LIST)
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNodeTemplate,
                                                 knowhere::feature::MMAP | knowhere::feature::MV |

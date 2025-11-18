@@ -1045,6 +1045,98 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
         }
     }
 
+    SECTION("RABITQ") {
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW_RABITQ;
+        const std::string& golden_index_type = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
+
+        for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
+            for (const int32_t dim : {16}) {
+                // generate a query
+                const uint64_t query_rng_seed = get_params_hash({(int)distance_type, dim});
+                auto query_ds_ptr = GenDataSet(NQ, dim, query_rng_seed);
+
+                for (const int32_t nb : NBS) {
+                    // set up a golden cfg
+                    knowhere::Json conf_golden = default_conf;
+                    conf_golden[knowhere::meta::METRIC_TYPE] = DISTANCE_TYPES[distance_type];
+                    conf_golden[knowhere::meta::DIM] = dim;
+                    conf_golden[knowhere::meta::ROWS] = nb;
+
+                    std::vector<int32_t> golden_params = {(int)distance_type, dim, nb};
+
+                    // generate a default dataset
+                    const uint64_t rng_seed = get_params_hash(golden_params);
+                    auto default_ds_ptr = GenDataSet(nb, dim, rng_seed);
+
+                    // create or load a golden index
+                    std::string golden_index_file_name =
+                        get_index_name<knowhere::fp32>(ann_test_name_, golden_index_type, golden_params);
+
+                    auto golden_index = create_index<knowhere::fp32>(golden_index_type, golden_index_file_name,
+                                                                     default_ds_ptr, conf_golden, false, "golden ");
+
+                    std::vector<std::string> index_files;
+                    std::string index_file;
+
+                    // test various bitset rates
+                    for (const float bitset_rate : BITSET_RATES) {
+                        const int32_t nbits_set = nb * bitset_rate;
+                        const int32_t filter_out_bits = nbits_set;
+                        const std::vector<uint8_t> bitset_data =
+                            GenerateBitsetWithRandomTbitsSet(nb, nbits_set);
+
+                        // initialize bitset_view.
+                        // provide a default one if nbits_set == 0
+                        knowhere::BitsetView bitset_view = nullptr;
+                        if (filter_out_bits != 0) {
+                            bitset_view = knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
+                        }
+
+                        // get a golden result
+                        auto golden_result = golden_index.Search(query_ds_ptr, conf_golden, bitset_view);
+
+                        // test RABITQ with nlist=64
+                        const int nlist = 64;
+                        
+                        auto conf = default_conf;
+                        conf[knowhere::meta::METRIC_TYPE] = DISTANCE_TYPES[distance_type];
+                        conf[knowhere::meta::DIM] = dim;
+                        conf[knowhere::indexparam::NLIST] = nlist;
+                        conf[knowhere::indexparam::RBQ_QUERY_NBITS] = 0;
+
+                        std::vector<int32_t> params = {(int)distance_type, dim, nb, nlist};
+
+                        printf(
+                            "\nProcessing HNSW,RABITQ with nlist=%d for %s distance, dim=%d, "
+                            "nrows=%d, "
+                            "%d%% points filtered out\n",
+                            nlist, DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                        index_file = test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
+                                                               golden_result.value(), params, conf, false, bitset_view);
+                        index_files.emplace_back(index_file);
+                        
+                        // test with query quantization
+                        conf[knowhere::indexparam::RBQ_QUERY_NBITS] = 4;
+                        printf(
+                            "\nProcessing HNSW,RABITQ with nlist=%d, rbq_query_nbits=4 for %s distance, dim=%d, "
+                            "nrows=%d, "
+                            "%d%% points filtered out\n",
+                            nlist, DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                        index_file = test_hnsw<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
+                                                               golden_result.value(), params, conf, false, bitset_view);
+                        index_files.emplace_back(index_file);
+                    }
+                    
+                    for (auto index : index_files) {
+                        std::remove(index.c_str());
+                    }
+                }
+            }
+        }
+    }
+
     SECTION("PRQ") {
         const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW_PRQ;
         const std::string& golden_index_type = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
