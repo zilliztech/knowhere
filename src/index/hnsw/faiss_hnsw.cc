@@ -2797,6 +2797,100 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
         return knowhere::IndexEnum::INDEX_HNSW_RABITQ;
     }
 
+    Status
+    Serialize(BinarySet& binset) const override {
+        if (isIndexEmpty()) {
+            return Status::empty_index;
+        }
+
+        try {
+            MemoryIOWriter writer;
+            if (indexes.size() > 1) {
+                // MV index
+                faiss::write_mv(&writer);
+                writeHeader(&writer);
+                for (const auto& index : indexes) {
+                    // For IndexIVFRaBitQWrapper, we need to serialize its internal index
+                    auto* wrapper = dynamic_cast<knowhere::IndexIVFRaBitQWrapper*>(index.get());
+                    if (wrapper != nullptr && wrapper->index != nullptr) {
+                        faiss::write_index(wrapper->index.get(), &writer);
+                    } else {
+                        faiss::write_index(index.get(), &writer);
+                    }
+                }
+
+                std::shared_ptr<uint8_t[]> data(writer.data());
+                binset.Append(Type(), data, writer.tellg());
+            } else {
+                // Single index
+                auto* wrapper = dynamic_cast<knowhere::IndexIVFRaBitQWrapper*>(indexes[0].get());
+                if (wrapper != nullptr && wrapper->index != nullptr) {
+                    // Serialize the internal faiss::Index from wrapper
+                    faiss::write_index(wrapper->index.get(), &writer);
+                } else {
+                    faiss::write_index(indexes[0].get(), &writer);
+                }
+                std::shared_ptr<uint8_t[]> data(writer.data());
+                binset.Append(Type(), data, writer.tellg());
+            }
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+            return Status::faiss_inner_error;
+        }
+
+        return Status::success;
+    }
+
+    Status
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config> config) override {
+        auto binary = binset.GetByName(Type());
+        if (binary == nullptr) {
+            LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
+            return Status::invalid_binary_set;
+        }
+
+        MemoryIOReader reader(binary->data.get(), binary->size);
+        try {
+            bool is_mv = faiss::read_is_mv(&reader);
+            if (is_mv) {
+                LOG_KNOWHERE_INFO_ << "start to load index by mv";
+                uint32_t v = readHeader(&reader);
+                indexes.resize(v);
+                LOG_KNOWHERE_INFO_ << "read " << v << " mvs";
+                for (auto i = 0; i < v; ++i) {
+                    auto read_index = std::unique_ptr<faiss::Index>(faiss::read_index(&reader));
+                    // Wrap it back in IndexIVFRaBitQWrapper
+                    auto wrapper = knowhere::IndexIVFRaBitQWrapper::from_deserialized(std::move(read_index));
+                    if (wrapper == nullptr) {
+                        LOG_KNOWHERE_ERROR_ << "Failed to deserialize IndexIVFRaBitQWrapper";
+                        return Status::invalid_serialized_index_type;
+                    }
+                    indexes[i] = std::move(wrapper);
+                }
+            } else {
+                reader.reset();
+                auto read_index = std::unique_ptr<faiss::Index>(faiss::read_index(&reader));
+                // Wrap it back in IndexIVFRaBitQWrapper
+                auto wrapper = knowhere::IndexIVFRaBitQWrapper::from_deserialized(std::move(read_index));
+                if (wrapper == nullptr) {
+                    LOG_KNOWHERE_ERROR_ << "Failed to deserialize IndexIVFRaBitQWrapper";
+                    return Status::invalid_serialized_index_type;
+                }
+                indexes[0] = std::move(wrapper);
+            }
+        } catch (const std::exception& e) {
+            if (is_faiss_fourcc_error(e.what())) {
+                LOG_KNOWHERE_WARNING_ << "faiss does not recognize the input index: " << e.what();
+                return Status::invalid_serialized_index_type;
+            } else {
+                LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+                return Status::faiss_inner_error;
+            }
+        }
+
+        return Status::success;
+    }
+
  public:
     std::vector<std::unique_ptr<knowhere::IndexIVFRaBitQWrapper>> tmp_index_ivfrabitq;
 
