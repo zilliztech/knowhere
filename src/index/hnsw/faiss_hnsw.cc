@@ -1403,6 +1403,9 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                         }
                         if (real_topk < k && real_topk < bitset.size() - bitset.count() &&
                             bf_index_wrapper_ptr != nullptr) {
+                            LOG_KNOWHERE_WARNING_ << "required topk: " << k
+                                                  << ", but the actual num of results got from hnsw: " << real_topk
+                                                  << ", trigger brute force search as fallback for hnsw search";
                             return true;
                         }
                         return false;
