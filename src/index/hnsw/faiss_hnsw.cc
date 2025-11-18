@@ -59,6 +59,21 @@
 #include "knowhere/prometheus_client.h"
 #endif
 
+namespace {
+// Wrapper class for IndexIVFRaBitQ to enable rotation support (by_residual)
+class IndexIVFRaBitQWrapper : public faiss::IndexIVFRaBitQ {
+ public:
+    IndexIVFRaBitQWrapper(faiss::Index* quantizer, size_t d, size_t nlist, 
+                          faiss::MetricType metric = faiss::METRIC_L2)
+        : faiss::IndexIVFRaBitQ(quantizer, d, nlist, metric) {
+        // Enable rotation by default for better accuracy
+        this->by_residual = true;
+    }
+    
+    virtual ~IndexIVFRaBitQWrapper() = default;
+};
+}  // anonymous namespace
+
 namespace knowhere {
 
 //
@@ -2795,7 +2810,7 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
     }
 
  public:
-    std::vector<std::unique_ptr<faiss::IndexIVFRaBitQ>> tmp_index_ivfrabitq;
+    std::vector<std::unique_ptr<IndexIVFRaBitQWrapper>> tmp_index_ivfrabitq;
 
  protected:
     Status
@@ -2839,7 +2854,7 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
                 quantizer = std::make_unique<faiss::IndexFlat>(dim, metric.value());
             }
             
-            auto ivfrabitq_index = std::make_unique<faiss::IndexIVFRaBitQ>(
+            auto ivfrabitq_index = std::make_unique<IndexIVFRaBitQWrapper>(
                 quantizer.release(), dim, nlist, metric.value());
 
             // should refine be used?
@@ -2934,7 +2949,7 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
             }
             
             if (index_hnsw != nullptr) {
-                faiss::IndexIVFRaBitQ* ivfrabitq_storage = dynamic_cast<faiss::IndexIVFRaBitQ*>(index_hnsw->storage);
+                IndexIVFRaBitQWrapper* ivfrabitq_storage = dynamic_cast<IndexIVFRaBitQWrapper*>(index_hnsw->storage);
                 if (ivfrabitq_storage != nullptr) {
                     ivfrabitq_storage->qb = qb;
                 }
@@ -2989,7 +3004,7 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
             index_hnsw_rabitq->storage = nullptr;
 
             // Initialize DirectMap for IVF_RABITQ to enable reconstruct()
-            faiss::IndexIVFRaBitQ* ivf_rabitq = tmp_index_ivfrabitq[i].get();
+            IndexIVFRaBitQWrapper* ivf_rabitq = tmp_index_ivfrabitq[i].get();
             ivf_rabitq->make_direct_map();
 
             // replace storage
