@@ -246,6 +246,47 @@ class FaissHnswPrqConfig : public FaissHnswConfig {
     }
 };
 
+class FaissHnswRabitqConfig : public FaissHnswConfig {
+ public:
+    // number of IVF clusters
+    CFG_INT nlist;
+    // number of bits to quantize query with (0 = disable quantization)
+    CFG_INT rbq_query_nbits;
+
+    KNOHWERE_DECLARE_CONFIG(FaissHnswRabitqConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(nlist)
+            .description("number of IVF clusters")
+            .set_default(256)
+            .for_train()
+            .set_range(1, 65536);
+        KNOWHERE_CONFIG_DECLARE_FIELD(rbq_query_nbits)
+            .description("number of bits to quantize query with")
+            .set_default(0)
+            .for_search()
+            .for_range_search()
+            .set_range(0, 8);
+    }
+
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        switch (param_type) {
+            case PARAM_TYPE::TRAIN: {
+                // check refine
+                if (refine_type.has_value()) {
+                    if (!WhetherAcceptableRefineType(refine_type.value())) {
+                        std::string msg = "invalid refine type : " + refine_type.value() +
+                                          ", optional types are [sq6, sq8, fp16, bf16, fp32, flat]";
+                        return HandleError(err_msg, msg, Status::invalid_args);
+                    }
+                }
+            }
+            default:
+                break;
+        }
+        return Status::success;
+    }
+};
+
 }  // namespace knowhere
 
 #endif /* FAISS_HNSW_CONFIG_H */
