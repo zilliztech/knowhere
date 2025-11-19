@@ -84,37 +84,55 @@ $ ./Release/tests/ut/knowhere_tests
 $ git clean -fxd
 ```
 
-## GEN PYTHON WHEEL(NEED REALSE BUILD)
+## GEN PYTHON WHEEL(NEED RELEASE BUILD)
 
-install dependency:
+### Prerequisites
 
-```
+Install dependencies:
+
+```bash
 sudo apt install swig python3-dev
-pip3 install bfloat16
+pip3 install bfloat16 auditwheel 'numpy<2'
 ```
 
-after build knowhere:
+### Build Portable Wheel
+
+After building Knowhere C++ library with Release configuration:
 
 ```bash
 cd python
-python3 setup.py bdist_wheel
+./build_portable_wheel.sh
 ```
 
-install knowhere wheel:
+This will create a portable **manylinux wheel** with all dependencies bundled.
+
+Options:
+- `-c, --clean` - Clean build artifacts first
+- `-v, --verbose` - Show detailed output
+- `-p, --python BIN` - Use specific Python executable
+
+Example:
+```bash
+# Clean build with verbose output
+./build_portable_wheel.sh -c -v
+
+# Build for Python 3.10
+./build_portable_wheel.sh -p python3.10
+```
+
+### Install Wheel
 
 ```bash
-pip3 install dist/pyknowhere-0.0.0-cp38-cp38-linux_x86_64.whl
+pip3 install dist/pyknowhere-*-manylinux*.whl
 ```
 
-clean
+
+### Clean Up
 
 ```bash
 cd python
-rm -rf build
-rm -rf dist
-rm -rf knowhere.egg-info
-rm knowhere/knowhere_wrap.cpp
-rm knowhere/swigknowhere.py
+rm -rf build dist *.egg-info
+rm -f knowhere/knowhere_wrap.cpp knowhere/swigknowhere.py
 ```
 
 ## Contributing
