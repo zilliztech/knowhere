@@ -177,6 +177,9 @@ if(__X86_64)
   knowhere_file_glob(GLOB FAISS_NEON_SRCS thirdparty/faiss/faiss/impl/*neon.cpp)
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_NEON_SRCS})
 
+  knowhere_file_glob(GLOB FAISS_RVV_SRCS thirdparty/faiss/faiss/impl/*rvv.cpp)
+  list(REMOVE_ITEM FAISS_SRCS ${FAISS_RVV_SRCS})
+
   add_library(faiss_avx2 OBJECT ${FAISS_AVX2_SRCS})
   target_compile_options(faiss_avx2 PRIVATE $<$<COMPILE_LANGUAGE:CXX>: -msse4.2
                                             -mavx2 -mfma -mf16c -mpopcnt>)
@@ -221,6 +224,9 @@ if(__AARCH64)
   knowhere_file_glob(GLOB FAISS_AVX_SRCS thirdparty/faiss/faiss/impl/*avx.cpp)
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX_SRCS})
 
+  knowhere_file_glob(GLOB FAISS_RVV_SRCS thirdparty/faiss/faiss/impl/*rvv.cpp)
+  list(REMOVE_ITEM FAISS_SRCS ${FAISS_RVV_SRCS})
+
   add_library(faiss STATIC ${FAISS_SRCS})
   target_include_directories(faiss PRIVATE ${Boost_INCLUDE_DIRS})
 
@@ -253,7 +259,7 @@ if(__RISCV64)
   target_compile_options(
     faiss
     PRIVATE $<$<COMPILE_LANGUAGE:CXX>:
-            -march=rv64gcv
+            -march=rv64gcv_zvfhmin
             -mabi=lp64d
             -Wno-sign-compare
             -Wno-unused-variable
@@ -274,6 +280,9 @@ if(__PPC64)
 
   knowhere_file_glob(GLOB FAISS_NEON_SRCS thirdparty/faiss/faiss/impl/*neon.cpp)
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_NEON_SRCS})
+
+  knowhere_file_glob(GLOB FAISS_RVV_SRCS thirdparty/faiss/faiss/impl/*rvv.cpp)
+  list(REMOVE_ITEM FAISS_SRCS ${FAISS_RVV_SRCS})
 
   add_library(faiss STATIC ${FAISS_SRCS})
   target_include_directories(faiss PRIVATE ${Boost_INCLUDE_DIRS})
