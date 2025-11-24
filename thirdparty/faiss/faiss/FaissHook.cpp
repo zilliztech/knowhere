@@ -9,6 +9,7 @@
 #include <faiss/impl/ScalarQuantizerDC_avx.h>
 #include <faiss/impl/ScalarQuantizerDC_avx512.h>
 #include <faiss/impl/ScalarQuantizerDC_neon.h>
+#include <faiss/impl/ScalarQuantizerDC_rvv.h>
 namespace faiss {
 
 sq_get_distance_computer_func_ptr sq_get_distance_computer =
@@ -63,6 +64,17 @@ void sq_hook() {
     sq_sel_quantizer = sq_select_quantizer_neon;
     sq_sel_inv_list_scanner = sq_select_inverted_list_scanner_neon;
 #endif
+
+#if defined(__riscv_vector)
+    static std::mutex hook_mutex;
+    std::lock_guard<std::mutex> lock(hook_mutex);
+    /* for IVFSQ */
+    sq_get_distance_computer = sq_get_distance_computer_rvv;
+    sq_sel_quantizer = sq_select_quantizer_rvv;
+    sq_sel_inv_list_scanner = sq_select_inverted_list_scanner_rvv;
+#endif
 }
 
+
 } // namespace faiss
+
