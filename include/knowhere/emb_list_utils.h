@@ -60,6 +60,12 @@ class EmbListOffset {
         return std::distance(offset.begin(), it) - 1;
     }
 
+    size_t
+    get_el_len(size_t el_id) const {
+        assert(el_id < offset.size() - 1);
+        return offset[el_id + 1] - offset[el_id];
+    }
+
     std::vector<int64_t>
     get_vids(size_t el_id) const {
         assert(el_id < offset.size() - 1);
