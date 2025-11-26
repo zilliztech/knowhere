@@ -1438,3 +1438,77 @@ TEST_CASE("Search for EMBList Indices (Binary)", "Benchmark and validation on bi
     }
 #endif
 }
+
+TEST_CASE("Test with some empty emb list", "[empty_emb_list]") {
+    // metrics to test
+    const std::vector<std::string> DISTANCE_TYPES = {"MAX_SIM_IP", "MAX_SIM_L2", "MAX_SIM_COSINE"};
+
+    // for unit tests
+    const std::vector<int32_t> DIMS = {4};
+    const std::vector<int32_t> NBS = {256};
+    const int32_t NQ = 10;
+    const int32_t TOPK = 16;
+
+    // random bitset rates
+    // 0.0 means unfiltered, 1.0 means all filtered out
+    const std::vector<float> BITSET_RATES = {0.0f, 0.5f, 0.95f, 1.0f};
+
+    // create base json config
+    knowhere::Json default_conf;
+
+    default_conf[knowhere::indexparam::HNSW_M] = 16;
+    default_conf[knowhere::indexparam::EFCONSTRUCTION] = 96;
+    default_conf[knowhere::indexparam::EF] = 64;
+    default_conf[knowhere::meta::TOPK] = TOPK;
+    default_conf[knowhere::indexparam::RETRIEVAL_ANN_RATIO] = 3.0f;
+    default_conf[knowhere::indexparam::NLIST] = 6;
+    default_conf[knowhere::indexparam::NPROBE] = 6;
+
+    int each_el_len = 10;
+
+    SECTION("HNSW FLAT") {
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW;
+
+        for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
+            for (const int32_t dim : DIMS) {
+                // generate query dataset
+                const uint64_t query_rng_seed = get_params_hash({(int)distance_type, dim});
+                auto query_ds_ptr = GenQueryEmbListDataSet(NQ, dim, query_rng_seed);
+
+                for (const int32_t nb : NBS) {
+                    knowhere::Json conf = default_conf;
+                    conf[knowhere::meta::METRIC_TYPE] = DISTANCE_TYPES[distance_type];
+                    conf[knowhere::meta::DIM] = dim;
+                    conf[knowhere::meta::ROWS] = nb;
+                    conf[knowhere::meta::INDEX_TYPE] = index_type;
+                    // generate base dataset
+                    std::vector<int32_t> params = {(int)distance_type, dim, nb};
+                    const uint64_t rng_seed = get_params_hash(params);
+                    int num_el = int(nb / each_el_len) + 1;
+                    auto default_ds_ptr = GenEmbListDataSetWithSomeEmpty(nb, dim, rng_seed, each_el_len);
+
+                    for (const float bitset_rate : BITSET_RATES) {
+                        printf("bitset_rate: %f\n", bitset_rate);
+                        const std::vector<uint8_t> bitset_data =
+                            GenerateBitsetByPartition(num_el, 1.0f - bitset_rate, 1);
+                        knowhere::BitsetView bitset_view = nullptr;
+                        if (bitset_rate != 0.0f) {
+                            bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
+                        }
+
+                        auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
+                                                                                          conf, bitset_view);
+                        printf(
+                            "\nProcessing EMBList HNSW,Flat fp32 for %s distance, dim=%d, nrows=%d, %d%% points "
+                            "filtered "
+                            "out\n",
+                            DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+                        auto index_file = test_emb_list_index<knowhere::fp32>(
+                            default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf, false, bitset_view);
+                        std::remove(index_file.c_str());
+                    }
+                }
+            }
+        }
+    }
+}

@@ -553,6 +553,33 @@ GenEmbListDataSet(int rows, int dim, const uint64_t seed = 42, int each_el_len =
     return ds;
 }
 
+inline knowhere::DataSetPtr
+GenEmbListDataSetWithSomeEmpty(int rows, int dim, const uint64_t seed = 42, int each_el_len = 10) {
+    std::mt19937 rng(seed);
+    // use int type to cover test cases for fb16, bf16, int8
+    std::uniform_int_distribution<> distrib(-100.0, 100.0);
+    float* ts = new float[rows * dim];
+    for (int i = 0; i < rows * dim; ++i) {
+        ts[i] = (float)distrib(rng);
+    }
+    auto ds = knowhere::GenDataSet(rows, dim, ts);
+    auto ptr = std::make_unique<size_t[]>(size_t(rows / each_el_len) + 2);
+    size_t i = 0;
+    for (; i * each_el_len < (size_t)rows; i += 1) {
+        if (i % 2 == 1) {
+            // make some empty emb lists, like [0, 0, 20, 20, 40, 40, ...]
+            ptr[i] = ptr[i - 1];
+        } else {
+            ptr[i] = i * each_el_len;
+        }
+    }
+    ptr[i] = (size_t)rows;
+    const size_t* ptr_const = ptr.release();
+    ds->Set(knowhere::meta::EMB_LIST_OFFSET, ptr_const);
+    ds->SetIsOwner(true);
+    return ds;
+}
+
 template <typename DataType>
 std::vector<knowhere::DataSetPtr>
 SplitEmbListDataSet(const knowhere::DataSetPtr ds, size_t partition_num, int each_el_len = 10) {

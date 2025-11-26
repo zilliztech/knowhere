@@ -217,18 +217,21 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
         futs.reserve(num_query_el);
 
         for (size_t query_el_i = 0; query_el_i < num_query_el; query_el_i++) {
+            auto num_query_vectors = query_el_offset.get_el_len(query_el_i);
+            if (num_query_vectors == 0) {
+                continue;
+            }
             futs.emplace_back(pool->push([&, query_el_idx = query_el_i] {
                 ThreadPool::ScopedSearchOmpSetter setter(1);
                 std::priority_queue<DistId, std::vector<DistId>, std::greater<>> minheap;
                 std::priority_queue<DistId, std::vector<DistId>, std::less<>> maxheap;
                 for (size_t base_el_idx = 0; base_el_idx < num_base_el; base_el_idx++) {
                     if (bitset.empty() || !bitset.test(base_el_idx)) {
-                        auto num_base_vectors =
-                            base_el_offset.offset[base_el_idx + 1] - base_el_offset.offset[base_el_idx];
-                        assert(num_base_vectors >= 0);
-                        auto num_query_vectors =
-                            query_el_offset.offset[query_el_idx + 1] - query_el_offset.offset[query_el_idx];
-                        assert(num_query_vectors >= 0);
+                        auto num_base_vectors = base_el_offset.get_el_len(base_el_idx);
+                        if (num_base_vectors == 0) {
+                            continue;
+                        }
+                        auto num_query_vectors = query_el_offset.get_el_len(query_el_idx);
                         auto distances = std::make_unique<float[]>(num_query_vectors * num_base_vectors);
 
                         auto code_size = dim;
