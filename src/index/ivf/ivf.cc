@@ -71,14 +71,21 @@ class IvfIndexNode : public IndexNode {
                       "IvfIndexNode only support float/binary");
         search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
         build_pool_ = ThreadPool::GetGlobalBuildThreadPool();
+        base_index_lock_ = std::make_unique<FairRWLock>();
     }
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
     Status
     Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
+    Status
+    AddEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
+               bool use_knowhere_build_pool) override;
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
            milvus::OpContext* op_context) const override;
+    expected<DataSetPtr>
+    SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                  milvus::OpContext* op_context) const override;
     expected<DataSetPtr>
     RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                 milvus::OpContext* op_context) const override;
@@ -95,6 +102,19 @@ class IvfIndexNode : public IndexNode {
                 bool use_knowhere_search_pool, milvus::OpContext* op_context) const override;
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override;
+    std::optional<size_t>
+    GetQueryCodeSize(const DataSetPtr dataset) const override {
+        // only support fp32
+        return 4 * dataset->GetDim();
+    }
+    expected<DataSetPtr>
+    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
+                  const bool is_cosine, milvus::OpContext* op_context) const override;
+    Status
+    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) override {
+        internal_offset_to_most_external_id_ = std::move(map);
+        return Status::success;
+    };
 
     static Status
     StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {
@@ -382,6 +402,8 @@ class IvfIndexNode : public IndexNode {
     // spawded during index training/building can inherit the low nice value of
     // threads in build_pool_.
     std::shared_ptr<ThreadPool> build_pool_;
+    std::vector<uint32_t> internal_offset_to_most_external_id_;
+    std::unique_ptr<FairRWLock> base_index_lock_;
 };
 
 }  // namespace knowhere
@@ -735,9 +757,80 @@ IvfIndexNode<DataType, IndexType>::Add(const DataSetPtr dataset, std::shared_ptr
 }
 
 template <typename DataType, typename IndexType>
+Status
+IvfIndexNode<DataType, IndexType>::AddEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims,
+                                              size_t num_rows, bool use_knowhere_build_pool) {
+    if (!this->index_) {
+        LOG_KNOWHERE_ERROR_ << "Can not add data to empty IVF index.";
+        return Status::empty_index;
+    }
+
+    if (emb_list_offset_ == nullptr || emb_list_offset_->offset.empty()) {
+        LOG_KNOWHERE_WARNING_ << "emb_list offset is empty, should call BuildEmbList first";
+        return Status::emb_list_inner_error;
+    }
+
+    // 1. split metric_type to el_metric_type and sub_metric_type
+    auto& config = static_cast<BaseConfig&>(*cfg);
+    auto original_metric_type = config.metric_type.value();
+    auto el_metric_type_or = get_el_metric_type(original_metric_type);
+    if (!el_metric_type_or.has_value()) {
+        LOG_KNOWHERE_WARNING_ << "Invalid metric type for emb_list: " << original_metric_type;
+        return Status::emb_list_inner_error;
+    }
+    auto el_metric_type = el_metric_type_or.value();
+    auto sub_metric_type_or = get_sub_metric_type(original_metric_type);
+    if (!sub_metric_type_or.has_value()) {
+        LOG_KNOWHERE_WARNING_ << "Invalid sub metric type for emb_list: " << original_metric_type;
+        return Status::emb_list_inner_error;
+    }
+    auto sub_metric_type = sub_metric_type_or.value();
+    config.metric_type = sub_metric_type;
+
+    // 2. update emb_list_offset and id map
+    {
+        FairWriteLockGuard guard(*this->base_index_lock_);
+        auto old_num_rows = Count();
+        auto old_num_el = emb_list_offset_->num_el();
+        auto dataset_rows = dataset->GetRows();
+        auto new_num_rows = old_num_rows + dataset_rows;
+        if (lims[0] != old_num_rows) {
+            LOG_KNOWHERE_WARNING_ << "lims[0] is not equal to the total_cnt of the old index";
+            return Status::emb_list_inner_error;
+        }
+        size_t idx = 1;
+        internal_offset_to_most_external_id_.resize(new_num_rows);
+        while (lims[idx] < new_num_rows) {
+            if (lims[idx] < lims[idx - 1]) {
+                LOG_KNOWHERE_WARNING_ << "lims is not increasing, lims[" << idx << "] = " << lims[idx] << " < lims["
+                                      << idx - 1 << "] = " << lims[idx - 1];
+                return Status::emb_list_inner_error;
+            }
+            emb_list_offset_->offset.push_back(lims[idx]);
+            auto cur_el_id = old_num_el + idx - 1;
+            std::fill_n(internal_offset_to_most_external_id_.begin() + lims[idx - 1], lims[idx] - lims[idx - 1],
+                        cur_el_id);
+            idx++;
+        }
+        if (lims[idx] != new_num_rows) {
+            LOG_KNOWHERE_WARNING_ << "lims should end with the total_cnt of the new index, lims[" << idx
+                                  << "] = " << lims[idx] << " != " << new_num_rows;
+            return Status::emb_list_inner_error;
+        }
+        emb_list_offset_->offset.push_back(new_num_rows);
+        auto cur_el_id = old_num_el + idx - 1;
+        std::fill_n(internal_offset_to_most_external_id_.begin() + lims[idx - 1], new_num_rows - lims[idx - 1],
+                    cur_el_id);
+    }
+
+    // 3. add to index
+    return Add(dataset, std::move(cfg), use_knowhere_build_pool);
+}
+
+template <typename DataType, typename IndexType>
 expected<DataSetPtr>
 IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
-                                          const BitsetView& bitset, milvus::OpContext* op_context) const {
+                                          const BitsetView& bitset_, milvus::OpContext* op_context) const {
     if (!this->index_) {
         LOG_KNOWHERE_WARNING_ << "search on empty index";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
@@ -756,6 +849,24 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
 
     auto k = ivf_cfg.k.value();
     auto nprobe = ivf_cfg.nprobe.value();
+
+    BitsetView bitset(bitset_);
+    if (!internal_offset_to_most_external_id_.empty()) {
+        if (emb_list_offset_ != nullptr) {
+            // if emb list, manually calculate the number of filtered out ids
+            size_t num_filtered_out_ids = 0;
+            for (size_t i = 0; i < bitset.size(); i++) {
+                if (bitset.test(i)) {
+                    num_filtered_out_ids += emb_list_offset_->offset[i + 1] - emb_list_offset_->offset[i];
+                }
+            }
+            bitset.set_out_ids(internal_offset_to_most_external_id_.data(), internal_offset_to_most_external_id_.size(),
+                               num_filtered_out_ids);
+        } else {
+            bitset.set_out_ids(internal_offset_to_most_external_id_.data(),
+                               internal_offset_to_most_external_id_.size());
+        }
+    }
 
     auto ids = std::make_unique<int64_t[]>(rows * k);
     auto distances = std::make_unique<float[]>(rows * k);
@@ -981,6 +1092,54 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
 
     auto res = GenResultDataSet(rows, k, std::move(ids), std::move(distances));
     return res;
+}
+
+template <typename DataType, typename IndexType>
+expected<DataSetPtr>
+IvfIndexNode<DataType, IndexType>::SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
+                                                 const BitsetView& bitset, milvus::OpContext* op_context) const {
+    FairReadLockGuard guard(*this->base_index_lock_);
+    return IndexNode::SearchEmbList(dataset, std::move(cfg), bitset, op_context);
+}
+
+template <typename DataType, typename IndexType>
+expected<DataSetPtr>
+IvfIndexNode<DataType, IndexType>::CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset,
+                                                 const int64_t* labels, const size_t labels_len, const bool is_cosine,
+                                                 milvus::OpContext* op_context) const {
+    if constexpr (std::is_same_v<IndexType, faiss::IndexIVFFlat> || std::is_same_v<IndexType, faiss::IndexIVFFlatCC>) {
+        auto num_queries = dataset->GetRows();
+        auto query_data = dataset->GetTensor();
+        auto dim = dataset->GetDim();
+        auto distances = std::make_unique<float[]>(num_queries * labels_len);
+
+        try {
+            std::vector<folly::Future<folly::Unit>> futs;
+            futs.reserve(num_queries);
+            for (int i = 0; i < num_queries; ++i) {
+                futs.emplace_back(search_pool_->push([&, index = i] {
+                    ThreadPool::ScopedSearchOmpSetter setter(1);
+                    std::unique_ptr<float[]> copied_query = nullptr;
+                    auto query = (const float*)query_data + index * dim;
+                    if (is_cosine) {
+                        copied_query = CopyAndNormalizeVecs(query, 1, dim);
+                        query = copied_query.get();
+                    }
+                    auto cur_distances = distances.get() + index * labels_len;
+                    index_->calc_dist_by_ids(1, query, labels_len, labels, cur_distances);
+                }));
+            }
+            WaitAllSuccess(futs);
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
+        }
+        // ids is not used in this context, so we pass an empty unique_ptr
+        return GenResultDataSet(num_queries, labels_len, std::unique_ptr<int64_t[]>{}, std::move(distances));
+    }
+
+    // only support IndexIVFFlat and IndexIVFFlatCC
+    return expected<DataSetPtr>::Err(Status::not_implemented, "CalcDistByIDs not implemented for current index type");
 }
 
 template <typename DataType, typename IndexType>
@@ -1563,10 +1722,18 @@ KNOWHERE_SIMPLE_REGISTER_DENSE_BIN_GLOBAL(IVFBIN, IvfIndexNode, knowhere::featur
 KNOWHERE_SIMPLE_REGISTER_DENSE_BIN_GLOBAL(BIN_IVF_FLAT, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexBinaryIVF)
 
 // float
-KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVFFLAT, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexIVFFlat)
-KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_FLAT, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexIVFFlat)
-KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVFFLATCC, IvfIndexNode, knowhere::feature::NONE, faiss::IndexIVFFlatCC)
-KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_FLAT_CC, IvfIndexNode, knowhere::feature::NONE, faiss::IndexIVFFlatCC)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVFFLAT, IvfIndexNode,
+                                              knowhere::feature::MMAP | knowhere::feature::EMB_LIST,
+                                              faiss::IndexIVFFlat)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_FLAT, IvfIndexNode,
+                                              knowhere::feature::MMAP | knowhere::feature::EMB_LIST,
+                                              faiss::IndexIVFFlat)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVFFLATCC, IvfIndexNode,
+                                              knowhere::feature::NONE | knowhere::feature::EMB_LIST,
+                                              faiss::IndexIVFFlatCC)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_FLAT_CC, IvfIndexNode,
+                                              knowhere::feature::NONE | knowhere::feature::EMB_LIST,
+                                              faiss::IndexIVFFlatCC)
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(SCANN, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexScaNN)
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVFPQ, IvfIndexNode, knowhere::feature::MMAP, IndexIVFPQWrapper)
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_PQ, IvfIndexNode, knowhere::feature::MMAP, IndexIVFPQWrapper)

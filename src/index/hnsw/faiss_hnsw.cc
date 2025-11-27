@@ -1481,7 +1481,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
     expected<DataSetPtr>
     CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset_, const int64_t* labels, const size_t labels_len,
-                  milvus::OpContext* op_context) const override {
+                  const bool /*is_cosine*/, milvus::OpContext* op_context) const override {
         if (this->indexes.empty()) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
@@ -2317,11 +2317,11 @@ class HNSWIndexNodeWithFallback : public IndexNode {
 
     expected<DataSetPtr>
     CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
-                  milvus::OpContext* op_context) const override {
+                  const bool is_cosine, milvus::OpContext* op_context) const override {
         if (use_base_index) {
-            return base_index->CalcDistByIDs(dataset, bitset, labels, labels_len, op_context);
+            return base_index->CalcDistByIDs(dataset, bitset, labels, labels_len, is_cosine, op_context);
         } else {
-            return fallback_search_index->CalcDistByIDs(dataset, bitset, labels, labels_len, op_context);
+            return fallback_search_index->CalcDistByIDs(dataset, bitset, labels, labels_len, is_cosine, op_context);
         }
     };
 

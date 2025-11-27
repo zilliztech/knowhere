@@ -29,7 +29,9 @@
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/IDSelector.h>
 
+#include <faiss/utils/distances.h>
 #include "knowhere/object.h"
+#include "simd/hook.h"
 
 namespace faiss {
 
@@ -968,6 +970,84 @@ void IndexIVF::range_search_preassigned(
         stats->nq += nx;
         stats->nlist += nlistv;
         stats->ndis += ndis;
+    }
+}
+
+void IndexIVF::calc_dist_by_ids(
+        idx_t n,
+        const float* x,
+        size_t num_keys,
+        const int64_t* keys,
+        float* __restrict out_dist) const {
+    assert(n == 1);
+
+    std::array<const float*, 4> codes_array{};
+    std::array<float, 4> norms_array{};
+    size_t counter = 0;
+    auto has_norms = invlists->get_code_norms((size_t)0, (size_t)0) != nullptr;
+
+    for (size_t i = 0; i < num_keys; i++) {
+        if (direct_map.type == DirectMap::Type::NoMap) {
+            throw std::runtime_error(
+                    "NoMap direct map not supported `calculate_dist_by_ids`");
+        }
+        auto lo = direct_map.get(keys[i]);
+        auto list_no = lo_listno(lo);
+        auto offset = lo_offset(lo);
+        auto codes = (const float*)invlists->get_single_code(list_no, offset);
+
+        codes_array[counter] = codes;
+        if (has_norms) {
+            norms_array[counter] = invlists->get_norm(list_no, offset);
+        }
+        counter++;
+
+        if (counter == 4) {
+            counter = 0;
+            if (metric_type == METRIC_INNER_PRODUCT) {
+                fvec_inner_product_batch_4(
+                        x,
+                        codes_array[0],
+                        codes_array[1],
+                        codes_array[2],
+                        codes_array[3],
+                        d,
+                        out_dist[i - 3],
+                        out_dist[i - 2],
+                        out_dist[i - 1],
+                        out_dist[i]);
+                if (has_norms) {
+                    out_dist[i - 3] /= norms_array[0];
+                    out_dist[i - 2] /= norms_array[1];
+                    out_dist[i - 1] /= norms_array[2];
+                    out_dist[i] /= norms_array[3];
+                }
+            } else {
+                fvec_L2sqr_batch_4(
+                        x,
+                        codes_array[0],
+                        codes_array[1],
+                        codes_array[2],
+                        codes_array[3],
+                        d,
+                        out_dist[i - 3],
+                        out_dist[i - 2],
+                        out_dist[i - 1],
+                        out_dist[i]);
+            }
+        }
+    }
+    // left over
+    for (size_t i = 0; i < counter; i++) {
+        if (metric_type == METRIC_INNER_PRODUCT) {
+            out_dist[num_keys - counter + i] =
+                    fvec_inner_product(x, codes_array[i], d);
+            if (has_norms) {
+                out_dist[num_keys - counter + i] /= norms_array[i];
+            }
+        } else {
+            out_dist[num_keys - counter + i] = fvec_L2sqr(x, codes_array[i], d);
+        }
     }
 }
 

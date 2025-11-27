@@ -63,7 +63,7 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
 
     Status
     AddEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
-               bool use_knowhere_build_pool = true) override;
+               bool use_knowhere_build_pool) override;
 
     std::optional<size_t>
     GetQueryCodeSize(const DataSetPtr dataset) const override {
@@ -78,7 +78,7 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
 
     expected<DataSetPtr>
     CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
-                  milvus::OpContext* op_context) const override;
+                  const bool is_cosine, milvus::OpContext* op_context) const override;
 
     expected<DataSetPtr>
     SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
@@ -395,6 +395,11 @@ Status
 IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::AddEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
                                                                   const size_t* lims, size_t num_rows,
                                                                   bool use_knowhere_build_pool) {
+    if (emb_list_offset_ == nullptr || emb_list_offset_->offset.empty()) {
+        LOG_KNOWHERE_WARNING_ << "emb_list offset is empty, should call BuildEmbList first";
+        return Status::emb_list_inner_error;
+    }
+
     // 1. split metric_type to el_metric_type and sub_metric_type
     auto& config = static_cast<BaseConfig&>(*cfg);
     auto original_metric_type = config.metric_type.value();
@@ -413,17 +418,10 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::AddEmbList(const DataSetP
     auto sub_metric_type = sub_metric_type_or.value();
     config.metric_type = sub_metric_type;
 
-    // 2. add to index
-    size_t old_rows_cnt = Count();
-    RETURN_IF_ERROR(Add(dataset, std::move(cfg), use_knowhere_build_pool));
-
-    if (emb_list_offset_ == nullptr || emb_list_offset_->offset.empty()) {
-        LOG_KNOWHERE_WARNING_ << "emb_list offset is empty, should call BuildEmbList first";
-        return Status::emb_list_inner_error;
-    }
-    // 3. update emb list offset and id map
+    // 2. update emb list offset and id map
     size_t old_num_el = emb_list_offset_->num_el();
-    size_t new_rows_cnt = Count();
+    size_t old_rows_cnt = Count();
+    size_t new_rows_cnt = old_rows_cnt + num_rows;
     {
         FairWriteLockGuard guard(*this->base_index_lock_);
         size_t idx = 0;
@@ -453,7 +451,9 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::AddEmbList(const DataSetP
         std::fill_n(internal_offset_to_most_external_id_.begin() + lims[idx - 1], new_rows_cnt - lims[idx - 1],
                     cur_el_id);
     }
-    return Status::success;
+
+    // 3. add to index
+    return Add(dataset, std::move(cfg), use_knowhere_build_pool);
 }
 
 template <typename DataType, typename BaseIndexNode>
@@ -530,6 +530,7 @@ expected<DataSetPtr>
 IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::CalcDistByIDs(const DataSetPtr dataset,
                                                                      const BitsetView& /*bitset*/,
                                                                      const int64_t* labels, const size_t labels_len,
+                                                                     const bool /*is_cosine*/,
                                                                      milvus::OpContext* op_context) const {
     auto num_queries = dataset->GetRows();
     auto query_data = dataset->GetTensor();

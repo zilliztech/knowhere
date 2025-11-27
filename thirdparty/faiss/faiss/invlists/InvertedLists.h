@@ -123,6 +123,13 @@ struct InvertedLists {
      */
     virtual const float* get_code_norms(size_t list_no, size_t offset) const;
 
+    /** get the norm by list_no and offset
+     * @param list_no
+     * @param offset
+     * @return
+     */
+    virtual float get_norm(size_t list_no, size_t offset) const;
+
     /** get the ids slice beginning with offset for an inverted list
      *
      * @return ids      size : user guarantee the slice side by list_size or segment_size API
@@ -352,6 +359,7 @@ struct ArrayInvertedLists : InvertedLists {
     const idx_t* get_ids(size_t list_no) const override;
 
     const float* get_code_norms(size_t list_no, size_t offset) const override;
+    float get_norm(size_t list_no, size_t offset) const override;
     void release_code_norms(size_t list_no, const float* codes) const override;
 
     size_t add_entries(
@@ -419,6 +427,7 @@ struct ConcurrentArrayInvertedLists : InvertedLists {
     const idx_t* get_ids(size_t list_no, size_t offset) const override;
 
     const float* get_code_norms(size_t list_no, size_t offset) const override;
+    float get_norm(size_t list_no, size_t offset) const override;
     void release_code_norms(size_t list_no, const float* codes)
             const override;
 

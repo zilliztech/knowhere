@@ -45,6 +45,14 @@ IndexNodeDataMockWrapper<DataType>::Add(const DataSetPtr dataset, std::shared_pt
 }
 
 template <typename DataType>
+Status
+IndexNodeDataMockWrapper<DataType>::AddEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
+                                               const size_t* lims, size_t num_rows, bool use_knowhere_build_pool) {
+    auto ds_ptr = ConvertFromDataTypeIfNeeded<DataType>(dataset);
+    return index_node_->AddEmbList(ds_ptr, std::move(cfg), lims, num_rows, use_knowhere_build_pool);
+}
+
+template <typename DataType>
 expected<DataSetPtr>
 IndexNodeDataMockWrapper<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
                                            const BitsetView& bitset, milvus::OpContext* op_context) const {
@@ -83,6 +91,15 @@ IndexNodeDataMockWrapper<DataType>::GetVectorByIds(const DataSetPtr dataset, mil
     } else {
         return res;
     }
+}
+
+template <typename DataType>
+expected<DataSetPtr>
+IndexNodeDataMockWrapper<DataType>::CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset,
+                                                  const int64_t* labels, const size_t labels_len, const bool is_cosine,
+                                                  milvus::OpContext* op_context) const {
+    auto ds_ptr = ConvertFromDataTypeIfNeeded<DataType>(dataset);
+    return index_node_->CalcDistByIDs(ds_ptr, bitset, labels, labels_len, is_cosine, op_context);
 }
 
 template class knowhere::IndexNodeDataMockWrapper<knowhere::fp16>;
