@@ -35,6 +35,10 @@ class IndexNodeDataMockWrapper : public IndexNode {
     Status
     Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
 
+    Status
+    AddEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
+               bool use_knowhere_build_pool) override;
+
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
            milvus::OpContext* op_context) const override;
@@ -49,6 +53,28 @@ class IndexNodeDataMockWrapper : public IndexNode {
 
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override;
+
+    expected<DataSetPtr>
+    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
+                  const bool is_cosine, milvus::OpContext* op_context) const override;
+    Status
+    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) override {
+        return index_node_->SetInternalIdToMostExternalIdMap(std::move(map));
+    }
+
+    std::optional<size_t>
+    GetQueryCodeSize(const DataSetPtr dataset) const override {
+        auto dim = dataset->GetDim();
+        if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
+            return 4 * dim;
+        } else if constexpr (std::is_same_v<DataType, knowhere::fp16>) {
+            return 2 * dim;
+        } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
+            return 2 * dim;
+        }
+        LOG_KNOWHERE_ERROR_ << "Unsupported data type";
+        return std::nullopt;
+    }
 
     bool
     HasRawData(const std::string& metric_type) const override {

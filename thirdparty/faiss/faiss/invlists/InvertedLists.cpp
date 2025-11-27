@@ -146,6 +146,10 @@ const float* InvertedLists::get_code_norms(size_t list_no, size_t offset)
     return nullptr;
 }
 
+float InvertedLists::get_norm(size_t list_no, size_t offset) const {
+    return 0.0f;
+}
+
 void InvertedLists::release_code_norms(size_t list_no, const float* codes)
         const {}
 
@@ -421,12 +425,21 @@ void ArrayInvertedLists::resize(size_t list_no, size_t new_size) {
 
 const float* ArrayInvertedLists::get_code_norms(
         size_t list_no,
-        size_t offset) const {
+        size_t /*offset*/) const {
     if (with_norm) {
         assert(list_no < nlist);
         return code_norms[list_no].data();
     } else {
         return nullptr;
+    }
+}
+
+float ArrayInvertedLists::get_norm(size_t list_no, size_t offset) const {
+    if (with_norm) {
+        assert(list_no < nlist);
+        return code_norms[list_no][offset];
+    } else {
+        return 0.0f;
     }
 }
 
@@ -778,6 +791,19 @@ const float* ConcurrentArrayInvertedLists::get_code_norms(
         return &(code_norms[list_no][segment_no][segment_off]);
     }
 }
+
+float ConcurrentArrayInvertedLists::get_norm(size_t list_no, size_t offset) const {
+    if (!save_norm) {
+        return 0.0f;
+    } else {
+        assert(list_no < nlist);
+        assert(offset < list_size(list_no));
+        auto segment_no = offset / segment_size;
+        auto segment_off = offset % segment_size;
+        return code_norms[list_no][segment_no][segment_off];
+    }
+}
+
 void ConcurrentArrayInvertedLists::release_code_norms(
         size_t list_no,
         const float* codes) const {
