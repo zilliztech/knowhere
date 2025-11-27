@@ -43,15 +43,13 @@ jobs:
           CIBW_SKIP: "*musllinux*" # faiss-cpu fails to build on musllinux
           CIBW_ARCHS: ${{ matrix.arch }}
           CIBW_BEFORE_ALL_LINUX: "bash scripts/python_deps.sh && rm -rf build && mkdir build && cd build && conan install .. --build=missing -o with_diskann=True -s compiler.libcxx=libstdc++11 -s build_type=Release && conan build .. && cd -"
-          # CIBW_BEFORE_ALL_MACOS: "bash scripts/python_deps.sh && rm -rf build && mkdir build && cd build && CC=$(brew --prefix llvm)/bin/clang CXX=$(brew --prefix llvm)/bin/clang++ conan install .. --build=missing -s build_type=Release && CC=$(brew --prefix llvm)/bin/clang CXX=$(brew --prefix llvm)/bin/clang++ conan build .. && cd -"
-          CIBW_BEFORE_BUILD: "pip3 install pytest numpy faiss-cpu bfloat16"
-          # CIBW_ENVIRONMENT_MACOS: >
-          #   _PYTHON_HOST_PLATFORM=macosx-10.15-${{ matrix.arch }}
-          # CIBW_BEFORE_BUILD: "bash scripts/python_deps.sh && pip3 install pytest numpy faiss-cpu"
-          # CIBW_CONFIG_SETTINGS: --build-option='-c clang'
-          # CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
-          #   DYLD_LIBRARY_PATH=$REPAIR_LIBRARY_PATH delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
-          CIBW_TEST_REQUIRES: "pytest numpy faiss-cpu"
+          # Use portable wheel build script instead of plain setup.py
+          CIBW_BEFORE_BUILD: "pip3 install pytest numpy faiss-cpu bfloat16 auditwheel"
+          # Custom build command using our portable wheel builder
+          CIBW_BUILD_FRONTEND: "build"
+          # Note: cibuildwheel will use our build_portable_wheel.sh via setup.py
+          # The script automatically handles auditwheel repair
+          CIBW_TEST_REQUIRES: "pytest numpy<2 faiss-cpu bfloat16"
           CIBW_TEST_COMMAND: "pytest {project}/tests/python/test_index_with_random.py"
           CIBW_ENVIRONMENT: "SETUPTOOLS_SCM_PRETEND_VERSION=${{ github.event.inputs.tag }}"
         with:
