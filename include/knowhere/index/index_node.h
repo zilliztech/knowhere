@@ -145,6 +145,7 @@ class IndexNode : public Object {
      * @param dataset Query vectors.
      * @param labels
      * @param labels_len
+     * @param is_cosine
      * @return An expected<> object containing the search results or an error.
      *
      * @note emb-list index search will use this method to perform brute-force distance calculation.
@@ -152,7 +153,7 @@ class IndexNode : public Object {
      */
     virtual expected<DataSetPtr>
     CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
-                  milvus::OpContext* op_context = nullptr) const {
+                  const bool is_cosine, milvus::OpContext* op_context = nullptr) const {
         return expected<DataSetPtr>::Err(Status::not_implemented,
                                          "BruteForceByIDs not supported for current index type");
     };
@@ -843,6 +844,7 @@ class IndexNode : public Object {
         if (sub_metric_type == metric::L2 || sub_metric_type == metric::HAMMING || sub_metric_type == metric::JACCARD) {
             larger_is_closer = false;
         }
+        bool is_cosine = sub_metric_type == metric::COSINE ? true : false;
         LOG_KNOWHERE_DEBUG_ << "search emb_list with sub metric_type: " << sub_metric_type;
         auto el_k = config.k.value();
 
@@ -913,7 +915,7 @@ class IndexNode : public Object {
                 // Brute-force compute distances between all vectors in the query emb_list and all vectors in the
                 // candidate emb_list
                 auto bf_query_dataset = GenDataSet(end_offset - start_offset, dim, tensor + tensor_offset);
-                auto bf_search_res = CalcDistByIDs(bf_query_dataset, bitset, vids.data(), vids.size());
+                auto bf_search_res = CalcDistByIDs(bf_query_dataset, bitset, vids.data(), vids.size(), is_cosine);
                 if (!bf_search_res.has_value()) {
                     LOG_KNOWHERE_ERROR_ << "bf search error: " << bf_search_res.what();
                     return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "bf search error");

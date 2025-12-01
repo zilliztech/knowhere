@@ -362,6 +362,13 @@ struct IndexIVF : Index, IndexIVFInterface {
             RangeSearchResult* result,
             const SearchParameters* params = nullptr) const override;
 
+    void calc_dist_by_ids(
+            idx_t n,
+            const float* x,
+            size_t num_keys,
+            const int64_t* keys,
+            float* out_dist) const;
+
     /** Get a scanner for this index (store_pairs means ignore labels)
      *
      * The default search implementation uses this to compute the distances.

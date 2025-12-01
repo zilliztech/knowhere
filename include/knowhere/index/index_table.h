@@ -141,10 +141,16 @@ static std::set<std::string> legal_support_mmap_knowhere_index = {
 };
 
 static std::set<std::string> legal_support_emb_list_knowhere_index = {
-    IndexEnum::INDEX_HNSW,     IndexEnum::INDEX_HNSW_SQ,         IndexEnum::INDEX_HNSW_PQ,
-    IndexEnum::INDEX_HNSW_PRQ, IndexEnum::INDEX_FAISS_SCANN_DVR,
+    IndexEnum::INDEX_HNSW,
+    IndexEnum::INDEX_HNSW_SQ,
+    IndexEnum::INDEX_HNSW_PQ,
+    IndexEnum::INDEX_HNSW_PRQ,
+    IndexEnum::INDEX_FAISS_SCANN_DVR,
+    IndexEnum::INDEX_FAISS_IVFFLAT,
+    IndexEnum::INDEX_FAISS_IVFFLAT_CC,
 #ifdef KNOWHERE_WITH_CARDINAL
-    IndexEnum::INDEX_DISKANN,  IndexEnum::INDEX_CARDINAL_TIERED,
+    IndexEnum::INDEX_DISKANN,
+    IndexEnum::INDEX_CARDINAL_TIERED,
 #endif
 };
 
