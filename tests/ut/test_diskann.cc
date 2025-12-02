@@ -11,7 +11,9 @@
 
 #include <sys/resource.h>
 
+#include <atomic>
 #include <string>
+#include <thread>
 
 #include "../DiskANN/include/diskann/defaults.h"
 #include "catch2/catch_approx.hpp"
@@ -22,6 +24,7 @@
 #include "index/diskann/diskann_config.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/knowhere_check.h"
+#include "knowhere/context.h"
 #include "knowhere/expected.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/utils.h"
@@ -1249,4 +1252,148 @@ base_AiSAQ_search() {
 
 TEST_CASE("Test_AiSAQ_IndexNode", "[diskann]") {
     base_AiSAQ_search<knowhere::fp32>();
+}
+
+TEST_CASE("Test DiskANN Search Cancellation", "[diskann][cancellation]") {
+    fs::remove_all(kDir);
+    fs::remove(kDir);
+    REQUIRE_NOTHROW(fs::create_directory(kDir));
+    REQUIRE_NOTHROW(fs::create_directory(kL2IndexDir));
+
+    auto version = GenTestVersionList();
+    auto index_type = GENERATE(as<std::string>{}, "DISKANN", "AISAQ");
+
+    auto build_gen = [&index_type]() {
+        knowhere::Json json;
+        json["dim"] = kDim;
+        json["metric_type"] = knowhere::metric::L2;
+        json["k"] = kK;
+        json["index_prefix"] = kL2IndexPrefix;
+        json["data_path"] = kRawDataPath;
+        json["max_degree"] = 56;
+        json["search_list_size"] = 128;
+        json["pq_code_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
+        json["search_cache_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
+        json["build_dram_budget_gb"] = 32.0;
+        if (index_type == "AISAQ") {
+            json["rearrange"] = true;
+            json["inline_pq"] = 0;
+            json["pq_cache_size"] = 0;
+            json["num_entry_points"] = 100;
+        }
+        return json;
+    };
+
+    auto deserialize_gen = [&index_type]() {
+        knowhere::Json json;
+        json["dim"] = kDim;
+        json["metric_type"] = knowhere::metric::L2;
+        json["k"] = kK;
+        json["index_prefix"] = kL2IndexPrefix;
+        json["search_cache_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
+        if (index_type == "AISAQ") {
+            json["pq_cache_size"] = 0;
+        }
+        return json;
+    };
+
+    auto search_gen = [&index_type]() {
+        knowhere::Json json;
+        json["dim"] = kDim;
+        json["metric_type"] = knowhere::metric::L2;
+        json["k"] = kK;
+        json["index_prefix"] = kL2IndexPrefix;
+        json["search_list_size"] = 36;
+        json["beamwidth"] = 8;
+        if (index_type == "AISAQ") {
+            json["vectors_beamwidth"] = 4;
+        }
+        return json;
+    };
+
+    // Prepare data and build index
+    auto base_ds = GenDataSet(kNumRows, kDim, 30);
+    auto query_ds = GenDataSet(kNumQueries, kDim, 42);
+    auto base_ptr = static_cast<const float*>(base_ds->GetTensor());
+    WriteRawDataToDisk<float>(kRawDataPath, base_ptr, kNumRows, kDim);
+
+    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+    auto diskann_index_pack = knowhere::Pack(file_manager);
+    knowhere::BinarySet binset;
+
+    // Build index
+    {
+        knowhere::DataSetPtr ds_ptr = nullptr;
+        auto diskann =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_type, version, diskann_index_pack).value();
+        diskann.Build(ds_ptr, build_gen());
+        diskann.Serialize(binset);
+    }
+
+    SECTION("Test Search with cancellation from another thread") {
+        auto diskann =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_type, version, diskann_index_pack).value();
+        diskann.Deserialize(binset, deserialize_gen());
+
+        folly::CancellationSource cs;
+        milvus::OpContext op_context(cs.getToken());
+
+        std::atomic<bool> search_started{false};
+        std::atomic<bool> search_finished{false};
+
+        std::thread search_thread([&]() {
+            search_started = true;
+            auto results = diskann.Search(query_ds, search_gen(), nullptr, &op_context);
+            search_finished = true;
+            (void)results;
+        });
+
+        while (!search_started) {
+            std::this_thread::yield();
+        }
+
+        cs.requestCancellation();
+        search_thread.join();
+
+        REQUIRE(search_finished);
+    }
+
+    SECTION("Test Search with pre-cancelled context should return error") {
+        auto diskann =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_type, version, diskann_index_pack).value();
+        diskann.Deserialize(binset, deserialize_gen());
+
+        folly::CancellationSource cs;
+        milvus::OpContext op_context(cs.getToken());
+
+        cs.requestCancellation();
+        bool is_cancelled = op_context.cancellation_token.isCancellationRequested();
+        REQUIRE(is_cancelled);
+
+        auto results = diskann.Search(query_ds, search_gen(), nullptr, &op_context);
+        REQUIRE(!results.has_value());
+        // DISKANN returns diskann_inner_error, AISAQ returns aisaq_error
+        auto expected_error =
+            (index_type == "AISAQ") ? knowhere::Status::aisaq_error : knowhere::Status::diskann_inner_error;
+        REQUIRE(results.error() == expected_error);
+    }
+
+    SECTION("Test Search without cancellation should succeed") {
+        auto diskann =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_type, version, diskann_index_pack).value();
+        diskann.Deserialize(binset, deserialize_gen());
+
+        // Search without OpContext should succeed
+        auto results = diskann.Search(query_ds, search_gen(), nullptr);
+        REQUIRE(results.has_value());
+
+        // Search with non-cancelled OpContext should also succeed∏
+        folly::CancellationSource cs;
+        milvus::OpContext op_context(cs.getToken());
+        auto results2 = diskann.Search(query_ds, search_gen(), nullptr, &op_context);
+        REQUIRE(results2.has_value());
+    }
+
+    fs::remove_all(kDir);
+    fs::remove(kDir);
 }

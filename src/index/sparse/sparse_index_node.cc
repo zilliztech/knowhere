@@ -19,6 +19,7 @@
 #include "io/memory_io.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/config.h"
+#include "knowhere/context.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/index/index_factory.h"
@@ -134,6 +135,7 @@ class SparseInvertedIndexNode : public IndexNode {
         futs.reserve(nq);
         for (int64_t idx = 0; idx < nq; ++idx) {
             futs.emplace_back(search_pool_->push([&, idx = idx, p_id = p_id.get(), p_dist = p_dist.get()]() {
+                knowhere::checkCancellation(op_context);
                 index_->Search(queries[idx], k, p_dist + idx * k, p_id + idx * k, bitset, computer, approx_params);
             }));
         }

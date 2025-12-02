@@ -18,6 +18,7 @@
 #include "io/memory_io.h"
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/task.h"
+#include "knowhere/context.h"
 #include "knowhere/feature.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/index_node_data_mock_wrapper.h"
@@ -93,6 +94,8 @@ class FlatIndexNode : public IndexNode {
             futs.reserve(nq);
             for (int i = 0; i < nq; ++i) {
                 futs.emplace_back(search_pool_->push([&, index = i] {
+                    knowhere::checkCancellation(op_context);
+
                     ThreadPool::ScopedSearchOmpSetter setter(1);
                     auto cur_ids = ids + k * index;
                     auto cur_dis = distances + k * index;
