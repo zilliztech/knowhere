@@ -29,6 +29,7 @@
 #include "index/ivf/ivfrbq_wrapper.h"
 #include "io/memory_io.h"
 #include "knowhere/bitsetview_idselector.h"
+#include "knowhere/context.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/feature.h"
@@ -875,6 +876,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
         futs.reserve(rows);
         for (int i = 0; i < rows; ++i) {
             futs.emplace_back(search_pool_->push([&, index = i] {
+                knowhere::checkCancellation(op_context);
                 ThreadPool::ScopedSearchOmpSetter setter(1);
                 auto offset = k * index;
                 std::unique_ptr<float[]> copied_query = nullptr;
@@ -1149,7 +1151,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
     // if support ann_iterator, use iterator-based range_search (IndexNode::RangeSearch)
     constexpr bool use_iterator_for_range_search = is_ann_iterator_supported();
     if (use_iterator_for_range_search) {
-        return IndexNode::RangeSearch(dataset, std::move(cfg), bitset);
+        return IndexNode::RangeSearch(dataset, std::move(cfg), bitset, op_context);
     }
     if (!this->index_) {
         LOG_KNOWHERE_WARNING_ << "range search on empty index";
@@ -1181,6 +1183,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
         futs.reserve(nq);
         for (int i = 0; i < nq; ++i) {
             futs.emplace_back(search_pool_->push([&, index = i] {
+                knowhere::checkCancellation(op_context);
                 ThreadPool::ScopedSearchOmpSetter setter(1);
                 faiss::RangeSearchResult res(1);
                 std::unique_ptr<float[]> copied_query = nullptr;

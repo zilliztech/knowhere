@@ -47,6 +47,7 @@
 #include "knowhere/comp/task.h"
 #include "knowhere/comp/time_recorder.h"
 #include "knowhere/config.h"
+#include "knowhere/context.h"
 #include "knowhere/expected.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/index_node_data_mock_wrapper.h"
@@ -1374,6 +1375,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                 futs.emplace_back(search_pool->push([&, idx = i, is_refined = is_refined,
                                                      index_wrapper_ptr = index_wrapper_ptr,
                                                      bf_index_wrapper_ptr = bf_index_wrapper_ptr]() {
+                    knowhere::checkCancellation(op_context);
                     // 1 thread per element
                     ThreadPool::ScopedSearchOmpSetter setter(1);
 
@@ -1516,6 +1518,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             futs.reserve(rows);
             for (auto i = 0; i < rows; i++) {
                 futs.emplace_back(search_pool->push([&, idx = i, index_id = index_id]() {
+                    knowhere::checkCancellation(op_context);
                     // set up a distance computer
                     std::unique_ptr<faiss::DistanceComputer> dist_computer;
                     const faiss::IndexRefine* index_refine =
@@ -1658,73 +1661,79 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         std::vector<std::vector<int64_t>> result_id_array(rows);
         std::vector<std::vector<float>> result_dist_array(rows);
 
-        std::vector<folly::Future<folly::Unit>> futs;
-        futs.reserve(rows);
+        try {
+            std::vector<folly::Future<folly::Unit>> futs;
+            futs.reserve(rows);
 
-        // a sequential version
-        for (int64_t i = 0; i < rows; ++i) {
-            // const int64_t idx = i;
-            // {
+            // a sequential version
+            for (int64_t i = 0; i < rows; ++i) {
+                // const int64_t idx = i;
+                // {
 
-            futs.emplace_back(
-                search_pool->push([&, idx = i, is_refined = is_refined, index_wrapper_ptr = index_wrapper_ptr] {
-                    // 1 thread per element
-                    ThreadPool::ScopedSearchOmpSetter setter(1);
+                futs.emplace_back(
+                    search_pool->push([&, idx = i, is_refined = is_refined, index_wrapper_ptr = index_wrapper_ptr] {
+                        knowhere::checkCancellation(op_context);
+                        // 1 thread per element
+                        ThreadPool::ScopedSearchOmpSetter setter(1);
 
-                    // set up a query
-                    const float* cur_query = nullptr;
+                        // set up a query
+                        const float* cur_query = nullptr;
 
-                    std::vector<float> cur_query_tmp(dim);
-                    if (data_format == DataFormatEnum::fp32) {
-                        cur_query = (const float*)data + idx * dim;
-                    } else {
-                        convert_rows_to_fp32(data, cur_query_tmp.data(), data_format, idx, 1, dim);
-                        cur_query = cur_query_tmp.data();
-                    }
-
-                    // initialize a buffer
-                    faiss::RangeSearchResult res(1);
-
-                    // perform the search
-                    if (is_refined) {
-                        faiss::IndexRefineSearchParameters refine_params;
-                        refine_params.k_factor = hnsw_cfg.refine_k.value_or(1);
-                        // a refine procedure itself does not need to care about filtering
-                        refine_params.sel = nullptr;
-                        refine_params.base_index_params = &hnsw_search_params;
-
-                        index_wrapper_ptr->range_search(1, cur_query, radius, &res, &refine_params);
-                    } else {
-                        index_wrapper_ptr->range_search(1, cur_query, radius, &res, &hnsw_search_params);
-                    }
-
-                    // post-process
-                    const size_t elem_cnt = res.lims[1];
-                    result_dist_array[idx].resize(elem_cnt);
-                    result_id_array[idx].resize(elem_cnt);
-
-                    if (labels.empty()) {
-                        for (size_t j = 0; j < elem_cnt; j++) {
-                            result_dist_array[idx][j] = res.distances[j];
-                            result_id_array[idx][j] = res.labels[j];
+                        std::vector<float> cur_query_tmp(dim);
+                        if (data_format == DataFormatEnum::fp32) {
+                            cur_query = (const float*)data + idx * dim;
+                        } else {
+                            convert_rows_to_fp32(data, cur_query_tmp.data(), data_format, idx, 1, dim);
+                            cur_query = cur_query_tmp.data();
                         }
-                    } else {
-                        for (size_t j = 0; j < elem_cnt; j++) {
-                            result_dist_array[idx][j] = res.distances[j];
-                            result_id_array[idx][j] =
-                                res.labels[j] < 0 ? res.labels[j] : labels[index_id]->operator[](res.labels[j]);
-                        }
-                    }
 
-                    if (hnsw_cfg.range_filter.value() != defaultRangeFilter) {
-                        FilterRangeSearchResultForOneNq(result_dist_array[idx], result_id_array[idx],
-                                                        is_similarity_metric, radius, range_filter);
-                    }
-                }));
+                        // initialize a buffer
+                        faiss::RangeSearchResult res(1);
+
+                        // perform the search
+                        if (is_refined) {
+                            faiss::IndexRefineSearchParameters refine_params;
+                            refine_params.k_factor = hnsw_cfg.refine_k.value_or(1);
+                            // a refine procedure itself does not need to care about filtering
+                            refine_params.sel = nullptr;
+                            refine_params.base_index_params = &hnsw_search_params;
+
+                            index_wrapper_ptr->range_search(1, cur_query, radius, &res, &refine_params);
+                        } else {
+                            index_wrapper_ptr->range_search(1, cur_query, radius, &res, &hnsw_search_params);
+                        }
+
+                        // post-process
+                        const size_t elem_cnt = res.lims[1];
+                        result_dist_array[idx].resize(elem_cnt);
+                        result_id_array[idx].resize(elem_cnt);
+
+                        if (labels.empty()) {
+                            for (size_t j = 0; j < elem_cnt; j++) {
+                                result_dist_array[idx][j] = res.distances[j];
+                                result_id_array[idx][j] = res.labels[j];
+                            }
+                        } else {
+                            for (size_t j = 0; j < elem_cnt; j++) {
+                                result_dist_array[idx][j] = res.distances[j];
+                                result_id_array[idx][j] =
+                                    res.labels[j] < 0 ? res.labels[j] : labels[index_id]->operator[](res.labels[j]);
+                            }
+                        }
+
+                        if (hnsw_cfg.range_filter.value() != defaultRangeFilter) {
+                            FilterRangeSearchResultForOneNq(result_dist_array[idx], result_id_array[idx],
+                                                            is_similarity_metric, radius, range_filter);
+                        }
+                    }));
+            }
+
+            // wait for the completion
+            WaitAllSuccess(futs);
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+            return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
-
-        // wait for the completion
-        WaitAllSuccess(futs);
 
         //
         RangeSearchResult range_search_result =

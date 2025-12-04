@@ -9,6 +9,12 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <folly/CancellationToken.h>
+#include <folly/futures/Future.h>
+
+#include <atomic>
+#include <thread>
+
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
@@ -19,6 +25,7 @@
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_check.h"
 #include "knowhere/comp/knowhere_config.h"
+#include "knowhere/context.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
 #include "simd/hook.h"
@@ -831,4 +838,269 @@ TEST_CASE("Test Mem Index With Binary Vector", "[bool metrics]") {
         REQUIRE(results.error() == knowhere::Status::faiss_inner_error);
     }
 #endif
+}
+
+TEST_CASE("Test Search Cancellation", "[search][cancellation]") {
+    const int64_t nb = 10000, nq = 100;
+    const int64_t dim = 128;
+    const int64_t topk = 10;
+
+    auto metric = knowhere::metric::L2;
+    auto version = GenTestVersionList();
+
+    auto hnsw_gen = [=]() {
+        knowhere::Json json;
+        json[knowhere::meta::DIM] = dim;
+        json[knowhere::meta::METRIC_TYPE] = metric;
+        json[knowhere::meta::TOPK] = topk;
+        json[knowhere::indexparam::HNSW_M] = 16;
+        json[knowhere::indexparam::EFCONSTRUCTION] = 100;
+        json[knowhere::indexparam::EF] = 64;
+        return json;
+    };
+
+    auto ivfflat_gen = [=]() {
+        knowhere::Json json;
+        json[knowhere::meta::DIM] = dim;
+        json[knowhere::meta::METRIC_TYPE] = metric;
+        json[knowhere::meta::TOPK] = topk;
+        json[knowhere::indexparam::NLIST] = 16;
+        json[knowhere::indexparam::NPROBE] = 8;
+        return json;
+    };
+
+    auto scann_gen = [=]() {
+        knowhere::Json json;
+        json[knowhere::meta::DIM] = dim;
+        json[knowhere::meta::METRIC_TYPE] = metric;
+        json[knowhere::meta::TOPK] = topk;
+        json[knowhere::indexparam::NLIST] = 16;
+        json[knowhere::indexparam::NPROBE] = 8;
+        json[knowhere::indexparam::REORDER_K] = 200;
+        json[knowhere::indexparam::WITH_RAW_DATA] = true;
+        return json;
+    };
+
+    const auto train_ds = GenDataSet(nb, dim);
+    const auto query_ds = GenDataSet(nq, dim);
+
+    using std::make_tuple;
+    auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+        make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
+        make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivfflat_gen),
+        make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
+    }));
+
+    // Skip SCANN if CPU doesn't support it
+    if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && !faiss::support_pq_fast_scan) {
+        return;
+    }
+
+    SECTION("Test Search with cancellation from another thread") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto json = gen();
+        CAPTURE(name, json.dump());
+        REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
+
+        folly::CancellationSource cs;
+        milvus::OpContext op_context(cs.getToken());
+
+        std::atomic<bool> search_started{false};
+        std::atomic<bool> search_finished{false};
+
+        // Start search in a separate thread
+        std::thread search_thread([&]() {
+            search_started = true;
+            auto results = idx.Search(query_ds, json, nullptr, &op_context);
+            search_finished = true;
+            // Results may be either successful (if completed before cancellation)
+            // or error (if cancelled) - both are acceptable outcomes
+            (void)results;
+        });
+
+        // Wait for search to start
+        while (!search_started) {
+            std::this_thread::yield();
+        }
+
+        // Request cancellation
+        cs.requestCancellation();
+
+        // Wait for search thread to finish
+        search_thread.join();
+
+        // The search should have finished (either completed or cancelled)
+        REQUIRE(search_finished);
+    }
+
+    SECTION("Test Search with pre-cancelled context should return error") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto json = gen();
+        CAPTURE(name, json.dump());
+        REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
+
+        folly::CancellationSource cs;
+        milvus::OpContext op_context(cs.getToken());
+
+        // Request cancellation before search
+        cs.requestCancellation();
+        REQUIRE((op_context.cancellation_token.isCancellationRequested()));
+
+        // Search should return error due to cancellation
+        auto results = idx.Search(query_ds, json, nullptr, &op_context);
+        REQUIRE(!results.has_value());
+        REQUIRE(results.error() == knowhere::Status::faiss_inner_error);
+    }
+
+    SECTION("Test Search without cancellation should succeed") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto json = gen();
+        CAPTURE(name, json.dump());
+        REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
+
+        // Search without OpContext should succeed
+        auto results = idx.Search(query_ds, json, nullptr);
+        REQUIRE(results.has_value());
+
+        // Search with non-cancelled OpContext should also succeed
+        folly::CancellationSource cs;
+        milvus::OpContext op_context(cs.getToken());
+        auto results2 = idx.Search(query_ds, json, nullptr, &op_context);
+        REQUIRE(results2.has_value());
+    }
+}
+
+TEST_CASE("Test RangeSearch Cancellation", "[range_search][cancellation]") {
+    const int64_t nb = 10000, nq = 100;
+    const int64_t dim = 128;
+
+    auto metric = knowhere::metric::L2;
+    auto version = GenTestVersionList();
+
+    auto hnsw_gen = [=]() {
+        knowhere::Json json;
+        json[knowhere::meta::DIM] = dim;
+        json[knowhere::meta::METRIC_TYPE] = metric;
+        json[knowhere::meta::TOPK] = 10;
+        json[knowhere::meta::RADIUS] = 200.0;
+        json[knowhere::meta::RANGE_FILTER] = 0.0;
+        json[knowhere::indexparam::HNSW_M] = 16;
+        json[knowhere::indexparam::EFCONSTRUCTION] = 100;
+        json[knowhere::indexparam::EF] = 64;
+        return json;
+    };
+
+    auto ivfflat_gen = [=]() {
+        knowhere::Json json;
+        json[knowhere::meta::DIM] = dim;
+        json[knowhere::meta::METRIC_TYPE] = metric;
+        json[knowhere::meta::TOPK] = 10;
+        json[knowhere::meta::RADIUS] = 200.0;
+        json[knowhere::meta::RANGE_FILTER] = 0.0;
+        json[knowhere::indexparam::NLIST] = 16;
+        json[knowhere::indexparam::NPROBE] = 8;
+        return json;
+    };
+
+    auto scann_gen = [=]() {
+        knowhere::Json json;
+        json[knowhere::meta::DIM] = dim;
+        json[knowhere::meta::METRIC_TYPE] = metric;
+        json[knowhere::meta::TOPK] = 10;
+        json[knowhere::meta::RADIUS] = 200.0;
+        json[knowhere::meta::RANGE_FILTER] = 0.0;
+        json[knowhere::indexparam::NLIST] = 16;
+        json[knowhere::indexparam::NPROBE] = 8;
+        json[knowhere::indexparam::REORDER_K] = 200;
+        json[knowhere::indexparam::WITH_RAW_DATA] = true;
+        return json;
+    };
+
+    const auto train_ds = GenDataSet(nb, dim);
+    const auto query_ds = GenDataSet(nq, dim);
+
+    using std::make_tuple;
+    auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
+        make_tuple(knowhere::IndexEnum::INDEX_HNSW, hnsw_gen),
+        make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, ivfflat_gen),
+        make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen),
+    }));
+
+    // Skip SCANN if CPU doesn't support it
+    if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && !faiss::support_pq_fast_scan) {
+        return;
+    }
+
+    SECTION("Test RangeSearch with cancellation from another thread") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto json = gen();
+        CAPTURE(name, json.dump());
+        REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
+
+        folly::CancellationSource cs;
+        milvus::OpContext op_context(cs.getToken());
+
+        std::atomic<bool> search_started{false};
+        std::atomic<bool> search_finished{false};
+
+        // Start range search in a separate thread
+        std::thread search_thread([&]() {
+            search_started = true;
+            auto results = idx.RangeSearch(query_ds, json, nullptr, &op_context);
+            search_finished = true;
+            // Results may be either successful (if completed before cancellation)
+            // or error (if cancelled) - both are acceptable outcomes
+            (void)results;
+        });
+
+        // Wait for search to start
+        while (!search_started) {
+            std::this_thread::yield();
+        }
+
+        // Request cancellation
+        cs.requestCancellation();
+
+        // Wait for search thread to finish
+        search_thread.join();
+
+        // The search should have finished (either completed or cancelled)
+        REQUIRE(search_finished);
+    }
+
+    SECTION("Test RangeSearch with pre-cancelled context should return error") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto json = gen();
+        CAPTURE(name, json.dump());
+        REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
+
+        folly::CancellationSource cs;
+        milvus::OpContext op_context(cs.getToken());
+
+        // Request cancellation before search
+        cs.requestCancellation();
+        REQUIRE((op_context.cancellation_token.isCancellationRequested()));
+
+        // RangeSearch should return error due to cancellation
+        auto results = idx.RangeSearch(query_ds, json, nullptr, &op_context);
+        REQUIRE(!results.has_value());
+        REQUIRE(results.error() == knowhere::Status::faiss_inner_error);
+    }
+
+    SECTION("Test RangeSearch without cancellation should succeed") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        auto json = gen();
+        CAPTURE(name, json.dump());
+        REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
+
+        // RangeSearch without OpContext should succeed
+        auto results = idx.RangeSearch(query_ds, json, nullptr);
+        REQUIRE(results.has_value());
+
+        // RangeSearch with non-cancelled OpContext should also succeed
+        folly::CancellationSource cs;
+        milvus::OpContext op_context(cs.getToken());
+        auto results2 = idx.RangeSearch(query_ds, json, nullptr, &op_context);
+        REQUIRE(results2.has_value());
+    }
 }
