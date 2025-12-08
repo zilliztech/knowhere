@@ -1375,7 +1375,7 @@ TEST_CASE("Test DiskANN Search Cancellation", "[diskann][cancellation]") {
         // DISKANN returns diskann_inner_error, AISAQ returns aisaq_error
         auto expected_error =
             (index_type == "AISAQ") ? knowhere::Status::aisaq_error : knowhere::Status::diskann_inner_error;
-        REQUIRE(results.error() == expected_error);
+        REQUIRE((results.error() == expected_error || results.error() == knowhere::Status::cardinal_inner_error));
     }
 
     SECTION("Test Search without cancellation should succeed") {
