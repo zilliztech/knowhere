@@ -463,7 +463,8 @@ void exhaustive_cosine_seq_impl(
                         y_norms[j] : 
                         sqrtf(fvec_norm_L2sqr(y + j * d, d));
                 norm = (norm == 0.0 ? 1.0 : norm);
-                resi.add_result(ip / norm, j);
+                // clamp the cosine distance to [-1.0, 1.0]
+                resi.add_result(std::clamp(ip / norm, -1.0f, 1.0f), j);
             };
 
             // compute distances
@@ -716,7 +717,8 @@ void exhaustive_cosine_blas(
                     float norm = (y_norms_in != nullptr) ? y_norms_in[j]
                                                          : y_norms[j];
                     norm = (norm == 0.0 ? 1.0 : norm);
-                    *ip_line = ip / norm;
+                    // clamp the cosine distance to [-1.0, 1.0]
+                    *ip_line = std::clamp(ip / norm, -1.0f, 1.0f);
                     ip_line++;
                 }
             }
