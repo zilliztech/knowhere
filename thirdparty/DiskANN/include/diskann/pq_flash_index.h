@@ -211,6 +211,9 @@ namespace diskann {
         knowhere::BitsetView                             bitset_view = nullptr,
         const float                                      filter_ratio = -1.0f);
 
+    void calc_dist_by_ids(const T *query, const int64_t *ids, const int64_t n,
+                          float *const output_dists);
+
     void get_vector_by_ids(const int64_t *ids, const int64_t n,
                            T *const output_data);
 

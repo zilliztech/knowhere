@@ -148,8 +148,8 @@ static std::set<std::string> legal_support_emb_list_knowhere_index = {
     IndexEnum::INDEX_FAISS_SCANN_DVR,
     IndexEnum::INDEX_FAISS_IVFFLAT,
     IndexEnum::INDEX_FAISS_IVFFLAT_CC,
-#ifdef KNOWHERE_WITH_CARDINAL
     IndexEnum::INDEX_DISKANN,
+#ifdef KNOWHERE_WITH_CARDINAL
     IndexEnum::INDEX_CARDINAL_TIERED,
 #endif
 };

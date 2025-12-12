@@ -379,7 +379,6 @@ TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
     base_search<knowhere::fp32>();
 }
 
-#ifdef KNOWHERE_WITH_CARDINAL
 template <typename DataType>
 inline void
 emb_list_search() {
@@ -396,9 +395,9 @@ emb_list_search() {
                                knowhere::metric::MAX_SIM_L2);
 
     std::unordered_map<knowhere::MetricType, std::string> metric_dir_map = {
-        {knowhere::metric::L2, kEmbListL2IndexPrefix},
-        {knowhere::metric::IP, kEmbListIPIndexPrefix},
-        {knowhere::metric::COSINE, kEmbListCOSINEIndexPrefix},
+        {knowhere::metric::MAX_SIM_L2, kEmbListL2IndexPrefix},
+        {knowhere::metric::MAX_SIM_IP, kEmbListIPIndexPrefix},
+        {knowhere::metric::MAX_SIM_COSINE, kEmbListCOSINEIndexPrefix},
     };
 
     auto base_gen = [&metric_str]() {
@@ -523,13 +522,10 @@ emb_list_search() {
     fs::remove_all(kDir);
     fs::remove(kDir);
 }
-#endif
 
-#ifdef KNOWHERE_WITH_CARDINAL
 TEST_CASE("Test DISKANN for EmbList", "[diskann]") {
     emb_list_search<knowhere::fp32>();
 }
-#endif
 
 // This test case only check L2
 TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {

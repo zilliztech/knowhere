@@ -12,6 +12,8 @@
 #include "knowhere/feder/DiskANN.h"
 
 #include <cstdint>
+#include <fstream>
+#include <limits>
 
 #include "diskann/aux_utils.h"
 #include "diskann/linux_aligned_file_reader.h"
@@ -50,6 +52,9 @@ class DiskANNIndexNode : public IndexNode {
     Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
 
     Status
+    BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
+
+    Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         return Status::not_implemented;
     }
@@ -65,6 +70,34 @@ class DiskANNIndexNode : public IndexNode {
 
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override;
+
+    std::optional<size_t>
+    GetQueryCodeSize(const DataSetPtr dataset) const override {
+        if (dataset == nullptr) {
+            LOG_KNOWHERE_ERROR_ << "GetQueryCodeSize: dataset is nullptr";
+            return std::nullopt;
+        }
+        const auto dim = dataset->GetDim();
+        if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
+            return sizeof(float) * dim;
+        } else if constexpr (std::is_same_v<DataType, knowhere::fp16>) {
+            return sizeof(uint16_t) * dim;
+        } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
+            return sizeof(uint16_t) * dim;
+        }
+        LOG_KNOWHERE_ERROR_ << "Invalid data type: " << typeid(DataType).name();
+        return std::nullopt;
+    }
+
+    Status
+    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) override {
+        internal_id_to_most_external_id_map_ = std::move(map);
+        return Status::success;
+    }
+
+    expected<DataSetPtr>
+    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
+                  const bool is_cosine, milvus::OpContext* op_context) const override;
 
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
@@ -86,6 +119,12 @@ class DiskANNIndexNode : public IndexNode {
         return Status::success;
     }
 
+    Status
+    SerializeEmbListIfNeed(BinarySet& binset) const override {
+        LOG_KNOWHERE_INFO_ << "DiskANN does nothing for serialize (with emb list if needed)";
+        return Status::success;
+    }
+
     static expected<Resource>
     StaticEstimateLoadResource(const uint64_t file_size_in_bytes, const int64_t num_rows, const int64_t dim,
                                const knowhere::BaseConfig& config, const IndexVersion& version) {
@@ -96,8 +135,17 @@ class DiskANNIndexNode : public IndexNode {
     Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) override;
 
     Status
+    DeserializeEmbListIfNeed(const BinarySet& binset, std::shared_ptr<Config> config) override;
+
+    Status
     DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> config) override {
         LOG_KNOWHERE_ERROR_ << "DiskANN doesn't support Deserialization from file.";
+        return Status::not_implemented;
+    }
+
+    Status
+    DeserializeFromFileIfNeed(const std::string& filename, std::shared_ptr<Config> config) override {
+        LOG_KNOWHERE_INFO_ << "DiskANN doesn't support deserialize from file (with emb list if needed)";
         return Status::not_implemented;
     }
 
@@ -217,6 +265,7 @@ class DiskANNIndexNode : public IndexNode {
     std::atomic_int64_t dim_;
     std::atomic_int64_t count_;
     std::shared_ptr<ThreadPool> search_pool_;
+    std::vector<uint32_t> internal_id_to_most_external_id_map_;  // for 1-hop bitset check
 };
 
 }  // namespace knowhere
@@ -224,6 +273,53 @@ class DiskANNIndexNode : public IndexNode {
 namespace knowhere {
 namespace {
 static constexpr float kCacheExpansionRate = 1.2;
+
+Status
+ReadEmbListOffsetFromFile(const std::string& file_path, std::vector<size_t>& offsets) {
+    std::ifstream in_file(file_path, std::ios::binary);
+    if (!in_file) {
+        LOG_KNOWHERE_ERROR_ << "Failed to open emb_list offset file for reading: " << file_path;
+        return Status::emb_list_inner_error;
+    }
+
+    size_t size = 0;
+    in_file.read(reinterpret_cast<char*>(&size), sizeof(size_t));
+    if (!in_file || in_file.gcount() != sizeof(size_t)) {
+        LOG_KNOWHERE_ERROR_ << "Failed to read size from emb_list offset file: " << file_path;
+        return Status::emb_list_inner_error;
+    }
+    if (size == 0) {
+        LOG_KNOWHERE_ERROR_ << "Emb_list offset file is empty: " << file_path;
+        return Status::emb_list_inner_error;
+    }
+
+    offsets.resize(size);
+    in_file.read(reinterpret_cast<char*>(offsets.data()), size * sizeof(size_t));
+    if (!in_file || static_cast<size_t>(in_file.gcount()) != size * sizeof(size_t)) {
+        LOG_KNOWHERE_ERROR_ << "Failed to read offset data from emb_list offset file: " << file_path;
+        return Status::emb_list_inner_error;
+    }
+
+    return Status::success;
+}
+
+Status
+WriteEmbListOffsetToFile(const std::string& file_path, const std::vector<size_t>& offsets) {
+    std::ofstream out_file(file_path, std::ios::binary);
+    if (!out_file) {
+        LOG_KNOWHERE_ERROR_ << "Failed to open emb_list offset file for writing: " << file_path;
+        return Status::emb_list_inner_error;
+    }
+
+    const size_t size = offsets.size();
+    out_file.write(reinterpret_cast<const char*>(&size), sizeof(size_t));
+    out_file.write(reinterpret_cast<const char*>(offsets.data()), size * sizeof(size_t));
+    if (!out_file) {
+        LOG_KNOWHERE_ERROR_ << "Failed to write emb_list offset data to file: " << file_path;
+        return Status::emb_list_inner_error;
+    }
+    return Status::success;
+}
 
 Status
 TryDiskANNCall(std::function<void()>&& diskann_call) {
@@ -271,6 +367,7 @@ GetOptionalFilenames(const std::string& prefix) {
     filenames.push_back(diskann::get_disk_index_centroids_filename(disk_index_filename));
     filenames.push_back(diskann::get_disk_index_medoids_filename(disk_index_filename));
     filenames.push_back(diskann::get_cached_nodes_file(prefix));
+    filenames.push_back(diskann::get_emb_list_offset_file(prefix));
     return filenames;
 }
 
@@ -308,7 +405,6 @@ template <typename DataType>
 Status
 DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) {
     assert(file_manager_ != nullptr);
-    std::lock_guard<std::mutex> lock(preparation_lock_);
     auto build_conf = static_cast<const DiskANNConfig&>(*cfg);
     if (!CheckMetric(build_conf.metric_type.value())) {
         LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << build_conf.metric_type.value();
@@ -388,8 +484,64 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
 
 template <typename DataType>
 Status
-DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) {
+DiskANNIndexNode<DataType>::BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
+                                               bool use_knowhere_build_pool) {
+    assert(file_manager_ != nullptr);
     std::lock_guard<std::mutex> lock(preparation_lock_);
+    auto& config = static_cast<BaseConfig&>(*cfg);
+    auto el_metric_type_or = get_el_metric_type(config.metric_type.value());
+    if (!el_metric_type_or.has_value()) {
+        // If not emb_list metric type, use the default build method
+        return Build(dataset, std::move(cfg), use_knowhere_build_pool);
+    }
+
+    LOG_KNOWHERE_INFO_ << "Build emb_list index and read emb_list offset from file.";
+
+    // Validate and get the emb_list offset file path
+    if (!config.emb_list_offset_file_path.has_value()) {
+        LOG_KNOWHERE_ERROR_ << "Emb_list offset file path is not set";
+        return Status::emb_list_inner_error;
+    }
+    const auto& input_file_path = config.emb_list_offset_file_path.value();
+    if (!file_exists(input_file_path)) {
+        LOG_KNOWHERE_ERROR_ << "Emb_list offset file does not exist: " << input_file_path;
+        return Status::emb_list_inner_error;
+    }
+
+    // Read emb_list offset data from the input file
+    std::vector<size_t> offset;
+    RETURN_IF_ERROR(ReadEmbListOffsetFromFile(input_file_path, offset));
+    if (offset.empty() || offset.front() != 0) {
+        LOG_KNOWHERE_ERROR_ << "Invalid emb_list offset data (expect first offset = 0), file: " << input_file_path;
+        return Status::emb_list_inner_error;
+    }
+
+    LOG_KNOWHERE_INFO_ << "Read emb_list offset from file: " << input_file_path << ", size: " << offset.size()
+                       << ", first offset: " << offset.front() << ", last offset: " << offset.back();
+
+    auto build_status = BuildEmbList(dataset, std::move(cfg), offset.data(), offset.back(), use_knowhere_build_pool);
+    if (build_status != Status::success) {
+        LOG_KNOWHERE_ERROR_ << "Failed to build base index.";
+        return build_status;
+    }
+
+    // Save the emb_list offset information to the index file
+    {
+        const auto output_file_path = diskann::get_emb_list_offset_file(index_prefix_);
+        RETURN_IF_ERROR(WriteEmbListOffsetToFile(output_file_path, offset));
+        // Add file to the file manager
+        if (!AddFile(output_file_path)) {
+            LOG_KNOWHERE_ERROR_ << "Failed to add file " << output_file_path << ".";
+            return Status::disk_file_error;
+        }
+    }
+
+    return Status::success;
+}
+
+template <typename DataType>
+Status
+DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) {
     auto prep_conf = static_cast<const DiskANNConfig&>(*cfg);
     if (!CheckMetric(prep_conf.metric_type.value())) {
         return Status::invalid_metric_type;
@@ -556,6 +708,63 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
 }
 
 template <typename DataType>
+Status
+DiskANNIndexNode<DataType>::DeserializeEmbListIfNeed(const BinarySet& binset, std::shared_ptr<Config> cfg) {
+    std::lock_guard<std::mutex> lock(preparation_lock_);
+    auto& config = static_cast<BaseConfig&>(*cfg);
+    auto el_metric_type_or = get_el_metric_type(config.metric_type.value());
+    if (!el_metric_type_or.has_value()) {
+        // If not emb_list metric type, use the default deserialize method
+        return Deserialize(binset, std::move(cfg));
+    }
+
+    LOG_KNOWHERE_INFO_ << "Deserialize emb_list index and read emb_list offset from file.";
+
+    // Step 1: Split metric_type into el_metric_type and sub_metric_type
+    el_metric_type_ = el_metric_type_or.value();
+    auto sub_metric_type_or = get_sub_metric_type(config.metric_type.value());
+    if (!sub_metric_type_or.has_value()) {
+        LOG_KNOWHERE_ERROR_ << "Invalid sub metric type: " << config.metric_type.value();
+        return Status::emb_list_inner_error;
+    }
+    config.metric_type = sub_metric_type_or.value();
+
+    // Step 2: Deserialize base index with sub_metric_type
+    RETURN_IF_ERROR(Deserialize(binset, cfg));
+
+    // Step 3: Deserialize emb_list offset from file
+    // Note: emb_list_offset_file is in optional files list, but for emb_list metric type it should exist
+    const auto emb_list_offset_file = diskann::get_emb_list_offset_file(index_prefix_);
+    auto is_exist_op = file_manager_->IsExisted(emb_list_offset_file);
+    if (!is_exist_op.has_value()) {
+        LOG_KNOWHERE_ERROR_ << "Failed to check existence of emb_list offset file: " << emb_list_offset_file;
+        return Status::emb_list_inner_error;
+    }
+    if (!is_exist_op.value()) {
+        LOG_KNOWHERE_ERROR_ << "Emb_list offset file does not exist: " << emb_list_offset_file;
+        return Status::emb_list_inner_error;
+    }
+    if (!LoadFile(emb_list_offset_file)) {
+        LOG_KNOWHERE_ERROR_ << "Failed to load emb_list offset file: " << emb_list_offset_file;
+        return Status::disk_file_error;
+    }
+
+    std::vector<size_t> offset;
+    RETURN_IF_ERROR(ReadEmbListOffsetFromFile(emb_list_offset_file, offset));
+    if (offset.empty() || offset.front() != 0) {
+        LOG_KNOWHERE_ERROR_ << "Invalid emb_list offset data (expect first offset = 0), file: " << emb_list_offset_file;
+        return Status::emb_list_inner_error;
+    }
+    LOG_KNOWHERE_INFO_ << "Read emb_list offset from file: " << emb_list_offset_file << ", size: " << offset.size()
+                       << ", first offset: " << offset.front() << ", last offset: " << offset.back();
+
+    emb_list_offset_ = std::make_unique<EmbListOffset>(std::move(offset));
+
+    // Step 4: Set base index id map for 1-hop bitset check
+    return SetBaseIndexIDMap();
+}
+
+template <typename DataType>
 expected<std::vector<IndexNode::IteratorPtr>>
 DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                                         bool use_knowhere_search_pool, milvus::OpContext* op_context) const {
@@ -599,7 +808,7 @@ DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_pt
 
 template <typename DataType>
 expected<DataSetPtr>
-DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset_,
                                    milvus::OpContext* op_context) const {
     if (!is_prepared_.load() || !pq_flash_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
@@ -626,6 +835,31 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
         feder_result = std::make_unique<feder::diskann::FederResult>();
         feder_result->visit_info_.SetQueryConfig(search_conf.k.value(), search_conf.beamwidth.value(),
                                                  search_conf.search_list_size.value(), search_conf.beamwidth.value());
+    }
+
+    BitsetView bitset(bitset_);
+    if (!internal_id_to_most_external_id_map_.empty()) {
+        if (emb_list_offset_ != nullptr) {
+            // if emb list, manually calculate the number of filtered out ids
+            size_t num_filtered_out_ids = 0;
+            const auto num_el = std::min(
+                bitset.size(), emb_list_offset_->offset.empty() ? size_t{0} : emb_list_offset_->offset.size() - 1);
+            if (emb_list_offset_->offset.size() < bitset.size() + 1) {
+                LOG_KNOWHERE_WARNING_ << "Bitset size(" << bitset.size() << ") doesn't match emb_list offset size("
+                                      << emb_list_offset_->offset.size()
+                                      << "), will compute filtered ids using min size(" << num_el << ")";
+            }
+            for (size_t i = 0; i < num_el; i++) {
+                if (bitset.test(i)) {
+                    num_filtered_out_ids += emb_list_offset_->offset[i + 1] - emb_list_offset_->offset[i];
+                }
+            }
+            bitset.set_out_ids(internal_id_to_most_external_id_map_.data(), internal_id_to_most_external_id_map_.size(),
+                               num_filtered_out_ids);
+        } else {
+            bitset.set_out_ids(internal_id_to_most_external_id_map_.data(),
+                               internal_id_to_most_external_id_map_.size());
+        }
     }
 
     auto p_id = std::make_unique<int64_t[]>(k * nq);
@@ -661,6 +895,53 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
         res->SetJsonIdSet(json_id_set.dump());
     }
     return res;
+}
+
+template <typename DataType>
+expected<DataSetPtr>
+DiskANNIndexNode<DataType>::CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
+                                          const size_t labels_len, const bool is_cosine,
+                                          milvus::OpContext* op_context) const {
+    (void)bitset;
+    (void)is_cosine;
+    if (!is_prepared_.load() || !pq_flash_index_) {
+        LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
+        return expected<DataSetPtr>::Err(Status::empty_index, "DiskANN not loaded");
+    }
+    if (!search_pool_) {
+        LOG_KNOWHERE_ERROR_ << "Search thread pool is not initialized.";
+        return expected<DataSetPtr>::Err(Status::internal_error, "search pool not initialized");
+    }
+    if (dataset == nullptr || dataset->GetTensor() == nullptr) {
+        return expected<DataSetPtr>::Err(Status::invalid_args, "empty query dataset");
+    }
+    if (labels == nullptr && labels_len != 0) {
+        return expected<DataSetPtr>::Err(Status::invalid_args, "labels is nullptr");
+    }
+    if (labels_len > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
+        return expected<DataSetPtr>::Err(Status::invalid_args, "labels_len overflow");
+    }
+
+    auto nq = dataset->GetRows();
+    auto dim = dataset->GetDim();
+    auto xq = static_cast<const DataType*>(dataset->GetTensor());
+    auto p_dist = std::make_unique<DistType[]>(nq * labels_len);
+
+    std::vector<folly::Future<folly::Unit>> futures;
+    futures.reserve(nq);
+    for (int64_t row = 0; row < nq; ++row) {
+        futures.emplace_back(search_pool_->push([&, index = row, p_dist_ptr = p_dist.get()]() {
+            knowhere::checkCancellation(op_context);
+            pq_flash_index_->calc_dist_by_ids(xq + (index * dim), labels, static_cast<int64_t>(labels_len),
+                                              p_dist_ptr + index * labels_len);
+        }));
+    }
+    if (TryDiskANNCall([&]() { WaitAllSuccess(futures); }) != Status::success) {
+        return expected<DataSetPtr>::Err(Status::diskann_inner_error, "some calc dist by ids failed");
+    }
+
+    std::unique_ptr<int64_t[]> ids = nullptr;
+    return GenResultDataSet(nq, labels_len, std::move(ids), std::move(p_dist));
 }
 
 /*
@@ -723,8 +1004,10 @@ DiskANNIndexNode<DataType>::GetCachedNodeNum(const float cache_dram_budget, cons
 }
 
 #ifdef KNOWHERE_WITH_CARDINAL
-KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(DISKANN_DEPRECATED, DiskANNIndexNode, knowhere::feature::DISK)
+KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(DISKANN_DEPRECATED, DiskANNIndexNode,
+                                                knowhere::feature::DISK | knowhere::feature::EMB_LIST)
 #else
-KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(DISKANN, DiskANNIndexNode, knowhere::feature::DISK)
+KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(DISKANN, DiskANNIndexNode,
+                                                knowhere::feature::DISK | knowhere::feature::EMB_LIST)
 #endif
 }  // namespace knowhere
