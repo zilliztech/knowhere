@@ -12,6 +12,7 @@
 .vscode
 docker-compose-devcontainer.yml
 docker-compose-devcontainer.yml.tmp
+.cache
 
 *.code-workspace
 
