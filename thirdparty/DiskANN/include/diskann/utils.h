@@ -882,6 +882,11 @@ namespace diskann {
         return disk_index_filename + "_pq_pivots.bin";
     }
 
+    inline std::string get_emb_list_offset_file(
+        const std::string& disk_index_filename) {
+        return disk_index_filename + "_emb_list_offset.bin";
+    }
+
 };  // namespace diskann
 
 struct PivotContainer {

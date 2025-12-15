@@ -7,6 +7,7 @@
 #include <malloc.h>
 #include "diskann/percentile_stats.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -1515,6 +1516,139 @@ namespace diskann {
     if (this->count_visited_nodes) {
       this->search_counter.fetch_add(1);
     }
+  }
+
+  template<typename T>
+  void PQFlashIndex<T>::calc_dist_by_ids(const T *query_, const int64_t *ids,
+                                         const int64_t n,
+                                         float *const  output_dists) {
+    ThreadData<T> data = this->thread_data.pop();
+    while (data.scratch.sector_scratch == nullptr) {
+      this->thread_data.wait_for_push_notify();
+      data = this->thread_data.pop();
+    }
+    auto query_norm_opt = init_thread_data(data, query_);
+    if (!query_norm_opt.has_value()) {
+      this->thread_data.push(data);
+      this->thread_data.push_notify_all();
+      return;
+    }
+    float query_norm = query_norm_opt.value();
+
+    auto     ctx = this->reader->get_ctx();
+    auto     query_scratch = &(data.scratch);
+    const T *query = data.scratch.aligned_query_T;
+
+    // First, check cache for vectors and calculate distances
+    std::vector<_u64> uncached_ids;
+    uncached_ids.reserve(n);
+    std::vector<int64_t> uncached_indices;
+    uncached_indices.reserve(n);
+
+    {
+      std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
+      for (int64_t i = 0; i < n; ++i) {
+        _u64       id = ids[i];
+        const auto it = coord_cache.find(id);
+        if (it != coord_cache.end()) {
+          // Vector is in cache, calculate distance directly
+          output_dists[i] =
+              dist_cmp_wrap(query, it->second, (size_t) aligned_dim, id);
+
+        } else {
+          // Need to read from disk
+          uncached_ids.push_back(id);
+          uncached_indices.push_back(i);
+        }
+      }
+    }
+
+    // If all vectors are cached, we're done
+    if (uncached_ids.empty()) {
+      this->reader->put_ctx(ctx);
+      this->thread_data.push(data);
+      this->thread_data.push_notify_all();
+      return;
+    }
+
+    // sector scratch
+    char *sector_scratch = query_scratch->sector_scratch;
+
+    // Read uncached vectors from disk and calculate distances
+    // Group uncached IDs by sector for efficient reading
+    std::unordered_map<_u64, std::vector<size_t>> sectors_to_visit;
+    for (size_t i = 0; i < uncached_ids.size(); ++i) {
+      _u64       id = uncached_ids[i];
+      const _u64 sector_offset = get_node_sector_offset(id);
+      sectors_to_visit[sector_offset].push_back(i);
+    }
+
+    const size_t batch_size = std::min(
+        {AioContextPool::GetGlobalAioPool()->max_events_per_ctx(),
+        defaults::MAX_N_SECTOR_READS, sectors_to_visit.size()});
+    if (batch_size == 0) {
+      this->reader->put_ctx(ctx);
+      this->thread_data.push(data);
+      this->thread_data.push_notify_all();
+      return;
+    }
+    std::vector<AlignedRead> frontier_read_reqs;
+    frontier_read_reqs.reserve(batch_size);
+
+    std::vector<_u64> sector_offsets;
+    sector_offsets.reserve(sectors_to_visit.size());
+    for (const auto &it : sectors_to_visit) {
+      sector_offsets.emplace_back(it.first);
+    }
+
+    const auto sector_num = sector_offsets.size();
+    const _u64 num_blocks = DIV_ROUND_UP(sector_num, batch_size);
+
+    for (_u64 i = 0; i < num_blocks; ++i) {
+      _u64 start_idx = i * batch_size;
+      _u64 idx_len = std::min(batch_size, sector_num - start_idx);
+      frontier_read_reqs.clear();
+      for (_u64 j = 0; j < idx_len; ++j) {
+        char *sector_buf = sector_scratch + j * read_len_for_node;
+        frontier_read_reqs.emplace_back(sector_offsets[start_idx + j],
+                                        read_len_for_node, sector_buf);
+      }
+      reader->read(frontier_read_reqs, ctx);
+
+      // Process the batch
+      for (const auto &req : frontier_read_reqs) {
+        auto  offset = req.offset;
+        char *sector_buf = static_cast<char *>(req.buf);
+        for (auto uncached_pos : sectors_to_visit.at(offset)) {
+          _u64    id = uncached_ids[uncached_pos];
+          int64_t output_idx = uncached_indices[uncached_pos];
+          char   *node_buf = get_offset_to_node(sector_buf, id);
+          T      *node_coords = OFFSET_TO_NODE_COORDS(node_buf);
+
+          // Calculate raw distance (not PQ distance)
+          output_dists[output_idx] =
+              dist_cmp_wrap(query, node_coords, (size_t) aligned_dim, id);
+        }
+      }
+    }
+
+    // transform l2-dist to ip-dist / cosine-dist
+    if (metric == diskann::Metric::INNER_PRODUCT) {
+      for (int64_t i = 0; i < n; ++i) {
+        output_dists[i] = 1.0 - output_dists[i] / 2.0;
+        if (max_base_norm != 0) {
+          output_dists[i] *= (max_base_norm * query_norm);
+        }
+      }
+    } else if (metric == diskann::Metric::COSINE) {
+      for (int64_t i = 0; i < n; ++i) {
+        output_dists[i] = -output_dists[i];
+      }
+    }
+
+    this->reader->put_ctx(ctx);
+    this->thread_data.push(data);
+    this->thread_data.push_notify_all();
   }
 
   template<typename T>
