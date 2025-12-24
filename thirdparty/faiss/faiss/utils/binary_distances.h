@@ -169,7 +169,7 @@ void all_hamming_distances(
         size_t d,
         size_t nx,
         size_t ny,
-        float* output,
+        int32_t* output,
         const IDSelector* sel = nullptr);
 
 } // namespace faiss

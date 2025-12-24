@@ -73,6 +73,24 @@ match_datasets(const knowhere::DataSetPtr& baseline, const knowhere::DataSetPtr&
     }
 }
 
+// make sure the two iterators return the same results.
+inline bool
+check_same_iterator(const knowhere::IndexNode::IteratorPtr& iter1, const knowhere::IndexNode::IteratorPtr& iter2) {
+    size_t count = 0;
+    while (iter1->HasNext()) {
+        REQUIRE(iter2->HasNext());
+        auto [id1, dist1] = iter1->Next();
+        auto [id2, dist2] = iter2->Next();
+        count++;
+        if (id1 != id2 || dist1 != dist2) {
+            return false;
+        }
+    }
+    printf("Total number of iterator->Next() calls: %ld\n", count);
+    REQUIRE(!iter2->HasNext());
+    return true;
+}
+
 struct FileIOWriter {
     std::fstream fs;
     std::string name;
@@ -1582,7 +1600,6 @@ EmbListAddTest(const knowhere::DataSetPtr train_ds_in, const knowhere::DataSetPt
     auto train_ds_list = SplitEmbListDataSet<DataType>(train_ds, partition_num, each_el_len);
     auto query = knowhere::ConvertToDataTypeIfNeeded<DataType>(query_ds);
     auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
-    auto dim = train_ds->GetDim();
     auto rows = train_ds->GetRows();
     auto num_el = (rows + each_el_len - 1) / each_el_len;
 
@@ -1638,6 +1655,499 @@ TEST_CASE("Test growing with emb list", "[growing]") {
 
                     EmbListAddTest<knowhere::fp32>(train_ds, query_ds, conf[knowhere::meta::METRIC_TYPE], conf,
                                                    each_el_len);
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("Test brute force search on chunk", "[on_chunk]") {
+    const std::vector<int32_t> DIMS = {8};
+    const std::vector<int32_t> NBS = {1000};
+    const int32_t NQ = 10;
+    const int32_t TOPK = 16;
+    const int32_t each_el_len = 10;
+    const std::vector<float> BITSET_RATES = {0.1f, 0.5f, 0.95f, 1.0f};
+
+    knowhere::Json default_conf;
+    default_conf[knowhere::meta::TOPK] = TOPK;
+
+    uint64_t seed = 42;
+
+    float CHUNK_RECALL_THRESHOLD = 0.999f;
+
+    SECTION("Dense Vector Search on Chunk") {
+        const std::vector<std::string> DISTANCE_TYPES = {"L2", "IP", "COSINE"};
+        for (const auto& distance_type : DISTANCE_TYPES) {
+            for (const int32_t dim : DIMS) {
+                for (const int32_t nb : NBS) {
+                    auto train_ds = GenEmbListDataSet(nb, dim, seed, each_el_len);
+                    auto query_ds = GenDataSet(NQ, dim, seed);
+
+                    knowhere::Json conf = default_conf;
+                    conf[knowhere::meta::METRIC_TYPE] = distance_type;
+                    conf[knowhere::meta::DIM] = dim;
+                    conf[knowhere::meta::ROWS] = nb;
+
+                    auto golden_result =
+                        knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
+
+                    // use the same seed to generate same float vectors
+                    auto chunk_train_ds = GenChunkDataSet(nb, dim, seed, each_el_len);
+
+                    auto chunk_result =
+                        knowhere::BruteForce::Search<knowhere::fp32>(chunk_train_ds, query_ds, conf, nullptr);
+                    REQUIRE(chunk_result.has_value());
+                    float recall = GetKNNRecall(*golden_result.value(), *chunk_result.value());
+                    printf("recall: %f\n", recall);
+                    REQUIRE(recall > CHUNK_RECALL_THRESHOLD);
+
+                    // with filter
+                    for (const float bitset_rate : BITSET_RATES) {
+                        const int32_t filter_out_bits = nb * bitset_rate;
+                        const std::vector<uint8_t> bitset_data = GenerateBitsetWithRandomTbitsSet(nb, filter_out_bits);
+                        knowhere::BitsetView bitset_view =
+                            knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
+
+                        auto golden_result =
+                            knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, bitset_view);
+                        auto chunk_result =
+                            knowhere::BruteForce::Search<knowhere::fp32>(chunk_train_ds, query_ds, conf, bitset_view);
+                        REQUIRE(chunk_result.has_value());
+                        float recall = GetKNNRecall(*golden_result.value(), *chunk_result.value());
+                        printf("bitset_rate: %f, recall: %f\n", bitset_rate, recall);
+                        REQUIRE(recall > CHUNK_RECALL_THRESHOLD);
+                    }
+
+                    // with datatype bf16
+                    {
+                        auto train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::bf16>(chunk_train_ds);
+                        auto query_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::bf16>(query_ds);
+                        auto chunk_train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::bf16>(chunk_train_ds);
+
+                        auto golden_result_typed =
+                            knowhere::BruteForce::Search<knowhere::bf16>(train_ds_typed, query_ds_typed, conf, nullptr);
+                        auto chunk_result_typed = knowhere::BruteForce::Search<knowhere::bf16>(
+                            chunk_train_ds_typed, query_ds_typed, conf, nullptr);
+                        REQUIRE(chunk_result_typed.has_value());
+                        float recall = GetKNNRecall(*golden_result_typed.value(), *chunk_result_typed.value());
+                        printf("datatype [bf16], recall: %f\n", recall);
+                        REQUIRE(recall > CHUNK_RECALL_THRESHOLD);
+                    }
+
+                    // with datatype fp16
+                    {
+                        auto train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::fp16>(chunk_train_ds);
+                        auto query_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::fp16>(query_ds);
+                        auto chunk_train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::fp16>(chunk_train_ds);
+
+                        auto golden_result_typed =
+                            knowhere::BruteForce::Search<knowhere::bf16>(train_ds_typed, query_ds_typed, conf, nullptr);
+                        auto chunk_result_typed = knowhere::BruteForce::Search<knowhere::bf16>(
+                            chunk_train_ds_typed, query_ds_typed, conf, nullptr);
+                        REQUIRE(chunk_result_typed.has_value());
+                        float recall = GetKNNRecall(*golden_result_typed.value(), *chunk_result_typed.value());
+                        printf("datatype [fp16], recall: %f\n", recall);
+                        REQUIRE(recall > CHUNK_RECALL_THRESHOLD);
+                    }
+
+                    // with datatype int8
+                    {
+                        auto train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::int8>(chunk_train_ds);
+                        auto query_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::int8>(query_ds);
+                        auto chunk_train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::int8>(chunk_train_ds);
+
+                        auto golden_result_typed =
+                            knowhere::BruteForce::Search<knowhere::int8>(train_ds_typed, query_ds_typed, conf, nullptr);
+                        auto chunk_result_typed = knowhere::BruteForce::Search<knowhere::int8>(
+                            chunk_train_ds_typed, query_ds_typed, conf, nullptr);
+                        REQUIRE(chunk_result_typed.has_value());
+                        float recall = GetKNNRecall(*golden_result_typed.value(), *chunk_result_typed.value());
+                        printf("datatype [int8], recall: %f\n", recall);
+                        REQUIRE(recall > CHUNK_RECALL_THRESHOLD);
+                    }
+                }
+            }
+        }
+    }
+
+    SECTION("Binary VectorSearch on Chunk") {
+        const std::vector<std::string> DISTANCE_TYPES = {"JACCARD", "HAMMING"};
+        for (const auto& distance_type : DISTANCE_TYPES) {
+            for (const int32_t dim : DIMS) {
+                for (const int32_t nb : NBS) {
+                    auto train_ds = GenEmbListBinDataSet(nb, dim, seed, each_el_len);
+                    auto query_ds = GenBinDataSet(NQ, dim, seed);
+
+                    knowhere::Json conf = default_conf;
+                    conf[knowhere::meta::METRIC_TYPE] = distance_type;
+                    conf[knowhere::meta::DIM] = dim;
+                    conf[knowhere::meta::ROWS] = nb;
+
+                    auto golden_result =
+                        knowhere::BruteForce::Search<knowhere::bin1>(train_ds, query_ds, conf, nullptr);
+
+                    // use the same seed to generate same float vectors
+                    auto chunk_train_ds = GenChunkBinDataSet(nb, dim, seed, each_el_len);
+
+                    auto chunk_result =
+                        knowhere::BruteForce::Search<knowhere::bin1>(chunk_train_ds, query_ds, conf, nullptr);
+                    REQUIRE(chunk_result.has_value());
+                    float recall = GetKNNRecall(*golden_result.value(), *chunk_result.value());
+                    printf("recall: %f\n", recall);
+                    REQUIRE(recall > CHUNK_RECALL_THRESHOLD);
+
+                    // with filter
+                    for (const float bitset_rate : BITSET_RATES) {
+                        const int32_t filter_out_bits = nb * bitset_rate;
+                        const std::vector<uint8_t> bitset_data = GenerateBitsetWithRandomTbitsSet(nb, filter_out_bits);
+                        knowhere::BitsetView bitset_view =
+                            knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
+
+                        auto golden_result =
+                            knowhere::BruteForce::Search<knowhere::bin1>(train_ds, query_ds, conf, bitset_view);
+                        auto chunk_result =
+                            knowhere::BruteForce::Search<knowhere::bin1>(chunk_train_ds, query_ds, conf, bitset_view);
+                        REQUIRE(chunk_result.has_value());
+                        float recall = GetKNNRecall(*golden_result.value(), *chunk_result.value());
+                        printf("bitset_rate: %f, recall: %f\n", bitset_rate, recall);
+                        REQUIRE(recall > CHUNK_RECALL_THRESHOLD);
+                    }
+                }
+            }
+        }
+    }
+
+    SECTION("Dense EmbList Search on Chunk") {
+        const std::vector<std::string> DISTANCE_TYPES = {"MAX_SIM_IP", "MAX_SIM_L2", "MAX_SIM_COSINE"};
+        for (const auto& distance_type : DISTANCE_TYPES) {
+            for (const int32_t dim : DIMS) {
+                for (const int32_t nb : NBS) {
+                    auto train_ds = GenEmbListDataSet(nb, dim, seed, each_el_len);
+                    auto query_ds = GenEmbListDataSet(NQ, dim, seed);
+                    auto num_el = (nb + each_el_len - 1) / each_el_len;
+
+                    knowhere::Json conf = default_conf;
+                    conf[knowhere::meta::METRIC_TYPE] = distance_type;
+                    conf[knowhere::meta::DIM] = dim;
+                    conf[knowhere::meta::ROWS] = nb;
+
+                    auto golden_result =
+                        knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
+
+                    // use the same seed to generate same float vectors
+                    auto chunk_train_ds = GenChunkDataSet(nb, dim, seed, each_el_len);
+
+                    auto chunk_result =
+                        knowhere::BruteForce::Search<knowhere::fp32>(chunk_train_ds, query_ds, conf, nullptr);
+                    REQUIRE(chunk_result.has_value());
+                    float recall = GetKNNRecall(*golden_result.value(), *chunk_result.value());
+                    printf("recall: %f\n", recall);
+                    REQUIRE(recall > CHUNK_RECALL_THRESHOLD);
+
+                    // with filter
+                    for (const float bitset_rate : BITSET_RATES) {
+                        const int32_t filter_out_bits = num_el * bitset_rate;
+                        const std::vector<uint8_t> bitset_data =
+                            GenerateBitsetByPartition(num_el, 1.0f - bitset_rate, 1);
+                        knowhere::BitsetView bitset_view =
+                            knowhere::BitsetView(bitset_data.data(), num_el, filter_out_bits);
+
+                        auto golden_result =
+                            knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, bitset_view);
+                        auto chunk_result =
+                            knowhere::BruteForce::Search<knowhere::fp32>(chunk_train_ds, query_ds, conf, bitset_view);
+                        REQUIRE(chunk_result.has_value());
+                        float recall = GetKNNRecall(*golden_result.value(), *chunk_result.value());
+                        printf("bitset_rate: %f, recall: %f\n", bitset_rate, recall);
+                        REQUIRE(recall > CHUNK_RECALL_THRESHOLD);
+                    }
+
+                    // with datatype bf16
+                    {
+                        auto train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::bf16>(chunk_train_ds);
+                        auto query_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::bf16>(query_ds);
+                        auto chunk_train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::bf16>(chunk_train_ds);
+
+                        auto golden_result_typed =
+                            knowhere::BruteForce::Search<knowhere::bf16>(train_ds_typed, query_ds_typed, conf, nullptr);
+                        auto chunk_result_typed = knowhere::BruteForce::Search<knowhere::bf16>(
+                            chunk_train_ds_typed, query_ds_typed, conf, nullptr);
+                        REQUIRE(chunk_result_typed.has_value());
+                        float recall = GetKNNRecall(*golden_result_typed.value(), *chunk_result_typed.value());
+                        printf("datatype [bf16], recall: %f\n", recall);
+                        REQUIRE(recall > CHUNK_RECALL_THRESHOLD);
+                    }
+
+                    // with datatype fp16
+                    {
+                        auto train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::fp16>(chunk_train_ds);
+                        auto query_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::fp16>(query_ds);
+                        auto chunk_train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::fp16>(chunk_train_ds);
+
+                        auto golden_result_typed =
+                            knowhere::BruteForce::Search<knowhere::bf16>(train_ds_typed, query_ds_typed, conf, nullptr);
+                        auto chunk_result_typed = knowhere::BruteForce::Search<knowhere::bf16>(
+                            chunk_train_ds_typed, query_ds_typed, conf, nullptr);
+                        REQUIRE(chunk_result_typed.has_value());
+                        float recall = GetKNNRecall(*golden_result_typed.value(), *chunk_result_typed.value());
+                        printf("datatype [fp16], recall: %f\n", recall);
+                        REQUIRE(recall > CHUNK_RECALL_THRESHOLD);
+                    }
+
+                    // with datatype int8
+                    {
+                        auto train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::int8>(chunk_train_ds);
+                        auto query_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::int8>(query_ds);
+                        auto chunk_train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::int8>(chunk_train_ds);
+
+                        auto golden_result_typed =
+                            knowhere::BruteForce::Search<knowhere::int8>(train_ds_typed, query_ds_typed, conf, nullptr);
+                        auto chunk_result_typed = knowhere::BruteForce::Search<knowhere::int8>(
+                            chunk_train_ds_typed, query_ds_typed, conf, nullptr);
+                        REQUIRE(chunk_result_typed.has_value());
+                        float recall = GetKNNRecall(*golden_result_typed.value(), *chunk_result_typed.value());
+                        printf("datatype [int8], recall: %f\n", recall);
+                        REQUIRE(recall > CHUNK_RECALL_THRESHOLD);
+                    }
+                }
+            }
+        }
+    }
+
+    SECTION("Binary EmbList Search on Chunk") {
+        const std::vector<std::string> DISTANCE_TYPES = {"MAX_SIM_HAMMING", "MAX_SIM_JACCARD"};
+
+        for (const auto& distance_type : DISTANCE_TYPES) {
+            for (const int32_t dim : DIMS) {
+                for (const int32_t nb : NBS) {
+                    auto train_ds = GenEmbListBinDataSet(nb, dim, seed, each_el_len);
+                    auto query_ds = GenEmbListBinDataSet(NQ, dim, seed);
+                    auto num_el = (nb + each_el_len - 1) / each_el_len;
+
+                    knowhere::Json conf = default_conf;
+                    conf[knowhere::meta::METRIC_TYPE] = distance_type;
+                    conf[knowhere::meta::DIM] = dim;
+                    conf[knowhere::meta::ROWS] = nb;
+
+                    auto golden_result =
+                        knowhere::BruteForce::Search<knowhere::bin1>(train_ds, query_ds, conf, nullptr);
+
+                    // use the same seed to generate same float vectors
+                    auto chunk_train_ds = GenChunkBinDataSet(nb, dim, seed, each_el_len);
+
+                    auto chunk_result =
+                        knowhere::BruteForce::Search<knowhere::bin1>(chunk_train_ds, query_ds, conf, nullptr);
+                    REQUIRE(chunk_result.has_value());
+                    float recall = GetKNNRecall(*golden_result.value(), *chunk_result.value());
+                    printf("recall: %f\n", recall);
+                    REQUIRE(recall > CHUNK_RECALL_THRESHOLD);
+
+                    // with filter
+                    for (const float bitset_rate : BITSET_RATES) {
+                        const int32_t filter_out_bits = num_el * bitset_rate;
+                        const std::vector<uint8_t> bitset_data =
+                            GenerateBitsetByPartition(num_el, 1.0f - bitset_rate, 1);
+                        knowhere::BitsetView bitset_view =
+                            knowhere::BitsetView(bitset_data.data(), num_el, filter_out_bits);
+
+                        auto golden_result =
+                            knowhere::BruteForce::Search<knowhere::bin1>(train_ds, query_ds, conf, bitset_view);
+                        auto chunk_result =
+                            knowhere::BruteForce::Search<knowhere::bin1>(chunk_train_ds, query_ds, conf, bitset_view);
+                        REQUIRE(chunk_result.has_value());
+                        float recall = GetKNNRecall(*golden_result.value(), *chunk_result.value());
+                        printf("bitset_rate: %f, recall: %f\n", bitset_rate, recall);
+                        REQUIRE(recall > CHUNK_RECALL_THRESHOLD);
+                    }
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("Test brute force anniterator on chunk", "[on_chunk]") {
+    const std::vector<int32_t> DIMS = {8};
+    const std::vector<int32_t> NBS = {1000};
+    const int32_t NQ = 10;
+    const int32_t TOPK = 16;
+    const int32_t each_el_len = 10;
+    const std::vector<float> BITSET_RATES = {0.1f, 0.5f, 0.95f, 1.0f};
+
+    knowhere::Json default_conf;
+    default_conf[knowhere::meta::TOPK] = TOPK;
+
+    uint64_t seed = 42;
+
+    SECTION("Dense AnnIterator on Chunk") {
+        const std::vector<std::string> DISTANCE_TYPES = {"L2", "IP", "COSINE"};
+        for (const auto& distance_type : DISTANCE_TYPES) {
+            for (const int32_t dim : DIMS) {
+                for (const int32_t nb : NBS) {
+                    auto train_ds = GenEmbListDataSet(nb, dim, seed, each_el_len);
+                    auto query_ds = GenDataSet(NQ, dim, seed);
+                    // use the same seed to generate same float vectors
+                    auto chunk_train_ds = GenChunkDataSet(nb, dim, seed, each_el_len);
+
+                    knowhere::Json conf = default_conf;
+                    conf[knowhere::meta::METRIC_TYPE] = distance_type;
+                    conf[knowhere::meta::DIM] = dim;
+                    conf[knowhere::meta::ROWS] = nb;
+
+                    auto golden_result_iter_or =
+                        knowhere::BruteForce::AnnIterator<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
+                    REQUIRE(golden_result_iter_or.has_value());
+                    auto golden_result_iter = golden_result_iter_or.value();
+
+                    auto chunk_result_iter_or =
+                        knowhere::BruteForce::AnnIterator<knowhere::fp32>(chunk_train_ds, query_ds, conf, nullptr);
+                    REQUIRE(chunk_result_iter_or.has_value());
+                    auto chunk_result_iter = chunk_result_iter_or.value();
+
+                    for (auto j = 0; j < NQ; ++j) {
+                        REQUIRE(check_same_iterator(golden_result_iter[j], chunk_result_iter[j]));
+                    }
+
+                    // with filter
+                    for (const float bitset_rate : BITSET_RATES) {
+                        const int32_t filter_out_bits = nb * bitset_rate;
+                        const std::vector<uint8_t> bitset_data = GenerateBitsetWithRandomTbitsSet(nb, filter_out_bits);
+                        knowhere::BitsetView bitset_view =
+                            knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
+
+                        auto golden_result_iter_or =
+                            knowhere::BruteForce::AnnIterator<knowhere::fp32>(train_ds, query_ds, conf, bitset_view);
+                        REQUIRE(golden_result_iter_or.has_value());
+                        auto golden_result_iter = golden_result_iter_or.value();
+
+                        auto chunk_result_iter_or = knowhere::BruteForce::AnnIterator<knowhere::fp32>(
+                            chunk_train_ds, query_ds, conf, bitset_view);
+                        REQUIRE(chunk_result_iter_or.has_value());
+                        auto chunk_result_iter = chunk_result_iter_or.value();
+
+                        for (auto j = 0; j < NQ; ++j) {
+                            REQUIRE(check_same_iterator(golden_result_iter[j], chunk_result_iter[j]));
+                        }
+                    }
+
+                    // with datatype bf16
+                    {
+                        auto train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::bf16>(chunk_train_ds);
+                        auto query_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::bf16>(query_ds);
+                        auto chunk_train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::bf16>(chunk_train_ds);
+
+                        auto golden_result_iter_or = knowhere::BruteForce::AnnIterator<knowhere::bf16>(
+                            train_ds_typed, query_ds_typed, conf, nullptr);
+                        REQUIRE(golden_result_iter_or.has_value());
+                        auto golden_result_iter = golden_result_iter_or.value();
+
+                        auto chunk_result_iter_or = knowhere::BruteForce::AnnIterator<knowhere::bf16>(
+                            chunk_train_ds_typed, query_ds_typed, conf, nullptr);
+                        REQUIRE(chunk_result_iter_or.has_value());
+                        auto chunk_result_iter = chunk_result_iter_or.value();
+
+                        for (auto j = 0; j < NQ; ++j) {
+                            REQUIRE(check_same_iterator(golden_result_iter[j], chunk_result_iter[j]));
+                        }
+                    }
+
+                    // with datatype fp16
+                    {
+                        auto train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::fp16>(chunk_train_ds);
+                        auto query_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::fp16>(query_ds);
+                        auto chunk_train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::fp16>(chunk_train_ds);
+
+                        auto golden_result_iter_or = knowhere::BruteForce::AnnIterator<knowhere::fp16>(
+                            train_ds_typed, query_ds_typed, conf, nullptr);
+                        REQUIRE(golden_result_iter_or.has_value());
+                        auto golden_result_iter = golden_result_iter_or.value();
+
+                        auto chunk_result_iter_or = knowhere::BruteForce::AnnIterator<knowhere::fp16>(
+                            chunk_train_ds_typed, query_ds_typed, conf, nullptr);
+                        REQUIRE(chunk_result_iter_or.has_value());
+                        auto chunk_result_iter = chunk_result_iter_or.value();
+
+                        for (auto j = 0; j < NQ; ++j) {
+                            REQUIRE(check_same_iterator(golden_result_iter[j], chunk_result_iter[j]));
+                        }
+                    }
+
+                    // with datatype int8
+                    {
+                        auto train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::int8>(chunk_train_ds);
+                        auto query_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::int8>(query_ds);
+                        auto chunk_train_ds_typed = knowhere::ConvertToDataTypeIfNeeded<knowhere::int8>(chunk_train_ds);
+
+                        auto golden_result_iter_or = knowhere::BruteForce::AnnIterator<knowhere::int8>(
+                            train_ds_typed, query_ds_typed, conf, nullptr);
+                        REQUIRE(golden_result_iter_or.has_value());
+                        auto golden_result_iter = golden_result_iter_or.value();
+
+                        auto chunk_result_iter_or = knowhere::BruteForce::AnnIterator<knowhere::int8>(
+                            chunk_train_ds_typed, query_ds_typed, conf, nullptr);
+                        REQUIRE(chunk_result_iter_or.has_value());
+                        auto chunk_result_iter = chunk_result_iter_or.value();
+
+                        for (auto j = 0; j < NQ; ++j) {
+                            REQUIRE(check_same_iterator(golden_result_iter[j], chunk_result_iter[j]));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    SECTION("Binary AnnIterator on Chunk") {
+        const std::vector<std::string> DISTANCE_TYPES = {"JACCARD", "HAMMING"};
+
+        for (const auto& distance_type : DISTANCE_TYPES) {
+            for (const int32_t dim : DIMS) {
+                for (const int32_t nb : NBS) {
+                    auto train_ds = GenEmbListBinDataSet(nb, dim, seed, each_el_len);
+                    auto query_ds = GenBinDataSet(NQ, dim, seed);
+                    // use the same seed to generate same float vectors
+                    auto chunk_train_ds = GenChunkBinDataSet(nb, dim, seed, each_el_len);
+
+                    knowhere::Json conf = default_conf;
+                    conf[knowhere::meta::METRIC_TYPE] = distance_type;
+                    conf[knowhere::meta::DIM] = dim;
+                    conf[knowhere::meta::ROWS] = nb;
+
+                    auto golden_result_iter_or =
+                        knowhere::BruteForce::AnnIterator<knowhere::bin1>(train_ds, query_ds, conf, nullptr);
+                    REQUIRE(golden_result_iter_or.has_value());
+                    auto golden_result_iter = golden_result_iter_or.value();
+
+                    auto chunk_result_iter_or =
+                        knowhere::BruteForce::AnnIterator<knowhere::bin1>(chunk_train_ds, query_ds, conf, nullptr);
+                    REQUIRE(chunk_result_iter_or.has_value());
+                    auto chunk_result_iter = chunk_result_iter_or.value();
+
+                    for (auto j = 0; j < NQ; ++j) {
+                        REQUIRE(check_same_iterator(golden_result_iter[j], chunk_result_iter[j]));
+                    }
+
+                    // with filter
+                    for (const float bitset_rate : BITSET_RATES) {
+                        const int32_t filter_out_bits = nb * bitset_rate;
+                        const std::vector<uint8_t> bitset_data = GenerateBitsetWithRandomTbitsSet(nb, filter_out_bits);
+                        knowhere::BitsetView bitset_view =
+                            knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
+
+                        auto golden_result_iter_or =
+                            knowhere::BruteForce::AnnIterator<knowhere::bin1>(train_ds, query_ds, conf, nullptr);
+                        REQUIRE(golden_result_iter_or.has_value());
+                        auto golden_result_iter = golden_result_iter_or.value();
+
+                        auto chunk_result_iter_or =
+                            knowhere::BruteForce::AnnIterator<knowhere::bin1>(chunk_train_ds, query_ds, conf, nullptr);
+                        REQUIRE(chunk_result_iter_or.has_value());
+                        auto chunk_result_iter = chunk_result_iter_or.value();
+
+                        for (auto j = 0; j < NQ; ++j) {
+                            REQUIRE(check_same_iterator(golden_result_iter[j], chunk_result_iter[j]));
+                        }
+                    }
                 }
             }
         }
