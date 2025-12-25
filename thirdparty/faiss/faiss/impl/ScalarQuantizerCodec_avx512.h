@@ -666,7 +666,7 @@ struct DCTemplate_avx512<Quantizer, Similarity, 16> : SQDistanceComputer {
     }
 };
 
-template <class Similarity>
+template <class Similarity, bool USE_VNNI>
 struct DistanceComputerSQ4UByte_avx512 : SQDistanceComputer {
     using Quantizer = QuantizerTemplate_avx512<
             Codec4bit_avx512,
@@ -746,22 +746,24 @@ struct DistanceComputerSQ4UByte_avx512 : SQDistanceComputer {
         }
 
         // Handle remaining dimensions
-        for (; i < d; i += 16) {
-            // Load 8 bytes (16 nibbles)
-            __m128i c128 = _mm_loadu_si128((const __m128i*)(code + i / 2));
-            __m512i c512 = _mm512_castsi128_si512(c128);
+        if (i < d) {
+            size_t rem = d - i;
+            uint64_t mask_even = (1ULL << ((rem + 1) / 2)) - 1;
+            uint64_t mask_odd = (1ULL << (rem / 2)) - 1;
+
+            __m512i c512 = _mm512_maskz_loadu_epi8(mask_even, code + i / 2);
 
             __m512i nibbles_lo = _mm512_and_si512(c512, mask_f);
             __m512i nibbles_hi =
                     _mm512_and_si512(_mm512_srli_epi16(c512, 4), mask_f);
 
-            // Load query bytes (16 bytes each)
-            __m128i q_lo_128 =
-                    _mm_loadu_si128((const __m128i*)(q_lo_ptr + i / 2));
-            __m128i q_hi_128 =
-                    _mm_loadu_si128((const __m128i*)(q_hi_ptr + i / 2));
-            __m512i q_lo_vec = _mm512_castsi128_si512(q_lo_128);
-            __m512i q_hi_vec = _mm512_castsi128_si512(q_hi_128);
+            __m512i q_lo_vec =
+                    _mm512_maskz_loadu_epi8(mask_even, q_lo_ptr + i / 2);
+            __m512i q_hi_vec =
+                    _mm512_maskz_loadu_epi8(mask_odd, q_hi_ptr + i / 2);
+
+            __m512i mask_odd_vec = _mm512_movm_epi8(mask_odd);
+            nibbles_hi = _mm512_and_si512(nibbles_hi, mask_odd_vec);
 
             __m512i diff_lo = _mm512_sub_epi8(q_lo_vec, nibbles_lo);
             __m512i diff_hi = _mm512_sub_epi8(q_hi_vec, nibbles_hi);
@@ -821,11 +823,15 @@ struct DistanceComputerSQ4UByte_avx512 : SQDistanceComputer {
         }
 
         // Handle remaining dimensions
-        for (; i < d; i += 16) {
-            __m128i c1_128 = _mm_loadu_si128((const __m128i*)(code1 + i / 2));
-            __m128i c2_128 = _mm_loadu_si128((const __m128i*)(code2 + i / 2));
-            __m512i c1_512 = _mm512_castsi128_si512(c1_128);
-            __m512i c2_512 = _mm512_castsi128_si512(c2_128);
+        if (i < d) {
+            size_t rem = d - i;
+            uint64_t mask_even = (1ULL << ((rem + 1) / 2)) - 1;
+            uint64_t mask_odd = (1ULL << (rem / 2)) - 1;
+
+            __m512i c1_512 =
+                    _mm512_maskz_loadu_epi8(mask_even, code1 + i / 2);
+            __m512i c2_512 =
+                    _mm512_maskz_loadu_epi8(mask_even, code2 + i / 2);
 
             __m512i c1_nibbles_lo =
                     _mm512_and_si512(c1_512, _mm512_set1_epi8(0xF));
@@ -836,6 +842,10 @@ struct DistanceComputerSQ4UByte_avx512 : SQDistanceComputer {
                     _mm512_and_si512(c2_512, _mm512_set1_epi8(0xF));
             __m512i c2_nibbles_hi = _mm512_and_si512(
                     _mm512_srli_epi16(c2_512, 4), _mm512_set1_epi8(0xF));
+
+            __m512i mask_odd_vec = _mm512_movm_epi8(mask_odd);
+            c1_nibbles_hi = _mm512_and_si512(c1_nibbles_hi, mask_odd_vec);
+            c2_nibbles_hi = _mm512_and_si512(c2_nibbles_hi, mask_odd_vec);
 
             __m512i diff_lo = _mm512_sub_epi8(c1_nibbles_lo, c2_nibbles_lo);
             __m512i diff_hi = _mm512_sub_epi8(c1_nibbles_hi, c2_nibbles_hi);
@@ -870,7 +880,7 @@ struct DistanceComputerSQ4UByte_avx512 : SQDistanceComputer {
         return compute_distance(nullptr, code);
     }
 
-    __attribute__((target("avx512vnni"))) void query_to_codes_batch_4(
+    void query_to_codes_batch_4(
             const uint8_t* __restrict code_0,
             const uint8_t* __restrict code_1,
             const uint8_t* __restrict code_2,
@@ -879,6 +889,24 @@ struct DistanceComputerSQ4UByte_avx512 : SQDistanceComputer {
             float& dis1,
             float& dis2,
             float& dis3) const override final {
+        if constexpr (USE_VNNI) {
+            query_to_codes_batch_4_vnni(
+                    code_0, code_1, code_2, code_3, dis0, dis1, dis2, dis3);
+        } else {
+            query_to_codes_batch_4_avx512(
+                    code_0, code_1, code_2, code_3, dis0, dis1, dis2, dis3);
+        }
+    }
+
+    __attribute__((target("avx512vnni"))) void query_to_codes_batch_4_vnni(
+            const uint8_t* __restrict code_0,
+            const uint8_t* __restrict code_1,
+            const uint8_t* __restrict code_2,
+            const uint8_t* __restrict code_3,
+            float& dis0,
+            float& dis1,
+            float& dis2,
+            float& dis3) const {
         __m512i acc0 = _mm512_setzero_si512();
         __m512i acc1 = _mm512_setzero_si512();
         __m512i acc2 = _mm512_setzero_si512();
@@ -934,17 +962,24 @@ struct DistanceComputerSQ4UByte_avx512 : SQDistanceComputer {
         }
 
         // Handle remaining dimensions
-        for (; i + 128 <= d; i += 128) {
-            __m512i q_lo_vec = _mm512_loadu_si512(q_lo_ptr + i / 2);
-            __m512i q_hi_vec = _mm512_loadu_si512(q_hi_ptr + i / 2);
+        if (i < d) {
+            size_t rem = d - i;
+            uint64_t mask_even = (1ULL << ((rem + 1) / 2)) - 1;
+            uint64_t mask_odd = (1ULL << (rem / 2)) - 1;
+
+            __m512i q_lo_vec = _mm512_maskz_loadu_epi8(mask_even, q_lo_ptr + i / 2);
+            __m512i q_hi_vec = _mm512_maskz_loadu_epi8(mask_odd, q_hi_ptr + i / 2);
+            __m512i mask_odd_vec = _mm512_movm_epi8(mask_odd);
 
             auto process = [&](const uint8_t* code, __m512i& acc)
                     __attribute__((target("avx512vnni"))) {
                 __m512i c512 =
-                        _mm512_loadu_si512((const __m512i*)(code + i / 2));
+                        _mm512_maskz_loadu_epi8(mask_even, code + i / 2);
                 __m512i nibbles_lo = _mm512_and_si512(c512, mask_f);
                 __m512i nibbles_hi =
                         _mm512_and_si512(_mm512_srli_epi16(c512, 4), mask_f);
+                
+                nibbles_hi = _mm512_and_si512(nibbles_hi, mask_odd_vec);
 
                 __m512i diff_lo = _mm512_sub_epi8(q_lo_vec, nibbles_lo);
                 __m512i diff_hi = _mm512_sub_epi8(q_hi_vec, nibbles_hi);
@@ -954,6 +989,123 @@ struct DistanceComputerSQ4UByte_avx512 : SQDistanceComputer {
 
                 acc = _mm512_dpbusd_epi32(acc, diff_lo, diff_lo);
                 acc = _mm512_dpbusd_epi32(acc, diff_hi, diff_hi);
+            };
+
+            process(code_0, acc0);
+            process(code_1, acc1);
+            process(code_2, acc2);
+            process(code_3, acc3);
+        }
+
+        dis0 = _mm512_reduce_add_epi32(acc0) * final_scale_sq;
+        dis1 = _mm512_reduce_add_epi32(acc1) * final_scale_sq;
+        dis2 = _mm512_reduce_add_epi32(acc2) * final_scale_sq;
+        dis3 = _mm512_reduce_add_epi32(acc3) * final_scale_sq;
+    }
+
+    void query_to_codes_batch_4_avx512(
+            const uint8_t* __restrict code_0,
+            const uint8_t* __restrict code_1,
+            const uint8_t* __restrict code_2,
+            const uint8_t* __restrict code_3,
+            float& dis0,
+            float& dis1,
+            float& dis2,
+            float& dis3) const {
+        __m512i acc0 = _mm512_setzero_si512();
+        __m512i acc1 = _mm512_setzero_si512();
+        __m512i acc2 = _mm512_setzero_si512();
+        __m512i acc3 = _mm512_setzero_si512();
+
+        const size_t d = quant.d;
+        const __m512i mask_f = _mm512_set1_epi8(0xF);
+        const __m512i one = _mm512_set1_epi16(1);
+        const uint8_t* q_lo_ptr = q_lo.data();
+        const uint8_t* q_hi_ptr = q_hi.data();
+
+        size_t i = 0;
+        // 256 dimensions per iteration
+        for (; i + 256 <= d; i += 256) {
+            // Chunk 0
+            __m512i q_lo_0 = _mm512_loadu_si512(q_lo_ptr + i / 2);
+            __m512i q_hi_0 = _mm512_loadu_si512(q_hi_ptr + i / 2);
+
+            // Chunk 1
+            __m512i q_lo_1 = _mm512_loadu_si512(q_lo_ptr + i / 2 + 64);
+            __m512i q_hi_1 = _mm512_loadu_si512(q_hi_ptr + i / 2 + 64);
+
+            auto process_chunk = [&](
+                    const uint8_t* code,
+                    __m512i& acc,
+                    __m512i q_lo,
+                    __m512i q_hi,
+                    int offset) {
+                __m512i c512 = _mm512_loadu_si512(
+                        (const __m512i*)(code + i / 2 + offset));
+                __m512i nibbles_lo = _mm512_and_si512(c512, mask_f);
+                __m512i nibbles_hi =
+                        _mm512_and_si512(_mm512_srli_epi16(c512, 4), mask_f);
+
+                __m512i diff_lo = _mm512_sub_epi8(q_lo, nibbles_lo);
+                __m512i diff_hi = _mm512_sub_epi8(q_hi, nibbles_hi);
+
+                diff_lo = _mm512_abs_epi8(diff_lo);
+                diff_hi = _mm512_abs_epi8(diff_hi);
+
+                __m512i sq_lo = _mm512_maddubs_epi16(diff_lo, diff_lo);
+                __m512i sq_hi = _mm512_maddubs_epi16(diff_hi, diff_hi);
+
+                __m512i sum_lo = _mm512_madd_epi16(sq_lo, one);
+                __m512i sum_hi = _mm512_madd_epi16(sq_hi, one);
+
+                acc = _mm512_add_epi32(acc, sum_lo);
+                acc = _mm512_add_epi32(acc, sum_hi);
+            };
+
+            process_chunk(code_0, acc0, q_lo_0, q_hi_0, 0);
+            process_chunk(code_1, acc1, q_lo_0, q_hi_0, 0);
+            process_chunk(code_2, acc2, q_lo_0, q_hi_0, 0);
+            process_chunk(code_3, acc3, q_lo_0, q_hi_0, 0);
+
+            process_chunk(code_0, acc0, q_lo_1, q_hi_1, 64);
+            process_chunk(code_1, acc1, q_lo_1, q_hi_1, 64);
+            process_chunk(code_2, acc2, q_lo_1, q_hi_1, 64);
+            process_chunk(code_3, acc3, q_lo_1, q_hi_1, 64);
+        }
+
+        // Handle remaining dimensions
+        if (i < d) {
+            size_t rem = d - i;
+            uint64_t mask_even = (1ULL << ((rem + 1) / 2)) - 1;
+            uint64_t mask_odd = (1ULL << (rem / 2)) - 1;
+
+            __m512i q_lo_vec = _mm512_maskz_loadu_epi8(mask_even, q_lo_ptr + i / 2);
+            __m512i q_hi_vec = _mm512_maskz_loadu_epi8(mask_odd, q_hi_ptr + i / 2);
+            __m512i mask_odd_vec = _mm512_movm_epi8(mask_odd);
+
+            auto process = [&](const uint8_t* code, __m512i& acc) {
+                __m512i c512 =
+                        _mm512_maskz_loadu_epi8(mask_even, code + i / 2);
+                __m512i nibbles_lo = _mm512_and_si512(c512, mask_f);
+                __m512i nibbles_hi =
+                        _mm512_and_si512(_mm512_srli_epi16(c512, 4), mask_f);
+                
+                nibbles_hi = _mm512_and_si512(nibbles_hi, mask_odd_vec);
+
+                __m512i diff_lo = _mm512_sub_epi8(q_lo_vec, nibbles_lo);
+                __m512i diff_hi = _mm512_sub_epi8(q_hi_vec, nibbles_hi);
+
+                diff_lo = _mm512_abs_epi8(diff_lo);
+                diff_hi = _mm512_abs_epi8(diff_hi);
+
+                __m512i sq_lo = _mm512_maddubs_epi16(diff_lo, diff_lo);
+                __m512i sq_hi = _mm512_maddubs_epi16(diff_hi, diff_hi);
+
+                __m512i sum_lo = _mm512_madd_epi16(sq_lo, one);
+                __m512i sum_hi = _mm512_madd_epi16(sq_hi, one);
+
+                acc = _mm512_add_epi32(acc, sum_lo);
+                acc = _mm512_add_epi32(acc, sum_hi);
             };
 
             process(code_0, acc0);
@@ -1084,6 +1236,7 @@ SQDistanceComputer* select_distance_computer_avx512(
         size_t d,
         const std::vector<float>& trained) {
     constexpr int SIMDWIDTH = Sim::simdwidth;
+    const bool use_vnni = __builtin_cpu_supports("avx512vnni");
     switch (qtype) {
         case QuantizerType::QT_8bit_uniform:
             return new DCTemplate_avx512<
@@ -1092,16 +1245,10 @@ SQDistanceComputer* select_distance_computer_avx512(
                     SIMDWIDTH>(d, trained);
 
         case QuantizerType::QT_4bit_uniform:
-            if (d % 16 == 0) {
-                return new DistanceComputerSQ4UByte_avx512<Sim>(d, trained);
+            if (use_vnni) {
+                return new DistanceComputerSQ4UByte_avx512<Sim, true>(d, trained);
             } else {
-                return new DCTemplate_avx512<
-                        QuantizerTemplate_avx512<
-                                Codec4bit_avx512,
-                                QuantizerTemplateScaling::UNIFORM,
-                                SIMDWIDTH>,
-                        Sim,
-                        SIMDWIDTH>(d, trained);
+                return new DistanceComputerSQ4UByte_avx512<Sim, false>(d, trained);
             }
 
         case QuantizerType::QT_8bit:
