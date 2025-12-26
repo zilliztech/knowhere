@@ -75,6 +75,17 @@ class IvfIndexNode : public IndexNode {
         base_index_lock_ = std::make_unique<FairRWLock>();
     }
     Status
+    BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
+                 bool use_knowhere_build_pool) override {
+        if constexpr (std::is_same_v<IndexType, faiss::IndexIVFFlat> ||
+                      std::is_same_v<IndexType, faiss::IndexIVFFlatCC>) {
+            return IndexNode::BuildEmbList(dataset, std::move(cfg), lims, num_rows, use_knowhere_build_pool);
+        }
+
+        LOG_KNOWHERE_ERROR_ << "BuildEmbList not implemented for current index type";
+        return Status::not_implemented;
+    }
+    Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
     Status
     Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
