@@ -28,7 +28,7 @@ namespace knowhere {
 
 class DataSet : public std::enable_shared_from_this<const DataSet> {
  public:
-    typedef std::variant<const float*, const size_t*, const int64_t*, const void*, int64_t, std::string, std::any> Var;
+    using Var = std::variant<const float*, const size_t*, const int64_t*, const void*, int64_t, std::string, std::any>;
     DataSet() = default;
     ~DataSet() {
         if (!is_owner) {
@@ -58,6 +58,11 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
                 if (ptr != nullptr) {
                     if (is_sparse) {
                         delete[](sparse::SparseRow<float>*)(*ptr);
+                    } else if (is_chunk) {
+                        for (auto i = 0; i < num_chunk; i += 1) {
+                            delete[]((char**)(*ptr))[i];
+                        }
+                        delete[](char**)(*ptr);
                     } else {
                         delete[](char*)(*ptr);
                     }
@@ -287,6 +292,30 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
         this->is_sparse = is_sparse;
     }
 
+    bool
+    GetIsChunk() const {
+        std::unique_lock lock(mutex_);
+        return this->is_chunk;
+    }
+
+    void
+    SetIsChunk(bool is_chunk) {
+        std::unique_lock lock(mutex_);
+        this->is_chunk = is_chunk;
+    }
+
+    int64_t
+    GetNumChunk() const {
+        std::unique_lock lock(mutex_);
+        return this->num_chunk;
+    }
+
+    void
+    SetNumChunk(int64_t num_chunk) {
+        std::unique_lock lock(mutex_);
+        this->num_chunk = num_chunk;
+    }
+
     int64_t
     GetTensorBeginId() const {
         std::shared_lock lock(mutex_);
@@ -322,6 +351,8 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
     std::map<std::string, Var> data_;
     bool is_owner = true;
     bool is_sparse = false;
+    bool is_chunk = false;
+    int64_t num_chunk = 1;
 };
 using DataSetPtr = std::shared_ptr<DataSet>;
 

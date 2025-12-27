@@ -554,6 +554,59 @@ GenEmbListDataSet(int rows, int dim, const uint64_t seed = 42, int each_el_len =
 }
 
 inline knowhere::DataSetPtr
+GenChunkDataSet(int rows, int dim, const uint64_t seed = 42, int each_el_len = 10) {
+    std::mt19937 rng(seed);
+    // use int type to cover test cases for fb16, bf16, int8
+    std::uniform_int_distribution<> distrib(-100.0, 100.0);
+    size_t num_chunk = (rows + each_el_len - 1) / each_el_len;
+    float** chunk_ts = new float*[num_chunk];
+    size_t* lims = new size_t[num_chunk + 1];
+
+    for (size_t chunk_idx = 0; chunk_idx < num_chunk; chunk_idx += 1) {
+        lims[chunk_idx] = chunk_idx * each_el_len;
+        chunk_ts[chunk_idx] = new float[each_el_len * dim];
+        for (size_t i = 0; i < each_el_len * dim; i += 1) {
+            chunk_ts[chunk_idx][i] = (float)distrib(rng);
+        }
+    }
+    lims[num_chunk] = rows;
+
+    auto ds = knowhere::GenDataSet(rows, dim, chunk_ts);
+    ds->SetNumChunk(num_chunk);
+    ds->Set(knowhere::meta::EMB_LIST_OFFSET, (const size_t*)lims);
+    ds->SetIsChunk(true);
+    ds->SetIsOwner(true);
+    return ds;
+}
+
+inline knowhere::DataSetPtr
+GenChunkBinDataSet(int rows, int dim, const uint64_t seed = 42, int each_el_len = 10) {
+    std::mt19937 rng(seed);
+    std::uniform_int_distribution<> distrib(0.0, 100.0);
+    int uint8_dim = dim / 8;
+
+    size_t num_chunk = (rows + each_el_len - 1) / each_el_len;
+    uint8_t** chunk_ts = new uint8_t*[num_chunk];
+    size_t* lims = new size_t[num_chunk + 1];
+
+    for (size_t chunk_idx = 0; chunk_idx < num_chunk; chunk_idx += 1) {
+        lims[chunk_idx] = chunk_idx * each_el_len;
+        chunk_ts[chunk_idx] = new uint8_t[each_el_len * uint8_dim];
+        for (size_t i = 0; i < each_el_len * uint8_dim; i += 1) {
+            chunk_ts[chunk_idx][i] = (uint8_t)distrib(rng);
+        }
+    }
+    lims[num_chunk] = rows;
+
+    auto ds = knowhere::GenDataSet(rows, dim, chunk_ts);
+    ds->SetNumChunk(num_chunk);
+    ds->Set(knowhere::meta::EMB_LIST_OFFSET, (const size_t*)lims);
+    ds->SetIsChunk(true);
+    ds->SetIsOwner(true);
+    return ds;
+}
+
+inline knowhere::DataSetPtr
 GenEmbListDataSetWithSomeEmpty(int rows, int dim, const uint64_t seed = 42, int each_el_len = 10) {
     std::mt19937 rng(seed);
     // use int type to cover test cases for fb16, bf16, int8
