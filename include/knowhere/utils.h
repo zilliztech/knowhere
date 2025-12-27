@@ -144,37 +144,76 @@ data_type_conversion(const DataSet& src, const std::optional<int64_t> start = st
         return nullptr;
     }
 
-    // map
-    auto* des_data = new OutType[out_dim * count_rows];
-
-    // only do memset() for intrinsic data types, such as float;
-    // for fp16/bf16, they will be initialized by the constructor
-    if constexpr (std::is_arithmetic_v<OutType>) {
-        std::memset(des_data, 0, sizeof(OutType) * out_dim * count_rows);
-    }
-
-    auto* src_data = (const InType*)src.GetTensor();
-    for (auto i = 0; i < count_rows; i++) {
-        for (auto d = 0; d < in_dim; d++) {
-            des_data[i * out_dim + d] = (OutType)src_data[(start_row + i) * in_dim + d];
-        }
-    }
-
     auto des = std::make_shared<DataSet>();
-    des->SetRows(count_rows);
-    des->SetDim(out_dim);
-    des->SetTensor(des_data);
-    des->SetIsOwner(true);
-    des->SetTensorBeginId(src.GetTensorBeginId() + start_row);
+    bool is_chunk = src.GetIsChunk();
+    if (is_chunk) {
+        // make sure the start == 0 and count == rows
+        if (start_row != 0 || count_rows != rows) {
+            throw std::runtime_error("splitting chunk dataset is not supported.");
+        }
+        auto* src_data = (const InType**)src.GetTensor();
+        auto num_chunk = src.GetNumChunk();
+        auto* des_data = new OutType*[num_chunk];
+        auto chunk_lims = src.Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+        if (chunk_lims == nullptr) {
+            throw std::runtime_error("chunk dataset should have offset array.");
+        }
+        for (auto i = 0; i < num_chunk; i++) {
+            auto num_vectors = chunk_lims[i + 1] - chunk_lims[i];
+            des_data[i] = new OutType[num_vectors * out_dim];
+            for (auto j = 0; j < num_vectors; j++) {
+                for (auto d = 0; d < out_dim; d++) {
+                    des_data[i][j * out_dim + d] = (OutType)src_data[i][j * in_dim + d];
+                }
+            }
+        }
+        des->SetTensor(des_data);
+        des->SetIsChunk(true);
+        des->SetIsOwner(true);
+        des->SetRows(rows);
+        des->SetNumChunk(num_chunk);
+        des->SetDim(out_dim);
+        des->SetTensorBeginId(src.GetTensorBeginId());
+    } else {
+        // map
+        auto* des_data = new OutType[out_dim * count_rows];
+
+        // only do memset() for intrinsic data types, such as float;
+        // for fp16/bf16, they will be initialized by the constructor
+        if constexpr (std::is_arithmetic_v<OutType>) {
+            std::memset(des_data, 0, sizeof(OutType) * out_dim * count_rows);
+        }
+
+        auto* src_data = (const InType*)src.GetTensor();
+        for (auto i = 0; i < count_rows; i++) {
+            for (auto d = 0; d < in_dim; d++) {
+                des_data[i * out_dim + d] = (OutType)src_data[(start_row + i) * in_dim + d];
+            }
+        }
+
+        des->SetRows(count_rows);
+        des->SetDim(out_dim);
+        des->SetTensor(des_data);
+        des->SetIsOwner(true);
+        des->SetTensorBeginId(src.GetTensorBeginId() + start_row);
+    }
 
     // for emb_list
     auto lims = src.Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
     if (lims != nullptr) {
         size_t lims_size = 0;
-        while (lims[lims_size] < (size_t)rows && lims_size < (size_t)rows) {
-            lims_size++;
+        if (is_chunk) {
+            lims_size = src.GetNumChunk();
+        } else {
+            auto offset_start = lims[0];
+            auto offset_end = offset_start + rows;
+            while (lims[lims_size] < offset_end) {
+                lims_size++;
+            }
+            if (lims[lims_size] != (size_t)offset_end) {
+                throw std::runtime_error("emb_list offsets mismatch with rows.");
+            }
         }
-        assert(lims[lims_size] == (size_t)rows);  // the last lims should be the rows
         auto lims_data = std::make_unique<size_t[]>(lims_size + 1);
         for (size_t i = 0; i < lims_size + 1; i++) {
             lims_data[i] = lims[i];

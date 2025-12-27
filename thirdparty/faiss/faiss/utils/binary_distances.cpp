@@ -763,13 +763,13 @@ void all_hamming_distances_template(
         size_t d,
         size_t nx,
         size_t ny,
-        float* output,
+        int32_t* output,
         const IDSelector* sel) {
     if (sel == nullptr) {
         // No IDSelector - compute all distances
         for (size_t i = 0; i < nx; i++) {
             const uint8_t* x_i = x + i * d;
-            float* output_i = output + i * ny;
+            int32_t* output_i = output + i * ny;
             HammingComputer hc(x_i, d);
             for (size_t j = 0; j < ny; j++) {
                 const uint8_t* y_j = y + j * d;
@@ -780,7 +780,7 @@ void all_hamming_distances_template(
         // With IDSelector - only compute distances for selected vectors
         for (size_t i = 0; i < nx; i++) {
             const uint8_t* x_i = x + i * d;
-            float* output_i = output + i * ny;
+            int32_t* output_i = output + i * ny;
             HammingComputer hc(x_i, d);
             for (size_t j = 0; j < ny; j++) {
                 if (sel->is_member(j)) {
@@ -788,7 +788,7 @@ void all_hamming_distances_template(
                     output_i[j] = hc.compute(y_j);
                 } else {
                     // Set to a large value for non-selected vectors
-                    output_i[j] = std::numeric_limits<int>::max();
+                    output_i[j] = std::numeric_limits<int32_t>::max();
                 }
             }
         }
@@ -801,7 +801,7 @@ void all_hamming_distances(
         size_t d,
         size_t nx,
         size_t ny,
-        float* output,
+        int32_t* output,
         const IDSelector* sel) {
     switch (d) {
 #define all_hamming_distances_hamming(ncodes)                        \

@@ -36,6 +36,11 @@ class BruteForce {
                   const Json& config, const BitsetView& bitset, milvus::OpContext* op_context = nullptr);
 
     template <typename DataType>
+    static Status
+    SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids, float* dis,
+                         const Json& config, const BitsetView& bitset, milvus::OpContext* op_context = nullptr);
+
+    template <typename DataType>
     static expected<DataSetPtr>
     RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                 const BitsetView& bitset, milvus::OpContext* op_context = nullptr);
@@ -54,6 +59,12 @@ class BruteForce {
     AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                 const BitsetView& bitset, bool use_knowhere_search_pool = true,
                 milvus::OpContext* op_context = nullptr);
+
+    template <typename DataType>
+    static expected<std::vector<IndexNode::IteratorPtr>>
+    AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                       const BitsetView& bitset, bool use_knowhere_search_pool = true,
+                       milvus::OpContext* op_context = nullptr);
 };
 
 }  // namespace knowhere
