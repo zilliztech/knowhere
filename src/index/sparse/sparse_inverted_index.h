@@ -25,6 +25,16 @@
 #include <unordered_map>
 #include <vector>
 
+// SIMD intrinsics for x86-64
+#if defined(__x86_64__) || defined(_M_X64)
+#ifdef __AVX2__
+#include <immintrin.h>
+#endif
+#ifdef __AVX512F__
+#include <immintrin.h>
+#endif
+#endif
+
 #include "index/sparse/sparse_inverted_index_config.h"
 #include "io/memory_io.h"
 #include "knowhere/bitsetview.h"
@@ -117,6 +127,43 @@ class BaseInvertedIndex {
     [[nodiscard]] virtual size_t
     n_cols() const = 0;
 };
+
+// CPU capability detection for SIMD optimizations
+#if defined(__x86_64__) || defined(_M_X64)
+namespace simd {
+
+struct CPUCapabilities {
+    bool has_avx2;
+    bool has_avx512f;
+
+    CPUCapabilities() {
+        has_avx2 = false;
+        has_avx512f = false;
+
+#ifdef __GNUC__
+        __builtin_cpu_init();
+        has_avx2 = __builtin_cpu_supports("avx2");
+        has_avx512f = __builtin_cpu_supports("avx512f");
+#elif defined(_MSC_VER)
+        int cpu_info[4];
+        __cpuid(cpu_info, 0);
+        int max_id = cpu_info[0];
+        if (max_id >= 7) {
+            __cpuidex(cpu_info, 7, 0);
+            has_avx2 = (cpu_info[1] & (1 << 5)) != 0;
+            has_avx512f = (cpu_info[1] & (1 << 16)) != 0;
+        }
+#endif
+    }
+
+    static const CPUCapabilities& get() {
+        static CPUCapabilities caps;
+        return caps;
+    }
+};
+
+}  // namespace simd
+#endif
 
 template <typename DType, typename QType, InvertedIndexAlgo algo, bool mmapped = false>
 class InvertedIndex : public BaseInvertedIndex<DType> {
@@ -960,10 +1007,179 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     compute_all_distances(const std::vector<std::pair<size_t, DType>>& q_vec,
                           const DocValueComputer<float>& computer) const {
         std::vector<float> scores(n_rows_internal_, 0.0f);
+
+#if defined(__x86_64__) || defined(_M_X64)
+        // x86-64: Use SIMD optimizations (AVX512 > AVX2 > Prefetching)
+        const auto& caps = simd::CPUCapabilities::get();
+
+        // Try AVX512 first (best performance: SIMD + prefetching)
+#ifdef __AVX512F__
+        if (caps.has_avx512f && metric_type_ == SparseMetricType::METRIC_IP) {
+            // AVX512 + prefetching for IP metric
+            constexpr size_t SIMD_WIDTH = 16;  // Process 16 floats at once
+            constexpr size_t PREFETCH_DISTANCE = 32;  // Prefetch 2 SIMD batches ahead
+
+            for (size_t i = 0; i < q_vec.size(); ++i) {
+                const auto& plist_ids = inverted_index_ids_spans_[q_vec[i].first];
+                const auto& plist_vals = inverted_index_vals_spans_[q_vec[i].first];
+                float q_weight = static_cast<float>(q_vec[i].second);
+
+                size_t j = 0;
+                __m512 q_weight_vec = _mm512_set1_ps(q_weight);
+
+                // SIMD loop with prefetching
+                for (; j + SIMD_WIDTH <= plist_ids.size(); j += SIMD_WIDTH) {
+                    // Prefetch next batch while SIMD processes current batch
+                    if (j + PREFETCH_DISTANCE + SIMD_WIDTH <= plist_ids.size()) {
+                        for (size_t k = 0; k < SIMD_WIDTH; ++k) {
+                            __builtin_prefetch(&scores[plist_ids[j + PREFETCH_DISTANCE + k]], 1, 1);
+                        }
+                    }
+
+                    // Load 16 posting list values
+                    __m512 vals = _mm512_loadu_ps(&plist_vals[j]);
+
+                    // Load 16 doc IDs (table_id_t is uint32_t)
+                    __m512i doc_ids = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(&plist_ids[j]));
+
+                    // Compute contribution: q_weight * plist_val
+                    __m512 contribution = _mm512_mul_ps(q_weight_vec, vals);
+
+                    // Gather current scores for these 16 docs
+                    __m512 current_scores = _mm512_i32gather_ps(doc_ids, scores.data(), 4);
+
+                    // Add contribution
+                    __m512 new_scores = _mm512_add_ps(current_scores, contribution);
+
+                    // TRUE SCATTER! Write all 16 results back in one instruction
+                    _mm512_i32scatter_ps(scores.data(), doc_ids, new_scores, 4);
+                }
+
+                // Handle remaining elements with prefetching
+                constexpr size_t SCALAR_PREFETCH = 16;
+                for (; j < plist_ids.size(); ++j) {
+                    if (j + SCALAR_PREFETCH < plist_ids.size()) {
+                        __builtin_prefetch(&scores[plist_ids[j + SCALAR_PREFETCH]], 1, 1);
+                    }
+                    scores[plist_ids[j]] += q_weight * plist_vals[j];
+                }
+            }
+            return scores;
+        }
+#endif
+
+        // Try AVX2 (SIMD + prefetching, manual scatter)
+#ifdef __AVX2__
+        if (caps.has_avx2 && metric_type_ == SparseMetricType::METRIC_IP) {
+            constexpr size_t SIMD_WIDTH = 8;  // Process 8 floats at once
+            constexpr size_t PREFETCH_DISTANCE = 16;  // Prefetch 2 SIMD batches ahead
+
+            for (size_t i = 0; i < q_vec.size(); ++i) {
+                const auto& plist_ids = inverted_index_ids_spans_[q_vec[i].first];
+                const auto& plist_vals = inverted_index_vals_spans_[q_vec[i].first];
+                float q_weight = static_cast<float>(q_vec[i].second);
+
+                size_t j = 0;
+                __m256 q_weight_vec = _mm256_set1_ps(q_weight);
+
+                // SIMD loop with prefetching
+                for (; j + SIMD_WIDTH <= plist_ids.size(); j += SIMD_WIDTH) {
+                    // Prefetch next batch
+                    if (j + PREFETCH_DISTANCE + SIMD_WIDTH <= plist_ids.size()) {
+                        for (size_t k = 0; k < SIMD_WIDTH; ++k) {
+                            __builtin_prefetch(&scores[plist_ids[j + PREFETCH_DISTANCE + k]], 1, 1);
+                        }
+                    }
+
+                    // Load 8 posting list values
+                    __m256 vals = _mm256_loadu_ps(&plist_vals[j]);
+
+                    // Compute contribution
+                    __m256 contribution = _mm256_mul_ps(q_weight_vec, vals);
+
+                    // AVX2 lacks scatter, so we extract and write manually
+                    alignas(32) float contrib_array[8];
+                    _mm256_store_ps(contrib_array, contribution);
+
+                    for (size_t k = 0; k < SIMD_WIDTH; ++k) {
+                        scores[plist_ids[j + k]] += contrib_array[k];
+                    }
+                }
+
+                // Handle remaining elements with prefetching
+                constexpr size_t SCALAR_PREFETCH = 16;
+                for (; j < plist_ids.size(); ++j) {
+                    if (j + SCALAR_PREFETCH < plist_ids.size()) {
+                        __builtin_prefetch(&scores[plist_ids[j + SCALAR_PREFETCH]], 1, 1);
+                    }
+                    scores[plist_ids[j]] += q_weight * plist_vals[j];
+                }
+            }
+            return scores;
+        }
+#endif
+
+        // TODO: BM25 can also be vectorized with AVX2/AVX512
+        // The BM25 formula: tf * (k1+1) / (tf + k1 * (1 - b + b * (doc_len / avgdl)))
+        // can be computed with SIMD using gather for doc_len and vector arithmetic.
+        // Division is slower (~20 cycles) but may still provide speedup for long posting lists.
+        // Current implementation uses prefetching which works well for both IP and BM25.
+
+        // Fallback: Software prefetching (works on all x86-64)
+        constexpr size_t PREFETCH_DISTANCE = 16;
+
+        // Branch hoisting: separate BM25 and IP paths
+        if (metric_type_ == SparseMetricType::METRIC_BM25) {
+            for (size_t i = 0; i < q_vec.size(); ++i) {
+                const auto& plist_ids = inverted_index_ids_spans_[q_vec[i].first];
+                const auto& plist_vals = inverted_index_vals_spans_[q_vec[i].first];
+                float q_weight = static_cast<float>(q_vec[i].second);
+
+                // Prefetch initial batch
+                size_t prefetch_init = std::min(PREFETCH_DISTANCE, plist_ids.size());
+                for (size_t j = 0; j < prefetch_init; ++j) {
+                    __builtin_prefetch(&scores[plist_ids[j]], 1, 1);
+                    __builtin_prefetch(&bm25_params_->row_sums_spans_[plist_ids[j]], 0, 1);
+                }
+
+                for (size_t j = 0; j < plist_ids.size(); ++j) {
+                    if (j + PREFETCH_DISTANCE < plist_ids.size()) {
+                        __builtin_prefetch(&scores[plist_ids[j + PREFETCH_DISTANCE]], 1, 1);
+                        __builtin_prefetch(&bm25_params_->row_sums_spans_[plist_ids[j + PREFETCH_DISTANCE]], 0, 1);
+                    }
+
+                    auto doc_id = plist_ids[j];
+                    float val_sum = bm25_params_->row_sums_spans_[doc_id];
+                    scores[doc_id] += q_weight * computer(plist_vals[j], val_sum);
+                }
+            }
+        } else {
+            // IP metric with prefetching
+            for (size_t i = 0; i < q_vec.size(); ++i) {
+                const auto& plist_ids = inverted_index_ids_spans_[q_vec[i].first];
+                const auto& plist_vals = inverted_index_vals_spans_[q_vec[i].first];
+                float q_weight = static_cast<float>(q_vec[i].second);
+
+                size_t prefetch_init = std::min(PREFETCH_DISTANCE, plist_ids.size());
+                for (size_t j = 0; j < prefetch_init; ++j) {
+                    __builtin_prefetch(&scores[plist_ids[j]], 1, 1);
+                }
+
+                for (size_t j = 0; j < plist_ids.size(); ++j) {
+                    if (j + PREFETCH_DISTANCE < plist_ids.size()) {
+                        __builtin_prefetch(&scores[plist_ids[j + PREFETCH_DISTANCE]], 1, 1);
+                    }
+
+                    auto doc_id = plist_ids[j];
+                    scores[doc_id] += q_weight * plist_vals[j];
+                }
+            }
+        }
+#else
+        // ARM/Apple Silicon: Hardware prefetcher is excellent, use simple implementation
         for (size_t i = 0; i < q_vec.size(); ++i) {
-            auto& plist_ids = inverted_index_ids_spans_[q_vec[i].first];
-            auto& plist_vals = inverted_index_vals_spans_[q_vec[i].first];
-            // TODO: improve with SIMD
+            const auto& plist_ids = inverted_index_ids_spans_[q_vec[i].first];
+            const auto& plist_vals = inverted_index_vals_spans_[q_vec[i].first];
             for (size_t j = 0; j < plist_ids.size(); ++j) {
                 auto doc_id = plist_ids[j];
                 float val_sum =
@@ -971,6 +1187,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                 scores[doc_id] += q_vec[i].second * computer(plist_vals[j], val_sum);
             }
         }
+#endif
+
         return scores;
     }
 
