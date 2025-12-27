@@ -13,6 +13,7 @@ on:
       - "src/**"
       - "thirdparty/**"
       - "benchmark/**"
+      - "benchmark_sparse_simd_simple.cpp"
       - "cmake/**"
       - "!cmake/libs/libcardinal.cmake"
       - ".github/workflows/ut.yaml"
@@ -97,3 +98,45 @@ jobs:
       - name: Test
         run: |
           pytest tests/python/test_index_with_random.py
+
+  simd-benchmark:
+    name: SIMD prefetching benchmark on x86
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Check CPU capabilities
+        run: |
+          echo "=== CPU Information ==="
+          lscpu | grep -E "Model name|Architecture|CPU\(s\)|Thread|Core|Socket|Flags"
+          echo ""
+          echo "=== AVX Support ==="
+          grep -o 'avx[^ ]*' /proc/cpuinfo | sort -u || echo "No AVX"
+
+      - name: Compile benchmark
+        run: |
+          g++ --version
+          g++ -std=c++20 -O3 -march=native -o benchmark_sparse_simd_simple benchmark_sparse_simd_simple.cpp
+
+      - name: Run benchmark - Small dataset
+        run: |
+          echo "========================================"
+          echo "Small Dataset (50K docs, fits in cache)"
+          echo "========================================"
+          ./benchmark_sparse_simd_simple 50000 20000 200 50
+
+      - name: Run benchmark - Medium dataset
+        run: |
+          echo "========================================"
+          echo "Medium Dataset (500K docs)"
+          echo "========================================"
+          ./benchmark_sparse_simd_simple 500000 100000 200 50
+
+      - name: Run benchmark - Large dataset
+        run: |
+          echo "=========================================="
+          echo "Large Dataset (1M docs, long posting lists)"
+          echo "=========================================="
+          ./benchmark_sparse_simd_simple 1000000 50000 300 50
