@@ -29,6 +29,7 @@
 #include "faiss/IndexCosine.h"
 #include "faiss/IndexHNSW.h"
 #include "faiss/IndexRefine.h"
+#include "faiss/IndexSQ4Uniform.h"
 #include "faiss/impl/ScalarQuantizer.h"
 #include "faiss/impl/mapped_io.h"
 #include "faiss/index_io.h"
@@ -2416,13 +2417,42 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
 
         // create an index
         const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
+        const bool is_sq4u = sq_type.value() == faiss::ScalarQuantizer::QT_4bit_uniform;
+
+        // For SQ4Uniform + COSINE: normalize the entire dataset
+        DataSetPtr normalized_dataset;
+        const float* training_data = static_cast<const float*>(data);
+
+        if (is_sq4u && is_cosine) {
+            // Convert to float
+            auto float_ds = convert_ds_to_float(dataset, data_format);
+            if (float_ds == nullptr) {
+                LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+                return Status::invalid_args;
+            }
+
+            // Normalize the dataset in-place
+            NormalizeDataset<float>(float_ds);
+            training_data = static_cast<const float*>(float_ds->GetTensor());
+
+            // Store the normalized dataset to keep it alive
+            normalized_dataset = float_ds;
+        }
 
         // should refine be used?
         std::unique_ptr<faiss::Index> final_index;
 
         auto train_index = [&](const float* data, const int i, const int64_t rows) {
             std::unique_ptr<faiss::IndexHNSW> hnsw_index;
-            if (is_cosine) {
+            if (is_sq4u && is_cosine) {
+                // Create IndexHNSWSQ4UniformCosine for COSINE
+                hnsw_index =
+                    std::make_unique<faiss::IndexHNSWSQ4UniformCosine>(dim, sq_type.value(), hnsw_cfg.M.value());
+            } else if (is_sq4u && metric.value() == faiss::METRIC_INNER_PRODUCT) {
+                // Create IndexHNSWSQ4UniformIP for IP
+                hnsw_index = std::make_unique<faiss::IndexHNSWSQ4UniformIP>(dim, sq_type.value(), hnsw_cfg.M.value());
+            } else if (is_cosine) {
+                // Other quantizers with COSINE
                 hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, sq_type.value(), hnsw_cfg.M.value());
             } else {
                 hnsw_index =
@@ -2472,19 +2502,140 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
         }
         // no scalar info or just one partition(after possible combination), build index on whole data
         if (scalar_info_map.empty() || tmp_combined_scalar_ids.size() <= 1) {
-            // we have to convert the data to float, unfortunately, which costs extra RAM
-            auto float_ds_ptr = convert_ds_to_float(dataset, data_format);
-            if (float_ds_ptr == nullptr) {
-                LOG_KNOWHERE_ERROR_ << "Unsupported data format";
-                return Status::invalid_args;
+            if (is_sq4u && is_cosine) {
+                // For SQ4Uniform + COSINE, training_data is already normalized and converted
+                return train_index(training_data, 0, rows);
+            } else {
+                // we have to convert the data to float, unfortunately, which costs extra RAM
+                auto float_ds_ptr = convert_ds_to_float(dataset, data_format);
+                if (float_ds_ptr == nullptr) {
+                    LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+                    return Status::invalid_args;
+                }
+                return train_index(reinterpret_cast<const float*>(float_ds_ptr->GetTensor()), 0, rows);
             }
-            return train_index(reinterpret_cast<const float*>(float_ds_ptr->GetTensor()), 0, rows);
         }
         LOG_KNOWHERE_INFO_ << "Train HNSWSQ Index with Scalar Info";
         for (const auto& [field_id, scalar_info] : scalar_info_map) {
             return TrainIndexByScalarInfo(train_index, scalar_info, data, rows, dim);
         }
         return Status::success;
+    }
+
+    // Override AddInternal to handle SQ4Uniform + COSINE normalization
+    Status
+    AddInternal(const DataSetPtr dataset, const Config& cfg) override {
+        if (isIndexEmpty()) {
+            LOG_KNOWHERE_ERROR_ << "Can not add data to an empty index.";
+            return Status::empty_index;
+        }
+
+        auto rows = dataset->GetRows();
+
+        // Check if this is SQ4Uniform + COSINE
+        bool is_sq4u_cosine = false;
+        faiss::IndexHNSW* index_hnsw = nullptr;
+        faiss::IndexRefine* index_refine = nullptr;
+
+        if (!indexes.empty() && indexes[0] != nullptr) {
+            index_refine = dynamic_cast<faiss::IndexRefine*>(indexes[0].get());
+            if (index_refine != nullptr) {
+                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index_refine->base_index);
+            } else {
+                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(indexes[0].get());
+            }
+
+            if (index_hnsw != nullptr) {
+                auto* sq4u_storage = dynamic_cast<faiss::IndexScalarQuantizer4bitUniformCosine*>(index_hnsw->storage);
+                if (sq4u_storage != nullptr) {
+                    is_sq4u_cosine = true;
+                }
+            }
+        }
+
+        // For SQ4Uniform + COSINE: use normalized data for both base and refine
+        // Since data is already normalized in training, refine also uses normalized data
+        // This is correct because COSINE distance is invariant to normalization
+        if (is_sq4u_cosine) {
+            // Convert to float
+            auto float_ds = convert_ds_to_float(dataset, data_format);
+            if (float_ds == nullptr) {
+                LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+                return Status::invalid_args;
+            }
+
+            // Create a normalized copy for SQ4Uniform using utility function
+            auto [normalized_ds, norms] = CopyAndNormalizeDataset<float>(float_ds);
+
+            const std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>& scalar_info_map =
+                dataset->Get<std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>>(meta::SCALAR_INFO);
+
+            if (scalar_info_map.empty() || tmp_combined_scalar_ids.size() <= 1) {
+                try {
+                    LOG_KNOWHERE_INFO_ << "Adding " << rows
+                                       << " rows to HNSW SQ4Uniform Index (COSINE with normalization)";
+
+                    const float* normalized_data = reinterpret_cast<const float*>(normalized_ds->GetTensor());
+
+                    // Use normalized data for both base and refine (COSINE distance invariant)
+                    indexes[0]->add(rows, normalized_data);
+
+                    return Status::success;
+                } catch (const std::exception& e) {
+                    LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+                    return Status::faiss_inner_error;
+                }
+            } else {
+                LOG_KNOWHERE_WARNING_ << "SQ4Uniform COSINE with scalar info not yet supported";
+                return Status::invalid_args;
+            }
+        }
+
+        return BaseFaissRegularIndexHNSWNode::AddInternal(dataset, cfg);
+    }
+
+    // Override Search to handle SQ4Uniform + COSINE query normalization
+    expected<DataSetPtr>
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset_,
+           milvus::OpContext* op_context) const override {
+        bool is_sq4u_cosine = false;
+        if (!indexes.empty() && indexes[0] != nullptr) {
+            const faiss::IndexHNSW* index_hnsw = nullptr;
+
+            // Check if it's an IndexRefine wrapping HNSW
+            auto* refine_index = dynamic_cast<const faiss::IndexRefine*>(indexes[0].get());
+            if (refine_index != nullptr) {
+                index_hnsw = dynamic_cast<const faiss::IndexHNSW*>(refine_index->base_index);
+            } else {
+                index_hnsw = dynamic_cast<const faiss::IndexHNSW*>(indexes[0].get());
+            }
+
+            if (index_hnsw != nullptr) {
+                auto* sq4u_storage =
+                    dynamic_cast<const faiss::IndexScalarQuantizer4bitUniformCosine*>(index_hnsw->storage);
+                if (sq4u_storage != nullptr) {
+                    is_sq4u_cosine = true;
+                }
+            }
+        }
+
+        DataSetPtr search_dataset = dataset;
+        DataSetPtr normalized_query_dataset;
+
+        if (is_sq4u_cosine) {
+            // Convert to float
+            auto float_ds = convert_ds_to_float(dataset, data_format);
+            if (float_ds == nullptr) {
+                return expected<DataSetPtr>::Err(Status::invalid_args, "Failed to convert dataset to float");
+            }
+
+            // Create normalized query dataset
+            auto [normalized_ds, norms] = CopyAndNormalizeDataset<float>(float_ds);
+            normalized_query_dataset = normalized_ds;
+            search_dataset = normalized_query_dataset;
+        }
+
+        return BaseFaissRegularIndexHNSWNode::Search(search_dataset, std::move(cfg), bitset_, op_context);
     }
 };
 

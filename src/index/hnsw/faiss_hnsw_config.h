@@ -57,7 +57,7 @@ class FaissHnswConfig : public BaseHnswConfig {
     bool
     WhetherAcceptableRefineType(const std::string& refine_type) {
         // 'flat' is identical to 'fp32'
-        std::vector<std::string> allowed_list = {"sq6", "sq8", "fp16", "bf16", "fp32", "flat"};
+        std::vector<std::string> allowed_list = {"sq4u", "sq6", "sq8", "fp16", "bf16", "fp32", "flat"};
         std::string refine_type_tolower = str_to_lower(refine_type);
 
         for (const auto& allowed : allowed_list) {
@@ -125,7 +125,7 @@ class FaissHnswSqConfig : public FaissHnswConfig {
             if (refine_type.has_value()) {
                 if (!WhetherAcceptableRefineType(refine_type.value())) {
                     std::string msg = "invalid refine type : " + refine_type.value() +
-                                      ", optional types are [sq6, sq8, fp16, bf16, fp32, flat]";
+                                      ", optional types are [sq4u, sq6, sq8, fp16, bf16, fp32, flat]";
                     return HandleError(err_msg, msg, Status::invalid_args);
                 }
             }
@@ -137,7 +137,7 @@ class FaissHnswSqConfig : public FaissHnswConfig {
     bool
     WhetherAcceptableQuantType(const std::string& sq_type) {
         // todo: add more
-        std::vector<std::string> allowed_list = {"sq6", "sq8", "fp16", "bf16"};
+        std::vector<std::string> allowed_list = {"sq4u", "sq6", "sq8", "fp16", "bf16"};
         std::string sq_type_tolower = str_to_lower(sq_type);
 
         for (const auto& allowed : allowed_list) {
@@ -183,7 +183,7 @@ class FaissHnswPqConfig : public FaissHnswConfig {
                 if (refine_type.has_value()) {
                     if (!WhetherAcceptableRefineType(refine_type.value())) {
                         std::string msg = "invalid refine type : " + refine_type.value() +
-                                          ", optional types are [sq6, sq8, fp16, bf16, fp32, flat]";
+                                          ", optional types are [sq4u, sq6, sq8, fp16, bf16, fp32, flat]";
                         return HandleError(err_msg, msg, Status::invalid_args);
                     }
                 }
@@ -234,7 +234,7 @@ class FaissHnswPrqConfig : public FaissHnswConfig {
                 if (refine_type.has_value()) {
                     if (!WhetherAcceptableRefineType(refine_type.value())) {
                         std::string msg = "invalid refine type : " + refine_type.value() +
-                                          ", optional types are [sq6, sq8, fp16, bf16, fp32, flat]";
+                                          ", optional types are [sq4u, sq6, sq8, fp16, bf16, fp32, flat]";
                         return HandleError(err_msg, msg, Status::invalid_args);
                     }
                 }

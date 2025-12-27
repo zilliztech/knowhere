@@ -32,6 +32,7 @@
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/dataset.h"
 #include "knowhere/index/index_factory.h"
+#include "knowhere/utils.h"
 #include "utils.h"
 
 namespace {
@@ -416,7 +417,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
     const std::vector<bool> MV_ONLYs = {false, true};
 
-    const std::vector<std::string> SQ_TYPES = {"SQ6", "SQ8", "BF16", "FP16"};
+    const std::vector<std::string> SQ_TYPES = {"SQ4U"};
 
     // random bitset rates
     // 0.0 means unfiltered, 1.0 means all filtered out
@@ -428,6 +429,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
     // accepted refines for a given SQ type for a FP32 data type
     std::unordered_map<std::string, std::vector<std::string>> SQ_ALLOWED_REFINES_FP32 = {
+        {"SQ4U", {"SQ6", "SQ8", "BF16", "FP16", "FLAT"}},
         {"SQ6", {"SQ8", "BF16", "FP16", "FLAT"}},
         {"SQ8", {"BF16", "FP16", "FLAT"}},
         {"BF16", {"FLAT"}},
@@ -435,11 +437,11 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
     // accepted refines for a given SQ type for a FP16 data type
     std::unordered_map<std::string, std::vector<std::string>> SQ_ALLOWED_REFINES_FP16 = {
-        {"SQ6", {"SQ8", "FP16"}}, {"SQ8", {"FP16"}}, {"BF16", {}}, {"FP16", {}}};
+        {"SQ4U", {"SQ6", "SQ8", "FP16"}}, {"SQ6", {"SQ8", "FP16"}}, {"SQ8", {"FP16"}}, {"BF16", {}}, {"FP16", {}}};
 
     // accepted refines for a given SQ type for a BF16 data type
     std::unordered_map<std::string, std::vector<std::string>> SQ_ALLOWED_REFINES_BF16 = {
-        {"SQ6", {"SQ8", "BF16"}}, {"SQ8", {"BF16"}}, {"BF16", {}}, {"FP16", {}}};
+        {"SQ4U", {"SQ6", "SQ8", "BF16"}}, {"SQ6", {"SQ8", "BF16"}}, {"SQ8", {"BF16"}}, {"BF16", {}}, {"FP16", {}}};
 
     // accepted refines for PQ for FP32 data type
     std::vector<std::string> PQ_ALLOWED_REFINES_FP32 = {{"SQ6", "SQ8", "BF16", "FP16", "FLAT"}};
@@ -473,6 +475,9 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
                     const uint64_t rng_seed = get_params_hash(golden_params);
                     auto default_ds_ptr = GenDataSet(nb, dim, rng_seed);
+                    if (DISTANCE_TYPES[distance_type] == "COSINE") {
+                        knowhere::NormalizeDataset<knowhere::fp32>(default_ds_ptr);
+                    }
 
                     // create or load a golden index
                     std::string golden_index_file_name =
@@ -497,6 +502,9 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                 // generate a query
                 const uint64_t query_rng_seed = get_params_hash({(int)distance_type, dim});
                 auto query_ds_ptr = GenDataSet(NQ, dim, query_rng_seed);
+                if (DISTANCE_TYPES[distance_type] == "COSINE") {
+                    knowhere::NormalizeDataset<knowhere::fp32>(query_ds_ptr);
+                }
 
                 for (const int32_t nb : NBS) {
                     knowhere::Json conf = default_conf;
@@ -511,6 +519,9 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                     // generate a default dataset
                     const uint64_t rng_seed = get_params_hash(golden_params);
                     auto default_ds_ptr = GenDataSet(nb, dim, rng_seed);
+                    if (DISTANCE_TYPES[distance_type] == "COSINE") {
+                        knowhere::NormalizeDataset<knowhere::fp32>(default_ds_ptr);
+                    }
 
                     // create or load a golden index
                     std::string golden_index_file_name =
@@ -620,6 +631,9 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                 // generate a query
                 const uint64_t query_rng_seed = get_params_hash({(int)distance_type, dim});
                 auto query_ds_ptr = GenDataSet(NQ, dim, query_rng_seed);
+                if (DISTANCE_TYPES[distance_type] == "COSINE") {
+                    knowhere::NormalizeDataset<knowhere::fp32>(query_ds_ptr);
+                }
 
                 for (const int32_t nb : NBS) {
                     // create golden conf
@@ -633,6 +647,9 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                     // generate a default dataset
                     const uint64_t rng_seed = get_params_hash(golden_params);
                     auto default_ds_ptr = GenDataSet(nb, dim, rng_seed);
+                    if (DISTANCE_TYPES[distance_type] == "COSINE") {
+                        knowhere::NormalizeDataset<knowhere::fp32>(default_ds_ptr);
+                    }
 
                     // create or load a golden index
                     std::string golden_index_file_name =
@@ -855,6 +872,9 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
                     // generate a default dataset
                     const uint64_t rng_seed = get_params_hash(golden_params);
                     auto default_ds_ptr = GenDataSet(nb, dim, rng_seed);
+                    if (DISTANCE_TYPES[distance_type] == "COSINE") {
+                        knowhere::NormalizeDataset<knowhere::fp32>(default_ds_ptr);
+                    }
 
                     // create or load a golden index
                     std::string golden_index_file_name =
@@ -1292,7 +1312,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
     const std::vector<bool> MV_ONLYs = {false, true};
 
-    const std::vector<std::string> SQ_TYPES = {"SQ6", "SQ8", "BF16", "FP16"};
+    const std::vector<std::string> SQ_TYPES = {"SQ4U", "SQ6", "SQ8", "BF16", "FP16"};
 
     // random bitset rates
     // 0.0 means unfiltered, 1.0 means all filtered out
@@ -1304,6 +1324,7 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
     // accepted refines for a given SQ type for a FP32 data type
     std::unordered_map<std::string, std::vector<std::string>> SQ_ALLOWED_REFINES_FP32 = {
+        {"SQ4U", {"SQ6", "SQ8", "BF16", "FP16", "FLAT"}},
         {"SQ6", {"SQ8", "BF16", "FP16", "FLAT"}},
         {"SQ8", {"BF16", "FP16", "FLAT"}},
         {"BF16", {"FLAT"}},
@@ -1311,11 +1332,11 @@ TEST_CASE("RangeSearch for FAISS HNSW Indices", "Benchmark and validation for Ra
 
     // accepted refines for a given SQ type for a FP16 data type
     std::unordered_map<std::string, std::vector<std::string>> SQ_ALLOWED_REFINES_FP16 = {
-        {"SQ6", {"SQ8", "FP16"}}, {"SQ8", {"FP16"}}, {"BF16", {}}, {"FP16", {}}};
+        {"SQ4U", {"SQ6", "SQ8", "FP16"}}, {"SQ6", {"SQ8", "FP16"}}, {"SQ8", {"FP16"}}, {"BF16", {}}, {"FP16", {}}};
 
     // accepted refines for a given SQ type for a BF16 data type
     std::unordered_map<std::string, std::vector<std::string>> SQ_ALLOWED_REFINES_BF16 = {
-        {"SQ6", {"SQ8", "BF16"}}, {"SQ8", {"BF16"}}, {"BF16", {}}, {"FP16", {}}};
+        {"SQ4U", {"SQ6", "SQ8", "BF16"}}, {"SQ6", {"SQ8", "BF16"}}, {"SQ8", {"BF16"}}, {"BF16", {}}, {"FP16", {}}};
 
     // accepted refines for PQ for FP32 data type
     std::vector<std::string> PQ_ALLOWED_REFINES_FP32 = {{"SQ6", "SQ8", "BF16", "FP16", "FLAT"}};
