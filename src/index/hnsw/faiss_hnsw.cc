@@ -29,6 +29,7 @@
 #include "faiss/IndexCosine.h"
 #include "faiss/IndexHNSW.h"
 #include "faiss/IndexRefine.h"
+#include "faiss/IndexSQ4Uniform.h"
 #include "faiss/impl/ScalarQuantizer.h"
 #include "faiss/impl/mapped_io.h"
 #include "faiss/index_io.h"
@@ -2416,13 +2417,22 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
 
         // create an index
         const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
+        const bool is_sq4u = sq_type.value() == faiss::ScalarQuantizer::QT_4bit_uniform;
 
         // should refine be used?
         std::unique_ptr<faiss::Index> final_index;
 
         auto train_index = [&](const float* data, const int i, const int64_t rows) {
             std::unique_ptr<faiss::IndexHNSW> hnsw_index;
-            if (is_cosine) {
+            if (is_sq4u && is_cosine) {
+                // Create IndexHNSWSQ4UniformCosine for COSINE
+                hnsw_index =
+                    std::make_unique<faiss::IndexHNSWSQ4UniformCosine>(dim, sq_type.value(), hnsw_cfg.M.value());
+            } else if (is_sq4u && metric.value() == faiss::METRIC_INNER_PRODUCT) {
+                // Create IndexHNSWSQ4UniformIP for IP
+                hnsw_index = std::make_unique<faiss::IndexHNSWSQ4UniformIP>(dim, sq_type.value(), hnsw_cfg.M.value());
+            } else if (is_cosine) {
+                // Other quantizers with COSINE
                 hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, sq_type.value(), hnsw_cfg.M.value());
             } else {
                 hnsw_index =

@@ -50,8 +50,9 @@
 #include <faiss/IndexRaBitQ.h>
 #include <faiss/IndexRefine.h>
 #include <faiss/IndexRowwiseMinMax.h>
-#include <faiss/IndexScalarQuantizer.h>
+#include <faiss/IndexSQ4Uniform.h>
 #include <faiss/IndexScaNN.h>
+#include <faiss/IndexScalarQuantizer.h>
 #include <faiss/MetaIndexes.h>
 #include <faiss/VectorTransform.h>
 
@@ -750,6 +751,33 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITE1(idxp_2->code_size);
         WRITEVECTOR(idxp_2->codes);
     } else if (
+            const IndexScalarQuantizer4bitUniformIP* idxs =
+                    dynamic_cast<const IndexScalarQuantizer4bitUniformIP*>(
+                            idx)) {
+        // IndexScalarQuantizer4bitUniformIP: SQ4Uniform + IP
+        // Must be checked BEFORE IndexScalarQuantizer4bitUniformCosine and
+        // IndexScalarQuantizer (parent classes)
+        uint32_t h = fourcc("IxSI");
+        WRITE1(h);
+        write_index_header(idx, f);
+        write_ScalarQuantizer(&idxs->sq, f);
+        WRITEVECTOR(idxs->codes);
+        // Must serialize l2_norms_sqr for IP distance computation
+        WRITEVECTOR(idxs->l2_norms_sqr);
+    } else if (
+            const IndexScalarQuantizer4bitUniformCosine* idxs =
+                    dynamic_cast<const IndexScalarQuantizer4bitUniformCosine*>(
+                            idx)) {
+        // IndexScalarQuantizer4bitUniformCosine: SQ4Uniform + COSINE
+        // Must be checked BEFORE IndexScalarQuantizerCosine (parent class)
+        uint32_t h = fourcc("IxS4");
+        WRITE1(h);
+        write_index_header(idx, f);
+        write_ScalarQuantizer(&idxs->sq, f);
+        WRITEVECTOR(idxs->codes);
+        // inverse norms (needed for refine to work correctly)
+        WRITEVECTOR(idxs->inverse_l2_norms);
+    } else if (
             const IndexScalarQuantizerCosine* idxs =
                     dynamic_cast<const IndexScalarQuantizerCosine*>(idx)) {
         uint32_t h = fourcc("IxS8");
@@ -795,7 +823,9 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
             WRITEVECTOR(tab);
         }
         write_InvertedLists(ivfl->invlists, f);
-    } else if (const IndexIVFFlat* ivfl = dynamic_cast<const IndexIVFFlatCC*>(idx)) {
+    } else if (
+            const IndexIVFFlat* ivfl =
+                    dynamic_cast<const IndexIVFFlatCC*>(idx)) {
         uint32_t h = fourcc("IwFc");
         WRITE1(h);
         write_ivf_header(ivfl, f);
@@ -912,7 +942,7 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         write_index_header(imiq, f);
         write_ProductQuantizer(&imiq->pq, f);
     } else if (
-        const IndexScaNN* idxscann = dynamic_cast<const IndexScaNN*>(idx)) {
+            const IndexScaNN* idxscann = dynamic_cast<const IndexScaNN*>(idx)) {
         uint32_t h = fourcc("IxSC");
         WRITE1(h);
         write_index_header(idxscann, f);
@@ -947,10 +977,17 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
                 : dynamic_cast<const IndexHNSWCagra*>(idx)      ? fourcc("IHNc")
                 : dynamic_cast<const IndexHNSWFlatCosine*>(idx) ? fourcc("IHN9")
                 : dynamic_cast<const IndexHNSWSQCosine*>(idx)   ? fourcc("IHN8")
-                : dynamic_cast<const IndexHNSWPQCosine*>(idx)   ? fourcc("IHN7")
-                : dynamic_cast<const IndexHNSWProductResidualQuantizer*>(idx)   ? fourcc("IHN6")
-                : dynamic_cast<const IndexHNSWProductResidualQuantizerCosine*>(idx)   ? fourcc("IHN5")
-                                                                : 0;
+                : dynamic_cast<const IndexHNSWSQ4UniformCosine*>(idx)
+                ? fourcc("IHNa")
+                : dynamic_cast<const IndexHNSWSQ4UniformIP*>(idx)
+                ? fourcc("IHNb")
+                : dynamic_cast<const IndexHNSWPQCosine*>(idx) ? fourcc("IHN7")
+                : dynamic_cast<const IndexHNSWProductResidualQuantizer*>(idx)
+                ? fourcc("IHN6")
+                : dynamic_cast<const IndexHNSWProductResidualQuantizerCosine*>(
+                          idx)
+                ? fourcc("IHN5")
+                : 0;
         FAISS_THROW_IF_NOT(h != 0);
         WRITE1(h);
         write_index_header(idxhnsw, f);
@@ -1041,7 +1078,8 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITE1(h);
         write_index_header(imm_2, f);
         write_index(imm_2->index, f);
-    } else if (const IndexRaBitQ* idxq = dynamic_cast<const IndexRaBitQ*>(idx)) {
+    } else if (
+            const IndexRaBitQ* idxq = dynamic_cast<const IndexRaBitQ*>(idx)) {
         // using 'IxrQ' instead of baseline's 'Ixrq'
         uint32_t h = fourcc("IxrQ");
         WRITE1(h);

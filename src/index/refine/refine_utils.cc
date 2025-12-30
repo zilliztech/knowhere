@@ -19,11 +19,9 @@ namespace knowhere {
 expected<faiss::ScalarQuantizer::QuantizerType>
 get_sq_quantizer_type(const std::string& sq_type) {
     std::map<std::string, faiss::ScalarQuantizer::QuantizerType> sq_types = {
-        {"sq6", faiss::ScalarQuantizer::QT_6bit},
-        {"sq8", faiss::ScalarQuantizer::QT_8bit},
-        {"fp16", faiss::ScalarQuantizer::QT_fp16},
-        {"bf16", faiss::ScalarQuantizer::QT_bf16},
-        {"int8", faiss::ScalarQuantizer::QT_8bit_direct_signed}};
+        {"sq4u", faiss::ScalarQuantizer::QT_4bit_uniform}, {"sq6", faiss::ScalarQuantizer::QT_6bit},
+        {"sq8", faiss::ScalarQuantizer::QT_8bit},          {"fp16", faiss::ScalarQuantizer::QT_fp16},
+        {"bf16", faiss::ScalarQuantizer::QT_bf16},         {"int8", faiss::ScalarQuantizer::QT_8bit_direct_signed}};
 
     // todo: tolower
     auto sq_type_tolower = str_to_lower(sq_type);
