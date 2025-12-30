@@ -20,6 +20,7 @@
 #include "faiss/IndexIVFRaBitQ.h"
 #include "faiss/IndexRefine.h"
 #include "index/ivf/ivf_config.h"
+#include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 
 namespace knowhere {
@@ -95,6 +96,25 @@ struct IndexIVFRaBitQWrapper : faiss::Index {
 
     void
     getIteratorNextBatch(faiss::IVFIteratorWorkspace* workspace, size_t current_backup_count) const;
+};
+
+// Specialized wrapper for HNSW + IVF_RABITQ with cached distance computer optimization
+struct IndexHNSWRaBitQWrapper : IndexIVFRaBitQWrapper {
+    // Flag to enable/disable cached distance computer for HNSW search optimization
+    mutable bool use_cached_distance_computer = false;
+
+    IndexHNSWRaBitQWrapper(std::unique_ptr<faiss::Index>&& index_in) : IndexIVFRaBitQWrapper(std::move(index_in)) {
+    }
+
+    // Override to support cached distance computer
+    faiss::DistanceComputer*
+    get_distance_computer() const override;
+
+    // Enable/disable cached distance computer for HNSW optimization
+    void
+    set_use_cached_distance_computer(bool use_cached) const {
+        use_cached_distance_computer = use_cached;
+    }
 };
 
 }  // namespace knowhere
