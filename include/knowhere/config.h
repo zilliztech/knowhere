@@ -31,6 +31,9 @@
 #include "knowhere/log.h"
 #include "nlohmann/json.hpp"
 
+#include "ncs/ncs.h"
+
+
 namespace knowhere {
 
 typedef nlohmann::json Json;
@@ -57,6 +60,10 @@ typedef nlohmann::json Json;
 
 #ifndef CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE
 #define CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE std::optional<knowhere::MaterializedViewSearchInfo>
+#endif
+
+#ifndef CFG_NCS_DESCRIPTOR
+#define CFG_NCS_DESCRIPTOR std::optional<milvus::NcsDescriptor>
 #endif
 
 template <typename T>
@@ -237,6 +244,29 @@ struct Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE> {
 
     CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE* val;
     std::optional<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE::value_type> default_val;
+    uint32_t type;
+    std::optional<std::string> desc;
+    bool allow_empty_without_default = false;
+};
+
+template <>
+struct Entry<CFG_NCS_DESCRIPTOR> {
+    explicit Entry(CFG_NCS_DESCRIPTOR* v) {
+        val = v;
+        default_val = std::nullopt;
+        type = 0x0;
+        desc = std::nullopt;
+    }
+
+    Entry() {
+        val = nullptr;
+        default_val = std::nullopt;
+        type = 0x0;
+        desc = std::nullopt;
+    }
+
+    CFG_NCS_DESCRIPTOR* val;
+    std::optional<CFG_NCS_DESCRIPTOR::value_type> default_val;
     uint32_t type;
     std::optional<std::string> desc;
     bool allow_empty_without_default = false;
@@ -541,6 +571,26 @@ class Config {
                 }
                 *ptr->val = json[it.first];
             }
+
+            if (const Entry<CFG_NCS_DESCRIPTOR>* ptr = std::get_if<Entry<CFG_NCS_DESCRIPTOR>>(&var)) {
+                if (!(type & ptr->type)) {
+                    continue;
+                }
+                if (json.find(it.first) == json.end()) {
+                    if (!ptr->default_val.has_value()) {
+                        if (ptr->allow_empty_without_default) {
+                            continue;
+                        }
+                        std::string msg = "param '" + it.first + "' not exist in json";
+                        return HandleError(err_msg, msg, Status::invalid_param_in_json);
+                    } else {
+                        *ptr->val = ptr->default_val;
+                        continue;
+                    }
+                }
+                // Accept JSON object for NcsDescriptor (use get<> to invoke from_json)
+                *ptr->val = json[it.first].get<milvus::NcsDescriptor>();
+            }
         }
 
         if (!err_msg) {
@@ -554,7 +604,7 @@ class Config {
     }
 
     using VarEntry = std::variant<Entry<CFG_STRING>, Entry<CFG_FLOAT>, Entry<CFG_INT>, Entry<CFG_INT64>,
-                                  Entry<CFG_BOOL>, Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE>>;
+                                  Entry<CFG_BOOL>, Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE>, Entry<CFG_NCS_DESCRIPTOR>>;
     std::unordered_map<std::string, VarEntry> __DICT__;
 
  protected:
@@ -646,6 +696,10 @@ class BaseConfig : public Config {
     CFG_FLOAT retrieval_ann_ratio;
     CFG_STRING emb_list_meta_file_path;    // for mmap
     CFG_STRING emb_list_offset_file_path;  // for build
+    // NCS descriptor, convertible to milvus::NcsDescriptor. Allows DiskAnn to open NcsConnector for NCS IO operations.
+    CFG_NCS_DESCRIPTOR ncs_descriptor;
+    // Enable or disable NCS usage for DiskANN. Defaults to false.
+    CFG_BOOL ncs_enable;
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(dim).allow_empty_without_default().description("vector dim").for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
@@ -822,6 +876,17 @@ class BaseConfig : public Config {
             .description("file name of emb_list offsets for build")
             .allow_empty_without_default()
             .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(ncs_descriptor)
+            .description("NCS descriptor. Allows DiskAnn to open NcsConnector for NCS IO operations.")
+            .allow_empty_without_default()
+            .for_deserialize()
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(ncs_enable)
+            .description("enable NCS integration for DiskANN")
+            .set_default(false)
+            .for_deserialize()
+            .for_train()
+            .for_static();
     }
 };
 }  // namespace knowhere

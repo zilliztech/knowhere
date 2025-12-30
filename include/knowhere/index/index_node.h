@@ -27,6 +27,7 @@
 #include "knowhere/operands.h"
 #include "knowhere/utils.h"
 #include "knowhere/version.h"
+#include "ncs/ncs.h"
 
 #if defined(NOT_COMPILE_FOR_SWIG)
 #include "common/OpContext.h"
@@ -542,6 +543,23 @@ class IndexNode : public Object {
     LoadIndexWithStream() {
         return false;
     }
+
+    /**
+     * @brief Lists files required for NCS upload. The strings should be considered as patterns. Any file matching "*<pattern>*" is required.
+     *
+     * @return A vector of file name patterns.
+     * @note The default implementation returns an empty vector, indicating no files are required for NCS upload.
+     */
+    virtual std::vector<std::string>
+    ListFilesForNcsUpload() const{
+        return {};
+    }
+
+    virtual milvus::NcsStatus
+    NcsUpload(std::shared_ptr<Config> cfg) {
+        return milvus::NcsStatus::ERROR;
+    }
+
 
     virtual ~IndexNode() {
     }

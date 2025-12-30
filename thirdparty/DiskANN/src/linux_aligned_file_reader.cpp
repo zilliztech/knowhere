@@ -144,6 +144,7 @@ LinuxAlignedFileReader::~LinuxAlignedFileReader() {
 }
 
 void LinuxAlignedFileReader::open(const std::string &fname) {
+  std::cout << "Opening file: " << fname << std::endl;
   int flags = O_DIRECT | O_RDONLY | O_LARGEFILE;
   this->file_desc = ::open(fname.c_str(), flags);
   // error checks

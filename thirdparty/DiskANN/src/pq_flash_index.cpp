@@ -27,7 +27,9 @@
 #include "knowhere/utils.h"
 #include "tsl/robin_set.h"
 
-#include "diskann/linux_aligned_file_reader.h"
+#include "diskann/file_index_reader.h"
+#include "diskann/ncs_reader.h"
+
 
 #define READ_U64(stream, val) stream.read((char *) &val, sizeof(_u64))
 #define READ_U32(stream, val) stream.read((char *) &val, sizeof(_u32))
@@ -193,7 +195,7 @@ namespace diskann {
   }
 
   template<typename T>
-  PQFlashIndex<T>::PQFlashIndex(std::shared_ptr<AlignedFileReader> fileReader,
+  PQFlashIndex<T>::PQFlashIndex(std::shared_ptr<IndexReader> fileReader,
                                 diskann::Metric                    m)
       : reader(fileReader), metric(m) {
     if (m == diskann::Metric::INNER_PRODUCT || m == diskann::Metric::COSINE) {
@@ -226,7 +228,7 @@ namespace diskann {
     }
 
     if (load_flag) {
-      reader->close();
+      // reader->close();
       this->destroy_thread_data();
     }
   }
@@ -240,6 +242,8 @@ namespace diskann {
       _u64 coord_alloc_size = ROUND_UP(sizeof(T) * this->aligned_dim, 256);
       diskann::alloc_aligned((void **) &scratch.coord_scratch, coord_alloc_size,
                              256);
+
+      // TODO: refactor to a smaller 'node_scratch' after AISAQ is updated to use IndexReader (like DiskANN does)
       diskann::alloc_aligned((void **) &scratch.sector_scratch,
                              (_u64) diskann::defaults::MAX_N_SECTOR_READS * read_len_for_node,
                              diskann::defaults::SECTOR_LEN);
@@ -317,15 +321,11 @@ namespace diskann {
     LOG_KNOWHERE_DEBUG_ << "Loading the cache list(" << num_cached_nodes
                         << " points) into memory...";
 
-    auto ctx = this->reader->get_ctx();
-
     if (nhood_cache_buf == nullptr) {
-      nhood_cache_buf =
-          std::make_unique<unsigned[]>(num_cached_nodes * (max_degree + 1));
-      memset(nhood_cache_buf.get(), 0,
-             num_cached_nodes * (max_degree + 1) * sizeof(unsigned));
+      size_t alloc_size = num_cached_nodes * (max_degree + 1);
+      nhood_cache_buf = std::make_unique<unsigned[]>(alloc_size);
+      memset(nhood_cache_buf.get(), 0, alloc_size * sizeof(unsigned));
     }
-
     _u64 coord_cache_buf_len = num_cached_nodes * aligned_dim;
     if (coord_cache_buf == nullptr) {
       diskann::alloc_aligned((void **) &coord_cache_buf,
@@ -339,25 +339,25 @@ namespace diskann {
     for (_u64 block = 0; block < num_blocks; block++) {
       _u64 start_idx = block * BLOCK_SIZE;
       _u64 end_idx = (std::min)(num_cached_nodes, (block + 1) * BLOCK_SIZE);
-      std::vector<AlignedRead>             read_reqs;
+      std::vector<ReadReq>             read_reqs;
       std::vector<std::pair<_u32, char *>> nhoods;
       for (_u64 node_idx = start_idx; node_idx < end_idx; node_idx++) {
-        AlignedRead read;
-        char       *buf = nullptr;
-        alloc_aligned((void **) &buf, read_len_for_node, diskann::defaults::SECTOR_LEN);
+        ReadReq read;
+        char       *buf = (char*) malloc(max_node_len);
         nhoods.push_back(std::make_pair(node_list[node_idx], buf));
-        read.len = read_len_for_node;
+        read.len = max_node_len;
         read.buf = buf;
-        read.offset = get_node_sector_offset(node_list[node_idx]);
+        read.key = node_list[node_idx];
         read_reqs.push_back(read);
       }
 
-      reader->read(read_reqs, ctx);
+      reader->read(read_reqs);
 
       _u64 node_idx = start_idx;
       for (_u32 i = 0; i < read_reqs.size(); i++) {
         auto &nhood = nhoods[i];
-        char *node_buf = get_offset_to_node(nhood.second, nhood.first);
+        // char *node_buf = get_offset_to_node(nhood.second, nhood.first);
+        char *node_buf = nhood.second;  // node data is now copied directly to buffer
         T    *node_coords = OFFSET_TO_NODE_COORDS(node_buf);
         T    *cached_coords = coord_cache_buf + node_idx * aligned_dim;
         memcpy(cached_coords, node_coords, disk_bytes_per_point);
@@ -376,11 +376,10 @@ namespace diskann {
           coord_cache.insert(std::make_pair(nhood.first, cached_coords));
           nhood_cache.insert(std::make_pair(nhood.first, cnhood));
         }
-        aligned_free(nhood.second);
+        free(nhood.second);
         node_idx++;
       }
     }
-    this->reader->put_ctx(ctx);
     LOG_KNOWHERE_DEBUG_ << "done.";
   }
 
@@ -532,8 +531,6 @@ namespace diskann {
       this_thread_data = this->thread_data.pop();
     }
 
-    auto ctx = this->reader->get_ctx();
-
     std::unique_ptr<tsl::robin_set<unsigned>> cur_level, prev_level;
     cur_level = std::make_unique<tsl::robin_set<unsigned>>();
     prev_level = std::make_unique<tsl::robin_set<unsigned>>();
@@ -573,28 +570,28 @@ namespace diskann {
         size_t start = block * BLOCK_SIZE;
         size_t end =
             (std::min)((block + 1) * BLOCK_SIZE, nodes_to_expand.size());
-        std::vector<AlignedRead>             read_reqs;
+        std::vector<ReadReq>             read_reqs;
         std::vector<std::pair<_u32, char *>> nhoods;
         for (size_t cur_pt = start; cur_pt < end; cur_pt++) {
-          char *buf = nullptr;
-          alloc_aligned((void **) &buf, read_len_for_node, diskann::defaults::SECTOR_LEN);
+          char *buf = (char*) malloc(max_node_len);
           nhoods.push_back(std::make_pair(nodes_to_expand[cur_pt], buf));
-          AlignedRead read;
-          read.len = read_len_for_node;
+          ReadReq read;
+          read.len = max_node_len;
           read.buf = buf;
-          read.offset = get_node_sector_offset(nodes_to_expand[cur_pt]);
+          read.key = nodes_to_expand[cur_pt];
           read_reqs.push_back(read);
         }
 
         // issue read requests
-        reader->read(read_reqs, ctx);
+        reader->read(read_reqs);
 
         // process each nhood buf
         for (_u32 i = 0; i < read_reqs.size(); i++) {
           auto &nhood = nhoods[i];
 
           // insert node coord into coord_cache
-          char     *node_buf = get_offset_to_node(nhood.second, nhood.first);
+          // char     *node_buf = get_offset_to_node(nhood.second, nhood.first);
+          char     *node_buf = nhood.second;  // node data is now copied directly to buffer
           unsigned *node_nhood = OFFSET_TO_NODE_NHOOD(node_buf);
           _u64      nnbrs = (_u64) *node_nhood;
           unsigned *nbrs = node_nhood + 1;
@@ -608,7 +605,7 @@ namespace diskann {
               finish_flag = true;
             }
           }
-          aligned_free(nhood.second);
+          free(nhood.second);
         }
       }
 
@@ -637,7 +634,6 @@ namespace diskann {
     // return thread data
     this->thread_data.push(this_thread_data);
     this->thread_data.push_notify_all();
-    this->reader->put_ctx(ctx);
 
     LOG(INFO) << "done";
   }
@@ -655,7 +651,6 @@ namespace diskann {
       this->thread_data.wait_for_push_notify();
       data = this->thread_data.pop();
     }
-    auto ctx = this->reader->get_ctx();
     // borrow buf
     auto scratch = &(data.scratch);
     scratch->reset();
@@ -667,14 +662,14 @@ namespace diskann {
     for (uint64_t cur_m = 0; cur_m < num_medoids; cur_m++) {
       auto medoid = medoids[cur_m];
       // read medoid nhood
-      std::vector<AlignedRead> medoid_read(1);
-      medoid_read[0].len = read_len_for_node;
+      std::vector<ReadReq> medoid_read(1);
+      medoid_read[0].len = max_node_len;
       medoid_read[0].buf = sector_scratch;
-      medoid_read[0].offset = get_node_sector_offset(medoid);
-      reader->read(medoid_read, ctx);
+      medoid_read[0].key = medoid;
+      reader->read(medoid_read);
 
       // all data about medoid
-      char *medoid_node_buf = get_offset_to_node(sector_scratch, medoid);
+      char *medoid_node_buf = sector_scratch;  // 'sector_scratch' is used as 'node_scratch' here (will be renamed later)
 
       // add medoid coords to `coord_cache`
       T *medoid_disk_coords = OFFSET_TO_NODE_COORDS(medoid_node_buf);
@@ -690,29 +685,114 @@ namespace diskann {
       }
     }
 
-    // return ctx
+    // return thread_data
     this->thread_data.push(data);
     this->thread_data.push_notify_all();
-    this->reader->put_ctx(ctx);
   }
 
   template<typename T>
-  int PQFlashIndex<T>::load(uint32_t num_threads, const char *index_prefix) {
+  int PQFlashIndex<T>::load_metadata(std::string metadata_file, std::string data_file, bool ncs_enable, bool sanity_checks) {
+
+    std::ifstream index_metadata(metadata_file, std::ios::binary);
+    if (!index_metadata.is_open()) {
+      LOG(ERROR) << "Failed to open metadata file: " << metadata_file;
+      return -1;
+    }
+    
+    size_t metadata_file_size = get_file_size(metadata_file);
+
+    // Validate metadata file size
+    if (metadata_file_size != diskann::defaults::SECTOR_LEN) {
+      LOG(ERROR) << "Metadata file size mismatch for " << metadata_file
+                 << " (size: " << metadata_file_size << ")"
+                 << " expected: " << diskann::defaults::SECTOR_LEN;
+      return -1;
+    }
+    
+    size_t expected_data_file_size;
+    _u64 disk_nnodes, file_frozen_id;
+
+    READ_U64(index_metadata, expected_data_file_size);
+    
+    
+    // Validate data file size if sanity_checks enabled
+    if (sanity_checks && !ncs_enable) {
+      size_t actual_data_file_size = get_file_size(data_file);
+      
+      if (actual_data_file_size != expected_data_file_size) {
+        LOG(ERROR) << "Data file size mismatch for " << data_file
+                   << " (size: " << actual_data_file_size << ")"
+                   << " expected: " << expected_data_file_size;
+        return -1;
+      }
+    }
+
+    READ_U64(index_metadata, disk_nnodes);
+    if (sanity_checks && (disk_nnodes != num_points)) {
+      LOG(ERROR) << "Mismatch in #points for compressed data file and disk "
+                    "index file: "
+                 << disk_nnodes << " vs " << num_points;
+      return -1;
+    }
+
+    READ_U64(index_metadata, medoid_id_on_file);
+    READ_U64(index_metadata, max_node_len);
+    READ_U64(index_metadata, nnodes_per_sector);
+
+    if (max_node_len > diskann::defaults::SECTOR_LEN) {
+      long_node = true;
+      nsectors_per_node = ROUND_UP(max_node_len, diskann::defaults::SECTOR_LEN) / diskann::defaults::SECTOR_LEN;
+      read_len_for_node = diskann::defaults::SECTOR_LEN * nsectors_per_node;
+    }
+
+    // setting up concept of frozen points in disk index for streaming-DiskANN
+    READ_U64(index_metadata, this->num_frozen_points);
+    
+    READ_U64(index_metadata, file_frozen_id);
+    if (this->num_frozen_points == 1)
+      this->frozen_location = file_frozen_id;
+    if (this->num_frozen_points == 1) {
+      LOG_KNOWHERE_INFO_ << " Detected frozen point in index at location "
+                    << this->frozen_location
+                    << ". Will not output it at search time.";
+    }
+
+    READ_U64(index_metadata, this->reorder_data_exists);
+    if (sanity_checks && this->reorder_data_exists) {
+      if (this->use_disk_index_pq == false) {
+        throw ANNException(
+            "Reordering is designed for used with disk PQ compression option",
+            -1, __FUNCSIG__, __FILE__, __LINE__);
+      }
+      READ_U64(index_metadata, this->reorder_data_start_sector);
+      READ_U64(index_metadata, this->ndims_reorder_vecs);
+      READ_U64(index_metadata, this->nvecs_per_sector);
+    }
+
+    index_metadata.close();
+
+    return 0;
+  }
+
+  template<typename T>
+  int PQFlashIndex<T>::load(uint32_t num_threads, const char *index_prefix, bool use_ncs, const milvus::NcsDescriptor* descriptor) {
+    // num_threads = 1;
     std::string pq_table_bin =
         get_pq_pivots_filename(std::string(index_prefix));
     std::string pq_compressed_vectors =
         get_pq_compressed_filename(std::string(index_prefix));
-    std::string disk_index_file =
-        get_disk_index_filename(std::string(index_prefix));
+    std::string disk_index_data_filename =
+        get_disk_index_data_filename(std::string(index_prefix));
+    std::string disk_index_metadata_filename =
+        get_disk_index_metadata_filename(std::string(index_prefix));
     std::string medoids_file =
-        get_disk_index_medoids_filename(std::string(disk_index_file));
+        get_disk_index_medoids_filename(std::string(index_prefix));
     std::string centroids_file =
-        get_disk_index_centroids_filename(std::string(disk_index_file));
+        get_disk_index_centroids_filename(std::string(index_prefix));
 
     size_t pq_file_dim, pq_file_num_centroids;
     get_bin_metadata(pq_table_bin, pq_file_num_centroids, pq_file_dim);
 
-    this->disk_index_file = disk_index_file;
     if (pq_file_num_centroids != 256) {
       LOG(ERROR) << "Error. Number of PQ centroids is not 256. Exitting.";
       return -1;
@@ -740,7 +820,7 @@ namespace diskann {
         << num_points << " #dim: " << data_dim
         << " #aligned_dim: " << aligned_dim << " #chunks: " << n_chunks;
 
-    std::string disk_pq_pivots_path = this->disk_index_file + "_pq_pivots.bin";
+    std::string disk_pq_pivots_path = get_disk_index_pq_pivots_filename(std::string(index_prefix));
     if (file_exists(disk_pq_pivots_path)) {
       use_disk_index_pq = true;
       // giving 0 chunks to make the pq_table infer from the
@@ -755,38 +835,7 @@ namespace diskann {
     }
 
     // read index metadata
-    std::ifstream index_metadata(disk_index_file, std::ios::binary);
-
-    size_t actual_index_size = get_file_size(disk_index_file);
-    size_t expected_file_size;
-    READ_U64(index_metadata, expected_file_size);
-    if (actual_index_size != expected_file_size) {
-      LOG(ERROR) << "File size mismatch for " << disk_index_file
-                 << " (size: " << actual_index_size << ")"
-                 << " with meta-data size: " << expected_file_size;
-      return -1;
-    }
-
-    _u64 disk_nnodes;
-    READ_U64(index_metadata, disk_nnodes);
-    if (disk_nnodes != num_points) {
-      LOG(ERROR) << "Mismatch in #points for compressed data file and disk "
-                    "index file: "
-                 << disk_nnodes << " vs " << num_points;
-      return -1;
-    }
-
-    size_t medoid_id_on_file;
-    READ_U64(index_metadata, medoid_id_on_file);
-    READ_U64(index_metadata, max_node_len);
-    READ_U64(index_metadata, nnodes_per_sector);
-
-    if (max_node_len > diskann::defaults::SECTOR_LEN) {
-      long_node = true;
-      nsectors_per_node = ROUND_UP(max_node_len, diskann::defaults::SECTOR_LEN) / diskann::defaults::SECTOR_LEN;
-      read_len_for_node = diskann::defaults::SECTOR_LEN * nsectors_per_node;
-    }
-
+    int load_meta_res = load_metadata(disk_index_metadata_filename, disk_index_data_filename, use_ncs, true);
     max_degree = ((max_node_len - disk_bytes_per_point) / sizeof(unsigned)) - 1;
 
     if (max_degree > diskann::defaults::MAX_GRAPH_DEGREE) {
@@ -798,39 +847,26 @@ namespace diskann {
                                   __LINE__);
     }
 
-    // setting up concept of frozen points in disk index for streaming-DiskANN
-    READ_U64(index_metadata, this->num_frozen_points);
-    _u64 file_frozen_id;
-    READ_U64(index_metadata, file_frozen_id);
-    if (this->num_frozen_points == 1)
-      this->frozen_location = file_frozen_id;
-    if (this->num_frozen_points == 1) {
-      LOG_KNOWHERE_INFO_ << " Detected frozen point in index at location "
-                    << this->frozen_location
-                    << ". Will not output it at search time.";
-    }
-
-    READ_U64(index_metadata, this->reorder_data_exists);
-    if (this->reorder_data_exists) {
-      if (this->use_disk_index_pq == false) {
-        throw ANNException(
-            "Reordering is designed for used with disk PQ compression option",
-            -1, __FUNCSIG__, __FILE__, __LINE__);
-      }
-      READ_U64(index_metadata, this->reorder_data_start_sector);
-      READ_U64(index_metadata, this->ndims_reorder_vecs);
-      READ_U64(index_metadata, this->nvecs_per_sector);
-    }
     LOG(INFO) << "Disk-Index File Meta-data: "
               << "# nodes per sector: " << nnodes_per_sector
               << ", max node len (bytes): " << max_node_len
               << ", max node degree: " << max_degree;
 
-    index_metadata.close();
+    if(load_meta_res != 0)
+      return load_meta_res;
 
-    // open AlignedFileReader handle to index_file
-    std::string index_fname(disk_index_file);
-    reader->open(index_fname);
+    // open IndexReader handle to index_data file
+    if(use_ncs){
+      reader = std::make_shared<NCSReader>(descriptor);
+    } else {
+      reader = std::make_shared<FileIndexReader>(
+        disk_index_data_filename,
+        [this](size_t n) { return get_node_sector_offset(n); },
+        [this](char* sector_buf, uint64_t node_id) { return get_offset_to_node(sector_buf, node_id); },
+        read_len_for_node
+      );
+    }
+
     this->setup_thread_data(num_threads);
     this->max_nthreads = num_threads;
 
@@ -875,7 +911,7 @@ namespace diskann {
     }
 
     std::string norm_file =
-        get_disk_index_max_base_norm_file(std::string(disk_index_file));
+        get_disk_index_max_base_norm_file(std::string(index_prefix));
 
     if (file_exists(norm_file) && metric == diskann::Metric::INNER_PRODUCT) {
       _u64                     dumr, dumc;
@@ -939,7 +975,7 @@ namespace diskann {
   void PQFlashIndex<T>::brute_force_beam_search(
       ThreadData<T> &data, const float query_norm, const _u64 k_search,
       _s64 *indices, float *distances, const _u64 beam_width_param,
-      IOContext &ctx, QueryStats *stats,
+      QueryStats *stats,
       const knowhere::feder::diskann::FederResultUniq &feder,
       knowhere::BitsetView                             bitset_view,
 	  PQDataGetter* pq_data_getter) {
@@ -957,11 +993,11 @@ namespace diskann {
     const _u64 pq_topk = k_search * kBruteForceTopkRefineExpansionFactor;
     knowhere::ResultMaxHeap<float, int64_t> pq_max_heap(pq_topk);
     T *data_buf = query_scratch->coord_scratch;
-    std::unordered_map<_u64, std::vector<_u64>> nodes_in_sectors_to_visit;
-    std::vector<AlignedRead>                    frontier_read_reqs;
+    std::vector<_u64> nodes_to_visit;
+    std::vector<ReadReq>                    frontier_read_reqs;
     frontier_read_reqs.reserve(beam_width);
-    char *sector_scratch = query_scratch->sector_scratch;
-    _u64 &sector_scratch_idx = query_scratch->sector_idx;
+    char *sector_scratch = query_scratch->sector_scratch; // 'sector_scratch' is used here as 'node_scratch' (will be renamed later)
+    _u64 &sector_scratch_idx = query_scratch->sector_idx; // 'sector_idx' is used here as 'node_idx' (will be renamed later)
     knowhere::ResultMaxHeap<float, _u64> max_heap(k_search);
     Timer                                io_timer, query_timer;
     size_t pq_offset = 0;
@@ -1003,47 +1039,42 @@ namespace diskann {
         }
       }
 
-      // deduplicate and prepare for I/O
-      const _u64 sector_offset = get_node_sector_offset(id);
-      nodes_in_sectors_to_visit[sector_offset].push_back(id);
+      // record I/O to be performed
+      nodes_to_visit.push_back(id);
     }
 
-    for (auto it = nodes_in_sectors_to_visit.cbegin();
-         it != nodes_in_sectors_to_visit.cend();) {
-      const auto sector_offset = it->first;
+    for (auto it = nodes_to_visit.cbegin();
+         it != nodes_to_visit.cend();) {
+      const auto id = *it;
       frontier_read_reqs.emplace_back(
-          sector_offset, read_len_for_node,
-          sector_scratch + sector_scratch_idx * read_len_for_node);
+          id, max_node_len,
+          sector_scratch + sector_scratch_idx * read_len_for_node); // 'sector_scratch' is used here as 'node_scratch' (will be renamed later)
       ++sector_scratch_idx, ++it;
       if (stats != nullptr) {
-        stats->n_4k++;
         stats->n_ios++;
       }
 
       // perform I/Os and calculate exact distances
       if (frontier_read_reqs.size() == beam_width ||
-          it == nodes_in_sectors_to_visit.cend()) {
+          it == nodes_to_visit.cend()) {
         io_timer.reset();
-        reader->read(frontier_read_reqs, ctx);  // synchronous IO linux
+        reader->read(frontier_read_reqs);  // synchronous IO linux
         if (stats != nullptr) {
           stats->io_us += (double) io_timer.elapsed();
         }
 
         T *node_fp_coords_copy = data_buf;
         for (const auto &req : frontier_read_reqs) {
-          const auto offset = req.offset;
-          char      *sector_buf = reinterpret_cast<char *>(req.buf);
-          for (const auto cur_id : nodes_in_sectors_to_visit[offset]) {
-            char *node_buf = get_offset_to_node(sector_buf, cur_id);
-            memcpy(node_fp_coords_copy, node_buf,
-                   disk_bytes_per_point);  // Do we really need memcpy here?
-            float dist = dist_cmp_wrap(query, node_fp_coords_copy,
-                                       (size_t) aligned_dim, cur_id);
-            max_heap.Push(dist, cur_id);
-            if (feder != nullptr) {
-              feder->visit_info_.AddTopCandidateInfo(cur_id, dist);
-              feder->id_set_.insert(cur_id);
-            }
+          char      *node_buf = reinterpret_cast<char *>(req.buf);
+          const auto id = req.key;
+          memcpy(node_fp_coords_copy, node_buf,
+                  disk_bytes_per_point);  // Do we really need memcpy here?
+          float dist = dist_cmp_wrap(query, node_fp_coords_copy,
+                                      (size_t) aligned_dim, id);
+          max_heap.Push(dist, id);
+          if (feder != nullptr) {
+            feder->visit_info_.AddTopCandidateInfo(id, dist);
+            feder->id_set_.insert(id);
           }
         }
         frontier_read_reqs.clear();
@@ -1106,7 +1137,6 @@ namespace diskann {
       return;
     }
     float query_norm = query_norm_opt.value();
-    auto  ctx = this->reader->get_ctx();
 
     size_t bv_cnt = 0;
 
@@ -1130,10 +1160,9 @@ namespace diskann {
 
       if (bv_cnt >= bitset_view.size() * filter_threshold) {
         brute_force_beam_search(data, query_norm, k_search, indices, distances,
-                                beam_width, ctx, stats, feder, bitset_view, this);
+                                beam_width, stats, feder, bitset_view, this);
         this->thread_data.push(data);
         this->thread_data.push_notify_all();
-        this->reader->put_ctx(ctx);
         return;
       }
     }
@@ -1141,10 +1170,9 @@ namespace diskann {
     // Turn to BF is k_search is too large
     if (k_search > 0.5 * (num_points - bv_cnt)) {
       brute_force_beam_search(data, query_norm, k_search, indices, distances,
-                              beam_width, ctx, stats, feder, bitset_view, this);
+                              beam_width, stats, feder, bitset_view, this);
       this->thread_data.push(data);
       this->thread_data.push_notify_all();
-      this->reader->put_ctx(ctx);
       return;
     }
 
@@ -1165,7 +1193,7 @@ namespace diskann {
     frontier.reserve(2 * beam_width);
     std::vector<std::pair<unsigned, char *>> frontier_nhoods;
     frontier_nhoods.reserve(2 * beam_width);
-    std::vector<AlignedRead> frontier_read_reqs;
+    std::vector<ReadReq> frontier_read_reqs;
     frontier_read_reqs.reserve(2 * beam_width);
     std::vector<std::pair<unsigned, std::pair<unsigned, unsigned *>>>
         cached_nhoods;
@@ -1308,19 +1336,18 @@ namespace diskann {
           std::pair<_u32, char *> fnhood;
           fnhood.first = id;
           fnhood.second =
-              sector_scratch + sector_scratch_idx * read_len_for_node;
+              sector_scratch + sector_scratch_idx * read_len_for_node; // 'sector_scratch' is used here as 'node_scratch' (will be renamed later)
           sector_scratch_idx++;
           frontier_nhoods.push_back(fnhood);
-          frontier_read_reqs.emplace_back(get_node_sector_offset(((size_t) id)),
-                                          read_len_for_node, fnhood.second);
+          frontier_read_reqs.emplace_back(((size_t) id),
+                                          max_node_len, fnhood.second);
           if (stats != nullptr) {
-            stats->n_4k++;
             stats->n_ios++;
           }
           num_ios++;
         }
         io_timer.reset();
-        reader->read(frontier_read_reqs, ctx);  // synchronous IO linux
+        reader->read(frontier_read_reqs);  // synchronous IO linux
         if (stats != nullptr) {
           stats->io_us += (double) io_timer.elapsed();
         }
@@ -1411,8 +1438,9 @@ namespace diskann {
       }
 
       for (auto &frontier_nhood : frontier_nhoods) {
-        char *node_disk_buf =
-            get_offset_to_node(frontier_nhood.second, frontier_nhood.first);
+        // char *node_disk_buf =
+        //     get_offset_to_node(frontier_nhood.second, frontier_nhood.first);
+        char *node_disk_buf = frontier_nhood.second;  // node data is now copied directly to buffer
         unsigned *node_buf = OFFSET_TO_NODE_NHOOD(node_disk_buf);
         T        *node_fp_coords = OFFSET_TO_NODE_COORDS(node_disk_buf);
         T        *node_fp_coords_copy = data_buf;
@@ -1444,7 +1472,7 @@ namespace diskann {
             -1, __FUNCSIG__, __FILE__, __LINE__);
       }
 
-      std::vector<AlignedRead> vec_read_reqs;
+      std::vector<ReadReq> vec_read_reqs;
 
       if (full_retset.size() > k_search * FULL_PRECISION_REORDER_MULTIPLIER)
         full_retset.erase(
@@ -1453,27 +1481,26 @@ namespace diskann {
 
       for (size_t i = 0; i < full_retset.size(); ++i) {
         vec_read_reqs.emplace_back(
-            VECTOR_SECTOR_NO(((size_t) full_retset[i].id)) * diskann::defaults::SECTOR_LEN,
-            diskann::defaults::SECTOR_LEN, sector_scratch + i * diskann::defaults::SECTOR_LEN);
+            (uint64_t) full_retset[i].id,
+            max_node_len, sector_scratch + i * max_node_len); // 'sector_scratch' is used here as 'node_scratch' (will be renamed later)
 
         if (stats != nullptr) {
-          stats->n_4k++;
           stats->n_ios++;
         }
       }
 
       io_timer.reset();
-      reader->read(vec_read_reqs, ctx);  // synchronous IO linux
+      reader->read(vec_read_reqs);  // synchronous IO linux
       if (stats != nullptr) {
         stats->io_us += io_timer.elapsed();
       }
 
       for (size_t i = 0; i < full_retset.size(); ++i) {
         auto id = full_retset[i].id;
-        auto location =
-            (sector_scratch + i * diskann::defaults::SECTOR_LEN) + VECTOR_SECTOR_OFFSET(id);
+        auto vec_buf =
+            sector_scratch + i * max_node_len;
         full_retset[i].distance =
-            dist_cmp_wrap(query, (T *) location, this->data_dim, id);
+            dist_cmp_wrap(query, (T *) vec_buf, this->data_dim, id);
       }
 
       std::sort(full_retset.begin(), full_retset.end(),
@@ -1508,7 +1535,6 @@ namespace diskann {
 
     this->thread_data.push(data);
     this->thread_data.push_notify_all();
-    this->reader->put_ctx(ctx);
 
     if (stats != nullptr) {
       stats->total_us = (double) query_timer.elapsed();
@@ -1535,15 +1561,13 @@ namespace diskann {
     }
     float query_norm = query_norm_opt.value();
 
-    auto     ctx = this->reader->get_ctx();
     auto     query_scratch = &(data.scratch);
     const T *query = data.scratch.aligned_query_T;
 
     // First, check cache for vectors and calculate distances
     std::vector<_u64> uncached_ids;
     uncached_ids.reserve(n);
-    std::vector<int64_t> uncached_indices;
-    uncached_indices.reserve(n);
+    std::unordered_map<_u64, int64_t> uncached_indices;
 
     {
       std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
@@ -1558,14 +1582,13 @@ namespace diskann {
         } else {
           // Need to read from disk
           uncached_ids.push_back(id);
-          uncached_indices.push_back(i);
+          uncached_indices[id] = i;
         }
       }
     }
 
     // If all vectors are cached, we're done
     if (uncached_ids.empty()) {
-      this->reader->put_ctx(ctx);
       this->thread_data.push(data);
       this->thread_data.push_notify_all();
       return;
@@ -1574,62 +1597,44 @@ namespace diskann {
     // sector scratch
     char *sector_scratch = query_scratch->sector_scratch;
 
-    // Read uncached vectors from disk and calculate distances
-    // Group uncached IDs by sector for efficient reading
-    std::unordered_map<_u64, std::vector<size_t>> sectors_to_visit;
-    for (size_t i = 0; i < uncached_ids.size(); ++i) {
-      _u64       id = uncached_ids[i];
-      const _u64 sector_offset = get_node_sector_offset(id);
-      sectors_to_visit[sector_offset].push_back(i);
-    }
 
     const size_t batch_size = std::min(
         {AioContextPool::GetGlobalAioPool()->max_events_per_ctx(),
-        defaults::MAX_N_SECTOR_READS, sectors_to_visit.size()});
+        defaults::MAX_N_SECTOR_READS, uncached_ids.size()});
     if (batch_size == 0) {
-      this->reader->put_ctx(ctx);
       this->thread_data.push(data);
       this->thread_data.push_notify_all();
       return;
     }
-    std::vector<AlignedRead> frontier_read_reqs;
+    std::vector<ReadReq> frontier_read_reqs;
     frontier_read_reqs.reserve(batch_size);
 
-    std::vector<_u64> sector_offsets;
-    sector_offsets.reserve(sectors_to_visit.size());
-    for (const auto &it : sectors_to_visit) {
-      sector_offsets.emplace_back(it.first);
-    }
 
-    const auto sector_num = sector_offsets.size();
-    const _u64 num_blocks = DIV_ROUND_UP(sector_num, batch_size);
+    const auto node_num = uncached_ids.size();
+    const _u64 num_batches = DIV_ROUND_UP(node_num, batch_size);
 
-    for (_u64 i = 0; i < num_blocks; ++i) {
+    for (_u64 i = 0; i < num_batches; ++i) {
       _u64 start_idx = i * batch_size;
-      _u64 idx_len = std::min(batch_size, sector_num - start_idx);
+      _u64 idx_len = std::min(batch_size, node_num - start_idx);
       frontier_read_reqs.clear();
       for (_u64 j = 0; j < idx_len; ++j) {
-        char *sector_buf = sector_scratch + j * read_len_for_node;
-        frontier_read_reqs.emplace_back(sector_offsets[start_idx + j],
-                                        read_len_for_node, sector_buf);
+        char *node_buf = sector_scratch + j * this->max_node_len;
+        frontier_read_reqs.emplace_back(uncached_ids[start_idx + j],
+                                        this->max_node_len, node_buf);
       }
-      reader->read(frontier_read_reqs, ctx);
+      reader->read(frontier_read_reqs);
 
       // Process the batch
       for (const auto &req : frontier_read_reqs) {
-        auto  offset = req.offset;
-        char *sector_buf = static_cast<char *>(req.buf);
-        for (auto uncached_pos : sectors_to_visit.at(offset)) {
-          _u64    id = uncached_ids[uncached_pos];
-          int64_t output_idx = uncached_indices[uncached_pos];
-          char   *node_buf = get_offset_to_node(sector_buf, id);
-          T      *node_coords = OFFSET_TO_NODE_COORDS(node_buf);
-
-          // Calculate raw distance (not PQ distance)
-          output_dists[output_idx] =
-              dist_cmp_wrap(query, node_coords, (size_t) aligned_dim, id);
+        auto    id = req.key;
+        char    *node_buf = static_cast<char *>(req.buf);
+        T       *node_coords = OFFSET_TO_NODE_COORDS(node_buf);
+        int64_t output_idx = uncached_indices[id];
+        
+        // Calculate raw distance (not PQ distance)
+        output_dists[output_idx] =
+            dist_cmp_wrap(query, node_coords, (size_t) aligned_dim, id);
         }
-      }
     }
 
     // transform l2-dist to ip-dist / cosine-dist
@@ -1646,7 +1651,6 @@ namespace diskann {
       }
     }
 
-    this->reader->put_ctx(ctx);
     this->thread_data.push(data);
     this->thread_data.push_notify_all();
   }
@@ -1667,6 +1671,8 @@ namespace diskann {
     }
   }
 
+
+  //TODO: remove this function after AISIAQ is updated to use IndexReader.
   template<typename T>
   std::unordered_map<_u64, std::vector<_u64>>
   PQFlashIndex<T>::get_sectors_layout_and_write_data_from_cache(
@@ -1687,12 +1693,32 @@ namespace diskann {
     return sectors_to_visit;
   }
 
+  
+  template<typename T>
+  std::unordered_map<_u64, _u64>
+  PQFlashIndex<T>::get_miss_ids_and_write_data_from_cache(
+      const int64_t *ids, int64_t n, T *output_data) {
+    std::unordered_map<_u64, _u64> nodes_to_visit;
+    for (int64_t i = 0; i < n; ++i) {
+      _u64 id = ids[i];
+      {
+        std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
+        if (coord_cache.find(id) != coord_cache.end()) {
+          copy_vec_base_data(output_data, i, coord_cache.at(id));
+        } else {
+          nodes_to_visit[id] = i;
+        }
+      }
+    }
+    return nodes_to_visit;
+  }
+
   template<typename T>
   void PQFlashIndex<T>::get_vector_by_ids(const int64_t *ids, const int64_t n,
                                           T *output_data) {
-    auto sectors_to_visit =
-        get_sectors_layout_and_write_data_from_cache(ids, n, output_data);
-    if (0 == sectors_to_visit.size()) {
+    auto nodes_to_visit =
+        get_miss_ids_and_write_data_from_cache(ids, n, output_data);
+    if (0 == nodes_to_visit.size()) {
       return;
     }
 
@@ -1704,59 +1730,55 @@ namespace diskann {
 
     const size_t batch_size =
         std::min(AioContextPool::GetGlobalAioPool()->max_events_per_ctx(),
-                 std::min(defaults::MAX_N_SECTOR_READS / 2UL, sectors_to_visit.size()));
+                 std::min(defaults::MAX_N_SECTOR_READS / 2UL, nodes_to_visit.size()));
     const size_t half_buf_idx = defaults::MAX_N_SECTOR_READS / 2 * read_len_for_node;
     char        *sector_scratch = data.scratch.sector_scratch;
-    std::vector<AlignedRead> frontier_read_reqs;
+    std::vector<ReadReq> frontier_read_reqs;
     frontier_read_reqs.reserve(batch_size);
 
-    std::vector<_u64> sector_offsets;
-    sector_offsets.reserve(sectors_to_visit.size());
-    for (const auto &it : sectors_to_visit) {
-      sector_offsets.emplace_back(it.first);
+    std::vector<_u64> nodes_ids;
+    nodes_ids.reserve(nodes_to_visit.size());
+    for (const auto &kv : nodes_to_visit) {
+      nodes_ids.push_back(kv.first);
     }
 
-    auto                     ctx = this->reader->get_ctx();
-    const auto               sector_num = sector_offsets.size();
-    const _u64               num_blocks = DIV_ROUND_UP(sector_num, batch_size);
-    std::vector<AlignedRead> last_reqs;
+    const auto               node_num = nodes_to_visit.size();
+    const _u64               num_batches = DIV_ROUND_UP(node_num, batch_size);
+    std::vector<ReadReq> last_reqs;
     bool                     rotate = false;
 
-    for (_u64 i = 0; i < num_blocks; ++i) {
+    for (_u64 i = 0; i < num_batches; ++i) {
       _u64 start_idx = i * batch_size;
-      _u64 idx_len = std::min(batch_size, sector_num - start_idx);
+      _u64 idx_len = std::min(batch_size, node_num - start_idx);
       last_reqs = frontier_read_reqs;
       frontier_read_reqs.clear();
       for (_u64 j = 0; j < idx_len; ++j) {
-        char *sector_buf =
-            sector_scratch + rotate * half_buf_idx + j * read_len_for_node;
-        frontier_read_reqs.emplace_back(sector_offsets[start_idx + j],
-                                        read_len_for_node, sector_buf);
+        char *node_buf =
+            //'sector_scratch' is used here as 'node_scratch' (will be renamed later)
+            sector_scratch + rotate * half_buf_idx + j * read_len_for_node; 
+        frontier_read_reqs.emplace_back(nodes_ids[start_idx + j],
+                                        max_node_len, node_buf);
       }
       rotate ^= 0x1;
-      reader->submit_req(ctx, frontier_read_reqs);
+      reader->submit_req(frontier_read_reqs);
       for (const auto &req : last_reqs) {
-        auto  offset = req.offset;
-        char *sector_buf = static_cast<char *>(req.buf);
-        for (auto idx : sectors_to_visit.at(offset)) {
-          char *node_buf = get_offset_to_node(sector_buf, ids[idx]);
-          copy_vec_base_data(output_data, idx, node_buf);
-        }
+        auto  id = req.key;
+        auto output_idx = nodes_to_visit[id];
+        char *node_buf = static_cast<char *>(req.buf);
+        copy_vec_base_data(output_data, output_idx, node_buf);
       }
-      reader->get_submitted_req(ctx, frontier_read_reqs.size());
+      reader->get_submitted_req();
     }
 
     // if any remaining
     for (const auto &req : frontier_read_reqs) {
-      auto  offset = req.offset;
-      char *sector_buf = static_cast<char *>(req.buf);
-      for (auto idx : sectors_to_visit.at(offset)) {
-        char *node_buf = get_offset_to_node(sector_buf, ids[idx]);
-        copy_vec_base_data(output_data, idx, node_buf);
-      }
+      auto  id = req.key;
+      auto output_idx = nodes_to_visit[id];
+      char *node_buf = static_cast<char *>(req.buf);
+      copy_vec_base_data(output_data, output_idx, node_buf);
+
     }
 
-    this->reader->put_ctx(ctx);
     this->thread_data.push(data);
     this->thread_data.push_notify_all();
   }
@@ -1809,7 +1831,6 @@ namespace diskann {
       data = this->thread_data.pop();
     }
     data.scratch.reset();
-    auto ctx = this->reader->get_ctx();
 
     // todo: switch to quant-bf
 
@@ -1964,15 +1985,15 @@ namespace diskann {
             std::pair<uint32_t, char *> fnhood;
             fnhood.first = id;
             fnhood.second =
+                //'sector_scratch' is used here as 'node_scratch' (will be renamed later)
                 sector_scratch + sector_scratch_idx * read_len_for_node;
             sector_scratch_idx++;
             workspace->frontier_nhoods.push_back(fnhood);
             workspace->frontier_read_reqs.emplace_back(
-                get_node_sector_offset(((size_t) id)), read_len_for_node,
+                ((size_t) id), max_node_len,
                 fnhood.second);
           }
-          reader->read(workspace->frontier_read_reqs,
-                       ctx);  // synchronous IO linux
+          reader->read(workspace->frontier_read_reqs);  // synchronous IO linux
         }
 
         // process cached nhoods
@@ -1989,8 +2010,9 @@ namespace diskann {
 
         // process frontier nhoods
         for (auto &frontier_nhood : workspace->frontier_nhoods) {
-          char *node_disk_buf =
-              get_offset_to_node(frontier_nhood.second, frontier_nhood.first);
+          // char *node_disk_buf =
+          //     get_offset_to_node(frontier_nhood.second, frontier_nhood.first);
+          char *node_disk_buf = frontier_nhood.second;  // node data is now copied directly to buffer
           unsigned *node_buf = OFFSET_TO_NODE_NHOOD(node_disk_buf);
           T        *node_fp_coords = OFFSET_TO_NODE_COORDS(node_disk_buf);
           T        *node_fp_coords_copy = data.scratch.coord_scratch;
@@ -2009,7 +2031,6 @@ namespace diskann {
     }
 
     // give back the memory buffer
-    this->reader->put_ctx(ctx);
     this->thread_data.push(data);
     this->thread_data.push_notify_all();
   }
