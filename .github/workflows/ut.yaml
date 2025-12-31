@@ -48,6 +48,15 @@ jobs:
           && conan install .. --build=missing -s build_type=Release -o with_ut=True -o with_diskann=True -o with_asan=True -s compiler.libcxx=libstdc++11 \
           && conan build .. \
           && ./Release/tests/ut/knowhere_tests
+      - name: Run Sparse SIMD Benchmark
+        run: |
+          cd build
+          if [ -f ./Release/benchmark/benchmark_sparse_simd ]; then
+            echo "Running sparse SIMD benchmark..."
+            ./Release/benchmark/benchmark_sparse_simd
+          else
+            echo "Sparse SIMD benchmark not found, skipping..."
+          fi
       - name: Save Cache
         uses: ./.github/actions/cache-save
         with:

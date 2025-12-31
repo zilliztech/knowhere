@@ -34,6 +34,8 @@
 #include "knowhere/prometheus_client.h"
 #include "knowhere/sparse_utils.h"
 #include "knowhere/utils.h"
+#include "simd/instruction_set.h"
+#include "simd/sparse_simd.h"
 
 namespace knowhere::sparse {
 
@@ -117,6 +119,62 @@ class BaseInvertedIndex {
     [[nodiscard]] virtual size_t
     n_cols() const = 0;
 };
+
+// Scalar implementation - works on all platforms
+template <typename QType>
+inline std::vector<float>
+compute_all_distances_scalar(size_t n_rows_internal, const std::vector<std::pair<size_t, float>>& q_vec,
+                             const std::vector<boost::span<const table_t>>& inverted_index_ids_spans,
+                             const std::vector<boost::span<const QType>>& inverted_index_vals_spans,
+                             const DocValueComputer<float>& computer, SparseMetricType metric_type,
+                             const boost::span<const float>* doc_len_ratios_spans_ptr) {
+    std::vector<float> scores(n_rows_internal, 0.0f);
+
+    for (size_t i = 0; i < q_vec.size(); ++i) {
+        const auto& plist_ids = inverted_index_ids_spans[q_vec[i].first];
+        const auto& plist_vals = inverted_index_vals_spans[q_vec[i].first];
+        const float q_weight = q_vec[i].second;
+
+        for (size_t j = 0; j < plist_ids.size(); ++j) {
+            const auto doc_id = plist_ids[j];
+            const float val_sum =
+                (metric_type == SparseMetricType::METRIC_BM25) ? (*doc_len_ratios_spans_ptr)[doc_id] : 0.0f;
+            scores[doc_id] += q_weight * computer(plist_vals[j], val_sum);
+        }
+    }
+
+    return scores;
+}
+
+// Dispatcher: Automatically selects best implementation based on runtime CPU detection
+template <typename QType>
+inline std::vector<float>
+compute_all_distances_simd_dispatch(size_t n_rows_internal, const std::vector<std::pair<size_t, float>>& q_vec,
+                                    const std::vector<boost::span<const table_t>>& inverted_index_ids_spans,
+                                    const std::vector<boost::span<const QType>>& inverted_index_vals_spans,
+                                    const DocValueComputer<float>& computer, SparseMetricType metric_type,
+                                    const boost::span<const float>* row_sums_spans_ptr) {
+#if defined(__x86_64__) || defined(_M_X64)
+    // Only enable AVX512 for IP metric with float values
+    // BM25 shows 0.77x-0.80x slowdown due to DocValueComputer overhead
+    //
+    // TODO: Add per-posting-list size check to use SIMD only for large lists
+    // - Use SIMD for posting lists >= 32 elements (amortizes gather/scatter overhead)
+    // - Use scalar for posting lists < 32 elements (avoids overhead)
+    // - Benchmark shows optimal threshold is around 16-32 elements per list
+    if constexpr (std::is_same_v<QType, float>) {
+        if (metric_type == SparseMetricType::METRIC_IP && faiss::InstructionSet::GetInstance().AVX512F()) {
+            return compute_all_distances_avx512<QType>(n_rows_internal, q_vec, inverted_index_ids_spans,
+                                                       inverted_index_vals_spans, computer, metric_type,
+                                                       row_sums_spans_ptr);
+        }
+    }
+#endif
+
+    // Fallback to scalar implementation (ARM, x86_64 without AVX512, BM25, or non-float types)
+    return compute_all_distances_scalar<QType>(n_rows_internal, q_vec, inverted_index_ids_spans,
+                                               inverted_index_vals_spans, computer, metric_type, row_sums_spans_ptr);
+}
 
 template <typename DType, typename QType, InvertedIndexAlgo algo, bool mmapped = false>
 class InvertedIndex : public BaseInvertedIndex<DType> {
@@ -959,19 +1017,20 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     std::vector<float>
     compute_all_distances(const std::vector<std::pair<size_t, DType>>& q_vec,
                           const DocValueComputer<float>& computer) const {
-        std::vector<float> scores(n_rows_internal_, 0.0f);
-        for (size_t i = 0; i < q_vec.size(); ++i) {
-            auto& plist_ids = inverted_index_ids_spans_[q_vec[i].first];
-            auto& plist_vals = inverted_index_vals_spans_[q_vec[i].first];
-            // TODO: improve with SIMD
-            for (size_t j = 0; j < plist_ids.size(); ++j) {
-                auto doc_id = plist_ids[j];
-                float val_sum =
-                    metric_type_ == SparseMetricType::METRIC_BM25 ? bm25_params_->row_sums_spans_[doc_id] : 0;
-                scores[doc_id] += q_vec[i].second * computer(plist_vals[j], val_sum);
-            }
+        // Convert q_vec to float type for SIMD dispatcher
+        std::vector<std::pair<size_t, float>> q_vec_float;
+        q_vec_float.reserve(q_vec.size());
+        for (const auto& [idx, val] : q_vec) {
+            q_vec_float.emplace_back(idx, static_cast<float>(val));
         }
-        return scores;
+
+        // Use SIMD dispatcher from src/simd/sparse_simd.h
+        const boost::span<const float>* row_sums_ptr =
+            (metric_type_ == SparseMetricType::METRIC_BM25) ? &bm25_params_->row_sums_spans_ : nullptr;
+
+        return compute_all_distances_simd_dispatch<QType>(n_rows_internal_, q_vec_float, inverted_index_ids_spans_,
+                                                          inverted_index_vals_spans_, computer, metric_type_,
+                                                          row_sums_ptr);
     }
 
     template <typename DocIdFilter>
