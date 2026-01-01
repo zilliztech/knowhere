@@ -15,6 +15,7 @@
 #include "knowhere/prometheus_client.h"
 #include "diskann/memory_mapper.h"
 #include "diskann/aio_context_pool.h"
+#include "knowhere/heap.h"
 
 #define READ_U64(stream, val) stream.read((char *)&val, sizeof(uint64_t))
 #define READ_U32(stream, val) stream.read((char *)&val, sizeof(uint32_t))
@@ -63,10 +64,11 @@ using namespace diskann::defaults;
 
 template <typename T>
 inline uint64_t PQFlashAisaqIndex<T>::get_node_sector(uint64_t node_id) {
-    return 1 + (this->nnodes_per_sector > 0
+    // Note: No +1 offset anymore since metadata is in a separate file
+    return this->nnodes_per_sector > 0
                     ? node_id / this->nnodes_per_sector
                     : node_id * DIV_ROUND_UP(this->max_node_len,
-                                             diskann::defaults::SECTOR_LEN));
+                                             diskann::defaults::SECTOR_LEN);
 }
 
 template <typename T>
@@ -296,8 +298,8 @@ std::vector<bool> PQFlashAisaqIndex<T>::read_nodes(
         this_thread_data = this->thread_data.pop();
     }
 
-    auto ctx = this->reader->get_ctx();
-    this->reader->read(read_reqs, ctx);
+    auto ctx = this->alignedFileReader->get_ctx();
+    this->alignedFileReader->read(read_reqs, ctx);
     // copy reads into buffers
     for (uint32_t i = 0; i < read_reqs.size(); i++) {
         char *node_buf = offset_to_node((char *)read_reqs[i].buf, node_ids[i]);
@@ -323,7 +325,7 @@ std::vector<bool> PQFlashAisaqIndex<T>::read_nodes(
     // return thread data
     this->thread_data.push(this_thread_data);
     this->thread_data.push_notify_all();
-    this->reader->put_ctx(ctx);
+    this->alignedFileReader->put_ctx(ctx);
     return retval;
 }
 
@@ -436,8 +438,9 @@ int PQFlashAisaqIndex<T>::aisaq_init(
     auto ctx_pool = AioContextPool::GetGlobalAioPool();
     std::string pq_file_path =
         _aisaq_rearranged_vectors
-            ? (std::string(index_prefix) + "_pq_compressed_rearranged.bin")
-            : (std::string(index_prefix) + "_pq_compressed.bin");
+            ? get_pq_compressed_rearranged_filename (std::string(index_prefix))
+            : get_pq_compressed_filename(std::string(index_prefix));
+            
     _aisaq_pq_vectors_reader = AisaqPQReader::create_reader(
         pq_io_engine, pq_file_path.c_str(), _aisaq_rearranged_vectors);
     if (_aisaq_pq_vectors_reader == nullptr) {
@@ -475,8 +478,7 @@ int PQFlashAisaqIndex<T>::aisaq_init(
         return -1;
     }
     /* handle multiple entry points */
-    std::string entry_points_path =
-        std::string(index_prefix) + "_disk.index_entry_points.bin";
+        std::string entry_points_path = get_index_entry_points_filename(std::string(index_prefix));
     if (file_exists(entry_points_path)) {
         /* load entry points pq vectors */
         size_t tmp_dim;
@@ -586,7 +588,7 @@ void PQFlashAisaqIndex<T>::aisaq_get_vector_by_ids(const int64_t *ids,
         sector_offsets.emplace_back(it.first);
     }
 
-    auto ctx = this->reader->get_ctx();
+    auto ctx = this->alignedFileReader->get_ctx();
     const auto sector_num = sector_offsets.size();
     const uint64_t num_blocks = DIV_ROUND_UP(sector_num, batch_size);
     std::vector<AlignedRead> last_reqs;
@@ -605,7 +607,7 @@ void PQFlashAisaqIndex<T>::aisaq_get_vector_by_ids(const int64_t *ids,
                                             sector_buf);
         }
         rotate ^= 0x1;
-        this->reader->submit_req(ctx, frontier_read_reqs);
+        this->alignedFileReader->submit_req(ctx, frontier_read_reqs);
         for (const auto &req : last_reqs) {
             auto offset = req.offset;
             char *sector_buf = static_cast<char *>(req.buf);
@@ -615,7 +617,7 @@ void PQFlashAisaqIndex<T>::aisaq_get_vector_by_ids(const int64_t *ids,
                 this->copy_vec_base_data(output_data, idx, node_buf);
             }
         }
-        this->reader->get_submitted_req(ctx, frontier_read_reqs.size());
+        this->alignedFileReader->get_submitted_req(ctx, frontier_read_reqs.size());
     }
 
     // if any remaining
@@ -629,7 +631,7 @@ void PQFlashAisaqIndex<T>::aisaq_get_vector_by_ids(const int64_t *ids,
         }
     }
 
-    this->reader->put_ctx(ctx);
+    this->alignedFileReader->put_ctx(ctx);
     this->thread_data.push(data);
     this->thread_data.push_notify_all();
 }
@@ -947,35 +949,34 @@ template <typename T>
 int PQFlashAisaqIndex<T>::aisaq_load(uint32_t num_threads,
                                      const char *index_prefix) {
 	this->index_prefix = std::string(index_prefix);
-    std::string pq_table_bin = this->index_prefix + "_pq_pivots.bin";
-    std::string pq_compressed_vectors =
-    		this->index_prefix + "_pq_compressed.bin";
-    std::string disk_index_file = this->index_prefix + "_disk.index";
-    return aisaq_load_from_separate_paths(num_threads, disk_index_file.c_str(),
+    std::string pq_table_bin = get_pq_pivots_filename(this->index_prefix);
+    std::string pq_compressed_vectors = get_pq_compressed_filename(this->index_prefix);
+    return aisaq_load_from_separate_paths(num_threads, this->index_prefix.c_str(),
                                           pq_table_bin.c_str(),
                                           pq_compressed_vectors.c_str());
 }
 
 template <typename T>
 int PQFlashAisaqIndex<T>::aisaq_load_from_separate_paths(
-    uint32_t num_threads, const char *index_filepath,
+    uint32_t num_threads, const char *index_prefix,
     const char *pivots_filepath, const char *compressed_filepath) {
     std::string pq_table_bin = pivots_filepath;
     std::string pq_compressed_vectors = compressed_filepath;
-    std::string medoids_file = std::string(index_filepath) + "_medoids.bin";
-    std::string centroids_file = std::string(index_filepath) + "_centroids.bin";
+    std::string index_prefix_str = std::string(index_prefix);
+    
+    std::string index_metadata_filepath = get_disk_index_metadata_filename(index_prefix_str);
+    std::string index_data_filepath = get_disk_index_data_filename(index_prefix_str);
+    
+    std::string medoids_file = get_disk_index_medoids_filename(index_prefix_str);
+    std::string centroids_file = get_disk_index_centroids_filename(index_prefix_str);
 
-    std::string labels_file = std::string(index_filepath) + "_labels.txt";
-    std::string labels_to_medoids =
-        std::string(index_filepath) + "_labels_to_medoids.txt";
-    std::string labels_map_file =
-        std::string(index_filepath) + "_labels_map.txt";
+    std::string labels_file = index_prefix_str + "_labels.txt";
+    std::string labels_to_medoids = index_prefix_str + "_labels_to_medoids.txt";
+    std::string labels_map_file = index_prefix_str + "_labels_map.txt";
 
     size_t pq_file_dim, pq_file_num_centroids;
 
     get_bin_metadata(pq_table_bin, pq_file_num_centroids, pq_file_dim);
-
-    this->disk_index_file = index_filepath;
 
     if (pq_file_num_centroids != 256) {
         LOG_KNOWHERE_ERROR_ << "Number of PQ centroids is not 256. Exiting.";
@@ -1026,7 +1027,7 @@ int PQFlashAisaqIndex<T>::aisaq_load_from_separate_paths(
     }
 
     std::string disk_pq_pivots_path =
-        std::string(index_filepath) + "_pq_pivots.bin";
+        get_disk_index_pq_pivots_filename(index_prefix_str);
     if (file_exists(disk_pq_pivots_path)) {
         this->use_disk_index_pq = true;
         // giving 0 chunks to make the _pq_table infer from the
@@ -1042,8 +1043,12 @@ int PQFlashAisaqIndex<T>::aisaq_load_from_separate_paths(
                            << this->disk_pq_n_chunks << " bytes per point.";
     }
 
-    // read index metadata
-    std::ifstream index_metadata(this->disk_index_file, std::ios::binary);
+    // read index metadata from separate metadata file
+    std::ifstream index_metadata(index_metadata_filepath, std::ios::binary);
+    if (!index_metadata.is_open()) {
+        LOG_KNOWHERE_ERROR_ << "Failed to open metadata file: " << index_metadata_filepath;
+        return -1;
+    }
 
     uint32_t nr,
         nc; // metadata itself is stored as bin format (nr is number of
@@ -1098,10 +1103,11 @@ int PQFlashAisaqIndex<T>::aisaq_load_from_separate_paths(
     READ_U64(index_metadata, __md_file_size);        /* file_size */
     READ_U64(index_metadata, __md_max_degree);       /* max_degree */
     READ_U64(index_metadata, __md_rearranged_index); /* rearranged_index */
-    if (get_file_size(this->disk_index_file) != __md_file_size) {
+    
+    if (get_file_size(index_data_filepath) != __md_file_size) {
         std::stringstream stream;
         stream << "Error: Loading index. Incorrect file size, file '"
-               << this->disk_index_file
+               << index_data_filepath
                << "' may be corrupted. expected size is: " << __md_file_size
                << " Bytes" << std::endl;
         throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__,
@@ -1159,9 +1165,8 @@ int PQFlashAisaqIndex<T>::aisaq_load_from_separate_paths(
         this->read_len_for_node =
             diskann::defaults::SECTOR_LEN * this->nsectors_per_node;
     }
-    // open AlignedFileReader handle to index_file
-    std::string index_fname(this->disk_index_file);
-    this->reader->open(index_fname);
+    // open AlignedFileReader handle to data file
+    this->alignedFileReader->open(index_data_filepath);
     setup_thread_data(num_threads);
     this->max_nthreads = num_threads;
 
@@ -1206,7 +1211,7 @@ int PQFlashAisaqIndex<T>::aisaq_load_from_separate_paths(
         use_medoids_data_as_centroids();
     }
 
-    std::string norm_file = std::string(index_filepath) + "_max_base_norm.bin";
+    std::string norm_file = get_disk_index_max_base_norm_file(index_prefix_str);
 
     if (file_exists(norm_file) &&
         this->metric == diskann::Metric::INNER_PRODUCT) {
@@ -1339,7 +1344,7 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
     }
     float query_norm = query_norm_opt.value();
     AisaqThreadData aisaq_data = aisaq_thread_data.pop();
-    auto ctx = this->reader->get_ctx();
+    auto ctx = this->alignedFileReader->get_ctx();
     if(aisaq_data.aisaq_pq_reader_ctx) {
     	_aisaq_pq_vectors_reader->set_io_ctx(*aisaq_data.aisaq_pq_reader_ctx, ctx);
     }
@@ -1351,7 +1356,7 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
         if(aisaq_data.aisaq_pq_reader_ctx){
         	_aisaq_pq_vectors_reader->set_io_ctx(*aisaq_data.aisaq_pq_reader_ctx, nullptr);
         }
-        this->reader->put_ctx(ctx);
+        this->alignedFileReader->put_ctx(ctx);
     };
     size_t bv_cnt = 0;
     uint64_t local_l_search = l_search;
@@ -1376,16 +1381,14 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
         }
         if (bv_cnt >= bitset.size() * filter_threshold ||
         		(k_search > 0.5 * (this->num_points - bv_cnt))) {
-            std::string pq_compressed_vectors =
-            		this->index_prefix + "_pq_compressed.bin";
+            std::string pq_compressed_vectors = get_pq_compressed_filename(this->index_prefix);
             try{
                 MemoryMapper mapper(pq_compressed_vectors);
                 size_t pq_size = 8+this->num_points*this->n_chunks;
                 madvise(mapper.getBuf(), pq_size, MADV_SEQUENTIAL);
                 _u8* pq_data = (_u8*)mapper.getBuf()+8;
                 AisaqPQDataGetter pq_getter(pq_data, this->_aisaq_rearranged_vectors, this->_aisaq_rearranged_vectors_map.get(), pq_size);
-
-                PQFlashIndex<T>::brute_force_beam_search(data, query_norm, k_search, indices, distances,
+                PQFlashAisaqIndex<T>::brute_force_beam_search(data, query_norm, k_search, indices, distances,
 						beam_width, ctx, stats, nullptr, bitset, &pq_getter);
             }
             catch(...){
@@ -1636,7 +1639,7 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
         /* If frontier_read_req is not empty */
         if (!frontier_read_reqs.empty()) {
             io_timer.reset();
-            this->reader->read(frontier_read_reqs, ctx); // synchronous IO linux
+            this->alignedFileReader->read(frontier_read_reqs, ctx); // synchronous IO linux
 
             if (stats != nullptr) {
                 stats->io_us += (float)io_timer.elapsed();
@@ -1918,7 +1921,7 @@ void PQFlashAisaqIndex<T>::rerank_candidate_list(std::vector<Neighbor> &full_ret
     }
 
     io_timer.reset();
-    this->reader->read(vec_read_reqs, ctx); // synchronous IO linux
+    this->alignedFileReader->read(vec_read_reqs, ctx); // synchronous IO linux
     if (stats != nullptr) {
         stats->io_us += io_timer.elapsed();
     }
@@ -2019,8 +2022,7 @@ template <typename T> uint32_t PQFlashAisaqIndex<T>::get_max_node_len() {
 
 template <typename T>
 int PQFlashAisaqIndex<T>::aisaq_load_rearrange_data(const char *index_prefix) {
-    std::string rearrange_map_path =
-        std::string(index_prefix) + "_disk.index_rearrange.bin";
+    std::string rearrange_map_path = get_index_rearranged_filename(std::string(index_prefix));
     size_t npts, dim;
     diskann::load_bin<uint32_t>(rearrange_map_path,
                                 _aisaq_rearranged_vectors_map, npts, dim);
@@ -2056,7 +2058,7 @@ bool PQFlashAisaqIndex<T>::should_ignore_point(
 template <typename T>
 PQFlashAisaqIndex<T>::PQFlashAisaqIndex(
     std::shared_ptr<AlignedFileReader> fileReader, diskann::Metric m)
-    : PQFlashIndex<T>(fileReader, m) {
+    : PQFlashIndex<T>(nullptr, m), alignedFileReader(fileReader) {
 }
 
 template <typename T> PQFlashAisaqIndex<T>::~PQFlashAisaqIndex() {
@@ -2128,6 +2130,156 @@ template <typename T> PQFlashAisaqIndex<T>::~PQFlashAisaqIndex() {
         _aisaq_pq_vectors_reader = nullptr;
     }
 }
+
+
+//TODO remove this ovverride once PQFlashAisaqIndex uses IndexReader
+template<typename T>
+  void PQFlashAisaqIndex<T>::brute_force_beam_search(
+      ThreadData<T> &data, const float query_norm, const _u64 k_search,
+      _s64 *indices, float *distances, const _u64 beam_width_param,
+      IOContext &ctx, QueryStats *stats,
+      const knowhere::feder::diskann::FederResultUniq &feder,
+      knowhere::BitsetView                             bitset_view,
+	  PQDataGetter* pq_data_getter) {
+    auto         query_scratch = &(data.scratch);
+    const T     *query = data.scratch.aligned_query_T;
+    auto         beam_width = beam_width_param * kRefineBeamWidthFactor;
+    const float *query_float = data.scratch.aligned_query_float;
+    float       *pq_dists = query_scratch->aligned_pqtable_dist_scratch;
+    this->pq_table.populate_chunk_distances(query_float, pq_dists);
+    float         *dist_scratch = query_scratch->aligned_dist_scratch;
+    _u8           *pq_coord_scratch = query_scratch->aligned_pq_coord_scratch;
+    constexpr _u32 pq_batch_size = diskann::defaults::MAX_GRAPH_DEGREE;
+    std::vector<unsigned> pq_batch_ids;
+    pq_batch_ids.reserve(pq_batch_size);
+    const _u64 pq_topk = k_search * kBruteForceTopkRefineExpansionFactor;
+    knowhere::ResultMaxHeap<float, int64_t> pq_max_heap(pq_topk);
+    T *data_buf = query_scratch->coord_scratch;
+    std::unordered_map<_u64, std::vector<_u64>> nodes_in_sectors_to_visit;
+    std::vector<AlignedRead>                    frontier_read_reqs;
+    frontier_read_reqs.reserve(beam_width);
+    char *sector_scratch = query_scratch->sector_scratch;
+    _u64 &sector_scratch_idx = query_scratch->sector_idx;
+    knowhere::ResultMaxHeap<float, _u64> max_heap(k_search);
+    Timer                                io_timer, query_timer;
+    size_t pq_offset = 0;
+    // scan un-marked points and calculate pq dists
+
+    for (_u64 id = 0; id < this->num_points; ++id) {
+      _u64 origin_id = pq_data_getter->get_origin_id(id);
+      if (bitset_view.empty() || !bitset_view.test(origin_id)) {
+    	pq_batch_ids.push_back(id);
+      }
+
+      if (pq_batch_ids.size() == pq_batch_size || id == this->num_points - 1) {
+        const size_t sz = pq_batch_ids.size();
+        aggregate_coords(pq_batch_ids.data(), sz, pq_data_getter->get_pq_data(),
+                         this->n_chunks, pq_coord_scratch);
+        pq_dist_lookup(pq_coord_scratch, sz, this->n_chunks, pq_dists,
+                       dist_scratch);
+        for (size_t i = 0; i < sz; ++i) {
+          pq_max_heap.Push(dist_scratch[i], pq_batch_ids[i]);
+        }
+        pq_data_getter->release_pq_data(pq_offset,id*this->n_chunks-pq_offset);
+        pq_offset = id*this->n_chunks;
+        pq_batch_ids.clear();
+      }
+    }
+    pq_data_getter->release_pq_data();
+    // deduplicate sectors by ids
+    while (const auto opt = pq_max_heap.Pop()) {
+      const auto [dist, id] = opt.value();
+
+      // check if in cache
+      {
+        std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
+        if (this->coord_cache.find(id) != this->coord_cache.end()) {
+          float dist = this->dist_cmp_wrap(query, this->coord_cache.at(id),
+                                     (size_t) this->aligned_dim, id);
+          max_heap.Push(dist, id);
+          continue;
+        }
+      }
+
+      // deduplicate and prepare for I/O
+      const _u64 sector_offset = this->get_node_sector_offset(id);
+      nodes_in_sectors_to_visit[sector_offset].push_back(id);
+    }
+
+    for (auto it = nodes_in_sectors_to_visit.cbegin();
+         it != nodes_in_sectors_to_visit.cend();) {
+      const auto sector_offset = it->first;
+      frontier_read_reqs.emplace_back(
+          sector_offset, this->read_len_for_node,
+          sector_scratch + sector_scratch_idx * this->read_len_for_node);
+      ++sector_scratch_idx, ++it;
+      if (stats != nullptr) {
+        stats->n_4k++;
+        stats->n_ios++;
+      }
+
+      // perform I/Os and calculate exact distances
+      if (frontier_read_reqs.size() == beam_width ||
+          it == nodes_in_sectors_to_visit.cend()) {
+        io_timer.reset();
+        alignedFileReader->read(frontier_read_reqs, ctx);  // synchronous IO linux
+        if (stats != nullptr) {
+          stats->io_us += (double) io_timer.elapsed();
+        }
+
+        T *node_fp_coords_copy = data_buf;
+        for (const auto &req : frontier_read_reqs) {
+          const auto offset = req.offset;
+          char      *sector_buf = reinterpret_cast<char *>(req.buf);
+          for (const auto cur_id : nodes_in_sectors_to_visit[offset]) {
+            char *node_buf = this->get_offset_to_node(sector_buf, cur_id);
+            memcpy(node_fp_coords_copy, node_buf,
+                   this->disk_bytes_per_point);  // Do we really need memcpy here?
+            float dist = this->dist_cmp_wrap(query, node_fp_coords_copy,
+                                       (size_t) this->aligned_dim, cur_id);
+            max_heap.Push(dist, cur_id);
+            if (feder != nullptr) {
+              feder->visit_info_.AddTopCandidateInfo(cur_id, dist);
+              feder->id_set_.insert(cur_id);
+            }
+          }
+        }
+        frontier_read_reqs.clear();
+        sector_scratch_idx = 0;
+      }
+    }
+
+    for (_s64 i = k_search - 1; i >= 0; --i) {
+      if ((_u64) i >= max_heap.Size()) {
+        indices[i] = -1;
+        if (distances != nullptr) {
+          distances[i] = -1;
+        }
+        continue;
+      }
+      if (const auto op = max_heap.Pop()) {
+        const auto [dis, id] = op.value();
+        indices[i] = pq_data_getter->get_origin_id(id);
+        if (distances != nullptr) {
+          distances[i] = dis;
+          if (this->metric == diskann::Metric::INNER_PRODUCT) {
+            distances[i] = 1.0 - distances[i] / 2.0;
+            if (this->max_base_norm != 0) {
+              distances[i] *= (this->max_base_norm * query_norm);
+            }
+          } else if (this->metric == diskann::Metric::COSINE) {
+            distances[i] = -distances[i];
+          }
+        }
+      } else {
+        LOG(ERROR) << "Size is incorrect";
+      }
+    }
+    if (stats != nullptr) {
+      stats->total_us = (double) query_timer.elapsed();
+    }
+    return;
+  }
 
 
 template class PQFlashAisaqIndex<float>;

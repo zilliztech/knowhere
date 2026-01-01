@@ -423,6 +423,63 @@ TEST_CASE("Test config json parse", "[config]") {
         CHECK(s == knowhere::Status::success);
         CHECK(range_cfg.trace_visit.value() == true);
     }
+
+    SECTION("check diskann ncs params") {
+        // DESERIALIZE context: defaults work fine
+        {
+            knowhere::Json json = knowhere::Json::parse(R"({})");
+            knowhere::DiskANNConfig cfg;
+            s = knowhere::Config::Load(cfg, json, knowhere::DESERIALIZE);
+            CHECK(s == knowhere::Status::success);
+            CHECK(cfg.ncs_enable.value() == false);
+            CHECK(cfg.ncs_descriptor.has_value() == false);
+        }
+
+        // DESERIALIZE context: ncs_enable=true without descriptor -> error
+        {
+            knowhere::Json json = knowhere::Json::parse(R"({
+                "ncs_enable": true
+            })");
+            knowhere::DiskANNConfig cfg;
+            s = knowhere::Config::Load(cfg, json, knowhere::DESERIALIZE);
+            CHECK(s == knowhere::Status::invalid_param_in_json);
+        }
+
+        // DESERIALIZE context: ncs_descriptor without ncs_enable (allowed, will be ignored)
+        {
+            knowhere::Json json = knowhere::Json::parse(R"({
+                "ncs_descriptor": {
+                    "ncsKind_": "InMemory",
+                    "bucketId_": 1,
+                    "extras_": {"note": "ut"}
+                }
+            })");
+
+            knowhere::DiskANNConfig cfg;
+            s = knowhere::Config::Load(cfg, json, knowhere::DESERIALIZE);
+            CHECK(s == knowhere::Status::success);
+            CHECK(cfg.ncs_enable.value() == false);
+            CHECK(cfg.ncs_descriptor.has_value() == true);
+        }
+
+        // DESERIALIZE context: both ncs_enable=true and ncs_descriptor present -> valid
+        {
+            knowhere::Json json = knowhere::Json::parse(R"({
+                "ncs_enable": true,
+                "ncs_descriptor": {
+                    "ncsKind_": "InMemory",
+                    "bucketId_": 1,
+                    "extras_": {"note": "ut"}
+                }
+            })");
+
+            knowhere::DiskANNConfig cfg;
+            s = knowhere::Config::Load(cfg, json, knowhere::DESERIALIZE);
+            CHECK(s == knowhere::Status::success);
+            CHECK(cfg.ncs_enable.value() == true);
+            CHECK(cfg.ncs_descriptor.has_value() == true);
+        }
+    }
 #endif
 #ifdef KNOWHERE_WITH_CUVS
     SECTION("check cagra index config") {

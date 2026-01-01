@@ -17,6 +17,7 @@
 
 #include "diskann/aux_utils.h"
 #include "diskann/linux_aligned_file_reader.h"
+#include "diskann/file_index_reader.h"
 #include "diskann/pq_flash_index.h"
 #include "filemanager/FileManager.h"
 #include "fmt/core.h"
@@ -38,6 +39,16 @@ template <typename DataType>
 class DiskANNIndexNode : public IndexNode {
     static_assert(KnowhereFloatTypeCheck<DataType>::value,
                   "DiskANN only support floating point data type(float32, float16, bfloat16)");
+
+    // Friend helper for test access to pq_flash_index_
+    template <typename T>
+    friend uint64_t GetDiskANNNodeSectorOffsetForTest(knowhere::Index<knowhere::IndexNode>& index, uint64_t node_id);
+    template <typename T>
+    friend char* GetDiskANNOffsetToNodeForTest(knowhere::Index<knowhere::IndexNode>& index, char* sector_buf, uint64_t node_id);
+    template <typename T>
+    friend uint64_t GetDiskANNMaxNodeLenForTest(knowhere::Index<knowhere::IndexNode>& index);
+    template <typename T>
+    friend size_t GetDiskANNReadLenForNodeForTest(knowhere::Index<knowhere::IndexNode>& index);
 
  public:
     using DistType = float;
@@ -128,7 +139,13 @@ class DiskANNIndexNode : public IndexNode {
     static expected<Resource>
     StaticEstimateLoadResource(const uint64_t file_size_in_bytes, const int64_t num_rows, const int64_t dim,
                                const knowhere::BaseConfig& config, const IndexVersion& version) {
-        return Resource{file_size_in_bytes / 4, file_size_in_bytes};
+        if(config.ncs_enable.value()){
+            LOG_KNOWHERE_DEBUG_ << "DiskANN configured to use NCS, disk cost is estimated as zero.";
+            return Resource{file_size_in_bytes / 4, 0};
+        }
+        else{
+            return Resource{file_size_in_bytes / 4, file_size_in_bytes};
+        }
     }
 
     Status
@@ -147,6 +164,100 @@ class DiskANNIndexNode : public IndexNode {
     DeserializeFromFileIfNeed(const std::string& filename, std::shared_ptr<Config> config) override {
         LOG_KNOWHERE_INFO_ << "DiskANN doesn't support deserialize from file (with emb list if needed)";
         return Status::not_implemented;
+    }
+
+    std::vector<std::string>
+    ListFilesForNcsUpload() const override{
+        return std::vector<std::string>{diskann::get_disk_index_data_filename("")};
+    }
+
+    milvus::NcsStatus
+    NcsUpload(std::shared_ptr<Config> cfg) override{
+        auto conf = static_cast<const DiskANNConfig&>(*cfg);
+        size_t count;
+        size_t dim;
+        diskann::get_bin_metadata(conf.data_path.value(), count, dim);
+
+        assert(conf.ncs_enable.value());
+        const milvus::NcsDescriptor* descriptor = &(conf.ncs_descriptor.value());
+
+        auto connector = std::unique_ptr<milvus::NcsConnector>(
+            milvus::NcsConnectorFactory::Instance().createConnector(descriptor));
+        
+        if(!connector){
+            LOG_KNOWHERE_ERROR_ << "Failed to create NcsConnector for NCS upload.";
+            return milvus::NcsStatus::ERROR;
+        }
+
+        std::string index_prefix = std::string(conf.index_prefix.value().c_str());
+        std::string disk_index_data_filename = diskann::get_disk_index_data_filename(index_prefix);
+        
+        // Initialize pq_flash_index_ if not already initialized
+        if (!pq_flash_index_) {
+            auto diskann_metric = GetDiskANNMetric(conf.metric_type.value());
+            std::shared_ptr<IndexReader> reader = nullptr;
+            pq_flash_index_ = std::make_unique<diskann::PQFlashIndex<DataType>>(reader, diskann_metric);
+        }
+        
+        std::string disk_index_metadata_filename = diskann::get_disk_index_metadata_filename(index_prefix);
+        pq_flash_index_->load_metadata(disk_index_metadata_filename, disk_index_data_filename, true, false);
+
+        // Use actual node size instead of sector-aligned size since FileIndexReader handles alignment
+        uint64_t max_node_len = pq_flash_index_->get_max_node_len();
+        
+        // Use data file instead of combined index file
+        std::unique_ptr<IndexReader> reader = std::make_unique<FileIndexReader>(
+            disk_index_data_filename, 
+            [this](size_t n) { return pq_flash_index_->get_node_sector_offset(n); },
+            [this](char* sector_buf, uint64_t node_id) { return pq_flash_index_->get_offset_to_node(sector_buf, node_id); },
+            pq_flash_index_->get_read_len_for_node()
+        );
+
+        if(!reader){
+            LOG_KNOWHERE_ERROR_ << "Failed to create IndexReader for NCS upload.";
+            return milvus::NcsStatus::ERROR;
+        }
+
+        int batch_size = diskann::defaults::MAX_GRAPH_DEGREE;
+
+        std::vector<std::unique_ptr<void, decltype(&std::free)>> buffers;
+        buffers.reserve(batch_size);
+        for (size_t i = 0; i < batch_size; ++i) {
+            void* aligned_buf = std::aligned_alloc(512, max_node_len);
+            if (aligned_buf == nullptr) {
+                LOG_KNOWHERE_ERROR_ << "Failed to allocate aligned buffer for NCS upload, size: " << max_node_len;
+                return milvus::NcsStatus::ERROR;
+            }
+            buffers.emplace_back(aligned_buf, &std::free);
+        }
+
+        for(uint64_t i=0 ; i < count ; i+=batch_size){
+            std::vector<ReadReq> reqs;
+            int batch_size_i;
+            if(i+batch_size > count){
+                batch_size_i = count % batch_size;
+            } else {
+                batch_size_i = batch_size;
+            }
+
+            for(int j=0 ; j < batch_size_i ; j++){
+                reqs.emplace_back((uint64_t)(i+j), max_node_len, (void*)buffers[j].get());
+            }
+            reader->read(reqs);
+
+            std::vector<uint32_t> keys;
+            std::vector<milvus::SpanBytes> valueSpans;
+            for(uint32_t j=0 ; j < batch_size_i ; j++){
+                auto key = i + j;
+                keys.push_back(key);
+                valueSpans.emplace_back(reqs[j].buf, max_node_len);
+            }
+
+            auto putResults = connector->multiPut(keys, valueSpans);
+        }
+
+
+        return milvus::NcsStatus::OK;
     }
 
     static std::unique_ptr<BaseConfig>
@@ -257,6 +368,9 @@ class DiskANNIndexNode : public IndexNode {
     uint64_t
     GetCachedNodeNum(const float cache_dram_budget, const uint64_t data_dim, const uint64_t max_degree);
 
+    diskann::Metric
+    GetDiskANNMetric(const std::string& metric_type) const;
+
     std::string index_prefix_;
     mutable std::mutex preparation_lock_;
     std::atomic_bool is_prepared_;
@@ -343,16 +457,18 @@ GetNecessaryFilenames(const std::string& prefix, const bool need_norm, const boo
                       const bool use_sample_warmup) {
     std::vector<std::string> filenames;
     auto pq_pivots_filename = diskann::get_pq_pivots_filename(prefix);
-    auto disk_index_filename = diskann::get_disk_index_filename(prefix);
+    auto disk_index_metadata_filename = diskann::get_disk_index_metadata_filename(prefix);
+    auto disk_index_data_filename = diskann::get_disk_index_data_filename(prefix);
 
     filenames.push_back(pq_pivots_filename);
     filenames.push_back(diskann::get_pq_rearrangement_perm_filename(pq_pivots_filename));
     filenames.push_back(diskann::get_pq_chunk_offsets_filename(pq_pivots_filename));
     filenames.push_back(diskann::get_pq_centroid_filename(pq_pivots_filename));
     filenames.push_back(diskann::get_pq_compressed_filename(prefix));
-    filenames.push_back(disk_index_filename);
+    filenames.push_back(disk_index_metadata_filename);
+    filenames.push_back(disk_index_data_filename);
     if (need_norm) {
-        filenames.push_back(diskann::get_disk_index_max_base_norm_file(disk_index_filename));
+        filenames.push_back(diskann::get_disk_index_max_base_norm_file(prefix));
     }
     if (use_sample_cache || use_sample_warmup) {
         filenames.push_back(diskann::get_sample_data_filename(prefix));
@@ -363,9 +479,8 @@ GetNecessaryFilenames(const std::string& prefix, const bool need_norm, const boo
 std::vector<std::string>
 GetOptionalFilenames(const std::string& prefix) {
     std::vector<std::string> filenames;
-    auto disk_index_filename = diskann::get_disk_index_filename(prefix);
-    filenames.push_back(diskann::get_disk_index_centroids_filename(disk_index_filename));
-    filenames.push_back(diskann::get_disk_index_medoids_filename(disk_index_filename));
+    filenames.push_back(diskann::get_disk_index_centroids_filename(prefix));
+    filenames.push_back(diskann::get_disk_index_medoids_filename(prefix));
     filenames.push_back(diskann::get_cached_nodes_file(prefix));
     filenames.push_back(diskann::get_emb_list_offset_file(prefix));
     return filenames;
@@ -400,6 +515,18 @@ CheckMetric(const std::string& diskann_metric) {
     }
 }
 }  // namespace
+
+template <typename DataType>
+diskann::Metric
+DiskANNIndexNode<DataType>::GetDiskANNMetric(const std::string& metric_type) const {
+    if (IsMetricType(metric_type, knowhere::metric::L2)) {
+        return diskann::Metric::L2;
+    } else if (IsMetricType(metric_type, knowhere::metric::COSINE)) {
+        return diskann::Metric::COSINE;
+    } else {
+        return diskann::Metric::INNER_PRODUCT;
+    }
+}
 
 template <typename DataType>
 Status
@@ -556,16 +683,8 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
     index_prefix_ = prep_conf.index_prefix.value();
     bool is_ip = IsMetricType(prep_conf.metric_type.value(), knowhere::metric::IP);
     bool need_norm = IsMetricType(prep_conf.metric_type.value(), knowhere::metric::IP) ||
-                     IsMetricType(prep_conf.metric_type.value(), knowhere::metric::COSINE);
-    auto diskann_metric = [m = prep_conf.metric_type.value()] {
-        if (IsMetricType(m, knowhere::metric::L2)) {
-            return diskann::Metric::L2;
-        } else if (IsMetricType(m, knowhere::metric::COSINE)) {
-            return diskann::Metric::COSINE;
-        } else {
-            return diskann::Metric::INNER_PRODUCT;
-        }
-    }();
+                    IsMetricType(prep_conf.metric_type.value(), knowhere::metric::COSINE);
+    auto diskann_metric = GetDiskANNMetric(prep_conf.metric_type.value());
 
     // Load file from file manager.
     for (auto& filename : GetNecessaryFilenames(
@@ -589,14 +708,18 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
     // set thread pool
     search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
 
-    // load diskann pq code and meta info
-    std::shared_ptr<AlignedFileReader> reader = nullptr;
+    const milvus::NcsDescriptor* descriptor = nullptr;
+    bool use_ncs = prep_conf.ncs_enable.value();
+    if(use_ncs){
+        descriptor = &(prep_conf.ncs_descriptor.value());
+    }
 
-    reader.reset(new LinuxAlignedFileReader());
+    // load diskann pq code and meta info
+    std::shared_ptr<IndexReader> reader = nullptr;
 
     pq_flash_index_ = std::make_unique<diskann::PQFlashIndex<DataType>>(reader, diskann_metric);
     auto disk_ann_call = [&]() {
-        int res = pq_flash_index_->load(search_pool_->size(), index_prefix_.c_str());
+        int res = pq_flash_index_->load(search_pool_->size(), index_prefix_.c_str(), use_ncs, descriptor);
         if (res != 0) {
             throw diskann::ANNException("pq_flash_index_->load returned non-zero value: " + std::to_string(res), -1);
         }
@@ -1010,4 +1133,51 @@ KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(DISKANN_DEPRECATED, DiskANNIndex
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(DISKANN, DiskANNIndexNode,
                                                 knowhere::feature::DISK | knowhere::feature::EMB_LIST)
 #endif
+
+// Helper function for test access to get_node_sector_offset
+template <typename DataType>
+uint64_t GetDiskANNNodeSectorOffsetForTest(knowhere::Index<knowhere::IndexNode>& index, uint64_t node_id) {
+    auto* diskann_node = dynamic_cast<DiskANNIndexNode<DataType>*>(index.Node());
+    if (!diskann_node || !diskann_node->pq_flash_index_) {
+        return 0;
+    }
+    return diskann_node->pq_flash_index_->get_node_sector_offset(node_id);
+}
+
+// Helper function for test access to get_offset_to_node
+template <typename DataType>
+char* GetDiskANNOffsetToNodeForTest(knowhere::Index<knowhere::IndexNode>& index, char* sector_buf, uint64_t node_id) {
+    auto* diskann_node = dynamic_cast<DiskANNIndexNode<DataType>*>(index.Node());
+    if (!diskann_node || !diskann_node->pq_flash_index_) {
+        return nullptr;
+    }
+    return diskann_node->pq_flash_index_->get_offset_to_node(sector_buf, node_id);
+}
+
+// Helper function for test access to get_max_node_len
+template <typename DataType>
+uint64_t GetDiskANNMaxNodeLenForTest(knowhere::Index<knowhere::IndexNode>& index) {
+    auto* diskann_node = dynamic_cast<DiskANNIndexNode<DataType>*>(index.Node());
+    if (!diskann_node || !diskann_node->pq_flash_index_) {
+        return 0;
+    }
+    return diskann_node->pq_flash_index_->get_max_node_len();
+}
+
+// Helper function for test access to get_read_len_for_node
+template <typename T>
+size_t GetDiskANNReadLenForNodeForTest(knowhere::Index<knowhere::IndexNode>& index){
+    auto* diskann_node = dynamic_cast<DiskANNIndexNode<T>*>(index.Node());
+    if (!diskann_node || !diskann_node->pq_flash_index_) {
+        return 0;
+    }
+    return diskann_node->pq_flash_index_->get_read_len_for_node();
+}
+
+// Explicit instantiation for fp32
+template uint64_t GetDiskANNNodeSectorOffsetForTest<knowhere::fp32>(knowhere::Index<knowhere::IndexNode>&, uint64_t);
+template char* GetDiskANNOffsetToNodeForTest<knowhere::fp32>(knowhere::Index<knowhere::IndexNode>&, char*, uint64_t);
+template uint64_t GetDiskANNMaxNodeLenForTest<knowhere::fp32>(knowhere::Index<knowhere::IndexNode>&);
+template size_t GetDiskANNReadLenForNodeForTest<knowhere::fp32>(knowhere::Index<knowhere::IndexNode>&);
+
 }  // namespace knowhere

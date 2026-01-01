@@ -163,6 +163,7 @@ class DiskANNConfig : public BaseConfig {
             .set_range(-1.0f, 1.0f)
             .for_search()
             .for_iterator();
+
     }
 
     Status
@@ -185,6 +186,14 @@ class DiskANNConfig : public BaseConfig {
                     std::string msg = "search_list_size(" + std::to_string(search_list_size.value()) +
                                       ") should be larger than k(" + std::to_string(k.value()) + ")";
                     return HandleError(err_msg, msg, Status::out_of_range_in_json);
+                }
+                break;
+            }
+            case PARAM_TYPE::DESERIALIZE: {
+                // Cross-field validation: if NCS is enabled, descriptor must be present
+                if (ncs_enable.has_value() && ncs_enable.value() && !ncs_descriptor.has_value()) {
+                    std::string msg = "ncs_descriptor is required when ncs_enable is true";
+                    return HandleError(err_msg, msg, Status::invalid_param_in_json);
                 }
                 break;
             }

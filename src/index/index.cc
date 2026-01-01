@@ -405,6 +405,28 @@ Index<T>::LoadIndexWithStream() const {
     return this->node->LoadIndexWithStream();
 }
 
+template <typename T>
+inline std::vector<std::string>
+Index<T>::ListFilesForNcsUpload() const{
+    return this->node->ListFilesForNcsUpload();
+}
+
+template <typename T>
+inline Status
+Index<T>::NcsUpload(const Json& json) {
+    auto cfg = this->node->CreateConfig();
+    std::string msg;
+    RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "NcsUpload", &msg));
+    
+    if(this->node->NcsUpload(std::move(cfg)) != milvus::NcsStatus::OK){
+        return Status::internal_error;
+    }
+
+    return Status::success;
+    
+}
+
+
 template class Index<IndexNode>;
 
 }  // namespace knowhere

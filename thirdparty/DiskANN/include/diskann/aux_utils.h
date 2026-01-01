@@ -83,8 +83,8 @@ namespace diskann {
    * parameter cannot be generated successfully, it is set to -1.*/
   template<typename T>
   std::unique_ptr<diskann::Index<T>> build_merged_vamana_index(
-      std::string base_file, diskann::Metric _compareMetric, unsigned L,
-      unsigned R, bool accelerate_build, bool shuffle_build, double sampling_rate,
+      std::string base_file, bool ip_prepared, diskann::Metric compareMetric,
+      unsigned L, unsigned R, bool accelerate_build, bool shuffle_build, double sampling_rate,
       double ram_budget, std::string mem_index_path, std::string medoids_file,
       std::string centroids_file);
 
@@ -137,9 +137,11 @@ namespace diskann {
   int build_disk_index(BuildConfig &config);
 
   template <typename T>
-  void create_aisaq_layout(const std::string base_file, const std::string mem_index_file, const std::string output_file,
+  void create_aisaq_layout(const std::string base_file, const std::string mem_index_file, 
+                           const std::string output_metadata_file, const std::string output_data_file,
                            const std::string reorder_data_file,
                            const std::string &index_prefix_path,
+                           const diskann::Metric metric,
                            int inline_pq /* control num of inline pq: -1=none, 0=auto, others: num of pq vectors <= R */,
                            bool &rearrange /* enable vectors reaarangement */);
   
@@ -150,7 +152,8 @@ namespace diskann {
   template<typename T>
   void create_disk_layout(
       const std::string base_file, const std::string mem_index_file,
-      const std::string output_file,
+      const std::string output_metadata_file,
+      const std::string output_data_file,
       const std::string reorder_data_file = std::string(""));
 
 }  // namespace diskann
