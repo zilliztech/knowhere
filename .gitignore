@@ -16,6 +16,9 @@ docker-compose-devcontainer.yml.tmp
 
 *.code-workspace
 
+# Claude Code local settings
+.claude/settings.local.json
+
 # Docker generated cache file
 .docker/
 
