@@ -664,6 +664,26 @@ struct DCTemplate_avx512<Quantizer, Similarity, 16> : SQDistanceComputer {
         dis2 = sim2.result_16();
         dis3 = sim3.result_16();
     }
+
+    void distances_batch_4(
+            const idx_t idx0,
+            const idx_t idx1,
+            const idx_t idx2,
+            const idx_t idx3,
+            float& dis0,
+            float& dis1,
+            float& dis2,
+            float& dis3) override {
+        query_to_codes_batch_4(
+                codes + idx0 * code_size,
+                codes + idx1 * code_size,
+                codes + idx2 * code_size,
+                codes + idx3 * code_size,
+                dis0,
+                dis1,
+                dis2,
+                dis3);
+    }
 };
 
 template <class Similarity, bool USE_VNNI>
