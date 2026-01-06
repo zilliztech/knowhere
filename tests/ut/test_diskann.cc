@@ -12,6 +12,9 @@
 #include <sys/resource.h>
 
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
+#include <random>
 #include <string>
 #include <thread>
 
@@ -94,30 +97,48 @@ namespace knowhere {
 
 using namespace milvus;
 
+namespace {
+/**
+ * @brief Get NCS extras config for the given NCS kind.
+ * @param ncs_kind The NCS backend type ("in_memory" or "redis")
+ * @return json config with appropriate settings for the backend
+ */
+json getNcsExtras(const std::string& ncs_kind) {
+    if (ncs_kind == "redis") {
+        return json{{"redis_host", "localhost"}, {"redis_port", 6379}};
+    }
+    return json::object();
+}
+
+/**
+ * @brief Initialize NCS singleton for the given NCS kind.
+ * Resets the singleton first to ensure clean state.
+ * @param ncs_kind The NCS backend type ("in_memory" or "redis")
+ */
+void initNcsForTest(const std::string& ncs_kind) {
+    NcsSingleton::reset();
+    if (ncs_kind == "in_memory") {
+        NcsSingleton::initNcs(InMemoryNcsFactory::KIND);
+    } else {
+        NcsSingleton::initNcs(RedisNcsFactory::KIND, getNcsExtras(ncs_kind));
+    }
+}
+} // namespace
+
 // Tests basic NCS connector operations (multiPut, multiGet, multiDelete, bucket management) 
 // with error handling for oversized buffers. Runs with both in_memory and redis NCS backends.
 TEST_CASE("InMemoryNcsConnector - sanity", "[NcsTest]") {
     auto ncs_kind = GENERATE("in_memory", "redis");
     const uint32_t bucketId = 1;
     
-    // Register the NCS factory in the singleton and get Ncs instance
-    if (ncs_kind == std::string("in_memory")) {
-        NcsSingleton::initNcs(InMemoryNcsFactory::KIND);
-    } else {
-        NcsSingleton::initNcs(RedisNcsFactory::KIND);
-    }
+    initNcsForTest(ncs_kind);
     
     Ncs* ncs = NcsSingleton::Instance();
     auto createResult = ncs->createBucket(bucketId);
     REQUIRE(createResult == NcsStatus::OK);
     
     // Create descriptor and connector
-    json ncs_extras;
-    if (ncs_kind == std::string("redis")) {
-        ncs_extras = json{{"redis_host", "localhost"}, {"redis_port", 6379}};
-    } else {
-        ncs_extras = json::object();
-    }
+    auto ncs_extras = getNcsExtras(ncs_kind);
     
     auto descriptor = NcsDescriptor(ncs_kind, bucketId, ncs_extras);
     auto connector = std::unique_ptr<NcsConnector>(
@@ -192,23 +213,13 @@ TEST_CASE("NcsReader", "[NcsTest]") {
     auto ncs_kind = GENERATE("in_memory", "redis");
     const uint32_t bucketId = 1;
     
-    // Register the NCS factory in the singleton and get Ncs instance
-    if (ncs_kind == std::string("in_memory")) {
-        NcsSingleton::initNcs(InMemoryNcsFactory::KIND);
-    } else {
-        NcsSingleton::initNcs(RedisNcsFactory::KIND);
-    }
+    initNcsForTest(ncs_kind);
     
     Ncs* ncs = NcsSingleton::Instance();
     auto createResult = ncs->createBucket(bucketId);
     REQUIRE(createResult == NcsStatus::OK);
     
-    json ncs_extras;
-    if (ncs_kind == std::string("redis")) {
-        ncs_extras = json{{"redis_host", "localhost"}, {"redis_port", 6379}};
-    } else {
-        ncs_extras = json::object();
-    }
+    auto ncs_extras = getNcsExtras(ncs_kind);
     
     auto descriptor = NcsDescriptor(ncs_kind, bucketId, ncs_extras);
     auto connector = std::unique_ptr<NcsConnector>(
@@ -284,6 +295,146 @@ TEST_CASE("NcsReader", "[NcsTest]") {
 
 }
 
+// Tests NCSReader thread_local connector model with concurrent access from multiple threads.
+// Each thread should transparently get its own connector instance via thread_local storage.
+// This validates the concurrency model where a single NCSReader can be safely shared across threads.
+// Runs with both in_memory and redis NCS backends.
+TEST_CASE("NCSReader - concurrent thread_local access", "[NcsTest]") {
+    auto ncs_kind = GENERATE("in_memory", "redis");
+    const uint64_t bucketId = 9999;
+    const size_t numThreads = 16;
+    const size_t opsPerThread = 10000;
+    const size_t numKeys = 100;
+    const size_t valueSize = 4096;
+    const size_t maxBatchSize = 5;
+    
+    initNcsForTest(ncs_kind);
+    
+    Ncs* ncs = NcsSingleton::Instance();
+    auto createResult = ncs->createBucket(bucketId);
+    REQUIRE(createResult == NcsStatus::OK);
+    
+    // Create descriptor for NCSReader
+    auto ncs_extras = getNcsExtras(ncs_kind);
+    NcsDescriptor descriptor(ncs_kind, bucketId, ncs_extras);
+    
+    // Pre-populate data using a connector
+    std::unique_ptr<NcsConnector> setup_connector(
+        NcsConnectorFactory::Instance().createConnector(&descriptor));
+    REQUIRE(setup_connector != nullptr);
+    
+    std::vector<uint32_t> allKeys;
+    std::vector<std::vector<uint8_t>> allValues;
+    std::vector<SpanBytes> allSpans;
+    
+    for (size_t i = 0; i < numKeys; ++i) {
+        allKeys.push_back(static_cast<uint32_t>(i));
+        allValues.emplace_back(valueSize, static_cast<uint8_t>(i % 256));
+    }
+    for (auto& v : allValues) {
+        allSpans.emplace_back(v.data(), v.size());
+    }
+    
+    auto putResults = setup_connector->multiPut(allKeys, allSpans);
+    for (const auto& r : putResults) {
+        REQUIRE(r == NcsStatus::OK);
+    }
+    setup_connector.reset();
+    
+    // Create a single NCSReader instance to be shared across threads
+    NCSReader ncs_reader(&descriptor);
+    
+    // Track success/failure across threads
+    std::atomic<size_t> successfulOps{0};
+    std::atomic<size_t> failedOps{0};
+    std::vector<std::thread> threads;
+    
+    // Barrier to synchronize all threads before their first read
+    std::mutex barrierMutex;
+    std::condition_variable barrierCv;
+    size_t readyCount = 0;
+    bool startFlag = false;
+    
+    // Launch multiple threads that all use the same NCSReader instance
+    // Each thread will get its own connector via thread_local storage
+    for (size_t t = 0; t < numThreads; ++t) {
+        threads.emplace_back([&, t]() {
+            std::mt19937 rng(static_cast<unsigned>(t));
+            std::uniform_int_distribution<size_t> keyDist(0, numKeys - 1);
+            std::uniform_int_distribution<size_t> batchDist(1, maxBatchSize);
+            
+            // Pre-allocate buffers for max batch size before starting iterations
+            std::vector<std::vector<uint8_t>> buffers;
+            buffers.reserve(maxBatchSize);
+            for (size_t b = 0; b < maxBatchSize; ++b) {
+                buffers.emplace_back(valueSize);
+            }
+            
+            // Signal ready and wait for all threads to be ready
+            {
+                std::unique_lock<std::mutex> lock(barrierMutex);
+                ++readyCount;
+                if (readyCount == numThreads) {
+                    // Last thread to arrive - signal everyone to start
+                    startFlag = true;
+                    barrierCv.notify_all();
+                } else {
+                    // Wait for the start signal
+                    barrierCv.wait(lock, [&] { return startFlag; });
+                }
+            }
+            
+            for (size_t op = 0; op < opsPerThread; ++op) {
+                size_t batchSize = batchDist(rng);
+                std::vector<ReadReq> read_reqs;
+                read_reqs.reserve(batchSize);
+                
+                for (size_t b = 0; b < batchSize; ++b) {
+                    size_t keyIdx = keyDist(rng);
+                    read_reqs.push_back({
+                        static_cast<uint32_t>(keyIdx), 
+                        valueSize, 
+                        buffers[b].data()
+                    });
+                }
+                
+                try {
+                    ncs_reader.read(read_reqs);
+                    
+                    // Verify data integrity
+                    bool allOk = true;
+                    for (size_t i = 0; i < read_reqs.size(); ++i) {
+                        uint8_t expectedPattern = static_cast<uint8_t>(read_reqs[i].key % 256);
+                        if (buffers[i][0] != expectedPattern) {
+                            allOk = false;
+                            break;
+                        }
+                    }
+                    
+                    if (allOk) {
+                        successfulOps.fetch_add(batchSize);
+                    } else {
+                        failedOps.fetch_add(batchSize);
+                    }
+                } catch (const std::exception& e) {
+                    failedOps.fetch_add(batchSize);
+                }
+            }
+        });
+    }
+    
+    // Wait for all threads to complete
+    for (auto& t : threads) {
+        t.join();
+    }
+    
+    REQUIRE(failedOps.load() == 0);
+    REQUIRE(successfulOps.load() > 0);
+    
+    // Cleanup
+    ncs->deleteBucket(bucketId);
+}
+
 // Tests DiskANN index building with NCS upload and verifies data consistency between
 // FileIndexReader and NCS connector reads. Ensures uploaded data can be retrieved via connector.
 // Runs with both in_memory and redis NCS backends.
@@ -291,12 +442,7 @@ TEST_CASE("Test NcsUpload Using Connector", "[NcsTest]") {
     auto ncs_kind = GENERATE("in_memory", "redis");
     const uint32_t bucketId = 1;
     
-    // Register the NCS factory in the singleton and get Ncs instance
-    if (ncs_kind == std::string("in_memory")) {
-        NcsSingleton::initNcs(InMemoryNcsFactory::KIND);
-    } else {
-        NcsSingleton::initNcs(RedisNcsFactory::KIND);
-    }
+    initNcsForTest(ncs_kind);
     
     Ncs* ncs = NcsSingleton::Instance();
     auto createResult = ncs->createBucket(bucketId);
@@ -317,12 +463,7 @@ TEST_CASE("Test NcsUpload Using Connector", "[NcsTest]") {
     auto base_ptr = static_cast<const float*>(base_ds->GetTensor());
     WriteRawDataToDisk<float>(kRawDataPath, base_ptr, rows_num, kDim);
 
-    json ncs_extras;
-    if (ncs_kind == std::string("redis")) {
-        ncs_extras = json{{"redis_host", "localhost"}, {"redis_port", 6379}};
-    } else {
-        ncs_extras = json::object();
-    }
+    auto ncs_extras = getNcsExtras(ncs_kind);
 
     knowhere::Json json;
     json["data_path"] = kRawDataPath;
@@ -425,12 +566,7 @@ TEST_CASE("FileReader Compare NcsReader", "[NcsTest]") {
     auto ncs_kind = GENERATE("in_memory", "redis");
     const uint32_t bucketId = 2;
     
-    // Register the NCS factory in the singleton and get Ncs instance
-    if (ncs_kind == std::string("in_memory")) {
-        NcsSingleton::initNcs(InMemoryNcsFactory::KIND);
-    } else {
-        NcsSingleton::initNcs(RedisNcsFactory::KIND);
-    }
+    initNcsForTest(ncs_kind);
     
     Ncs* ncs = NcsSingleton::Instance();
     auto createResult = ncs->createBucket(bucketId);
@@ -451,12 +587,7 @@ TEST_CASE("FileReader Compare NcsReader", "[NcsTest]") {
     auto base_ptr = static_cast<const float*>(base_ds->GetTensor());
     WriteRawDataToDisk<float>(kRawDataPath, base_ptr, rows_num, kDim);
 
-    json ncs_extras;
-    if (ncs_kind == std::string("redis")) {
-        ncs_extras = json{{"redis_host", "localhost"}, {"redis_port", 6379}};
-    } else {
-        ncs_extras = json::object();
-    }
+    auto ncs_extras = getNcsExtras(ncs_kind);
 
     knowhere::Json json;
     json["data_path"] = kRawDataPath;
@@ -1902,12 +2033,7 @@ TEST_CASE("DiskANN NcsUpload", "[diskann][ncs]") {
     auto ncs_kind = GENERATE("in_memory", "redis");
     auto test_mode = GENERATE("connector", "reader");
     
-    // Initialize the appropriate NCS backend
-    if (ncs_kind == std::string("in_memory")) {
-        NcsSingleton::initNcs(InMemoryNcsFactory::KIND);
-    } else {
-        NcsSingleton::initNcs(RedisNcsFactory::KIND);
-    }
+    initNcsForTest(ncs_kind);
     
     // Configure test parameters based on mode
     const uint32_t bucketId = (test_mode == std::string("connector")) ? 3260486057 : 1001;
@@ -1938,12 +2064,7 @@ TEST_CASE("DiskANN NcsUpload", "[diskann][ncs]") {
     auto base_ptr = static_cast<const float*>(base_ds->GetTensor());
     WriteRawDataToDisk<float>(kNcsRawDataPath, base_ptr, testNumRows, testDim);
     
-    json ncs_extras;
-    if (ncs_kind == std::string("redis")) {
-        ncs_extras = json{{"redis_host", "localhost"}, {"redis_port", 6379}};
-    } else {
-        ncs_extras = json::object();
-    }
+    auto ncs_extras = getNcsExtras(ncs_kind);
     
     // Build configuration
     knowhere::Json build_config;
