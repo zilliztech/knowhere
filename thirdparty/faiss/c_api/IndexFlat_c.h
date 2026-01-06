@@ -1,11 +1,10 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved
 // -*- c -*-
 
 #ifndef FAISS_INDEX_FLAT_C_H
@@ -36,7 +35,7 @@ int faiss_IndexFlat_new_with(
  *
  * @param index   opaque pointer to index object
  * @param p_xb    output, the pointer to the beginning of `xb`.
- * @param p_size  output, the current size of `sb` in number of float values.
+ * @param p_size  output, the current size of `xb` in number of float values.
  */
 void faiss_IndexFlat_xb(FaissIndexFlat* index, float** p_xb, size_t* p_size);
 

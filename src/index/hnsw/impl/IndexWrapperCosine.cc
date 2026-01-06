@@ -11,18 +11,18 @@
 
 #include "index/hnsw/impl/IndexWrapperCosine.h"
 
-#include <faiss/IndexCosine.h>
+#include <faiss/cppcontrib/knowhere/IndexCosine.h>
 
 namespace knowhere {
 
 // a wrapper that overrides a distance computer
-IndexWrapperCosine::IndexWrapperCosine(faiss::Index* index, const float* inverse_l2_norms_in)
+IndexWrapperCosine::IndexWrapperCosine(faiss::cppcontrib::knowhere::Index* index, const float* inverse_l2_norms_in)
     : faiss::cppcontrib::knowhere::IndexWrapper(index), inverse_l2_norms{inverse_l2_norms_in} {
 }
 
 faiss::DistanceComputer*
 IndexWrapperCosine::get_distance_computer() const {
-    return new faiss::WithCosineNormDistanceComputer(
+    return new faiss::cppcontrib::knowhere::WithCosineNormDistanceComputer(
         inverse_l2_norms, index->d, std::unique_ptr<faiss::DistanceComputer>(index->get_distance_computer()));
 }
 

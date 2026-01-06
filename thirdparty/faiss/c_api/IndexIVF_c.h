@@ -1,11 +1,10 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved.
 // -*- c -*-
 
 #ifndef FAISS_INDEX_IVF_C_H
@@ -14,10 +13,26 @@
 #include "Clustering_c.h"
 #include "Index_c.h"
 #include "faiss_c.h"
+#include "impl/AuxIndexStructures_c.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+FAISS_DECLARE_CLASS_INHERITED(SearchParametersIVF, SearchParameters)
+FAISS_DECLARE_DESTRUCTOR(SearchParametersIVF)
+FAISS_DECLARE_SEARCH_PARAMETERS_DOWNCAST(SearchParametersIVF)
+
+int faiss_SearchParametersIVF_new(FaissSearchParametersIVF** p_sp);
+int faiss_SearchParametersIVF_new_with(
+        FaissSearchParametersIVF** p_sp,
+        FaissIDSelector* sel,
+        size_t nprobe,
+        size_t max_codes);
+
+FAISS_DECLARE_GETTER(SearchParametersIVF, const FaissIDSelector*, sel)
+FAISS_DECLARE_GETTER_SETTER(SearchParametersIVF, size_t, nprobe)
+FAISS_DECLARE_GETTER_SETTER(SearchParametersIVF, size_t, max_codes)
 
 /** Index based on a inverted file (IVF)
  *
@@ -138,6 +153,12 @@ void faiss_IndexIVF_invlists_get_ids(
         size_t list_no,
         idx_t* invlist);
 
+int faiss_IndexIVF_train_encoder(
+        FaissIndexIVF* index,
+        idx_t n,
+        const float* x,
+        const idx_t* assign);
+
 typedef struct FaissIndexIVFStats {
     size_t nq;                // nb of queries run
     size_t nlist;             // nb of inverted lists scanned
@@ -153,7 +174,7 @@ inline void faiss_IndexIVFStats_init(FaissIndexIVFStats* stats) {
     faiss_IndexIVFStats_reset(stats);
 }
 
-/// global var that collects all statists
+/// global var that collects all statistics
 FaissIndexIVFStats* faiss_get_indexIVF_stats();
 
 #ifdef __cplusplus

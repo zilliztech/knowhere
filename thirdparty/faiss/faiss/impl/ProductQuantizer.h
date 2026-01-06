@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -21,7 +21,11 @@
 
 namespace faiss {
 
-/** Product Quantizer. Implemented only for METRIC_L2 */
+/** Product Quantizer.
+ * PQ is trained using k-means, minimizing the L2 distance to centroids.
+ * PQ supports L2 and Inner Product search, however the quantization error is
+ * biased towards L2 distance.
+ */
 struct ProductQuantizer : Quantizer {
     size_t M;     ///< number of subquantizers
     size_t nbits; ///< number of bits per quantization index
@@ -162,7 +166,7 @@ struct ProductQuantizer : Quantizer {
     /// Symmetric Distance Table
     std::vector<float> sdc_table;
 
-    // intitialize the SDC table from the centroids
+    // initialize the SDC table from the centroids
     void compute_sdc_table();
 
     void search_sdc(
@@ -179,8 +183,6 @@ struct ProductQuantizer : Quantizer {
 
     /// Clear transposed centroids table so ones are no longer used.
     void clear_transposed_centroids();
-
-    size_t cal_size() const;
 };
 
 // block size used in ProductQuantizer::compute_codes

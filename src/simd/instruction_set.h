@@ -19,11 +19,13 @@
 #include <string>
 #include <vector>
 
-// faiss::InstructionSet is x86-specific and uses cpuid instructions
+// faiss::cppcontrib::knowhere::InstructionSet is x86-specific and uses cpuid instructions
 #if defined(__x86_64__) || defined(_M_X64)
 #include <cpuid.h>
 
 namespace faiss {
+namespace cppcontrib {
+namespace knowhere {
 
 class InstructionSet {
  public:
@@ -371,6 +373,8 @@ class InstructionSet {
     std::vector<std::array<int, 4>> extdata_;
 };
 
+}  // namespace knowhere
+}  // namespace cppcontrib
 }  // namespace faiss
 #endif  // __x86_64__ || _M_X64
 

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -11,14 +11,26 @@
 #define FAISS_INDEX_H
 
 #include <faiss/MetricType.h>
+#include <faiss/impl/FaissAssert.h>
+
 #include <cstdio>
 #include <sstream>
-#include <string>
-#include <typeinfo>
 
 #define FAISS_VERSION_MAJOR 1
-#define FAISS_VERSION_MINOR 8
-#define FAISS_VERSION_PATCH 0
+#define FAISS_VERSION_MINOR 13
+#define FAISS_VERSION_PATCH 2
+
+// Macro to combine the version components into a single string
+#ifndef FAISS_STRINGIFY
+#define FAISS_STRINGIFY(ARG) #ARG
+#endif
+#ifndef FAISS_TOSTRING
+#define FAISS_TOSTRING(ARG) FAISS_STRINGIFY(ARG)
+#endif
+#define VERSION_STRING                                          \
+    FAISS_TOSTRING(FAISS_VERSION_MAJOR)                         \
+    "." FAISS_TOSTRING(FAISS_VERSION_MINOR) "." FAISS_TOSTRING( \
+            FAISS_VERSION_PATCH)
 
 /**
  * @namespace faiss
@@ -38,13 +50,35 @@
 
 namespace faiss {
 
-/// Forward declarations see impl/AuxIndexStructures.h, impl/IDSelector.h and
-/// impl/DistanceComputer.h
+/// Forward declarations see impl/AuxIndexStructures.h, impl/IDSelector.h
+/// and impl/DistanceComputer.h
 struct IDSelector;
 struct RangeSearchResult;
 struct DistanceComputer;
 
-/** Parent class for the optional search paramenters.
+enum NumericType {
+    Float32,
+    Float16,
+    UInt8,
+    Int8,
+};
+
+inline size_t get_numeric_type_size(NumericType numeric_type) {
+    switch (numeric_type) {
+        case NumericType::Float32:
+            return 4;
+        case NumericType::Float16:
+            return 2;
+        case NumericType::UInt8:
+        case NumericType::Int8:
+            return 1;
+        default:
+            FAISS_THROW_MSG(
+                    "Unknown Numeric Type. Only supports Float32, Float16");
+    }
+}
+
+/** Parent class for the optional search parameters.
  *
  * Sub-classes with additional search parameters should inherit this class.
  * Ownership of the object fields is always to the caller.
@@ -52,12 +86,12 @@ struct DistanceComputer;
 struct SearchParameters {
     /// if non-null, only these IDs will be considered during search.
     IDSelector* sel = nullptr;
-
     /// make sure we can dynamic_cast this
     virtual ~SearchParameters() {}
 };
 
-/** Abstract structure for an index, supports adding vectors and searching them.
+/** Abstract structure for an index, supports adding vectors and searching
+ * them.
  *
  * All vectors provided at add or search time are 32-bit float arrays,
  * although the internal representation may vary.
@@ -69,9 +103,6 @@ struct Index {
     int d;        ///< vector dimension
     idx_t ntotal; ///< total nb of indexed vectors
     bool verbose; ///< verbosity level
-
-    /// both IP and COSINE are regarded as INNER_PRODUCT in faiss
-    bool is_cosine;
 
     /// set if the Index does not require training, or if training is
     /// done already
@@ -94,9 +125,17 @@ struct Index {
     /** Perform training on a representative set of vectors
      *
      * @param n      nb of training vectors
-     * @param x      training vecors, size n * d
+     * @param x      training vectors, size n * d
      */
     virtual void train(idx_t n, const float* x);
+
+    virtual void train_ex(idx_t n, const void* x, NumericType numeric_type) {
+        if (numeric_type == NumericType::Float32) {
+            train(n, static_cast<const float*>(x));
+        } else {
+            FAISS_THROW_MSG("Index::train: unsupported numeric type");
+        }
+    }
 
     /** Add n vectors of dimension d to the index.
      *
@@ -108,6 +147,14 @@ struct Index {
      */
     virtual void add(idx_t n, const float* x) = 0;
 
+    virtual void add_ex(idx_t n, const void* x, NumericType numeric_type) {
+        if (numeric_type == NumericType::Float32) {
+            add(n, static_cast<const float*>(x));
+        } else {
+            FAISS_THROW_MSG("Index::add: unsupported numeric type");
+        }
+    }
+
     /** Same as add, but stores xids instead of sequential ids.
      *
      * The default implementation fails with an assertion, as it is
@@ -118,6 +165,17 @@ struct Index {
      * @param xids      if non-null, ids to store for the vectors (size n)
      */
     virtual void add_with_ids(idx_t n, const float* x, const idx_t* xids);
+    virtual void add_with_ids_ex(
+            idx_t n,
+            const void* x,
+            NumericType numeric_type,
+            const idx_t* xids) {
+        if (numeric_type == NumericType::Float32) {
+            add_with_ids(n, static_cast<const float*>(x), xids);
+        } else {
+            FAISS_THROW_MSG("Index::add_with_ids: unsupported numeric type");
+        }
+    }
 
     /** query n vectors of dimension d to the index.
      *
@@ -137,6 +195,26 @@ struct Index {
             float* distances,
             idx_t* labels,
             const SearchParameters* params = nullptr) const = 0;
+
+    virtual void search_ex(
+            idx_t n,
+            const void* x,
+            NumericType numeric_type,
+            idx_t k,
+            float* distances,
+            idx_t* labels,
+            const SearchParameters* params = nullptr) const {
+        if (numeric_type == NumericType::Float32) {
+            search(n,
+                   static_cast<const float*>(x),
+                   k,
+                   distances,
+                   labels,
+                   params);
+        } else {
+            FAISS_THROW_MSG("Index::search: unsupported numeric type");
+        }
+    }
 
     /** query n vectors of dimension d to the index.
      *
@@ -158,7 +236,8 @@ struct Index {
 
     /** return the indexes of the k vectors closest to the query x.
      *
-     * This function is identical as search but only return labels of neighbors.
+     * This function is identical as search but only return labels of
+     * neighbors.
      * @param n           number of vectors
      * @param x           input vectors to search, size n * d
      * @param labels      output labels of the NNs, size n*k
@@ -179,16 +258,17 @@ struct Index {
      *
      * this function may not be defined for some indexes
      * @param key         id of the vector to reconstruct
-     * @param recons      reconstucted vector (size d)
+     * @param recons      reconstructed vector (size d)
      */
     virtual void reconstruct(idx_t key, float* recons) const;
 
-    /** Reconstruct several stored vectors (or an approximation if lossy coding)
+    /** Reconstruct several stored vectors (or an approximation if lossy
+     * coding)
      *
      * this function may not be defined for some indexes
      * @param n           number of vectors to reconstruct
      * @param keys        ids of the vectors to reconstruct (size n)
-     * @param recons      reconstucted vector (size n * d)
+     * @param recons      reconstructed vector (size n * d)
      */
     virtual void reconstruct_batch(idx_t n, const idx_t* keys, float* recons)
             const;
@@ -198,7 +278,7 @@ struct Index {
      * this function may not be defined for some indexes
      * @param i0          index of the first vector in the sequence
      * @param ni          number of vectors in the sequence
-     * @param recons      reconstucted vector (size ni * d)
+     * @param recons      reconstructed vector (size ni * d)
      */
     virtual void reconstruct_n(idx_t i0, idx_t ni, float* recons) const;
 
@@ -223,6 +303,29 @@ struct Index {
             idx_t* labels,
             float* recons,
             const SearchParameters* params = nullptr) const;
+
+    /** Similar to search, but operates on a potentially different subset
+     * of the dataset for each query.
+     *
+     * The default implementation fails with an assertion, as it is
+     * not supported by all indexes.
+     *
+     * @param n           number of vectors
+     * @param x           input vectors, size n * d
+     * @param k_base      number of vectors to search from
+     * @param base_labels ids of the vectors to search from
+     * @param k           desired number of results per query
+     * @param distances   output pairwise distances, size n*k
+     * @param labels      output labels of the NNs, size n*k
+     */
+    virtual void search_subset(
+            idx_t n,
+            const float* x,
+            idx_t k_base,
+            const idx_t* base_labels,
+            idx_t k,
+            float* distances,
+            idx_t* labels) const;
 
     /** Computes a residual vector after indexing encoding.
      *
@@ -296,6 +399,13 @@ struct Index {
      * trained in the same way and have the same
      * parameters). Otherwise throw. */
     virtual void check_compatible_for_merge(const Index& otherIndex) const;
+
+    /** Add vectors that are computed with the standalone codec
+     *
+     * @param codes  codes to add size n * sa_code_size()
+     * @param xids   corresponding ids, size n
+     */
+    virtual void add_sa_codes(idx_t n, const uint8_t* codes, const idx_t* xids);
 };
 
 } // namespace faiss

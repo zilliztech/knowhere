@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -9,10 +9,12 @@ from __future__ import print_function
 import numpy as np
 import unittest
 import faiss
+import platform
 
 from common_faiss_tests import get_dataset_2
 from faiss.contrib.datasets import SyntheticDataset
 from faiss.contrib.inspect_tools import get_additive_quantizer_codebooks
+
 
 class TestEncodeDecode(unittest.TestCase):
 
@@ -263,6 +265,19 @@ class LatticeTest(unittest.TestCase):
     def test_ZnSphereCodecAlt24(self):
         self.run_ZnSphereCodecAlt(24, 14)
 
+    def test_lattice_index(self):
+        index = faiss.index_factory(96, "ZnLattice3x10_4")
+        rs = np.random.RandomState(123)
+        xq = rs.randn(10, 96).astype('float32')
+        xb = rs.randn(20, 96).astype('float32')
+        index.train(xb)
+        index.add(xb)
+        D, I = index.search(xq, 5)
+        for i in range(10):
+            recons = index.reconstruct_batch(I[i, :])
+            ref_dis = ((recons - xq[i]) ** 2).sum(1)
+            np.testing.assert_allclose(D[i, :], ref_dis, atol=1e-4)
+
 
 class TestBitstring(unittest.TestCase):
 
@@ -346,6 +361,27 @@ class TestIVFTransfer(unittest.TestCase):
         np.testing.assert_array_equal(Dref, Dnew)
 
 
+class TestIDMap(unittest.TestCase):
+    def test_idmap(self):
+        ds = SyntheticDataset(32, 2000, 200, 100)
+        ids = np.random.randint(10000, size=ds.nb, dtype='int64')
+        index = faiss.index_factory(ds.d, "IDMap2,PQ8x2")
+        index.train(ds.get_train())
+        index.add_with_ids(ds.get_database(), ids)
+        Dref, Iref = index.search(ds.get_queries(), 10)
+
+        index.reset()
+
+        index.train(ds.get_train())
+        codes = index.index.sa_encode(ds.get_database())
+        index.add_sa_codes(codes, ids)
+        Dnew, Inew = index.search(ds.get_queries(), 10)
+
+        np.testing.assert_array_equal(Iref, Inew)
+        np.testing.assert_array_equal(Dref, Dnew)
+        
+
+
 class TestRefine(unittest.TestCase):
 
     def test_refine(self):
@@ -393,6 +429,8 @@ class TestRefine(unittest.TestCase):
 
         np.testing.assert_array_equal(codes1, codes2)
 
+    @unittest.skipIf(platform.system() == 'Windows',
+                     'Does not work on Windows after numpy 2 upgrade.')
     def test_equiv_sh(self):
         """ make sure that the IVFSpectralHash sa_encode function gives the same
         result as the concatenated RQ + LSH index sa_encode """

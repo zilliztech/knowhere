@@ -10,14 +10,14 @@ import logging
 import os
 import pickle
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 from zipfile import ZipFile
 
-import faiss  # @manual=//faiss/python:pyfaiss_gpu
+import faiss  # @manual=//faiss/python:pyfaiss
 
 import numpy as np
-import submitit
-from faiss.contrib.datasets import (  # @manual=//faiss/contrib:faiss_contrib_gpu
+import submitit  # @manual=fbsource//third-party/submitit:submitit
+from faiss.contrib.datasets import (  # @manual=//faiss/contrib:faiss_contrib
     dataset_from_name,
 )
 
@@ -45,16 +45,16 @@ def merge_rcq_itq(
 
 @dataclass
 class BenchmarkIO:
-    path: str
+    path: str  # local path
+
+    def __init__(self, path: str):
+        self.path = path
+        self.cached_ds: Dict[Any, Any] = {}
 
     def clone(self):
         return BenchmarkIO(path=self.path)
 
-    def __post_init__(self):
-        self.cached_ds = {}
-
-    # TODO(kuarora): rename it as get_local_file
-    def get_local_filename(self, filename):
+    def get_local_filepath(self, filename):
         if len(filename) > 184:
             fn, ext = os.path.splitext(filename)
             filename = (
@@ -71,7 +71,7 @@ class BenchmarkIO:
         bucket: Optional[str] = None,
         path: Optional[str] = None,
     ):
-        return self.get_local_filename(filename)
+        return self.get_local_filepath(filename)
 
     def upload_file_to_blobstore(
         self,
@@ -83,7 +83,7 @@ class BenchmarkIO:
         pass
 
     def file_exist(self, filename: str):
-        fn = self.get_local_filename(filename)
+        fn = self.get_local_filepath(filename)
         exists = os.path.exists(fn)
         logger.info(f"{filename} {exists=}")
         return exists
@@ -111,7 +111,7 @@ class BenchmarkIO:
         values: List[Any],
         overwrite: bool = False,
     ):
-        fn = self.get_local_filename(filename)
+        fn = self.get_local_filepath(filename)
         with ZipFile(fn, "w") as zip_file:
             for key, value in zip(keys, values, strict=True):
                 with zip_file.open(key, "w", force_zip64=True) as f:
@@ -185,11 +185,12 @@ class BenchmarkIO:
         self,
         nparray: np.ndarray,
         filename: str,
+        overwrite: bool = False,
     ):
-        fn = self.get_local_filename(filename)
+        fn = self.get_local_filepath(filename)
         logger.info(f"Saving nparray {nparray.shape} to {fn}")
         np.save(fn, nparray)
-        self.upload_file_to_blobstore(filename)
+        self.upload_file_to_blobstore(filename=filename, overwrite=overwrite)
 
     def read_json(
         self,
@@ -208,11 +209,11 @@ class BenchmarkIO:
         filename: str,
         overwrite: bool = False,
     ):
-        fn = self.get_local_filename(filename)
+        fn = self.get_local_filepath(filename)
         logger.info(f"Saving json {json_dict} to {fn}")
         with open(fn, "w") as fp:
             json.dump(json_dict, fp)
-        self.upload_file_to_blobstore(filename, overwrite=overwrite)
+        self.upload_file_to_blobstore(filename=filename, overwrite=overwrite)
 
     def read_index(
         self,
@@ -238,7 +239,7 @@ class BenchmarkIO:
         index: faiss.Index,
         filename: str,
     ):
-        fn = self.get_local_filename(filename)
+        fn = self.get_local_filepath(filename)
         logger.info(f"Saving index to {fn}")
         faiss.write_index(index, fn)
         self.upload_file_to_blobstore(filename)

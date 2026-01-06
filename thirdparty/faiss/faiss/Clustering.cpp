@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -19,7 +19,6 @@
 
 #include <omp.h>
 
-#include <faiss/FaissHook.h>
 #include <faiss/IndexFlat.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/kmeans1d.h>
@@ -34,30 +33,15 @@ Clustering::Clustering(int d, int k) : d(d), k(k) {}
 Clustering::Clustering(int d, int k, const ClusteringParameters& cp)
         : ClusteringParameters(cp), d(d), k(k) {}
 
-static double imbalance_factor(int n, int k, int64_t* assign) {
-    std::vector<int> hist(k, 0);
-    for (int i = 0; i < n; i++)
-        hist[assign[i]]++;
-
-    double tot = 0, uf = 0;
-
-    for (int i = 0; i < k; i++) {
-        tot += hist[i];
-        uf += hist[i] * (double)hist[i];
-    }
-    uf = uf * k / (tot * tot);
-
-    return uf;
-}
-
 void Clustering::post_process_centroids() {
     if (spherical) {
         fvec_renorm_L2(d, k, centroids.data());
     }
 
     if (int_centroids) {
-        for (size_t i = 0; i < centroids.size(); i++)
+        for (size_t i = 0; i < centroids.size(); i++) {
             centroids[i] = roundf(centroids[i]);
+        }
     }
 }
 
@@ -228,7 +212,7 @@ void compute_centroids(
  * It works by slightly changing the centroids to make 2 clusters from
  * a single one. Takes the same arguments as compute_centroids.
  *
- * @return           nb of spliting operations (larger is worse)
+ * @return           nb of splitting operations (larger is worse)
  */
 int split_clusters(
         size_t d,
@@ -258,7 +242,7 @@ int split_clusters(
                    centroids + cj * d,
                    sizeof(*centroids) * d);
 
-            /* small symmetric pertubation */
+            /* small symmetric perturbation */
             for (size_t j = 0; j < d; j++) {
                 if (j % 2 == 0) {
                     centroids[ci * d + j] *= 1 + EPS;
@@ -280,123 +264,6 @@ int split_clusters(
 }
 
 } // namespace
-
-ClusteringType clustering_type = ClusteringType::K_MEANS;
-double early_stop_threshold = 0.0;
-
-void Clustering::kmeans_algorithm(
-        std::vector<int>& centroids_index,
-        int64_t random_seed,
-        size_t n_input_centroids,
-        size_t d,
-        size_t k,
-        idx_t nx,
-        const uint8_t* x_in) {
-    // centroids with random points from the dataset
-    rand_perm (centroids_index.data(), nx, random_seed);
-}
-
-void Clustering::kmeans_plus_plus_algorithm(
-        std::vector<int>& centroids_index,
-        int64_t random_seed,
-        size_t n_input_centroids,
-        size_t d,
-        size_t k,
-        idx_t nx,
-        const uint8_t* x_in) {
-    FAISS_THROW_IF_NOT_MSG (
-       n_input_centroids == 0,
-       "Kmeans plus plus only support the provided input centroids number of zero"
-    );
-
-    size_t thread_max_num = omp_get_max_threads();
-    auto x = reinterpret_cast<const float*>(x_in);
-
-    // The square of distance to current centroid
-    std::vector<float> dx_distance(nx, 1.0 / 0.0);
-    std::vector<float> pre_sum(nx);
-
-    // task of each thread when calculate P(x)
-    std::vector<size_t> task(thread_max_num, nx);
-    size_t step = (nx + thread_max_num - 1) / thread_max_num;
-    for (size_t i = 0; i + 1 < thread_max_num; i++) {
-        task[i] = (i + 1) * step;
-    }
-
-    // Record the centroids that has been calculated
-    // Input :
-    // nx : int -> nb of points
-    // d : size_t -> nb of dimensions
-    // k : size_t -> nb of centroids
-    // x : unsigned char -> data : the x[i*d] means the i-th point's d-th value
-    // Output:
-    // centroids : array -> the cluster centers
-
-    // 1. get the pre-n-input-centroids: if equal to 0,
-    //   then should get the first random start point
-    RandomGenerator rng (random_seed);
-    //if (n_input_centroids == 0) {}
-    size_t first_center;
-    first_center = static_cast<size_t>(rng.rand_int64() % nx);
-    centroids_index[0] = first_center;
-
-    // 2. use the first few centroids to calculate the next centroid,and already has first random start point
-    //size_t current_centroids = n_input_centroids == 0 ? 1 : n_input_centroids;
-    size_t current_centroids = 1;
-    // For every epoch there is i-th centroids,and we want to calculate the i+1 centroid
-    for (size_t i = current_centroids; i < k; i++) {
-        auto last_centroids_data = x + centroids_index[i - 1] * d;
-        // for every point
-        #pragma omp parallel for
-        for (size_t point_it = 0; point_it < nx; point_it++) {
-            float distance_of_point_and_centroid = 0;
-            distance_of_point_and_centroid = fvec_L2sqr((x + point_it * d), last_centroids_data, d);
-            if (distance_of_point_and_centroid < dx_distance[point_it]) {
-                dx_distance[point_it] = distance_of_point_and_centroid;
-            }
-        }
-
-        //calculate P(x)
-        #pragma omp parallel for
-        for (size_t task_i = 0; task_i < thread_max_num; task_i++) {
-            size_t left = (task_i == 0) ? 0 : task[task_i - 1];
-            size_t right = task[task_i];
-            pre_sum[left] = dx_distance[left];
-            for (size_t j = left + 1; j < right; j++) {
-                pre_sum[j] = pre_sum[j - 1] + dx_distance[j];
-            }
-        }
-        float sum = 0.0;
-        for (size_t task_i = 0; task_i < thread_max_num; task_i++) {
-            sum += pre_sum[task[task_i] - 1];
-        }
-
-        // the random num is [0,sum]
-        float choose_centroid_random = rng.rand_double() * sum;
-
-        size_t task_i = 0;
-        for (task_i = 0; task_i < thread_max_num; task_i++) {
-            auto task_pre_sum = pre_sum[task[task_i] - 1];
-            if (choose_centroid_random - task_pre_sum <= 0) {
-                break;
-            }
-            choose_centroid_random -= task_pre_sum;
-        }
-
-        size_t left = task_i == 0 ? 0 : task[task_i - 1];
-        size_t right = task[task_i];
-
-        //find the next centroid using Binary search and the left is what we want
-        while (left < right) {
-            size_t mid = left + (right - left) / 2;
-            if (pre_sum[mid] < choose_centroid_random)
-                left = mid + 1;
-            else
-                right = mid;
-        }
-        centroids_index[i] = left;
-    }
-}
 
 void Clustering::train_encoded(
         idx_t nx,
@@ -540,29 +407,52 @@ void Clustering::train_encoded(
             printf("Outer iteration %d / %d\n", redo, nredo);
         }
 
-        {
-            int64_t random_seed = actual_seed + 1 + redo * 15486557L;
-            std::vector<int> centroids_index(nx);
+        // initialize centroids using the selected method
+        centroids.resize(d * k);
 
-            if (ClusteringType::K_MEANS == clustering_type) {
-                //Use classic kmeans algorithm
-                kmeans_algorithm(centroids_index, random_seed, n_input_centroids, d, k, nx, x_in);
-            } else if (ClusteringType::K_MEANS_PLUS_PLUS == clustering_type) {
-                //Use kmeans++ algorithm
-                kmeans_plus_plus_algorithm(centroids_index, random_seed, n_input_centroids, d, k, nx, x_in);
-            } else {
-                FAISS_THROW_FMT ("Clustering Type is knonws: %d", (int)clustering_type);
-            }
-
-            centroids.resize(d * k);
-            if (!codec) {
-                for (int i = n_input_centroids; i < k; i++) {
-                    memcpy(&centroids[i * d], x + centroids_index[i] * line_size, line_size);
+        size_t k_to_init = k - n_input_centroids;
+        if (k_to_init > 0) {
+            // Fast path for RANDOM initialization - preserves exact original
+            // behavior
+            if (init_method == ClusteringInitMethod::RANDOM) {
+                std::vector<int> perm(nx);
+                rand_perm(perm.data(), nx, actual_seed + 1 + redo * 15486557L);
+                for (size_t i = 0; i < k_to_init; i++) {
+                    if (!codec) {
+                        memcpy(centroids.data() + (n_input_centroids + i) * d,
+                               x + perm[n_input_centroids + i] * line_size,
+                               line_size);
+                    } else {
+                        codec->sa_decode(
+                                1,
+                                x + perm[n_input_centroids + i] * line_size,
+                                centroids.data() + (n_input_centroids + i) * d);
+                    }
                 }
             } else {
-                for (int i = n_input_centroids; i < k; i++) {
-                    codec->sa_decode(1, x + centroids_index[i] * line_size, &centroids[i * d]);
+                // For k-means++ and AFK-MC², we need all vectors decoded
+                const float* x_float = nullptr;
+                std::vector<float> x_decoded;
+
+                if (!codec) {
+                    x_float = reinterpret_cast<const float*>(x);
+                } else {
+                    // Decode all vectors for initialization
+                    x_decoded.resize(nx * d);
+                    codec->sa_decode(nx, x, x_decoded.data());
+                    x_float = x_decoded.data();
                 }
+
+                ClusteringInitialization initializer(d, k_to_init);
+                initializer.method = init_method;
+                initializer.seed = actual_seed + 1 + redo * 15486557L;
+                initializer.afkmc2_chain_length = afkmc2_chain_length;
+                initializer.init_centroids(
+                        nx,
+                        x_float,
+                        centroids.data() + n_input_centroids * d,
+                        n_input_centroids,
+                        n_input_centroids > 0 ? centroids.data() : nullptr);
             }
         }
 
@@ -583,7 +473,6 @@ void Clustering::train_encoded(
         // k-means iterations
 
         float obj = 0;
-        float prev_objective = 0;
         for (int i = 0; i < niter; i++) {
             double t0s = getmillisecs();
 
@@ -672,20 +561,28 @@ void Clustering::train_encoded(
             }
 
             index.add(k, centroids.data());
-
-            // Early stop strategy
-            float diff = (prev_objective == 0) ? std::numeric_limits<float>::max()
-                                               : (prev_objective - stats.obj) / prev_objective;
-            prev_objective = stats.obj;
-            if (diff < early_stop_threshold / 100.) {
-                break;
-            }
-
             InterruptCallback::check();
+
+            // Early stopping: if objective didn't change, we've converged.
+            // Safe to access iteration_stats[size - 2] because we push_back
+            // above, so size >= i + 1, and when i > 0 we have size >= 2.
+            if (i > 0) {
+                float prev_obj =
+                        iteration_stats[iteration_stats.size() - 2].obj;
+                if (obj == prev_obj) {
+                    if (verbose) {
+                        printf("\n  Converged at iteration %d: "
+                               "objective did not change\n",
+                               i);
+                    }
+                    break;
+                }
+            }
         }
 
-        if (verbose)
+        if (verbose) {
             printf("\n");
+        }
         if (nredo > 1) {
             if ((lower_is_better && obj < best_obj) ||
                 (!lower_is_better && obj > best_obj)) {

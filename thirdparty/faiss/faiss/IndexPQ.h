@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -31,10 +31,7 @@ struct IndexPQ : IndexFlatCodes {
      * @param M      number of subquantizers
      * @param nbits  number of bit per subvector index
      */
-    IndexPQ(int d,        ///< dimensionality of the input vectors
-            size_t M,     ///< number of subquantizers
-            size_t nbits, ///< number of bit per subvector index
-            MetricType metric = METRIC_L2);
+    IndexPQ(int d, size_t M, size_t nbits, MetricType metric = METRIC_L2);
 
     IndexPQ();
 
@@ -110,8 +107,6 @@ struct IndexPQ : IndexFlatCodes {
      * @param dis  output distances, size n * ntotal
      */
     void hamming_distance_table(idx_t n, const float* x, int32_t* dis) const;
-
-    size_t cal_size() const;
 };
 
 /// override search parameters from the class
@@ -158,6 +153,7 @@ struct MultiIndexQuantizer : Index {
 
     /// add and reset will crash at runtime
     void add(idx_t n, const float* x) override;
+
     void reset() override;
 
     MultiIndexQuantizer() {}
@@ -168,7 +164,7 @@ struct MultiIndexQuantizer : Index {
 // block size used in MultiIndexQuantizer::search
 FAISS_API extern int multi_index_quantizer_search_bs;
 
-/** MultiIndexQuantizer where the PQ assignmnet is performed by sub-indexes
+/** MultiIndexQuantizer where the PQ assignment is performed by sub-indexes
  */
 struct MultiIndexQuantizer2 : MultiIndexQuantizer {
     /// M Indexes on d / M dimensions

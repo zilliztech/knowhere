@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -17,6 +17,7 @@ print("path:", faiss_datasets.__file__)
 
 faiss_datasets.dataset_basedir = '/checkpoint/matthijs/simsearch/'
 
+
 def sanitize(x):
     return np.ascontiguousarray(x, dtype='float32')
 
@@ -24,6 +25,7 @@ def sanitize(x):
 #################################################################
 # Dataset
 #################################################################
+
 
 class DatasetCentroids(faiss_datasets.Dataset):
 

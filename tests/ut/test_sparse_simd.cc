@@ -56,7 +56,7 @@ accumulate_posting_list_ip_scalar_ref(const uint32_t* doc_ids, const float* doc_
 
 TEST_CASE("Test Sparse SIMD AVX512 - Basic Correctness", "[sparse simd avx512]") {
 #if defined(__x86_64__) || defined(_M_X64)
-    if (!faiss::InstructionSet::GetInstance().AVX512F()) {
+    if (!faiss::cppcontrib::knowhere::InstructionSet::GetInstance().AVX512F()) {
         SKIP("AVX512 not available on this CPU");
     }
 
@@ -95,7 +95,7 @@ TEST_CASE("Test Sparse SIMD AVX512 - Basic Correctness", "[sparse simd avx512]")
 
 TEST_CASE("Test Sparse SIMD AVX512 - SIMD Boundary Cases", "[sparse simd avx512]") {
 #if defined(__x86_64__) || defined(_M_X64)
-    if (!faiss::InstructionSet::GetInstance().AVX512F()) {
+    if (!faiss::cppcontrib::knowhere::InstructionSet::GetInstance().AVX512F()) {
         SKIP("AVX512 not available on this CPU");
     }
 
@@ -155,7 +155,7 @@ TEST_CASE("Test Sparse SIMD AVX512 - SIMD Boundary Cases", "[sparse simd avx512]
 
 TEST_CASE("Test Sparse SIMD AVX512 - Edge Cases", "[sparse simd avx512]") {
 #if defined(__x86_64__) || defined(_M_X64)
-    if (!faiss::InstructionSet::GetInstance().AVX512F()) {
+    if (!faiss::cppcontrib::knowhere::InstructionSet::GetInstance().AVX512F()) {
         SKIP("AVX512 not available on this CPU");
     }
 
@@ -227,7 +227,7 @@ TEST_CASE("Test Sparse SIMD AVX512 - Edge Cases", "[sparse simd avx512]") {
 
 TEST_CASE("Test Sparse SIMD AVX512 - Special Values", "[sparse simd avx512]") {
 #if defined(__x86_64__) || defined(_M_X64)
-    if (!faiss::InstructionSet::GetInstance().AVX512F()) {
+    if (!faiss::cppcontrib::knowhere::InstructionSet::GetInstance().AVX512F()) {
         SKIP("AVX512 not available on this CPU");
     }
 
@@ -281,7 +281,7 @@ TEST_CASE("Test Sparse SIMD AVX512 - Special Values", "[sparse simd avx512]") {
 
 TEST_CASE("Test Sparse SIMD AVX512 - Multiple Accumulations", "[sparse simd avx512]") {
 #if defined(__x86_64__) || defined(_M_X64)
-    if (!faiss::InstructionSet::GetInstance().AVX512F()) {
+    if (!faiss::cppcontrib::knowhere::InstructionSet::GetInstance().AVX512F()) {
         SKIP("AVX512 not available on this CPU");
     }
 

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -17,21 +17,24 @@ namespace faiss {
 template <typename C>
 void HeapArray<C>::heapify() {
 #pragma omp parallel for
-    for (int64_t j = 0; j < nh; j++)
+    for (int64_t j = 0; j < nh; j++) {
         heap_heapify<C>(k, val + j * k, ids + j * k);
+    }
 }
 
 template <typename C>
 void HeapArray<C>::reorder() {
 #pragma omp parallel for
-    for (int64_t j = 0; j < nh; j++)
+    for (int64_t j = 0; j < nh; j++) {
         heap_reorder<C>(k, val + j * k, ids + j * k);
+    }
 }
 
 template <typename C>
 void HeapArray<C>::addn(size_t nj, const T* vin, TI j0, size_t i0, int64_t ni) {
-    if (ni == -1)
+    if (ni == -1) {
         ni = nh;
+    }
     assert(i0 >= 0 && i0 + ni <= nh);
 #pragma omp parallel for if (ni * nj > 100000)
     for (int64_t i = i0; i < i0 + ni; i++) {
@@ -60,8 +63,9 @@ void HeapArray<C>::addn_with_ids(
         addn(nj, vin, 0, i0, ni);
         return;
     }
-    if (ni == -1)
+    if (ni == -1) {
         ni = nh;
+    }
     assert(i0 >= 0 && i0 + ni <= nh);
 #pragma omp parallel for if (ni * nj > 100000)
     for (int64_t i = i0; i < i0 + ni; i++) {
@@ -115,24 +119,27 @@ void HeapArray<C>::per_line_extrema(T* out_val, TI* out_ids) const {
         int64_t imin = -1;
         typename C::T xval = C::Crev::neutral();
         const typename C::T* x_ = val + j * k;
-        for (size_t i = 0; i < k; i++)
+        for (size_t i = 0; i < k; i++) {
             if (C::cmp(x_[i], xval)) {
                 xval = x_[i];
                 imin = i;
             }
-        if (out_val)
+        }
+        if (out_val) {
             out_val[j] = xval;
+        }
 
         if (out_ids) {
-            if (ids && imin != -1)
+            if (ids && imin != -1) {
                 out_ids[j] = ids[j * k + imin];
-            else
+            } else {
                 out_ids[j] = imin;
+            }
         }
     }
 }
 
-// explicit instanciations
+// explicit instantiations
 
 template struct HeapArray<CMin<float, int64_t>>;
 template struct HeapArray<CMax<float, int64_t>>;
@@ -231,7 +238,7 @@ void merge_knn_results(
     }
 }
 
-// explicit instanciations
+// explicit instantiations
 #define INSTANTIATE(C, distance_t)                                \
     template void merge_knn_results<int64_t, C<distance_t, int>>( \
             size_t,                                               \
@@ -250,20 +257,18 @@ INSTANTIATE(CMax, int32_t);
 /**********************************************************
  * reorder_2_heaps
  **********************************************************/
-/** reduce two results: k_base result<base_labels, base_distances> and
- * k result<labels, distances> to k result<labels, distances>
- */
+
 template <class C>
 void reorder_2_heaps(
-        size_t n,
-        size_t k,
+        int64_t n,
+        int64_t k,
         typename C::TI* __restrict labels,
         float* __restrict distances,
-        size_t k_base,
+        int64_t k_base,
         const typename C::TI* __restrict base_labels,
         const float* __restrict base_distances) {
 #pragma omp parallel for if (n > 1)
-    for (size_t i = 0; i < n; i++) {
+    for (int64_t i = 0; i < n; i++) {
         typename C::TI* idxo = labels + i * k;
         float* diso = distances + i * k;
         const typename C::TI* idxi = base_labels + i * k_base;
@@ -276,21 +281,23 @@ void reorder_2_heaps(
         heap_reorder<C>(k, diso, idxo);
     }
 }
+
 template void reorder_2_heaps<CMax<float, int64_t>>(
-        size_t n,
-        size_t k,
+        int64_t n,
+        int64_t k,
         int64_t* __restrict labels,
         float* __restrict distances,
-        size_t k_base,
+        int64_t k_base,
         const int64_t* __restrict base_labels,
         const float* __restrict base_distances);
 
 template void reorder_2_heaps<CMin<float, int64_t>>(
-        size_t n,
-        size_t k,
+        int64_t n,
+        int64_t k,
         int64_t* __restrict labels,
         float* __restrict distances,
-        size_t k_base,
+        int64_t k_base,
         const int64_t* __restrict base_labels,
         const float* __restrict base_distances);
+
 } // namespace faiss

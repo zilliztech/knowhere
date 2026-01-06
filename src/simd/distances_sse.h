@@ -17,6 +17,8 @@
 #include "knowhere/operands.h"
 
 namespace faiss {
+namespace cppcontrib {
+namespace knowhere {
 
 /// Squared L2 distance between two vectors
 float
@@ -62,13 +64,13 @@ ivec_L2sqr_sse(const int8_t* x, const int8_t* y, size_t d);
 // bf16
 
 float
-bf16_vec_inner_product_sse(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
+bf16_vec_inner_product_sse(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d);
 
 float
-bf16_vec_L2sqr_sse(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
+bf16_vec_L2sqr_sse(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d);
 
 float
-bf16_vec_norm_L2sqr_sse(const knowhere::bf16* x, size_t d);
+bf16_vec_norm_L2sqr_sse(const ::knowhere::bf16* x, size_t d);
 
 ///////////////////////////////////////////////////////////////////////////////
 // int8
@@ -93,4 +95,7 @@ rabitq_dp_popcnt_sse(const uint8_t* q, const uint8_t* x, const size_t d, const s
 // minhash
 uint64_t
 calculate_hash_sse(const char* data, size_t size);
+
+}  // namespace knowhere
+}  // namespace cppcontrib
 }  // namespace faiss

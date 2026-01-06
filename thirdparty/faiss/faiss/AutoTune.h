@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -32,7 +32,7 @@ struct AutoTuneCriterion {
 
     AutoTuneCriterion(idx_t nq, idx_t nnn);
 
-    /** Intitializes the gt_D and gt_I vectors. Must be called before evaluating
+    /** Initializes the gt_D and gt_I vectors. Must be called before evaluating
      *
      * @param gt_D_in  size nq * gt_nnn
      * @param gt_I_in  size nq * gt_nnn
@@ -86,7 +86,7 @@ struct OperatingPoint {
     double perf;     ///< performance measure (output of a Criterion)
     double t;        ///< corresponding execution time (ms)
     std::string key; ///< key that identifies this op pt
-    int64_t cno;     ///< integer identifer
+    int64_t cno;     ///< integer identifier
 };
 
 struct OperatingPoints {

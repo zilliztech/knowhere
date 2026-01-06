@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -45,17 +45,12 @@ struct IndexPQFastScan : IndexFastScan {
 
     void compute_codes(uint8_t* codes, idx_t n, const float* x) const override;
 
-    void compute_float_LUT(float* lut, idx_t n, const float* x) const override;
+    void compute_float_LUT(
+            float* lut,
+            idx_t n,
+            const float* x,
+            const FastScanDistancePostProcessing& context) const override;
 
-    /** Decode a set of vectors.
-     *
-     *  NOTE: The codes in the IndexPQFastScan object are non-contiguous.
-     *        But this method requires a contiguous representation.
-     *
-     * @param n       number of vectors
-     * @param bytes   input encoded vectors, size n * code_size
-     * @param x       output vectors, size n * d
-     */
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
 };
 

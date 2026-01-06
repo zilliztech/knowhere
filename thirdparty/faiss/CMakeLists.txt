@@ -1,3 +1,4 @@
+# @lint-ignore-every LICENSELINT
 # Copyright (c) Facebook, Inc. and its affiliates.
 # All rights reserved.
 #
@@ -5,7 +6,7 @@
 # LICENSE file in the root directory of this source tree.
 
 # =============================================================================
-# Copyright (c) 2023, NVIDIA CORPORATION.
+# Copyright (c) 2023-2024, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
 # in compliance with the License. You may obtain a copy of the License at
@@ -18,67 +19,81 @@
 # the License.
 # =============================================================================
 
-cmake_minimum_required(VERSION 3.23.1 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.24.0 FATAL_ERROR)
 
 set(FAISS_LANGUAGES CXX)
 
 if(FAISS_ENABLE_GPU)
-  list(APPEND FAISS_LANGUAGES CUDA)
+  if (FAISS_ENABLE_ROCM)
+    list(APPEND FAISS_LANGUAGES HIP)
+    list(PREPEND CMAKE_MODULE_PATH "/opt/rocm/lib/cmake")
+    list(PREPEND CMAKE_PREFIX_PATH "/opt/rocm")
+  else()
+    list(APPEND FAISS_LANGUAGES CUDA)
+  endif()
 endif()
 
-if(FAISS_ENABLE_RAFT)
-include(cmake/thirdparty/fetch_rapids.cmake)
-include(rapids-cmake)
-include(rapids-cpm)
-include(rapids-cuda)
-include(rapids-export)
-include(rapids-find)
+if(FAISS_ENABLE_CUVS)
+  include(cmake/thirdparty/fetch_rapids.cmake)
+  include(rapids-cmake)
+  include(rapids-cpm)
+  include(rapids-cuda)
+  include(rapids-export)
+  include(rapids-find)
 
-rapids_cuda_init_architectures(faiss)
-rapids_cuda_init_architectures(pyfaiss)
-rapids_cuda_init_architectures(faiss_c_library)
+  rapids_cuda_init_architectures(faiss)
+  rapids_cuda_init_architectures(pyfaiss)
+  rapids_cuda_init_architectures(faiss_c_library)
 endif()
 
 project(faiss
-  VERSION 1.8.0
+  VERSION 1.13.2
   DESCRIPTION "A library for efficient similarity search and clustering of dense vectors."
   HOMEPAGE_URL "https://github.com/facebookresearch/faiss"
   LANGUAGES ${FAISS_LANGUAGES})
 include(GNUInstallDirs)
 
-set(CMAKE_CXX_STANDARD 17)
+if(FAISS_ENABLE_CUVS)
+  set(CMAKE_CXX_STANDARD 17)
+else()
+  set(CMAKE_CXX_STANDARD 20)
+endif()
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 
-# Valid values are "generic", "avx2", "avx512".
+# Valid values are "generic", "avx2", "avx512", "avx512_spr", "sve".
 option(FAISS_OPT_LEVEL "" "generic")
 option(FAISS_ENABLE_GPU "Enable support for GPU indexes." ON)
-option(FAISS_ENABLE_RAFT "Enable RAFT for GPU indexes." OFF)
+option(FAISS_GPU_STATIC "Link GPU libraries statically." OFF)
+option(FAISS_ENABLE_CUVS "Enable cuVS for GPU indexes." OFF)
+option(FAISS_ENABLE_ROCM "Enable ROCm for GPU indexes." OFF)
+option(FAISS_ENABLE_MKL "Enable MKL." ON)
 option(FAISS_ENABLE_PYTHON "Build Python extension." ON)
 option(FAISS_ENABLE_C_API "Build C API." OFF)
-option(FAISS_ENABLE_CCACHE "Build with ccache." ON)
-
-if (FAISS_ENABLE_CCACHE)
-    find_program(CCACHE_FOUND ccache)
-    if (CCACHE_FOUND)
-        message(STATUS "Using ccache: ${CCACHE_FOUND}")
-        set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ${CCACHE_FOUND})
-        set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ${CCACHE_FOUND})
-        # let ccache preserve C++ comments, because some of them may be
-        # meaningful to the compiler
-        set(ENV{CCACHE_COMMENTS} "1")
-    endif (CCACHE_FOUND)
-endif()
+option(FAISS_ENABLE_EXTRAS "Build extras like benchmarks and demos" ON)
+option(FAISS_USE_LTO "Enable Link-Time optimization" OFF)
+option(FAISS_ENABLE_SVS "Enable SVS (Intel(R) Scalable Vector Search) integration." OFF)
+set(FAISS_SVS_RUNTIME_VERSION "v0" CACHE STRING "Version of the SVS runtime API to use")
+set_property(CACHE FAISS_SVS_RUNTIME_VERSION PROPERTY STRINGS "v0")
 
 if(FAISS_ENABLE_GPU)
-  set(CMAKE_CUDA_HOST_COMPILER ${CMAKE_CXX_COMPILER})
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DUSE_GPU")
-  enable_language(CUDA)
+  if(FAISS_ENABLE_ROCM)
+    enable_language(HIP)
+    add_definitions(-DUSE_AMD_ROCM)
+    find_package(HIP REQUIRED)
+    find_package(hipBLAS REQUIRED)
+    set(GPU_EXT_PREFIX "hip")
+    execute_process(COMMAND ${PROJECT_SOURCE_DIR}/faiss/gpu/hipify.sh)
+  else ()
+    set(CMAKE_CUDA_HOST_COMPILER ${CMAKE_CXX_COMPILER})
+    enable_language(CUDA)
+    set(GPU_EXT_PREFIX "cu")
+  endif()
 endif()
 
-if(FAISS_ENABLE_RAFT)
-  find_package(raft COMPONENTS compiled distributed)
-endif()
+if(FAISS_ENABLE_CUVS AND NOT TARGET cuvs::cuvs)
+   find_package(cuvs)
+ endif()
 
 add_subdirectory(faiss)
 
@@ -94,16 +109,22 @@ if(FAISS_ENABLE_C_API)
   add_subdirectory(c_api)
 endif()
 
-add_subdirectory(demos)
-add_subdirectory(benchs)
-add_subdirectory(tutorial/cpp)
+if(FAISS_ENABLE_EXTRAS)
+  add_subdirectory(demos)
+  add_subdirectory(benchs)
+  add_subdirectory(tutorial/cpp)
+endif()
 
 # CTest must be included in the top level to enable `make test` target.
 include(CTest)
 if(BUILD_TESTING)
   add_subdirectory(tests)
-
+  add_subdirectory(perf_tests)
   if(FAISS_ENABLE_GPU)
-    add_subdirectory(faiss/gpu/test)
+    if(FAISS_ENABLE_ROCM)
+      add_subdirectory(faiss/gpu/test)
+    else()
+      add_subdirectory(faiss/gpu/test)
+    endif()
   endif()
 endif()

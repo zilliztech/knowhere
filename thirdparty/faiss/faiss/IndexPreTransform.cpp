@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -48,8 +48,9 @@ void IndexPreTransform::prepend_transform(VectorTransform* ltrans) {
 
 IndexPreTransform::~IndexPreTransform() {
     if (own_fields) {
-        for (int i = 0; i < chain.size(); i++)
+        for (int i = 0; i < chain.size(); i++) {
             delete chain[i];
+        }
         delete index;
     }
 }
@@ -94,8 +95,9 @@ void IndexPreTransform::train(idx_t n, const float* x) {
             }
             index->train(n, prev_x);
         }
-        if (i == last_untrained)
+        if (i == last_untrained) {
             break;
+        }
         if (verbose) {
             printf("   Applying transform %d/%zd\n", i, chain.size());
         }
@@ -193,6 +195,20 @@ void IndexPreTransform::range_search(
     TransformedVectors tv(x, apply_chain(n, x));
     index->range_search(
             n, tv.x, radius, result, extract_index_search_params(params));
+}
+
+void IndexPreTransform::search_subset(
+        idx_t n,
+        const float* x,
+        idx_t k_base,
+        const idx_t* base_labels,
+        idx_t k,
+        float* distances,
+        idx_t* labels) const {
+    FAISS_THROW_IF_NOT(k > 0);
+    FAISS_THROW_IF_NOT(is_trained);
+    TransformedVectors tv(x, apply_chain(n, x));
+    index->search_subset(n, tv.x, k_base, base_labels, k, distances, labels);
 }
 
 void IndexPreTransform::reset() {

@@ -195,7 +195,7 @@ run_benchmark(const char* name, const SparseDataset& dataset) {
 
     // Check CPU capabilities
 #if defined(__x86_64__) || defined(_M_X64)
-    auto& inst_set = faiss::InstructionSet::GetInstance();
+    auto& inst_set = faiss::cppcontrib::knowhere::InstructionSet::GetInstance();
     printf("CPU Capabilities: AVX512F=%d, AVX2=%d\n", inst_set.AVX512F(), inst_set.AVX2());
 #else
     printf("CPU Capabilities: ARM/Apple Silicon (no SIMD)\n");

@@ -11,9 +11,9 @@
 
 #include "hook.h"
 
-#include <mutex>
+#include <faiss/cppcontrib/knowhere/FaissHook.h>
 
-#include "faiss/FaissHook.h"
+#include <mutex>
 
 #if defined(__x86_64__)
 #include "distances_avx.h"
@@ -46,7 +46,7 @@
 
 #include "distances_ref.h"
 
-namespace faiss {
+namespace faiss::cppcontrib::knowhere {
 
 #if defined(__x86_64__)
 bool use_avx512 = true;
@@ -117,6 +117,7 @@ decltype(u32_jaccard_distance_batch_4) u32_jaccard_distance_batch_4 = u32_jaccar
 decltype(u64_jaccard_distance) u64_jaccard_distance = u64_jaccard_distance_ref;
 decltype(minhash_lsh_hit) minhash_lsh_hit = minhash_lsh_hit_ref;
 decltype(u64_jaccard_distance_batch_4) u64_jaccard_distance_batch_4 = u64_jaccard_distance_batch_4_ref;
+
 ///////////////////////////////////////////////////////////////////////////////
 #if defined(__x86_64__)
 bool
@@ -616,8 +617,8 @@ fvec_hook(std::string& simd_type) {
 static int init_hook_ = []() {
     std::string simd_type;
     fvec_hook(simd_type);
-    faiss::sq_hook();
+    faiss::cppcontrib::knowhere::sq_hook();
     return 0;
 }();
 
-}  // namespace faiss
+}  // namespace faiss::cppcontrib::knowhere

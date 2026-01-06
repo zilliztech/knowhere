@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -40,7 +40,6 @@ struct IndexIVFPQFastScan : IndexIVFFastScan {
     /// if use_precompute_table size (nlist, pq.M, pq.ksub)
     AlignedTable<float> precomputed_table;
 
-    // todo agzuhva: add back cosine support from knowhere
     IndexIVFPQFastScan(
             Index* quantizer,
             size_t d,
@@ -48,17 +47,8 @@ struct IndexIVFPQFastScan : IndexIVFFastScan {
             size_t M,
             size_t nbits,
             MetricType metric = METRIC_L2,
-            int bbs = 32);
-
-    IndexIVFPQFastScan(
-            Index* quantizer,
-            size_t d,
-            size_t nlist,
-            size_t M,
-            size_t nbits,
-            bool is_cosine,
-            MetricType metric = METRIC_L2,
-            int bbs = 32);
+            int bbs = 32,
+            bool own_invlists = true);
 
     IndexIVFPQFastScan();
 
@@ -90,9 +80,13 @@ struct IndexIVFPQFastScan : IndexIVFFastScan {
             const float* x,
             const CoarseQuantized& cq,
             AlignedTable<float>& dis_tables,
-            AlignedTable<float>& biases) const override;
+            AlignedTable<float>& biases,
+            const FastScanDistancePostProcessing& context) const override;
 
-    void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
+    InvertedListScanner* get_InvertedListScanner(
+            bool store_pairs,
+            const IDSelector* sel,
+            const IVFSearchParameters*) const override;
 };
 
 } // namespace faiss

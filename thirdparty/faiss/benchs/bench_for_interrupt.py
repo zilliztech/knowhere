@@ -1,6 +1,5 @@
 #! /usr/bin/env python3
-
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -14,6 +13,7 @@ import argparse
 
 
 parser = argparse.ArgumentParser()
+
 
 def aa(*args, **kwargs):
     group.add_argument(*args, **kwargs)
@@ -80,6 +80,7 @@ index_1.add(xb)
 
 print('set nprobe=', nprobe)
 faiss.ParameterSpace().set_index_parameter(index_1, 'nprobe', nprobe)
+
 
 class ResultHeap:
     """ Combine query results from a sliced dataset """

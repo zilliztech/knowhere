@@ -12,9 +12,9 @@
 // knowhere-specific indices
 #pragma once
 
+#include "faiss/cppcontrib/knowhere/impl/ScalarQuantizer.h"
+#include "faiss/cppcontrib/knowhere/invlists/InvertedLists.h"
 #include "faiss/impl/DistanceComputer.h"
-#include "faiss/impl/ScalarQuantizer.h"
-#include "faiss/invlists/InvertedLists.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/object.h"
 #include "knowhere/operands.h"
@@ -63,19 +63,23 @@ struct QuantRefine {
         }
         switch (refine_type) {
             case RefineType::UINT8_QUANT:
-                quantizer = new faiss::ScalarQuantizer(d, faiss::ScalarQuantizer::QuantizerType::QT_8bit);
+                quantizer = new faiss::cppcontrib::knowhere::ScalarQuantizer(
+                    d, faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_8bit);
                 break;
             case RefineType::BFLOAT16_QUANT:
-                quantizer = new faiss::ScalarQuantizer(d, faiss::ScalarQuantizer::QuantizerType::QT_bf16);
+                quantizer = new faiss::cppcontrib::knowhere::ScalarQuantizer(
+                    d, faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_bf16);
                 break;
             case RefineType::FLOAT16_QUANT:
-                quantizer = new faiss::ScalarQuantizer(d, faiss::ScalarQuantizer::QuantizerType::QT_fp16);
+                quantizer = new faiss::cppcontrib::knowhere::ScalarQuantizer(
+                    d, faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_fp16);
                 break;
             default:
                 throw std::runtime_error("Fail to generate quant for refiner if refine_type == RefineType::DATA_VIEW");
                 break;
         }
-        storage = new faiss::ConcurrentArrayInvertedLists(list_num, quantizer->code_size, segment_size, false);
+        storage = new faiss::cppcontrib::knowhere::ConcurrentArrayInvertedLists(list_num, quantizer->code_size,
+                                                                                segment_size, false);
     }
     void
     Train(const void* train_data, const size_t n) {
@@ -114,9 +118,9 @@ struct QuantRefine {
     GetMetric() {
         return metric_type;
     }
-    std::unique_ptr<faiss::ScalarQuantizer::SQDistanceComputer>
+    std::unique_ptr<faiss::cppcontrib::knowhere::ScalarQuantizer::SQDistanceComputer>
     GetQuantComputer() {
-        return std::unique_ptr<faiss::ScalarQuantizer::SQDistanceComputer>(
+        return std::unique_ptr<faiss::cppcontrib::knowhere::ScalarQuantizer::SQDistanceComputer>(
             quantizer->get_distance_computer(metric_type));
     }
     DataFormatEnum
@@ -137,8 +141,8 @@ struct QuantRefine {
     static constexpr size_t key = 0;
     static constexpr size_t list_num = 1;
     static constexpr size_t segment_size = 48;
-    faiss::ScalarQuantizer* quantizer = nullptr;
-    faiss::InvertedLists* storage = nullptr;
+    faiss::cppcontrib::knowhere::ScalarQuantizer* quantizer = nullptr;
+    faiss::cppcontrib::knowhere::InvertedLists* storage = nullptr;
     faiss::MetricType metric_type;
     DataFormatEnum origin_data_type;
     RefineType refine_type;
@@ -149,7 +153,7 @@ template <bool NeedNormalize = false>
 struct QuantDataDistanceComputer : faiss::DistanceComputer {
     std::vector<float> query_buf;
     std::shared_ptr<QuantRefine> quant_data;
-    std::unique_ptr<faiss::ScalarQuantizer::SQDistanceComputer> qc;
+    std::unique_ptr<faiss::cppcontrib::knowhere::ScalarQuantizer::SQDistanceComputer> qc;
     float q_norm;
     size_t dim;
 
@@ -305,57 +309,71 @@ SelectDataViewComputer(const ViewDataOp& view_data, const DataFormatEnum& data_t
         if (metric == metric::IP) {
             if (is_cosine) {
                 return std::unique_ptr<faiss::DistanceComputer>(
-                    new DataViewDistanceComputer<fp16, decltype(faiss::fp16_vec_inner_product),
-                                                 decltype(faiss::fp16_vec_inner_product_batch_4), true>(
-                        view_data, dim, faiss::fp16_vec_inner_product, faiss::fp16_vec_inner_product_batch_4));
+                    new DataViewDistanceComputer<fp16, decltype(faiss::cppcontrib::knowhere::fp16_vec_inner_product),
+                                                 decltype(faiss::cppcontrib::knowhere::fp16_vec_inner_product_batch_4),
+                                                 true>(view_data, dim,
+                                                       faiss::cppcontrib::knowhere::fp16_vec_inner_product,
+                                                       faiss::cppcontrib::knowhere::fp16_vec_inner_product_batch_4));
             } else {
                 return std::unique_ptr<faiss::DistanceComputer>(
-                    new DataViewDistanceComputer<fp16, decltype(faiss::fp16_vec_inner_product),
-                                                 decltype(faiss::fp16_vec_inner_product_batch_4), false>(
-                        view_data, dim, faiss::fp16_vec_inner_product, faiss::fp16_vec_inner_product_batch_4));
+                    new DataViewDistanceComputer<fp16, decltype(faiss::cppcontrib::knowhere::fp16_vec_inner_product),
+                                                 decltype(faiss::cppcontrib::knowhere::fp16_vec_inner_product_batch_4),
+                                                 false>(view_data, dim,
+                                                        faiss::cppcontrib::knowhere::fp16_vec_inner_product,
+                                                        faiss::cppcontrib::knowhere::fp16_vec_inner_product_batch_4));
             }
         } else {
             return std::unique_ptr<faiss::DistanceComputer>(
-                new DataViewDistanceComputer<fp16, decltype(faiss::fp16_vec_L2sqr),
-                                             decltype(faiss::fp16_vec_L2sqr_batch_4)>(
-                    view_data, dim, faiss::fp16_vec_L2sqr, faiss::fp16_vec_L2sqr_batch_4));
+                new DataViewDistanceComputer<fp16, decltype(faiss::cppcontrib::knowhere::fp16_vec_L2sqr),
+                                             decltype(faiss::cppcontrib::knowhere::fp16_vec_L2sqr_batch_4)>(
+                    view_data, dim, faiss::cppcontrib::knowhere::fp16_vec_L2sqr,
+                    faiss::cppcontrib::knowhere::fp16_vec_L2sqr_batch_4));
         }
     } else if (data_type == DataFormatEnum::bf16) {
         if (metric == metric::IP) {
             if (is_cosine) {
                 return std::unique_ptr<faiss::DistanceComputer>(
-                    new DataViewDistanceComputer<bf16, decltype(faiss::bf16_vec_inner_product),
-                                                 decltype(faiss::bf16_vec_inner_product_batch_4), true>(
-                        view_data, dim, faiss::bf16_vec_inner_product, faiss::bf16_vec_inner_product_batch_4));
+                    new DataViewDistanceComputer<bf16, decltype(faiss::cppcontrib::knowhere::bf16_vec_inner_product),
+                                                 decltype(faiss::cppcontrib::knowhere::bf16_vec_inner_product_batch_4),
+                                                 true>(view_data, dim,
+                                                       faiss::cppcontrib::knowhere::bf16_vec_inner_product,
+                                                       faiss::cppcontrib::knowhere::bf16_vec_inner_product_batch_4));
             } else {
                 return std::unique_ptr<faiss::DistanceComputer>(
-                    new DataViewDistanceComputer<bf16, decltype(faiss::bf16_vec_inner_product),
-                                                 decltype(faiss::bf16_vec_inner_product_batch_4), false>(
-                        view_data, dim, faiss::bf16_vec_inner_product, faiss::bf16_vec_inner_product_batch_4));
+                    new DataViewDistanceComputer<bf16, decltype(faiss::cppcontrib::knowhere::bf16_vec_inner_product),
+                                                 decltype(faiss::cppcontrib::knowhere::bf16_vec_inner_product_batch_4),
+                                                 false>(view_data, dim,
+                                                        faiss::cppcontrib::knowhere::bf16_vec_inner_product,
+                                                        faiss::cppcontrib::knowhere::bf16_vec_inner_product_batch_4));
             }
         } else {
             return std::unique_ptr<faiss::DistanceComputer>(
-                new DataViewDistanceComputer<bf16, decltype(faiss::bf16_vec_L2sqr),
-                                             decltype(faiss::bf16_vec_L2sqr_batch_4)>(
-                    view_data, dim, faiss::bf16_vec_L2sqr, faiss::bf16_vec_L2sqr_batch_4));
+                new DataViewDistanceComputer<bf16, decltype(faiss::cppcontrib::knowhere::bf16_vec_L2sqr),
+                                             decltype(faiss::cppcontrib::knowhere::bf16_vec_L2sqr_batch_4)>(
+                    view_data, dim, faiss::cppcontrib::knowhere::bf16_vec_L2sqr,
+                    faiss::cppcontrib::knowhere::bf16_vec_L2sqr_batch_4));
         }
     } else if (data_type == DataFormatEnum::fp32) {
         if (metric == metric::IP) {
             if (is_cosine) {
                 return std::unique_ptr<faiss::DistanceComputer>(
-                    new DataViewDistanceComputer<fp32, decltype(faiss::fvec_inner_product),
-                                                 decltype(faiss::fvec_inner_product_batch_4), true>(
-                        view_data, dim, faiss::fvec_inner_product, faiss::fvec_inner_product_batch_4));
+                    new DataViewDistanceComputer<fp32, decltype(faiss::cppcontrib::knowhere::fvec_inner_product),
+                                                 decltype(faiss::cppcontrib::knowhere::fvec_inner_product_batch_4),
+                                                 true>(view_data, dim, faiss::cppcontrib::knowhere::fvec_inner_product,
+                                                       faiss::cppcontrib::knowhere::fvec_inner_product_batch_4));
             } else {
                 return std::unique_ptr<faiss::DistanceComputer>(
-                    new DataViewDistanceComputer<fp32, decltype(faiss::fvec_inner_product),
-                                                 decltype(faiss::fvec_inner_product_batch_4), false>(
-                        view_data, dim, faiss::fvec_inner_product, faiss::fvec_inner_product_batch_4));
+                    new DataViewDistanceComputer<fp32, decltype(faiss::cppcontrib::knowhere::fvec_inner_product),
+                                                 decltype(faiss::cppcontrib::knowhere::fvec_inner_product_batch_4),
+                                                 false>(view_data, dim, faiss::cppcontrib::knowhere::fvec_inner_product,
+                                                        faiss::cppcontrib::knowhere::fvec_inner_product_batch_4));
             }
         } else {
             return std::unique_ptr<faiss::DistanceComputer>(
-                new DataViewDistanceComputer<fp32, decltype(faiss::fvec_L2sqr), decltype(faiss::fvec_L2sqr_batch_4)>(
-                    view_data, dim, faiss::fvec_L2sqr, faiss::fvec_L2sqr_batch_4));
+                new DataViewDistanceComputer<fp32, decltype(faiss::cppcontrib::knowhere::fvec_L2sqr),
+                                             decltype(faiss::cppcontrib::knowhere::fvec_L2sqr_batch_4)>(
+                    view_data, dim, faiss::cppcontrib::knowhere::fvec_L2sqr,
+                    faiss::cppcontrib::knowhere::fvec_L2sqr_batch_4));
         }
     } else {
         return nullptr;

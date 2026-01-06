@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -45,9 +45,8 @@ BLOCK_SELECT_DECL(float, false, 2048);
 
 void runBlockSelect(
         Tensor<float, 2, true>& in,
-        Tensor<uint8_t, 1, true>& bitset,
         Tensor<float, 2, true>& outK,
-        Tensor<int, 2, true>& outV,
+        Tensor<idx_t, 2, true>& outV,
         bool dir,
         int k,
         cudaStream_t stream) {
@@ -56,7 +55,7 @@ void runBlockSelect(
     if (dir) {
         if (k == 1) {
             BLOCK_SELECT_CALL(float, true, 1);
-        } else if (k <= 32) {
+        } else if (k <= 32 && getWarpSizeCurrentDevice() == 32) {
             BLOCK_SELECT_CALL(float, true, 32);
         } else if (k <= 64) {
             BLOCK_SELECT_CALL(float, true, 64);
@@ -76,7 +75,7 @@ void runBlockSelect(
     } else {
         if (k == 1) {
             BLOCK_SELECT_CALL(float, false, 1);
-        } else if (k <= 32) {
+        } else if (k <= 32 && getWarpSizeCurrentDevice() == 32) {
             BLOCK_SELECT_CALL(float, false, 32);
         } else if (k <= 64) {
             BLOCK_SELECT_CALL(float, false, 64);
@@ -98,10 +97,9 @@ void runBlockSelect(
 
 void runBlockSelectPair(
         Tensor<float, 2, true>& inK,
-        Tensor<int, 2, true>& inV,
-        Tensor<uint8_t, 1, true>& bitset,
+        Tensor<idx_t, 2, true>& inV,
         Tensor<float, 2, true>& outK,
-        Tensor<int, 2, true>& outV,
+        Tensor<idx_t, 2, true>& outV,
         bool dir,
         int k,
         cudaStream_t stream) {
@@ -110,7 +108,7 @@ void runBlockSelectPair(
     if (dir) {
         if (k == 1) {
             BLOCK_SELECT_PAIR_CALL(float, true, 1);
-        } else if (k <= 32) {
+        } else if (k <= 32 && getWarpSizeCurrentDevice() == 32) {
             BLOCK_SELECT_PAIR_CALL(float, true, 32);
         } else if (k <= 64) {
             BLOCK_SELECT_PAIR_CALL(float, true, 64);
@@ -130,7 +128,7 @@ void runBlockSelectPair(
     } else {
         if (k == 1) {
             BLOCK_SELECT_PAIR_CALL(float, false, 1);
-        } else if (k <= 32) {
+        } else if (k <= 32 && getWarpSizeCurrentDevice() == 32) {
             BLOCK_SELECT_PAIR_CALL(float, false, 32);
         } else if (k <= 64) {
             BLOCK_SELECT_PAIR_CALL(float, false, 64);

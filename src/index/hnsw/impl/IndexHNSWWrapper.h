@@ -11,7 +11,7 @@
 
 #pragma once
 
-#include <faiss/IndexHNSW.h>
+#include <faiss/cppcontrib/knowhere/IndexHNSW.h>
 #include <faiss/cppcontrib/knowhere/IndexWrapper.h>
 
 #include <cstddef>
@@ -22,9 +22,9 @@
 namespace knowhere {
 
 // Custom parameters for IndexHNSW.
-struct SearchParametersHNSWWrapper : public faiss::SearchParametersHNSW {
+struct SearchParametersHNSWWrapper : public faiss::cppcontrib::knowhere::SearchParametersHNSW {
     // Stats will be updated if the object pointer is provided.
-    faiss::HNSWStats* hnsw_stats = nullptr;
+    faiss::cppcontrib::knowhere::HNSWStats* hnsw_stats = nullptr;
     // feder will be updated if the object pointer is provided.
     knowhere::feder::hnsw::FederResult* feder = nullptr;
     // filtering parameter
@@ -40,7 +40,7 @@ struct SearchParametersHNSWWrapper : public faiss::SearchParametersHNSW {
 
 // override a search() procedure for IndexHNSW.
 struct IndexHNSWWrapper : public faiss::cppcontrib::knowhere::IndexWrapper {
-    IndexHNSWWrapper(faiss::IndexHNSW* underlying_index);
+    IndexHNSWWrapper(faiss::cppcontrib::knowhere::IndexHNSW* underlying_index);
 
     /// entry point for search
     void

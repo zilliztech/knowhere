@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -77,7 +77,7 @@ void IndexIVFIndependentQuantizer::add(idx_t n, const float* x) {
 
     VTransformedVectors tv(vt, n, x);
 
-    index_ivf->add_core(n, tv.x, nullptr, nullptr, I.data());
+    index_ivf->add_core(n, tv.x, nullptr, I.data());
 }
 
 void IndexIVFIndependentQuantizer::search(

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -13,19 +13,11 @@
 
 namespace faiss {
 
-// todo aguzhva: get rid of this file by adding Index* Index::clone() function.
-//   same for quantizers.
-
 struct Index;
 struct IndexIVF;
 struct VectorTransform;
 struct Quantizer;
 struct IndexBinary;
-
-
-namespace gpu {
-    struct GpuIndexFlat;
-}
 
 /* cloning functions */
 Index* clone_index(const Index*);

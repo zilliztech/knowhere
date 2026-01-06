@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -34,10 +34,12 @@ index = faiss.IndexPreTransform(
         )
     )
 
+
 def ivecs_mmap(fname):
     a = np.memmap(fname, dtype='int32', mode='r')
     d = a[0]
     return a.reshape(-1, d + 1)[:, 1:]
+
 
 def fvecs_mmap(fname):
     return ivecs_mmap(fname).view('float32')

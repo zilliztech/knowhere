@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -8,12 +8,10 @@
 #include <faiss/IndexAdditiveQuantizerFastScan.h>
 
 #include <cassert>
-#include <climits>
 #include <memory>
 
-#include <omp.h>
-
 #include <faiss/impl/FaissAssert.h>
+#include <faiss/impl/FastScanDistancePostProcessing.h>
 #include <faiss/impl/LocalSearchQuantizer.h>
 #include <faiss/impl/LookupTableScaler.h>
 #include <faiss/impl/ResidualQuantizer.h>
@@ -35,30 +33,31 @@ IndexAdditiveQuantizerFastScan::IndexAdditiveQuantizerFastScan(
 }
 
 void IndexAdditiveQuantizerFastScan::init(
-        AdditiveQuantizer* aq_2,
+        AdditiveQuantizer* aq_init,
         MetricType metric,
         int bbs) {
-    FAISS_THROW_IF_NOT(aq_2 != nullptr);
-    FAISS_THROW_IF_NOT(!aq_2->nbits.empty());
-    FAISS_THROW_IF_NOT(aq_2->nbits[0] == 4);
+    FAISS_THROW_IF_NOT(aq_init != nullptr);
+    FAISS_THROW_IF_NOT(!aq_init->nbits.empty());
+    FAISS_THROW_IF_NOT(aq_init->nbits[0] == 4);
     if (metric == METRIC_INNER_PRODUCT) {
         FAISS_THROW_IF_NOT_MSG(
-                aq_2->search_type == AdditiveQuantizer::ST_LUT_nonorm,
+                aq_init->search_type == AdditiveQuantizer::ST_LUT_nonorm,
                 "Search type must be ST_LUT_nonorm for IP metric");
     } else {
         FAISS_THROW_IF_NOT_MSG(
-                aq_2->search_type == AdditiveQuantizer::ST_norm_lsq2x4 ||
-                        aq_2->search_type == AdditiveQuantizer::ST_norm_rq2x4,
+                aq_init->search_type == AdditiveQuantizer::ST_norm_lsq2x4 ||
+                        aq_init->search_type ==
+                                AdditiveQuantizer::ST_norm_rq2x4,
                 "Search type must be lsq2x4 or rq2x4 for L2 metric");
     }
 
-    this->aq = aq_2;
+    this->aq = aq_init;
     if (metric == METRIC_L2) {
-        M = aq_2->M + 2; // 2x4 bits AQ
+        M = aq_init->M + 2; // 2x4 bits AQ
     } else {
-        M = aq_2->M;
+        M = aq_init->M;
     }
-    init_fastscan(aq_2->d, M, 4, metric, bbs);
+    init_fastscan(aq_init->d, M, 4, metric, bbs);
 
     max_train_points = 1024 * ksub * M;
 }
@@ -125,7 +124,8 @@ void IndexAdditiveQuantizerFastScan::estimate_norm_scale(
     }
 
     std::vector<float> dis_tables(n * M * ksub);
-    compute_float_LUT(dis_tables.data(), n, x);
+    FastScanDistancePostProcessing empty_context;
+    compute_float_LUT(dis_tables.data(), n, x, empty_context);
 
     // here we compute the mean of scales for each query
     // TODO: try max of scales
@@ -155,7 +155,8 @@ void IndexAdditiveQuantizerFastScan::compute_codes(
 void IndexAdditiveQuantizerFastScan::compute_float_LUT(
         float* lut,
         idx_t n,
-        const float* x) const {
+        const float* x,
+        const FastScanDistancePostProcessing&) const {
     if (metric_type == METRIC_INNER_PRODUCT) {
         aq->compute_LUT(n, x, lut, 1.0f);
     } else {
@@ -202,10 +203,12 @@ void IndexAdditiveQuantizerFastScan::search(
     }
 
     NormTableScaler scaler(norm_scale);
+    FastScanDistancePostProcessing context;
+    context.norm_scaler = &scaler;
     if (metric_type == METRIC_L2) {
-        search_dispatch_implem<true>(n, x, k, distances, labels, &scaler);
+        search_dispatch_implem<true>(n, x, k, distances, labels, context);
     } else {
-        search_dispatch_implem<false>(n, x, k, distances, labels, &scaler);
+        search_dispatch_implem<false>(n, x, k, distances, labels, context);
     }
 }
 

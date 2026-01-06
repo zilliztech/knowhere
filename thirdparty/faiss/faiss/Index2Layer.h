@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -23,7 +23,7 @@ struct IndexIVFPQ;
 /** Same as an IndexIVFPQ without the inverted lists: codes are stored
  * sequentially
  *
- * The class is mainly inteded to store encoded vectors that can be
+ * The class is mainly intended to store encoded vectors that can be
  * accessed randomly, the search function is not implemented.
  */
 struct Index2Layer : IndexFlatCodes {
@@ -47,7 +47,7 @@ struct Index2Layer : IndexFlatCodes {
             MetricType metric = METRIC_L2);
 
     Index2Layer();
-    ~Index2Layer();
+    ~Index2Layer() override;
 
     void train(idx_t n, const float* x) override;
 
@@ -68,8 +68,6 @@ struct Index2Layer : IndexFlatCodes {
     /* The standalone codec interface */
     void sa_encode(idx_t n, const float* x, uint8_t* bytes) const override;
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
-
-    size_t cal_size() const;
 };
 
 // block size used in Index2Layer::sa_encode

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -23,7 +23,7 @@ struct IndexIDMapTemplate : IndexT {
     using distance_t = typename IndexT::distance_t;
 
     IndexT* index = nullptr; ///! the sub-index
-    bool own_fields = false; ///! whether pointers are deleted in destructo
+    bool own_fields = false; ///! whether pointers are deleted in destructor
     std::vector<idx_t> id_map;
 
     explicit IndexIDMapTemplate(IndexT* index);
@@ -31,9 +31,15 @@ struct IndexIDMapTemplate : IndexT {
     /// @param xids if non-null, ids to store for the vectors (size n)
     void add_with_ids(idx_t n, const component_t* x, const idx_t* xids)
             override;
+    void add_with_ids_ex(
+            idx_t n,
+            const void* x,
+            NumericType numeric_type,
+            const idx_t* xids) override;
 
     /// this will fail. Use add_with_ids
     void add(idx_t n, const component_t* x) override;
+    void add_ex(idx_t n, const void* x, NumericType numeric_type) override;
 
     void search(
             idx_t n,
@@ -42,25 +48,35 @@ struct IndexIDMapTemplate : IndexT {
             distance_t* distances,
             idx_t* labels,
             const SearchParameters* params = nullptr) const override;
+    void search_ex(
+            idx_t n,
+            const void* x,
+            NumericType numeric_type,
+            idx_t k,
+            distance_t* distances,
+            idx_t* labels,
+            const SearchParameters* params = nullptr) const override;
 
     void train(idx_t n, const component_t* x) override;
+    void train_ex(idx_t n, const void* x, NumericType numeric_type) override;
 
     void reset() override;
 
     /// remove ids adapted to IndexFlat
     size_t remove_ids(const IDSelector& sel) override;
 
-    // Knowhere-specific: radius became float because of Jaccard distance
-    //   for IndexBinary
     void range_search(
             idx_t n,
             const component_t* x,
-            float radius,
+            distance_t radius,
             RangeSearchResult* result,
             const SearchParameters* params = nullptr) const override;
 
     void merge_from(IndexT& otherIndex, idx_t add_id = 0) override;
     void check_compatible_for_merge(const IndexT& otherIndex) const override;
+
+    size_t sa_code_size() const override;
+    void add_sa_codes(idx_t n, const uint8_t* x, const idx_t* xids) override;
 
     ~IndexIDMapTemplate() override;
     IndexIDMapTemplate() {
@@ -88,6 +104,11 @@ struct IndexIDMap2Template : IndexIDMapTemplate<IndexT> {
 
     void add_with_ids(idx_t n, const component_t* x, const idx_t* xids)
             override;
+    void add_with_ids_ex(
+            idx_t n,
+            const void* x,
+            NumericType numeric_type,
+            const idx_t* xids) override;
 
     size_t remove_ids(const IDSelector& sel) override;
 

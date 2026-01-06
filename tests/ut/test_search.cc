@@ -18,7 +18,7 @@
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
-#include "faiss/utils/binary_distances.h"
+#include "faiss/cppcontrib/knowhere/utils/binary_distances.h"
 #include "hnswlib/hnswalg.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/comp/brute_force.h"
@@ -195,7 +195,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
             auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
             if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN) {
                 // need to check cpu model for scann
-                if (!faiss::support_pq_fast_scan) {
+                if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
                     REQUIRE(idx_expected.error() == knowhere::Status::invalid_index_error);
                     return;
                 }
@@ -285,7 +285,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN) {
             // need to check cpu model for scann
-            if (!faiss::support_pq_fast_scan) {
+            if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
                 REQUIRE(idx_expected.error() == knowhere::Status::invalid_index_error);
                 return;
             }
@@ -500,7 +500,7 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN) {
             // need to check cpu model for scann
-            if (!faiss::support_pq_fast_scan) {
+            if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
                 REQUIRE(idx_expected.error() == knowhere::Status::invalid_index_error);
                 return;
             }
@@ -807,9 +807,9 @@ TEST_CASE("Test Mem Index With Binary Vector", "[bool metrics]") {
             for (int64_t j = 0; j < real_topk; j++) {
                 const uint8_t* res_vector = (const uint8_t*)gv_res.value()->GetTensor() + j * code_size;
                 if (metric == knowhere::metric::SUPERSTRUCTURE) {
-                    REQUIRE(faiss::is_subset(res_vector, query_vector, code_size));
+                    REQUIRE(faiss::cppcontrib::knowhere::is_subset(res_vector, query_vector, code_size));
                 } else {
-                    REQUIRE(faiss::is_subset(query_vector, res_vector, code_size));
+                    REQUIRE(faiss::cppcontrib::knowhere::is_subset(query_vector, res_vector, code_size));
                 }
             }
         }
@@ -892,7 +892,7 @@ TEST_CASE("Test Search Cancellation", "[search][cancellation]") {
     }));
 
     // Skip SCANN if CPU doesn't support it
-    if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && !faiss::support_pq_fast_scan) {
+    if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && !faiss::cppcontrib::knowhere::support_pq_fast_scan) {
         return;
     }
 
@@ -1028,7 +1028,7 @@ TEST_CASE("Test RangeSearch Cancellation", "[range_search][cancellation]") {
     }));
 
     // Skip SCANN if CPU doesn't support it
-    if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && !faiss::support_pq_fast_scan) {
+    if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && !faiss::cppcontrib::knowhere::support_pq_fast_scan) {
         return;
     }
 

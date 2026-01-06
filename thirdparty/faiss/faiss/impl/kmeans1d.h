@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -41,7 +41,7 @@ void smawk(
  * @param n          input array length
  * @param nclusters  number of clusters
  * @param centroids  output centroids, size nclusters
- * @return  imbalancce factor
+ * @return  imbalance factor
  */
 double kmeans1d(const float* x, size_t n, size_t nclusters, float* centroids);
 

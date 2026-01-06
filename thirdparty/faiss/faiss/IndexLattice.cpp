@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -12,12 +12,10 @@
 #include <faiss/utils/distances.h>
 #include <faiss/utils/hamming.h> // for the bitstring routines
 
-#include "simd/hook.h"
-
 namespace faiss {
 
 IndexLattice::IndexLattice(idx_t d, int nsq, int scale_nbit, int r2)
-        : Index(d),
+        : IndexFlatCodes(0, d, METRIC_L2),
           nsq(nsq),
           dsq(d / nsq),
           zn_sphere_codec(dsq, r2),
@@ -49,10 +47,12 @@ void IndexLattice::train(idx_t n, const float* x) {
     for (idx_t i = 0; i < n; i++) {
         for (int sq = 0; sq < nsq; sq++) {
             float norm2 = fvec_norm_L2sqr(x + i * d + sq * dsq, dsq);
-            if (norm2 > maxs[sq])
+            if (norm2 > maxs[sq]) {
                 maxs[sq] = norm2;
-            if (norm2 < mins[sq])
+            }
+            if (norm2 < mins[sq]) {
                 mins[sq] = norm2;
+            }
         }
     }
 
@@ -81,10 +81,12 @@ void IndexLattice::sa_encode(idx_t n, const float* x, uint8_t* codes) const {
         for (int j = 0; j < nsq; j++) {
             float nj = (sqrtf(fvec_norm_L2sqr(xi, dsq)) - mins[j]) * sc /
                     (maxs[j] - mins[j]);
-            if (nj < 0)
+            if (nj < 0) {
                 nj = 0;
-            if (nj >= sc)
+            }
+            if (nj >= sc) {
                 nj = sc - 1;
+            }
             wr.write((int64_t)nj, scale_nbit);
             wr.write(zn_sphere_codec.encode(xi), lattice_nbit);
             xi += dsq;
@@ -114,24 +116,6 @@ void IndexLattice::sa_decode(idx_t n, const uint8_t* codes, float* x) const {
             xi += dsq;
         }
     }
-}
-
-void IndexLattice::add(idx_t, const float*) {
-    FAISS_THROW_MSG("not implemented");
-}
-
-void IndexLattice::search(
-        idx_t,
-        const float*,
-        idx_t,
-        float*,
-        idx_t*,
-        const SearchParameters*) const {
-    FAISS_THROW_MSG("not implemented");
-}
-
-void IndexLattice::reset() {
-    FAISS_THROW_MSG("not implemented");
 }
 
 } // namespace faiss

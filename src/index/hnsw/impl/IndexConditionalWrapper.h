@@ -17,7 +17,7 @@
 #include <optional>
 #include <tuple>
 
-#include "faiss/Index.h"
+#include "faiss/cppcontrib/knowhere/Index.h"
 #include "index/hnsw/faiss_hnsw_config.h"
 #include "knowhere/bitsetview.h"
 
@@ -46,8 +46,8 @@ WhetherPerformBruteForceRangeSearch(const faiss::Index* index, const FaissHnswCo
 //
 // `whether_to_enable_refine` allows to enable the refine for the search if the
 //    index was trained with the refine.
-std::tuple<std::unique_ptr<faiss::Index>, bool>
-create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw_cfg, const bool whether_bf_search,
-                                const bool whether_to_enable_refine);
+std::tuple<std::unique_ptr<faiss::cppcontrib::knowhere::Index>, bool>
+create_conditional_hnsw_wrapper(faiss::cppcontrib::knowhere::Index* index, const FaissHnswConfig& hnsw_cfg,
+                                const bool whether_bf_search, const bool whether_to_enable_refine);
 
 }  // namespace knowhere

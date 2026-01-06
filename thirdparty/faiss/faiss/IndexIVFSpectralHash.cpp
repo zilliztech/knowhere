@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -19,7 +19,6 @@
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/utils/hamming.h>
-#include <faiss/utils/utils.h>
 
 namespace faiss {
 
@@ -28,8 +27,15 @@ IndexIVFSpectralHash::IndexIVFSpectralHash(
         size_t d,
         size_t nlist,
         int nbit,
-        float period)
-        : IndexIVF(quantizer, d, nlist, (nbit + 7) / 8, METRIC_L2),
+        float period,
+        bool own_invlists)
+        : IndexIVF(
+                  quantizer,
+                  d,
+                  nlist,
+                  (nbit + 7) / 8,
+                  METRIC_L2,
+                  own_invlists),
           nbit(nbit),
           period(period) {
     RandomRotationMatrix* rr = new RandomRotationMatrix(d, nbit);
@@ -213,7 +219,7 @@ struct IVFScanner : InvertedListScanner {
     std::vector<uint8_t> qcode;
     HammingComputer hc;
 
-    IVFScanner(const IndexIVFSpectralHash* index, bool store_pairs, const IDSelector* sel = nullptr)
+    IVFScanner(const IndexIVFSpectralHash* index, bool store_pairs)
             : index(index),
               nbit(index->nbit),
               period(index->period),
@@ -223,7 +229,6 @@ struct IVFScanner : InvertedListScanner {
               qcode(index->code_size),
               hc(qcode.data(), index->code_size) {
         this->store_pairs = store_pairs;
-        this->sel = sel;
         this->code_size = index->code_size;
         this->keep_max = is_similarity_metric(index->metric_type);
     }
@@ -249,28 +254,24 @@ struct IVFScanner : InvertedListScanner {
     }
 
     float distance_to_code(const uint8_t* code) const final {
-        return hc.compute(code);
+        return hc.hamming(code);
     }
 
     size_t scan_codes(
             size_t list_size,
             const uint8_t* codes,
-            const float* code_norms,
             const idx_t* ids,
             float* simi,
             idx_t* idxi,
-            size_t k,
-            size_t& scan_cnt) const override {
+            size_t k) const override {
         size_t nup = 0;
         for (size_t j = 0; j < list_size; j++) {
-            if (!sel || sel->is_member(ids[j])) {
-                float dis = hc.compute(codes);
-                scan_cnt++;
-                if (dis < simi[0]) {
-                    int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                    maxheap_replace_top(k, simi, idxi, dis, id);
-                    nup++;
-                }
+            float dis = hc.hamming(codes);
+
+            if (dis < simi[0]) {
+                int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
+                maxheap_replace_top(k, simi, idxi, dis, id);
+                nup++;
             }
             codes += code_size;
         }
@@ -280,17 +281,14 @@ struct IVFScanner : InvertedListScanner {
     void scan_codes_range(
             size_t list_size,
             const uint8_t* codes,
-            const float* code_norms,
             const idx_t* ids,
             float radius,
             RangeQueryResult& res) const override {
         for (size_t j = 0; j < list_size; j++) {
-            if (!sel || sel->is_member(ids[j])) {
-                float dis = hc.compute(codes);
-                if (dis < radius) {
-                    int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                    res.add(dis, id);
-                }
+            float dis = hc.hamming(codes);
+            if (dis < radius) {
+                int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
+                res.add(dis, id);
             }
             codes += code_size;
         }
@@ -301,8 +299,8 @@ struct BuildScanner {
     using T = InvertedListScanner*;
 
     template <class HammingComputer>
-    static T f(const IndexIVFSpectralHash* index, bool store_pairs, const IDSelector* sel) {
-        return new IVFScanner<HammingComputer>(index, store_pairs, sel);
+    static T f(const IndexIVFSpectralHash* index, bool store_pairs) {
+        return new IVFScanner<HammingComputer>(index, store_pairs);
     }
 };
 
@@ -314,7 +312,7 @@ InvertedListScanner* IndexIVFSpectralHash::get_InvertedListScanner(
         const IVFSearchParameters*) const {
     FAISS_THROW_IF_NOT(!sel);
     BuildScanner bs;
-    return dispatch_HammingComputer(code_size, bs, this, store_pairs, sel);
+    return dispatch_HammingComputer(code_size, bs, this, store_pairs);
 }
 
 void IndexIVFSpectralHash::replace_vt(VectorTransform* vt_in, bool own) {
@@ -333,7 +331,7 @@ void IndexIVFSpectralHash::replace_vt(VectorTransform* vt_in, bool own) {
 /*
     Check that the encoder is a single vector transform followed by a LSH
     that just does thresholding.
-    If this is not the case, the linear transform + threhsolds of the IndexLSH
+    If this is not the case, the linear transform + thresholds of the IndexLSH
     should be merged into the VectorTransform (which is feasible).
 */
 

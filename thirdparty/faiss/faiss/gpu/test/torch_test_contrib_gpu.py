@@ -1,13 +1,17 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import faiss
 import torch
 import unittest
 import numpy as np
+import faiss
 import faiss.contrib.torch_utils
+
+from faiss.contrib import datasets
+from faiss.contrib.torch import clustering
+
 
 def to_column_major_torch(x):
     if hasattr(torch, 'contiguous_format'):
@@ -16,8 +20,10 @@ def to_column_major_torch(x):
         # was default setting before memory_format was introduced
         return x.t().clone().t()
 
+
 def to_column_major_numpy(x):
     return x.T.copy().T
+
 
 class TestTorchUtilsGPU(unittest.TestCase):
     # tests add, search
@@ -76,7 +82,11 @@ class TestTorchUtilsGPU(unittest.TestCase):
         res = faiss.StandardGpuResources()
         res.noTempMemory()
 
-        index = faiss.GpuIndexIVFFlat(res, d, nlist, faiss.METRIC_L2)
+        config = faiss.GpuIndexIVFFlatConfig()
+        # FIXME: triage failure when use_cuvs is set to True (issue #3968)
+        config.use_cuvs = False
+
+        index = faiss.GpuIndexIVFFlat(res, d, nlist, faiss.METRIC_L2, config)
         xb = torch.rand(1000, d, device=torch.device('cuda', 0), dtype=torch.float32)
         index.train(xb)
 
@@ -108,7 +118,7 @@ class TestTorchUtilsGPU(unittest.TestCase):
         self.assertTrue(np.array_equal(I.reshape(10), ids_np[10:20]))
 
     # tests reconstruct, reconstruct_n
-    def test_reconstruct(self):
+    def test_flat_reconstruct(self):
         d = 32
         res = faiss.StandardGpuResources()
         res.noTempMemory()
@@ -136,6 +146,40 @@ class TestTorchUtilsGPU(unittest.TestCase):
         y = torch.empty(d, device=torch.device('cuda', 0), dtype=torch.float32)
         index.reconstruct(13, y)
         self.assertTrue(torch.equal(xb[13], y))
+
+        # Test reconstruct_n with torch gpu (native return)
+        y = index.reconstruct_n(10, 10)
+        self.assertTrue(y.is_cuda)
+        self.assertTrue(torch.equal(xb[10:20], y))
+
+        # Test reconstruct with numpy output provided
+        y = np.empty((10, d), dtype='float32')
+        index.reconstruct_n(20, 10, y)
+        self.assertTrue(np.array_equal(xb.cpu().numpy()[20:30], y))
+
+        # Test reconstruct_n with torch cpu output provided
+        y = torch.empty(10, d, dtype=torch.float32)
+        index.reconstruct_n(40, 10, y)
+        self.assertTrue(torch.equal(xb[40:50].cpu(), y))
+
+        # Test reconstruct_n with torch gpu output provided
+        y = torch.empty(10, d, device=torch.device('cuda', 0), dtype=torch.float32)
+        index.reconstruct_n(50, 10, y)
+        self.assertTrue(torch.equal(xb[50:60], y))
+
+    def test_ivfflat_reconstruct(self):
+        d = 32
+        nlist = 5
+        res = faiss.StandardGpuResources()
+        res.noTempMemory()
+        config = faiss.GpuIndexIVFFlatConfig()
+        config.use_cuvs = False
+
+        index = faiss.GpuIndexIVFFlat(res, d, nlist, faiss.METRIC_L2, config)
+
+        xb = torch.rand(100, d, device=torch.device('cuda', 0), dtype=torch.float32)
+        index.train(xb)
+        index.add(xb)
 
         # Test reconstruct_n with torch gpu (native return)
         y = index.reconstruct_n(10, 10)
@@ -214,8 +258,9 @@ class TestTorchUtilsGPU(unittest.TestCase):
         # This is not currently implemented on GPU indices
         return
 
+
 class TestTorchUtilsKnnGpu(unittest.TestCase):
-    def test_knn_gpu(self):
+    def test_knn_gpu(self, use_cuvs=False):
         torch.manual_seed(10)
         d = 32
         nb = 1024
@@ -252,7 +297,7 @@ class TestTorchUtilsKnnGpu(unittest.TestCase):
                     else:
                         xb_c = xb_np
 
-                    D, I = faiss.knn_gpu(res, xq_c, xb_c, k)
+                    D, I = faiss.knn_gpu(res, xq_c, xb_c, k, use_cuvs=use_cuvs)
 
                     self.assertTrue(torch.equal(torch.from_numpy(I), gt_I))
                     self.assertLess((torch.from_numpy(D) - gt_D).abs().max(), 1e-4)
@@ -278,7 +323,7 @@ class TestTorchUtilsKnnGpu(unittest.TestCase):
                             xb_c = to_column_major_torch(xb)
                             assert not xb_c.is_contiguous()
 
-                        D, I = faiss.knn_gpu(res, xq_c, xb_c, k)
+                        D, I = faiss.knn_gpu(res, xq_c, xb_c, k, use_cuvs=use_cuvs)
 
                         self.assertTrue(torch.equal(I.cpu(), gt_I))
                         self.assertLess((D.cpu() - gt_D).abs().max(), 1e-4)
@@ -286,7 +331,7 @@ class TestTorchUtilsKnnGpu(unittest.TestCase):
                         # test on subset
                         try:
                             # This internally uses the current pytorch stream
-                            D, I = faiss.knn_gpu(res, xq_c[6:8], xb_c, k)
+                            D, I = faiss.knn_gpu(res, xq_c[6:8], xb_c, k, use_cuvs=use_cuvs)
                         except TypeError:
                             if not xq_row_major:
                                 # then it is expected
@@ -297,7 +342,13 @@ class TestTorchUtilsKnnGpu(unittest.TestCase):
                         self.assertTrue(torch.equal(I.cpu(), gt_I[6:8]))
                         self.assertLess((D.cpu() - gt_D[6:8]).abs().max(), 1e-4)
 
-    def test_knn_gpu_datatypes(self):
+    @unittest.skipUnless(
+        "CUVS" in faiss.get_compile_options(),
+        "only if CUVS is compiled in")
+    def test_knn_gpu_cuvs(self):
+        self.test_knn_gpu(use_cuvs=True)
+
+    def test_knn_gpu_datatypes(self, use_cuvs=False):
         torch.manual_seed(10)
         d = 10
         nb = 1024
@@ -320,7 +371,7 @@ class TestTorchUtilsKnnGpu(unittest.TestCase):
         D = torch.zeros(nq, k, device=xb_c.device, dtype=torch.float32)
         I = torch.zeros(nq, k, device=xb_c.device, dtype=torch.int32)
 
-        faiss.knn_gpu(res, xq_c, xb_c, k, D, I)
+        faiss.knn_gpu(res, xq_c, xb_c, k, D, I, use_cuvs=use_cuvs)
 
         self.assertTrue(torch.equal(I.long().cpu(), gt_I))
         self.assertLess((D.float().cpu() - gt_D).abs().max(), 1.5e-3)
@@ -332,10 +383,11 @@ class TestTorchUtilsKnnGpu(unittest.TestCase):
         xb_c = xb.half().numpy()
         xq_c = xq.half().numpy()
 
-        faiss.knn_gpu(res, xq_c, xb_c, k, D, I)
+        faiss.knn_gpu(res, xq_c, xb_c, k, D, I, use_cuvs=use_cuvs)
 
         self.assertTrue(torch.equal(torch.from_numpy(I).long(), gt_I))
         self.assertLess((torch.from_numpy(D) - gt_D).abs().max(), 1.5e-3)
+
 
 class TestTorchUtilsPairwiseDistanceGpu(unittest.TestCase):
     def test_pairwise_distance_gpu(self):
@@ -430,3 +482,31 @@ class TestTorchUtilsPairwiseDistanceGpu(unittest.TestCase):
                         D, _ = torch.sort(D, dim=1)
 
                         self.assertLess((D.cpu() - gt_D[4:8]).abs().max(), 1e-4)
+
+
+class TestClustering(unittest.TestCase):
+
+    def test_python_kmeans(self):
+        """ Test the python implementation of kmeans """
+        ds = datasets.SyntheticDataset(32, 10000, 0, 0)
+        x = ds.get_train()
+
+        # bad distribution to stress-test split code
+        xt = x[:10000].copy()
+        xt[:5000] = x[0]
+
+        # CPU baseline
+        km_ref = faiss.Kmeans(ds.d, 100, niter=10)
+        km_ref.train(xt)
+        err = faiss.knn(xt, km_ref.centroids, 1)[0].sum()
+
+        xt_torch = torch.from_numpy(xt).to("cuda:0")
+        res = faiss.StandardGpuResources()
+        data = clustering.DatasetAssignGPU(res, xt_torch)
+        centroids = clustering.kmeans(100, data, 10)
+        centroids = centroids.cpu().numpy()
+        err2 = faiss.knn(xt, centroids, 1)[0].sum()
+
+        # 33498.332 33380.477
+        print(err, err2)
+        self.assertLess(err2, err * 1.1)
