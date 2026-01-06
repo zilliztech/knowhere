@@ -220,16 +220,7 @@ class DiskANNIndexNode : public IndexNode {
 
         int batch_size = diskann::defaults::MAX_GRAPH_DEGREE;
 
-        std::vector<std::unique_ptr<void, decltype(&std::free)>> buffers;
-        buffers.reserve(batch_size);
-        for (size_t i = 0; i < batch_size; ++i) {
-            void* aligned_buf = std::aligned_alloc(512, max_node_len);
-            if (aligned_buf == nullptr) {
-                LOG_KNOWHERE_ERROR_ << "Failed to allocate aligned buffer for NCS upload, size: " << max_node_len;
-                return milvus::NcsStatus::ERROR;
-            }
-            buffers.emplace_back(aligned_buf, &std::free);
-        }
+        std::vector<std::vector<char>> buffers(batch_size, std::vector<char>(max_node_len));
 
         for(uint64_t i=0 ; i < count ; i+=batch_size){
             std::vector<ReadReq> reqs;
@@ -241,7 +232,7 @@ class DiskANNIndexNode : public IndexNode {
             }
 
             for(int j=0 ; j < batch_size_i ; j++){
-                reqs.emplace_back((uint64_t)(i+j), max_node_len, (void*)buffers[j].get());
+                reqs.emplace_back((uint64_t)(i+j), max_node_len, (void*)buffers[j].data());
             }
             reader->read(reqs);
 
