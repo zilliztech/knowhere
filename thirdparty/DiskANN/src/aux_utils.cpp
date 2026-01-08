@@ -484,7 +484,7 @@ namespace diskann {
     diskann::get_bin_metadata(base_file, base_num, base_dim);
 #ifdef KNOWHERE_WITH_CUVS
     raft::device_resources dev_resources;
-    if(compareMetric == diskann::L2 && is_gpu_available()) {
+    if(is_gpu_available()) {
       size_t gpu_free_mem, gpu_total_mem;
       gpu_get_mem_info(dev_resources, gpu_free_mem, gpu_total_mem);
       LOG_KNOWHERE_INFO_ << "GPU has " <<  gpu_free_mem/(1024*1024*1024L) <<
@@ -518,7 +518,7 @@ namespace diskann {
       bool built_with_gpu=false;
 #ifdef KNOWHERE_WITH_CUVS
       //currently cuvs vamana build only supports L2Expanded metric
-      if (compareMetric == diskann::L2 && is_gpu_available() &&
+      if (compareMetric == diskann::L2 && is_gpu_available () &&
               (std::is_same_v<T, float> || std::is_same_v<T, uint8_t>) ) {
         LOG_KNOWHERE_INFO_ << "Building with GPU!" << " R= "<< R<<" L=" << L;
 
@@ -558,7 +558,7 @@ namespace diskann {
     std::string merged_index_prefix = mem_index_path + "_tempFiles";
     int         num_parts =
         partition_with_ram_budget<T>(base_file, sampling_rate, ram_budget,
-                                     shard_r, merged_index_prefix, 2);
+                                     2 * R / 3, merged_index_prefix, 2);
 
     std::string cur_centroid_filepath = merged_index_prefix + "_centroids.bin";
     std::rename(cur_centroid_filepath.c_str(), centroids_file.c_str());
@@ -578,14 +578,13 @@ namespace diskann {
 
       diskann::Parameters paras;
       paras.Set<unsigned>("L", L);
-      paras.Set<unsigned>("R", shard_r);
+      paras.Set<unsigned>("R", (2 * (R / 3)));
       paras.Set<unsigned>("C", 750);
       paras.Set<float>("alpha", 1.2f);
       paras.Set<unsigned>("num_rnds", 2);
       paras.Set<bool>("saturate_graph", 0);
       paras.Set<std::string>("save_path", shard_index_file);
       paras.Set<bool>("accelerate_build", accelerate_build);
-      paras.Set<bool>("shuffle_build", shuffle_build);
 
       _u64 shard_base_dim, shard_base_pts;
       bool built_with_gpu=false;
@@ -1842,7 +1841,7 @@ template<typename T>
       return -1;
     }
 #ifdef KNOWHERE_WITH_CUVS
-    if(is_gpu_available()) {
+    if(config.compare_metric == diskann::L2 && is_gpu_available()) {
       if (R != 32 && R != 64 && R != 128) {
         LOG_KNOWHERE_ERROR_ << "Invalid R value for cuvs - should be only 32 or 64 or 128";
         return -1;
