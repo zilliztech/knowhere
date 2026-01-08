@@ -293,10 +293,10 @@ fvec_hook(std::string& simd_type) {
         u64_binary_search_eq = u64_binary_search_eq_avx512;
         u64_binary_search_ge = u64_binary_search_ge_avx512;
         calculate_hash = calculate_hash_avx512;
-        u32_jaccard_distance = u32_jaccard_distance_ref;
-        u32_jaccard_distance_batch_4 = u32_jaccard_distance_batch_4_ref;
-        u64_jaccard_distance = u64_jaccard_distance_ref;
-        u64_jaccard_distance_batch_4 = u64_jaccard_distance_batch_4_ref;
+        u32_jaccard_distance = u32_jaccard_distance_avx512;
+        u32_jaccard_distance_batch_4 = u32_jaccard_distance_batch_4_avx512;
+        u64_jaccard_distance = u64_jaccard_distance_avx512;
+        u64_jaccard_distance_batch_4 = u64_jaccard_distance_batch_4_avx512;
         //
         simd_type = "AVX512";
         support_pq_fast_scan = true;
