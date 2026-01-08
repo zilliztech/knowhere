@@ -5,7 +5,6 @@
 #include <cuda_runtime.h>
 #include <cuvs/neighbors/vamana.hpp>
 #include "diskann/diskann_gpu.h"
-#include "knowhere/log.h"
 #include <fstream>
 #include <iostream>
 #include <raft/core/resources.hpp>
@@ -26,7 +25,7 @@ raft::device_matrix<T, idxT> read_bin_dataset(
 	datafile.read(reinterpret_cast<char*>(&N), sizeof(uint32_t));
 	datafile.read(reinterpret_cast<char*>(&dim), sizeof(uint32_t));
 
-    LOG_KNOWHERE_INFO_ << "Read in file - N: " << N << ", dim: " << dim;
+	std::cout << "Read in file - N: " << N << ", dim: " << dim << std::endl;
 
 	std::size_t total = static_cast<std::size_t>(N) * dim;
 	if (total == 0) {
@@ -72,19 +71,19 @@ void vamana_build_and_write(raft::device_resources const &dev_resources,
 	index_params.graph_degree = degree;
 	index_params.vamana_iters = iters;
 
-	LOG_KNOWHERE_INFO_ << "Building Vamana index (search graph)";
+	std::cout << "Building Vamana index (search graph)" << std::endl;
 
 	auto start = std::chrono::system_clock::now();
 	auto index = vamana::build(dev_resources, index_params, dataset);
 	auto end = std::chrono::system_clock::now();
 	std::chrono::duration<double> elapsed_seconds = end - start;
 
-	LOG_KNOWHERE_INFO_ << "Vamana index has " << index.size() << " vectors";
-	LOG_KNOWHERE_INFO_ << "Vamana graph has degree " << index.graph_degree()
+	std::cout << "Vamana index has " << index.size() << " vectors" << std::endl;
+	std::cout << "Vamana graph has degree " << index.graph_degree()
 			<< ", graph size [" << index.graph().extent(0) << ", "
-			<< index.graph().extent(1) << "]";
+			<< index.graph().extent(1) << "]" << std::endl;
 
-	LOG_KNOWHERE_INFO_ << "Time to build index: " << elapsed_seconds.count() << "s\n";
+	std::cout << "Time to build index: " << elapsed_seconds.count() << "s\n";
 	// Output index to file
 	serialize(dev_resources, out_fname, index);
 }
