@@ -1165,13 +1165,13 @@ ScalarQuantizer::SQDistanceComputer* select_distance_computer_rvv(
                     0>(dim, trained);
 
         case ScalarQuantizer::QT_4bit_uniform:
-            return new DCTemplate_rvv<
-                    QuantizerTemplate_rvv<
-                            Codec4bit_rvv,
-                            QuantizerTemplateScaling::UNIFORM,
-                            0>,
-                    Similarity,
-                    0>(dim, trained);
+            // Fallback to base class for SQ4U to ensure correct COSINE metric
+            // handling The generic DCTemplate_rvv computes IP distance for
+            // INNER_PRODUCT metric, but SQ4U with COSINE metric requires L2
+            // distance computation.
+            // TODO: Implement RVV-optimized DistanceComputerSQ4UByte_rvv
+            // similar to AVX2 version
+            return select_distance_computer<Similarity>(qtype, dim, trained);
 
         case ScalarQuantizer::QT_6bit:
             return new DCTemplate_rvv<
