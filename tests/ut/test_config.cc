@@ -11,6 +11,7 @@
 
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "index/data_view_dense_index/data_view_index_config.h"
 #include "index/flat/flat_config.h"
 #include "index/hnsw/hnsw_config.h"
 #include "index/ivf/ivf_config.h"
@@ -153,6 +154,46 @@ TEST_CASE("Test config json parse", "[config]") {
         knowhere::Json test_json = knowhere::Json::parse(invalid_json_str);
         s = knowhere::Config::FormatAndCheck(test_config, test_json);
         CHECK(s == knowhere::Status::invalid_value_in_json);
+    }
+
+    SECTION("check refine type in json") {
+        knowhere::Json build_json1 = knowhere::Json::parse(R"({
+            "dim": 128,
+            "metric_type": "L2",
+            "nlist": 1024,
+            "refine_type": "sq8"
+        })");
+        knowhere::Json build_json2 = knowhere::Json::parse(R"({
+            "dim": 128,
+            "metric_type": "L2",
+            "nlist": 1024,
+            "refine_type": 2,
+            "refine_with_quant": true
+        })");
+        // check in index without refine type
+        knowhere::IvfFlatConfig ivf_flat_config;
+        s = knowhere::Config::FormatAndCheck(ivf_flat_config, build_json1);
+        checkBuildConfig(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, build_json1);
+        CHECK(s == knowhere::Status::success);
+
+        s = knowhere::Config::FormatAndCheck(ivf_flat_config, build_json2);
+        checkBuildConfig(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, build_json2);
+        CHECK(s == knowhere::Status::success);
+
+        // check in index with string refine type
+        knowhere::IvfRaBitQConfig ivf_rabitq_config;
+        s = knowhere::Config::FormatAndCheck(ivf_rabitq_config, build_json1);
+        checkBuildConfig(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, build_json1);
+        CHECK(s == knowhere::Status::success);
+
+        // check in index with int refine type
+        knowhere::ScannWithDataViewRefinerConfig scann_dvr_config;
+        s = knowhere::Config::FormatAndCheck(scann_dvr_config, build_json1);
+        CHECK(s == knowhere::Status::invalid_value_in_json);
+
+        s = knowhere::Config::FormatAndCheck(scann_dvr_config, build_json2);
+        checkBuildConfig(knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, build_json2);
+        CHECK(s == knowhere::Status::success);
     }
 
     SECTION("Check the json for the specific index") {

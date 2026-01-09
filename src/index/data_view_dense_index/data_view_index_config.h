@@ -14,39 +14,85 @@
 #define DATA_VIEW_INDEX_CONFIG_H
 
 #include "index/ivf/ivf_config.h"
+#include "knowhere/utils.h"
 #include "simd/hook.h"
 namespace knowhere {
-class IndexWithDataViewRefinerConfig : public ScannConfig {
- public:
+/**
+ * parameters:
+ * refine_type, refine_ratio and refine_with_quant only used by data view index
+ * - refine_type, train parameter, has several config:
+ *    DATA_VIEW, not alloc extra memory in refiner
+ *    FLOAT16_QUANT, keep data as float16 vector in memory in refiner
+ *    BFLOAT16_QUANT, keep data as bfloat16 vector in memory in refiner
+ *    UINT8_QUANT, keep data as uint8 vector in memory in refiner
+ * - refine_with_quant, search parameter, whether to use quantized data to refine, faster but lost a little
+ * -  refine_ratio, search parameter, the ratio of data view refiner index search out of total k,
+ * precision
+ */
+
+#define DECLARE_DATA_VIEW_REFINER_MEMBERS() \
+    CFG_INT refine_type;                    \
+    CFG_BOOL refine_with_quant;             \
     CFG_FLOAT refine_ratio;
-    KNOHWERE_DECLARE_CONFIG(IndexWithDataViewRefinerConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(refine_ratio)
-            .description("refine_ratio used for refining")
-            .set_default(1.0f)
-            .for_search();
+
+#define REGISTER_DATA_VIEW_REFINER_CONFIG()                                     \
+    KNOWHERE_CONFIG_DECLARE_FIELD(refine_type)                                  \
+        .description("refiner type , no memory by default")                     \
+        .set_default(RefineType::DATA_VIEW)                                     \
+        .for_train();                                                           \
+    KNOWHERE_CONFIG_DECLARE_FIELD(refine_with_quant)                            \
+        .description("search parameters, whether use quantized data to refine") \
+        .set_default(false)                                                     \
+        .for_search()                                                           \
+        .for_range_search()                                                     \
+        .for_iterator();                                                        \
+    KNOWHERE_CONFIG_DECLARE_FIELD(refine_ratio)                                 \
+        .description("refine_ratio used for refining")                          \
+        .set_default(1.0f)                                                      \
+        .for_search();
+
+class IndexWithDataViewRefinerBaseConfig : public BaseConfig {
+ public:
+    DECLARE_DATA_VIEW_REFINER_MEMBERS()
+    KNOHWERE_DECLARE_CONFIG(IndexWithDataViewRefinerBaseConfig) {
+        REGISTER_DATA_VIEW_REFINER_CONFIG()
     }
 };
 class ScannWithDataViewRefinerConfig : public ScannConfig {
  public:
-    CFG_FLOAT refine_ratio;
-    KNOHWERE_DECLARE_CONFIG(ScannWithDataViewRefinerConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(refine_ratio)
-            .description("refine_ratio used for refining")
-            .set_default(1.0f)
-            .for_search();
-    }
-    Status
-    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+    DECLARE_DATA_VIEW_REFINER_MEMBERS()
+    KNOHWERE_DECLARE_CONFIG(ScannWithDataViewRefinerConfig){REGISTER_DATA_VIEW_REFINER_CONFIG()}
+
+    Status CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
         if (!faiss::support_pq_fast_scan) {
             LOG_KNOWHERE_ERROR_ << "SCANN index is not supported on the current CPU model, avx2 support is "
                                    "needed for x86 arch.";
             return Status::invalid_instruction_set;
-        } else {
-            return Status::success;
         }
         return Status::success;
     }
 };
+
+// Helper functions to safely get data view refiner field values from BaseConfig*
+inline CFG_INT
+GetRefineType(const BaseConfig* cfg) {
+    if (auto* dv_cfg = dynamic_cast<const ScannWithDataViewRefinerConfig*>(cfg)) {
+        return dv_cfg->refine_type;
+    } else if (auto* dv_cfg = dynamic_cast<const IndexWithDataViewRefinerBaseConfig*>(cfg)) {
+        return dv_cfg->refine_type;
+    }
+    return std::nullopt;
+}
+
+inline CFG_BOOL
+GetRefineWithQuant(const BaseConfig* cfg) {
+    if (auto* dv_cfg = dynamic_cast<const ScannWithDataViewRefinerConfig*>(cfg)) {
+        return dv_cfg->refine_with_quant;
+    } else if (auto* dv_cfg = dynamic_cast<const IndexWithDataViewRefinerBaseConfig*>(cfg)) {
+        return dv_cfg->refine_with_quant;
+    }
+    return std::nullopt;
+}
 
 static void
 AdaptToBaseIndexConfig(Config* cfg, PARAM_TYPE param_type, size_t dim) {
@@ -90,15 +136,12 @@ AdaptToBaseIndexConfig(Config* cfg, PARAM_TYPE param_type, size_t dim) {
             default:
                 break;
         }
-    } else if (auto base_cfg = dynamic_cast<IndexWithDataViewRefinerConfig*>(cfg)) {
+    } else if (auto base_cfg = dynamic_cast<IndexWithDataViewRefinerBaseConfig*>(cfg)) {
         if (base_cfg->metric_type.value() == metric::COSINE) {
             base_cfg->metric_type.value() = metric::IP;
         }
+        // how to handle refine_ratio depends on different index type
         switch (param_type) {
-            case PARAM_TYPE::SEARCH: {
-                base_cfg->k = base_cfg->reorder_k.value();
-                break;
-            }
             case PARAM_TYPE::RANGE_SEARCH: {
                 base_cfg->range_filter = defaultRangeFilter;
                 break;
@@ -116,5 +159,6 @@ AdaptToBaseIndexConfig(Config* cfg, PARAM_TYPE param_type, size_t dim) {
         throw std::runtime_error("Not a valid config for DV(Data View) refiner index.");
     }
 }
+
 }  // namespace knowhere
 #endif

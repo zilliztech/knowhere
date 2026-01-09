@@ -149,7 +149,7 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
         if (dynamic_cast<ScannConfig*>(base_index_cfg.get())) {
             return std::make_unique<ScannWithDataViewRefinerConfig>();
         } else {
-            return std::make_unique<IndexWithDataViewRefinerConfig>();
+            return std::make_unique<IndexWithDataViewRefinerBaseConfig>();
         }
     }
 
@@ -158,7 +158,7 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
         if (base_index_->Type() == IndexEnum::INDEX_FAISS_SCANN) {
             return std::make_unique<ScannWithDataViewRefinerConfig>();
         } else {
-            return std::make_unique<IndexWithDataViewRefinerConfig>();
+            return std::make_unique<IndexWithDataViewRefinerBaseConfig>();
         }
     }
 
@@ -335,7 +335,12 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Train(const DataSetPtr da
     auto dim = dataset->GetDim();
     auto train_rows = dataset->GetRows();
     auto data = dataset->GetTensor();
-    auto refine_type = (knowhere::RefineType)(base_cfg.refine_type.value());
+    auto refine_type_opt = GetRefineType(&base_cfg);
+    if (refine_type_opt == std::nullopt) {
+        LOG_KNOWHERE_WARNING_ << "fail to get refine type in config ";
+        return Status::invalid_args;
+    }
+    auto refine_type = static_cast<RefineType>(refine_type_opt.value());
     // construct refiner
     auto refine_metric = is_cosine_ ? metric::IP : base_cfg.metric_type.value();
     // construct quant index and train:
@@ -469,7 +474,12 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Search(const DataSetPtr d
     auto nq = dataset->GetRows();
     auto dim = dataset->GetDim();
     auto topk = base_cfg.k.value();
-    auto refine_with_quant = base_cfg.refine_with_quant.value();
+    auto refine_with_quant_opt = GetRefineWithQuant(&base_cfg);
+    if (refine_with_quant_opt == std::nullopt) {
+        LOG_KNOWHERE_WARNING_ << "fail to get refine with quant in config ";
+        return expected<DataSetPtr>::Err(Status::invalid_args, "Wrong Config, GetRefineWithQuant failed in Search.");
+    }
+    auto refine_with_quant = refine_with_quant_opt.value();
     // basic search
     AdaptToBaseIndexConfig(cfg.get(), PARAM_TYPE::SEARCH, dim);
     auto base_index_ds = std::get<0>(
@@ -566,7 +576,13 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::AnnIterator(const DataSet
     const auto& base_cfg = static_cast<const BaseConfig&>(*cfg);
     auto refine_ratio = base_cfg.iterator_refine_ratio.value();
     auto larger_is_closer = IsMetricType(base_cfg.metric_type.value(), knowhere::metric::IP) || is_cosine_;
-    auto refine_with_quant = base_cfg.refine_with_quant.value();
+    auto refine_with_quant_opt = GetRefineWithQuant(&base_cfg);
+    if (refine_with_quant_opt == std::nullopt) {
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(
+            Status::invalid_args, "Wrong Config, GetRefineWithQuant failed in AnnIterator.");
+    }
+    auto refine_with_quant = refine_with_quant_opt.value();
+
     auto base_index_ds = std::get<0>(
         ConvertToBaseIndexFp32DataSet<DataType>(dataset, is_cosine_, std::nullopt, std::nullopt, base_index_->Dim()));
     knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>> base_index_init;
