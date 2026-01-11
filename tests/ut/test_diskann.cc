@@ -1344,7 +1344,7 @@ TEST_CASE("Test DiskANN Search Cancellation", "[diskann][cancellation]") {
         json["k"] = kK;
         json["index_prefix"] = kL2IndexPrefix;
         json["data_path"] = kRawDataPath;
-        json["max_degree"] = 56;
+        json["max_degree"] = 32;
         json["search_list_size"] = 128;
         json["pq_code_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
         json["search_cache_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
