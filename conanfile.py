@@ -101,7 +101,6 @@ class KnowhereConan(ConanFile):
         self.requires("glog/0.6.0")
         self.requires("nlohmann_json/3.11.2")
         self.requires("openssl/1.1.1t")
-        self.requires("hiredis/1.2.0")
         self.requires("prometheus-cpp/1.1.0")
         self.requires("zlib/1.2.12")
         self.requires("double-conversion/3.2.1")

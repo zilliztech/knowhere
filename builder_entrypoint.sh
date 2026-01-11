@@ -16,7 +16,12 @@ echo "==> Step 2: Creating build directory"
 mkdir build && cd build
 
 echo "==> Step 3: Running conan install"
-conan install .. --build=missing -o with_ut=True -o with_diskann=True -s compiler.libcxx=libstdc++11 -s build_type=$BUILD_TYPE
+conan install .. --build=missing \
+    -o with_ut=True \
+    -o with_diskann=True \
+    -o with_asan=True \
+    -s compiler.libcxx=libstdc++11 \
+    -s build_type=$BUILD_TYPE
 
 echo "==> Step 4: Running conan build"
 conan build ..

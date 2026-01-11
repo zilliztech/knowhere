@@ -228,11 +228,13 @@ TEST_CASE("NcsReader", "[NcsTest]") {
     REQUIRE(connector != nullptr);
 
     std::vector<uint32_t> keys = {1, 2, 3};
-    std::vector<std::vector<uint8_t>> values = {
-        std::vector<uint8_t>(100, 0x11), 
-        std::vector<uint8_t>(200, 0x22), 
-        std::vector<uint8_t>(300, 0x33)
-    };
+    std::vector<size_t> value_sizes = {100, 200, 300};
+    std::vector<uint8_t> value_patterns = {0x11, 0x22, 0x33};
+    std::vector<std::vector<uint8_t>> values;
+    for (size_t i = 0; i < keys.size(); ++i) {
+        values.emplace_back(value_sizes[i], value_patterns[i]);
+    }
+
     std::vector<SpanBytes> valueSpans;
     for (auto& value : values) {
         valueSpans.emplace_back(value.data(), value.size());
@@ -244,21 +246,14 @@ TEST_CASE("NcsReader", "[NcsTest]") {
         REQUIRE(status == NcsStatus::OK);
     }
 
-    NCSReader* ncs_reader = new NCSReader(&descriptor);
+    auto ncs_reader = std::make_unique<NCSReader>(&descriptor);
 
     std::vector<ReadReq> read_reqs;
-    std::vector<void*> buffers;
-    buffers.reserve(keys.size());
-
-    for (size_t i = 0; i < keys.size(); ++i) {
-        void* ptr = std::malloc(values[i].size());
-        if (!ptr) 
-            throw std::bad_alloc();
-        buffers.push_back(ptr);
-    }
+    auto buffer_size = *std::max_element(value_sizes.begin(), value_sizes.end());
+    std::vector<std::vector<char>> buffers(keys.size(), std::vector<char>(buffer_size));
 
     for(uint i = 0; i < keys.size() ; i++){
-        read_reqs.push_back({(uint32_t)keys[i], values[i].size(), buffers[i]});
+        read_reqs.push_back({(uint32_t)keys[i], values[i].size(), buffers[i].data()});
     }
 
     ncs_reader->read(read_reqs);
@@ -270,18 +265,11 @@ TEST_CASE("NcsReader", "[NcsTest]") {
     }
 
     std::vector<ReadReq> async_read_reqs;
-    std::vector<void*> async_buffers;
-    async_buffers.reserve(keys.size());
-    
-    for (size_t i = 0; i < keys.size(); ++i) {
-        void* ptr = std::malloc(values[i].size());
-        if (!ptr) 
-            throw std::bad_alloc();
-        async_buffers.push_back(ptr);
-    }
+    std::vector<std::vector<char>> async_buffers(keys.size(), std::vector<char>(buffer_size));
+
 
     for(uint i = 0; i < keys.size() ; i++){
-        async_read_reqs.push_back({(uint32_t)keys[i], values[i].size(), async_buffers[i]});
+        async_read_reqs.push_back({(uint32_t)keys[i], values[i].size(), async_buffers[i].data()});
     }
 
     ncs_reader->submit_req(async_read_reqs);
@@ -516,17 +504,12 @@ TEST_CASE("Test NcsUpload Using Connector", "[NcsTest]") {
 
     // Use actual node size instead of sector-aligned size since FileIndexReader handles alignment
     uint64_t max_node_len = knowhere::GetDiskANNMaxNodeLenForTest<knowhere::fp32>(diskann);
-    std::vector<std::unique_ptr<void, decltype(&std::free)>> file_reader_buffers;
-    file_reader_buffers.reserve(keys.size());
-    for (size_t key : keys) {
-        void* aligned_buf = std::aligned_alloc(512, max_node_len);
-        file_reader_buffers.emplace_back(aligned_buf, &std::free);
-    }
+    std::vector<std::vector<char>> file_reader_buffers(keys.size(), std::vector<char>(max_node_len));
 
     int i =0;
     std::vector<ReadReq> reqs;
     for(size_t key : keys){
-        reqs.emplace_back(key, max_node_len, (void*)file_reader_buffers[i].get());
+        reqs.emplace_back(key, max_node_len, (void*)file_reader_buffers[i].data());
         i++;
     }
     reader->read(reqs);
@@ -642,22 +625,18 @@ TEST_CASE("FileReader Compare NcsReader", "[NcsTest]") {
     // Use actual node size instead of sector-aligned size since FileIndexReader handles alignment
     uint64_t max_node_len = knowhere::GetDiskANNMaxNodeLenForTest<knowhere::fp32>(diskann);
 
-    std::vector<std::unique_ptr<void, decltype(&std::free)>> file_buffers;
-    file_buffers.reserve(keys.size());
+    std::vector<std::vector<char>> file_buffers(keys.size(), std::vector<char>(max_node_len));
     std::vector<ReadReq> file_reqs;
-    for (size_t key : keys) {
-        void* aligned_buf = std::aligned_alloc(512, max_node_len);
-        file_buffers.emplace_back(aligned_buf, &std::free);
-        file_reqs.emplace_back(key, max_node_len, aligned_buf);
+    file_reqs.reserve(keys.size());
+    for (size_t i = 0; i < keys.size(); ++i) {
+        file_reqs.emplace_back(keys[i], max_node_len, file_buffers[i].data());
     }
 
-    std::vector<std::unique_ptr<void, decltype(&std::free)>> ncs_buffers;
-    ncs_buffers.reserve(keys.size());
+    std::vector<std::vector<char>> ncs_buffers(keys.size(), std::vector<char>(max_node_len));
     std::vector<ReadReq> ncs_reqs;
-    for (size_t key : keys) {
-        void* aligned_buf = std::aligned_alloc(512, max_node_len);
-        ncs_buffers.emplace_back(aligned_buf, &std::free);
-        ncs_reqs.emplace_back(key, max_node_len, aligned_buf);
+    ncs_reqs.reserve(keys.size());
+    for (size_t i = 0; i < keys.size(); ++i) {
+        ncs_reqs.emplace_back(keys[i], max_node_len, ncs_buffers[i].data());
     }
 
     file_reader->read(file_reqs);
@@ -2114,6 +2093,8 @@ TEST_CASE("DiskANN NcsUpload", "[diskann][ncs]") {
     // Perform NCS upload
     auto ncs_upload_status = diskann.NcsUpload(build_config);
     REQUIRE(ncs_upload_status == knowhere::Status::success);
+
+    uint64_t max_node_len = knowhere::GetDiskANNMaxNodeLenForTest<knowhere::fp32>(diskann);
     
     // Mode-specific verification
     auto descriptor = NcsDescriptor(ncs_kind, bucketId, ncs_extras);
@@ -2125,15 +2106,12 @@ TEST_CASE("DiskANN NcsUpload", "[diskann][ncs]") {
         REQUIRE(connector != nullptr);
         
         std::vector<uint32_t> test_keys = {0, 1, 2};
-        std::vector<std::unique_ptr<void, decltype(&std::free)>> read_buffers;
         std::vector<SpanBytes> read_spans;
         
-        size_t buffer_size = 4096;
+        std::vector<std::vector<char>> read_buffers(test_keys.size(), std::vector<char>(max_node_len));
+        read_spans.reserve(test_keys.size());
         for (size_t i = 0; i < test_keys.size(); ++i) {
-            void* aligned_buf = std::aligned_alloc(512, buffer_size);
-            REQUIRE(aligned_buf != nullptr);
-            read_buffers.emplace_back(aligned_buf, &std::free);
-            read_spans.emplace_back(read_buffers.back().get(), buffer_size);
+            read_spans.emplace_back(read_buffers[i].data(), max_node_len);
         }
         
         auto get_results = connector->multiGet(test_keys, read_spans);
@@ -2152,17 +2130,14 @@ TEST_CASE("DiskANN NcsUpload", "[diskann][ncs]") {
         NCSReader ncs_reader(&descriptor);
         
         // Test synchronous read
-        std::vector<ReadReq> read_reqs;
-        std::vector<std::unique_ptr<void, decltype(&std::free)>> buffers;
         
-        size_t read_size = 2048;
         int num_test_reads = 5;
-        
+        std::vector<std::vector<char>> buffers(num_test_reads, std::vector<char>(max_node_len));
+        std::vector<ReadReq> read_reqs;
+        read_reqs.reserve(num_test_reads);
+
         for (int i = 0; i < num_test_reads; ++i) {
-            void* aligned_buf = std::aligned_alloc(512, read_size);
-            REQUIRE(aligned_buf != nullptr);
-            buffers.emplace_back(aligned_buf, &std::free);
-            read_reqs.push_back({static_cast<uint32_t>(i), read_size, buffers.back().get()});
+            read_reqs.push_back({static_cast<uint32_t>(i), max_node_len, buffers[i].data()});
         }
         
         REQUIRE_NOTHROW(ncs_reader.read(read_reqs));
@@ -2182,14 +2157,11 @@ TEST_CASE("DiskANN NcsUpload", "[diskann][ncs]") {
         REQUIRE(has_data);
         
         // Test asynchronous read
+        std::vector<std::vector<char>> async_buffers(num_test_reads, std::vector<char>(max_node_len));
         std::vector<ReadReq> async_read_reqs;
-        std::vector<std::unique_ptr<void, decltype(&std::free)>> async_buffers;
-        
+        async_read_reqs.reserve(num_test_reads);
         for (int i = 0; i < num_test_reads; ++i) {
-            void* aligned_buf = std::aligned_alloc(512, read_size);
-            REQUIRE(aligned_buf != nullptr);
-            async_buffers.emplace_back(aligned_buf, &std::free);
-            async_read_reqs.push_back({static_cast<uint32_t>(i), read_size, async_buffers.back().get()});
+            async_read_reqs.push_back({static_cast<uint32_t>(i), max_node_len, async_buffers[i].data()});
         }
         
         REQUIRE_NOTHROW(ncs_reader.submit_req(async_read_reqs));

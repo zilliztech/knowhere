@@ -231,6 +231,7 @@ class DiskANNIndexNode : public IndexNode {
                 batch_size_i = batch_size;
             }
 
+            reqs.reserve(batch_size_i);
             for(int j=0 ; j < batch_size_i ; j++){
                 reqs.emplace_back((uint64_t)(i+j), max_node_len, (void*)buffers[j].data());
             }
