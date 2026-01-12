@@ -462,6 +462,13 @@ template <typename DataType>
 inline void
 emb_list_search() {
     auto version = GenTestEmbListVersionList();
+    int max_degree = 56;
+
+#ifdef KNOWHERE_WITH_CUVS
+    if(is_gpu_available()) {
+        max_degree = defaultMaxDegree;
+    }
+#endif
 
     fs::remove_all(kDir);
     fs::remove(kDir);
@@ -487,12 +494,12 @@ emb_list_search() {
         return json;
     };
 
-    auto build_gen = [&base_gen, &metric_str, &metric_dir_map]() {
+    auto build_gen = [&base_gen, &metric_str, &metric_dir_map, max_degree]() {
         knowhere::Json json = base_gen();
         json["index_prefix"] = metric_dir_map[metric_str];
         json["data_path"] = kRawDataPath;
         json["emb_list_offset_file_path"] = kEmbListOffsetPath;
-        json["max_degree"] = 56;
+        json["max_degree"] = max_degree;
         json["search_list_size"] = 128;
         json["pq_code_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
         json["search_cache_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);

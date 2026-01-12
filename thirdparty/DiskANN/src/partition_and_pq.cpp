@@ -1233,8 +1233,12 @@ int partition_calc_kmeans(const std::string &data_file, const std::string &outpu
     size_t train_dim, num_train;
     //float *train_data_float;
     std::unique_ptr<float[]> train_data_float = nullptr;
+    float min_sample_ratio = static_cast<float>(k) / static_cast<float>(npts32);
+    float suggested_ratio = 0.01;
+    float slice_ratio = std::max(min_sample_ratio, suggested_ratio);
+    LOG_KNOWHERE_INFO_ << "partition_calc_kmeans with " << slice_ratio << " slice_ratio...";
     // Load a sample of the dataset for k-means
-    gen_random_slice<T>(data_file, 0.01, train_data_float, num_train, train_dim, &sampled_ids);
+    gen_random_slice<T>(data_file, slice_ratio, train_data_float, num_train, train_dim, &sampled_ids);
 
     // Allocate centroids
     std::vector<float> centroids(k * train_dim);
