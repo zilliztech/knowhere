@@ -40,7 +40,7 @@ find_min_index_sve(const float* data, size_t ny) {
     float min_scalar = svminv_f32(res_pg, min_val);
 
     svbool_t min_mask = svcmpeq_f32(res_pg, min_val, svdup_n_f32(min_scalar));
-    size_t min_index = svlastb_u32(min_mask, min_idx);
+    size_t min_index = svlastb_u32(svbrka_b_z(min_mask, min_mask), min_idx);
     return min_index;
 }
 
