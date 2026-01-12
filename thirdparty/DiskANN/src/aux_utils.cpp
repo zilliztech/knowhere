@@ -484,7 +484,7 @@ namespace diskann {
     diskann::get_bin_metadata(base_file, base_num, base_dim);
 #ifdef KNOWHERE_WITH_CUVS
     raft::device_resources dev_resources;
-    if(is_gpu_available()) {
+    if(compareMetric == diskann::L2 && is_gpu_available()) {
       size_t gpu_free_mem, gpu_total_mem;
       gpu_get_mem_info(dev_resources, gpu_free_mem, gpu_total_mem);
       LOG_KNOWHERE_INFO_ << "GPU has " <<  gpu_free_mem/(1024*1024*1024L) <<
@@ -518,7 +518,7 @@ namespace diskann {
       bool built_with_gpu=false;
 #ifdef KNOWHERE_WITH_CUVS
       //currently cuvs vamana build only supports L2Expanded metric
-      if (compareMetric == diskann::L2 && is_gpu_available () &&
+      if (compareMetric == diskann::L2 && is_gpu_available() &&
               (std::is_same_v<T, float> || std::is_same_v<T, uint8_t>) ) {
         LOG_KNOWHERE_INFO_ << "Building with GPU!" << " R= "<< R<<" L=" << L;
 
