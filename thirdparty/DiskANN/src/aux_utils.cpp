@@ -1842,7 +1842,7 @@ template<typename T>
       return -1;
     }
 #ifdef KNOWHERE_WITH_CUVS
-    if(config.compare_metric == diskann::L2 && is_gpu_available()) {
+    if(is_gpu_available()) {
       if (R != 32 && R != 64 && R != 128) {
         LOG_KNOWHERE_ERROR_ << "Invalid R value for cuvs - should be only 32 or 64 or 128";
         return -1;
