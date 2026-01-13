@@ -12,14 +12,16 @@
 #ifndef INSTRUCTION_SET_H
 #define INSTRUCTION_SET_H
 
-#include <cpuid.h>
-
 #include <array>
 #include <bitset>
 #include <cstring>
 #include <iostream>
 #include <string>
 #include <vector>
+
+// faiss::InstructionSet is x86-specific and uses cpuid instructions
+#if defined(__x86_64__) || defined(_M_X64)
+#include <cpuid.h>
 
 namespace faiss {
 
@@ -370,5 +372,6 @@ class InstructionSet {
 };
 
 }  // namespace faiss
+#endif  // __x86_64__ || _M_X64
 
 #endif /* INSTRUCTION_SET_H */

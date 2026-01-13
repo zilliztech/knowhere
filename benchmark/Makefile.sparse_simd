@@ -1,0 +1,25 @@
+# Standalone Makefile for sparse SIMD benchmark
+# Usage: make -f Makefile.sparse_simd
+
+CXX ?= g++
+CXXFLAGS = -std=c++17 -O3 -Wall -I../include -I.. -mavx512f -mavx512dq
+LDFLAGS = -pthread
+
+# Detect build directory
+BUILD_DIR = ../build
+
+BENCHMARK_BIN = benchmark_sparse_simd_standalone
+
+all: $(BENCHMARK_BIN)
+
+$(BENCHMARK_BIN): benchmark_sparse_simd.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
+
+run: $(BENCHMARK_BIN)
+	@echo "Running sparse SIMD benchmark..."
+	@./$(BENCHMARK_BIN)
+
+clean:
+	rm -f $(BENCHMARK_BIN)
+
+.PHONY: all run clean

@@ -34,6 +34,8 @@
 #include "knowhere/prometheus_client.h"
 #include "knowhere/sparse_utils.h"
 #include "knowhere/utils.h"
+#include "simd/instruction_set.h"
+#include "simd/sparse_simd.h"
 
 namespace knowhere::sparse {
 
@@ -960,17 +962,29 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     compute_all_distances(const std::vector<std::pair<size_t, DType>>& q_vec,
                           const DocValueComputer<float>& computer) const {
         std::vector<float> scores(n_rows_internal_, 0.0f);
-        for (size_t i = 0; i < q_vec.size(); ++i) {
-            auto& plist_ids = inverted_index_ids_spans_[q_vec[i].first];
-            auto& plist_vals = inverted_index_vals_spans_[q_vec[i].first];
-            // TODO: improve with SIMD
-            for (size_t j = 0; j < plist_ids.size(); ++j) {
-                auto doc_id = plist_ids[j];
-                float val_sum =
-                    metric_type_ == SparseMetricType::METRIC_BM25 ? bm25_params_->row_sums_spans_[doc_id] : 0;
-                scores[doc_id] += q_vec[i].second * computer(plist_vals[j], val_sum);
+
+        if (metric_type_ == SparseMetricType::METRIC_IP) {
+            for (const auto& [dim_idx, q_weight] : q_vec) {
+                const auto& plist_ids = inverted_index_ids_spans_[dim_idx];
+                const auto& plist_vals = inverted_index_vals_spans_[dim_idx];
+
+                accumulate_posting_list_contribution_ip_dispatch<QType>(
+                    plist_ids.data(), plist_vals.data(), plist_ids.size(), static_cast<float>(q_weight), scores.data());
+            }
+        } else {
+            const auto& doc_len_ratios = bm25_params_->row_sums_spans_;
+            for (const auto& [dim_idx, q_weight] : q_vec) {
+                const auto& plist_ids = inverted_index_ids_spans_[dim_idx];
+                const auto& plist_vals = inverted_index_vals_spans_[dim_idx];
+                const float q_weight_float = static_cast<float>(q_weight);
+                for (size_t j = 0; j < plist_ids.size(); ++j) {
+                    const auto doc_id = plist_ids[j];
+                    const float doc_val = computer(plist_vals[j], doc_len_ratios[doc_id]);
+                    scores[doc_id] += q_weight_float * doc_val;
+                }
             }
         }
+
         return scores;
     }
 
