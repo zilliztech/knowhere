@@ -238,11 +238,11 @@ class DiskANNIndexNode : public IndexNode {
             reader->read(reqs);
 
             std::vector<uint32_t> keys;
-            std::vector<milvus::SpanBytes> valueSpans;
+            std::vector<boost::span<uint8_t>> valueSpans;
             for(uint32_t j=0 ; j < batch_size_i ; j++){
                 auto key = i + j;
                 keys.push_back(key);
-                valueSpans.emplace_back(reqs[j].buf, max_node_len);
+                valueSpans.emplace_back(static_cast<uint8_t*>(reqs[j].buf), max_node_len);
             }
 
             auto putResults = connector->multiPut(keys, valueSpans);

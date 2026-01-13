@@ -103,11 +103,11 @@ namespace {
  * @param ncs_kind The NCS backend type ("in_memory" or "redis")
  * @return json config with appropriate settings for the backend
  */
-json getNcsExtras(const std::string& ncs_kind) {
+nlohmann::json getNcsExtras(const std::string& ncs_kind) {
     if (ncs_kind == "redis") {
-        return json{{"redis_host", "localhost"}, {"redis_port", 6379}};
+        return nlohmann::json{{"redis_host", "localhost"}, {"redis_port", 6379}};
     }
-    return json::object();
+    return nlohmann::json::object();
 }
 
 /**
@@ -153,7 +153,7 @@ TEST_CASE("InMemoryNcsConnector - sanity", "[NcsTest]") {
         std::vector<uint8_t>(200, 0x22),  // 200 bytes
         std::vector<uint8_t>(300, 0x33)   // 300 bytes
     };
-    std::vector<SpanBytes> valueSpans;
+    std::vector<boost::span<uint8_t>> valueSpans;
     for (auto& value : values) {
         valueSpans.emplace_back(value.data(), value.size());
     }
@@ -167,10 +167,12 @@ TEST_CASE("InMemoryNcsConnector - sanity", "[NcsTest]") {
 
     // Prepare buffers for reading
     std::vector<std::vector<uint8_t>> readBuffers;
-    std::vector<SpanBytes> readSpans;
+    std::vector<boost::span<uint8_t>> readSpans;
     for (const auto& value : values) {
         readBuffers.emplace_back(value.size());
-        readSpans.emplace_back(readBuffers.back().data(), readBuffers.back().size());
+    }
+    for (auto& buf : readBuffers) {
+        readSpans.emplace_back(buf.data(), buf.size());
     }
 
     // Test multiGet
@@ -183,7 +185,7 @@ TEST_CASE("InMemoryNcsConnector - sanity", "[NcsTest]") {
 
     // Test with buffer too small
     std::vector<uint8_t> smallBuffer(50);
-    SpanBytes smallSpan(smallBuffer.data(), smallBuffer.size());
+    boost::span<uint8_t> smallSpan(smallBuffer.data(), smallBuffer.size());
     auto getResult = connector->multiGet({keys[2]}, {smallSpan});
     REQUIRE(getResult.size() == 1);
     REQUIRE(getResult[0] == NcsStatus::ERROR);  // Should fail as buffer is too small
@@ -235,7 +237,7 @@ TEST_CASE("NcsReader", "[NcsTest]") {
         values.emplace_back(value_sizes[i], value_patterns[i]);
     }
 
-    std::vector<SpanBytes> valueSpans;
+    std::vector<boost::span<uint8_t>> valueSpans;
     for (auto& value : values) {
         valueSpans.emplace_back(value.data(), value.size());
     }
@@ -313,7 +315,7 @@ TEST_CASE("NCSReader - concurrent thread_local access", "[NcsTest]") {
     
     std::vector<uint32_t> allKeys;
     std::vector<std::vector<uint8_t>> allValues;
-    std::vector<SpanBytes> allSpans;
+    std::vector<boost::span<uint8_t>> allSpans;
     
     for (size_t i = 0; i < numKeys; ++i) {
         allKeys.push_back(static_cast<uint32_t>(i));
@@ -465,9 +467,6 @@ TEST_CASE("Test NcsUpload Using Connector", "[NcsTest]") {
     json["pq_code_budget_gb"] = sizeof(float) * kDim * rows_num * 0.125 / (1024 * 1024 * 1024);
     json["build_dram_budget_gb"] = 32.0;
     json["search_cache_budget_gb"] = sizeof(float) * kDim * rows_num * 0.05 / (1024 * 1024 * 1024);
-    json["beamwidth"] = 8;
-    json["min_k"] = 10;
-    json["max_k"] = 8000;
     json["ncs_enable"] = true;
     json["ncs_descriptor"] = NcsDescriptor(ncs_kind, bucketId, ncs_extras);
     
@@ -488,7 +487,7 @@ TEST_CASE("Test NcsUpload Using Connector", "[NcsTest]") {
     for (int i = 0; i < rows_num; ++i) {
         keys.push_back(i);
     }
-    std::vector<SpanBytes> buffs;
+    std::vector<boost::span<uint8_t>> buffs;
     
     std::unique_ptr<IndexReader> reader = std::make_unique<FileIndexReader>(
         kL2IndexPrefix+"_disk_data.index", 
@@ -515,10 +514,12 @@ TEST_CASE("Test NcsUpload Using Connector", "[NcsTest]") {
     reader->read(reqs);
 
     std::vector<std::vector<uint8_t>> ncs_reader_buffers;
-    std::vector<SpanBytes> readSpans;
+    std::vector<boost::span<uint8_t>> readSpans;
     for (size_t key : keys) {
         ncs_reader_buffers.emplace_back(max_node_len);
-        readSpans.emplace_back(ncs_reader_buffers.back().data(), max_node_len);
+    }
+    for (auto& buf : ncs_reader_buffers) {
+        readSpans.emplace_back(buf.data(), buf.size());
     }
 
     auto getResults = connector->multiGet(keys, readSpans);
@@ -584,9 +585,6 @@ TEST_CASE("FileReader Compare NcsReader", "[NcsTest]") {
     json["pq_code_budget_gb"] = sizeof(float) * kDim * rows_num * 0.125 / (1024 * 1024 * 1024);
     json["build_dram_budget_gb"] = 32.0;
     json["search_cache_budget_gb"] = sizeof(float) * kDim * rows_num * 0.05 / (1024 * 1024 * 1024);
-    json["beamwidth"] = 8;
-    json["min_k"] = 10;
-    json["max_k"] = 8000;
     json["ncs_enable"] = true;
     json["ncs_descriptor"] = NcsDescriptor(ncs_kind, bucketId, ncs_extras);
     
@@ -2014,24 +2012,13 @@ TEST_CASE("DiskANN NcsUpload", "[diskann][ncs]") {
     
     initNcsForTest(ncs_kind);
     
-    // Configure test parameters based on mode
-    const uint32_t bucketId = (test_mode == std::string("connector")) ? 3260486057 : 1001;
-    const uint32_t testNumRows = (test_mode == std::string("connector")) ? 2000 : 1000;
-    const uint32_t testDim = (test_mode == std::string("connector")) ? 8 : 128;
-    const std::string testDir = (test_mode == std::string("connector")) ? 
-        fs::current_path().string() + "/diskann_ncs_test" :
-        fs::current_path().string() + "/diskann_ncs_integration_test";
-    const std::string indexPrefixSuffix = (test_mode == std::string("connector")) ? "/_disk" : "/test_index";
-    
-    std::string kNcsTestDir = testDir;
-    std::string kNcsRawDataPath = kNcsTestDir + "/raw_data";
-    std::string kNcsIndexDir = kNcsTestDir + "/index" + ((test_mode == std::string("connector")) ? "_files" : "");
-    std::string kNcsIndexPrefix = kNcsIndexDir + indexPrefixSuffix;
+    const uint32_t bucketId = 1234;
     
     // Clean up and create directories
-    fs::remove_all(kNcsTestDir);
-    fs::remove(kNcsTestDir);
-    REQUIRE_NOTHROW(fs::create_directories(kNcsIndexDir));
+    fs::remove_all(kDir);
+    fs::remove(kDir);
+    REQUIRE_NOTHROW(fs::create_directory(kDir));
+    REQUIRE_NOTHROW(fs::create_directory(kL2IndexDir));
     
     Ncs* ncs = NcsSingleton::Instance();
     auto createResult = ncs->createBucket(bucketId);
@@ -2039,38 +2026,25 @@ TEST_CASE("DiskANN NcsUpload", "[diskann][ncs]") {
     
     // Generate test data
     auto version = GenTestVersionList();
-    auto base_ds = GenDataSet(testNumRows, testDim, (test_mode == std::string("connector")) ? 30 : 42);
+    auto base_ds = GenDataSet(kNumRows, kDim);
     auto base_ptr = static_cast<const float*>(base_ds->GetTensor());
-    WriteRawDataToDisk<float>(kNcsRawDataPath, base_ptr, testNumRows, testDim);
+    WriteRawDataToDisk<float>(kRawDataPath, base_ptr, kNumRows, kDim);
     
     auto ncs_extras = getNcsExtras(ncs_kind);
     
     // Build configuration
     knowhere::Json build_config;
-    build_config["dim"] = testDim;
+    build_config["dim"] = kDim;
     build_config["metric_type"] = "L2";
-    build_config["index_prefix"] = kNcsIndexPrefix;
-    build_config["data_path"] = kNcsRawDataPath;
+    build_config["index_prefix"] = kL2IndexPrefix;
+    build_config["data_path"] = kRawDataPath;
     build_config["ncs_enable"] = true;
     build_config["ncs_descriptor"] = NcsDescriptor(ncs_kind, bucketId, ncs_extras);
-    
-    // Mode-specific configuration
-    if (test_mode == std::string("connector")) {
-        build_config["max_degree"] = 56;
-        build_config["search_list_size"] = 100;
-        build_config["pq_code_budget_gb"] = 7.000000096013537e-06;
-        build_config["pq_code_budget_gb_ratio"] = 0.125;
-        build_config["search_cache_budget_gb"] = 6.000000212225132e-06;
-        build_config["search_cache_budget_gb_ratio"] = 0.10000000149011612;
-        build_config["build_dram_budget_gb"] = 503.04913330078125;
-        build_config["num_build_thread"] = 80;
-    } else {
-        build_config["max_degree"] = 48;
-        build_config["search_list_size"] = 128;
-        build_config["pq_code_budget_gb"] = sizeof(float) * testDim * testNumRows * 0.125 / (1024 * 1024 * 1024);
-        build_config["search_cache_budget_gb"] = sizeof(float) * testDim * testNumRows * 0.125 / (1024 * 1024 * 1024);
-        build_config["build_dram_budget_gb"] = 16.0;
-    }
+    build_config["max_degree"] = 24;
+    build_config["search_list_size"] = 64;
+    build_config["pq_code_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
+    build_config["build_dram_budget_gb"] = 32.0;
+    build_config["search_cache_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.05 / (1024 * 1024 * 1024);
     
     // Build the DiskANN index
     std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
@@ -2085,8 +2059,8 @@ TEST_CASE("DiskANN NcsUpload", "[diskann][ncs]") {
     REQUIRE(build_status == knowhere::Status::success);
     
     // Verify index files are created
-    std::string disk_index_metadata_file = kNcsIndexPrefix + "_disk_metadata.index";
-    std::string disk_index_data_file = kNcsIndexPrefix + "_disk_data.index";
+    std::string disk_index_metadata_file = kL2IndexPrefix + "_disk_metadata.index";
+    std::string disk_index_data_file = kL2IndexPrefix + "_disk_data.index";
     REQUIRE(fs::exists(disk_index_metadata_file));
     REQUIRE(fs::exists(disk_index_data_file));
     
@@ -2106,9 +2080,9 @@ TEST_CASE("DiskANN NcsUpload", "[diskann][ncs]") {
         REQUIRE(connector != nullptr);
         
         std::vector<uint32_t> test_keys = {0, 1, 2};
-        std::vector<SpanBytes> read_spans;
+        std::vector<boost::span<uint8_t>> read_spans;
         
-        std::vector<std::vector<char>> read_buffers(test_keys.size(), std::vector<char>(max_node_len));
+        std::vector<std::vector<uint8_t>> read_buffers(test_keys.size(), std::vector<uint8_t>(max_node_len));
         read_spans.reserve(test_keys.size());
         for (size_t i = 0; i < test_keys.size(); ++i) {
             read_spans.emplace_back(read_buffers[i].data(), max_node_len);
@@ -2172,6 +2146,6 @@ TEST_CASE("DiskANN NcsUpload", "[diskann][ncs]") {
     auto deleteResult = ncs->deleteBucket(bucketId);
     REQUIRE(deleteResult == NcsStatus::OK);
     
-    fs::remove_all(kNcsTestDir);
-    fs::remove(kNcsTestDir);
+    fs::remove_all(kDir);
+    fs::remove(kDir);
 }

@@ -41,14 +41,14 @@ void NCSReader::read(std::vector<ReadReq> &read_reqs) {
     auto* connector = getThreadLocalConnector();
     
     std::vector<uint32_t> keys;
-    std::vector<milvus::SpanBytes> buffs;
+    std::vector<boost::span<uint8_t>> buffs;
 
     keys.reserve(read_reqs.size());
     buffs.reserve(read_reqs.size());
 
     for (const auto& req : read_reqs) {
         keys.push_back((uint32_t)req.key);
-        buffs.push_back(milvus::SpanBytes(req.buf, req.len));
+        buffs.push_back(boost::span<uint8_t>(static_cast<uint8_t*>(req.buf), req.len));
     }
 
     std::vector<milvus::NcsStatus> results = connector->multiGet(keys, buffs);
