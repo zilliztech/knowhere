@@ -19,6 +19,7 @@
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "diskann/diskann_gpu.h"
 #include "filemanager/FileManager.h"
 #include "filemanager/impl/LocalFileManager.h"
 #include "index/diskann/diskann_config.h"
@@ -30,7 +31,6 @@
 #include "knowhere/utils.h"
 #include "knowhere/version.h"
 #include "utils.h"
-#include "diskann/diskann_gpu.h"
 
 #if __has_include(<filesystem>)
 #include <filesystem>
@@ -216,7 +216,7 @@ base_search() {
     int max_degree = 56;
 
 #ifdef KNOWHERE_WITH_CUVS
-    if(is_gpu_available()) {
+    if (is_gpu_available()) {
         max_degree = defaultMaxDegree;
     }
 #endif
@@ -396,7 +396,7 @@ TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
 TEST_CASE("Test DiskANN Build Index", "[diskann]") {
     auto version = GenTestVersionList();
     knowhere::Status test_stat;
-    if(is_gpu_available()) {
+    if (is_gpu_available()) {
         for (const uint32_t dim : {kDim}) {
             fs::remove_all(kDir);
             fs::remove(kDir);
@@ -429,8 +429,9 @@ TEST_CASE("Test DiskANN Build Index", "[diskann]") {
             auto diskann_index_pack = knowhere::Pack(file_manager);
 
             knowhere::DataSetPtr ds_ptr = nullptr;
-            auto diskann =
-                knowhere::IndexFactory::Instance().Create<knowhere::fp32>("DISKANN", version, diskann_index_pack).value();
+            auto diskann = knowhere::IndexFactory::Instance()
+                               .Create<knowhere::fp32>("DISKANN", version, diskann_index_pack)
+                               .value();
             auto build_json = build_gen().dump();
             knowhere::Json json = knowhere::Json::parse(build_json);
             diskann.Build(ds_ptr, json);
@@ -465,7 +466,7 @@ emb_list_search() {
     int max_degree = 56;
 
 #ifdef KNOWHERE_WITH_CUVS
-    if(is_gpu_available()) {
+    if (is_gpu_available()) {
         max_degree = defaultMaxDegree;
     }
 #endif
