@@ -10,6 +10,7 @@
 #include <immintrin.h>
 #include <omp.h>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 #include <faiss/impl/FaissAssert.h>
@@ -63,6 +64,27 @@ struct Codec4bit_avx : public Codec4bit {
         f8 = _mm256_add_ps(f8, half);
         __m256 one_255 = _mm256_set1_ps(1.f / 15.f);
         return _mm256_mul_ps(f8, one_255);
+    }
+
+    static FAISS_ALWAYS_INLINE __m256i
+    decode_8_components_int(const uint8_t* code, int i) {
+        // Load 4 bytes containing 8 nibbles
+        uint32_t c4 = *(uint32_t*)(code + (i >> 1));
+        uint32_t mask = 0x0f0f0f0f;
+        uint32_t c4ev = c4 & mask;        // Even nibbles
+        uint32_t c4od = (c4 >> 4) & mask; // Odd nibbles
+
+        // Interleave even and odd nibbles
+        __m128i c8 =
+                _mm_unpacklo_epi8(_mm_set1_epi32(c4ev), _mm_set1_epi32(c4od));
+
+        // Convert to 8x32-bit integers
+        __m128i c4lo = _mm_cvtepu8_epi32(c8);
+        __m128i c4hi = _mm_cvtepu8_epi32(_mm_srli_si128(c8, 4));
+        __m256i result = _mm256_castsi128_si256(c4lo);
+        result = _mm256_insertf128_si256(result, c4hi, 1);
+
+        return result;
     }
 };
 
@@ -214,6 +236,43 @@ struct QuantizerBF16_avx<8> : public QuantizerBF16<1> {
         __m256i code_256i = _mm256_cvtepu16_epi32(code_128i);
         code_256i = _mm256_slli_epi32(code_256i, 16);
         return _mm256_castsi256_ps(code_256i);
+    }
+};
+
+/*******************************************************************
+ * Specialized QuantizerTemplate for SQ4U
+ *******************************************************************/
+
+template <>
+struct QuantizerTemplate_avx<
+        Codec4bit_avx,
+        QuantizerTemplateScaling::UNIFORM,
+        8>
+        : public QuantizerTemplate<
+                  Codec4bit_avx,
+                  QuantizerTemplateScaling::UNIFORM,
+                  1> {
+    float final_scale;
+    float final_bias;
+
+    QuantizerTemplate_avx(size_t d, const std::vector<float>& trained)
+            : QuantizerTemplate<
+                      Codec4bit_avx,
+                      QuantizerTemplateScaling::UNIFORM,
+                      1>(d, trained) {
+        final_scale = this->vdiff / 15.0f;
+        final_bias = this->vmin + this->vdiff * 0.5f / 15.0f;
+    }
+
+    FAISS_ALWAYS_INLINE __m256
+    reconstruct_8_components(const uint8_t* code, int i) const {
+        __m256i nibbles = Codec4bit_avx::decode_8_components_int(code, i);
+        __m256 nibbles_f = _mm256_cvtepi32_ps(nibbles);
+
+        return _mm256_fmadd_ps(
+                nibbles_f,
+                _mm256_set1_ps(final_scale),
+                _mm256_set1_ps(final_bias));
     }
 };
 
@@ -409,6 +468,394 @@ struct SimilarityIP_avx<8> {
         __m128 v2 = _mm_shuffle_ps(v1, v1, _MM_SHUFFLE(0, 0, 0, 1));
         const __m128 v3 = _mm_add_ps(v1, v2);
         return _mm_cvtss_f32(v3);
+    }
+};
+
+/*******************************************************************
+ * SQ4U specialized distance computer (AVX2 version)
+ *******************************************************************/
+
+template <class Similarity>
+struct DistanceComputerSQ4UByte_avx : SQDistanceComputer {
+    using Quantizer = QuantizerTemplate_avx<
+            Codec4bit_avx,
+            QuantizerTemplateScaling::UNIFORM,
+            8>;
+    using Sim = Similarity;
+
+    Quantizer quant;
+    std::vector<uint8_t> q_lo;
+    std::vector<uint8_t> q_hi;
+    float final_scale_sq;
+
+    DistanceComputerSQ4UByte_avx(size_t d, const std::vector<float>& trained)
+            : quant(d, trained),
+              q_lo((d + 1) / 2 + 32, 0),
+              q_hi((d + 1) / 2 + 32, 0) {
+        final_scale_sq = quant.final_scale * quant.final_scale;
+    }
+
+    void set_query(const float* x) final {
+        float inv_scale = 1.0f / quant.final_scale;
+        float offset = quant.vmin;
+
+        for (size_t i = 0; i < quant.d; i++) {
+            float val = (x[i] - offset) * inv_scale;
+            int code = (int)std::floor(val);
+            if (code < 0)
+                code = 0;
+            if (code > 15)
+                code = 15;
+
+            if (i % 2 == 0) {
+                q_lo[i / 2] = (uint8_t)code;
+            } else {
+                q_hi[i / 2] = (uint8_t)code;
+            }
+        }
+    }
+
+    // Only computes L2 distance
+    float compute_distance(const float* x, const uint8_t* code) const {
+        return compute_distance_l2(code);
+    }
+
+    float compute_distance_l2(const uint8_t* code) const {
+        const size_t d = quant.d;
+        const uint8_t* q_lo_ptr = q_lo.data();
+        const uint8_t* q_hi_ptr = q_hi.data();
+
+        __m256i acc = _mm256_setzero_si256();
+        const __m256i mask_f = _mm256_set1_epi8(0xF);
+        const __m256i one = _mm256_set1_epi16(1);
+
+        size_t i = 0;
+        // Process 64 dimensions per iteration (32 bytes = 64 nibbles)
+        for (; i + 64 <= d; i += 64) {
+            __m256i c256 = _mm256_loadu_si256((const __m256i*)(code + i / 2));
+
+            __m256i nibbles_lo = _mm256_and_si256(c256, mask_f);
+            __m256i nibbles_hi =
+                    _mm256_and_si256(_mm256_srli_epi16(c256, 4), mask_f);
+
+            __m256i q_lo_vec =
+                    _mm256_loadu_si256((const __m256i*)(q_lo_ptr + i / 2));
+            __m256i q_hi_vec =
+                    _mm256_loadu_si256((const __m256i*)(q_hi_ptr + i / 2));
+
+            // Compute absolute differences
+            __m256i diff_lo = _mm256_sub_epi8(q_lo_vec, nibbles_lo);
+            __m256i diff_hi = _mm256_sub_epi8(q_hi_vec, nibbles_hi);
+
+            // AVX2 doesn't have _mm256_abs_epi8, so we use max(x, -x)
+            diff_lo = _mm256_max_epi8(
+                    diff_lo, _mm256_sub_epi8(_mm256_setzero_si256(), diff_lo));
+            diff_hi = _mm256_max_epi8(
+                    diff_hi, _mm256_sub_epi8(_mm256_setzero_si256(), diff_hi));
+
+            // Square using maddubs: treats input as unsigned bytes
+            __m256i sq_lo = _mm256_maddubs_epi16(diff_lo, diff_lo);
+            __m256i sq_hi = _mm256_maddubs_epi16(diff_hi, diff_hi);
+
+            // Accumulate to 32-bit
+            __m256i sum_lo = _mm256_madd_epi16(sq_lo, one);
+            __m256i sum_hi = _mm256_madd_epi16(sq_hi, one);
+
+            acc = _mm256_add_epi32(acc, sum_lo);
+            acc = _mm256_add_epi32(acc, sum_hi);
+        }
+
+        // Horizontal reduction of acc
+        __m128i acc_lo = _mm256_castsi256_si128(acc);
+        __m128i acc_hi = _mm256_extracti128_si256(acc, 1);
+        acc_lo = _mm_add_epi32(acc_lo, acc_hi);
+        acc_lo = _mm_hadd_epi32(acc_lo, acc_lo);
+        acc_lo = _mm_hadd_epi32(acc_lo, acc_lo);
+        int32_t sum = _mm_cvtsi128_si32(acc_lo);
+
+        // Handle remaining dimensions scalar
+        for (; i < d; i++) {
+            uint8_t c = code[i / 2];
+            uint8_t nibble;
+            if (i % 2 == 0) {
+                nibble = c & 0xF;
+            } else {
+                nibble = (c >> 4) & 0xF;
+            }
+
+            int diff;
+            if (i % 2 == 0) {
+                diff = (int)q_lo[i / 2] - (int)nibble;
+            } else {
+                diff = (int)q_hi[i / 2] - (int)nibble;
+            }
+            sum += diff * diff;
+        }
+
+        return sum * final_scale_sq;
+    }
+
+    float compute_code_distance_l2(const uint8_t* code1, const uint8_t* code2)
+            const {
+        const size_t d = quant.d;
+        __m256i acc = _mm256_setzero_si256();
+        const __m256i mask_f = _mm256_set1_epi8(0xF);
+        const __m256i one = _mm256_set1_epi16(1);
+
+        size_t i = 0;
+        for (; i + 64 <= d; i += 64) {
+            __m256i c1_256 =
+                    _mm256_loadu_si256((const __m256i*)(code1 + i / 2));
+            __m256i c2_256 =
+                    _mm256_loadu_si256((const __m256i*)(code2 + i / 2));
+
+            __m256i c1_nibbles_lo = _mm256_and_si256(c1_256, mask_f);
+            __m256i c1_nibbles_hi =
+                    _mm256_and_si256(_mm256_srli_epi16(c1_256, 4), mask_f);
+
+            __m256i c2_nibbles_lo = _mm256_and_si256(c2_256, mask_f);
+            __m256i c2_nibbles_hi =
+                    _mm256_and_si256(_mm256_srli_epi16(c2_256, 4), mask_f);
+
+            __m256i diff_lo = _mm256_sub_epi8(c1_nibbles_lo, c2_nibbles_lo);
+            __m256i diff_hi = _mm256_sub_epi8(c1_nibbles_hi, c2_nibbles_hi);
+
+            diff_lo = _mm256_max_epi8(
+                    diff_lo, _mm256_sub_epi8(_mm256_setzero_si256(), diff_lo));
+            diff_hi = _mm256_max_epi8(
+                    diff_hi, _mm256_sub_epi8(_mm256_setzero_si256(), diff_hi));
+
+            __m256i sq_lo = _mm256_maddubs_epi16(diff_lo, diff_lo);
+            __m256i sq_hi = _mm256_maddubs_epi16(diff_hi, diff_hi);
+
+            __m256i sum_lo = _mm256_madd_epi16(sq_lo, one);
+            __m256i sum_hi = _mm256_madd_epi16(sq_hi, one);
+
+            acc = _mm256_add_epi32(acc, sum_lo);
+            acc = _mm256_add_epi32(acc, sum_hi);
+        }
+
+        __m128i acc_lo = _mm256_castsi256_si128(acc);
+        __m128i acc_hi = _mm256_extracti128_si256(acc, 1);
+        acc_lo = _mm_add_epi32(acc_lo, acc_hi);
+        acc_lo = _mm_hadd_epi32(acc_lo, acc_lo);
+        acc_lo = _mm_hadd_epi32(acc_lo, acc_lo);
+        int32_t sum = _mm_cvtsi128_si32(acc_lo);
+
+        for (; i < d; i++) {
+            uint8_t c1 = code1[i / 2];
+            uint8_t c2 = code2[i / 2];
+            uint8_t n1, n2;
+            if (i % 2 == 0) {
+                n1 = c1 & 0xF;
+                n2 = c2 & 0xF;
+            } else {
+                n1 = (c1 >> 4) & 0xF;
+                n2 = (c2 >> 4) & 0xF;
+            }
+            int diff = (int)n1 - (int)n2;
+            sum += diff * diff;
+        }
+
+        return sum * final_scale_sq;
+    }
+
+    float operator()(idx_t i) final {
+        return compute_distance(nullptr, codes + i * code_size);
+    }
+
+    float symmetric_dis(idx_t i, idx_t j) override {
+        return compute_code_distance_l2(
+                codes + i * code_size, codes + j * code_size);
+    }
+
+    float query_to_code(const uint8_t* code) const override final {
+        return compute_distance(nullptr, code);
+    }
+
+    void query_to_codes_batch_4(
+            const uint8_t* __restrict code_0,
+            const uint8_t* __restrict code_1,
+            const uint8_t* __restrict code_2,
+            const uint8_t* __restrict code_3,
+            float& dis0,
+            float& dis1,
+            float& dis2,
+            float& dis3) const {
+        const size_t d = quant.d;
+        const uint8_t* q_lo_ptr = q_lo.data();
+        const uint8_t* q_hi_ptr = q_hi.data();
+
+        __m256i acc0 = _mm256_setzero_si256();
+        __m256i acc1 = _mm256_setzero_si256();
+        __m256i acc2 = _mm256_setzero_si256();
+        __m256i acc3 = _mm256_setzero_si256();
+
+        const __m256i mask_f = _mm256_set1_epi8(0xF);
+        const __m256i one = _mm256_set1_epi16(1);
+        const __m256i zero = _mm256_setzero_si256();
+
+        size_t i = 0;
+        // Process 128 dimensions per outer iteration
+        for (; i + 128 <= d; i += 128) {
+            // Chunk 0: first 64 dimensions
+            __m256i q_lo_0 =
+                    _mm256_loadu_si256((const __m256i*)(q_lo_ptr + i / 2));
+            __m256i q_hi_0 =
+                    _mm256_loadu_si256((const __m256i*)(q_hi_ptr + i / 2));
+
+            auto process_chunk_64 = [&](const uint8_t* code,
+                                        __m256i& acc,
+                                        __m256i q_lo,
+                                        __m256i q_hi,
+                                        int offset) {
+                __m256i c = _mm256_loadu_si256(
+                        (const __m256i*)(code + i / 2 + offset));
+                __m256i nibbles_lo = _mm256_and_si256(c, mask_f);
+                __m256i nibbles_hi =
+                        _mm256_and_si256(_mm256_srli_epi16(c, 4), mask_f);
+
+                __m256i diff_lo = _mm256_sub_epi8(q_lo, nibbles_lo);
+                __m256i diff_hi = _mm256_sub_epi8(q_hi, nibbles_hi);
+
+                diff_lo = _mm256_max_epi8(
+                        diff_lo, _mm256_sub_epi8(zero, diff_lo));
+                diff_hi = _mm256_max_epi8(
+                        diff_hi, _mm256_sub_epi8(zero, diff_hi));
+
+                __m256i sq_lo = _mm256_maddubs_epi16(diff_lo, diff_lo);
+                __m256i sq_hi = _mm256_maddubs_epi16(diff_hi, diff_hi);
+
+                __m256i sum_lo = _mm256_madd_epi16(sq_lo, one);
+                __m256i sum_hi = _mm256_madd_epi16(sq_hi, one);
+
+                acc = _mm256_add_epi32(acc, sum_lo);
+                acc = _mm256_add_epi32(acc, sum_hi);
+            };
+
+            process_chunk_64(code_0, acc0, q_lo_0, q_hi_0, 0);
+            process_chunk_64(code_1, acc1, q_lo_0, q_hi_0, 0);
+            process_chunk_64(code_2, acc2, q_lo_0, q_hi_0, 0);
+            process_chunk_64(code_3, acc3, q_lo_0, q_hi_0, 0);
+
+            // Chunk 1: next 64 dimensions
+            __m256i q_lo_1 =
+                    _mm256_loadu_si256((const __m256i*)(q_lo_ptr + i / 2 + 32));
+            __m256i q_hi_1 =
+                    _mm256_loadu_si256((const __m256i*)(q_hi_ptr + i / 2 + 32));
+
+            process_chunk_64(code_0, acc0, q_lo_1, q_hi_1, 32);
+            process_chunk_64(code_1, acc1, q_lo_1, q_hi_1, 32);
+            process_chunk_64(code_2, acc2, q_lo_1, q_hi_1, 32);
+            process_chunk_64(code_3, acc3, q_lo_1, q_hi_1, 32);
+        }
+
+        // Handle remaining 64-dimensional chunk
+        if (i + 64 <= d) {
+            __m256i q_lo_0 =
+                    _mm256_loadu_si256((const __m256i*)(q_lo_ptr + i / 2));
+            __m256i q_hi_0 =
+                    _mm256_loadu_si256((const __m256i*)(q_hi_ptr + i / 2));
+
+            auto process = [&](const uint8_t* code, __m256i& acc) {
+                __m256i c = _mm256_loadu_si256((const __m256i*)(code + i / 2));
+                __m256i nibbles_lo = _mm256_and_si256(c, mask_f);
+                __m256i nibbles_hi =
+                        _mm256_and_si256(_mm256_srli_epi16(c, 4), mask_f);
+
+                __m256i diff_lo = _mm256_sub_epi8(q_lo_0, nibbles_lo);
+                __m256i diff_hi = _mm256_sub_epi8(q_hi_0, nibbles_hi);
+
+                diff_lo = _mm256_max_epi8(
+                        diff_lo, _mm256_sub_epi8(zero, diff_lo));
+                diff_hi = _mm256_max_epi8(
+                        diff_hi, _mm256_sub_epi8(zero, diff_hi));
+
+                __m256i sq_lo = _mm256_maddubs_epi16(diff_lo, diff_lo);
+                __m256i sq_hi = _mm256_maddubs_epi16(diff_hi, diff_hi);
+
+                __m256i sum_lo = _mm256_madd_epi16(sq_lo, one);
+                __m256i sum_hi = _mm256_madd_epi16(sq_hi, one);
+
+                acc = _mm256_add_epi32(acc, sum_lo);
+                acc = _mm256_add_epi32(acc, sum_hi);
+            };
+
+            process(code_0, acc0);
+            process(code_1, acc1);
+            process(code_2, acc2);
+            process(code_3, acc3);
+
+            i += 64;
+        }
+
+        // Horizontal reductions
+        auto reduce = [](const __m256i& acc) -> int32_t {
+            __m128i acc_lo = _mm256_castsi256_si128(acc);
+            __m128i acc_hi = _mm256_extracti128_si256(acc, 1);
+            acc_lo = _mm_add_epi32(acc_lo, acc_hi);
+            acc_lo = _mm_hadd_epi32(acc_lo, acc_lo);
+            acc_lo = _mm_hadd_epi32(acc_lo, acc_lo);
+            return _mm_cvtsi128_si32(acc_lo);
+        };
+
+        dis0 = reduce(acc0);
+        dis1 = reduce(acc1);
+        dis2 = reduce(acc2);
+        dis3 = reduce(acc3);
+
+        // Handle remaining dimensions scalar
+        for (; i < d; i++) {
+            uint8_t nibble_lo = q_lo[i / 2];
+            uint8_t nibble_hi = q_hi[i / 2];
+
+            auto process_scalar = [&](const uint8_t* code, float& dis) {
+                uint8_t c = code[i / 2];
+                uint8_t nibble;
+                if (i % 2 == 0) {
+                    nibble = c & 0xF;
+                } else {
+                    nibble = (c >> 4) & 0xF;
+                }
+                int diff;
+                if (i % 2 == 0) {
+                    diff = (int)nibble_lo - (int)nibble;
+                } else {
+                    diff = (int)nibble_hi - (int)nibble;
+                }
+                dis += diff * diff;
+            };
+
+            process_scalar(code_0, dis0);
+            process_scalar(code_1, dis1);
+            process_scalar(code_2, dis2);
+            process_scalar(code_3, dis3);
+        }
+
+        dis0 *= final_scale_sq;
+        dis1 *= final_scale_sq;
+        dis2 *= final_scale_sq;
+        dis3 *= final_scale_sq;
+    }
+
+    void distances_batch_4(
+            const idx_t idx0,
+            const idx_t idx1,
+            const idx_t idx2,
+            const idx_t idx3,
+            float& dis0,
+            float& dis1,
+            float& dis2,
+            float& dis3) override {
+        query_to_codes_batch_4(
+                codes + idx0 * code_size,
+                codes + idx1 * code_size,
+                codes + idx2 * code_size,
+                codes + idx3 * code_size,
+                dis0,
+                dis1,
+                dis2,
+                dis3);
     }
 };
 
@@ -614,10 +1061,7 @@ SQDistanceComputer* select_distance_computer_avx(
                     SIMDWIDTH>(d, trained);
 
         case QuantizerType::QT_4bit_uniform:
-            return new DCTemplate_avx<
-                    QuantizerTemplate_avx<Codec4bit_avx, QuantizerTemplateScaling::UNIFORM, SIMDWIDTH>,
-                    Sim,
-                    SIMDWIDTH>(d, trained);
+            return new DistanceComputerSQ4UByte_avx<Sim>(d, trained);
 
         case QuantizerType::QT_8bit:
             return new DCTemplate_avx<

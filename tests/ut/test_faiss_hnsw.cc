@@ -416,7 +416,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
     const std::vector<bool> MV_ONLYs = {false, true};
 
-    const std::vector<std::string> SQ_TYPES = {"SQ6", "SQ8", "BF16", "FP16"};
+    const std::vector<std::string> SQ_TYPES = {"SQ4U", "SQ6", "SQ8", "BF16", "FP16"};
 
     // random bitset rates
     // 0.0 means unfiltered, 1.0 means all filtered out
@@ -428,6 +428,7 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
     // accepted refines for a given SQ type for a FP32 data type
     std::unordered_map<std::string, std::vector<std::string>> SQ_ALLOWED_REFINES_FP32 = {
+        {"SQ4U", {"SQ6", "SQ8", "BF16", "FP16", "FLAT"}},
         {"SQ6", {"SQ8", "BF16", "FP16", "FLAT"}},
         {"SQ8", {"BF16", "FP16", "FLAT"}},
         {"BF16", {"FLAT"}},
@@ -435,11 +436,11 @@ TEST_CASE("Search for FAISS HNSW Indices", "Benchmark and validation") {
 
     // accepted refines for a given SQ type for a FP16 data type
     std::unordered_map<std::string, std::vector<std::string>> SQ_ALLOWED_REFINES_FP16 = {
-        {"SQ6", {"SQ8", "FP16"}}, {"SQ8", {"FP16"}}, {"BF16", {}}, {"FP16", {}}};
+        {"SQ4U", {"SQ8", "FP16"}}, {"SQ6", {"SQ8", "FP16"}}, {"SQ8", {"FP16"}}, {"BF16", {}}, {"FP16", {}}};
 
     // accepted refines for a given SQ type for a BF16 data type
     std::unordered_map<std::string, std::vector<std::string>> SQ_ALLOWED_REFINES_BF16 = {
-        {"SQ6", {"SQ8", "BF16"}}, {"SQ8", {"BF16"}}, {"BF16", {}}, {"FP16", {}}};
+        {"SQ4U", {"SQ8", "BF16"}}, {"SQ6", {"SQ8", "BF16"}}, {"SQ8", {"BF16"}}, {"BF16", {}}, {"FP16", {}}};
 
     // accepted refines for PQ for FP32 data type
     std::vector<std::string> PQ_ALLOWED_REFINES_FP32 = {{"SQ6", "SQ8", "BF16", "FP16", "FLAT"}};

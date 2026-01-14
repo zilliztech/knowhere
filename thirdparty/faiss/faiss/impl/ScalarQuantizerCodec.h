@@ -265,6 +265,54 @@ struct QuantizerBF16<1> : ScalarQuantizer::SQuantizer {
 };
 
 /*******************************************************************
+ * Specialized QuantizerTemplate for SQ4U (base version)
+ *******************************************************************/
+
+template <>
+struct QuantizerTemplate<Codec4bit, QuantizerTemplateScaling::UNIFORM, 1>
+        : SQuantizer {
+    const size_t d;
+    const float vmin, vdiff;
+    float final_scale;
+    float final_bias;
+
+    QuantizerTemplate(size_t d, const std::vector<float>& trained)
+            : d(d), vmin(trained[0]), vdiff(trained[1]) {
+        final_scale = vdiff / 15.0f;
+        final_bias = vmin + vdiff * 0.5f / 15.0f;
+    }
+
+    void encode_vector(const float* x, uint8_t* code) const final {
+        for (size_t i = 0; i < d; i++) {
+            float xi = 0;
+            if (vdiff != 0) {
+                xi = (x[i] - vmin) / vdiff;
+                if (xi < 0) {
+                    xi = 0;
+                }
+                if (xi > 1.0) {
+                    xi = 1.0;
+                }
+            }
+            Codec4bit::encode_component(xi, code, i);
+        }
+    }
+
+    void decode_vector(const uint8_t* code, float* x) const final {
+        for (size_t i = 0; i < d; i++) {
+            float xi = Codec4bit::decode_component(code, i);
+            x[i] = vmin + xi * vdiff;
+        }
+    }
+
+    FAISS_ALWAYS_INLINE float reconstruct_component(const uint8_t* code, int i)
+            const {
+        float xi = Codec4bit::decode_component(code, i);
+        return vmin + xi * vdiff;
+    }
+};
+
+/*******************************************************************
  * 8bit_direct quantizer
  *******************************************************************/
 
@@ -390,6 +438,121 @@ SQuantizer* select_quantizer_1(
     }
     FAISS_THROW_MSG("unknown qtype");
 }
+
+/*******************************************************************
+ * DistanceComputerSQ4UByte: specialized distance computer for SQ4U
+ * Always computes L2 distance in quantized space regardless of Similarity
+ *******************************************************************/
+
+template <class Similarity>
+struct DistanceComputerSQ4UByte : SQDistanceComputer {
+    using Quantizer =
+            QuantizerTemplate<Codec4bit, QuantizerTemplateScaling::UNIFORM, 1>;
+    Quantizer quant;
+
+    // Quantized query codes
+    uint8_t* q_codes;
+
+    DistanceComputerSQ4UByte(size_t d, const std::vector<float>& trained)
+            : quant(d, trained) {
+        q_codes = new uint8_t[(d + 1) / 2];
+    }
+
+    ~DistanceComputerSQ4UByte() {
+        delete[] q_codes;
+    }
+
+    void set_query(const float* x) override {
+        // Quantize query to 4-bit codes
+        // Database layout: low nibble = even index, high nibble = odd index
+        float inv_scale = 1.0f / quant.final_scale;
+        float offset = quant.vmin;
+
+        for (size_t i = 0; i < quant.d; i += 2) {
+            // Quantize first component (even index -> low nibble)
+            float val0 = (x[i] - offset) * inv_scale;
+            int q0 = static_cast<int>(std::floor(val0));
+            q0 = std::max(0, std::min(15, q0));
+
+            // Quantize second component (odd index -> high nibble)
+            int q1 = 0;
+            if (i + 1 < quant.d) {
+                float val1 = (x[i + 1] - offset) * inv_scale;
+                q1 = static_cast<int>(std::floor(val1));
+                q1 = std::max(0, std::min(15, q1));
+            }
+
+            // Pack: low nibble = q0 (even), high nibble = q1 (odd)
+            q_codes[i / 2] = q0 | (q1 << 4);
+        }
+    }
+
+    // Compute L2 distance between query and database code
+    float compute_distance_l2(const uint8_t* code8) const {
+        int32_t accu = 0;
+        const uint8_t* qc = q_codes;
+
+        for (size_t i = 0; i < quant.d; i += 2) {
+            uint8_t qbyte = *qc++;
+            uint8_t dbyte = *code8++;
+
+            // Extract nibbles: low nibble = even index, high nibble = odd index
+            int q0 = qbyte & 15; // even (low nibble)
+            int q1 = qbyte >> 4; // odd (high nibble)
+            int d0 = dbyte & 15; // even (low nibble)
+            int d1 = dbyte >> 4; // odd (high nibble)
+
+            // Compute differences
+            int diff0 = q0 - d0;
+            int diff1 = q1 - d1;
+
+            // Accumulate squared differences
+            accu += diff0 * diff0 + diff1 * diff1;
+        }
+
+        // Scale to floating point
+        float scale = quant.final_scale;
+        return accu * scale * scale;
+    }
+
+    // Compute L2 distance between two codes
+    float compute_code_distance_l2(const uint8_t* code1, const uint8_t* code2)
+            const {
+        int32_t accu = 0;
+
+        for (size_t i = 0; i < quant.d; i += 2) {
+            uint8_t byte1 = *code1++;
+            uint8_t byte2 = *code2++;
+
+            // Extract nibbles: low nibble = even index, high nibble = odd index
+            int c1_0 = byte1 & 15; // even (low nibble)
+            int c1_1 = byte1 >> 4; // odd (high nibble)
+            int c2_0 = byte2 & 15; // even (low nibble)
+            int c2_1 = byte2 >> 4; // odd (high nibble)
+
+            // Compute differences
+            int diff0 = c1_0 - c2_0;
+            int diff1 = c1_1 - c2_1;
+
+            // Accumulate squared differences
+            accu += diff0 * diff0 + diff1 * diff1;
+        }
+
+        // Scale to floating point
+        float scale = quant.final_scale;
+        return accu * scale * scale;
+    }
+
+    float query_to_code(const uint8_t* code) const override {
+        return compute_distance_l2(code);
+    }
+
+    float symmetric_dis(idx_t i, idx_t j) override {
+        const uint8_t* code_i = codes + i * code_size;
+        const uint8_t* code_j = codes + j * code_size;
+        return compute_code_distance_l2(code_i, code_j);
+    }
+};
 
 /*******************************************************************
  * Similarity: gets vector components and computes a similarity wrt. a
@@ -587,10 +750,7 @@ SQDistanceComputer* select_distance_computer(
                     SIMDWIDTH>(d, trained);
 
         case ScalarQuantizer::QT_4bit_uniform:
-            return new DCTemplate<
-                    QuantizerTemplate<Codec4bit, QuantizerTemplateScaling::UNIFORM, SIMDWIDTH>,
-                    Sim,
-                    SIMDWIDTH>(d, trained);
+            return new DistanceComputerSQ4UByte<Sim>(d, trained);
 
         case ScalarQuantizer::QT_8bit:
             return new DCTemplate<
