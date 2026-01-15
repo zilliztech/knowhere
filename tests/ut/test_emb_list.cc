@@ -77,16 +77,39 @@ match_datasets(const knowhere::DataSetPtr& baseline, const knowhere::DataSetPtr&
 inline bool
 check_same_iterator(const knowhere::IndexNode::IteratorPtr& iter1, const knowhere::IndexNode::IteratorPtr& iter2) {
     size_t count = 0;
+    size_t number_of_imprecise_distances = 0;
+    double max_abs_relative_error = 0;
     while (iter1->HasNext()) {
         REQUIRE(iter2->HasNext());
         auto [id1, dist1] = iter1->Next();
         auto [id2, dist2] = iter2->Next();
         count++;
-        if (id1 != id2 || dist1 != dist2) {
+
+        // Perform a precise match of ids
+        if (id1 != id2) {
             return false;
+        }
+
+        // Perform an approximate match of distances.
+        // Differences may occur because of a different compiler
+        //   code in a regular distance computation code and a
+        //   batch4 distance computation code for -ffast-math.
+        if (dist1 != dist2) {
+            number_of_imprecise_distances += 1;
+
+            double relative_error = std::abs(((double)dist1 - (double)dist2) / (double)dist2);
+            if (relative_error > 1e-6) {
+                return false;
+            }
+
+            max_abs_relative_error = std::max(max_abs_relative_error, relative_error);
         }
     }
     printf("Total number of iterator->Next() calls: %ld\n", count);
+    if (number_of_imprecise_distances > 0) {
+        printf("Total number of imprecise distances: %ld\n", number_of_imprecise_distances);
+        printf("Max abs relative error exponent: %f\n", std::log10(max_abs_relative_error));
+    }
     REQUIRE(!iter2->HasNext());
     return true;
 }
