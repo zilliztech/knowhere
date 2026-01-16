@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -96,6 +96,12 @@ def get_flat_data(index):
     """ copy and return the data matrix in an IndexFlat """
     xb = faiss.vector_to_array(index.codes).view("float32")
     return xb.reshape(index.ntotal, index.d)
+
+
+def get_flat_codes(index_flat): 
+    """ get the codes from an indexFlatCodes as an array """
+    return faiss.vector_to_array(index_flat.codes).reshape(
+        index_flat.ntotal, index_flat.code_size)
 
 
 def get_NSG_neighbors(nsg):

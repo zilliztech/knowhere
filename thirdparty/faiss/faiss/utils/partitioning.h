@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -28,7 +28,7 @@ typename C::T partition_fuzzy(
         size_t q_max,
         size_t* q_out);
 
-/** simplified interface for when the parition is not fuzzy */
+/** simplified interface for when the partition is not fuzzy */
 template <class C>
 inline typename C::T partition(
         typename C::T* vals,
@@ -36,27 +36,6 @@ inline typename C::T partition(
         size_t n,
         size_t q) {
     return partition_fuzzy<C>(vals, ids, n, q, q, nullptr);
-}
-
-// avx2 version
-template <class C>
-typename C::T partition_fuzzy_avx2(
-        typename C::T* vals,
-        typename C::TI* ids,
-        size_t n,
-        size_t q_min,
-        size_t q_max,
-        size_t* q_out);
-
-// avx2 version
-/** simplified interface for when the parition is not fuzzy */
-template <class C>
-inline typename C::T partition_avx2(
-        typename C::T* vals,
-        typename C::TI* ids,
-        size_t n,
-        size_t q) {
-    return partition_fuzzy_avx2<C>(vals, ids, n, q, q, nullptr);
 }
 
 /** low level SIMD histogramming functions */
@@ -80,7 +59,7 @@ void simd_histogram_16(
         int* hist);
 
 struct PartitionStats {
-    uint64_t bissect_cycles;
+    uint64_t bisect_cycles;
     uint64_t compress_cycles;
 
     PartitionStats() {

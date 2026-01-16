@@ -22,7 +22,7 @@
 #include "faiss/impl/platform_macros.h"
 #include "xxhash.h"
 
-namespace faiss {
+namespace faiss::cppcontrib::knowhere {
 
 #define ALIGNED(x) __attribute__((aligned(x)))
 
@@ -433,7 +433,7 @@ ivec_L2sqr_sse(const int8_t* x, const int8_t* y, size_t d) {
 // bf16
 
 float
-bf16_vec_inner_product_sse(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+bf16_vec_inner_product_sse(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d) {
     __m128 m_res = _mm_setzero_ps();
     while (d >= 4) {
         __m128 m_x = _mm_bf16_to_fp32(_mm_loadl_epi64((const __m128i*)x));
@@ -454,7 +454,7 @@ bf16_vec_inner_product_sse(const knowhere::bf16* x, const knowhere::bf16* y, siz
 }
 
 float
-bf16_vec_L2sqr_sse(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+bf16_vec_L2sqr_sse(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d) {
     __m128 m_res = _mm_setzero_ps();
     while (d >= 4) {
         __m128 m_x = _mm_bf16_to_fp32(_mm_loadl_epi64((const __m128i*)x));
@@ -477,7 +477,7 @@ bf16_vec_L2sqr_sse(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
 }
 
 float
-bf16_vec_norm_L2sqr_sse(const knowhere::bf16* x, size_t d) {
+bf16_vec_norm_L2sqr_sse(const ::knowhere::bf16* x, size_t d) {
     __m128 m_res = _mm_setzero_ps();
     while (d >= 4) {
         __m128 m_x = _mm_bf16_to_fp32(_mm_loadl_epi64((const __m128i*)x));
@@ -587,5 +587,7 @@ uint64_t
 calculate_hash_sse(const char* data, size_t size) {
     return XXH3_64bits(data, size);
 }
-}  // namespace faiss
+
+}  // namespace faiss::cppcontrib::knowhere
+
 #endif

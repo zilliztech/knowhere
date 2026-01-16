@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -20,7 +20,7 @@ struct IDSelector;
 /** Inverted Lists that are organized by blocks.
  *
  * Different from the regular inverted lists, the codes are organized by blocks
- * of size block_size bytes that reprsent a set of n_per_block. Therefore, code
+ * of size block_size bytes that represent a set of n_per_block. Therefore, code
  * allocations are always rounded up to block_size bytes. The codes are also
  * aligned on 32-byte boundaries for use with SIMD.
  *
@@ -58,8 +58,7 @@ struct BlockInvertedLists : InvertedLists {
             size_t list_no,
             size_t n_entry,
             const idx_t* ids,
-            const uint8_t* code,
-            const float* code_norm = nullptr) override;
+            const uint8_t* code) override;
 
     /// not implemented
     void update_entries(

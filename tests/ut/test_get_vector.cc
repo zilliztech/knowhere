@@ -191,7 +191,7 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
         auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
         if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN) {
             // need to check cpu model for scann
-            if (!faiss::support_pq_fast_scan) {
+            if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
                 REQUIRE(idx_expected.error() == knowhere::Status::invalid_index_error);
                 return;
             }

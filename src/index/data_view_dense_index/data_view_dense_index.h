@@ -22,9 +22,10 @@
 #include <mutex>
 #include <shared_mutex>
 
+#include "faiss/cppcontrib/knowhere/impl/ResultHandler.h"
+#include "faiss/cppcontrib/knowhere/utils/distances_if.h"
 #include "faiss/impl/AuxIndexStructures.h"
-#include "faiss/impl/ResultHandler.h"
-#include "faiss/utils/distances_if.h"
+#include "faiss/utils/Heap.h"
 #include "index/data_view_dense_index/refine_computer.h"
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/task.h"
@@ -32,6 +33,7 @@
 #include "knowhere/context.h"
 #include "knowhere/operands.h"
 #include "knowhere/range_util.h"
+
 namespace knowhere {
 using CMAX = faiss::CMax<float, idx_t>;
 using CMIN = faiss::CMin<float, idx_t>;
@@ -333,10 +335,10 @@ DataViewIndexFlat::exhaustive_search_in_one_query_impl(const std::unique_ptr<fai
             dis = dis / (norms_[j]);
             resi.add_result(dis, j);
         };
-        faiss::distance_compute_if(ny, computer.get(), filter, apply);
+        faiss::cppcontrib::knowhere::distance_compute_if(ny, computer.get(), filter, apply);
     } else {
         auto apply = [&resi](const float dis, const idx_t j) { resi.add_result(dis, j); };
-        faiss::distance_compute_if(ny, computer.get(), filter, apply);
+        faiss::cppcontrib::knowhere::distance_compute_if(ny, computer.get(), filter, apply);
     }
 }
 
@@ -350,12 +352,12 @@ DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k
     futs.reserve(n);
     if (k < faiss::distance_compute_min_k_reservoir) {
         if (metric_type_ == metric::L2) {
-            faiss::HeapBlockResultHandler<CMAX> res(n, distances, labels, k);
+            faiss::cppcontrib::knowhere::HeapBlockResultHandler<CMAX> res(n, distances, labels, k);
             for (auto i = 0; i < n; i++) {
                 futs.emplace_back(search_pool->push([&] {
                     knowhere::checkCancellation(op_context);
                     ThreadPool::ScopedSearchOmpSetter setter(1);
-                    faiss::HeapBlockResultHandler<CMAX>::SingleResultHandler resi(res);
+                    faiss::cppcontrib::knowhere::HeapBlockResultHandler<CMAX>::SingleResultHandler resi(res);
                     auto computer = SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_,
                                                            use_quant ? quant_data_ : nullptr);
                     computer->set_query((const float*)((const char*)x + code_size_ * i));
@@ -370,12 +372,12 @@ DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k
             }
             WaitAllSuccess(futs);
         } else {
-            faiss::HeapBlockResultHandler<CMIN> res(n, distances, labels, k);
+            faiss::cppcontrib::knowhere::HeapBlockResultHandler<CMIN> res(n, distances, labels, k);
             for (auto i = 0; i < n; i++) {
                 futs.emplace_back(search_pool->push([&] {
                     knowhere::checkCancellation(op_context);
                     ThreadPool::ScopedSearchOmpSetter setter(1);
-                    faiss::HeapBlockResultHandler<CMIN>::SingleResultHandler resi(res);
+                    faiss::cppcontrib::knowhere::HeapBlockResultHandler<CMIN>::SingleResultHandler resi(res);
                     auto computer = SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_,
                                                            use_quant ? quant_data_ : nullptr);
                     computer->set_query((const float*)((const char*)x + code_size_ * i));
@@ -392,12 +394,12 @@ DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k
         }
     } else {
         if (metric_type_ == metric::L2) {
-            faiss::ReservoirBlockResultHandler<CMAX> res(n, distances, labels, k);
+            faiss::cppcontrib::knowhere::ReservoirBlockResultHandler<CMAX> res(n, distances, labels, k);
 
             for (auto i = 0; i < n; i++) {
                 futs.emplace_back(search_pool->push([&] {
                     ThreadPool::ScopedSearchOmpSetter setter(1);
-                    faiss::ReservoirBlockResultHandler<CMAX>::SingleResultHandler resi(res);
+                    faiss::cppcontrib::knowhere::ReservoirBlockResultHandler<CMAX>::SingleResultHandler resi(res);
                     auto computer = SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_,
                                                            use_quant ? quant_data_ : nullptr);
                     computer->set_query((const float*)((const char*)x + code_size_ * i));
@@ -412,11 +414,11 @@ DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k
             }
             WaitAllSuccess(futs);
         } else {
-            faiss::ReservoirBlockResultHandler<CMIN> res(n, distances, labels, k);
+            faiss::cppcontrib::knowhere::ReservoirBlockResultHandler<CMIN> res(n, distances, labels, k);
             for (auto i = 0; i < n; i++) {
                 futs.emplace_back(search_pool->push([&] {
                     ThreadPool::ScopedSearchOmpSetter setter(1);
-                    faiss::ReservoirBlockResultHandler<CMIN>::SingleResultHandler resi(res);
+                    faiss::cppcontrib::knowhere::ReservoirBlockResultHandler<CMIN>::SingleResultHandler resi(res);
                     auto computer = SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_,
                                                            use_quant ? quant_data_ : nullptr);
                     computer->set_query((const float*)((const char*)x + code_size_ * i));
@@ -526,8 +528,8 @@ DataViewIndexFlat::RangeSearch(const idx_t n, const void* __restrict x, const fl
                 auto computer = SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_,
                                                        use_quant ? quant_data_ : nullptr);
                 faiss::RangeSearchResult res(1);
-                faiss::RangeSearchBlockResultHandler<CMAX> resh(&res, radius);
-                faiss::RangeSearchBlockResultHandler<CMAX>::SingleResultHandler reshi(resh);
+                faiss::cppcontrib::knowhere::RangeSearchBlockResultHandler<CMAX> resh(&res, radius);
+                faiss::cppcontrib::knowhere::RangeSearchBlockResultHandler<CMAX>::SingleResultHandler reshi(resh);
                 computer->set_query(((const float*)x + code_size_ * i));
                 reshi.begin(i);
                 if (bitset.empty()) {
@@ -557,8 +559,8 @@ DataViewIndexFlat::RangeSearch(const idx_t n, const void* __restrict x, const fl
                 auto computer = SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_,
                                                        use_quant ? quant_data_ : nullptr);
                 faiss::RangeSearchResult res(1);
-                faiss::RangeSearchBlockResultHandler<CMIN> resh(&res, radius);
-                faiss::RangeSearchBlockResultHandler<CMIN>::SingleResultHandler reshi(resh);
+                faiss::cppcontrib::knowhere::RangeSearchBlockResultHandler<CMIN> resh(&res, radius);
+                faiss::cppcontrib::knowhere::RangeSearchBlockResultHandler<CMIN>::SingleResultHandler reshi(resh);
                 computer->set_query(((const float*)x + code_size_ * i));
                 reshi.begin(i);
                 if (bitset.empty()) {
@@ -643,6 +645,6 @@ DataViewIndexFlat::ComputeDistanceSubset(const void* __restrict x, const idx_t s
 
     auto filter = [=](const size_t i) { return (idsj[i] >= 0); };
     auto apply = [=](const float dis, const size_t i) { disj[i] = dis; };
-    distance_compute_by_idx_if(idsj, sub_y_n, computer.get(), filter, apply);
+    faiss::cppcontrib::knowhere::distance_compute_by_idx_if(idsj, sub_y_n, computer.get(), filter, apply);
 }
 }  // namespace knowhere

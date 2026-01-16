@@ -1,12 +1,11 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
 #include <algorithm>
-#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <numeric>
@@ -142,7 +141,7 @@ void smawk(
 namespace {
 
 class CostCalculator {
-    // The reuslt would be inaccurate if we use float
+    // The result would be inaccurate if we use float
     std::vector<double> cumsum;
     std::vector<double> cumsum2;
 

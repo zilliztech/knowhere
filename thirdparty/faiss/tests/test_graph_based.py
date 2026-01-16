@@ -1,15 +1,13 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-""" a few tests for graph-based indices (HNSW and NSG)"""
+""" a few tests for graph-based indices (HNSW, nndescent and NSG)"""
 
 import numpy as np
 import unittest
 import faiss
-import tempfile
-import os
 
 from common_faiss_tests import get_dataset_2
 
@@ -52,13 +50,13 @@ class TestHNSW(unittest.TestCase):
         lims, D, I = index.range_search(self.xq, radius)
 
         nmiss = 0
-        # check if returned resutls are a subset of the reference results
+        # check if returned results are a subset of the reference results
         for i in range(len(self.xq)):
             ref = Iref[lims_ref[i]: lims_ref[i + 1]]
             new = I[lims[i]: lims[i + 1]]
             self.assertLessEqual(set(new), set(ref))
             nmiss += len(ref) - len(new)
-        # currenly we miss 405 / 6019 neighbors
+        # currently we miss 405 / 6019 neighbors
         self.assertLessEqual(nmiss, lims_ref[-1] * 0.1)
 
     def test_hnsw_unbounded_queue(self):
@@ -66,10 +64,24 @@ class TestHNSW(unittest.TestCase):
 
         index = faiss.IndexHNSWFlat(d, 16)
         index.add(self.xb)
-        index.search_bounded_queue = False
+        index.hnsw.search_bounded_queue = False
         Dhnsw, Ihnsw = index.search(self.xq, 1)
 
         self.assertGreaterEqual((self.Iref == Ihnsw).sum(), 460)
+
+        self.io_and_retest(index, Dhnsw, Ihnsw)
+
+    def test_hnsw_no_init_level0(self):
+        d = self.xq.shape[1]
+
+        index = faiss.IndexHNSWFlat(d, 16)
+        index.init_level0 = False
+        index.add(self.xb)
+        Dhnsw, Ihnsw = index.search(self.xq, 1)
+
+        # This is expected to be smaller because we are not initializing
+        # vectors into level 0.
+        self.assertGreaterEqual((self.Iref == Ihnsw).sum(), 25)
 
         self.io_and_retest(index, Dhnsw, Ihnsw)
 
@@ -98,6 +110,24 @@ class TestHNSW(unittest.TestCase):
         Dhnsw, Ihnsw = index.search(self.xq, 1)
 
         self.assertGreaterEqual((self.Iref == Ihnsw).sum(), 307)
+
+        self.io_and_retest(index, Dhnsw, Ihnsw)
+
+    def test_hnsw_2level_mixed_search(self):
+        d = self.xq.shape[1]
+
+        quant = faiss.IndexFlatL2(d)
+
+        storage = faiss.IndexIVFPQ(quant, d, 32, 8, 8)
+        storage.make_direct_map()
+        index = faiss.IndexHNSW2Level(quant, 32, 8, 8)
+        index.storage = storage
+        index.train(self.xb)
+        index.add(self.xb)
+        Dhnsw, Ihnsw = index.search(self.xq, 1)
+
+        # It is expected that the mixed search will perform worse.
+        self.assertGreaterEqual((self.Iref == Ihnsw).sum(), 200)
 
         self.io_and_retest(index, Dhnsw, Ihnsw)
 
@@ -167,7 +197,51 @@ class TestHNSW(unittest.TestCase):
             index3 = faiss.deserialize_index(
                 faiss.serialize_index(index), faiss.IO_FLAG_SKIP_STORAGE
             )
-            self.assertEquals(index3.storage, None)
+            self.assertEqual(index3.storage, None)
+
+    def test_hnsw_reset(self):
+        d = self.xb.shape[1]
+        index_flat = faiss.IndexFlat(d)
+        index_flat.add(self.xb)
+        self.assertEqual(index_flat.ntotal, self.xb.shape[0])
+        index_hnsw = faiss.IndexHNSW(index_flat)
+        index_hnsw.add(self.xb)
+        # * 2 because we add to storage twice. This is just for testing
+        # that storage gets cleared correctly.
+        self.assertEqual(index_hnsw.ntotal, self.xb.shape[0] * 2)
+
+        index_hnsw.reset()
+
+        self.assertEqual(index_flat.ntotal, 0)
+        self.assertEqual(index_hnsw.ntotal, 0)
+
+
+class Issue3684(unittest.TestCase):
+
+    def test_issue3684(self):
+        np.random.seed(1234)  # For reproducibility
+        d = 256  # Example dimension
+        nb = 10  # Number of database vectors
+        nq = 2   # Number of query vectors
+        xb = np.random.random((nb, d)).astype('float32')
+        xq = np.random.random((nq, d)).astype('float32')
+
+        faiss.normalize_L2(xb)  # Normalize both query and database vectors
+        faiss.normalize_L2(xq)
+
+        hnsw_index_ip = faiss.IndexHNSWFlat(256, 16, faiss.METRIC_INNER_PRODUCT)
+        hnsw_index_ip.hnsw.efConstruction = 512
+        hnsw_index_ip.hnsw.efSearch = 512
+        hnsw_index_ip.add(xb)
+
+        # test knn
+        D, I = hnsw_index_ip.search(xq, 10)
+        self.assertTrue(np.all(D[:, :-1] >= D[:, 1:]))
+
+        # test range search
+        radius = 0.74  # Cosine similarity threshold
+        lims, D, I = hnsw_index_ip.range_search(xq, radius)
+        self.assertTrue(np.all(D >= radius))
 
 
 class TestNSG(unittest.TestCase):
@@ -204,14 +278,7 @@ class TestNSG(unittest.TestCase):
         return knn_graph
 
     def subtest_io_and_clone(self, index, Dnsg, Insg):
-        fd, tmpfile = tempfile.mkstemp()
-        os.close(fd)
-        try:
-            faiss.write_index(index, tmpfile)
-            index2 = faiss.read_index(tmpfile)
-        finally:
-            if os.path.exists(tmpfile):
-                os.unlink(tmpfile)
+        index2 = faiss.deserialize_index(faiss.serialize_index(index))
 
         Dnsg2, Insg2 = index2.search(self.xq, 1)
         np.testing.assert_array_equal(Dnsg2, Dnsg)
@@ -230,8 +297,6 @@ class TestNSG(unittest.TestCase):
 
     def subtest_add(self, build_type, thresh, metric=faiss.METRIC_L2):
         d = self.xq.shape[1]
-        metrics = {faiss.METRIC_L2: 'L2',
-                   faiss.METRIC_INNER_PRODUCT: 'IP'}
 
         flat_index = faiss.IndexFlat(d, metric)
         flat_index.add(self.xb)
@@ -292,7 +357,7 @@ class TestNSG(unittest.TestCase):
         """Make some invalid entries in the input knn graph.
 
         It would cause a warning but IndexNSG should be able
-        to handel this.
+        to handle this.
         """
         knn_graph = self.make_knn_graph(faiss.METRIC_L2)
         knn_graph[:100, 5] = -111
@@ -305,8 +370,6 @@ class TestNSG(unittest.TestCase):
     def test_reset(self):
         """test IndexNSG.reset()"""
         d = self.xq.shape[1]
-        metrics = {faiss.METRIC_L2: 'L2',
-                   faiss.METRIC_INNER_PRODUCT: 'IP'}
 
         metric = faiss.METRIC_L2
         flat_index = faiss.IndexFlat(d, metric)
@@ -346,6 +409,48 @@ class TestNSG(unittest.TestCase):
         gt = np.arange(0, k)[np.newaxis, :]  # [1, k]
         gt = np.repeat(gt, nq, axis=0)  # [nq, k]
         np.testing.assert_array_equal(indices, gt)
+
+    def test_nsg_supports_pre_built_knn_graph(self):
+        """Test IndexNSGBuild"""
+        knn_graph = self.make_knn_graph(faiss.METRIC_L2)
+        d = self.xq.shape[1]
+        index = faiss.IndexNSGFlat(d, 16)
+        index.build(self.xb, knn_graph)
+        index.search(self.xq, k=1)
+        self.assertTrue(index.is_built)
+
+    def test_nsg_with_pre_built_knn_graph_throws_when_rebuilding_via_add(self):
+        """Test IndexNSGBuild"""
+        knn_graph = self.make_knn_graph(faiss.METRIC_L2)
+
+        d = self.xq.shape[1]
+        index = faiss.IndexNSGFlat(d, 16)
+        index.build(self.xb, knn_graph)
+        index.search(self.xq, k=1)
+        self.assertTrue(index.is_built)
+
+        index.GK = 32
+        index.train(self.xb)
+        with self.assertRaises(RuntimeError) as context:
+            index.add(self.xb)
+
+        self.assertIn(
+            "NSG does not support incremental addition",
+            str(context.exception)
+        )
+
+    def test_nsg_rebuild_throws_with_pre_built_knn_graph(self):
+        """Test IndexNSGBuild"""
+        knn_graph = self.make_knn_graph(faiss.METRIC_L2)
+        d = self.xq.shape[1]
+        index = faiss.IndexNSGFlat(d, 16)
+        index.build(self.xb, knn_graph)
+        index.search(self.xq, k=1)
+
+        with self.assertRaises(RuntimeError) as context:
+            index.build(self.xb, knn_graph)
+
+        self.assertIn("The IndexNSG is already built", str(context.exception))
 
     def test_nsg_pq(self):
         """Test IndexNSGPQ"""
@@ -428,14 +533,7 @@ class TestNNDescent(unittest.TestCase):
         self.assertGreaterEqual(recalls, 450)  # 462
 
         # do some IO tests
-        fd, tmpfile = tempfile.mkstemp()
-        os.close(fd)
-        try:
-            faiss.write_index(index, tmpfile)
-            index2 = faiss.read_index(tmpfile)
-        finally:
-            if os.path.exists(tmpfile):
-                os.unlink(tmpfile)
+        index2 = faiss.deserialize_index(faiss.serialize_index(index))
 
         D2, I2 = index2.search(self.xq, 1)
         np.testing.assert_array_equal(D2, D)
@@ -463,3 +561,58 @@ class TestNNDescent(unittest.TestCase):
         gt = np.arange(0, k)[np.newaxis, :]  # [1, k]
         gt = np.repeat(gt, nq, axis=0)  # [nq, k]
         np.testing.assert_array_equal(indices, gt)
+
+
+class TestNNDescentKNNG(unittest.TestCase):
+
+    def test_knng_L2(self):
+        self.subtest(32, 10, faiss.METRIC_L2)
+
+    def test_knng_IP(self):
+        self.subtest(32, 10, faiss.METRIC_INNER_PRODUCT)
+
+    def subtest(self, d, K, metric):
+        nb = 1000
+        _, xb, _ = get_dataset_2(d, 0, nb, 0)
+
+        _, knn = faiss.knn(xb, xb, K + 1, metric)
+        knn = knn[:, 1:]
+
+        index = faiss.IndexNNDescentFlat(d, K, metric)
+        index.nndescent.S = 10
+        index.nndescent.R = 32
+        index.nndescent.L = K + 20
+        index.nndescent.iter = 5
+        index.verbose = True
+
+        index.add(xb)
+        graph = index.nndescent.final_graph
+        graph = faiss.vector_to_array(graph)
+        graph = graph.reshape(nb, K)
+
+        recalls = 0
+        for i in range(nb):
+            for j in range(K):
+                for k in range(K):
+                    if graph[i, j] == knn[i, k]:
+                        recalls += 1
+                        break
+        recall = 1.0 * recalls / (nb * K)
+        assert recall > 0.99
+
+    def test_small_nndescent(self):
+        """ building a too small graph used to crash, make sure it raises
+        an exception instead.
+        TODO: build the exact knn graph for small cases
+        """
+        d = 32
+        K = 10
+        index = faiss.IndexNNDescentFlat(d, K, faiss.METRIC_L2)
+        index.nndescent.S = 10
+        index.nndescent.R = 32
+        index.nndescent.L = K + 20
+        index.nndescent.iter = 5
+        index.verbose = True
+
+        xb = np.zeros((78, d), dtype='float32')
+        self.assertRaises(RuntimeError, index.add, xb)

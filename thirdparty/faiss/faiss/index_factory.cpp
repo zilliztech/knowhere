@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -10,11 +10,6 @@
  */
 
 #include <faiss/index_factory.h>
-#include "faiss/MetricType.h"
-#include "faiss/impl/FaissAssert.h"
-
-#include <cinttypes>
-#include <cmath>
 
 #include <map>
 
@@ -22,7 +17,6 @@
 
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/utils/random.h>
-#include <faiss/utils/utils.h>
 
 #include <faiss/Index2Layer.h>
 #include <faiss/IndexAdditiveQuantizer.h>
@@ -33,10 +27,12 @@
 #include <faiss/IndexIVFAdditiveQuantizer.h>
 #include <faiss/IndexIVFAdditiveQuantizerFastScan.h>
 #include <faiss/IndexIVFFlat.h>
+#include <faiss/IndexIVFFlatPanorama.h>
 #include <faiss/IndexIVFPQ.h>
 #include <faiss/IndexIVFPQFastScan.h>
 #include <faiss/IndexIVFPQR.h>
 #include <faiss/IndexIVFRaBitQ.h>
+#include <faiss/IndexIVFRaBitQFastScan.h>
 #include <faiss/IndexIVFSpectralHash.h>
 #include <faiss/IndexLSH.h>
 #include <faiss/IndexLattice.h>
@@ -45,6 +41,7 @@
 #include <faiss/IndexPQFastScan.h>
 #include <faiss/IndexPreTransform.h>
 #include <faiss/IndexRaBitQ.h>
+#include <faiss/IndexRaBitQFastScan.h>
 #include <faiss/IndexRefine.h>
 #include <faiss/IndexRowwiseMinMax.h>
 #include <faiss/IndexScalarQuantizer.h>
@@ -55,6 +52,16 @@
 #include <faiss/IndexBinaryHNSW.h>
 #include <faiss/IndexBinaryHash.h>
 #include <faiss/IndexBinaryIVF.h>
+
+#ifdef FAISS_ENABLE_SVS
+#include <faiss/svs/IndexSVSFlat.h>
+#include <faiss/svs/IndexSVSVamana.h>
+#include <faiss/svs/IndexSVSVamanaLVQ.h>
+#include <faiss/svs/IndexSVSVamanaLeanVec.h>
+#endif
+#include <faiss/IndexIDMap.h>
+#include <algorithm>
+#include <cctype>
 #include <string>
 
 namespace faiss {
@@ -72,6 +79,7 @@ namespace {
  */
 
 bool re_match(const std::string& s, const std::string& pat, std::smatch& sm) {
+    // @lint-ignore CLANGTIDY
     return std::regex_match(s, sm, std::regex(pat));
 }
 
@@ -169,19 +177,20 @@ const std::string aq_norm_pattern =
 const std::string paq_def_pattern = "([0-9]+)x([0-9]+)x([0-9]+)";
 
 AdditiveQuantizer::Search_type_t aq_parse_search_type(
-        std::string stok,
+        const std::string& stok,
         MetricType metric) {
     if (stok == "") {
         return metric == METRIC_L2 ? AdditiveQuantizer::ST_decompress
                                    : AdditiveQuantizer::ST_LUT_nonorm;
     }
-    int pos = stok.rfind("_");
+    int pos = stok.rfind('_');
     return aq_search_type[stok.substr(pos)];
 }
 
 std::vector<size_t> aq_parse_nbits(std::string stok) {
     std::vector<size_t> nbits;
     std::smatch sm;
+    // @lint-ignore CLANGTIDY
     while (std::regex_search(stok, sm, std::regex("[^q]([0-9]+)x([0-9]+)"))) {
         int M = std::stoi(sm[1].str());
         int nbit = std::stoi(sm[2].str());
@@ -190,8 +199,6 @@ std::vector<size_t> aq_parse_nbits(std::string stok) {
     }
     return nbits;
 }
-
-const std::string rabitq_pattern = "(RaBitQ)";
 
 /***************************************************************
  * Parse VectorTransform
@@ -226,11 +233,24 @@ VectorTransform* parse_VectorTransform(const std::string& description, int d) {
         return new RemapDimensionsTransform(d, std::max(d_out, d), false);
     }
     return nullptr;
-};
+}
 
 /***************************************************************
  * Parse IndexIVF
  */
+
+size_t parse_nlist(std::string s) {
+    size_t multiplier = 1;
+    if (s.back() == 'k') {
+        s.pop_back();
+        multiplier = 1024;
+    }
+    if (s.back() == 'M') {
+        s.pop_back();
+        multiplier = 1024 * 1024;
+    }
+    return std::stoi(s) * multiplier;
+}
 
 // parsing guard + function
 Index* parse_coarse_quantizer(
@@ -246,8 +266,8 @@ Index* parse_coarse_quantizer(
     };
     use_2layer = false;
 
-    if (match("IVF([0-9]+)")) {
-        nlist = std::stoi(sm[1].str());
+    if (match("IVF([0-9]+[kM]?)")) {
+        nlist = parse_nlist(sm[1].str());
         return new IndexFlat(d, mt);
     }
     if (match("IMI2x([0-9]+)")) {
@@ -258,18 +278,18 @@ Index* parse_coarse_quantizer(
         nlist = (size_t)1 << (2 * nbit);
         return new MultiIndexQuantizer(d, 2, nbit);
     }
-    if (match("IVF([0-9]+)_HNSW([0-9]*)")) {
-        nlist = std::stoi(sm[1].str());
+    if (match("IVF([0-9]+[kM]?)_HNSW([0-9]*)")) {
+        nlist = parse_nlist(sm[1].str());
         int hnsw_M = sm[2].length() > 0 ? std::stoi(sm[2]) : 32;
         return new IndexHNSWFlat(d, hnsw_M, mt);
     }
-    if (match("IVF([0-9]+)_NSG([0-9]+)")) {
-        nlist = std::stoi(sm[1].str());
+    if (match("IVF([0-9]+[kM]?)_NSG([0-9]+)")) {
+        nlist = parse_nlist(sm[1].str());
         int R = std::stoi(sm[2]);
         return new IndexNSGFlat(d, R, mt);
     }
-    if (match("IVF([0-9]+)\\(Index([0-9])\\)")) {
-        nlist = std::stoi(sm[1].str());
+    if (match("IVF([0-9]+[kM]?)\\(Index([0-9])\\)")) {
+        nlist = parse_nlist(sm[1].str());
         int no = std::stoi(sm[2].str());
         FAISS_ASSERT(no >= 0 && no < parenthesis_indexes.size());
         return parenthesis_indexes[no].release();
@@ -302,7 +322,8 @@ IndexIVF* parse_IndexIVF(
         const std::string& code_string,
         std::unique_ptr<Index>& quantizer,
         size_t nlist,
-        MetricType mt) {
+        MetricType mt,
+        bool own_il) {
     std::smatch sm;
     auto match = [&sm, &code_string](const std::string pattern) {
         return re_match(code_string, pattern, sm);
@@ -311,18 +332,29 @@ IndexIVF* parse_IndexIVF(
     int d = quantizer->d;
 
     if (match("Flat")) {
-        return new IndexIVFFlat(get_q(), d, nlist, mt);
+        return new IndexIVFFlat(get_q(), d, nlist, mt, own_il);
     }
     if (match("FlatDedup")) {
-        return new IndexIVFFlatDedup(get_q(), d, nlist, mt);
+        return new IndexIVFFlatDedup(get_q(), d, nlist, mt, own_il);
+    }
+    if (match("FlatPanorama([0-9]+)?")) {
+        int nlevels = mres_to_int(sm[1], 8); // default to 8 levels
+        return new IndexIVFFlatPanorama(get_q(), d, nlist, nlevels, mt, own_il);
     }
     if (match(sq_pattern)) {
         return new IndexIVFScalarQuantizer(
-                get_q(), d, nlist, sq_types[sm[1].str()], mt);
+                get_q(),
+                d,
+                nlist,
+                sq_types[sm[1].str()],
+                mt,
+                /*by_residual=*/true,
+                own_il);
     }
     if (match("PQ([0-9]+)(x[0-9]+)?(np)?")) {
         int M = mres_to_int(sm[1]), nbit = mres_to_int(sm[2], 8, 1);
-        IndexIVFPQ* index_ivf = new IndexIVFPQ(get_q(), d, nlist, M, nbit, mt);
+        IndexIVFPQ* index_ivf =
+                new IndexIVFPQ(get_q(), d, nlist, M, nbit, mt, own_il);
         index_ivf->do_polysemous_training = sm[3].str() != "np";
         return index_ivf;
     }
@@ -331,13 +363,13 @@ IndexIVF* parse_IndexIVF(
                 mt == METRIC_L2,
                 "IVFPQR not implemented for inner product search");
         int M1 = mres_to_int(sm[1]), M2 = mres_to_int(sm[2]);
-        return new IndexIVFPQR(get_q(), d, nlist, M1, 8, M2, 8);
+        return new IndexIVFPQR(get_q(), d, nlist, M1, 8, M2, 8, own_il);
     }
     if (match("PQ([0-9]+)x4fs(r?)(_[0-9]+)?")) {
         int M = mres_to_int(sm[1]);
         int bbs = mres_to_int(sm[3], 32, 1);
-        IndexIVFPQFastScan* index_ivf =
-                new IndexIVFPQFastScan(get_q(), d, nlist, M, 4, mt, bbs);
+        IndexIVFPQFastScan* index_ivf = new IndexIVFPQFastScan(
+                get_q(), d, nlist, M, 4, mt, bbs, own_il);
         index_ivf->by_residual = sm[2].str() == "r";
         return index_ivf;
     }
@@ -348,11 +380,11 @@ IndexIVF* parse_IndexIVF(
         IndexIVF* index_ivf;
         if (sm[1].str() == "RQ") {
             index_ivf = new IndexIVFResidualQuantizer(
-                    get_q(), d, nlist, nbits, mt, st);
+                    get_q(), d, nlist, nbits, mt, st, own_il);
         } else {
             FAISS_THROW_IF_NOT(nbits.size() > 0);
             index_ivf = new IndexIVFLocalSearchQuantizer(
-                    get_q(), d, nlist, nbits.size(), nbits[0], mt, st);
+                    get_q(), d, nlist, nbits.size(), nbits[0], mt, st, own_il);
         }
         return index_ivf;
     }
@@ -364,10 +396,10 @@ IndexIVF* parse_IndexIVF(
         IndexIVF* index_ivf;
         if (sm[1].str() == "PRQ") {
             index_ivf = new IndexIVFProductResidualQuantizer(
-                    get_q(), d, nlist, nsplits, Msub, nbit, mt, st);
+                    get_q(), d, nlist, nsplits, Msub, nbit, mt, st, own_il);
         } else {
             index_ivf = new IndexIVFProductLocalSearchQuantizer(
-                    get_q(), d, nlist, nsplits, Msub, nbit, mt, st);
+                    get_q(), d, nlist, nsplits, Msub, nbit, mt, st, own_il);
         }
         return index_ivf;
     }
@@ -378,10 +410,10 @@ IndexIVF* parse_IndexIVF(
         IndexIVFAdditiveQuantizerFastScan* index_ivf;
         if (sm[1].str() == "RQ") {
             index_ivf = new IndexIVFResidualQuantizerFastScan(
-                    get_q(), d, nlist, M, 4, mt, st, bbs);
+                    get_q(), d, nlist, M, 4, mt, st, bbs, own_il);
         } else {
             index_ivf = new IndexIVFLocalSearchQuantizerFastScan(
-                    get_q(), d, nlist, M, 4, mt, st, bbs);
+                    get_q(), d, nlist, M, 4, mt, st, bbs, own_il);
         }
         index_ivf->by_residual = (sm[3].str() == "r");
         return index_ivf;
@@ -395,10 +427,10 @@ IndexIVF* parse_IndexIVF(
         IndexIVFAdditiveQuantizerFastScan* index_ivf;
         if (sm[1].str() == "PRQ") {
             index_ivf = new IndexIVFProductResidualQuantizerFastScan(
-                    get_q(), d, nlist, nsplits, Msub, 4, mt, st, bbs);
+                    get_q(), d, nlist, nsplits, Msub, 4, mt, st, bbs, own_il);
         } else {
             index_ivf = new IndexIVFProductLocalSearchQuantizerFastScan(
-                    get_q(), d, nlist, nsplits, Msub, 4, mt, st, bbs);
+                    get_q(), d, nlist, nsplits, Msub, 4, mt, st, bbs, own_il);
         }
         index_ivf->by_residual = (sm[4].str() == "r");
         return index_ivf;
@@ -416,8 +448,8 @@ IndexIVF* parse_IndexIVF(
         // the rationale for -1e10 is that this corresponds to simple
         // thresholding
         float period = sm[3].length() > 0 ? std::stof(sm[3]) : -1e10;
-        IndexIVFSpectralHash* index_ivf =
-                new IndexIVFSpectralHash(get_q(), d, nlist, outdim, period);
+        IndexIVFSpectralHash* index_ivf = new IndexIVFSpectralHash(
+                get_q(), d, nlist, outdim, period, own_il);
         index_ivf->replace_vt(vt.release(), true);
         if (sm[4].length()) {
             std::string s = sm[4].str();
@@ -430,8 +462,21 @@ IndexIVF* parse_IndexIVF(
         }
         return index_ivf;
     }
-    if (match(rabitq_pattern)) {
-        return new IndexIVFRaBitQ(get_q(), d, nlist, mt);
+    // IndexIVFRaBitQ with optional nb_bits (1-9)
+    // Accepts: "RaBitQ" (default 1-bit) or "RaBitQ{nb_bits}" (e.g., "RaBitQ4")
+    if (match("RaBitQ([1-9])?")) {
+        uint8_t nb_bits = sm[1].length() > 0 ? std::stoi(sm[1].str()) : 1;
+        return new IndexIVFRaBitQ(get_q(), d, nlist, mt, own_il, nb_bits);
+    }
+    // Accepts: "RaBitQfs" (default 1-bit, batch size 32)
+    //          "RaBitQfs{nb_bits}" (e.g., "RaBitQfs4")
+    //          "RaBitQfs_64" (1-bit, batch size 64)
+    //          "RaBitQfs{nb_bits}_{bbs}" (e.g., "RaBitQfs4_64")
+    if (match("RaBitQfs([1-9])?(_[0-9]+)?")) {
+        uint8_t nb_bits = sm[1].length() > 0 ? std::stoi(sm[1].str()) : 1;
+        int bbs = mres_to_int(sm[2], 32, 1);
+        return new IndexIVFRaBitQFastScan(
+                get_q(), d, nlist, mt, bbs, own_il, nb_bits);
     }
     return nullptr;
 }
@@ -452,6 +497,11 @@ IndexHNSW* parse_IndexHNSW(
 
     if (match("Flat|")) {
         return new IndexHNSWFlat(d, hnsw_M, mt);
+    }
+
+    if (match("FlatPanorama([0-9]+)?")) {
+        int nlevels = mres_to_int(sm[1], 8); // default to 8 levels
+        return new IndexHNSWFlatPanorama(d, hnsw_M, nlevels, mt);
     }
 
     if (match("PQ([0-9]+)(x[0-9]+)?(np)?")) {
@@ -520,6 +570,109 @@ IndexNSG* parse_IndexNSG(
     return nullptr;
 }
 
+#ifdef FAISS_ENABLE_SVS
+/***************************************************************
+ * Parse IndexSVS
+ */
+
+SVSStorageKind parse_lvq(const std::string& lvq_string) {
+    if (lvq_string == "LVQ4x0") {
+        return SVSStorageKind::SVS_LVQ4x0;
+    }
+    if (lvq_string == "LVQ4x4") {
+        return SVSStorageKind::SVS_LVQ4x4;
+    }
+    if (lvq_string == "LVQ4x8") {
+        return SVSStorageKind::SVS_LVQ4x8;
+    }
+    FAISS_ASSERT(!"not supported SVS LVQ level");
+}
+
+SVSStorageKind parse_leanvec(const std::string& leanvec_string) {
+    if (leanvec_string == "LeanVec4x4") {
+        return SVSStorageKind::SVS_LeanVec4x4;
+    }
+    if (leanvec_string == "LeanVec4x8") {
+        return SVSStorageKind::SVS_LeanVec4x8;
+    }
+    if (leanvec_string == "LeanVec8x8") {
+        return SVSStorageKind::SVS_LeanVec8x8;
+    }
+    FAISS_ASSERT(!"not supported SVS Leanvec level");
+}
+
+Index* parse_svs_datatype(
+        const std::string& index_type,
+        const std::string& arg_string,
+        const std::string& datatype_string,
+        int d,
+        MetricType mt) {
+    std::smatch sm;
+
+    if (datatype_string.empty()) {
+        if (index_type == "Vamana")
+            return new IndexSVSVamana(d, std::stoul(arg_string), mt);
+        if (index_type == "Flat")
+            return new IndexSVSFlat(d, mt);
+        FAISS_ASSERT(!"Unspported SVS index type");
+    }
+    if (re_match(datatype_string, "FP16", sm)) {
+        if (index_type == "Vamana")
+            return new IndexSVSVamana(
+                    d, std::stoul(arg_string), mt, SVSStorageKind::SVS_FP16);
+        FAISS_ASSERT(!"Unspported SVS index type for Float16");
+    }
+    if (re_match(datatype_string, "SQI8", sm)) {
+        if (index_type == "Vamana")
+            return new IndexSVSVamana(
+                    d, std::stoul(arg_string), mt, SVSStorageKind::SVS_SQI8);
+        FAISS_ASSERT(!"Unspported SVS index type for SQI8");
+    }
+    if (re_match(datatype_string, "(LVQ[0-9]+x[0-9]+)", sm)) {
+        if (index_type == "Vamana")
+            return new IndexSVSVamanaLVQ(
+                    d, std::stoul(arg_string), mt, parse_lvq(sm[0].str()));
+        FAISS_ASSERT(!"Unspported SVS index type for LVQ");
+    }
+    if (re_match(datatype_string, "(LeanVec[0-9]+x[0-9]+)(_[0-9]+)?", sm)) {
+        std::string leanvec_d_string =
+                sm[2].length() > 0 ? sm[2].str().substr(1) : "0";
+        int leanvec_d = std::stoul(leanvec_d_string);
+
+        if (index_type == "Vamana")
+            return new IndexSVSVamanaLeanVec(
+                    d,
+                    std::stoul(arg_string),
+                    mt,
+                    leanvec_d,
+                    parse_leanvec(sm[1].str()));
+        FAISS_ASSERT(!"Unspported SVS index type for LeanVec");
+    }
+    return nullptr;
+}
+
+Index* parse_IndexSVS(const std::string& code_string, int d, MetricType mt) {
+    std::smatch sm;
+    if (re_match(code_string, "Flat(,.+)?", sm)) {
+        std::string datatype_string =
+                sm[1].length() > 0 ? sm[1].str().substr(1) : "";
+        return parse_svs_datatype("Flat", "", datatype_string, d, mt);
+    }
+    if (re_match(code_string, "Vamana([0-9]+)(,.+)?", sm)) {
+        Index* index{nullptr};
+        std::string degree_string = sm[1].str();
+        std::string datatype_string =
+                sm[2].length() > 0 ? sm[2].str().substr(1) : "";
+        return parse_svs_datatype(
+                "Vamana", degree_string, datatype_string, d, mt);
+    }
+    if (re_match(code_string, "IVF([0-9]+)(,.+)?", sm)) {
+        FAISS_ASSERT(!"Unspported SVS index type");
+    }
+    return nullptr;
+}
+#endif // FAISS_ENABLE_SVS
+
 /***************************************************************
  * Parse basic indexes
  */
@@ -538,12 +691,25 @@ Index* parse_other_indexes(
         return new IndexFlat(d, metric);
     }
 
-    // IndexLSH
-    if (match("LSH(r?)(t?)")) {
-        bool rotate_data = sm[1].length() > 0;
-        bool train_thresholds = sm[2].length() > 0;
+    // IndexFlatL2Panorama
+    if (match("FlatL2Panorama([0-9]+)(_[0-9]+)?")) {
         FAISS_THROW_IF_NOT(metric == METRIC_L2);
-        return new IndexLSH(d, d, rotate_data, train_thresholds);
+        int nlevels = std::stoi(sm[1].str());
+        if (sm[2].length() > 0) {
+            int batch_size = std::stoi(sm[2].str().substr(1));
+            return new IndexFlatL2Panorama(d, nlevels, (size_t)batch_size);
+        } else {
+            return new IndexFlatL2Panorama(d, nlevels);
+        }
+    }
+
+    // IndexLSH
+    if (match("LSH([0-9]*)(r?)(t?)")) {
+        int nbits = sm[1].length() > 0 ? std::stoi(sm[1].str()) : d;
+        bool rotate_data = sm[2].length() > 0;
+        bool train_thresholds = sm[3].length() > 0;
+        FAISS_THROW_IF_NOT(metric == METRIC_L2);
+        return new IndexLSH(d, nbits, rotate_data, train_thresholds);
     }
 
     // IndexLattice
@@ -653,9 +819,17 @@ Index* parse_other_indexes(
         }
     }
 
-    // IndexRaBitQ
-    if (match(rabitq_pattern)) {
-        return new IndexRaBitQ(d, metric);
+    // IndexRaBitQ with optional nb_bits (1-9)
+    // Accepts: "RaBitQ" (default 1-bit) or "RaBitQ{nb_bits}" (e.g., "RaBitQ4")
+    if (match("RaBitQ([1-9])?")) {
+        uint8_t nb_bits = sm[1].length() > 0 ? std::stoi(sm[1].str()) : 1;
+        return new IndexRaBitQ(d, metric, nb_bits);
+    }
+
+    if (match("RaBitQfs([1-9])?(_[0-9]+)?")) {
+        uint8_t nb_bits = sm[1].length() > 0 ? std::stoi(sm[1].str()) : 1;
+        int bbs = mres_to_int(sm[2], 32, 1);
+        return new IndexRaBitQFastScan(d, metric, bbs, nb_bits);
     }
 
     return nullptr;
@@ -667,7 +841,8 @@ Index* parse_other_indexes(
 std::unique_ptr<Index> index_factory_sub(
         int d,
         std::string description,
-        MetricType metric) {
+        MetricType metric,
+        bool own_invlists = true) {
     // handle composite indexes
 
     bool verbose = index_factory_verbose;
@@ -678,6 +853,36 @@ std::unique_ptr<Index> index_factory_sub(
 
     // for the current match
     std::smatch sm;
+
+    // IndexIDMap -- it turns out is was used both as a prefix and a suffix, so
+    // support both
+    if (re_match(description, "(.+),IDMap2", sm) ||
+        re_match(description, "IDMap2,(.+)", sm)) {
+        IndexIDMap2* idmap2 = new IndexIDMap2(
+                index_factory_sub(d, sm[1].str(), metric).release());
+        idmap2->own_fields = true;
+        return std::unique_ptr<Index>(idmap2);
+    }
+
+    if (re_match(description, "(.+),IDMap", sm) ||
+        re_match(description, "IDMap,(.+)", sm)) {
+        IndexIDMap* idmap = new IndexIDMap(
+                index_factory_sub(d, sm[1].str(), metric).release());
+        idmap->own_fields = true;
+        return std::unique_ptr<Index>(idmap);
+    }
+
+    // handle refine Panorama
+    // TODO(aknayar): Add tests to test_factory.py
+    if (re_match(description, "(.+),RefinePanorama\\((.+)\\)", sm)) {
+        std::unique_ptr<Index> filter_index =
+                index_factory_sub(d, sm[1].str(), metric);
+        std::unique_ptr<Index> refine_index =
+                index_factory_sub(d, sm[2].str(), metric);
+        auto* index_rf = new IndexRefinePanorama(
+                filter_index.release(), refine_index.release());
+        return std::unique_ptr<Index>(index_rf);
+    }
 
     // handle refines
     if (re_match(description, "(.+),RFlat", sm) ||
@@ -749,28 +954,10 @@ std::unique_ptr<Index> index_factory_sub(
     }
 
     if (verbose) {
-        printf("after () normalization: %s %ld parenthesis indexes d=%d\n",
+        printf("after () normalization: %s %zd parenthesis indexes d=%d\n",
                description.c_str(),
                parenthesis_indexes.size(),
                d);
-    }
-
-    // IndexIDMap -- it turns out is was used both as a prefix and a suffix, so
-    // support both
-    if (re_match(description, "(.+),IDMap2", sm) ||
-        re_match(description, "IDMap2,(.+)", sm)) {
-        IndexIDMap2* idmap2 = new IndexIDMap2(
-                index_factory_sub(d, sm[1].str(), metric).release());
-        idmap2->own_fields = true;
-        return std::unique_ptr<Index>(idmap2);
-    }
-
-    if (re_match(description, "(.+),IDMap", sm) ||
-        re_match(description, "IDMap,(.+)", sm)) {
-        IndexIDMap* idmap = new IndexIDMap(
-                index_factory_sub(d, sm[1].str(), metric).release());
-        idmap->own_fields = true;
-        return std::unique_ptr<Index>(idmap);
     }
 
     { // handle basic index types
@@ -803,6 +990,25 @@ std::unique_ptr<Index> index_factory_sub(
         return std::unique_ptr<Index>(index);
     }
 
+#ifdef FAISS_ENABLE_SVS
+    if (re_match(description, "SVS((?:Flat|Vamana|IVF).*)", sm)) {
+        std::string code_string = sm[1].str();
+        if (verbose) {
+            printf("parsing SVS string %s code_string=%s",
+                   description.c_str(),
+                   code_string.c_str());
+        }
+
+        Index* index = parse_IndexSVS(code_string, d, metric);
+        FAISS_THROW_IF_NOT_FMT(
+                index,
+                "could not parse SVS code description %s in %s",
+                code_string.c_str(),
+                description.c_str());
+        return std::unique_ptr<Index>(index);
+    }
+#endif // FAISS_ENABLE_SVS
+
     // NSG variants (it was unclear in the old version that the separator was a
     // "," so we support both "_" and ",")
     if (re_match(description, "NSG([0-9]*)([,_].*)?", sm)) {
@@ -828,7 +1034,7 @@ std::unique_ptr<Index> index_factory_sub(
 
     // IndexRowwiseMinMax, fp32 version
     if (description.compare(0, 7, "MinMax,") == 0) {
-        size_t comma = description.find(",");
+        size_t comma = description.find(',');
         std::string sub_index_string = description.substr(comma + 1);
         auto sub_index = index_factory_sub(d, sub_index_string, metric);
 
@@ -840,7 +1046,7 @@ std::unique_ptr<Index> index_factory_sub(
 
     // IndexRowwiseMinMax, fp16 version
     if (description.compare(0, 11, "MinMaxFP16,") == 0) {
-        size_t comma = description.find(",");
+        size_t comma = description.find(',');
         std::string sub_index_string = description.substr(comma + 1);
         auto sub_index = index_factory_sub(d, sub_index_string, metric);
 
@@ -854,7 +1060,7 @@ std::unique_ptr<Index> index_factory_sub(
     {
         size_t nlist;
         bool use_2layer;
-        size_t comma = description.find(",");
+        size_t comma = description.find(',');
         std::string coarse_string = description.substr(0, comma);
         // Match coarse quantizer part first
         std::unique_ptr<Index> quantizer(parse_coarse_quantizer(
@@ -884,8 +1090,8 @@ std::unique_ptr<Index> index_factory_sub(
                 return std::unique_ptr<Index>(index_2l);
             }
 
-            IndexIVF* index_ivf =
-                    parse_IndexIVF(code_description, quantizer, nlist, metric);
+            IndexIVF* index_ivf = parse_IndexIVF(
+                    code_description, quantizer, nlist, metric, own_invlists);
 
             FAISS_THROW_IF_NOT_FMT(
                     index_ivf,
@@ -901,28 +1107,54 @@ std::unique_ptr<Index> index_factory_sub(
 
 } // anonymous namespace
 
-Index* index_factory(int d, const char* description, MetricType metric) {
-    return index_factory_sub(d, description, metric).release();
+Index* index_factory(
+        int d,
+        const char* description,
+        MetricType metric,
+        bool own_invlists) {
+    return index_factory_sub(d, description, metric, own_invlists).release();
 }
 
 IndexBinary* index_binary_factory(
         int d,
         const char* description,
-        MetricType metric) {
+        bool own_invlists) {
     IndexBinary* index = nullptr;
+
+    std::smatch sm;
+    std::string desc_str(description);
+
+    // Handle IDMap2 and IDMap wrappers (prefix or suffix)
+    if (re_match(desc_str, "(.+),IDMap2", sm) ||
+        re_match(desc_str, "IDMap2,(.+)", sm)) {
+        IndexBinary* sub_index =
+                index_binary_factory(d, sm[1].str().c_str(), own_invlists);
+        IndexBinaryIDMap2* idmap2 = new IndexBinaryIDMap2(sub_index);
+        idmap2->own_fields = true;
+        return idmap2;
+    }
+
+    if (re_match(desc_str, "(.+),IDMap", sm) ||
+        re_match(desc_str, "IDMap,(.+)", sm)) {
+        IndexBinary* sub_index =
+                index_binary_factory(d, sm[1].str().c_str(), own_invlists);
+        IndexBinaryIDMap* idmap = new IndexBinaryIDMap(sub_index);
+        idmap->own_fields = true;
+        return idmap;
+    }
 
     int ncentroids = -1;
     int M, nhash, b;
 
     if (sscanf(description, "BIVF%d_HNSW%d", &ncentroids, &M) == 2) {
-        IndexBinaryIVF* index_ivf =
-                new IndexBinaryIVF(new IndexBinaryHNSW(d, M), d, ncentroids);
+        IndexBinaryIVF* index_ivf = new IndexBinaryIVF(
+                new IndexBinaryHNSW(d, M), d, ncentroids, own_invlists);
         index_ivf->own_fields = true;
         index = index_ivf;
 
     } else if (sscanf(description, "BIVF%d", &ncentroids) == 1) {
-        IndexBinaryIVF* index_ivf =
-                new IndexBinaryIVF(new IndexBinaryFlat(d), d, ncentroids);
+        IndexBinaryIVF* index_ivf = new IndexBinaryIVF(
+                new IndexBinaryFlat(d), d, ncentroids, own_invlists);
         index_ivf->own_fields = true;
         index = index_ivf;
 
@@ -936,12 +1168,9 @@ IndexBinary* index_binary_factory(
     } else if (sscanf(description, "BHash%d", &b) == 1) {
         index = new IndexBinaryHash(d, b);
 
-    } else if (std::string(description) == "BFlat") {
-        IndexBinary* index_x = new IndexBinaryFlat(d, metric);
-        IndexBinaryIDMap* idmap = new IndexBinaryIDMap(index_x);
-        idmap->own_fields = true;
+    } else if (desc_str == "BFlat") {
+        index = new IndexBinaryFlat(d);
 
-        index = idmap;
     } else {
         FAISS_THROW_IF_NOT_FMT(
                 index, "description %s did not generate an index", description);

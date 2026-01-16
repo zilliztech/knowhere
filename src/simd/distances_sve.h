@@ -18,6 +18,8 @@
 
 #if defined(__ARM_FEATURE_SVE)
 namespace faiss {
+namespace cppcontrib {
+namespace knowhere {
 
 float
 fvec_L2sqr_sve(const float* x, const float* y, size_t d);
@@ -26,10 +28,10 @@ float
 fvec_inner_product_sve(const float* x, const float* y, size_t d);
 
 float
-fp16_vec_L2sqr_sve(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
+fp16_vec_L2sqr_sve(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size_t d);
 
 float
-fp16_vec_inner_product_sve(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
+fp16_vec_inner_product_sve(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size_t d);
 
 float
 fvec_L1_sve(const float* x, const float* y, size_t d);
@@ -41,7 +43,7 @@ float
 fvec_norm_L2sqr_sve(const float* x, size_t d);
 
 float
-fp16_vec_norm_L2sqr_sve(const knowhere::fp16* x, size_t d);
+fp16_vec_norm_L2sqr_sve(const ::knowhere::fp16* x, size_t d);
 
 void
 fvec_madd_sve(size_t n, const float* a, float bf, const float* b, float* c);
@@ -91,23 +93,25 @@ int8_vec_inner_product_batch_4_sve(const int8_t* x, const int8_t* y0, const int8
                                    float& dis3);
 
 float
-bf16_vec_L2sqr_sve(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
+bf16_vec_L2sqr_sve(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d);
 
 float
-bf16_vec_norm_L2sqr_sve(const knowhere::bf16* x, size_t d);
+bf16_vec_norm_L2sqr_sve(const ::knowhere::bf16* x, size_t d);
 
 void
-bf16_vec_L2sqr_batch_4_sve(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                           const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0, float& dis1,
-                           float& dis2, float& dis3);
+bf16_vec_L2sqr_batch_4_sve(const ::knowhere::bf16* x, const ::knowhere::bf16* y0, const ::knowhere::bf16* y1,
+                           const ::knowhere::bf16* y2, const ::knowhere::bf16* y3, const size_t d, float& dis0,
+                           float& dis1, float& dis2, float& dis3);
 
 float
-bf16_vec_inner_product_sve(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
+bf16_vec_inner_product_sve(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d);
 
 void
-bf16_vec_inner_product_batch_4_sve(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                                   const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
+bf16_vec_inner_product_batch_4_sve(const ::knowhere::bf16* x, const ::knowhere::bf16* y0, const ::knowhere::bf16* y1,
+                                   const ::knowhere::bf16* y2, const ::knowhere::bf16* y3, const size_t d, float& dis0,
                                    float& dis1, float& dis2, float& dis3);
 
+}  // namespace knowhere
+}  // namespace cppcontrib
 }  // namespace faiss
 #endif

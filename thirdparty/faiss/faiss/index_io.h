@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -11,17 +11,12 @@
 #define FAISS_INDEX_IO_H
 
 #include <cstdio>
-#include <string>
-#include <typeinfo>
-#include <vector>
-
-#include <faiss/IndexIVF.h>
 
 /** I/O functions can read/write to a filename, a file handle or to an
  * object that abstracts the medium.
  *
  * The read functions return objects that should be deallocated with
- * delete. All references within these objectes are owned by the
+ * delete. All references within these objects are owned by the
  * object.
  */
 
@@ -61,10 +56,8 @@ const int IO_FLAG_SKIP_PRECOMPUTE_TABLE = 16;
 // this will prevent graph building because sdc
 // computations are required to construct the graph
 const int IO_FLAG_PQ_SKIP_SDC_TABLE = 32;
-// load index data with vectors' norms
-const int IO_FLAG_WITH_NORM = 1 << 8;
 // try to memmap data (useful to load an ArrayInvertedLists as an
-// OnDiskInvertedLists). 
+// OnDiskInvertedLists)
 const int IO_FLAG_MMAP = IO_FLAG_SKIP_IVF_DATA | 0x646f0000;
 // mmap that handles codes for IndexFlatCodes-derived indices and HNSW.
 // this is a temporary solution, it is expected to be merged with IO_FLAG_MMAP
@@ -94,14 +87,6 @@ void write_ProductQuantizer(const ProductQuantizer* pq, IOWriter* f);
 void write_InvertedLists(const InvertedLists* ils, IOWriter* f);
 InvertedLists* read_InvertedLists(IOReader* reader, int io_flags = 0);
 
-// additional helper function for knowhere
-bool read_is_mv(IOReader* reader);
-bool read_is_mv(const char* fname);
-void write_vector(const std::vector<uint32_t>& v, IOWriter* writer);
-void read_vector(std::vector<uint32_t>& v, IOReader* f);
-uint32_t read_value(IOReader *f);
-void write_value(uint32_t v, IOWriter* writer);
-void write_mv(IOWriter* writer);
 } // namespace faiss
 
 #endif

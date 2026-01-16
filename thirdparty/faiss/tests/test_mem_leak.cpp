@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -14,7 +14,8 @@
 
 using namespace faiss;
 
-TEST(MEM_LEAK, ivfflat) {
+TEST(TestMemoryLeak, ivfflat) {
+    GTEST_SKIP() << "Skipping flaky memory leak test.";
     size_t num_tfidf_faiss_cells = 20;
     size_t max_tfidf_features = 500;
 
@@ -61,12 +62,6 @@ TEST(MEM_LEAK, ivfflat) {
             }
         }
         printf("\n");
-        
-        // TODO: caiyd
-        // Memory usage increases after faiss updated, this behavior is as
-        // same as faiss-1.7.0 updated. So disable memory usage check.
-        // Can run memory profiling comparing with original faiss to find
-        // out where the increased memory is used.
-        // EXPECT_GE(50 * bs, (get_mem_usage_kb() - m0) * 1024.0 / N2);
+        EXPECT_GE(50 * bs, (get_mem_usage_kb() - m0) * 1024.0 / N2);
     }
 }

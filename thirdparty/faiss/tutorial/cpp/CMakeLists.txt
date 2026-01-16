@@ -1,7 +1,6 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-# All rights reserved.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
-# This source code is licensed under the BSD-style license found in the
+# This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
 add_executable(1-Flat EXCLUDE_FROM_ALL 1-Flat.cpp)
@@ -30,3 +29,14 @@ target_link_libraries(8-PQFastScanRefine PRIVATE faiss)
 
 add_executable(9-RefineComparison EXCLUDE_FROM_ALL 9-RefineComparison.cpp)
 target_link_libraries(9-RefineComparison PRIVATE faiss)
+
+if(FAISS_ENABLE_SVS)
+
+  add_executable(10-SVS-Vamana-LVQ EXCLUDE_FROM_ALL 10-SVS-Vamana-LVQ.cpp)
+  target_link_libraries(10-SVS-Vamana-LVQ PRIVATE faiss)
+  target_compile_definitions(10-SVS-Vamana-LVQ PRIVATE FAISS_ENABLE_SVS FAISS_SVS_RUNTIME_VERSION=${FAISS_SVS_RUNTIME_VERSION})
+
+  add_executable(11-SVS-Vamana-LeanVec EXCLUDE_FROM_ALL 11-SVS-Vamana-LeanVec.cpp)
+  target_link_libraries(11-SVS-Vamana-LeanVec PRIVATE faiss)
+  target_compile_definitions(11-SVS-Vamana-LeanVec PRIVATE FAISS_ENABLE_SVS FAISS_SVS_RUNTIME_VERSION=${FAISS_SVS_RUNTIME_VERSION})
+endif()

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -14,8 +14,8 @@ using faiss::IndexShards;
 
 DEFINE_DESTRUCTOR(IndexShards)
 
-DEFINE_GETTER(IndexShards, int, own_fields)
-DEFINE_SETTER(IndexShards, int, own_fields)
+DEFINE_GETTER(IndexShards, int, own_indices)
+DEFINE_SETTER(IndexShards, int, own_indices)
 
 DEFINE_GETTER(IndexShards, int, successive_ids)
 DEFINE_SETTER(IndexShards, int, successive_ids)

@@ -9,20 +9,21 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <faiss/cppcontrib/knowhere/IndexFlatElkan.h>
+#include <faiss/cppcontrib/knowhere/IndexIVFScalarQuantizerCC.h>
+#include <faiss/cppcontrib/knowhere/IndexScaNN.h>
+
 #include "common/metric.h"
-#include "faiss/IndexBinaryFlat.h"
-#include "faiss/IndexBinaryIVF.h"
-#include "faiss/IndexFlat.h"
-#include "faiss/IndexFlatElkan.h"
-#include "faiss/IndexIVFFlat.h"
-#include "faiss/IndexIVFPQ.h"
-#include "faiss/IndexIVFPQFastScan.h"
-#include "faiss/IndexIVFRaBitQ.h"
-#include "faiss/IndexIVFScalarQuantizerCC.h"
-#include "faiss/IndexScaNN.h"
-#include "faiss/IndexScalarQuantizer.h"
 #include "faiss/VectorTransform.h"
-#include "faiss/index_io.h"
+#include "faiss/cppcontrib/knowhere/IndexBinaryFlat.h"
+#include "faiss/cppcontrib/knowhere/IndexBinaryIVF.h"
+#include "faiss/cppcontrib/knowhere/IndexFlat.h"
+#include "faiss/cppcontrib/knowhere/IndexIVFFlat.h"
+#include "faiss/cppcontrib/knowhere/IndexIVFPQ.h"
+#include "faiss/cppcontrib/knowhere/IndexIVFPQFastScan.h"
+#include "faiss/cppcontrib/knowhere/IndexIVFRaBitQ.h"
+#include "faiss/cppcontrib/knowhere/IndexScalarQuantizer.h"
+#include "faiss/cppcontrib/knowhere/index_io.h"
 #include "index/data_view_dense_index/index_node_with_data_view_refiner.h"
 #include "index/ivf/ivf_config.h"
 #include "index/ivf/ivf_wrapper.h"
@@ -51,7 +52,7 @@ struct IndexDispatch {
 };
 
 template <>
-struct IndexDispatch<faiss::IndexIVFFlat> {
+struct IndexDispatch<faiss::cppcontrib::knowhere::IndexIVFFlat> {
     using Tag = IVFFlatTag;
 };
 
@@ -59,13 +60,13 @@ template <typename DataType, typename IndexType>
 class IvfIndexNode : public IndexNode {
  public:
     IvfIndexNode(const int32_t version, const Object& object) : IndexNode(version), index_(nullptr) {
-        static_assert(std::is_same<IndexType, faiss::IndexIVFFlat>::value ||
-                          std::is_same<IndexType, faiss::IndexIVFFlatCC>::value ||
+        static_assert(std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlat>::value ||
+                          std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlatCC>::value ||
                           std::is_same<IndexType, IndexIVFPQWrapper>::value ||
                           std::is_same<IndexType, IndexIVFSQWrapper>::value ||
-                          std::is_same<IndexType, faiss::IndexBinaryIVF>::value ||
-                          std::is_same<IndexType, faiss::IndexScaNN>::value ||
-                          std::is_same<IndexType, faiss::IndexIVFScalarQuantizerCC>::value ||
+                          std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexBinaryIVF>::value ||
+                          std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexScaNN>::value ||
+                          std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC>::value ||
                           std::is_same<IndexType, IndexIVFRaBitQWrapper>::value,
                       "not support");
         static_assert(std::is_same_v<DataType, fp32> || std::is_same_v<DataType, bin1>,
@@ -77,8 +78,8 @@ class IvfIndexNode : public IndexNode {
     Status
     BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
                  bool use_knowhere_build_pool) override {
-        if constexpr (std::is_same_v<IndexType, faiss::IndexIVFFlat> ||
-                      std::is_same_v<IndexType, faiss::IndexIVFFlatCC>) {
+        if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlat> ||
+                      std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlatCC>) {
             return IndexNode::BuildEmbList(dataset, std::move(cfg), lims, num_rows, use_knowhere_build_pool);
         }
 
@@ -103,11 +104,12 @@ class IvfIndexNode : public IndexNode {
                 milvus::OpContext* op_context) const override;
     static constexpr bool
     is_ann_iterator_supported() {
-        return (
-            std::is_same<faiss::IndexIVFFlatCC, IndexType>::value ||
-            std::is_same<faiss::IndexIVFFlat, IndexType>::value || std::is_same<IndexIVFSQWrapper, IndexType>::value ||
-            std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value ||
-            std::is_same<faiss::IndexScaNN, IndexType>::value || std::is_same<IndexIVFRaBitQWrapper, IndexType>::value);
+        return (std::is_same<faiss::cppcontrib::knowhere::IndexIVFFlatCC, IndexType>::value ||
+                std::is_same<faiss::cppcontrib::knowhere::IndexIVFFlat, IndexType>::value ||
+                std::is_same<IndexIVFSQWrapper, IndexType>::value ||
+                std::is_same<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC, IndexType>::value ||
+                std::is_same<faiss::cppcontrib::knowhere::IndexScaNN, IndexType>::value ||
+                std::is_same<IndexIVFRaBitQWrapper, IndexType>::value);
     }
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
@@ -157,10 +159,10 @@ class IvfIndexNode : public IndexNode {
 
     static bool
     CommonHasRawData() {
-        if constexpr (std::is_same<faiss::IndexIVFFlat, IndexType>::value) {
+        if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexIVFFlat, IndexType>::value) {
             return true;
         }
-        if constexpr (std::is_same<faiss::IndexIVFFlatCC, IndexType>::value) {
+        if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexIVFFlatCC, IndexType>::value) {
             return true;
         }
         if constexpr (std::is_same<IndexIVFPQWrapper, IndexType>::value) {
@@ -169,7 +171,7 @@ class IvfIndexNode : public IndexNode {
         if constexpr (std::is_same<IndexIVFSQWrapper, IndexType>::value) {
             return false;
         }
-        if constexpr (std::is_same<faiss::IndexBinaryIVF, IndexType>::value) {
+        if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexBinaryIVF, IndexType>::value) {
             return true;
         }
         if constexpr (std::is_same<IndexIVFRaBitQWrapper, IndexType>::value) {
@@ -180,11 +182,11 @@ class IvfIndexNode : public IndexNode {
 
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
-        if constexpr (std::is_same<faiss::IndexScaNN, IndexType>::value) {
+        if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexScaNN, IndexType>::value) {
             const ScannConfig& scann_cfg = static_cast<const ScannConfig&>(config);
             return scann_cfg.with_raw_data.has_value() && scann_cfg.with_raw_data.value();
         }
-        if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
+        if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC, IndexType>::value) {
             const IvfSqCcConfig& ivfsqcc_cfg = static_cast<const IvfSqCcConfig&>(config);
             return ivfsqcc_cfg.raw_data_store_prefix.has_value();
         }
@@ -196,10 +198,10 @@ class IvfIndexNode : public IndexNode {
         if (!index_) {
             return false;
         }
-        if constexpr (std::is_same<faiss::IndexScaNN, IndexType>::value) {
+        if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexScaNN, IndexType>::value) {
             return index_->with_raw_data();
         }
-        if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
+        if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC, IndexType>::value) {
             return index_->with_raw_data();
         }
         return CommonHasRawData();
@@ -219,25 +221,25 @@ class IvfIndexNode : public IndexNode {
 
     static std::unique_ptr<BaseConfig>
     StaticCreateConfig() {
-        if constexpr (std::is_same<faiss::IndexIVFFlat, IndexType>::value) {
+        if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexIVFFlat, IndexType>::value) {
             return std::make_unique<IvfFlatConfig>();
         }
-        if constexpr (std::is_same<faiss::IndexIVFFlatCC, IndexType>::value) {
+        if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexIVFFlatCC, IndexType>::value) {
             return std::make_unique<IvfFlatCcConfig>();
         }
         if constexpr (std::is_same<IndexIVFPQWrapper, IndexType>::value) {
             return std::make_unique<IvfPqConfig>();
         }
-        if constexpr (std::is_same<faiss::IndexScaNN, IndexType>::value) {
+        if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexScaNN, IndexType>::value) {
             return std::make_unique<ScannConfig>();
         }
         if constexpr (std::is_same<IndexIVFSQWrapper, IndexType>::value) {
             return std::make_unique<IvfSqConfig>();
         }
-        if constexpr (std::is_same<faiss::IndexBinaryIVF, IndexType>::value) {
+        if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexBinaryIVF, IndexType>::value) {
             return std::make_unique<IvfBinConfig>();
         }
-        if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
+        if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC, IndexType>::value) {
             return std::make_unique<IvfSqCcConfig>();
         }
         if constexpr (std::is_same<IndexIVFRaBitQWrapper, IndexType>::value) {
@@ -262,13 +264,13 @@ class IvfIndexNode : public IndexNode {
         if (!index_) {
             return 0;
         }
-        if constexpr (std::is_same<IndexType, faiss::IndexIVFFlat>::value) {
+        if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlat>::value) {
             auto nb = index_->invlists->compute_ntotal();
             auto nlist = index_->nlist;
             auto code_size = index_->code_size;
             return ((nb + nlist) * (code_size + sizeof(int64_t)));
         }
-        if constexpr (std::is_same<IndexType, faiss::IndexIVFFlatCC>::value) {
+        if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlatCC>::value) {
             auto nb = index_->invlists->compute_ntotal();
             auto nlist = index_->nlist;
             auto code_size = index_->code_size;
@@ -277,19 +279,19 @@ class IvfIndexNode : public IndexNode {
         if constexpr (std::is_same<IndexType, IndexIVFPQWrapper>::value) {
             return index_->size();
         }
-        if constexpr (std::is_same<IndexType, faiss::IndexScaNN>::value) {
+        if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexScaNN>::value) {
             return index_->size();
         }
         if constexpr (std::is_same<IndexType, IndexIVFSQWrapper>::value) {
             return index_->size();
         }
-        if constexpr (std::is_same<IndexType, faiss::IndexBinaryIVF>::value) {
+        if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexBinaryIVF>::value) {
             auto nb = index_->invlists->compute_ntotal();
             auto nlist = index_->nlist;
             auto code_size = index_->code_size;
             return (nb * code_size + nb * sizeof(int64_t) + nlist * code_size);
         }
-        if constexpr (std::is_same<IndexType, faiss::IndexIVFScalarQuantizerCC>::value) {
+        if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC>::value) {
             auto nb = index_->invlists->compute_ntotal();
             auto code_size = index_->code_size;
             auto nlist = index_->nlist;
@@ -308,25 +310,25 @@ class IvfIndexNode : public IndexNode {
     };
     std::string
     Type() const override {
-        if constexpr (std::is_same<IndexType, faiss::IndexIVFFlat>::value) {
+        if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlat>::value) {
             return knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
         }
-        if constexpr (std::is_same<IndexType, faiss::IndexIVFFlatCC>::value) {
+        if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlatCC>::value) {
             return knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC;
         }
         if constexpr (std::is_same<IndexType, IndexIVFPQWrapper>::value) {
             return knowhere::IndexEnum::INDEX_FAISS_IVFPQ;
         }
-        if constexpr (std::is_same<IndexType, faiss::IndexScaNN>::value) {
+        if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexScaNN>::value) {
             return knowhere::IndexEnum::INDEX_FAISS_SCANN;
         }
         if constexpr (std::is_same<IndexType, IndexIVFSQWrapper>::value) {
             return knowhere::IndexEnum::INDEX_FAISS_IVFSQ8;
         }
-        if constexpr (std::is_same<IndexType, faiss::IndexBinaryIVF>::value) {
+        if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexBinaryIVF>::value) {
             return knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT;
         }
-        if constexpr (std::is_same<IndexType, faiss::IndexIVFScalarQuantizerCC>::value) {
+        if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC>::value) {
             return knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC;
         }
         if constexpr (std::is_same<IndexType, IndexIVFRaBitQWrapper>::value) {
@@ -351,8 +353,9 @@ class IvfIndexNode : public IndexNode {
     static constexpr bool
     IsQuantized() {
         return std::is_same_v<IndexType, IndexIVFPQWrapper> || std::is_same_v<IndexType, IndexIVFSQWrapper> ||
-               std::is_same_v<IndexType, faiss::IndexIVFScalarQuantizerCC> ||
-               std::is_same_v<IndexType, faiss::IndexScaNN> || std::is_same_v<IndexType, IndexIVFRaBitQWrapper>;
+               std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC> ||
+               std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexScaNN> ||
+               std::is_same_v<IndexType, IndexIVFRaBitQWrapper>;
     }
 
  private:
@@ -389,7 +392,7 @@ class IvfIndexNode : public IndexNode {
 
         float
         raw_distance(int64_t id) override {
-            if constexpr (std::is_same_v<IndexType, faiss::IndexScaNN>) {
+            if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexScaNN>) {
                 if (this->refine_) {
                     return workspace_->dis_refine->operator()(id);
                 } else {
@@ -401,10 +404,10 @@ class IvfIndexNode : public IndexNode {
 
      private:
         const IndexType* index_ = nullptr;
-        std::unique_ptr<faiss::IVFIteratorWorkspace> workspace_ = nullptr;
+        std::unique_ptr<faiss::cppcontrib::knowhere::IVFIteratorWorkspace> workspace_ = nullptr;
         std::unique_ptr<float[]> copied_query_ = nullptr;
         std::unique_ptr<BitsetViewIDSelector> bw_idselector_ = nullptr;
-        faiss::IVFSearchParameters ivf_search_params_;
+        faiss::cppcontrib::knowhere::IVFSearchParameters ivf_search_params_;
     };
 
     std::unique_ptr<IndexType> index_;
@@ -457,25 +460,25 @@ MatchNbits(int64_t size, int64_t nbits) {
 namespace {
 
 // turn IndexFlatElkan into IndexFlat
-std::unique_ptr<faiss::IndexFlat>
-to_index_flat(std::unique_ptr<faiss::IndexFlat>&& index) {
+std::unique_ptr<faiss::cppcontrib::knowhere::IndexFlat>
+to_index_flat(std::unique_ptr<faiss::cppcontrib::knowhere::IndexFlat>&& index) {
     // C++ slicing here
-    return std::make_unique<faiss::IndexFlat>(std::move(*index));
+    return std::make_unique<faiss::cppcontrib::knowhere::IndexFlat>(std::move(*index));
 }
 
-expected<faiss::ScalarQuantizer::QuantizerType>
+expected<faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType>
 get_ivf_sq_quantizer_type(int code_size) {
     switch (code_size) {
         case 4:
-            return faiss::ScalarQuantizer::QuantizerType::QT_4bit;
+            return faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_4bit;
         case 6:
-            return faiss::ScalarQuantizer::QuantizerType::QT_6bit;
+            return faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_6bit;
         case 8:
-            return faiss::ScalarQuantizer::QuantizerType::QT_8bit;
+            return faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_8bit;
         case 16:
-            return faiss::ScalarQuantizer::QuantizerType::QT_fp16;
+            return faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_fp16;
         default:
-            return expected<faiss::ScalarQuantizer::QuantizerType>::Err(
+            return expected<faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType>::Err(
                 Status::invalid_args, fmt::format("current code size {} not in (4, 6, 8, 16)", code_size));
     }
 }
@@ -529,7 +532,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
 
     // faiss scann needs at least 16 rows since nbits=4
     constexpr int64_t SCANN_MIN_ROWS = 16;
-    if constexpr (std::is_same<faiss::IndexScaNN, IndexType>::value) {
+    if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexScaNN, IndexType>::value) {
         if (rows < SCANN_MIN_ROWS) {
             LOG_KNOWHERE_ERROR_ << rows << " rows is not enough, scann needs at least 16 rows to build index";
             return Status::faiss_inner_error;
@@ -539,17 +542,18 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
     std::unique_ptr<IndexType> index;
     // if cfg.use_elkan is used, then we'll use a temporary instance of
     //  IndexFlatElkan for the training.
-    if constexpr (std::is_same<faiss::IndexIVFFlat, IndexType>::value) {
+    if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexIVFFlat, IndexType>::value) {
         const IvfFlatConfig& ivf_flat_cfg = static_cast<const IvfFlatConfig&>(*cfg);
         auto nlist = MatchNlist(rows, ivf_flat_cfg.nlist.value());
 
         const bool use_elkan = ivf_flat_cfg.use_elkan.value_or(true);
 
         // create quantizer for the training
-        std::unique_ptr<faiss::IndexFlat> qzr =
-            std::make_unique<faiss::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+        std::unique_ptr<faiss::cppcontrib::knowhere::IndexFlat> qzr =
+            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
         // create index. Index does not own qzr
-        index = std::make_unique<faiss::IndexIVFFlat>(qzr.get(), dim, nlist, metric.value(), is_cosine);
+        index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFFlat>(qzr.get(), dim, nlist, metric.value(),
+                                                                            is_cosine);
         // train
         index->train(rows, (const float*)data);
         // replace quantizer with a regular IndexFlat
@@ -558,18 +562,18 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         index->quantizer = qzr.release();
         index->own_fields = true;
     }
-    if constexpr (std::is_same<faiss::IndexIVFFlatCC, IndexType>::value) {
+    if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexIVFFlatCC, IndexType>::value) {
         const IvfFlatCcConfig& ivf_flat_cc_cfg = static_cast<const IvfFlatCcConfig&>(*cfg);
         auto nlist = MatchNlist(rows, ivf_flat_cc_cfg.nlist.value());
 
         const bool use_elkan = ivf_flat_cc_cfg.use_elkan.value_or(true);
 
         // create quantizer for the training
-        std::unique_ptr<faiss::IndexFlat> qzr =
-            std::make_unique<faiss::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+        std::unique_ptr<faiss::cppcontrib::knowhere::IndexFlat> qzr =
+            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
         // create index. Index does not own qzr
-        index = std::make_unique<faiss::IndexIVFFlatCC>(qzr.get(), dim, nlist, ivf_flat_cc_cfg.ssize.value(),
-                                                        metric.value(), is_cosine);
+        index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFFlatCC>(
+            qzr.get(), dim, nlist, ivf_flat_cc_cfg.ssize.value(), metric.value(), is_cosine);
         // train
         index->train(rows, (const float*)data);
         // replace quantizer with a regular IndexFlat
@@ -578,7 +582,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         index->quantizer = qzr.release();
         index->own_fields = true;
         // ivfflat_cc has no serialize stage, make map at build stage
-        index->make_direct_map(true, faiss::DirectMap::ConcurrentArray);
+        index->make_direct_map(true, faiss::cppcontrib::knowhere::DirectMap::ConcurrentArray);
     }
     if constexpr (std::is_same<IndexIVFPQWrapper, IndexType>::value) {
         const IvfPqConfig& ivf_pq_cfg = static_cast<const IvfPqConfig&>(*cfg);
@@ -588,8 +592,8 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         const bool use_elkan = ivf_pq_cfg.use_elkan.value_or(true);
 
         // create quantizer for the training
-        std::unique_ptr<faiss::IndexFlat> qzr =
-            std::make_unique<faiss::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+        std::unique_ptr<faiss::cppcontrib::knowhere::IndexFlat> qzr =
+            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
 
         DataFormatEnum data_format = DataType2EnumHelper<DataType>::value;
 
@@ -606,11 +610,11 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         // replace quantizer with a regular IndexFlat
         qzr = to_index_flat(std::move(qzr));
         // transfer ownership of qzr to index
-        faiss::IndexIVFPQ* uindex = index->get_base_ivf_index();
+        faiss::cppcontrib::knowhere::IndexIVFPQ* uindex = index->get_base_ivf_index();
         uindex->quantizer = qzr.release();
         uindex->own_fields = true;
     }
-    if constexpr (std::is_same<faiss::IndexScaNN, IndexType>::value) {
+    if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexScaNN, IndexType>::value) {
         const ScannConfig& scann_cfg = static_cast<const ScannConfig&>(*cfg);
         auto nlist = MatchNlist(rows, scann_cfg.nlist.value());
         bool is_cosine = base_cfg.metric_type.value() == metric::COSINE;
@@ -618,17 +622,17 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         const bool use_elkan = scann_cfg.use_elkan.value_or(true);
         const int sub_dim = scann_cfg.sub_dim.value_or(2);
         // create quantizer for the training
-        std::unique_ptr<faiss::IndexFlat> qzr =
-            std::make_unique<faiss::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+        std::unique_ptr<faiss::cppcontrib::knowhere::IndexFlat> qzr =
+            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
         // create base index. it does not own qzr
-        auto base_index = std::make_unique<faiss::IndexIVFPQFastScan>(
+        auto base_index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFPQFastScan>(
             qzr.get(), dim, nlist, (dim + sub_dim - 1) / sub_dim, 4, is_cosine, metric.value());
         // create scann index, which does not base_index by default,
         //    but owns the refine index by default omg
         if (scann_cfg.with_raw_data.value()) {
-            index = std::make_unique<faiss::IndexScaNN>(base_index.get(), (const float*)data);
+            index = std::make_unique<faiss::cppcontrib::knowhere::IndexScaNN>(base_index.get(), (const float*)data);
         } else {
-            index = std::make_unique<faiss::IndexScaNN>(base_index.get(), nullptr);
+            index = std::make_unique<faiss::cppcontrib::knowhere::IndexScaNN>(base_index.get(), nullptr);
         }
         // train
         index->train(rows, (const float*)data);
@@ -649,8 +653,8 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         const bool use_elkan = ivf_sq_cfg.use_elkan.value_or(true);
 
         // create quantizer for the training
-        std::unique_ptr<faiss::IndexFlat> qzr =
-            std::make_unique<faiss::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+        std::unique_ptr<faiss::cppcontrib::knowhere::IndexFlat> qzr =
+            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
 
         DataFormatEnum data_format = DataType2EnumHelper<DataType>::value;
 
@@ -666,25 +670,25 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         // replace quantizer with a regular IndexFlat
         qzr = to_index_flat(std::move(qzr));
         // transfer ownership of qzr to index
-        faiss::IndexIVFScalarQuantizer* uindex = index->get_base_ivf_index();
+        faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer* uindex = index->get_base_ivf_index();
         uindex->quantizer = qzr.release();
         uindex->own_fields = true;
     }
-    if constexpr (std::is_same<faiss::IndexBinaryIVF, IndexType>::value) {
+    if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexBinaryIVF, IndexType>::value) {
         const IvfBinConfig& ivf_bin_cfg = static_cast<const IvfBinConfig&>(*cfg);
         auto nlist = MatchNlist(rows, ivf_bin_cfg.nlist.value());
 
         // create quantizer
-        auto qzr = std::make_unique<faiss::IndexBinaryFlat>(dim, metric.value());
+        auto qzr = std::make_unique<faiss::cppcontrib::knowhere::IndexBinaryFlat>(dim, metric.value());
         // create index. Index does not own qzr
-        index = std::make_unique<faiss::IndexBinaryIVF>(qzr.get(), dim, nlist, metric.value());
+        index = std::make_unique<faiss::cppcontrib::knowhere::IndexBinaryIVF>(qzr.get(), dim, nlist, metric.value());
         // train
         index->train(rows, (const uint8_t*)data);
         // transfer ownership of qzr to index
         qzr.release();
         index->own_fields = true;
     }
-    if constexpr (std::is_same<faiss::IndexIVFScalarQuantizerCC, IndexType>::value) {
+    if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC, IndexType>::value) {
         const IvfSqCcConfig& ivf_sq_cc_cfg = static_cast<const IvfSqCcConfig&>(*cfg);
         auto nlist = MatchNlist(rows, ivf_sq_cc_cfg.nlist.value());
         auto ssize = ivf_sq_cc_cfg.ssize.value();
@@ -692,17 +696,17 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         const bool use_elkan = ivf_sq_cc_cfg.use_elkan.value_or(true);
 
         // create quantizer for the training
-        std::unique_ptr<faiss::IndexFlat> qzr =
-            std::make_unique<faiss::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+        std::unique_ptr<faiss::cppcontrib::knowhere::IndexFlat> qzr =
+            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
         // create index. Index does not own qzr
         auto qzr_type = get_ivf_sq_quantizer_type(ivf_sq_cc_cfg.code_size.value());
         if (!qzr_type.has_value()) {
             LOG_KNOWHERE_ERROR_ << "fail to get ivf sq quantizer type, " << qzr_type.what();
             return qzr_type.error();
         }
-        index = std::make_unique<faiss::IndexIVFScalarQuantizerCC>(qzr.get(), dim, nlist, ssize, qzr_type.value(),
-                                                                   metric.value(), is_cosine, false,
-                                                                   ivf_sq_cc_cfg.raw_data_store_prefix);
+        index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC>(
+            qzr.get(), dim, nlist, ssize, qzr_type.value(), metric.value(), is_cosine, false,
+            ivf_sq_cc_cfg.raw_data_store_prefix);
         // train
         index->train(rows, (const float*)data);
         // replace quantizer with a regular IndexFlat
@@ -710,7 +714,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         // transfer ownership of qzr to index
         index->quantizer = qzr.release();
         index->own_fields = true;
-        index->make_direct_map(true, faiss::DirectMap::ConcurrentArray);
+        index->make_direct_map(true, faiss::cppcontrib::knowhere::DirectMap::ConcurrentArray);
     }
     if constexpr (std::is_same<IndexIVFRaBitQWrapper, IndexType>::value) {
         const IvfRaBitQConfig& ivf_rabitq_cfg = static_cast<const IvfRaBitQConfig&>(*cfg);
@@ -754,7 +758,7 @@ IvfIndexNode<DataType, IndexType>::Add(const DataSetPtr dataset, std::shared_ptr
                           } else {
                               setter = std::make_unique<ThreadPool::ScopedBuildOmpSetter>();
                           }
-                          if constexpr (std::is_same<faiss::IndexBinaryIVF, IndexType>::value) {
+                          if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexBinaryIVF, IndexType>::value) {
                               index_->add(rows, (const uint8_t*)data);
                           } else {
                               index_->add(rows, (const float*)data);
@@ -895,12 +899,12 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
                 BitsetViewIDSelector bw_idselector(bitset);
                 faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
 
-                if constexpr (std::is_same<IndexType, faiss::IndexBinaryIVF>::value) {
+                if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexBinaryIVF>::value) {
                     auto cur_data = (const uint8_t*)data + index * ((dim + 7) / 8);
 
                     int32_t* i_distances = reinterpret_cast<int32_t*>(distances.get());
 
-                    faiss::IVFSearchParameters ivf_search_params;
+                    faiss::cppcontrib::knowhere::IVFSearchParameters ivf_search_params;
                     ivf_search_params.nprobe = nprobe;
                     ivf_search_params.sel = id_selector;
                     index_->search(1, cur_data, k, i_distances + offset, ids.get() + offset, &ivf_search_params);
@@ -911,15 +915,16 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
                             distances[i + offset] = static_cast<float>(i_distances[i + offset]);
                         }
                     }
-                } else if constexpr (std::is_same<IndexType, faiss::IndexIVFFlatCC>::value ||
-                                     std::is_same<IndexType, faiss::IndexIVFScalarQuantizerCC>::value) {
+                } else if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlatCC>::value ||
+                                     std::is_same<IndexType,
+                                                  faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC>::value) {
                     auto cur_query = (const float*)data + index * dim;
                     if (is_cosine) {
                         copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         cur_query = copied_query.get();
                     }
 
-                    faiss::IVFSearchParameters ivf_search_params;
+                    faiss::cppcontrib::knowhere::IVFSearchParameters ivf_search_params;
 
                     ivf_search_params.sel = id_selector;
                     ivf_search_params.ensure_topk_full = ivf_cfg.ensure_topk_full.value();
@@ -934,7 +939,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
                     }
 
                     index_->search(1, cur_query, k, distances.get() + offset, ids.get() + offset, &ivf_search_params);
-                } else if constexpr (std::is_same<IndexType, faiss::IndexScaNN>::value) {
+                } else if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexScaNN>::value) {
                     auto cur_query = (const float*)data + index * dim;
                     const ScannConfig& scann_cfg = static_cast<const ScannConfig&>(*cfg);
                     if (is_cosine) {
@@ -943,12 +948,13 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
                     }
 
                     // todo aguzhva: this is somewhat alogical. Refactor?
-                    faiss::IVFSearchParameters base_search_params;
+                    faiss::cppcontrib::knowhere::IVFSearchParameters base_search_params;
                     base_search_params.sel = id_selector;
                     base_search_params.nprobe = nprobe;
                     base_search_params.ensure_topk_full = scann_cfg.ensure_topk_full.value();
                     if (base_search_params.ensure_topk_full) {
-                        if (auto base_index_ptr = reinterpret_cast<faiss::IndexIVFPQFastScan*>(index_->base_index)) {
+                        if (auto base_index_ptr = reinterpret_cast<faiss::cppcontrib::knowhere::IndexIVFPQFastScan*>(
+                                index_->base_index)) {
                             auto nlist = base_index_ptr->nlist;
                             base_search_params.nprobe = nlist;
                             // use max_codes to early termination
@@ -962,7 +968,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
                         base_search_params.max_codes = 0;
                     }
 
-                    faiss::IndexScaNNSearchParameters scann_search_params;
+                    faiss::cppcontrib::knowhere::IndexScaNNSearchParameters scann_search_params;
                     scann_search_params.base_index_params = &base_search_params;
                     scann_search_params.reorder_k = scann_cfg.reorder_k.value();
 
@@ -982,11 +988,12 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
                     const bool whether_to_enable_refine = ivf_rabitq_cfg.refine_k.has_value();
                     if (const auto wrapper_index = dynamic_cast<const IndexIVFRaBitQWrapper*>(index_.get());
                         wrapper_index != nullptr) {
-                        const faiss::IndexRefine* refine_index = wrapper_index->get_refine_index();
+                        const faiss::cppcontrib::knowhere::IndexRefine* refine_index =
+                            wrapper_index->get_refine_index();
                         use_refine = (refine_index != nullptr);
                     }
 
-                    faiss::IVFRaBitQSearchParameters ivf_search_params;
+                    faiss::cppcontrib::knowhere::IVFRaBitQSearchParameters ivf_search_params;
                     ivf_search_params.nprobe = nprobe;
                     ivf_search_params.max_codes = 0;
                     ivf_search_params.sel = id_selector;
@@ -994,7 +1001,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
 
                     if (use_refine && whether_to_enable_refine) {
                         // yes, use refine
-                        faiss::IndexRefineSearchParameters refine_search_params;
+                        faiss::cppcontrib::knowhere::IndexRefineSearchParameters refine_search_params;
                         refine_search_params.sel = id_selector;
                         refine_search_params.k_factor = ivf_rabitq_cfg.refine_k.value_or(1);
                         refine_search_params.base_index_params = &ivf_search_params;
@@ -1021,17 +1028,18 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
                     const bool whether_to_enable_refine = ivf_pg_cfg.refine_k.has_value();
                     if (const auto wrapper_index = dynamic_cast<const IndexIVFPQWrapper*>(index_.get());
                         wrapper_index != nullptr) {
-                        const faiss::IndexRefine* refine_index = wrapper_index->get_refine_index();
+                        const faiss::cppcontrib::knowhere::IndexRefine* refine_index =
+                            wrapper_index->get_refine_index();
                         use_refine = (refine_index != nullptr);
                     }
 
-                    faiss::IVFSearchParameters ivf_search_params;
+                    faiss::cppcontrib::knowhere::IVFSearchParameters ivf_search_params;
                     ivf_search_params.nprobe = nprobe;
                     ivf_search_params.max_codes = 0;
                     ivf_search_params.sel = id_selector;
                     if (use_refine && whether_to_enable_refine) {
                         // yes, use refine
-                        faiss::IndexRefineSearchParameters refine_search_params;
+                        faiss::cppcontrib::knowhere::IndexRefineSearchParameters refine_search_params;
                         refine_search_params.sel = id_selector;
                         refine_search_params.k_factor = ivf_pg_cfg.refine_k.value_or(1);
                         refine_search_params.base_index_params = &ivf_search_params;
@@ -1058,17 +1066,18 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
                     const bool whether_to_enable_refine = ivf_sq_cfg.refine_k.has_value();
                     if (const auto wrapper_index = dynamic_cast<const IndexIVFSQWrapper*>(index_.get());
                         wrapper_index != nullptr) {
-                        const faiss::IndexRefine* refine_index = wrapper_index->get_refine_index();
+                        const faiss::cppcontrib::knowhere::IndexRefine* refine_index =
+                            wrapper_index->get_refine_index();
                         use_refine = (refine_index != nullptr);
                     }
 
-                    faiss::IVFSearchParameters ivf_search_params;
+                    faiss::cppcontrib::knowhere::IVFSearchParameters ivf_search_params;
                     ivf_search_params.nprobe = nprobe;
                     ivf_search_params.max_codes = 0;
                     ivf_search_params.sel = id_selector;
                     if (use_refine && whether_to_enable_refine) {
                         // yes, use refine
-                        faiss::IndexRefineSearchParameters refine_search_params;
+                        faiss::cppcontrib::knowhere::IndexRefineSearchParameters refine_search_params;
                         refine_search_params.sel = id_selector;
                         refine_search_params.k_factor = ivf_sq_cfg.refine_k.value_or(1);
                         refine_search_params.base_index_params = &ivf_search_params;
@@ -1087,7 +1096,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
                         cur_query = copied_query.get();
                     }
 
-                    faiss::IVFSearchParameters ivf_search_params;
+                    faiss::cppcontrib::knowhere::IVFSearchParameters ivf_search_params;
                     ivf_search_params.nprobe = nprobe;
                     ivf_search_params.max_codes = 0;
                     ivf_search_params.sel = id_selector;
@@ -1120,7 +1129,8 @@ expected<DataSetPtr>
 IvfIndexNode<DataType, IndexType>::CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset,
                                                  const int64_t* labels, const size_t labels_len, const bool is_cosine,
                                                  milvus::OpContext* op_context) const {
-    if constexpr (std::is_same_v<IndexType, faiss::IndexIVFFlat> || std::is_same_v<IndexType, faiss::IndexIVFFlatCC>) {
+    if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlat> ||
+                  std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlatCC>) {
         auto num_queries = dataset->GetRows();
         auto query_data = dataset->GetTensor();
         auto dim = dataset->GetDim();
@@ -1202,30 +1212,30 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
                 BitsetViewIDSelector bw_idselector(bitset);
                 faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
 
-                if constexpr (std::is_same<IndexType, faiss::IndexBinaryIVF>::value) {
+                if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexBinaryIVF>::value) {
                     auto cur_data = (const uint8_t*)xq + index * ((dim + 7) / 8);
 
-                    faiss::IVFSearchParameters ivf_search_params;
+                    faiss::cppcontrib::knowhere::IVFSearchParameters ivf_search_params;
                     ivf_search_params.nprobe = index_->nlist;
                     ivf_search_params.max_empty_result_buckets = ivf_cfg.max_empty_result_buckets.value();
                     ivf_search_params.sel = id_selector;
 
                     index_->range_search(1, cur_data, radius, &res, &ivf_search_params);
-                } else if constexpr (std::is_same<IndexType, faiss::IndexIVFFlat>::value) {
+                } else if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlat>::value) {
                     auto cur_query = (const float*)xq + index * dim;
                     if (is_cosine) {
                         copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                         cur_query = copied_query.get();
                     }
 
-                    faiss::IVFSearchParameters ivf_search_params;
+                    faiss::cppcontrib::knowhere::IVFSearchParameters ivf_search_params;
                     ivf_search_params.nprobe = index_->nlist;
                     ivf_search_params.max_codes = 0;
                     ivf_search_params.max_empty_result_buckets = ivf_cfg.max_empty_result_buckets.value();
                     ivf_search_params.sel = id_selector;
 
                     index_->range_search(1, cur_query, radius, &res, &ivf_search_params);
-                } else if constexpr (std::is_same<IndexType, faiss::IndexScaNN>::value) {
+                } else if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexScaNN>::value) {
                     auto cur_query = (const float*)xq + index * dim;
                     if (is_cosine) {
                         copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
@@ -1233,7 +1243,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
                     }
 
                     // todo aguzhva: this is somewhat alogical. Refactor?
-                    faiss::IVFSearchParameters search_params;
+                    faiss::cppcontrib::knowhere::IVFSearchParameters search_params;
                     search_params.max_empty_result_buckets = ivf_cfg.max_empty_result_buckets.value();
                     search_params.sel = id_selector;
 
@@ -1247,9 +1257,9 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
 
                     const IvfRaBitQConfig& ivf_rabitq_cfg = static_cast<const IvfRaBitQConfig&>(*cfg);
 
-                    const faiss::IndexIVFRaBitQ* uindex_ = index_->get_ivfrabitq_index();
+                    const faiss::cppcontrib::knowhere::IndexIVFRaBitQ* uindex_ = index_->get_ivfrabitq_index();
 
-                    faiss::IVFRaBitQSearchParameters ivf_search_params;
+                    faiss::cppcontrib::knowhere::IVFRaBitQSearchParameters ivf_search_params;
                     ivf_search_params.nprobe = uindex_->nlist;
                     ivf_search_params.max_codes = 0;
                     ivf_search_params.max_empty_result_buckets = ivf_cfg.max_empty_result_buckets.value();
@@ -1262,13 +1272,14 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
                     const bool whether_to_enable_refine = ivf_rabitq_cfg.refine_k.has_value();
                     if (const auto wrapper_index = dynamic_cast<const IndexIVFRaBitQWrapper*>(index_.get());
                         wrapper_index != nullptr) {
-                        const faiss::IndexRefine* refine_index = wrapper_index->get_refine_index();
+                        const faiss::cppcontrib::knowhere::IndexRefine* refine_index =
+                            wrapper_index->get_refine_index();
                         use_refine = (refine_index != nullptr);
                     }
 
                     if (use_refine && whether_to_enable_refine) {
                         // yes, use refine
-                        faiss::IndexRefineSearchParameters refine_search_params;
+                        faiss::cppcontrib::knowhere::IndexRefineSearchParameters refine_search_params;
                         refine_search_params.sel = id_selector;
                         refine_search_params.k_factor = ivf_rabitq_cfg.refine_k.value_or(1);
                         refine_search_params.base_index_params = &ivf_search_params;
@@ -1286,9 +1297,9 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
 
                     const IvfPqConfig& ivf_pq_cfg = static_cast<const IvfPqConfig&>(*cfg);
 
-                    const faiss::IndexIVFPQ* uindex_ = index_->get_base_ivf_index();
+                    const faiss::cppcontrib::knowhere::IndexIVFPQ* uindex_ = index_->get_base_ivf_index();
 
-                    faiss::IVFPQSearchParameters ivf_search_params;
+                    faiss::cppcontrib::knowhere::IVFPQSearchParameters ivf_search_params;
                     ivf_search_params.nprobe = uindex_->nlist;
                     ivf_search_params.max_codes = 0;
                     ivf_search_params.max_empty_result_buckets = ivf_cfg.max_empty_result_buckets.value();
@@ -1300,13 +1311,14 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
                     const bool whether_to_enable_refine = ivf_pq_cfg.refine_k.has_value();
                     if (const auto wrapper_index = dynamic_cast<const IndexIVFPQWrapper*>(index_.get());
                         wrapper_index != nullptr) {
-                        const faiss::IndexRefine* refine_index = wrapper_index->get_refine_index();
+                        const faiss::cppcontrib::knowhere::IndexRefine* refine_index =
+                            wrapper_index->get_refine_index();
                         use_refine = (refine_index != nullptr);
                     }
 
                     if (use_refine && whether_to_enable_refine) {
                         // yes, use refine
-                        faiss::IndexRefineSearchParameters refine_search_params;
+                        faiss::cppcontrib::knowhere::IndexRefineSearchParameters refine_search_params;
                         refine_search_params.sel = id_selector;
                         refine_search_params.k_factor = ivf_pq_cfg.refine_k.value_or(1);
                         refine_search_params.base_index_params = &ivf_search_params;
@@ -1324,9 +1336,9 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
 
                     const IvfSqConfig& ivf_sq_cfg = static_cast<const IvfSqConfig&>(*cfg);
 
-                    const faiss::IndexIVFScalarQuantizer* uindex_ = index_->get_base_ivf_index();
+                    const faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer* uindex_ = index_->get_base_ivf_index();
 
-                    faiss::IVFSearchParameters ivf_search_params;
+                    faiss::cppcontrib::knowhere::IVFSearchParameters ivf_search_params;
                     ivf_search_params.nprobe = uindex_->nlist;
                     ivf_search_params.max_codes = 0;
                     ivf_search_params.max_empty_result_buckets = ivf_cfg.max_empty_result_buckets.value();
@@ -1338,13 +1350,14 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
                     const bool whether_to_enable_refine = ivf_sq_cfg.refine_k.has_value();
                     if (const auto wrapper_index = dynamic_cast<const IndexIVFSQWrapper*>(index_.get());
                         wrapper_index != nullptr) {
-                        const faiss::IndexRefine* refine_index = wrapper_index->get_refine_index();
+                        const faiss::cppcontrib::knowhere::IndexRefine* refine_index =
+                            wrapper_index->get_refine_index();
                         use_refine = (refine_index != nullptr);
                     }
 
                     if (use_refine && whether_to_enable_refine) {
                         // yes, use refine
-                        faiss::IndexRefineSearchParameters refine_search_params;
+                        faiss::cppcontrib::knowhere::IndexRefineSearchParameters refine_search_params;
                         refine_search_params.sel = id_selector;
                         refine_search_params.k_factor = ivf_sq_cfg.refine_k.value_or(1);
                         refine_search_params.base_index_params = &ivf_search_params;
@@ -1360,7 +1373,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
                         cur_query = copied_query.get();
                     }
 
-                    faiss::IVFSearchParameters ivf_search_params;
+                    faiss::cppcontrib::knowhere::IVFSearchParameters ivf_search_params;
                     ivf_search_params.nprobe = index_->nlist;
                     ivf_search_params.max_codes = 0;
                     ivf_search_params.max_empty_result_buckets = ivf_cfg.max_empty_result_buckets.value();
@@ -1423,7 +1436,7 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::un
         size_t nprobe = ivf_cfg.nprobe.value();
         // set iterator_refine_ratio = 0.0. If quantizer != flat, faiss:indexivf will not keep raw data;
         float iterator_refine_ratio = 0.0f;
-        if constexpr (std::is_same_v<IndexType, faiss::IndexScaNN>) {
+        if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexScaNN>) {
             if (HasRawData(ivf_cfg.metric_type.value())) {
                 iterator_refine_ratio = ivf_cfg.iterator_refine_ratio.value();
             }
@@ -1463,7 +1476,7 @@ IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSetPtr dataset, milv
     if (!this->index_->is_trained) {
         return expected<DataSetPtr>::Err(Status::index_not_trained, "index not trained");
     }
-    if constexpr (std::is_same<IndexType, faiss::IndexBinaryIVF>::value) {
+    if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexBinaryIVF>::value) {
         auto dim = Dim();
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
@@ -1480,8 +1493,8 @@ IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSetPtr dataset, milv
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
-    } else if constexpr (std::is_same<IndexType, faiss::IndexIVFFlat>::value ||
-                         std::is_same<IndexType, faiss::IndexIVFFlatCC>::value) {
+    } else if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlat>::value ||
+                         std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlatCC>::value) {
         auto dim = Dim();
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
@@ -1498,8 +1511,8 @@ IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSetPtr dataset, milv
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
-    } else if constexpr (std::is_same<IndexType, faiss::IndexScaNN>::value ||
-                         std::is_same<IndexType, faiss::IndexIVFScalarQuantizerCC>::value) {
+    } else if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexScaNN>::value ||
+                         std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC>::value) {
         // we should never go here since we should call HasRawData() first
         if (!index_->with_raw_data()) {
             return expected<DataSetPtr>::Err(Status::not_implemented, "GetVectorByIds not implemented");
@@ -1533,8 +1546,8 @@ IvfIndexNode<DataType, IndexType>::GetIndexMetaImpl(std::unique_ptr<Config>, IVF
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
 
-    auto ivf_index = dynamic_cast<faiss::IndexIVF*>(index_.get());
-    auto ivf_quantizer = dynamic_cast<faiss::IndexFlat*>(ivf_index->quantizer);
+    auto ivf_index = dynamic_cast<faiss::cppcontrib::knowhere::IndexIVF*>(index_.get());
+    auto ivf_quantizer = dynamic_cast<faiss::cppcontrib::knowhere::IndexFlat*>(ivf_index->quantizer);
 
     int64_t dim = ivf_index->d;
     int64_t nlist = ivf_index->nlist;
@@ -1545,8 +1558,8 @@ IvfIndexNode<DataType, IndexType>::GetIndexMetaImpl(std::unique_ptr<Config>, IVF
 
     for (int32_t i = 0; i < nlist; i++) {
         // copy from IndexIVF::search_preassigned
-        std::unique_ptr<faiss::InvertedLists::ScopedIds> sids =
-            std::make_unique<faiss::InvertedLists::ScopedIds>(index_->invlists, i);
+        std::unique_ptr<faiss::cppcontrib::knowhere::InvertedLists::ScopedIds> sids =
+            std::make_unique<faiss::cppcontrib::knowhere::InvertedLists::ScopedIds>(index_->invlists, i);
 
         // node ids
         auto node_num = index_->invlists->list_size(i);
@@ -1573,16 +1586,16 @@ IvfIndexNode<DataType, IndexType>::SerializeImpl(BinarySet& binset) const {
             return Status::empty_index;
         }
         MemoryIOWriter writer;
-        if constexpr (std::is_same<IndexType, faiss::IndexBinaryIVF>::value) {
-            faiss::write_index_binary(index_.get(), &writer);
+        if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexBinaryIVF>::value) {
+            faiss::cppcontrib::knowhere::write_index_binary(index_.get(), &writer);
         } else if constexpr (std::is_same<IndexType, IndexIVFRaBitQWrapper>::value) {
-            faiss::write_index(index_->index.get(), &writer);
+            faiss::cppcontrib::knowhere::write_index(index_->index.get(), &writer);
         } else if constexpr (std::is_same<IndexType, IndexIVFPQWrapper>::value) {
-            faiss::write_index(index_->index.get(), &writer);
+            faiss::cppcontrib::knowhere::write_index(index_->index.get(), &writer);
         } else if constexpr (std::is_same<IndexType, IndexIVFSQWrapper>::value) {
-            faiss::write_index(index_->index.get(), &writer);
+            faiss::cppcontrib::knowhere::write_index(index_->index.get(), &writer);
         } else {
-            faiss::write_index(index_.get(), &writer);
+            faiss::cppcontrib::knowhere::write_index(index_.get(), &writer);
         }
         std::shared_ptr<uint8_t[]> data(writer.data());
         binset.Append(Type(), data, writer.tellg());
@@ -1611,7 +1624,8 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, std::sha
             // a special case for IVFRaBitQ, bcz a wrapper is involved.
 
             // deserialize
-            auto index_raw = std::unique_ptr<faiss::Index>(faiss::read_index(&reader));
+            auto index_raw =
+                std::unique_ptr<faiss::cppcontrib::knowhere::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
             auto index_wr = IndexIVFRaBitQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFRaBitQ";
@@ -1622,7 +1636,8 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, std::sha
             index_ = std::move(index_wr);
         } else if constexpr (std::is_same<IndexType, IndexIVFPQWrapper>::value) {
             // deserialize
-            auto index_raw = std::unique_ptr<faiss::Index>(faiss::read_index(&reader));
+            auto index_raw =
+                std::unique_ptr<faiss::cppcontrib::knowhere::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
             auto index_wr = IndexIVFPQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFPQ";
@@ -1633,7 +1648,8 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, std::sha
             index_ = std::move(index_wr);
         } else if constexpr (std::is_same<IndexType, IndexIVFSQWrapper>::value) {
             // deserialize
-            auto index_raw = std::unique_ptr<faiss::Index>(faiss::read_index(&reader));
+            auto index_raw =
+                std::unique_ptr<faiss::cppcontrib::knowhere::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
             auto index_wr = IndexIVFSQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFScalarQuantizer";
@@ -1644,14 +1660,14 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, std::sha
             index_ = std::move(index_wr);
         } else {
             // the default case for a regular index
-            if constexpr (std::is_same<IndexType, faiss::IndexBinaryIVF>::value) {
-                index_.reset(static_cast<IndexType*>(faiss::read_index_binary(&reader)));
+            if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexBinaryIVF>::value) {
+                index_.reset(static_cast<IndexType*>(faiss::cppcontrib::knowhere::read_index_binary(&reader)));
             } else {
-                index_.reset(static_cast<IndexType*>(faiss::read_index(&reader)));
+                index_.reset(static_cast<IndexType*>(faiss::cppcontrib::knowhere::read_index(&reader)));
             }
 
-            if constexpr (!std::is_same_v<IndexType, faiss::IndexScaNN> &&
-                          !std::is_same_v<IndexType, faiss::IndexIVFScalarQuantizerCC>) {
+            if constexpr (!std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexScaNN> &&
+                          !std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC>) {
                 const BaseConfig& base_cfg = static_cast<const BaseConfig&>(*cfg);
                 if (HasRawData(base_cfg.metric_type.value())) {
                     index_->make_direct_map(true);
@@ -1672,14 +1688,15 @@ IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filena
 
     int io_flags = 0;
     if (cfg.enable_mmap.value()) {
-        io_flags |= faiss::IO_FLAG_MMAP;
+        io_flags |= faiss::cppcontrib::knowhere::IO_FLAG_MMAP;
     }
     try {
         if constexpr (std::is_same<IndexType, IndexIVFRaBitQWrapper>::value) {
             // a special case for IVFRaBitQ, bcz a wrapper is involved.
 
             // deserialize into a wrapper
-            auto index_raw = std::unique_ptr<faiss::Index>(faiss::read_index(filename.data(), io_flags));
+            auto index_raw = std::unique_ptr<faiss::cppcontrib::knowhere::Index>(
+                faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
             auto index_wr = IndexIVFRaBitQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFRaBitQ";
@@ -1690,7 +1707,8 @@ IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filena
             index_ = std::move(index_wr);
         } else if constexpr (std::is_same<IndexType, IndexIVFPQWrapper>::value) {
             // deserialize into a wrapper
-            auto index_raw = std::unique_ptr<faiss::Index>(faiss::read_index(filename.data(), io_flags));
+            auto index_raw = std::unique_ptr<faiss::cppcontrib::knowhere::Index>(
+                faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
             auto index_wr = IndexIVFPQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFPQ";
@@ -1701,7 +1719,8 @@ IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filena
             index_ = std::move(index_wr);
         } else if constexpr (std::is_same<IndexType, IndexIVFSQWrapper>::value) {
             // deserialize into a wrapper
-            auto index_raw = std::unique_ptr<faiss::Index>(faiss::read_index(filename.data(), io_flags));
+            auto index_raw = std::unique_ptr<faiss::cppcontrib::knowhere::Index>(
+                faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
             auto index_wr = IndexIVFSQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFScalarQuantizer";
@@ -1712,13 +1731,15 @@ IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filena
             index_ = std::move(index_wr);
         } else {
             // the default case for a regular index
-            if constexpr (std::is_same<IndexType, faiss::IndexBinaryIVF>::value) {
-                index_.reset(static_cast<IndexType*>(faiss::read_index_binary(filename.data(), io_flags)));
+            if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexBinaryIVF>::value) {
+                index_.reset(
+                    static_cast<IndexType*>(faiss::cppcontrib::knowhere::read_index_binary(filename.data(), io_flags)));
             } else {
-                index_.reset(static_cast<IndexType*>(faiss::read_index(filename.data(), io_flags)));
+                index_.reset(
+                    static_cast<IndexType*>(faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags)));
             }
 
-            if constexpr (!std::is_same_v<IndexType, faiss::IndexScaNN>) {
+            if constexpr (!std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexScaNN>) {
                 const BaseConfig& base_cfg = static_cast<const BaseConfig&>(*config);
                 if (HasRawData(base_cfg.metric_type.value())) {
                     index_->make_direct_map(true);
@@ -1732,51 +1753,56 @@ IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filena
     return Status::success;
 }
 // bin1
-KNOWHERE_SIMPLE_REGISTER_DENSE_BIN_GLOBAL(IVFBIN, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexBinaryIVF)
-KNOWHERE_SIMPLE_REGISTER_DENSE_BIN_GLOBAL(BIN_IVF_FLAT, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexBinaryIVF)
+KNOWHERE_SIMPLE_REGISTER_DENSE_BIN_GLOBAL(IVFBIN, IvfIndexNode, knowhere::feature::MMAP,
+                                          faiss::cppcontrib::knowhere::IndexBinaryIVF)
+KNOWHERE_SIMPLE_REGISTER_DENSE_BIN_GLOBAL(BIN_IVF_FLAT, IvfIndexNode, knowhere::feature::MMAP,
+                                          faiss::cppcontrib::knowhere::IndexBinaryIVF)
 
 // float
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVFFLAT, IvfIndexNode,
                                               knowhere::feature::MMAP | knowhere::feature::EMB_LIST,
-                                              faiss::IndexIVFFlat)
+                                              faiss::cppcontrib::knowhere::IndexIVFFlat)
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_FLAT, IvfIndexNode,
                                               knowhere::feature::MMAP | knowhere::feature::EMB_LIST,
-                                              faiss::IndexIVFFlat)
+                                              faiss::cppcontrib::knowhere::IndexIVFFlat)
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVFFLATCC, IvfIndexNode,
                                               knowhere::feature::NONE | knowhere::feature::EMB_LIST,
-                                              faiss::IndexIVFFlatCC)
+                                              faiss::cppcontrib::knowhere::IndexIVFFlatCC)
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_FLAT_CC, IvfIndexNode,
                                               knowhere::feature::NONE | knowhere::feature::EMB_LIST,
-                                              faiss::IndexIVFFlatCC)
-KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(SCANN, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexScaNN)
+                                              faiss::cppcontrib::knowhere::IndexIVFFlatCC)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(SCANN, IvfIndexNode, knowhere::feature::MMAP,
+                                              faiss::cppcontrib::knowhere::IndexScaNN)
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVFPQ, IvfIndexNode, knowhere::feature::MMAP, IndexIVFPQWrapper)
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_PQ, IvfIndexNode, knowhere::feature::MMAP, IndexIVFPQWrapper)
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVFSQ, IvfIndexNode, knowhere::feature::MMAP, IndexIVFSQWrapper)
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_SQ, IvfIndexNode, knowhere::feature::MMAP, IndexIVFSQWrapper)
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_SQ8, IvfIndexNode, knowhere::feature::MMAP, IndexIVFSQWrapper)
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_SQ_CC, IvfIndexNode, knowhere::feature::NONE,
-                                              faiss::IndexIVFScalarQuantizerCC)
+                                              faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC)
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVFRABITQ, IvfIndexNode, knowhere::feature::MMAP, IndexIVFRaBitQWrapper)
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_RABITQ, IvfIndexNode, knowhere::feature::MMAP, IndexIVFRaBitQWrapper)
 // int
 KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVFFLAT, IvfIndexNode, knowhere::feature::MMAP | knowhere::feature::EMB_LIST,
-                                        faiss::IndexIVFFlat)
+                                        faiss::cppcontrib::knowhere::IndexIVFFlat)
 KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVF_FLAT, IvfIndexNode, knowhere::feature::MMAP | knowhere::feature::EMB_LIST,
-                                        faiss::IndexIVFFlat)
+                                        faiss::cppcontrib::knowhere::IndexIVFFlat)
 KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVFFLATCC, IvfIndexNode, knowhere::feature::NONE | knowhere::feature::EMB_LIST,
-                                        faiss::IndexIVFFlatCC)
+                                        faiss::cppcontrib::knowhere::IndexIVFFlatCC)
 KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVF_FLAT_CC, IvfIndexNode,
-                                        knowhere::feature::NONE | knowhere::feature::EMB_LIST, faiss::IndexIVFFlatCC)
-KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(SCANN, IvfIndexNode, knowhere::feature::MMAP, faiss::IndexScaNN)
+                                        knowhere::feature::NONE | knowhere::feature::EMB_LIST,
+                                        faiss::cppcontrib::knowhere::IndexIVFFlatCC)
+KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(SCANN, IvfIndexNode, knowhere::feature::MMAP,
+                                        faiss::cppcontrib::knowhere::IndexScaNN)
 KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVFPQ, IvfIndexNode, knowhere::feature::MMAP, IndexIVFPQWrapper)
 KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVF_PQ, IvfIndexNode, knowhere::feature::MMAP, IndexIVFPQWrapper)
 KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVFSQ, IvfIndexNode, knowhere::feature::MMAP, IndexIVFSQWrapper)
 KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVF_SQ, IvfIndexNode, knowhere::feature::MMAP, IndexIVFSQWrapper)
 KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVF_SQ8, IvfIndexNode, knowhere::feature::MMAP, IndexIVFSQWrapper)
 KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVF_SQ_CC, IvfIndexNode, knowhere::feature::NONE,
-                                        faiss::IndexIVFScalarQuantizerCC)
+                                        faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC)
 // faiss index + data view refiner combination
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(SCANN_DVR, IndexNodeWithDataViewRefiner,
                                                 knowhere::feature::NONE | knowhere::feature::EMB_LIST,
-                                                IvfIndexNode<fp32, faiss::IndexScaNN>)
+                                                IvfIndexNode<fp32, faiss::cppcontrib::knowhere::IndexScaNN>)
 }  // namespace knowhere

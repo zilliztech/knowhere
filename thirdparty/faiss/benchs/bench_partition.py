@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -6,6 +6,7 @@
 import time
 import faiss
 import numpy as np
+
 
 def do_partition(n, qin, maxval=65536, seed=123, id_type='int64'):
     print(
@@ -33,7 +34,7 @@ def do_partition(n, qin, maxval=65536, seed=123, id_type='int64'):
         faiss.copy_array_to_AlignedTable(vals, tab_a)
         t0 = time.time()
         # print("tab a type", tab_a.get())
-        if type(qin) == int:
+        if isinstance(qin, int):
             q = qin
             faiss.CMax_uint16_partition_fuzzy(
                 tab_a.get(), sp(ids), n, q, q, None)
@@ -58,7 +59,7 @@ def do_partition(n, qin, maxval=65536, seed=123, id_type='int64'):
 
     print(
         f"times {times.mean():.3f} µs (± {times.std():.4f} µs) nerr={nerr} "
-        f"bissect {stats.bissect_cycles / 1e6:.3f} Mcy "
+        f"bisect {stats.bissect_cycles / 1e6:.3f} Mcy "
         f"compress {stats.compress_cycles / 1e6:.3f} Mcy"
     )
 

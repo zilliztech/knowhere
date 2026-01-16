@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,9 +7,9 @@
 
 #include <faiss/utils/distances_fused/distances_fused.h>
 
-#include <faiss/impl/platform_macros.h>
+#include <faiss/impl/platform_macros.h> // NOLINT
 
-#include <faiss/utils/distances_fused/avx512.h>
+#include <faiss/utils/distances_fused/avx512.h> // NOLINT
 #include <faiss/utils/distances_fused/simdlib_based.h>
 
 namespace faiss {

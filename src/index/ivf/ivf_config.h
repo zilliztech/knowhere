@@ -213,7 +213,7 @@ class ScannConfig : public IvfFlatConfig {
                 }
             }
             case PARAM_TYPE::SEARCH: {
-                if (!faiss::support_pq_fast_scan) {
+                if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
                     LOG_KNOWHERE_ERROR_ << "SCANN index is not supported on the current CPU model, avx2 support is "
                                            "needed for x86 arch.";
                     return Status::invalid_instruction_set;
@@ -231,7 +231,7 @@ class ScannConfig : public IvfFlatConfig {
                 break;
             }
             default: {
-                if (!faiss::support_pq_fast_scan) {
+                if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
                     std::string msg =
                         "SCANN index is not supported on the current CPU model, avx2 support is "
                         "needed for x86 arch.";

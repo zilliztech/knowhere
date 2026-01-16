@@ -11,18 +11,19 @@
 
 #include "index/ivf/ivf_wrapper.h"
 
+#include <faiss/cppcontrib/knowhere/IndexCosine.h>
+
 #include <memory>
 
-#include "faiss/IndexCosine.h"
-#include "faiss/IndexFlat.h"
+#include "faiss/cppcontrib/knowhere/IndexFlat.h"
 #include "faiss/cppcontrib/knowhere/impl/CountSizeIOWriter.h"
-#include "faiss/index_io.h"
+#include "faiss/cppcontrib/knowhere/index_io.h"
 #include "index/refine/refine_utils.h"
 
 namespace knowhere {
 
 template <typename IndexIVFType>
-IndexIVFWrapper<IndexIVFType>::IndexIVFWrapper(std::unique_ptr<faiss::Index>&& index_in)
+IndexIVFWrapper<IndexIVFType>::IndexIVFWrapper(std::unique_ptr<faiss::cppcontrib::knowhere::Index>&& index_in)
     : Index{index_in->d, index_in->metric_type}, index{std::move(index_in)} {
     ntotal = index->ntotal;
     is_trained = index->is_trained;
@@ -33,7 +34,7 @@ IndexIVFWrapper<IndexIVFType>::IndexIVFWrapper(std::unique_ptr<faiss::Index>&& i
 
 template <typename IndexIVFType>
 std::unique_ptr<IndexIVFWrapper<IndexIVFType>>
-IndexIVFWrapper<IndexIVFType>::from_deserialized(std::unique_ptr<faiss::Index>&& index_in) {
+IndexIVFWrapper<IndexIVFType>::from_deserialized(std::unique_ptr<faiss::cppcontrib::knowhere::Index>&& index_in) {
     auto index = std::make_unique<IndexIVFWrapper<IndexIVFType>>(std::move(index_in));
 
     // check a provided index type
@@ -100,8 +101,10 @@ template <typename IndexIVFType>
 IndexIVFType*
 IndexIVFWrapper<IndexIVFType>::get_base_ivf_index() {
     // try refine
-    faiss::IndexRefine* index_refine = dynamic_cast<faiss::IndexRefine*>(index.get());
-    faiss::Index* index_for_base = (index_refine != nullptr) ? index_refine->base_index : index.get();
+    faiss::cppcontrib::knowhere::IndexRefine* index_refine =
+        dynamic_cast<faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
+    faiss::cppcontrib::knowhere::Index* index_for_base =
+        (index_refine != nullptr) ? index_refine->base_index : index.get();
 
     // Use dynamic_cast to cast to the specific IndexIVFType (e.g., IndexIVFPQ)
     return dynamic_cast<IndexIVFType*>(index_for_base);
@@ -111,21 +114,23 @@ template <typename IndexIVFType>
 const IndexIVFType*
 IndexIVFWrapper<IndexIVFType>::get_base_ivf_index() const {
     // try refine
-    const faiss::IndexRefine* index_refine = dynamic_cast<const faiss::IndexRefine*>(index.get());
-    const faiss::Index* index_for_base = (index_refine != nullptr) ? index_refine->base_index : index.get();
+    const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
+        dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
+    const faiss::cppcontrib::knowhere::Index* index_for_base =
+        (index_refine != nullptr) ? index_refine->base_index : index.get();
     return dynamic_cast<const IndexIVFType*>(index_for_base);
 }
 
 template <typename IndexIVFType>
-faiss::IndexRefine*
+faiss::cppcontrib::knowhere::IndexRefine*
 IndexIVFWrapper<IndexIVFType>::get_refine_index() {
-    return dynamic_cast<faiss::IndexRefine*>(index.get());
+    return dynamic_cast<faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
 }
 
 template <typename IndexIVFType>
-const faiss::IndexRefine*
+const faiss::cppcontrib::knowhere::IndexRefine*
 IndexIVFWrapper<IndexIVFType>::get_refine_index() const {
-    return dynamic_cast<const faiss::IndexRefine*>(index.get());
+    return dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
 }
 
 template <typename IndexIVFType>
@@ -141,7 +146,7 @@ IndexIVFWrapper<IndexIVFType>::size() const {
 
     // a temporary yet expensive workaround
     faiss::cppcontrib::knowhere::CountSizeIOWriter writer;
-    faiss::write_index(index.get(), &writer);
+    faiss::cppcontrib::knowhere::write_index(index.get(), &writer);
 
     // cache the size
     size_cache_ = writer.total_size;
@@ -150,13 +155,15 @@ IndexIVFWrapper<IndexIVFType>::size() const {
 
 template <typename IndexIVFType>
 template <typename U>
-typename std::enable_if<std::is_same_v<U, faiss::IndexIVFScalarQuantizer>,
-                        std::unique_ptr<faiss::IVFIteratorWorkspace>>::type
-IndexIVFWrapper<IndexIVFType>::getIteratorWorkspace(const float* query_data,
-                                                    const faiss::IVFSearchParameters* ivfsearchParams) const {
+typename std::enable_if<std::is_same_v<U, faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>,
+                        std::unique_ptr<faiss::cppcontrib::knowhere::IVFIteratorWorkspace>>::type
+IndexIVFWrapper<IndexIVFType>::getIteratorWorkspace(
+    const float* query_data, const faiss::cppcontrib::knowhere::IVFSearchParameters* ivfsearchParams) const {
     // try refine
-    const faiss::IndexRefine* index_refine = dynamic_cast<const faiss::IndexRefine*>(index.get());
-    const faiss::Index* index_for_base = (index_refine != nullptr) ? index_refine->base_index : index.get();
+    const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
+        dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
+    const faiss::cppcontrib::knowhere::Index* index_for_base =
+        (index_refine != nullptr) ? index_refine->base_index : index.get();
 
     const IndexIVFType* index_ivf = dynamic_cast<const IndexIVFType*>(index_for_base);
     if (index_ivf == nullptr) {
@@ -184,8 +191,8 @@ IndexIVFWrapper<IndexIVFType>::getIteratorWorkspace(const float* query_data,
 
 template <typename IndexIVFType>
 template <typename U>
-typename std::enable_if<std::is_same_v<U, faiss::IndexIVFScalarQuantizer>, void>::type
-IndexIVFWrapper<IndexIVFType>::getIteratorNextBatch(faiss::IVFIteratorWorkspace* workspace,
+typename std::enable_if<std::is_same_v<U, faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>, void>::type
+IndexIVFWrapper<IndexIVFType>::getIteratorNextBatch(faiss::cppcontrib::knowhere::IVFIteratorWorkspace* workspace,
                                                     size_t current_backup_count) const {
     const auto ivf = this->get_base_ivf_index();
     if (ivf != nullptr) {
@@ -193,32 +200,37 @@ IndexIVFWrapper<IndexIVFType>::getIteratorNextBatch(faiss::IVFIteratorWorkspace*
     }
 }
 
-template struct IndexIVFWrapper<faiss::IndexIVFPQ>;
-template struct IndexIVFWrapper<faiss::IndexIVFScalarQuantizer>;
+template struct IndexIVFWrapper<faiss::cppcontrib::knowhere::IndexIVFPQ>;
+template struct IndexIVFWrapper<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>;
 
-template typename std::enable_if<std::is_same_v<faiss::IndexIVFScalarQuantizer, faiss::IndexIVFScalarQuantizer>,
-                                 std::unique_ptr<faiss::IVFIteratorWorkspace>>::type
-IndexIVFWrapper<faiss::IndexIVFScalarQuantizer>::getIteratorWorkspace<faiss::IndexIVFScalarQuantizer>(
-    const float* query_data, const faiss::IVFSearchParameters* ivfsearchParams) const;
+template typename std::enable_if<std::is_same_v<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer,
+                                                faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>,
+                                 std::unique_ptr<faiss::cppcontrib::knowhere::IVFIteratorWorkspace>>::type
+IndexIVFWrapper<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>::getIteratorWorkspace<
+    faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>(
+    const float* query_data, const faiss::cppcontrib::knowhere::IVFSearchParameters* ivfsearchParams) const;
 
-template
-    typename std::enable_if<std::is_same_v<faiss::IndexIVFScalarQuantizer, faiss::IndexIVFScalarQuantizer>, void>::type
-    IndexIVFWrapper<faiss::IndexIVFScalarQuantizer>::getIteratorNextBatch<faiss::IndexIVFScalarQuantizer>(
-        faiss::IVFIteratorWorkspace* workspace, size_t current_backup_count) const;
+template typename std::enable_if<std::is_same_v<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer,
+                                                faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>,
+                                 void>::type
+IndexIVFWrapper<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>::getIteratorNextBatch<
+    faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>(faiss::cppcontrib::knowhere::IVFIteratorWorkspace* workspace,
+                                                          size_t current_backup_count) const;
 
 expected<std::unique_ptr<IndexIVFPQWrapper>>
-IndexIvfFactory::create_for_pq(faiss::IndexFlat* qzr_raw_ptr, const faiss::idx_t d, const size_t nlist,
-                               const size_t nbits, const IvfPqConfig& ivf_pq_cfg, const DataFormatEnum raw_data_format,
-                               const faiss::MetricType metric) {
+IndexIvfFactory::create_for_pq(faiss::cppcontrib::knowhere::IndexFlat* qzr_raw_ptr, const faiss::idx_t d,
+                               const size_t nlist, const size_t nbits, const IvfPqConfig& ivf_pq_cfg,
+                               const DataFormatEnum raw_data_format, const faiss::MetricType metric) {
     // the index factory string is either `IVFx,PQ,Refine(y)` or `IVFx,PQ`,
     //   depends on the refine parameters
 
     // create IndexIVFPQ
     // Index does not own qzr
-    auto index = std::make_unique<faiss::IndexIVFPQ>(qzr_raw_ptr, d, nlist, ivf_pq_cfg.m.value(), nbits, metric);
+    auto index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFPQ>(qzr_raw_ptr, d, nlist, ivf_pq_cfg.m.value(),
+                                                                           nbits, metric);
 
     // create a refiner index, if needed
-    std::unique_ptr<faiss::Index> idx_final;
+    std::unique_ptr<faiss::cppcontrib::knowhere::Index> idx_final;
     if (ivf_pq_cfg.refine.value_or(false) && ivf_pq_cfg.refine_type.has_value()) {
         // refine is needed
         const auto base_d = index->d;
@@ -240,28 +252,29 @@ IndexIvfFactory::create_for_pq(faiss::IndexFlat* qzr_raw_ptr, const faiss::idx_t
 }
 
 expected<std::unique_ptr<IndexIVFSQWrapper>>
-IndexIvfFactory::create_for_sq(faiss::IndexFlat* qzr_raw_ptr, const faiss::idx_t d, const size_t nlist,
-                               const IvfSqConfig& ivf_sq_cfg, const DataFormatEnum raw_data_format,
+IndexIvfFactory::create_for_sq(faiss::cppcontrib::knowhere::IndexFlat* qzr_raw_ptr, const faiss::idx_t d,
+                               const size_t nlist, const IvfSqConfig& ivf_sq_cfg, const DataFormatEnum raw_data_format,
                                const faiss::MetricType metric) {
     // the index factory string is either `IVFx,SQ,Refine(y)` or `IVFx,SQ`,
     //   depends on the refine parameters
 
     // create IndexIVFSQ
     // Index does not own qzr
-    faiss::ScalarQuantizer::QuantizerType quantizer_type;
+    faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType quantizer_type;
     // ivf_sq_cfg.sq_type.value() has already been guaranteed to be legal in CheckAndAdjust
     std::string quantizer_type_tolower = str_to_lower(ivf_sq_cfg.sq_type.value());
     if (quantizer_type_tolower == "sq4") {
-        quantizer_type = faiss::ScalarQuantizer::QuantizerType::QT_4bit;
+        quantizer_type = faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_4bit;
     } else if (quantizer_type_tolower == "sq6") {
-        quantizer_type = faiss::ScalarQuantizer::QuantizerType::QT_6bit;
+        quantizer_type = faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_6bit;
     } else {
-        quantizer_type = faiss::ScalarQuantizer::QuantizerType::QT_8bit;
+        quantizer_type = faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_8bit;
     }
-    auto index = std::make_unique<faiss::IndexIVFScalarQuantizer>(qzr_raw_ptr, d, nlist, quantizer_type, metric);
+    auto index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>(qzr_raw_ptr, d, nlist,
+                                                                                        quantizer_type, metric);
 
     // create a refiner index, if needed
-    std::unique_ptr<faiss::Index> idx_final;
+    std::unique_ptr<faiss::cppcontrib::knowhere::Index> idx_final;
     if (ivf_sq_cfg.refine.value_or(false) && ivf_sq_cfg.refine_type.has_value()) {
         // refine is needed
         const auto base_d = index->d;

@@ -9,8 +9,12 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <faiss/cppcontrib/knowhere/IndexCosine.h>
+#include <faiss/cppcontrib/knowhere/IndexSQ4Uniform.h>
+#include <faiss/cppcontrib/knowhere/MetricType.h>
 #include <faiss/cppcontrib/knowhere/impl/CountSizeIOWriter.h>
 #include <faiss/cppcontrib/knowhere/impl/HnswSearcher.h>
+#include <faiss/cppcontrib/knowhere/impl/additional_io.h>
 #include <faiss/cppcontrib/knowhere/utils/Bitset.h>
 #include <faiss/utils/Heap.h>
 
@@ -25,14 +29,12 @@
 #include <string>
 
 #include "common/metric.h"
-#include "faiss/IndexBinaryHNSW.h"
-#include "faiss/IndexCosine.h"
-#include "faiss/IndexHNSW.h"
-#include "faiss/IndexRefine.h"
-#include "faiss/IndexSQ4Uniform.h"
-#include "faiss/impl/ScalarQuantizer.h"
+#include "faiss/cppcontrib/knowhere/IndexBinaryHNSW.h"
+#include "faiss/cppcontrib/knowhere/IndexHNSW.h"
+#include "faiss/cppcontrib/knowhere/IndexRefine.h"
+#include "faiss/cppcontrib/knowhere/impl/ScalarQuantizer.h"
+#include "faiss/cppcontrib/knowhere/index_io.h"
 #include "faiss/impl/mapped_io.h"
-#include "faiss/index_io.h"
 #include "index/hnsw/faiss_hnsw_config.h"
 #include "index/hnsw/hnsw.h"
 #include "index/hnsw/impl/DummyVisitor.h"
@@ -185,16 +187,16 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
             if (indexes.size() > 1) {
                 // this is a hack for compatibility, faiss index has 4-byte header to indicate index category
                 // create a new one to distinguish MV faiss hnsw from faiss hnsw
-                faiss::write_mv(&writer);
+                faiss::cppcontrib::knowhere::write_mv(&writer);
                 writeHeader(&writer);
                 for (const auto& index : indexes) {
-                    faiss::write_index(index.get(), &writer);
+                    faiss::cppcontrib::knowhere::write_index(index.get(), &writer);
                 }
 
                 std::shared_ptr<uint8_t[]> data(writer.data());
                 binset.Append(Type(), data, writer.tellg());
             } else {
-                faiss::write_index(indexes[0].get(), &writer);
+                faiss::cppcontrib::knowhere::write_index(indexes[0].get(), &writer);
                 std::shared_ptr<uint8_t[]> data(writer.data());
                 binset.Append(Type(), data, writer.tellg());
             }
@@ -218,19 +220,21 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
         try {
             // this is a hack for compatibility, faiss index has 4-byte header to indicate index category
             // create a new one to distinguish MV faiss hnsw from faiss hnsw
-            bool is_mv = faiss::read_is_mv(&reader);
+            bool is_mv = faiss::cppcontrib::knowhere::read_is_mv(&reader);
             if (is_mv) {
                 LOG_KNOWHERE_INFO_ << "start to load index by mv";
                 uint32_t v = readHeader(&reader);
                 indexes.resize(v);
                 LOG_KNOWHERE_INFO_ << "read " << v << " mvs";
                 for (auto i = 0; i < v; ++i) {
-                    auto read_index = std::unique_ptr<faiss::Index>(faiss::read_index(&reader));
+                    auto read_index = std::unique_ptr<faiss::cppcontrib::knowhere::Index>(
+                        faiss::cppcontrib::knowhere::read_index(&reader));
                     indexes[i].reset(read_index.release());
                 }
             } else {
                 reader.reset();
-                auto read_index = std::unique_ptr<faiss::Index>(faiss::read_index(&reader));
+                auto read_index = std::unique_ptr<faiss::cppcontrib::knowhere::Index>(
+                    faiss::cppcontrib::knowhere::read_index(&reader));
                 indexes[0].reset(read_index.release());
             }
         } catch (const std::exception& e) {
@@ -252,26 +256,28 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
 
         int io_flags = 0;
         if (cfg.enable_mmap.value()) {
-            io_flags |= faiss::IO_FLAG_MMAP_IFC;
+            io_flags |= faiss::cppcontrib::knowhere::IO_FLAG_MMAP_IFC;
         }
 
         try {
             // this is a hack for compatibility, faiss index has 4-byte header to indicate index category
             // create a new one to distinguish MV faiss hnsw from faiss hnsw
-            bool is_mv = faiss::read_is_mv(filename.data());
+            bool is_mv = faiss::cppcontrib::knowhere::read_is_mv(filename.data());
             if (is_mv) {
                 auto read_index = [&](faiss::IOReader* r) {
                     LOG_KNOWHERE_INFO_ << "start to load index by mv";
-                    read_is_mv(r);
+                    faiss::cppcontrib::knowhere::read_is_mv(r);
                     uint32_t v = readHeader(r);
                     LOG_KNOWHERE_INFO_ << "read " << v << " mvs";
                     indexes.resize(v);
                     for (auto i = 0; i < v; ++i) {
-                        auto read_index = std::unique_ptr<faiss::Index>(faiss::read_index(r, io_flags));
+                        auto read_index = std::unique_ptr<faiss::cppcontrib::knowhere::Index>(
+                            faiss::cppcontrib::knowhere::read_index(r, io_flags));
                         indexes[i].reset(read_index.release());
                     }
                 };
-                if ((io_flags & faiss::IO_FLAG_MMAP_IFC) == faiss::IO_FLAG_MMAP_IFC) {
+                if ((io_flags & faiss::cppcontrib::knowhere::IO_FLAG_MMAP_IFC) ==
+                    faiss::cppcontrib::knowhere::IO_FLAG_MMAP_IFC) {
                     // enable mmap-supporting IOReader
                     auto owner = std::make_shared<faiss::MmappedFileMappingOwner>(filename.data());
                     faiss::MappedFileIOReader reader(owner);
@@ -281,7 +287,8 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
                     read_index(&reader);
                 }
             } else {
-                auto read_index = std::unique_ptr<faiss::Index>(faiss::read_index(filename.data(), io_flags));
+                auto read_index = std::unique_ptr<faiss::cppcontrib::knowhere::Index>(
+                    faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
                 indexes[0].reset(read_index.release());
             }
         } catch (const std::exception& e) {
@@ -330,7 +337,7 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
         // a temporary yet expensive workaround
         faiss::cppcontrib::knowhere::CountSizeIOWriter writer;
         for (const auto& index : indexes) {
-            faiss::write_index(index.get(), &writer);
+            faiss::cppcontrib::knowhere::write_index(index.get(), &writer);
         }
 
         // todo
@@ -372,7 +379,7 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
  protected:
     // it is std::shared_ptr, not std::unique_ptr, because it can be
     //    shared with FaissHnswIterator
-    std::vector<std::shared_ptr<faiss::Index>> indexes;
+    std::vector<std::shared_ptr<faiss::cppcontrib::knowhere::Index>> indexes;
     // each index's out ids(label), can be shared with FaissHnswIterator
     std::vector<std::shared_ptr<std::vector<uint32_t>>> labels;
 
@@ -413,30 +420,30 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
     void
     writeHeader(faiss::IOWriter* f) const {
         uint32_t version = 0;
-        faiss::write_value(version, f);
+        faiss::cppcontrib::knowhere::write_value(version, f);
         uint32_t size = indexes.size();
-        faiss::write_value(size, f);
+        faiss::cppcontrib::knowhere::write_value(size, f);
         uint32_t cluster_size = labels.size();
-        faiss::write_value(cluster_size, f);
+        faiss::cppcontrib::knowhere::write_value(cluster_size, f);
         for (const auto& label : labels) {
-            faiss::write_vector(*label, f);
+            faiss::cppcontrib::knowhere::write_vector(*label, f);
         }
-        faiss::write_vector(index_rows_sum, f);
-        faiss::write_vector(label_to_internal_offset, f);
+        faiss::cppcontrib::knowhere::write_vector(index_rows_sum, f);
+        faiss::cppcontrib::knowhere::write_vector(label_to_internal_offset, f);
     }
 
     uint32_t
     readHeader(faiss::IOReader* f) {
-        [[maybe_unused]] uint32_t version = faiss::read_value(f);
-        uint32_t size = faiss::read_value(f);
-        uint32_t cluster_size = faiss::read_value(f);
+        [[maybe_unused]] uint32_t version = faiss::cppcontrib::knowhere::read_value(f);
+        uint32_t size = faiss::cppcontrib::knowhere::read_value(f);
+        uint32_t cluster_size = faiss::cppcontrib::knowhere::read_value(f);
         labels.resize(cluster_size);
         for (auto j = 0; j < cluster_size; ++j) {
             labels[j] = std::make_shared<std::vector<uint32_t>>();
-            faiss::read_vector(*labels[j], f);
+            faiss::cppcontrib::knowhere::read_vector(*labels[j], f);
         }
-        faiss::read_vector(index_rows_sum, f);
-        faiss::read_vector(label_to_internal_offset, f);
+        faiss::cppcontrib::knowhere::read_vector(index_rows_sum, f);
+        faiss::cppcontrib::knowhere::read_vector(label_to_internal_offset, f);
         return size;
     }
 
@@ -623,7 +630,8 @@ convert_ds_to_float(const DataSetPtr& src, DataFormatEnum data_format) {
 }
 
 Status
-add_to_index(faiss::Index* const __restrict index, const DataSetPtr& dataset, const DataFormatEnum data_format) {
+add_to_index(faiss::cppcontrib::knowhere::Index* const __restrict index, const DataSetPtr& dataset,
+             const DataFormatEnum data_format) {
     const auto* data = dataset->GetTensor();
     const auto rows = dataset->GetRows();
     const auto dim = dataset->GetDim();
@@ -655,7 +663,7 @@ add_to_index(faiss::Index* const __restrict index, const DataSetPtr& dataset, co
 }
 
 Status
-add_partial_dataset_to_index(faiss::Index* const __restrict index, const DataSetPtr& dataset,
+add_partial_dataset_to_index(faiss::cppcontrib::knowhere::Index* const __restrict index, const DataSetPtr& dataset,
                              const DataFormatEnum data_format, const std::vector<uint32_t>& ids) {
     const auto* data = dataset->GetTensor();
 
@@ -692,7 +700,7 @@ add_partial_dataset_to_index(faiss::Index* const __restrict index, const DataSet
 //
 // returns nullopt if an input index does not contain raw bf16, fp16 or fp32 data
 std::optional<DataFormatEnum>
-get_index_data_format(const faiss::Index* index) {
+get_index_data_format(const faiss::cppcontrib::knowhere::Index* index) {
     // empty
     if (index == nullptr) {
         return std::nullopt;
@@ -700,22 +708,22 @@ get_index_data_format(const faiss::Index* index) {
 
     // is it flat?
     // note: IndexFlatCosine preserves the original data, no cosine norm is applied
-    auto index_flat = dynamic_cast<const faiss::IndexFlat*>(index);
+    auto index_flat = dynamic_cast<const faiss::cppcontrib::knowhere::IndexFlat*>(index);
     if (index_flat != nullptr) {
         return DataFormatEnum::fp32;
     }
 
     // is it sq?
     // note: IndexScalarQuantizerCosine preserves the original data, no cosine norm is appliesd
-    auto index_sq = dynamic_cast<const faiss::IndexScalarQuantizer*>(index);
+    auto index_sq = dynamic_cast<const faiss::cppcontrib::knowhere::IndexScalarQuantizer*>(index);
     if (index_sq != nullptr) {
-        if (index_sq->sq.qtype == faiss::ScalarQuantizer::QT_bf16) {
+        if (index_sq->sq.qtype == faiss::cppcontrib::knowhere::ScalarQuantizer::QT_bf16) {
             return DataFormatEnum::bf16;
-        } else if (index_sq->sq.qtype == faiss::ScalarQuantizer::QT_fp16) {
+        } else if (index_sq->sq.qtype == faiss::cppcontrib::knowhere::ScalarQuantizer::QT_fp16) {
             return DataFormatEnum::fp16;
-        } else if (index_sq->sq.qtype == faiss::ScalarQuantizer::QT_8bit_direct_signed) {
+        } else if (index_sq->sq.qtype == faiss::cppcontrib::knowhere::ScalarQuantizer::QT_8bit_direct_signed) {
             return DataFormatEnum::int8;
-        } else if (index_sq->sq.qtype == faiss::ScalarQuantizer::QT_1bit_direct) {
+        } else if (index_sq->sq.qtype == faiss::cppcontrib::knowhere::ScalarQuantizer::QT_1bit_direct) {
             return DataFormatEnum::bin1;
         } else {
             return std::nullopt;
@@ -729,7 +737,7 @@ get_index_data_format(const faiss::Index* index) {
 // cloned from IndexHNSW.cpp
 faiss::DistanceComputer*
 storage_distance_computer(const faiss::Index* storage) {
-    if (faiss::is_similarity_metric(storage->metric_type)) {
+    if (faiss::cppcontrib::knowhere::is_similarity_metric(storage->metric_type)) {
         return new faiss::NegativeDistanceComputer(storage->get_distance_computer());
     } else {
         return storage->get_distance_computer();
@@ -782,7 +790,7 @@ combine_partitions(const std::vector<std::vector<uint32_t>>& scalar_info, const 
 struct FaissHnswIteratorWorkspace {
     // hnsw.
     // this pointer is not owned.
-    const faiss::HNSW* hnsw = nullptr;
+    const faiss::cppcontrib::knowhere::HNSW* hnsw = nullptr;
 
     // nodes that we've already visited
     faiss::cppcontrib::knowhere::Bitset visited_nodes;
@@ -804,7 +812,7 @@ struct FaissHnswIteratorWorkspace {
     DummyVisitor graph_visitor;
 
     // faiss hnsw search params (such as ef)
-    faiss::SearchParametersHNSW search_params;
+    faiss::cppcontrib::knowhere::SearchParametersHNSW search_params;
 
     // the query
     std::unique_ptr<float[]> query;
@@ -824,7 +832,7 @@ struct FaissHnswIteratorWorkspace {
 // Contains an iterator logic
 class FaissHnswIterator : public IndexIterator {
  public:
-    FaissHnswIterator(const std::shared_ptr<faiss::Index>& index_in,
+    FaissHnswIterator(const std::shared_ptr<faiss::cppcontrib::knowhere::Index>& index_in,
                       const std::shared_ptr<std::vector<uint32_t>>& labels_in, std::unique_ptr<float[]>&& query_in,
                       const BitsetView& bitset_in, const int32_t ef_in, bool larger_is_closer,
                       const float refine_ratio = 0.5f, const std::vector<uint32_t>& label_to_internal_offset_in = {},
@@ -849,9 +857,11 @@ class FaissHnswIterator : public IndexIterator {
         //   to (-1) again after we're done.
 
         // TODO: upgrade to refine options && cosine
-        const faiss::IndexRefine* index_refine = dynamic_cast<const faiss::IndexRefine*>(index.get());
+        const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
+            dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
         if (index_refine != nullptr) {
-            const faiss::IndexHNSW* index_hnsw = dynamic_cast<const faiss::IndexHNSW*>(index_refine->base_index);
+            const faiss::cppcontrib::knowhere::IndexHNSW* index_hnsw =
+                dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSW*>(index_refine->base_index);
             if (index_hnsw == nullptr) {
                 // todo: turn constructor into a factory method
                 throw;
@@ -869,13 +879,13 @@ class FaissHnswIterator : public IndexIterator {
                 // Basically, if out hnsw index's storage is HasInverseL2Norms, then
                 //   this is a cosine index. But because refine always keeps original
                 //   data, then we need to use a wrapper over a distance computer
-                const faiss::HasInverseL2Norms* has_l2_norms =
-                    dynamic_cast<const faiss::HasInverseL2Norms*>(index_hnsw->storage);
+                const faiss::cppcontrib::knowhere::HasInverseL2Norms* has_l2_norms =
+                    dynamic_cast<const faiss::cppcontrib::knowhere::HasInverseL2Norms*>(index_hnsw->storage);
                 if (has_l2_norms != nullptr) {
                     // add a cosine wrapper over it
                     // DO NOT WRAP A SIGN, by design
-                    workspace.qdis_refine =
-                        std::unique_ptr<faiss::DistanceComputer>(new faiss::WithCosineNormDistanceComputer(
+                    workspace.qdis_refine = std::unique_ptr<faiss::DistanceComputer>(
+                        new faiss::cppcontrib::knowhere::WithCosineNormDistanceComputer(
                             has_l2_norms->get_inverse_l2_norms(), index->d,
                             std::unique_ptr<faiss::DistanceComputer>(
                                 index_refine->refine_index->get_distance_computer())));
@@ -890,7 +900,8 @@ class FaissHnswIterator : public IndexIterator {
                 workspace.qdis_refine = nullptr;
             }
         } else {
-            const faiss::IndexHNSW* index_hnsw = dynamic_cast<const faiss::IndexHNSW*>(index.get());
+            const faiss::cppcontrib::knowhere::IndexHNSW* index_hnsw =
+                dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSW*>(index.get());
             if (index_hnsw == nullptr) {
                 // todo: turn constructor into a factory method
                 throw;
@@ -947,7 +958,7 @@ class FaissHnswIterator : public IndexIterator {
         // accumulate elements for a new batch?
         if (!workspace.initial_search_done) {
             // yes
-            faiss::HNSWStats stats;
+            faiss::cppcontrib::knowhere::HNSWStats stats;
 
             // is the graph empty?
             if (searcher.hnsw.entry_point != -1) {
@@ -958,7 +969,8 @@ class FaissHnswIterator : public IndexIterator {
                 float d_nearest = searcher.qdis(nearest);
 
                 // iterate through upper levels
-                faiss::HNSWStats bottom_levels_stats = searcher.greedy_search_top_levels(nearest, d_nearest);
+                faiss::cppcontrib::knowhere::HNSWStats bottom_levels_stats =
+                    searcher.greedy_search_top_levels(nearest, d_nearest);
 
                 // update stats
                 if (track_hnsw_stats) {
@@ -986,7 +998,7 @@ class FaissHnswIterator : public IndexIterator {
                 }
 
                 // perform the search of the level 0.
-                faiss::HNSWStats local_stats =
+                faiss::cppcontrib::knowhere::HNSWStats local_stats =
                     searcher.search_on_a_level(retset, 0, &workspace.to_visit, workspace.accumulated_alpha);
                 if (track_hnsw_stats) {
                     stats.combine(local_stats);
@@ -1032,7 +1044,7 @@ class FaissHnswIterator : public IndexIterator {
         //   because workspace.qdis() does so.
         // We need to ensure that we pass positive distances into batch_handler(),
         //   thus we need to negate the sign from workspace.qdis().
-        if (faiss::is_similarity_metric(index->metric_type)) {
+        if (faiss::cppcontrib::knowhere::is_similarity_metric(index->metric_type)) {
             for (auto& p : workspace.dists) {
                 p.val = -p.val;
             }
@@ -1082,7 +1094,7 @@ class FaissHnswIterator : public IndexIterator {
     }
 
  private:
-    std::shared_ptr<faiss::Index> index;
+    std::shared_ptr<faiss::cppcontrib::knowhere::Index> index;
     std::shared_ptr<std::vector<uint32_t>> labels;
     const std::vector<uint32_t>& label_to_internal_offset;  // internal_offset = label_to_internal_offset[label_id];
     const uint32_t mv_base_offset;                          // mv_internal_offset = internal_offset - mv_base_offset;
@@ -1123,9 +1135,9 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         }
 
         // an index that is used for reconstruction
-        std::vector<const faiss::Index*> indexes_to_reconstruct_from(indexes.size());
+        std::vector<const faiss::cppcontrib::knowhere::Index*> indexes_to_reconstruct_from(indexes.size());
         for (auto i = 0; i < indexes.size(); ++i) {
-            const faiss::Index* index_to_reconstruct_from = GetIndexToReconstructRawDataFrom(i);
+            const faiss::cppcontrib::knowhere::Index* index_to_reconstruct_from = GetIndexToReconstructRawDataFrom(i);
 
             // check whether raw data is available
             if (index_to_reconstruct_from == nullptr) {
@@ -1333,8 +1345,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         }
 
         // set up a bf wrapper as fallback
-        std::unique_ptr<faiss::Index> bf_index_wrapper = nullptr;
-        faiss::Index* bf_index_wrapper_ptr = nullptr;
+        std::unique_ptr<faiss::cppcontrib::knowhere::Index> bf_index_wrapper = nullptr;
+        faiss::cppcontrib::knowhere::Index* bf_index_wrapper_ptr = nullptr;
         if (!whether_bf_search.value_or(false)) {
             std::tie(bf_index_wrapper, is_refined) =
                 create_conditional_hnsw_wrapper(indexes[index_id].get(), hnsw_cfg, true, whether_to_enable_refine);
@@ -1344,7 +1356,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             bf_index_wrapper_ptr = bf_index_wrapper.get();
         }
 
-        faiss::Index* index_wrapper_ptr = index_wrapper.get();
+        faiss::cppcontrib::knowhere::Index* index_wrapper_ptr = index_wrapper.get();
 
         // set up faiss search parameters
         knowhere::SearchParametersHNSWWrapper hnsw_search_params;
@@ -1416,7 +1428,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
                     // perform the search
                     if (is_refined) {
-                        faiss::IndexRefineSearchParameters refine_params;
+                        faiss::cppcontrib::knowhere::IndexRefineSearchParameters refine_params;
                         refine_params.k_factor = hnsw_cfg.refine_k.value_or(1);
                         // a refine procedure itself does not need to care about filtering
                         refine_params.sel = nullptr;
@@ -1522,8 +1534,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     knowhere::checkCancellation(op_context);
                     // set up a distance computer
                     std::unique_ptr<faiss::DistanceComputer> dist_computer;
-                    const faiss::IndexRefine* index_refine =
-                        dynamic_cast<const faiss::IndexRefine*>(indexes[index_id].get());
+                    const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
+                        dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(indexes[index_id].get());
                     if (index_refine != nullptr) {
                         dist_computer.reset(index_refine->refine_index->get_distance_computer());
                     } else {
@@ -1605,7 +1617,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             }
         }
 
-        const bool is_similarity_metric = faiss::is_similarity_metric(indexes[index_id]->metric_type);
+        const bool is_similarity_metric =
+            faiss::cppcontrib::knowhere::is_similarity_metric(indexes[index_id]->metric_type);
 
         const float radius = hnsw_cfg.radius.value();
         const float range_filter = hnsw_cfg.range_filter.value();
@@ -1636,7 +1649,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
         }
 
-        faiss::Index* index_wrapper_ptr = index_wrapper.get();
+        faiss::cppcontrib::knowhere::Index* index_wrapper_ptr = index_wrapper.get();
 
         // set up faiss search parameters
         knowhere::SearchParametersHNSWWrapper hnsw_search_params;
@@ -1693,7 +1706,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
                         // perform the search
                         if (is_refined) {
-                            faiss::IndexRefineSearchParameters refine_params;
+                            faiss::cppcontrib::knowhere::IndexRefineSearchParameters refine_params;
                             refine_params.k_factor = hnsw_cfg.refine_k.value_or(1);
                             // a refine procedure itself does not need to care about filtering
                             refine_params.sel = nullptr;
@@ -1801,7 +1814,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         return Status::success;
     }
 
-    const faiss::Index*
+    const faiss::cppcontrib::knowhere::Index*
     GetIndexToReconstructRawDataFrom(int i) const {
         if (indexes.size() <= i) {
             return nullptr;
@@ -1811,15 +1824,15 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         }
 
         // an index that is used for reconstruction
-        const faiss::Index* index_to_reconstruct_from = nullptr;
+        const faiss::cppcontrib::knowhere::Index* index_to_reconstruct_from = nullptr;
 
         // check whether our index uses refine
-        auto index_refine = dynamic_cast<const faiss::IndexRefine*>(indexes[i].get());
+        auto index_refine = dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(indexes[i].get());
         if (index_refine == nullptr) {
             // non-refined index
 
             // cast as IndexHNSW
-            auto index_hnsw = dynamic_cast<const faiss::IndexHNSW*>(indexes[i].get());
+            auto index_hnsw = dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSW*>(indexes[i].get());
             if (index_hnsw == nullptr) {
                 // this is unexpected, we expect IndexHNSW
                 return nullptr;
@@ -1965,7 +1978,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                 }
 
                 const bool should_use_refine =
-                    (dynamic_cast<const faiss::IndexRefine*>(indexes[index_id].get()) != nullptr);
+                    (dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(indexes[index_id].get()) != nullptr);
 
                 const float iterator_refine_ratio =
                     should_use_refine ? hnsw_cfg.iterator_refine_ratio.value_or(0.5) : 0;
@@ -2036,13 +2049,14 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
         const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
         const bool is_binary = data_format == DataFormatEnum::bin1;
 
-        std::unique_ptr<faiss::IndexHNSW> hnsw_index;
+        std::unique_ptr<faiss::cppcontrib::knowhere::IndexHNSW> hnsw_index;
         auto train_index = [&](const float* data, const int i, const int64_t rows) {
             if (is_binary) {
                 if (metric.value() == faiss::MetricType::METRIC_Hamming ||
                     metric.value() == faiss::MetricType::METRIC_Jaccard) {
-                    hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(dim, faiss::ScalarQuantizer::QT_1bit_direct,
-                                                                      hnsw_cfg.M.value(), metric.value());
+                    hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQ>(
+                        dim, faiss::cppcontrib::knowhere::ScalarQuantizer::QT_1bit_direct, hnsw_cfg.M.value(),
+                        metric.value());
                 } else {
                     LOG_KNOWHERE_ERROR_ << "Unsupported metric for binary data: " << hnsw_cfg.metric_type.value();
                     return Status::invalid_metric_type;
@@ -2050,32 +2064,38 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
             } else {
                 if (is_cosine) {
                     if (data_format == DataFormatEnum::fp32) {
-                        hnsw_index = std::make_unique<faiss::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
+                        hnsw_index =
+                            std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
                     } else if (data_format == DataFormatEnum::fp16) {
-                        hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, faiss::ScalarQuantizer::QT_fp16,
-                                                                                hnsw_cfg.M.value());
+                        hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQCosine>(
+                            dim, faiss::cppcontrib::knowhere::ScalarQuantizer::QT_fp16, hnsw_cfg.M.value());
                     } else if (data_format == DataFormatEnum::bf16) {
-                        hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, faiss::ScalarQuantizer::QT_bf16,
-                                                                                hnsw_cfg.M.value());
+                        hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQCosine>(
+                            dim, faiss::cppcontrib::knowhere::ScalarQuantizer::QT_bf16, hnsw_cfg.M.value());
                     } else if (data_format == DataFormatEnum::int8) {
-                        hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(
-                            dim, faiss::ScalarQuantizer::QT_8bit_direct_signed, hnsw_cfg.M.value());
+                        hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQCosine>(
+                            dim, faiss::cppcontrib::knowhere::ScalarQuantizer::QT_8bit_direct_signed,
+                            hnsw_cfg.M.value());
                     } else {
                         LOG_KNOWHERE_ERROR_ << "Unsupported metric type: " << hnsw_cfg.metric_type.value();
                         return Status::invalid_metric_type;
                     }
                 } else {
                     if (data_format == DataFormatEnum::fp32) {
-                        hnsw_index = std::make_unique<faiss::IndexHNSWFlat>(dim, hnsw_cfg.M.value(), metric.value());
+                        hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWFlat>(
+                            dim, hnsw_cfg.M.value(), metric.value());
                     } else if (data_format == DataFormatEnum::fp16) {
-                        hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(dim, faiss::ScalarQuantizer::QT_fp16,
-                                                                          hnsw_cfg.M.value(), metric.value());
+                        hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQ>(
+                            dim, faiss::cppcontrib::knowhere::ScalarQuantizer::QT_fp16, hnsw_cfg.M.value(),
+                            metric.value());
                     } else if (data_format == DataFormatEnum::bf16) {
-                        hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(dim, faiss::ScalarQuantizer::QT_bf16,
-                                                                          hnsw_cfg.M.value(), metric.value());
+                        hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQ>(
+                            dim, faiss::cppcontrib::knowhere::ScalarQuantizer::QT_bf16, hnsw_cfg.M.value(),
+                            metric.value());
                     } else if (data_format == DataFormatEnum::int8) {
-                        hnsw_index = std::make_unique<faiss::IndexHNSWSQ>(
-                            dim, faiss::ScalarQuantizer::QT_8bit_direct_signed, hnsw_cfg.M.value(), metric.value());
+                        hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQ>(
+                            dim, faiss::cppcontrib::knowhere::ScalarQuantizer::QT_8bit_direct_signed,
+                            hnsw_cfg.M.value(), metric.value());
                     } else {
                         LOG_KNOWHERE_ERROR_ << "Unsupported metric type: " << hnsw_cfg.metric_type.value();
                         return Status::invalid_metric_type;
@@ -2417,26 +2437,28 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
 
         // create an index
         const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
-        const bool is_sq4u = sq_type.value() == faiss::ScalarQuantizer::QT_4bit_uniform;
+        const bool is_sq4u = sq_type.value() == faiss::cppcontrib::knowhere::ScalarQuantizer::QT_4bit_uniform;
 
         // should refine be used?
-        std::unique_ptr<faiss::Index> final_index;
+        std::unique_ptr<faiss::cppcontrib::knowhere::Index> final_index;
 
         auto train_index = [&](const float* data, const int i, const int64_t rows) {
-            std::unique_ptr<faiss::IndexHNSW> hnsw_index;
+            std::unique_ptr<faiss::cppcontrib::knowhere::IndexHNSW> hnsw_index;
             if (is_sq4u && is_cosine) {
                 // Create IndexHNSWSQ4UniformCosine for COSINE
-                hnsw_index =
-                    std::make_unique<faiss::IndexHNSWSQ4UniformCosine>(dim, sq_type.value(), hnsw_cfg.M.value());
+                hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQ4UniformCosine>(
+                    dim, sq_type.value(), hnsw_cfg.M.value());
             } else if (is_sq4u && metric.value() == faiss::METRIC_INNER_PRODUCT) {
                 // Create IndexHNSWSQ4UniformIP for IP
-                hnsw_index = std::make_unique<faiss::IndexHNSWSQ4UniformIP>(dim, sq_type.value(), hnsw_cfg.M.value());
+                hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQ4UniformIP>(dim, sq_type.value(),
+                                                                                                  hnsw_cfg.M.value());
             } else if (is_cosine) {
                 // Other quantizers with COSINE
-                hnsw_index = std::make_unique<faiss::IndexHNSWSQCosine>(dim, sq_type.value(), hnsw_cfg.M.value());
+                hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQCosine>(dim, sq_type.value(),
+                                                                                              hnsw_cfg.M.value());
             } else {
-                hnsw_index =
-                    std::make_unique<faiss::IndexHNSWSQ>(dim, sq_type.value(), hnsw_cfg.M.value(), metric.value());
+                hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQ>(
+                    dim, sq_type.value(), hnsw_cfg.M.value(), metric.value());
             }
 
             hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
@@ -2541,7 +2563,7 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
     }
 
  protected:
-    std::vector<std::unique_ptr<faiss::IndexPQ>> tmp_index_pq;
+    std::vector<std::unique_ptr<faiss::cppcontrib::knowhere::IndexPQ>> tmp_index_pq;
 
     Status
     TrainInternal(const DataSetPtr dataset, const Config& cfg) override {
@@ -2573,26 +2595,29 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
         // HNSW + PQ index yields BAD recall somewhy.
         // Let's build HNSW+FLAT index, then replace FLAT with PQ
         auto train_index = [&](const float* data, const int i, const int64_t rows) {
-            std::unique_ptr<faiss::IndexHNSW> hnsw_index;
+            std::unique_ptr<faiss::cppcontrib::knowhere::IndexHNSW> hnsw_index;
             if (is_cosine) {
-                hnsw_index = std::make_unique<faiss::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
+                hnsw_index =
+                    std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
             } else {
-                hnsw_index = std::make_unique<faiss::IndexHNSWFlat>(dim, hnsw_cfg.M.value(), metric.value());
+                hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWFlat>(dim, hnsw_cfg.M.value(),
+                                                                                          metric.value());
             }
 
             hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
 
             // pq
-            std::unique_ptr<faiss::IndexPQ> pq_index;
+            std::unique_ptr<faiss::cppcontrib::knowhere::IndexPQ> pq_index;
             if (is_cosine) {
-                pq_index = std::make_unique<faiss::IndexPQCosine>(dim, hnsw_cfg.m.value(), hnsw_cfg.nbits.value());
+                pq_index = std::make_unique<faiss::cppcontrib::knowhere::IndexPQCosine>(dim, hnsw_cfg.m.value(),
+                                                                                        hnsw_cfg.nbits.value());
             } else {
-                pq_index =
-                    std::make_unique<faiss::IndexPQ>(dim, hnsw_cfg.m.value(), hnsw_cfg.nbits.value(), metric.value());
+                pq_index = std::make_unique<faiss::cppcontrib::knowhere::IndexPQ>(
+                    dim, hnsw_cfg.m.value(), hnsw_cfg.nbits.value(), metric.value());
             }
 
             // should refine be used?
-            std::unique_ptr<faiss::Index> final_index;
+            std::unique_ptr<faiss::cppcontrib::knowhere::Index> final_index;
             if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
                 // yes
                 const auto hnsw_d = hnsw_index->storage->d;
@@ -2675,28 +2700,30 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
             // throw away flat and replace it with pq
 
             // check if we have a refine available.
-            faiss::IndexHNSW* index_hnsw = nullptr;
+            faiss::cppcontrib::knowhere::IndexHNSW* index_hnsw = nullptr;
 
-            faiss::IndexRefine* const index_refine = dynamic_cast<faiss::IndexRefine*>(indexes[i].get());
+            faiss::cppcontrib::knowhere::IndexRefine* const index_refine =
+                dynamic_cast<faiss::cppcontrib::knowhere::IndexRefine*>(indexes[i].get());
 
             if (index_refine != nullptr) {
-                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index_refine->base_index);
+                index_hnsw = dynamic_cast<faiss::cppcontrib::knowhere::IndexHNSW*>(index_refine->base_index);
             } else {
-                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(indexes[i].get());
+                index_hnsw = dynamic_cast<faiss::cppcontrib::knowhere::IndexHNSW*>(indexes[i].get());
             }
 
             // recreate hnswpq
-            std::unique_ptr<faiss::IndexHNSW> index_hnsw_pq;
+            std::unique_ptr<faiss::cppcontrib::knowhere::IndexHNSW> index_hnsw_pq;
 
             if (index_hnsw->storage->is_cosine) {
-                index_hnsw_pq = std::make_unique<faiss::IndexHNSWPQCosine>();
+                index_hnsw_pq = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWPQCosine>();
             } else {
-                index_hnsw_pq = std::make_unique<faiss::IndexHNSWPQ>();
+                index_hnsw_pq = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWPQ>();
             }
 
             // C++ slicing.
-            // we can't use move, because faiss::IndexHNSW overrides a destructor.
-            static_cast<faiss::IndexHNSW&>(*index_hnsw_pq) = static_cast<faiss::IndexHNSW&>(*index_hnsw);
+            // we can't use move, because faiss::cppcontrib::knowhere::IndexHNSW overrides a destructor.
+            static_cast<faiss::cppcontrib::knowhere::IndexHNSW&>(*index_hnsw_pq) =
+                static_cast<faiss::cppcontrib::knowhere::IndexHNSW&>(*index_hnsw);
 
             // clear out the storage
             delete index_hnsw->storage;
@@ -2816,7 +2843,7 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
     }
 
  protected:
-    std::vector<std::unique_ptr<faiss::IndexProductResidualQuantizer>> tmp_index_prq;
+    std::vector<std::unique_ptr<faiss::cppcontrib::knowhere::IndexProductResidualQuantizer>> tmp_index_prq;
 
     Status
     TrainInternal(const DataSetPtr dataset, const Config& cfg) override {
@@ -2848,11 +2875,13 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
         // HNSW + PRQ index yields BAD recall somewhy.
         // Let's build HNSW+FLAT index, then replace FLAT with PRQ
         auto train_index = [&](const float* data, const int i, const int64_t rows) {
-            std::unique_ptr<faiss::IndexHNSW> hnsw_index;
+            std::unique_ptr<faiss::cppcontrib::knowhere::IndexHNSW> hnsw_index;
             if (is_cosine) {
-                hnsw_index = std::make_unique<faiss::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
+                hnsw_index =
+                    std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
             } else {
-                hnsw_index = std::make_unique<faiss::IndexHNSWFlat>(dim, hnsw_cfg.M.value(), metric.value());
+                hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWFlat>(dim, hnsw_cfg.M.value(),
+                                                                                          metric.value());
             }
 
             hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
@@ -2863,18 +2892,18 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
                     ? faiss::AdditiveQuantizer::Search_type_t::ST_LUT_nonorm
                     : faiss::AdditiveQuantizer::Search_type_t::ST_norm_float;
 
-            std::unique_ptr<faiss::IndexProductResidualQuantizer> prq_index;
+            std::unique_ptr<faiss::cppcontrib::knowhere::IndexProductResidualQuantizer> prq_index;
             if (is_cosine) {
-                prq_index = std::make_unique<faiss::IndexProductResidualQuantizerCosine>(
+                prq_index = std::make_unique<faiss::cppcontrib::knowhere::IndexProductResidualQuantizerCosine>(
                     dim, hnsw_cfg.m.value(), hnsw_cfg.nrq.value(), hnsw_cfg.nbits.value(), prq_search_type);
             } else {
-                prq_index = std::make_unique<faiss::IndexProductResidualQuantizer>(
+                prq_index = std::make_unique<faiss::cppcontrib::knowhere::IndexProductResidualQuantizer>(
                     dim, hnsw_cfg.m.value(), hnsw_cfg.nrq.value(), hnsw_cfg.nbits.value(), metric.value(),
                     prq_search_type);
             }
 
             // should refine be used?
-            std::unique_ptr<faiss::Index> final_index;
+            std::unique_ptr<faiss::cppcontrib::knowhere::Index> final_index;
             if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
                 // yes
                 const auto hnsw_d = hnsw_index->storage->d;
@@ -2957,28 +2986,31 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
             // throw away flat and replace it with prq
 
             // check if we have a refine available.
-            faiss::IndexHNSW* index_hnsw = nullptr;
+            faiss::cppcontrib::knowhere::IndexHNSW* index_hnsw = nullptr;
 
-            faiss::IndexRefine* const index_refine = dynamic_cast<faiss::IndexRefine*>(indexes[i].get());
+            faiss::cppcontrib::knowhere::IndexRefine* const index_refine =
+                dynamic_cast<faiss::cppcontrib::knowhere::IndexRefine*>(indexes[i].get());
 
             if (index_refine != nullptr) {
-                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index_refine->base_index);
+                index_hnsw = dynamic_cast<faiss::cppcontrib::knowhere::IndexHNSW*>(index_refine->base_index);
             } else {
-                index_hnsw = dynamic_cast<faiss::IndexHNSW*>(indexes[i].get());
+                index_hnsw = dynamic_cast<faiss::cppcontrib::knowhere::IndexHNSW*>(indexes[i].get());
             }
 
             // recreate hnswprq
-            std::unique_ptr<faiss::IndexHNSW> index_hnsw_prq;
+            std::unique_ptr<faiss::cppcontrib::knowhere::IndexHNSW> index_hnsw_prq;
 
             if (index_hnsw->storage->is_cosine) {
-                index_hnsw_prq = std::make_unique<faiss::IndexHNSWProductResidualQuantizerCosine>();
+                index_hnsw_prq =
+                    std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWProductResidualQuantizerCosine>();
             } else {
-                index_hnsw_prq = std::make_unique<faiss::IndexHNSWProductResidualQuantizer>();
+                index_hnsw_prq = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWProductResidualQuantizer>();
             }
 
             // C++ slicing
             // we can't use move, because faiss::IndexHNSW overrides a destructor.
-            static_cast<faiss::IndexHNSW&>(*index_hnsw_prq) = static_cast<faiss::IndexHNSW&>(*index_hnsw);
+            static_cast<faiss::cppcontrib::knowhere::IndexHNSW&>(*index_hnsw_prq) =
+                static_cast<faiss::cppcontrib::knowhere::IndexHNSW&>(*index_hnsw);
 
             // clear out the storage
             delete index_hnsw->storage;

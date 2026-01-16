@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -84,8 +84,10 @@ class FileSock:
         if len(c)==0 or chr(c[0])=='\n':
             return s
 
+
 class ClientExit(Exception):
     pass
+
 
 class ServerException(Exception):
     pass
@@ -108,7 +110,7 @@ class Server:
 
 
     def log(self, s):
-        self.logf.write("Sever log %s: %s\n" % (self.log_prefix, s))
+        self.logf.write("Server log %s: %s\n" % (self.log_prefix, s))
 
     def one_function(self):
         """
@@ -177,7 +179,7 @@ class Server:
             traceback.print_exc(50,sys.stderr)
             sys.exit(1)
 
-        LOG.info("exit sever")
+        LOG.info("exit server")
 
     def exec_loop_cleanup(self):
         pass
@@ -195,6 +197,7 @@ class Server:
         for l in f:
             ret+=l
         return ret
+
 
 class Client:
     """

@@ -33,7 +33,7 @@ constexpr int kCosineMaxMissNum = 5;
 TEST_CASE("Test SCANN with data view refiner", "[float metrics]") {
     using Catch::Approx;
     auto version = GenTestVersionList();
-    if (!faiss::support_pq_fast_scan) {
+    if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
         SKIP("pass scann test");
     }
 
@@ -186,7 +186,7 @@ TEST_CASE("Test SCANN with data view refiner", "[float metrics]") {
 TEST_CASE("Ensure topk test", "[float metrics]") {
     using Catch::Approx;
     auto version = GenTestVersionList();
-    if (!faiss::support_pq_fast_scan) {
+    if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
         SKIP("pass scann test");
     }
 
@@ -405,7 +405,7 @@ EmbListAddTest(const knowhere::DataSetPtr train_ds_in, const knowhere::DataSetPt
 }
 
 TEST_CASE("Test SCANN_DVR with emb list", "[multi metrics]") {
-    if (!faiss::support_pq_fast_scan) {
+    if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
         SKIP("pass scann test");
     }
     const int64_t nb = 1000, nq = 1;
@@ -518,7 +518,7 @@ TEST_CASE("Test SCANN_DVR with emb list", "[multi metrics]") {
 }
 
 TEST_CASE("Test difference dim with difference data type", "[multi metrics]") {
-    if (!faiss::support_pq_fast_scan) {
+    if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
         SKIP("pass scann test");
     }
     const int64_t nb = 1000, nq = 10;
@@ -555,7 +555,7 @@ TEST_CASE("Test difference dim with difference data type", "[multi metrics]") {
 }
 
 TEST_CASE("Test fp16/bf16 with quant refine", "[multi metrics]") {
-    if (!faiss::support_pq_fast_scan) {
+    if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
         SKIP("pass scann test");
     }
     const int64_t nb = 1000, nq = 1;

@@ -8,12 +8,16 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-import faiss  # @manual=//faiss/python:pyfaiss_gpu
+import faiss  # @manual=//faiss/python:pyfaiss
 
 from .benchmark_io import BenchmarkIO
 from .utils import timer
 
 logger = logging.getLogger(__name__)
+
+
+# Important: filenames end with . without extension (npy, codec, index),
+# when writing files, you are required to filename + "npy" etc.
 
 
 @dataclass
@@ -48,6 +52,7 @@ class IndexDescriptorClassic:
     def __hash__(self):
         return hash(str(self))
 
+
 @dataclass
 class DatasetDescriptor:
     # namespace possible values:
@@ -78,6 +83,47 @@ class DatasetDescriptor:
     # number of vectors to load from the dataset
     num_vectors: Optional[int] = None
 
+    embedding_column: Optional[str] = None
+
+    # only when the embedding column is a map
+    embedding_column_key: Optional[Any] = None
+
+    embedding_id_column: Optional[str] = None
+
+    # only used when previous_assignment_table is set
+    # this represents the centroid id that the embedding was mapped to
+    # in a previous clustering job
+    centroid_id_column: Optional[str] = None
+
+    # filters on the dataset where each filter is a
+    # string rep of a filter expression
+    filters: Optional[List[str]] = None
+
+    # unused in open-source
+    splits_distribution: Optional[List[List[bytes]]] = None
+
+    # unused in open-source
+    splits: Optional[List[bytes]] = None
+
+    # unused in open-source
+    serialized_df: Optional[str] = None
+
+    sampling_rate: Optional[float] = None
+
+    # sampling column for xdb
+    sampling_column: Optional[str] = None
+
+    # blob store
+    bucket: Optional[str] = None
+    path: Optional[str] = None
+
+    # desc_name
+    desc_name: Optional[str] = None
+
+    filename_suffix: Optional[str] = None
+
+    normalize_L2: bool = False
+
     def __hash__(self):
         return hash(self.get_filename())
 
@@ -85,6 +131,9 @@ class DatasetDescriptor:
         self,
         prefix: Optional[str] = None,
     ) -> str:
+        if self.desc_name is not None:
+            return self.desc_name
+
         filename = ""
         if prefix is not None:
             filename += prefix + "_"
@@ -93,31 +142,42 @@ class DatasetDescriptor:
         assert self.tablename is not None
         filename += self.tablename
         if self.partitions is not None:
-            filename += "_" + "_".join(self.partitions).replace("=", "_")
+            filename += "_" + "_".join(
+                self.partitions
+            ).replace("=", "_").replace("/", "_")
         if self.num_vectors is not None:
             filename += f"_{self.num_vectors}"
+        if self.filename_suffix is not None:
+            filename += f"_{self.filename_suffix}"
         filename += "."
-        return filename
+
+        self.desc_name = filename
+        return self.desc_name
+
+    def get_kmeans_filename(self, k):
+        return f"{self.get_filename()}kmeans_{k}."
 
     def k_means(self, io, k, dry_run):
         logger.info(f"k_means {k} {self}")
         kmeans_vectors = DatasetDescriptor(
-            tablename=f"{self.get_filename()}kmeans_{k}.npy"
+            tablename=f"{self.get_filename()}kmeans_{k}"
         )
-        meta_filename = kmeans_vectors.tablename + ".json"
-        if not io.file_exist(kmeans_vectors.tablename) or not io.file_exist(
+        kmeans_filename = kmeans_vectors.get_filename() + "npy"
+        meta_filename = kmeans_vectors.get_filename() + "json"
+        if not io.file_exist(kmeans_filename) or not io.file_exist(
             meta_filename
         ):
             if dry_run:
-                return None, None, kmeans_vectors.tablename
+                return None, None, kmeans_filename
             x = io.get_dataset(self)
             kmeans = faiss.Kmeans(d=x.shape[1], k=k, gpu=True)
             _, t, _ = timer("k_means", lambda: kmeans.train(x))
-            io.write_nparray(kmeans.centroids, kmeans_vectors.tablename)
+            io.write_nparray(kmeans.centroids, kmeans_filename)
             io.write_json({"k_means_time": t}, meta_filename)
         else:
             t = io.read_json(meta_filename)["k_means_time"]
         return kmeans_vectors, t, None
+
 
 @dataclass
 class IndexBaseDescriptor:
@@ -175,6 +235,9 @@ class CodecDescriptor(IndexBaseDescriptor):
     factory: Optional[str] = None
     construction_params: Optional[List[Dict[str, int]]] = None
     training_vectors: Optional[DatasetDescriptor] = None
+    normalize_l2: bool = False
+    is_spherical: bool = False
+    FILENAME_PREFIX: str = "xt"
 
     def __post_init__(self):
         self.get_name()
@@ -215,7 +278,7 @@ class CodecDescriptor(IndexBaseDescriptor):
         name += f"d_{self.d}.{self.metric.upper()}."
         if self.factory != "Flat":
             assert self.training_vectors is not None
-            name += self.training_vectors.get_filename("xt")
+            name += self.training_vectors.get_filename(CodecDescriptor.FILENAME_PREFIX)
         name += IndexBaseDescriptor.param_dict_list_to_name(self.construction_params)
         return name
 
@@ -229,16 +292,18 @@ class CodecDescriptor(IndexBaseDescriptor):
             name = filename
         return name
 
-    def alias(self, benchmark_io : BenchmarkIO):
+    def alias(self, benchmark_io: BenchmarkIO):
         if hasattr(benchmark_io, "bucket"):
             return CodecDescriptor(desc_name=self.get_name(), bucket=benchmark_io.bucket, path=self.get_path(benchmark_io), d=self.d, metric=self.metric)
         return CodecDescriptor(desc_name=self.get_name(), d=self.d, metric=self.metric)
+
 
 
 @dataclass
 class IndexDescriptor(IndexBaseDescriptor):
     codec_desc: Optional[CodecDescriptor] = None
     database_desc: Optional[DatasetDescriptor] = None
+    FILENAME_PREFIX: str = "xb"
 
     def __hash__(self):
         return hash(str(self))
@@ -251,21 +316,22 @@ class IndexDescriptor(IndexBaseDescriptor):
 
     def get_name(self) -> str:
         if self.desc_name is None:
-            self.desc_name = self.codec_desc.get_name() + self.database_desc.get_filename(prefix="xb")
+            self.desc_name = self.codec_desc.get_name() + self.database_desc.get_filename(prefix=IndexDescriptor.FILENAME_PREFIX)
 
         return self.desc_name
 
     def flat_name(self):
         if self.flat_desc_name is not None:
             return self.flat_desc_name
-        self.flat_desc_name = self.codec_desc.flat_name() + self.database_desc.get_filename(prefix="xb")
+        self.flat_desc_name = self.codec_desc.flat_name() + self.database_desc.get_filename(prefix=IndexDescriptor.FILENAME_PREFIX)
         return self.flat_desc_name
 
-    # alias is used to refer when index is uploaded to blobstore and refered again
+    # alias is used to refer when index is uploaded to blobstore and referred again
     def alias(self, benchmark_io: BenchmarkIO):
         if hasattr(benchmark_io, "bucket"):
             return IndexDescriptor(desc_name=self.get_name(), bucket=benchmark_io.bucket, path=self.get_path(benchmark_io), d=self.d, metric=self.metric)
         return IndexDescriptor(desc_name=self.get_name(), d=self.d, metric=self.metric)
+
 
 @dataclass
 class KnnDescriptor(IndexBaseDescriptor):
@@ -274,6 +340,7 @@ class KnnDescriptor(IndexBaseDescriptor):
     query_dataset: Optional[DatasetDescriptor] = None
     search_params: Optional[Dict[str, int]] = None
     reconstruct: bool = False
+    FILENAME_PREFIX: str = "q"
     # range metric definitions
     # key: name
     # value: one of the following:
@@ -299,22 +366,25 @@ class KnnDescriptor(IndexBaseDescriptor):
         return hash(str(self))
 
     def get_name(self):
+        if self.desc_name is not None:
+            return self.desc_name
         name = self.index_desc.get_name()
         name += IndexBaseDescriptor.param_dict_to_name(self.search_params)
-        name += self.query_dataset.get_filename("q")
+        name += self.query_dataset.get_filename(KnnDescriptor.FILENAME_PREFIX)
         name += f"k_{self.k}."
         name += f"t_{self.num_threads}."
         if self.reconstruct:
             name += "rec."
         else:
             name += "knn."
+        self.desc_name = name
         return name
 
     def flat_name(self):
         if self.flat_desc_name is not None:
             return self.flat_desc_name
         name = self.index_desc.flat_name()
-        name += self.query_dataset.get_filename("q")
+        name += self.query_dataset.get_filename(KnnDescriptor.FILENAME_PREFIX)
         name += f"k_{self.k}."
         name += f"t_{self.num_threads}."
         if self.reconstruct:

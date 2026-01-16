@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,14 +7,13 @@
 
 // -*- c++ -*-
 
+#include <faiss/Index.h>
 #include <faiss/utils/utils.h>
 
 #include <cassert>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-
-#include <sys/types.h>
 
 #ifdef _MSC_VER
 #define NOMINMAX
@@ -28,14 +27,12 @@
 #include <omp.h>
 
 #include <algorithm>
-#include <cinttypes>
 #include <set>
 #include <type_traits>
 #include <vector>
 
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissAssert.h>
-#include <faiss/impl/platform_macros.h>
 #include <faiss/utils/random.h>
 
 #ifndef FINTEGER
@@ -105,7 +102,10 @@ int sgemv_(
 namespace faiss {
 
 // this will be set at load time from GPU Faiss
-std::string gpu_compile_options;
+std::string& ref_gpu_compile_options() {
+    static std::string gpu_compile_options;
+    return gpu_compile_options;
+}
 
 std::string get_compile_options() {
     std::string options;
@@ -115,19 +115,29 @@ std::string get_compile_options() {
     options += "OPTIMIZE ";
 #endif
 
-#ifdef __AVX2__
-    options += "AVX2 ";
-#elif __AVX512F__
+#ifdef __AVX512F__
     options += "AVX512 ";
+#elif defined(__AVX2__)
+    options += "AVX2 ";
+#elif defined(__ARM_FEATURE_SVE)
+    options += "SVE NEON ";
 #elif defined(__aarch64__)
     options += "NEON ";
 #else
     options += "GENERIC ";
 #endif
 
-    options += gpu_compile_options;
+#ifdef FAISS_ENABLE_SVS
+    options += "SVS ";
+#endif
+
+    options += ref_gpu_compile_options();
 
     return options;
+}
+
+std::string get_version() {
+    return VERSION_STRING;
 }
 
 #ifdef _MSC_VER
@@ -381,7 +391,7 @@ size_t ranklist_intersection_size(
     return count;
 }
 
-double imbalance_factor(int k, const int* hist) {
+double imbalance_factor(int k, const int64_t* hist) {
     double tot = 0, uf = 0;
 
     for (int i = 0; i < k; i++) {
@@ -393,9 +403,9 @@ double imbalance_factor(int k, const int* hist) {
     return uf;
 }
 
-double imbalance_factor(int n, int k, const int64_t* assign) {
-    std::vector<int> hist(k, 0);
-    for (int i = 0; i < n; i++) {
+double imbalance_factor(int64_t n, int k, const int64_t* assign) {
+    std::vector<int64_t> hist(k, 0);
+    for (int64_t i = 0; i < n; i++) {
         hist[assign[i]]++;
     }
 
@@ -558,29 +568,6 @@ bool check_openmp() {
     return true;
 }
 
-int64_t get_l3_size() {
-    static int64_t l3_size = -1;
-    constexpr int64_t KB = 1024;
-    if (l3_size == -1) {
-        FILE* file =
-                fopen("/sys/devices/system/cpu/cpu0/cache/index3/size", "r");
-        int64_t result = 0;
-        constexpr int64_t line_length = 128;
-        char line[line_length];
-        if (file) {
-            char* ret = fgets(line, sizeof(line) - 1, file);
-
-            sscanf(line, "%" SCNd64 "K", &result);
-            l3_size = result * KB;
-
-            fclose(file);
-        } else {
-            l3_size = 12 * KB * KB; // 12M
-        }
-    }
-    return l3_size;
-}
-
 namespace {
 
 template <typename T>
@@ -606,9 +593,9 @@ int64_t count_gt(int64_t n, const T* row, T threshold) {
 } // namespace
 
 template <typename T>
-void CombinerRangeKNN<T>::compute_sizes(int64_t* L_res_2) {
-    this->L_res = L_res_2;
-    L_res_2[0] = 0;
+void CombinerRangeKNN<T>::compute_sizes(int64_t* L_res_init) {
+    this->L_res = L_res_init;
+    L_res_init[0] = 0;
     int64_t j = 0;
     for (int64_t i = 0; i < nq; i++) {
         int64_t n_in;
@@ -619,11 +606,11 @@ void CombinerRangeKNN<T>::compute_sizes(int64_t* L_res_2) {
             n_in = lim_remain[j + 1] - lim_remain[j];
             j++;
         }
-        L_res_2[i + 1] = n_in; // L_res_2[i] + n_in;
+        L_res_init[i + 1] = n_in; // L_res_init[i] + n_in;
     }
     // cumsum
     for (int64_t i = 0; i < nq; i++) {
-        L_res_2[i + 1] += L_res_2[i];
+        L_res_init[i + 1] += L_res_init[i];
     }
 }
 

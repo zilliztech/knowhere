@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,8 +9,6 @@
 
 #include <faiss/IndexNSG.h>
 
-#include <omp.h>
-
 #include <cinttypes>
 #include <memory>
 
@@ -18,7 +16,6 @@
 #include <faiss/IndexNNDescent.h>
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissAssert.h>
-#include <faiss/utils/Heap.h>
 #include <faiss/utils/distances.h>
 
 namespace faiss {
@@ -104,7 +101,7 @@ void IndexNSG::search(
     }
 }
 
-void IndexNSG::build(idx_t n, const float* x, idx_t* knn_graph, int GK) {
+void IndexNSG::build(idx_t n, const float* x, idx_t* knn_graph, int gk) {
     FAISS_THROW_IF_NOT_MSG(
             storage,
             "Please use IndexNSGFlat (or variants) instead of IndexNSG directly");
@@ -115,9 +112,9 @@ void IndexNSG::build(idx_t n, const float* x, idx_t* knn_graph, int GK) {
     ntotal = storage->ntotal;
 
     // check the knn graph
-    check_knn_graph(knn_graph, n, GK);
+    check_knn_graph(knn_graph, n, gk);
 
-    const nsg::Graph<idx_t> knng(knn_graph, n, GK);
+    const nsg::Graph<idx_t> knng(knn_graph, n, gk);
     nsg.build(storage, n, knng, verbose);
     is_built = true;
 }
@@ -264,7 +261,7 @@ void IndexNSG::check_knn_graph(const idx_t* knn_graph, idx_t n, int K) const {
     }
     FAISS_THROW_IF_NOT_MSG(
             total_count < n / 10,
-            "There are too much invalid entries in the knn graph. "
+            "There are too many invalid entries in the knn graph. "
             "It may be an invalid knn graph.");
 }
 

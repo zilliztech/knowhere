@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,7 +9,6 @@
 #include <cstdlib>
 #include <random>
 
-#include <omp.h>
 #include <unistd.h>
 
 #include <pthread.h>
@@ -157,7 +156,7 @@ TEST(ONDISK, test_add) {
     }
 }
 
-// WARN this thest will run multithreaded only in opt mode
+// WARN this test will run multithreaded only in opt mode
 TEST(ONDISK, make_invlists_threaded) {
     int nlist = 100;
     int code_size = 32;

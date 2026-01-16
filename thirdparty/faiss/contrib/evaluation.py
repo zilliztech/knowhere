@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -13,6 +13,7 @@ from multiprocessing.pool import ThreadPool
 ###############################################################
 # Simple functions to evaluate knn results
 
+
 def knn_intersection_measure(I1, I2):
     """ computes the intersection measure of two result tables
     """
@@ -26,6 +27,7 @@ def knn_intersection_measure(I1, I2):
 
 ###############################################################
 # Range search results can be compared with Precision-Recall
+
 
 def filter_range_results(lims, D, I, thresh):
     """ select a set of results """
@@ -78,7 +80,7 @@ def range_PR(lims_ref, Iref, lims_new, Inew, mode="overall"):
 
 
 def counts_to_PR(ngt, nres, ninter, mode="overall"):
-    """ computes a  precision-recall for a ser of queries.
+    """ computes a  precision-recall for a set of queries.
     ngt = nb of GT results per query
     nres = nb of found results per query
     ninter = nb of correct results per query (smaller than nres of course)
@@ -122,6 +124,7 @@ def counts_to_PR(ngt, nres, ninter, mode="overall"):
 
     else:
         raise AssertionError()
+
 
 def sort_range_res_2(lims, D, I):
     """ sort 2 arrays using the first as key """
@@ -291,6 +294,7 @@ def check_ref_range_results(Lref, Dref, Iref,
 # OperatingPoints functions
 # this is the Python version of the AutoTune object in C++
 
+
 class OperatingPoints:
     """
     Manages a set of search parameters with associated performance and time.
@@ -309,7 +313,7 @@ class OperatingPoints:
         raise NotImplemented
 
     def do_nothing_key(self):
-        """ parameters to say we do noting, takes 0 time and has 0 performance"""
+        """ parameters to say we do nothing, takes 0 time and has 0 performance"""
         raise NotImplemented
 
     def is_pareto_optimal(self, perf_new, t_new):
@@ -428,6 +432,7 @@ class OperatingPointsWithRanges(OperatingPoints):
 ###############################################################
 # Timer object
 
+
 class TimerIter:
     def __init__(self, timer):
         self.ts = []
@@ -452,6 +457,7 @@ class TimerIter:
                 # if timeout, we use all the runs
                 timer.times = times[:]
             raise StopIteration
+
 
 class RepeatTimer:
     """

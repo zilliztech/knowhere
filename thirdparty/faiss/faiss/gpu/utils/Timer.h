@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -18,7 +18,7 @@ class KernelTimer {
    public:
     /// Constructor starts the timer and adds an event into the current
     /// device stream
-    KernelTimer(cudaStream_t stream = 0);
+    KernelTimer(cudaStream_t stream = nullptr);
 
     /// Destructor releases event resources
     ~KernelTimer();

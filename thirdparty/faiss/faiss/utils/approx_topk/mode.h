@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -21,7 +21,7 @@
 /// It seems that only the limited number of combinations are
 /// meaningful, because of the limited supply of SIMD registers.
 /// Also, certain combinations, such as B32_D1 and B16_D1, were concluded
-/// to be not very precise in benchmarks, so ones were not introduced.
+/// to be not very precise in benchmarks, so they were not introduced.
 ///
 /// TODO: Consider d-ary SIMD heap.
 

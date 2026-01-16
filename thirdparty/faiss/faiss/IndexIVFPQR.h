@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -30,7 +30,8 @@ struct IndexIVFPQR : IndexIVFPQ {
             size_t M,
             size_t nbits_per_idx,
             size_t M_refine,
-            size_t nbits_per_idx_refine);
+            size_t nbits_per_idx_refine,
+            bool own_invlists = true);
 
     void reset() override;
 
@@ -47,7 +48,6 @@ struct IndexIVFPQR : IndexIVFPQ {
     void add_core(
             idx_t n,
             const float* x,
-            const float* x_norms,
             const idx_t* xids,
             const idx_t* precomputed_idx,
             void* inverted_list_context = nullptr) override;

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -46,7 +46,7 @@ WARP_SELECT_DECL(float, false, 2048);
 void runWarpSelect(
         Tensor<float, 2, true>& in,
         Tensor<float, 2, true>& outK,
-        Tensor<int, 2, true>& outV,
+        Tensor<idx_t, 2, true>& outV,
         bool dir,
         int k,
         cudaStream_t stream) {
@@ -55,7 +55,7 @@ void runWarpSelect(
     if (dir) {
         if (k == 1) {
             WARP_SELECT_CALL(float, true, 1);
-        } else if (k <= 32) {
+        } else if (k <= 32 && getWarpSizeCurrentDevice() == 32) {
             WARP_SELECT_CALL(float, true, 32);
         } else if (k <= 64) {
             WARP_SELECT_CALL(float, true, 64);
@@ -75,7 +75,7 @@ void runWarpSelect(
     } else {
         if (k == 1) {
             WARP_SELECT_CALL(float, false, 1);
-        } else if (k <= 32) {
+        } else if (k <= 32 && getWarpSizeCurrentDevice() == 32) {
             WARP_SELECT_CALL(float, false, 32);
         } else if (k <= 64) {
             WARP_SELECT_CALL(float, false, 64);

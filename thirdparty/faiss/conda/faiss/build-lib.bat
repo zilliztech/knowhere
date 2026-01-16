@@ -1,3 +1,8 @@
+@REM Copyright (c) Meta Platforms, Inc. and affiliates.
+@REM
+@REM This source code is licensed under the MIT license found in the
+@REM LICENSE file in the root directory of this source tree.
+
 :: Copyright (c) Facebook, Inc. and its affiliates.
 ::
 :: This source code is licensed under the MIT license found in the
@@ -5,9 +10,9 @@
 
 :: Build libfaiss.so.
 cmake -B _build ^
-      -T v141 ^
+      -T v143 ^
       -A x64 ^
-      -G "Visual Studio 16 2019" ^
+      -G "Visual Studio 17 2022" ^
       -DBUILD_SHARED_LIBS=ON ^
       -DBUILD_TESTING=OFF ^
       -DFAISS_ENABLE_GPU=OFF ^

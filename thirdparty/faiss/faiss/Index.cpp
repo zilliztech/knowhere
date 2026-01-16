@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -8,8 +8,6 @@
 // -*- c++ -*-
 
 #include <faiss/Index.h>
-
-#include <faiss/FaissHook.h>
 
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/DistanceComputer.h>
@@ -106,6 +104,17 @@ void Index::search_and_reconstruct(
     }
 }
 
+void Index::search_subset(
+        idx_t n,
+        const float* x,
+        idx_t k_base,
+        const idx_t* base_labels,
+        idx_t k,
+        float* distances,
+        idx_t* labels) const {
+    FAISS_THROW_MSG("search_subset not implemented for this type of index");
+}
+
 void Index::compute_residual(const float* x, float* residual, idx_t key) const {
     reconstruct(key, residual);
     for (size_t i = 0; i < d; i++) {
@@ -134,6 +143,10 @@ void Index::sa_encode(idx_t, const float*, uint8_t*) const {
 
 void Index::sa_decode(idx_t, const uint8_t*, float*) const {
     FAISS_THROW_MSG("standalone codec not implemented for this type of index");
+}
+
+void Index::add_sa_codes(idx_t, const uint8_t*, const idx_t*) {
+    FAISS_THROW_MSG("add_sa_codes not implemented for this type of index");
 }
 
 namespace {

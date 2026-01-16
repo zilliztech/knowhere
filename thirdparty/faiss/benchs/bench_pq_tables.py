@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -12,12 +11,12 @@ import faiss
 
 os.system("grep -m1 'model name' < /proc/cpuinfo")
 
+
 def format_tab(x):
     return "\n".join("\t".join("%g" % xi for xi in row) for row in x)
 
 
 def run_bench(d, dsub, nbit=8, metric=None):
-
     M = d // dsub
     pq = faiss.ProductQuantizer(d, M, nbit)
     pq.train(faiss.randn((max(1000, pq.ksub * 50), d), 123))
@@ -74,5 +73,5 @@ for have_threads in False, True:
                     res = run_bench(M * dsub, dsub, nbit, metric)
                     allres.append(res)
         allres = np.array(allres)
-        print("formated result:")
+        print("formatted result:")
         print(format_tab(allres))

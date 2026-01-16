@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -35,7 +35,7 @@ class SearchServer(rpc.Server):
 
 
 def run_index_server(index: faiss.Index, port: int, v6: bool = False):
-    """ serve requests for that index forerver """
+    """ serve requests for that index forever """
     rpc.run_server(
         lambda s: SearchServer(s, index),
         port, v6=v6)

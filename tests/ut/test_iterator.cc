@@ -15,7 +15,7 @@
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
-#include "faiss/utils/binary_distances.h"
+#include "faiss/cppcontrib/knowhere/utils/binary_distances.h"
 #include "hnswlib/hnswalg.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/comp/brute_force.h"
@@ -648,7 +648,7 @@ TEST_CASE("Test Iterator BruteForce With Sparse Float Vector", "[IP metric]") {
 
 TEST_CASE("Test Scann with data view refiner", "[float metrics]") {
     using Catch::Approx;
-    if (!faiss::support_pq_fast_scan) {
+    if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
         SKIP("pass scann test");
     }
     auto version = GenTestVersionList();

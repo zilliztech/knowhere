@@ -15,7 +15,7 @@
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
-#include "faiss/invlists/InvertedLists.h"
+#include "faiss/cppcontrib/knowhere/invlists/InvertedLists.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_check.h"
 #include "knowhere/index/index_factory.h"
@@ -72,7 +72,8 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
         size_t code_size = 512;
         size_t segment_size = 1024;
 
-        auto invList = std::make_unique<faiss::ConcurrentArrayInvertedLists>(nlist, code_size, segment_size, true);
+        auto invList = std::make_unique<faiss::cppcontrib::knowhere::ConcurrentArrayInvertedLists>(nlist, code_size,
+                                                                                                   segment_size, true);
 
         for (size_t i = 0; i < nlist; i++) {
             REQUIRE(invList->list_size(i) == 0);

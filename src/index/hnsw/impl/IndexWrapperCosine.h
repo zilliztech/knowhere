@@ -11,7 +11,7 @@
 
 #pragma once
 
-#include <faiss/Index.h>
+#include <faiss/cppcontrib/knowhere/Index.h>
 #include <faiss/cppcontrib/knowhere/IndexWrapper.h>
 #include <faiss/impl/DistanceComputer.h>
 
@@ -23,7 +23,7 @@ struct IndexWrapperCosine : public faiss::cppcontrib::knowhere::IndexWrapper {
     const float* inverse_l2_norms;
 
     // norms are external
-    IndexWrapperCosine(faiss::Index* index, const float* inverse_l2_norms_in);
+    IndexWrapperCosine(faiss::cppcontrib::knowhere::Index* index, const float* inverse_l2_norms_in);
 
     faiss::DistanceComputer*
     get_distance_computer() const override;
