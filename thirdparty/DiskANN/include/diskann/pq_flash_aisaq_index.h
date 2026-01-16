@@ -78,6 +78,8 @@ public:
 
 template<typename T>
 class PQFlashAisaqIndex: public PQFlashIndex<T> {
+private:
+    std::shared_ptr<AlignedFileReader> alignedFileReader;
 public:
     PQFlashAisaqIndex<T>(std::shared_ptr<AlignedFileReader> fileReader,
                 diskann::Metric metric = diskann::Metric::L2);
@@ -109,7 +111,7 @@ public:
                              uint64_t pq_cache_size_bytes, uint32_t policy);
     bool get_rearranged_index();
     int aisaq_load(uint32_t num_threads, const char *index_prefix);
-    int aisaq_load_from_separate_paths(uint32_t num_threads, const char *index_filepath,
+    int aisaq_load_from_separate_paths(uint32_t num_threads, const char *index_prefix,
                                        const char *pivots_filepath, const char *compressed_filepath);
     void use_medoids_data_as_centroids();
     
@@ -155,6 +157,21 @@ public:
                                                        uint64_t        l_search,
                                                        uint64_t        beamwidth,
                                                        uint64_t num_nodes_to_cache);
+
+    //TODO: remove this override after AISAQ is updated to use IndexReader (like DiskANN does)
+    // Brute force search for the given query. Use beam search rather than
+    // sending whole bunch of requests at once to avoid all threads sending I/O
+    // requests and the time overlaps.
+    // The beam width is adjusted in the function.
+    void brute_force_beam_search(
+        ThreadData<T> &data, const float query_norm, const _u64 k_search,
+        _s64 *indices, float *distances, const _u64 beam_width_param,
+        IOContext &ctx, QueryStats *stats,
+        const knowhere::feder::diskann::FederResultUniq &feder,
+        knowhere::BitsetView                             bitset_view,
+		PQDataGetter* pq_data_getter);
+
+
     /* AiSAQ node cache addition */
     uint8_t *_aisaq_node_cache_buf = nullptr;
     tsl::robin_map<uint32_t, uint8_t *> _aisaq_node_cache;

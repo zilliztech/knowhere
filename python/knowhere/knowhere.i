@@ -38,9 +38,12 @@ typedef uint64_t size_t;
 #include <knowhere/comp/knowhere_config.h>
 #include <filemanager/impl/LocalFileManager.h>
 #include <knowhere/comp/index_param.h>
+#include <ncs/ncs.h>
+#include <ncs/InMemoryNcs.h>
 #include <fstream>
 #include <string>
 using namespace knowhere;
+using namespace milvus;
 %}
 
 %{
@@ -65,6 +68,7 @@ import_array();
 %template(BinaryPtr) std::shared_ptr<knowhere::Binary>;
 %template(BinarySetPtr) std::shared_ptr<knowhere::BinarySet>;
 %template(int64_float_pair) std::pair<long long int, float>;
+%template(StringVector) std::vector<std::string>;
 %include <knowhere/expected.h>
 %include <knowhere/dataset.h>
 %include <knowhere/binaryset.h>
@@ -263,6 +267,18 @@ class IndexWrap {
     DeserializeFromFile(const std::string& filename, const std::string& json) {
         GILReleaser rel;
         return idx.value().DeserializeFromFile(filename, knowhere::Json::parse(json));
+    }
+
+    knowhere::Status
+    NcsUpload(const std::string& json) {
+        GILReleaser rel;
+        return idx.value().NcsUpload(knowhere::Json::parse(json));
+    }
+
+    std::vector<std::string>
+    ListFilesForNcsUpload() {
+        GILReleaser rel;
+        return idx.value().ListFilesForNcsUpload();
     }
 
     int64_t
@@ -729,6 +745,37 @@ SetBuildThreadPool(uint32_t num_threads) {
 void
 SetSearchThreadPool(uint32_t num_threads) {
     knowhere::KnowhereConfig::SetSearchThreadPoolSize(num_threads);
+}
+
+// NCS support functions
+void InitNcs(const std::string& kind) {
+    milvus::NcsSingleton::initNcs(kind);
+}
+
+int CreateNcsBucket(uint32_t bucketId) {
+    milvus::Ncs* ncs = milvus::NcsSingleton::Instance();
+    if (ncs == nullptr) {
+        return -1;
+    }
+    auto status = ncs->createBucket(bucketId);
+    return (status == milvus::NcsStatus::OK) ? 0 : -1;
+}
+
+int DeleteNcsBucket(uint32_t bucketId) {
+    milvus::Ncs* ncs = milvus::NcsSingleton::Instance();
+    if (ncs == nullptr) {
+        return -1;
+    }
+    auto status = ncs->deleteBucket(bucketId);
+    return (status == milvus::NcsStatus::OK) ? 0 : -1;
+}
+
+bool IsNcsBucketExist(uint32_t bucketId) {
+    milvus::Ncs* ncs = milvus::NcsSingleton::Instance();
+    if (ncs == nullptr) {
+        return false;
+    }
+    return ncs->isBucketExist(bucketId);
 }
 
 %}

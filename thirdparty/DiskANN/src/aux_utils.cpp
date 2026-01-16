@@ -821,7 +821,8 @@ namespace diskann {
   template<typename T>
   void create_disk_layout(const std::string base_file,
                           const std::string mem_index_file,
-                          const std::string output_file,
+                          const std::string output_metadata_file,
+                          const std::string output_data_file,
                           const std::string reorder_data_file) {
     unsigned npts, ndims;
 
@@ -871,7 +872,7 @@ namespace diskann {
     size_t actual_file_size = get_file_size(mem_index_file);
     LOG_KNOWHERE_INFO_ << "Vamana index file size: " << actual_file_size;
     std::ifstream   vamana_reader(mem_index_file, std::ios::binary);
-    cached_ofstream diskann_writer(output_file, write_blk_size);
+    cached_ofstream diskann_data_writer(output_data_file, write_blk_size);
 
     // metadata: width, medoid
     unsigned width_u32, medoid_u32;
@@ -937,8 +938,9 @@ namespace diskann {
       n_reorder_sectors =
           ROUND_UP(npts_64, n_data_nodes_per_sector) / n_data_nodes_per_sector;
     }
-    _u64 disk_index_file_size =
-        (n_sectors + n_reorder_sectors + 1) * diskann::defaults::SECTOR_LEN;
+    // Data file size (no metadata sector)
+    _u64 disk_index_data_file_size =
+        (n_sectors + n_reorder_sectors) * diskann::defaults::SECTOR_LEN;
 
     // SECTOR_LEN buffer for each sector
     _u64 sector_buf_size =
@@ -946,8 +948,12 @@ namespace diskann {
     std::unique_ptr<char[]> sector_buf =
         std::make_unique<char[]>(sector_buf_size);
 
-    // write first sector with metadata
-    *(_u64 *) (sector_buf.get() + 0 * sizeof(_u64)) = disk_index_file_size;
+    // Write metadata to separate metadata file
+    std::ofstream metadata_writer(output_metadata_file, std::ios::binary);
+    memset(sector_buf.get(), 0, diskann::defaults::SECTOR_LEN);
+    
+    // Store the data file size in metadata (not the combined size)
+    *(_u64 *) (sector_buf.get() + 0 * sizeof(_u64)) = disk_index_data_file_size;
     *(_u64 *) (sector_buf.get() + 1 * sizeof(_u64)) = npts_64;
     *(_u64 *) (sector_buf.get() + 2 * sizeof(_u64)) = medoid;
     *(_u64 *) (sector_buf.get() + 3 * sizeof(_u64)) = max_node_len;
@@ -956,13 +962,16 @@ namespace diskann {
     *(_u64 *) (sector_buf.get() + 6 * sizeof(_u64)) = vamana_frozen_loc;
     *(_u64 *) (sector_buf.get() + 7 * sizeof(_u64)) = append_reorder_data;
     if (append_reorder_data) {
-      *(_u64 *) (sector_buf.get() + 8 * sizeof(_u64)) = n_sectors + 1;
+      // Note: No +1 offset since metadata is in separate file, reorder data starts after n_sectors
+      *(_u64 *) (sector_buf.get() + 8 * sizeof(_u64)) = n_sectors;
       *(_u64 *) (sector_buf.get() + 9 * sizeof(_u64)) = ndims_reorder_file;
       *(_u64 *) (sector_buf.get() + 10 * sizeof(_u64)) =
           n_data_nodes_per_sector;
     }
 
-    diskann_writer.write(sector_buf.get(), diskann::defaults::SECTOR_LEN);
+    metadata_writer.write(sector_buf.get(), diskann::defaults::SECTOR_LEN);
+    metadata_writer.close();
+    LOG_KNOWHERE_INFO_ << "Metadata file written to " << output_metadata_file;
 
     if (long_node) {
       for (_u64 node_id = 0; node_id < npts_64; ++node_id) {
@@ -984,9 +993,9 @@ namespace diskann {
         // write coords of node first
         base_reader.read((char *) sector_buf.get(), sizeof(T) * ndims_64);
 
-        diskann_writer.write(sector_buf.get(), sector_buf_size);
+        diskann_data_writer.write(sector_buf.get(), sector_buf_size);
       }
-      LOG_KNOWHERE_DEBUG_ << "Output file written.";
+      LOG_KNOWHERE_INFO_ << "Data file written to " << output_data_file;
       return;
     }
 
@@ -1022,7 +1031,7 @@ namespace diskann {
         cur_node_id++;
       }
       // flush sector to disk
-      diskann_writer.write(sector_buf.get(), diskann::defaults::SECTOR_LEN);
+      diskann_data_writer.write(sector_buf.get(), diskann::defaults::SECTOR_LEN);
     }
     if (append_reorder_data) {
       LOG_KNOWHERE_INFO_ << "Index written. Appending reorder data...";
@@ -1049,10 +1058,10 @@ namespace diskann {
                  vec_len);
         }
         // flush sector to disk
-        diskann_writer.write(sector_buf.get(), diskann::defaults::SECTOR_LEN);
+        diskann_data_writer.write(sector_buf.get(), diskann::defaults::SECTOR_LEN);
       }
     }
-    LOG_KNOWHERE_DEBUG_ << "Output file written.";
+    LOG_KNOWHERE_INFO_ << "Data file written to " << output_data_file;
   }
 
 struct vamana_read_context {
@@ -1129,7 +1138,8 @@ void aisaq_calc_inline_layout(int inline_pq, uint32_t pq_compressed_nbytes, uint
 }
 
 template <typename T>
-void create_aisaq_layout(const std::string base_file, const std::string mem_index_file, const std::string output_file,
+void create_aisaq_layout(const std::string base_file, const std::string mem_index_file, 
+                        const std::string output_metadata_file, const std::string output_data_file,
                         const std::string reorder_data_file,
                         const std::string &index_prefix_path,
                         const diskann::Metric metric,
@@ -1182,7 +1192,7 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
     size_t actual_file_size = get_file_size(mem_index_file);
     LOG_KNOWHERE_INFO_ << "Vamana index file size=" << actual_file_size;
     std::ifstream vamana_reader(mem_index_file, std::ios::binary);
-    cached_ofstream diskann_writer(output_file, write_blk_size);
+    cached_ofstream diskann_data_writer(output_data_file, write_blk_size);
 
     // metadata: width, medoid
     uint32_t width_u32, medoid_u32;
@@ -1209,7 +1219,7 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
     max_node_len = (((uint64_t)width_u32 + 1) * sizeof(uint32_t)) + (ndims_64 * sizeof(T));
 
     /* open and validate compressed vectors file */
-    std::string pq_compressed_vectors_path = index_prefix_path + "_pq_compressed.bin";
+    std::string pq_compressed_vectors_path =  get_pq_compressed_filename(index_prefix_path);
     uint32_t pq_compressed_nbytes, pq_compressed_vectors_npts;
     std::ifstream pq_compressed_vectors_reader;
     size_t pq_compressed_vectors_file_size = get_file_size(pq_compressed_vectors_path);
@@ -1282,8 +1292,8 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
             vamana_reader_node_to_pos_map[i] = offset;
         }
         
-        std::string medoids_path = index_prefix_path + "_disk.index_medoids.bin";
-        std::string entry_points_path = index_prefix_path + "_disk.index_entry_points.bin";
+        std::string medoids_path = get_disk_index_medoids_filename(index_prefix_path);
+        std::string entry_points_path = get_index_entry_points_filename(index_prefix_path);
         std::unique_ptr <uint32_t[]> entry_points = nullptr;
         size_t n_entry_points, __dim;
         if (file_exists(entry_points_path)) {
@@ -1343,7 +1353,7 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
         pq_compressed_vectors_reader.open(pq_compressed_vectors_path, std::ios::binary);
 
         /* create aligned pq compressed rearranged file */
-        std::string rearranged_pq_compressed_vectors_path = index_prefix_path + "_pq_compressed_rearranged.bin";
+        std::string rearranged_pq_compressed_vectors_path = get_pq_compressed_rearranged_filename(index_prefix_path);
         if (aisaq_create_aligned_rearranged_pq_compressed_vectors_file(pq_compressed_vectors_reader,
             rearranged_pq_compressed_vectors_path, AISAQ_REARRANGED_PQ_FILE_PAGE_SIZE_DEFAULT,
             nullptr /*reversed_rearranged_vectors_map*/, npts_64, pq_compressed_nbytes) != 0) {
@@ -1353,7 +1363,7 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
         
         /* create rearrange map that can be used by filter search
            rearrange map contains mapping from new_id --> origin_id */
-        std::string rearrange_map_path = index_prefix_path + "_disk.index_rearrange.bin";
+        std::string rearrange_map_path = get_index_rearranged_filename(index_prefix_path);
         diskann::save_bin<uint32_t>(rearrange_map_path, reversed_rearranged_vectors_map, npts_64, 1, 0);
         
         /* translate medoid */
@@ -1370,8 +1380,7 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
         }
         /* rearrange norm file */
         if (metric == diskann::Metric::COSINE) {
-            std::string norm_path =
-                get_disk_index_max_base_norm_file(std::string(index_prefix_path + "_disk.index"));
+            std::string norm_path = get_disk_index_max_base_norm_file(index_prefix_path);
             if (file_exists(norm_path)) {
                 LOG_KNOWHERE_INFO_ << "rearranging normalization file " << norm_path;
                 std::unique_ptr<float[]> norm_data = nullptr;
@@ -1420,7 +1429,8 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
         n_data_nodes_per_sector = defaults::SECTOR_LEN / (ndims_reorder_file * sizeof(float));
         n_reorder_sectors = ROUND_UP(npts_64, n_data_nodes_per_sector) / n_data_nodes_per_sector;
     }
-    uint64_t disk_index_file_size = (n_sectors + n_reorder_sectors + 1) * defaults::SECTOR_LEN;
+    // Note: No +1 for metadata sector since it's in a separate file
+    uint64_t disk_index_data_file_size = (n_sectors + n_reorder_sectors) * defaults::SECTOR_LEN;
 
     std::vector<uint64_t> output_file_meta;
     output_file_meta.push_back(npts_64);
@@ -1433,11 +1443,12 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
     output_file_meta.push_back((uint64_t)append_reorder_data);
     if (append_reorder_data)
     {
-        output_file_meta.push_back(n_sectors + 1);
+        // Note: No +1 offset since metadata is in separate file, reorder data starts after n_sectors
+        output_file_meta.push_back(n_sectors);
         output_file_meta.push_back(ndims_reorder_file);
         output_file_meta.push_back(n_data_nodes_per_sector);
     }
-    output_file_meta.push_back(disk_index_file_size);
+    output_file_meta.push_back(disk_index_data_file_size);
 
     /* update metadata with backward compatibility */
     uint64_t val = 0;
@@ -1448,7 +1459,8 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
     val = (uint64_t)rearrange;
     output_file_meta.push_back(val);
 
-    diskann_writer.write(sector_buf.get(), defaults::SECTOR_LEN);
+    // Write metadata to separate metadata file
+    diskann::save_bin<uint64_t>(output_metadata_file, output_file_meta.data(), output_file_meta.size(), 1);
 
     std::unique_ptr<T[]> cur_node_coords = std::make_unique<T[]>(ndims_64);
     LOG_KNOWHERE_INFO_ << "# sectors: " << n_sectors;
@@ -1538,7 +1550,7 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
                 cur_node_id++;
             }
             // flush sector to disk
-            diskann_writer.write(sector_buf.get(), defaults::SECTOR_LEN);
+            diskann_data_writer.write(sector_buf.get(), defaults::SECTOR_LEN);
         }
     }
     else
@@ -1616,7 +1628,7 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
                 }
             }
             // flush sector to disk
-            diskann_writer.write(multisector_buf.get(), nsectors_per_node * defaults::SECTOR_LEN);
+            diskann_data_writer.write(multisector_buf.get(), nsectors_per_node * defaults::SECTOR_LEN);
         }
     }
 
@@ -1661,16 +1673,16 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
                 cur_node_id++;
             }
             // flush sector to disk
-            diskann_writer.write(sector_buf.get(), defaults::SECTOR_LEN);
+            diskann_data_writer.write(sector_buf.get(), defaults::SECTOR_LEN);
         }
     }
-    diskann_writer.close();
+    diskann_data_writer.close();
     if (reversed_rearranged_vectors_map != nullptr) {
         delete [] reversed_rearranged_vectors_map;
         reversed_rearranged_vectors_map = nullptr;
     }
-    diskann::save_bin<uint64_t>(output_file, output_file_meta.data(), output_file_meta.size(), 1);
-    LOG_KNOWHERE_ERROR_ << "Output disk index file written to " << output_file;
+    LOG_KNOWHERE_ERROR_ << "Output disk index metadata file written to " << output_metadata_file;
+    LOG_KNOWHERE_ERROR_ << "Output disk index data file written to " << output_data_file;
 }
 
 template<typename T>
@@ -1699,17 +1711,17 @@ template<typename T>
     std::string pq_compressed_vectors_path =
         get_pq_compressed_filename(index_prefix_path);
     std::string mem_index_path = index_prefix_path + "_mem.index";
-    std::string disk_index_path = get_disk_index_filename(index_prefix_path);
-    std::string medoids_path = get_disk_index_medoids_filename(disk_index_path);
-    std::string centroids_path =
-        get_disk_index_centroids_filename(disk_index_path);
+    std::string disk_index_metadata_path = get_disk_index_metadata_filename(index_prefix_path);
+    std::string disk_index_data_path = get_disk_index_data_filename(index_prefix_path);
+    std::string medoids_path = get_disk_index_medoids_filename(index_prefix_path);
+    std::string centroids_path = get_disk_index_centroids_filename(index_prefix_path);
     std::string sample_data_file = get_sample_data_filename(index_prefix_path);
     // optional, used if disk index file must store pq data
     std::string disk_pq_pivots_path =
-        index_prefix_path + "_disk.index_pq_pivots.bin";
+        get_disk_index_pq_pivots_filename(index_prefix_path);
     // optional, used if disk index must store pq data
     std::string disk_pq_compressed_vectors_path =
-        index_prefix_path + "_disk.index_pq_compressed.bin";
+        get_disk_index_pq_compressed_filename(index_prefix_path);
     // optional, used if build mem usage is enough to generate cached nodes
     std::string cached_nodes_file = get_cached_nodes_file(index_prefix_path);
 
@@ -1727,8 +1739,8 @@ template<typename T>
       data_file_to_save = prepped_base;
       float max_norm_of_base =
           diskann::prepare_base_for_inner_products<T>(base_file, prepped_base);
-      std::string norm_file =
-          get_disk_index_max_base_norm_file(disk_index_path);
+      
+          std::string norm_file = get_disk_index_max_base_norm_file(index_prefix_path);
       diskann::save_bin<float>(norm_file, &max_norm_of_base, 1, 1);
       ip_prepared = true;
     }
@@ -1742,8 +1754,7 @@ template<typename T>
       data_file_to_use = prepped_base;
       auto norms_of_base =
           diskann::prepare_base_for_cosine<T>(base_file, prepped_base);
-      std::string norm_file =
-          get_disk_index_max_base_norm_file(disk_index_path);
+      std::string norm_file = get_disk_index_max_base_norm_file(index_prefix_path);
       diskann::save_bin<float>(norm_file, norms_of_base.data(),
                                norms_of_base.size(), 1);
     }
@@ -1857,7 +1868,7 @@ template<typename T>
         LOG_KNOWHERE_INFO_ << "AiSAQ build mode enabled, inline pq is " << inline_pq
                 << ", rearrange is " << rearrange << ", entry points: " << num_entry_points;
         if (num_entry_points > 0) {
-            std::string entry_points_path = index_prefix_path + "_disk.index_entry_points.bin";
+            std::string entry_points_path = get_index_entry_points_filename(index_prefix_path);
             LOG_KNOWHERE_INFO_ << "generating entry points file: " << entry_points_path;
             if (file_exists(entry_points_path)) {
                 delete_file(entry_points_path);
@@ -1869,7 +1880,7 @@ template<typename T>
         }
         LOG_KNOWHERE_INFO_ << "Call create_aisaq_layout";
         if (!use_disk_pq) {
-            diskann::create_aisaq_layout<T>(data_file_to_use.c_str(), mem_index_path, disk_index_path
+            diskann::create_aisaq_layout<T>(data_file_to_use.c_str(), mem_index_path, disk_index_metadata_path, disk_index_data_path
                                        , std::string("")
                                        , index_prefix_path
                                        , config.compare_metric
@@ -1880,7 +1891,7 @@ template<typename T>
               LOG_KNOWHERE_INFO_ << "create_disk_layout use_disk_pq: " << use_disk_pq << " reorder_data: " << reorder_data;
           if (!reorder_data)
                 diskann::create_aisaq_layout<_u8>(disk_pq_compressed_vectors_path
-                                        , mem_index_path, disk_index_path, std::string("")
+                                        , mem_index_path, disk_index_metadata_path, disk_index_data_path, std::string("")
                                         , index_prefix_path
                                         , config.compare_metric
                                         , inline_pq
@@ -1888,7 +1899,7 @@ template<typename T>
                 );
          else
                 diskann::create_aisaq_layout<_u8>(disk_pq_compressed_vectors_path,
-                                             mem_index_path, disk_index_path,
+                                             mem_index_path, disk_index_metadata_path, disk_index_data_path,
 											 data_file_to_save.c_str()
                                             , index_prefix_path
                                             , config.compare_metric
@@ -1902,14 +1913,16 @@ template<typename T>
     {
         if (!use_disk_pq) {
           diskann::create_disk_layout<T>(data_file_to_save.c_str(), mem_index_path,
-                                         disk_index_path);
+                                         disk_index_metadata_path, disk_index_data_path);
         } else {
           if (!reorder_data)
             diskann::create_disk_layout<_u8>(disk_pq_compressed_vectors_path,
-                                             mem_index_path, disk_index_path);
+                                             mem_index_path, disk_index_metadata_path,
+                                             disk_index_data_path);
           else
             diskann::create_disk_layout<_u8>(disk_pq_compressed_vectors_path,
-                                             mem_index_path, disk_index_path,
+                                             mem_index_path, disk_index_metadata_path,
+                                             disk_index_data_path,
                                              data_file_to_save.c_str());
         }
     }
@@ -1955,21 +1968,26 @@ template<typename T>
 
   template void create_disk_layout<int8_t>(const std::string base_file,
                                            const std::string mem_index_file,
-                                           const std::string output_file,
+                                           const std::string output_metadata_file,
+                                           const std::string output_data_file,
                                            const std::string reorder_data_file);
   template void create_disk_layout<uint8_t>(
       const std::string base_file, const std::string mem_index_file,
-      const std::string output_file, const std::string reorder_data_file);
+      const std::string output_metadata_file, const std::string output_data_file,
+      const std::string reorder_data_file);
   template void create_disk_layout<float>(const std::string base_file,
                                           const std::string mem_index_file,
-                                          const std::string output_file,
+                                          const std::string output_metadata_file,
+                                          const std::string output_data_file,
                                           const std::string reorder_data_file);
   template void create_disk_layout<knowhere::fp16>(
       const std::string base_file, const std::string mem_index_file,
-      const std::string output_file, const std::string reorder_data_file);
+      const std::string output_metadata_file, const std::string output_data_file,
+      const std::string reorder_data_file);
   template void create_disk_layout<knowhere::bf16>(
       const std::string base_file, const std::string mem_index_file,
-      const std::string output_file, const std::string reorder_data_file);
+      const std::string output_metadata_file, const std::string output_data_file,
+      const std::string reorder_data_file);
 
   template int8_t  *load_warmup<int8_t>(const std::string &cache_warmup_file,
                                        uint64_t          &warmup_num,
@@ -2087,7 +2105,8 @@ template<typename T>
   template void create_aisaq_layout<float>(
             const std::string base_file,
             const std::string mem_index_file,
-            const std::string output_file,
+            const std::string output_metadata_file,
+            const std::string output_data_file,
             const std::string reorder_data_file,
             const std::string &index_prefix_path,
             const diskann::Metric metric,  
@@ -2097,7 +2116,8 @@ template<typename T>
   template void create_aisaq_layout<int8_t>(
             const std::string base_file,
             const std::string mem_index_file,
-            const std::string output_file,
+            const std::string output_metadata_file,
+            const std::string output_data_file,
             const std::string reorder_data_file,
             const std::string &index_prefix_path,
             const diskann::Metric metric,  
@@ -2107,7 +2127,8 @@ template<typename T>
   template void create_aisaq_layout<uint8_t>(
             const std::string base_file,
             const std::string mem_index_file,
-            const std::string output_file,
+            const std::string output_metadata_file,
+            const std::string output_data_file,
             const std::string reorder_data_file,
             const std::string &index_prefix_path,
             const diskann::Metric metric,  
@@ -2117,7 +2138,8 @@ template<typename T>
   template void create_aisaq_layout<knowhere::bf16>(
             const std::string base_file,
             const std::string mem_index_file,
-            const std::string output_file,
+            const std::string output_metadata_file,
+            const std::string output_data_file,
             const std::string reorder_data_file,
             const std::string &index_prefix_path,
             const diskann::Metric metric,  
@@ -2127,7 +2149,8 @@ template<typename T>
   template void create_aisaq_layout<knowhere::fp16>(
             const std::string base_file,
             const std::string mem_index_file,
-            const std::string output_file,
+            const std::string output_metadata_file,
+            const std::string output_data_file,
             const std::string reorder_data_file,
             const std::string &index_prefix_path,
             const diskann::Metric metric,  

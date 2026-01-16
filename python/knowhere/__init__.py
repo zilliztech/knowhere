@@ -6,6 +6,7 @@ from .swigknowhere import BruteForceSearchFP16, BruteForceRangeSearchFP16
 from .swigknowhere import BruteForceSearchBF16, BruteForceRangeSearchBF16
 from .swigknowhere import BruteForceSearchInt8, BruteForceRangeSearchInt8
 from .swigknowhere import BruteForceSearchBin, BruteForceRangeSearchBin
+from .swigknowhere import InitNcs, CreateNcsBucket, DeleteNcsBucket, IsNcsBucketExist
 
 import numpy as np
 from bfloat16 import bfloat16

@@ -93,7 +93,7 @@ test_data = [
             "reorder_k": 1000,
             "with_raw_data": True,
         }
-    )
+    ),
     (
         "HNSW",
         {

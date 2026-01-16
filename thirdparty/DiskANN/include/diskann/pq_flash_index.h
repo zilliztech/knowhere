@@ -17,6 +17,7 @@
 #include "knowhere/feder/DiskANN.h"
 
 #include "aligned_file_reader.h"
+#include "index_reader.h"
 #include "concurrent_queue.h"
 #include "neighbor.h"
 #include "parameters.h"
@@ -25,6 +26,8 @@
 #include "utils.h"
 #include "diskann/distance.h"
 #include "knowhere/thread_pool.h"
+
+#include "ncs/ncs.h"
 
 #include "defaults.h"
 
@@ -52,8 +55,11 @@ namespace diskann {
   struct QueryScratch {
     T *coord_scratch = nullptr;  // MUST BE AT LEAST [sizeof(T) * data_dim]
 
+    // TODO: refactor to a smaller 'node_scratch' after AISAQ is updated to use IndexReader (like DiskANN does)
     char *sector_scratch =
         nullptr;          // MUST BE AT LEAST [MAX_N_SECTOR_READS * SECTOR_LEN]
+
+    // TODO: refactor to a 'node_idx' after AISAQ is updated to use IndexReader (like DiskANN does)
     _u64 sector_idx = 0;  // index of next [SECTOR_LEN] scratch to use
 
     float *aligned_pqtable_dist_scratch =
@@ -146,7 +152,7 @@ namespace diskann {
     float                 max_base_norm = 0.0f;
     bool not_l2_but_zero = false;  // (cosine or ip) and query_norm == 0.
     std::vector<unsigned>      frontier;
-    std::vector<AlignedRead>   frontier_read_reqs;
+    std::vector<ReadReq>   frontier_read_reqs;
     const knowhere::BitsetView bitset;
 
     std::vector<std::pair<unsigned, char *>> frontier_nhoods;
@@ -185,12 +191,12 @@ namespace diskann {
   template<typename T>
   class PQFlashIndex: public PQDataGetter {
    public:
-    PQFlashIndex(std::shared_ptr<AlignedFileReader> fileReader,
+    PQFlashIndex(std::shared_ptr<IndexReader> fileReader,
                  diskann::Metric metric = diskann::Metric::L2);
     ~PQFlashIndex();
 
     // load compressed data, and obtains the handle to the disk-resident index
-    int load(uint32_t num_threads, const char *index_prefix);
+    int load(uint32_t num_threads, const char *index_prefix, bool use_ncs, const milvus::NcsDescriptor* descriptor);
 
     virtual void load_cache_list(std::vector<uint32_t> &node_list);
 
@@ -217,7 +223,9 @@ namespace diskann {
     void get_vector_by_ids(const int64_t *ids, const int64_t n,
                            T *const output_data);
 
-    std::shared_ptr<AlignedFileReader> reader;
+    std::shared_ptr<IndexReader> reader;
+
+    int load_metadata(std::string metadata_file, std::string data_file, bool ncs_enable, bool sanity_checks);
 
     _u64 get_num_points() const noexcept;
 
@@ -250,19 +258,22 @@ namespace diskann {
     	return id;
     }
 
+    _u64 get_read_len_for_node(){
+      return read_len_for_node;
+    }
+
+    _u64 get_max_node_len(){
+      return max_node_len;
+    }
+
     virtual void release_pq_data(size_t offset=0, size_t size=0) override {}
 
-  protected:
-    void use_medoids_data_as_centroids();
-    void setup_thread_data(_u64 nthreads);
-    void destroy_thread_data();
-    _u64 get_thread_data_size();
-
-   //private:
+    //private:
     // sector # on disk where node_id is present with in the graph part
+    // Note: No +1 offset anymore since metadata is in a separate file
     virtual _u64 get_node_sector_offset(_u64 node_id) {
-      return long_node ? (node_id * nsectors_per_node + 1) * diskann::defaults::SECTOR_LEN
-                       : (node_id / nnodes_per_sector + 1) * diskann::defaults::SECTOR_LEN;
+      return long_node ? (node_id * nsectors_per_node) * diskann::defaults::SECTOR_LEN
+                       : (node_id / nnodes_per_sector) * diskann::defaults::SECTOR_LEN;
     }
 
     // obtains region of sector containing node
@@ -271,6 +282,12 @@ namespace diskann {
                  ? sector_buf
                  : sector_buf + (node_id % nnodes_per_sector) * max_node_len;
     }
+
+  protected:
+    void use_medoids_data_as_centroids();
+    void setup_thread_data(_u64 nthreads);
+    void destroy_thread_data();
+    _u64 get_thread_data_size();
 
     inline void copy_vec_base_data(T *des, const int64_t des_idx, void *src);
 
@@ -285,15 +302,23 @@ namespace diskann {
     void brute_force_beam_search(
         ThreadData<T> &data, const float query_norm, const _u64 k_search,
         _s64 *indices, float *distances, const _u64 beam_width_param,
-        IOContext &ctx, QueryStats *stats,
+        QueryStats *stats,
         const knowhere::feder::diskann::FederResultUniq &feder,
         knowhere::BitsetView                             bitset_view,
 		PQDataGetter* pq_data_getter);
 
+    //TODO: remove this function after AISAQ is updated to use IndexReader (like DiskANN does)
     // Assign the index of ids to its corresponding sector and if it is in
     // cache, write to the output_data
     std::unordered_map<_u64, std::vector<_u64>>
     get_sectors_layout_and_write_data_from_cache(const int64_t *ids, int64_t n,
+                                                 T *output_data);
+
+    // if the vector is in cache, write it to the output_data,
+    // otherwise, return a map, with the ids to be read from disk as keys, and
+    // the corresponding output_data index as values. 
+    std::unordered_map<_u64, _u64>
+    get_miss_ids_and_write_data_from_cache(const int64_t *ids, int64_t n,
                                                  T *output_data);
 
     // index info
@@ -318,6 +343,7 @@ namespace diskann {
 
     // data info
     bool long_node = false;
+    size_t medoid_id_on_file = 0;
     _u64 nsectors_per_node = 0;
     _u64 read_len_for_node = diskann::defaults::SECTOR_LEN;
     _u64 num_points = 0;
@@ -329,7 +355,6 @@ namespace diskann {
     _u64 aligned_dim = 0;
     _u64 disk_bytes_per_point = 0;
 
-    std::string       disk_index_file;
     std::shared_mutex node_visit_counter_mtx;
     std::vector<std::pair<_u32, std::unique_ptr<std::atomic<_u32>>>>
                       node_visit_counter;

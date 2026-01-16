@@ -6,6 +6,7 @@
 #include "diskann/aisaq.h"
 #include "diskann/aux_utils.h"
 #include "diskann/linux_aligned_file_reader.h"
+#include "diskann/file_index_reader.h"
 #include "diskann/pq_flash_aisaq_index.h"
 #include "diskann/pq_flash_index.h"
 #include "filemanager/FileManager.h"
@@ -208,16 +209,18 @@ GetNecessaryFilenames(const std::string& prefix, const bool need_norm, const boo
                       const bool use_sample_warmup, const bool rearrange, const bool entry_points) {
     std::vector<std::string> filenames;
     auto pq_pivots_filename = diskann::get_pq_pivots_filename(prefix);
-    auto disk_index_filename = diskann::get_disk_index_filename(prefix);
+    auto disk_index_metadata_filename = diskann::get_disk_index_metadata_filename(prefix);
+    auto disk_index_data_filename = diskann::get_disk_index_data_filename(prefix);
 
     filenames.push_back(pq_pivots_filename);
     filenames.push_back(diskann::get_pq_rearrangement_perm_filename(pq_pivots_filename));
     filenames.push_back(diskann::get_pq_chunk_offsets_filename(pq_pivots_filename));
     filenames.push_back(diskann::get_pq_centroid_filename(pq_pivots_filename));
     filenames.push_back(diskann::get_pq_compressed_filename(prefix));
-    filenames.push_back(disk_index_filename);
+    filenames.push_back(disk_index_metadata_filename);
+    filenames.push_back(disk_index_data_filename);
     if (need_norm) {
-        filenames.push_back(diskann::get_disk_index_max_base_norm_file(disk_index_filename));
+        filenames.push_back(diskann::get_disk_index_max_base_norm_file(prefix));
     }
     if (use_sample_cache || use_sample_warmup) {
         filenames.push_back(diskann::get_sample_data_filename(prefix));
@@ -235,10 +238,9 @@ GetNecessaryFilenames(const std::string& prefix, const bool need_norm, const boo
 std::vector<std::string>
 GetOptionalFilenames(const std::string& prefix) {
     std::vector<std::string> filenames;
-    auto disk_index_filename = diskann::get_disk_index_filename(prefix);
-    auto disk_pq_pivots_file_name = diskann::get_disk_index_pq_pivots_filename(disk_index_filename);
-    filenames.push_back(diskann::get_disk_index_centroids_filename(disk_index_filename));
-    filenames.push_back(diskann::get_disk_index_medoids_filename(disk_index_filename));
+    auto disk_pq_pivots_file_name = diskann::get_disk_index_pq_pivots_filename(prefix);
+    filenames.push_back(diskann::get_disk_index_centroids_filename(prefix));
+    filenames.push_back(diskann::get_disk_index_medoids_filename(prefix));
     filenames.push_back(disk_pq_pivots_file_name);
     filenames.push_back(diskann::get_pq_rearrangement_perm_filename(disk_pq_pivots_file_name));
     filenames.push_back(diskann::get_pq_chunk_offsets_filename(disk_pq_pivots_file_name));
@@ -492,7 +494,7 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
     }
 
     if (prep_conf.pq_cache_size.value() > 0) {
-        std::string pq_compressed_vectors_path = index_prefix_ + "_pq_compressed.bin";
+        std::string pq_compressed_vectors_path = diskann::get_pq_compressed_filename(index_prefix_);
         pq_flash_index_->aisaq_load_pq_cache(pq_compressed_vectors_path, prep_conf.pq_cache_size.value(),
                                              diskann::aisaq_pq_cache_policy_auto);
     }

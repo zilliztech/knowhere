@@ -18,6 +18,8 @@
 #include "knowhere/expected.h"
 #include "knowhere/index/index_node.h"
 #include "knowhere/index/interrupt.h"
+#include "ncs/ncs.h"
+
 namespace knowhere {
 
 template <typename T1>
@@ -204,6 +206,13 @@ class Index {
 
     [[nodiscard]] bool
     LoadIndexWithStream() const;
+
+    std::vector<std::string>
+    ListFilesForNcsUpload() const;
+    
+    Status
+    NcsUpload(const Json& json);
+
 
     ~Index() {
         if (node == nullptr)
