@@ -49,6 +49,7 @@ if(__X86_64)
   target_compile_options(utils_avx512icx PRIVATE -mfma -mf16c -mavx512f -mavx512dq
                                               -mavx512bw -mpopcnt -mavx512vl -mavx512vpopcntdq)
   target_compile_options(sparse_simd_avx512 PRIVATE -mavx512f -mavx512dq)
+  target_include_directories(sparse_simd_avx512 PRIVATE ${Boost_INCLUDE_DIRS})
 
   add_library(
     knowhere_utils STATIC
