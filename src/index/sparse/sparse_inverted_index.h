@@ -16,6 +16,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <boost/core/span.hpp>
 #include <cmath>
 #include <filesystem>
@@ -1015,8 +1016,23 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
         void
         seek(table_t vec_id) {
-            while (loc_ < plist_size_ && plist_ids_[loc_] < vec_id) {
-                ++loc_;
+            // Use binary search for long remaining lists, linear scan for short ones.
+            // Binary search has O(log n) complexity but higher constant overhead.
+            // Linear scan is cache-friendly and faster for short sequences.
+            constexpr size_t kBinarySearchThreshold = 32;
+            const size_t remaining = plist_size_ - loc_;
+
+            if (remaining > kBinarySearchThreshold) {
+                // Binary search: find first position where plist_ids_[pos] >= vec_id
+                auto begin = plist_ids_.begin() + loc_;
+                auto end = plist_ids_.begin() + plist_size_;
+                auto it = std::lower_bound(begin, end, vec_id);
+                loc_ = it - plist_ids_.begin();
+            } else {
+                // Linear scan for short remaining lists
+                while (loc_ < plist_size_ && plist_ids_[loc_] < vec_id) {
+                    ++loc_;
+                }
             }
             skip_filtered_ids();
             update_cur_vec_id();
