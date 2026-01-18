@@ -262,11 +262,14 @@ class MaxMinHeap {
     }
     void
     push(table_t id, T val) {
-        if (size_ < capacity_) {
+        // Branch hints: After initial k insertions, most candidates are rejected.
+        // - size_ < capacity_: FALSE after first k elements (unlikely)
+        // - val > pool_[0].val: FALSE for ~99.99% of candidates (unlikely)
+        if (__builtin_expect(size_ < capacity_, 0)) {
             pool_[size_] = {id, val};
             size_ += 1;
             std::push_heap(pool_.begin(), pool_.begin() + size_, std::greater<SparseIdVal<T>>());
-        } else if (val > pool_[0].val) {
+        } else if (__builtin_expect(val > pool_[0].val, 0)) {
             sift_down(id, val);
         }
     }
