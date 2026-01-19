@@ -119,10 +119,16 @@ class SparseInvertedIndexNode : public IndexNode {
             refine_factor = 1;
         }
 
+        auto use_block_max = cfg.use_block_max.value_or(false);
+        if (use_block_max && !index_->SupportsBlockMax()) {
+            return expected<DataSetPtr>::Err(Status::invalid_args,
+                                             "use_block_max is only supported for DAAT_WAND algorithm");
+        }
         sparse::InvertedIndexApproxSearchParams approx_params = {
             .refine_factor = refine_factor,
             .drop_ratio_search = drop_ratio_search,
             .dim_max_score_ratio = dim_max_score_ratio,
+            .use_block_max = use_block_max,
         };
 
         auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
@@ -401,6 +407,7 @@ class SparseInvertedIndexNode : public IndexNode {
                     new sparse::InvertedIndex<value_type, uint16_t, sparse::InvertedIndexAlgo::DAAT_WAND, mmapped>(
                         sparse::SparseMetricType::METRIC_BM25);
                 index->SetBM25Params(k1, b, avgdl);
+                index->SetBlockMaxBlockSize(cfg.block_max_block_size.value());
                 return index;
             } else if (cfg.inverted_index_algo.value() == "DAAT_MAXSCORE") {
                 auto index =
@@ -423,6 +430,7 @@ class SparseInvertedIndexNode : public IndexNode {
                 auto index =
                     new sparse::InvertedIndex<value_type, float, sparse::InvertedIndexAlgo::DAAT_WAND, mmapped>(
                         sparse::SparseMetricType::METRIC_IP);
+                index->SetBlockMaxBlockSize(cfg.block_max_block_size.value());
                 return index;
             } else if (cfg.inverted_index_algo.value() == "DAAT_MAXSCORE") {
                 auto index =

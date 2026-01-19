@@ -69,3 +69,8 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|X86_64)$")
 else()
     message(STATUS "Skipping sparse SIMD benchmark on ${CMAKE_SYSTEM_PROCESSOR} (x86_64 only)")
 endif()
+
+# Sparse algorithm benchmark (TAAT, WAND, BMW, MaxScore comparison)
+add_executable(benchmark_sparse_algo benchmark_sparse_algo.cpp)
+target_link_libraries(benchmark_sparse_algo knowhere)
+install(TARGETS benchmark_sparse_algo DESTINATION unittest)

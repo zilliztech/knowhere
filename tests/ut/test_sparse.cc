@@ -49,6 +49,9 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
 
     auto inverted_index_algo = GENERATE("TAAT_NAIVE", "DAAT_WAND", "DAAT_MAXSCORE");
 
+    // Test use_block_max only with DAAT_WAND (where it's implemented)
+    auto use_block_max = GENERATE(false, true);
+
     auto drop_ratio_search = metric == knowhere::metric::BM25 ? GENERATE(0.0, 0.1) : GENERATE(0.0, 0.3);
 
     auto version = GenTestVersionList();
@@ -65,10 +68,12 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
     };
 
     auto sparse_inverted_index_gen = [base_gen, drop_ratio_search = drop_ratio_search,
-                                      inverted_index_algo = inverted_index_algo]() {
+                                      inverted_index_algo = inverted_index_algo, use_block_max = use_block_max]() {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::DROP_RATIO_SEARCH] = drop_ratio_search;
         json[knowhere::indexparam::INVERTED_INDEX_ALGO] = inverted_index_algo;
+        // Only enable block_max for DAAT_WAND (where it's implemented)
+        json[knowhere::indexparam::USE_BLOCK_MAX] = use_block_max && (std::string(inverted_index_algo) == "DAAT_WAND");
         return json;
     };
 
@@ -491,6 +496,7 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
         knowhere::Json json = base_gen();
         json[knowhere::indexparam::DROP_RATIO_SEARCH] = drop_ratio_search;
         json[knowhere::indexparam::INVERTED_INDEX_ALGO] = inverted_index_algo;
+        // use_block_max defaults to false, CC test doesn't need it
         return json;
     };
 

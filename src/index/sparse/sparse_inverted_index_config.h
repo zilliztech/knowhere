@@ -24,6 +24,8 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_INT refine_factor;
     CFG_FLOAT dim_max_score_ratio;
     CFG_STRING inverted_index_algo;
+    CFG_BOOL use_block_max;
+    CFG_INT block_max_block_size;
     KNOHWERE_DECLARE_CONFIG(SparseInvertedIndexConfig) {
         // NOTE: drop_ratio_build has been deprecated, it won't change anything
         KNOWHERE_CONFIG_DECLARE_FIELD(drop_ratio_build)
@@ -81,6 +83,28 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .set_default(1.05)
             .description("ratio to upscale/downscale the max score of each dimension")
             .for_search();
+        /**
+         * use_block_max enables block-level max score bounds for DAAT algorithms.
+         * When enabled, posting lists are divided into blocks (128 docs each) with
+         * precomputed max scores per block. This allows tighter upper bound estimates
+         * and block skipping when the block's max contribution can't exceed threshold.
+         * Most effective when score distributions are skewed (e.g., BM25, SPLADE).
+         */
+        KNOWHERE_CONFIG_DECLARE_FIELD(use_block_max)
+            .set_default(false)
+            .description("enable block-max bounds for tighter pruning in DAAT algorithms")
+            .for_search();
+        /**
+         * block_max_block_size sets the block size for Block-Max WAND algorithm.
+         * Each posting list is divided into blocks of this size, with max score stored per block.
+         * Smaller blocks give tighter bounds but more memory overhead.
+         * Typical values: 64-256. Default: 128.
+         */
+        KNOWHERE_CONFIG_DECLARE_FIELD(block_max_block_size)
+            .set_default(128)
+            .set_range(16, 1024)
+            .description("block size for block-max algorithm")
+            .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(inverted_index_algo)
             .description("inverted index algorithm")
             .set_default("DAAT_MAXSCORE")
