@@ -492,7 +492,8 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
         milvus::cachinglayer::Manager::ConfigureTieredStorage(
             {CacheWarmupPolicy::CacheWarmupPolicy_Disable, CacheWarmupPolicy::CacheWarmupPolicy_Disable,
              CacheWarmupPolicy::CacheWarmupPolicy_Disable, CacheWarmupPolicy::CacheWarmupPolicy_Disable},
-            {1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb}, true, true, {10, false, 30});
+            {1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb}, true, true, {10, false, 30},
+            std::chrono::milliseconds(1000));
         const std::string& index_type = knowhere::IndexEnum::INDEX_CARDINAL_TIERED;
 
         for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
@@ -1450,7 +1451,8 @@ TEST_CASE("Search for EMBList Indices (Binary)", "Benchmark and validation on bi
         milvus::cachinglayer::Manager::ConfigureTieredStorage(
             {CacheWarmupPolicy::CacheWarmupPolicy_Disable, CacheWarmupPolicy::CacheWarmupPolicy_Disable,
              CacheWarmupPolicy::CacheWarmupPolicy_Disable, CacheWarmupPolicy::CacheWarmupPolicy_Disable},
-            {1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb}, true, true, {10, false, 30});
+            {1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb}, true, true, {10, false, 30},
+            std::chrono::milliseconds(1000));
         const std::string& index_type = knowhere::IndexEnum::INDEX_CARDINAL_TIERED;
 
         for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
