@@ -837,8 +837,16 @@ namespace diskann {
         return prefix + "_pq_compressed.bin";
     }
 
-    inline std::string get_disk_index_filename(const std::string& prefix) {
-        return prefix + "_disk.index";
+    inline std::string get_disk_index_pq_compressed_filename(const std::string& prefix) {
+        return prefix + "_disk_pq_compressed.bin";
+    }
+
+    inline std::string get_disk_index_metadata_filename(const std::string& prefix) {
+        return prefix + "_disk_metadata.index";
+    }
+
+    inline std::string get_disk_index_data_filename(const std::string& prefix) {
+        return prefix + "_disk_data.index";
     }
 
     inline std::string get_pq_compressed_rearranged_filename(const std::string& prefix) {
@@ -846,21 +854,21 @@ namespace diskann {
     }
 
     inline std::string get_index_rearranged_filename(const std::string& prefix) {
-        return prefix + "_disk.index_rearrange.bin";
+        return prefix + "_rearrange.bin";
     }
 
     inline std::string get_index_entry_points_filename(const std::string& prefix) {
-        return prefix + "_disk.index_entry_points.bin";
+        return prefix + "_entry_points.bin";
     }
 
     inline std::string get_disk_index_medoids_filename(
-        const std::string& disk_index_filename) {
-        return disk_index_filename + "_medoids.bin";
+        const std::string& prefix) {
+        return prefix + "_medoids.bin";
     }
 
     inline std::string get_disk_index_centroids_filename(
-        const std::string& disk_index_filename) {
-        return disk_index_filename + "_centroids.bin";
+        const std::string& prefix) {
+        return prefix + "_centroids.bin";
     }
 
     inline std::string get_sample_data_filename(const std::string& prefix) {
@@ -868,18 +876,18 @@ namespace diskann {
     }
 
     inline std::string get_disk_index_max_base_norm_file(
-        const std::string& disk_index_filename) {
-        return disk_index_filename + "_max_base_norm.bin";
+        const std::string& prefix) {
+        return prefix + "_max_base_norm.bin";
     }
 
     inline std::string get_cached_nodes_file(
-        const std::string& disk_index_filename) {
-        return disk_index_filename + "_cached_nodes.bin";
+        const std::string& prefix) {
+        return prefix + "_cached_nodes.bin";
     }
 
     inline std::string get_disk_index_pq_pivots_filename(
-        const std::string& disk_index_filename) {
-        return disk_index_filename + "_pq_pivots.bin";
+        const std::string& prefix) {
+        return prefix + "disk_pq_pivots.bin";
     }
 
     inline std::string get_emb_list_offset_file(
