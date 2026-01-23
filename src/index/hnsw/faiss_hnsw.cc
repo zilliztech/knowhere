@@ -2823,12 +2823,26 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
             return Status::empty_index;
         }
 
+        // Serialization Strategy for HNSW+RABITQ:
+        // The HNSW index uses IndexHNSWRaBitQWrapper as its storage, which is a knowhere-specific
+        // wrapper around faiss::IndexPreTransform + faiss::IndexIVFRaBitQ (+ optional IndexRefine).
+        // Since faiss::write_index() doesn't know how to serialize our custom wrapper class,
+        // we temporarily swap the storage pointer to point directly to the internal faiss index
+        // during serialization. This allows faiss to serialize the underlying index structure.
+        // After serialization, we restore the original wrapper pointer.
+        // On deserialization, we detect this and re-wrap the index back into IndexHNSWRaBitQWrapper.
+
         try {
             MemoryIOWriter writer;
             if (indexes.size() > 1) {
                 // MV index
                 faiss::write_mv(&writer);
                 writeHeader(&writer);
+
+                // Collect COSINE norms from all sub-indexes for separate serialization
+                std::vector<std::vector<float>> all_cosine_norms;
+                all_cosine_norms.reserve(indexes.size());
+
                 for (const auto& index : indexes) {
                     // Check if this is an HNSW index with IndexIVFRaBitQWrapper storage
                     auto* hnsw_index = dynamic_cast<faiss::IndexHNSW*>(index.get());
@@ -2841,11 +2855,19 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
                     if (hnsw_index != nullptr) {
                         auto* wrapper_storage = dynamic_cast<knowhere::IndexIVFRaBitQWrapper*>(hnsw_index->storage);
                         if (wrapper_storage != nullptr && wrapper_storage->index != nullptr) {
-                            // Temporarily replace storage with the internal index for serialization
+                            // Temporarily replace storage with the internal faiss index for serialization
+                            // (faiss can serialize its own index types, but not our wrapper)
                             auto* original_storage = hnsw_index->storage;
                             hnsw_index->storage = wrapper_storage->index.get();
                             faiss::write_index(index.get(), &writer);
                             hnsw_index->storage = original_storage;
+
+                            // Collect COSINE norms if this is a COSINE wrapper
+                            auto* cosine_wrapper =
+                                dynamic_cast<knowhere::IndexHNSWRaBitQWrapperCosine*>(original_storage);
+                            if (cosine_wrapper != nullptr) {
+                                all_cosine_norms.push_back(cosine_wrapper->inverse_norms_storage.inverse_l2_norms);
+                            }
                             continue;
                         }
                     }
@@ -2856,6 +2878,22 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
 
                 std::shared_ptr<uint8_t[]> data(writer.data());
                 binset.Append(Type(), data, writer.tellg());
+
+                // Serialize COSINE norms for MV indexes if any were collected
+                if (!all_cosine_norms.empty()) {
+                    MemoryIOWriter norms_writer;
+                    const size_t num_indexes = all_cosine_norms.size();
+                    norms_writer.write(&num_indexes, sizeof(num_indexes), 1);
+                    for (const auto& norms : all_cosine_norms) {
+                        const size_t norms_count = norms.size();
+                        norms_writer.write(&norms_count, sizeof(norms_count), 1);
+                        if (!norms.empty()) {
+                            norms_writer.write(norms.data(), sizeof(float), norms.size());
+                        }
+                    }
+                    std::shared_ptr<uint8_t[]> norms_data(norms_writer.data());
+                    binset.Append("HNSW_RABITQ_COSINE_NORMS", norms_data, norms_writer.tellg());
+                }
             } else {
                 // Single index - check if this is an HNSW index with IndexIVFRaBitQWrapper storage
                 auto* hnsw_index = dynamic_cast<faiss::IndexHNSW*>(indexes[0].get());
@@ -2868,7 +2906,8 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
                 if (hnsw_index != nullptr) {
                     auto* wrapper_storage = dynamic_cast<knowhere::IndexIVFRaBitQWrapper*>(hnsw_index->storage);
                     if (wrapper_storage != nullptr && wrapper_storage->index != nullptr) {
-                        // Temporarily replace storage with the internal index for serialization
+                        // Temporarily replace storage with the internal faiss index for serialization
+                        // (faiss can serialize its own index types, but not our wrapper)
                         auto* original_storage = hnsw_index->storage;
                         hnsw_index->storage = wrapper_storage->index.get();
                         faiss::write_index(indexes[0].get(), &writer);
@@ -2876,6 +2915,23 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
 
                         std::shared_ptr<uint8_t[]> data(writer.data());
                         binset.Append(Type(), data, writer.tellg());
+
+                        // For COSINE indexes, also serialize the inverse L2 norms
+                        auto* cosine_wrapper =
+                            dynamic_cast<knowhere::IndexHNSWRaBitQWrapperCosine*>(hnsw_index->storage);
+                        if (cosine_wrapper != nullptr) {
+                            const auto& norms = cosine_wrapper->inverse_norms_storage.inverse_l2_norms;
+                            if (!norms.empty()) {
+                                MemoryIOWriter norms_writer;
+                                const size_t norms_count = norms.size();
+                                norms_writer.write(&norms_count, sizeof(norms_count), 1);
+                                norms_writer.write(norms.data(), sizeof(float), norms.size());
+
+                                std::shared_ptr<uint8_t[]> norms_data(norms_writer.data());
+                                binset.Append("HNSW_RABITQ_COSINE_NORMS", norms_data, norms_writer.tellg());
+                            }
+                        }
+
                         return Status::success;
                     }
                 }
@@ -2895,6 +2951,12 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
 
     Status
     Deserialize(const BinarySet& binset, std::shared_ptr<Config> config) override {
+        // Deserialization Strategy for HNSW+RABITQ:
+        // During serialization, we replaced the IndexHNSWRaBitQWrapper with its internal faiss index.
+        // Now we need to detect this and re-wrap the storage back into IndexHNSWRaBitQWrapper.
+        // The wrapper provides HNSW-specific optimizations (e.g., cached distance computers).
+        // See Serialize() for more details on why this swap is necessary.
+
         auto binary = binset.GetByName(Type());
         if (binary == nullptr) {
             LOG_KNOWHERE_ERROR_ << "Invalid binary set.";
@@ -2909,6 +2971,26 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
                 uint32_t v = readHeader(&reader);
                 indexes.resize(v);
                 LOG_KNOWHERE_INFO_ << "read " << v << " mvs";
+
+                // Pre-read COSINE norms for MV indexes if available
+                std::vector<std::vector<float>> all_cosine_norms;
+                auto norms_binary = binset.GetByName("HNSW_RABITQ_COSINE_NORMS");
+                if (norms_binary != nullptr && norms_binary->size > 0) {
+                    MemoryIOReader norms_reader(norms_binary->data.get(), norms_binary->size);
+                    size_t num_indexes = 0;
+                    norms_reader.read(&num_indexes, sizeof(num_indexes), 1);
+                    all_cosine_norms.resize(num_indexes);
+                    for (size_t idx = 0; idx < num_indexes; ++idx) {
+                        size_t norms_count = 0;
+                        norms_reader.read(&norms_count, sizeof(norms_count), 1);
+                        if (norms_count > 0) {
+                            all_cosine_norms[idx].resize(norms_count);
+                            norms_reader.read(all_cosine_norms[idx].data(), sizeof(float), norms_count);
+                        }
+                    }
+                }
+
+                size_t cosine_norms_idx = 0;
                 for (auto i = 0; i < v; ++i) {
                     auto read_index = std::unique_ptr<faiss::Index>(faiss::read_index(&reader));
 
@@ -2926,6 +3008,11 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
                         std::unique_ptr<faiss::Index> storage_index(hnsw_index->storage);
                         hnsw_index->storage = nullptr;  // Prevent double-free
 
+                        // Check if this is a COSINE index:
+                        // 1. The is_cosine flag must be set on the storage index
+                        // 2. There must be COSINE norms data available (pre-loaded from BinarySet)
+                        const bool is_cosine_index = storage_index->is_cosine && !all_cosine_norms.empty();
+
                         // First deserialize as IndexIVFRaBitQWrapper
                         auto base_wrapper =
                             knowhere::IndexIVFRaBitQWrapper::from_deserialized(std::move(storage_index));
@@ -2934,13 +3021,33 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
                             return Status::invalid_serialized_index_type;
                         }
 
-                        // Then wrap in IndexHNSWRaBitQWrapper for HNSW optimization support
-                        auto hnsw_wrapper =
-                            std::make_unique<knowhere::IndexHNSWRaBitQWrapper>(std::move(base_wrapper->index));
-                        hnsw_wrapper->ntotal = base_wrapper->ntotal;
-                        hnsw_wrapper->is_trained = base_wrapper->is_trained;
+                        if (is_cosine_index) {
+                            // Create COSINE wrapper and restore inverse L2 norms from serialized data
+                            auto hnsw_wrapper =
+                                std::make_unique<knowhere::IndexHNSWRaBitQWrapperCosine>(std::move(base_wrapper->index));
+                            hnsw_wrapper->ntotal = base_wrapper->ntotal;
+                            hnsw_wrapper->is_trained = base_wrapper->is_trained;
 
-                        hnsw_index->storage = hnsw_wrapper.release();
+                            // Restore inverse L2 norms from BinarySet (saved during Serialize)
+                            if (cosine_norms_idx < all_cosine_norms.size()) {
+                                hnsw_wrapper->inverse_norms_storage.inverse_l2_norms =
+                                    std::move(all_cosine_norms[cosine_norms_idx]);
+                                ++cosine_norms_idx;
+                            } else {
+                                LOG_KNOWHERE_WARNING_ << "COSINE index missing inverse norms data in BinarySet (MV)";
+                                return Status::invalid_binary_set;
+                            }
+
+                            hnsw_index->storage = hnsw_wrapper.release();
+                        } else {
+                            // Then wrap in IndexHNSWRaBitQWrapper for HNSW optimization support
+                            auto hnsw_wrapper =
+                                std::make_unique<knowhere::IndexHNSWRaBitQWrapper>(std::move(base_wrapper->index));
+                            hnsw_wrapper->ntotal = base_wrapper->ntotal;
+                            hnsw_wrapper->is_trained = base_wrapper->is_trained;
+
+                            hnsw_index->storage = hnsw_wrapper.release();
+                        }
                     }
 
                     indexes[i] = std::move(read_index);
@@ -2963,6 +3070,13 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
                     std::unique_ptr<faiss::Index> storage_index(hnsw_index->storage);
                     hnsw_index->storage = nullptr;  // Prevent double-free
 
+                    // Check if this is a COSINE index:
+                    // 1. The is_cosine flag must be set on the storage index
+                    // 2. The COSINE norms data must exist in the BinarySet
+                    // Both conditions are required for backward compatibility with pre-COSINE indexes
+                    const bool has_cosine_norms = binset.GetByName("HNSW_RABITQ_COSINE_NORMS") != nullptr;
+                    const bool is_cosine_index = storage_index->is_cosine && has_cosine_norms;
+
                     // First deserialize as IndexIVFRaBitQWrapper
                     auto base_wrapper = knowhere::IndexIVFRaBitQWrapper::from_deserialized(std::move(storage_index));
                     if (base_wrapper == nullptr) {
@@ -2970,13 +3084,39 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
                         return Status::invalid_serialized_index_type;
                     }
 
-                    // Then wrap in IndexHNSWRaBitQWrapper for HNSW optimization support
-                    auto hnsw_wrapper =
-                        std::make_unique<knowhere::IndexHNSWRaBitQWrapper>(std::move(base_wrapper->index));
-                    hnsw_wrapper->ntotal = base_wrapper->ntotal;
-                    hnsw_wrapper->is_trained = base_wrapper->is_trained;
+                    if (is_cosine_index) {
+                        // Create COSINE wrapper and restore inverse L2 norms from serialized data
+                        auto hnsw_wrapper =
+                            std::make_unique<knowhere::IndexHNSWRaBitQWrapperCosine>(std::move(base_wrapper->index));
+                        hnsw_wrapper->ntotal = base_wrapper->ntotal;
+                        hnsw_wrapper->is_trained = base_wrapper->is_trained;
 
-                    hnsw_index->storage = hnsw_wrapper.release();
+                        // Restore inverse L2 norms from BinarySet (saved during Serialize)
+                        auto norms_binary = binset.GetByName("HNSW_RABITQ_COSINE_NORMS");
+                        if (norms_binary != nullptr && norms_binary->size > 0) {
+                            MemoryIOReader norms_reader(norms_binary->data.get(), norms_binary->size);
+                            size_t norms_count = 0;
+                            norms_reader.read(&norms_count, sizeof(norms_count), 1);
+                            if (norms_count > 0) {
+                                hnsw_wrapper->inverse_norms_storage.inverse_l2_norms.resize(norms_count);
+                                norms_reader.read(hnsw_wrapper->inverse_norms_storage.inverse_l2_norms.data(),
+                                                  sizeof(float), norms_count);
+                            }
+                        } else {
+                            LOG_KNOWHERE_WARNING_ << "COSINE index missing inverse norms data in BinarySet";
+                            return Status::invalid_binary_set;
+                        }
+
+                        hnsw_index->storage = hnsw_wrapper.release();
+                    } else {
+                        // Then wrap in IndexHNSWRaBitQWrapper for HNSW optimization support
+                        auto hnsw_wrapper =
+                            std::make_unique<knowhere::IndexHNSWRaBitQWrapper>(std::move(base_wrapper->index));
+                        hnsw_wrapper->ntotal = base_wrapper->ntotal;
+                        hnsw_wrapper->is_trained = base_wrapper->is_trained;
+
+                        hnsw_index->storage = hnsw_wrapper.release();
+                    }
                 }
 
                 indexes[0] = std::move(read_index);
@@ -3019,26 +3159,19 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
         // create an index
         const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
 
-        // For cosine distance: normalize the entire dataset (for both HNSW and refine)
-        // This matches IVF_RABITQ's behavior where both base_index and refine_index use normalized data
-        DataSetPtr normalized_dataset;
-        const float* training_data = static_cast<const float*>(data);
+        // For cosine distance:
+        // - HNSW (IndexHNSWFlatCosine) handles normalization internally
+        // - IVF_RABITQ uses IndexIVFRaBitQWrapperCosine which stores inverse L2 norms
+        //   and uses IP metric internally, returning proper cosine distances
+        // - Both HNSW and IVF_RABITQ use original (non-normalized) data
 
-        if (is_cosine) {
-            // Convert to float
-            auto float_ds = convert_ds_to_float(dataset, data_format);
-            if (float_ds == nullptr) {
-                LOG_KNOWHERE_ERROR_ << "Unsupported data format";
-                return Status::invalid_args;
-            }
-
-            // Normalize the dataset in-place (like IVF_RABITQ does)
-            NormalizeDataset<float>(float_ds);
-            training_data = static_cast<const float*>(float_ds->GetTensor());
-
-            // Store the normalized dataset to keep it alive
-            normalized_dataset = float_ds;
+        // Convert to float (needed for all cases)
+        auto float_ds = convert_ds_to_float(dataset, data_format);
+        if (float_ds == nullptr) {
+            LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+            return Status::invalid_args;
         }
+        const float* training_data = static_cast<const float*>(float_ds->GetTensor());
 
         // HNSW + IVF_RABITQ index should build HNSW+FLAT first, then replace FLAT with IVF_RABITQ
         auto train_index = [&](const float* data, const int i, const int64_t rows) {
@@ -3060,28 +3193,35 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
             ivf_cfg.rbq_bits_query = hnsw_cfg.rbq_query_nbits.value_or(0);
             ivf_cfg.refine = false;  // Don't use wrapper's refine, HNSW manages it
 
-            // Create IndexIVFRaBitQWrapper with METRIC_L2 (data will be normalized for cosine)
-            expected<std::unique_ptr<knowhere::IndexIVFRaBitQWrapper>> ivfrabitq_result;
+            // Create appropriate wrapper based on metric type
+            std::unique_ptr<knowhere::IndexHNSWRaBitQWrapper> ivfrabitq_wrapper;
             if (is_cosine) {
-                // For cosine: use normalized data for IVF_RABITQ, L2 metric
-                ivfrabitq_result =
-                    knowhere::IndexIVFRaBitQWrapper::create(dim, nlist, ivf_cfg, data_format, faiss::METRIC_L2);
+                // For cosine: use IndexIVFRaBitQWrapperCosine with IP metric
+                // It stores inverse L2 norms and returns WithCosineNormDistanceComputer
+                auto ivfrabitq_result =
+                    knowhere::IndexIVFRaBitQWrapperCosine::create(dim, nlist, ivf_cfg, data_format);
+                if (!ivfrabitq_result.has_value()) {
+                    LOG_KNOWHERE_ERROR_ << "Failed to create IndexIVFRaBitQWrapperCosine";
+                    return Status::invalid_args;
+                }
+                // Wrap in IndexHNSWRaBitQWrapperCosine for HNSW optimization support
+                ivfrabitq_wrapper = std::make_unique<knowhere::IndexHNSWRaBitQWrapperCosine>(
+                    std::move(ivfrabitq_result.value()->index));
+                ivfrabitq_wrapper->ntotal = ivfrabitq_result.value()->ntotal;
+                ivfrabitq_wrapper->is_trained = ivfrabitq_result.value()->is_trained;
             } else {
-                ivfrabitq_result =
+                auto ivfrabitq_result =
                     knowhere::IndexIVFRaBitQWrapper::create(dim, nlist, ivf_cfg, data_format, metric.value());
+                if (!ivfrabitq_result.has_value()) {
+                    LOG_KNOWHERE_ERROR_ << "Failed to create IndexIVFRaBitQWrapper";
+                    return Status::invalid_args;
+                }
+                // Wrap in IndexHNSWRaBitQWrapper for HNSW optimization support
+                ivfrabitq_wrapper =
+                    std::make_unique<knowhere::IndexHNSWRaBitQWrapper>(std::move(ivfrabitq_result.value()->index));
+                ivfrabitq_wrapper->ntotal = ivfrabitq_result.value()->ntotal;
+                ivfrabitq_wrapper->is_trained = ivfrabitq_result.value()->is_trained;
             }
-
-            if (!ivfrabitq_result.has_value()) {
-                LOG_KNOWHERE_ERROR_ << "Failed to create IndexIVFRaBitQWrapper";
-                return Status::invalid_args;
-            }
-
-            // Wrap in IndexHNSWRaBitQWrapper for HNSW optimization support
-            auto ivfrabitq_wrapper =
-                std::make_unique<knowhere::IndexHNSWRaBitQWrapper>(std::move(ivfrabitq_result.value()->index));
-            // Copy over the ntotal and other fields
-            ivfrabitq_wrapper->ntotal = ivfrabitq_result.value()->ntotal;
-            ivfrabitq_wrapper->is_trained = ivfrabitq_result.value()->is_trained;
 
             // should refine be used?
             std::unique_ptr<faiss::Index> final_index;
@@ -3104,11 +3244,13 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
                 final_index = std::move(hnsw_index);
             }
 
-            // train with normalized data for cosine (both HNSW and refine use normalized data)
+            // Train HNSW with original data (IndexHNSWFlatCosine handles normalization internally)
+            // Refine index also uses original data for accurate distance computation
             LOG_KNOWHERE_INFO_ << "Training HNSW Index";
             final_index->train(rows, training_data);
 
-            // train ivf_rabitq with the same data
+            // Train IVF_RABITQ with original data
+            // For COSINE: IndexIVFRaBitQWrapperCosine uses IP metric internally
             LOG_KNOWHERE_INFO_ << "Training IVF_RABITQ Index";
             ivfrabitq_wrapper->train(rows, training_data);
 
@@ -3132,6 +3274,8 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
         // no scalar info or just one partition(after possible combination), build index on whole data
         if (scalar_info_map.empty() || tmp_combined_scalar_ids.size() <= 1) {
             tmp_index_ivfrabitq.resize(1);
+            // Note: the data parameter is not used inside train_index lambda,
+            // it uses captured training_data instead
             return train_index(training_data, 0, rows);
         }
 
@@ -3151,13 +3295,15 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
         auto qb = hnsw_cfg.rbq_query_nbits.value_or(0);
 
         // Enable cached distance computer for HNSW optimization and set qb parameter
-        for (auto& index : indexes) {
+        // Note: We use wrapper's mutable search_qb field instead of modifying the underlying
+        // faiss index to maintain const-correctness of this Search method
+        for (const auto& index : indexes) {
             if (index == nullptr) {
                 continue;
             }
 
             faiss::IndexHNSW* index_hnsw = nullptr;
-            faiss::IndexRefine* const index_refine = dynamic_cast<faiss::IndexRefine*>(index.get());
+            const faiss::IndexRefine* index_refine = dynamic_cast<const faiss::IndexRefine*>(index.get());
 
             if (index_refine != nullptr) {
                 index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index_refine->base_index);
@@ -3168,48 +3314,29 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
             if (index_hnsw != nullptr) {
                 auto* wrapper_storage = dynamic_cast<knowhere::IndexHNSWRaBitQWrapper*>(index_hnsw->storage);
                 if (wrapper_storage != nullptr) {
-                    auto* ivfrabitq_idx = wrapper_storage->get_ivfrabitq_index();
-                    if (ivfrabitq_idx != nullptr) {
-                        ivfrabitq_idx->qb = qb;
-                    }
-
-                    // Always enable cached distance computer for HNSW optimization
+                    // Set qb via wrapper's mutable field (const-safe)
+                    wrapper_storage->set_search_qb(qb);
+                    // Enable cached distance computer for HNSW optimization
                     wrapper_storage->set_use_cached_distance_computer(true);
                 }
             }
         }
 
-        // For cosine distance, normalize queries (like IVF_RABITQ does)
-        // Since training data was normalized, queries must also be normalized
-        const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), knowhere::metric::COSINE);
-        DataSetPtr normalized_query_dataset;
-        DataSetPtr search_dataset = dataset;
+        // For cosine distance: no need to normalize queries
+        // IndexHNSWRaBitQWrapperCosine::get_distance_computer() returns WithCosineNormDistanceComputer
+        // which automatically handles query norm in set_query()
 
-        if (is_cosine) {
-            // Convert to float
-            auto float_ds = convert_ds_to_float(dataset, data_format);
-            if (float_ds == nullptr) {
-                LOG_KNOWHERE_ERROR_ << "Unsupported data format";
-                return expected<DataSetPtr>::Err(Status::invalid_args, "Failed to convert dataset to float");
-            }
-
-            // Create normalized query dataset
-            auto [normalized_ds, norms] = CopyAndNormalizeDataset<float>(float_ds);
-            normalized_query_dataset = normalized_ds;
-            search_dataset = normalized_query_dataset;
-        }
-
-        // Call the parent class Search method with (possibly normalized) queries
-        auto result = BaseFaissRegularIndexHNSWNode::Search(search_dataset, std::move(cfg), bitset, op_context);
+        // Call the parent class Search method with original queries
+        auto result = BaseFaissRegularIndexHNSWNode::Search(dataset, std::move(cfg), bitset, op_context);
 
         // Disable cached distance computer after search
-        for (auto& index : indexes) {
+        for (const auto& index : indexes) {
             if (index == nullptr) {
                 continue;
             }
 
             faiss::IndexHNSW* index_hnsw = nullptr;
-            faiss::IndexRefine* const index_refine = dynamic_cast<faiss::IndexRefine*>(index.get());
+            const faiss::IndexRefine* index_refine = dynamic_cast<const faiss::IndexRefine*>(index.get());
 
             if (index_refine != nullptr) {
                 index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index_refine->base_index);
@@ -3237,23 +3364,8 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
 
         auto rows = dataset->GetRows();
 
-        // For cosine distance: prepare normalized data for IVF_RABITQ only
-        // HNSW and Refine should use original data
-        bool is_cosine = indexes[0]->is_cosine;
-
-        DataSetPtr normalized_dataset_for_ivf;
-        if (is_cosine) {
-            // Convert to float
-            auto float_ds = convert_ds_to_float(dataset, data_format);
-            if (float_ds == nullptr) {
-                LOG_KNOWHERE_ERROR_ << "Unsupported data format";
-                return Status::invalid_args;
-            }
-
-            // Create a normalized copy for IVF_RABITQ using utility function
-            auto [normalized_ds, norms] = CopyAndNormalizeDataset<float>(float_ds);
-            normalized_dataset_for_ivf = normalized_ds;
-        }
+        // For cosine distance: IndexIVFRaBitQWrapperCosine::add() stores inverse L2 norms
+        // automatically, so we just pass original data to both HNSW and IVF_RABITQ
 
         auto finalize_index = [&](int i) {
             // we're done.
@@ -3322,20 +3434,13 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
                     return status_reg;
                 }
 
-                // ivf_rabitq - use normalized dataset for cosine, original for others
+                // ivf_rabitq - use original dataset
+                // For cosine: IndexIVFRaBitQWrapperCosine::add() stores inverse L2 norms automatically
                 LOG_KNOWHERE_INFO_ << "Adding " << rows << " to IVF_RABITQ Index";
 
-                if (is_cosine && normalized_dataset_for_ivf) {
-                    auto status_rabitq =
-                        add_to_index(tmp_index_ivfrabitq[0].get(), normalized_dataset_for_ivf, data_format);
-                    if (status_rabitq != Status::success) {
-                        return status_rabitq;
-                    }
-                } else {
-                    auto status_rabitq = add_to_index(tmp_index_ivfrabitq[0].get(), dataset, data_format);
-                    if (status_rabitq != Status::success) {
-                        return status_rabitq;
-                    }
+                auto status_rabitq = add_to_index(tmp_index_ivfrabitq[0].get(), dataset, data_format);
+                if (status_rabitq != Status::success) {
+                    return status_rabitq;
                 }
                 return finalize_index(0);
             }
@@ -3358,21 +3463,14 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
                             return status_reg;
                         }
 
-                        // ivf_rabitq - use normalized dataset for cosine, original for others
+                        // ivf_rabitq - use original dataset
+                        // For cosine: IndexIVFRaBitQWrapperCosine::add() stores inverse L2 norms automatically
                         LOG_KNOWHERE_INFO_ << "Adding " << scalar_info[id].size() << " to IVF_RABITQ Index";
 
-                        if (is_cosine && normalized_dataset_for_ivf) {
-                            auto status_rabitq = add_partial_dataset_to_index(
-                                tmp_index_ivfrabitq[i].get(), normalized_dataset_for_ivf, data_format, scalar_info[id]);
-                            if (status_rabitq != Status::success) {
-                                return status_rabitq;
-                            }
-                        } else {
-                            auto status_rabitq = add_partial_dataset_to_index(tmp_index_ivfrabitq[i].get(), dataset,
-                                                                              data_format, scalar_info[id]);
-                            if (status_rabitq != Status::success) {
-                                return status_rabitq;
-                            }
+                        auto status_rabitq = add_partial_dataset_to_index(tmp_index_ivfrabitq[i].get(), dataset,
+                                                                          data_format, scalar_info[id]);
+                        if (status_rabitq != Status::success) {
+                            return status_rabitq;
                         }
                     }
                     finalize_index(i);

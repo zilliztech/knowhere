@@ -32,6 +32,9 @@ struct CachedHNSWRaBitDistanceComputer : faiss::DistanceComputer {
     const faiss::IndexIVFRaBitQ* parent = nullptr;
     const faiss::IndexPreTransform* pretransform = nullptr;  // For applying rotation
 
+    // Query bits value for distance computation (passed from wrapper, not read from parent)
+    uint8_t qb_value = 0;
+
     // Cached data
     std::vector<std::vector<float>> centroids;  // Pre-computed centroids for all lists
     std::vector<std::unique_ptr<faiss::FlatCodesDistanceComputer>> distance_computers;  // One per list
@@ -42,8 +45,12 @@ struct CachedHNSWRaBitDistanceComputer : faiss::DistanceComputer {
     mutable std::vector<bool> query_set_flags;  // Flag for each list
     const float* current_query_ptr = nullptr;   // Track current query pointer to detect query changes
 
-    CachedHNSWRaBitDistanceComputer(const faiss::IndexIVFRaBitQ* parent_index, const faiss::IndexPreTransform* pt)
-        : parent(parent_index), pretransform(pt) {
+    // Debug: track if rotation was applied
+    bool rotation_applied = false;
+
+    CachedHNSWRaBitDistanceComputer(const faiss::IndexIVFRaBitQ* parent_index, const faiss::IndexPreTransform* pt,
+                                    uint8_t qb)
+        : parent(parent_index), pretransform(pt), qb_value(qb) {
         // Pre-compute all centroids (these don't change)
         const size_t nlist = parent->nlist;
         centroids.resize(nlist);
@@ -55,6 +62,7 @@ struct CachedHNSWRaBitDistanceComputer : faiss::DistanceComputer {
             centroids[list_no].resize(parent->d);
             parent->quantizer->reconstruct(list_no, centroids[list_no].data());
         }
+
     }
 
     void
@@ -65,21 +73,25 @@ struct CachedHNSWRaBitDistanceComputer : faiss::DistanceComputer {
             if (xt != x) {
                 transformed_query.reset(xt);
                 q = transformed_query.get();
+                rotation_applied = true;
             } else {
                 q = x;
+                rotation_applied = false;
             }
         } else {
             q = x;
+            rotation_applied = false;
         }
 
+
         // Check if we need to recreate distance computers due to qb change
-        if (cached_qb != parent->qb) {
+        if (cached_qb != static_cast<int>(qb_value)) {
             // Recreate all distance computers with the new qb value
             for (size_t list_no = 0; list_no < centroids.size(); ++list_no) {
                 distance_computers[list_no].reset(
-                    parent->rabitq.get_distance_computer(parent->qb, centroids[list_no].data()));
+                    parent->rabitq.get_distance_computer(qb_value, centroids[list_no].data()));
             }
-            cached_qb = parent->qb;
+            cached_qb = qb_value;
             // When qb changes, we need to reset all query flags
             std::fill(query_set_flags.begin(), query_set_flags.end(), false);
         }
@@ -109,6 +121,7 @@ struct CachedHNSWRaBitDistanceComputer : faiss::DistanceComputer {
 
         // Use cached distance computer for this list
         float distance = distance_computers[list_no]->distance_to_code(code);
+
 
         // Release code
         parent->invlists->release_codes(list_no, code);
@@ -243,10 +256,11 @@ IndexHNSWRaBitQWrapper::get_distance_computer() const {
             faiss::Index* index_for_pt = (index_refine != nullptr) ? index_refine->base_index : index.get();
             faiss::IndexPreTransform* index_pt = dynamic_cast<faiss::IndexPreTransform*>(index_for_pt);
 
-            return new CachedHNSWRaBitDistanceComputer(ivfrabitq_idx, index_pt);
+            // Pass search_qb to the distance computer (avoids modifying index state in const method)
+            return new CachedHNSWRaBitDistanceComputer(ivfrabitq_idx, index_pt, search_qb);
         }
     }
-    // Default: use standard distance computer
+    // Default: use standard distance computer (IndexPreTransform's distance computer)
     return IndexIVFRaBitQWrapper::get_distance_computer();
 }
 
@@ -354,6 +368,236 @@ void
 IndexIVFRaBitQWrapper::getIteratorNextBatch(faiss::IVFIteratorWorkspace* workspace, size_t current_backup_count) const {
     const auto ivfrbq = this->get_ivfrabitq_index();
     ivfrbq->getIteratorNextBatch(workspace, current_backup_count);
+}
+
+// IndexIVFRaBitQWrapperCosine implementation
+// Similar to IndexScalarQuantizerCosine - uses IP metric internally and stores inverse L2 norms
+
+IndexIVFRaBitQWrapperCosine::IndexIVFRaBitQWrapperCosine(std::unique_ptr<faiss::Index>&& index_in)
+    : IndexIVFRaBitQWrapper(std::move(index_in)) {
+    is_cosine = true;
+}
+
+expected<std::unique_ptr<IndexIVFRaBitQWrapperCosine>>
+IndexIVFRaBitQWrapperCosine::create(const faiss::idx_t d, const size_t nlist, const IvfRaBitQConfig& ivf_rabitq_cfg,
+                                    const DataFormatEnum raw_data_format) {
+    // For cosine, use METRIC_INNER_PRODUCT internally
+    // The WithCosineNormDistanceComputer will handle the norm multiplication
+    auto qb = ivf_rabitq_cfg.rbq_bits_query.value();
+
+    auto idx_flat = std::make_unique<faiss::IndexFlat>(d, faiss::METRIC_INNER_PRODUCT, false);
+    auto idx_ivfrbq =
+        std::make_unique<faiss::IndexIVFRaBitQ>(idx_flat.release(), d, nlist, faiss::METRIC_INNER_PRODUCT);
+    idx_ivfrbq->own_fields = true;
+    idx_ivfrbq->qb = qb;
+
+    // wrap it in an IndexPreTransform
+    auto rr = std::make_unique<faiss::RandomRotationMatrix>(d, d);
+    auto idx_rr = std::make_unique<faiss::IndexPreTransform>(rr.release(), idx_ivfrbq.release());
+    idx_rr->own_fields = true;
+    idx_rr->is_cosine = true;
+
+    // create a refiner index, if needed
+    std::unique_ptr<faiss::Index> idx_final;
+    if (ivf_rabitq_cfg.refine.value_or(false) && ivf_rabitq_cfg.refine_type.has_value()) {
+        // refine is needed - use IP metric for base, refine will use original data
+        const auto base_d = idx_rr->d;
+        // For refine with cosine, we still use IP metric type
+        auto final_index_cnd =
+            pick_refine_index(raw_data_format, ivf_rabitq_cfg.refine_type, std::move(idx_rr), base_d,
+                              faiss::METRIC_INNER_PRODUCT);
+        if (!final_index_cnd.has_value()) {
+            return expected<std::unique_ptr<IndexIVFRaBitQWrapperCosine>>::Err(Status::invalid_args,
+                                                                               "Invalid refine parameters");
+        }
+
+        idx_final = std::move(final_index_cnd.value());
+    } else {
+        // refine is not needed
+        idx_final = std::move(idx_rr);
+    }
+
+    auto result = std::make_unique<IndexIVFRaBitQWrapperCosine>(std::move(idx_final));
+    return result;
+}
+
+void
+IndexIVFRaBitQWrapperCosine::add(faiss::idx_t n, const float* x) {
+    if (n == 0) {
+        return;
+    }
+    // Add data to underlying index
+    IndexIVFRaBitQWrapper::add(n, x);
+    // Store inverse L2 norms for cosine distance computation
+    inverse_norms_storage.add(x, n, d);
+}
+
+void
+IndexIVFRaBitQWrapperCosine::reset() {
+    IndexIVFRaBitQWrapper::reset();
+    inverse_norms_storage.reset();
+}
+
+const float*
+IndexIVFRaBitQWrapperCosine::get_inverse_l2_norms() const {
+    return inverse_norms_storage.inverse_l2_norms.data();
+}
+
+faiss::DistanceComputer*
+IndexIVFRaBitQWrapperCosine::get_distance_computer() const {
+    // Wrap the base distance computer with WithCosineNormDistanceComputer
+    // This multiplies distances by inverse_l2_norms[i] * inverse_query_norm
+    return new faiss::WithCosineNormDistanceComputer(
+        this->get_inverse_l2_norms(), this->d,
+        std::unique_ptr<faiss::DistanceComputer>(IndexIVFRaBitQWrapper::get_distance_computer()));
+}
+
+// IndexHNSWRaBitQWrapperCosine implementation
+// Inherits from IndexHNSWRaBitQWrapper + HasInverseL2Norms for proper cosine support
+
+IndexHNSWRaBitQWrapperCosine::IndexHNSWRaBitQWrapperCosine(std::unique_ptr<faiss::Index>&& index_in)
+    : IndexHNSWRaBitQWrapper(std::move(index_in)) {
+    is_cosine = true;
+}
+
+void
+IndexHNSWRaBitQWrapperCosine::add(faiss::idx_t n, const float* x) {
+    if (n == 0) {
+        return;
+    }
+    // Add data to underlying index
+    IndexHNSWRaBitQWrapper::add(n, x);
+    // Store inverse L2 norms for cosine distance computation
+    inverse_norms_storage.add(x, n, d);
+}
+
+void
+IndexHNSWRaBitQWrapperCosine::reset() {
+    IndexHNSWRaBitQWrapper::reset();
+    inverse_norms_storage.reset();
+}
+
+const float*
+IndexHNSWRaBitQWrapperCosine::get_inverse_l2_norms() const {
+    return inverse_norms_storage.inverse_l2_norms.data();
+}
+
+// Cached distance computer for HNSW + IVF_RABITQ with COSINE metric
+struct CachedHNSWRaBitDistanceComputerCosine : faiss::DistanceComputer {
+    const float* q = nullptr;
+    const faiss::IndexIVFRaBitQ* parent = nullptr;
+    const faiss::IndexPreTransform* pretransform = nullptr;
+    const float* inverse_l2_norms = nullptr;
+    faiss::idx_t d = 0;
+
+    uint8_t qb_value = 0;
+
+    std::vector<std::vector<float>> centroids;
+    std::vector<std::unique_ptr<faiss::FlatCodesDistanceComputer>> distance_computers;
+    int cached_qb = -1;
+    std::unique_ptr<const float[]> transformed_query;
+
+    mutable std::vector<bool> query_set_flags;
+    const float* current_query_ptr = nullptr;
+
+    // For cosine: inverse query norm
+    float inverse_query_norm = 1.0f;
+
+    CachedHNSWRaBitDistanceComputerCosine(const faiss::IndexIVFRaBitQ* parent_index, const faiss::IndexPreTransform* pt,
+                                          uint8_t qb, const float* inv_norms, faiss::idx_t dim)
+        : parent(parent_index), pretransform(pt), qb_value(qb), inverse_l2_norms(inv_norms), d(dim) {
+        const size_t nlist = parent->nlist;
+        centroids.resize(nlist);
+        distance_computers.resize(nlist);
+        query_set_flags.resize(nlist, false);
+
+        for (size_t list_no = 0; list_no < nlist; ++list_no) {
+            centroids[list_no].resize(parent->d);
+            parent->quantizer->reconstruct(list_no, centroids[list_no].data());
+        }
+    }
+
+    void
+    set_query(const float* x) override {
+        // Apply pretransform (rotation) if available
+        if (pretransform != nullptr && !pretransform->chain.empty()) {
+            const float* xt = pretransform->apply_chain(1, x);
+            if (xt != x) {
+                transformed_query.reset(xt);
+                q = transformed_query.get();
+            } else {
+                q = x;
+            }
+        } else {
+            q = x;
+        }
+
+        // Compute inverse query norm for cosine distance
+        float query_norm_l2sqr = faiss::fvec_norm_L2sqr(x, d);
+        inverse_query_norm = (query_norm_l2sqr == 0.0f) ? 1.0f : (1.0f / sqrtf(query_norm_l2sqr));
+
+        // Check if we need to recreate distance computers due to qb change
+        if (cached_qb != static_cast<int>(qb_value)) {
+            for (size_t list_no = 0; list_no < centroids.size(); ++list_no) {
+                distance_computers[list_no].reset(
+                    parent->rabitq.get_distance_computer(qb_value, centroids[list_no].data()));
+            }
+            cached_qb = qb_value;
+            std::fill(query_set_flags.begin(), query_set_flags.end(), false);
+        }
+
+        // Check if this is a new query
+        if (current_query_ptr != x) {
+            current_query_ptr = x;
+            std::fill(query_set_flags.begin(), query_set_flags.end(), false);
+        }
+    }
+
+    float
+    operator()(faiss::idx_t i) override {
+        faiss::idx_t lo = parent->direct_map.get(i);
+        uint64_t list_no = faiss::lo_listno(lo);
+        uint64_t offset = faiss::lo_offset(lo);
+
+        if (!query_set_flags[list_no] && distance_computers[list_no]) {
+            distance_computers[list_no]->set_query(q);
+            query_set_flags[list_no] = true;
+        }
+
+        const uint8_t* code = parent->invlists->get_single_code(list_no, offset);
+        float distance = distance_computers[list_no]->distance_to_code(code);
+        parent->invlists->release_codes(list_no, code);
+
+        // Apply cosine norm correction: distance * inverse_norm[i] * inverse_query_norm
+        // For IP metric, this gives us the cosine similarity (negated for min-heap)
+        distance = distance * inverse_l2_norms[i] * inverse_query_norm;
+
+        return distance;
+    }
+
+    float
+    symmetric_dis(faiss::idx_t i, faiss::idx_t j) override {
+        FAISS_THROW_MSG("Not implemented");
+    }
+};
+
+faiss::DistanceComputer*
+IndexHNSWRaBitQWrapperCosine::get_distance_computer() const {
+    if (use_cached_distance_computer) {
+        auto* ivfrabitq_idx = get_ivfrabitq_index();
+        if (ivfrabitq_idx != nullptr) {
+            faiss::IndexRefine* index_refine = dynamic_cast<faiss::IndexRefine*>(index.get());
+            faiss::Index* index_for_pt = (index_refine != nullptr) ? index_refine->base_index : index.get();
+            faiss::IndexPreTransform* index_pt = dynamic_cast<faiss::IndexPreTransform*>(index_for_pt);
+
+            return new CachedHNSWRaBitDistanceComputerCosine(ivfrabitq_idx, index_pt, search_qb,
+                                                             get_inverse_l2_norms(), d);
+        }
+    }
+    // Default: wrap base distance computer with cosine norm correction
+    return new faiss::WithCosineNormDistanceComputer(
+        this->get_inverse_l2_norms(), this->d,
+        std::unique_ptr<faiss::DistanceComputer>(IndexHNSWRaBitQWrapper::get_distance_computer()));
 }
 
 }  // namespace knowhere

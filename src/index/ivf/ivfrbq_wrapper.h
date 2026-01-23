@@ -14,8 +14,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "faiss/Index.h"
+#include "faiss/IndexCosine.h"
 #include "faiss/IndexIVF.h"
 #include "faiss/IndexIVFRaBitQ.h"
 #include "faiss/IndexRefine.h"
@@ -103,6 +105,10 @@ struct IndexHNSWRaBitQWrapper : IndexIVFRaBitQWrapper {
     // Flag to enable/disable cached distance computer for HNSW search optimization
     mutable bool use_cached_distance_computer = false;
 
+    // Query bits for search - mutable to allow setting in const search methods
+    // This is used instead of directly modifying the underlying faiss index's qb field
+    mutable uint8_t search_qb = 0;
+
     IndexHNSWRaBitQWrapper(std::unique_ptr<faiss::Index>&& index_in) : IndexIVFRaBitQWrapper(std::move(index_in)) {
     }
 
@@ -115,6 +121,67 @@ struct IndexHNSWRaBitQWrapper : IndexIVFRaBitQWrapper {
     set_use_cached_distance_computer(bool use_cached) const {
         use_cached_distance_computer = use_cached;
     }
+
+    // Set the query bits parameter for search
+    void
+    set_search_qb(uint8_t qb) const {
+        search_qb = qb;
+    }
+
+    // Get the query bits parameter
+    uint8_t
+    get_search_qb() const {
+        return search_qb;
+    }
+};
+
+// Cosine-specialized wrapper for IVF_RABITQ
+// Similar to IndexScalarQuantizerCosine - stores inverse L2 norms and returns
+// WithCosineNormDistanceComputer for proper cosine distance calculation
+struct IndexIVFRaBitQWrapperCosine : IndexIVFRaBitQWrapper, faiss::HasInverseL2Norms {
+    faiss::L2NormsStorage inverse_norms_storage;
+
+    IndexIVFRaBitQWrapperCosine(std::unique_ptr<faiss::Index>&& index_in);
+
+    // Create with IP metric for cosine similarity
+    static expected<std::unique_ptr<IndexIVFRaBitQWrapperCosine>>
+    create(const faiss::idx_t d, const size_t nlist, const IvfRaBitQConfig& ivf_rabitq_cfg,
+           const DataFormatEnum raw_data_format);
+
+    // Override to store inverse L2 norms along with data
+    void
+    add(faiss::idx_t n, const float* x) override;
+
+    void
+    reset() override;
+
+    // Return WithCosineNormDistanceComputer for proper cosine distance
+    faiss::DistanceComputer*
+    get_distance_computer() const override;
+
+    const float*
+    get_inverse_l2_norms() const override;
+};
+
+// Cosine-specialized HNSW + IVF_RABITQ wrapper with cached distance computer optimization
+// Inherits from IndexHNSWRaBitQWrapper for type compatibility, adds cosine norm storage
+struct IndexHNSWRaBitQWrapperCosine : IndexHNSWRaBitQWrapper, faiss::HasInverseL2Norms {
+    faiss::L2NormsStorage inverse_norms_storage;
+
+    IndexHNSWRaBitQWrapperCosine(std::unique_ptr<faiss::Index>&& index_in);
+
+    // Override to store inverse L2 norms along with data
+    void
+    add(faiss::idx_t n, const float* x) override;
+
+    void
+    reset() override;
+
+    faiss::DistanceComputer*
+    get_distance_computer() const override;
+
+    const float*
+    get_inverse_l2_norms() const override;
 };
 
 }  // namespace knowhere
