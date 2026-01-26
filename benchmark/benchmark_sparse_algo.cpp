@@ -463,16 +463,13 @@ main(int argc, char** argv) {
             }
         }
 
-        // Check if data is L2 normalized (MSMARCO SPLADE should be)
+        // Check if data is L2 normalized
         bool base_normalized = IsL2Normalized(base_mat);
         printf("  Base vectors L2 normalized: %s\n", base_normalized ? "yes" : "no");
 
-        // For MSMARCO SPLADE with IP metric, data should be normalized
-        // If not normalized, we normalize it (cosine = IP on normalized vectors)
-        bool need_normalize = (metric == "IP") && !base_normalized;
-        if (need_normalize) {
-            printf("  Normalizing base vectors for IP metric...\n");
-        }
+        // MSMARCO SPLADE GT was computed with raw IP (not normalized)
+        // Do NOT normalize - use raw IP to match ground truth
+        bool need_normalize = false;
         auto train_ds = CSRToKnowhereDataSet(base_mat, need_normalize);
         float avgdl = ComputeAvgDocLen(base_mat);
         printf("  Loaded %s: %ld vectors, dim=%ld, nnz=%ld, avgdl=%.2f\n", base_name.c_str(), base_mat.nrow,
@@ -489,16 +486,15 @@ main(int argc, char** argv) {
         bool query_normalized = IsL2Normalized(query_mat);
         printf("  Query vectors L2 normalized: %s\n", query_normalized ? "yes" : "no");
 
-        bool need_normalize_query = (metric == "IP") && !query_normalized;
-        if (need_normalize_query) {
-            printf("  Normalizing query vectors for IP metric...\n");
-        }
+        // MSMARCO SPLADE GT was computed with raw IP (not normalized)
+        // Do NOT normalize - use raw IP to match ground truth
+        bool need_normalize_query = false;
         auto query_ds = CSRToKnowhereDataSet(query_mat, need_normalize_query);
         printf("  Loaded %ld queries, dim=%ld, nnz=%ld\n", query_mat.nrow, query_mat.ncol, query_mat.nnz);
 
         // Load ground truth from .gt file
         // IMPORTANT: For MSMARCO, we MUST use the provided .gt file, not recompute
-        // The .gt file contains the actual MSMARCO ground truth (cosine/IP on normalized SPLADE)
+        // The .gt file contains ground truth computed with raw IP on unnormalized SPLADE vectors
         printf("Loading ground truth...\n");
         auto gt = ReadGroundTruth(data_dir + "/" + base_name + ".gt");
         if (!gt) {
