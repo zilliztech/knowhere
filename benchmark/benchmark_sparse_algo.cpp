@@ -1,8 +1,11 @@
 // Sparse Search Algorithm Benchmark using actual Knowhere library
 // Compares: TAAT_NAIVE, DAAT_WAND, DAAT_WAND+BMW, DAAT_MAXSCORE
+// Supports MSMARCO/SPLADE dataset from big-ann-benchmarks
 
 #include <chrono>
 #include <cstdio>
+#include <cstring>
+#include <fstream>
 #include <map>
 #include <random>
 #include <vector>
@@ -14,24 +17,144 @@
 #include "knowhere/sparse_utils.h"
 #include "knowhere/version.h"
 
-// Generate realistic text-like sparse data with Zipfian term distribution
-// This better simulates scenarios where BMW excels:
-// 1. Some terms are rare (high IDF) and appear in few docs with high TF
-// 2. Some terms are common (low IDF) and appear in many docs with low TF
-// 3. High scores concentrate in specific documents per term
+// ============================================================================
+// CSR Matrix I/O (big-ann-benchmarks format)
+// Format: nrow(int64) ncol(int64) nnz(int64) indptr(int64[nrow+1]) indices(int32[nnz]) data(float32[nnz])
+// ============================================================================
+
+struct CSRMatrix {
+    int64_t nrow;
+    int64_t ncol;
+    int64_t nnz;
+    std::vector<int64_t> indptr;
+    std::vector<int32_t> indices;
+    std::vector<float> data;
+};
+
+bool
+ReadCSRMatrix(const std::string& filename, CSRMatrix& mat) {
+    std::ifstream f(filename, std::ios::binary);
+    if (!f) {
+        printf("Failed to open file: %s\n", filename.c_str());
+        return false;
+    }
+
+    // Read header
+    int64_t sizes[3];
+    f.read(reinterpret_cast<char*>(sizes), sizeof(sizes));
+    mat.nrow = sizes[0];
+    mat.ncol = sizes[1];
+    mat.nnz = sizes[2];
+
+    printf("  Reading CSR matrix: %ld rows, %ld cols, %ld nnz\n", mat.nrow, mat.ncol, mat.nnz);
+
+    // Read indptr
+    mat.indptr.resize(mat.nrow + 1);
+    f.read(reinterpret_cast<char*>(mat.indptr.data()), (mat.nrow + 1) * sizeof(int64_t));
+
+    // Read indices
+    mat.indices.resize(mat.nnz);
+    f.read(reinterpret_cast<char*>(mat.indices.data()), mat.nnz * sizeof(int32_t));
+
+    // Read data
+    mat.data.resize(mat.nnz);
+    f.read(reinterpret_cast<char*>(mat.data.data()), mat.nnz * sizeof(float));
+
+    if (!f) {
+        printf("Error reading file\n");
+        return false;
+    }
+
+    // Verify
+    if (mat.indptr[mat.nrow] != mat.nnz) {
+        printf("Warning: indptr[nrow]=%ld != nnz=%ld\n", mat.indptr[mat.nrow], mat.nnz);
+    }
+
+    return true;
+}
+
+knowhere::DataSetPtr
+CSRToKnowhereDataSet(const CSRMatrix& mat) {
+    auto tensor = std::make_unique<knowhere::sparse::SparseRow<float>[]>(mat.nrow);
+
+    for (int64_t i = 0; i < mat.nrow; ++i) {
+        int64_t start = mat.indptr[i];
+        int64_t end = mat.indptr[i + 1];
+        int64_t row_nnz = end - start;
+
+        if (row_nnz > 0) {
+            knowhere::sparse::SparseRow<float> row(row_nnz);
+            for (int64_t j = 0; j < row_nnz; ++j) {
+                row.set_at(j, mat.indices[start + j], mat.data[start + j]);
+            }
+            tensor[i] = std::move(row);
+        }
+    }
+
+    auto ds = knowhere::GenDataSet(mat.nrow, mat.ncol, tensor.release());
+    ds->SetIsOwner(true);
+    ds->SetIsSparse(true);
+    return ds;
+}
+
+// Read ground truth file (big-ann-benchmarks format)
+// Format: nq(uint32) k(uint32) ids(int32[nq*k]) dists(float32[nq*k])
+knowhere::DataSetPtr
+ReadGroundTruth(const std::string& filename) {
+    std::ifstream f(filename, std::ios::binary);
+    if (!f) {
+        printf("Failed to open ground truth file: %s\n", filename.c_str());
+        return nullptr;
+    }
+
+    uint32_t nq, k;
+    f.read(reinterpret_cast<char*>(&nq), sizeof(uint32_t));
+    f.read(reinterpret_cast<char*>(&k), sizeof(uint32_t));
+
+    // Sanity check - if values are unreasonable, file is probably invalid
+    if (nq > 10000000 || k > 10000 || nq == 0 || k == 0) {
+        printf("  Ground truth file appears invalid (nq=%u, k=%u)\n", nq, k);
+        return nullptr;
+    }
+
+    printf("  Ground truth: %u queries, k=%u\n", nq, k);
+
+    auto ids = new int64_t[nq * k];
+    auto dists = new float[nq * k];
+
+    // Read int32 ids and convert to int64
+    std::vector<int32_t> ids32(nq * k);
+    f.read(reinterpret_cast<char*>(ids32.data()), nq * k * sizeof(int32_t));
+    for (size_t i = 0; i < nq * k; ++i) {
+        ids[i] = ids32[i];
+    }
+
+    f.read(reinterpret_cast<char*>(dists), nq * k * sizeof(float));
+
+    auto ds = std::make_shared<knowhere::DataSet>();
+    ds->SetRows(nq);
+    ds->SetDim(k);
+    ds->SetIds(ids);
+    ds->SetDistance(dists);
+    ds->SetIsOwner(true);
+    return ds;
+}
+
+// ============================================================================
+// Synthetic Data Generation (Zipfian distribution)
+// ============================================================================
+
 knowhere::DataSetPtr
 GenZipfianDataSet(int32_t rows, int32_t cols, float avg_terms_per_doc, float zipf_exp, int seed = 42) {
     std::mt19937 rng(seed);
     auto uniform = std::uniform_real_distribution<float>(0, 1);
 
-    // Generate Zipfian term frequencies (how many docs each term appears in)
     std::vector<float> term_doc_freq(cols);
     float sum = 0;
     for (int32_t c = 0; c < cols; ++c) {
         term_doc_freq[c] = 1.0f / std::pow(c + 1, zipf_exp);
         sum += term_doc_freq[c];
     }
-    // Normalize so average doc has avg_terms_per_doc terms
     float scale = avg_terms_per_doc * rows / (sum * rows);
     for (int32_t c = 0; c < cols; ++c) {
         term_doc_freq[c] = std::min(term_doc_freq[c] * scale, 1.0f);
@@ -41,28 +164,23 @@ GenZipfianDataSet(int32_t rows, int32_t cols, float avg_terms_per_doc, float zip
 
     for (int32_t col = 0; col < cols; ++col) {
         float prob = term_doc_freq[col];
-        // Determine how many docs contain this term
         int32_t num_docs = static_cast<int32_t>(prob * rows);
         if (num_docs == 0 && uniform(rng) < prob * rows)
             num_docs = 1;
 
-        // Randomly select which docs contain this term
         std::vector<int32_t> doc_ids(rows);
         std::iota(doc_ids.begin(), doc_ids.end(), 0);
         std::shuffle(doc_ids.begin(), doc_ids.end(), rng);
 
         for (int32_t i = 0; i < num_docs && i < rows; ++i) {
             int32_t doc_id = doc_ids[i];
-            // Generate TF with exponential distribution (few high, many low)
             float tf = -std::log(1.0f - uniform(rng) * 0.9999f);
-            // Scale TF: rare terms (low col index) get higher max TF
             float max_tf = 10.0f / std::pow(col + 1, 0.3f);
             tf = std::min(tf, max_tf);
             data[doc_id][col] = tf;
         }
     }
 
-    // Convert to sparse format
     auto tensor = std::make_unique<knowhere::sparse::SparseRow<float>[]>(rows);
     for (int32_t i = 0; i < rows; ++i) {
         if (data[i].size() == 0) {
@@ -82,7 +200,6 @@ GenZipfianDataSet(int32_t rows, int32_t cols, float avg_terms_per_doc, float zip
     return ds;
 }
 
-// Generate query that targets both common and rare terms (realistic query pattern)
 knowhere::DataSetPtr
 GenZipfianQuery(int32_t nq, int32_t cols, int32_t terms_per_query, float zipf_exp, int seed = 123) {
     std::mt19937 rng(seed);
@@ -93,7 +210,6 @@ GenZipfianQuery(int32_t nq, int32_t cols, int32_t terms_per_query, float zipf_ex
     for (int32_t q = 0; q < nq; ++q) {
         std::set<int32_t> selected_terms;
         while ((int32_t)selected_terms.size() < terms_per_query) {
-            // Select term with Zipfian distribution (prefer common terms, but also include rare)
             float u = uniform(rng);
             int32_t term = static_cast<int32_t>(cols * std::pow(u, zipf_exp));
             term = std::min(term, cols - 1);
@@ -103,7 +219,6 @@ GenZipfianQuery(int32_t nq, int32_t cols, int32_t terms_per_query, float zipf_ex
         knowhere::sparse::SparseRow<float> row(selected_terms.size());
         size_t j = 0;
         for (int32_t term : selected_terms) {
-            // Query weight: rare terms (high index) get higher weight (like IDF)
             float weight = std::log(1.0f + cols / (term + 1.0f));
             row.set_at(j++, term, weight);
         }
@@ -116,11 +231,19 @@ GenZipfianQuery(int32_t nq, int32_t cols, int32_t terms_per_query, float zipf_ex
     return ds;
 }
 
+// ============================================================================
+// Benchmark Runner
+// ============================================================================
+
 struct BenchResult {
-    double time_us;
+    double build_time_ms;
+    double search_time_us;
+    double qps;
     float recall;
 };
 
+// Run benchmark following DSP paper methodology:
+// - 5 runs, drop first 2 warmup runs, report average of last 3
 BenchResult
 RunBenchmark(const std::string& algo, bool use_block_max, knowhere::DataSetPtr& train_ds,
              knowhere::DataSetPtr& query_ds, knowhere::DataSetPtr& gt, int topk, int runs,
@@ -148,130 +271,288 @@ RunBenchmark(const std::string& algo, bool use_block_max, knowhere::DataSetPtr& 
     }
 
     auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
-    // Use INDEX_SPARSE_INVERTED_INDEX (use_wand=false) so the algorithm is determined by config
-    // INDEX_SPARSE_WAND has use_wand=true which forces DAAT_WAND regardless of config
     auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(
         knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version);
     if (!idx.has_value()) {
         printf("Failed to create index\n");
-        return {0, 0};
+        return {0, 0, 0, 0};
     }
 
+    // Build
+    auto build_start = std::chrono::high_resolution_clock::now();
     auto status = idx.value().Build(train_ds, build_conf);
+    auto build_end = std::chrono::high_resolution_clock::now();
+    double build_time_ms = std::chrono::duration<double, std::milli>(build_end - build_start).count();
+
     if (status != knowhere::Status::success) {
         printf("Build failed: %s\n", knowhere::Status2String(status).c_str());
-        return {0, 0};
+        return {0, 0, 0, 0};
     }
 
-    // Warmup
-    for (int i = 0; i < 3; ++i) {
-        auto result = idx.value().Search(query_ds, search_conf, nullptr);
-    }
+    // DSP paper methodology: run 5 times, drop first 2, avg last 3
+    // We use 'runs' parameter but ensure minimum of 5 for proper warmup
+    int total_runs = std::max(runs, 5);
+    int warmup_runs = 2;
+    int measured_runs = total_runs - warmup_runs;
 
-    // Benchmark
-    auto t1 = std::chrono::high_resolution_clock::now();
+    auto nq = query_ds->GetRows();
+    std::vector<double> run_times;
     knowhere::DataSetPtr last_result;
-    for (int i = 0; i < runs; ++i) {
+
+    for (int i = 0; i < total_runs; ++i) {
+        auto t1 = std::chrono::high_resolution_clock::now();
         auto result = idx.value().Search(query_ds, search_conf, nullptr);
+        auto t2 = std::chrono::high_resolution_clock::now();
+        double run_time_us = std::chrono::duration<double, std::micro>(t2 - t1).count();
+
+        if (i >= warmup_runs) {
+            run_times.push_back(run_time_us);
+        }
         if (result.has_value()) {
             last_result = result.value();
         }
     }
-    auto t2 = std::chrono::high_resolution_clock::now();
-    double time_us = std::chrono::duration<double, std::micro>(t2 - t1).count() / runs;
+
+    // Average of measured runs (after warmup)
+    double total_time_us = 0;
+    for (double t : run_times) {
+        total_time_us += t;
+    }
+    double search_time_us = total_time_us / measured_runs;
+    double qps = nq / (search_time_us / 1e6);
 
     // Compute recall
     float recall = 0.0f;
     if (last_result && gt) {
-        auto nq = last_result->GetRows();
-        auto k = last_result->GetDim();
         auto gt_k = gt->GetDim();
         auto res_ids = last_result->GetIds();
         auto gt_ids = gt->GetIds();
 
         int matched = 0;
         for (int64_t i = 0; i < nq; ++i) {
-            std::set<int64_t> gt_set(gt_ids + i * gt_k, gt_ids + i * gt_k + k);
-            for (int64_t j = 0; j < k; ++j) {
-                if (res_ids[i * k + j] >= 0 && gt_set.count(res_ids[i * k + j])) {
+            std::set<int64_t> gt_set(gt_ids + i * gt_k, gt_ids + i * gt_k + std::min((int64_t)topk, gt_k));
+            for (int64_t j = 0; j < topk; ++j) {
+                if (res_ids[i * topk + j] >= 0 && gt_set.count(res_ids[i * topk + j])) {
                     matched++;
                 }
             }
         }
-        recall = (float)matched / (float)(nq * k);
+        recall = (float)matched / (float)(nq * topk);
     }
 
-    return {time_us, recall};
+    return {build_time_ms, search_time_us, qps, recall};
+}
+
+void
+PrintUsage(const char* prog) {
+    printf("Usage: %s [OPTIONS]\n", prog);
+    printf("Options:\n");
+    printf("  --data-dir DIR     Directory containing MSMARCO/SPLADE data\n");
+    printf("                     Expected files: base_full.csr, queries.dev.csr, base_full.gt\n");
+    printf("  --synthetic        Run synthetic Zipfian benchmark (default if no data-dir)\n");
+    printf("  --metric METRIC    IP or BM25 (default: IP)\n");
+    printf("  --topk K           Top-k results (default: 10)\n");
+    printf("  --runs N           Number of search runs (default: 10)\n");
+    printf("  --help             Show this help\n");
 }
 
 int
-main() {
+main(int argc, char** argv) {
+    std::string data_dir;
+    std::string metric = "IP";
+    int topk = 10;
+    int runs = 10;
+    bool use_synthetic = true;
+
+    // Parse arguments
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--data-dir") == 0 && i + 1 < argc) {
+            data_dir = argv[++i];
+            use_synthetic = false;
+        } else if (strcmp(argv[i], "--synthetic") == 0) {
+            use_synthetic = true;
+        } else if (strcmp(argv[i], "--metric") == 0 && i + 1 < argc) {
+            metric = argv[++i];
+        } else if (strcmp(argv[i], "--topk") == 0 && i + 1 < argc) {
+            topk = std::stoi(argv[++i]);
+        } else if (strcmp(argv[i], "--runs") == 0 && i + 1 < argc) {
+            runs = std::stoi(argv[++i]);
+        } else if (strcmp(argv[i], "--help") == 0) {
+            PrintUsage(argv[0]);
+            return 0;
+        }
+    }
+
     printf("Sparse Search Algorithm Benchmark (Knowhere Library)\n");
     printf("=====================================================\n\n");
 
-    const int runs = 10;
+    // ========================================================================
+    // MSMARCO/SPLADE Dataset Benchmark
+    // ========================================================================
+    if (!data_dir.empty()) {
+        printf("=== MSMARCO/SPLADE Dataset [%s metric] ===\n", metric.c_str());
+        printf("Data directory: %s\n\n", data_dir.c_str());
 
-    // ========== PART 1: Zipfian (realistic text-like) data ==========
-    // Choose metric: "IP" or "BM25"
-    const std::string metric = "BM25";  // Change to "IP" for IP metric
-
-    printf("=== Zipfian Data (realistic text-like distribution) [%s metric] ===\n", metric.c_str());
-    printf("This simulates real text where:\n");
-    printf("- Some terms are rare (high IDF) with concentrated high TF\n");
-    printf("- Some terms are common (low IDF) appearing in many docs\n");
-    printf("- BMW should excel by skipping low-scoring common term blocks\n\n");
-
-    struct ZipfConfig {
-        const char* name;
-        int32_t nb;
-        int32_t nq;
-        int32_t dim;
-        float avg_terms_per_doc;
-        int32_t query_terms;
-        float zipf_exp;
-        int topk;
-    };
-
-    std::vector<ZipfConfig> zipf_configs = {
-        {"Zipf 1.0 (uniform)", 50000, 100, 10000, 50.0f, 10, 1.0f, 10},
-        {"Zipf 1.5 (moderate)", 50000, 100, 10000, 50.0f, 10, 1.5f, 10},
-        {"Zipf 2.0 (skewed)", 50000, 100, 10000, 50.0f, 10, 2.0f, 10},
-        {"Large Zipf 1.5", 200000, 100, 20000, 100.0f, 15, 1.5f, 10},
-    };
-
-    for (const auto& cfg : zipf_configs) {
-        printf("Config: %s (nb=%d, nq=%d, dim=%d, query_terms=%d, topk=%d)\n", cfg.name, cfg.nb, cfg.nq, cfg.dim,
-               cfg.query_terms, cfg.topk);
-
-        auto train_ds = GenZipfianDataSet(cfg.nb, cfg.dim, cfg.avg_terms_per_doc, cfg.zipf_exp, 42);
-        auto query_ds = GenZipfianQuery(cfg.nq, cfg.dim, cfg.query_terms, cfg.zipf_exp, 123);
-
-        // Compute ground truth
-        knowhere::Json gt_conf = {
-            {knowhere::meta::METRIC_TYPE, metric},
-            {knowhere::meta::TOPK, cfg.topk},
-        };
-        if (metric == "BM25") {
-            gt_conf[knowhere::meta::BM25_K1] = 1.2f;
-            gt_conf[knowhere::meta::BM25_B] = 0.75f;
-            gt_conf[knowhere::meta::BM25_AVGDL] = 100.0f;
+        // Load base vectors
+        printf("Loading base vectors...\n");
+        CSRMatrix base_mat;
+        std::string base_name = "base_full";
+        if (!ReadCSRMatrix(data_dir + "/base_full.csr", base_mat)) {
+            printf("  base_full.csr not found, trying base_small.csr...\n");
+            base_name = "base_small";
+            if (!ReadCSRMatrix(data_dir + "/base_small.csr", base_mat)) {
+                printf("Failed to load base vectors.\n");
+                return 1;
+            }
         }
-        auto gt_result = knowhere::BruteForce::SearchSparse(train_ds, query_ds, gt_conf, nullptr);
-        knowhere::DataSetPtr gt = gt_result.has_value() ? gt_result.value() : nullptr;
+        auto train_ds = CSRToKnowhereDataSet(base_mat);
+        printf("  Loaded %s: %ld vectors, dim=%ld, nnz=%ld\n", base_name.c_str(), base_mat.nrow, base_mat.ncol,
+               base_mat.nnz);
 
-        auto taat = RunBenchmark("TAAT_NAIVE", false, train_ds, query_ds, gt, cfg.topk, runs, metric);
-        auto wand = RunBenchmark("DAAT_WAND", false, train_ds, query_ds, gt, cfg.topk, runs, metric);
-        auto bmw = RunBenchmark("DAAT_WAND", true, train_ds, query_ds, gt, cfg.topk, runs, metric);
-        auto maxscore = RunBenchmark("DAAT_MAXSCORE", false, train_ds, query_ds, gt, cfg.topk, runs, metric);
+        // Load queries
+        printf("Loading queries...\n");
+        CSRMatrix query_mat;
+        if (!ReadCSRMatrix(data_dir + "/queries.dev.csr", query_mat)) {
+            printf("Failed to load queries.\n");
+            return 1;
+        }
+        auto query_ds = CSRToKnowhereDataSet(query_mat);
+        printf("  Loaded %ld queries, dim=%ld, nnz=%ld\n", query_mat.nrow, query_mat.ncol, query_mat.nnz);
 
-        printf("  TAAT:      %8.0f us,          recall=%.2f%%\n", taat.time_us, taat.recall * 100);
-        printf("  WAND:      %8.0f us (%.2fx),  recall=%.2f%%\n", wand.time_us, taat.time_us / wand.time_us,
-               wand.recall * 100);
-        printf("  BMW:       %8.0f us (%.2fx),  recall=%.2f%%\n", bmw.time_us, taat.time_us / bmw.time_us,
-               bmw.recall * 100);
-        printf("  MaxScore:  %8.0f us (%.2fx),  recall=%.2f%%\n", maxscore.time_us, taat.time_us / maxscore.time_us,
-               maxscore.recall * 100);
-        printf("\n");
+        // Load ground truth
+        printf("Loading ground truth...\n");
+        auto gt = ReadGroundTruth(data_dir + "/" + base_name + ".gt");
+        if (!gt) {
+            printf("Warning: No ground truth file, will compute from TAAT\n");
+            // Compute ground truth using brute force
+            knowhere::Json gt_conf = {
+                {knowhere::meta::METRIC_TYPE, metric},
+                {knowhere::meta::TOPK, topk},
+            };
+            if (metric == "BM25") {
+                gt_conf[knowhere::meta::BM25_K1] = 1.2f;
+                gt_conf[knowhere::meta::BM25_B] = 0.75f;
+                gt_conf[knowhere::meta::BM25_AVGDL] = 100.0f;
+            }
+            auto gt_result = knowhere::BruteForce::SearchSparse(train_ds, query_ds, gt_conf, nullptr);
+            gt = gt_result.has_value() ? gt_result.value() : nullptr;
+        }
+
+        // Run benchmarks for multiple k values like DSP paper (k=10, k=1000)
+        std::vector<int> k_values = {10, 1000};
+        if (topk != 10 && topk != 1000) {
+            k_values = {topk};  // Use user-specified k if different
+        }
+
+        printf("\nRunning benchmark (DSP paper methodology: 5 runs, drop first 2, avg last 3)...\n");
+        printf("=====================================================================\n\n");
+
+        for (int k : k_values) {
+            printf("=== k=%d ===\n\n", k);
+
+            // Compute ground truth for this k value
+            knowhere::DataSetPtr gt_for_k = nullptr;
+            if (gt && (int64_t)gt->GetDim() >= k) {
+                gt_for_k = gt;  // Reuse existing GT if it has enough neighbors
+            } else {
+                // Compute ground truth using brute force
+                printf("Computing ground truth for k=%d...\n", k);
+                knowhere::Json gt_conf = {
+                    {knowhere::meta::METRIC_TYPE, metric},
+                    {knowhere::meta::TOPK, k},
+                };
+                if (metric == "BM25") {
+                    gt_conf[knowhere::meta::BM25_K1] = 1.2f;
+                    gt_conf[knowhere::meta::BM25_B] = 0.75f;
+                    gt_conf[knowhere::meta::BM25_AVGDL] = 100.0f;
+                }
+                auto gt_result = knowhere::BruteForce::SearchSparse(train_ds, query_ds, gt_conf, nullptr);
+                gt_for_k = gt_result.has_value() ? gt_result.value() : nullptr;
+            }
+
+            auto taat = RunBenchmark("TAAT_NAIVE", false, train_ds, query_ds, gt_for_k, k, runs, metric);
+            auto wand = RunBenchmark("DAAT_WAND", false, train_ds, query_ds, gt_for_k, k, runs, metric);
+            auto bmw = RunBenchmark("DAAT_WAND", true, train_ds, query_ds, gt_for_k, k, runs, metric);
+            auto maxscore = RunBenchmark("DAAT_MAXSCORE", false, train_ds, query_ds, gt_for_k, k, runs, metric);
+
+            // Print results in table format similar to DSP paper
+            printf("%-12s %12s %15s %12s %10s\n", "Algorithm", "Build(ms)", "MRT(ms)", "QPS", "Recall");
+            printf("%-12s %12.1f %15.3f %12.0f %9.2f%%\n", "TAAT", taat.build_time_ms, taat.search_time_us / 1000.0,
+                   taat.qps, taat.recall * 100);
+            printf("%-12s %12.1f %15.3f %12.0f %9.2f%%\n", "WAND", wand.build_time_ms, wand.search_time_us / 1000.0,
+                   wand.qps, wand.recall * 100);
+            printf("%-12s %12.1f %15.3f %12.0f %9.2f%%\n", "BMW", bmw.build_time_ms, bmw.search_time_us / 1000.0,
+                   bmw.qps, bmw.recall * 100);
+            printf("%-12s %12.1f %15.3f %12.0f %9.2f%%\n", "MaxScore", maxscore.build_time_ms,
+                   maxscore.search_time_us / 1000.0, maxscore.qps, maxscore.recall * 100);
+
+            printf("\nSpeedup vs TAAT (Mean Response Time):\n");
+            printf("  WAND:     %.2fx\n", taat.search_time_us / wand.search_time_us);
+            printf("  BMW:      %.2fx\n", taat.search_time_us / bmw.search_time_us);
+            printf("  MaxScore: %.2fx\n", taat.search_time_us / maxscore.search_time_us);
+
+            printf("\nSpeedup BMW vs WAND: %.2fx\n", wand.search_time_us / bmw.search_time_us);
+            printf("\n");
+        }
+    }
+
+    // ========================================================================
+    // Synthetic Zipfian Benchmark
+    // ========================================================================
+    if (use_synthetic) {
+        printf("\n=== Synthetic Zipfian Data [%s metric] ===\n", metric.c_str());
+        printf("This simulates real text where:\n");
+        printf("- Some terms are rare (high IDF) with concentrated high TF\n");
+        printf("- Some terms are common (low IDF) appearing in many docs\n\n");
+
+        struct ZipfConfig {
+            const char* name;
+            int32_t nb;
+            int32_t nq;
+            int32_t dim;
+            float avg_terms_per_doc;
+            int32_t query_terms;
+            float zipf_exp;
+        };
+
+        std::vector<ZipfConfig> zipf_configs = {
+            {"Small Zipf 1.5", 50000, 100, 10000, 50.0f, 10, 1.5f},
+            {"Medium Zipf 1.5", 200000, 100, 20000, 100.0f, 15, 1.5f},
+        };
+
+        for (const auto& cfg : zipf_configs) {
+            printf("Config: %s (nb=%d, nq=%d, dim=%d)\n", cfg.name, cfg.nb, cfg.nq, cfg.dim);
+
+            auto train_ds = GenZipfianDataSet(cfg.nb, cfg.dim, cfg.avg_terms_per_doc, cfg.zipf_exp, 42);
+            auto query_ds = GenZipfianQuery(cfg.nq, cfg.dim, cfg.query_terms, cfg.zipf_exp, 123);
+
+            // Compute ground truth
+            knowhere::Json gt_conf = {
+                {knowhere::meta::METRIC_TYPE, metric},
+                {knowhere::meta::TOPK, topk},
+            };
+            if (metric == "BM25") {
+                gt_conf[knowhere::meta::BM25_K1] = 1.2f;
+                gt_conf[knowhere::meta::BM25_B] = 0.75f;
+                gt_conf[knowhere::meta::BM25_AVGDL] = 100.0f;
+            }
+            auto gt_result = knowhere::BruteForce::SearchSparse(train_ds, query_ds, gt_conf, nullptr);
+            knowhere::DataSetPtr gt = gt_result.has_value() ? gt_result.value() : nullptr;
+
+            auto taat = RunBenchmark("TAAT_NAIVE", false, train_ds, query_ds, gt, topk, runs, metric);
+            auto wand = RunBenchmark("DAAT_WAND", false, train_ds, query_ds, gt, topk, runs, metric);
+            auto bmw = RunBenchmark("DAAT_WAND", true, train_ds, query_ds, gt, topk, runs, metric);
+            auto maxscore = RunBenchmark("DAAT_MAXSCORE", false, train_ds, query_ds, gt, topk, runs, metric);
+
+            printf("  TAAT:      %8.0f us,          recall=%.2f%%\n", taat.search_time_us, taat.recall * 100);
+            printf("  WAND:      %8.0f us (%.2fx),  recall=%.2f%%\n", wand.search_time_us,
+                   taat.search_time_us / wand.search_time_us, wand.recall * 100);
+            printf("  BMW:       %8.0f us (%.2fx),  recall=%.2f%%\n", bmw.search_time_us,
+                   taat.search_time_us / bmw.search_time_us, bmw.recall * 100);
+            printf("  MaxScore:  %8.0f us (%.2fx),  recall=%.2f%%\n", maxscore.search_time_us,
+                   taat.search_time_us / maxscore.search_time_us, maxscore.recall * 100);
+            printf("\n");
+        }
     }
 
     return 0;

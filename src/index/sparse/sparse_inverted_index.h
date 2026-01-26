@@ -1129,6 +1129,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     };  // struct Cursor
 
     // BMW (Block-Max WAND) Cursor: tracks current block and provides block-level max scores
+    // Enhanced with skip list structure for O(log B) block lookup during shallow advance.
     template <typename DocIdFilter>
     struct BMWCursor {
      public:
@@ -1144,6 +1145,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
               q_value_(q_value),
               filter_(filter),
               block_size_(block_size) {
+            // Build skip list: store last doc_id for each block to enable O(log B) block lookup
+            build_skip_list();
             skip_filtered_ids();
             update_cur_vec_id();
             update_current_block();
@@ -1217,17 +1220,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
 
         // Shallow advance: get block-max contribution for a target doc_id without actually advancing.
-        //
-        // TODO: Implement skip list-based shallow advancing for better BMW performance.
-        // Current approach uses global_max for future blocks which is correct but conservative.
-        // A skip list structure would store (last_doc_id, block_max_score) per block, enabling:
-        //   1. O(log B) lookup to find which block contains target_doc_id (B = num blocks)
-        //   2. Direct access to that block's max score without binary searching full posting list
-        // This would allow tighter bounds during pivot finding while maintaining 100% recall.
-        // Required changes: add skip list to posting format, update serialization, ~10% memory overhead.
-        //
-        // Current strategy: Use block-max when target is in current block, otherwise fall back
-        // to global max to ensure we don't skip valid documents (correctness over tightness).
+        // Uses skip list for O(log B) lookup to find which block contains target_doc_id.
+        // This enables tight block-max bounds during pivot finding, which is the key BMW optimization.
         float
         shallow_advance_score(table_t target_doc_id) const {
             if (target_doc_id == cur_vec_id_) {
@@ -1240,16 +1234,37 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                 return 0;
             }
 
-            // Check if target is within the current block
-            table_t block_end = block_end_doc_id();
-            if (target_doc_id <= block_end) {
-                // Target is in current block, use current block max
-                return block_max_contribution();
+            // Use skip list to find which block contains target_doc_id in O(log B) time
+            // skip_list_[i] = last doc_id in block i
+            // Binary search to find first block where last_doc_id >= target_doc_id
+            if (skip_list_.empty()) {
+                return global_max_score_;
             }
 
-            // Target is in a future block - use global max for safety
-            // This ensures we don't underestimate and skip valid documents
-            return global_max_score_;
+            // Binary search: find the block that could contain target_doc_id
+            // We want the first block where skip_list_[block] >= target_doc_id
+            auto it = std::lower_bound(skip_list_.begin() + current_block_, skip_list_.end(), target_doc_id);
+
+            if (it == skip_list_.end()) {
+                // Target is beyond last block - document doesn't exist in this posting list
+                return 0;
+            }
+
+            size_t target_block = it - skip_list_.begin();
+
+            // Verify target could be in this block:
+            // - If this is the first block, target just needs to be <= last_doc of block
+            // - Otherwise, target must be > last_doc of previous block
+            if (target_block > 0 && target_doc_id <= skip_list_[target_block - 1]) {
+                // Target is in or before previous block - shouldn't happen if we search from current_block_
+                target_block = target_block - 1;
+            }
+
+            if (target_block >= block_max_scores_.size()) {
+                return 0;
+            }
+
+            return block_max_scores_[target_block] * q_value_;
         }
 
         const boost::span<const table_t>& plist_ids_;
@@ -1264,8 +1279,25 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         DocIdFilter filter_;
         table_t cur_vec_id_ = 0;
         size_t block_size_;
+        // Skip list: skip_list_[i] = last doc_id in block i
+        // Enables O(log B) lookup to find which block contains a target doc_id
+        std::vector<table_t> skip_list_;
 
      private:
+        // Build skip list for O(log B) block lookup during shallow advance
+        void
+        build_skip_list() {
+            if (plist_size_ == 0 || block_max_scores_.empty()) {
+                return;
+            }
+            size_t n_blocks = block_max_scores_.size();
+            skip_list_.resize(n_blocks);
+            for (size_t b = 0; b < n_blocks; ++b) {
+                size_t block_end_loc = std::min((b + 1) * block_size_, plist_size_) - 1;
+                skip_list_[b] = plist_ids_[block_end_loc];
+            }
+        }
+
         inline void
         update_cur_vec_id() {
             cur_vec_id_ = (loc_ >= plist_size_) ? total_num_vec_ : plist_ids_[loc_];
@@ -1516,10 +1548,9 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
             float threshold = heap.full() ? heap.top().val : 0;
 
-            // Phase 1: Find pivot using global max scores (same as standard WAND)
-            // Using global max ensures we never skip valid documents (100% recall).
-            // Block-max optimization is applied in Phase 3 (block skipping) instead.
-            float upper_bound = 0;
+            // Phase 1: Find pivot using global max scores (O(n) scan)
+            // This quickly finds a candidate pivot using loose bounds.
+            float upper_bound_global = 0;
             size_t pivot = 0;
             bool found_pivot = false;
 
@@ -1527,24 +1558,34 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                 if (cursor_ptrs[pivot]->cur_vec_id_ >= n_rows_internal_) {
                     break;
                 }
-                upper_bound += cursor_ptrs[pivot]->global_max_contribution();
-                // Use >= to handle ties correctly
-                if (upper_bound >= threshold) {
+                upper_bound_global += cursor_ptrs[pivot]->global_max_contribution();
+                if (upper_bound_global >= threshold) {
                     found_pivot = true;
                     break;
                 }
             }
 
             if (!found_pivot) {
-                // No pivot found with block-max bounds - need to advance to next block.
-                // Find the cursor with the minimum block_end and advance it past its current block.
-                // This is the key BMW optimization: skip entire blocks that can't be competitive.
+                // Global max can't reach threshold - done
+                break;
+            }
+
+            table_t candidate_pivot_id = cursor_ptrs[pivot]->cur_vec_id_;
+
+            // Phase 1b: Verify pivot using BLOCK-MAX scores (tighter bounds)
+            // Compute block-max upper bound for the candidate pivot document.
+            // This is the core BMW optimization - use block-level max scores.
+            float upper_bound_block = 0;
+            for (size_t i = 0; i <= pivot; ++i) {
+                upper_bound_block += cursor_ptrs[i]->shallow_advance_score(candidate_pivot_id);
+            }
+
+            if (upper_bound_block < threshold) {
+                // Block-max bound is below threshold - skip to next block boundary.
+                // Find the cursor with the minimum block_end and advance it.
                 table_t min_block_end = n_rows_internal_;
                 size_t min_block_cursor = 0;
-                for (size_t i = 0; i < cursor_ptrs.size(); ++i) {
-                    if (cursor_ptrs[i]->cur_vec_id_ >= n_rows_internal_) {
-                        continue;
-                    }
+                for (size_t i = 0; i <= pivot; ++i) {
                     table_t block_end = cursor_ptrs[i]->block_end_doc_id();
                     if (block_end < min_block_end) {
                         min_block_end = block_end;
@@ -1553,16 +1594,16 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                 }
 
                 if (min_block_end >= n_rows_internal_) {
-                    break;  // All cursors exhausted
+                    break;
                 }
 
-                // Advance the cursor with minimum block_end to the next block
+                // Advance past the minimum block boundary
                 cursor_ptrs[min_block_cursor]->seek(min_block_end + 1);
                 reposition_cursor(min_block_cursor);
                 continue;
             }
 
-            table_t pivot_id = cursor_ptrs[pivot]->cur_vec_id_;
+            table_t pivot_id = candidate_pivot_id;
 
             // Phase 2: Check if all essential cursors are aligned at pivot
             if (pivot_id == cursor_ptrs[0]->cur_vec_id_) {
