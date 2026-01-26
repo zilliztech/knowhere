@@ -88,6 +88,9 @@ CSRToKnowhereDataSet(const CSRMatrix& mat) {
                 row.set_at(j, mat.indices[start + j], mat.data[start + j]);
             }
             tensor[i] = std::move(row);
+        } else {
+            // Explicitly initialize empty rows to avoid UB
+            tensor[i] = knowhere::sparse::SparseRow<float>();
         }
     }
 
@@ -95,6 +98,12 @@ CSRToKnowhereDataSet(const CSRMatrix& mat) {
     ds->SetIsOwner(true);
     ds->SetIsSparse(true);
     return ds;
+}
+
+// Compute average document length from CSR matrix
+float
+ComputeAvgDocLen(const CSRMatrix& mat) {
+    return static_cast<float>(mat.nnz) / static_cast<float>(mat.nrow);
 }
 
 // Read ground truth file (big-ann-benchmarks format)
@@ -247,7 +256,7 @@ struct BenchResult {
 BenchResult
 RunBenchmark(const std::string& algo, bool use_block_max, knowhere::DataSetPtr& train_ds,
              knowhere::DataSetPtr& query_ds, knowhere::DataSetPtr& gt, int topk, int runs,
-             const std::string& metric = "IP") {
+             const std::string& metric = "IP", float avgdl = 0.0f) {
     knowhere::Json build_conf = {
         {knowhere::meta::DIM, train_ds->GetDim()},
         {knowhere::meta::METRIC_TYPE, metric},
@@ -262,12 +271,14 @@ RunBenchmark(const std::string& algo, bool use_block_max, knowhere::DataSetPtr& 
     };
 
     if (metric == "BM25") {
+        // Use computed avgdl if provided, otherwise default to 100
+        float bm25_avgdl = (avgdl > 0.0f) ? avgdl : 100.0f;
         build_conf[knowhere::meta::BM25_K1] = 1.2f;
         build_conf[knowhere::meta::BM25_B] = 0.75f;
-        build_conf[knowhere::meta::BM25_AVGDL] = 100.0f;
+        build_conf[knowhere::meta::BM25_AVGDL] = bm25_avgdl;
         search_conf[knowhere::meta::BM25_K1] = 1.2f;
         search_conf[knowhere::meta::BM25_B] = 0.75f;
-        search_conf[knowhere::meta::BM25_AVGDL] = 100.0f;
+        search_conf[knowhere::meta::BM25_AVGDL] = bm25_avgdl;
     }
 
     auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
@@ -321,23 +332,30 @@ RunBenchmark(const std::string& algo, bool use_block_max, knowhere::DataSetPtr& 
     double search_time_us = total_time_us / measured_runs;
     double qps = nq / (search_time_us / 1e6);
 
-    // Compute recall
+    // Compute recall@k
+    // Note: recall is computed as intersection(result, gt) / min(k, gt_k)
+    // If gt has fewer than k items, we can only measure recall up to gt_k
     float recall = 0.0f;
     if (last_result && gt) {
-        auto gt_k = gt->GetDim();
+        auto gt_k = static_cast<int64_t>(gt->GetDim());
         auto res_ids = last_result->GetIds();
         auto gt_ids = gt->GetIds();
 
+        // We can only compute recall for min(topk, gt_k) items
+        int64_t eval_k = std::min(static_cast<int64_t>(topk), gt_k);
+
         int matched = 0;
         for (int64_t i = 0; i < nq; ++i) {
-            std::set<int64_t> gt_set(gt_ids + i * gt_k, gt_ids + i * gt_k + std::min((int64_t)topk, gt_k));
-            for (int64_t j = 0; j < topk; ++j) {
+            // Build set of ground truth top-eval_k results
+            std::set<int64_t> gt_set(gt_ids + i * gt_k, gt_ids + i * gt_k + eval_k);
+            // Check how many of our top-eval_k results are in ground truth
+            for (int64_t j = 0; j < eval_k; ++j) {
                 if (res_ids[i * topk + j] >= 0 && gt_set.count(res_ids[i * topk + j])) {
                     matched++;
                 }
             }
         }
-        recall = (float)matched / (float)(nq * topk);
+        recall = static_cast<float>(matched) / static_cast<float>(nq * eval_k);
     }
 
     return {build_time_ms, search_time_us, qps, recall};
@@ -406,8 +424,9 @@ main(int argc, char** argv) {
             }
         }
         auto train_ds = CSRToKnowhereDataSet(base_mat);
-        printf("  Loaded %s: %ld vectors, dim=%ld, nnz=%ld\n", base_name.c_str(), base_mat.nrow, base_mat.ncol,
-               base_mat.nnz);
+        float avgdl = ComputeAvgDocLen(base_mat);
+        printf("  Loaded %s: %ld vectors, dim=%ld, nnz=%ld, avgdl=%.2f\n", base_name.c_str(), base_mat.nrow,
+               base_mat.ncol, base_mat.nnz, avgdl);
 
         // Load queries
         printf("Loading queries...\n");
@@ -432,7 +451,7 @@ main(int argc, char** argv) {
             if (metric == "BM25") {
                 gt_conf[knowhere::meta::BM25_K1] = 1.2f;
                 gt_conf[knowhere::meta::BM25_B] = 0.75f;
-                gt_conf[knowhere::meta::BM25_AVGDL] = 100.0f;
+                gt_conf[knowhere::meta::BM25_AVGDL] = avgdl;
             }
             auto gt_result = knowhere::BruteForce::SearchSparse(train_ds, query_ds, gt_conf, nullptr);
             gt = gt_result.has_value() ? gt_result.value() : nullptr;
@@ -464,16 +483,16 @@ main(int argc, char** argv) {
                 if (metric == "BM25") {
                     gt_conf[knowhere::meta::BM25_K1] = 1.2f;
                     gt_conf[knowhere::meta::BM25_B] = 0.75f;
-                    gt_conf[knowhere::meta::BM25_AVGDL] = 100.0f;
+                    gt_conf[knowhere::meta::BM25_AVGDL] = avgdl;
                 }
                 auto gt_result = knowhere::BruteForce::SearchSparse(train_ds, query_ds, gt_conf, nullptr);
                 gt_for_k = gt_result.has_value() ? gt_result.value() : nullptr;
             }
 
-            auto taat = RunBenchmark("TAAT_NAIVE", false, train_ds, query_ds, gt_for_k, k, runs, metric);
-            auto wand = RunBenchmark("DAAT_WAND", false, train_ds, query_ds, gt_for_k, k, runs, metric);
-            auto bmw = RunBenchmark("DAAT_WAND", true, train_ds, query_ds, gt_for_k, k, runs, metric);
-            auto maxscore = RunBenchmark("DAAT_MAXSCORE", false, train_ds, query_ds, gt_for_k, k, runs, metric);
+            auto taat = RunBenchmark("TAAT_NAIVE", false, train_ds, query_ds, gt_for_k, k, runs, metric, avgdl);
+            auto wand = RunBenchmark("DAAT_WAND", false, train_ds, query_ds, gt_for_k, k, runs, metric, avgdl);
+            auto bmw = RunBenchmark("DAAT_WAND", true, train_ds, query_ds, gt_for_k, k, runs, metric, avgdl);
+            auto maxscore = RunBenchmark("DAAT_MAXSCORE", false, train_ds, query_ds, gt_for_k, k, runs, metric, avgdl);
 
             // Print results in table format similar to DSP paper
             printf("%-12s %12s %15s %12s %10s\n", "Algorithm", "Build(ms)", "MRT(ms)", "QPS", "Recall");
