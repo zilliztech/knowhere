@@ -70,3 +70,6 @@ CMakeUserPresets.json
 # python
 .eggs
 *.egg-info
+
+# Claude Code plans (local only)
+docs/plans/
