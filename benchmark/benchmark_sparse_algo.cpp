@@ -3,6 +3,7 @@
 // Supports MSMARCO/SPLADE dataset from big-ann-benchmarks
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -73,8 +74,33 @@ ReadCSRMatrix(const std::string& filename, CSRMatrix& mat) {
     return true;
 }
 
+// Check if CSR matrix rows are already L2 normalized
+bool
+IsL2Normalized(const CSRMatrix& mat, int sample_rows = 100) {
+    int check_count = std::min(static_cast<int64_t>(sample_rows), mat.nrow);
+    int normalized_count = 0;
+
+    for (int64_t i = 0; i < check_count; ++i) {
+        int64_t start = mat.indptr[i];
+        int64_t end = mat.indptr[i + 1];
+        if (start == end)
+            continue;
+
+        float norm_sq = 0.0f;
+        for (int64_t j = start; j < end; ++j) {
+            norm_sq += mat.data[j] * mat.data[j];
+        }
+        float norm = std::sqrt(norm_sq);
+        if (std::abs(norm - 1.0f) < 0.01f) {
+            normalized_count++;
+        }
+    }
+
+    return normalized_count > check_count * 0.9;  // 90% of sampled rows are normalized
+}
+
 knowhere::DataSetPtr
-CSRToKnowhereDataSet(const CSRMatrix& mat) {
+CSRToKnowhereDataSet(const CSRMatrix& mat, bool normalize_l2 = false) {
     auto tensor = std::make_unique<knowhere::sparse::SparseRow<float>[]>(mat.nrow);
 
     for (int64_t i = 0; i < mat.nrow; ++i) {
@@ -83,9 +109,22 @@ CSRToKnowhereDataSet(const CSRMatrix& mat) {
         int64_t row_nnz = end - start;
 
         if (row_nnz > 0) {
+            // Compute L2 norm if normalizing
+            float norm = 1.0f;
+            if (normalize_l2) {
+                float norm_sq = 0.0f;
+                for (int64_t j = start; j < end; ++j) {
+                    norm_sq += mat.data[j] * mat.data[j];
+                }
+                norm = std::sqrt(norm_sq);
+                if (norm < 1e-9f)
+                    norm = 1.0f;  // Avoid division by zero
+            }
+
             knowhere::sparse::SparseRow<float> row(row_nnz);
             for (int64_t j = 0; j < row_nnz; ++j) {
-                row.set_at(j, mat.indices[start + j], mat.data[start + j]);
+                float val = mat.data[start + j] / norm;
+                row.set_at(j, mat.indices[start + j], val);
             }
             tensor[i] = std::move(row);
         } else {
@@ -423,7 +462,18 @@ main(int argc, char** argv) {
                 return 1;
             }
         }
-        auto train_ds = CSRToKnowhereDataSet(base_mat);
+
+        // Check if data is L2 normalized (MSMARCO SPLADE should be)
+        bool base_normalized = IsL2Normalized(base_mat);
+        printf("  Base vectors L2 normalized: %s\n", base_normalized ? "yes" : "no");
+
+        // For MSMARCO SPLADE with IP metric, data should be normalized
+        // If not normalized, we normalize it (cosine = IP on normalized vectors)
+        bool need_normalize = (metric == "IP") && !base_normalized;
+        if (need_normalize) {
+            printf("  Normalizing base vectors for IP metric...\n");
+        }
+        auto train_ds = CSRToKnowhereDataSet(base_mat, need_normalize);
         float avgdl = ComputeAvgDocLen(base_mat);
         printf("  Loaded %s: %ld vectors, dim=%ld, nnz=%ld, avgdl=%.2f\n", base_name.c_str(), base_mat.nrow,
                base_mat.ncol, base_mat.nnz, avgdl);
@@ -435,27 +485,30 @@ main(int argc, char** argv) {
             printf("Failed to load queries.\n");
             return 1;
         }
-        auto query_ds = CSRToKnowhereDataSet(query_mat);
+
+        bool query_normalized = IsL2Normalized(query_mat);
+        printf("  Query vectors L2 normalized: %s\n", query_normalized ? "yes" : "no");
+
+        bool need_normalize_query = (metric == "IP") && !query_normalized;
+        if (need_normalize_query) {
+            printf("  Normalizing query vectors for IP metric...\n");
+        }
+        auto query_ds = CSRToKnowhereDataSet(query_mat, need_normalize_query);
         printf("  Loaded %ld queries, dim=%ld, nnz=%ld\n", query_mat.nrow, query_mat.ncol, query_mat.nnz);
 
-        // Load ground truth
+        // Load ground truth from .gt file
+        // IMPORTANT: For MSMARCO, we MUST use the provided .gt file, not recompute
+        // The .gt file contains the actual MSMARCO ground truth (cosine/IP on normalized SPLADE)
         printf("Loading ground truth...\n");
         auto gt = ReadGroundTruth(data_dir + "/" + base_name + ".gt");
         if (!gt) {
-            printf("Warning: No ground truth file, will compute from TAAT\n");
-            // Compute ground truth using brute force
-            knowhere::Json gt_conf = {
-                {knowhere::meta::METRIC_TYPE, metric},
-                {knowhere::meta::TOPK, topk},
-            };
-            if (metric == "BM25") {
-                gt_conf[knowhere::meta::BM25_K1] = 1.2f;
-                gt_conf[knowhere::meta::BM25_B] = 0.75f;
-                gt_conf[knowhere::meta::BM25_AVGDL] = avgdl;
-            }
-            auto gt_result = knowhere::BruteForce::SearchSparse(train_ds, query_ds, gt_conf, nullptr);
-            gt = gt_result.has_value() ? gt_result.value() : nullptr;
+            printf("ERROR: Ground truth file required for MSMARCO benchmark!\n");
+            printf("  Expected: %s/%s.gt\n", data_dir.c_str(), base_name.c_str());
+            printf("  Without ground truth, recall cannot be measured correctly.\n");
+            printf("  Download from: https://storage.googleapis.com/ann-challenge-sparse-vectors/csr/\n");
+            return 1;
         }
+        printf("  Loaded ground truth: %ld queries, k=%ld\n", gt->GetRows(), gt->GetDim());
 
         // Run benchmarks for multiple k values like DSP paper (k=10, k=1000)
         std::vector<int> k_values = {10, 1000};
@@ -469,30 +522,24 @@ main(int argc, char** argv) {
         for (int k : k_values) {
             printf("=== k=%d ===\n\n", k);
 
-            // Compute ground truth for this k value
-            knowhere::DataSetPtr gt_for_k = nullptr;
-            if (gt && (int64_t)gt->GetDim() >= k) {
-                gt_for_k = gt;  // Reuse existing GT if it has enough neighbors
-            } else {
-                // Compute ground truth using brute force
-                printf("Computing ground truth for k=%d...\n", k);
-                knowhere::Json gt_conf = {
-                    {knowhere::meta::METRIC_TYPE, metric},
-                    {knowhere::meta::TOPK, k},
-                };
-                if (metric == "BM25") {
-                    gt_conf[knowhere::meta::BM25_K1] = 1.2f;
-                    gt_conf[knowhere::meta::BM25_B] = 0.75f;
-                    gt_conf[knowhere::meta::BM25_AVGDL] = avgdl;
-                }
-                auto gt_result = knowhere::BruteForce::SearchSparse(train_ds, query_ds, gt_conf, nullptr);
-                gt_for_k = gt_result.has_value() ? gt_result.value() : nullptr;
+            // Use the .gt file for recall computation
+            // If k > gt_k, recall will be computed for min(k, gt_k) items
+            auto gt_k = static_cast<int64_t>(gt->GetDim());
+            if (k > gt_k) {
+                printf("Warning: k=%d > gt_k=%ld, recall will be computed for top-%ld only\n", k, gt_k, gt_k);
             }
 
-            auto taat = RunBenchmark("TAAT_NAIVE", false, train_ds, query_ds, gt_for_k, k, runs, metric, avgdl);
-            auto wand = RunBenchmark("DAAT_WAND", false, train_ds, query_ds, gt_for_k, k, runs, metric, avgdl);
-            auto bmw = RunBenchmark("DAAT_WAND", true, train_ds, query_ds, gt_for_k, k, runs, metric, avgdl);
-            auto maxscore = RunBenchmark("DAAT_MAXSCORE", false, train_ds, query_ds, gt_for_k, k, runs, metric, avgdl);
+            auto taat = RunBenchmark("TAAT_NAIVE", false, train_ds, query_ds, gt, k, runs, metric, avgdl);
+            auto wand = RunBenchmark("DAAT_WAND", false, train_ds, query_ds, gt, k, runs, metric, avgdl);
+            auto bmw = RunBenchmark("DAAT_WAND", true, train_ds, query_ds, gt, k, runs, metric, avgdl);
+            auto maxscore = RunBenchmark("DAAT_MAXSCORE", false, train_ds, query_ds, gt, k, runs, metric, avgdl);
+
+            // Sanity check: TAAT recall should be ~100% if using correct ground truth
+            if (taat.recall < 0.95f) {
+                printf("WARNING: TAAT recall is %.2f%% (expected ~100%%)\n", taat.recall * 100);
+                printf("  This may indicate a mismatch between search metric and ground truth.\n");
+                printf("  For MSMARCO SPLADE, use IP metric with L2-normalized vectors.\n\n");
+            }
 
             // Print results in table format similar to DSP paper
             printf("%-12s %12s %15s %12s %10s\n", "Algorithm", "Build(ms)", "MRT(ms)", "QPS", "Recall");
