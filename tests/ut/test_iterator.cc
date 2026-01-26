@@ -103,7 +103,8 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
     milvus::cachinglayer::Manager::ConfigureTieredStorage(
         {CacheWarmupPolicy::CacheWarmupPolicy_Disable, CacheWarmupPolicy::CacheWarmupPolicy_Disable,
          CacheWarmupPolicy::CacheWarmupPolicy_Disable, CacheWarmupPolicy::CacheWarmupPolicy_Disable},
-        {1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb}, true, true, {10, false, 30});
+        {1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb, 1024 * mb}, true, true, {10, false, 30},
+        std::chrono::milliseconds(1000));
 
     auto base_gen = [=]() {
         knowhere::Json json;
