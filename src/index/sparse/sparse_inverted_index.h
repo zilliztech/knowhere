@@ -1570,40 +1570,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                 break;
             }
 
-            table_t candidate_pivot_id = cursor_ptrs[pivot]->cur_vec_id_;
-
-            // Phase 1b: Verify pivot using BLOCK-MAX scores (tighter bounds)
-            // Compute block-max upper bound for the candidate pivot document.
-            // This is the core BMW optimization - use block-level max scores.
-            float upper_bound_block = 0;
-            for (size_t i = 0; i <= pivot; ++i) {
-                upper_bound_block += cursor_ptrs[i]->shallow_advance_score(candidate_pivot_id);
-            }
-
-            if (upper_bound_block < threshold) {
-                // Block-max bound is below threshold - skip to next block boundary.
-                // Find the cursor with the minimum block_end and advance it.
-                table_t min_block_end = n_rows_internal_;
-                size_t min_block_cursor = 0;
-                for (size_t i = 0; i <= pivot; ++i) {
-                    table_t block_end = cursor_ptrs[i]->block_end_doc_id();
-                    if (block_end < min_block_end) {
-                        min_block_end = block_end;
-                        min_block_cursor = i;
-                    }
-                }
-
-                if (min_block_end >= n_rows_internal_) {
-                    break;
-                }
-
-                // Advance past the minimum block boundary
-                cursor_ptrs[min_block_cursor]->seek(min_block_end + 1);
-                reposition_cursor(min_block_cursor);
-                continue;
-            }
-
-            table_t pivot_id = candidate_pivot_id;
+            table_t pivot_id = cursor_ptrs[pivot]->cur_vec_id_;
 
             // Phase 2: Check if all essential cursors are aligned at pivot
             if (pivot_id == cursor_ptrs[0]->cur_vec_id_) {
