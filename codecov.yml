@@ -1,35 +1,57 @@
-# Configuration File for CodeCov
+# Configuration File for Codecov
+# Reference: https://docs.codecov.com/docs/codecov-yaml
+
 codecov:
-  require_ci_to_pass: no
+  require_ci_to_pass: yes
   notify:
-    require_ci_to_pass: no
-    wait_for_ci: false
+    require_ci_to_pass: yes
+    wait_for_ci: true
   ci:
     - jenkins.milvus.io:18080
+
 coverage:
   precision: 2
   round: down
-  range: "50...100"
+  range: "60...100"
 
   status:
     project:
       default:
-        target: 50%
-        threshold: 0% #Allow the coverage to drop by threshold%, and posting a success status.
+        # Global coverage target
+        target: 70%
+        threshold: 1%  # Allow 1% drop
+        if_ci_failed: error
     patch:
       default:
-        target: 60%   #target of patch diff
-        threshold: 0%
-        if_ci_failed: error #success, failure, error, ignore
+        # Incremental coverage target (for changed files)
+        # Higher requirement for new code
+        target: 80%
+        threshold: 0%  # No decrease allowed
+        if_ci_failed: error
+
+parsers:
+  gcov:
+    branch_detection:
+      conditional: yes
+      loop: yes
+      method: no
+      macro: no
 
 comment:
   layout: "reach, diff, flags, files"
   behavior: default
   require_changes: false
-  branches: # branch names that can post comment
+  require_base: no
+  require_head: yes
+  branches:
     - main
 
 ignore:
+  - "tests/**/*"
+  - "thirdparty/**/*"
+  - "benchmark/**/*"
+  - "**/*_test.cc"
+  - "**/*_mock.cc"
   - "LICENSES"
   - ".git"
   - "*.yml"
