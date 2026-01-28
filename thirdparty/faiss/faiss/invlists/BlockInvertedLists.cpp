@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -43,8 +43,7 @@ size_t BlockInvertedLists::add_entries(
         size_t list_no,
         size_t n_entry,
         const idx_t* ids_in,
-        const uint8_t* code,
-        const float* code_norm) {
+        const uint8_t* code) {
     if (n_entry == 0) {
         return 0;
     }
@@ -128,7 +127,7 @@ void BlockInvertedLists::update_entries(
         size_t,
         const idx_t*,
         const uint8_t*) {
-    FAISS_THROW_MSG("not impemented");
+    FAISS_THROW_MSG("not implemented");
 }
 
 BlockInvertedLists::~BlockInvertedLists() {

@@ -6,9 +6,8 @@
  */
 
 #include <stdio.h>
-#include <string.h>
 
-#if defined(__linux__) || defined(__APPLE__)
+#if defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
 
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -30,13 +29,13 @@
 
 namespace faiss {
 
-#if defined(__linux__) || defined(__APPLE__)
+#if defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
 
 struct MmappedFileMappingOwner::PImpl {
     void* ptr = nullptr;
     size_t ptr_size = 0;
 
-    PImpl(const std::string& filename) {
+    explicit PImpl(const std::string& filename) {
         auto f = std::unique_ptr<FILE, decltype(&fclose)>(
                 fopen(filename.c_str(), "r"), &fclose);
         FAISS_THROW_IF_NOT_FMT(
@@ -67,7 +66,7 @@ struct MmappedFileMappingOwner::PImpl {
         ptr_size = filesize;
     }
 
-    PImpl(FILE* f) {
+    explicit PImpl(FILE* f) {
         // get the size
         struct stat s;
         int status = fstat(fileno(f), &s);
@@ -171,12 +170,12 @@ struct MmappedFileMappingOwner::PImpl {
         const int fd = _fileno(f);
         if (fd == -1) {
             // no good
-            FAISS_THROW_FMT("could not get a HANDLE");
+            FAISS_THROW_MSG("could not get a HANDLE");
         }
 
         HANDLE file_handle = (HANDLE)_get_osfhandle(fd);
         if (file_handle == INVALID_HANDLE_VALUE) {
-            FAISS_THROW_FMT("could not get an OS HANDLE");
+            FAISS_THROW_MSG("could not get an OS HANDLE");
         }
 
         // get the size of the file
@@ -227,12 +226,15 @@ struct MmappedFileMappingOwner::PImpl {
 #else
 
 struct MmappedFileMappingOwner::PImpl {
-    PImpl(FILE* f) {
-        FAISS_THROW_FMT("Not implemented");
+    void* ptr = nullptr;
+    size_t ptr_size = 0;
+
+    PImpl(const std::string& filename) {
+        FAISS_THROW_MSG("Not implemented");
     }
 
-    ~PImpl() {
-        FAISS_THROW_FMT("Not implemented");
+    PImpl(FILE* f) {
+        FAISS_THROW_MSG("Not implemented");
     }
 };
 

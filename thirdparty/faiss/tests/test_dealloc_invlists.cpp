@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -18,7 +18,6 @@
 #include <faiss/IVFlib.h>
 #include <faiss/IndexIVF.h>
 #include <faiss/index_factory.h>
-#include <faiss/index_io.h>
 
 using namespace faiss;
 
@@ -71,12 +70,13 @@ std::vector<idx_t> search_index(Index* index, const float* xq) {
 struct EncapsulateInvertedLists : InvertedLists {
     const InvertedLists* il;
 
-    EncapsulateInvertedLists(const InvertedLists* il)
+    explicit EncapsulateInvertedLists(const InvertedLists* il)
             : InvertedLists(il->nlist, il->code_size), il(il) {}
 
     static void* memdup(const void* m, size_t size) {
-        if (size == 0)
+        if (size == 0) {
             return nullptr;
+        }
         return memcpy(malloc(size), m, size);
     }
 
@@ -108,7 +108,7 @@ struct EncapsulateInvertedLists : InvertedLists {
                 il->get_single_code(list_no, offset), code_size);
     }
 
-    size_t add_entries(size_t, size_t, const idx_t*, const uint8_t*, const float*) override {
+    size_t add_entries(size_t, size_t, const idx_t*, const uint8_t*) override {
         assert(!"not implemented");
         return 0;
     }

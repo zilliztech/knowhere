@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -14,9 +14,7 @@
 #include <memory>
 
 #include <faiss/impl/FaissAssert.h>
-#include <faiss/utils/binary_distances.h>
 #include <faiss/utils/hamming.h>
-#include <faiss/utils/utils.h>
 
 namespace faiss {
 
@@ -106,8 +104,8 @@ void IndexLSH::search(
         float* distances,
         idx_t* labels,
         const SearchParameters* params) const {
-    // FAISS_THROW_IF_NOT_MSG(
-    //         !params, "search params not supported for this index");
+    FAISS_THROW_IF_NOT_MSG(
+            !params, "search params not supported for this index");
     FAISS_THROW_IF_NOT(k > 0);
     FAISS_THROW_IF_NOT(is_trained);
     const float* xt = apply_preprocess(n, x);
@@ -121,14 +119,7 @@ void IndexLSH::search(
 
     int_maxheap_array_t res = {size_t(n), size_t(k), labels, idistances.get()};
 
-    binary_knn_hc(
-        faiss::METRIC_Hamming,
-        &res, 
-        qcodes.get(), 
-        codes.data(), 
-        ntotal, 
-        code_size, 
-        (params == nullptr) ? nullptr : params->sel);
+    hammings_knn_hc(&res, qcodes.get(), codes.data(), ntotal, code_size, true);
 
     // convert distances to floats
     for (int i = 0; i < k * n; i++)

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -53,40 +53,40 @@ class GpuIndexBinaryFlat : public IndexBinary {
     /// in the index instance
     void copyTo(faiss::IndexBinaryFlat* index) const;
 
-    void add(faiss::IndexBinary::idx_t n, const uint8_t* x) override;
+    void add(faiss::idx_t n, const uint8_t* x) override;
 
     void reset() override;
 
     void search(
-            faiss::IndexBinary::idx_t n,
+            idx_t n,
             const uint8_t* x,
-            faiss::IndexBinary::idx_t k,
+            // faiss::IndexBinary has idx_t for k
+            idx_t k,
             int32_t* distances,
-            faiss::IndexBinary::idx_t* labels,
-            const BitsetView bitset = nullptr) const override;
+            faiss::idx_t* labels,
+            const faiss::SearchParameters* params = nullptr) const override;
 
-    void reconstruct(faiss::IndexBinary::idx_t key, uint8_t* recons)
-            const override;
+    void reconstruct(faiss::idx_t key, uint8_t* recons) const override;
 
    protected:
     /// Called from search when the input data is on the CPU;
     /// potentially allows for pinned memory usage
     void searchFromCpuPaged_(
-            int n,
+            idx_t n,
             const uint8_t* x,
             int k,
             int32_t* outDistancesData,
-            int* outIndicesData) const;
+            idx_t* outIndicesData) const;
 
     void searchNonPaged_(
-            int n,
+            idx_t n,
             const uint8_t* x,
             int k,
             int32_t* outDistancesData,
-            int* outIndicesData) const;
+            idx_t* outIndicesData) const;
 
    protected:
-    /// Manages streans, cuBLAS handles and scratch memory for devices
+    /// Manages streams, cuBLAS handles and scratch memory for devices
     std::shared_ptr<GpuResources> resources_;
 
     /// Configuration options

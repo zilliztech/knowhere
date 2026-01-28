@@ -20,7 +20,7 @@
 #include "faiss/impl/platform_macros.h"
 #include "xxhash.h"
 
-namespace faiss {
+namespace faiss::cppcontrib::knowhere {
 
 #define ALIGNED(x) __attribute__((aligned(x)))
 
@@ -482,7 +482,7 @@ ivec_L2sqr_avx(const int8_t* x, const int8_t* y, size_t d) {
 // fp16
 
 float
-fp16_vec_inner_product_avx(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+fp16_vec_inner_product_avx(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size_t d) {
     __m256 msum_0 = _mm256_setzero_ps();
     while (d >= 16) {
         auto mx = _mm256_loadu_si256((__m256i*)x);
@@ -518,7 +518,7 @@ fp16_vec_inner_product_avx(const knowhere::fp16* x, const knowhere::fp16* y, siz
 }
 
 float
-fp16_vec_L2sqr_avx(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+fp16_vec_L2sqr_avx(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size_t d) {
     __m256 msum_0 = _mm256_setzero_ps();
     while (d >= 16) {
         auto mx = _mm256_loadu_si256((__m256i*)x);
@@ -558,7 +558,7 @@ fp16_vec_L2sqr_avx(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
 }
 
 float
-fp16_vec_norm_L2sqr_avx(const knowhere::fp16* x, size_t d) {
+fp16_vec_norm_L2sqr_avx(const ::knowhere::fp16* x, size_t d) {
     __m256 msum_0 = _mm256_setzero_ps();
     while (d >= 16) {
         auto mx = _mm256_loadu_si256((__m256i*)x);
@@ -585,8 +585,8 @@ fp16_vec_norm_L2sqr_avx(const knowhere::fp16* x, size_t d) {
 }
 
 void
-fp16_vec_inner_product_batch_4_avx(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
-                                   const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0,
+fp16_vec_inner_product_batch_4_avx(const ::knowhere::fp16* x, const ::knowhere::fp16* y0, const ::knowhere::fp16* y1,
+                                   const ::knowhere::fp16* y2, const ::knowhere::fp16* y3, const size_t d, float& dis0,
                                    float& dis1, float& dis2, float& dis3) {
     __m256 msum_0 = _mm256_setzero_ps();
     __m256 msum_1 = _mm256_setzero_ps();
@@ -629,9 +629,9 @@ fp16_vec_inner_product_batch_4_avx(const knowhere::fp16* x, const knowhere::fp16
 }
 
 void
-fp16_vec_L2sqr_batch_4_avx(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
-                           const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0, float& dis1,
-                           float& dis2, float& dis3) {
+fp16_vec_L2sqr_batch_4_avx(const ::knowhere::fp16* x, const ::knowhere::fp16* y0, const ::knowhere::fp16* y1,
+                           const ::knowhere::fp16* y2, const ::knowhere::fp16* y3, const size_t d, float& dis0,
+                           float& dis1, float& dis2, float& dis3) {
     __m256 msum_0 = _mm256_setzero_ps();
     __m256 msum_1 = _mm256_setzero_ps();
     __m256 msum_2 = _mm256_setzero_ps();
@@ -683,7 +683,7 @@ fp16_vec_L2sqr_batch_4_avx(const knowhere::fp16* x, const knowhere::fp16* y0, co
 // bf16
 
 float
-bf16_vec_inner_product_avx(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+bf16_vec_inner_product_avx(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d) {
     __m256 msum_0 = _mm256_setzero_ps();
     while (d >= 16) {
         auto mx = _mm256_loadu_si256((__m256i*)x);
@@ -719,7 +719,7 @@ bf16_vec_inner_product_avx(const knowhere::bf16* x, const knowhere::bf16* y, siz
 }
 
 float
-bf16_vec_L2sqr_avx(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+bf16_vec_L2sqr_avx(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d) {
     __m256 msum_0 = _mm256_setzero_ps();
     while (d >= 16) {
         auto mx = _mm256_loadu_si256((__m256i*)x);
@@ -757,7 +757,7 @@ bf16_vec_L2sqr_avx(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
 }
 
 float
-bf16_vec_norm_L2sqr_avx(const knowhere::bf16* x, size_t d) {
+bf16_vec_norm_L2sqr_avx(const ::knowhere::bf16* x, size_t d) {
     __m256 msum_0 = _mm256_setzero_ps();
     while (d >= 16) {
         auto mx = _mm256_loadu_si256((__m256i*)x);
@@ -784,8 +784,8 @@ bf16_vec_norm_L2sqr_avx(const knowhere::bf16* x, size_t d) {
 }
 
 void
-bf16_vec_inner_product_batch_4_avx(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                                   const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
+bf16_vec_inner_product_batch_4_avx(const ::knowhere::bf16* x, const ::knowhere::bf16* y0, const ::knowhere::bf16* y1,
+                                   const ::knowhere::bf16* y2, const ::knowhere::bf16* y3, const size_t d, float& dis0,
                                    float& dis1, float& dis2, float& dis3) {
     __m256 msum_0 = _mm256_setzero_ps();
     __m256 msum_1 = _mm256_setzero_ps();
@@ -827,9 +827,9 @@ bf16_vec_inner_product_batch_4_avx(const knowhere::bf16* x, const knowhere::bf16
 }
 
 void
-bf16_vec_L2sqr_batch_4_avx(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                           const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0, float& dis1,
-                           float& dis2, float& dis3) {
+bf16_vec_L2sqr_batch_4_avx(const ::knowhere::bf16* x, const ::knowhere::bf16* y0, const ::knowhere::bf16* y1,
+                           const ::knowhere::bf16* y2, const ::knowhere::bf16* y3, const size_t d, float& dis0,
+                           float& dis1, float& dis2, float& dis3) {
     __m256 msum_0 = _mm256_setzero_ps();
     __m256 msum_1 = _mm256_setzero_ps();
     __m256 msum_2 = _mm256_setzero_ps();
@@ -1145,5 +1145,5 @@ calculate_hash_avx2(const char* data, size_t size) {
     return XXH3_64bits(data, size);
 }
 
-}  // namespace faiss
+}  // namespace faiss::cppcontrib::knowhere
 #endif

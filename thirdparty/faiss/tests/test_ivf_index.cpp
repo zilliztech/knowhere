@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -8,9 +8,6 @@
 #include <omp.h>
 #include <algorithm>
 #include <cstddef>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <map>
 #include <random>
 #include <set>
@@ -20,7 +17,6 @@
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexIVFFlat.h>
 #include <faiss/impl/FaissAssert.h>
-#include <faiss/index_io.h>
 
 namespace {
 
@@ -30,20 +26,17 @@ class TestContext {
    public:
     TestContext() {}
 
-    void save_code(size_t list_no, const uint8_t* code, size_t code_size, const float* code_norm) {
+    void save_code(size_t list_no, const uint8_t* code, size_t code_size) {
         list_nos.emplace(id, list_no);
         codes.emplace(id, std::vector<uint8_t>(code_size));
         for (size_t i = 0; i < code_size; i++) {
             codes[id][i] = code[i];
         }
-        code_norms.emplace(id, code_norm);
         id++;
     }
 
     // id to codes map
     std::unordered_map<faiss::idx_t, std::vector<uint8_t>> codes;
-    // id to code norms map
-    std::unordered_map<faiss::idx_t, const float*> code_norms;
     // id to list_no map
     std::unordered_map<faiss::idx_t, size_t> list_nos;
     faiss::idx_t id = 0;
@@ -123,10 +116,9 @@ class TestInvertedLists : public faiss::InvertedLists {
             size_t list_no,
             faiss::idx_t /*theid*/,
             const uint8_t* code,
-            const float* code_norm,
             void* context) override {
         auto testContext = (TestContext*)context;
-        testContext->save_code(list_no, code, code_size, code_norm);
+        testContext->save_code(list_no, code, code_size);
         return 0;
     }
 
@@ -134,8 +126,7 @@ class TestInvertedLists : public faiss::InvertedLists {
             size_t /*list_no*/,
             size_t /*n_entry*/,
             const faiss::idx_t* /*ids*/,
-            const uint8_t* /*code*/,
-            const float* /*code_norm*/) override {
+            const uint8_t* /*code*/) override {
         FAISS_THROW_MSG("unexpected call");
     }
 
@@ -201,12 +192,10 @@ TEST(IVF, list_context) {
         }
         std::vector<faiss::idx_t> coarse_idx(nb);
         index.quantizer->assign(nb, database.data(), coarse_idx.data());
-        // pass dummy ids, the acutal ids are assigned in TextContext object
+        // pass dummy ids, the actual ids are assigned in TextContext object
         std::vector<faiss::idx_t> xids(nb, 42);
-        // todo aguzhva: add a proper testing 
-        const float* code_norms = nullptr;
         index.add_core(
-                nb, database.data(), code_norms, xids.data(), coarse_idx.data(), &context);
+                nb, database.data(), xids.data(), coarse_idx.data(), &context);
 
         // check the context object get updated
         EXPECT_EQ(nb, context.id) << "should have added all ids";
@@ -214,6 +203,20 @@ TEST(IVF, list_context) {
                 << "should have correct number of codes";
         EXPECT_EQ(nb, context.list_nos.size())
                 << "should have correct number of list numbers";
+    }
+    {
+        constexpr size_t num_vecs = 5; // number of vectors
+        std::vector<float> vecs(num_vecs * d);
+        for (size_t i = 0; i < num_vecs * d; i++) {
+            vecs[i] = distrib(rng);
+        }
+        const size_t codeSize = index.sa_code_size();
+        std::vector<uint8_t> encodedData(num_vecs * codeSize);
+        index.sa_encode(num_vecs, vecs.data(), encodedData.data());
+        std::vector<float> decodedVecs(num_vecs * d);
+        index.sa_decode(num_vecs, encodedData.data(), decodedVecs.data());
+        EXPECT_EQ(vecs, decodedVecs)
+                << "decoded vectors should be the same as the original vectors that were encoded";
     }
     {
         constexpr faiss::idx_t k = 100;

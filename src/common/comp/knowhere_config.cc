@@ -16,8 +16,8 @@
 #ifdef KNOWHERE_WITH_DISKANN
 #include "diskann/aio_context_pool.h"
 #endif
-#include "faiss/Clustering.h"
-#include "faiss/utils/distances.h"
+#include "faiss/cppcontrib/knowhere/Clustering.h"
+#include "faiss/cppcontrib/knowhere/utils/distances.h"
 #include "knowhere/log.h"
 #include "knowhere/thread_pool.h"
 #ifdef KNOWHERE_WITH_GPU
@@ -58,34 +58,34 @@ std::string
 KnowhereConfig::SetSimdType(const SimdType simd_type) {
 #ifdef __x86_64__
     if (simd_type == SimdType::AUTO) {
-        faiss::use_avx512 = true;
-        faiss::use_avx2 = true;
-        faiss::use_sse4_2 = true;
+        faiss::cppcontrib::knowhere::use_avx512 = true;
+        faiss::cppcontrib::knowhere::use_avx2 = true;
+        faiss::cppcontrib::knowhere::use_sse4_2 = true;
         LOG_KNOWHERE_INFO_ << "FAISS expect simdType::AUTO";
     } else if (simd_type == SimdType::AVX512) {
-        faiss::use_avx512 = true;
-        faiss::use_avx2 = true;
-        faiss::use_sse4_2 = true;
+        faiss::cppcontrib::knowhere::use_avx512 = true;
+        faiss::cppcontrib::knowhere::use_avx2 = true;
+        faiss::cppcontrib::knowhere::use_sse4_2 = true;
         LOG_KNOWHERE_INFO_ << "FAISS expect simdType::AVX512";
     } else if (simd_type == SimdType::AVX2) {
-        faiss::use_avx512 = false;
-        faiss::use_avx2 = true;
-        faiss::use_sse4_2 = true;
+        faiss::cppcontrib::knowhere::use_avx512 = false;
+        faiss::cppcontrib::knowhere::use_avx2 = true;
+        faiss::cppcontrib::knowhere::use_sse4_2 = true;
         LOG_KNOWHERE_INFO_ << "FAISS expect simdType::AVX2";
     } else if (simd_type == SimdType::SSE4_2) {
-        faiss::use_avx512 = false;
-        faiss::use_avx2 = false;
-        faiss::use_sse4_2 = true;
+        faiss::cppcontrib::knowhere::use_avx512 = false;
+        faiss::cppcontrib::knowhere::use_avx2 = false;
+        faiss::cppcontrib::knowhere::use_sse4_2 = true;
         LOG_KNOWHERE_INFO_ << "FAISS expect simdType::SSE4_2";
     } else if (simd_type == SimdType::GENERIC) {
-        faiss::use_avx512 = false;
-        faiss::use_avx2 = false;
-        faiss::use_sse4_2 = false;
+        faiss::cppcontrib::knowhere::use_avx512 = false;
+        faiss::cppcontrib::knowhere::use_avx2 = false;
+        faiss::cppcontrib::knowhere::use_sse4_2 = false;
         LOG_KNOWHERE_INFO_ << "FAISS expect simdType::GENERIC";
     }
 #endif
     std::string simd_str;
-    faiss::fvec_hook(simd_str);
+    faiss::cppcontrib::knowhere::fvec_hook(simd_str);
     LOG_KNOWHERE_INFO_ << "FAISS hook " << simd_str;
     return simd_str;
 }
@@ -93,35 +93,35 @@ KnowhereConfig::SetSimdType(const SimdType simd_type) {
 void
 KnowhereConfig::EnablePatchForComputeFP32AsBF16() {
     LOG_KNOWHERE_INFO_ << "Enable patch for compute fp32 as bf16";
-    faiss::enable_patch_for_fp32_bf16();
+    faiss::cppcontrib::knowhere::enable_patch_for_fp32_bf16();
 }
 
 void
 KnowhereConfig::DisablePatchForComputeFP32AsBF16() {
     LOG_KNOWHERE_INFO_ << "Disable patch for compute fp32 as bf16";
-    faiss::disable_patch_for_fp32_bf16();
+    faiss::cppcontrib::knowhere::disable_patch_for_fp32_bf16();
 }
 
 void
 KnowhereConfig::SetBlasThreshold(const int64_t use_blas_threshold) {
     LOG_KNOWHERE_INFO_ << "Set faiss::distance_compute_blas_threshold to " << use_blas_threshold;
-    faiss::distance_compute_blas_threshold = static_cast<int>(use_blas_threshold);
+    faiss::cppcontrib::knowhere::distance_compute_blas_threshold = static_cast<int>(use_blas_threshold);
 }
 
 int64_t
 KnowhereConfig::GetBlasThreshold() {
-    return faiss::distance_compute_blas_threshold;
+    return faiss::cppcontrib::knowhere::distance_compute_blas_threshold;
 }
 
 void
 KnowhereConfig::SetEarlyStopThreshold(const double early_stop_threshold) {
     LOG_KNOWHERE_INFO_ << "Set faiss::early_stop_threshold to " << early_stop_threshold;
-    faiss::early_stop_threshold = early_stop_threshold;
+    faiss::cppcontrib::knowhere::early_stop_threshold = early_stop_threshold;
 }
 
 double
 KnowhereConfig::GetEarlyStopThreshold() {
-    return faiss::early_stop_threshold;
+    return faiss::cppcontrib::knowhere::early_stop_threshold;
 }
 
 void
@@ -130,10 +130,11 @@ KnowhereConfig::SetClusteringType(const ClusteringType clustering_type) {
     switch (clustering_type) {
         case ClusteringType::K_MEANS:
         default:
-            faiss::clustering_type = faiss::ClusteringType::K_MEANS;
+            faiss::cppcontrib::knowhere::clustering_type = faiss::cppcontrib::knowhere::ClusteringType::K_MEANS;
             break;
         case ClusteringType::K_MEANS_PLUS_PLUS:
-            faiss::clustering_type = faiss::ClusteringType::K_MEANS_PLUS_PLUS;
+            faiss::cppcontrib::knowhere::clustering_type =
+                faiss::cppcontrib::knowhere::ClusteringType::K_MEANS_PLUS_PLUS;
             break;
     }
 }

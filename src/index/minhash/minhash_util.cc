@@ -9,7 +9,9 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 #include "index/minhash/minhash_util.h"
+
 namespace knowhere::minhash {
+
 namespace {
 using JcaccardSim = faiss::CMin<float, idx_t>;
 using DIST1FUNC = float (*)(const char* x, const char* y, size_t element_length, size_t element_size);
@@ -60,11 +62,11 @@ struct MinHashJaccardComputer : faiss::DistanceComputer {
     MinHashJaccardComputer(const char* x, const size_t l, const size_t es)
         : base(x), element_length(l), element_size(es) {
         if (element_size == 4) {
-            dist1 = faiss::u32_jaccard_distance;
-            dist4 = faiss::u32_jaccard_distance_batch_4;
+            dist1 = faiss::cppcontrib::knowhere::u32_jaccard_distance;
+            dist4 = faiss::cppcontrib::knowhere::u32_jaccard_distance_batch_4;
         } else if (element_size == 8) {
-            dist1 = faiss::u64_jaccard_distance;
-            dist4 = faiss::u64_jaccard_distance_batch_4;
+            dist1 = faiss::cppcontrib::knowhere::u64_jaccard_distance;
+            dist4 = faiss::cppcontrib::knowhere::u64_jaccard_distance_batch_4;
         } else {
             dist1 = &minhash_jaccard_native;
             dist4 = &minhash_jaccard_batch_4_native;
@@ -147,7 +149,8 @@ minhash_lsh_hit_with_topk1_opt_search(const char* x, const char* y, size_t size_
             for (size_t query_id = query_beg; query_id < query_end; query_id++) {
                 auto query_key = query_hash_k.data() + mh_lsh_band * query_id;
                 for (size_t i = 0; i < mh_lsh_band; i++) {
-                    auto hit_id = faiss::u64_binary_search_eq(base_hash_k.data() + i * ny, ny, query_key[i]);
+                    auto hit_id = faiss::cppcontrib::knowhere::u64_binary_search_eq(base_hash_k.data() + i * ny, ny,
+                                                                                    query_key[i]);
                     if (hit_id != -1) {
                         all_res[query_id].push(base_hash_v[hit_id], 1.0f);
                         while (!all_res[query_id].full() && hit_id < mh_lsh_band &&
@@ -322,7 +325,8 @@ MinHashLSHHitByNy(const char* x, const char* y, size_t size_in_bytes, size_t ele
     MinHashLSHResultHandler res(ids, vals, topk);
     for (size_t i = 0; i < ny; i++) {
         if (bitset.empty() || !bitset.test(i)) {
-            res.push(i, faiss::minhash_lsh_hit(x, y + size_in_bytes * i, truncated_size, mh_lsh_band));
+            res.push(
+                i, faiss::cppcontrib::knowhere::minhash_lsh_hit(x, y + size_in_bytes * i, truncated_size, mh_lsh_band));
             if (res.full()) {
                 break;
             }
@@ -348,7 +352,7 @@ MinHashJaccardKNNSearchByNy(const char* x, const char* y, size_t length, size_t 
             faiss::heap_replace_top<JcaccardSim>(topk, vals, ids, dis_in, j);
         }
     };
-    faiss::distance_compute_if(ny, computer.get(), filter, apply);
+    faiss::cppcontrib::knowhere::distance_compute_if(ny, computer.get(), filter, apply);
     faiss::heap_reorder<JcaccardSim>(topk, vals, ids);
 }
 

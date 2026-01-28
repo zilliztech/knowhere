@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -30,7 +30,7 @@ void setCurrentDevice(int device) {
 int getNumDevices() {
     int numDev = -1;
     cudaError_t err = cudaGetDeviceCount(&numDev);
-    if (cudaErrorNoDevice == err) {
+    if (cudaErrorNoDevice == err || cudaErrorInsufficientDriver == err) {
         numDev = 0;
     } else {
         CUDA_VERIFY(err);
@@ -86,6 +86,16 @@ int getMaxThreadsCurrentDevice() {
     return getMaxThreads(getCurrentDevice());
 }
 
+dim3 getMaxGrid(int device) {
+    auto& prop = getDeviceProperties(device);
+
+    return dim3(prop.maxGridSize[0], prop.maxGridSize[1], prop.maxGridSize[2]);
+}
+
+dim3 getMaxGridCurrentDevice() {
+    return getMaxGrid(getCurrentDevice());
+}
+
 size_t getMaxSharedMemPerBlock(int device) {
     return getDeviceProperties(device).sharedMemPerBlock;
 }
@@ -114,6 +124,14 @@ int getDeviceForAddress(const void* p) {
         return -1;
     }
 
+#if USE_AMD_ROCM
+    if (att.type != hipMemoryTypeHost &&
+        att.type != hipMemoryTypeUnregistered) {
+        return att.device;
+    } else {
+        return -1;
+    }
+#else
     // memoryType is deprecated for CUDA 10.0+
 #if CUDA_VERSION < 10000
     if (att.memoryType == cudaMemoryTypeHost) {
@@ -128,6 +146,7 @@ int getDeviceForAddress(const void* p) {
     } else {
         return -1;
     }
+#endif
 #endif
 }
 
@@ -149,10 +168,33 @@ bool getTensorCoreSupportCurrentDevice() {
     return getTensorCoreSupport(getCurrentDevice());
 }
 
-int getMaxKSelection() {
-    // Don't use the device at the moment, just base this based on the CUDA SDK
-    // that we were compiled with
-    return GPU_MAX_SELECTION_K;
+int getWarpSize(int device) {
+    const auto& prop = getDeviceProperties(device);
+    return prop.warpSize;
+}
+
+int getWarpSizeCurrentDevice() {
+    return getWarpSize(getCurrentDevice());
+}
+
+size_t getFreeMemory(int device) {
+    DeviceScope scope(device);
+
+    size_t free = 0;
+    size_t total = 0;
+
+    CUDA_VERIFY(cudaMemGetInfo(&free, &total));
+
+    return free;
+}
+
+size_t getFreeMemoryCurrentDevice() {
+    size_t free = 0;
+    size_t total = 0;
+
+    CUDA_VERIFY(cudaMemGetInfo(&free, &total));
+
+    return free;
 }
 
 DeviceScope::DeviceScope(int device) {

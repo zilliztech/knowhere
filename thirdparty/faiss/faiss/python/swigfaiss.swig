@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -32,8 +32,26 @@
 #pragma SWIG nowarn=341
 #pragma SWIG nowarn=512
 #pragma SWIG nowarn=362
+#pragma SWIG nowarn=509
 
-%include <stdint.i>
+// we need explict control of these typedefs...
+// %include <stdint.i>
+typedef unsigned char uint8_t;
+typedef unsigned short uint16_t;
+typedef unsigned int uint32_t;
+
+// char != unsigned char AND char != signed char so be explicit
+typedef signed char int8_t;
+typedef short int16_t;
+typedef int int32_t;
+
+#ifdef SWIGWORDSIZE64
+typedef unsigned long uint64_t;
+typedef long int64_t;
+#else
+typedef unsigned long long uint64_t;
+typedef long long int64_t;
+#endif
 
 typedef uint64_t size_t;
 
@@ -64,6 +82,11 @@ typedef uint64_t size_t;
 
 #endif
 
+#include <faiss/impl/io.h>
+
+#include <faiss/impl/maybe_owned_vector.h>
+#include <faiss/impl/mapped_io.h>
+#include <faiss/impl/zerocopy_io.h>
 
 #include <faiss/IndexFlat.h>
 #include <faiss/VectorTransform.h>
@@ -76,11 +99,13 @@ typedef uint64_t size_t;
 #include <faiss/Index2Layer.h>
 #include <faiss/IndexIVFPQR.h>
 #include <faiss/IndexIVFFlat.h>
+#include <faiss/IndexIVFFlatPanorama.h>
 #include <faiss/IndexIVFIndependentQuantizer.h>
 
 #include <faiss/IndexFastScan.h>
 #include <faiss/IndexAdditiveQuantizerFastScan.h>
 #include <faiss/IndexPQFastScan.h>
+#include <faiss/impl/FastScanDistancePostProcessing.h>
 #include <faiss/utils/simdlib.h>
 #include <faiss/impl/simd_result_handlers.h>
 
@@ -145,6 +170,9 @@ typedef uint64_t size_t;
 #include <faiss/impl/LocalSearchQuantizer.h>
 #include <faiss/impl/ProductAdditiveQuantizer.h>
 #include <faiss/impl/CodePacker.h>
+#include <faiss/utils/NeuralNet.h>
+#include <faiss/impl/Panorama.h>
+#include <faiss/impl/PanoramaStats.h>
 
 #include <faiss/invlists/BlockInvertedLists.h>
 
@@ -153,6 +181,7 @@ typedef uint64_t size_t;
 #endif // !_MSC_VER
 
 #include <faiss/Clustering.h>
+#include <faiss/impl/ClusteringInitialization.h>
 
 #include <faiss/utils/hamming.h>
 #include <faiss/utils/hamming_distance/common.h>
@@ -164,6 +193,22 @@ typedef uint64_t size_t;
 #include <faiss/impl/lattice_Zn.h>
 #include <faiss/IndexLattice.h>
 
+#include <faiss/IndexNeuralNetCodec.h>
+
+#include <faiss/impl/RaBitQuantizer.h>
+#include <faiss/impl/RaBitQStats.h>
+#include <faiss/impl/RaBitQUtils.h>
+#include <faiss/IndexRaBitQ.h>
+#include <faiss/IndexRaBitQFastScan.h>
+#include <faiss/IndexIVFRaBitQ.h>
+#include <faiss/IndexIVFRaBitQFastScan.h>
+
+#ifdef FAISS_ENABLE_SVS
+#include <faiss/svs/IndexSVSVamana.h>
+#include <faiss/svs/IndexSVSFlat.h>
+#include <faiss/svs/IndexSVSVamanaLVQ.h>
+#include <faiss/svs/IndexSVSVamanaLeanVec.h>
+#endif
 
 %}
 
@@ -189,7 +234,7 @@ typedef uint64_t size_t;
             PyErr_SetString(PyExc_RuntimeError, e.what());
         }
         SWIG_fail;
-    } catch(std::bad_alloc & ba) {
+    } catch(std::bad_alloc&) {
         PyEval_RestoreThread(_save);
         PyErr_SetString(PyExc_MemoryError, "std::bad_alloc");
         SWIG_fail;
@@ -237,10 +282,15 @@ namespace std {
 // primitive array types
 %template(Float32Vector) std::vector<float>;
 %template(Float64Vector) std::vector<double>;
+
+// weird interaction within C++ between char and signed char
+%ignore Int8Vector::swap;
+
 %template(Int8Vector) std::vector<int8_t>;
 %template(Int16Vector) std::vector<int16_t>;
 %template(Int32Vector) std::vector<int32_t>;
 %template(Int64Vector) std::vector<int64_t>;
+
 %template(UInt8Vector) std::vector<uint8_t>;
 %template(UInt16Vector) std::vector<uint16_t>;
 %template(UInt32Vector) std::vector<uint32_t>;
@@ -256,7 +306,9 @@ namespace std {
 %template(RepeatVector) std::vector<faiss::Repeat>;
 %template(ClusteringIterationStatsVector) std::vector<faiss::ClusteringIterationStats>;
 %template(ParameterRangeVector) std::vector<faiss::ParameterRange>;
-
+%template(MaybeOwnedVectorUInt8Vector) std::vector<faiss::MaybeOwnedVector<uint8_t> >;
+%template(MaybeOwnedVectorInt32Vector) std::vector<faiss::MaybeOwnedVector<int32_t> >;
+%template(MaybeOwnedVectorFloat32Vector) std::vector<faiss::MaybeOwnedVector<float> >;
 
 #ifndef SWIGWIN
 %template(OnDiskOneListVector) std::vector<faiss::OnDiskOneList>;
@@ -350,6 +402,37 @@ void gpu_sync_all_devices()
 %include  <faiss/gpu/GpuResources.h>
 %include  <faiss/gpu/StandardGpuResources.h>
 
+#ifdef FAISS_ENABLE_ROCM
+
+typedef ihipStream_t* hipStream_t;
+
+%inline %{
+
+// interop between pytorch exposed hipStream_t and faiss
+hipStream_t cast_integer_to_cudastream_t(int64_t x) {
+  return (hipStream_t) x;
+}
+
+int64_t cast_cudastream_t_to_integer(hipStream_t x) {
+  return (int64_t) x;
+}
+
+%}
+
+#else // FAISS_ENABLE_ROCM
+
+#ifdef FAISS_ENABLE_CUVS
+%shared_ptr(faiss::gpu::IVFPQBuildCagraConfig);
+%shared_ptr(faiss::gpu::IVFPQSearchCagraConfig);
+
+%{
+
+#include <faiss/gpu/GpuIndexCagra.h>
+#include <faiss/gpu/GpuIndexBinaryCagra.h>
+
+%}
+#endif // FAISS_ENABLE_CUVS
+
 typedef CUstream_st* cudaStream_t;
 
 %inline %{
@@ -365,7 +448,8 @@ int64_t cast_cudastream_t_to_integer(cudaStream_t x) {
 
 %}
 
-#else
+#endif // FAISS_ENABLE_ROCM
+#else // GPU_WRAPPER
 
 %{
 int get_num_gpus()
@@ -387,7 +471,7 @@ void gpu_sync_all_devices()
 %}
 
 
-#endif
+#endif // GPU_WRAPPER
 
 // order matters because includes are not recursive
 
@@ -408,9 +492,21 @@ void gpu_sync_all_devices()
 
 %include <faiss/impl/DistanceComputer.h>
 
+%include <faiss/impl/io.h>
+
+%ignore faiss::MmappedFileMappingOwner::p_impl;
+
+%include <faiss/impl/maybe_owned_vector.h>
+%include <faiss/impl/mapped_io.h>
+%include <faiss/impl/zerocopy_io.h>
+
 %newobject *::get_FlatCodesDistanceComputer() const;
 %include  <faiss/IndexFlatCodes.h>
+
+%ignore faiss::IndexFlatPanorama::pano;
+
 %include  <faiss/IndexFlat.h>
+%include  <faiss/impl/ClusteringInitialization.h>
 %include  <faiss/Clustering.h>
 
 %include  <faiss/utils/extra_distances.h>
@@ -425,6 +521,8 @@ void gpu_sync_all_devices()
 %include  <faiss/impl/LocalSearchQuantizer.h>
 %include  <faiss/impl/ProductAdditiveQuantizer.h>
 %include  <faiss/impl/CodePacker.h>
+%include  <faiss/impl/Panorama.h>
+%include  <faiss/impl/PanoramaStats.h>
 
 %include  <faiss/VectorTransform.h>
 %include  <faiss/IndexPreTransform.h>
@@ -460,6 +558,7 @@ void gpu_sync_all_devices()
 %include  <faiss/IndexNNDescent.h>
 
 %include  <faiss/IndexIVFFlat.h>
+%include  <faiss/IndexIVFFlatPanorama.h>
 
 %warnfilter(509) faiss::nsg::Graph< int >::at(int,int);
 
@@ -490,6 +589,7 @@ void gpu_sync_all_devices()
 %include  <faiss/IndexIVFPQR.h>
 %include  <faiss/Index2Layer.h>
 
+%include  <faiss/impl/FastScanDistancePostProcessing.h>
 %include  <faiss/IndexFastScan.h>
 %include  <faiss/IndexAdditiveQuantizerFastScan.h>
 %include  <faiss/IndexPQFastScan.h>
@@ -529,6 +629,19 @@ struct faiss::simd16uint16 {};
 
 %include  <faiss/IndexRowwiseMinMax.h>
 
+%include <faiss/utils/NeuralNet.h>
+%template(Tensor2D) faiss::nn::Tensor2DTemplate<float>;
+%template(Int32Tensor2D) faiss::nn::Tensor2DTemplate<int32_t>;
+
+%include <faiss/IndexNeuralNetCodec.h>
+
+%include <faiss/impl/RaBitQuantizer.h>
+%include <faiss/impl/RaBitQStats.h>
+%include <faiss/impl/RaBitQUtils.h>
+%include <faiss/IndexRaBitQ.h>
+%include <faiss/IndexRaBitQFastScan.h>
+%include <faiss/IndexIVFRaBitQ.h>
+%include <faiss/IndexIVFRaBitQFastScan.h>
 
 %ignore faiss::BufferList::Buffer;
 %ignore faiss::RangeSearchPartialResult::QueryResult;
@@ -549,6 +662,15 @@ struct faiss::simd16uint16 {};
 
 %include <faiss/utils/approx_topk/mode.h>
 
+#ifdef FAISS_ENABLE_SVS
+%ignore faiss::to_svs_storage_kind;
+
+%include  <faiss/svs/IndexSVSVamana.h>
+%include  <faiss/svs/IndexSVSFlat.h>
+%include  <faiss/svs/IndexSVSVamanaLVQ.h>
+%include  <faiss/svs/IndexSVSVamanaLeanVec.h>
+#endif // FAISS_ENABLE_SVS
+
 #ifdef GPU_WRAPPER
 
 // quiet SWIG warnings
@@ -557,6 +679,10 @@ struct faiss::simd16uint16 {};
 %include  <faiss/gpu/GpuIndicesOptions.h>
 %include  <faiss/gpu/GpuClonerOptions.h>
 %include  <faiss/gpu/GpuIndex.h>
+#ifdef FAISS_ENABLE_CUVS
+%include  <faiss/gpu/GpuIndexCagra.h>
+%include  <faiss/gpu/GpuIndexBinaryCagra.h>
+#endif
 %include  <faiss/gpu/GpuIndexFlat.h>
 %include  <faiss/gpu/GpuIndexIVF.h>
 %include  <faiss/gpu/GpuIndexIVFPQ.h>
@@ -566,10 +692,7 @@ struct faiss::simd16uint16 {};
 %include  <faiss/gpu/GpuDistance.h>
 %include  <faiss/gpu/GpuIcmEncoder.h>
 
-
 #endif
-
-
 
 
 
@@ -620,6 +743,10 @@ struct faiss::simd16uint16 {};
     DOWNCAST ( IndexShardsIVF )
     DOWNCAST2 ( IndexShards, IndexShardsTemplateT_faiss__Index_t )
     DOWNCAST2 ( IndexReplicas, IndexReplicasTemplateT_faiss__Index_t )
+    DOWNCAST ( IndexRaBitQFastScan )
+    DOWNCAST ( IndexRaBitQ )
+    DOWNCAST ( IndexIVFRaBitQ )
+    DOWNCAST ( IndexIVFRaBitQFastScan )
     DOWNCAST ( IndexIVFIndependentQuantizer)
     DOWNCAST ( IndexIVFPQR )
     DOWNCAST ( IndexIVFPQ )
@@ -634,12 +761,15 @@ struct faiss::simd16uint16 {};
     DOWNCAST ( IndexIVFLocalSearchQuantizerFastScan )
     DOWNCAST ( IndexIVFProductResidualQuantizerFastScan )
     DOWNCAST ( IndexIVFProductLocalSearchQuantizerFastScan )
+    DOWNCAST ( IndexIVFFlatPanorama )
     DOWNCAST ( IndexIVFFlatDedup )
     DOWNCAST ( IndexIVFFlat )
     DOWNCAST ( IndexIVF )
     DOWNCAST ( IndexFlatIP )
     DOWNCAST ( IndexFlatL2 )
+    DOWNCAST ( IndexFlatL2Panorama )
     DOWNCAST ( IndexFlat )
+    DOWNCAST ( IndexRefinePanorama )
     DOWNCAST ( IndexRefineFlat )
     DOWNCAST ( IndexRefine )
     DOWNCAST ( IndexPQFastScan )
@@ -659,6 +789,7 @@ struct faiss::simd16uint16 {};
     DOWNCAST ( IndexLattice )
     DOWNCAST ( IndexPreTransform )
     DOWNCAST ( MultiIndexQuantizer )
+    DOWNCAST ( IndexHNSWFlatPanorama )
     DOWNCAST ( IndexHNSWFlat )
     DOWNCAST ( IndexHNSWPQ )
     DOWNCAST ( IndexHNSWSQ )
@@ -672,7 +803,17 @@ struct faiss::simd16uint16 {};
     DOWNCAST ( IndexRandom )
     DOWNCAST ( IndexRowwiseMinMax )
     DOWNCAST ( IndexRowwiseMinMaxFP16 )
+#ifdef FAISS_ENABLE_SVS
+    DOWNCAST ( IndexSVSFlat )
+    DOWNCAST ( IndexSVSVamanaLeanVec )
+    DOWNCAST ( IndexSVSVamanaLVQ )
+    DOWNCAST ( IndexSVSVamana )
+#endif // FAISS_ENABLE_SVS
 #ifdef GPU_WRAPPER
+#ifdef FAISS_ENABLE_CUVS
+    DOWNCAST_GPU ( GpuIndexCagra )
+    DOWNCAST_GPU ( GpuIndexBinaryCagra )
+#endif
     DOWNCAST_GPU ( GpuIndexIVFPQ )
     DOWNCAST_GPU ( GpuIndexIVFFlat )
     DOWNCAST_GPU ( GpuIndexIVFScalarQuantizer )
@@ -698,6 +839,7 @@ struct faiss::simd16uint16 {};
     DOWNCAST ( IndexBinaryIVF )
     DOWNCAST ( IndexBinaryFlat )
     DOWNCAST ( IndexBinaryFromFloat )
+    DOWNCAST ( IndexBinaryHNSWCagra )
     DOWNCAST ( IndexBinaryHNSW )
     DOWNCAST ( IndexBinaryHash )
     DOWNCAST ( IndexBinaryMultiHash )
@@ -854,6 +996,10 @@ faiss::Quantizer * downcast_Quantizer (faiss::Quantizer *aq)
 %template(AlignedTableUint16) faiss::AlignedTable<uint16_t>;
 %template(AlignedTableFloat32) faiss::AlignedTable<float>;
 
+%template(MaybeOwnedVectorUInt8) faiss::MaybeOwnedVector<uint8_t>;
+%template(MaybeOwnedVectorInt32) faiss::MaybeOwnedVector<int32_t>;
+%template(MaybeOwnedVectorFloat32) faiss::MaybeOwnedVector<float>;
+
 
 // SWIG seems to have some trouble resolving function template types here, so
 // declare explicitly
@@ -970,6 +1116,13 @@ void *memcpy(void *dest, const void *src, size_t n);
 
 #ifdef SWIGPYTHON
 
+// transfer SWIG flag to C++
+#ifdef SWIGWORDSIZE64
+%{
+#define SWIGWORDSIZE64_CPP
+%}
+#endif
+
 %{
 PyObject *swig_ptr (PyObject *a)
 {
@@ -1004,7 +1157,7 @@ PyObject *swig_ptr (PyObject *a)
         return SWIG_NewPointerObj(data, SWIGTYPE_p_unsigned_char, 0);
     }
     if(PyArray_TYPE(ao) == NPY_INT8) {
-        return SWIG_NewPointerObj(data, SWIGTYPE_p_char, 0);
+        return SWIG_NewPointerObj(data, SWIGTYPE_p_signed_char, 0);
     }
     if(PyArray_TYPE(ao) == NPY_UINT16) {
         return SWIG_NewPointerObj(data, SWIGTYPE_p_unsigned_short, 0);
@@ -1022,14 +1175,17 @@ PyObject *swig_ptr (PyObject *a)
         return SWIG_NewPointerObj(data, SWIGTYPE_p_bool, 0);
     }
     if(PyArray_TYPE(ao) == NPY_UINT64) {
-#if (__SIZEOF_LONG__ == 8)
+    // Convert npy64 either long or long long  and it depends on how compiler define int64_t.
+    // In the 64bit machine, typically the int64_t should be long but it is not hold for Apple osx.
+    // In this case, we want to convert npy64 to long_Long in osx
+#ifdef SWIGWORDSIZE64_CPP
         return SWIG_NewPointerObj(data, SWIGTYPE_p_unsigned_long, 0);
 #else
         return SWIG_NewPointerObj(data, SWIGTYPE_p_unsigned_long_long, 0);
 #endif
     }
     if(PyArray_TYPE(ao) == NPY_INT64) {
-#if  (__SIZEOF_LONG__ == 8)
+#ifdef SWIGWORDSIZE64_CPP
         return SWIG_NewPointerObj(data, SWIGTYPE_p_long, 0);
 #else
         return SWIG_NewPointerObj(data, SWIGTYPE_p_long_long, 0);
@@ -1038,7 +1194,9 @@ PyObject *swig_ptr (PyObject *a)
     PyErr_SetString(PyExc_ValueError, "did not recognize array type");
     return NULL;
 }
+%}
 
+%inline %{
 
 struct PythonInterruptCallback: faiss::InterruptCallback {
 
@@ -1053,18 +1211,18 @@ struct PythonInterruptCallback: faiss::InterruptCallback {
         return err == -1;
     }
 
+    static void reset() {
+        faiss::InterruptCallback::instance.reset(new PythonInterruptCallback());
+    }
 };
 
-
 %}
-
 
 %init %{
     /* needed, else crash at runtime */
     import_array();
 
-    faiss::InterruptCallback::instance.reset(new PythonInterruptCallback());
-
+    PythonInterruptCallback::reset();
 %}
 
 // return a pointer usable as input for functions that expect pointers
@@ -1084,8 +1242,8 @@ PyObject * rev_swig_ptr(ctype *src, size_t size);
 
 REV_SWIG_PTR(float, NPY_FLOAT32);
 REV_SWIG_PTR(double, NPY_FLOAT64);
-REV_SWIG_PTR(unsigned char, NPY_UINT8);
-REV_SWIG_PTR(char, NPY_INT8);
+REV_SWIG_PTR(uint8_t, NPY_UINT8);
+REV_SWIG_PTR(int8_t, NPY_INT8);
 REV_SWIG_PTR(unsigned short, NPY_UINT16);
 REV_SWIG_PTR(short, NPY_INT16);
 REV_SWIG_PTR(int, NPY_INT32);
@@ -1121,20 +1279,16 @@ int * cast_integer_to_int_ptr (int64_t x) {
 void * cast_integer_to_void_ptr (int64_t x) {
     return (void*)x;
 }
-
 %}
 
-
-
-
-
-
-
 %inline %{
-    void wait() {
-        // in gdb, use return to get out of this function
-        for(int i = 0; i == 0; i += 0);
-    }
- %}
+
+// the SWIG version is a 6-digit hex string, eg. version 3.2.1 is encoded as
+// 0x030201
+uint64_t swig_version() {
+    return SWIG_VERSION;
+}
+
+%}
 
 // End of file...

@@ -15,7 +15,7 @@
 #include <cmath>
 #include <cstdint>
 
-#include "faiss/IndexIVFFlat.h"
+#include "faiss/cppcontrib/knowhere/IndexIVFFlat.h"
 #include "faiss/impl/FaissException.h"
 #include "faiss/index_io.h"
 #include "io/memory_io.h"
@@ -30,11 +30,11 @@ float
 GetL2Norm(const DataType* x, int32_t d) {
     float norm_l2_sqr = 0.0;
     if constexpr (std::is_same_v<DataType, fp32>) {
-        norm_l2_sqr = faiss::fvec_norm_L2sqr(x, d);
+        norm_l2_sqr = faiss::cppcontrib::knowhere::fvec_norm_L2sqr(x, d);
     } else if constexpr (std::is_same_v<DataType, fp16>) {
-        norm_l2_sqr = faiss::fp16_vec_norm_L2sqr(x, d);
+        norm_l2_sqr = faiss::cppcontrib::knowhere::fp16_vec_norm_L2sqr(x, d);
     } else if constexpr (std::is_same_v<DataType, bf16>) {
-        norm_l2_sqr = faiss::bf16_vec_norm_L2sqr(x, d);
+        norm_l2_sqr = faiss::cppcontrib::knowhere::bf16_vec_norm_L2sqr(x, d);
     } else {
         KNOWHERE_THROW_MSG("Unknown Datatype");
     }
@@ -62,11 +62,11 @@ float
 NormalizeVec(DataType* x, int32_t d) {
     float norm_l2_sqr = 0.0;
     if constexpr (std::is_same_v<DataType, fp32>) {
-        norm_l2_sqr = faiss::fvec_norm_L2sqr(x, d);
+        norm_l2_sqr = faiss::cppcontrib::knowhere::fvec_norm_L2sqr(x, d);
     } else if constexpr (std::is_same_v<DataType, fp16>) {
-        norm_l2_sqr = faiss::fp16_vec_norm_L2sqr(x, d);
+        norm_l2_sqr = faiss::cppcontrib::knowhere::fp16_vec_norm_L2sqr(x, d);
     } else if constexpr (std::is_same_v<DataType, bf16>) {
-        norm_l2_sqr = faiss::bf16_vec_norm_L2sqr(x, d);
+        norm_l2_sqr = faiss::cppcontrib::knowhere::bf16_vec_norm_L2sqr(x, d);
     } else {
         KNOWHERE_THROW_MSG("Unknown Datatype");
     }

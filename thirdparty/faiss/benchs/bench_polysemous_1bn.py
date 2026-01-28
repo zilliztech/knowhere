@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -69,7 +69,7 @@ elif dbname == 'Deep1B':
     xb = mmap_fvecs('deep1b/base.fvecs')
     xq = mmap_fvecs('deep1b/deep1B_queries.fvecs')
     xt = mmap_fvecs('deep1b/learn.fvecs')
-    # deep1B's train is is outrageously big
+    # deep1B's train is outrageously big
     xt = xt[:10 * 1000 * 1000]
     gt = ivecs_read('deep1b/deep1B_groundtruth.ivecs')
 

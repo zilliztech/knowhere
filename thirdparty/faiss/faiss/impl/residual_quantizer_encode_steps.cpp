@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -16,8 +16,6 @@
 #include <faiss/utils/utils.h>
 
 #include <faiss/utils/approx_topk/approx_topk.h>
-
-#include "simd/hook.h"
 
 extern "C" {
 
@@ -97,7 +95,7 @@ void accum_and_store_tab(
         for (size_t ij = 1; ij < M; ij++) {
             reg += cbs[ij][kk];
         }
-        output[b * K + kk] = reg;
+        output[kk] = reg;
     }
 }
 
@@ -154,7 +152,7 @@ void accum_and_add_tab(
         for (size_t ij = 1; ij < M; ij++) {
             reg += cbs[ij][kk];
         }
-        output[b * K + kk] += reg;
+        output[kk] += reg;
     }
 }
 
@@ -294,8 +292,8 @@ void beam_search_encode_step(
                     cent_ids.data() + i * beam_size * new_beam_size;
 
             // here we could be a tad more efficient by merging sorted arrays
-            for (int i_2 = 0; i_2 < new_beam_size; i_2++) {
-                new_distances_i[i_2] = C::neutral();
+            for (int j = 0; j < new_beam_size; j++) {
+                new_distances_i[j] = C::neutral();
             }
             std::vector<int> perm(new_beam_size, -1);
             heap_addn<C>(
@@ -327,8 +325,8 @@ void beam_search_encode_step(
             const float* cent_distances_i =
                     cent_distances.data() + i * beam_size * K;
             // then we have to select the best results
-            for (int i_2 = 0; i_2 < new_beam_size; i_2++) {
-                new_distances_i[i_2] = C::neutral();
+            for (int j = 0; j < new_beam_size; j++) {
+                new_distances_i[j] = C::neutral();
             }
             std::vector<int> perm(new_beam_size, -1);
 
@@ -560,8 +558,8 @@ void beam_search_encode_step_tab(
         const float* cent_distances_i = cent_distances.data();
 
         // then we have to select the best results
-        for (int i_2 = 0; i_2 < new_beam_size; i_2++) {
-            new_distances_i[i_2] = C::neutral();
+        for (int j = 0; j < new_beam_size; j++) {
+            new_distances_i[j] = C::neutral();
         }
         std::vector<int> perm(new_beam_size, -1);
 
@@ -666,8 +664,6 @@ void refine_beam_mp(
     std::unique_ptr<Index> assign_index;
     if (rq.assign_index_factory) {
         assign_index.reset((*rq.assign_index_factory)(rq.d));
-    } else {
-        assign_index.reset(new IndexFlatL2(rq.d));
     }
 
     // main loop
@@ -703,7 +699,9 @@ void refine_beam_mp(
                 assign_index.get(),
                 rq.approx_topk_mode);
 
-        assign_index->reset();
+        if (assign_index != nullptr) {
+            assign_index->reset();
+        }
 
         std::swap(codes_ptr, new_codes_ptr);
         std::swap(residuals_ptr, new_residuals_ptr);
@@ -811,7 +809,7 @@ void refine_beam_LUT_mp(
                 rq.codebook_offsets.data(),
                 query_cp + rq.codebook_offsets[m],
                 rq.total_codebook_size,
-                rq.cent_norms.data() + rq.codebook_offsets[m],
+                rq.centroid_norms.data() + rq.codebook_offsets[m],
                 m,
                 codes_ptr,
                 distances_ptr,

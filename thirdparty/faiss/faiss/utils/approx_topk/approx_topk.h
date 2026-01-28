@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -50,8 +50,8 @@
 //        for j in range(0, NBUCKETS):
 //          idx = beam * n + i * NBUCKETS + j
 //          if distances[idx] < local_min_distances[j]:
-//            local_min_distances[i] = distances[idx]
-//            local_min_indices[i] = indices[idx]
+//            local_min_distances[j] = distances[idx]
+//            local_min_indices[j] = indices[idx]
 //
 //    for j in range(0, NBUCKETS):
 //      heap.push(local_min_distances[j], local_min_indices[j])

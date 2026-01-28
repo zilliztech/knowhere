@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -19,6 +19,7 @@
 #include <faiss/gpu/utils/Limits.cuh>
 #include <faiss/gpu/utils/MatrixMult.cuh>
 
+#include <faiss/gpu/impl/IndexUtils.h>
 #include <thrust/device_ptr.h>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
@@ -79,7 +80,7 @@ void runAllPairwiseDistance(
     // Prepare norm vector ||q||^2; ||c||^2 is already pre-computed
     //
     DeviceTensor<float, 1, true> queryNorms(
-            res, makeTempAlloc(AllocType::Other, stream), {(int)numQueries});
+            res, makeTempAlloc(AllocType::Other, stream), {numQueries});
 
     // ||q||^2
     if (computeL2) {
@@ -126,10 +127,9 @@ void runDistance(
         Tensor<float, 1, true>* centroidNorms,
         Tensor<T, 2, true>& queries,
         bool queriesRowMajor,
-        Tensor<uint8_t, 1, true>& bitset,
         int k,
         Tensor<float, 2, true>& outDistances,
-        Tensor<int, 2, true>& outIndices,
+        Tensor<idx_t, 2, true>& outIndices,
         bool ignoreOutDistances) {
     // The # of centroids in `centroids` based on memory layout
     auto numCentroids = centroids.getSize(centroidsRowMajor ? 0 : 1);
@@ -178,7 +178,7 @@ void runDistance(
     // Prepare norm vector ||q||^2; ||c||^2 is already pre-computed
     //
     DeviceTensor<float, 1, true> queryNorms(
-            res, makeTempAlloc(AllocType::Other, stream), {(int)numQueries});
+            res, makeTempAlloc(AllocType::Other, stream), {numQueries});
 
     // ||q||^2
     if (computeL2) {
@@ -187,8 +187,8 @@ void runDistance(
 
     // By default, aim to use up to 512 MB of memory for the processing, with
     // both number of queries and number of centroids being at least 512.
-    int tileRows = 0;
-    int tileCols = 0;
+    idx_t tileRows = 0;
+    idx_t tileCols = 0;
     chooseTileSize(
             numQueries,
             numCentroids,
@@ -198,11 +198,11 @@ void runDistance(
             tileRows,
             tileCols);
 
-    int numColTiles = utils::divUp(numCentroids, tileCols);
+    idx_t numColTiles = utils::divUp(numCentroids, tileCols);
 
     // We can have any number of vectors to query against, even less than k, in
     // which case we'll return -1 for the index
-    FAISS_ASSERT(k <= GPU_MAX_SELECTION_K); // select limitation
+    FAISS_ASSERT(k <= getMaxKSelection(false)); // select limitation
 
     // Temporary output memory space we'll use
     DeviceTensor<float, 2, true> distanceBuf1(
@@ -223,15 +223,15 @@ void runDistance(
     DeviceTensor<float, 2, true>* outDistanceBufs[2] = {
             &outDistanceBuf1, &outDistanceBuf2};
 
-    DeviceTensor<int, 2, true> outIndexBuf1(
+    DeviceTensor<idx_t, 2, true> outIndexBuf1(
             res,
             makeTempAlloc(AllocType::Other, stream),
             {tileRows, numColTiles * k});
-    DeviceTensor<int, 2, true> outIndexBuf2(
+    DeviceTensor<idx_t, 2, true> outIndexBuf2(
             res,
             makeTempAlloc(AllocType::Other, stream),
             {tileRows, numColTiles * k});
-    DeviceTensor<int, 2, true>* outIndexBufs[2] = {
+    DeviceTensor<idx_t, 2, true>* outIndexBufs[2] = {
             &outIndexBuf1, &outIndexBuf2};
 
     auto streams = res->getAlternateStreamsCurrentDevice();
@@ -241,20 +241,20 @@ void runDistance(
     bool interrupt = false;
 
     // Tile over the input queries
-    for (int i = 0; i < numQueries; i += tileRows) {
+    for (idx_t i = 0; i < numQueries; i += tileRows) {
         if (interrupt || InterruptCallback::is_interrupted()) {
             interrupt = true;
             break;
         }
 
-        int curQuerySize = std::min(tileRows, numQueries - i);
+        idx_t curQuerySize = std::min(tileRows, numQueries - i);
 
         auto outDistanceView = outDistances.narrow(0, i, curQuerySize);
         auto outIndexView = outIndices.narrow(0, i, curQuerySize);
 
         auto queryView =
                 queries.narrow(queriesRowMajor ? 0 : 1, i, curQuerySize);
-        auto queryNormNiew = queryNorms.narrow(0, i, curQuerySize);
+        auto queryNormView = queryNorms.narrow(0, i, curQuerySize);
 
         auto outDistanceBufRowView =
                 outDistanceBufs[curStream]->narrow(0, 0, curQuerySize);
@@ -262,14 +262,14 @@ void runDistance(
                 outIndexBufs[curStream]->narrow(0, 0, curQuerySize);
 
         // Tile over the centroids
-        for (int j = 0; j < numCentroids; j += tileCols) {
+        for (idx_t j = 0; j < numCentroids; j += tileCols) {
             if (InterruptCallback::is_interrupted()) {
                 interrupt = true;
                 break;
             }
 
-            int curCentroidSize = std::min(tileCols, numCentroids - j);
-            int curColTile = j / tileCols;
+            auto curCentroidSize = std::min(tileCols, numCentroids - j);
+            auto curColTile = j / tileCols;
 
             auto centroidsView = sliceCentroids(
                     centroids, centroidsRowMajor, j, curCentroidSize);
@@ -311,7 +311,6 @@ void runDistance(
                     runL2SelectMin(
                             distanceBufView,
                             *centroidNorms,
-                            bitset,
                             outDistanceView,
                             outIndexView,
                             k,
@@ -322,7 +321,7 @@ void runDistance(
                         // along rows top-k ||c||^2 - 2qc + ||q||^2 in the form
                         // (query id, k)
                         runSumAlongRows(
-                                queryNormNiew,
+                                queryNormView,
                                 outDistanceView,
                                 true, // L2 distances should not go below zero
                                       // due to roundoff error
@@ -336,7 +335,6 @@ void runDistance(
                     runL2SelectMin(
                             distanceBufView,
                             centroidNormsView,
-                            bitset,
                             outDistanceBufColView,
                             outIndexBufColView,
                             k,
@@ -347,7 +345,7 @@ void runDistance(
                         // along rows top-k ||c||^2 - 2qc + ||q||^2 in the form
                         // (query id, k)
                         runSumAlongRows(
-                                queryNormNiew,
+                                queryNormView,
                                 outDistanceBufColView,
                                 true, // L2 distances should not go below zero
                                       // due to roundoff error
@@ -360,7 +358,6 @@ void runDistance(
                     // Write into the final output
                     runBlockSelect(
                             distanceBufView,
-                            bitset,
                             outDistanceView,
                             outIndexView,
                             true,
@@ -370,7 +367,6 @@ void runDistance(
                     // Write into the intermediate output
                     runBlockSelect(
                             distanceBufView,
-                            bitset,
                             outDistanceBufColView,
                             outIndexBufColView,
                             true,
@@ -391,7 +387,6 @@ void runDistance(
             runBlockSelectPair(
                     outDistanceBufRowView,
                     outIndexBufRowView,
-                    bitset,
                     outDistanceView,
                     outIndexView,
                     computeL2 ? false : true,
@@ -419,10 +414,9 @@ void runL2Distance(
         Tensor<float, 1, true>* centroidNorms,
         Tensor<T, 2, true>& queries,
         bool queriesRowMajor,
-        Tensor<uint8_t, 1, true>& bitset,
         int k,
         Tensor<float, 2, true>& outDistances,
-        Tensor<int, 2, true>& outIndices,
+        Tensor<idx_t, 2, true>& outIndices,
         bool ignoreOutDistances = false) {
     runDistance<T>(
             true, // L2
@@ -433,7 +427,6 @@ void runL2Distance(
             centroidNorms,
             queries,
             queriesRowMajor,
-            bitset,
             k,
             outDistances,
             outIndices,
@@ -448,10 +441,9 @@ void runIPDistance(
         bool centroidsRowMajor,
         Tensor<T, 2, true>& queries,
         bool queriesRowMajor,
-        Tensor<uint8_t, 1, true>& bitset,
         int k,
         Tensor<float, 2, true>& outDistances,
-        Tensor<int, 2, true>& outIndices) {
+        Tensor<idx_t, 2, true>& outIndices) {
     runDistance<T>(
             false, // IP
             res,
@@ -461,7 +453,6 @@ void runIPDistance(
             nullptr, // no centroid norms provided
             queries,
             queriesRowMajor,
-            bitset,
             k,
             outDistances,
             outIndices,
@@ -514,6 +505,27 @@ void runAllPairwiseL2Distance(
             outDistances);
 }
 
+void runAllPairwiseL2Distance(
+        GpuResources* res,
+        cudaStream_t stream,
+        Tensor<__nv_bfloat16, 2, true>& vectors,
+        bool vectorsRowMajor,
+        Tensor<float, 1, true>* vectorNorms,
+        Tensor<__nv_bfloat16, 2, true>& queries,
+        bool queriesRowMajor,
+        Tensor<float, 2, true>& outDistances) {
+    runAllPairwiseDistance<__nv_bfloat16>(
+            true,
+            res,
+            stream,
+            vectors,
+            vectorsRowMajor,
+            vectorNorms,
+            queries,
+            queriesRowMajor,
+            outDistances);
+}
+
 void runAllPairwiseIPDistance(
         GpuResources* res,
         cudaStream_t stream,
@@ -554,6 +566,26 @@ void runAllPairwiseIPDistance(
             outDistances);
 }
 
+void runAllPairwiseIPDistance(
+        GpuResources* res,
+        cudaStream_t stream,
+        Tensor<__nv_bfloat16, 2, true>& vectors,
+        bool vectorsRowMajor,
+        Tensor<__nv_bfloat16, 2, true>& queries,
+        bool queriesRowMajor,
+        Tensor<float, 2, true>& outDistances) {
+    runAllPairwiseDistance<__nv_bfloat16>(
+            false,
+            res,
+            stream,
+            vectors,
+            vectorsRowMajor,
+            nullptr,
+            queries,
+            queriesRowMajor,
+            outDistances);
+}
+
 void runL2Distance(
         GpuResources* res,
         cudaStream_t stream,
@@ -562,10 +594,9 @@ void runL2Distance(
         Tensor<float, 1, true>* vectorNorms,
         Tensor<float, 2, true>& queries,
         bool queriesRowMajor,
-        Tensor<uint8_t, 1, true>& bitset,
         int k,
         Tensor<float, 2, true>& outDistances,
-        Tensor<int, 2, true>& outIndices,
+        Tensor<idx_t, 2, true>& outIndices,
         bool ignoreOutDistances) {
     runL2Distance<float>(
             res,
@@ -575,7 +606,6 @@ void runL2Distance(
             vectorNorms,
             queries,
             queriesRowMajor,
-            bitset,
             k,
             outDistances,
             outIndices,
@@ -590,10 +620,9 @@ void runL2Distance(
         Tensor<float, 1, true>* vectorNorms,
         Tensor<half, 2, true>& queries,
         bool queriesRowMajor,
-        Tensor<uint8_t, 1, true>& bitset,
         int k,
         Tensor<float, 2, true>& outDistances,
-        Tensor<int, 2, true>& outIndices,
+        Tensor<idx_t, 2, true>& outIndices,
         bool ignoreOutDistances) {
     runL2Distance<half>(
             res,
@@ -603,7 +632,32 @@ void runL2Distance(
             vectorNorms,
             queries,
             queriesRowMajor,
-            bitset,
+            k,
+            outDistances,
+            outIndices,
+            ignoreOutDistances);
+}
+
+void runL2Distance(
+        GpuResources* res,
+        cudaStream_t stream,
+        Tensor<__nv_bfloat16, 2, true>& vectors,
+        bool vectorsRowMajor,
+        Tensor<float, 1, true>* vectorNorms,
+        Tensor<__nv_bfloat16, 2, true>& queries,
+        bool queriesRowMajor,
+        int k,
+        Tensor<float, 2, true>& outDistances,
+        Tensor<idx_t, 2, true>& outIndices,
+        bool ignoreOutDistances) {
+    runL2Distance<__nv_bfloat16>(
+            res,
+            stream,
+            vectors,
+            vectorsRowMajor,
+            vectorNorms,
+            queries,
+            queriesRowMajor,
             k,
             outDistances,
             outIndices,
@@ -617,10 +671,9 @@ void runIPDistance(
         bool vectorsRowMajor,
         Tensor<float, 2, true>& queries,
         bool queriesRowMajor,
-        Tensor<uint8_t, 1, true>& bitset,
         int k,
         Tensor<float, 2, true>& outDistances,
-        Tensor<int, 2, true>& outIndices) {
+        Tensor<idx_t, 2, true>& outIndices) {
     runIPDistance<float>(
             res,
             stream,
@@ -628,7 +681,6 @@ void runIPDistance(
             vectorsRowMajor,
             queries,
             queriesRowMajor,
-            bitset,
             k,
             outDistances,
             outIndices);
@@ -641,10 +693,9 @@ void runIPDistance(
         bool vectorsRowMajor,
         Tensor<half, 2, true>& queries,
         bool queriesRowMajor,
-        Tensor<uint8_t, 1, true>& bitset,
         int k,
         Tensor<float, 2, true>& outDistances,
-        Tensor<int, 2, true>& outIndices) {
+        Tensor<idx_t, 2, true>& outIndices) {
     runIPDistance<half>(
             res,
             stream,
@@ -652,7 +703,28 @@ void runIPDistance(
             vectorsRowMajor,
             queries,
             queriesRowMajor,
-            bitset,
+            k,
+            outDistances,
+            outIndices);
+}
+
+void runIPDistance(
+        GpuResources* res,
+        cudaStream_t stream,
+        Tensor<__nv_bfloat16, 2, true>& vectors,
+        bool vectorsRowMajor,
+        Tensor<__nv_bfloat16, 2, true>& queries,
+        bool queriesRowMajor,
+        int k,
+        Tensor<float, 2, true>& outDistances,
+        Tensor<idx_t, 2, true>& outIndices) {
+    runIPDistance<__nv_bfloat16>(
+            res,
+            stream,
+            vectors,
+            vectorsRowMajor,
+            queries,
+            queriesRowMajor,
             k,
             outDistances,
             outIndices);

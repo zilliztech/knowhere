@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -11,7 +11,6 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
-#include <random>
 
 #include <algorithm>
 
@@ -20,7 +19,6 @@
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/utils/distances.h>
 #include <faiss/utils/hamming.h>
-#include <faiss/utils/utils.h>
 
 extern "C" {
 
@@ -156,7 +154,7 @@ void ProductAdditiveQuantizer::compute_unpacked_codes(
         int32_t* unpacked_codes,
         size_t n,
         const float* centroids) const {
-    /// TODO: actuallly we do not need to unpack and pack
+    /// TODO: actually we do not need to unpack and pack
     size_t offset_d = 0, offset_m = 0;
     std::vector<float> xsub;
     std::vector<uint8_t> codes;

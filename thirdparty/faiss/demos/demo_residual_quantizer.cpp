@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -41,7 +41,7 @@ int main() {
     };
 
     tic();
-    printf("samping dataset of %zd dim vectors, Q %zd B %zd T %zd\n",
+    printf("sampling dataset of %zd dim vectors, Q %zd B %zd T %zd\n",
            d,
            nq,
            nb,
@@ -76,7 +76,7 @@ int main() {
 
     faiss::ResidualQuantizer rq(
             d, 7, 6, faiss::AdditiveQuantizer::ST_norm_qint8);
-    // do cheap an inaccurate training
+    // do cheap and inaccurate training
     rq.cp.niter = 5;
     rq.max_beam_size = 5;
     rq.train_type = 0;
@@ -103,7 +103,7 @@ int main() {
         index.is_trained = true;
 
         // override vectors
-        index.codes = raw_codes;
+        index.codes = faiss::MaybeOwnedVector<uint8_t>(raw_codes);
         index.ntotal = nb;
 
         tic();

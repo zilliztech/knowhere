@@ -11,7 +11,7 @@
 
 #pragma once
 
-#include <faiss/Index.h>
+#include <faiss/cppcontrib/knowhere/Index.h>
 
 namespace faiss {
 namespace cppcontrib {
@@ -48,7 +48,7 @@ struct IndexWrapper : Index {
 
     void reset() override;
 
-    void merge_from(Index& otherIndex, idx_t add_id = 0) override;
+    void merge_from(faiss::Index& otherIndex, idx_t add_id = 0) override;
 
     DistanceComputer* get_distance_computer() const override;
 };

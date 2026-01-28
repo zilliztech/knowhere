@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -25,8 +25,6 @@
 
 #include <faiss/impl/FaissAssert.h>
 
-#include "simd/hook.h"
-
 /*****************************************
  * Mixed PQ / Hamming
  ******************************************/
@@ -44,8 +42,9 @@ double PermutationObjective::cost_update(const int* perm, int iw, int jw)
     double orig_cost = compute_cost(perm);
 
     std::vector<int> perm2(n);
-    for (int i = 0; i < n; i++)
+    for (int i = 0; i < n; i++) {
         perm2[i] = perm[i];
+    }
     perm2[iw] = perm[jw];
     perm2[jw] = perm[iw];
 
@@ -75,8 +74,9 @@ double SimulatedAnnealingOptimizer::run_optimization(int* best_perm) {
     // just do a few runs of the annealing and keep the lowest output cost
     for (int it = 0; it < n_redo; it++) {
         std::vector<int> perm(n);
-        for (int i = 0; i < n; i++)
+        for (int i = 0; i < n; i++) {
             perm[i] = i;
+        }
         if (init_random) {
             for (int i = 0; i < n; i++) {
                 int j = i + rnd->rand_int(n - i);
@@ -84,8 +84,9 @@ double SimulatedAnnealingOptimizer::run_optimization(int* best_perm) {
             }
         }
         float cost = optimize(perm.data());
-        if (logfile)
+        if (logfile) {
             fprintf(logfile, "\n");
+        }
         if (verbose > 1) {
             printf("    optimization run %d: cost=%g %s\n",
                    it,
@@ -105,8 +106,9 @@ double SimulatedAnnealingOptimizer::run_optimization(int* best_perm) {
 double SimulatedAnnealingOptimizer::optimize(int* perm) {
     double cost = init_cost = obj->compute_cost(perm);
     int log2n = 0;
-    while (!(n <= (1 << log2n)))
+    while (!(n <= (1 << log2n))) {
         log2n++;
+    }
     double temperature = init_temperature;
     int n_swap = 0, n_hot = 0;
     for (int it = 0; it < n_iter; it++) {
@@ -118,16 +120,18 @@ double SimulatedAnnealingOptimizer::optimize(int* perm) {
         } else {
             iw = rnd->rand_int(n);
             jw = rnd->rand_int(n - 1);
-            if (jw == iw)
+            if (jw == iw) {
                 jw++;
+            }
         }
         double delta_cost = obj->cost_update(perm, iw, jw);
         if (delta_cost < 0 || rnd->rand_float() < temperature) {
             std::swap(perm[iw], perm[jw]);
             cost += delta_cost;
             n_swap++;
-            if (delta_cost >= 0)
+            if (delta_cost >= 0) {
                 n_hot++;
+            }
         }
         if (verbose > 2 || (verbose > 1 && it % 10000 == 0)) {
             printf("      iteration %d cost %g temp %g n_swap %d "
@@ -149,8 +153,9 @@ double SimulatedAnnealingOptimizer::optimize(int* perm) {
                     n_hot);
         }
     }
-    if (verbose > 1)
+    if (verbose > 1) {
         printf("\n");
+    }
     return cost;
 }
 
@@ -173,7 +178,7 @@ struct ReproduceWithHammingObjective : PermutationObjective {
         return x * x;
     }
 
-    // weihgting of distances: it is more important to reproduce small
+    // weighting of distances: it is more important to reproduce small
     // distances well
     double dis_weight(double x) const {
         return exp(-dis_weight_factor * x);
@@ -290,7 +295,7 @@ struct ReproduceWithHammingObjective : PermutationObjective {
 
 } // anonymous namespace
 
-// weihgting of distances: it is more important to reproduce small
+// weighting of distances: it is more important to reproduce small
 // distances well
 double ReproduceDistancesObjective::dis_weight(double x) const {
     return exp(-dis_weight_factor * x);
@@ -469,8 +474,9 @@ struct Score3Computer : PermutationObjective {
      */
     Taccu compute_update(const int* perm, int iw, int jw) const {
         assert(iw != jw);
-        if (iw > jw)
+        if (iw > jw) {
             std::swap(iw, jw);
+        }
 
         Taccu accu = 0;
         const Ttab* n_gt_i = n_gt.data();
@@ -482,8 +488,9 @@ struct Score3Computer : PermutationObjective {
 
             accu += update_i_cross(perm, iw, jw, ip0, ip, n_gt_i);
 
-            if (ip != ip0)
+            if (ip != ip0) {
                 accu += update_i_plane(perm, iw, jw, ip0, ip, n_gt_i);
+            }
 
             n_gt_i += nc * nc;
         }
@@ -587,8 +594,9 @@ struct Score3Computer : PermutationObjective {
             const Ttab* n_gt_ij) const {
         Taccu accu = 0;
         for (int k = 0; k < nc; k++) {
-            if (k == iw || k == jw)
+            if (k == iw || k == jw) {
                 continue;
+            }
             int kp = perm[k];
             Ttab ng = n_gt_ij[k];
             if (hamming_dis(ip, jp) < hamming_dis(ip, kp)) {
@@ -619,15 +627,16 @@ struct Score3Computer : PermutationObjective {
             accu += update_k(perm, iw, jw, ip0, ip, jp0, jp, iw, n_gt_ij);
             accu += update_k(perm, iw, jw, ip0, ip, jp0, jp, jw, n_gt_ij);
 
-            if (jp != jp0)
+            if (jp != jp0) {
                 accu += update_j_line(perm, iw, jw, ip0, ip, jp0, jp, n_gt_ij);
+            }
 
             n_gt_ij += nc;
         }
         return accu;
     }
 
-    /// PermutationObjective implementeation (just negates the scores
+    /// PermutationObjective implementation (just negates the scores
     /// for minimization)
 
     double compute_cost(const int* perm) const override {
@@ -680,7 +689,7 @@ struct RankingScore2 : Score3Computer<float, double> {
     /// count nb of i, j in a x b st. i < j
     /// a and b should be sorted on input
     /// they are the ranks of j and k respectively.
-    /// specific version for diff-of-rank weighting, cannot optimized
+    /// specific version for diff-of-rank weighting, cannot optimize
     /// with a cumulative table
     double accum_gt_weight_diff(
             const std::vector<int>& a,
@@ -723,8 +732,9 @@ struct RankingScore2 : Score3Computer<float, double> {
 
             { // build rank table
                 IndirectSort s = {gtd};
-                for (int j = 0; j < nb; j++)
+                for (int j = 0; j < nb; j++) {
                     ranks[j] = j;
+                }
                 std::sort(ranks, ranks + nb, s);
             }
 
@@ -816,17 +826,20 @@ void PolysemousTraining::optimize_reproduce_distances(
                    final_cost);
         }
 
-        if (log_pattern.size())
+        if (log_pattern.size()) {
             fclose(optim.logfile);
+        }
 
         std::vector<float> centroids_copy;
-        for (int i = 0; i < dsub * n; i++)
+        for (int i = 0; i < dsub * n; i++) {
             centroids_copy.push_back(centroids[i]);
+        }
 
-        for (int i = 0; i < n; i++)
+        for (int i = 0; i < n; i++) {
             memcpy(centroids + perm[i] * dsub,
                    centroids_copy.data() + i * dsub,
                    dsub * sizeof(centroids[0]));
+        }
     }
 }
 
@@ -855,14 +868,16 @@ void PolysemousTraining::optimize_ranking(
 
         if (n > 0) {
             std::vector<float> xtrain(n * dsub);
-            for (int i = 0; i < n; i++)
+            for (int i = 0; i < n; i++) {
                 memcpy(xtrain.data() + i * dsub,
                        x + i * pq.d + m * dsub,
                        sizeof(float) * dsub);
+            }
 
             codes.resize(n);
-            for (int i = 0; i < n; i++)
+            for (int i = 0; i < n; i++) {
                 codes[i] = all_codes[i * pq.code_size + m];
+            }
 
             nq = n / 4;
             nb = n - nq;
@@ -875,8 +890,9 @@ void PolysemousTraining::optimize_ranking(
         } else {
             nq = nb = pq.ksub;
             codes.resize(2 * nq);
-            for (int i = 0; i < nq; i++)
+            for (int i = 0; i < nq; i++) {
                 codes[i] = codes[i + nq] = i;
+            }
 
             gt_distances.resize(nq * nb);
 
@@ -923,19 +939,22 @@ void PolysemousTraining::optimize_ranking(
                optim.init_cost,
                final_cost);
 
-        if (log_pattern.size())
+        if (log_pattern.size()) {
             fclose(optim.logfile);
+        }
 
         float* centroids = pq.get_centroids(m, 0);
 
         std::vector<float> centroids_copy;
-        for (int i = 0; i < dsub * pq.ksub; i++)
+        for (int i = 0; i < dsub * pq.ksub; i++) {
             centroids_copy.push_back(centroids[i]);
+        }
 
-        for (int i = 0; i < pq.ksub; i++)
+        for (int i = 0; i < pq.ksub; i++) {
             memcpy(centroids + perm[i] * dsub,
                    centroids_copy.data() + i * dsub,
                    dsub * sizeof(centroids[0]));
+        }
     }
 }
 
@@ -966,7 +985,7 @@ size_t PolysemousTraining::memory_usage_per_thread(
             return n * n * n * sizeof(float);
     }
 
-    FAISS_THROW_MSG("Invalid optmization type");
+    FAISS_THROW_MSG("Invalid optimization type");
     return 0;
 }
 

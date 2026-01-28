@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -37,7 +37,7 @@ struct VectorTransform {
      * nothing by default.
      *
      * @param n      nb of training vectors
-     * @param x      training vecors, size n * d
+     * @param x      training vectors, size n * d
      */
     virtual void train(idx_t n, const float* x);
 
@@ -249,7 +249,7 @@ struct OPQMatrix : LinearTransform {
     void train(idx_t n, const float* x) override;
 };
 
-/** remap dimensions for intput vectors, possibly inserting 0s
+/** remap dimensions for input vectors, possibly inserting 0s
  * strictly speaking this is also a linear transform but we don't want
  * to compute it with matrix multiplies */
 struct RemapDimensionsTransform : VectorTransform {

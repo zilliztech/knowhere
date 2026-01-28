@@ -9,11 +9,11 @@ template <typename DataType, typename DistanceType>
 static DistanceType
 NormSqr(const void* pVect1v, const void* qty_ptr) {
     if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-        return faiss::fvec_norm_L2sqr((const DataType*)pVect1v, *(size_t*)(qty_ptr));
+        return faiss::cppcontrib::knowhere::fvec_norm_L2sqr((const DataType*)pVect1v, *(size_t*)(qty_ptr));
     } else if constexpr (std::is_same_v<DataType, knowhere::fp16>) {
-        return faiss::fp16_vec_norm_L2sqr((const DataType*)pVect1v, *(size_t*)(qty_ptr));
+        return faiss::cppcontrib::knowhere::fp16_vec_norm_L2sqr((const DataType*)pVect1v, *(size_t*)(qty_ptr));
     } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
-        return faiss::bf16_vec_norm_L2sqr((const DataType*)pVect1v, *(size_t*)(qty_ptr));
+        return faiss::cppcontrib::knowhere::bf16_vec_norm_L2sqr((const DataType*)pVect1v, *(size_t*)(qty_ptr));
     } else {
         throw std::runtime_error("Unknown Datatype\n");
     }
@@ -23,11 +23,11 @@ template <typename DataType, typename DistanceType>
 static DistanceType
 L2Sqr(const void* pVect1v, const void* pVect2v, const void* qty_ptr) {
     if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-        return faiss::fvec_L2sqr((const DataType*)pVect1v, (const DataType*)pVect2v, *((size_t*)qty_ptr));
+        return faiss::cppcontrib::knowhere::fvec_L2sqr((const DataType*)pVect1v, (const DataType*)pVect2v, *((size_t*)qty_ptr));
     } else if constexpr (std::is_same_v<DataType, knowhere::fp16>) {
-        return faiss::fp16_vec_L2sqr((const DataType*)pVect1v, (const DataType*)pVect2v, *((size_t*)qty_ptr));
+        return faiss::cppcontrib::knowhere::fp16_vec_L2sqr((const DataType*)pVect1v, (const DataType*)pVect2v, *((size_t*)qty_ptr));
     } else if constexpr (std::is_same_v<DataType, knowhere::bf16>) {
-        return faiss::bf16_vec_L2sqr((const DataType*)pVect1v, (const DataType*)pVect2v, *((size_t*)qty_ptr));
+        return faiss::cppcontrib::knowhere::bf16_vec_L2sqr((const DataType*)pVect1v, (const DataType*)pVect2v, *((size_t*)qty_ptr));
     } else {
         throw std::runtime_error("Unknown Datatype\n");
     }
@@ -35,7 +35,7 @@ L2Sqr(const void* pVect1v, const void* pVect2v, const void* qty_ptr) {
 
 static inline float
 L2SqrSQ8(const void* pVect1v, const void* pVect2v, const void* qty_ptr) {
-    return faiss::ivec_L2sqr((const int8_t*)pVect1v, (const int8_t*)pVect2v, *(size_t*)qty_ptr);
+    return faiss::cppcontrib::knowhere::ivec_L2sqr((const int8_t*)pVect1v, (const int8_t*)pVect2v, *(size_t*)qty_ptr);
 }
 
 #if defined(USE_AVX512)

@@ -11,8 +11,9 @@
 
 #include "index/hnsw/impl/IndexBruteForceWrapper.h"
 
-#include <faiss/Index.h>
 #include <faiss/MetricType.h>
+#include <faiss/cppcontrib/knowhere/Index.h>
+#include <faiss/cppcontrib/knowhere/MetricType.h>
 #include <faiss/cppcontrib/knowhere/impl/Bruteforce.h>
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/DistanceComputer.h>
@@ -45,7 +46,7 @@ struct BitsetViewIDSelectorWrapper final {
 };
 
 //
-IndexBruteForceWrapper::IndexBruteForceWrapper(faiss::Index* underlying_index)
+IndexBruteForceWrapper::IndexBruteForceWrapper(faiss::cppcontrib::knowhere::Index* underlying_index)
     : faiss::cppcontrib::knowhere::IndexWrapper{underlying_index} {
 }
 
@@ -69,7 +70,7 @@ IndexBruteForceWrapper::search(faiss::idx_t n, const float* __restrict x, faiss:
         // set up a filter
         faiss::IDSelector* sel = (params == nullptr) ? nullptr : params->sel;
 
-        if (is_similarity_metric(index->metric_type)) {
+        if (faiss::cppcontrib::knowhere::is_similarity_metric(index->metric_type)) {
             using C = faiss::CMin<float, idx_t>;
 
             // try knowhere-specific filter
@@ -125,7 +126,7 @@ IndexBruteForceWrapper::range_search(faiss::idx_t n, const float* x, float radiu
         // set up a filter
         faiss::IDSelector* __restrict sel = (params == nullptr) ? nullptr : params->sel;
 
-        if (is_similarity_metric(index->metric_type)) {
+        if (faiss::cppcontrib::knowhere::is_similarity_metric(index->metric_type)) {
             typename RH_max::SingleResultHandler res_max(bres_max);
             res_max.begin(i);
 

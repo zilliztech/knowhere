@@ -11,12 +11,13 @@
 
 #include "IndexConditionalWrapper.h"
 
+#include <faiss/cppcontrib/knowhere/IndexCosine.h>
+
 #include <cstddef>
 #include <cstdint>
 
-#include "faiss/IndexCosine.h"
-#include "faiss/IndexHNSW.h"
-#include "faiss/IndexRefine.h"
+#include "faiss/cppcontrib/knowhere/IndexHNSW.h"
+#include "faiss/cppcontrib/knowhere/IndexRefine.h"
 #include "index/hnsw/impl/IndexBruteForceWrapper.h"
 #include "index/hnsw/impl/IndexHNSWWrapper.h"
 #include "index/hnsw/impl/IndexWrapperCosine.h"
@@ -98,19 +99,21 @@ WhetherPerformBruteForceRangeSearch(const faiss::Index* index, const FaissHnswCo
 //
 // `whether_to_enable_refine` allows to enable the refine for the search if the
 //    index was trained with the refine.
-std::tuple<std::unique_ptr<faiss::Index>, bool>
-create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw_cfg, const bool whether_bf_search,
-                                const bool whether_to_enable_refine) {
+std::tuple<std::unique_ptr<faiss::cppcontrib::knowhere::Index>, bool>
+create_conditional_hnsw_wrapper(faiss::cppcontrib::knowhere::Index* index, const FaissHnswConfig& hnsw_cfg,
+                                const bool whether_bf_search, const bool whether_to_enable_refine) {
     const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), knowhere::metric::COSINE);
 
     // check if we have a refine available.
-    faiss::IndexRefine* const index_refine = dynamic_cast<faiss::IndexRefine*>(index);
+    faiss::cppcontrib::knowhere::IndexRefine* const index_refine =
+        dynamic_cast<faiss::cppcontrib::knowhere::IndexRefine*>(index);
 
     if (index_refine != nullptr) {
         // yes, it is possible to refine results.
 
         // cast a base index to IndexHNSW-based index
-        faiss::IndexHNSW* const index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index_refine->base_index);
+        faiss::cppcontrib::knowhere::IndexHNSW* const index_hnsw =
+            dynamic_cast<faiss::cppcontrib::knowhere::IndexHNSW*>(index_refine->base_index);
 
         if (index_hnsw == nullptr) {
             // this is unexpected
@@ -119,7 +122,7 @@ create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw
 
         // select a wrapper index, which is safe to delete without deleting
         //   an original index
-        std::unique_ptr<faiss::Index> base_wrapper;
+        std::unique_ptr<faiss::cppcontrib::knowhere::Index> base_wrapper;
 
         if (whether_bf_search) {
             // use brute-force wrapper
@@ -142,11 +145,13 @@ create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw
                 std::unique_ptr<knowhere::IndexWrapperCosine> cosine_wrapper =
                     std::make_unique<knowhere::IndexWrapperCosine>(
                         index_refine->refine_index,
-                        dynamic_cast<faiss::HasInverseL2Norms*>(index_hnsw->storage)->get_inverse_l2_norms());
+                        dynamic_cast<faiss::cppcontrib::knowhere::HasInverseL2Norms*>(index_hnsw->storage)
+                            ->get_inverse_l2_norms());
 
                 // create a temporary refine index
-                std::unique_ptr<faiss::IndexRefine> refine_wrapper =
-                    std::make_unique<faiss::IndexRefine>(base_wrapper.get(), cosine_wrapper.get());
+                std::unique_ptr<faiss::cppcontrib::knowhere::IndexRefine> refine_wrapper =
+                    std::make_unique<faiss::cppcontrib::knowhere::IndexRefine>(base_wrapper.get(),
+                                                                               cosine_wrapper.get());
 
                 // transfer ownership
                 refine_wrapper->own_fields = true;
@@ -161,8 +166,9 @@ create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw
                 // no, wrap base index only.
 
                 // create a temporary refine index
-                std::unique_ptr<faiss::IndexRefine> refine_wrapper =
-                    std::make_unique<faiss::IndexRefine>(base_wrapper.get(), index_refine->refine_index);
+                std::unique_ptr<faiss::cppcontrib::knowhere::IndexRefine> refine_wrapper =
+                    std::make_unique<faiss::cppcontrib::knowhere::IndexRefine>(base_wrapper.get(),
+                                                                               index_refine->refine_index);
 
                 // transfer ownership
                 refine_wrapper->own_fields = true;
@@ -179,7 +185,8 @@ create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw
         }
     } else {
         // cast to IndexHNSW-based index
-        faiss::IndexHNSW* const index_hnsw = dynamic_cast<faiss::IndexHNSW*>(index);
+        faiss::cppcontrib::knowhere::IndexHNSW* const index_hnsw =
+            dynamic_cast<faiss::cppcontrib::knowhere::IndexHNSW*>(index);
 
         if (index_hnsw == nullptr) {
             // this is unexpected
@@ -187,7 +194,7 @@ create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw
         }
 
         // select a wrapper index for search
-        std::unique_ptr<faiss::Index> base_wrapper;
+        std::unique_ptr<faiss::cppcontrib::knowhere::Index> base_wrapper;
 
         if (whether_bf_search) {
             // use brute-force wrapper

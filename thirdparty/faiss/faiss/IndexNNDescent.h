@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -26,7 +26,7 @@ struct IndexNNDescent : Index {
 
     /// Faiss results are 64-bit
 
-    // the link strcuture
+    // the link structure
     NNDescent nndescent;
 
     // the sequential storage

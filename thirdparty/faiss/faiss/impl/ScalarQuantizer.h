@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -31,17 +31,16 @@ struct ScalarQuantizer : Quantizer {
         QT_4bit_uniform,
         QT_fp16,
         QT_8bit_direct, ///< fast indexing of uint8s
-        QT_6bit,        ///< 6 bits per component,
+        QT_6bit,        ///< 6 bits per component
         QT_bf16,
         QT_8bit_direct_signed, ///< fast indexing of signed int8s ranging from
                                ///< [-128 to 127]
-        QT_1bit_direct, ///< fast indexing of 1 bit per component
     };
 
     QuantizerType qtype = QT_8bit;
 
     /** The uniform encoder can estimate the range of representable
-     * values of the unform encoder using different statistics. Here
+     * values of the uniform encoder using different statistics. Here
      * rs = rangestat_arg */
 
     // rangestat_arg.
@@ -99,30 +98,12 @@ struct ScalarQuantizer : Quantizer {
     SQuantizer* select_quantizer() const;
 
     struct SQDistanceComputer : FlatCodesDistanceComputer {
-        const float* q;
-
-        SQDistanceComputer() : q(nullptr) {}
+        SQDistanceComputer() : FlatCodesDistanceComputer(nullptr) {}
 
         virtual float query_to_code(const uint8_t* code) const = 0;
 
         float distance_to_code(const uint8_t* code) final {
             return query_to_code(code);
-        }
-
-        virtual void query_to_codes_batch_4(
-            const uint8_t* __restrict code_0,
-            const uint8_t* __restrict code_1,
-            const uint8_t* __restrict code_2,
-            const uint8_t* __restrict code_3,
-            float& dis0,
-            float& dis1,
-            float& dis2,
-            float& dis3
-        ) const {
-            dis0 = this->query_to_code(code_0);
-            dis1 = this->query_to_code(code_1);
-            dis2 = this->query_to_code(code_2);
-            dis3 = this->query_to_code(code_3);
         }
     };
 
@@ -135,8 +116,6 @@ struct ScalarQuantizer : Quantizer {
             bool store_pairs,
             const IDSelector* sel,
             bool by_residual = false) const;
-
-    size_t cal_size() const;
 };
 
 } // namespace faiss

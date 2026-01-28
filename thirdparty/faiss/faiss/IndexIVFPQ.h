@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -56,7 +56,8 @@ struct IndexIVFPQ : IndexIVF {
             size_t nlist,
             size_t M,
             size_t nbits_per_idx,
-            MetricType metric = METRIC_L2);
+            MetricType metric = METRIC_L2,
+            bool own_invlists = true);
 
     void encode_vectors(
             idx_t n,
@@ -65,12 +66,17 @@ struct IndexIVFPQ : IndexIVF {
             uint8_t* codes,
             bool include_listnos = false) const override;
 
+    void decode_vectors(
+            idx_t n,
+            const uint8_t* codes,
+            const idx_t* listnos,
+            float* x) const override;
+
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
 
     void add_core(
             idx_t n,
             const float* x,
-            const float* x_norms,
             const idx_t* xids,
             const idx_t* precomputed_idx,
             void* inverted_list_context = nullptr) override;
@@ -107,7 +113,7 @@ struct IndexIVFPQ : IndexIVF {
      */
     size_t find_duplicates(idx_t* ids, size_t* lims) const;
 
-    // map a vector to a binary code knowning the index
+    // map a vector to a binary code knowing the index
     void encode(idx_t key, const float* x, uint8_t* code) const;
 
     /** Encode multiple vectors

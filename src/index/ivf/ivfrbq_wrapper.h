@@ -15,10 +15,10 @@
 #include <cstdint>
 #include <memory>
 
-#include "faiss/Index.h"
-#include "faiss/IndexIVF.h"
-#include "faiss/IndexIVFRaBitQ.h"
-#include "faiss/IndexRefine.h"
+#include "faiss/cppcontrib/knowhere/Index.h"
+#include "faiss/cppcontrib/knowhere/IndexIVF.h"
+#include "faiss/cppcontrib/knowhere/IndexIVFRaBitQ.h"
+#include "faiss/cppcontrib/knowhere/IndexRefine.h"
 #include "index/ivf/ivf_config.h"
 #include "knowhere/expected.h"
 
@@ -30,14 +30,14 @@ namespace knowhere {
 // The problem is that IndexPreTransform is a generic class, suitable
 //   for any other use case as well, so this is wrong to reference
 //   IndexPreTransform in the ivf.cc file.
-struct IndexIVFRaBitQWrapper : faiss::Index {
+struct IndexIVFRaBitQWrapper : faiss::cppcontrib::knowhere::Index {
     // this is one of two:
-    // * faiss::IndexPreTransform + faiss::IndexIVFRaBitQ
-    // * faiss::IndexPreTransform + faiss::IndexRefine + faiss::IndexIVFRaBitQ
-    std::unique_ptr<faiss::Index> index;
+    // * faiss::IndexPreTransform + faiss::cppcontrib::knowhere::IndexIVFRaBitQ
+    // * faiss::IndexPreTransform + faiss::IndexRefine + faiss::cppcontrib::knowhere::IndexIVFRaBitQ
+    std::unique_ptr<faiss::cppcontrib::knowhere::Index> index;
     mutable std::optional<size_t> size_cache_ = std::nullopt;
 
-    IndexIVFRaBitQWrapper(std::unique_ptr<faiss::Index>&& index_in);
+    IndexIVFRaBitQWrapper(std::unique_ptr<faiss::cppcontrib::knowhere::Index>&& index_in);
 
     static expected<std::unique_ptr<IndexIVFRaBitQWrapper>>
     create(const faiss::idx_t d, const size_t nlist, const IvfRaBitQConfig& ivf_rabitq_cfg,
@@ -48,7 +48,7 @@ struct IndexIVFRaBitQWrapper : faiss::Index {
     // returns nullptr if the provided index type is not the one
     //   as expected.
     static std::unique_ptr<IndexIVFRaBitQWrapper>
-    from_deserialized(std::unique_ptr<faiss::Index>&& index_in);
+    from_deserialized(std::unique_ptr<faiss::cppcontrib::knowhere::Index>&& index_in);
 
     void
     train(faiss::idx_t n, const float* x) override;
@@ -68,33 +68,35 @@ struct IndexIVFRaBitQWrapper : faiss::Index {
     reset() override;
 
     void
-    merge_from(Index& otherIndex, faiss::idx_t add_id) override;
+    merge_from(faiss::Index& otherIndex, faiss::idx_t add_id) override;
 
     faiss::DistanceComputer*
     get_distance_computer() const override;
 
     // point to IndexIVFRaBitQ or return nullptr.
     // this may also point to an index, owned by IndexRefine
-    faiss::IndexIVFRaBitQ*
+    faiss::cppcontrib::knowhere::IndexIVFRaBitQ*
     get_ivfrabitq_index();
-    const faiss::IndexIVFRaBitQ*
+    const faiss::cppcontrib::knowhere::IndexIVFRaBitQ*
     get_ivfrabitq_index() const;
 
     // point to IndexRefine or return nullptr.
-    faiss::IndexRefine*
+    faiss::cppcontrib::knowhere::IndexRefine*
     get_refine_index();
-    const faiss::IndexRefine*
+    const faiss::cppcontrib::knowhere::IndexRefine*
     get_refine_index() const;
 
     // return the size of the index
     size_t
     size() const;
 
-    std::unique_ptr<faiss::IVFIteratorWorkspace>
-    getIteratorWorkspace(const float* query_data, const faiss::IVFSearchParameters* ivfsearchParams) const;
+    std::unique_ptr<faiss::cppcontrib::knowhere::IVFIteratorWorkspace>
+    getIteratorWorkspace(const float* query_data,
+                         const faiss::cppcontrib::knowhere::IVFSearchParameters* ivfsearchParams) const;
 
     void
-    getIteratorNextBatch(faiss::IVFIteratorWorkspace* workspace, size_t current_backup_count) const;
+    getIteratorNextBatch(faiss::cppcontrib::knowhere::IVFIteratorWorkspace* workspace,
+                         size_t current_backup_count) const;
 };
 
 }  // namespace knowhere

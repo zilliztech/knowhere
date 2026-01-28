@@ -65,22 +65,22 @@ class Benchmark_simd_qps : public Benchmark_knowhere, public ::testing::Test {
             for (int32_t j = 0; j < nb; j++) {
                 const T* y = xb + j * dim;
                 if constexpr (std::is_same_v<T, knowhere::fp32>) {
-                    auto d = faiss::fvec_inner_product(x, y, dim);
+                    auto d = faiss::cppcontrib::knowhere::fvec_inner_product(x, y, dim);
                     if (dist) {
                         dist[(start + i) * nb + j] = d;
                     }
                 } else if constexpr (std::is_same_v<T, knowhere::fp16>) {
-                    auto d = faiss::fp16_vec_inner_product(x, y, dim);
+                    auto d = faiss::cppcontrib::knowhere::fp16_vec_inner_product(x, y, dim);
                     if (dist) {
                         dist[(start + i) * nb + j] = d;
                     }
                 } else if constexpr (std::is_same_v<T, knowhere::bf16>) {
-                    auto d = faiss::bf16_vec_inner_product(x, y, dim);
+                    auto d = faiss::cppcontrib::knowhere::bf16_vec_inner_product(x, y, dim);
                     if (dist) {
                         dist[(start + i) * nb + j] = d;
                     }
                 } else if constexpr (std::is_same_v<T, knowhere::int8>) {
-                    auto d = faiss::int8_vec_inner_product(x, y, dim);
+                    auto d = faiss::cppcontrib::knowhere::int8_vec_inner_product(x, y, dim);
                     if (dist) {
                         dist[(start + i) * nb + j] = d;
                     }
@@ -106,22 +106,22 @@ class Benchmark_simd_qps : public Benchmark_knowhere, public ::testing::Test {
             for (int32_t j = 0; j < nb; j++) {
                 const T* y = xb + j * dim;
                 if constexpr (std::is_same_v<T, knowhere::fp32>) {
-                    auto d = faiss::fvec_L2sqr(x, y, dim);
+                    auto d = faiss::cppcontrib::knowhere::fvec_L2sqr(x, y, dim);
                     if (dist) {
                         dist[(start + i) * nb + j] = d;
                     }
                 } else if constexpr (std::is_same_v<T, knowhere::fp16>) {
-                    auto d = faiss::fp16_vec_L2sqr(x, y, dim);
+                    auto d = faiss::cppcontrib::knowhere::fp16_vec_L2sqr(x, y, dim);
                     if (dist) {
                         dist[(start + i) * nb + j] = d;
                     }
                 } else if constexpr (std::is_same_v<T, knowhere::bf16>) {
-                    auto d = faiss::bf16_vec_L2sqr(x, y, dim);
+                    auto d = faiss::cppcontrib::knowhere::bf16_vec_L2sqr(x, y, dim);
                     if (dist) {
                         dist[(start + i) * nb + j] = d;
                     }
                 } else if constexpr (std::is_same_v<T, knowhere::int8>) {
-                    auto d = faiss::int8_vec_L2sqr(x, y, dim);
+                    auto d = faiss::cppcontrib::knowhere::int8_vec_L2sqr(x, y, dim);
                     if (dist) {
                         dist[(start + i) * nb + j] = d;
                     }
@@ -144,22 +144,22 @@ class Benchmark_simd_qps : public Benchmark_knowhere, public ::testing::Test {
             for (int32_t j = 0; j < nb; j++) {
                 const T* y = xb + j * dim;
                 if constexpr (std::is_same_v<T, knowhere::fp32>) {
-                    auto d = faiss::fvec_norm_L2sqr(y, dim);
+                    auto d = faiss::cppcontrib::knowhere::fvec_norm_L2sqr(y, dim);
                     if (dist) {
                         dist[(start + i) * nb + j] = d;
                     }
                 } else if constexpr (std::is_same_v<T, knowhere::fp16>) {
-                    auto d = faiss::fp16_vec_norm_L2sqr(y, dim);
+                    auto d = faiss::cppcontrib::knowhere::fp16_vec_norm_L2sqr(y, dim);
                     if (dist) {
                         dist[(start + i) * nb + j] = d;
                     }
                 } else if constexpr (std::is_same_v<T, knowhere::bf16>) {
-                    auto d = faiss::bf16_vec_norm_L2sqr(y, dim);
+                    auto d = faiss::cppcontrib::knowhere::bf16_vec_norm_L2sqr(y, dim);
                     if (dist) {
                         dist[(start + i) * nb + j] = d;
                     }
                 } else if constexpr (std::is_same_v<T, knowhere::int8>) {
-                    auto d = faiss::int8_vec_norm_L2sqr(y, dim);
+                    auto d = faiss::cppcontrib::knowhere::int8_vec_norm_L2sqr(y, dim);
                     if (dist) {
                         dist[(start + i) * nb + j] = d;
                     }
@@ -186,46 +186,47 @@ class Benchmark_simd_qps : public Benchmark_knowhere, public ::testing::Test {
                 const T* y = xb + j * dim;
                 if constexpr (std::is_same_v<T, knowhere::fp32>) {
                     if (dist) {
-                        faiss::fvec_inner_product_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim, dim,
-                                                          dist[(start + i) * nb + j], dist[(start + i) * nb + j + 1],
-                                                          dist[(start + i) * nb + j + 2],
-                                                          dist[(start + i) * nb + j + 3]);
+                        faiss::cppcontrib::knowhere::fvec_inner_product_batch_4(
+                            x, y, y + dim, y + 2 * dim, y + 3 * dim, dim, dist[(start + i) * nb + j],
+                            dist[(start + i) * nb + j + 1], dist[(start + i) * nb + j + 2],
+                            dist[(start + i) * nb + j + 3]);
                     } else {
                         float d0, d1, d2, d3;
-                        faiss::fvec_inner_product_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim, dim, d0, d1, d2, d3);
+                        faiss::cppcontrib::knowhere::fvec_inner_product_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim,
+                                                                                dim, d0, d1, d2, d3);
                     }
                 } else if constexpr (std::is_same_v<T, knowhere::fp16>) {
                     if (dist) {
-                        faiss::fp16_vec_inner_product_batch_4(
+                        faiss::cppcontrib::knowhere::fp16_vec_inner_product_batch_4(
                             x, y, y + dim, y + 2 * dim, y + 3 * dim, dim, dist[(start + i) * nb + j],
                             dist[(start + i) * nb + j + 1], dist[(start + i) * nb + j + 2],
                             dist[(start + i) * nb + j + 3]);
                     } else {
                         float d0, d1, d2, d3;
-                        faiss::fp16_vec_inner_product_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim, dim, d0, d1, d2,
-                                                              d3);
+                        faiss::cppcontrib::knowhere::fp16_vec_inner_product_batch_4(x, y, y + dim, y + 2 * dim,
+                                                                                    y + 3 * dim, dim, d0, d1, d2, d3);
                     }
                 } else if constexpr (std::is_same_v<T, knowhere::bf16>) {
                     if (dist) {
-                        faiss::bf16_vec_inner_product_batch_4(
+                        faiss::cppcontrib::knowhere::bf16_vec_inner_product_batch_4(
                             x, y, y + dim, y + 2 * dim, y + 3 * dim, dim, dist[(start + i) * nb + j],
                             dist[(start + i) * nb + j + 1], dist[(start + i) * nb + j + 2],
                             dist[(start + i) * nb + j + 3]);
                     } else {
                         float d0, d1, d2, d3;
-                        faiss::bf16_vec_inner_product_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim, dim, d0, d1, d2,
-                                                              d3);
+                        faiss::cppcontrib::knowhere::bf16_vec_inner_product_batch_4(x, y, y + dim, y + 2 * dim,
+                                                                                    y + 3 * dim, dim, d0, d1, d2, d3);
                     }
                 } else if constexpr (std::is_same_v<T, knowhere::int8>) {
                     if (dist) {
-                        faiss::int8_vec_inner_product_batch_4(
+                        faiss::cppcontrib::knowhere::int8_vec_inner_product_batch_4(
                             x, y, y + dim, y + 2 * dim, y + 3 * dim, dim, dist[(start + i) * nb + j],
                             dist[(start + i) * nb + j + 1], dist[(start + i) * nb + j + 2],
                             dist[(start + i) * nb + j + 3]);
                     } else {
                         float d0, d1, d2, d3;
-                        faiss::int8_vec_inner_product_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim, dim, d0, d1, d2,
-                                                              d3);
+                        faiss::cppcontrib::knowhere::int8_vec_inner_product_batch_4(x, y, y + dim, y + 2 * dim,
+                                                                                    y + 3 * dim, dim, d0, d1, d2, d3);
                     }
                 }
             }
@@ -250,39 +251,47 @@ class Benchmark_simd_qps : public Benchmark_knowhere, public ::testing::Test {
                 const T* y = xb + j * dim;
                 if constexpr (std::is_same_v<T, knowhere::fp32>) {
                     if (dist) {
-                        faiss::fvec_L2sqr_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim, dim,
-                                                  dist[(start + i) * nb + j], dist[(start + i) * nb + j + 1],
-                                                  dist[(start + i) * nb + j + 2], dist[(start + i) * nb + j + 3]);
+                        faiss::cppcontrib::knowhere::fvec_L2sqr_batch_4(
+                            x, y, y + dim, y + 2 * dim, y + 3 * dim, dim, dist[(start + i) * nb + j],
+                            dist[(start + i) * nb + j + 1], dist[(start + i) * nb + j + 2],
+                            dist[(start + i) * nb + j + 3]);
                     } else {
                         float d0, d1, d2, d3;
-                        faiss::fvec_L2sqr_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim, dim, d0, d1, d2, d3);
+                        faiss::cppcontrib::knowhere::fvec_L2sqr_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim, dim,
+                                                                        d0, d1, d2, d3);
                     }
                 } else if constexpr (std::is_same_v<T, knowhere::fp16>) {
                     if (dist) {
-                        faiss::fp16_vec_L2sqr_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim, dim,
-                                                      dist[(start + i) * nb + j], dist[(start + i) * nb + j + 1],
-                                                      dist[(start + i) * nb + j + 2], dist[(start + i) * nb + j + 3]);
+                        faiss::cppcontrib::knowhere::fp16_vec_L2sqr_batch_4(
+                            x, y, y + dim, y + 2 * dim, y + 3 * dim, dim, dist[(start + i) * nb + j],
+                            dist[(start + i) * nb + j + 1], dist[(start + i) * nb + j + 2],
+                            dist[(start + i) * nb + j + 3]);
                     } else {
                         float d0, d1, d2, d3;
-                        faiss::fp16_vec_L2sqr_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim, dim, d0, d1, d2, d3);
+                        faiss::cppcontrib::knowhere::fp16_vec_L2sqr_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim,
+                                                                            dim, d0, d1, d2, d3);
                     }
                 } else if constexpr (std::is_same_v<T, knowhere::bf16>) {
                     if (dist) {
-                        faiss::bf16_vec_L2sqr_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim, dim,
-                                                      dist[(start + i) * nb + j], dist[(start + i) * nb + j + 1],
-                                                      dist[(start + i) * nb + j + 2], dist[(start + i) * nb + j + 3]);
+                        faiss::cppcontrib::knowhere::bf16_vec_L2sqr_batch_4(
+                            x, y, y + dim, y + 2 * dim, y + 3 * dim, dim, dist[(start + i) * nb + j],
+                            dist[(start + i) * nb + j + 1], dist[(start + i) * nb + j + 2],
+                            dist[(start + i) * nb + j + 3]);
                     } else {
                         float d0, d1, d2, d3;
-                        faiss::bf16_vec_L2sqr_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim, dim, d0, d1, d2, d3);
+                        faiss::cppcontrib::knowhere::bf16_vec_L2sqr_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim,
+                                                                            dim, d0, d1, d2, d3);
                     }
                 } else if constexpr (std::is_same_v<T, knowhere::int8>) {
                     if (dist) {
-                        faiss::int8_vec_L2sqr_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim, dim,
-                                                      dist[(start + i) * nb + j], dist[(start + i) * nb + j + 1],
-                                                      dist[(start + i) * nb + j + 2], dist[(start + i) * nb + j + 3]);
+                        faiss::cppcontrib::knowhere::int8_vec_L2sqr_batch_4(
+                            x, y, y + dim, y + 2 * dim, y + 3 * dim, dim, dist[(start + i) * nb + j],
+                            dist[(start + i) * nb + j + 1], dist[(start + i) * nb + j + 2],
+                            dist[(start + i) * nb + j + 3]);
                     } else {
                         float d0, d1, d2, d3;
-                        faiss::int8_vec_L2sqr_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim, dim, d0, d1, d2, d3);
+                        faiss::cppcontrib::knowhere::int8_vec_L2sqr_batch_4(x, y, y + dim, y + 2 * dim, y + 3 * dim,
+                                                                            dim, d0, d1, d2, d3);
                     }
                 }
             }

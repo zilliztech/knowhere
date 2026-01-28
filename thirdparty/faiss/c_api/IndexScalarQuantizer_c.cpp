@@ -1,11 +1,10 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved.
 // -*- c++ -*-
 
 #include "IndexScalarQuantizer_c.h"
@@ -107,16 +106,6 @@ int faiss_IndexIVFScalarQuantizer_add_core(
     try {
         reinterpret_cast<IndexIVFScalarQuantizer*>(index)->add_core(
                 n, x, xids, precomputed_idx);
-    }
-    CATCH_AND_HANDLE
-}
-
-int faiss_IndexIVFScalarQuantizer_train_residual(
-        FaissIndexIVFScalarQuantizer* index,
-        idx_t n,
-        const float* x) {
-    try {
-        reinterpret_cast<IndexIVFScalarQuantizer*>(index)->train_residual(n, x);
     }
     CATCH_AND_HANDLE
 }

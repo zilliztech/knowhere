@@ -1,36 +1,42 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import faiss
-import unittest
-import numpy as np
-import platform
 import os
-import random
+import platform
 import shutil
 import tempfile
-
-from faiss.contrib import datasets
-from faiss.contrib import inspect_tools
-from faiss.contrib import evaluation
-from faiss.contrib import ivf_tools
-from faiss.contrib import clustering
-from faiss.contrib import big_batch_search
-from faiss.contrib.ondisk import merge_ondisk
-
-from common_faiss_tests import get_dataset_2
-from faiss.contrib.exhaustive_search import \
-    knn_ground_truth, knn, range_ground_truth, \
-    range_search_max_results, exponential_query_iterator
+import unittest
 from contextlib import contextmanager
 
-@unittest.skipIf(platform.python_version_tuple()[0] < '3',
-                 'Submodule import broken in python 2.')
+import faiss
+import numpy as np
+import sys
+
+from common_faiss_tests import get_dataset_2
+
+from faiss.contrib import (
+    big_batch_search,
+    clustering,
+    datasets,
+    evaluation,
+    inspect_tools,
+    ivf_tools,
+)
+from faiss.contrib.exhaustive_search import (
+    exponential_query_iterator,
+    knn,
+    knn_ground_truth,
+    range_ground_truth,
+    range_search_max_results,
+)
+from faiss.contrib.ondisk import merge_ondisk
+
+
 class TestComputeGT(unittest.TestCase):
 
-    def do_test_compute_GT(self, metric=faiss.METRIC_L2):
+    def do_test_compute_GT(self, metric=faiss.METRIC_L2, ngpu=0):
         d = 64
         xt, xb, xq = get_dataset_2(d, 0, 10000, 100)
 
@@ -45,7 +51,7 @@ class TestComputeGT(unittest.TestCase):
                 yield xb[i0:i0 + bs]
 
         Dnew, Inew = knn_ground_truth(
-            xq, matrix_iterator(xb, 1000), 10, metric)
+            xq, matrix_iterator(xb, 1000), 10, metric, ngpu=ngpu)
 
         np.testing.assert_array_equal(Iref, Inew)
         # decimal = 4 required when run on GPU
@@ -56,6 +62,12 @@ class TestComputeGT(unittest.TestCase):
 
     def test_compute_GT_ip(self):
         self.do_test_compute_GT(faiss.METRIC_INNER_PRODUCT)
+
+    def test_compute_GT_gpu(self):
+        self.do_test_compute_GT(ngpu=-1)
+
+    def test_compute_GT_ip_gpu(self):
+        self.do_test_compute_GT(faiss.METRIC_INNER_PRODUCT, ngpu=-1)
 
 
 class TestDatasets(unittest.TestCase):
@@ -373,7 +385,7 @@ class TestPreassigned(unittest.TestCase):
         D, I = ivf_tools.search_preassigned(index, xq, 4, a)
         radius = D.max() * 1.01
 
-        lims, DR, IR = ivf_tools.range_search_preassigned(index, xq, radius, a)
+        lims, DR, IR = ivf_tools.range_search_preassigned(index, xq, radius.item(), a)
 
         # with that radius the k-NN results are a subset of the range search
         # results
@@ -381,6 +393,10 @@ class TestPreassigned(unittest.TestCase):
             l0, l1 = lims[q], lims[q + 1]
             self.assertTrue(set(I[q]) <= set(IR[l0:l1]))
 
+    @unittest.skipIf(
+        platform.system() == 'Windows',
+        'test_binary hangs for Windows on newer versions of MKL.'
+    )
     def test_binary(self):
         ds = datasets.SyntheticDataset(128, 2000, 2000, 200)
 
@@ -517,6 +533,26 @@ class TestRangeSearchMaxResults(unittest.TestCase):
 
 class TestClustering(unittest.TestCase):
 
+    def test_python_kmeans(self):
+        """ Test the python implementation of kmeans """
+        ds = datasets.SyntheticDataset(32, 10000, 0, 0)
+        x = ds.get_train()
+
+        # bad distribution to stress-test split code
+        xt = x[:10000].copy()
+        xt[:5000] = x[0]
+
+        km_ref = faiss.Kmeans(ds.d, 100, niter=10)
+        km_ref.train(xt)
+        err = faiss.knn(xt, km_ref.centroids, 1)[0].sum()
+
+        data = clustering.DatasetAssign(xt)
+        centroids = clustering.kmeans(100, data, 10)
+        err2 = faiss.knn(xt, centroids, 1)[0].sum()
+
+        # err=33498.332 err2=33380.477
+        self.assertLess(err2, err * 1.1)
+
     def test_2level(self):
         " verify that 2-level clustering is not too sub-optimal "
         ds = datasets.SyntheticDataset(32, 10000, 0, 0)
@@ -548,7 +584,7 @@ class TestClustering(unittest.TestCase):
 
         # normally 47 / 200 differences
         ndiff = (Iref != Inew).sum()
-        self.assertLess(ndiff, 51)
+        self.assertLess(ndiff.item(), 57)
 
 
 class TestBigBatchSearch(unittest.TestCase):
@@ -645,7 +681,10 @@ class TestInvlistSort(unittest.TestCase):
         np.testing.assert_equal(Inew, Iref)
 
     def test_hnsw_permute(self):
-        """ make sure HNSW permutation works (useful when used as coarse quantizer) """
+        """
+            make sure HNSW permutation works
+            (useful when used as coarse quantizer)
+        """
         ds = datasets.SyntheticDataset(32, 0, 1000, 50)
         index = faiss.index_factory(ds.d, "HNSW32,Flat")
         index.add(ds.get_database())
@@ -673,8 +712,12 @@ class TestCodeSet(unittest.TestCase):
             np.sort(codes[inserted], axis=None))
 
 
-@unittest.skipIf(platform.system() == 'Windows',
-                'OnDiskInvertedLists is unsupported on Windows.')
+@unittest.skipIf(
+    platform.system() == 'Windows',
+    'OnDiskInvertedLists is unsupported on Windows.'
+)
+
+
 class TestMerge(unittest.TestCase):
     @contextmanager
     def temp_directory(self):

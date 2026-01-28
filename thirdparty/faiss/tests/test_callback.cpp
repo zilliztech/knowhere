@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
@@ -14,8 +14,8 @@
 #include <faiss/utils/random.h>
 
 TEST(TestCallback, timeout) {
-    int n = 1000;
-    int k = 100;
+    int n = 20000;
+    int k = 5000;
     int d = 128;
     int niter = 1000000000;
     int seed = 42;

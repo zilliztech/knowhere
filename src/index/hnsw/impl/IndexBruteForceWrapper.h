@@ -11,14 +11,14 @@
 
 #pragma once
 
-#include <faiss/Index.h>
+#include <faiss/cppcontrib/knowhere/Index.h>
 #include <faiss/cppcontrib/knowhere/IndexWrapper.h>
 
 namespace knowhere {
 
 // override a search procedure to perform a brute-force search.
 struct IndexBruteForceWrapper : public faiss::cppcontrib::knowhere::IndexWrapper {
-    IndexBruteForceWrapper(faiss::Index* underlying_index);
+    IndexBruteForceWrapper(faiss::cppcontrib::knowhere::Index* underlying_index);
 
     /// entry point for search
     void

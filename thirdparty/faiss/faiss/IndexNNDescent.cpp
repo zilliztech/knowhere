@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,14 +9,9 @@
 
 #include <faiss/IndexNNDescent.h>
 
-#include <omp.h>
-
 #include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
-
-#include <queue>
-#include <unordered_set>
 
 #ifdef __SSE__
 #endif
@@ -24,9 +19,7 @@
 #include <faiss/IndexFlat.h>
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissAssert.h>
-#include <faiss/utils/Heap.h>
 #include <faiss/utils/distances.h>
-#include <faiss/utils/random.h>
 
 extern "C" {
 
@@ -161,7 +154,7 @@ void IndexNNDescent::add(idx_t n, const float* x) {
 
     if (ntotal != 0) {
         fprintf(stderr,
-                "WARNING NNDescent doest not support dynamic insertions,"
+                "WARNING NNDescent does not support dynamic insertions,"
                 "multiple insertions would lead to re-building the index");
     }
 

@@ -22,7 +22,7 @@ accumulate_posting_list_contribution_ip_dispatch(const uint32_t* doc_ids, const 
                                                  float q_weight, float* scores) {
 #if defined(__x86_64__) || defined(_M_X64)
     if constexpr (std::is_same_v<QType, float>) {
-        if (faiss::InstructionSet::GetInstance().AVX512F()) {
+        if (faiss::cppcontrib::knowhere::InstructionSet::GetInstance().AVX512F()) {
             accumulate_posting_list_ip_avx512(doc_ids, doc_vals, list_size, q_weight, scores);
             return;
         }

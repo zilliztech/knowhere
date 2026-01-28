@@ -24,6 +24,8 @@
 #define INT8_VEC_SIZE 16
 
 namespace faiss {
+namespace cppcontrib {
+namespace knowhere {
 
 float
 fvec_L2sqr_ppc(const float* x, const float* y, size_t d) {
@@ -514,5 +516,7 @@ ivec_L2sqr_ppc(const int8_t* x, const int8_t* y, size_t d) {
     return res;
 }
 
+}  // namespace knowhere
+}  // namespace cppcontrib
 }  // namespace faiss
 #endif

@@ -1,19 +1,15 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// -*- c++ -*-
-
 #ifndef FAISS_INDEX_BINARY_H
 #define FAISS_INDEX_BINARY_H
 
+#include <cstdint>
 #include <cstdio>
-#include <sstream>
-#include <string>
-#include <typeinfo>
 
 #include <faiss/Index.h>
 
@@ -44,18 +40,25 @@ struct IndexBinary {
     bool is_trained = true;
 
     /// type of metric this index uses for search
-    MetricType metric_type = METRIC_Hamming;
+    MetricType metric_type = METRIC_L2;
 
-    explicit IndexBinary(idx_t d = 0, MetricType metric = METRIC_Hamming);
+    explicit IndexBinary(idx_t d = 0, MetricType metric = METRIC_L2);
 
     virtual ~IndexBinary();
 
     /** Perform training on a representative set of vectors.
      *
      * @param n      nb of training vectors
-     * @param x      training vecors, size n * d / 8
+     * @param x      training vectors, size n * d / 8
      */
     virtual void train(idx_t n, const uint8_t* x);
+    virtual void train_ex(idx_t n, const void* x, NumericType numeric_type) {
+        if (numeric_type == NumericType::UInt8) {
+            train(n, static_cast<const uint8_t*>(x));
+        } else {
+            FAISS_THROW_MSG("IndexBinary::train: unsupported numeric type");
+        }
+    };
 
     /** Add n vectors of dimension d to the index.
      *
@@ -63,6 +66,13 @@ struct IndexBinary {
      * @param x      input matrix, size n * d / 8
      */
     virtual void add(idx_t n, const uint8_t* x) = 0;
+    virtual void add_ex(idx_t n, const void* x, NumericType numeric_type) {
+        if (numeric_type == NumericType::UInt8) {
+            add(n, static_cast<const uint8_t*>(x));
+        } else {
+            FAISS_THROW_MSG("IndexBinary::add: unsupported numeric type");
+        }
+    };
 
     /** Same as add, but stores xids instead of sequential ids.
      *
@@ -72,6 +82,18 @@ struct IndexBinary {
      * @param xids if non-null, ids to store for the vectors (size n)
      */
     virtual void add_with_ids(idx_t n, const uint8_t* x, const idx_t* xids);
+    virtual void add_with_ids_ex(
+            idx_t n,
+            const void* x,
+            NumericType numeric_type,
+            const idx_t* xids) {
+        if (numeric_type == NumericType::UInt8) {
+            add_with_ids(n, static_cast<const uint8_t*>(x), xids);
+        } else {
+            FAISS_THROW_MSG(
+                    "IndexBinary::add_with_ids: unsupported numeric type");
+        }
+    };
 
     /** Query n vectors of dimension d to the index.
      *
@@ -89,6 +111,25 @@ struct IndexBinary {
             int32_t* distances,
             idx_t* labels,
             const SearchParameters* params = nullptr) const = 0;
+    virtual void search_ex(
+            idx_t n,
+            const void* x,
+            NumericType numeric_type,
+            idx_t k,
+            int32_t* distances,
+            idx_t* labels,
+            const SearchParameters* params = nullptr) const {
+        if (numeric_type == NumericType::UInt8) {
+            search(n,
+                   static_cast<const uint8_t*>(x),
+                   k,
+                   distances,
+                   labels,
+                   params);
+        } else {
+            FAISS_THROW_MSG("IndexBinary::search: unsupported numeric type");
+        }
+    };
 
     /** Query n vectors of dimension d to the index.
      *
@@ -107,7 +148,7 @@ struct IndexBinary {
     virtual void range_search(
             idx_t n,
             const uint8_t* x,
-            float radius,
+            int radius,
             RangeSearchResult* result,
             const SearchParameters* params = nullptr) const;
 
@@ -131,14 +172,14 @@ struct IndexBinary {
      *
      * This function may not be defined for some indexes.
      * @param key         id of the vector to reconstruct
-     * @param recons      reconstucted vector (size d / 8)
+     * @param recons      reconstructed vector (size d / 8)
      */
     virtual void reconstruct(idx_t key, uint8_t* recons) const;
 
     /** Reconstruct vectors i0 to i0 + ni - 1.
      *
      * This function may not be defined for some indexes.
-     * @param recons      reconstucted vectors (size ni * d / 8)
+     * @param recons      reconstructed vectors (size ni * d / 8)
      */
     virtual void reconstruct_n(idx_t i0, idx_t ni, uint8_t* recons) const;
 
@@ -173,6 +214,12 @@ struct IndexBinary {
      * parameters). Otherwise throw. */
     virtual void check_compatible_for_merge(
             const IndexBinary& otherIndex) const;
+
+    /** size of the produced codes in bytes */
+    virtual size_t sa_code_size() const;
+
+    /** Same as add_with_ids for IndexBinary. */
+    virtual void add_sa_codes(idx_t n, const uint8_t* codes, const idx_t* xids);
 };
 
 } // namespace faiss

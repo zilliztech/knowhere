@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 #include <faiss/IndexIVFRaBitQ.h>
 
 #include <omp.h>
@@ -9,7 +16,6 @@
 
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/RaBitQuantizer.h>
-#include <faiss/utils/distances_if.h>
 
 namespace faiss {
 
@@ -17,10 +23,15 @@ IndexIVFRaBitQ::IndexIVFRaBitQ(
         Index* quantizer,
         const size_t d,
         const size_t nlist,
-        MetricType metric)
-        : IndexIVF(quantizer, d, nlist, 0, metric), rabitq(d, metric) {
+        MetricType metric,
+        bool own_invlists,
+        uint8_t nb_bits_in)
+        : IndexIVF(quantizer, d, nlist, 0, metric, own_invlists),
+          rabitq(d, metric, nb_bits_in) {
     code_size = rabitq.code_size;
-    invlists->code_size = code_size;
+    if (own_invlists) {
+        invlists->code_size = code_size;
+    }
     is_trained = false;
 
     by_residual = true;
@@ -70,10 +81,30 @@ void IndexIVFRaBitQ::encode_vectors(
     }
 }
 
+void IndexIVFRaBitQ::decode_vectors(
+        idx_t n,
+        const uint8_t* codes,
+        const idx_t* listnos,
+        float* x) const {
+#pragma omp parallel
+    {
+        std::vector<float> centroid(d);
+
+#pragma omp for
+        for (idx_t i = 0; i < n; i++) {
+            const uint8_t* code = codes + i * code_size;
+            int64_t list_no = listnos[i];
+            float* xi = x + i * d;
+
+            quantizer->reconstruct(list_no, centroid.data());
+            rabitq.decode_core(code, xi, 1, centroid.data());
+        }
+    }
+}
+
 void IndexIVFRaBitQ::add_core(
         idx_t n,
         const float* x,
-        const float* x_norms,
         const idx_t* xids,
         const idx_t* precomputed_idx,
         void* inverted_list_context) {
@@ -103,7 +134,7 @@ void IndexIVFRaBitQ::add_core(
                         xi, one_code.data(), 1, centroid.data());
 
                 size_t ofs = invlists->add_entry(
-                        list_no, id, one_code.data(), nullptr, inverted_list_context);
+                        list_no, id, one_code.data(), inverted_list_context);
 
                 dm_add.add(i, list_no, ofs);
 
@@ -123,17 +154,22 @@ struct RaBitInvertedListScanner : InvertedListScanner {
     std::vector<float> query_vector;
 
     std::unique_ptr<FlatCodesDistanceComputer> dc;
+    RaBitQDistanceComputer* rabitq_dc =
+            nullptr; // For multi-bit adaptive filtering
 
     uint8_t qb = 0;
+    bool centered = false;
 
-    RaBitInvertedListScanner(
+    explicit RaBitInvertedListScanner(
             const IndexIVFRaBitQ& ivf_rabitq_in,
             bool store_pairs = false,
             const IDSelector* sel = nullptr,
-            uint8_t qb_in = 0)
+            uint8_t qb_in = 0,
+            bool centered = false)
             : InvertedListScanner(store_pairs, sel),
               ivf_rabitq{ivf_rabitq_in},
-              qb{qb_in} {
+              qb{qb_in},
+              centered(centered) {
         keep_max = is_similarity_metric(ivf_rabitq.metric_type);
         code_size = ivf_rabitq.code_size;
     }
@@ -161,38 +197,96 @@ struct RaBitInvertedListScanner : InvertedListScanner {
         return dc->distance_to_code(code);
     }
 
+    /// Override scan_codes to implement adaptive filtering for multi-bit codes
+    size_t scan_codes(
+            size_t list_size,
+            const uint8_t* codes,
+            const idx_t* ids,
+            float* simi,
+            idx_t* idxi,
+            size_t k) const override {
+        size_t ex_bits = ivf_rabitq.rabitq.nb_bits - 1;
+
+        // For 1-bit codes, use default implementation
+        if (ex_bits == 0 || rabitq_dc == nullptr) {
+            return InvertedListScanner::scan_codes(
+                    list_size, codes, ids, simi, idxi, k);
+        }
+
+        // Multi-bit: Two-stage search with adaptive filtering
+        size_t nup = 0;
+
+        // Stats tracking for multi-bit two-stage search
+        // n_1bit_evaluations: candidates evaluated using 1-bit lower bound
+        // n_multibit_evaluations: candidates requiring full multi-bit distance
+        size_t local_1bit_evaluations = 0;
+        size_t local_multibit_evaluations = 0;
+
+        for (size_t j = 0; j < list_size; j++) {
+            if (sel != nullptr) {
+                int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
+                if (!sel->is_member(id)) {
+                    codes += code_size;
+                    continue;
+                }
+            }
+
+            local_1bit_evaluations++;
+
+            // Stage 1: Compute lower bound using 1-bit codes
+            float lower_bound = rabitq_dc->lower_bound_distance(codes);
+
+            // Stage 2: Adaptive filtering
+            // L2 (min-heap): filter if lower_bound < simi[0]
+            // IP (max-heap): filter if lower_bound > simi[0]
+            // Note: Using simi[0] directly (not cached) enables more aggressive
+            // filtering as the heap is updated with better candidates
+            bool should_refine = keep_max ? (lower_bound > simi[0])
+                                          : (lower_bound < simi[0]);
+
+            if (should_refine) {
+                local_multibit_evaluations++;
+                // Lower bound is promising, compute full distance
+                float dis = distance_to_code(codes);
+
+                // Check if distance improves heap
+                bool improves_heap =
+                        keep_max ? (dis > simi[0]) : (dis < simi[0]);
+
+                if (improves_heap) {
+                    int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
+                    if (keep_max) {
+                        minheap_replace_top(k, simi, idxi, dis, id);
+                    } else {
+                        maxheap_replace_top(k, simi, idxi, dis, id);
+                    }
+                    nup++;
+                }
+            }
+            codes += code_size;
+        }
+
+        // Update global stats atomically
+#pragma omp atomic
+        rabitq_stats.n_1bit_evaluations += local_1bit_evaluations;
+#pragma omp atomic
+        rabitq_stats.n_multibit_evaluations += local_multibit_evaluations;
+
+        return nup;
+    }
+
     void internal_try_setup_dc() {
         if (!query_vector.empty() && !reconstructed_centroid.empty()) {
             // both query_vector and centroid are available!
             // set up DistanceComputer
             dc.reset(ivf_rabitq.rabitq.get_distance_computer(
-                    qb, reconstructed_centroid.data()));
+                    qb, reconstructed_centroid.data(), centered));
 
             dc->set_query(query_vector.data());
+
+            // Try to cast to RaBitQDistanceComputer for multi-bit support
+            rabitq_dc = dynamic_cast<RaBitQDistanceComputer*>(dc.get());
         }
-    }
-
-    void scan_codes_and_return(
-            size_t list_size,
-            const uint8_t* codes,
-            const float* code_norms,
-            const idx_t* ids,
-            std::vector<knowhere::DistId>& out) const override {
-        // the lambda that filters acceptable elements.
-        const bool use_sel = (sel != nullptr);
-
-        auto filter = [&](const size_t j) {
-            return (!use_sel || sel->is_member(use_sel == 1 ? ids[j] : j));
-        };
-        // the lambda that applies a valid element.
-        auto apply = [&](const float dis_in, const size_t j) {
-            const float dis =
-                    (code_norms == nullptr) ? dis_in : (dis_in / code_norms[j]);
-            out.emplace_back(ids[j], dis);
-        };
-        distance_compute_by_idx_if_flatcodes(
-            codes, code_size, list_size, dc.get(), filter, apply
-        );
     }
 };
 
@@ -201,12 +295,15 @@ InvertedListScanner* IndexIVFRaBitQ::get_InvertedListScanner(
         const IDSelector* sel,
         const IVFSearchParameters* search_params_in) const {
     uint8_t used_qb = qb;
+    bool centered = false;
     if (auto params = dynamic_cast<const IVFRaBitQSearchParameters*>(
                 search_params_in)) {
         used_qb = params->qb;
+        centered = params->centered;
     }
 
-    return new RaBitInvertedListScanner(*this, store_pairs, sel, used_qb);
+    return new RaBitInvertedListScanner(
+            *this, store_pairs, sel, used_qb, centered);
 }
 
 void IndexIVFRaBitQ::reconstruct_from_offset(
@@ -271,7 +368,8 @@ float IVFRaBitDistanceComputer::operator()(idx_t i) {
     float distance = 0;
 
     std::unique_ptr<FlatCodesDistanceComputer> dc(
-            parent->rabitq.get_distance_computer(parent->qb, centroid.data()));
+            parent->rabitq.get_distance_computer(
+                    parent->qb, centroid.data(), /*centered=*/false));
     dc->set_query(q);
     distance = dc->distance_to_code(code);
 

@@ -1,19 +1,20 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
+#pragma once
+
 /** In this file are the implementations of extra metrics beyond L2
  *  and inner product */
 
+#include <faiss/MetricType.h>
+#include <faiss/impl/FaissAssert.h>
+#include <faiss/utils/distances.h>
 #include <cmath>
 #include <type_traits>
-
-#include <faiss/FaissHook.h>
-#include <faiss/MetricType.h>
-#include <faiss/utils/distances.h>
 
 namespace faiss {
 
@@ -21,6 +22,7 @@ template <MetricType mt>
 struct VectorDistance {
     size_t d;
     float metric_arg;
+    static constexpr MetricType metric = mt;
     static constexpr bool is_similarity = is_similarity_metric(mt);
 
     inline float operator()(const float* x, const float* y) const;
@@ -123,9 +125,6 @@ template <>
 inline float VectorDistance<METRIC_Jaccard>::operator()(
         const float* x,
         const float* y) const {
-    // todo aguzhva: knowhere implementation is different,
-    //   compare ones
-
     // WARNING: this distance is defined only for positive input vectors.
     // Providing vectors with negative values would lead to incorrect results.
     float accu_num = 0, accu_den = 0;
@@ -157,14 +156,74 @@ inline float VectorDistance<METRIC_NaNEuclidean>::operator()(
 }
 
 template <>
-inline float VectorDistance<METRIC_ABS_INNER_PRODUCT>::operator()(
+inline float VectorDistance<METRIC_GOWER>::operator()(
         const float* x,
         const float* y) const {
     float accu = 0;
+    size_t valid_dims = 0;
+
     for (size_t i = 0; i < d; i++) {
-        accu += fabs(x[i] * y[i]);
+        if (std::isnan(x[i]) || std::isnan(y[i])) {
+            continue;
+        }
+
+        if (x[i] >= 0 && y[i] >= 0) {
+            if (x[i] > 1 || y[i] > 1) {
+                return std::numeric_limits<float>::quiet_NaN();
+            }
+            // Numeric dimensions are in [0,1]
+            accu += fabs(x[i] - y[i]);
+        } else if (x[i] < 0 && y[i] < 0) {
+            // Categorical dimensions are negative values
+            accu += float(int(x[i] != y[i]));
+        } else {
+            // Invalid representation
+            return std::numeric_limits<float>::quiet_NaN();
+        }
+        valid_dims++;
     }
-    return accu;
+
+    if (valid_dims == 0) {
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+    return accu / valid_dims;
+}
+
+/***************************************************************************
+ * Dispatching function that takes a metric type and a consumer object
+ * the consumer object should contain a return type T and a operation template
+ * function f() that is called to perform the operation. The first argument
+ * of the function is the VectorDistance object. The rest are passed in as is.
+ **************************************************************************/
+
+template <class Consumer, class... Types>
+typename Consumer::T dispatch_VectorDistance(
+        size_t d,
+        MetricType metric,
+        float metric_arg,
+        Consumer& consumer,
+        Types... args) {
+    switch (metric) {
+#define DISPATCH_VD(mt)                                              \
+    case mt: {                                                       \
+        VectorDistance<mt> vd = {d, metric_arg};                     \
+        return consumer.template f<VectorDistance<mt>>(vd, args...); \
+    }
+        DISPATCH_VD(METRIC_INNER_PRODUCT);
+        DISPATCH_VD(METRIC_L2);
+        DISPATCH_VD(METRIC_L1);
+        DISPATCH_VD(METRIC_Linf);
+        DISPATCH_VD(METRIC_Lp);
+        DISPATCH_VD(METRIC_Canberra);
+        DISPATCH_VD(METRIC_BrayCurtis);
+        DISPATCH_VD(METRIC_JensenShannon);
+        DISPATCH_VD(METRIC_Jaccard);
+        DISPATCH_VD(METRIC_NaNEuclidean);
+        DISPATCH_VD(METRIC_GOWER);
+        default:
+            FAISS_THROW_FMT("Invalid metric %d", metric);
+    }
+#undef DISPATCH_VD
 }
 
 } // namespace faiss

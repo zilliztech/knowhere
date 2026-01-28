@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -20,6 +20,12 @@
 namespace faiss {
 namespace gpu {
 
+#if defined(USE_AMD_ROCM) && __AMDGCN_WAVEFRONT_SIZE == 64u
+#define LAUNCH_BOUND 320
+#else
+#define LAUNCH_BOUND 288
+#endif
+
 // Kernel responsible for calculating distance from residual vector to
 // each product quantizer code centroid
 template <
@@ -27,12 +33,12 @@ template <
         typename CentroidT,
         int DimsPerSubQuantizer,
         bool L2Distance>
-__global__ void __launch_bounds__(288, 3) pqCodeDistances(
+__global__ void __launch_bounds__(LAUNCH_BOUND, 3) pqCodeDistances(
         Tensor<float, 2, true> queries,
         int queriesPerBlock,
         Tensor<CentroidT, 2, true> coarseCentroids,
         Tensor<float, 3, true> pqCentroids,
-        Tensor<int, 2, true> coarseIndices,
+        Tensor<idx_t, 2, true> coarseIndices,
         // (query id)(coarse)(subquantizer)(code) -> dist
         Tensor<OutCodeT, 4, true> outCodeDistances) {
     const auto numSubQuantizers = pqCentroids.getSize(0);
@@ -76,7 +82,7 @@ __global__ void __launch_bounds__(288, 3) pqCodeDistances(
     // performing the reductions locally
 
     // Handle multiple queries per block
-    auto startQueryId = blockIdx.x * queriesPerBlock;
+    auto startQueryId = idx_t(blockIdx.x) * queriesPerBlock;
     auto numQueries = queries.getSize(0) - startQueryId;
     if (numQueries > queriesPerBlock) {
         numQueries = queriesPerBlock;
@@ -96,7 +102,10 @@ __global__ void __launch_bounds__(288, 3) pqCodeDistances(
         // Load list of coarse centroids found
         for (int i = threadIdx.x; i < coarseIndices.getSize(1);
              i += blockDim.x) {
-            coarseIds[i] = coarseIndices[queryId][i];
+            // FIXME: coarseIndices is now idx_t but the smem allocation
+            // of coarseIds is still int. In practical limitation, everything
+            // should still fit into int32
+            coarseIds[i] = (int)coarseIndices[queryId][i];
         }
 
         // We need coarseIds below
@@ -281,7 +290,7 @@ template <typename CentroidT, bool L2Residual>
 __global__ void pqResidualVector(
         Tensor<float, 2, true> queries,
         Tensor<CentroidT, 2, true> coarseCentroids,
-        Tensor<int, 2, true> coarseIndices,
+        Tensor<idx_t, 2, true> coarseIndices,
         int numSubDim,
         // output is transposed:
         // (sub q)(query id)(centroid id)(sub dim)
@@ -289,7 +298,7 @@ __global__ void pqResidualVector(
     auto queryId = blockIdx.x;
     auto centroidId = blockIdx.y;
 
-    int realCentroidId = coarseIndices[queryId][centroidId];
+    idx_t realCentroidId = coarseIndices[queryId][centroidId];
 
     for (int dim = threadIdx.x; dim < queries.getSize(1); dim += blockDim.x) {
         float q = queries[queryId][dim];
@@ -320,13 +329,14 @@ void runPQResidualVector(
         Tensor<float, 3, true>& pqCentroids,
         Tensor<float, 2, true>& queries,
         Tensor<CentroidT, 2, true>& coarseCentroids,
-        Tensor<int, 2, true>& coarseIndices,
+        Tensor<idx_t, 2, true>& coarseIndices,
         Tensor<float, 4, true>& residual,
         bool l2Residual,
         cudaStream_t stream) {
+    // blockDim.y is limited by nprobe
     auto grid = dim3(coarseIndices.getSize(0), coarseIndices.getSize(1));
-    auto block =
-            dim3(std::min(queries.getSize(1), getMaxThreadsCurrentDevice()));
+    auto block = dim3(
+            std::min(queries.getSize(1), (idx_t)getMaxThreadsCurrentDevice()));
 
     if (l2Residual) {
         pqResidualVector<CentroidT, true><<<grid, block, 0, stream>>>(
@@ -377,6 +387,7 @@ void runPQDistanceIPCorrection(
         Tensor<T, 4, true>& codeDistances,
         Tensor<T, 2, true>& coarseDistances,
         cudaStream_t stream) {
+    // blockDim.y is limited by nprobe
     auto grid = dim3(coarseDistances.getSize(1), coarseDistances.getSize(0));
     auto block = 512;
 
@@ -396,7 +407,7 @@ void runPQCodeDistancesMM(
         Tensor<float, 2, true>& queries,
         Tensor<CentroidT, 2, true>& coarseCentroids,
         Tensor<float, 2, true>& coarseDistances,
-        Tensor<int, 2, true>& coarseIndices,
+        Tensor<idx_t, 2, true>& coarseIndices,
         // Output is (query)(centroid)(sub q)(code)
         NoTypeTensor<4, true>& outCodeDistances,
         bool l2Distance,
@@ -547,8 +558,6 @@ void runPQCodeDistancesMM(
         runPQDistanceIPCorrection(outCodeDistancesF, coarseDistances, stream);
     }
 
-    HostTensor<float, 4, true> debugT(outCodeDistancesF, stream);
-
     if (useFloat16Lookup) {
         // Need to convert back to half in the output memory
         auto outCodeDistancesH = outCodeDistances.toTensor<half>();
@@ -587,7 +596,7 @@ void runPQCodeDistances(
         Tensor<float, 2, true>& queries,
         Tensor<CentroidT, 2, true>& coarseCentroids,
         Tensor<float, 2, true>& coarseDistances,
-        Tensor<int, 2, true>& coarseIndices,
+        Tensor<idx_t, 2, true>& coarseIndices,
         NoTypeTensor<4, true>& outCodeDistances,
         bool useMMImplementation,
         bool l2Distance,
@@ -629,7 +638,8 @@ void runPQCodeDistances(
 
     // Reserve one block of threads for double buffering
     // FIXME: probably impractical for large # of dims?
-    auto loadingThreads = utils::roundUp(dimsPerSubQuantizer, kWarpSize);
+    int warpSize = getWarpSizeCurrentDevice();
+    auto loadingThreads = utils::roundUp(dimsPerSubQuantizer, warpSize);
     auto block = dim3(codesPerSubQuantizer + loadingThreads);
 
     auto smem = (3 * dimsPerSubQuantizer) * sizeof(float) +

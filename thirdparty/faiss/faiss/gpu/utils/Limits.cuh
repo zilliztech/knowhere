@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -33,7 +33,7 @@ struct Limits<float> {
 };
 
 inline __device__ __host__ half kGetHalf(unsigned short v) {
-#if CUDA_VERSION >= 9000
+#if CUDA_VERSION >= 9000 || defined(USE_AMD_ROCM)
     __half_raw h;
     h.x = v;
     return __half(h);
@@ -64,6 +64,19 @@ struct Limits<int> {
     }
     static __device__ __host__ inline int getMax() {
         return kIntMax;
+    }
+};
+
+constexpr idx_t kIdxTMax = std::numeric_limits<idx_t>::max();
+constexpr idx_t kIdxTMin = std::numeric_limits<idx_t>::lowest();
+
+template <>
+struct Limits<idx_t> {
+    static __device__ __host__ inline idx_t getMin() {
+        return kIdxTMin;
+    }
+    static __device__ __host__ inline idx_t getMax() {
+        return kIdxTMax;
     }
 };
 

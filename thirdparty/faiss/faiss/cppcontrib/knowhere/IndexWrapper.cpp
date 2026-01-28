@@ -11,9 +11,9 @@
 
 #include <faiss/cppcontrib/knowhere/IndexWrapper.h>
 
-namespace faiss {
-namespace cppcontrib {
-namespace knowhere {
+
+
+namespace faiss::cppcontrib::knowhere {
 
 IndexWrapper::IndexWrapper(Index* underlying_index) : 
     Index{underlying_index->d, underlying_index->metric_type},
@@ -61,7 +61,7 @@ void IndexWrapper::reset() {
     this->ntotal = 0;
 }
 
-void IndexWrapper::merge_from(Index& otherIndex, idx_t add_id) {
+void IndexWrapper::merge_from(faiss::Index& otherIndex, idx_t add_id) {
     index->merge_from(otherIndex, add_id);
 }
 
@@ -70,5 +70,4 @@ DistanceComputer* IndexWrapper::get_distance_computer() const {
 }
 
 }
-}
-}
+

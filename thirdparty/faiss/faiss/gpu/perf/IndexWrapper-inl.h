@@ -1,9 +1,11 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
+
+#pragma once
 
 #include <faiss/impl/FaissAssert.h>
 
@@ -58,8 +60,8 @@ void IndexWrapper<GpuIndex>::runOnIndices(std::function<void(GpuIndex*)> f) {
 }
 
 template <typename GpuIndex>
-void IndexWrapper<GpuIndex>::setNumProbes(int nprobe) {
-    runOnIndices([nprobe](GpuIndex* index) { index->setNumProbes(nprobe); });
+void IndexWrapper<GpuIndex>::setNumProbes(size_t nprobe) {
+    runOnIndices([nprobe](GpuIndex* index) { index->nprobe = nprobe; });
 }
 
 } // namespace gpu

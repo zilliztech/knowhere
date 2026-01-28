@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -144,7 +144,7 @@ void IndexShardsIVF::add_with_ids(
         }
 
         index_ivf->add_core(
-                i1 - i0, x + i0 * d, nullptr, ids ? ids + i0 : nullptr, Iq.data() + i0);
+                i1 - i0, x + i0 * d, ids ? ids + i0 : nullptr, Iq.data() + i0);
 
         if (index->verbose) {
             printf("end add shard %d on %" PRId64 " points\n", no, i1 - i0);

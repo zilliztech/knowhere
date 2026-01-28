@@ -1,6 +1,5 @@
 #! /bin/bash
-
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -43,11 +42,11 @@ elif [ $todo == test_kmeans_1 ]; then
            --k $k --gpu -1
 
 elif [ $todo == test_kmeans_2 ]; then
-    # distrbuted run, with one local server per GPU
+    # distributed run, with one local server per GPU
     ngpu=$( echo /dev/nvidia? | wc -w )
     baseport=12012
 
-    # kill background porcesses on output of this script
+    # kill background processes on output of this script
     trap 'kill -HUP 0' 0
 
     hostports=''

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -46,7 +46,7 @@ size_t PyCallbackIOWriter::operator()(
         size_t wi = ws > bs ? bs : ws;
         PyObject* result = PyObject_CallFunction(
                 callback, "(N)", PyBytes_FromStringAndSize(ptr, wi));
-        if (result == NULL) {
+        if (result == nullptr) {
             FAISS_THROW_MSG("py err");
         }
         // TODO check nb of bytes written
@@ -77,7 +77,7 @@ size_t PyCallbackIOReader::operator()(void* ptrv, size_t size, size_t nitems) {
     while (rs > 0) {
         size_t ri = rs > bs ? bs : rs;
         PyObject* result = PyObject_CallFunction(callback, "(n)", ri);
-        if (result == NULL) {
+        if (result == nullptr) {
             FAISS_THROW_MSG("propagate py error");
         }
         if (!PyBytes_Check(result)) {
@@ -104,6 +104,57 @@ size_t PyCallbackIOReader::operator()(void* ptrv, size_t size, size_t nitems) {
 }
 
 PyCallbackIOReader::~PyCallbackIOReader() {
+    PyThreadLock gil;
+    Py_DECREF(callback);
+}
+
+/***********************************************************
+ * Callbacks for IDSelector
+ ***********************************************************/
+
+PyCallbackIDSelector::PyCallbackIDSelector(PyObject* callback)
+        : callback(callback) {
+    PyThreadLock gil;
+    Py_INCREF(callback);
+}
+
+bool PyCallbackIDSelector::is_member(faiss::idx_t id) const {
+    FAISS_THROW_IF_NOT((id >> 32) == 0);
+    PyThreadLock gil;
+    PyObject* result = PyObject_CallFunction(callback, "(n)", int(id));
+    if (result == nullptr) {
+        FAISS_THROW_MSG("propagate py error");
+    }
+    bool b = PyObject_IsTrue(result);
+    Py_DECREF(result);
+    return b;
+}
+
+PyCallbackIDSelector::~PyCallbackIDSelector() {
+    PyThreadLock gil;
+    Py_DECREF(callback);
+}
+
+/***********************************************************
+ * Callbacks for IVF index sharding
+ ***********************************************************/
+
+PyCallbackShardingFunction::PyCallbackShardingFunction(PyObject* callback)
+        : callback(callback) {
+    PyThreadLock gil;
+    Py_INCREF(callback);
+}
+
+int64_t PyCallbackShardingFunction::operator()(int64_t i, int64_t shard_count) {
+    PyThreadLock gil;
+    PyObject* shard_id = PyObject_CallFunction(callback, "LL", i, shard_count);
+    if (shard_id == nullptr) {
+        FAISS_THROW_MSG("propagate py error");
+    }
+    return PyLong_AsLongLong(shard_id);
+}
+
+PyCallbackShardingFunction::~PyCallbackShardingFunction() {
     PyThreadLock gil;
     Py_DECREF(callback);
 }

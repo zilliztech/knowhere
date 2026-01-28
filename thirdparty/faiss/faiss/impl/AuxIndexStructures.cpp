@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -36,7 +36,7 @@ RangeSearchResult::RangeSearchResult(size_t nq, bool alloc_lims) : nq(nq) {
 /// for each query
 void RangeSearchResult::do_allocation() {
     // works only if all the partial results are aggregated
-    // simulatenously
+    // simultaneously
     FAISS_THROW_IF_NOT(labels == nullptr && distances == nullptr);
     size_t ofs = 0;
     for (int i = 0; i < nq; i++) {
@@ -86,7 +86,7 @@ void BufferList::append_buffer() {
     wp = 0;
 }
 
-/// copy elemnts ofs:ofs+n-1 seen as linear data in the buffers to
+/// copy elements ofs:ofs+n-1 seen as linear data in the buffers to
 /// tables dest_ids, dest_dis
 void BufferList::copy_range(
         size_t ofs,
@@ -168,23 +168,26 @@ void RangeSearchPartialResult::merge(
         std::vector<RangeSearchPartialResult*>& partial_results,
         bool do_delete) {
     int npres = partial_results.size();
-    if (npres == 0)
+    if (npres == 0) {
         return;
+    }
     RangeSearchResult* result = partial_results[0]->res;
     size_t nx = result->nq;
 
     // count
     for (const RangeSearchPartialResult* pres : partial_results) {
-        if (!pres)
+        if (!pres) {
             continue;
+        }
         for (const RangeQueryResult& qres : pres->queries) {
             result->lims[qres.qno] += qres.nres;
         }
     }
     result->do_allocation();
     for (int j = 0; j < npres; j++) {
-        if (!partial_results[j])
+        if (!partial_results[j]) {
             continue;
+        }
         partial_results[j]->copy_result(true);
         if (do_delete) {
             delete partial_results[j];

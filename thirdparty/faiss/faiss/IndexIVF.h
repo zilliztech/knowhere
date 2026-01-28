@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -22,8 +22,6 @@
 #include <faiss/invlists/DirectMap.h>
 #include <faiss/invlists/InvertedLists.h>
 #include <faiss/utils/Heap.h>
-
-#include "knowhere/object.h"
 
 namespace faiss {
 
@@ -73,20 +71,7 @@ struct Level1Quantizer {
 struct SearchParametersIVF : SearchParameters {
     size_t nprobe = 1;    ///< number of probes at query time
     size_t max_codes = 0; ///< max nb of codes to visit to do a query
-    ///< indicate whether we should early teriminate before topk results full when search reaches max_codes
-    ///< to minimize code change, when users only use nprobe to search, this config does not take affect since we will first retrieve the nearest nprobe buckets
-    ///< it is a bit heavy to further retrieve more buckets
-    ///< therefore to make sure we get topk results, use nprobe=nlist and use max_codes to narrow down the search range
-    size_t max_lists_num = 0; ///< select min{scanned number of (max_codes),
-    ///< scanned number of (max_lists_num) to return.}
-    bool ensure_topk_full = false;
-
-    ///< during IVF range search, if reach 'max_empty_result_buckets' num of
-    ///< continuous buckets with no valid results, terminate range search
-    size_t max_empty_result_buckets = 0;
-
     SearchParameters* quantizer_params = nullptr;
-
     /// context object to pass to InvertedLists
     void* inverted_list_context = nullptr;
 
@@ -95,29 +80,6 @@ struct SearchParametersIVF : SearchParameters {
 
 // the new convention puts the index type after SearchParameters
 using IVFSearchParameters = SearchParametersIVF;
-struct DistanceComputer;
-struct IVFIteratorWorkspace {
-    IVFIteratorWorkspace() = default;
-    IVFIteratorWorkspace(
-            const float* query_data,
-            const size_t d,
-            const IVFSearchParameters* search_params);
-    virtual ~IVFIteratorWorkspace();
-
-    std::vector<float> query_data; // a copy of a single query
-    const IVFSearchParameters* search_params = nullptr;
-    size_t nprobe = 0;
-    size_t backup_count_threshold = 0;   // count * nprobe / nlist
-    std::vector<knowhere::DistId> dists; // should be cleared after each use
-    size_t next_visit_coarse_list_idx = 0;
-    std::unique_ptr<float[]> coarse_dis =
-            nullptr; // backup coarse centroids distances (heap)
-    std::unique_ptr<idx_t[]> coarse_idx =
-            nullptr; // backup coarse centroids ids (heap)
-    std::unique_ptr<size_t[]> coarse_list_sizes =
-            nullptr; // snapshot of the list_size
-    std::unique_ptr<DistanceComputer> dis_refine;
-};
 
 struct InvertedListScanner;
 struct IndexIVFStats;
@@ -198,7 +160,7 @@ struct IndexIVFInterface : Level1Quantizer {
  * index maps to a list (aka inverted list or posting list), where the
  * id of the vector is stored.
  *
- * The inverted list object is required only after trainng. If none is
+ * The inverted list object is required only after training. If none is
  * set externally, an ArrayInvertedLists is used automatically.
  *
  * At search time, the vector to be searched is also quantized, and
@@ -209,7 +171,7 @@ struct IndexIVFInterface : Level1Quantizer {
  * lists are visited.
  *
  * Sub-classes implement a post-filtering of the index that refines
- * the distance estimation from the query to databse vectors.
+ * the distance estimation from the query to database vectors.
  */
 struct IndexIVF : Index, IndexIVFInterface {
     /// Access to the actual data
@@ -248,21 +210,8 @@ struct IndexIVF : Index, IndexIVFInterface {
             size_t d,
             size_t nlist,
             size_t code_size,
-            MetricType metric = METRIC_L2);
-
-    virtual std::unique_ptr<IVFIteratorWorkspace> getIteratorWorkspace(
-            const float* query_data,
-            const IVFSearchParameters* ivfsearchParams) const;
-
-    // Unlike regular knn-search, the iterator does not know the size `k` of the
-    // returned result.
-    //   The iterator will maintain a heap of at least (nprobe/nlist) nodes for
-    //   iterator `Next()` operation.
-    //   When there are not enough nodes in the heap, iterator will scan the
-    //   next coarse list.
-    virtual void getIteratorNextBatch(
-            IVFIteratorWorkspace* workspace,
-            size_t current_backup_count) const;
+            MetricType metric = METRIC_L2,
+            bool own_invlists = true);
 
     void reset() override;
 
@@ -285,7 +234,6 @@ struct IndexIVF : Index, IndexIVFInterface {
     virtual void add_core(
             idx_t n,
             const float* x,
-            const float* x_norms,
             const idx_t* xids,
             const idx_t* precomputed_idx,
             void* inverted_list_context = nullptr);
@@ -306,12 +254,27 @@ struct IndexIVF : Index, IndexIVFInterface {
             uint8_t* codes,
             bool include_listno = false) const = 0;
 
+    /** Decodes a set of vectors as they would appear in a given set of inverted
+     * lists (inverse of encode_vectors)
+     *
+     * @param codes      input codes, size n * code_size
+     * @param x          output decoded vectors
+     * @param list_nos   input listnos, size n
+     *
+     */
+    virtual void decode_vectors(
+            idx_t n,
+            const uint8_t* codes,
+            const idx_t* list_nos,
+            float* x) const;
+
     /** Add vectors that are computed with the standalone codec
      *
      * @param codes  codes to add size n * sa_code_size()
      * @param xids   corresponding ids, size n
      */
-    void add_sa_codes(idx_t n, const uint8_t* codes, const idx_t* xids);
+    void add_sa_codes(idx_t n, const uint8_t* codes, const idx_t* xids)
+            override;
 
     /** Train the encoder for the vectors.
      *
@@ -362,18 +325,11 @@ struct IndexIVF : Index, IndexIVFInterface {
             RangeSearchResult* result,
             const SearchParameters* params = nullptr) const override;
 
-    void calc_dist_by_ids(
-            idx_t n,
-            const float* x,
-            size_t num_keys,
-            const int64_t* keys,
-            float* out_dist) const;
-
     /** Get a scanner for this index (store_pairs means ignore labels)
      *
      * The default search implementation uses this to compute the distances.
      * Use sel instead of params->sel, because sel is initialized with
-     * params->sel, but may get overriden by IndexIVF's internal logic.
+     * params->sel, but may get overridden by IndexIVF's internal logic.
      */
     virtual InvertedListScanner* get_InvertedListScanner(
             bool store_pairs = false,
@@ -473,10 +429,6 @@ struct IndexIVF : Index, IndexIVFInterface {
             idx_t a1,
             idx_t a2) const;
 
-    virtual void to_readonly();
-
-    virtual bool is_readonly() const;
-
     ~IndexIVF() override;
 
     size_t get_list_size(size_t list_no) const {
@@ -491,7 +443,7 @@ struct IndexIVF : Index, IndexIVFInterface {
      * @param new_maintain_direct_map    if true, create a direct map,
      *                                   else clear it
      */
-    void make_direct_map(bool new_maintain_direct_map = true, DirectMap::Type type = DirectMap::Type::Array);
+    void make_direct_map(bool new_maintain_direct_map = true);
 
     void set_direct_map_type(DirectMap::Type type);
 
@@ -502,15 +454,13 @@ struct IndexIVF : Index, IndexIVFInterface {
     size_t sa_code_size() const override;
 
     /** encode a set of vectors
-     * sa_encode will call encode_vector with include_listno=true
+     * sa_encode will call encode_vectors with include_listno=true
      * @param n      nb of vectors to encode
      * @param x      the vectors to encode
      * @param bytes  output array for the codes
      * @return nb of bytes written to codes
      */
     void sa_encode(idx_t n, const float* x, uint8_t* bytes) const override;
-
-    void dump();
 
     IndexIVF();
 };
@@ -547,44 +497,25 @@ struct InvertedListScanner {
     /// compute a single query-to-code distance
     virtual float distance_to_code(const uint8_t* code) const = 0;
 
-    /** scan a set of codes, compute distances to current query and
-     * update heap of results if necessary. Default implemetation
+    /** scan a set of codes, compute distances to current query, and
+     * update heap of results if necessary. Default implementation
      * calls distance_to_code.
      *
-     * @param n      number of codes to scan
-     * @param codes  codes to scan (n * code_size)
+     * @param n          number of codes to scan
+     * @param codes      codes to scan (n * code_size)
      * @param ids        corresponding ids (ignored if store_pairs)
      * @param distances  heap distances (size k)
      * @param labels     heap labels (size k)
      * @param k          heap size
-     * @param scan_cnt   valid number of codes be scanned
      * @return number of heap updates performed
      */
     virtual size_t scan_codes(
             size_t n,
             const uint8_t* codes,
-            const float* code_norms,
             const idx_t* ids,
             float* distances,
             idx_t* labels,
-            size_t k,
-            size_t& scan_cnt) const;
-
-    /** scan a set of codes, compute distances to current query and
-     * return in a vector.
-     *
-     * @param list_size     number of codes to scan
-     * @param codes         codes to scan (list_size * code_size)
-     * @param code_norms    norms of code (for cosine)
-     * @param ids           corresponding ids (ignored if store_pairs)
-     * @param out           output distances and ids
-     */
-    virtual void scan_codes_and_return(
-            size_t list_size,
-            const uint8_t* codes,
-            const float* code_norms,
-            const idx_t* ids,
-            std::vector<knowhere::DistId>& out) const;
+            size_t k) const;
 
     // same as scan_codes, using an iterator
     virtual size_t iterate_codes(
@@ -601,7 +532,6 @@ struct InvertedListScanner {
     virtual void scan_codes_range(
             size_t n,
             const uint8_t* codes,
-            const float* code_norms,
             const idx_t* ids,
             float radius,
             RangeQueryResult& result) const;
