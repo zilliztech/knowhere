@@ -56,6 +56,7 @@ constexpr const char* INDEX_HNSW = "HNSW";
 constexpr const char* INDEX_HNSW_SQ = "HNSW_SQ";
 constexpr const char* INDEX_HNSW_PQ = "HNSW_PQ";
 constexpr const char* INDEX_HNSW_PRQ = "HNSW_PRQ";
+constexpr const char* INDEX_HNSW_RABITQ = "HNSW_RABITQ";
 
 constexpr const char* INDEX_DISKANN = "DISKANN";
 constexpr const char* INDEX_AISAQ = "AISAQ";
@@ -208,6 +209,7 @@ constexpr const char* DROP_RATIO_SEARCH = "drop_ratio_search";
 
 // RaBitQ Params
 constexpr const char* RABITQ_QUERY_BITS = "rbq_bits_query";
+constexpr const char* RBQ_QUERY_NBITS = "rbq_query_nbits";  // for HNSW_RABITQ
 
 // minhash meta Params
 constexpr const char* MH_ELEMENT_BIT_WIDTH = "mh_element_bit_width";
