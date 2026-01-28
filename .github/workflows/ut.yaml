@@ -42,8 +42,29 @@ jobs:
           os: ubuntu-22.04
       - name: Build
         run: |
-          make WITH_UT=True WITH_ASAN=True
+          make WITH_UT=True WITH_ASAN=True WITH_COVERAGE=True
+      - name: Run Unit Tests
+        run: |
           make test
+      - name: Generate Coverage Report
+        if: always()
+        run: |
+          lcov --capture --directory build/ --output-file coverage.info --rc lcov_branch_coverage=1 2>/dev/null \
+          && lcov --remove coverage.info \
+              '/usr/*' \
+              '*/.conan/*' \
+              '*/thirdparty/*' \
+              '*/tests/*' \
+              '*/build/*' \
+              --output-file coverage.info --rc lcov_branch_coverage=1 2>/dev/null \
+          && lcov --summary coverage.info 2>/dev/null
+      - name: Upload Coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.info
+          fail_ci_if_error: false
+          verbose: true
       - name: Save Cache
         uses: ./.github/actions/cache-save
         with:

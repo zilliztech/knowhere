@@ -2437,3 +2437,183 @@ TEST_CASE("External ID Map for 1-hop Bitset Check", "[external_id_map]") {
         }
     }
 }
+
+// ============================================================================
+// HNSW Empty Graph and Edge Case Tests
+// ============================================================================
+
+TEST_CASE("HNSW Empty Graph Search", "[hnsw][empty_graph]") {
+    auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+    auto metric = GENERATE(knowhere::metric::L2, knowhere::metric::IP);
+
+    int nq = 5;
+    int dim = 64;
+    int topk = 10;
+
+    auto query_ds = GenDataSet(nq, dim, uint64_t(42));
+
+    knowhere::Json conf = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::METRIC_TYPE, metric},
+        {knowhere::meta::TOPK, topk},
+        {knowhere::indexparam::HNSW_M, 16},
+        {knowhere::indexparam::EFCONSTRUCTION, 200},
+        {knowhere::indexparam::EF, 200},
+    };
+
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
+        knowhere::IndexEnum::INDEX_HNSW, version);
+    REQUIRE(idx.has_value());
+
+    auto empty_ds = knowhere::GenDataSet(0, dim, (float*)nullptr);
+    auto status = idx.value().Build(empty_ds, conf);
+
+    if (status == knowhere::Status::success) {
+        SECTION("Search on empty HNSW") {
+            auto result = idx.value().Search(query_ds, conf, nullptr);
+            if (result.has_value()) {
+                auto ids = result.value()->GetIds();
+                for (int64_t i = 0; i < nq * topk; i++) {
+                    REQUIRE(ids[i] == -1);
+                }
+            }
+        }
+
+        SECTION("RangeSearch on empty HNSW") {
+            knowhere::Json range_conf = conf;
+            range_conf[knowhere::meta::RADIUS] = 10.0f;
+            range_conf[knowhere::meta::RANGE_FILTER] = 100.0f;
+            auto result = idx.value().RangeSearch(query_ds, range_conf, nullptr);
+            if (result.has_value()) {
+                auto lims = result.value()->GetLims();
+                for (int64_t i = 0; i <= nq; i++) {
+                    REQUIRE(lims[i] == 0);
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("HNSW Search with Heavy Filtering", "[hnsw][filter]") {
+    auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+
+    int nb = 1000;
+    int nq = 5;
+    int dim = 64;
+    int topk = 10;
+
+    auto base_ds = GenDataSet(nb, dim, uint64_t(42));
+    auto query_ds = GenDataSet(nq, dim, uint64_t(100));
+
+    knowhere::Json conf = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::L2},
+        {knowhere::meta::TOPK, topk},
+        {knowhere::indexparam::HNSW_M, 16},
+        {knowhere::indexparam::EFCONSTRUCTION, 100},
+        {knowhere::indexparam::EF, 100},
+    };
+
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
+        knowhere::IndexEnum::INDEX_HNSW, version);
+    REQUIRE(idx.has_value());
+    REQUIRE(idx.value().Build(base_ds, conf) == knowhere::Status::success);
+
+    SECTION("Search with 90% filtered out") {
+        auto bitset_data = GenerateBitsetWithRandomTbitsSet(nb, nb * 0.9);
+        knowhere::BitsetView bitset(bitset_data.data(), nb);
+
+        auto result = idx.value().Search(query_ds, conf, bitset);
+        REQUIRE(result.has_value());
+
+        auto ids = result.value()->GetIds();
+        for (int64_t i = 0; i < nq * topk; i++) {
+            if (ids[i] != -1) {
+                REQUIRE(!bitset.test(ids[i]));
+            }
+        }
+    }
+
+    SECTION("RangeSearch with filtering") {
+        knowhere::Json range_conf = conf;
+        range_conf[knowhere::meta::RADIUS] = 0.0f;
+        range_conf[knowhere::meta::RANGE_FILTER] = 100000.0f;
+
+        auto bitset_data = GenerateBitsetWithFirstTbitsSet(nb, nb / 2);
+        knowhere::BitsetView bitset(bitset_data.data(), nb);
+
+        auto result = idx.value().RangeSearch(query_ds, range_conf, bitset);
+        REQUIRE(result.has_value());
+
+        auto ids = result.value()->GetIds();
+        auto lims = result.value()->GetLims();
+        for (size_t i = 0; i < lims[nq]; i++) {
+            REQUIRE(!bitset.test(ids[i]));
+        }
+    }
+}
+
+TEST_CASE("HNSW AnnIterator Edge Cases", "[hnsw][iterator]") {
+    auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+
+    int nb = 500;
+    int nq = 3;
+    int dim = 32;
+
+    auto base_ds = GenDataSet(nb, dim, uint64_t(42));
+    auto query_ds = GenDataSet(nq, dim, uint64_t(100));
+
+    knowhere::Json conf = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::L2},
+        {knowhere::meta::TOPK, 10},
+        {knowhere::indexparam::HNSW_M, 16},
+        {knowhere::indexparam::EFCONSTRUCTION, 100},
+        {knowhere::indexparam::EF, 50},
+    };
+
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
+        knowhere::IndexEnum::INDEX_HNSW, version);
+    REQUIRE(idx.has_value());
+    REQUIRE(idx.value().Build(base_ds, conf) == knowhere::Status::success);
+
+    SECTION("Iterator without filter") {
+        auto iterators_or = idx.value().AnnIterator(query_ds, conf, nullptr);
+        REQUIRE(iterators_or.has_value());
+        auto& iterators = iterators_or.value();
+        REQUIRE(iterators.size() == static_cast<size_t>(nq));
+
+        for (size_t i = 0; i < iterators.size(); i++) {
+            auto& iter = iterators[i];
+            int count = 0;
+            while (iter->HasNext() && count < 100) {
+                auto [id, dist] = iter->Next();
+                REQUIRE(id >= 0);
+                REQUIRE(id < nb);
+                (void)dist;
+                count++;
+            }
+            REQUIRE(count > 0);
+        }
+    }
+
+    SECTION("Iterator with filter") {
+        auto bitset_data = GenerateBitsetWithRandomTbitsSet(nb, nb / 3);
+        knowhere::BitsetView bitset(bitset_data.data(), nb);
+
+        auto iterators_or = idx.value().AnnIterator(query_ds, conf, bitset);
+        REQUIRE(iterators_or.has_value());
+
+        auto& iterators = iterators_or.value();
+        for (size_t i = 0; i < iterators.size(); i++) {
+            auto& iter = iterators[i];
+            int count = 0;
+            while (iter->HasNext() && count < 100) {
+                auto [id, dist] = iter->Next();
+                REQUIRE(!bitset.test(id));
+                (void)dist;
+                count++;
+            }
+        }
+    }
+}

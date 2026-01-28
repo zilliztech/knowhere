@@ -64,6 +64,10 @@ ifdef WITH_ASAN
     CONAN_FLAGS += -o with_asan=True
 endif
 
+ifdef WITH_COVERAGE
+    CONAN_FLAGS += -o with_coverage=True
+endif
+
 ifdef WITH_CARDINAL
     CONAN_FLAGS += -o with_cardinal=True
 endif
