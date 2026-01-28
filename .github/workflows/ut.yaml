@@ -45,9 +45,30 @@ jobs:
       - name: Build
         run: |
           mkdir build && cd build \
-          && conan install .. --build=missing -s build_type=Release -o with_ut=True -o with_diskann=True -o with_asan=True -s compiler.libcxx=libstdc++11 \
-          && conan build .. \
-          && ./Release/tests/ut/knowhere_tests
+          && conan install .. --build=missing -s build_type=Release -o with_ut=True -o with_diskann=True -o with_asan=True -o with_coverage=True -s compiler.libcxx=libstdc++11 \
+          && conan build ..
+      - name: Run Unit Tests
+        run: |
+          cd build/Release/tests/ut \
+          && ./knowhere_tests
+      - name: Generate and Print Coverage Report
+        if: always()
+        run: |
+          echo "=========================================="
+          echo "         CODE COVERAGE REPORT"
+          echo "=========================================="
+          lcov --capture --directory build/ --output-file coverage.info --rc lcov_branch_coverage=1 2>/dev/null \
+          && lcov --remove coverage.info \
+              '/usr/*' \
+              '*/.conan/*' \
+              '*/thirdparty/*' \
+              '*/tests/*' \
+              '*/build/*' \
+              --output-file coverage.info --rc lcov_branch_coverage=1 2>/dev/null \
+          && echo "" \
+          && lcov --summary coverage.info 2>/dev/null \
+          && echo "" \
+          && echo "=========================================="
       - name: Save Cache
         uses: ./.github/actions/cache-save
         with:
