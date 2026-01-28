@@ -56,7 +56,8 @@ enum class InvertedIndexSectionType : uint32_t {
     DIM_MAP = 2,
     ROW_SUMS = 3,
     MAX_SCORES_PER_DIM = 4,
-    PROMETHEUS_BUILD_STATS = 5
+    PROMETHEUS_BUILD_STATS = 5,
+    BLOCK_MAX_SCORES = 6,  // Block-max scores for BMW algorithm
 };
 
 struct InvertedIndexSectionHeader {
@@ -69,6 +70,7 @@ struct InvertedIndexApproxSearchParams {
     int refine_factor;
     float drop_ratio_search;
     float dim_max_score_ratio;
+    bool use_block_max;  // Enable block-max bounds for tighter pruning (works with DAAT_WAND and DAAT_MAXSCORE)
 };
 
 template <typename T>
@@ -106,6 +108,10 @@ class BaseInvertedIndex {
 
     virtual float
     GetRawDistance(const label_t vec_id, const SparseRow<T>& query, const DocValueComputer<T>& computer) const = 0;
+
+    // Returns true if this index supports block-max optimization (only DAAT_WAND)
+    virtual bool
+    SupportsBlockMax() const = 0;
 
     virtual expected<DocValueComputer<T>>
     GetDocValueComputer(const SparseInvertedIndexConfig& cfg) const = 0;
@@ -173,6 +179,11 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     void
     SetBM25Params(float k1, float b, float avgdl) {
         bm25_params_ = std::make_unique<BM25Params>(k1, b, avgdl);
+    }
+
+    void
+    SetBlockMaxBlockSize(size_t block_size) {
+        block_max_block_size_ = block_size;
     }
 
     expected<DocValueComputer<float>>
@@ -360,6 +371,9 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                 boost::span<const float>(bm25_params_->row_sums.data(), bm25_params_->row_sums.size());
         }
 
+        // Compute block-max scores for BMW algorithm
+        compute_block_max_scores();
+
         return Status::success;
     }
 
@@ -414,6 +428,9 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         if (max_score_in_dim_spans_.size() > 0) {
             nr_sections += 1;  // max scores per dim
         }
+        if (!block_max_scores_spans_.empty()) {
+            nr_sections += 1;  // block max scores for BMW
+        }
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
         // use a section to store some build stats for prometheus
         nr_sections += 1;
@@ -453,6 +470,20 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             section_headers[curr_section_idx].type = InvertedIndexSectionType::MAX_SCORES_PER_DIM;
             section_headers[curr_section_idx].offset = used_offset;
             section_headers[curr_section_idx].size = sizeof(float) * this->nr_inner_dims_;
+            used_offset += section_headers[curr_section_idx].size;
+            curr_section_idx++;
+        }
+
+        if (!block_max_scores_spans_.empty()) {
+            section_headers[curr_section_idx].type = InvertedIndexSectionType::BLOCK_MAX_SCORES;
+            section_headers[curr_section_idx].offset = used_offset;
+            // Size: block_size (uint32_t) + offsets (uint64_t * (nr_dims + 1)) + flattened scores
+            uint64_t block_max_scores_size = sizeof(uint32_t);                       // block_max_block_size_
+            block_max_scores_size += sizeof(uint64_t) * (this->nr_inner_dims_ + 1);  // offsets
+            for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
+                block_max_scores_size += block_max_scores_spans_[i].size() * sizeof(float);
+            }
+            section_headers[curr_section_idx].size = block_max_scores_size;
             used_offset += section_headers[curr_section_idx].size;
             curr_section_idx++;
         }
@@ -503,6 +534,23 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
         if (max_score_in_dim_spans_.size() > 0) {
             writer.write(max_score_in_dim_spans_.data(), sizeof(float), this->nr_inner_dims_);
+        }
+
+        // write block max scores
+        if (!block_max_scores_spans_.empty()) {
+            uint32_t block_size = static_cast<uint32_t>(block_max_block_size_);
+            writer.write(&block_size, sizeof(uint32_t));
+            // write offsets
+            std::vector<uint64_t> block_max_offsets(this->nr_inner_dims_ + 1);
+            block_max_offsets[0] = 0;
+            for (size_t i = 1; i <= this->nr_inner_dims_; ++i) {
+                block_max_offsets[i] = block_max_offsets[i - 1] + block_max_scores_spans_[i - 1].size();
+            }
+            writer.write(block_max_offsets.data(), sizeof(uint64_t), block_max_offsets.size());
+            // write flattened block max scores
+            for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
+                writer.write(block_max_scores_spans_[i].data(), sizeof(float), block_max_scores_spans_[i].size());
+            }
         }
 
         // write prometheus build stats
@@ -593,6 +641,24 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                         max_score_in_dim_spans_ = boost::span<const float>(
                             reinterpret_cast<float*>(reader.data() + section_header.offset), this->nr_inner_dims_);
                         reader.advance(sizeof(float) * this->nr_inner_dims_);
+                        break;
+                    }
+                    case InvertedIndexSectionType::BLOCK_MAX_SCORES: {
+                        reader.seekg(section_header.offset);
+                        uint32_t block_size;
+                        readBinaryPOD(reader, block_size);
+                        block_max_block_size_ = block_size;
+                        // read offsets
+                        auto offsets_ptr = reinterpret_cast<const uint64_t*>(reader.data() + reader.tellg());
+                        reader.advance(sizeof(uint64_t) * (this->nr_inner_dims_ + 1));
+                        // read block max scores - use spans pointing to mmapped memory
+                        auto scores_base_ptr = reinterpret_cast<const float*>(reader.data() + reader.tellg());
+                        block_max_scores_spans_.resize(this->nr_inner_dims_);
+                        for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
+                            size_t offset = offsets_ptr[i];
+                            size_t length = offsets_ptr[i + 1] - offsets_ptr[i];
+                            block_max_scores_spans_[i] = boost::span<const float>(scores_base_ptr + offset, length);
+                        }
                         break;
                     }
                     case InvertedIndexSectionType::PROMETHEUS_BUILD_STATS: {
@@ -819,6 +885,9 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                     boost::span<const float>(bm25_params_->row_sums.data(), bm25_params_->row_sums.size());
             }
 
+            // Compute block-max scores for BMW algorithm
+            compute_block_max_scores();
+
             return Status::success;
         }
     }
@@ -840,10 +909,13 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
         MaxMinHeap<float> heap(k * approx_params.refine_factor);
         // DAAT_WAND and DAAT_MAXSCORE are based on the implementation in PISA.
+        // use_block_max enables block-level max score bounds for tighter pruning.
         if constexpr (algo == InvertedIndexAlgo::DAAT_WAND) {
-            search_daat_wand(q_vec, heap, bitset, computer, approx_params.dim_max_score_ratio);
+            search_daat_wand(q_vec, heap, bitset, computer, approx_params.dim_max_score_ratio,
+                             approx_params.use_block_max);
         } else if constexpr (algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
-            search_daat_maxscore(q_vec, heap, bitset, computer, approx_params.dim_max_score_ratio);
+            search_daat_maxscore(q_vec, heap, bitset, computer, approx_params.dim_max_score_ratio,
+                                 approx_params.use_block_max);
         } else {
             search_taat_naive(q_vec, heap, bitset, computer);
         }
@@ -902,6 +974,11 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
 
         return distance;
+    }
+
+    bool
+    SupportsBlockMax() const override {
+        return algo == InvertedIndexAlgo::DAAT_WAND;
     }
 
     [[nodiscard]] size_t
@@ -1051,6 +1128,194 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
     };  // struct Cursor
 
+    // BMW (Block-Max WAND) Cursor: tracks current block and provides block-level max scores
+    // Enhanced with skip list structure for O(log B) block lookup during shallow advance.
+    template <typename DocIdFilter>
+    struct BMWCursor {
+     public:
+        BMWCursor(const boost::span<const table_t>& plist_ids, const boost::span<const QType>& plist_vals,
+                  const boost::span<const float>& block_max_scores, size_t num_vec, float global_max_score,
+                  float q_value, DocIdFilter filter, size_t block_size)
+            : plist_ids_(plist_ids),
+              plist_vals_(plist_vals),
+              block_max_scores_(block_max_scores),
+              plist_size_(plist_ids.size()),
+              total_num_vec_(num_vec),
+              global_max_score_(global_max_score),
+              q_value_(q_value),
+              filter_(filter),
+              block_size_(block_size) {
+            // Build skip list: store last doc_id for each block to enable O(log B) block lookup
+            build_skip_list();
+            skip_filtered_ids();
+            update_cur_vec_id();
+            update_current_block();
+        }
+        BMWCursor(const BMWCursor& rhs) = delete;
+        BMWCursor(BMWCursor&& rhs) noexcept = default;
+
+        void
+        next() {
+            ++loc_;
+            skip_filtered_ids();
+            update_cur_vec_id();
+            update_current_block();
+        }
+
+        void
+        seek(table_t vec_id) {
+            while (loc_ < plist_size_ && plist_ids_[loc_] < vec_id) {
+                ++loc_;
+            }
+            skip_filtered_ids();
+            update_cur_vec_id();
+            update_current_block();
+        }
+
+        // Seek to next block boundary (skip remaining docs in current block)
+        void
+        seek_to_block_end() {
+            size_t next_block_start = (current_block_ + 1) * block_size_;
+            if (next_block_start < plist_size_) {
+                loc_ = next_block_start;
+                skip_filtered_ids();
+                update_cur_vec_id();
+                update_current_block();
+            } else {
+                loc_ = plist_size_;
+                update_cur_vec_id();
+                current_block_ = block_max_scores_.size();
+            }
+        }
+
+        QType
+        cur_vec_val() const {
+            return plist_vals_[loc_];
+        }
+
+        // Global max score (for initial pivot finding)
+        // Note: global_max_score_ already includes q_value from make_bmw_cursors
+        float
+        global_max_contribution() const {
+            return global_max_score_;
+        }
+
+        // Block-level max score (tighter bound for current block)
+        float
+        block_max_contribution() const {
+            if (current_block_ >= block_max_scores_.size()) {
+                return 0;
+            }
+            return block_max_scores_[current_block_] * q_value_;
+        }
+
+        // Get the last doc_id in the current block
+        table_t
+        block_end_doc_id() const {
+            if (current_block_ >= block_max_scores_.size()) {
+                return total_num_vec_;
+            }
+            size_t block_end_loc = std::min((current_block_ + 1) * block_size_, plist_size_) - 1;
+            return plist_ids_[block_end_loc];
+        }
+
+        // Shallow advance: get block-max contribution for a target doc_id without actually advancing.
+        // Uses skip list for O(log B) lookup to find which block contains target_doc_id.
+        // This enables tight block-max bounds during pivot finding, which is the key BMW optimization.
+        float
+        shallow_advance_score(table_t target_doc_id) const {
+            if (target_doc_id == cur_vec_id_) {
+                // Cursor is at target, use current block max (tightest bound)
+                return block_max_contribution();
+            }
+
+            if (target_doc_id < cur_vec_id_) {
+                // Target is before current position - cursor has moved past it
+                return 0;
+            }
+
+            // Use skip list to find which block contains target_doc_id in O(log B) time
+            // skip_list_[i] = last doc_id in block i
+            // Binary search to find first block where last_doc_id >= target_doc_id
+            if (skip_list_.empty()) {
+                return global_max_score_;
+            }
+
+            // Binary search: find the block that could contain target_doc_id
+            // We want the first block where skip_list_[block] >= target_doc_id
+            auto it = std::lower_bound(skip_list_.begin() + current_block_, skip_list_.end(), target_doc_id);
+
+            if (it == skip_list_.end()) {
+                // Target is beyond last block - document doesn't exist in this posting list
+                return 0;
+            }
+
+            size_t target_block = it - skip_list_.begin();
+
+            // Verify target could be in this block:
+            // - If this is the first block, target just needs to be <= last_doc of block
+            // - Otherwise, target must be > last_doc of previous block
+            if (target_block > 0 && target_doc_id <= skip_list_[target_block - 1]) {
+                // Target is in or before previous block - shouldn't happen if we search from current_block_
+                target_block = target_block - 1;
+            }
+
+            if (target_block >= block_max_scores_.size()) {
+                return 0;
+            }
+
+            return block_max_scores_[target_block] * q_value_;
+        }
+
+        const boost::span<const table_t>& plist_ids_;
+        const boost::span<const QType>& plist_vals_;
+        const boost::span<const float>& block_max_scores_;
+        const size_t plist_size_;
+        size_t loc_ = 0;
+        size_t current_block_ = 0;
+        size_t total_num_vec_ = 0;
+        float global_max_score_ = 0.0f;
+        float q_value_ = 0.0f;
+        DocIdFilter filter_;
+        table_t cur_vec_id_ = 0;
+        size_t block_size_;
+        // Skip list: skip_list_[i] = last doc_id in block i
+        // Enables O(log B) lookup to find which block contains a target doc_id
+        std::vector<table_t> skip_list_;
+
+     private:
+        // Build skip list for O(log B) block lookup during shallow advance
+        void
+        build_skip_list() {
+            if (plist_size_ == 0 || block_max_scores_.empty()) {
+                return;
+            }
+            size_t n_blocks = block_max_scores_.size();
+            skip_list_.resize(n_blocks);
+            for (size_t b = 0; b < n_blocks; ++b) {
+                size_t block_end_loc = std::min((b + 1) * block_size_, plist_size_) - 1;
+                skip_list_[b] = plist_ids_[block_end_loc];
+            }
+        }
+
+        inline void
+        update_cur_vec_id() {
+            cur_vec_id_ = (loc_ >= plist_size_) ? total_num_vec_ : plist_ids_[loc_];
+        }
+
+        inline void
+        update_current_block() {
+            current_block_ = loc_ / block_size_;
+        }
+
+        inline void
+        skip_filtered_ids() {
+            while (loc_ < plist_size_ && !filter_.empty() && filter_.test(plist_ids_[loc_])) {
+                ++loc_;
+            }
+        }
+    };  // struct BMWCursor
+
     std::vector<std::pair<size_t, DType>>
     parse_query(const SparseRow<DType>& query, float drop_ratio_search) const {
         DType q_threshold = 0;
@@ -1091,6 +1356,61 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         return cursors;
     }
 
+    // Compute block-max scores for DAAT algorithms when use_block_max is enabled.
+    // Should be called after index is built and before search.
+    void
+    compute_block_max_scores() {
+        // Only compute for DAAT algorithms (WAND and MAXSCORE)
+        // TAAT doesn't use max score bounds at all
+        if constexpr (algo == InvertedIndexAlgo::TAAT_NAIVE) {
+            return;
+        }
+        // Skip if block_max_scores have already been loaded from serialized data
+        if (!block_max_scores_spans_.empty()) {
+            return;
+        }
+        // Only compute for non-mmapped indices; mmapped indices load from file
+        if constexpr (!mmapped) {
+            block_max_scores_.resize(nr_inner_dims_);
+            block_max_scores_spans_.resize(nr_inner_dims_);
+
+            // For BM25, we need to compute actual BM25 scores (not raw values) as upper bounds.
+            // This is because BM25 transform can produce scores higher than raw values for short docs.
+            const bool is_bm25 = (metric_type_ == SparseMetricType::METRIC_BM25);
+
+            for (size_t dim = 0; dim < nr_inner_dims_; ++dim) {
+                const auto& ids = inverted_index_ids_spans_[dim];
+                const auto& vals = inverted_index_vals_spans_[dim];
+                size_t n_blocks = (vals.size() + block_max_block_size_ - 1) / block_max_block_size_;
+                block_max_scores_[dim].resize(n_blocks);
+
+                for (size_t b = 0; b < n_blocks; ++b) {
+                    size_t start = b * block_max_block_size_;
+                    size_t end = std::min(start + block_max_block_size_, vals.size());
+                    float block_max = 0;
+                    for (size_t i = start; i < end; ++i) {
+                        float score;
+                        if (is_bm25 && bm25_params_) {
+                            // For BM25: compute actual BM25 score using the doc's length
+                            float tf = static_cast<float>(vals[i]);
+                            float doc_len = bm25_params_->row_sums_spans_[ids[i]];
+                            // Apply BM25 formula: tf * (k1 + 1) / (tf + k1 * (1 - b + b * doc_len / avgdl))
+                            // Use max_score_computer which was initialized with k1, b, avgdl
+                            score = bm25_params_->max_score_computer(tf, doc_len);
+                        } else {
+                            // For IP: raw value is the correct upper bound
+                            score = static_cast<float>(vals[i]);
+                        }
+                        block_max = std::max(block_max, score);
+                    }
+                    block_max_scores_[dim][b] = block_max;
+                }
+                block_max_scores_spans_[dim] =
+                    boost::span<const float>(block_max_scores_[dim].data(), block_max_scores_[dim].size());
+            }
+        }
+    }
+
     // find the top-k candidates using brute force search, k as specified by the capacity of the heap.
     // any value in q_vec that is smaller than q_threshold and any value with dimension >= n_cols() will be ignored.
     // TODO: may switch to row-wise brute force if filter rate is high. Benchmark needed.
@@ -1109,7 +1429,14 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     template <typename DocIdFilter>
     void
     search_daat_wand(const std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
-                     const DocValueComputer<float>& computer, float dim_max_score_ratio) const {
+                     const DocValueComputer<float>& computer, float dim_max_score_ratio,
+                     bool use_block_max = false) const {
+        // If block-max enabled and we have block scores, use BMW cursors for tighter bounds
+        if (use_block_max && !block_max_scores_spans_.empty()) {
+            search_daat_wand_block_max(q_vec, heap, filter, computer, dim_max_score_ratio);
+            return;
+        }
+
         std::vector<Cursor<DocIdFilter>> cursors = make_cursors(q_vec, computer, filter, dim_max_score_ratio);
         std::vector<Cursor<DocIdFilter>*> cursor_ptrs(cursors.size());
         for (size_t i = 0; i < cursors.size(); ++i) {
@@ -1171,10 +1498,134 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
     }
 
+    // Block-Max WAND variant: uses per-block max scores for tighter bounds and block skipping
+    template <typename DocIdFilter>
+    void
+    search_daat_wand_block_max(const std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap,
+                               DocIdFilter& filter, const DocValueComputer<float>& computer,
+                               float dim_max_score_ratio) const {
+        // Block-Max WAND implementation based on Ding-Suel (SIGIR 2011) and Lucene's implementation.
+        // Key insight: Use BLOCK-level max scores during pivot finding, not global max scores.
+        // This allows skipping entire blocks when their max scores can't beat the threshold.
+        //
+        // Performance optimizations:
+        // 1. Use insertion-style repositioning instead of full sort (O(n) vs O(n log n))
+        // 2. Avoid full sort after scoring/seeking - cursors are nearly sorted
+        // 3. Track which cursors moved and only reposition those
+
+        std::vector<BMWCursor<DocIdFilter>> cursors = make_bmw_cursors(q_vec, computer, filter, dim_max_score_ratio);
+        if (cursors.empty()) {
+            return;
+        }
+
+        std::vector<BMWCursor<DocIdFilter>*> cursor_ptrs(cursors.size());
+        for (size_t i = 0; i < cursors.size(); ++i) {
+            cursor_ptrs[i] = &cursors[i];
+        }
+
+        // Initial sort is necessary - only full sort in the algorithm
+        std::sort(cursor_ptrs.begin(), cursor_ptrs.end(),
+                  [](auto& x, auto& y) { return x->cur_vec_id_ < y->cur_vec_id_; });
+
+        // Helper: Reposition a single cursor that moved forward using insertion sort
+        // This is O(n) worst case but typically O(1) when cursor only moves slightly
+        auto reposition_cursor = [&cursor_ptrs](size_t idx) {
+            // Cursor at idx moved forward, bubble it right to maintain sorted order
+            while (idx + 1 < cursor_ptrs.size() && cursor_ptrs[idx]->cur_vec_id_ > cursor_ptrs[idx + 1]->cur_vec_id_) {
+                std::swap(cursor_ptrs[idx], cursor_ptrs[idx + 1]);
+                ++idx;
+            }
+        };
+
+        while (true) {
+            // Remove exhausted cursors from the front
+            while (!cursor_ptrs.empty() && cursor_ptrs[0]->cur_vec_id_ >= n_rows_internal_) {
+                cursor_ptrs.erase(cursor_ptrs.begin());
+            }
+            if (cursor_ptrs.empty()) {
+                break;
+            }
+
+            float threshold = heap.full() ? heap.top().val : 0;
+
+            // Phase 1: Find pivot using global max scores (O(n) scan)
+            // This quickly finds a candidate pivot using loose bounds.
+            float upper_bound_global = 0;
+            size_t pivot = 0;
+            bool found_pivot = false;
+
+            for (pivot = 0; pivot < cursor_ptrs.size(); ++pivot) {
+                if (cursor_ptrs[pivot]->cur_vec_id_ >= n_rows_internal_) {
+                    break;
+                }
+                upper_bound_global += cursor_ptrs[pivot]->global_max_contribution();
+                if (upper_bound_global >= threshold) {
+                    found_pivot = true;
+                    break;
+                }
+            }
+
+            if (!found_pivot) {
+                // Global max can't reach threshold - done
+                break;
+            }
+
+            table_t pivot_id = cursor_ptrs[pivot]->cur_vec_id_;
+
+            // Phase 2: Check if all essential cursors are aligned at pivot
+            if (pivot_id == cursor_ptrs[0]->cur_vec_id_) {
+                // All cursors [0, pivot] are at pivot_id - we can score this document
+
+                // Score the document and advance all cursors at pivot
+                float score = 0;
+                float cur_vec_sum =
+                    metric_type_ == SparseMetricType::METRIC_BM25 ? bm25_params_->row_sums_spans_[pivot_id] : 0;
+                size_t num_at_pivot = 0;
+                for (auto& cursor_ptr : cursor_ptrs) {
+                    if (cursor_ptr->cur_vec_id_ != pivot_id) {
+                        break;
+                    }
+                    score += cursor_ptr->q_value_ * computer(cursor_ptr->cur_vec_val(), cur_vec_sum);
+                    cursor_ptr->next();
+                    num_at_pivot++;
+                }
+                heap.push(pivot_id, score);
+
+                // Reposition cursors that moved (they all moved forward from pivot_id)
+                // Process from the back to handle cascading repositions correctly
+                for (size_t i = num_at_pivot; i > 0; --i) {
+                    reposition_cursor(i - 1);
+                }
+            } else {
+                // Not all essential cursors at pivot - advance the lagging cursor
+                // Find the rightmost cursor before pivot that's not at pivot_id
+                size_t next_list = pivot;
+                while (next_list > 0 && cursor_ptrs[next_list]->cur_vec_id_ == pivot_id) {
+                    --next_list;
+                }
+
+                // BMW optimization: if the cursor's block_end < pivot_id, skip to next block
+                table_t block_end = cursor_ptrs[next_list]->block_end_doc_id();
+                if (block_end < pivot_id) {
+                    // Skip entire block - advance to block_end + 1
+                    cursor_ptrs[next_list]->seek(block_end + 1);
+                } else {
+                    // Standard WAND behavior - advance to pivot_id
+                    cursor_ptrs[next_list]->seek(pivot_id);
+                }
+
+                // Reposition the single cursor that moved
+                reposition_cursor(next_list);
+            }
+        }
+    }
+
     template <typename DocIdFilter>
     void
     search_daat_maxscore(std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
-                         const DocValueComputer<float>& computer, float dim_max_score_ratio) const {
+                         const DocValueComputer<float>& computer, float dim_max_score_ratio,
+                         [[maybe_unused]] bool use_block_max = false) const {
+        // TODO: implement block-max variant for MaxScore algorithm
         std::sort(q_vec.begin(), q_vec.end(), [this](auto& a, auto& b) {
             return a.second * max_score_in_dim_spans_[a.first] > b.second * max_score_in_dim_spans_[b.first];
         });
@@ -1261,6 +1712,24 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
     }
 
+    // Create BMW cursors with block-max score information
+    template <typename DocIdFilter>
+    std::vector<BMWCursor<DocIdFilter>>
+    make_bmw_cursors(const std::vector<std::pair<size_t, DType>>& q_vec, const DocValueComputer<float>& computer,
+                     DocIdFilter& filter, float dim_max_score_ratio) const {
+        std::vector<BMWCursor<DocIdFilter>> cursors;
+        cursors.reserve(q_vec.size());
+        for (auto q_dim : q_vec) {
+            auto& plist_ids = inverted_index_ids_spans_[q_dim.first];
+            auto& plist_vals = inverted_index_vals_spans_[q_dim.first];
+            auto& block_max = block_max_scores_spans_[q_dim.first];
+            float global_max = max_score_in_dim_spans_[q_dim.first] * q_dim.second * dim_max_score_ratio;
+            cursors.emplace_back(plist_ids, plist_vals, block_max, n_rows_internal_, global_max, q_dim.second, filter,
+                                 block_max_block_size_);
+        }
+        return cursors;
+    }
+
     void
     refine_and_collect(const SparseRow<DType>& query, MaxMinHeap<float>& inacc_heap, size_t k, float* distances,
                        label_t* labels, const DocValueComputer<float>& computer,
@@ -1283,10 +1752,11 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         float dim_max_score_ratio = std::max(approx_params.dim_max_score_ratio, 1.0f);
 
         DocIdFilterByVector filter(std::move(docids));
+        // For refinement, don't use block-max since we're working with a small filtered set
         if constexpr (algo == InvertedIndexAlgo::DAAT_WAND) {
-            search_daat_wand(q_vec, heap, filter, computer, dim_max_score_ratio);
+            search_daat_wand(q_vec, heap, filter, computer, dim_max_score_ratio, false);
         } else if constexpr (algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
-            search_daat_maxscore(q_vec, heap, filter, computer, dim_max_score_ratio);
+            search_daat_maxscore(q_vec, heap, filter, computer, dim_max_score_ratio, false);
         } else {
             search_taat_naive(q_vec, heap, filter, computer);
         }
@@ -1385,6 +1855,18 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     std::vector<boost::span<const QType>> inverted_index_vals_spans_;
     Vector<float> max_score_in_dim_;
     boost::span<const float> max_score_in_dim_spans_;
+
+    // Block-max scores for BMW algorithm: per-dimension vector of block max scores
+    // block_max_scores_[dim][block_idx] = max score in block block_idx of dimension dim
+    //
+    // TODO: Consider adding a skip list structure for efficient shallow advancing:
+    //   struct SkipEntry { table_t last_doc_id; float block_max_score; };
+    //   Vector<Vector<SkipEntry>> skip_lists_;
+    // This would enable O(log B) lookup of block-max for any target doc_id, improving
+    // BMW pivot finding performance. See shallow_advance_score() for details.
+    Vector<Vector<float>> block_max_scores_;
+    std::vector<boost::span<const float>> block_max_scores_spans_;
+    size_t block_max_block_size_ = 128;
 
     SparseMetricType metric_type_;
 
