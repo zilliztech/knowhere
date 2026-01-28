@@ -22,8 +22,8 @@ on:
 
 jobs:
   ut:
-    name: ut on ubuntu-22.04
-    runs-on: ubuntu-22.04
+    name: ut on self-hosted
+    runs-on: self-hosted
     timeout-minutes: 180
     strategy:
       fail-fast: true
