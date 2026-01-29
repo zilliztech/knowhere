@@ -94,7 +94,7 @@ GetRefineWithQuant(const BaseConfig* cfg) {
     return std::nullopt;
 }
 
-static void
+[[maybe_unused]] static void
 AdaptToBaseIndexConfig(Config* cfg, PARAM_TYPE param_type, size_t dim) {
     // config can't do copy, change the base config in place.
     if (cfg == nullptr)

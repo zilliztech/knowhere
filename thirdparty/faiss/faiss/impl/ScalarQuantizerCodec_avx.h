@@ -1108,6 +1108,9 @@ SQDistanceComputer* select_distance_computer_avx(
                     Quantizer8bitDirectSigned_avx<SIMDWIDTH>,
                     Sim,
                     SIMDWIDTH>(d, trained);
+
+        default:
+            break;
     }
     FAISS_THROW_MSG("unknown qtype");
     return nullptr;
@@ -1198,6 +1201,9 @@ InvertedListScanner* sel1_InvertedListScanner_avx(
                     Quantizer8bitDirectSigned_avx<SIMDWIDTH>,
                     Similarity,
                     SIMDWIDTH>>(sq, quantizer, store_pairs, sel, r);
+
+        default:
+            break;
     }
 
     FAISS_THROW_MSG("unknown qtype");

@@ -55,98 +55,104 @@ class PrometheusClient {
 extern const prometheus::Histogram::BucketBoundaries defaultBuckets;
 extern const std::unique_ptr<PrometheusClient> prometheusClient;
 
-#define CONCATENATE(x, y) x##_##y
+#define KNOWHERE_CONCATENATE(x, y) x##_##y
 #define PROMETHEUS_LABEL_KNOWHERE knowhere
 #define PROMETHEUS_LABEL_CARDINAL cardinal
 
-#define DEFINE_PROMETHEUS_GAUGE_FAMILY(name, desc)                     \
-    prometheus::Family<prometheus::Gauge>& CONCATENATE(name, family) = \
+#define KNOWHERE_DEFINE_PROMETHEUS_GAUGE_FAMILY(name, desc)                     \
+    prometheus::Family<prometheus::Gauge>& KNOWHERE_CONCATENATE(name, family) = \
         prometheus::BuildGauge().Name(#name).Help(desc).Register(knowhere::prometheusClient->GetRegistry());
 
-#define DEFINE_PROMETHEUS_GAUGE(name, module) \
-    prometheus::Gauge& CONCATENATE(module, name) = CONCATENATE(name, family).Add({{"module", #module}});
+#define KNOWHERE_DEFINE_PROMETHEUS_GAUGE(name, module)      \
+    prometheus::Gauge& KNOWHERE_CONCATENATE(module, name) = \
+        KNOWHERE_CONCATENATE(name, family).Add({{"module", #module}});
 
-#define DEFINE_PROMETHEUS_COUNTER_FAMILY(name, desc)                     \
-    prometheus::Family<prometheus::Counter>& CONCATENATE(name, family) = \
+#define KNOWHERE_DEFINE_PROMETHEUS_COUNTER_FAMILY(name, desc)                     \
+    prometheus::Family<prometheus::Counter>& KNOWHERE_CONCATENATE(name, family) = \
         prometheus::BuildCounter().Name(#name).Help(desc).Register(knowhere::prometheusClient->GetRegistry());
 
-#define DEFINE_PROMETHEUS_COUNTER(name, module) \
-    prometheus::Counter& CONCATENATE(module, name) = CONCATENATE(name, family).Add({{"module", #module}});
+#define KNOWHERE_DEFINE_PROMETHEUS_COUNTER(name, module)      \
+    prometheus::Counter& KNOWHERE_CONCATENATE(module, name) = \
+        KNOWHERE_CONCATENATE(name, family).Add({{"module", #module}});
 
-#define DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(name, desc)                     \
-    prometheus::Family<prometheus::Histogram>& CONCATENATE(name, family) = \
+#define KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(name, desc)                     \
+    prometheus::Family<prometheus::Histogram>& KNOWHERE_CONCATENATE(name, family) = \
         prometheus::BuildHistogram().Name(#name).Help(desc).Register(knowhere::prometheusClient->GetRegistry());
 
-#define DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(name, module, buckets) \
-    prometheus::Histogram& CONCATENATE(module, name) = CONCATENATE(name, family).Add({{"module", #module}}, buckets);
+#define KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(name, module, buckets) \
+    prometheus::Histogram& KNOWHERE_CONCATENATE(module, name) =                  \
+        KNOWHERE_CONCATENATE(name, family).Add({{"module", #module}}, buckets);
 
-#define DEFINE_PROMETHEUS_HISTOGRAM(name, module) DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(name, module, defaultBuckets)
+#define KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(name, module) \
+    KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(name, module, defaultBuckets)
 
-#define DECLARE_PROMETHEUS_GAUGE(name, module) extern prometheus::Gauge& CONCATENATE(module, name);
-#define DECLARE_PROMETHEUS_COUNTER(name, module) extern prometheus::Counter& CONCATENATE(module, name);
-#define DECLARE_PROMETHEUS_HISTOGRAM(name, module) extern prometheus::Histogram& CONCATENATE(module, name);
+#define KNOWHERE_DECLARE_PROMETHEUS_GAUGE(name, module) extern prometheus::Gauge& KNOWHERE_CONCATENATE(module, name);
+#define KNOWHERE_DECLARE_PROMETHEUS_COUNTER(name, module) \
+    extern prometheus::Counter& KNOWHERE_CONCATENATE(module, name);
+#define KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(name, module) \
+    extern prometheus::Histogram& KNOWHERE_CONCATENATE(module, name);
 
-#define DECLARE_PROMETHEUS_GAUGE_FAMILY(name, module) \
-    extern prometheus::Family<prometheus::Gauge>& CONCATENATE(name, family);
-#define DECLARE_PROMETHEUS_COUNTER_FAMILY(name, module) \
-    extern prometheus::Family<prometheus::Counter>& CONCATENATE(name, family);
-#define DECLARE_PROMETHEUS_HISTOGRAM_FAMILY(name, module) \
-    extern prometheus::Family<prometheus::Histogram>& CONCATENATE(name, family);
+#define KNOWHERE_DECLARE_PROMETHEUS_GAUGE_FAMILY(name, module) \
+    extern prometheus::Family<prometheus::Gauge>& KNOWHERE_CONCATENATE(name, family);
+#define KNOWHERE_DECLARE_PROMETHEUS_COUNTER_FAMILY(name, module) \
+    extern prometheus::Family<prometheus::Counter>& KNOWHERE_CONCATENATE(name, family);
+#define KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM_FAMILY(name, module) \
+    extern prometheus::Family<prometheus::Histogram>& KNOWHERE_CONCATENATE(name, family);
 
-DECLARE_PROMETHEUS_HISTOGRAM(build_latency, PROMETHEUS_LABEL_KNOWHERE);
-DECLARE_PROMETHEUS_HISTOGRAM(build_latency, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(build_latency, PROMETHEUS_LABEL_KNOWHERE);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(build_latency, PROMETHEUS_LABEL_CARDINAL);
 
-DECLARE_PROMETHEUS_HISTOGRAM(load_latency, PROMETHEUS_LABEL_KNOWHERE);
-DECLARE_PROMETHEUS_HISTOGRAM(load_latency, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(load_latency, PROMETHEUS_LABEL_KNOWHERE);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(load_latency, PROMETHEUS_LABEL_CARDINAL);
 
-DECLARE_PROMETHEUS_HISTOGRAM(search_latency, PROMETHEUS_LABEL_KNOWHERE);
-DECLARE_PROMETHEUS_HISTOGRAM(search_latency, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(search_latency, PROMETHEUS_LABEL_KNOWHERE);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(search_latency, PROMETHEUS_LABEL_CARDINAL);
 
 // cardinal uses the RangeSearch function of the parent class `IndexNode` (index_node.h).
 // both use the knowhere metric uniformly.
-DECLARE_PROMETHEUS_HISTOGRAM(range_search_latency, PROMETHEUS_LABEL_KNOWHERE);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(range_search_latency, PROMETHEUS_LABEL_KNOWHERE);
 
-DECLARE_PROMETHEUS_HISTOGRAM(ann_iterator_init_latency, PROMETHEUS_LABEL_KNOWHERE);
-DECLARE_PROMETHEUS_HISTOGRAM(ann_iterator_init_latency, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(ann_iterator_init_latency, PROMETHEUS_LABEL_KNOWHERE);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(ann_iterator_init_latency, PROMETHEUS_LABEL_CARDINAL);
 
-DECLARE_PROMETHEUS_HISTOGRAM(search_topk, PROMETHEUS_LABEL_KNOWHERE);
-DECLARE_PROMETHEUS_HISTOGRAM(search_topk, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(search_topk, PROMETHEUS_LABEL_KNOWHERE);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(search_topk, PROMETHEUS_LABEL_CARDINAL);
 
-DECLARE_PROMETHEUS_HISTOGRAM(search_emb_list_1st_ann_latency, PROMETHEUS_LABEL_KNOWHERE);
-DECLARE_PROMETHEUS_HISTOGRAM(search_emb_list_1st_ann_latency, PROMETHEUS_LABEL_CARDINAL);
-DECLARE_PROMETHEUS_HISTOGRAM(search_emb_list_2nd_bf_agg_latency, PROMETHEUS_LABEL_KNOWHERE);
-DECLARE_PROMETHEUS_HISTOGRAM(search_emb_list_2nd_bf_agg_latency, PROMETHEUS_LABEL_CARDINAL);
-DECLARE_PROMETHEUS_HISTOGRAM(search_emb_list_retrieval_ann_ratio, PROMETHEUS_LABEL_KNOWHERE);
-DECLARE_PROMETHEUS_HISTOGRAM(search_emb_list_retrieval_ann_ratio, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(search_emb_list_1st_ann_latency, PROMETHEUS_LABEL_KNOWHERE);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(search_emb_list_1st_ann_latency, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(search_emb_list_2nd_bf_agg_latency, PROMETHEUS_LABEL_KNOWHERE);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(search_emb_list_2nd_bf_agg_latency, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(search_emb_list_retrieval_ann_ratio, PROMETHEUS_LABEL_KNOWHERE);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(search_emb_list_retrieval_ann_ratio, PROMETHEUS_LABEL_CARDINAL);
 
-DECLARE_PROMETHEUS_HISTOGRAM(search_level, PROMETHEUS_LABEL_CARDINAL);
-DECLARE_PROMETHEUS_HISTOGRAM(bitset_ratio, PROMETHEUS_LABEL_CARDINAL);
-DECLARE_PROMETHEUS_HISTOGRAM(quant_compute_cnt, PROMETHEUS_LABEL_CARDINAL);
-DECLARE_PROMETHEUS_HISTOGRAM(raw_compute_cnt, PROMETHEUS_LABEL_CARDINAL);
-DECLARE_PROMETHEUS_HISTOGRAM(cache_hit_cnt, PROMETHEUS_LABEL_CARDINAL);
-DECLARE_PROMETHEUS_HISTOGRAM(io_cnt, PROMETHEUS_LABEL_CARDINAL);
-DECLARE_PROMETHEUS_HISTOGRAM(queue_latency, PROMETHEUS_LABEL_CARDINAL);
-DECLARE_PROMETHEUS_HISTOGRAM(exec_latency, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(search_level, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(bitset_ratio, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(quant_compute_cnt, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(raw_compute_cnt, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(cache_hit_cnt, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(io_cnt, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(queue_latency, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(exec_latency, PROMETHEUS_LABEL_CARDINAL);
 
-DECLARE_PROMETHEUS_HISTOGRAM(graph_search_cnt, PROMETHEUS_LABEL_CARDINAL);
-DECLARE_PROMETHEUS_HISTOGRAM(ivf_search_cnt, PROMETHEUS_LABEL_CARDINAL);
-DECLARE_PROMETHEUS_HISTOGRAM(bf_search_cnt, PROMETHEUS_LABEL_CARDINAL);
-DECLARE_PROMETHEUS_HISTOGRAM(re_search_cnt, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(graph_search_cnt, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(ivf_search_cnt, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(bf_search_cnt, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(re_search_cnt, PROMETHEUS_LABEL_CARDINAL);
 
-DECLARE_PROMETHEUS_HISTOGRAM(filter_connectivity_ratio, PROMETHEUS_LABEL_CARDINAL);
-DECLARE_PROMETHEUS_HISTOGRAM(filter_mv_only_cnt, PROMETHEUS_LABEL_CARDINAL);
-DECLARE_PROMETHEUS_HISTOGRAM(filter_mv_activated_fields_cnt, PROMETHEUS_LABEL_CARDINAL);
-DECLARE_PROMETHEUS_HISTOGRAM(filter_mv_change_base_cnt, PROMETHEUS_LABEL_CARDINAL);
-DECLARE_PROMETHEUS_HISTOGRAM(filter_mv_supplement_ep_bool_cnt, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(filter_connectivity_ratio, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(filter_mv_only_cnt, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(filter_mv_activated_fields_cnt, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(filter_mv_change_base_cnt, PROMETHEUS_LABEL_CARDINAL);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(filter_mv_supplement_ep_bool_cnt, PROMETHEUS_LABEL_CARDINAL);
 
-DECLARE_PROMETHEUS_HISTOGRAM(hnsw_bitset_ratio, PROMETHEUS_LABEL_KNOWHERE);
-DECLARE_PROMETHEUS_HISTOGRAM(hnsw_search_hops, PROMETHEUS_LABEL_KNOWHERE);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(hnsw_bitset_ratio, PROMETHEUS_LABEL_KNOWHERE);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(hnsw_search_hops, PROMETHEUS_LABEL_KNOWHERE);
 
-DECLARE_PROMETHEUS_HISTOGRAM(diskann_bitset_ratio, PROMETHEUS_LABEL_KNOWHERE);
-DECLARE_PROMETHEUS_HISTOGRAM(diskann_search_hops, PROMETHEUS_LABEL_KNOWHERE);
-DECLARE_PROMETHEUS_HISTOGRAM(diskann_range_search_iters, PROMETHEUS_LABEL_KNOWHERE);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(diskann_bitset_ratio, PROMETHEUS_LABEL_KNOWHERE);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(diskann_search_hops, PROMETHEUS_LABEL_KNOWHERE);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(diskann_range_search_iters, PROMETHEUS_LABEL_KNOWHERE);
 
-DECLARE_PROMETHEUS_HISTOGRAM_FAMILY(sparse_dataset_nnz_len, PROMETHEUS_LABEL_KNOWHERE);
-DECLARE_PROMETHEUS_HISTOGRAM_FAMILY(sparse_inverted_index_posting_list_len, PROMETHEUS_LABEL_KNOWHERE);
-DECLARE_PROMETHEUS_GAUGE_FAMILY(sparse_inverted_index_size, PROMETHEUS_LABEL_KNOWHERE);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM_FAMILY(sparse_dataset_nnz_len, PROMETHEUS_LABEL_KNOWHERE);
+KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM_FAMILY(sparse_inverted_index_posting_list_len, PROMETHEUS_LABEL_KNOWHERE);
+KNOWHERE_DECLARE_PROMETHEUS_GAUGE_FAMILY(sparse_inverted_index_size, PROMETHEUS_LABEL_KNOWHERE);
 }  // namespace knowhere

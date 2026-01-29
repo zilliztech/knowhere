@@ -802,10 +802,10 @@ IvfIndexNode<DataType, IndexType>::AddEmbList(const DataSetPtr dataset, std::sha
     // 2. update emb_list_offset and id map
     {
         FairWriteLockGuard guard(*this->base_index_lock_);
-        auto old_num_rows = Count();
+        const size_t old_num_rows = Count();
         auto old_num_el = emb_list_offset_->num_el();
         auto dataset_rows = dataset->GetRows();
-        auto new_num_rows = old_num_rows + dataset_rows;
+        const size_t new_num_rows = old_num_rows + static_cast<size_t>(dataset_rows);
         if (lims[0] != old_num_rows) {
             LOG_KNOWHERE_WARNING_ << "lims[0] is not equal to the total_cnt of the old index";
             return Status::emb_list_inner_error;

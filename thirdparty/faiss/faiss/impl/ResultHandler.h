@@ -150,7 +150,7 @@ struct Top1BlockResultHandler : BlockResultHandler<C, use_sel> {
 
     /// add results for query i0..i1 and j0..j1
     void add_results(size_t j0, size_t j1, const T* dis_tab_2) final {
-        for (int64_t i = i0; i < i1; i++) {
+        for (int64_t i = i0; i < static_cast<int64_t>(i1); i++) {
             const T* dis_tab_i = dis_tab_2 + (j1 - j0) * (i - i0) - j0;
 
             auto& min_distance = this->dis_tab[i];
@@ -262,7 +262,7 @@ struct HeapBlockResultHandler : BlockResultHandler<C, use_sel> {
     /// add results for query i0..i1 and j0..j1
     void add_results(size_t j0, size_t j1, const T* dis_tab) final {
 #pragma omp parallel for
-        for (int64_t i = i0; i < i1; i++) {
+        for (int64_t i = i0; i < static_cast<int64_t>(i1); i++) {
             T* heap_dis = heap_dis_tab + i * k;
             TI* heap_ids = heap_ids_tab + i * k;
             const T* dis_tab_i = dis_tab + (j1 - j0) * (i - i0) - j0;
@@ -458,7 +458,7 @@ struct ReservoirBlockResultHandler : BlockResultHandler<C, use_sel> {
     /// add results for query i0..i1 and j0..j1
     void add_results(size_t j0, size_t j1, const T* dis_tab) {
 #pragma omp parallel for
-        for (int64_t i = i0; i < i1; i++) {
+        for (int64_t i = i0; i < static_cast<int64_t>(i1); i++) {
             ReservoirTopN<C>& reservoir = reservoirs[i - i0];
             const T* dis_tab_i = dis_tab + (j1 - j0) * (i - i0) - j0;
             for (size_t j = j0; j < j1; j++) {
@@ -553,7 +553,7 @@ struct RangeSearchBlockResultHandler : BlockResultHandler<C, use_sel> {
 
     std::vector<RangeSearchPartialResult*> partial_results;
     std::vector<size_t> j0s;
-    int pr = 0;
+    size_t pr = 0;
 
     /// begin
     void begin_multiple(size_t i0_2, size_t i1_2) {

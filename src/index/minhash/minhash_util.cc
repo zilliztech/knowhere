@@ -150,7 +150,7 @@ minhash_lsh_hit_with_topk1_opt_search(const char* x, const char* y, size_t size_
                     auto hit_id = faiss::u64_binary_search_eq(base_hash_k.data() + i * ny, ny, query_key[i]);
                     if (hit_id != -1) {
                         all_res[query_id].push(base_hash_v[hit_id], 1.0f);
-                        while (!all_res[query_id].full() && hit_id < mh_lsh_band &&
+                        while (!all_res[query_id].full() && static_cast<size_t>(hit_id) < mh_lsh_band &&
                                base_hash_k[i * mh_lsh_band + hit_id] == query_key[i]) {
                             all_res[query_id].push(base_hash_v[hit_id], 1.0f);
                             hit_id++;

@@ -486,7 +486,7 @@ MinHashLSH::BatchSearch(const char* query, size_t nq, float* distances, idx_t* l
         auto query_kv =
             minhash::GenTransposedHashKV((const char*)query, nq, this->mh_vec_elememt_size_ * this->mh_vec_length_,
                                          this->mh_vec_elememt_size_, this->band_, this->r_);
-        for (auto i = 0; i < nq * band_; i++) {
+        for (size_t i = 0; i < nq * band_; i++) {
             query_hash_v.emplace_back(query_kv[i].Key);
         }
     }

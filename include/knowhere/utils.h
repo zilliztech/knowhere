@@ -158,11 +158,11 @@ data_type_conversion(const DataSet& src, const std::optional<int64_t> start = st
         if (chunk_lims == nullptr) {
             throw std::runtime_error("chunk dataset should have offset array.");
         }
-        for (auto i = 0; i < num_chunk; i++) {
+        for (int64_t i = 0; i < num_chunk; i++) {
             auto num_vectors = chunk_lims[i + 1] - chunk_lims[i];
             des_data[i] = new OutType[num_vectors * out_dim];
-            for (auto j = 0; j < num_vectors; j++) {
-                for (auto d = 0; d < out_dim; d++) {
+            for (size_t j = 0; j < num_vectors; j++) {
+                for (int64_t d = 0; d < out_dim; d++) {
                     des_data[i][j * out_dim + d] = (OutType)src_data[i][j * in_dim + d];
                 }
             }
@@ -257,7 +257,15 @@ ConvertToDataTypeIfNeeded(const DataSetPtr& ds, const std::optional<int64_t> sta
         }
     }
 
+// GCC false positive: std::optional parameters are always initialized (default to std::nullopt)
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
     return data_type_conversion<typename MockData<DataType>::type, DataType>(*ds, start, count, count_dim);
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 }
 
 template <typename T>

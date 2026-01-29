@@ -311,7 +311,7 @@ EmbListTest(const knowhere::DataSetPtr train_ds, const knowhere::DataSetPtr quer
     auto base = knowhere::ConvertToDataTypeIfNeeded<DataType>(train_ds);
     auto query = knowhere::ConvertToDataTypeIfNeeded<DataType>(query_ds);
     auto dim = base->GetDim();
-    auto nq = query->GetRows();
+    [[maybe_unused]] auto nq = query->GetRows();
 
     knowhere::ViewDataOp data_view = [&base, data_size = dim](size_t id) {
         auto data = (const DataType*)base->GetTensor();
