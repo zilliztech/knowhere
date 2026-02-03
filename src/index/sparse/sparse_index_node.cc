@@ -408,6 +408,12 @@ class SparseInvertedIndexNode : public IndexNode {
                         sparse::SparseMetricType::METRIC_BM25);
                 index->SetBM25Params(k1, b, avgdl);
                 return index;
+            } else if (cfg.inverted_index_algo.value() == "DAAT_MAXSCORE_V2") {
+                auto index =
+                    new sparse::InvertedIndex<value_type, uint16_t, sparse::InvertedIndexAlgo::DAAT_MAXSCORE_V2,
+                                              mmapped>(sparse::SparseMetricType::METRIC_BM25);
+                index->SetBM25Params(k1, b, avgdl);
+                return index;
             } else if (cfg.inverted_index_algo.value() == "TAAT_NAIVE") {
                 auto index =
                     new sparse::InvertedIndex<value_type, uint16_t, sparse::InvertedIndexAlgo::TAAT_NAIVE, mmapped>(
@@ -427,6 +433,11 @@ class SparseInvertedIndexNode : public IndexNode {
             } else if (cfg.inverted_index_algo.value() == "DAAT_MAXSCORE") {
                 auto index =
                     new sparse::InvertedIndex<value_type, float, sparse::InvertedIndexAlgo::DAAT_MAXSCORE, mmapped>(
+                        sparse::SparseMetricType::METRIC_IP);
+                return index;
+            } else if (cfg.inverted_index_algo.value() == "DAAT_MAXSCORE_V2") {
+                auto index =
+                    new sparse::InvertedIndex<value_type, float, sparse::InvertedIndexAlgo::DAAT_MAXSCORE_V2, mmapped>(
                         sparse::SparseMetricType::METRIC_IP);
                 return index;
             } else if (cfg.inverted_index_algo.value() == "TAAT_NAIVE") {
