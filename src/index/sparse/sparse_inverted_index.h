@@ -43,6 +43,7 @@ enum class InvertedIndexAlgo {
     TAAT_NAIVE,
     DAAT_WAND,
     DAAT_MAXSCORE,
+    DAAT_MAXSCORE_V2,  // SIMD-optimized MaxScore with aligned posting lists
 };
 
 struct InvertedIndexBuildStats {
@@ -199,7 +200,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
         auto avgdl = cfg.bm25_avgdl.value();
         avgdl = std::max(avgdl, 1.0f);
-        if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
+        if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE ||
+                      algo == InvertedIndexAlgo::DAAT_MAXSCORE_V2) {
             // daat_wand and daat_maxscore: search time k1/b must equal load time config.
             if ((cfg.bm25_k1.has_value() && cfg.bm25_k1.value() != bm25_params_->k1) ||
                 ((cfg.bm25_b.has_value() && cfg.bm25_b.value() != bm25_params_->b))) {
@@ -671,7 +673,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
         map_byte_size_ =
             inverted_index_ids_byte_size + inverted_index_vals_byte_size + plists_ids_byte_size + plists_vals_byte_size;
-        if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
+        if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE ||
+                      algo == InvertedIndexAlgo::DAAT_MAXSCORE_V2) {
             map_byte_size_ += max_score_in_dim_byte_size;
         }
         if (metric_type_ == SparseMetricType::METRIC_BM25) {
@@ -725,7 +728,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         inverted_index_vals_.initialize(ptr, inverted_index_vals_byte_size);
         ptr += inverted_index_vals_byte_size;
 
-        if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
+        if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE ||
+                      algo == InvertedIndexAlgo::DAAT_MAXSCORE_V2) {
             max_score_in_dim_.initialize(ptr, max_score_in_dim_byte_size);
             ptr += max_score_in_dim_byte_size;
         }
@@ -750,7 +754,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         size_t dim_id = 0;
         for (const auto& [idx, count] : idx_counts) {
             dim_map_[idx] = dim_id;
-            if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
+            if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE ||
+                          algo == InvertedIndexAlgo::DAAT_MAXSCORE_V2) {
                 max_score_in_dim_.emplace_back(0.0f);
             }
             ++dim_id;
@@ -844,6 +849,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             search_daat_wand(q_vec, heap, bitset, computer, approx_params.dim_max_score_ratio);
         } else if constexpr (algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
             search_daat_maxscore(q_vec, heap, bitset, computer, approx_params.dim_max_score_ratio);
+        } else if constexpr (algo == InvertedIndexAlgo::DAAT_MAXSCORE_V2) {
+            search_daat_maxscore_v2(q_vec, heap, bitset, computer, approx_params.dim_max_score_ratio);
         } else {
             search_taat_naive(q_vec, heap, bitset, computer);
         }
@@ -924,7 +931,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                 res += sizeof(typename decltype(inverted_index_vals_spans_)::value_type::value_type) *
                        inverted_index_vals_span.size();
             }
-            if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
+            if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE ||
+                          algo == InvertedIndexAlgo::DAAT_MAXSCORE_V2) {
                 res += sizeof(typename decltype(max_score_in_dim_spans_)::value_type) * max_score_in_dim_spans_.size();
             }
             return res;
@@ -1051,6 +1059,77 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
     };  // struct Cursor
 
+    // SIMDCursor: Cursor with SIMD-accelerated seek for MaxScore v2
+    // Uses aligned posting lists and SIMD parallel comparison for faster seek
+    template <typename DocIdFilter>
+    struct SIMDCursor {
+     public:
+        SIMDCursor(const boost::span<const table_t>& plist_ids, const boost::span<const QType>& plist_vals,
+                   size_t num_vec, float max_score, float q_value, DocIdFilter filter)
+            : plist_ids_(plist_ids),
+              plist_vals_(plist_vals),
+              plist_size_(plist_ids.size()),
+              total_num_vec_(num_vec),
+              max_score_(max_score),
+              q_value_(q_value),
+              filter_(filter) {
+            skip_filtered_ids();
+            update_cur_vec_id();
+        }
+        SIMDCursor(const SIMDCursor& rhs) = delete;
+        SIMDCursor(SIMDCursor&& rhs) noexcept = default;
+
+        void
+        next() {
+            ++loc_;
+            skip_filtered_ids();
+            update_cur_vec_id();
+        }
+
+        // SIMD-accelerated seek using parallel comparison
+        void
+        seek(table_t vec_id) {
+            if (loc_ >= plist_size_ || plist_ids_[loc_] >= vec_id) {
+                skip_filtered_ids();
+                update_cur_vec_id();
+                return;
+            }
+
+            // Use SIMD seek for large jumps
+            loc_ = simd_seek_dispatch(plist_ids_.data(), plist_size_, loc_, vec_id);
+            skip_filtered_ids();
+            update_cur_vec_id();
+        }
+
+        QType
+        cur_vec_val() const {
+            return plist_vals_[loc_];
+        }
+
+        const boost::span<const table_t>& plist_ids_;
+        const boost::span<const QType>& plist_vals_;
+        const size_t plist_size_;
+        size_t loc_ = 0;
+        size_t total_num_vec_ = 0;
+        float max_score_ = 0.0f;
+        float q_value_ = 0.0f;
+        DocIdFilter filter_;
+        table_t cur_vec_id_ = 0;
+
+     private:
+        inline void
+        update_cur_vec_id() {
+            cur_vec_id_ = (loc_ >= plist_size_) ? total_num_vec_ : plist_ids_[loc_];
+        }
+
+        inline void
+        skip_filtered_ids() {
+            while (loc_ < plist_size_ && !filter_.empty() && filter_.test(plist_ids_[loc_])) {
+                ++loc_;
+            }
+        }
+    };  // struct SIMDCursor
+
     std::vector<std::pair<size_t, DType>>
     parse_query(const SparseRow<DType>& query, float drop_ratio_search) const {
         DType q_threshold = 0;
@@ -1080,6 +1159,23 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     make_cursors(const std::vector<std::pair<size_t, DType>>& q_vec, const DocValueComputer<float>& computer,
                  DocIdFilter& filter, float dim_max_score_ratio) const {
         std::vector<Cursor<DocIdFilter>> cursors;
+        cursors.reserve(q_vec.size());
+        for (auto q_dim : q_vec) {
+            auto& plist_ids = inverted_index_ids_spans_[q_dim.first];
+            auto& plist_vals = inverted_index_vals_spans_[q_dim.first];
+            cursors.emplace_back(plist_ids, plist_vals, n_rows_internal_,
+                                 max_score_in_dim_spans_[q_dim.first] * q_dim.second * dim_max_score_ratio,
+                                 q_dim.second, filter);
+        }
+        return cursors;
+    }
+
+    // Create SIMD cursors with accelerated seek for MaxScore v2
+    template <typename DocIdFilter>
+    std::vector<SIMDCursor<DocIdFilter>>
+    make_simd_cursors(const std::vector<std::pair<size_t, DType>>& q_vec, const DocValueComputer<float>& computer,
+                      DocIdFilter& filter, float dim_max_score_ratio) const {
+        std::vector<SIMDCursor<DocIdFilter>> cursors;
         cursors.reserve(q_vec.size());
         for (auto q_dim : q_vec) {
             auto& plist_ids = inverted_index_ids_spans_[q_dim.first];
@@ -1261,6 +1357,169 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
     }
 
+    // MaxScore v2: Batched MaxScore with SIMD scatter-gather accumulation
+    // Process each posting list's contributions in batches rather than alternating
+    // between iterators. This enables:
+    // - Better memory locality (prefetcher works on sequential access)
+    // - Better branch prediction (consistent pattern per posting list)
+    // - SIMD vectorization (AVX512 scatter-gather for batch accumulation)
+    template <typename DocIdFilter>
+    void
+    search_daat_maxscore_v2(std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
+                            const DocValueComputer<float>& computer, float dim_max_score_ratio) const {
+        // Window size for batched processing (64K docs * 4 bytes = 256KB, fits in L2/L3 cache)
+        constexpr size_t WINDOW_SIZE = 65536;
+
+        // Sort query terms by contribution (max_score * query_weight) descending
+        std::sort(q_vec.begin(), q_vec.end(), [this](auto& a, auto& b) {
+            return a.second * max_score_in_dim_spans_[a.first] > b.second * max_score_in_dim_spans_[b.first];
+        });
+
+        // Build posting list info for each query term
+        struct PostingListInfo {
+            float q_weight;
+            float max_score;
+            boost::span<const table_t> ids;
+            boost::span<const QType> vals;
+        };
+        std::vector<PostingListInfo> posting_lists;
+        posting_lists.reserve(q_vec.size());
+
+        for (auto& [inner_dim, q_weight] : q_vec) {
+            auto plist_ids = inverted_index_ids_spans_[inner_dim];
+            auto plist_vals = inverted_index_vals_spans_[inner_dim];
+            if (plist_ids.empty())
+                continue;
+
+            float max_score = max_score_in_dim_spans_[inner_dim] * static_cast<float>(q_weight) * dim_max_score_ratio;
+            posting_lists.push_back({static_cast<float>(q_weight), max_score, plist_ids, plist_vals});
+        }
+
+        if (posting_lists.empty())
+            return;
+
+        // Compute suffix sums for pruning (upper bounds)
+        std::vector<float> upper_bounds(posting_lists.size());
+        float bound_sum = 0.0f;
+        for (size_t i = posting_lists.size(); i > 0; --i) {
+            bound_sum += posting_lists[i - 1].max_score;
+            upper_bounds[i - 1] = bound_sum;
+        }
+
+        float threshold = heap.full() ? heap.top().val : 0;
+
+        // Allocate window score buffer (aligned for SIMD)
+        std::vector<float> scores(WINDOW_SIZE);
+
+        // Track current position in each posting list (for cursor advancement across windows)
+        std::vector<size_t> cursors(posting_lists.size(), 0);
+
+        // Process documents in windows
+        for (table_t window_start = 0; window_start < n_rows_internal_; window_start += WINDOW_SIZE) {
+            table_t window_end =
+                std::min(static_cast<table_t>(window_start + WINDOW_SIZE), static_cast<table_t>(n_rows_internal_));
+            size_t window_size = window_end - window_start;
+
+            // Reset scores for this window
+            std::memset(scores.data(), 0, window_size * sizeof(float));
+
+            // Find essential/non-essential split based on current threshold
+            size_t first_ne_idx = posting_lists.size();
+            while (first_ne_idx > 0 && upper_bounds[first_ne_idx - 1] <= threshold) {
+                --first_ne_idx;
+            }
+            if (first_ne_idx == 0)
+                break;  // No more candidates possible
+
+            // BATCH PROCESS each essential posting list
+            // Process all contributions from one posting list before moving to the next,
+            // enabling CPU prefetcher and SIMD
+            for (size_t i = 0; i < first_ne_idx; ++i) {
+                auto& pl = posting_lists[i];
+                const table_t* ids = pl.ids.data();
+                const QType* vals = pl.vals.data();
+                size_t pl_size = pl.ids.size();
+
+                // Advance cursor to first element >= window_start
+                while (cursors[i] < pl_size && ids[cursors[i]] < window_start) {
+                    cursors[i]++;
+                }
+                size_t list_start = cursors[i];
+
+                // Find end position (first element >= window_end)
+                size_t list_end = list_start;
+                while (list_end < pl_size && ids[list_end] < window_end) {
+                    list_end++;
+                }
+
+                if (list_start < list_end) {
+                    if (metric_type_ == SparseMetricType::METRIC_IP) {
+                        // SIMD batch accumulate for IP metric
+                        // scores[doc_id - window_start] += q_weight * val
+                        sparse::accumulate_window_ip_dispatch(ids, vals, list_start, list_end, pl.q_weight,
+                                                              scores.data(), window_start);
+                    } else {
+                        // Scalar loop for BM25 metric (requires computer function)
+                        const auto& doc_len_ratios = bm25_params_->row_sums_spans_;
+                        for (size_t j = list_start; j < list_end; ++j) {
+                            const auto doc_id = ids[j];
+                            const uint32_t local_id = doc_id - window_start;
+                            scores[local_id] +=
+                                pl.q_weight * computer(static_cast<float>(vals[j]), doc_len_ratios[doc_id]);
+                        }
+                    }
+                }
+            }
+
+            // Calculate max possible contribution from non-essential terms
+            float ne_upper_bound = (first_ne_idx < posting_lists.size()) ? upper_bounds[first_ne_idx] : 0.0f;
+
+            // Extract candidates from scores array
+            // A doc is a candidate if it appears in essential lists (score > 0) AND
+            // its essential score + max non-essential contribution could beat threshold
+            for (size_t doc_offset = 0; doc_offset < window_size; ++doc_offset) {
+                float score = scores[doc_offset];
+                // Skip if doc doesn't appear in any essential list, or can't possibly beat threshold
+                if (score == 0.0f || score + ne_upper_bound <= threshold)
+                    continue;
+
+                table_t doc_id = window_start + static_cast<table_t>(doc_offset);
+                if (!filter.empty() && filter.test(doc_id))
+                    continue;
+
+                // Add contributions from non-essential terms
+                // (These are terms whose max contribution alone can't beat threshold,
+                // but might contribute when combined with essential terms)
+                float full_score = score;
+                float cur_vec_sum =
+                    metric_type_ == SparseMetricType::METRIC_BM25 ? bm25_params_->row_sums_spans_[doc_id] : 0;
+
+                for (size_t i = first_ne_idx; i < posting_lists.size(); ++i) {
+                    // Early termination if we can't beat threshold
+                    if (full_score + upper_bounds[i] <= threshold)
+                        break;
+
+                    auto& pl = posting_lists[i];
+                    const table_t* ids = pl.ids.data();
+                    const QType* vals = pl.vals.data();
+                    size_t pl_size = pl.ids.size();
+
+                    // Binary search for doc_id in this posting list
+                    auto it = std::lower_bound(ids, ids + pl_size, doc_id);
+                    if (it != ids + pl_size && *it == doc_id) {
+                        size_t idx = it - ids;
+                        full_score += pl.q_weight * computer(static_cast<float>(vals[idx]), cur_vec_sum);
+                    }
+                }
+
+                if (full_score > threshold) {
+                    heap.push(doc_id, full_score);
+                    threshold = heap.full() ? heap.top().val : 0;
+                }
+            }
+        }
+    }
+
     void
     refine_and_collect(const SparseRow<DType>& query, MaxMinHeap<float>& inacc_heap, size_t k, float* distances,
                        label_t* labels, const DocValueComputer<float>& computer,
@@ -1287,6 +1546,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             search_daat_wand(q_vec, heap, filter, computer, dim_max_score_ratio);
         } else if constexpr (algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
             search_daat_maxscore(q_vec, heap, filter, computer, dim_max_score_ratio);
+        } else if constexpr (algo == InvertedIndexAlgo::DAAT_MAXSCORE_V2) {
+            search_daat_maxscore_v2(q_vec, heap, filter, computer, dim_max_score_ratio);
         } else {
             search_taat_naive(q_vec, heap, filter, computer);
         }
@@ -1325,7 +1586,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                 dim_it = dim_map_.insert({dim, next_dim_id_++}).first;
                 inverted_index_ids_.emplace_back();
                 inverted_index_vals_.emplace_back();
-                if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
+                if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE ||
+                              algo == InvertedIndexAlgo::DAAT_MAXSCORE_V2) {
                     max_score_in_dim_.emplace_back(0.0f);
                 }
             }
@@ -1336,7 +1598,8 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         build_stats_.dataset_nnz_stats_.push_back(row.size());
 #endif
         // update max_score_in_dim_
-        if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
+        if constexpr (algo == InvertedIndexAlgo::DAAT_WAND || algo == InvertedIndexAlgo::DAAT_MAXSCORE ||
+                      algo == InvertedIndexAlgo::DAAT_MAXSCORE_V2) {
             for (size_t j = 0; j < row.size(); ++j) {
                 auto [dim, val] = row[j];
                 if (val == 0) {

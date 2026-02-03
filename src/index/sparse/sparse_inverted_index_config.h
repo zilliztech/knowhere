@@ -92,13 +92,14 @@ class SparseInvertedIndexConfig : public BaseConfig {
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
         if (param_type == PARAM_TYPE::TRAIN) {
-            constexpr std::array<std::string_view, 3> legal_inverted_index_algo_list{"TAAT_NAIVE", "DAAT_WAND",
-                                                                                     "DAAT_MAXSCORE"};
+            constexpr std::array<std::string_view, 4> legal_inverted_index_algo_list{
+                "TAAT_NAIVE", "DAAT_WAND", "DAAT_MAXSCORE", "DAAT_MAXSCORE_V2"};
             std::string inverted_index_algo_str = inverted_index_algo.value_or("");
             if (std::find(legal_inverted_index_algo_list.begin(), legal_inverted_index_algo_list.end(),
                           inverted_index_algo_str) == legal_inverted_index_algo_list.end()) {
-                std::string msg = "sparse inverted index algo " + inverted_index_algo_str +
-                                  " not found or not supported, supported: [TAAT_NAIVE DAAT_WAND DAAT_MAXSCORE]";
+                std::string msg =
+                    "sparse inverted index algo " + inverted_index_algo_str +
+                    " not found or not supported, supported: [TAAT_NAIVE DAAT_WAND DAAT_MAXSCORE DAAT_MAXSCORE_V2]";
                 return HandleError(err_msg, msg, Status::invalid_args);
             }
         }
