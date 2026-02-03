@@ -98,7 +98,7 @@ GetVecNorms(const DataSetPtr& base) {
             futs.emplace_back(pool->push([&, chunk_idx = i] {
                 auto num_vectors = chunk_lims[chunk_idx + 1] - chunk_lims[chunk_idx];
                 auto xb = base_tensor[chunk_idx];
-                for (auto j = 0; j < num_vectors; j++) {
+                for (size_t j = 0; j < num_vectors; j++) {
                     norms[chunk_lims[chunk_idx] + j] = std::sqrt(norm_computer(xb + j * dim, dim));
                 }
             }));
@@ -239,7 +239,7 @@ brute_force_dense_impl(const void* xq, size_t query_idx, const void* xb, const f
             faiss::int_maxheap_array_t res = {size_t(1), size_t(topk), cur_labels, int_distances.data()};
             binary_knn_hc(faiss::METRIC_Hamming, &res, (const uint8_t*)cur_query, (const uint8_t*)xb, nb, dim / 8,
                           id_selector);
-            for (int i = 0; i < topk; ++i) {
+            for (size_t i = 0; i < topk; ++i) {
                 cur_distances[i] = static_cast<float>(int_distances[i]);
             }
             break;
@@ -374,7 +374,7 @@ brute_force_emb_list_impl(const void* xq, size_t query_el_idx, const void* xb, i
                     std::vector<int32_t> int_distances(num_query_vectors * num_base_vectors);
                     faiss::all_hamming_distances(cur_query, cur_base, code_size, num_query_vectors, num_base_vectors,
                                                  int_distances.data(), nullptr);
-                    for (int i = 0; i < num_query_vectors * num_base_vectors; ++i) {
+                    for (size_t i = 0; i < num_query_vectors * num_base_vectors; ++i) {
                         distances[i] = static_cast<float>(int_distances[i]);
                     }
                 } else {
@@ -621,7 +621,7 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
 
     auto base_tensor = base_dataset->GetTensor();
     auto num_chunk = base_dataset->GetNumChunk();
-    auto num_total_vectors = base_dataset->GetRows();
+    const size_t num_total_vectors = base_dataset->GetRows();
     if (num_total_vectors != chunk_lims[num_chunk]) {
         LOG_KNOWHERE_ERROR_ << "the num_rows should be equal to the last element of chunk_lims";
         return Status::invalid_args;
@@ -785,7 +785,7 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
         auto pool = ThreadPool::GetGlobalSearchThreadPool();
         std::vector<folly::Future<Status>> futs;
         futs.reserve(num_query_el);
-        for (auto query_el_i = 0; query_el_i < num_query_el; query_el_i++) {
+        for (size_t query_el_i = 0; query_el_i < num_query_el; query_el_i++) {
             auto num_query_vectors = query_el_offset.get_el_len(query_el_i);
             if (num_query_vectors == 0) {
                 continue;
@@ -1459,7 +1459,7 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
     }
 
     auto num_chunk = base_dataset->GetNumChunk();
-    auto num_total_vectors = base_dataset->GetRows();
+    const size_t num_total_vectors = base_dataset->GetRows();
     if (num_total_vectors != chunk_lims[num_chunk]) {
         LOG_KNOWHERE_ERROR_ << "the num_rows should be equal to the last element of chunk_lims";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(
@@ -1536,7 +1536,7 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                 KNOWHERE_THROW_MSG(err_msg);
                             }
                             // copy chunk_distances_ids to distances_ids
-                            for (int j = 0; j < num_base_vectors; ++j) {
+                            for (size_t j = 0; j < num_base_vectors; ++j) {
                                 distances_ids[chunk_lims[chunk_idx] + j].id =
                                     chunk_distances_ids[j].id == -1
                                         ? -1
@@ -1563,7 +1563,7 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                     KNOWHERE_THROW_MSG(err_msg);
                                 }
                                 // copy chunk_distances_ids to distances_ids
-                                for (int j = 0; j < num_base_vectors; ++j) {
+                                for (size_t j = 0; j < num_base_vectors; ++j) {
                                     distances_ids[chunk_lims[chunk_idx] + j].id =
                                         chunk_distances_ids[j].id == -1
                                             ? -1
@@ -1583,7 +1583,7 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                     KNOWHERE_THROW_MSG(err_msg);
                                 }
                                 // copy chunk_distances_ids to distances_ids
-                                for (int j = 0; j < num_base_vectors; ++j) {
+                                for (size_t j = 0; j < num_base_vectors; ++j) {
                                     distances_ids[chunk_lims[chunk_idx] + j].id =
                                         chunk_distances_ids[j].id == -1
                                             ? -1
@@ -1598,7 +1598,7 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                 std::vector<int32_t> distances(num_base_vectors, max_dis);
                                 faiss::all_hamming_distances(cur_query, (const DataType*)xb, code_size, 1,
                                                              num_base_vectors, distances.data(), id_selector);
-                                for (int j = 0; j < num_base_vectors; ++j) {
+                                for (size_t j = 0; j < num_base_vectors; ++j) {
                                     if (distances[j] == std::numeric_limits<int32_t>::max()) {
                                         distances_ids[chunk_lims[chunk_idx] + j].id = -1;
                                         distances_ids[chunk_lims[chunk_idx] + j].val = max_dis;
@@ -1620,7 +1620,7 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                 std::vector<float> distances(num_base_vectors, max_dis);
                                 faiss::all_jaccard_distances(cur_query, (const DataType*)xb, code_size, 1,
                                                              num_base_vectors, distances.data(), id_selector);
-                                for (int j = 0; j < num_base_vectors; ++j) {
+                                for (size_t j = 0; j < num_base_vectors; ++j) {
                                     if (distances[j] == std::numeric_limits<float>::infinity()) {
                                         distances_ids[chunk_lims[chunk_idx] + j].id = -1;
                                         distances_ids[chunk_lims[chunk_idx] + j].val = max_dis;

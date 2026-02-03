@@ -565,7 +565,7 @@ GenChunkDataSet(int rows, int dim, const uint64_t seed = 42, int each_el_len = 1
     for (size_t chunk_idx = 0; chunk_idx < num_chunk; chunk_idx += 1) {
         lims[chunk_idx] = chunk_idx * each_el_len;
         chunk_ts[chunk_idx] = new float[each_el_len * dim];
-        for (size_t i = 0; i < each_el_len * dim; i += 1) {
+        for (size_t i = 0; i < static_cast<size_t>(each_el_len) * static_cast<size_t>(dim); i += 1) {
             chunk_ts[chunk_idx][i] = (float)distrib(rng);
         }
     }
@@ -592,7 +592,7 @@ GenChunkBinDataSet(int rows, int dim, const uint64_t seed = 42, int each_el_len 
     for (size_t chunk_idx = 0; chunk_idx < num_chunk; chunk_idx += 1) {
         lims[chunk_idx] = chunk_idx * each_el_len;
         chunk_ts[chunk_idx] = new uint8_t[each_el_len * uint8_dim];
-        for (size_t i = 0; i < each_el_len * uint8_dim; i += 1) {
+        for (size_t i = 0; i < static_cast<size_t>(each_el_len) * static_cast<size_t>(uint8_dim); i += 1) {
             chunk_ts[chunk_idx][i] = (uint8_t)distrib(rng);
         }
     }
