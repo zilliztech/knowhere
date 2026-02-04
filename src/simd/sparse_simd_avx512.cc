@@ -9,7 +9,7 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
-// This file is compiled with -mavx512f flag to enable AVX512 intrinsics
+// This file is compiled with -mavx512f -mavx512cd flags to enable AVX512 intrinsics
 // Runtime CPU detection ensures it's only called on CPUs with AVX512 support
 
 #include <immintrin.h>
@@ -17,6 +17,39 @@
 #include "sparse_simd.h"
 
 namespace knowhere::sparse {
+
+// ============================================================================
+// Conflict Detection Configuration
+// ============================================================================
+// By default, the code assumes there are no duplicate indices within a SIMD batch,
+// and it does not work correctly by design if there are any duplicates.
+// Set check_conflicts to true to enable runtime conflict detection with scalar fallback.
+// This is useful for debugging or when input data quality cannot be guaranteed.
+constexpr bool check_conflicts = false;
+
+// ============================================================================
+// Conflict Detection Helper (AVX512CD)
+// ============================================================================
+// Uses _mm512_conflict_epi32 to detect duplicate indices within a 16-element SIMD batch.
+// Returns true if all indices are unique (safe for scatter).
+// _mm512_conflict_epi32 returns a vector where each lane i has a bitmask of
+// lanes j < i that have the same value. If all lanes are unique, all masks are 0.
+inline bool
+has_no_conflicts(__m512i indices) {
+    __m512i conflicts = _mm512_conflict_epi32(indices);
+    __mmask16 has_dups = _mm512_cmpneq_epi32_mask(conflicts, _mm512_setzero_si512());
+    return has_dups == 0;  // true = no duplicates, safe for scatter
+}
+
+// Scalar fallback for when conflicts are detected
+inline void
+scalar_accumulate_window(const uint32_t* doc_ids, const float* doc_vals, size_t start, size_t end, float q_weight,
+                         float* scores, uint32_t window_start) {
+    for (size_t i = start; i < end; ++i) {
+        uint32_t local_id = doc_ids[i] - window_start;
+        scores[local_id] += q_weight * doc_vals[i];
+    }
+}
 
 // ============================================================================
 // AVX512 SIMD Implementation (16-wide vectorization with hardware scatter)
@@ -93,6 +126,9 @@ accumulate_posting_list_ip_avx512(const uint32_t* doc_ids, const float* doc_vals
 // once per posting list. AVX512 scatter has undefined behavior with duplicate
 // indices - only one lane's value would be written, losing other contributions.
 //
+// If check_conflicts is enabled, uses AVX512CD to detect duplicates at runtime
+// and falls back to scalar accumulation when conflicts are found.
+//
 // Parameters:
 //   doc_ids: posting list doc IDs (must be sorted and unique per posting list)
 //   doc_vals: posting list values
@@ -126,15 +162,36 @@ accumulate_window_ip_avx512(const uint32_t* doc_ids, const float* doc_vals, size
         __m512i local_ids0 = _mm512_sub_epi32(ids0, window_start_vec);
         __m512i local_ids1 = _mm512_sub_epi32(ids1, window_start_vec);
 
-        // Gather-FMA-Scatter for chunk 0
-        __m512 current0 = _mm512_i32gather_ps(local_ids0, scores, sizeof(float));
-        __m512 new0 = _mm512_fmadd_ps(vals0, q_weight_vec, current0);
-        _mm512_i32scatter_ps(scores, local_ids0, new0, sizeof(float));
+        // Process chunk 0: check for conflicts if enabled
+        if constexpr (check_conflicts) {
+            if (!has_no_conflicts(local_ids0)) {
+                scalar_accumulate_window(doc_ids, doc_vals, j, j + SIMD_WIDTH, q_weight, scores, window_start);
+            } else {
+                __m512 current0 = _mm512_i32gather_ps(local_ids0, scores, sizeof(float));
+                __m512 new0 = _mm512_fmadd_ps(vals0, q_weight_vec, current0);
+                _mm512_i32scatter_ps(scores, local_ids0, new0, sizeof(float));
+            }
+        } else {
+            __m512 current0 = _mm512_i32gather_ps(local_ids0, scores, sizeof(float));
+            __m512 new0 = _mm512_fmadd_ps(vals0, q_weight_vec, current0);
+            _mm512_i32scatter_ps(scores, local_ids0, new0, sizeof(float));
+        }
 
-        // Gather-FMA-Scatter for chunk 1
-        __m512 current1 = _mm512_i32gather_ps(local_ids1, scores, sizeof(float));
-        __m512 new1 = _mm512_fmadd_ps(vals1, q_weight_vec, current1);
-        _mm512_i32scatter_ps(scores, local_ids1, new1, sizeof(float));
+        // Process chunk 1: check for conflicts if enabled
+        if constexpr (check_conflicts) {
+            if (!has_no_conflicts(local_ids1)) {
+                scalar_accumulate_window(doc_ids, doc_vals, j + SIMD_WIDTH, j + 2 * SIMD_WIDTH, q_weight, scores,
+                                         window_start);
+            } else {
+                __m512 current1 = _mm512_i32gather_ps(local_ids1, scores, sizeof(float));
+                __m512 new1 = _mm512_fmadd_ps(vals1, q_weight_vec, current1);
+                _mm512_i32scatter_ps(scores, local_ids1, new1, sizeof(float));
+            }
+        } else {
+            __m512 current1 = _mm512_i32gather_ps(local_ids1, scores, sizeof(float));
+            __m512 new1 = _mm512_fmadd_ps(vals1, q_weight_vec, current1);
+            _mm512_i32scatter_ps(scores, local_ids1, new1, sizeof(float));
+        }
     }
 
     // Handle remaining 16-31 elements
@@ -143,21 +200,24 @@ accumulate_window_ip_avx512(const uint32_t* doc_ids, const float* doc_vals, size
         __m512 vals = _mm512_loadu_ps(&doc_vals[j]);
         __m512i local_ids = _mm512_sub_epi32(ids, window_start_vec);
 
-        __m512 current = _mm512_i32gather_ps(local_ids, scores, sizeof(float));
-        __m512 new_scores = _mm512_fmadd_ps(vals, q_weight_vec, current);
-        _mm512_i32scatter_ps(scores, local_ids, new_scores, sizeof(float));
+        if constexpr (check_conflicts) {
+            if (!has_no_conflicts(local_ids)) {
+                scalar_accumulate_window(doc_ids, doc_vals, j, j + SIMD_WIDTH, q_weight, scores, window_start);
+            } else {
+                __m512 current = _mm512_i32gather_ps(local_ids, scores, sizeof(float));
+                __m512 new_scores = _mm512_fmadd_ps(vals, q_weight_vec, current);
+                _mm512_i32scatter_ps(scores, local_ids, new_scores, sizeof(float));
+            }
+        } else {
+            __m512 current = _mm512_i32gather_ps(local_ids, scores, sizeof(float));
+            __m512 new_scores = _mm512_fmadd_ps(vals, q_weight_vec, current);
+            _mm512_i32scatter_ps(scores, local_ids, new_scores, sizeof(float));
+        }
     }
 
-    // Masked tail
+    // Masked tail - use scalar for simplicity (small number of elements)
     if (j < list_end) {
-        __mmask16 mask = (1u << (list_end - j)) - 1;
-        __m512i ids = _mm512_maskz_loadu_epi32(mask, &doc_ids[j]);
-        __m512 vals = _mm512_maskz_loadu_ps(mask, &doc_vals[j]);
-        __m512i local_ids = _mm512_sub_epi32(ids, window_start_vec);
-
-        __m512 current = _mm512_mask_i32gather_ps(_mm512_setzero_ps(), mask, local_ids, scores, sizeof(float));
-        __m512 new_scores = _mm512_fmadd_ps(vals, q_weight_vec, current);
-        _mm512_mask_i32scatter_ps(scores, mask, local_ids, new_scores, sizeof(float));
+        scalar_accumulate_window(doc_ids, doc_vals, j, list_end, q_weight, scores, window_start);
     }
 }
 
