@@ -1411,6 +1411,9 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         // Allocate window score buffer (aligned for SIMD)
         std::vector<float> scores(WINDOW_SIZE);
 
+        // Candidate indices buffer for SIMD extraction (worst case: all docs are candidates)
+        std::vector<uint32_t> candidate_indices(WINDOW_SIZE);
+
         // Track current position in each posting list (for cursor advancement across windows)
         std::vector<size_t> cursors(posting_lists.size(), 0);
 
@@ -1474,14 +1477,17 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             // Calculate max possible contribution from non-essential terms
             float ne_upper_bound = (first_ne_idx < posting_lists.size()) ? upper_bounds[first_ne_idx] : 0.0f;
 
-            // Extract candidates from scores array
-            // A doc is a candidate if it appears in essential lists (score > 0) AND
-            // its essential score + max non-essential contribution could beat threshold
-            for (size_t doc_offset = 0; doc_offset < window_size; ++doc_offset) {
+            // SIMD candidate extraction: find all docs where score > effective_threshold
+            // effective_threshold = max(0, threshold - ne_upper_bound)
+            // This combines two checks: score > 0 AND score + ne_upper_bound > threshold
+            float effective_threshold = std::max(0.0f, threshold - ne_upper_bound);
+            size_t num_candidates = sparse::extract_candidates_dispatch(scores.data(), window_size, effective_threshold,
+                                                                        candidate_indices.data());
+
+            // Process extracted candidates
+            for (size_t c = 0; c < num_candidates; ++c) {
+                uint32_t doc_offset = candidate_indices[c];
                 float score = scores[doc_offset];
-                // Skip if doc doesn't appear in any essential list, or can't possibly beat threshold
-                if (score == 0.0f || score + ne_upper_bound <= threshold)
-                    continue;
 
                 table_t doc_id = window_start + static_cast<table_t>(doc_offset);
                 if (!filter.empty() && filter.test(doc_id))

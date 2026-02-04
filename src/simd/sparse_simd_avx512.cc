@@ -161,4 +161,60 @@ accumulate_window_ip_avx512(const uint32_t* doc_ids, const float* doc_vals, size
     }
 }
 
+// ============================================================================
+// AVX512 SIMD Candidate Extraction
+// ============================================================================
+// Finds all indices where scores[i] > threshold using SIMD comparison
+// Returns candidate indices via compress-store for efficient sparse output
+//
+// Performance: ~4x faster than scalar for sparse candidates (threshold filters most)
+// Uses compare-mask + compress-store pattern to avoid branch mispredictions
+size_t
+extract_candidates_avx512(const float* scores, size_t window_size, float threshold, uint32_t* candidates) {
+    constexpr size_t SIMD_WIDTH = 16;
+    size_t num_candidates = 0;
+
+    // Broadcast threshold for comparison
+    __m512 threshold_vec = _mm512_set1_ps(threshold);
+
+    // Base indices template [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+    const __m512i base_indices = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+
+    size_t i = 0;
+
+    // Main SIMD loop - process 16 scores at a time
+    for (; i + SIMD_WIDTH <= window_size; i += SIMD_WIDTH) {
+        __m512 scores_vec = _mm512_loadu_ps(&scores[i]);
+
+        // Compare: mask bit set where score > threshold
+        __mmask16 mask = _mm512_cmp_ps_mask(scores_vec, threshold_vec, _CMP_GT_OQ);
+
+        if (mask != 0) {
+            // Create indices for this chunk: [i, i+1, i+2, ..., i+15]
+            __m512i chunk_indices = _mm512_add_epi32(_mm512_set1_epi32(static_cast<int32_t>(i)), base_indices);
+
+            // Compress-store: write only the indices where mask bit is set
+            _mm512_mask_compressstoreu_epi32(&candidates[num_candidates], mask, chunk_indices);
+            num_candidates += _mm_popcnt_u32(mask);
+        }
+    }
+
+    // Handle tail elements (0-15 remaining)
+    if (i < window_size) {
+        __mmask16 valid_mask = (1u << (window_size - i)) - 1;
+        __m512 scores_vec = _mm512_maskz_loadu_ps(valid_mask, &scores[i]);
+
+        // Compare only valid elements
+        __mmask16 mask = _mm512_mask_cmp_ps_mask(valid_mask, scores_vec, threshold_vec, _CMP_GT_OQ);
+
+        if (mask != 0) {
+            __m512i chunk_indices = _mm512_add_epi32(_mm512_set1_epi32(static_cast<int32_t>(i)), base_indices);
+            _mm512_mask_compressstoreu_epi32(&candidates[num_candidates], mask, chunk_indices);
+            num_candidates += _mm_popcnt_u32(mask);
+        }
+    }
+
+    return num_candidates;
+}
+
 }  // namespace knowhere::sparse

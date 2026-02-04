@@ -24,6 +24,12 @@ accumulate_window_ip_avx512(const uint32_t* doc_ids, const float* doc_vals, size
 // AVX512 SIMD seek: find first position where id >= target (16-wide)
 size_t
 simd_seek_avx512_impl(const uint32_t* __restrict__ ids, size_t size, size_t start_pos, uint32_t target);
+
+// AVX512 SIMD candidate extraction: find indices where scores[i] > threshold
+// Returns number of candidates found, writes candidate indices to candidates array
+// candidates array must have space for at least window_size elements
+size_t
+extract_candidates_avx512(const float* scores, size_t window_size, float threshold, uint32_t* candidates);
 #endif
 
 // Scalar seek implementation (fallback)
@@ -98,6 +104,29 @@ accumulate_window_ip_dispatch(const uint32_t* doc_ids, const QType* doc_vals, si
         const uint32_t local_id = doc_ids[i] - window_start;
         scores[local_id] += q_weight * static_cast<float>(doc_vals[i]);
     }
+}
+
+// Scalar candidate extraction fallback
+inline size_t
+extract_candidates_scalar(const float* scores, size_t window_size, float threshold, uint32_t* candidates) {
+    size_t num_candidates = 0;
+    for (size_t i = 0; i < window_size; ++i) {
+        if (scores[i] > threshold) {
+            candidates[num_candidates++] = static_cast<uint32_t>(i);
+        }
+    }
+    return num_candidates;
+}
+
+// Dispatch function for candidate extraction with runtime CPU detection
+inline size_t
+extract_candidates_dispatch(const float* scores, size_t window_size, float threshold, uint32_t* candidates) {
+#if defined(__x86_64__) || defined(_M_X64)
+    if (faiss::InstructionSet::GetInstance().AVX512F()) {
+        return extract_candidates_avx512(scores, window_size, threshold, candidates);
+    }
+#endif
+    return extract_candidates_scalar(scores, window_size, threshold, candidates);
 }
 
 }  // namespace knowhere::sparse
