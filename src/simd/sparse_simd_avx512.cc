@@ -87,8 +87,14 @@ accumulate_posting_list_ip_avx512(const uint32_t* doc_ids, const float* doc_vals
 // scores[doc_ids[i] - window_start] += q_weight * doc_vals[i]
 // Only processes elements where doc_ids[i] is in [window_start, window_end)
 //
+// REQUIRES: doc_ids must contain unique values within the processed range.
+// This is guaranteed by the posting list construction in add_row_to_index()
+// (see sparse_inverted_index.h) which ensures each document appears at most
+// once per posting list. AVX512 scatter has undefined behavior with duplicate
+// indices - only one lane's value would be written, losing other contributions.
+//
 // Parameters:
-//   doc_ids: posting list doc IDs (must be sorted)
+//   doc_ids: posting list doc IDs (must be sorted and unique per posting list)
 //   doc_vals: posting list values
 //   list_start: start index in posting list (elements before this are < window_start)
 //   list_end: end index in posting list (elements from this point are >= window_end)

@@ -1565,6 +1565,21 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
     }
 
+    // Adds a single sparse row to the inverted index.
+    //
+    // UNIQUENESS INVARIANT: Each vec_id appears at most once per posting list.
+    // This holds when:
+    //   1. vec_id is assigned sequentially and is unique per document
+    //   2. Each document is added exactly once via Train() or Add()
+    //   3. Input sparse rows have at most one value per dimension (caller's responsibility)
+    //
+    // Note: SparseRow does not enforce unique dimensions - it assumes valid sorted input.
+    // If a row contains duplicate dimensions, this function will append vec_id multiple
+    // times to the same posting list, violating the invariant.
+    //
+    // This invariant is critical for AVX512 scatter operations in DAAT_MAXSCORE_V2
+    // which require unique indices within each SIMD batch. Without this guarantee,
+    // scatter would have undefined behavior when multiple lanes write to the same index.
     inline void
     add_row_to_index(const SparseRow<DType>& row, table_t vec_id) {
         [[maybe_unused]] float row_sum = 0;
@@ -1591,6 +1606,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                     max_score_in_dim_.emplace_back(0.0f);
                 }
             }
+            // vec_id is unique per document, so each posting list entry is unique
             inverted_index_ids_[dim_it->second].emplace_back(vec_id);
             inverted_index_vals_[dim_it->second].emplace_back(get_quant_val(val));
         }
