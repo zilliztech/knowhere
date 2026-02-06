@@ -163,7 +163,10 @@ class Timer {
 
 void
 print_usage(const char* prog) {
-    printf("Usage: %s --data-dir <path> [--topk <k>] [--nq <num_queries>]\n", prog);
+    printf("Usage: %s --data-dir <path> --data-type <splade|bm25> [--topk <k>] [--nq <num_queries>]\n", prog);
+    printf("\nRequired arguments:\n");
+    printf("  --data-dir <path>    - Directory containing CSR data files\n");
+    printf("  --data-type <type>   - Type of data: 'splade' (IP metric) or 'bm25' (BM25 metric)\n");
     printf("\nExpected files in data-dir:\n");
     printf("  base_small.csr       - Base vectors in CSR format\n");
     printf("  queries.dev.csr      - Query vectors in CSR format\n");
@@ -177,6 +180,7 @@ print_usage(const char* prog) {
 int
 main(int argc, char** argv) {
     std::string data_dir;
+    std::string data_type;
     int64_t topk = 10;
     int64_t nq = 0;  // 0 = use all queries
 
@@ -184,6 +188,8 @@ main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--data-dir") == 0 && i + 1 < argc) {
             data_dir = argv[++i];
+        } else if (strcmp(argv[i], "--data-type") == 0 && i + 1 < argc) {
+            data_type = argv[++i];
         } else if (strcmp(argv[i], "--topk") == 0 && i + 1 < argc) {
             topk = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--nq") == 0 && i + 1 < argc) {
@@ -194,7 +200,13 @@ main(int argc, char** argv) {
         }
     }
 
-    if (data_dir.empty()) {
+    if (data_dir.empty() || data_type.empty()) {
+        print_usage(argv[0]);
+        return 1;
+    }
+
+    if (data_type != "splade" && data_type != "bm25") {
+        printf("Error: --data-type must be 'splade' or 'bm25'\n");
         print_usage(argv[0]);
         return 1;
     }
@@ -237,8 +249,13 @@ main(int argc, char** argv) {
     // Algorithms to benchmark
     std::vector<std::string> algos = {"DAAT_MAXSCORE", "DAAT_MAXSCORE_V2"};
 
-    // Metrics to benchmark
-    std::vector<std::string> metrics = {"IP", "BM25"};
+    // Metrics to benchmark based on data type
+    std::vector<std::string> metrics;
+    if (data_type == "splade") {
+        metrics = {"IP"};
+    } else {
+        metrics = {"BM25"};
+    }
 
     // Benchmark parameters following DSP paper methodology:
     // 5 runs, drop first 2 (warmup), average last 3

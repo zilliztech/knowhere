@@ -1367,9 +1367,6 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     void
     search_daat_maxscore_v2(std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
                             const DocValueComputer<float>& computer, float dim_max_score_ratio) const {
-        // Window size for batched processing (64K docs * 4 bytes = 256KB, fits in L2/L3 cache)
-        constexpr size_t WINDOW_SIZE = 65536;
-
         // Sort query terms by contribution (max_score * query_weight) descending
         std::sort(q_vec.begin(), q_vec.end(), [this](auto& a, auto& b) {
             return a.second * max_score_in_dim_spans_[a.first] > b.second * max_score_in_dim_spans_[b.first];
@@ -1408,120 +1405,82 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
 
         float threshold = heap.full() ? heap.top().val : 0;
 
-        // Allocate window score buffer (aligned for SIMD)
-        std::vector<float> scores(WINDOW_SIZE);
+        // Allocate score buffer for all documents
+        std::vector<float> scores(n_rows_internal_, 0.0f);
 
-        // Candidate indices buffer for SIMD extraction (worst case: all docs are candidates)
-        std::vector<uint32_t> candidate_indices(WINDOW_SIZE);
+        // Candidate indices buffer for SIMD extraction
+        std::vector<uint32_t> candidate_indices(n_rows_internal_);
 
-        // Track current position in each posting list (for cursor advancement across windows)
-        std::vector<size_t> cursors(posting_lists.size(), 0);
+        // Find essential/non-essential split based on current threshold
+        size_t first_ne_idx = posting_lists.size();
+        while (first_ne_idx > 0 && upper_bounds[first_ne_idx - 1] <= threshold) {
+            --first_ne_idx;
+        }
+        if (first_ne_idx == 0)
+            return;  // No candidates possible
 
-        // Process documents in windows
-        for (table_t window_start = 0; window_start < n_rows_internal_; window_start += WINDOW_SIZE) {
-            table_t window_end =
-                std::min(static_cast<table_t>(window_start + WINDOW_SIZE), static_cast<table_t>(n_rows_internal_));
-            size_t window_size = window_end - window_start;
+        // BATCH PROCESS each essential posting list
+        for (size_t i = 0; i < first_ne_idx; ++i) {
+            auto& pl = posting_lists[i];
+            const table_t* ids = pl.ids.data();
+            const QType* vals = pl.vals.data();
+            size_t pl_size = pl.ids.size();
 
-            // Reset scores for this window
-            std::memset(scores.data(), 0, window_size * sizeof(float));
-
-            // Find essential/non-essential split based on current threshold
-            size_t first_ne_idx = posting_lists.size();
-            while (first_ne_idx > 0 && upper_bounds[first_ne_idx - 1] <= threshold) {
-                --first_ne_idx;
+            if (metric_type_ == SparseMetricType::METRIC_IP) {
+                // SIMD batch accumulate for IP metric
+                sparse::accumulate_window_ip_dispatch(ids, vals, 0, pl_size, pl.q_weight, scores.data(), 0);
+            } else {
+                // Scalar loop for BM25 metric (requires computer function)
+                const auto& doc_len_ratios = bm25_params_->row_sums_spans_;
+                for (size_t j = 0; j < pl_size; ++j) {
+                    const auto doc_id = ids[j];
+                    scores[doc_id] += pl.q_weight * computer(static_cast<float>(vals[j]), doc_len_ratios[doc_id]);
+                }
             }
-            if (first_ne_idx == 0)
-                break;  // No more candidates possible
+        }
 
-            // BATCH PROCESS each essential posting list
-            // Process all contributions from one posting list before moving to the next,
-            // enabling CPU prefetcher and SIMD
-            for (size_t i = 0; i < first_ne_idx; ++i) {
+        // Calculate max possible contribution from non-essential terms
+        float ne_upper_bound = (first_ne_idx < posting_lists.size()) ? upper_bounds[first_ne_idx] : 0.0f;
+
+        // SIMD candidate extraction: find all docs where score > effective_threshold
+        float effective_threshold = std::max(0.0f, threshold - ne_upper_bound);
+        size_t num_candidates = sparse::extract_candidates_dispatch(scores.data(), n_rows_internal_,
+                                                                    effective_threshold, candidate_indices.data());
+
+        // Process extracted candidates
+        for (size_t c = 0; c < num_candidates; ++c) {
+            table_t doc_id = candidate_indices[c];
+            float score = scores[doc_id];
+
+            if (!filter.empty() && filter.test(doc_id))
+                continue;
+
+            // Add contributions from non-essential terms
+            float full_score = score;
+            float cur_vec_sum =
+                metric_type_ == SparseMetricType::METRIC_BM25 ? bm25_params_->row_sums_spans_[doc_id] : 0;
+
+            for (size_t i = first_ne_idx; i < posting_lists.size(); ++i) {
+                // Early termination if we can't beat threshold
+                if (full_score + upper_bounds[i] <= threshold)
+                    break;
+
                 auto& pl = posting_lists[i];
                 const table_t* ids = pl.ids.data();
                 const QType* vals = pl.vals.data();
                 size_t pl_size = pl.ids.size();
 
-                // Advance cursor to first element >= window_start
-                while (cursors[i] < pl_size && ids[cursors[i]] < window_start) {
-                    cursors[i]++;
-                }
-                size_t list_start = cursors[i];
-
-                // Find end position (first element >= window_end)
-                size_t list_end = list_start;
-                while (list_end < pl_size && ids[list_end] < window_end) {
-                    list_end++;
-                }
-
-                if (list_start < list_end) {
-                    if (metric_type_ == SparseMetricType::METRIC_IP) {
-                        // SIMD batch accumulate for IP metric
-                        // scores[doc_id - window_start] += q_weight * val
-                        sparse::accumulate_window_ip_dispatch(ids, vals, list_start, list_end, pl.q_weight,
-                                                              scores.data(), window_start);
-                    } else {
-                        // Scalar loop for BM25 metric (requires computer function)
-                        const auto& doc_len_ratios = bm25_params_->row_sums_spans_;
-                        for (size_t j = list_start; j < list_end; ++j) {
-                            const auto doc_id = ids[j];
-                            const uint32_t local_id = doc_id - window_start;
-                            scores[local_id] +=
-                                pl.q_weight * computer(static_cast<float>(vals[j]), doc_len_ratios[doc_id]);
-                        }
-                    }
+                // Binary search for doc_id in this posting list
+                auto it = std::lower_bound(ids, ids + pl_size, doc_id);
+                if (it != ids + pl_size && *it == doc_id) {
+                    size_t idx = it - ids;
+                    full_score += pl.q_weight * computer(static_cast<float>(vals[idx]), cur_vec_sum);
                 }
             }
 
-            // Calculate max possible contribution from non-essential terms
-            float ne_upper_bound = (first_ne_idx < posting_lists.size()) ? upper_bounds[first_ne_idx] : 0.0f;
-
-            // SIMD candidate extraction: find all docs where score > effective_threshold
-            // effective_threshold = max(0, threshold - ne_upper_bound)
-            // This combines two checks: score > 0 AND score + ne_upper_bound > threshold
-            float effective_threshold = std::max(0.0f, threshold - ne_upper_bound);
-            size_t num_candidates = sparse::extract_candidates_dispatch(scores.data(), window_size, effective_threshold,
-                                                                        candidate_indices.data());
-
-            // Process extracted candidates
-            for (size_t c = 0; c < num_candidates; ++c) {
-                uint32_t doc_offset = candidate_indices[c];
-                float score = scores[doc_offset];
-
-                table_t doc_id = window_start + static_cast<table_t>(doc_offset);
-                if (!filter.empty() && filter.test(doc_id))
-                    continue;
-
-                // Add contributions from non-essential terms
-                // (These are terms whose max contribution alone can't beat threshold,
-                // but might contribute when combined with essential terms)
-                float full_score = score;
-                float cur_vec_sum =
-                    metric_type_ == SparseMetricType::METRIC_BM25 ? bm25_params_->row_sums_spans_[doc_id] : 0;
-
-                for (size_t i = first_ne_idx; i < posting_lists.size(); ++i) {
-                    // Early termination if we can't beat threshold
-                    if (full_score + upper_bounds[i] <= threshold)
-                        break;
-
-                    auto& pl = posting_lists[i];
-                    const table_t* ids = pl.ids.data();
-                    const QType* vals = pl.vals.data();
-                    size_t pl_size = pl.ids.size();
-
-                    // Binary search for doc_id in this posting list
-                    auto it = std::lower_bound(ids, ids + pl_size, doc_id);
-                    if (it != ids + pl_size && *it == doc_id) {
-                        size_t idx = it - ids;
-                        full_score += pl.q_weight * computer(static_cast<float>(vals[idx]), cur_vec_sum);
-                    }
-                }
-
-                if (full_score > threshold) {
-                    heap.push(doc_id, full_score);
-                    threshold = heap.full() ? heap.top().val : 0;
-                }
+            if (full_score > threshold) {
+                heap.push(doc_id, full_score);
+                threshold = heap.full() ? heap.top().val : 0;
             }
         }
     }
