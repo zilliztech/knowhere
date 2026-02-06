@@ -372,11 +372,12 @@ main(int argc, char** argv) {
             }
             avg_time /= (total_runs - warmup_runs);
 
-            // Compute recall on last run's results (only for successful queries)
+            // Compute recall on last run's results (only for queries with ground truth)
             float avg_recall = 0;
             int64_t valid_queries = 0;
             if (gt.nq > 0) {
-                for (int64_t q = 0; q < nq; ++q) {
+                int64_t max_gt_queries = std::min(nq, gt.nq);
+                for (int64_t q = 0; q < max_gt_queries; ++q) {
                     if (query_success[q]) {
                         avg_recall += gt.compute_recall(&all_results[q * topk], q, topk);
                         valid_queries++;
