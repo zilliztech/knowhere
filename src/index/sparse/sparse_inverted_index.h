@@ -1447,19 +1447,16 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                         found_cand = false;
                         break;
                     }
+                    cursors[i].seek(curr_cand_vec_id);
                     if (cursors[i].cur_vec_id_ == curr_cand_vec_id) {
                         curr_cand_score += cursors[i].q_value_ * computer(cursors[i].cur_vec_val(), cur_vec_sum);
-                        cursors[i].next();
-                    }
-                    if (cursors[i].cur_vec_id_ < next_cand_vec_id) {
-                        next_cand_vec_id = cursors[i].cur_vec_id_;
                     }
                 }
             }
 
-            heap.push(curr_cand_vec_id, curr_cand_score);
-            if (heap.full()) {
-                threshold = heap.top().val;
+            if (curr_cand_score > threshold) {
+                heap.push(curr_cand_vec_id, curr_cand_score);
+                threshold = heap.full() ? heap.top().val : 0;
                 while (first_ne_idx != 0 && upper_bounds[first_ne_idx - 1] <= threshold) {
                     --first_ne_idx;
                     if (first_ne_idx == 0) {
