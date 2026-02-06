@@ -22,6 +22,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <numeric>
 #include <unordered_map>
 #include <vector>
 
@@ -1379,16 +1380,26 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                                  DocIdFilter& filter, const DocValueComputer<float>& computer,
                                  float dim_max_score_ratio) const {
         // IDF-weighted ordering: priority = log(N/df) * max_score * query_weight
+        // Precompute priorities once to avoid repeated log() calls in comparator
         const float n_docs = static_cast<float>(n_rows_internal_);
-        std::sort(q_vec.begin(), q_vec.end(), [this, n_docs](auto& a, auto& b) {
-            size_t df_a = inverted_index_ids_spans_[a.first].size();
-            size_t df_b = inverted_index_ids_spans_[b.first].size();
-            float idf_a = std::log(n_docs / (df_a + 1.0f));
-            float idf_b = std::log(n_docs / (df_b + 1.0f));
-            float ub_a = max_score_in_dim_spans_[a.first] * a.second;
-            float ub_b = max_score_in_dim_spans_[b.first] * b.second;
-            return idf_a * ub_a > idf_b * ub_b;
-        });
+        std::vector<float> priorities(q_vec.size());
+        for (size_t i = 0; i < q_vec.size(); ++i) {
+            size_t df = inverted_index_ids_spans_[q_vec[i].first].size();
+            float idf = std::log(n_docs / (df + 1.0f));
+            priorities[i] = idf * max_score_in_dim_spans_[q_vec[i].first] * q_vec[i].second;
+        }
+
+        // Sort indices by priority, then reorder q_vec
+        std::vector<size_t> order(q_vec.size());
+        std::iota(order.begin(), order.end(), 0);
+        std::sort(order.begin(), order.end(),
+                  [&priorities](size_t a, size_t b) { return priorities[a] > priorities[b]; });
+
+        std::vector<std::pair<size_t, DType>> sorted_q_vec(q_vec.size());
+        for (size_t i = 0; i < order.size(); ++i) {
+            sorted_q_vec[i] = q_vec[order[i]];
+        }
+        q_vec = std::move(sorted_q_vec);
 
         std::vector<Cursor<DocIdFilter>> cursors = make_cursors(q_vec, computer, filter, dim_max_score_ratio);
 
