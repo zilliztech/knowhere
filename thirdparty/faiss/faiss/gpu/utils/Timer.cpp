@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -14,7 +14,10 @@ namespace faiss {
 namespace gpu {
 
 KernelTimer::KernelTimer(cudaStream_t stream)
-        : startEvent_(0), stopEvent_(0), stream_(stream), valid_(true) {
+        : startEvent_(nullptr),
+          stopEvent_(nullptr),
+          stream_(stream),
+          valid_(true) {
     CUDA_VERIFY(cudaEventCreate(&startEvent_));
     CUDA_VERIFY(cudaEventCreate(&stopEvent_));
 

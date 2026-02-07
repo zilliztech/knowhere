@@ -11,6 +11,9 @@
 
 #ifndef MINHASH_LSH_H
 #define MINHASH_LSH_H
+
+#include <faiss/cppcontrib/knowhere/impl/BlockFileIOWriter.h>
+
 #include "faiss/impl/io.h"
 #include "index/minhash/minhash_util.h"
 #include "io/file_io.h"
@@ -23,6 +26,7 @@
 #include "knowhere/utils.h"
 #include "simd/hook.h"
 #include "sys/stat.h"
+
 namespace knowhere::minhash {
 struct MinHashLSHBuildParams {
     std::string data_path;
@@ -52,8 +56,8 @@ struct MinHashLSHSearchParams {
 class MinHashBandIndex {
  public:
     static size_t
-    FormatAndSave(faiss::BlockFileIOWriter& writer, const KVPair* sorted_kv, const size_t block_size,
-                  const size_t rows);
+    FormatAndSave(faiss::cppcontrib::knowhere::BlockFileIOWriter& writer, const KVPair* sorted_kv,
+                  const size_t block_size, const size_t rows);
 
     Status
     Load(FileReader& reader, size_t rows, char* mmap_data, BloomFilter<KeyType>& bloom_filter);
@@ -149,8 +153,8 @@ class MinHashLSH {
 };
 
 size_t
-MinHashBandIndex::FormatAndSave(faiss::BlockFileIOWriter& writer, const KVPair* sorted_kv, const size_t block_size,
-                                const size_t rows) {
+MinHashBandIndex::FormatAndSave(faiss::cppcontrib::knowhere::BlockFileIOWriter& writer, const KVPair* sorted_kv,
+                                const size_t block_size, const size_t rows) {
     size_t max_num_of_a_block = block_size / sizeof(KVPair);
     size_t blocks_num = (rows + max_num_of_a_block - 1) / max_num_of_a_block;
     std::vector<KeyType> mins;
@@ -228,7 +232,7 @@ MinHashBandIndex::Load(FileReader& reader, size_t rows, char* mmap_data, BloomFi
 
 void
 MinHashBandIndex::Search(KeyType key, MinHashLSHResultHandler* res, faiss::IDSelector* id_selector) const {
-    auto block_id = faiss::u64_binary_search_ge(maxs_.data(), maxs_.size(), key);
+    auto block_id = faiss::cppcontrib::knowhere::u64_binary_search_ge(maxs_.data(), maxs_.size(), key);
 
     if (block_id == -1 || key < mins_[block_id]) {
         return;
@@ -237,7 +241,7 @@ MinHashBandIndex::Search(KeyType key, MinHashLSHResultHandler* res, faiss::IDSel
         size_t rows = num_in_a_blk_[block_id];
         KeyType* blk_k = reinterpret_cast<KeyType*>(data_ + block_size_ * block_id);
         ValueType* blk_v = reinterpret_cast<ValueType*>(data_ + block_size_ * block_id + rows * sizeof(KeyType));
-        int inner_id = faiss::u64_binary_search_eq(blk_k, rows, key);
+        int inner_id = faiss::cppcontrib::knowhere::u64_binary_search_eq(blk_k, rows, key);
         if (inner_id != -1) {
             for (; key == blk_k[inner_id] && (size_t)inner_id < rows; inner_id++) {
                 if (id_selector == nullptr || id_selector->is_member(blk_v[inner_id])) {
@@ -275,7 +279,7 @@ MinHashLSH::BuildAndSave(MinHashLSHBuildParams* params) {
     std::shared_ptr<KVPair[]> total_kv_pair;
 
     size_t header_size = DIV_ROUND_UP(sizeof(MinHashLSH) + band_num * sizeof(size_t), block_size);
-    faiss::BlockFileIOWriter writer(params->index_file_path.c_str(), block_size, header_size);
+    faiss::cppcontrib::knowhere::BlockFileIOWriter writer(params->index_file_path.c_str(), block_size, header_size);
     // load raw data, generate hash kv for each band and save raw data
     {
         std::unique_ptr<char[]> data = nullptr;

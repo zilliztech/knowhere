@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -93,7 +93,7 @@ struct HammingComputer4 {
         a0 = *(uint32_t*)a;
     }
 
-    inline int compute(const uint8_t* b) const {
+    inline int hamming(const uint8_t* b) const {
         return popcount64(*(uint32_t*)b ^ a0);
     }
 
@@ -116,7 +116,7 @@ struct HammingComputer8 {
         a0 = *(uint64_t*)a;
     }
 
-    inline int compute(const uint8_t* b) const {
+    inline int hamming(const uint8_t* b) const {
         return popcount64(*(uint64_t*)b ^ a0);
     }
 
@@ -141,7 +141,7 @@ struct HammingComputer16 {
         a1 = a[1];
     }
 
-    inline int compute(const uint8_t* b8) const {
+    inline int hamming(const uint8_t* b8) const {
         const uint64_t* b = (uint64_t*)b8;
         return popcount64(b[0] ^ a0) + popcount64(b[1] ^ a1);
     }
@@ -166,12 +166,15 @@ struct HammingComputer20 {
     void set(const uint8_t* a8, int code_size) {
         assert(code_size == 20);
         const uint64_t* a = (uint64_t*)a8;
+        const uint32_t* b = (uint32_t*)a8;
         a0 = a[0];
         a1 = a[1];
-        a2 = a[2];
+        // can't read a[2] since it is uint64_t, not uint32_t
+        // results in AddressSanitizer failure reading past end of array
+        a2 = b[4];
     }
 
-    inline int compute(const uint8_t* b8) const {
+    inline int hamming(const uint8_t* b8) const {
         const uint64_t* b = (uint64_t*)b8;
         return popcount64(b[0] ^ a0) + popcount64(b[1] ^ a1) +
                 popcount64(*(uint32_t*)(b + 2) ^ a2);
@@ -200,7 +203,7 @@ struct HammingComputer32 {
         a3 = a[3];
     }
 
-    inline int compute(const uint8_t* b8) const {
+    inline int hamming(const uint8_t* b8) const {
         const uint64_t* b = (uint64_t*)b8;
         return popcount64(b[0] ^ a0) + popcount64(b[1] ^ a1) +
                 popcount64(b[2] ^ a2) + popcount64(b[3] ^ a3);
@@ -233,7 +236,7 @@ struct HammingComputer64 {
         a7 = a[7];
     }
 
-    inline int compute(const uint8_t* b8) const {
+    inline int hamming(const uint8_t* b8) const {
         const uint64_t* b = (uint64_t*)b8;
         return popcount64(b[0] ^ a0) + popcount64(b[1] ^ a1) +
                 popcount64(b[2] ^ a2) + popcount64(b[3] ^ a3) +
@@ -263,7 +266,7 @@ struct HammingComputerDefault {
         remainder8 = code_size % 8;
     }
 
-    int compute(const uint8_t* b8) const {
+    int hamming(const uint8_t* b8) const {
         int accu = 0;
 
         const uint64_t* a64 = reinterpret_cast<const uint64_t*>(a8);
@@ -309,6 +312,7 @@ struct HammingComputerDefault {
             const uint8_t* a = a8 + 8 * quotient8;
             const uint8_t* b = b8 + 8 * quotient8;
             switch (remainder8) {
+                [[fallthrough]];
                 case 7:
                     accu += hamdis_tab_ham_bytes[a[6] ^ b[6]];
                     [[fallthrough]];
@@ -364,7 +368,7 @@ struct GenHammingComputer8 {
         a0 = *(uint64_t*)a;
     }
 
-    inline int compute(const uint8_t* b) const {
+    inline int hamming(const uint8_t* b) const {
         return generalized_hamming_64(*(uint64_t*)b ^ a0);
     }
 
@@ -382,7 +386,7 @@ struct GenHammingComputer16 {
         a1 = a[1];
     }
 
-    inline int compute(const uint8_t* b8) const {
+    inline int hamming(const uint8_t* b8) const {
         const uint64_t* b = (uint64_t*)b8;
         return generalized_hamming_64(b[0] ^ a0) +
                 generalized_hamming_64(b[1] ^ a1);
@@ -405,7 +409,7 @@ struct GenHammingComputer32 {
         a3 = a[3];
     }
 
-    inline int compute(const uint8_t* b8) const {
+    inline int hamming(const uint8_t* b8) const {
         const uint64_t* b = (uint64_t*)b8;
         return generalized_hamming_64(b[0] ^ a0) +
                 generalized_hamming_64(b[1] ^ a1) +
@@ -428,7 +432,7 @@ struct GenHammingComputerM8 {
         n = code_size / 8;
     }
 
-    int compute(const uint8_t* b8) const {
+    int hamming(const uint8_t* b8) const {
         const uint64_t* b = (uint64_t*)b8;
         int accu = 0;
         for (int i = 0; i < n; i++)

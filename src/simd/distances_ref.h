@@ -17,6 +17,8 @@
 #include "knowhere/operands.h"
 
 namespace faiss {
+namespace cppcontrib {
+namespace knowhere {
 
 /// Squared L2 distance between two vectors
 float
@@ -95,44 +97,44 @@ ivec_L2sqr_ref(const int8_t* x, const int8_t* y, size_t d);
 ///////////////////////////////////////////////////////////////////////////////
 // fp16
 float
-fp16_vec_inner_product_ref(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
+fp16_vec_inner_product_ref(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size_t d);
 
 float
-fp16_vec_L2sqr_ref(const knowhere::fp16* x, const knowhere::fp16* y, size_t d);
+fp16_vec_L2sqr_ref(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size_t d);
 
 float
-fp16_vec_norm_L2sqr_ref(const knowhere::fp16* x, size_t d);
+fp16_vec_norm_L2sqr_ref(const ::knowhere::fp16* x, size_t d);
 
 void
-fp16_vec_inner_product_batch_4_ref(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
-                                   const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0,
+fp16_vec_inner_product_batch_4_ref(const ::knowhere::fp16* x, const ::knowhere::fp16* y0, const ::knowhere::fp16* y1,
+                                   const ::knowhere::fp16* y2, const ::knowhere::fp16* y3, const size_t d, float& dis0,
                                    float& dis1, float& dis2, float& dis3);
 
 void
-fp16_vec_L2sqr_batch_4_ref(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
-                           const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0, float& dis1,
-                           float& dis2, float& dis3);
+fp16_vec_L2sqr_batch_4_ref(const ::knowhere::fp16* x, const ::knowhere::fp16* y0, const ::knowhere::fp16* y1,
+                           const ::knowhere::fp16* y2, const ::knowhere::fp16* y3, const size_t d, float& dis0,
+                           float& dis1, float& dis2, float& dis3);
 
 ///////////////////////////////////////////////////////////////////////////////
 // bf16
 float
-bf16_vec_inner_product_ref(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
+bf16_vec_inner_product_ref(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d);
 
 float
-bf16_vec_L2sqr_ref(const knowhere::bf16* x, const knowhere::bf16* y, size_t d);
+bf16_vec_L2sqr_ref(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d);
 
 float
-bf16_vec_norm_L2sqr_ref(const knowhere::bf16* x, size_t d);
+bf16_vec_norm_L2sqr_ref(const ::knowhere::bf16* x, size_t d);
 
 void
-bf16_vec_inner_product_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                                   const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
+bf16_vec_inner_product_batch_4_ref(const ::knowhere::bf16* x, const ::knowhere::bf16* y0, const ::knowhere::bf16* y1,
+                                   const ::knowhere::bf16* y2, const ::knowhere::bf16* y3, const size_t d, float& dis0,
                                    float& dis1, float& dis2, float& dis3);
 
 void
-bf16_vec_L2sqr_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                           const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0, float& dis1,
-                           float& dis2, float& dis3);
+bf16_vec_L2sqr_batch_4_ref(const ::knowhere::bf16* x, const ::knowhere::bf16* y0, const ::knowhere::bf16* y1,
+                           const ::knowhere::bf16* y2, const ::knowhere::bf16* y3, const size_t d, float& dis0,
+                           float& dis1, float& dis2, float& dis3);
 
 ///////////////////////////////////////////////////////////////////////////////
 // int8
@@ -199,4 +201,6 @@ void
 u64_jaccard_distance_batch_4_ref(const char*, const char*, const char*, const char*, const char*, size_t, size_t,
                                  float&, float&, float&, float&);
 
+}  // namespace knowhere
+}  // namespace cppcontrib
 }  // namespace faiss

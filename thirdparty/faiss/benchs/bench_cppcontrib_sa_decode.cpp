@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -20,9 +20,7 @@
 #include <faiss/Index2Layer.h>
 #include <faiss/IndexIVFPQ.h>
 #include <faiss/IndexPQ.h>
-#include <faiss/impl/io.h>
 #include <faiss/index_factory.h>
-#include <faiss/index_io.h>
 
 #include <faiss/IndexRowwiseMinMax.h>
 #include <faiss/cppcontrib/SaDecodeKernels.h>
@@ -223,9 +221,9 @@ static void verifyIndex2LevelDecoder(
 
     // generate a random order of points
     std::uniform_int_distribution<uint64_t> un(0, n - 1);
-    std::vector<uint64_t> pointIncidesToDecode(nIterations * n, 0);
+    std::vector<uint64_t> pointIndicesToDecode(nIterations * n, 0);
     for (uint64_t i = 0; i < nIterations * n; i++) {
-        pointIncidesToDecode[i] = un(rng);
+        pointIndicesToDecode[i] = un(rng);
     }
 
     {
@@ -236,7 +234,7 @@ static void verifyIndex2LevelDecoder(
         StopWatch swFaiss;
         for (uint64_t iter = 0; iter < nIterations; iter++) {
             for (uint64_t i = 0; i < n; i++) {
-                const auto pointIdx = pointIncidesToDecode[i + iter * n];
+                const auto pointIdx = pointIndicesToDecode[i + iter * n];
                 index->sa_decode(
                         1,
                         encodedData.data() + pointIdx * codeSize,
@@ -249,7 +247,7 @@ static void verifyIndex2LevelDecoder(
         StopWatch swKernel;
         for (uint64_t iter = 0; iter < nIterations; iter++) {
             for (uint64_t i = 0; i < n; i++) {
-                const auto pointIdx = pointIncidesToDecode[i + iter * n];
+                const auto pointIdx = pointIndicesToDecode[i + iter * n];
                 T::store(
                         pqCoarseCentroidsQ,
                         pqFineCentroidsQ,
@@ -291,14 +289,15 @@ static void verifyIndex2LevelDecoder(
         for (uint64_t i = 0; i < n; i++) {
             for (uint64_t iter = 0; iter < nIterations; iter++) {
                 const auto pointIdx =
-                        pointIncidesToDecode[i * nIterations + iter];
+                        pointIndicesToDecode[i * nIterations + iter];
                 const auto weight = weights[i * nIterations + iter];
                 index->sa_decode(
                         1,
                         encodedData.data() + pointIdx * codeSize,
                         tempFaiss.data());
-                for (uint64_t j = 0; j < d; j++)
+                for (uint64_t j = 0; j < d; j++) {
                     outputFaiss[i * d + j] += weight * tempFaiss[j];
+                }
             }
         }
         const double timeFaiss = swFaiss.elapsed();
@@ -308,7 +307,7 @@ static void verifyIndex2LevelDecoder(
         for (uint64_t i = 0; i < n; i++) {
             for (uint64_t iter = 0; iter < nIterations; iter++) {
                 const auto pointIdx =
-                        pointIncidesToDecode[i * nIterations + iter];
+                        pointIndicesToDecode[i * nIterations + iter];
                 const auto weight = weights[i * nIterations + iter];
                 T::accum(
                         pqCoarseCentroidsQ,
@@ -332,10 +331,10 @@ static void verifyIndex2LevelDecoder(
         for (uint64_t i = 0; i < n; i++) {
             for (uint64_t iter = 0; iter < nIterations; iter += 2) {
                 const auto pointIdx0 =
-                        pointIncidesToDecode[i * nIterations + iter + 0];
+                        pointIndicesToDecode[i * nIterations + iter + 0];
                 const auto weight0 = weights[i * nIterations + iter + 0];
                 const auto pointIdx1 =
-                        pointIncidesToDecode[i * nIterations + iter + 1];
+                        pointIndicesToDecode[i * nIterations + iter + 1];
                 const auto weight1 = weights[i * nIterations + iter + 1];
                 T::accum(
                         pqCoarseCentroidsQ,
@@ -361,10 +360,10 @@ static void verifyIndex2LevelDecoder(
         for (uint64_t i = 0; i < n; i++) {
             for (uint64_t iter = 0; iter < nIterations; iter += 2) {
                 const auto pointIdx0 =
-                        pointIncidesToDecode[i * nIterations + iter + 0];
+                        pointIndicesToDecode[i * nIterations + iter + 0];
                 const auto weight0 = weights[i * nIterations + iter + 0];
                 const auto pointIdx1 =
-                        pointIncidesToDecode[i * nIterations + iter + 1];
+                        pointIndicesToDecode[i * nIterations + iter + 1];
                 const auto weight1 = weights[i * nIterations + iter + 1];
                 T::accum(
                         pqCoarseCentroidsQ,
@@ -392,13 +391,13 @@ static void verifyIndex2LevelDecoder(
         for (uint64_t i = 0; i < n; i++) {
             for (uint64_t iter = 0; iter < nIterations; iter += 3) {
                 const auto pointIdx0 =
-                        pointIncidesToDecode[i * nIterations + iter + 0];
+                        pointIndicesToDecode[i * nIterations + iter + 0];
                 const auto weight0 = weights[i * nIterations + iter + 0];
                 const auto pointIdx1 =
-                        pointIncidesToDecode[i * nIterations + iter + 1];
+                        pointIndicesToDecode[i * nIterations + iter + 1];
                 const auto weight1 = weights[i * nIterations + iter + 1];
                 const auto pointIdx2 =
-                        pointIncidesToDecode[i * nIterations + iter + 2];
+                        pointIndicesToDecode[i * nIterations + iter + 2];
                 const auto weight2 = weights[i * nIterations + iter + 2];
                 T::accum(
                         pqCoarseCentroidsQ,
@@ -426,13 +425,13 @@ static void verifyIndex2LevelDecoder(
         for (uint64_t i = 0; i < n; i++) {
             for (uint64_t iter = 0; iter < nIterations; iter += 3) {
                 const auto pointIdx0 =
-                        pointIncidesToDecode[i * nIterations + iter + 0];
+                        pointIndicesToDecode[i * nIterations + iter + 0];
                 const auto weight0 = weights[i * nIterations + iter + 0];
                 const auto pointIdx1 =
-                        pointIncidesToDecode[i * nIterations + iter + 1];
+                        pointIndicesToDecode[i * nIterations + iter + 1];
                 const auto weight1 = weights[i * nIterations + iter + 1];
                 const auto pointIdx2 =
-                        pointIncidesToDecode[i * nIterations + iter + 2];
+                        pointIndicesToDecode[i * nIterations + iter + 2];
                 const auto weight2 = weights[i * nIterations + iter + 2];
                 T::accum(
                         pqCoarseCentroidsQ,
@@ -533,9 +532,9 @@ static void verifyMinMaxIndex2LevelDecoder(
 
     // generate a random order of points
     std::uniform_int_distribution<uint64_t> un(0, n - 1);
-    std::vector<uint64_t> pointIncidesToDecode(nIterations * n, 0);
+    std::vector<uint64_t> pointIndicesToDecode(nIterations * n, 0);
     for (uint64_t i = 0; i < nIterations * n; i++) {
-        pointIncidesToDecode[i] = un(rng);
+        pointIndicesToDecode[i] = un(rng);
     }
 
     {
@@ -546,7 +545,7 @@ static void verifyMinMaxIndex2LevelDecoder(
         StopWatch swFaiss;
         for (uint64_t iter = 0; iter < nIterations; iter++) {
             for (uint64_t i = 0; i < n; i++) {
-                const auto pointIdx = pointIncidesToDecode[i + iter * n];
+                const auto pointIdx = pointIndicesToDecode[i + iter * n];
                 index->sa_decode(
                         1,
                         encodedData.data() + pointIdx * codeSize,
@@ -559,7 +558,7 @@ static void verifyMinMaxIndex2LevelDecoder(
         StopWatch swKernel;
         for (uint64_t iter = 0; iter < nIterations; iter++) {
             for (uint64_t i = 0; i < n; i++) {
-                const auto pointIdx = pointIncidesToDecode[i + iter * n];
+                const auto pointIdx = pointIndicesToDecode[i + iter * n];
                 T::store(
                         pqCoarseCentroidsQ,
                         pqFineCentroidsQ,
@@ -602,7 +601,7 @@ static void verifyMinMaxIndex2LevelDecoder(
         for (uint64_t i = 0; i < n; i++) {
             for (uint64_t iter = 0; iter < nIterations; iter++) {
                 const auto pointIdx =
-                        pointIncidesToDecode[i * nIterations + iter];
+                        pointIndicesToDecode[i * nIterations + iter];
                 const auto weight = weights[i * nIterations + iter];
                 index->sa_decode(
                         1,
@@ -621,7 +620,7 @@ static void verifyMinMaxIndex2LevelDecoder(
             float outputAccumMin = 0;
             for (uint64_t iter = 0; iter < nIterations; iter++) {
                 const auto pointIdx =
-                        pointIncidesToDecode[i * nIterations + iter];
+                        pointIndicesToDecode[i * nIterations + iter];
                 const auto weight = weights[i * nIterations + iter];
                 T::accum(
                         pqCoarseCentroidsQ,
@@ -650,10 +649,10 @@ static void verifyMinMaxIndex2LevelDecoder(
             float outputAccumMin = 0;
             for (uint64_t iter = 0; iter < nIterations; iter += 2) {
                 const auto pointIdx0 =
-                        pointIncidesToDecode[i * nIterations + iter + 0];
+                        pointIndicesToDecode[i * nIterations + iter + 0];
                 const auto weight0 = weights[i * nIterations + iter + 0];
                 const auto pointIdx1 =
-                        pointIncidesToDecode[i * nIterations + iter + 1];
+                        pointIndicesToDecode[i * nIterations + iter + 1];
                 const auto weight1 = weights[i * nIterations + iter + 1];
                 T::accum(
                         pqCoarseCentroidsQ,
@@ -684,10 +683,10 @@ static void verifyMinMaxIndex2LevelDecoder(
             float outputAccumMin = 0;
             for (uint64_t iter = 0; iter < nIterations; iter += 2) {
                 const auto pointIdx0 =
-                        pointIncidesToDecode[i * nIterations + iter + 0];
+                        pointIndicesToDecode[i * nIterations + iter + 0];
                 const auto weight0 = weights[i * nIterations + iter + 0];
                 const auto pointIdx1 =
-                        pointIncidesToDecode[i * nIterations + iter + 1];
+                        pointIndicesToDecode[i * nIterations + iter + 1];
                 const auto weight1 = weights[i * nIterations + iter + 1];
                 T::accum(
                         pqCoarseCentroidsQ,
@@ -720,13 +719,13 @@ static void verifyMinMaxIndex2LevelDecoder(
             float outputAccumMin = 0;
             for (uint64_t iter = 0; iter < nIterations; iter += 3) {
                 const auto pointIdx0 =
-                        pointIncidesToDecode[i * nIterations + iter + 0];
+                        pointIndicesToDecode[i * nIterations + iter + 0];
                 const auto weight0 = weights[i * nIterations + iter + 0];
                 const auto pointIdx1 =
-                        pointIncidesToDecode[i * nIterations + iter + 1];
+                        pointIndicesToDecode[i * nIterations + iter + 1];
                 const auto weight1 = weights[i * nIterations + iter + 1];
                 const auto pointIdx2 =
-                        pointIncidesToDecode[i * nIterations + iter + 2];
+                        pointIndicesToDecode[i * nIterations + iter + 2];
                 const auto weight2 = weights[i * nIterations + iter + 2];
                 T::accum(
                         pqCoarseCentroidsQ,
@@ -759,13 +758,13 @@ static void verifyMinMaxIndex2LevelDecoder(
             float outputAccumMin = 0;
             for (uint64_t iter = 0; iter < nIterations; iter += 3) {
                 const auto pointIdx0 =
-                        pointIncidesToDecode[i * nIterations + iter + 0];
+                        pointIndicesToDecode[i * nIterations + iter + 0];
                 const auto weight0 = weights[i * nIterations + iter + 0];
                 const auto pointIdx1 =
-                        pointIncidesToDecode[i * nIterations + iter + 1];
+                        pointIndicesToDecode[i * nIterations + iter + 1];
                 const auto weight1 = weights[i * nIterations + iter + 1];
                 const auto pointIdx2 =
-                        pointIncidesToDecode[i * nIterations + iter + 2];
+                        pointIndicesToDecode[i * nIterations + iter + 2];
                 const auto weight2 = weights[i * nIterations + iter + 2];
                 T::accum(
                         pqCoarseCentroidsQ,
@@ -860,9 +859,9 @@ static void verifyIndexPQDecoder(
 
     // generate a random order of points
     std::uniform_int_distribution<uint64_t> un(0, n - 1);
-    std::vector<uint64_t> pointIncidesToDecode(nIterations * n, 0);
+    std::vector<uint64_t> pointIndicesToDecode(nIterations * n, 0);
     for (uint64_t i = 0; i < nIterations * n; i++) {
-        pointIncidesToDecode[i] = un(rng);
+        pointIndicesToDecode[i] = un(rng);
     }
 
     {
@@ -873,7 +872,7 @@ static void verifyIndexPQDecoder(
         StopWatch swFaiss;
         for (uint64_t iter = 0; iter < nIterations; iter++) {
             for (uint64_t i = 0; i < n; i++) {
-                const auto pointIdx = pointIncidesToDecode[i + iter * n];
+                const auto pointIdx = pointIndicesToDecode[i + iter * n];
                 index->sa_decode(
                         1,
                         encodedData.data() + pointIdx * codeSize,
@@ -886,7 +885,7 @@ static void verifyIndexPQDecoder(
         StopWatch swKernel;
         for (uint64_t iter = 0; iter < nIterations; iter++) {
             for (uint64_t i = 0; i < n; i++) {
-                const auto pointIdx = pointIncidesToDecode[i + iter * n];
+                const auto pointIdx = pointIndicesToDecode[i + iter * n];
                 T::store(
                         pqFineCentroidsQ,
                         encodedData.data() + pointIdx * codeSize,
@@ -928,7 +927,7 @@ static void verifyIndexPQDecoder(
         for (uint64_t i = 0; i < n; i++) {
             for (uint64_t iter = 0; iter < nIterations; iter++) {
                 const auto pointIdx =
-                        pointIncidesToDecode[i * nIterations + iter];
+                        pointIndicesToDecode[i * nIterations + iter];
                 const auto weight = weights[i * nIterations + iter];
                 index->sa_decode(
                         1,
@@ -946,7 +945,7 @@ static void verifyIndexPQDecoder(
         for (uint64_t i = 0; i < n; i++) {
             for (uint64_t iter = 0; iter < nIterations; iter++) {
                 const auto pointIdx =
-                        pointIncidesToDecode[i * nIterations + iter];
+                        pointIndicesToDecode[i * nIterations + iter];
                 const auto weight = weights[i * nIterations + iter];
                 T::accum(
                         pqFineCentroidsQ,
@@ -969,10 +968,10 @@ static void verifyIndexPQDecoder(
         for (uint64_t i = 0; i < n; i++) {
             for (uint64_t iter = 0; iter < nIterations; iter += 2) {
                 const auto pointIdx0 =
-                        pointIncidesToDecode[i * nIterations + iter + 0];
+                        pointIndicesToDecode[i * nIterations + iter + 0];
                 const auto weight0 = weights[i * nIterations + iter + 0];
                 const auto pointIdx1 =
-                        pointIncidesToDecode[i * nIterations + iter + 1];
+                        pointIndicesToDecode[i * nIterations + iter + 1];
                 const auto weight1 = weights[i * nIterations + iter + 1];
                 T::accum(
                         pqFineCentroidsQ,
@@ -997,10 +996,10 @@ static void verifyIndexPQDecoder(
         for (uint64_t i = 0; i < n; i++) {
             for (uint64_t iter = 0; iter < nIterations; iter += 2) {
                 const auto pointIdx0 =
-                        pointIncidesToDecode[i * nIterations + iter + 0];
+                        pointIndicesToDecode[i * nIterations + iter + 0];
                 const auto weight0 = weights[i * nIterations + iter + 0];
                 const auto pointIdx1 =
-                        pointIncidesToDecode[i * nIterations + iter + 1];
+                        pointIndicesToDecode[i * nIterations + iter + 1];
                 const auto weight1 = weights[i * nIterations + iter + 1];
                 T::accum(
                         pqFineCentroidsQ,
@@ -1026,13 +1025,13 @@ static void verifyIndexPQDecoder(
         for (uint64_t i = 0; i < n; i++) {
             for (uint64_t iter = 0; iter < nIterations; iter += 3) {
                 const auto pointIdx0 =
-                        pointIncidesToDecode[i * nIterations + iter + 0];
+                        pointIndicesToDecode[i * nIterations + iter + 0];
                 const auto weight0 = weights[i * nIterations + iter + 0];
                 const auto pointIdx1 =
-                        pointIncidesToDecode[i * nIterations + iter + 1];
+                        pointIndicesToDecode[i * nIterations + iter + 1];
                 const auto weight1 = weights[i * nIterations + iter + 1];
                 const auto pointIdx2 =
-                        pointIncidesToDecode[i * nIterations + iter + 2];
+                        pointIndicesToDecode[i * nIterations + iter + 2];
                 const auto weight2 = weights[i * nIterations + iter + 2];
                 T::accum(
                         pqFineCentroidsQ,
@@ -1059,13 +1058,13 @@ static void verifyIndexPQDecoder(
         for (uint64_t i = 0; i < n; i++) {
             for (uint64_t iter = 0; iter < nIterations; iter += 3) {
                 const auto pointIdx0 =
-                        pointIncidesToDecode[i * nIterations + iter + 0];
+                        pointIndicesToDecode[i * nIterations + iter + 0];
                 const auto weight0 = weights[i * nIterations + iter + 0];
                 const auto pointIdx1 =
-                        pointIncidesToDecode[i * nIterations + iter + 1];
+                        pointIndicesToDecode[i * nIterations + iter + 1];
                 const auto weight1 = weights[i * nIterations + iter + 1];
                 const auto pointIdx2 =
-                        pointIncidesToDecode[i * nIterations + iter + 2];
+                        pointIndicesToDecode[i * nIterations + iter + 2];
                 const auto weight2 = weights[i * nIterations + iter + 2];
                 T::accum(
                         pqFineCentroidsQ,
@@ -1158,9 +1157,9 @@ static void verifyMinMaxIndexPQDecoder(
 
     // generate a random order of points
     std::uniform_int_distribution<uint64_t> un(0, n - 1);
-    std::vector<uint64_t> pointIncidesToDecode(nIterations * n, 0);
+    std::vector<uint64_t> pointIndicesToDecode(nIterations * n, 0);
     for (uint64_t i = 0; i < nIterations * n; i++) {
-        pointIncidesToDecode[i] = un(rng);
+        pointIndicesToDecode[i] = un(rng);
     }
 
     {
@@ -1171,7 +1170,7 @@ static void verifyMinMaxIndexPQDecoder(
         StopWatch swFaiss;
         for (uint64_t iter = 0; iter < nIterations; iter++) {
             for (uint64_t i = 0; i < n; i++) {
-                const auto pointIdx = pointIncidesToDecode[i + iter * n];
+                const auto pointIdx = pointIndicesToDecode[i + iter * n];
                 index->sa_decode(
                         1,
                         encodedData.data() + pointIdx * codeSize,
@@ -1184,7 +1183,7 @@ static void verifyMinMaxIndexPQDecoder(
         StopWatch swKernel;
         for (uint64_t iter = 0; iter < nIterations; iter++) {
             for (uint64_t i = 0; i < n; i++) {
-                const auto pointIdx = pointIncidesToDecode[i + iter * n];
+                const auto pointIdx = pointIndicesToDecode[i + iter * n];
                 T::store(
                         pqFineCentroidsQ,
                         encodedData.data() + pointIdx * codeSize,
@@ -1226,7 +1225,7 @@ static void verifyMinMaxIndexPQDecoder(
         for (uint64_t i = 0; i < n; i++) {
             for (uint64_t iter = 0; iter < nIterations; iter++) {
                 const auto pointIdx =
-                        pointIncidesToDecode[i * nIterations + iter];
+                        pointIndicesToDecode[i * nIterations + iter];
                 const auto weight = weights[i * nIterations + iter];
                 index->sa_decode(
                         1,
@@ -1245,7 +1244,7 @@ static void verifyMinMaxIndexPQDecoder(
             float outputAccumMin = 0;
             for (uint64_t iter = 0; iter < nIterations; iter++) {
                 const auto pointIdx =
-                        pointIncidesToDecode[i * nIterations + iter];
+                        pointIndicesToDecode[i * nIterations + iter];
                 const auto weight = weights[i * nIterations + iter];
                 T::accum(
                         pqFineCentroidsQ,
@@ -1273,10 +1272,10 @@ static void verifyMinMaxIndexPQDecoder(
             float outputAccumMin = 0;
             for (uint64_t iter = 0; iter < nIterations; iter += 2) {
                 const auto pointIdx0 =
-                        pointIncidesToDecode[i * nIterations + iter + 0];
+                        pointIndicesToDecode[i * nIterations + iter + 0];
                 const auto weight0 = weights[i * nIterations + iter + 0];
                 const auto pointIdx1 =
-                        pointIncidesToDecode[i * nIterations + iter + 1];
+                        pointIndicesToDecode[i * nIterations + iter + 1];
                 const auto weight1 = weights[i * nIterations + iter + 1];
                 T::accum(
                         pqFineCentroidsQ,
@@ -1306,10 +1305,10 @@ static void verifyMinMaxIndexPQDecoder(
             float outputAccumMin = 0;
             for (uint64_t iter = 0; iter < nIterations; iter += 2) {
                 const auto pointIdx0 =
-                        pointIncidesToDecode[i * nIterations + iter + 0];
+                        pointIndicesToDecode[i * nIterations + iter + 0];
                 const auto weight0 = weights[i * nIterations + iter + 0];
                 const auto pointIdx1 =
-                        pointIncidesToDecode[i * nIterations + iter + 1];
+                        pointIndicesToDecode[i * nIterations + iter + 1];
                 const auto weight1 = weights[i * nIterations + iter + 1];
                 T::accum(
                         pqFineCentroidsQ,
@@ -1340,13 +1339,13 @@ static void verifyMinMaxIndexPQDecoder(
             float outputAccumMin = 0;
             for (uint64_t iter = 0; iter < nIterations; iter += 3) {
                 const auto pointIdx0 =
-                        pointIncidesToDecode[i * nIterations + iter + 0];
+                        pointIndicesToDecode[i * nIterations + iter + 0];
                 const auto weight0 = weights[i * nIterations + iter + 0];
                 const auto pointIdx1 =
-                        pointIncidesToDecode[i * nIterations + iter + 1];
+                        pointIndicesToDecode[i * nIterations + iter + 1];
                 const auto weight1 = weights[i * nIterations + iter + 1];
                 const auto pointIdx2 =
-                        pointIncidesToDecode[i * nIterations + iter + 2];
+                        pointIndicesToDecode[i * nIterations + iter + 2];
                 const auto weight2 = weights[i * nIterations + iter + 2];
                 T::accum(
                         pqFineCentroidsQ,
@@ -1378,13 +1377,13 @@ static void verifyMinMaxIndexPQDecoder(
             float outputAccumMin = 0;
             for (uint64_t iter = 0; iter < nIterations; iter += 3) {
                 const auto pointIdx0 =
-                        pointIncidesToDecode[i * nIterations + iter + 0];
+                        pointIndicesToDecode[i * nIterations + iter + 0];
                 const auto weight0 = weights[i * nIterations + iter + 0];
                 const auto pointIdx1 =
-                        pointIncidesToDecode[i * nIterations + iter + 1];
+                        pointIndicesToDecode[i * nIterations + iter + 1];
                 const auto weight1 = weights[i * nIterations + iter + 1];
                 const auto pointIdx2 =
-                        pointIncidesToDecode[i * nIterations + iter + 2];
+                        pointIndicesToDecode[i * nIterations + iter + 2];
                 const auto weight2 = weights[i * nIterations + iter + 2];
                 T::accum(
                         pqFineCentroidsQ,

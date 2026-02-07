@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <cstdio>
 
-#ifdef _MSC_VER
+#ifdef _WIN32
 
 /*******************************************************
  * Windows specific macros
@@ -23,11 +23,11 @@
 #define FAISS_API __declspec(dllimport)
 #endif // FAISS_MAIN_LIB
 
-#ifdef _MSC_VER
 #define strtok_r strtok_s
-#endif // _MSC_VER
 
+#ifdef _MSC_VER
 #define __PRETTY_FUNCTION__ __FUNCSIG__
+#endif // _MSC_VER
 
 #define posix_memalign(p, a, s) \
     (((*(p)) = _aligned_malloc((s), (a))), *(p) ? 0 : errno)
@@ -37,8 +37,10 @@
 #define ALIGNED(x) __declspec(align(x))
 
 // redefine the GCC intrinsics with Windows equivalents
+#ifdef _MSC_VER
 
 #include <intrin.h>
+#include <limits.h>
 
 #ifndef __clang__
 inline int __builtin_ctzll(uint64_t x) {
@@ -59,12 +61,22 @@ inline int __builtin_ctz(unsigned long x) {
 
 #ifndef __clang__
 inline int __builtin_clzll(uint64_t x) {
+#if defined(_M_X64) || defined(__x86_64__)
     return (int)__lzcnt64(x);
+#elif defined(_M_ARM64)
+    unsigned long index;
+    int count = sizeof(uint64_t) * CHAR_BIT;
+    if (_BitScanReverse64(&index, x)) {
+        count = count - 1 - index;
+    }
+    return count;
+#endif
 }
 #endif
 
 #define __builtin_popcount __popcnt
 #define __builtin_popcountl __popcnt64
+#define __builtin_popcountll __popcnt64
 
 #ifndef __clang__
 #define __m128i_u __m128i
@@ -91,7 +103,15 @@ inline int __builtin_clzll(uint64_t x) {
 #define __F16C__ 1
 #endif
 
+#endif // _MSC_VER
+
 #define FAISS_ALWAYS_INLINE __forceinline
+
+// MSVC uses pragma pack instead of __attribute__((packed))
+// Use FAISS_PACK_STRUCTS_BEGIN/END to wrap packed structure definitions
+#define FAISS_PACKED
+#define FAISS_PACK_STRUCTS_BEGIN __pragma(pack(push, 1))
+#define FAISS_PACK_STRUCTS_END __pragma(pack(pop))
 
 #else
 /*******************************************************
@@ -105,9 +125,15 @@ inline int __builtin_clzll(uint64_t x) {
 // windows
 #ifdef SWIG
 #define ALIGNED(x)
+#define FAISS_PACKED
 #else
 #define ALIGNED(x) __attribute__((aligned(x)))
+#define FAISS_PACKED __attribute__((packed))
 #endif
+
+// On non-Windows, FAISS_PACKED handles packing, so these are no-ops
+#define FAISS_PACK_STRUCTS_BEGIN
+#define FAISS_PACK_STRUCTS_END
 
 #define FAISS_ALWAYS_INLINE __attribute__((always_inline)) inline
 
@@ -170,13 +196,6 @@ inline int __builtin_clzll(uint64_t x) {
 #define FAISS_PRAGMA_IMPRECISE_LOOP
 #define FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
 #define FAISS_PRAGMA_IMPRECISE_FUNCTION_END
-#endif
-
-#if defined(_MSC_VER) && defined(_MSVC_LANG)
-static_assert(_MSVC_LANG >= 201703L, "C++17 is expected");
-#else
-// make sure that at least C++17 is used
-static_assert(__cplusplus >= 201703L, "C++17 is expected");
 #endif
 
 // clang-format on

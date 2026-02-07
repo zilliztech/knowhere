@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -16,7 +16,6 @@
 
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissAssert.h>
-#include <faiss/impl/IDSelector.h>
 #include <faiss/utils/Heap.h>
 #include <faiss/utils/WorkerThread.h>
 #include <faiss/utils/random.h>
@@ -37,8 +36,9 @@ void IndexSplitVectors::add_sub_index(Index* index) {
 }
 
 void IndexSplitVectors::sync_with_sub_indexes() {
-    if (sub_indexes.empty())
+    if (sub_indexes.empty()) {
         return;
+    }
     Index* index0 = sub_indexes[0];
     sum_d = index0->d;
     metric_type = index0->metric_type;
@@ -82,24 +82,28 @@ void IndexSplitVectors::search(
                         no == 0 ? distances : all_distances.get() + no * k * n;
                 idx_t* labels1 =
                         no == 0 ? labels : all_labels.get() + no * k * n;
-                if (index->verbose)
+                if (index->verbose) {
                     printf("begin query shard %d on %" PRId64 " points\n",
                            no,
                            n);
+                }
                 const Index* sub_index = index->sub_indexes[no];
                 int64_t sub_d = sub_index->d, d = index->d;
                 idx_t ofs = 0;
-                for (int i = 0; i < no; i++)
+                for (int i = 0; i < no; i++) {
                     ofs += index->sub_indexes[i]->d;
+                }
 
                 std::unique_ptr<float[]> sub_x(new float[sub_d * n]);
-                for (idx_t i = 0; i < n; i++)
+                for (idx_t i = 0; i < n; i++) {
                     memcpy(sub_x.get() + i * sub_d,
                            x + ofs + i * d,
                            sub_d * sizeof(float));
+                }
                 sub_index->search(n, sub_x.get(), k, distances1, labels1);
-                if (index->verbose)
+                if (index->verbose) {
                     printf("end query shard %d\n", no);
+                }
             };
 
     if (!threaded) {
@@ -151,8 +155,9 @@ void IndexSplitVectors::reset() {
 
 IndexSplitVectors::~IndexSplitVectors() {
     if (own_fields) {
-        for (int s = 0; s < sub_indexes.size(); s++)
+        for (int s = 0; s < sub_indexes.size(); s++) {
             delete sub_indexes[s];
+        }
     }
 }
 

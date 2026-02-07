@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -13,8 +13,6 @@
 
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/io.h>
-#include <iostream>
-#include "knowhere/utils.h"
 
 namespace faiss {
 
@@ -45,11 +43,13 @@ size_t VectorIOWriter::operator()(const void* ptr, size_t size, size_t nitems) {
 }
 
 size_t VectorIOReader::operator()(void* ptr, size_t size, size_t nitems) {
-    if (rp >= data.size())
+    if (rp >= data.size()) {
         return 0;
+    }
     size_t nremain = (data.size() - rp) / size;
-    if (nremain < nitems)
+    if (nremain < nitems) {
         nitems = nremain;
+    }
     if (size * nitems > 0) {
         memcpy(ptr, &data[rp], size * nitems);
         rp += size * nitems;
@@ -74,7 +74,7 @@ FileIOReader::FileIOReader(const char* fname) {
 FileIOReader::~FileIOReader() {
     if (need_close) {
         int ret = fclose(f);
-        if (ret != 0) { // we cannot raise and exception in the destructor
+        if (ret != 0) { // we cannot raise an exception in the destructor
             fprintf(stderr,
                     "file %s close error: %s",
                     name.c_str(),
@@ -109,7 +109,7 @@ FileIOWriter::~FileIOWriter() {
     if (need_close) {
         int ret = fclose(f);
         if (ret != 0) {
-            // we cannot raise and exception in the destructor
+            // we cannot raise an exception in the destructor
             fprintf(stderr,
                     "file %s close error: %s",
                     name.c_str(),
@@ -130,89 +130,6 @@ int FileIOWriter::filedescriptor() {
 #endif
 }
 
-BlockFileIOWriter::BlockFileIOWriter(
-        FILE* wf,
-        size_t block_size,
-        size_t header_size)
-        : FileIOWriter(wf), block_size(block_size) {
-    header_size = ROUND_UP(header_size, block_size);
-    block_buf = std::make_unique<char[]>(header_size);
-    block_buf_ofs = 0;
-    // write a placeholder for file header
-    fwrite(block_buf.get(), sizeof(char), header_size, f);
-    current_block_id = 1;
-}
-
-BlockFileIOWriter::BlockFileIOWriter(
-        const char* fname,
-        size_t block_size,
-        size_t header_size)
-        : FileIOWriter(fname), block_size(block_size) {
-    header_size = ROUND_UP(header_size, block_size);
-    block_buf = std::make_unique<char[]>(header_size);
-    block_buf_ofs = 0;
-    // write a placeholder for file header
-    fwrite(block_buf.get(), sizeof(char), header_size, f);
-    current_block_id = 1;
-}
-
-BlockFileIOWriter::~BlockFileIOWriter() {
-    flush();
-}
-
-size_t BlockFileIOWriter::write(const char* ptr, size_t bytes_size) {
-    if (block_buf_ofs + bytes_size <= block_size) {
-        memcpy(block_buf.get() + block_buf_ofs, ptr, bytes_size);
-        block_buf_ofs += bytes_size;
-        if (block_buf_ofs == block_size) {
-            flush();
-        }
-    } else {
-        size_t cur_pos = 0;
-        while (cur_pos < bytes_size) {
-            size_t copy_size =
-                    std::min(block_size - block_buf_ofs, bytes_size - cur_pos);
-            memcpy(block_buf.get() + block_buf_ofs, ptr + cur_pos, copy_size);
-            cur_pos += copy_size;
-            block_buf_ofs += copy_size;
-            if (block_buf_ofs == block_size) {
-                flush();
-            }
-        }
-    }
-    return bytes_size;
-}
-
-void BlockFileIOWriter::flush() {
-    if (block_buf_ofs != 0) {
-        fwrite(block_buf.get(), sizeof(char), block_size, f);
-        current_block_id++;
-        block_buf_ofs = 0;
-    }
-}
-
-size_t BlockFileIOWriter::flush_and_write(const char* ptr, size_t bytes) {
-    flush();
-    return write(ptr, bytes);
-}
-
-size_t BlockFileIOWriter::operator()(
-        const void* ptr,
-        size_t size,
-        size_t nitems) {
-    return write((const char*)ptr, size * nitems);
-}
-
-size_t BlockFileIOWriter::write_header(const char* ptr, size_t bytes) {
-    FAISS_THROW_IF_MSG(
-            bytes > block_size,
-            "header size should not larger than a block size");
-    fseek(f, 0, SEEK_SET);
-    fwrite(ptr, sizeof(char), bytes, f);
-    fseek(f, 0, SEEK_END);
-    return bytes;
-}
-
 /***********************************************************************
  * IO buffer
  ***********************************************************************/
@@ -228,8 +145,9 @@ BufferedIOReader::BufferedIOReader(IOReader* reader, size_t bsz)
 
 size_t BufferedIOReader::operator()(void* ptr, size_t unitsize, size_t nitems) {
     size_t size = unitsize * nitems;
-    if (size == 0)
+    if (size == 0) {
         return 0;
+    }
     char* dst = (char*)ptr;
     size_t nb;
 
@@ -274,8 +192,9 @@ size_t BufferedIOWriter::operator()(
         size_t unitsize,
         size_t nitems) {
     size_t size = unitsize * nitems;
-    if (size == 0)
+    if (size == 0) {
         return 0;
+    }
     const char* src = (const char*)ptr;
     size_t nb;
 
@@ -345,14 +264,14 @@ std::string fourcc_inv(uint32_t x) {
 std::string fourcc_inv_printable(uint32_t x) {
     char cstr[5];
     fourcc_inv(x, cstr);
-    std::string str = "";
+    std::string str;
     for (int i = 0; i < 4; i++) {
         uint8_t c = cstr[i];
         if (32 <= c && c < 127) {
             str += c;
         } else {
             char buf[10];
-            snprintf(buf, 10, "\\x%02x", c);
+            snprintf(buf, sizeof(buf), "\\x%02x", c);
             str += buf;
         }
     }

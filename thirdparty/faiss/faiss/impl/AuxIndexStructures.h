@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -80,7 +80,7 @@ struct BufferList {
     /// add one result, possibly appending a new buffer if needed
     void add(idx_t id, float dis);
 
-    /// copy elemnts ofs:ofs+n-1 seen as linear data in the buffers to
+    /// copy elements ofs:ofs+n-1 seen as linear data in the buffers to
     /// tables dest_ids, dest_dis
     void copy_range(size_t ofs, size_t n, idx_t* dest_ids, float* dest_dis);
 };
@@ -122,7 +122,7 @@ struct RangeSearchPartialResult : BufferList {
     void copy_result(bool incremental = false);
 
     /// merge a set of PartialResult's into one RangeSearchResult
-    /// on ouptut the partialresults are empty!
+    /// on output the partialresults are empty!
     static void merge(
             std::vector<RangeSearchPartialResult*>& partial_results,
             bool do_delete = true);

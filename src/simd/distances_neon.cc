@@ -18,6 +18,8 @@
 #include <math.h>
 
 namespace faiss {
+namespace cppcontrib {
+namespace knowhere {
 
 namespace {
 inline float32x4x4_t
@@ -1280,7 +1282,7 @@ ivec_L2sqr_neon(const int8_t* x, const int8_t* y, size_t d) {
 // fp16
 
 float
-fp16_vec_inner_product_neon(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+fp16_vec_inner_product_neon(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size_t d) {
     float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
     while (d >= 16) {
         float32x4x4_t a = vcvt4_f32_f16(vld4_f16((const __fp16*)x));
@@ -1343,7 +1345,7 @@ fp16_vec_inner_product_neon(const knowhere::fp16* x, const knowhere::fp16* y, si
 }
 
 float
-fp16_vec_L2sqr_neon(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+fp16_vec_L2sqr_neon(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size_t d) {
     float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
     while (d >= 16) {
         float32x4x4_t a = vcvt4_f32_f16(vld4_f16((const __fp16*)x));
@@ -1415,7 +1417,7 @@ fp16_vec_L2sqr_neon(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) 
 }
 
 float
-fp16_vec_norm_L2sqr_neon(const knowhere::fp16* x, size_t d) {
+fp16_vec_norm_L2sqr_neon(const ::knowhere::fp16* x, size_t d) {
     float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
     while (d >= 16) {
         float32x4x4_t a = vcvt4_f32_f16(vld4_f16((const __fp16*)x));
@@ -1465,8 +1467,8 @@ fp16_vec_norm_L2sqr_neon(const knowhere::fp16* x, size_t d) {
 }
 
 void
-fp16_vec_inner_product_batch_4_neon(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
-                                    const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0,
+fp16_vec_inner_product_batch_4_neon(const ::knowhere::fp16* x, const ::knowhere::fp16* y0, const ::knowhere::fp16* y1,
+                                    const ::knowhere::fp16* y2, const ::knowhere::fp16* y3, const size_t d, float& dis0,
                                     float& dis1, float& dis2, float& dis3) {
     // res store sub result of {4*dis0, 4*dis1, d4*is2, 4*dis3}
     float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
@@ -1601,8 +1603,8 @@ fp16_vec_inner_product_batch_4_neon(const knowhere::fp16* x, const knowhere::fp1
 }
 
 void
-fp16_vec_L2sqr_batch_4_neon(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
-                            const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0,
+fp16_vec_L2sqr_batch_4_neon(const ::knowhere::fp16* x, const ::knowhere::fp16* y0, const ::knowhere::fp16* y1,
+                            const ::knowhere::fp16* y2, const ::knowhere::fp16* y3, const size_t d, float& dis0,
                             float& dis1, float& dis2, float& dis3) {
     float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
     auto cur_d = d;
@@ -1781,7 +1783,7 @@ fp16_vec_L2sqr_batch_4_neon(const knowhere::fp16* x, const knowhere::fp16* y0, c
 // bf16
 
 float
-bf16_vec_inner_product_neon(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+bf16_vec_inner_product_neon(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d) {
     float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
     while (d >= 16) {
         float32x4x4_t a = vcvt4_f32_half(vld4_u16((const uint16_t*)x));
@@ -1844,7 +1846,7 @@ bf16_vec_inner_product_neon(const knowhere::bf16* x, const knowhere::bf16* y, si
 }
 
 float
-bf16_vec_L2sqr_neon(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+bf16_vec_L2sqr_neon(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d) {
     float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
     while (d >= 16) {
         float32x4x4_t a = vcvt4_f32_half(vld4_u16((const uint16_t*)x));
@@ -1916,7 +1918,7 @@ bf16_vec_L2sqr_neon(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) 
 }
 
 float
-bf16_vec_norm_L2sqr_neon(const knowhere::bf16* x, size_t d) {
+bf16_vec_norm_L2sqr_neon(const ::knowhere::bf16* x, size_t d) {
     float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
     while (d >= 16) {
         float32x4x4_t a = vcvt4_f32_half(vld4_u16((const uint16_t*)x));
@@ -1967,8 +1969,8 @@ bf16_vec_norm_L2sqr_neon(const knowhere::bf16* x, size_t d) {
 }
 
 void
-bf16_vec_inner_product_batch_4_neon(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                                    const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
+bf16_vec_inner_product_batch_4_neon(const ::knowhere::bf16* x, const ::knowhere::bf16* y0, const ::knowhere::bf16* y1,
+                                    const ::knowhere::bf16* y2, const ::knowhere::bf16* y3, const size_t d, float& dis0,
                                     float& dis1, float& dis2, float& dis3) {
     float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
     auto cur_d = d;
@@ -2102,8 +2104,8 @@ bf16_vec_inner_product_batch_4_neon(const knowhere::bf16* x, const knowhere::bf1
 }
 
 void
-bf16_vec_L2sqr_batch_4_neon(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                            const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
+bf16_vec_L2sqr_batch_4_neon(const ::knowhere::bf16* x, const ::knowhere::bf16* y0, const ::knowhere::bf16* y1,
+                            const ::knowhere::bf16* y2, const ::knowhere::bf16* y3, const size_t d, float& dis0,
                             float& dis1, float& dis2, float& dis3) {
     float32x4x4_t res = {vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)};
     auto cur_d = d;
@@ -3520,5 +3522,7 @@ fvec_L2sqr_batch_4_bf16_patch_neon(const float* x, const float* y0, const float*
     dis3 = vaddvq_f32(sum_.val[3]);
 }
 
+}  // namespace knowhere
+}  // namespace cppcontrib
 }  // namespace faiss
 #endif

@@ -1,49 +1,7 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-# All rights reserved.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
-# This source code is licensed under the BSD-style license found in the
+# This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
-
-###############################################################################
-# copy from knowhere/utils/CMakeLists.txt
-set(UTILS_SRC
-        ../../../knowhere/utils/distances_simd.cpp
-        ../../../knowhere/utils/FaissHookFvec.cpp
-        )
-
-set(UTILS_SSE_SRC
-        ../../../knowhere/utils/distances_simd_sse.cpp
-        )
-set(UTILS_AVX_SRC
-        ../../../knowhere/utils/distances_simd_avx.cpp
-        )
-set(UTILS_AVX512_SRC
-        ../../../knowhere/utils/distances_simd_avx512.cpp
-        )
-
-add_library(utils_sse OBJECT
-        ${UTILS_SSE_SRC}
-        )
-add_library(utils_avx OBJECT
-        ${UTILS_AVX_SRC}
-        )
-add_library(utils_avx512 OBJECT
-        ${UTILS_AVX512_SRC}
-        )
-
-target_compile_options(utils_sse PUBLIC "-msse4.2")
-target_compile_options(utils_avx PUBLIC "-mf16c;-mavx2")
-target_compile_options(utils_avx512 PUBLIC "-mf16c;-mavx512f;-mavx512dq;-mavx512bw")
-
-add_library(knowhere_utils STATIC
-        ${UTILS_SRC}
-        $<TARGET_OBJECTS:utils_sse>
-        $<TARGET_OBJECTS:utils_avx>
-        $<TARGET_OBJECTS:utils_avx512>
-        )
-
-target_include_directories(knowhere_utils PUBLIC ${KNOWHERE_SOURCE_DIR}/knowhere/utils)
-###############################################################################
 
 set(FAISS_TEST_SRC
   test_binary_flat.cpp
@@ -61,7 +19,7 @@ set(FAISS_TEST_SRC
   test_sliding_ivf.cpp
   test_threaded_index.cpp
   test_transfer_invlists.cpp
-  # test_mem_leak.cpp
+  test_mem_leak.cpp
   test_cppcontrib_sa_decode.cpp
   test_cppcontrib_uintreader.cpp
   test_simdlib.cpp
@@ -72,37 +30,33 @@ set(FAISS_TEST_SRC
   test_code_distance.cpp
   test_hnsw.cpp
   test_partitioning.cpp
-  test_distances_if.cpp
   test_fastscan_perf.cpp
   test_disable_pq_sdc_tables.cpp
   test_common_ivf_empty_index.cpp
   test_callback.cpp
+  test_utils.cpp
+  test_hamming.cpp
+  test_mmap.cpp
+  test_zerocopy.cpp
 )
+
+if(FAISS_ENABLE_SVS)
+  list(APPEND FAISS_TEST_SRC test_svs.cpp)
+endif()
 
 add_executable(faiss_test ${FAISS_TEST_SRC})
 
-if(NOT FAISS_OPT_LEVEL STREQUAL "avx2" AND NOT FAISS_OPT_LEVEL STREQUAL "avx512")
-  target_link_libraries(faiss_test PRIVATE faiss)
+if(FAISS_ENABLE_SVS)
+  target_compile_definitions(faiss_test PRIVATE FAISS_ENABLE_SVS FAISS_SVS_RUNTIME_VERSION=${FAISS_SVS_RUNTIME_VERSION})
 endif()
 
-if(FAISS_OPT_LEVEL STREQUAL "avx2")
-  if(NOT WIN32)
-    target_compile_options(faiss_test PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-mavx2 -mfma>)
-  else()
-    target_compile_options(faiss_test PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/arch:AVX2>)
-  endif()
-  target_link_libraries(faiss_test PRIVATE faiss_avx2)
-endif()
+include(../cmake/link_to_faiss_lib.cmake)
 
-if(FAISS_OPT_LEVEL STREQUAL "avx512")
-  if(NOT WIN32)
-    target_compile_options(faiss_test PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-mavx2 -mfma -mavx512f -mavx512f -mavx512cd -mavx512vl -mavx512dq -mavx512bw>)
-  else()
-    target_compile_options(faiss_test PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/arch:AVX512>)
-  endif()
-  target_link_libraries(faiss_test PRIVATE faiss_avx512)
-endif()
+link_to_faiss_lib(faiss_test)
 
+if (FAISS_ENABLE_PYTHON)
+  target_link_libraries(faiss_test PUBLIC faiss_example_external_module)
+endif()
 
 include(FetchContent)
 FetchContent_Declare(
@@ -138,7 +92,7 @@ find_package(GTest CONFIG REQUIRED)
 target_link_libraries(faiss_test PRIVATE
   OpenMP::OpenMP_CXX
   GTest::gtest_main
-  knowhere_utils
+  $<$<BOOL:${FAISS_ENABLE_ROCM}>:hip::host>
 )
 
 # Defines `gtest_discover_tests()`.

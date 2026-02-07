@@ -39,9 +39,10 @@ TEST_CASE("Test bf16 patch", "[bf16 patch]") {
     auto compute_dist = [&](float* l2_dist_ret, float* ip_dist_ret) {
         for (int64_t i = 0; i < nq; i++) {
             for (int64_t j = 0; j < nb; j++) {
-                l2_dist_ret[i * nq + j] = faiss::fvec_L2sqr(query_tensor + i * dim, train_tensor + j * dim, dim);
-                ip_dist_ret[i * nq + j] =
-                    faiss::fvec_inner_product(query_tensor + i * dim, train_tensor + j * dim, dim);
+                l2_dist_ret[i * nq + j] =
+                    faiss::cppcontrib::knowhere::fvec_L2sqr(query_tensor + i * dim, train_tensor + j * dim, dim);
+                ip_dist_ret[i * nq + j] = faiss::cppcontrib::knowhere::fvec_inner_product(query_tensor + i * dim,
+                                                                                          train_tensor + j * dim, dim);
             }
         }
     };
@@ -49,9 +50,10 @@ TEST_CASE("Test bf16 patch", "[bf16 patch]") {
     auto compute_ref_dist = [&](float* l2_dist_ret, float* ip_dist_ret) {
         for (int64_t i = 0; i < nq; i++) {
             for (int64_t j = 0; j < nb; j++) {
-                l2_dist_ret[i * nq + j] = faiss::fvec_L2sqr_ref(query_tensor + i * dim, train_tensor + j * dim, dim);
-                ip_dist_ret[i * nq + j] =
-                    faiss::fvec_inner_product_ref(query_tensor + i * dim, train_tensor + j * dim, dim);
+                l2_dist_ret[i * nq + j] =
+                    faiss::cppcontrib::knowhere::fvec_L2sqr_ref(query_tensor + i * dim, train_tensor + j * dim, dim);
+                ip_dist_ret[i * nq + j] = faiss::cppcontrib::knowhere::fvec_inner_product_ref(
+                    query_tensor + i * dim, train_tensor + j * dim, dim);
             }
         }
     };

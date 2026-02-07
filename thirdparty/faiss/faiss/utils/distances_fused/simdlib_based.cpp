@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -226,7 +226,7 @@ void exhaustive_L2sqr_fused_cmax(
         const float* const __restrict y,
         size_t nx,
         size_t ny,
-        SingleBestResultHandler<CMax<float, int64_t>>& res,
+        Top1BlockResultHandler<CMax<float, int64_t>>& res,
         const float* __restrict y_norms) {
     // BLAS does not like empty matrices
     if (nx == 0 || ny == 0) {
@@ -260,7 +260,7 @@ void exhaustive_L2sqr_fused_cmax(
     const size_t nx_p = (nx / NX_POINTS_PER_LOOP) * NX_POINTS_PER_LOOP;
     // the main loop.
 #pragma omp parallel for schedule(dynamic)
-    for (size_t i = 0; i < nx_p; i += NX_POINTS_PER_LOOP) {
+    for (int64_t i = 0; i < nx_p; i += NX_POINTS_PER_LOOP) {
         kernel<DIM, NX_POINTS_PER_LOOP, NY_POINTS_PER_LOOP>(
                 x, y, y_transposed.data(), ny, res, y_norms, i);
     }
@@ -270,7 +270,7 @@ void exhaustive_L2sqr_fused_cmax(
                 x, y, y_transposed.data(), ny, res, y_norms, i);
     }
 
-    // Does nothing for SingleBestResultHandler, but
+    // Does nothing for Top1BlockResultHandler, but
     // keeping the call for the consistency.
     res.end_multiple();
     InterruptCallback::check();
@@ -284,7 +284,7 @@ bool exhaustive_L2sqr_fused_cmax_simdlib(
         size_t d,
         size_t nx,
         size_t ny,
-        SingleBestResultHandler<CMax<float, int64_t>>& res,
+        Top1BlockResultHandler<CMax<float, int64_t>>& res,
         const float* y_norms) {
     // Process only cases with certain dimensionalities.
     // An acceptable dimensionality value is limited by the number of

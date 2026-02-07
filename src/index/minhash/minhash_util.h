@@ -11,12 +11,14 @@
 
 #pragma once
 
-#include "faiss/utils/distances_if.h"
+#include <faiss/cppcontrib/knowhere/utils/distances_if.h>
+
 #include "knowhere/bitsetview.h"
 #include "knowhere/comp/task.h"
 #include "knowhere/config.h"
 #include "knowhere/operands.h"
 #include "knowhere/thread_pool.h"
+
 namespace knowhere::minhash {
 using idx_t = faiss::idx_t;
 using KeyType = uint64_t;
@@ -80,7 +82,7 @@ inline minhash::KeyType
 GetHashKey(const char* data, size_t size /*in bytes*/, size_t band, size_t band_i) {
     const size_t r = size / band;
     auto band_i_data = data + r * band_i;
-    return faiss::calculate_hash((const char*)band_i_data, r);
+    return faiss::cppcontrib::knowhere::calculate_hash((const char*)band_i_data, r);
 }
 
 std::shared_ptr<minhash::KVPair[]>

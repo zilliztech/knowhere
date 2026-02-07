@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -19,6 +19,7 @@ using namespace faiss;
 static void bench(benchmark::State& state) {
     int d = 128;
     int n = 2000;
+    state.SetLabel(faiss::get_compile_options());
 
     std::vector<float> x(d * n);
 
@@ -51,8 +52,9 @@ static void bench(benchmark::State& state) {
 
     size_t ndiff = 0;
     for (size_t i = 0; i < codes.size(); i++) {
-        if (codes[i] != codes2[i])
+        if (codes[i] != codes2[i]) {
             ndiff++;
+        }
     }
 
     state.counters["ndiff_for_idempotence"] = ndiff;

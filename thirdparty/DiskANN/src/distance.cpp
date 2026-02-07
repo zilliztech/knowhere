@@ -33,14 +33,14 @@ namespace diskann {
   template<>
   DISTFUN<float> get_distance_function(diskann::Metric m) {
     if (m == diskann::Metric::L2) {
-      return faiss::fvec_L2sqr;
+      return faiss::cppcontrib::knowhere::fvec_L2sqr;
     } else if (m == diskann::Metric::INNER_PRODUCT) {
       return [](const float* x, const float* y, size_t size) -> float {
-        return (-1.0) * faiss::fvec_inner_product(x, y, size);
+        return (-1.0) * faiss::cppcontrib::knowhere::fvec_inner_product(x, y, size);
       };
     } else if (m == diskann::Metric::COSINE) {
       return [](const float* x, const float* y, size_t size) -> float {
-        return (-1.0) * faiss::fvec_inner_product(x, y, size);
+        return (-1.0) * faiss::cppcontrib::knowhere::fvec_inner_product(x, y, size);
       };
     } else {
       std::stringstream stream;
@@ -55,16 +55,16 @@ namespace diskann {
   template<>
   DISTFUN<knowhere::fp16> get_distance_function(diskann::Metric m) {
     if (m == diskann::Metric::L2) {
-      return faiss::fp16_vec_L2sqr;
+      return faiss::cppcontrib::knowhere::fp16_vec_L2sqr;
     } else if (m == diskann::Metric::INNER_PRODUCT) {
       return [](const knowhere::fp16* x, const knowhere::fp16* y,
                 size_t size) -> float {
-        return (-1.0) * faiss::fp16_vec_inner_product(x, y, size);
+        return (-1.0) * faiss::cppcontrib::knowhere::fp16_vec_inner_product(x, y, size);
       };
     } else if (m == diskann::Metric::COSINE) {
       return [](const knowhere::fp16* x, const knowhere::fp16* y,
                 size_t size) -> float {
-        return (-1.0) * faiss::fp16_vec_inner_product(x, y, size);
+        return (-1.0) * faiss::cppcontrib::knowhere::fp16_vec_inner_product(x, y, size);
       };
     } else {
       std::stringstream stream;
@@ -79,16 +79,16 @@ namespace diskann {
   template<>
   DISTFUN<knowhere::bf16> get_distance_function(diskann::Metric m) {
     if (m == diskann::Metric::L2) {
-      return faiss::bf16_vec_L2sqr;
+      return faiss::cppcontrib::knowhere::bf16_vec_L2sqr;
     } else if (m == diskann::Metric::INNER_PRODUCT) {
       return [](const knowhere::bf16* x, const knowhere::bf16* y,
                 size_t size) -> float {
-        return (-1.0) * faiss::bf16_vec_inner_product(x, y, size);
+        return (-1.0) * faiss::cppcontrib::knowhere::bf16_vec_inner_product(x, y, size);
       };
     } else if (m == diskann::Metric::COSINE) {
       return [](const knowhere::bf16* x, const knowhere::bf16* y,
                 size_t size) -> float {
-        return (-1.0) * faiss::bf16_vec_inner_product(x, y, size);
+        return (-1.0) * faiss::cppcontrib::knowhere::bf16_vec_inner_product(x, y, size);
       };
     } else {
       std::stringstream stream;
@@ -104,13 +104,13 @@ namespace diskann {
   template<typename T>
   float norm_l2sqr(const T* a, size_t size) {
     if constexpr (std::is_floating_point<T>::value) {
-      return faiss::fvec_norm_L2sqr(a, size);
+      return faiss::cppcontrib::knowhere::fvec_norm_L2sqr(a, size);
     }
     if constexpr (std::is_same_v<T, knowhere::fp16>) {
-      return faiss::fp16_vec_norm_L2sqr(a, size);
+      return faiss::cppcontrib::knowhere::fp16_vec_norm_L2sqr(a, size);
     }
     if constexpr (std::is_same_v<T, knowhere::bf16>) {
-      return faiss::bf16_vec_norm_L2sqr(a, size);
+      return faiss::cppcontrib::knowhere::bf16_vec_norm_L2sqr(a, size);
     } else {
       float res = 0;
       for (size_t i = 0; i < size; i++) {

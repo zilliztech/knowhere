@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -16,6 +16,9 @@
 #ifdef __aarch64__
 // ARM compilers may produce inoptimal code for Hamming distance somewhy.
 #include <faiss/utils/hamming_distance/neon-inl.h>
+#elif __AVX512F__
+// offers better performance where __AVX512VPOPCNTDQ__ is supported
+#include <faiss/utils/hamming_distance/avx512-inl.h>
 #elif __AVX2__
 // better versions for GenHammingComputer
 #include <faiss/utils/hamming_distance/avx2-inl.h>
@@ -55,7 +58,7 @@ SPECIALIZED_HC(64);
 /***************************************************************************
  * Dispatching function that takes a code size and a consumer object
  * the consumer object should contain a retun type t and a operation template
- * function f() that to be called to perform the operation.
+ * function f() that must be called to perform the operation.
  **************************************************************************/
 
 template <class Consumer, class... Types>
@@ -76,6 +79,7 @@ typename Consumer::T dispatch_HammingComputer(
         default:
             return consumer.template f<HammingComputerDefault>(args...);
     }
+#undef DISPATCH_HC
 }
 
 } // namespace faiss

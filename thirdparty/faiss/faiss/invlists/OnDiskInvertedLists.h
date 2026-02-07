@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -77,7 +77,6 @@ struct OnDiskInvertedLists : InvertedLists {
     size_t totsize;
     uint8_t* ptr;   // mmap base pointer
     bool read_only; /// are inverted lists mapped read-only
-    bool with_norm = false;
 
     OnDiskInvertedLists(size_t nlist, size_t code_size, const char* filename);
 
@@ -89,8 +88,7 @@ struct OnDiskInvertedLists : InvertedLists {
             size_t list_no,
             size_t n_entry,
             const idx_t* ids,
-            const uint8_t* code,
-            const float* code_norm = nullptr) override;
+            const uint8_t* code) override;
 
     void update_entries(
             size_t list_no,
@@ -123,7 +121,7 @@ struct OnDiskInvertedLists : InvertedLists {
 
     LockLevels* locks;
 
-    // encapsulates the threads that are busy prefeteching
+    // encapsulates the threads that are busy prefetching
     struct OngoingPrefetch;
     OngoingPrefetch* pf;
     int prefetch_nthread;
@@ -139,8 +137,6 @@ struct OnDiskInvertedLists : InvertedLists {
 
     // empty constructor for the I/O functions
     OnDiskInvertedLists();
-
-    const float* get_code_norms(size_t list_no, size_t offset) const override;
 };
 
 struct OnDiskInvertedListsIOHook : InvertedListsIOHook {

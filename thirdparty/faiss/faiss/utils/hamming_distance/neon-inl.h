@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -98,9 +98,9 @@ inline hamdis_t hamming<256>(const uint64_t* pa, const uint64_t* pb) {
 
 /* Hamming distances for multiple of 64 bits */
 inline hamdis_t hamming(const uint64_t* pa, const uint64_t* pb, size_t nwords) {
-    const size_t nwords256 = nwords / 256;
-    const size_t nwords128 = (nwords - nwords256 * 256) / 128;
-    const size_t nwords64 = (nwords - nwords256 * 256 - nwords128 * 128) / 64;
+    const size_t nwords256 = nwords / 4;
+    const size_t nwords128 = (nwords % 4) / 2;
+    const size_t nwords64 = nwords % 2;
 
     hamdis_t h = 0;
     if (nwords256 > 0) {
@@ -146,7 +146,7 @@ struct HammingComputer4 {
         a0 = *(uint32_t*)a;
     }
 
-    inline int compute(const uint8_t* b) const {
+    inline int hamming(const uint8_t* b) const {
         return popcount64(*(uint32_t*)b ^ a0);
     }
 
@@ -169,7 +169,7 @@ struct HammingComputer8 {
         a0 = *(uint64_t*)a;
     }
 
-    inline int compute(const uint8_t* b) const {
+    inline int hamming(const uint8_t* b) const {
         return popcount64(*(uint64_t*)b ^ a0);
     }
 
@@ -192,7 +192,7 @@ struct HammingComputer16 {
         a0 = vld1q_u8(a8);
     }
 
-    inline int compute(const uint8_t* b8) const {
+    inline int hamming(const uint8_t* b8) const {
         uint8x16_t b0 = vld1q_u8(b8);
 
         uint8x16_t or0 = veorq_u8(a0, b0);
@@ -227,7 +227,7 @@ struct HammingComputer20 {
         a2 = a[4];
     }
 
-    inline int compute(const uint8_t* b8) const {
+    inline int hamming(const uint8_t* b8) const {
         uint8x16_t b0 = vld1q_u8(b8);
 
         uint8x16_t or0 = veorq_u8(a0, b0);
@@ -259,7 +259,7 @@ struct HammingComputer32 {
         a1 = vld1q_u8(a8 + 16);
     }
 
-    inline int compute(const uint8_t* b8) const {
+    inline int hamming(const uint8_t* b8) const {
         uint8x16_t b0 = vld1q_u8(b8);
         uint8x16_t b1 = vld1q_u8(b8 + 16);
 
@@ -292,8 +292,8 @@ struct HammingComputer64 {
         hc1.set(a8 + 32, 32);
     }
 
-    inline int compute(const uint8_t* b8) const {
-        return hc0.compute(b8) + hc1.compute(b8 + 32);
+    inline int hamming(const uint8_t* b8) const {
+        return hc0.hamming(b8) + hc1.hamming(b8 + 32);
     }
 
     inline static constexpr int get_code_size() {
@@ -318,7 +318,7 @@ struct HammingComputerDefault {
         remainder8 = code_size % 8;
     }
 
-    int compute(const uint8_t* b8) const {
+    int hamming(const uint8_t* b8) const {
         int accu = 0;
 
         const uint64_t* a64 = reinterpret_cast<const uint64_t*>(a8);
@@ -426,7 +426,7 @@ struct GenHammingComputer8 {
         a0 = vld1_u8(a8);
     }
 
-    inline int compute(const uint8_t* b8) const {
+    inline int hamming(const uint8_t* b8) const {
         uint8x8_t b0 = vld1_u8(b8);
         uint8x8_t reg = vceq_u8(a0, b0);
         uint8x8_t c0 = vcnt_u8(reg);
@@ -446,7 +446,7 @@ struct GenHammingComputer16 {
         a0 = vld1q_u8(a8);
     }
 
-    inline int compute(const uint8_t* b8) const {
+    inline int hamming(const uint8_t* b8) const {
         uint8x16_t b0 = vld1q_u8(b8);
         uint8x16_t reg = vceqq_u8(a0, b0);
         uint8x16_t c0 = vcntq_u8(reg);
@@ -466,8 +466,8 @@ struct GenHammingComputer32 {
         assert(code_size == 32);
     }
 
-    inline int compute(const uint8_t* b8) const {
-        return a0.compute(b8) + a1.compute(b8 + 16);
+    inline int hamming(const uint8_t* b8) const {
+        return a0.hamming(b8) + a1.hamming(b8 + 16);
     }
 
     inline static constexpr int get_code_size() {
@@ -485,7 +485,7 @@ struct GenHammingComputerM8 {
         n = code_size / 8;
     }
 
-    int compute(const uint8_t* b8) const {
+    int hamming(const uint8_t* b8) const {
         const uint64_t* b = (uint64_t*)b8;
         int accu = 0;
 

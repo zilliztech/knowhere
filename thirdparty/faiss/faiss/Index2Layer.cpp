@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,10 +9,7 @@
 
 #include <faiss/Index2Layer.h>
 
-#include <faiss/impl/platform_macros.h>
-#include <cassert>
 #include <cinttypes>
-#include <cmath>
 #include <cstdint>
 #include <cstdio>
 
@@ -22,7 +19,6 @@
 
 #include <algorithm>
 
-#include <faiss/FaissHook.h>
 #include <faiss/IndexIVFPQ.h>
 
 #include <faiss/IndexFlat.h>
@@ -86,7 +82,7 @@ void Index2Layer::train(idx_t n, const float* x) {
 
     std::unique_ptr<const float[]> del_x(x_in == x ? nullptr : x);
 
-    std::vector<idx_t> assign(n); // assignement to coarse centroids
+    std::vector<idx_t> assign(n); // assignment to coarse centroids
     q1.quantizer->assign(n, x, assign.data());
     std::vector<float> residuals(n * d);
     for (idx_t i = 0; i < n; i++) {
@@ -94,13 +90,14 @@ void Index2Layer::train(idx_t n, const float* x) {
                 x + i * d, residuals.data() + i * d, assign[i]);
     }
 
-    if (verbose)
+    if (verbose) {
         printf("training %zdx%zd product quantizer on %" PRId64
                " vectors in %dD\n",
                pq.M,
                pq.ksub,
                n,
                d);
+    }
     pq.verbose = verbose;
     pq.train(n, residuals.data());
 
@@ -133,10 +130,6 @@ void Index2Layer::transfer_to_IVFPQ(IndexIVFPQ& other) const {
     }
 
     other.ntotal = ntotal;
-}
-
-size_t Index2Layer::cal_size() const {
-    return sizeof(*this) + codes.size() * sizeof(uint8_t) + pq.cal_size();
 }
 
 namespace {

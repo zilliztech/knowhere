@@ -3,13 +3,21 @@ include(CheckCXXCompilerFlag)
 include_directories(thirdparty/faiss)
 
 knowhere_file_glob(
-  GLOB FAISS_SRCS thirdparty/faiss/faiss/*.cpp
-  thirdparty/faiss/faiss/impl/*.cpp thirdparty/faiss/faiss/invlists/*.cpp
+  GLOB FAISS_SRCS
+  thirdparty/faiss/faiss/*.cpp
+  thirdparty/faiss/faiss/impl/*.cpp
+  thirdparty/faiss/faiss/invlists/*.cpp
   thirdparty/faiss/faiss/utils/*.cpp
-  thirdparty/faiss/faiss/cppcontrib/knowhere/*.cpp)
+  thirdparty/faiss/faiss/utils/distances_fused/*.cpp
+  thirdparty/faiss/faiss/cppcontrib/knowhere/*.cpp
+  thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*.cpp
+  thirdparty/faiss/faiss/cppcontrib/knowhere/invlists/*.cpp
+  thirdparty/faiss/faiss/cppcontrib/knowhere/utils/*.cpp
+)
 
 knowhere_file_glob(GLOB FAISS_AVX512_SRCS
-                   thirdparty/faiss/faiss/impl/*avx512.cpp)
+                   thirdparty/faiss/faiss/impl/*avx512.cpp
+                   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*avx512.cpp)
 
 knowhere_file_glob(
   GLOB
@@ -17,10 +25,16 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/impl/*avx.cpp
   thirdparty/faiss/faiss/impl/pq4_fast_scan_search_1.cpp
   thirdparty/faiss/faiss/impl/pq4_fast_scan_search_qbs.cpp
-  thirdparty/faiss/faiss/utils/partitioning_avx2.cpp
   thirdparty/faiss/faiss/IndexPQFastScan.cpp
   thirdparty/faiss/faiss/IndexIVFFastScan.cpp
-  thirdparty/faiss/faiss/IndexIVFPQFastScan.cpp)
+  thirdparty/faiss/faiss/IndexIVFPQFastScan.cpp
+  thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*avx.cpp
+  thirdparty/faiss/faiss/cppcontrib/knowhere/impl/pq4_fast_scan_search_1.cpp
+  thirdparty/faiss/faiss/cppcontrib/knowhere/impl/pq4_fast_scan_search_qbs.cpp
+  thirdparty/faiss/faiss/cppcontrib/knowhere/utils/partitioning_avx2.cpp
+  thirdparty/faiss/faiss/cppcontrib/knowhere/IndexIVFFastScan.cpp
+  thirdparty/faiss/faiss/cppcontrib/knowhere/IndexIVFPQFastScan.cpp
+)
 
 list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX512_SRCS})
 
@@ -179,10 +193,16 @@ include_directories(${xxHash_INCLUDE_DIRS})
 if(__X86_64)
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX2_SRCS})
 
-  knowhere_file_glob(GLOB FAISS_NEON_SRCS thirdparty/faiss/faiss/impl/*neon.cpp)
+  knowhere_file_glob(GLOB FAISS_NEON_SRCS
+    thirdparty/faiss/faiss/impl/*neon.cpp
+    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*neon.cpp
+  )
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_NEON_SRCS})
 
-  knowhere_file_glob(GLOB FAISS_RVV_SRCS thirdparty/faiss/faiss/impl/*rvv.cpp)
+  knowhere_file_glob(GLOB FAISS_RVV_SRCS
+    thirdparty/faiss/faiss/impl/*rvv.cpp
+    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*rvv.cpp
+  )
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_RVV_SRCS})
 
   add_library(faiss_avx2 OBJECT ${FAISS_AVX2_SRCS})
@@ -226,10 +246,16 @@ if(__X86_64)
 endif()
 
 if(__AARCH64)
-  knowhere_file_glob(GLOB FAISS_AVX_SRCS thirdparty/faiss/faiss/impl/*avx.cpp)
+  knowhere_file_glob(GLOB FAISS_AVX_SRCS
+    thirdparty/faiss/faiss/impl/*avx.cpp
+    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*avx.cpp
+  )
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX_SRCS})
 
-  knowhere_file_glob(GLOB FAISS_RVV_SRCS thirdparty/faiss/faiss/impl/*rvv.cpp)
+  knowhere_file_glob(GLOB FAISS_RVV_SRCS
+    thirdparty/faiss/faiss/impl/*rvv.cpp
+    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*rvv.cpp
+  )
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_RVV_SRCS})
 
   add_library(faiss STATIC ${FAISS_SRCS})
@@ -252,10 +278,16 @@ if(__AARCH64)
 endif()
 
 if(__RISCV64)
-  knowhere_file_glob(GLOB FAISS_AVX_SRCS thirdparty/faiss/faiss/impl/*avx.cpp)
+  knowhere_file_glob(GLOB FAISS_AVX_SRCS
+    thirdparty/faiss/faiss/impl/*avx.cpp
+    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*avx.cpp
+  )
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX_SRCS})
 
-  knowhere_file_glob(GLOB FAISS_NEON_SRCS thirdparty/faiss/faiss/impl/*neon.cpp)
+  knowhere_file_glob(GLOB FAISS_NEON_SRCS
+    thirdparty/faiss/faiss/impl/*neon.cpp
+    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*neon.cpp
+  )
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_NEON_SRCS})
 
   add_library(faiss STATIC ${FAISS_SRCS})
@@ -280,13 +312,22 @@ if(__RISCV64)
 endif()
 
 if(__PPC64)
-  knowhere_file_glob(GLOB FAISS_AVX_SRCS thirdparty/faiss/faiss/impl/*avx.cpp)
+  knowhere_file_glob(GLOB FAISS_AVX_SRCS
+    thirdparty/faiss/faiss/impl/*avx.cpp
+    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*avx.cpp
+  )
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX_SRCS})
 
-  knowhere_file_glob(GLOB FAISS_NEON_SRCS thirdparty/faiss/faiss/impl/*neon.cpp)
+  knowhere_file_glob(GLOB FAISS_NEON_SRCS
+    thirdparty/faiss/faiss/impl/*neon.cpp
+    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*neon.cpp
+  )
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_NEON_SRCS})
 
-  knowhere_file_glob(GLOB FAISS_RVV_SRCS thirdparty/faiss/faiss/impl/*rvv.cpp)
+  knowhere_file_glob(GLOB FAISS_RVV_SRCS
+    thirdparty/faiss/faiss/impl/*rvv.cpp
+    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*rvv.cpp
+  )
   list(REMOVE_ITEM FAISS_SRCS ${FAISS_RVV_SRCS})
 
   add_library(faiss STATIC ${FAISS_SRCS})

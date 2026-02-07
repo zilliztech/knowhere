@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -62,7 +62,11 @@ struct IndexAdditiveQuantizerFastScan : IndexFastScan {
 
     void compute_codes(uint8_t* codes, idx_t n, const float* x) const override;
 
-    void compute_float_LUT(float* lut, idx_t n, const float* x) const override;
+    void compute_float_LUT(
+            float* lut,
+            idx_t n,
+            const float* x,
+            const FastScanDistancePostProcessing& context) const override;
 
     void search(
             idx_t n,

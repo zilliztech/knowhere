@@ -1,11 +1,11 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-#include <faiss/utils/binary_distances.h>
+#pragma once
 
 namespace faiss {
 
@@ -99,7 +99,7 @@ struct HCounterState {
               k(k) {}
 
     void update_counter(const uint8_t* y, size_t j) {
-        int32_t dis = hc.compute(y);
+        int32_t dis = hc.hamming(y);
 
         if (dis <= thres) {
             if (dis < thres) {

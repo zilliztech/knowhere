@@ -1,13 +1,15 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-from packaging.version import Version
 import platform
 import subprocess
 import logging
 import os
+import sys
+
+from packaging.version import Version
 
 
 def supported_instruction_sets():
@@ -24,13 +26,39 @@ def supported_instruction_sets():
     >>> supported_instruction_sets()  # for ARM
     {"NEON", "ASIMD", ...}
     """
+
+    # Old numpy.core._multiarray_umath.__cpu_features__ doesn't support Arm SVE,
+    # so let's read Features in numpy.distutils.cpuinfo and search 'sve' entry
+    def is_sve_supported():
+        if platform.machine() != "aarch64":
+            return False
+        # Currently SVE is only supported on Linux
+        if platform.system() != "Linux":
+            return False
+        # Numpy 2.0 supports SVE detection by __cpu_features__, so just skip
+        import numpy
+        if Version(numpy.__version__) >= Version("2.0"):
+            return False
+        # platform-dependent legacy fallback using numpy.distutils.cpuinfo
+        try:
+            import numpy.distutils.cpuinfo
+            return "sve" in numpy.distutils.cpuinfo.cpu.info[0].get('Features', "").split()
+        except ImportError:
+            # check if SVE is supported by checking the auxval
+            # using values defined as:
+            # #define AT_HWCAP 16
+            # #define HWCAP_SVE  (1 << 22)
+            return bool(__import__('ctypes').CDLL(None).getauxval(16) & (1<<22))
+
     import numpy
     if Version(numpy.__version__) >= Version("1.19"):
         # use private API as next-best thing until numpy/numpy#18058 is solved
-        from numpy.core._multiarray_umath import __cpu_features__
+        from numpy._core._multiarray_umath import __cpu_features__
         # __cpu_features__ is a dictionary with CPU features
         # as keys, and True / False as values
         supported = {k for k, v in __cpu_features__.items() if v}
+        if is_sve_supported():
+            supported.add("SVE")
         for f in os.getenv("FAISS_DISABLE_CPU_FEATURES", "").split(", \t\n\r"):
             supported.discard(f)
         return supported
@@ -46,9 +74,15 @@ def supported_instruction_sets():
             result.add("AVX2")
         if "avx512" in numpy.distutils.cpuinfo.cpu.info[0].get('flags', ""):
             result.add("AVX512")
+        if "avx512_fp16" in numpy.distutils.cpuinfo.cpu.info[0].get('flags', ""):
+            # avx512_fp16 is supported starting SPR
+            result.add("AVX512_SPR")
+        if is_sve_supported():
+            result.add("SVE")
+        for f in os.getenv("FAISS_DISABLE_CPU_FEATURES", "").split(", \t\n\r"):
+            result.discard(f)
         return result
     return set()
-
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +102,20 @@ else:
     instruction_sets.add(opt_level)
 
 loaded = False
+has_AVX512_SPR = any("AVX512_SPR" in x.upper() for x in instruction_sets)
+if has_AVX512_SPR:
+    try:
+        logger.info("Loading faiss with AVX512-SPR support.")
+        from .swigfaiss_avx512_spr import *
+        logger.info("Successfully loaded faiss with AVX512-SPR support.")
+        loaded = True
+    except ImportError as e:
+        logger.info(f"Could not load library with AVX512-SPR support due to:\n{e!r}")
+        # reset so that we load without AVX512 below
+        loaded = False
+
 has_AVX512 = any("AVX512" in x.upper() for x in instruction_sets)
-if has_AVX512:
+if has_AVX512 and not loaded:
     try:
         logger.info("Loading faiss with AVX512 support.")
         from .swigfaiss_avx512 import *
@@ -92,8 +138,61 @@ if has_AVX2 and not loaded:
         # reset so that we load without AVX2 below
         loaded = False
 
+has_SVE = "SVE" in instruction_sets
+if has_SVE and not loaded:
+    try:
+        logger.info("Loading faiss with SVE support.")
+        from .swigfaiss_sve import *
+        logger.info("Successfully loaded faiss with SVE support.")
+        loaded = True
+    except ImportError as e:
+        logger.info(f"Could not load library with SVE support due to:\n{e!r}")
+        # reset so that we load without SVE below
+        loaded = False
+
 if not loaded:
-    # we import * so that the symbol X can be accessed as faiss.X
-    logger.info("Loading faiss.")
-    from .swigfaiss import *
-    logger.info("Successfully loaded faiss.")
+    try:
+        # we import * so that the symbol X can be accessed as faiss.X
+        logger.info("Loading faiss.")
+        from .swigfaiss import *
+        logger.info("Successfully loaded faiss.")
+    except ModuleNotFoundError:
+        formatted_ins_sets = ", ".join(supported_instruction_sets())
+
+        message = (
+            f"No module named 'faiss.swigfaiss' found. To fix this, you must "
+            f"do both of the following:\n"
+            f"A) Set the correct FAISS_OPT_LEVEL value when executing "
+            f"'cmake'.\n"
+            f"B) Build the correct SWIG wrapper.\n\n"
+
+            f"These are the supported instruction sets on your system:\n"
+            f"{formatted_ins_sets}\n"
+            f"- If 'AVX512_SPR' (case insensitive) is supported on your "
+            f"system, you can set the FAISS_OPT_LEVEL=avx512_spr "
+            f"to build the SWIG wrapper with 'AVX512-SPR' support.\n"
+            f"You will have to build the 'swigfaiss_avx512_spr' "
+            f"target in this case.\n"
+            f"- If 'AVX512' (case insensitive) is supported on your system, "
+            f"you can set the FAISS_OPT_LEVEL=avx512 to build the SWIG wrapper "
+            f"with 'AVX512' support.\n"
+            f"You will have to build the 'swigfaiss_avx512' target in this "
+            f"case.\n"
+            f"- If 'AVX2' (case sensitive) is supported on your system, you "
+            f"can set the FAISS_OPT_LEVEL=AVX2 to build the SWIG wrapper "
+            f"with 'AVX2' support.\n"
+            f"You will have to build the 'swigfaiss_avx2' target in this "
+            f"case.\n"
+            f"- If 'SVE' (case sensitive) is supported on your system, you can "
+            f"set the FAISS_OPT_LEVEL=SVE to build the SWIG wrapper with "
+            f"'SVE' support.\n"
+            f"You will have to build the 'swigfaiss_sve' target in this "
+            f"case.\n"
+            f"- If none of the above instruction sets are supported on your "
+            f"system, you can execute 'cmake' without setting the "
+            f"FAISS_OPT_LEVEL variable and build the 'swigfaiss' target."
+        )
+
+        logger.error(message)
+
+        sys.exit(1)

@@ -15,10 +15,14 @@
 #include <cstdint>
 
 namespace faiss {
+namespace cppcontrib {
+namespace knowhere {
 
 ///////////////////////////////////////////////////////////////////////////////
 // rabitq
 int
 rabitq_dp_popcnt_avx512icx(const uint8_t* q, const uint8_t* x, const size_t d, const size_t nb);
 
+}  // namespace knowhere
+}  // namespace cppcontrib
 }  // namespace faiss

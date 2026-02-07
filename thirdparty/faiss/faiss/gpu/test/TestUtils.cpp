@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -16,6 +16,77 @@
 
 namespace faiss {
 namespace gpu {
+
+inline float half2float(const unsigned short h) {
+    unsigned int sign = ((static_cast<unsigned int>(h) >> 15U) & 1U);
+    unsigned int exponent = ((static_cast<unsigned int>(h) >> 10U) & 0x1fU);
+    unsigned int mantissa = ((static_cast<unsigned int>(h) & 0x3ffU) << 13U);
+    float f;
+    if (exponent == 0x1fU) { /* NaN or Inf */
+        /* discard sign of a NaN */
+        sign = ((mantissa != 0U) ? (sign >> 1U) : sign);
+        mantissa = ((mantissa != 0U) ? 0x7fffffU : 0U);
+        exponent = 0xffU;
+    } else if (exponent == 0U) { /* Denorm or Zero */
+        if (mantissa != 0U) {
+            unsigned int msb;
+            exponent = 0x71U;
+            do {
+                msb = (mantissa & 0x400000U);
+                mantissa <<= 1U; /* normalize */
+                --exponent;
+            } while (msb == 0U);
+            mantissa &= 0x7fffffU; /* 1.mantissa is implicit */
+        }
+    } else {
+        exponent += 0x70U;
+    }
+    const unsigned int u = ((sign << 31U) | (exponent << 23U) | mantissa);
+    std::memcpy(&f, &u, sizeof(u));
+    return f;
+}
+
+unsigned short float2half(const float f) {
+    unsigned int sign;
+    unsigned int remainder;
+    unsigned int x;
+    unsigned int u;
+    unsigned int result;
+    (void)std::memcpy(&x, &f, sizeof(f));
+
+    u = (x & 0x7fffffffU);
+    sign = ((x >> 16U) & 0x8000U);
+    // NaN/+Inf/-Inf
+    if (u >= 0x7f800000U) {
+        remainder = 0U;
+        result = ((u == 0x7f800000U) ? (sign | 0x7c00U) : 0x7fffU);
+    } else if (u > 0x477fefffU) { // Overflows
+        remainder = 0x80000000U;
+        result = (sign | 0x7bffU);
+    } else if (u >= 0x38800000U) { // Normal numbers
+        remainder = u << 19U;
+        u -= 0x38000000U;
+        result = (sign | (u >> 13U));
+    } else if (u < 0x33000001U) { // +0/-0
+        remainder = u;
+        result = sign;
+    } else { // Denormal numbers
+        const unsigned int exponent = u >> 23U;
+        const unsigned int shift = 0x7eU - exponent;
+        unsigned int mantissa = (u & 0x7fffffU);
+        mantissa |= 0x800000U;
+        remainder = mantissa << (32U - shift);
+        result = (sign | (mantissa >> shift));
+        result &= 0x0000FFFFU;
+    }
+
+    if ((remainder > 0x80000000U) ||
+        ((remainder == 0x80000000U) && ((result & 0x1U) != 0U))) {
+        return static_cast<unsigned short>(result) + 1;
+    } else {
+        return static_cast<unsigned short>(result);
+    }
+}
 
 inline float relativeError(float a, float b) {
     return std::abs(a - b) / (0.5f * (std::abs(a) + std::abs(b)));
@@ -74,6 +145,15 @@ std::vector<unsigned char> randBinaryVecs(size_t num, size_t dim) {
     return v;
 }
 
+std::vector<float> roundToHalf(const std::vector<float>& v) {
+    auto out = std::vector<float>(v.size());
+    for (int i = 0; i < v.size(); ++i) {
+        out[i] = half2float(float2half(v[i]));
+    }
+
+    return out;
+}
+
 void compareIndices(
         const std::vector<float>& queryVecs,
         faiss::Index& refIndex,
@@ -87,7 +167,7 @@ void compareIndices(
         float pctMaxDiffN) {
     // Compare
     std::vector<float> refDistance(numQuery * k, 0);
-    std::vector<faiss::Index::idx_t> refIndices(numQuery * k, -1);
+    std::vector<faiss::idx_t> refIndices(numQuery * k, -1);
     refIndex.search(
             numQuery,
             queryVecs.data(),
@@ -96,7 +176,7 @@ void compareIndices(
             refIndices.data());
 
     std::vector<float> testDistance(numQuery * k, 0);
-    std::vector<faiss::Index::idx_t> testIndices(numQuery * k, -1);
+    std::vector<faiss::idx_t> testIndices(numQuery * k, -1);
     testIndex.search(
             numQuery,
             queryVecs.data(),
@@ -152,9 +232,9 @@ inline T lookup(const T* p, int i, int j, int /*dim1*/, int dim2) {
 
 void compareLists(
         const float* refDist,
-        const faiss::Index::idx_t* refInd,
+        const faiss::idx_t* refInd,
         const float* testDist,
-        const faiss::Index::idx_t* testInd,
+        const faiss::idx_t* testInd,
         int dim1,
         int dim2,
         const std::string& configMsg,
@@ -171,10 +251,10 @@ void compareLists(
     int numResults = dim1 * dim2;
 
     // query -> {index -> result position}
-    std::vector<std::unordered_map<faiss::Index::idx_t, int>> refIndexMap;
+    std::vector<std::unordered_map<faiss::idx_t, int>> refIndexMap;
 
     for (int query = 0; query < dim1; ++query) {
-        std::unordered_map<faiss::Index::idx_t, int> indices;
+        std::unordered_map<faiss::idx_t, int> indices;
 
         for (int result = 0; result < dim2; ++result) {
             indices[lookup(refInd, query, result, dim1, dim2)] = result;
@@ -198,7 +278,7 @@ void compareLists(
 
     for (int query = 0; query < dim1; ++query) {
         std::vector<int> diffs;
-        std::set<faiss::Index::idx_t> uniqueIndices;
+        std::set<faiss::idx_t> uniqueIndices;
 
         auto& indices = refIndexMap[query];
 

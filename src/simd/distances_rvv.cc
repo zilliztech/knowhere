@@ -17,6 +17,8 @@
 #include <riscv_vector.h>
 
 namespace faiss {
+namespace cppcontrib {
+namespace knowhere {
 
 // bf16 conversion helper function
 __attribute__((always_inline)) inline vfloat32m2_t
@@ -711,7 +713,7 @@ int8_vec_L2sqr_batch_4_rvv(const int8_t* x, const int8_t* y0, const int8_t* y1, 
 // fp16
 
 float
-fp16_vec_inner_product_rvv(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+fp16_vec_inner_product_rvv(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size_t d) {
     const size_t original_d = d;
     vfloat32m8_t acc = __riscv_vfmv_v_f_f32m8(0.0f, __riscv_vsetvlmax_e32m8());
 
@@ -737,7 +739,7 @@ fp16_vec_inner_product_rvv(const knowhere::fp16* x, const knowhere::fp16* y, siz
 }
 
 float
-fp16_vec_L2sqr_rvv(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+fp16_vec_L2sqr_rvv(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size_t d) {
     const size_t original_d = d;
     vfloat32m4_t acc = __riscv_vfmv_v_f_f32m4(0.0f, __riscv_vsetvlmax_e32m4());
     const _Float16* x_ptr = reinterpret_cast<const _Float16*>(x);
@@ -763,7 +765,7 @@ fp16_vec_L2sqr_rvv(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
 }
 
 float
-fp16_vec_norm_L2sqr_rvv(const knowhere::fp16* x, size_t d) {
+fp16_vec_norm_L2sqr_rvv(const ::knowhere::fp16* x, size_t d) {
     const size_t original_d = d;
     vfloat32m8_t acc = __riscv_vfmv_v_f_f32m8(0.0f, __riscv_vsetvlmax_e32m8());
     const _Float16* x_ptr = reinterpret_cast<const _Float16*>(x);
@@ -784,8 +786,8 @@ fp16_vec_norm_L2sqr_rvv(const knowhere::fp16* x, size_t d) {
 }
 
 void
-fp16_vec_inner_product_batch_4_rvv(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
-                                   const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0,
+fp16_vec_inner_product_batch_4_rvv(const ::knowhere::fp16* x, const ::knowhere::fp16* y0, const ::knowhere::fp16* y1,
+                                   const ::knowhere::fp16* y2, const ::knowhere::fp16* y3, const size_t d, float& dis0,
                                    float& dis1, float& dis2, float& dis3) {
     size_t temp_d = d;
     const _Float16* x_ptr = reinterpret_cast<const _Float16*>(x);
@@ -828,9 +830,9 @@ fp16_vec_inner_product_batch_4_rvv(const knowhere::fp16* x, const knowhere::fp16
 }
 
 void
-fp16_vec_L2sqr_batch_4_rvv(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
-                           const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0, float& dis1,
-                           float& dis2, float& dis3) {
+fp16_vec_L2sqr_batch_4_rvv(const ::knowhere::fp16* x, const ::knowhere::fp16* y0, const ::knowhere::fp16* y1,
+                           const ::knowhere::fp16* y2, const ::knowhere::fp16* y3, const size_t d, float& dis0,
+                           float& dis1, float& dis2, float& dis3) {
     const _Float16* x_ptr = reinterpret_cast<const _Float16*>(x);
     const _Float16* y0_ptr = reinterpret_cast<const _Float16*>(y0);
     const _Float16* y1_ptr = reinterpret_cast<const _Float16*>(y1);
@@ -881,7 +883,7 @@ fp16_vec_L2sqr_batch_4_rvv(const knowhere::fp16* x, const knowhere::fp16* y0, co
 ///////////////////////////////////////////////////////////////////////////////
 // bf16
 float
-bf16_vec_inner_product_rvv(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+bf16_vec_inner_product_rvv(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d) {
     const size_t original_d = d;
     const uint16_t* x_ptr = reinterpret_cast<const uint16_t*>(x);
     const uint16_t* y_ptr = reinterpret_cast<const uint16_t*>(y);
@@ -914,7 +916,7 @@ bf16_vec_inner_product_rvv(const knowhere::bf16* x, const knowhere::bf16* y, siz
 }
 
 float
-bf16_vec_L2sqr_rvv(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+bf16_vec_L2sqr_rvv(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d) {
     const size_t original_d = d;
     const uint16_t* x_ptr = reinterpret_cast<const uint16_t*>(x);
     const uint16_t* y_ptr = reinterpret_cast<const uint16_t*>(y);
@@ -950,7 +952,7 @@ bf16_vec_L2sqr_rvv(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
 }
 
 float
-bf16_vec_norm_L2sqr_rvv(const knowhere::bf16* x, size_t d) {
+bf16_vec_norm_L2sqr_rvv(const ::knowhere::bf16* x, size_t d) {
     const size_t original_d = d;
     const uint16_t* x_ptr = reinterpret_cast<const uint16_t*>(x);
 
@@ -974,8 +976,8 @@ bf16_vec_norm_L2sqr_rvv(const knowhere::bf16* x, size_t d) {
 }
 
 void
-bf16_vec_inner_product_batch_4_rvv(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                                   const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
+bf16_vec_inner_product_batch_4_rvv(const ::knowhere::bf16* x, const ::knowhere::bf16* y0, const ::knowhere::bf16* y1,
+                                   const ::knowhere::bf16* y2, const ::knowhere::bf16* y3, const size_t d, float& dis0,
                                    float& dis1, float& dis2, float& dis3) {
     size_t temp_d = d;
     const uint16_t* x_ptr = reinterpret_cast<const uint16_t*>(x);
@@ -1037,9 +1039,9 @@ bf16_vec_inner_product_batch_4_rvv(const knowhere::bf16* x, const knowhere::bf16
 }
 
 void
-bf16_vec_L2sqr_batch_4_rvv(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                           const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0, float& dis1,
-                           float& dis2, float& dis3) {
+bf16_vec_L2sqr_batch_4_rvv(const ::knowhere::bf16* x, const ::knowhere::bf16* y0, const ::knowhere::bf16* y1,
+                           const ::knowhere::bf16* y2, const ::knowhere::bf16* y3, const size_t d, float& dis0,
+                           float& dis1, float& dis2, float& dis3) {
     size_t temp_d = d;
     const uint16_t* x_ptr = reinterpret_cast<const uint16_t*>(x);
     const uint16_t* y0_ptr = reinterpret_cast<const uint16_t*>(y0);
@@ -1504,6 +1506,8 @@ fvec_L2sqr_ny_nearest_y_transposed_rvv(float* distances_tmp_buffer, const float*
     return nearest_idx;
 }
 
+}  // namespace knowhere
+}  // namespace cppcontrib
 }  // namespace faiss
 
 #endif

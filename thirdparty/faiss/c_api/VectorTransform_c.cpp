@@ -1,11 +1,10 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved.
 // -*- c++ -*-
 
 #include "VectorTransform_c.h"
@@ -120,6 +119,10 @@ int faiss_PCAMatrix_new_with(
 DEFINE_GETTER(PCAMatrix, float, eigen_power)
 
 DEFINE_GETTER(PCAMatrix, int, random_rotation)
+
+DEFINE_GETTER(PCAMatrix, int, balanced_bins)
+
+DEFINE_SETTER(PCAMatrix, int, balanced_bins)
 
 /*********************************************
  * ITQMatrix

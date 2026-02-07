@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -78,10 +78,6 @@ size_t StackDeviceMemory::Stack::getSizeAvailable() const {
 }
 
 char* StackDeviceMemory::Stack::getAlloc(size_t size, cudaStream_t stream) {
-    if (size == 0) {
-        return nullptr;
-    }
-
     // The user must check to see that the allocation fit within us
     auto sizeRemaining = getSizeAvailable();
 
@@ -136,10 +132,6 @@ void StackDeviceMemory::Stack::returnAlloc(
         char* p,
         size_t size,
         cudaStream_t stream) {
-    if (size == 0) {
-        return;
-    }
-
     // This allocation should be within ourselves
     FAISS_ASSERT(p >= start_ && p < end_);
 

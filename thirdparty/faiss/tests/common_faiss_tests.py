@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -11,7 +11,7 @@ import numpy as np
 import faiss
 
 # reduce number of threads to avoid excessive nb of threads in opt
-# mode (recuces runtime from 100s to 4s!)
+# mode (reduces runtime from 100s to 4s!)
 faiss.omp_set_num_threads(4)
 
 

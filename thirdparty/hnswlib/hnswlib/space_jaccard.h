@@ -1,6 +1,6 @@
 #pragma once
 
-#include <faiss/utils/binary_distances.h>
+#include <faiss/cppcontrib/knowhere/utils/binary_distances.h>
 
 #include "hnswlib.h"
 
@@ -8,7 +8,7 @@ namespace hnswlib {
 
 static float
 Jaccard(const void* pVect1v, const void* pVect2v, const void* qty_ptr) {
-    return faiss::bvec_jaccard((const uint8_t*)pVect1v, (const uint8_t*)pVect2v, *((size_t*)qty_ptr) / 8);
+    return faiss::cppcontrib::knowhere::bvec_jaccard((const uint8_t*)pVect1v, (const uint8_t*)pVect2v, *((size_t*)qty_ptr) / 8);
 }
 
 class JaccardSpace : public SpaceInterface<float> {

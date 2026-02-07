@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -13,20 +13,12 @@
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/IDSelector.h>
 #include <faiss/utils/Heap.h>
-
-// todo aguzhva: merge binary_distances with hamming_distances
-#include <faiss/utils/binary_distances.h>
 #include <faiss/utils/hamming.h>
-
-#include <faiss/utils/utils.h>
 #include <cstring>
 
 namespace faiss {
 
 IndexBinaryFlat::IndexBinaryFlat(idx_t d) : IndexBinary(d) {}
-
-IndexBinaryFlat::IndexBinaryFlat(idx_t d, MetricType metric)
-        : IndexBinary(d, metric) {}
 
 void IndexBinaryFlat::add(idx_t n, const uint8_t* x) {
     xb.insert(xb.end(), x, x + n * code_size);
@@ -45,59 +37,44 @@ void IndexBinaryFlat::search(
         int32_t* distances,
         idx_t* labels,
         const SearchParameters* params) const {
+    // Extract IDSelector from params if present
+    const IDSelector* sel = params ? params->sel : nullptr;
     FAISS_THROW_IF_NOT(k > 0);
 
-    IDSelector* sel = (params == nullptr) ? nullptr : params->sel;
+    const idx_t block_size = query_batch_size;
+    for (idx_t s = 0; s < n; s += block_size) {
+        idx_t nn = block_size;
+        if (s + block_size > n) {
+            nn = n - s;
+        }
 
-    // ====================================================
-    // The following piece of the code is Knowhere-specific.
-    //   As a result, query_batch_size and 
-    //   use_heap variables are not used.
+        if (use_heap) {
+            // We see the distances and labels as heaps.
+            int_maxheap_array_t res = {
+                    size_t(nn), size_t(k), labels + s * k, distances + s * k};
 
-    if (metric_type == METRIC_Jaccard) {
-        float* D = reinterpret_cast<float*>(distances);
-        float_maxheap_array_t res = {size_t(n), size_t(k), labels, D};
-        binary_knn_hc(
-                METRIC_Jaccard, 
-                &res, 
-                x, 
-                xb.data(), 
-                ntotal, 
-                code_size, 
-                sel);
-    } else if (metric_type == METRIC_Hamming) {
-        int_maxheap_array_t res = {size_t(n), size_t(k), labels, distances};
-        binary_knn_hc(
-                METRIC_Hamming, 
-                &res, 
-                x, 
-                xb.data(), 
-                ntotal, 
-                code_size, 
-                sel);
-    } else if (
-            metric_type == METRIC_Substructure ||
-            metric_type == METRIC_Superstructure) {
-        float* D = reinterpret_cast<float*>(distances);
-
-        // only matched ids will be chosen, not to use heap
-        binary_knn_mc(
-                metric_type,
-                x,
-                xb.data(),
-                n,
-                ntotal,
-                k,
-                code_size,
-                D,
-                labels,
-                sel);
-    } else {
-        FAISS_ASSERT_FMT(false, "invalid metric type %d", (int)metric_type);
+            hammings_knn_hc(
+                    &res,
+                    x + s * code_size,
+                    xb.data(),
+                    ntotal,
+                    code_size,
+                    /* ordered = */ true,
+                    approx_topk_mode,
+                    sel);
+        } else {
+            hammings_knn_mc(
+                    x + s * code_size,
+                    xb.data(),
+                    nn,
+                    ntotal,
+                    k,
+                    code_size,
+                    distances + s * k,
+                    labels + s * k,
+                    sel);
+        }
     }
-
-    // The end of Knowhere-specific code. 
-    // ====================================================
 }
 
 size_t IndexBinaryFlat::remove_ids(const IDSelector& sel) {
@@ -129,55 +106,12 @@ void IndexBinaryFlat::reconstruct(idx_t key, uint8_t* recons) const {
 void IndexBinaryFlat::range_search(
         idx_t n,
         const uint8_t* x,
-        float radius,
+        int radius,
         RangeSearchResult* result,
         const SearchParameters* params) const {
-
-    // ====================================================
-    // The following piece of the code is Knowhere-specific.
-
-    IDSelector* sel = (params == nullptr) ? nullptr : params->sel;
-
-    switch (metric_type) {
-        case METRIC_Jaccard: {
-            binary_range_search<CMin<float, int64_t>, float>(
-                    METRIC_Jaccard,
-                    x,
-                    xb.data(),
-                    n,
-                    ntotal,
-                    radius,
-                    code_size,
-                    result,
-                    sel);
-            break;
-        }
-        case METRIC_Hamming: {
-            binary_range_search<CMin<int, int64_t>, int>(
-                    METRIC_Hamming,
-                    x,
-                    xb.data(),
-                    n,
-                    ntotal,
-                    static_cast<int>(radius),
-                    code_size,
-                    result,
-                    sel);
-            break;
-        }
-        case METRIC_Superstructure:
-            FAISS_THROW_MSG("Superstructure not support range_search");
-            break;
-        case METRIC_Substructure:
-            FAISS_THROW_MSG("Substructure not support range_search");
-            break;
-        default:
-            FAISS_THROW_FMT("Invalid metric type %d\n", (int)metric_type);
-            break;
-    }
-
-    // The end of Knowhere-specific code. 
-    // ====================================================
+    const IDSelector* sel = params ? params->sel : nullptr;
+    hamming_range_search(
+            x, xb.data(), n, ntotal, radius, code_size, result, sel);
 }
 
 } // namespace faiss

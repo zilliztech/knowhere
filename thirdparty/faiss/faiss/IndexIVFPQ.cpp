@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -22,8 +22,6 @@
 #include <faiss/utils/utils.h>
 
 #include <faiss/Clustering.h>
-#include <faiss/FaissHook.h>
-#include <faiss/IndexFlat.h>
 
 #include <faiss/utils/hamming.h>
 
@@ -48,10 +46,14 @@ IndexIVFPQ::IndexIVFPQ(
         size_t nlist,
         size_t M,
         size_t nbits_per_idx,
-        MetricType metric)
-        : IndexIVF(quantizer, d, nlist, 0, metric), pq(d, M, nbits_per_idx) {
+        MetricType metric,
+        bool own_invlists)
+        : IndexIVF(quantizer, d, nlist, 0, metric, own_invlists),
+          pq(d, M, nbits_per_idx) {
     code_size = pq.code_size;
-    invlists->code_size = code_size;
+    if (own_invlists) {
+        invlists->code_size = code_size;
+    }
     is_trained = false;
     by_residual = true;
     use_precomputed_table = 0;
@@ -135,7 +137,6 @@ void IndexIVFPQ::decode_multiple(
 void IndexIVFPQ::add_core(
         idx_t n,
         const float* x,
-        const float* x_norms,
         const idx_t* xids,
         const idx_t* coarse_idx,
         void* inverted_list_context) {
@@ -182,6 +183,14 @@ void IndexIVFPQ::encode_vectors(
             encode_listno(list_nos[i], code);
         }
     }
+}
+
+void IndexIVFPQ::decode_vectors(
+        idx_t n,
+        const uint8_t* codes,
+        const idx_t* listnos,
+        float* x) const {
+    return decode_multiple(n, listnos, codes, x);
 }
 
 void IndexIVFPQ::sa_decode(idx_t n, const uint8_t* codes, float* x) const {
@@ -287,7 +296,7 @@ void IndexIVFPQ::add_core_o(
 
         uint8_t* code = xcodes.get() + i * code_size;
         size_t offset =
-                invlists->add_entry(key, id, code, nullptr, inverted_list_context);
+                invlists->add_entry(key, id, code, inverted_list_context);
 
         if (residuals_2) {
             float* res2 = residuals_2 + i * d;
@@ -320,16 +329,14 @@ void IndexIVFPQ::reconstruct_from_offset(
         float* recons) const {
     const uint8_t* code = invlists->get_single_code(list_no, offset);
 
+    pq.decode(code, recons);
     if (by_residual) {
         std::vector<float> centroid(d);
         quantizer->reconstruct(list_no, centroid.data());
 
-        pq.decode(code, recons);
         for (int i = 0; i < d; ++i) {
             recons[i] += centroid[i];
         }
-    } else {
-        pq.decode(code, recons);
     }
 }
 
@@ -755,7 +762,7 @@ struct QueryTables {
     }
 };
 
-// This way of handling the sleector is not optimal since all distances
+// This way of handling the selector is not optimal since all distances
 // are computed even if the id would filter it out.
 template <class C, bool use_sel>
 struct KnnSearchResults {
@@ -1066,16 +1073,16 @@ struct IVFPQScannerT : QueryTables {
             // 9999999 is just an arbitrary large number
             int hd0 = (res.skip_entry(j + 0))
                     ? 99999999
-                    : hc.compute(b_code + 0 * code_size);
+                    : hc.hamming(b_code + 0 * code_size);
             int hd1 = (res.skip_entry(j + 1))
                     ? 99999999
-                    : hc.compute(b_code + 1 * code_size);
+                    : hc.hamming(b_code + 1 * code_size);
             int hd2 = (res.skip_entry(j + 2))
                     ? 99999999
-                    : hc.compute(b_code + 2 * code_size);
+                    : hc.hamming(b_code + 2 * code_size);
             int hd3 = (res.skip_entry(j + 3))
                     ? 99999999
-                    : hc.compute(b_code + 3 * code_size);
+                    : hc.hamming(b_code + 3 * code_size);
 
             saved_j[counter] = j + 0;
             counter = (hd0 < ht) ? (counter + 1) : counter;
@@ -1140,7 +1147,7 @@ struct IVFPQScannerT : QueryTables {
                 continue;
             }
             const uint8_t* b_code = codes + j * code_size;
-            int hd = hc.compute(b_code);
+            int hd = hc.hamming(b_code);
             if (hd < ht) {
                 n_hamming_pass++;
 
@@ -1156,7 +1163,9 @@ struct IVFPQScannerT : QueryTables {
         }
 
 #pragma omp critical
-        { indexIVFPQ_stats.n_hamming_pass += n_hamming_pass; }
+        {
+            indexIVFPQ_stats.n_hamming_pass += n_hamming_pass;
+        }
     }
 
     template <class SearchResultType>
@@ -1206,6 +1215,7 @@ struct IVFPQScanner : IVFPQScannerT<idx_t, METRIC_TYPE, PQDecoder>,
               sel(sel) {
         this->store_pairs = store_pairs;
         this->keep_max = is_similarity_metric(METRIC_TYPE);
+        this->code_size = this->pq.code_size;
     }
 
     void set_query(const float* query) override {
@@ -1228,12 +1238,10 @@ struct IVFPQScanner : IVFPQScannerT<idx_t, METRIC_TYPE, PQDecoder>,
     size_t scan_codes(
             size_t ncode,
             const uint8_t* codes,
-            const float* code_norms,
             const idx_t* ids,
             float* heap_sim,
             idx_t* heap_ids,
-            size_t k,
-            size_t& scan_cnt) const override {
+            size_t k) const override {
         KnnSearchResults<C, use_sel> res = {
                 /* key */ this->key,
                 /* ids */ this->store_pairs ? nullptr : ids,
@@ -1261,7 +1269,6 @@ struct IVFPQScanner : IVFPQScannerT<idx_t, METRIC_TYPE, PQDecoder>,
     void scan_codes_range(
             size_t ncode,
             const uint8_t* codes,
-            const float* code_norms,
             const idx_t* ids,
             float radius,
             RangeQueryResult& rres) const override {

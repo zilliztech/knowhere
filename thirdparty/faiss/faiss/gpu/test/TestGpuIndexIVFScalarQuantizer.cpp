@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -61,7 +61,7 @@ struct Options {
     faiss::gpu::IndicesOptions indicesOpt;
 };
 
-void runCopyToTest(faiss::QuantizerType qtype) {
+void runCopyToTest(faiss::ScalarQuantizer::QuantizerType qtype) {
     using namespace faiss;
     using namespace faiss::gpu;
 
@@ -79,7 +79,7 @@ void runCopyToTest(faiss::QuantizerType qtype) {
             &res, opt.dim, opt.numCentroids, qtype, METRIC_L2, true, config);
     gpuIndex.train(opt.numTrain, trainVecs.data());
     gpuIndex.add(opt.numAdd, addVecs.data());
-    gpuIndex.setNumProbes(opt.nprobe);
+    gpuIndex.nprobe = opt.nprobe;
 
     // use garbage values to see if we overwrite then
     IndexFlatL2 cpuQuantizer(1);
@@ -87,7 +87,7 @@ void runCopyToTest(faiss::QuantizerType qtype) {
             &cpuQuantizer,
             1,
             1,
-            QuantizerType::QT_6bit,
+            ScalarQuantizer::QuantizerType::QT_6bit,
             METRIC_L2);
     cpuIndex.nprobe = 1;
 
@@ -100,7 +100,7 @@ void runCopyToTest(faiss::QuantizerType qtype) {
     EXPECT_EQ(cpuIndex.quantizer->d, gpuIndex.quantizer->d);
     EXPECT_EQ(cpuIndex.d, opt.dim);
     EXPECT_EQ(cpuIndex.nlist, gpuIndex.getNumLists());
-    EXPECT_EQ(cpuIndex.nprobe, gpuIndex.getNumProbes());
+    EXPECT_EQ(cpuIndex.nprobe, gpuIndex.nprobe);
 
     testIVFEquality(cpuIndex, gpuIndex);
 
@@ -118,30 +118,30 @@ void runCopyToTest(faiss::QuantizerType qtype) {
 }
 
 TEST(TestGpuIndexIVFScalarQuantizer, CopyTo_fp16) {
-    runCopyToTest(faiss::QuantizerType::QT_fp16);
+    runCopyToTest(faiss::ScalarQuantizer::QuantizerType::QT_fp16);
 }
 
 TEST(TestGpuIndexIVFScalarQuantizer, CopyTo_8bit) {
-    runCopyToTest(faiss::QuantizerType::QT_8bit);
+    runCopyToTest(faiss::ScalarQuantizer::QuantizerType::QT_8bit);
 }
 
 TEST(TestGpuIndexIVFScalarQuantizer, CopyTo_8bit_uniform) {
-    runCopyToTest(faiss::QuantizerType::QT_8bit_uniform);
+    runCopyToTest(faiss::ScalarQuantizer::QuantizerType::QT_8bit_uniform);
 }
 
 TEST(TestGpuIndexIVFScalarQuantizer, CopyTo_6bit) {
-    runCopyToTest(faiss::QuantizerType::QT_6bit);
+    runCopyToTest(faiss::ScalarQuantizer::QuantizerType::QT_6bit);
 }
 
 TEST(TestGpuIndexIVFScalarQuantizer, CopyTo_4bit) {
-    runCopyToTest(faiss::QuantizerType::QT_4bit);
+    runCopyToTest(faiss::ScalarQuantizer::QuantizerType::QT_4bit);
 }
 
 TEST(TestGpuIndexIVFScalarQuantizer, CopyTo_4bit_uniform) {
-    runCopyToTest(faiss::QuantizerType::QT_4bit_uniform);
+    runCopyToTest(faiss::ScalarQuantizer::QuantizerType::QT_4bit_uniform);
 }
 
-void runCopyFromTest(faiss::QuantizerType qtype) {
+void runCopyFromTest(faiss::ScalarQuantizer::QuantizerType qtype) {
     using namespace faiss;
     using namespace faiss::gpu;
 
@@ -168,11 +168,11 @@ void runCopyFromTest(faiss::QuantizerType qtype) {
             &res,
             1,
             1,
-            QuantizerType::QT_4bit,
+            ScalarQuantizer::QuantizerType::QT_4bit,
             METRIC_L2,
             false,
             config);
-    gpuIndex.setNumProbes(1);
+    gpuIndex.nprobe = 1;
 
     gpuIndex.copyFrom(&cpuIndex);
 
@@ -182,7 +182,7 @@ void runCopyFromTest(faiss::QuantizerType qtype) {
     EXPECT_EQ(cpuIndex.d, gpuIndex.d);
     EXPECT_EQ(cpuIndex.d, opt.dim);
     EXPECT_EQ(cpuIndex.nlist, gpuIndex.getNumLists());
-    EXPECT_EQ(cpuIndex.nprobe, gpuIndex.getNumProbes());
+    EXPECT_EQ(cpuIndex.nprobe, gpuIndex.nprobe);
 
     testIVFEquality(cpuIndex, gpuIndex);
 
@@ -200,27 +200,27 @@ void runCopyFromTest(faiss::QuantizerType qtype) {
 }
 
 TEST(TestGpuIndexIVFScalarQuantizer, CopyFrom_fp16) {
-    runCopyFromTest(faiss::QuantizerType::QT_fp16);
+    runCopyFromTest(faiss::ScalarQuantizer::QuantizerType::QT_fp16);
 }
 
 TEST(TestGpuIndexIVFScalarQuantizer, CopyFrom_8bit) {
-    runCopyFromTest(faiss::QuantizerType::QT_8bit);
+    runCopyFromTest(faiss::ScalarQuantizer::QuantizerType::QT_8bit);
 }
 
 TEST(TestGpuIndexIVFScalarQuantizer, CopyFrom_8bit_uniform) {
-    runCopyFromTest(faiss::QuantizerType::QT_8bit_uniform);
+    runCopyFromTest(faiss::ScalarQuantizer::QuantizerType::QT_8bit_uniform);
 }
 
 TEST(TestGpuIndexIVFScalarQuantizer, CopyFrom_6bit) {
-    runCopyFromTest(faiss::QuantizerType::QT_6bit);
+    runCopyFromTest(faiss::ScalarQuantizer::QuantizerType::QT_6bit);
 }
 
 TEST(TestGpuIndexIVFScalarQuantizer, CopyFrom_4bit) {
-    runCopyFromTest(faiss::QuantizerType::QT_4bit);
+    runCopyFromTest(faiss::ScalarQuantizer::QuantizerType::QT_4bit);
 }
 
 TEST(TestGpuIndexIVFScalarQuantizer, CopyFrom_4bit_uniform) {
-    runCopyFromTest(faiss::QuantizerType::QT_4bit_uniform);
+    runCopyFromTest(faiss::ScalarQuantizer::QuantizerType::QT_4bit_uniform);
 }
 
 int main(int argc, char** argv) {

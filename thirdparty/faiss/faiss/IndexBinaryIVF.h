@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -68,13 +68,11 @@ struct IndexBinaryIVF : IndexBinary {
      * identifier. The pointer is borrowed: the quantizer should not
      * be deleted while the IndexBinaryIVF is in use.
      */
-    IndexBinaryIVF(IndexBinary* quantizer, size_t d, size_t nlist);
-
     IndexBinaryIVF(
             IndexBinary* quantizer,
             size_t d,
             size_t nlist,
-            MetricType metric);
+            bool own_invlists = true);
 
     IndexBinaryIVF();
 
@@ -127,12 +125,10 @@ struct IndexBinaryIVF : IndexBinary {
             int32_t* distances,
             idx_t* labels,
             bool store_pairs,
-            const IVFSearchParameters* params = nullptr,
-            IndexIVFStats* stats = nullptr) const;
+            const IVFSearchParameters* params = nullptr) const;
 
     virtual BinaryInvertedListScanner* get_InvertedListScanner(
-            bool store_pairs = false,
-            const IDSelector* sel = nullptr) const;
+            bool store_pairs = false) const;
 
     /** assign the vectors, then call search_preassign */
     void search(
@@ -143,24 +139,20 @@ struct IndexBinaryIVF : IndexBinary {
             idx_t* labels,
             const SearchParameters* params = nullptr) const override;
 
-    // Knowhere-specific: radius became float because of Jaccard distance
     void range_search(
             idx_t n,
             const uint8_t* x,
-            float radius,
+            int radius,
             RangeSearchResult* result,
             const SearchParameters* params = nullptr) const override;
 
-    // Knowhere-specific: radius became float because of Jaccard distance
     void range_search_preassigned(
             idx_t n,
             const uint8_t* x,
-            float radius,
+            int radius,
             const idx_t* assign,
             const int32_t* centroid_dis,
-            RangeSearchResult* result,
-            const IVFSearchParameters* params = nullptr,
-            IndexIVFStats* stats = nullptr) const;
+            RangeSearchResult* result) const;
 
     void reconstruct(idx_t key, uint8_t* recons) const override;
 
@@ -222,24 +214,14 @@ struct IndexBinaryIVF : IndexBinary {
      * @param new_maintain_direct_map    if true, create a direct map,
      *                                   else clear it
      */
-    void make_direct_map(bool new_maintain_direct_map = true, DirectMap::Type type = DirectMap::Type::Array);
+    void make_direct_map(bool new_maintain_direct_map = true);
 
     void set_direct_map_type(DirectMap::Type type);
 
     void replace_invlists(InvertedLists* il, bool own = false);
-
 };
 
 struct BinaryInvertedListScanner {
-    bool store_pairs;
-    /// search in this subset of ids
-    const IDSelector* sel;
-
-    BinaryInvertedListScanner(
-            bool store_pairs = false,
-            const IDSelector* sel = nullptr)
-            : store_pairs(store_pairs), sel(sel) {}
-
     /// from now on we handle this query.
     virtual void set_query(const uint8_t* query_vector) = 0;
 
@@ -247,7 +229,7 @@ struct BinaryInvertedListScanner {
     virtual void set_list(idx_t list_no, uint8_t coarse_dis) = 0;
 
     /// compute a single query-to-code distance
-    virtual float distance_to_code(const uint8_t* code) const = 0;
+    virtual uint32_t distance_to_code(const uint8_t* code) const = 0;
 
     /** compute the distances to codes. (distances, labels) should be
      * organized as a min- or max-heap
@@ -267,12 +249,11 @@ struct BinaryInvertedListScanner {
             idx_t* labels,
             size_t k) const = 0;
 
-    // Knowhere-specific: radius became float because of Jaccard distance
     virtual void scan_codes_range(
             size_t n,
             const uint8_t* codes,
             const idx_t* ids,
-            float radius,
+            int radius,
             RangeQueryResult& result) const = 0;
 
     virtual ~BinaryInvertedListScanner() {}

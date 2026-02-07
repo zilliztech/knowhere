@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -56,7 +56,8 @@ struct IndexIVFSpectralHash : IndexIVF {
             size_t d,
             size_t nlist,
             int nbit,
-            float period);
+            float period,
+            bool own_invlists = true);
 
     IndexIVFSpectralHash();
 
@@ -78,7 +79,7 @@ struct IndexIVFSpectralHash : IndexIVF {
      */
     void replace_vt(VectorTransform* vt, bool own = false);
 
-    /** convenience function to get the VT from an index constucted by an
+    /** convenience function to get the VT from an index constructed by an
      * index_factory (should end in "LSH") */
     void replace_vt(IndexPreTransform* index, bool own = false);
 

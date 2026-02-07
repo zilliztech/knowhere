@@ -60,7 +60,7 @@ IndexFactory::Create(const std::string& name, const int32_t& version, const Obje
         return expected<Index<IndexNode>>::Err(Status::cuda_runtime_error, "gpu not available");
     }
 #endif
-    if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && !faiss::support_pq_fast_scan) {
+    if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && !faiss::cppcontrib::knowhere::support_pq_fast_scan) {
         LOG_KNOWHERE_ERROR_ << "SCANN index is not supported on the current CPU model";
         return expected<Index<IndexNode>>::Err(Status::invalid_index_error,
                                                "SCANN index is not supported on the current CPU model");

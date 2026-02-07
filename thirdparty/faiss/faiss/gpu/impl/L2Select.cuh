@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -15,9 +15,8 @@ namespace gpu {
 void runL2SelectMin(
         Tensor<float, 2, true>& productDistances,
         Tensor<float, 1, true>& centroidDistances,
-        Tensor<uint8_t, 1, true>& bitset,
         Tensor<float, 2, true>& outDistances,
-        Tensor<int, 2, true>& outIndices,
+        Tensor<idx_t, 2, true>& outIndices,
         int k,
         cudaStream_t stream);
 

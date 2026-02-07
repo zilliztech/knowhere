@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -9,7 +9,6 @@ import numpy as np
 
 import faiss
 import unittest
-import array
 
 from common_faiss_tests import get_dataset_2
 
@@ -297,3 +296,23 @@ class TestClustering1D(unittest.TestCase):
         faiss.smawk(nrows, ncols, sp(A), sp(argmins))
         argmins_ref = np.argmin(A, axis=1)
         assert np.array_equal(argmins, argmins_ref)
+
+
+class TestEarlyStopping(unittest.TestCase):
+
+    def test_early_stopping_convergence(self):
+        d = 32
+        n = 1000
+        k = 10
+        max_iter = 1000
+
+        rs = np.random.RandomState(42)
+        x = rs.uniform(size=(n, d)).astype('float32')
+
+        clus = faiss.Clustering(d, k)
+        clus.niter = max_iter
+        index = faiss.IndexFlatL2(d)
+        clus.train(x, index)
+
+        num_iterations = clus.iteration_stats.size()
+        self.assertLess(num_iterations, max_iter)

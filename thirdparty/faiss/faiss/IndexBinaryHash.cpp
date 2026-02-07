@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -11,7 +11,6 @@
 
 #include <cinttypes>
 #include <cstdio>
-#include <memory>
 #include <unordered_set>
 
 #include <faiss/utils/hamming.h>
@@ -19,7 +18,6 @@
 
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissAssert.h>
-#include <faiss/impl/platform_macros.h>
 
 namespace faiss {
 
@@ -109,7 +107,7 @@ struct FlipEnumerator {
 };
 
 struct RangeSearchResults {
-    float radius;
+    int radius;
     RangeQueryResult& qres;
 
     inline void add(float dis, idx_t id) {
@@ -166,7 +164,7 @@ void search_single_query_template(
         } else {
             const uint8_t* codes = il.vecs.data();
             for (size_t i = 0; i < nv; i++) {
-                auto dis = hc.compute(codes);
+                int dis = hc.hamming(codes);
                 res.add(dis, il.ids[i]);
                 codes += code_size;
             }
@@ -179,8 +177,8 @@ void search_single_query_template(
 struct Run_search_single_query {
     using T = void;
     template <class HammingComputer, class... Types>
-    T f(Types... args) {
-        search_single_query_template<HammingComputer>(args...);
+    T f(Types*... args) {
+        search_single_query_template<HammingComputer>(*args...);
     }
 };
 
@@ -194,7 +192,7 @@ void search_single_query(
         size_t& ndis) {
     Run_search_single_query r;
     dispatch_HammingComputer(
-            index.code_size, r, index, q, res, n0, nlist, ndis);
+            index.code_size, r, &index, &q, &res, &n0, &nlist, &ndis);
 }
 
 } // anonymous namespace
@@ -202,7 +200,7 @@ void search_single_query(
 void IndexBinaryHash::range_search(
         idx_t n,
         const uint8_t* x,
-        float radius,
+        int radius,
         RangeSearchResult* result,
         const SearchParameters* params) const {
     FAISS_THROW_IF_NOT_MSG(
@@ -347,7 +345,7 @@ static void verify_shortlist(
     const uint8_t* codes = index->xb.data();
 
     for (auto i : shortlist) {
-        auto dis = hc.compute(codes + i * code_size);
+        int dis = hc.hamming(codes + i * code_size);
         res.add(dis, i);
     }
 }
@@ -410,7 +408,7 @@ void search_1_query_multihash(
 void IndexBinaryMultiHash::range_search(
         idx_t n,
         const uint8_t* x,
-        float radius,
+        int radius,
         RangeSearchResult* result,
         const SearchParameters* params) const {
     FAISS_THROW_IF_NOT_MSG(

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -15,9 +15,8 @@
 
 #include <faiss/IndexIVF.h>
 
-#include "knowhere/object.h"
-
 namespace faiss {
+
 /** Inverted file with stored vectors. Here the inverted file
  * pre-selects the vectors to be searched, but they are not otherwise
  * encoded, the code array just contains the raw float entries.
@@ -28,19 +27,11 @@ struct IndexIVFFlat : IndexIVF {
             size_t d,
             size_t nlist_,
             MetricType = METRIC_L2,
-            bool is_cosine = false);
-
-    // Be careful with overriding this function, because
-    //   renormalized x may be used inside.
-    // Overridden by IndexIVFFlatDedup.
-    void train(idx_t n, const float* x) override;
-
-    void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
+            bool own_invlists = true);
 
     void add_core(
             idx_t n,
             const float* x,
-            const float* x_norms,
             const idx_t* xids,
             const idx_t* precomputed_idx,
             void* inverted_list_context = nullptr) override;
@@ -51,6 +42,12 @@ struct IndexIVFFlat : IndexIVF {
             const idx_t* list_nos,
             uint8_t* codes,
             bool include_listnos = false) const override;
+
+    void decode_vectors(
+            idx_t n,
+            const uint8_t* codes,
+            const idx_t* list_nos,
+            float* x) const override;
 
     InvertedListScanner* get_InvertedListScanner(
             bool store_pairs,
@@ -65,18 +62,6 @@ struct IndexIVFFlat : IndexIVF {
     IndexIVFFlat();
 };
 
-struct IndexIVFFlatCC : IndexIVFFlat {
-    IndexIVFFlatCC(
-            Index* quantizer,
-            size_t d,
-            size_t nlist,
-            size_t ssize,
-            MetricType = METRIC_L2,
-            bool is_cosine = false);
-
-    IndexIVFFlatCC();
-};
-
 struct IndexIVFFlatDedup : IndexIVFFlat {
     /** Maps ids stored in the index to the ids of vectors that are
      *  the same. When a vector is unique, it does not appear in the
@@ -87,7 +72,8 @@ struct IndexIVFFlatDedup : IndexIVFFlat {
             Index* quantizer,
             size_t d,
             size_t nlist_,
-            MetricType = METRIC_L2);
+            MetricType = METRIC_L2,
+            bool own_invlists = true);
 
     /// also dedups the training set
     void train(idx_t n, const float* x) override;

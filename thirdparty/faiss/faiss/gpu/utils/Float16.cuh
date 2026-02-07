@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -16,7 +16,18 @@
 #define FAISS_USE_FULL_FLOAT16 1
 #endif // __CUDA_ARCH__ types
 
+// Some compute capabilities have full bfloat16 ALUs.
+#if __CUDA_ARCH__ >= 800 || defined(USE_AMD_ROCM)
+#define FAISS_USE_FULL_BFLOAT16 1
+#endif // __CUDA_ARCH__ types
+
+#if !defined(USE_AMD_ROCM)
+#include <cuda_bf16.h>
 #include <cuda_fp16.h>
+#else
+#include <hip/hip_bf16.h>
+#include <hip/hip_fp16.h>
+#endif // !defined(USE_AMD_ROCM)
 
 namespace faiss {
 namespace gpu {

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -138,7 +138,7 @@ struct LocalSearchQuantizer : AdditiveQuantizer {
     /** Add some perturbation to codebooks
      *
      * @param T         temperature of simulated annealing
-     * @param stddev    standard derivations of each dimension in training data
+     * @param stddev    standard deviations of each dimension in training data
      */
     void perturb_codebooks(
             float T,

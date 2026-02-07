@@ -18,6 +18,9 @@
 #include "faiss/impl/platform_macros.h"
 #if defined(__ARM_FEATURE_SVE)
 namespace faiss {
+namespace cppcontrib {
+namespace knowhere {
+
 namespace {
 inline size_t
 find_min_index_sve(const float* data, size_t ny) {
@@ -214,7 +217,7 @@ fvec_inner_product_sve(const float* x, const float* y, size_t d) {
 }
 
 float
-fp16_vec_L2sqr_sve(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+fp16_vec_L2sqr_sve(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size_t d) {
     svfloat32_t sum1 = svdup_f32(0.0f);
     svfloat32_t sum2 = svdup_f32(0.0f);
     size_t i = 0;
@@ -248,7 +251,7 @@ fp16_vec_L2sqr_sve(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
 }
 
 float
-fp16_vec_inner_product_sve(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+fp16_vec_inner_product_sve(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size_t d) {
     svfloat32_t sum1 = svdup_f32(0.0f);
     svfloat32_t sum2 = svdup_f32(0.0f);
     size_t i = 0;
@@ -340,7 +343,7 @@ fvec_norm_L2sqr_sve(const float* x, size_t d) {
 }
 
 float
-fp16_vec_norm_L2sqr_sve(const knowhere::fp16* x, size_t d) {
+fp16_vec_norm_L2sqr_sve(const ::knowhere::fp16* x, size_t d) {
     svfloat32_t sum1 = svdup_f32(0.0f);
     svfloat32_t sum2 = svdup_f32(0.0f);
     size_t i = 0;
@@ -807,7 +810,7 @@ int8_vec_inner_product_batch_4_sve(const int8_t* x, const int8_t* y0, const int8
 }
 
 float
-bf16_vec_L2sqr_sve(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+bf16_vec_L2sqr_sve(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d) {
     svfloat32_t acc_squared_norm_x = svdup_f32(0.0f);
     svfloat32_t acc_squared_norm_y = svdup_f32(0.0f);
     svfloat32_t acc_dot_product = svdup_f32(0.0f);
@@ -837,7 +840,7 @@ bf16_vec_L2sqr_sve(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
 }
 
 float
-bf16_vec_norm_L2sqr_sve(const knowhere::bf16* x, size_t d) {
+bf16_vec_norm_L2sqr_sve(const ::knowhere::bf16* x, size_t d) {
     svfloat32_t acc = svdup_f32(0.0f);
 
     size_t i = 0;
@@ -858,8 +861,8 @@ bf16_vec_norm_L2sqr_sve(const knowhere::bf16* x, size_t d) {
 }
 
 void
-bf16_vec_L2sqr_batch_4_sve(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                           const knowhere::bf16* y2, const knowhere::bf16* y3, size_t d, float& dis0, float& dis1,
+bf16_vec_L2sqr_batch_4_sve(const ::knowhere::bf16* x, const ::knowhere::bf16* y0, const ::knowhere::bf16* y1,
+                           const ::knowhere::bf16* y2, const ::knowhere::bf16* y3, size_t d, float& dis0, float& dis1,
                            float& dis2, float& dis3) {
     svfloat32_t acc_x = svdup_f32(0.0f);
     svfloat32_t acc_y0 = svdup_f32(0.0f);
@@ -917,7 +920,7 @@ bf16_vec_L2sqr_batch_4_sve(const knowhere::bf16* x, const knowhere::bf16* y0, co
 }
 
 float
-bf16_vec_inner_product_sve(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+bf16_vec_inner_product_sve(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d) {
     svfloat32_t acc = svdup_f32(0.0f);
 
     size_t i = 0;
@@ -939,8 +942,8 @@ bf16_vec_inner_product_sve(const knowhere::bf16* x, const knowhere::bf16* y, siz
 }
 
 void
-bf16_vec_inner_product_batch_4_sve(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                                   const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
+bf16_vec_inner_product_batch_4_sve(const ::knowhere::bf16* x, const ::knowhere::bf16* y0, const ::knowhere::bf16* y1,
+                                   const ::knowhere::bf16* y2, const ::knowhere::bf16* y3, const size_t d, float& dis0,
                                    float& dis1, float& dis2, float& dis3) {
     svfloat32_t acc0 = svdup_f32(0.0f);
     svfloat32_t acc1 = svdup_f32(0.0f);
@@ -974,6 +977,8 @@ bf16_vec_inner_product_batch_4_sve(const knowhere::bf16* x, const knowhere::bf16
     dis3 = svaddv_f32(svptrue_b32(), acc3);
 }
 
+}  // namespace knowhere
+}  // namespace cppcontrib
 }  // namespace faiss
 
 #endif

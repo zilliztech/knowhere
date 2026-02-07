@@ -18,7 +18,7 @@
 
 #include "distances_avx512.h"
 
-namespace faiss {
+namespace faiss::cppcontrib::knowhere {
 
 namespace {
 
@@ -115,5 +115,6 @@ rabitq_dp_popcnt_avx512icx(const uint8_t* q, const uint8_t* x, const size_t d, c
     return 0;
 }
 
-}  // namespace faiss
+}  // namespace faiss::cppcontrib::knowhere
+
 #endif

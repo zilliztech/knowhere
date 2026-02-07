@@ -1,13 +1,19 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import faiss
-import torch
-import unittest
-import numpy as np
-import faiss.contrib.torch_utils
+import torch  # usort: skip
+import unittest  # usort: skip
+import numpy as np  # usort: skip
+
+import faiss  # usort: skip
+import faiss.contrib.torch_utils  # usort: skip
+from faiss.contrib import datasets
+from faiss.contrib.torch import clustering, quantization
+
+
+
 
 class TestTorchUtilsCPU(unittest.TestCase):
     # tests add, search
@@ -286,6 +292,32 @@ class TestTorchUtilsCPU(unittest.TestCase):
         self.assertTrue(torch.equal(I, I_input))
         self.assertTrue(torch.equal(R, R_input))
 
+    def test_search_preassigned(self):
+        ds = datasets.SyntheticDataset(32, 1000, 100, 10)
+        index = faiss.index_factory(32, "IVF20,PQ4np")
+        index.train(ds.get_train())
+        index.add(ds.get_database())
+        index.nprobe = 4
+        Dref, Iref = index.search(ds.get_queries(), 10)
+        quantizer = faiss.clone_index(index.quantizer)
+
+        # mutilate the index' quantizer
+        index.quantizer.reset()
+        index.quantizer.add(np.zeros((20, 32), dtype='float32'))
+
+        # test numpy codepath
+        Dq, Iq = quantizer.search(ds.get_queries(), 4)
+        Dref2, Iref2 = index.search_preassigned(ds.get_queries(), 10, Iq, Dq)
+        np.testing.assert_array_equal(Iref, Iref2)
+        np.testing.assert_array_equal(Dref, Dref2)
+
+        # test torch codepath
+        xq = torch.from_numpy(ds.get_queries())
+        Dq, Iq = quantizer.search(xq, 4)
+        Dref2, Iref2 = index.search_preassigned(xq, 10, Iq, Dq)
+        np.testing.assert_array_equal(Iref, Iref2.numpy())
+        np.testing.assert_array_equal(Dref, Dref2.numpy())
+
     # tests sa_encode, sa_decode
     def test_sa_encode_decode(self):
         d = 16
@@ -343,3 +375,53 @@ class TestTorchUtilsCPU(unittest.TestCase):
         # disabled since we now accept non-contiguous arrays
         # with self.assertRaises(ValueError):
         #    index.add(xb.numpy())
+
+
+class TestClustering(unittest.TestCase):
+
+    def test_python_kmeans(self):
+        """ Test the python implementation of kmeans """
+        ds = datasets.SyntheticDataset(32, 10000, 0, 0)
+        x = ds.get_train()
+
+        # bad distribution to stress-test split code
+        xt = x[:10000].copy()
+        xt[:5000] = x[0]
+
+        km_ref = faiss.Kmeans(ds.d, 100, niter=10)
+        km_ref.train(xt)
+        err = faiss.knn(xt, km_ref.centroids, 1)[0].sum()
+
+        xt_torch = torch.from_numpy(xt)
+        data = clustering.DatasetAssign(xt_torch)
+        centroids = clustering.kmeans(100, data, 10)
+        centroids = centroids.numpy()
+        err2 = faiss.knn(xt, centroids, 1)[0].sum()
+
+        # 33498.332 33380.477
+        # print(err, err2)        1/0
+        self.assertLess(err2, err * 1.1)
+
+
+class TestQuantization(unittest.TestCase):
+    def test_python_product_quantization(self):
+        """ Test the python implementation of product quantization """
+        d = 64
+        n = 10000
+        cs = 4
+        nbits = 8
+        M = 4
+        x = np.random.random(size=(n, d)).astype('float32')
+        pq = faiss.ProductQuantizer(d, cs, nbits)
+        pq.train(x)
+        codes = pq.compute_codes(x)
+        x2 = pq.decode(codes)
+        diff = ((x - x2)**2).sum()
+        # vs pure pytorch impl
+        xt = torch.from_numpy(x)
+        my_pq = quantization.ProductQuantizer(d, M, nbits)
+        my_pq.train(xt)
+        my_codes = my_pq.encode(xt)
+        xt2 = my_pq.decode(my_codes)
+        my_diff = ((xt - xt2)**2).sum()
+        self.assertLess(abs(diff - my_diff), 100)

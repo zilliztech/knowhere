@@ -1,19 +1,19 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
 #include <faiss/impl/FaissAssert.h>
-#include <faiss/impl/platform_macros.h>
 #include <faiss/impl/pq4_fast_scan.h>
-#include <cstring>
+#include <faiss/impl/simd_result_handlers.h>
 
 #include <array>
 
 namespace faiss {
 
+using namespace simd_result_handlers;
 
 /***************************************************************
  * Packing functions for codes
@@ -49,7 +49,19 @@ void pq4_pack_codes(
         size_t nb,
         size_t bbs,
         size_t nsq,
-        uint8_t* blocks) {
+        uint8_t* blocks,
+        size_t code_stride) {
+    // Determine stride: use custom if provided, otherwise use legacy
+    // calculation
+    size_t actual_stride = (code_stride == 0) ? (M + 1) / 2 : code_stride;
+
+    // Input validation for custom stride
+    if (code_stride != 0) {
+        FAISS_THROW_IF_NOT_MSG(
+                code_stride >= (M + 1) / 2,
+                "Custom stride must be >= minimum code size");
+    }
+
     FAISS_THROW_IF_NOT(bbs % 32 == 0);
     FAISS_THROW_IF_NOT(nb % bbs == 0);
     FAISS_THROW_IF_NOT(nsq % 2 == 0);
@@ -57,7 +69,6 @@ void pq4_pack_codes(
     if (nb == 0) {
         return;
     }
-
     memset(blocks, 0, nb * nsq / 2);
 #ifdef FAISS_BIG_ENDIAN
     const uint8_t perm0[16] = {
@@ -73,7 +84,8 @@ void pq4_pack_codes(
             for (size_t i = 0; i < bbs; i += 32) {
                 std::array<uint8_t, 32> c, c0, c1;
                 get_matrix_column(
-                        codes, ntotal, (M + 1) / 2, i0 + i, sq / 2, c);
+                        codes, ntotal, actual_stride, i0 + i, sq / 2, c);
+
                 for (int j = 0; j < 32; j++) {
                     c0[j] = c[j] & 15;
                     c1[j] = c[j] >> 4;
@@ -98,7 +110,19 @@ void pq4_pack_codes_range(
         size_t i1,
         size_t bbs,
         size_t nsq,
-        uint8_t* blocks) {
+        uint8_t* blocks,
+        size_t code_stride) {
+    // Determine stride: use custom if provided, otherwise use legacy
+    // calculation
+    size_t actual_stride = (code_stride == 0) ? (M + 1) / 2 : code_stride;
+
+    // Input validation for custom stride
+    if (code_stride != 0) {
+        FAISS_THROW_IF_NOT_MSG(
+                code_stride >= (M + 1) / 2,
+                "Custom stride must be >= minimum code size");
+    }
+
 #ifdef FAISS_BIG_ENDIAN
     const uint8_t perm0[16] = {
             8, 0, 9, 1, 10, 2, 11, 3, 12, 4, 13, 5, 14, 6, 15, 7};
@@ -118,7 +142,8 @@ void pq4_pack_codes_range(
             for (size_t i = 0; i < bbs; i += 32) {
                 std::array<uint8_t, 32> c, c0, c1;
                 get_matrix_column(
-                        codes, i1 - i0, (M + 1) / 2, i_base + i, sq / 2, c);
+                        codes, i1 - i0, actual_stride, i_base + i, sq / 2, c);
+
                 for (int j = 0; j < 32; j++) {
                     c0[j] = c[j] & 15;
                     c1[j] = c[j] >> 4;

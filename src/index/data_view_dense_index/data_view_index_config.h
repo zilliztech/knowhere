@@ -16,6 +16,7 @@
 #include "index/ivf/ivf_config.h"
 #include "knowhere/utils.h"
 #include "simd/hook.h"
+
 namespace knowhere {
 /**
  * parameters:
@@ -58,13 +59,14 @@ class IndexWithDataViewRefinerBaseConfig : public BaseConfig {
         REGISTER_DATA_VIEW_REFINER_CONFIG()
     }
 };
+
 class ScannWithDataViewRefinerConfig : public ScannConfig {
  public:
     DECLARE_DATA_VIEW_REFINER_MEMBERS()
     KNOHWERE_DECLARE_CONFIG(ScannWithDataViewRefinerConfig){REGISTER_DATA_VIEW_REFINER_CONFIG()}
 
     Status CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
-        if (!faiss::support_pq_fast_scan) {
+        if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
             LOG_KNOWHERE_ERROR_ << "SCANN index is not supported on the current CPU model, avx2 support is "
                                    "needed for x86 arch.";
             return Status::invalid_instruction_set;

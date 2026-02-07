@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -13,9 +13,8 @@
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/utils/AlignedTable.h>
 #include <faiss/utils/ordered_key_value.h>
-#ifdef __AVX2__
 #include <faiss/utils/simdlib.h>
-#endif
+
 #include <faiss/impl/platform_macros.h>
 
 namespace faiss {
@@ -141,7 +140,7 @@ typename C::T partition_fuzzy_median3(
     using T = typename C::T;
 
     // here we use bissection with a median of 3 to find the threshold and
-    // compress the arrays afterwards. So it's a n*log(n) algoirithm rather than
+    // compress the arrays afterwards. So it's a n*log(n) algorithm rather than
     // qselect's O(n) but it avoids shuffling around the array.
 
     FAISS_THROW_IF_NOT(n >= 3);
@@ -224,7 +223,6 @@ typename C::T partition_fuzzy_median3(
  * SIMD routines when vals is an aligned array of uint16_t
  ******************************************************************/
 
-#ifdef __AVX2__
 namespace simd_partitioning {
 
 void find_minimax(
@@ -352,7 +350,7 @@ int simd_compress_array(
         }
     }
 
-    // handle remaining, only striclty lt ones.
+    // handle remaining, only strictly lt ones.
     for (; i0 + 15 < n; i0 += 16) {
         simd16uint16 v(vals + i0);
         simd16uint16 max2 = max_func<C>(v, thr16);
@@ -508,7 +506,7 @@ uint16_t simd_partition_fuzzy_with_bounds(
 
     uint64_t t2 = get_cy();
 
-    partition_stats.bissect_cycles += t1 - t0;
+    partition_stats.bisect_cycles += t1 - t0;
     partition_stats.compress_cycles += t2 - t1;
 
     return thresh;
@@ -664,7 +662,7 @@ uint16_t simd_partition_fuzzy_with_bounds_histogram(
         }
     }
 
-    IFV printf("end bissection: thresh=%d q=%ld n_eq=%ld\n", thresh, q, n_eq);
+    IFV printf("end bisection: thresh=%d q=%ld n_eq=%ld\n", thresh, q, n_eq);
 
     if (!C::is_max) {
         if (n_eq == 0) {
@@ -741,8 +739,6 @@ uint16_t simd_partition_with_bounds(
 
 } // namespace simd_partitioning
 
-#endif
-
 /******************************************************************
  * Driver routine
  ******************************************************************/
@@ -766,7 +762,7 @@ typename C::T partition_fuzzy(
             vals, ids, n, q_min, q_max, q_out);
 }
 
-// explicit template instanciations
+// explicit template instantiations
 
 template float partition_fuzzy<CMin<float, int64_t>>(
         float* vals,
@@ -820,7 +816,7 @@ template uint16_t partition_fuzzy<CMax<uint16_t, int>>(
  * Histogram subroutines
  ******************************************************************/
 
-#if defined(__AVX2__)
+#if defined(__AVX2__) || defined(__aarch64__)
 /// FIXME when MSB of uint16 is set
 // this code does not compile properly with GCC 7.4.0
 
@@ -1197,12 +1193,14 @@ void simd_histogram_8(
 
     // complete with remaining bins
     for (int i = (n & ~15); i < n; i++) {
-        if (data[i] < min)
+        if (data[i] < min) {
             continue;
+        }
         uint16_t v = data[i] - min;
         v >>= shift;
-        if (v < 8)
+        if (v < 8) {
             hist[v]++;
+        }
     }
 }
 
@@ -1251,12 +1249,14 @@ void simd_histogram_16(
     }
 
     for (int i = (n & ~15); i < n; i++) {
-        if (data[i] < min)
+        if (data[i] < min) {
             continue;
+        }
         uint16_t v = data[i] - min;
         v >>= shift;
-        if (v < 16)
+        if (v < 16) {
             hist[v]++;
+        }
     }
 }
 

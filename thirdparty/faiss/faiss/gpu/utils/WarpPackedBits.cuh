@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -45,7 +45,7 @@ struct WarpPackedBits<uint8_t, 6> {
             uint8_t v,
             bool valid,
             uint8_t* out) {
-        // Lower 24 lanes wwrite out packed data
+        // Lower kWarpSize*3/4 lanes (24 or 48) write out packed data
         int laneFrom = (laneId * 8) / 6;
 
         v = valid ? v : 0;
@@ -80,7 +80,7 @@ struct WarpPackedBits<uint8_t, 6> {
                 break;
         }
 
-        if (laneId < 24) {
+        if (laneId < kWarpSize * 3 / 4) {
             // There could be prior data
             out[laneId] |= vOut;
         }
@@ -89,7 +89,7 @@ struct WarpPackedBits<uint8_t, 6> {
     static inline __device__ uint8_t read(int laneId, uint8_t* in) {
         uint8_t v = 0;
 
-        if (laneId < 24) {
+        if (laneId < kWarpSize * 3 / 4) {
             v = in[laneId];
         }
 
@@ -134,11 +134,11 @@ struct WarpPackedBits<uint8_t, 5> {
             uint8_t v,
             bool valid,
             uint8_t* out) {
-        // Lower 24 lanes wwrite out packed data
+        // Lower 24 lanes write out packed data
         int laneFrom = (laneId * 8) / 5;
 
         v = valid ? v : 0;
-        v &= 0x1f; // ensure we have only 6 bits
+        v &= 0x1f; // ensure we have only 5 bits
 
         uint8_t lo = (uint8_t)SHFL_SYNC((unsigned int)v, laneFrom, kWarpSize);
         uint8_t hi =
@@ -242,7 +242,7 @@ struct WarpPackedBits<uint8_t, 4> {
             uint8_t v,
             bool valid,
             uint8_t* out) {
-        // Lower 16 lanes write out packed data
+        // Lower kWarpSize/2 (16 or 32) lanes write out packed data
         int laneFrom = laneId * 2;
 
         v = valid ? v : 0;
@@ -254,7 +254,7 @@ struct WarpPackedBits<uint8_t, 4> {
 
         uint8_t vOut = (vLower & 0xf) | (vUpper << 4);
 
-        if (laneId < 16) {
+        if (laneId < kWarpSize / 2) {
             // There could be prior data
             out[laneId] |= vOut;
         }
@@ -263,7 +263,7 @@ struct WarpPackedBits<uint8_t, 4> {
     static inline __device__ uint8_t read(int laneId, uint8_t* in) {
         uint8_t v = 0;
 
-        if (laneId < 16) {
+        if (laneId < kWarpSize / 2) {
             v = in[laneId];
         }
 

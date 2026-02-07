@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -15,7 +15,6 @@
 
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <sys/types.h>
 #include <unistd.h>
 
 #include <faiss/impl/FaissAssert.h>
@@ -149,8 +148,9 @@ struct OnDiskInvertedLists::OngoingPrefetch {
 
         bool one_list() {
             idx_t list_no = pf->get_next_list();
-            if (list_no == -1)
+            if (list_no == -1) {
                 return false;
+            }
             const OnDiskInvertedLists* od = pf->od;
             od->locks->lock_1(list_no);
             size_t n = od->list_size(list_no);
@@ -196,8 +196,9 @@ struct OnDiskInvertedLists::OngoingPrefetch {
     static void* prefetch_list(void* arg) {
         Thread* th = static_cast<Thread*>(arg);
 
-        while (th->one_list())
+        while (th->one_list()) {
             ;
+        }
 
         return nullptr;
     }
@@ -285,7 +286,6 @@ void OnDiskInvertedLists::do_mmap() {
             "could not mmap %s: %s",
             filename.c_str(),
             strerror(errno));
-    madvise(ptro, totsize, MADV_RANDOM);
     ptr = ptro;
 }
 
@@ -372,7 +372,7 @@ OnDiskInvertedLists::~OnDiskInvertedLists() {
     if (ptr != nullptr) {
         int err = munmap(ptr, totsize);
         if (err != 0) {
-            fprintf(stderr, "mumap error: %s", strerror(errno));
+            fprintf(stderr, "munmap error: %s", strerror(errno));
         }
     }
     delete locks;
@@ -406,8 +406,9 @@ void OnDiskInvertedLists::update_entries(
         const idx_t* ids_in,
         const uint8_t* codes_in) {
     FAISS_THROW_IF_NOT(!read_only);
-    if (n_entry == 0)
+    if (n_entry == 0) {
         return;
+    }
     [[maybe_unused]] const List& l = lists[list_no];
     assert(n_entry + offset <= l.size);
     idx_t* ids = const_cast<idx_t*>(get_ids(list_no));
@@ -420,8 +421,7 @@ size_t OnDiskInvertedLists::add_entries(
         size_t list_no,
         size_t n_entry,
         const idx_t* ids,
-        const uint8_t* code,
-        const float* code_norm) {
+        const uint8_t* code) {
     FAISS_THROW_IF_NOT(!read_only);
     locks->lock_1(list_no);
     size_t o = list_size(list_no);
@@ -518,8 +518,9 @@ size_t OnDiskInvertedLists::allocate_slot(size_t capacity) {
 
 void OnDiskInvertedLists::free_slot(size_t offset, size_t capacity) {
     // should hold lock2
-    if (capacity == 0)
+    if (capacity == 0) {
         return;
+    }
 
     auto it = slots.begin();
     while (it != slots.end() && it->offset <= offset) {
@@ -674,25 +675,7 @@ void OnDiskInvertedLists::set_all_lists_sizes(const size_t* sizes) {
     for (size_t i = 0; i < nlist; i++) {
         lists[i].offset = ofs;
         lists[i].capacity = lists[i].size = sizes[i];
-        if (this->with_norm) {
-            ofs += sizes[i] * (sizeof(idx_t) + code_size + sizeof(float));
-        } else {
-            ofs += sizes[i] * (sizeof(idx_t) + code_size);
-        }
-    }
-}
-
-const float* OnDiskInvertedLists::get_code_norms(
-        size_t list_no,
-        size_t /*offset*/) const {
-    if (with_norm) {
-        if (lists[list_no].offset == INVALID_OFFSET) {
-            return nullptr;
-        }
-        return (const float*)(ptr + lists[list_no].offset +
-                            (code_size + sizeof(idx_t)) * lists[list_no].capacity);
-    } else {
-        return nullptr;
+        ofs += sizes[i] * (sizeof(idx_t) + code_size);
     }
 }
 
@@ -779,7 +762,7 @@ InvertedLists* OnDiskInvertedListsIOHook::read(IOReader* f, int io_flags)
 /** read from a ArrayInvertedLists into this invertedlist type */
 InvertedLists* OnDiskInvertedListsIOHook::read_ArrayInvertedLists(
         IOReader* f,
-        int io_flags,
+        int /* io_flags */,
         size_t nlist,
         size_t code_size,
         const std::vector<size_t>& sizes) const {
@@ -787,7 +770,6 @@ InvertedLists* OnDiskInvertedListsIOHook::read_ArrayInvertedLists(
     ails->nlist = nlist;
     ails->code_size = code_size;
     ails->read_only = true;
-    ails->with_norm = io_flags & IO_FLAG_WITH_NORM;
     ails->lists.resize(nlist);
 
     FileIOReader* reader = dynamic_cast<FileIOReader*>(f);
@@ -817,11 +799,7 @@ InvertedLists* OnDiskInvertedListsIOHook::read_ArrayInvertedLists(
         OnDiskInvertedLists::List& l = ails->lists[i];
         l.size = l.capacity = sizes[i];
         l.offset = o;
-        if (ails->with_norm) {
-            o += l.size * (sizeof(idx_t) + ails->code_size + sizeof(float));
-        } else {
-            o += l.size * (sizeof(idx_t) + ails->code_size);
-        }
+        o += l.size * (sizeof(idx_t) + ails->code_size);
     }
     // resume normal reading of file
     fseek(fdesc, o, SEEK_SET);

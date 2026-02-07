@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -95,7 +95,7 @@ struct HammingComputer4 {
         a0 = *(uint32_t*)a;
     }
 
-    inline int compute(const uint8_t* b) const {
+    inline int hamming(const uint8_t* b) const {
         return popcount64(*(uint32_t*)b ^ a0);
     }
 
@@ -118,7 +118,7 @@ struct HammingComputer8 {
         a0 = *(uint64_t*)a;
     }
 
-    inline int compute(const uint8_t* b) const {
+    inline int hamming(const uint8_t* b) const {
         return popcount64(*(uint64_t*)b ^ a0);
     }
 
@@ -143,7 +143,7 @@ struct HammingComputer16 {
         a1 = a[1];
     }
 
-    inline int compute(const uint8_t* b8) const {
+    inline int hamming(const uint8_t* b8) const {
         const uint64_t* b = (uint64_t*)b8;
         return popcount64(b[0] ^ a0) + popcount64(b[1] ^ a1);
     }
@@ -173,7 +173,7 @@ struct HammingComputer20 {
         a2 = a[2];
     }
 
-    inline int compute(const uint8_t* b8) const {
+    inline int hamming(const uint8_t* b8) const {
         const uint64_t* b = (uint64_t*)b8;
         return popcount64(b[0] ^ a0) + popcount64(b[1] ^ a1) +
                 popcount64(*(uint32_t*)(b + 2) ^ a2);
@@ -202,7 +202,7 @@ struct HammingComputer32 {
         a3 = a[3];
     }
 
-    inline int compute(const uint8_t* b8) const {
+    inline int hamming(const uint8_t* b8) const {
         const uint64_t* b = (uint64_t*)b8;
         return popcount64(b[0] ^ a0) + popcount64(b[1] ^ a1) +
                 popcount64(b[2] ^ a2) + popcount64(b[3] ^ a3);
@@ -235,7 +235,7 @@ struct HammingComputer64 {
         a7 = a[7];
     }
 
-    inline int compute(const uint8_t* b8) const {
+    inline int hamming(const uint8_t* b8) const {
         const uint64_t* b = (uint64_t*)b8;
         return popcount64(b[0] ^ a0) + popcount64(b[1] ^ a1) +
                 popcount64(b[2] ^ a2) + popcount64(b[3] ^ a3) +
@@ -265,7 +265,7 @@ struct HammingComputerDefault {
         remainder8 = code_size % 8;
     }
 
-    int compute(const uint8_t* b8) const {
+    int hamming(const uint8_t* b8) const {
         int accu = 0;
 
         const uint64_t* a64 = reinterpret_cast<const uint64_t*>(a8);
@@ -366,7 +366,7 @@ struct GenHammingComputer8 {
         a0 = *(uint64_t*)a;
     }
 
-    inline int compute(const uint8_t* b) const {
+    inline int hamming(const uint8_t* b) const {
         return generalized_hamming_64(*(uint64_t*)b ^ a0);
     }
 
@@ -385,7 +385,7 @@ struct GenHammingComputer16 {
         a = _mm_loadu_si128((const __m128i_u*)a8);
     }
 
-    inline int compute(const uint8_t* b8) const {
+    inline int hamming(const uint8_t* b8) const {
         const __m128i b = _mm_loadu_si128((const __m128i_u*)b8);
         const __m128i cmp = _mm_cmpeq_epi8(a, b);
         const auto movemask = _mm_movemask_epi8(cmp);
@@ -405,7 +405,7 @@ struct GenHammingComputer32 {
         a = _mm256_loadu_si256((const __m256i_u*)a8);
     }
 
-    inline int compute(const uint8_t* b8) const {
+    inline int hamming(const uint8_t* b8) const {
         const __m256i b = _mm256_loadu_si256((const __m256i_u*)b8);
         const __m256i cmp = _mm256_cmpeq_epi8(a, b);
         const uint32_t movemask = _mm256_movemask_epi8(cmp);
@@ -433,7 +433,7 @@ struct GenHammingComputerM8 {
         n = code_size / 8;
     }
 
-    int compute(const uint8_t* b8) const {
+    int hamming(const uint8_t* b8) const {
         const uint64_t* b = (uint64_t*)b8;
         int accu = 0;
 

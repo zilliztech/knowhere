@@ -17,6 +17,8 @@
 #include <cstdio>
 
 namespace faiss {
+namespace cppcontrib {
+namespace knowhere {
 
 /// Squared L2 distance between two vectors
 float
@@ -90,4 +92,6 @@ ivec_inner_product_ppc(const int8_t* x, const int8_t* y, size_t d);
 int32_t
 ivec_L2sqr_ppc(const int8_t* x, const int8_t* y, size_t d);
 
+}  // namespace knowhere
+}  // namespace cppcontrib
 }  // namespace faiss

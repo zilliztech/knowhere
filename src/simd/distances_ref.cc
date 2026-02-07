@@ -16,7 +16,7 @@
 #include "knowhere/operands.h"
 #include "xxhash.h"
 
-namespace faiss {
+namespace faiss::cppcontrib::knowhere {
 
 float
 fvec_inner_product_ref(const float* x, const float* y, size_t d) {
@@ -234,7 +234,7 @@ ivec_L2sqr_ref(const int8_t* x, const int8_t* y, size_t d) {
 // fp16
 
 float
-fp16_vec_inner_product_ref(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+fp16_vec_inner_product_ref(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size_t d) {
     float res = 0;
     for (size_t i = 0; i < d; i++) {
         res += (float)x[i] * (float)y[i];
@@ -243,7 +243,7 @@ fp16_vec_inner_product_ref(const knowhere::fp16* x, const knowhere::fp16* y, siz
 }
 
 float
-fp16_vec_L2sqr_ref(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
+fp16_vec_L2sqr_ref(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size_t d) {
     float res = 0;
     for (size_t i = 0; i < d; i++) {
         const float tmp = (float)x[i] - (float)y[i];
@@ -253,7 +253,7 @@ fp16_vec_L2sqr_ref(const knowhere::fp16* x, const knowhere::fp16* y, size_t d) {
 }
 
 float
-fp16_vec_norm_L2sqr_ref(const knowhere::fp16* x, size_t d) {
+fp16_vec_norm_L2sqr_ref(const ::knowhere::fp16* x, size_t d) {
     double res = 0;
     for (size_t i = 0; i < d; i++) {
         res += (float)x[i] * (float)x[i];
@@ -262,8 +262,8 @@ fp16_vec_norm_L2sqr_ref(const knowhere::fp16* x, size_t d) {
 }
 
 void
-fp16_vec_inner_product_batch_4_ref(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
-                                   const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0,
+fp16_vec_inner_product_batch_4_ref(const ::knowhere::fp16* x, const ::knowhere::fp16* y0, const ::knowhere::fp16* y1,
+                                   const ::knowhere::fp16* y2, const ::knowhere::fp16* y3, const size_t d, float& dis0,
                                    float& dis1, float& dis2, float& dis3) {
     float d0 = 0, d1 = 0, d2 = 0, d3 = 0;
 
@@ -282,9 +282,9 @@ fp16_vec_inner_product_batch_4_ref(const knowhere::fp16* x, const knowhere::fp16
 }
 
 void
-fp16_vec_L2sqr_batch_4_ref(const knowhere::fp16* x, const knowhere::fp16* y0, const knowhere::fp16* y1,
-                           const knowhere::fp16* y2, const knowhere::fp16* y3, const size_t d, float& dis0, float& dis1,
-                           float& dis2, float& dis3) {
+fp16_vec_L2sqr_batch_4_ref(const ::knowhere::fp16* x, const ::knowhere::fp16* y0, const ::knowhere::fp16* y1,
+                           const ::knowhere::fp16* y2, const ::knowhere::fp16* y3, const size_t d, float& dis0,
+                           float& dis1, float& dis2, float& dis3) {
     float d0 = 0, d1 = 0, d2 = 0, d3 = 0;
 
     for (size_t i = 0; i < d; ++i) {
@@ -309,7 +309,7 @@ fp16_vec_L2sqr_batch_4_ref(const knowhere::fp16* x, const knowhere::fp16* y0, co
 // bf16
 
 float
-bf16_vec_inner_product_ref(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+bf16_vec_inner_product_ref(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d) {
     float res = 0;
     for (size_t i = 0; i < d; i++) {
         res += (float)x[i] * (float)y[i];
@@ -318,7 +318,7 @@ bf16_vec_inner_product_ref(const knowhere::bf16* x, const knowhere::bf16* y, siz
 }
 
 float
-bf16_vec_L2sqr_ref(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
+bf16_vec_L2sqr_ref(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d) {
     float res = 0;
     for (size_t i = 0; i < d; i++) {
         const float tmp = (float)x[i] - (float)y[i];
@@ -328,7 +328,7 @@ bf16_vec_L2sqr_ref(const knowhere::bf16* x, const knowhere::bf16* y, size_t d) {
 }
 
 float
-bf16_vec_norm_L2sqr_ref(const knowhere::bf16* x, size_t d) {
+bf16_vec_norm_L2sqr_ref(const ::knowhere::bf16* x, size_t d) {
     double res = 0;
     for (size_t i = 0; i < d; i++) {
         res += (float)x[i] * (float)x[i];
@@ -337,8 +337,8 @@ bf16_vec_norm_L2sqr_ref(const knowhere::bf16* x, size_t d) {
 }
 
 void
-bf16_vec_inner_product_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                                   const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0,
+bf16_vec_inner_product_batch_4_ref(const ::knowhere::bf16* x, const ::knowhere::bf16* y0, const ::knowhere::bf16* y1,
+                                   const ::knowhere::bf16* y2, const ::knowhere::bf16* y3, const size_t d, float& dis0,
                                    float& dis1, float& dis2, float& dis3) {
     float d0 = 0, d1 = 0, d2 = 0, d3 = 0;
 
@@ -357,9 +357,9 @@ bf16_vec_inner_product_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16
 }
 
 void
-bf16_vec_L2sqr_batch_4_ref(const knowhere::bf16* x, const knowhere::bf16* y0, const knowhere::bf16* y1,
-                           const knowhere::bf16* y2, const knowhere::bf16* y3, const size_t d, float& dis0, float& dis1,
-                           float& dis2, float& dis3) {
+bf16_vec_L2sqr_batch_4_ref(const ::knowhere::bf16* x, const ::knowhere::bf16* y0, const ::knowhere::bf16* y1,
+                           const ::knowhere::bf16* y2, const ::knowhere::bf16* y3, const size_t d, float& dis0,
+                           float& dis1, float& dis2, float& dis3) {
     float d0 = 0, d1 = 0, d2 = 0, d3 = 0;
 
     for (size_t i = 0; i < d; ++i) {
@@ -729,4 +729,4 @@ u64_jaccard_distance_batch_4_ref(const char* x, const char* y0, const char* y1, 
     return;
 }
 
-}  // namespace faiss
+}  // namespace faiss::cppcontrib::knowhere

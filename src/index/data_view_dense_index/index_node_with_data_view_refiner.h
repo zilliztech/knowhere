@@ -18,8 +18,11 @@
 #include "index/data_view_dense_index/data_view_index_config.h"
 #include "knowhere/comp/rw_lock.h"
 #include "knowhere/index/index_node.h"
+
 namespace knowhere {
-struct DataViewIndexFlat;
+
+class DataViewIndexFlat;
+
 /*
 IndexNodeWithDataViewRefiner is a just in time index, support concurrent build and search.
 This kind of index will not keep raw data anymore, so init it with a get raw data function(ViewDataOp).

@@ -11,16 +11,17 @@
 
 #include "index/hnsw/impl/IndexHNSWWrapper.h"
 
-#include <faiss/IndexHNSW.h>
 #include <faiss/MetricType.h>
+#include <faiss/cppcontrib/knowhere/IndexHNSW.h>
+#include <faiss/cppcontrib/knowhere/MetricType.h>
 #include <faiss/cppcontrib/knowhere/impl/Bruteforce.h>
+#include <faiss/cppcontrib/knowhere/impl/HNSW.h>
 #include <faiss/cppcontrib/knowhere/impl/HnswSearcher.h>
+#include <faiss/cppcontrib/knowhere/impl/ResultHandler.h>
 #include <faiss/cppcontrib/knowhere/utils/Bitset.h>
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/DistanceComputer.h>
 #include <faiss/impl/FaissAssert.h>
-#include <faiss/impl/HNSW.h>
-#include <faiss/impl/ResultHandler.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -47,7 +48,7 @@ namespace {
 // cloned from IndexHNSW.cpp
 faiss::DistanceComputer*
 storage_distance_computer(const faiss::Index* storage) {
-    if (faiss::is_similarity_metric(storage->metric_type)) {
+    if (faiss::cppcontrib::knowhere::is_similarity_metric(storage->metric_type)) {
         return new faiss::NegativeDistanceComputer(storage->get_distance_computer());
     } else {
         return storage->get_distance_computer();
@@ -62,7 +63,7 @@ storage_distance_computer(const faiss::Index* storage) {
 
 using idx_t = faiss::idx_t;
 
-IndexHNSWWrapper::IndexHNSWWrapper(faiss::IndexHNSW* underlying_index)
+IndexHNSWWrapper::IndexHNSWWrapper(faiss::cppcontrib::knowhere::IndexHNSW* underlying_index)
     : faiss::cppcontrib::knowhere::IndexWrapper(underlying_index) {
 }
 
@@ -71,7 +72,8 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
                          idx_t* __restrict labels, const faiss::SearchParameters* __restrict params_in) const {
     FAISS_THROW_IF_NOT(k > 0);
 
-    const faiss::IndexHNSW* index_hnsw = dynamic_cast<const faiss::IndexHNSW*>(index);
+    const faiss::cppcontrib::knowhere::IndexHNSW* index_hnsw =
+        dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSW*>(index);
     FAISS_THROW_IF_NOT(index_hnsw);
 
     FAISS_THROW_IF_NOT_MSG(index_hnsw->storage, "No storage index");
@@ -91,7 +93,7 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
 
     // check parameters
     const SearchParametersHNSWWrapper* params = nullptr;
-    const faiss::HNSW& hnsw = index_hnsw->hnsw;
+    const faiss::cppcontrib::knowhere::HNSW& hnsw = index_hnsw->hnsw;
 
     float kAlpha = 0.0f;
     if (params_in) {
@@ -102,7 +104,8 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
     }
 
     // set up hnsw_stats
-    faiss::HNSWStats* __restrict const hnsw_stats = (params == nullptr) ? nullptr : params->hnsw_stats;
+    faiss::cppcontrib::knowhere::HNSWStats* __restrict const hnsw_stats =
+        (params == nullptr) ? nullptr : params->hnsw_stats;
 
     //
     size_t n1 = 0;
@@ -129,7 +132,7 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
         knowhere::feder::hnsw::FederResult* feder = (params == nullptr) ? nullptr : params->feder;
 
         // future results
-        faiss::HNSWStats local_stats;
+        faiss::cppcontrib::knowhere::HNSWStats local_stats;
 
         // set up a filter
         faiss::IDSelector* sel = (params == nullptr) ? nullptr : params->sel;
@@ -218,7 +221,7 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
     }
 
     // done, update the results, if needed
-    if (is_similarity_metric(index->metric_type)) {
+    if (faiss::cppcontrib::knowhere::is_similarity_metric(index->metric_type)) {
         // we need to revert the negated distances
         for (idx_t i = 0; i < k * n; i++) {
             distances[i] = -distances[i];
@@ -230,7 +233,8 @@ void
 IndexHNSWWrapper::range_search(idx_t n, const float* __restrict x, float radius_in,
                                faiss::RangeSearchResult* __restrict result,
                                const faiss::SearchParameters* __restrict params_in) const {
-    const faiss::IndexHNSW* index_hnsw = dynamic_cast<const faiss::IndexHNSW*>(index);
+    const faiss::cppcontrib::knowhere::IndexHNSW* index_hnsw =
+        dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSW*>(index);
     FAISS_THROW_IF_NOT(index_hnsw);
 
     FAISS_THROW_IF_NOT_MSG(index_hnsw->storage, "No storage index");
@@ -242,7 +246,7 @@ IndexHNSWWrapper::range_search(idx_t n, const float* __restrict x, float radius_
 
     // check parameters
     const SearchParametersHNSWWrapper* params = nullptr;
-    const faiss::HNSW& hnsw = index_hnsw->hnsw;
+    const faiss::cppcontrib::knowhere::HNSW& hnsw = index_hnsw->hnsw;
 
     float kAlpha = 0.0f;
     if (params_in) {
@@ -253,7 +257,8 @@ IndexHNSWWrapper::range_search(idx_t n, const float* __restrict x, float radius_
     }
 
     // set up hnsw_stats
-    faiss::HNSWStats* __restrict const hnsw_stats = (params == nullptr) ? nullptr : params->hnsw_stats;
+    faiss::cppcontrib::knowhere::HNSWStats* __restrict const hnsw_stats =
+        (params == nullptr) ? nullptr : params->hnsw_stats;
 
     //
     size_t n1 = 0;
@@ -270,12 +275,12 @@ IndexHNSWWrapper::range_search(idx_t n, const float* __restrict x, float radius_
 
     // radius
     float radius = radius_in;
-    if (is_similarity_metric(this->metric_type)) {
+    if (faiss::cppcontrib::knowhere::is_similarity_metric(this->metric_type)) {
         radius *= (-1);
     }
 
     // initialize a ResultHandler
-    using RH_min = faiss::RangeSearchBlockResultHandler<faiss::CMax<float, int64_t>>;
+    using RH_min = faiss::cppcontrib::knowhere::RangeSearchBlockResultHandler<faiss::CMax<float, int64_t>>;
     RH_min bres_min(result, radius);
 
     // no parallelism by design
@@ -294,7 +299,7 @@ IndexHNSWWrapper::range_search(idx_t n, const float* __restrict x, float radius_
         knowhere::feder::hnsw::FederResult* feder = (params == nullptr) ? nullptr : params->feder;
 
         // future results
-        faiss::HNSWStats local_stats;
+        faiss::cppcontrib::knowhere::HNSWStats local_stats;
 
         // set up a filter
         faiss::IDSelector* sel = (params == nullptr) ? nullptr : params->sel;
@@ -386,7 +391,7 @@ IndexHNSWWrapper::range_search(idx_t n, const float* __restrict x, float radius_
     }
 
     // done, update the results, if needed
-    if (is_similarity_metric(this->metric_type)) {
+    if (faiss::cppcontrib::knowhere::is_similarity_metric(this->metric_type)) {
         // we need to revert the negated distances
         for (size_t i = 0; i < result->lims[result->nq]; i++) {
             result->distances[i] = -result->distances[i];

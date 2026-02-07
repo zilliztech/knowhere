@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -31,12 +31,9 @@ struct IndexBinaryFlat : IndexBinary {
 
     size_t query_batch_size = 32;
 
-    // // todo aguzhva: disabled for Knowhere at this moment
-    // ApproxTopK_mode_t approx_topk_mode = ApproxTopK_mode_t::EXACT_TOPK;
+    ApproxTopK_mode_t approx_topk_mode = ApproxTopK_mode_t::EXACT_TOPK;
 
     explicit IndexBinaryFlat(idx_t d);
-
-    IndexBinaryFlat(idx_t d, MetricType metric);
 
     void add(idx_t n, const uint8_t* x) override;
 
@@ -53,7 +50,7 @@ struct IndexBinaryFlat : IndexBinary {
     void range_search(
             idx_t n,
             const uint8_t* x,
-            float radius,
+            int radius,
             RangeSearchResult* result,
             const SearchParameters* params = nullptr) const override;
 

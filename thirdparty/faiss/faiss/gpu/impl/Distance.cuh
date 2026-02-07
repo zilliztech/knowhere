@@ -1,5 +1,5 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -41,6 +41,16 @@ void runAllPairwiseL2Distance(
         bool queriesRowMajor,
         Tensor<float, 2, true>& outDistances);
 
+void runAllPairwiseL2Distance(
+        GpuResources* res,
+        cudaStream_t stream,
+        Tensor<__nv_bfloat16, 2, true>& vectors,
+        bool vectorsRowMajor,
+        Tensor<float, 1, true>* vectorNorms,
+        Tensor<__nv_bfloat16, 2, true>& queries,
+        bool queriesRowMajor,
+        Tensor<float, 2, true>& outDistances);
+
 void runAllPairwiseIPDistance(
         GpuResources* res,
         cudaStream_t stream,
@@ -56,6 +66,15 @@ void runAllPairwiseIPDistance(
         Tensor<half, 2, true>& vectors,
         bool vectorsRowMajor,
         Tensor<half, 2, true>& queries,
+        bool queriesRowMajor,
+        Tensor<float, 2, true>& outDistances);
+
+void runAllPairwiseIPDistance(
+        GpuResources* res,
+        cudaStream_t stream,
+        Tensor<__nv_bfloat16, 2, true>& vectors,
+        bool vectorsRowMajor,
+        Tensor<__nv_bfloat16, 2, true>& queries,
         bool queriesRowMajor,
         Tensor<float, 2, true>& outDistances);
 
@@ -71,10 +90,9 @@ void runL2Distance(
         Tensor<float, 1, true>* vectorNorms,
         Tensor<float, 2, true>& queries,
         bool queriesRowMajor,
-        Tensor<uint8_t, 1, true>& bitset,
         int k,
         Tensor<float, 2, true>& outDistances,
-        Tensor<int, 2, true>& outIndices,
+        Tensor<idx_t, 2, true>& outIndices,
         // Do we care about `outDistances`? If not, we can
         // take shortcuts.
         bool ignoreOutDistances = false);
@@ -87,10 +105,22 @@ void runL2Distance(
         Tensor<float, 1, true>* vectorNorms,
         Tensor<half, 2, true>& queries,
         bool queriesRowMajor,
-        Tensor<uint8_t, 1, true>& bitset,
         int k,
         Tensor<float, 2, true>& outDistances,
-        Tensor<int, 2, true>& outIndices,
+        Tensor<idx_t, 2, true>& outIndices,
+        bool ignoreOutDistances = false);
+
+void runL2Distance(
+        GpuResources* resources,
+        cudaStream_t stream,
+        Tensor<__nv_bfloat16, 2, true>& vectors,
+        bool vectorsRowMajor,
+        Tensor<float, 1, true>* vectorNorms,
+        Tensor<__nv_bfloat16, 2, true>& queries,
+        bool queriesRowMajor,
+        int k,
+        Tensor<float, 2, true>& outDistances,
+        Tensor<idx_t, 2, true>& outIndices,
         bool ignoreOutDistances = false);
 
 /// Calculates brute-force inner product distance between `vectors`
@@ -102,10 +132,9 @@ void runIPDistance(
         bool vectorsRowMajor,
         Tensor<float, 2, true>& queries,
         bool queriesRowMajor,
-        Tensor<uint8_t, 1, true>& bitset,
         int k,
         Tensor<float, 2, true>& outDistances,
-        Tensor<int, 2, true>& outIndices);
+        Tensor<idx_t, 2, true>& outIndices);
 
 void runIPDistance(
         GpuResources* resources,
@@ -114,10 +143,20 @@ void runIPDistance(
         bool vectorsRowMajor,
         Tensor<half, 2, true>& queries,
         bool queriesRowMajor,
-        Tensor<uint8_t, 1, true>& bitset,
         int k,
         Tensor<float, 2, true>& outDistances,
-        Tensor<int, 2, true>& outIndices);
+        Tensor<idx_t, 2, true>& outIndices);
+
+void runIPDistance(
+        GpuResources* resources,
+        cudaStream_t stream,
+        Tensor<__nv_bfloat16, 2, true>& vectors,
+        bool vectorsRowMajor,
+        Tensor<__nv_bfloat16, 2, true>& queries,
+        bool queriesRowMajor,
+        int k,
+        Tensor<float, 2, true>& outDistances,
+        Tensor<idx_t, 2, true>& outIndices);
 
 //
 // General distance implementation, assumes that all arguments are on the
@@ -232,6 +271,20 @@ void allPairwiseDistanceOnDevice(
                     outDistances,
                     JensenShannonDistance(),
                     stream);
+        } else if (metric == faiss::MetricType::METRIC_Jaccard) {
+            runGeneralDistanceKernel(
+                    tVectorsDimInnermost,
+                    tQueriesDimInnermost,
+                    outDistances,
+                    JaccardSimilarity(),
+                    stream);
+        } else if (metric == faiss::MetricType::METRIC_GOWER) {
+            runGeneralDistanceKernel(
+                    tVectorsDimInnermost,
+                    tQueriesDimInnermost,
+                    outDistances,
+                    GowerDistance(),
+                    stream);
         } else {
             FAISS_THROW_FMT("unimplemented metric type %d", metric);
         }
@@ -253,12 +306,11 @@ void bfKnnOnDevice(
         Tensor<float, 1, true>* vectorNorms,
         Tensor<T, 2, true>& queries,
         bool queriesRowMajor,
-        Tensor<uint8_t, 1, true>& bitset,
         int k,
         faiss::MetricType metric,
         float metricArg,
         Tensor<float, 2, true>& outDistances,
-        Tensor<int, 2, true>& outIndices,
+        Tensor<idx_t, 2, true>& outIndices,
         bool ignoreOutDistances) {
     DeviceScope ds(device);
     // We are guaranteed that all data arguments are resident on our preferred
@@ -276,7 +328,6 @@ void bfKnnOnDevice(
                 vectorNorms,
                 queries,
                 queriesRowMajor,
-                bitset,
                 k,
                 outDistances,
                 outIndices);
@@ -288,7 +339,6 @@ void bfKnnOnDevice(
                 vectorsRowMajor,
                 queries,
                 queriesRowMajor,
-                bitset,
                 k,
                 outDistances,
                 outIndices);
@@ -317,7 +367,6 @@ void bfKnnOnDevice(
                     stream,
                     tVectorsDimInnermost,
                     tQueriesDimInnermost,
-                    bitset,
                     k,
                     L1Distance(),
                     outDistances,
@@ -329,7 +378,6 @@ void bfKnnOnDevice(
                     stream,
                     tVectorsDimInnermost,
                     tQueriesDimInnermost,
-                    bitset,
                     k,
                     L2Distance(),
                     outDistances,
@@ -340,7 +388,6 @@ void bfKnnOnDevice(
                     stream,
                     tVectorsDimInnermost,
                     tQueriesDimInnermost,
-                    bitset,
                     k,
                     LpDistance(metricArg),
                     outDistances,
@@ -351,7 +398,6 @@ void bfKnnOnDevice(
                     stream,
                     tVectorsDimInnermost,
                     tQueriesDimInnermost,
-                    bitset,
                     k,
                     LinfDistance(),
                     outDistances,
@@ -362,7 +408,6 @@ void bfKnnOnDevice(
                     stream,
                     tVectorsDimInnermost,
                     tQueriesDimInnermost,
-                    bitset,
                     k,
                     CanberraDistance(),
                     outDistances,
@@ -373,7 +418,6 @@ void bfKnnOnDevice(
                     stream,
                     tVectorsDimInnermost,
                     tQueriesDimInnermost,
-                    bitset,
                     k,
                     BrayCurtisDistance(),
                     outDistances,
@@ -384,9 +428,28 @@ void bfKnnOnDevice(
                     stream,
                     tVectorsDimInnermost,
                     tQueriesDimInnermost,
-                    bitset,
                     k,
                     JensenShannonDistance(),
+                    outDistances,
+                    outIndices);
+        } else if (metric == faiss::MetricType::METRIC_Jaccard) {
+            runGeneralDistance(
+                    resources,
+                    stream,
+                    tVectorsDimInnermost,
+                    tQueriesDimInnermost,
+                    k,
+                    JaccardSimilarity(),
+                    outDistances,
+                    outIndices);
+        } else if (metric == faiss::MetricType::METRIC_GOWER) {
+            runGeneralDistance(
+                    resources,
+                    stream,
+                    tVectorsDimInnermost,
+                    tQueriesDimInnermost,
+                    k,
+                    GowerDistance(),
                     outDistances,
                     outIndices);
         } else {

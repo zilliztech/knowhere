@@ -12,11 +12,15 @@
 #ifndef HOOK_H
 #define HOOK_H
 
+#include <faiss/cppcontrib/knowhere/utils/distances.h>
+
 #include <string>
 
 #include "knowhere/operands.h"
 
 namespace faiss {
+namespace cppcontrib {
+namespace knowhere {
 
 #if defined(__x86_64__)
 extern bool use_avx512;
@@ -86,27 +90,27 @@ extern int32_t (*ivec_inner_product)(const int8_t*, const int8_t*, size_t);
 extern int32_t (*ivec_L2sqr)(const int8_t*, const int8_t*, size_t);
 
 // fp16
-extern float (*fp16_vec_inner_product)(const knowhere::fp16*, const knowhere::fp16*, size_t);
-extern float (*fp16_vec_L2sqr)(const knowhere::fp16*, const knowhere::fp16*, size_t);
-extern float (*fp16_vec_norm_L2sqr)(const knowhere::fp16*, size_t);
+extern float (*fp16_vec_inner_product)(const ::knowhere::fp16*, const ::knowhere::fp16*, size_t);
+extern float (*fp16_vec_L2sqr)(const ::knowhere::fp16*, const ::knowhere::fp16*, size_t);
+extern float (*fp16_vec_norm_L2sqr)(const ::knowhere::fp16*, size_t);
 
-extern void (*fp16_vec_inner_product_batch_4)(const knowhere::fp16*, const knowhere::fp16*, const knowhere::fp16*,
-                                              const knowhere::fp16*, const knowhere::fp16*, const size_t, float&,
+extern void (*fp16_vec_inner_product_batch_4)(const ::knowhere::fp16*, const ::knowhere::fp16*, const ::knowhere::fp16*,
+                                              const ::knowhere::fp16*, const ::knowhere::fp16*, const size_t, float&,
                                               float&, float&, float&);
-extern void (*fp16_vec_L2sqr_batch_4)(const knowhere::fp16*, const knowhere::fp16*, const knowhere::fp16*,
-                                      const knowhere::fp16*, const knowhere::fp16*, const size_t, float&, float&,
+extern void (*fp16_vec_L2sqr_batch_4)(const ::knowhere::fp16*, const ::knowhere::fp16*, const ::knowhere::fp16*,
+                                      const ::knowhere::fp16*, const ::knowhere::fp16*, const size_t, float&, float&,
                                       float&, float&);
 
 // bf16
-extern float (*bf16_vec_inner_product)(const knowhere::bf16*, const knowhere::bf16*, size_t);
-extern float (*bf16_vec_L2sqr)(const knowhere::bf16*, const knowhere::bf16*, size_t);
-extern float (*bf16_vec_norm_L2sqr)(const knowhere::bf16*, size_t);
+extern float (*bf16_vec_inner_product)(const ::knowhere::bf16*, const ::knowhere::bf16*, size_t);
+extern float (*bf16_vec_L2sqr)(const ::knowhere::bf16*, const ::knowhere::bf16*, size_t);
+extern float (*bf16_vec_norm_L2sqr)(const ::knowhere::bf16*, size_t);
 
-extern void (*bf16_vec_inner_product_batch_4)(const knowhere::bf16*, const knowhere::bf16*, const knowhere::bf16*,
-                                              const knowhere::bf16*, const knowhere::bf16*, const size_t, float&,
+extern void (*bf16_vec_inner_product_batch_4)(const ::knowhere::bf16*, const ::knowhere::bf16*, const ::knowhere::bf16*,
+                                              const ::knowhere::bf16*, const ::knowhere::bf16*, const size_t, float&,
                                               float&, float&, float&);
-extern void (*bf16_vec_L2sqr_batch_4)(const knowhere::bf16*, const knowhere::bf16*, const knowhere::bf16*,
-                                      const knowhere::bf16*, const knowhere::bf16*, const size_t, float&, float&,
+extern void (*bf16_vec_L2sqr_batch_4)(const ::knowhere::bf16*, const ::knowhere::bf16*, const ::knowhere::bf16*,
+                                      const ::knowhere::bf16*, const ::knowhere::bf16*, const size_t, float&, float&,
                                       float&, float&);
 // int8
 extern float (*int8_vec_inner_product)(const int8_t*, const int8_t*, size_t);
@@ -133,6 +137,7 @@ extern void (*u64_jaccard_distance_batch_4)(const char*, const char*, const char
                                             size_t, float&, float&, float&, float&);
 extern uint64_t (*calculate_hash)(const char*, size_t);
 extern float (*minhash_lsh_hit)(const char* x, const char* y, size_t dim, size_t mh_lsh_band);
+
 ///////////////////////////////////////////////////////////////////////////////
 #if defined(__x86_64__)
 bool
@@ -159,6 +164,8 @@ disable_patch_for_fp32_bf16();
 void
 fvec_hook(std::string&);
 
+}  // namespace knowhere
+}  // namespace cppcontrib
 }  // namespace faiss
 
 #endif /* HOOK_H */

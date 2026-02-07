@@ -1,6 +1,6 @@
 #pragma once
 
-#include <faiss/utils/binary_distances.h>
+#include <faiss/cppcontrib/knowhere/utils/binary_distances.h>
 
 #include "hnswlib.h"
 
@@ -8,7 +8,7 @@ namespace hnswlib {
 
 static float
 Hamming(const void* pVect1v, const void* pVect2v, const void* qty_ptr) {
-    return faiss::xor_popcnt((const uint8_t*)pVect1v, (const uint8_t*)pVect2v, *((size_t*)qty_ptr) / 8);
+    return faiss::cppcontrib::knowhere::xor_popcnt((const uint8_t*)pVect1v, (const uint8_t*)pVect2v, *((size_t*)qty_ptr) / 8);
 }
 
 class HammingSpace : public SpaceInterface<float> {
