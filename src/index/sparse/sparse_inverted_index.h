@@ -1338,7 +1338,10 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                         found_cand = false;
                         break;
                     }
-                    cursors[i].seek(curr_cand_vec_id);
+                    // Only seek if cursor is behind candidate; skip if already at or ahead
+                    if (cursors[i].cur_vec_id_ < curr_cand_vec_id) {
+                        cursors[i].seek(curr_cand_vec_id);
+                    }
                     if (cursors[i].cur_vec_id_ == curr_cand_vec_id) {
                         curr_cand_score += cursors[i].q_value_ * computer(cursors[i].cur_vec_val(), cur_vec_sum);
                     }
@@ -1458,7 +1461,10 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                         found_cand = false;
                         break;
                     }
-                    cursors[i].seek(curr_cand_vec_id);
+                    // Only seek if cursor is behind candidate; skip if already at or ahead
+                    if (cursors[i].cur_vec_id_ < curr_cand_vec_id) {
+                        cursors[i].seek(curr_cand_vec_id);
+                    }
                     if (cursors[i].cur_vec_id_ == curr_cand_vec_id) {
                         curr_cand_score += cursors[i].q_value_ * computer(cursors[i].cur_vec_val(), cur_vec_sum);
                     }
