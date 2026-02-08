@@ -430,8 +430,8 @@ struct cuvs_knowhere_index<IndexKind, DataType>::impl {
             auto device_data = raft::make_device_matrix<data_type, input_indexing_type>(res, row_count, feature_count);
             auto device_data_view = device_data.view();
             raft::copy(res, device_data_view, host_data);
-            raft::linalg::row_normalize(res, raft::make_const_mdspan(device_data_view), device_data_view,
-                                        raft::linalg::NormType::L2Norm);
+            raft::linalg::row_normalize<raft::linalg::NormType::L2Norm>(res, raft::make_const_mdspan(device_data_view),
+                                                                        device_data_view);
             auto host_data_view = raft::make_host_matrix_view(const_cast<data_type*>(data), row_count, feature_count);
             raft::copy(res, host_data_view, device_data_view);
             res.sync_stream();
@@ -470,8 +470,8 @@ struct cuvs_knowhere_index<IndexKind, DataType>::impl {
 
         if (config.metric_type == knowhere::metric::COSINE) {
             auto device_data_view = device_data_storage.view();
-            raft::linalg::row_normalize(res, raft::make_const_mdspan(device_data_view), device_data_view,
-                                        raft::linalg::NormType::L2Norm);
+            raft::linalg::row_normalize<raft::linalg::NormType::L2Norm>(res, raft::make_const_mdspan(device_data_view),
+                                                                        device_data_view);
         }
 
         auto device_bitset = std::optional<

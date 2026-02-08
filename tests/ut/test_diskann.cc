@@ -19,6 +19,7 @@
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "diskann/diskann_gpu.h"
 #include "filemanager/FileManager.h"
 #include "filemanager/impl/LocalFileManager.h"
 #include "index/diskann/diskann_config.h"
@@ -64,7 +65,12 @@ constexpr uint32_t kNumRows = 1000;
 constexpr uint32_t kNumQueries = 10;
 constexpr uint32_t kDim = 128;
 constexpr uint32_t kLargeDim = 256;
-constexpr uint32_t kK = 10;
+constexpr uint32_t kK = 64;
+#ifdef KNOWHERE_WITH_CUVS
+constexpr uint32_t defaultMaxDegree = 64;
+#else
+constexpr uint32_t defaultMaxDegree = 56;
+#endif
 constexpr float kKnnRecall = 0.9;
 constexpr float kEmbListKnnRecall = 0.75;
 constexpr float AiSAQKnnRecall = 0.01;
@@ -125,7 +131,7 @@ TEST_CASE("Invalid diskann params test", "[diskann]") {
     REQUIRE_NOTHROW(fs::create_directory(kDir));
     REQUIRE_NOTHROW(fs::create_directory(kL2IndexDir));
     REQUIRE_NOTHROW(fs::create_directory(kIPIndexDir));
-    int rows_num = 10;
+    int rows_num = kNumRows;
     auto version = GenTestVersionList();
     auto test_gen = [rows_num]() {
         knowhere::Json json;
@@ -134,7 +140,7 @@ TEST_CASE("Invalid diskann params test", "[diskann]") {
         json["k"] = 100;
         json["index_prefix"] = kL2IndexPrefix;
         json["data_path"] = kRawDataPath;
-        json["max_degree"] = 24;
+        json["max_degree"] = 32;
         json["search_list_size"] = 64;
         json["pq_code_budget_gb"] = sizeof(float) * kDim * rows_num * 0.125 / (1024 * 1024 * 1024);
         json["build_dram_budget_gb"] = 32.0;
@@ -207,6 +213,13 @@ base_search() {
 
     auto metric_str = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::IP, knowhere::metric::COSINE);
     auto version = GenTestVersionList();
+    int max_degree = 56;
+
+#ifdef KNOWHERE_WITH_CUVS
+    if (is_gpu_available()) {
+        max_degree = defaultMaxDegree;
+    }
+#endif
 
     std::unordered_map<knowhere::MetricType, std::string> metric_dir_map = {
         {knowhere::metric::L2, kL2IndexPrefix},
@@ -237,11 +250,11 @@ base_search() {
         return json;
     };
 
-    auto build_gen = [&base_gen, &metric_str, &metric_dir_map]() {
+    auto build_gen = [&base_gen, &metric_str, &metric_dir_map, max_degree]() {
         knowhere::Json json = base_gen();
         json["index_prefix"] = metric_dir_map[metric_str];
         json["data_path"] = kRawDataPath;
-        json["max_degree"] = 56;
+        json["max_degree"] = max_degree;
         json["search_list_size"] = 128;
         json["pq_code_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
         json["search_cache_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
@@ -259,7 +272,7 @@ base_search() {
     auto knn_search_gen = [&base_gen, &metric_str, &metric_dir_map]() {
         knowhere::Json json = base_gen();
         json["index_prefix"] = metric_dir_map[metric_str];
-        json["search_list_size"] = 36;
+        json["search_list_size"] = 64;
         json["beamwidth"] = 8;
         return json;
     };
@@ -379,10 +392,84 @@ TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
     base_search<knowhere::fp32>();
 }
 
+#ifdef KNOWHERE_WITH_CUVS
+TEST_CASE("Test DiskANN Build Index", "[diskann]") {
+    auto version = GenTestVersionList();
+    knowhere::Status test_stat;
+    if (is_gpu_available()) {
+        for (const uint32_t dim : {kDim}) {
+            fs::remove_all(kDir);
+            fs::remove(kDir);
+            REQUIRE_NOTHROW(fs::create_directories(kL2IndexDir));
+
+            auto base_gen = [=] {
+                knowhere::Json json;
+                json["dim"] = dim;
+                json["metric_type"] = knowhere::metric::L2;
+                json["k"] = kK;
+                return json;
+            };
+
+            auto build_gen = [=]() {
+                knowhere::Json json = base_gen();
+                json["index_prefix"] = kL2IndexPrefix;
+                json["data_path"] = kRawDataPath;
+                json["max_degree"] = 64;
+                json["search_list_size"] = kK;
+                json["pq_code_budget_gb"] = sizeof(float) * dim * kNumRows * 0.03125 / (1024 * 1024 * 1024);
+                json["build_dram_budget_gb"] = 0.4;
+                return json;
+            };
+
+            auto base_ds = GenDataSet(kNumRows, dim, 30);
+            auto base_ptr = static_cast<const float*>(base_ds->GetTensor());
+            WriteRawDataToDisk<float>(kRawDataPath, base_ptr, kNumRows, dim);
+
+            std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+            auto diskann_index_pack = knowhere::Pack(file_manager);
+
+            knowhere::DataSetPtr ds_ptr = nullptr;
+            auto diskann = knowhere::IndexFactory::Instance()
+                               .Create<knowhere::fp32>("DISKANN", version, diskann_index_pack)
+                               .value();
+            auto build_json = build_gen().dump();
+            knowhere::Json json = knowhere::Json::parse(build_json);
+            diskann.Build(ds_ptr, json);
+
+            SECTION("Invalid build params for GPU test") {
+                json["max_degree"] = 56;
+                json["index_prefix"] = kL2IndexDir + "/l2a";
+                test_stat = diskann.Build(ds_ptr, json);
+                REQUIRE(test_stat == knowhere::Status::diskann_inner_error);
+                json["max_degree"] = 64;
+                json["search_list_size"] = kK;
+                json["index_prefix"] = kL2IndexDir + "/l2b";
+                test_stat = diskann.Build(ds_ptr, json);
+                REQUIRE(test_stat == knowhere::Status::diskann_inner_error);
+                json["max_degree"] = 64;
+                json["search_list_size"] = 100;
+                json["index_prefix"] = kL2IndexDir + "/l2c";
+                test_stat = diskann.Build(ds_ptr, json);
+                REQUIRE(test_stat == knowhere::Status::diskann_inner_error);
+            }
+        }
+        fs::remove_all(kDir);
+        fs::remove(kDir);
+    }
+}
+#endif
+
 template <typename DataType>
 inline void
 emb_list_search() {
     auto version = GenTestEmbListVersionList();
+    int max_degree = 56;
+
+#ifdef KNOWHERE_WITH_CUVS
+    if (is_gpu_available()) {
+        max_degree = defaultMaxDegree;
+    }
+#endif
 
     fs::remove_all(kDir);
     fs::remove(kDir);
@@ -408,12 +495,12 @@ emb_list_search() {
         return json;
     };
 
-    auto build_gen = [&base_gen, &metric_str, &metric_dir_map]() {
+    auto build_gen = [&base_gen, &metric_str, &metric_dir_map, max_degree]() {
         knowhere::Json json = base_gen();
         json["index_prefix"] = metric_dir_map[metric_str];
         json["data_path"] = kRawDataPath;
         json["emb_list_offset_file_path"] = kEmbListOffsetPath;
-        json["max_degree"] = 56;
+        json["max_degree"] = max_degree;
         json["search_list_size"] = 128;
         json["pq_code_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
         json["search_cache_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
@@ -431,7 +518,7 @@ emb_list_search() {
     auto knn_search_gen = [&base_gen, &metric_str, &metric_dir_map]() {
         knowhere::Json json = base_gen();
         json["index_prefix"] = metric_dir_map[metric_str];
-        json["search_list_size"] = 36;
+        json["search_list_size"] = 64;
         json["beamwidth"] = 8;
         json["retrieval_ann_ratio"] = 3.0f;
         return json;
@@ -547,7 +634,7 @@ TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {
             knowhere::Json json = base_gen();
             json["index_prefix"] = kL2IndexPrefix;
             json["data_path"] = kRawDataPath;
-            json["max_degree"] = 5;
+            json["max_degree"] = 32;
             json["search_list_size"] = kK;
             json["pq_code_budget_gb"] = sizeof(float) * dim * kNumRows * 0.03125 / (1024 * 1024 * 1024);
             json["build_dram_budget_gb"] = 32.0;
@@ -670,7 +757,6 @@ TEST_CASE("Test_AiSAQ_dynamic_cache", "[diskann]") {
         json["rearrange"] = true;
         json["inline_pq"] = 0;
         json["pq_cache_size"] = 0;
-        json["num_entry_points"] = 100;
         return json;
     };
 
@@ -685,7 +771,7 @@ TEST_CASE("Test_AiSAQ_dynamic_cache", "[diskann]") {
     auto knn_search_gen = [&base_gen, &metric_str, &metric_dir_map]() {
         knowhere::Json json = base_gen();
         json["index_prefix"] = metric_dir_map[metric_str];
-        json["search_list_size"] = 36;
+        json["search_list_size"] = 64;
         json["beamwidth"] = 4;
         json["vectors_beamwidth"] = 4;
         return json;
@@ -776,7 +862,7 @@ TEST_CASE("Test_AiSAQ_GetVectorByIds", "[diskann]") {
             knowhere::Json json = base_gen();
             json["index_prefix"] = kL2IndexPrefix;
             json["data_path"] = kRawDataPath;
-            json["max_degree"] = 5;
+            json["max_degree"] = 32;
             json["search_list_size"] = kK;
             json["pq_code_budget_gb"] = sizeof(float) * dim * kNumRows * 0.03125 / (1024 * 1024 * 1024);
             json["build_dram_budget_gb"] = 32.0;
@@ -909,7 +995,7 @@ base_AiSAQ_param_test() {
     auto knn_search_gen = [&base_gen, &metric_str, &metric_dir_map]() {
         knowhere::Json json = base_gen();
         json["index_prefix"] = metric_dir_map[metric_str];
-        json["search_list_size"] = 36;
+        json["search_list_size"] = 64;
         json["beamwidth"] = 4;
         json["vectors_beamwidth"] = 4;
         return json;
@@ -953,7 +1039,7 @@ base_AiSAQ_param_test() {
         knowhere::Json test_json;
         // build process
         {
-            knowhere::DataSetPtr ds_ptr = nullptr;
+            knowhere::DataSetPtr ds_ptr = GenDataSet(kNumRows, kDim, 30);
             auto diskann =
                 knowhere::IndexFactory::Instance().Create<DataType>(index_type, version, diskann_index_pack).value();
             LOG_KNOWHERE_INFO_ << "Test invalid metric_type parameter";
@@ -1108,7 +1194,7 @@ base_AiSAQ_search() {
         json["index_prefix"] = metric_dir_map[metric_str];
         json["data_path"] = kRawDataPath;
         json["max_degree"] = 64;
-        json["search_list_size"] = 100;
+        json["search_list_size"] = 128;
         json["pq_code_budget_gb"] = sizeof(float) * kLargeDim * kNumRows * 0.5 / (1024 * 1024 * 1024);
         json["search_cache_budget_gb"] = 0;
         json["disk_pq_dims"] = kLargeDim;
@@ -1157,7 +1243,7 @@ base_AiSAQ_search() {
     const auto num_entry_points_list = {0, 100};
     const auto bitset_percentages = {0.05f, 0.20f, 0.40f, 0.60f, 0.80f, 0.9f};
     const auto bitset_thresholds = {0.9f};
-    const auto l_search_dict = {100};
+    const auto l_search_dict = {128};
     const auto pq_read_page_cache_size_list = {0, 1048576};
     SECTION("Test search and range search") {
         for (const bool rearrange : rearrange_list) {
@@ -1266,7 +1352,7 @@ TEST_CASE("Test DiskANN Search Cancellation", "[diskann][cancellation]") {
         json["k"] = kK;
         json["index_prefix"] = kL2IndexPrefix;
         json["data_path"] = kRawDataPath;
-        json["max_degree"] = 56;
+        json["max_degree"] = 32;
         json["search_list_size"] = 128;
         json["pq_code_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
         json["search_cache_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
@@ -1299,7 +1385,7 @@ TEST_CASE("Test DiskANN Search Cancellation", "[diskann][cancellation]") {
         json["metric_type"] = knowhere::metric::L2;
         json["k"] = kK;
         json["index_prefix"] = kL2IndexPrefix;
-        json["search_list_size"] = 36;
+        json["search_list_size"] = 64;
         json["beamwidth"] = 8;
         if (index_type == "AISAQ") {
             json["vectors_beamwidth"] = 4;

@@ -26,6 +26,9 @@
 #include "diskann/pq_flash_index.h"
 #include "knowhere/comp/task.h"
 #include "tsl/robin_set.h"
+#ifdef KNOWHERE_WITH_CUVS
+#include "diskann/diskann_gpu.h"
+#endif
 
 
 namespace diskann {
@@ -477,7 +480,19 @@ namespace diskann {
       double ram_budget, std::string mem_index_path, std::string medoids_file,
       std::string centroids_file) {
     size_t base_num, base_dim;
+    uint32_t shard_r = 2*R/3;
     diskann::get_bin_metadata(base_file, base_num, base_dim);
+#ifdef KNOWHERE_WITH_CUVS
+    raft::device_resources dev_resources;
+    if(compareMetric == diskann::L2 && is_gpu_available()) {
+      size_t gpu_free_mem, gpu_total_mem;
+      gpu_get_mem_info(dev_resources, gpu_free_mem, gpu_total_mem);
+      LOG_KNOWHERE_INFO_ << "GPU has " <<  gpu_free_mem/(1024*1024*1024L) <<
+              " Gib free memory out of " <<  gpu_total_mem/(1024*1024*1024L) << " Gib total";
+      ram_budget = std::min<double>(ram_budget,(double)0.9*(gpu_free_mem/(1024*1024*1024)));
+      shard_r = std::max<uint32_t>((uint32_t)32,(uint32_t)R/2);
+    }
+#endif
 
     double full_index_ram =
         estimate_ram_usage(base_num, base_dim, sizeof(T), R);
@@ -499,9 +514,42 @@ namespace diskann {
 
       std::unique_ptr<diskann::Index<T>> _pvamanaIndex =
           std::unique_ptr<diskann::Index<T>>(new diskann::Index<T>(
-              compareMetric, ip_prepared, base_dim, base_num, false, false));
-      _pvamanaIndex->build(base_file.c_str(), base_num, paras);
-      _pvamanaIndex->save(mem_index_path.c_str(), true);
+          compareMetric, ip_prepared, base_dim, base_num, false, false));
+      bool built_with_gpu=false;
+#ifdef KNOWHERE_WITH_CUVS
+      //currently cuvs vamana build only supports L2Expanded metric
+      if (compareMetric == diskann::L2 && is_gpu_available() &&
+              (std::is_same_v<T, float> || std::is_same_v<T, uint8_t>) ) {
+        LOG_KNOWHERE_INFO_ << "Building with GPU!" << " R= "<< R<<" L=" << L;
+
+        if (std::is_same_v<T, float>) {
+          auto dataset = read_bin_dataset<float, uint64_t>(dev_resources, base_file);
+          vamana_build_and_write<float>(dev_resources,
+                                           raft::make_const_mdspan(dataset.view()),
+                                           mem_index_path,
+                                           R,
+                                           L,
+                                           0.06,
+                                           1);
+        }else {
+          auto dataset = read_bin_dataset<uint8_t, uint64_t>(dev_resources, base_file);
+          vamana_build_and_write<uint8_t>(dev_resources,
+                                           raft::make_const_mdspan(dataset.view()),
+                                           mem_index_path,
+                                           R,
+                                           L,
+                                           0.06,
+                                           1);
+        }
+        built_with_gpu=true;
+      }
+#endif
+      if(!built_with_gpu) {
+        _pvamanaIndex->build(base_file.c_str(), base_num, paras);
+        _pvamanaIndex->save(mem_index_path.c_str(), true);
+      }else {
+        _pvamanaIndex->load_graph(mem_index_path, base_num);
+      }
 
       std::remove(medoids_file.c_str());
       std::remove(centroids_file.c_str());
@@ -510,7 +558,7 @@ namespace diskann {
     std::string merged_index_prefix = mem_index_path + "_tempFiles";
     int         num_parts =
         partition_with_ram_budget<T>(base_file, sampling_rate, ram_budget,
-                                     2 * R / 3, merged_index_prefix, 2);
+                                     shard_r, merged_index_prefix, 2);
 
     std::string cur_centroid_filepath = merged_index_prefix + "_centroids.bin";
     std::rename(cur_centroid_filepath.c_str(), centroids_file.c_str());
@@ -530,22 +578,53 @@ namespace diskann {
 
       diskann::Parameters paras;
       paras.Set<unsigned>("L", L);
-      paras.Set<unsigned>("R", (2 * (R / 3)));
+      paras.Set<unsigned>("R", shard_r);
       paras.Set<unsigned>("C", 750);
       paras.Set<float>("alpha", 1.2f);
       paras.Set<unsigned>("num_rnds", 2);
       paras.Set<bool>("saturate_graph", 0);
       paras.Set<std::string>("save_path", shard_index_file);
       paras.Set<bool>("accelerate_build", accelerate_build);
+      paras.Set<bool>("shuffle_build", shuffle_build);
 
       _u64 shard_base_dim, shard_base_pts;
+      bool built_with_gpu=false;
       get_bin_metadata(shard_base_file, shard_base_pts, shard_base_dim);
       std::unique_ptr<diskann::Index<T>> _pvamanaIndex =
           std::unique_ptr<diskann::Index<T>>(
               new diskann::Index<T>(compareMetric, ip_prepared, shard_base_dim,
-                                    shard_base_pts, false));  // TODO: Single?
-      _pvamanaIndex->build(shard_base_file.c_str(), shard_base_pts, paras);
-      _pvamanaIndex->save(shard_index_file.c_str());
+              shard_base_pts, false));  // TODO: Single?
+#ifdef KNOWHERE_WITH_CUVS
+      //currently cuvs vamana build only supports L2Expanded metric
+      if (compareMetric == diskann::L2 && is_gpu_available () &&
+              (std::is_same_v<T, float> || std::is_same_v<T, uint8_t>)) {
+        LOG_KNOWHERE_INFO_ << "Building with GPU!" << " R= "<< shard_r <<" L=" << L;
+        if (std::is_same_v<T, float> ) {
+          auto dataset = read_bin_dataset<float, uint64_t>(dev_resources, shard_base_file);
+          vamana_build_and_write<float>(dev_resources,
+                                       raft::make_const_mdspan(dataset.view()),
+                                       shard_index_file,
+                                       shard_r,
+                                       L,
+                                       0.06,
+                                       1);
+        }else {
+          auto dataset = read_bin_dataset<uint8_t, uint64_t>(dev_resources, shard_base_file);
+          vamana_build_and_write<uint8_t>(dev_resources,
+                                       raft::make_const_mdspan(dataset.view()),
+                                       shard_index_file,
+                                       shard_r,
+                                       L,
+                                       0.06,
+                                       1);
+        }
+        built_with_gpu = true;
+      }
+#endif
+      if(!built_with_gpu){
+        _pvamanaIndex->build(shard_base_file.c_str(), shard_base_pts, paras);
+        _pvamanaIndex->save(shard_index_file.c_str());
+      }
       std::remove(shard_base_file.c_str());
     }
 
@@ -1762,7 +1841,22 @@ template<typename T>
       LOG(ERROR) << "Not building index. Please provide more RAM budget";
       return -1;
     }
-
+#ifdef KNOWHERE_WITH_CUVS
+    if(is_gpu_available()) {
+      if (R != 32 && R != 64 && R != 128) {
+        LOG_KNOWHERE_ERROR_ << "Invalid R value for cuvs - should be only 32 or 64 or 128";
+        return -1;
+      }
+      if (L != 32 && L != 64 && L != 128 && L != 256) {
+        LOG_KNOWHERE_ERROR_ << "Invalid L value for cuvs - should be only 32, 64, 128 or 256";
+        return -1;
+      }
+      if (R >= L) {
+        LOG_KNOWHERE_ERROR_ << "Invalid L value for cuvs - L must be > R";
+        return -1;
+      }
+    }
+#endif
     LOG_KNOWHERE_INFO_ << "Starting index build: R=" << R << " L=" << L
                        << " Query RAM budget: "
                        << pq_code_size_limit / (1024 * 1024 * 1024) << "(GiB)"

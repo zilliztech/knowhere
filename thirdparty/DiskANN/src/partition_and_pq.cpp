@@ -43,6 +43,9 @@
 #include <cassert>
 #include "diskann/memory_mapper.h"
 #include "diskann/partition_and_pq.h"
+#ifdef KNOWHERE_WITH_CUVS
+#include "diskann/diskann_gpu.h"
+#endif
 
 // block size for reading/ processing large files and matrices in blocks
 #define BLOCK_SIZE 1000000
@@ -317,56 +320,91 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
 
   full_pivot_data.reset(new float[num_centers * dim]);
 
-  std::atomic<uint32_t> num_chunk_done(0);
-  const uint32_t        num_chunk_step = num_pq_chunks / COMPLETION_PERCENT;
-  auto thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
-  std::vector<folly::Future<folly::Unit>> futures;
-  futures.reserve(num_pq_chunks);
-  for (size_t i = 0; i < num_pq_chunks; i++) {
-    size_t cur_chunk_size = chunk_offsets[i + 1] - chunk_offsets[i];
-    if (cur_chunk_size == 0)
-      continue;
-    futures.emplace_back(thread_pool->push([&, chunk_size = cur_chunk_size,
-                                            index = i]() {
+  bool used_gpu = false;
+#ifdef KNOWHERE_WITH_CUVS
+  // GPU path
+  if(is_gpu_available()) {
+    raft::resources res;
+    LOG_KNOWHERE_INFO_ << "Running pq with " << num_centers << " clusters, pq "<< num_pq_chunks<< " ...using GPU!";
+    for (size_t i = 0; i < num_pq_chunks; i++) {
+      size_t cur_chunk_size = chunk_offsets[i + 1] - chunk_offsets[i];
+      if (cur_chunk_size == 0)
+        continue;
       std::unique_ptr<float[]> cur_pivot_data =
-          std::make_unique<float[]>(num_centers * chunk_size);
+        std::make_unique<float[]>(num_centers * cur_chunk_size);
       std::unique_ptr<float[]> cur_data =
-          std::make_unique<float[]>(num_train * chunk_size);
+        std::make_unique<float[]>(num_train * cur_chunk_size);
       std::unique_ptr<uint32_t[]> closest_center =
-          std::make_unique<uint32_t[]>(num_train);
-
-      LOG_KNOWHERE_DEBUG_ << "Processing chunk " << index
-                          << " with dimensions [" << chunk_offsets[index]
-                          << ", " << chunk_offsets[index + 1] << ")";
-
+        std::make_unique<uint32_t[]>(num_train);
       for (int64_t j = 0; j < (_s64) num_train; j++) {
-        std::memcpy(cur_data.get() + j * chunk_size,
-                    train_data.get() + j * dim + chunk_offsets[index],
-                    chunk_size * sizeof(float));
+        std::memcpy(cur_data.get() + j * cur_chunk_size,
+                train_data.get() + j * dim + chunk_offsets[i],
+                cur_chunk_size * sizeof(float));
       }
-
-      kmeans::kmeanspp_selecting_pivots(cur_data.get(), num_train, chunk_size,
-                                        cur_pivot_data.get(), num_centers);
-
-      kmeans::run_lloyds(cur_data.get(), num_train, chunk_size,
-                         cur_pivot_data.get(), num_centers, max_k_means_reps,
-                         NULL, closest_center.get());
+      kmeans_gpu(res,cur_data.get(), num_train, cur_chunk_size,
+              num_centers, max_k_means_reps, cur_pivot_data.get());
 
       for (uint64_t j = 0; j < num_centers; j++) {
-        std::memcpy(full_pivot_data.get() + j * dim + chunk_offsets[index],
-                    cur_pivot_data.get() + j * chunk_size,
-                    chunk_size * sizeof(float));
+        std::memcpy(full_pivot_data.get() + j * dim + chunk_offsets[i],
+                cur_pivot_data.get() + j * cur_chunk_size,
+                cur_chunk_size * sizeof(float));
       }
-      uint32_t cur_chunk_done = num_chunk_done.fetch_add(1);
-      if (num_chunk_step == 0 || cur_chunk_done % num_chunk_step == 0 ||
-          cur_chunk_done == num_pq_chunks) {
-        LOG_KNOWHERE_INFO_ << "Genereated pivots for " << cur_chunk_done
-                           << " chunks out of " << num_pq_chunks;
-      }
-    }));
+    }
+    used_gpu = true;
   }
-  knowhere::WaitAllSuccess(futures);
+#endif
 
+  if(!used_gpu) {
+    std::atomic<uint32_t> num_chunk_done(0);
+    const uint32_t        num_chunk_step = num_pq_chunks / COMPLETION_PERCENT;
+    auto thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
+    std::vector<folly::Future<folly::Unit>> futures;
+    futures.reserve(num_pq_chunks);
+    for (size_t i = 0; i < num_pq_chunks; i++) {
+      size_t cur_chunk_size = chunk_offsets[i + 1] - chunk_offsets[i];
+      if (cur_chunk_size == 0)
+        continue;
+      futures.emplace_back(thread_pool->push([&, chunk_size = cur_chunk_size,
+                                              index = i]() {
+        std::unique_ptr<float[]> cur_pivot_data =
+            std::make_unique<float[]>(num_centers * chunk_size);
+        std::unique_ptr<float[]> cur_data =
+            std::make_unique<float[]>(num_train * chunk_size);
+        std::unique_ptr<uint32_t[]> closest_center =
+            std::make_unique<uint32_t[]>(num_train);
+
+        LOG_KNOWHERE_DEBUG_ << "Processing chunk " << index
+                            << " with dimensions [" << chunk_offsets[index]
+                            << ", " << chunk_offsets[index + 1] << ")";
+
+        for (int64_t j = 0; j < (_s64) num_train; j++) {
+          std::memcpy(cur_data.get() + j * chunk_size,
+                      train_data.get() + j * dim + chunk_offsets[index],
+                      chunk_size * sizeof(float));
+        }
+
+        kmeans::kmeanspp_selecting_pivots(cur_data.get(), num_train, chunk_size,
+                                          cur_pivot_data.get(), num_centers);
+
+        kmeans::run_lloyds(cur_data.get(), num_train, chunk_size,
+                           cur_pivot_data.get(), num_centers, max_k_means_reps,
+                           NULL, closest_center.get());
+
+        for (uint64_t j = 0; j < num_centers; j++) {
+          std::memcpy(full_pivot_data.get() + j * dim + chunk_offsets[index],
+                      cur_pivot_data.get() + j * chunk_size,
+                      chunk_size * sizeof(float));
+        }
+        uint32_t cur_chunk_done = num_chunk_done.fetch_add(1);
+        if (num_chunk_step == 0 || cur_chunk_done % num_chunk_step == 0 ||
+            cur_chunk_done == num_pq_chunks) {
+          LOG_KNOWHERE_INFO_ << "Genereated pivots for " << cur_chunk_done
+                             << " chunks out of " << num_pq_chunks;
+        }
+      }));
+    }
+    knowhere::WaitAllSuccess(futures);
+  }
   diskann::save_bin<float>(pq_pivots_path.c_str(), full_pivot_data.get(),
                            (size_t) num_centers, dim);
   std::string centroids_path =
@@ -539,6 +577,10 @@ int generate_pq_data_from_pivots(const std::string data_file,
           }));
     }
     knowhere::WaitAllSuccess(futures);
+#ifdef KNOWHERE_WITH_CUVS
+    // GPU path
+    raft::resources res;
+#endif
 
     futures.clear();
     futures.reserve(num_pq_chunks);
@@ -568,8 +610,19 @@ int generate_pq_data_from_pivots(const std::string data_file,
               chunk_size * sizeof(float));
         }
 
-        math_utils::elkan_L2(cur_data.get(), cur_pivot_data.get(), chunk_size,
-                             cur_blk_size, num_centers, closest_center.get());
+        bool predicted_with_gpu=false;
+#if defined(KNOWHERE_WITH_CUVS)
+        if (is_gpu_available()) {
+            predict_gpu(res, cur_data.get(), cur_blk_size, chunk_size,
+                         cur_pivot_data.get(), num_centers,
+                         reinterpret_cast<int*>(closest_center.get()));
+            predicted_with_gpu = true;
+        }
+#endif
+        if(!predicted_with_gpu){
+            math_utils::elkan_L2(cur_data.get(), cur_pivot_data.get(), chunk_size,
+                         cur_blk_size, num_centers, closest_center.get());
+        }
 
         for (int64_t j = 0; j < (_s64) cur_blk_size; j++) {
           block_compressed_base[j * num_pq_chunks + chunk_index] =
@@ -622,47 +675,88 @@ int estimate_cluster_sizes(float *test_data_float, size_t num_test,
                            const float *pivots, const size_t num_centers,
                            const size_t test_dim, const size_t k_base,
                            std::vector<size_t> &cluster_sizes) {
-  cluster_sizes.clear();
 
-  auto shard_counts = std::make_unique<size_t[]>(num_centers);
+	size_t k_candidates = num_centers;
 
-  for (size_t i = 0; i < num_centers; i++) {
-    shard_counts[i] = 0;
-  }
-
-  size_t block_size = num_test <= BLOCK_SIZE ? num_test : BLOCK_SIZE;
-  auto block_closest_centers = std::make_unique<_u32[]>(block_size * k_base);
-  float *block_data_float;
-
-  size_t num_blocks = DIV_ROUND_UP(num_test, block_size);
-
-  for (size_t block = 0; block < num_blocks; block++) {
-    size_t start_id = block * block_size;
-    size_t end_id = (std::min)((block + 1) * block_size, num_test);
-    size_t cur_blk_size = end_id - start_id;
-
-    block_data_float = test_data_float + start_id * test_dim;
-
-    math_utils::compute_closest_centers(block_data_float, cur_blk_size,
-                                        test_dim, pivots, num_centers, k_base,
-                                        block_closest_centers.get());
-
-    for (size_t p = 0; p < cur_blk_size; p++) {
-      for (size_t p1 = 0; p1 < k_base; p1++) {
-        size_t shard_id = block_closest_centers[p * k_base + p1];
-        shard_counts[shard_id]++;
-      }
+    if (k_base == 0 || k_base > k_candidates) {
+        LOG_KNOWHERE_ERROR_ << "Invalid k_base: must be in [1," << k_candidates << "]";
+        return -1;
     }
-  }
-  std::stringstream cluster_size_stream;
-  cluster_size_stream << "Estimated cluster sizes: ";
-  for (size_t i = 0; i < num_centers; i++) {
-    _u32 cur_shard_count = (_u32) shard_counts[i];
-    cluster_sizes.push_back((size_t) cur_shard_count);
-    cluster_size_stream << cur_shard_count << " ";
-  }
-  LOG_KNOWHERE_DEBUG_ << cluster_size_stream.str();
-  return 0;
+
+    cluster_sizes.clear();
+    cluster_sizes.resize(num_centers, 0);
+
+    auto shard_counts = std::make_unique<size_t[]>(num_centers);
+    std::fill_n(shard_counts.get(), num_centers, 0);
+
+    const size_t block_size = num_test <= BLOCK_SIZE ? num_test : BLOCK_SIZE;
+    auto block_closest_centers = std::make_unique<int64_t[]>(block_size * k_candidates);
+
+    const size_t num_blocks = DIV_ROUND_UP(num_test, block_size);
+
+    const double beta = 0.1;  // weight for distance vs. balance: 0..1
+
+    for (size_t block = 0; block < num_blocks; block++) {
+        const size_t start_id = block * block_size;
+        const size_t end_id   = std::min((block + 1) * block_size, num_test);
+        const size_t cur_blk_size = end_id - start_id;
+
+        float* block_data_float = test_data_float + start_id * test_dim;
+        bool used_gpu = false;
+#ifdef KNOWHERE_WITH_CUVS
+	    // GPU path
+        if(is_gpu_available()) {
+		  raft::resources res;
+		  if(block %1000 == 0) {
+			  LOG_KNOWHERE_INFO_ << "Running brute force for " << cur_blk_size << " vectors...using GPU!";
+		  }
+		  brute_force_gpu(res, pivots, num_centers, test_dim, k_candidates,
+				  block_data_float, cur_blk_size, block_closest_centers.get());
+
+		  used_gpu = true;
+        }
+#endif
+        if(!used_gpu) {
+        	math_utils::compute_closest_centers(block_data_float, cur_blk_size,
+                                            test_dim, pivots, num_centers,
+											k_candidates, block_closest_centers.get());
+        }
+
+        for (size_t p = 0; p < cur_blk_size; p++) {
+            const size_t* cand = (const size_t*)block_closest_centers.get() + p * k_candidates;
+
+            bool used[k_candidates] = {false};
+
+            for (size_t assign = 0; assign < k_base; assign++) {
+                size_t best_idx = SIZE_MAX;
+                double best_score = std::numeric_limits<double>::max();
+
+                for (size_t i = 0; i < k_candidates; i++) {
+                    if (used[i]) continue;
+                    size_t cid = cand[i];
+                    double normalized_count = (double)shard_counts[cid] * k_candidates / num_test;
+                    double score = beta * i + (1.0 - beta) * normalized_count;
+                    if (score < best_score) {
+                        best_score = score;
+                        best_idx = i;
+                    }
+                }
+
+                used[best_idx] = true;
+                shard_counts[cand[best_idx]]++;
+            }
+        }
+    }
+
+    cluster_sizes.assign(shard_counts.get(), shard_counts.get() + num_centers);
+
+    std::stringstream cluster_size_stream;
+    cluster_size_stream << "Estimated cluster sizes: ";
+    for (size_t i = 0; i < num_centers; i++)
+        cluster_size_stream << cluster_sizes[i] << " ";
+    LOG_KNOWHERE_INFO_ << cluster_size_stream.str();
+
+    return 0;
 }
 
 template<typename T>
@@ -707,8 +801,8 @@ int shard_data_into_clusters(const std::string data_file, float *pivots,
   }
 
   size_t block_size = num_points <= BLOCK_SIZE ? num_points : BLOCK_SIZE;
-  std::unique_ptr<_u32[]> block_closest_centers =
-      std::make_unique<_u32[]>(block_size * k_base);
+  std::unique_ptr<int64_t[]> block_closest_centers =
+      std::make_unique<int64_t[]>(block_size * k_base);
   std::unique_ptr<T[]> block_data_T = std::make_unique<T[]>(block_size * dim);
   std::unique_ptr<float[]> block_data_float =
       std::make_unique<float[]>(block_size * dim);
@@ -723,11 +817,26 @@ int shard_data_into_clusters(const std::string data_file, float *pivots,
     base_reader.read((char *) block_data_T.get(),
                      sizeof(T) * (cur_blk_size * dim));
     diskann::convert_types<T, float>(block_data_T.get(), block_data_float.get(),
-                                     cur_blk_size, dim);
+    cur_blk_size, dim);
 
-    math_utils::compute_closest_centers(block_data_float.get(), cur_blk_size,
-                                        dim, pivots, num_centers, k_base,
-                                        block_closest_centers.get());
+    bool used_gpu = false;
+#ifdef KNOWHERE_WITH_CUVS
+    // GPU path
+    if(is_gpu_available()) {
+      raft::resources res;
+      if(block %1000 == 0) {
+        LOG_KNOWHERE_INFO_ << "Running brute force for " << cur_blk_size << " vectors...using GPU!";
+      }
+      brute_force_gpu(res, pivots, num_centers, dim, k_base,
+              block_data_float.get(), cur_blk_size, block_closest_centers.get());
+      used_gpu = true;
+    }
+#endif
+    if(!used_gpu) {
+      math_utils::compute_closest_centers(block_data_float.get(), cur_blk_size,
+                                          dim, pivots, num_centers, k_base,
+                                          block_closest_centers.get());
+    }
 
     for (size_t p = 0; p < cur_blk_size; p++) {
       for (size_t p1 = 0; p1 < k_base; p1++) {
@@ -771,88 +880,125 @@ int shard_data_into_clusters_only_ids(const std::string data_file,
                                       float *pivots, const size_t num_centers,
                                       const size_t dim, const size_t k_base,
                                       std::string prefix_path) {
-  _u64 read_blk_size = 64 * 1024 * 1024;
-  //  _u64 write_blk_size = 64 * 1024 * 1024;
-  // create cached reader + writer
-  cached_ifstream base_reader(data_file, read_blk_size);
-  _u32            npts32;
-  _u32            basedim32;
-  base_reader.read((char *) &npts32, sizeof(uint32_t));
-  base_reader.read((char *) &basedim32, sizeof(uint32_t));
-  size_t num_points = npts32;
-  if (basedim32 != dim) {
-    LOG(ERROR) << "Error. dimensions dont match for train set and base set";
-    return -1;
-  }
+    size_t k_candidates = num_centers;
 
-  std::unique_ptr<size_t[]> shard_counts =
-      std::make_unique<size_t[]>(num_centers);
-
-  std::vector<std::ofstream> shard_idmap_writer(num_centers);
-  _u32                       dummy_size = 0;
-  _u32                       const_one = 1;
-
-  for (size_t i = 0; i < num_centers; i++) {
-    std::string idmap_filename =
-        prefix_path + "_subshard-" + std::to_string(i) + "_ids_uint32.bin";
-    shard_idmap_writer[i] =
-        std::ofstream(idmap_filename.c_str(), std::ios::binary);
-    shard_idmap_writer[i].write((char *) &dummy_size, sizeof(uint32_t));
-    shard_idmap_writer[i].write((char *) &const_one, sizeof(uint32_t));
-    shard_counts[i] = 0;
-  }
-
-  size_t block_size = num_points <= BLOCK_SIZE ? num_points : BLOCK_SIZE;
-  std::unique_ptr<_u32[]> block_closest_centers =
-      std::make_unique<_u32[]>(block_size * k_base);
-  std::unique_ptr<T[]> block_data_T = std::make_unique<T[]>(block_size * dim);
-  std::unique_ptr<float[]> block_data_float =
-      std::make_unique<float[]>(block_size * dim);
-
-  size_t num_blocks = DIV_ROUND_UP(num_points, block_size);
-
-  for (size_t block = 0; block < num_blocks; block++) {
-    size_t start_id = block * block_size;
-    size_t end_id = (std::min)((block + 1) * block_size, num_points);
-    size_t cur_blk_size = end_id - start_id;
-
-    base_reader.read((char *) block_data_T.get(),
-                     sizeof(T) * (cur_blk_size * dim));
-    diskann::convert_types<T, float>(block_data_T.get(), block_data_float.get(),
-                                     cur_blk_size, dim);
-
-    math_utils::compute_closest_centers(block_data_float.get(), cur_blk_size,
-                                        dim, pivots, num_centers, k_base,
-                                        block_closest_centers.get());
-
-    for (size_t p = 0; p < cur_blk_size; p++) {
-      for (size_t p1 = 0; p1 < k_base; p1++) {
-        size_t   shard_id = block_closest_centers[p * k_base + p1];
-        uint32_t original_point_map_id = (uint32_t) (start_id + p);
-        shard_idmap_writer[shard_id].write((char *) &original_point_map_id,
-                                           sizeof(uint32_t));
-        shard_counts[shard_id]++;
-      }
+    if (k_base == 0 || k_base > k_candidates) {
+        LOG_KNOWHERE_ERROR_ << "Invalid k_base: must be in [1," << k_candidates << "]";
+        return -1;
     }
-  }
 
-  size_t            total_count = 0;
-  std::stringstream shard_size_stream;
-  shard_size_stream << "Actual shard sizes: ";
-  for (size_t i = 0; i < num_centers; i++) {
-    _u32 cur_shard_count = (_u32) shard_counts[i];
-    total_count += cur_shard_count;
-    shard_size_stream << cur_shard_count << " ";
-    shard_idmap_writer[i].seekp(0);
-    shard_idmap_writer[i].write((char *) &cur_shard_count, sizeof(uint32_t));
-    shard_idmap_writer[i].close();
-  }
-  LOG_KNOWHERE_INFO_ << shard_size_stream.str();
-  LOG_KNOWHERE_INFO_ << "Partitioned " << num_points
-                     << " with replication factor " << k_base << " to get "
-                     << total_count << " points across " << num_centers
-                     << " shards ";
-  return 0;
+    _u64 read_blk_size = 64 * 1024 * 1024;
+    cached_ifstream base_reader(data_file, read_blk_size);
+
+    _u32 npts32;
+    _u32 basedim32;
+    base_reader.read((char*)&npts32, sizeof(uint32_t));
+    base_reader.read((char*)&basedim32, sizeof(uint32_t));
+    size_t num_points = npts32;
+    if (basedim32 != dim) {
+        LOG(ERROR) << "Error. dimensions dont match for train set and base set";
+        return -1;
+    }
+
+    std::unique_ptr<size_t[]> shard_counts = std::make_unique<size_t[]>(num_centers);
+    std::fill_n(shard_counts.get(), num_centers, 0);
+
+    std::vector<std::ofstream> shard_idmap_writer(num_centers);
+    _u32 dummy_size = 0;
+    _u32 const_one = 1;
+
+    for (size_t i = 0; i < num_centers; i++) {
+        std::string idmap_filename =
+            prefix_path + "_subshard-" + std::to_string(i) + "_ids_uint32.bin";
+        shard_idmap_writer[i] =
+            std::ofstream(idmap_filename.c_str(), std::ios::binary);
+        shard_idmap_writer[i].write((char*)&dummy_size, sizeof(uint32_t));
+        shard_idmap_writer[i].write((char*)&const_one, sizeof(uint32_t));
+    }
+
+    size_t block_size = num_points <= BLOCK_SIZE ? num_points : BLOCK_SIZE;
+    std::unique_ptr<int64_t[]> block_closest_centers = std::make_unique<int64_t[]>(block_size * k_candidates);
+    std::unique_ptr<T[]> block_data_T = std::make_unique<T[]>(block_size * dim);
+    std::unique_ptr<float[]> block_data_float = std::make_unique<float[]>(block_size * dim);
+
+    size_t num_blocks = DIV_ROUND_UP(num_points, block_size);
+
+    const double beta = 0.1;  // distance vs balance weight
+
+    for (size_t block = 0; block < num_blocks; block++) {
+        size_t start_id = block * block_size;
+        size_t end_id = std::min((block + 1) * block_size, num_points);
+        size_t cur_blk_size = end_id - start_id;
+
+        base_reader.read((char*)block_data_T.get(), sizeof(T) * (cur_blk_size * dim));
+        diskann::convert_types<T, float>(block_data_T.get(), block_data_float.get(), cur_blk_size, dim);
+        bool used_gpu = false;
+#ifdef KNOWHERE_WITH_CUVS
+		// GPU path
+		if(is_gpu_available()) {
+		  raft::resources res;
+		  if(block %1000 == 0) {
+			  LOG_KNOWHERE_INFO_ << "Running brute force for " << cur_blk_size << " vectors...using GPU!";
+		  }
+		  brute_force_gpu(res, pivots, num_centers, dim, k_candidates,
+				  block_data_float.get(), cur_blk_size, block_closest_centers.get());
+		  used_gpu = true;
+		}
+#endif
+		if(!used_gpu) {
+			math_utils::compute_closest_centers(block_data_float.get(), cur_blk_size,
+											dim, pivots, num_centers,
+											k_candidates, block_closest_centers.get());
+		}
+
+        for (size_t p = 0; p < cur_blk_size; p++) {
+            size_t* cand = (size_t*)block_closest_centers.get() + p * k_candidates;
+
+            bool used[k_candidates] = {false};
+
+            for (size_t assign = 0; assign < k_base; assign++) {
+                size_t best_idx = SIZE_MAX;
+                double best_score = std::numeric_limits<double>::max();
+
+                for (size_t i = 0; i < k_candidates; i++) {
+                    if (used[i]) continue;
+                    size_t cid = cand[i];
+                    double normalized_count = (double)shard_counts[cid] * k_candidates / num_points;
+                    double score = beta * i + (1.0 - beta) * normalized_count;
+                    if (score < best_score) {
+                        best_score = score;
+                        best_idx = i;
+                    }
+                }
+
+                used[best_idx] = true;
+                size_t shard_id = cand[best_idx];
+                uint32_t original_point_map_id = (uint32_t)(start_id + p);
+                shard_idmap_writer[shard_id].write((char*)&original_point_map_id, sizeof(uint32_t));
+                shard_counts[shard_id]++;
+            }
+        }
+    }
+
+    size_t total_count = 0;
+    std::stringstream shard_size_stream;
+    shard_size_stream << "Actual shard sizes: ";
+    for (size_t i = 0; i < num_centers; i++) {
+        _u32 cur_shard_count = (_u32)shard_counts[i];
+        total_count += cur_shard_count;
+        shard_size_stream << cur_shard_count << " ";
+        shard_idmap_writer[i].seekp(0);
+        shard_idmap_writer[i].write((char*)&cur_shard_count, sizeof(uint32_t));
+        shard_idmap_writer[i].close();
+    }
+
+    LOG_KNOWHERE_INFO_ << shard_size_stream.str();
+    LOG_KNOWHERE_INFO_ << "Partitioned " << num_points
+                       << " with replication factor " << k_base << " to get "
+                       << total_count << " points across " << num_centers
+                       << " shards ";
+
+    return 0;
 }
 
 template<typename T>
@@ -949,11 +1095,24 @@ int partition(const std::string data_file, const float sampling_rate,
 
   // Process Global k-means for kmeans_partitioning Step
   LOG_KNOWHERE_DEBUG_ << "Processing global k-means (kmeans_partitioning Step)";
-  kmeans::kmeanspp_selecting_pivots(train_data_float.get(), num_train, train_dim,
-                                    pivot_data.get(), num_parts);
+  bool used_gpu = false;
+#ifdef KNOWHERE_WITH_CUVS
+  // GPU path
+  if(is_gpu_available()) {
+    raft::resources res;
+    LOG_KNOWHERE_INFO_ << "Running k-means with " << num_parts << " clusters...using GPU!";
+    kmeans_gpu(res,train_data_float.get(), num_train, train_dim,
+            num_parts, max_k_means_reps, pivot_data.get());
+    used_gpu = true;
+  }
+#endif
+  if(!used_gpu) {
+    kmeans::kmeanspp_selecting_pivots(train_data_float.get(), num_train, train_dim,
+                                      pivot_data.get(), num_parts);
 
-  kmeans::run_lloyds(train_data_float.get(), num_train, train_dim, pivot_data.get(),
-                     num_parts, max_k_means_reps, NULL, NULL);
+    kmeans::run_lloyds(train_data_float.get(), num_train, train_dim, pivot_data.get(),
+                       num_parts, max_k_means_reps, NULL, NULL);
+  }
 
   LOG_KNOWHERE_DEBUG_ << "Saving global k-center pivots";
   diskann::save_bin<float>(output_file.c_str(), pivot_data.get(), (size_t) num_parts,
@@ -1005,12 +1164,25 @@ int partition_with_ram_budget(const std::string data_file,
     pivot_data = std::make_unique<float[]>(num_parts * train_dim);
     // Process Global k-means for kmeans_partitioning Step
     LOG_KNOWHERE_INFO_
-        << "Processing global k-means (kmeans_partitioning Step)";
-    kmeans::kmeanspp_selecting_pivots(train_data_float.get(), num_train, train_dim,
-                                      pivot_data.get(), num_parts);
+    << "Processing global k-means (kmeans_partitioning Step)";
+    bool used_gpu = false;
+#ifdef KNOWHERE_WITH_CUVS
+    // GPU path
+    if(is_gpu_available()) {
+      raft::resources res;
+      LOG_KNOWHERE_INFO_ << "Running k-means with " << num_parts << " clusters " << num_train << " " << train_dim << " ...using GPU!";
+      kmeans_gpu(res,train_data_float.get(), num_train, train_dim,
+              num_parts, max_k_means_reps, pivot_data.get(), true);
+      used_gpu = true;
+    }
+#endif
+    if(!used_gpu) {
+      kmeans::kmeanspp_selecting_pivots(train_data_float.get(), num_train, train_dim,
+                                        pivot_data.get(), num_parts);
 
-    kmeans::run_lloyds(train_data_float.get(), num_train, train_dim, pivot_data.get(),
-                       num_parts, max_k_means_reps, NULL, NULL);
+      kmeans::run_lloyds(train_data_float.get(), num_train, train_dim, pivot_data.get(),
+                         num_parts, max_k_means_reps, NULL, NULL);
+    }
 
     // now pivots are ready. need to stream base points and assign them to
     // closest clusters.
@@ -1061,16 +1233,33 @@ int partition_calc_kmeans(const std::string &data_file, const std::string &outpu
     size_t train_dim, num_train;
     //float *train_data_float;
     std::unique_ptr<float[]> train_data_float = nullptr;
+    float min_sample_ratio = static_cast<float>(k) / static_cast<float>(npts32);
+    float suggested_ratio = 0.01;
+    float slice_ratio = std::max(min_sample_ratio, suggested_ratio);
+    LOG_KNOWHERE_INFO_ << "partition_calc_kmeans with " << slice_ratio << " slice_ratio...";
     // Load a sample of the dataset for k-means
-    gen_random_slice<T>(data_file, 0.01, train_data_float, num_train, train_dim, &sampled_ids);
+    gen_random_slice<T>(data_file, slice_ratio, train_data_float, num_train, train_dim, &sampled_ids);
 
     // Allocate centroids
     std::vector<float> centroids(k * train_dim);
     // Perform k-means clustering
-    LOG_KNOWHERE_INFO_ << "Running k-means with " << k << " clusters...";
-    kmeans::kmeanspp_selecting_pivots(train_data_float.get(), num_train, train_dim, centroids.data(), k);
-    LOG_KNOWHERE_INFO_ << "Running LLoyds " << k << " clusters...";
-    kmeans::run_lloyds(train_data_float.get(), num_train, train_dim, centroids.data(), k, 10, nullptr, nullptr);
+    bool used_gpu = false;
+#ifdef KNOWHERE_WITH_CUVS
+    // GPU path
+    if(is_gpu_available()) {
+      raft::resources res;
+      LOG_KNOWHERE_INFO_ << "Running k-means with " << k << " clusters...using GPU!";
+      kmeans_gpu(res,train_data_float.get(), num_train, train_dim,
+              k, 10, centroids.data());
+      used_gpu = true;
+    }
+#endif
+    if(!used_gpu) {
+      LOG_KNOWHERE_INFO_ << "Running k-means with " << k << " clusters...";
+      kmeans::kmeanspp_selecting_pivots(train_data_float.get(), num_train, train_dim, centroids.data(), k);
+      LOG_KNOWHERE_INFO_ << "Running LLoyds " << k << " clusters...";
+      kmeans::run_lloyds(train_data_float.get(), num_train, train_dim, centroids.data(), k, 10, nullptr, nullptr);
+    }
 
     std::vector<uint32_t> medoids(k);
     // Parallel computation of medoids
