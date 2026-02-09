@@ -56,7 +56,7 @@ simd_seek_dispatch(const uint32_t* __restrict__ ids, size_t size, size_t start_p
 #if defined(__x86_64__) || defined(_M_X64)
     // Only use SIMD for larger seeks where setup overhead is amortized
     if (remaining >= SIMD_SEEK_THRESHOLD) {
-        if (faiss::InstructionSet::GetInstance().AVX512F()) {
+        if (faiss::cppcontrib::knowhere::InstructionSet::GetInstance().AVX512F()) {
             return simd_seek_avx512_impl(ids, size, start_pos, target);
         }
     }
@@ -92,7 +92,7 @@ accumulate_window_ip_dispatch(const uint32_t* doc_ids, const QType* doc_vals, si
                               float q_weight, float* scores, uint32_t window_start) {
 #if defined(__x86_64__) || defined(_M_X64)
     if constexpr (std::is_same_v<QType, float>) {
-        if (faiss::InstructionSet::GetInstance().AVX512F()) {
+        if (faiss::cppcontrib::knowhere::InstructionSet::GetInstance().AVX512F()) {
             accumulate_window_ip_avx512(doc_ids, doc_vals, list_start, list_end, q_weight, scores, window_start);
             return;
         }
@@ -122,7 +122,7 @@ extract_candidates_scalar(const float* scores, size_t window_size, float thresho
 inline size_t
 extract_candidates_dispatch(const float* scores, size_t window_size, float threshold, uint32_t* candidates) {
 #if defined(__x86_64__) || defined(_M_X64)
-    if (faiss::InstructionSet::GetInstance().AVX512F()) {
+    if (faiss::cppcontrib::knowhere::InstructionSet::GetInstance().AVX512F()) {
         return extract_candidates_avx512(scores, window_size, threshold, candidates);
     }
 #endif
