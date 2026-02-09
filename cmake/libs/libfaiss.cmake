@@ -66,7 +66,9 @@ if(__X86_64)
                                               -mavx512bw -mpopcnt -mavx512vl -mavx512vpopcntdq)
   target_compile_options(sparse_simd_avx512 PRIVATE -mavx512f -mavx512dq -mavx512cd)
   target_compile_options(sparse_seek_avx512 PRIVATE -mavx512f -mavx512dq)
-  target_include_directories(sparse_simd_avx512 PRIVATE ${Boost_INCLUDE_DIRS})
+  target_include_directories(sparse_simd_avx512 PRIVATE ${Boost_INCLUDE_DIRS}
+                             ${CMAKE_CURRENT_SOURCE_DIR}/src
+                             ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
   add_library(
     knowhere_utils STATIC
