@@ -9,6 +9,8 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <cmath>
+
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
@@ -612,5 +614,78 @@ TEST_CASE("Test distance") {
 
         knowhere::KnowhereConfig::DisablePatchForComputeFP32AsBF16();
         run_test();
+    }
+}
+
+TEST_CASE("Test Distance Known Values - Multi Types", "[distance][known_values]") {
+    constexpr float kTolerance = 0.01f;
+
+    SECTION("fp16 known values") {
+        // [1, 2, 3] dot [4, 5, 6] = 32
+        std::vector<knowhere::fp16> x = {knowhere::fp16(1.0f), knowhere::fp16(2.0f), knowhere::fp16(3.0f)};
+        std::vector<knowhere::fp16> y = {knowhere::fp16(4.0f), knowhere::fp16(5.0f), knowhere::fp16(6.0f)};
+        REQUIRE_THAT(faiss::fp16_vec_inner_product_ref(x.data(), y.data(), 3),
+                     Catch::Matchers::WithinRel(32.0f, kTolerance));
+
+        // norm^2 of [3, 4] = 25
+        std::vector<knowhere::fp16> n = {knowhere::fp16(3.0f), knowhere::fp16(4.0f)};
+        REQUIRE_THAT(faiss::fp16_vec_norm_L2sqr_ref(n.data(), 2), Catch::Matchers::WithinRel(25.0f, kTolerance));
+    }
+
+    SECTION("bf16 known values") {
+        std::vector<knowhere::bf16> x = {knowhere::bf16(1.0f), knowhere::bf16(2.0f), knowhere::bf16(3.0f)};
+        std::vector<knowhere::bf16> y = {knowhere::bf16(4.0f), knowhere::bf16(5.0f), knowhere::bf16(6.0f)};
+        REQUIRE_THAT(faiss::bf16_vec_inner_product_ref(x.data(), y.data(), 3),
+                     Catch::Matchers::WithinRel(32.0f, kTolerance));
+    }
+
+    SECTION("int8 known values") {
+        std::vector<int8_t> x = {1, 2, 3, 4};
+        std::vector<int8_t> y = {5, 6, 7, 8};
+        // IP = 1*5 + 2*6 + 3*7 + 4*8 = 5 + 12 + 21 + 32 = 70
+        REQUIRE_THAT(faiss::int8_vec_inner_product_ref(x.data(), y.data(), 4),
+                     Catch::Matchers::WithinRel(70.0f, 0.001f));
+
+        // L2^2 of [1,2,3] vs [4,5,6] = 9+9+9 = 27
+        std::vector<int8_t> a = {1, 2, 3};
+        std::vector<int8_t> b = {4, 5, 6};
+        REQUIRE_THAT(faiss::int8_vec_L2sqr_ref(a.data(), b.data(), 3), Catch::Matchers::WithinRel(27.0f, 0.001f));
+    }
+}
+
+TEST_CASE("Test Cross-Type Distance Consistency", "[distance][cross_type]") {
+    std::mt19937 rng(42);
+    std::string ins;
+    faiss::fvec_hook(ins);
+
+    auto dim = GENERATE(64, 128);
+    constexpr float kCrossTypeTolerance = 0.10f;
+
+    SECTION("fp32 vs fp16 vs bf16 should produce similar results") {
+        std::uniform_real_distribution<float> dist(-5.0f, 5.0f);
+
+        for (int trial = 0; trial < 10; ++trial) {
+            std::vector<float> fp32_x(dim), fp32_y(dim);
+            std::vector<knowhere::fp16> fp16_x(dim), fp16_y(dim);
+            std::vector<knowhere::bf16> bf16_x(dim), bf16_y(dim);
+
+            for (size_t i = 0; i < static_cast<size_t>(dim); ++i) {
+                fp32_x[i] = dist(rng);
+                fp32_y[i] = dist(rng);
+                fp16_x[i] = knowhere::fp16(fp32_x[i]);
+                fp16_y[i] = knowhere::fp16(fp32_y[i]);
+                bf16_x[i] = knowhere::bf16(fp32_x[i]);
+                bf16_y[i] = knowhere::bf16(fp32_y[i]);
+            }
+
+            float ip_fp32 = faiss::fvec_inner_product_ref(fp32_x.data(), fp32_y.data(), dim);
+            float ip_fp16 = faiss::fp16_vec_inner_product_ref(fp16_x.data(), fp16_y.data(), dim);
+            float ip_bf16 = faiss::bf16_vec_inner_product_ref(bf16_x.data(), bf16_y.data(), dim);
+
+            if (std::abs(ip_fp32) > 1.0f) {
+                REQUIRE_THAT(ip_fp16, Catch::Matchers::WithinRel(ip_fp32, kCrossTypeTolerance));
+                REQUIRE_THAT(ip_bf16, Catch::Matchers::WithinRel(ip_fp32, kCrossTypeTolerance));
+            }
+        }
     }
 }

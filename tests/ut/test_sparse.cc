@@ -12,6 +12,7 @@
 #include <future>
 #include <thread>
 
+#include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 #include "knowhere/bitsetview.h"
@@ -442,6 +443,223 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
         auto results = idx.RangeSearch(query_ds, json, nullptr);
         REQUIRE(results.has_value());
         check_result(*results.value());
+    }
+}
+
+// ============================================================================
+// SparseRow Unit Tests
+// ============================================================================
+
+TEST_CASE("SparseRow Basic Operations", "[sparse_utils]") {
+    using namespace knowhere::sparse;
+
+    SECTION("Default constructor creates empty row") {
+        SparseRow<float> row;
+        REQUIRE(row.size() == 0);
+        REQUIRE(row.dim() == 0);
+        REQUIRE(row.data_byte_size() == 0);
+    }
+
+    SECTION("Constructor with count allocates memory") {
+        SparseRow<float> row(5);
+        REQUIRE(row.size() == 5);
+        REQUIRE(row.data() != nullptr);
+        REQUIRE(row.data_byte_size() == 5 * SparseRow<float>::element_size());
+    }
+
+    SECTION("Constructor from vector of pairs") {
+        std::vector<std::pair<table_t, float>> data = {{1, 1.5f}, {3, 2.5f}, {5, 3.5f}};
+        SparseRow<float> row(data);
+        REQUIRE(row.size() == 3);
+        REQUIRE(row[0].id == 1);
+        REQUIRE(row[1].id == 3);
+        REQUIRE(row[2].id == 5);
+        REQUIRE(row.dim() == 6);
+    }
+
+    SECTION("Copy constructor performs deep copy") {
+        std::vector<std::pair<table_t, float>> data = {{1, 1.0f}, {2, 2.0f}};
+        SparseRow<float> original(data);
+        SparseRow<float> copy(original);
+        REQUIRE(copy.size() == original.size());
+        REQUIRE(copy.data() != original.data());
+    }
+
+    SECTION("Move constructor transfers ownership") {
+        std::vector<std::pair<table_t, float>> data = {{1, 1.0f}};
+        SparseRow<float> original(data);
+        void* original_data = original.data();
+        SparseRow<float> moved(std::move(original));
+        REQUIRE(moved.data() == original_data);
+    }
+
+    SECTION("set_at modifies elements") {
+        SparseRow<float> row(3);
+        row.set_at(0, 10, 1.5f);
+        row.set_at(1, 20, 2.5f);
+        REQUIRE(row[0].id == 10);
+        REQUIRE(row[1].id == 20);
+    }
+
+    SECTION("set_at throws on out of range") {
+        SparseRow<float> row(2);
+        REQUIRE_THROWS_AS(row.set_at(5, 1, 1.0f), std::out_of_range);
+    }
+
+    SECTION("Dot product operations") {
+        std::vector<std::pair<table_t, float>> data1 = {{1, 2.0f}, {2, 3.0f}};
+        std::vector<std::pair<table_t, float>> data2 = {{2, 4.0f}, {3, 1.0f}};
+        SparseRow<float> row1(data1);
+        SparseRow<float> row2(data2);
+        float result = row1.dot(row2);
+        REQUIRE(result == Catch::Approx(12.0f));  // Only index 2 overlaps: 3*4=12
+    }
+
+    SECTION("Swap function") {
+        std::vector<std::pair<table_t, float>> data1 = {{1, 1.0f}};
+        std::vector<std::pair<table_t, float>> data2 = {{2, 2.0f}, {3, 3.0f}};
+        SparseRow<float> row1(data1);
+        SparseRow<float> row2(data2);
+        swap(row1, row2);
+        REQUIRE(row1.size() == 2);
+        REQUIRE(row2.size() == 1);
+    }
+}
+
+TEST_CASE("MaxMinHeap Operations", "[sparse_utils]") {
+    using namespace knowhere::sparse;
+
+    SECTION("Basic push and pop") {
+        MaxMinHeap<float> heap(3);
+        REQUIRE(heap.empty());
+        heap.push(1, 10.0f);
+        heap.push(2, 20.0f);
+        heap.push(3, 30.0f);
+        REQUIRE(heap.full());
+        REQUIRE(heap.top().val == Catch::Approx(10.0f));
+    }
+
+    SECTION("Push larger replaces minimum when full") {
+        MaxMinHeap<float> heap(3);
+        heap.push(1, 10.0f);
+        heap.push(2, 20.0f);
+        heap.push(3, 30.0f);
+        heap.push(4, 25.0f);  // Should replace 10.0f
+        REQUIRE(heap.top().val == Catch::Approx(20.0f));
+    }
+
+    SECTION("Push smaller is ignored when full") {
+        MaxMinHeap<float> heap(3);
+        heap.push(1, 10.0f);
+        heap.push(2, 20.0f);
+        heap.push(3, 30.0f);
+        heap.push(4, 5.0f);  // Should be ignored
+        REQUIRE(heap.top().val == Catch::Approx(10.0f));
+    }
+
+    SECTION("Pop returns minimum") {
+        MaxMinHeap<float> heap(3);
+        heap.push(1, 30.0f);
+        heap.push(2, 10.0f);
+        heap.push(3, 20.0f);
+        table_t id = heap.pop();
+        REQUIRE(id == 2);
+        REQUIRE(heap.size() == 2);
+    }
+}
+
+TEST_CASE("GrowableVectorView Operations", "[sparse_utils]") {
+    using namespace knowhere::sparse;
+
+    SECTION("Basic operations") {
+        std::vector<int> storage(5);
+        GrowableVectorView<int> view;
+        view.initialize(storage.data(), 5 * sizeof(int));
+        REQUIRE(view.capacity() == 5);
+        REQUIRE(view.size() == 0);
+
+        view.emplace_back(10);
+        view.emplace_back(20);
+        REQUIRE(view.size() == 2);
+        REQUIRE(view[0] == 10);
+        REQUIRE(view.at(1) == 20);
+    }
+
+    SECTION("Throws on invalid byte_size") {
+        std::vector<int> storage(10);
+        GrowableVectorView<int> view;
+        REQUIRE_THROWS_AS(view.initialize(storage.data(), 7), std::invalid_argument);
+    }
+
+    SECTION("Throws on emplace_back when full") {
+        std::vector<int> storage(2);
+        GrowableVectorView<int> view;
+        view.initialize(storage.data(), 2 * sizeof(int));
+        view.emplace_back(1);
+        view.emplace_back(2);
+        REQUIRE_THROWS_AS(view.emplace_back(3), std::out_of_range);
+    }
+
+    SECTION("at() bounds checking") {
+        std::vector<int> storage(5);
+        GrowableVectorView<int> view;
+        view.initialize(storage.data(), 5 * sizeof(int));
+        view.emplace_back(10);
+        REQUIRE_THROWS_AS(view.at(1), std::out_of_range);
+    }
+
+    SECTION("Iterator operations") {
+        std::vector<int> storage(3);
+        GrowableVectorView<int> view;
+        view.initialize(storage.data(), 3 * sizeof(int));
+        view.emplace_back(1);
+        view.emplace_back(2);
+        view.emplace_back(3);
+
+        int sum = 0;
+        for (int val : view) {
+            sum += val;
+        }
+        REQUIRE(sum == 6);
+    }
+}
+
+TEST_CASE("DocIdFilterByVector Operations", "[sparse_utils]") {
+    using namespace knowhere::sparse;
+
+    SECTION("Empty filter passes all") {
+        DocIdFilterByVector filter(std::vector<table_t>{});
+        REQUIRE(filter.empty());
+        REQUIRE(filter.test(0));
+        REQUIRE(filter.test(100));
+    }
+
+    SECTION("Filter blocks specified ids") {
+        std::vector<table_t> filtered_ids = {2, 5, 8};
+        DocIdFilterByVector filter(std::move(filtered_ids));
+        REQUIRE(filter.test(0));
+        REQUIRE(filter.test(1));
+        REQUIRE(!filter.test(2));
+        REQUIRE(filter.test(3));
+        REQUIRE(!filter.test(5));
+        REQUIRE(!filter.test(8));
+        REQUIRE(filter.test(10));
+    }
+}
+
+TEST_CASE("DocValueComputer Functions", "[sparse_utils]") {
+    using namespace knowhere::sparse;
+
+    SECTION("Original computer returns value unchanged") {
+        auto computer = GetDocValueOriginalComputer<float>();
+        REQUIRE(computer(5.0f, 100.0f) == Catch::Approx(5.0f));
+    }
+
+    SECTION("BM25 computer applies formula") {
+        auto computer = GetDocValueBM25Computer<float>(1.2f, 0.75f, 100.0f);
+        float tf = 2.0f, doc_len = 100.0f;
+        float expected = tf * 2.2f / (tf + 1.2f * 1.0f);
+        REQUIRE(computer(tf, doc_len) == Catch::Approx(expected));
     }
 }
 
