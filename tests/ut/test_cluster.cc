@@ -14,7 +14,7 @@
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
-#include "faiss/utils/binary_distances.h"
+#include "faiss/cppcontrib/knowhere/utils/binary_distances.h"
 #include "hnswlib/hnswalg.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/cluster/cluster_factory.h"
