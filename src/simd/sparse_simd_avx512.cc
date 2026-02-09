@@ -237,14 +237,12 @@ extract_candidates_avx512(const float* scores, size_t window_size, float thresho
         // Compare: mask bit set where score > threshold
         __mmask16 mask = _mm512_cmp_ps_mask(scores_vec, threshold_vec, _CMP_GT_OQ);
 
-        if (mask != 0) {
-            // Create indices for this chunk: [i, i+1, i+2, ..., i+15]
-            __m512i chunk_indices = _mm512_add_epi32(_mm512_set1_epi32(static_cast<int32_t>(i)), base_indices);
+        // Create indices for this chunk: [i, i+1, i+2, ..., i+15]
+        __m512i chunk_indices = _mm512_add_epi32(_mm512_set1_epi32(static_cast<int32_t>(i)), base_indices);
 
-            // Compress-store: write only the indices where mask bit is set
-            _mm512_mask_compressstoreu_epi32(&candidates[num_candidates], mask, chunk_indices);
-            num_candidates += _mm_popcnt_u32(mask);
-        }
+        // Compress-store: write only the indices where mask bit is set (no-op when mask == 0)
+        _mm512_mask_compressstoreu_epi32(&candidates[num_candidates], mask, chunk_indices);
+        num_candidates += _mm_popcnt_u32(mask);
     }
 
     // Handle tail elements (0-15 remaining)
@@ -255,11 +253,9 @@ extract_candidates_avx512(const float* scores, size_t window_size, float thresho
         // Compare only valid elements
         __mmask16 mask = _mm512_mask_cmp_ps_mask(valid_mask, scores_vec, threshold_vec, _CMP_GT_OQ);
 
-        if (mask != 0) {
-            __m512i chunk_indices = _mm512_add_epi32(_mm512_set1_epi32(static_cast<int32_t>(i)), base_indices);
-            _mm512_mask_compressstoreu_epi32(&candidates[num_candidates], mask, chunk_indices);
-            num_candidates += _mm_popcnt_u32(mask);
-        }
+        __m512i chunk_indices = _mm512_add_epi32(_mm512_set1_epi32(static_cast<int32_t>(i)), base_indices);
+        _mm512_mask_compressstoreu_epi32(&candidates[num_candidates], mask, chunk_indices);
+        num_candidates += _mm_popcnt_u32(mask);
     }
 
     return num_candidates;
