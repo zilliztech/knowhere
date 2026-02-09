@@ -162,31 +162,19 @@ accumulate_window_ip_avx512(const uint32_t* doc_ids, const float* doc_vals, size
         __m512i local_ids0 = _mm512_sub_epi32(ids0, window_start_vec);
         __m512i local_ids1 = _mm512_sub_epi32(ids1, window_start_vec);
 
-        // Process chunk 0: check for conflicts if enabled
-        if constexpr (check_conflicts) {
-            if (!has_no_conflicts(local_ids0)) {
-                scalar_accumulate_window(doc_ids, doc_vals, j, j + SIMD_WIDTH, q_weight, scores, window_start);
-            } else {
-                __m512 current0 = _mm512_i32gather_ps(local_ids0, scores, sizeof(float));
-                __m512 new0 = _mm512_fmadd_ps(vals0, q_weight_vec, current0);
-                _mm512_i32scatter_ps(scores, local_ids0, new0, sizeof(float));
-            }
+        // Process chunk 0
+        if (check_conflicts && !has_no_conflicts(local_ids0)) {
+            scalar_accumulate_window(doc_ids, doc_vals, j, j + SIMD_WIDTH, q_weight, scores, window_start);
         } else {
             __m512 current0 = _mm512_i32gather_ps(local_ids0, scores, sizeof(float));
             __m512 new0 = _mm512_fmadd_ps(vals0, q_weight_vec, current0);
             _mm512_i32scatter_ps(scores, local_ids0, new0, sizeof(float));
         }
 
-        // Process chunk 1: check for conflicts if enabled
-        if constexpr (check_conflicts) {
-            if (!has_no_conflicts(local_ids1)) {
-                scalar_accumulate_window(doc_ids, doc_vals, j + SIMD_WIDTH, j + 2 * SIMD_WIDTH, q_weight, scores,
-                                         window_start);
-            } else {
-                __m512 current1 = _mm512_i32gather_ps(local_ids1, scores, sizeof(float));
-                __m512 new1 = _mm512_fmadd_ps(vals1, q_weight_vec, current1);
-                _mm512_i32scatter_ps(scores, local_ids1, new1, sizeof(float));
-            }
+        // Process chunk 1
+        if (check_conflicts && !has_no_conflicts(local_ids1)) {
+            scalar_accumulate_window(doc_ids, doc_vals, j + SIMD_WIDTH, j + 2 * SIMD_WIDTH, q_weight, scores,
+                                     window_start);
         } else {
             __m512 current1 = _mm512_i32gather_ps(local_ids1, scores, sizeof(float));
             __m512 new1 = _mm512_fmadd_ps(vals1, q_weight_vec, current1);
@@ -200,14 +188,8 @@ accumulate_window_ip_avx512(const uint32_t* doc_ids, const float* doc_vals, size
         __m512 vals = _mm512_loadu_ps(&doc_vals[j]);
         __m512i local_ids = _mm512_sub_epi32(ids, window_start_vec);
 
-        if constexpr (check_conflicts) {
-            if (!has_no_conflicts(local_ids)) {
-                scalar_accumulate_window(doc_ids, doc_vals, j, j + SIMD_WIDTH, q_weight, scores, window_start);
-            } else {
-                __m512 current = _mm512_i32gather_ps(local_ids, scores, sizeof(float));
-                __m512 new_scores = _mm512_fmadd_ps(vals, q_weight_vec, current);
-                _mm512_i32scatter_ps(scores, local_ids, new_scores, sizeof(float));
-            }
+        if (check_conflicts && !has_no_conflicts(local_ids)) {
+            scalar_accumulate_window(doc_ids, doc_vals, j, j + SIMD_WIDTH, q_weight, scores, window_start);
         } else {
             __m512 current = _mm512_i32gather_ps(local_ids, scores, sizeof(float));
             __m512 new_scores = _mm512_fmadd_ps(vals, q_weight_vec, current);
@@ -215,9 +197,15 @@ accumulate_window_ip_avx512(const uint32_t* doc_ids, const float* doc_vals, size
         }
     }
 
-    // Masked tail - use scalar for simplicity (small number of elements)
+    // Masked tail: handle remaining 0-15 elements in SIMD mode
     if (j < list_end) {
-        scalar_accumulate_window(doc_ids, doc_vals, j, list_end, q_weight, scores, window_start);
+        __mmask16 mask = (1u << (list_end - j)) - 1;
+        __m512i ids = _mm512_maskz_loadu_epi32(mask, &doc_ids[j]);
+        __m512 vals = _mm512_maskz_loadu_ps(mask, &doc_vals[j]);
+        __m512i local_ids = _mm512_sub_epi32(ids, window_start_vec);
+        __m512 current = _mm512_mask_i32gather_ps(_mm512_setzero_ps(), mask, local_ids, scores, sizeof(float));
+        __m512 new_scores = _mm512_fmadd_ps(vals, q_weight_vec, current);
+        _mm512_mask_i32scatter_ps(scores, mask, local_ids, new_scores, sizeof(float));
     }
 }
 
