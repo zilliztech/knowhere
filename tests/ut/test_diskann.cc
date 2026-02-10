@@ -67,6 +67,7 @@ constexpr uint32_t kDim = 128;
 constexpr uint32_t kLargeDim = 256;
 constexpr uint32_t kK = 64;
 #ifdef KNOWHERE_WITH_CUVS
+// This test is expected to run on a GPU with at least 2 GB of RAM
 constexpr uint32_t defaultMaxDegree = 64;
 #else
 constexpr uint32_t defaultMaxDegree = 56;

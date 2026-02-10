@@ -51,6 +51,7 @@
 #define BLOCK_SIZE 1000000
 
 // #define SAVE_INFLATED_PQ true
+constexpr uint32_t kNumOfIterations = 10;
 
 template<typename T>
 void gen_random_slice(const std::string base_file,
@@ -398,7 +399,7 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
         uint32_t cur_chunk_done = num_chunk_done.fetch_add(1);
         if (num_chunk_step == 0 || cur_chunk_done % num_chunk_step == 0 ||
             cur_chunk_done == num_pq_chunks) {
-          LOG_KNOWHERE_INFO_ << "Genereated pivots for " << cur_chunk_done
+          LOG_KNOWHERE_INFO_ << "Generated pivots for " << cur_chunk_done
                              << " chunks out of " << num_pq_chunks;
         }
       }));
@@ -1250,7 +1251,7 @@ int partition_calc_kmeans(const std::string &data_file, const std::string &outpu
       raft::resources res;
       LOG_KNOWHERE_INFO_ << "Running k-means with " << k << " clusters...using GPU!";
       kmeans_gpu(res,train_data_float.get(), num_train, train_dim,
-              k, 10, centroids.data());
+              k, kNumOfIterations, centroids.data());
       used_gpu = true;
     }
 #endif
@@ -1258,7 +1259,7 @@ int partition_calc_kmeans(const std::string &data_file, const std::string &outpu
       LOG_KNOWHERE_INFO_ << "Running k-means with " << k << " clusters...";
       kmeans::kmeanspp_selecting_pivots(train_data_float.get(), num_train, train_dim, centroids.data(), k);
       LOG_KNOWHERE_INFO_ << "Running LLoyds " << k << " clusters...";
-      kmeans::run_lloyds(train_data_float.get(), num_train, train_dim, centroids.data(), k, 10, nullptr, nullptr);
+      kmeans::run_lloyds(train_data_float.get(), num_train, train_dim, centroids.data(), k, kNumOfIterations, nullptr, nullptr);
     }
 
     std::vector<uint32_t> medoids(k);

@@ -491,6 +491,9 @@ namespace diskann {
               " Gib free memory out of " <<  gpu_total_mem/(1024*1024*1024L) << " Gib total";
       ram_budget = std::min<double>(ram_budget,(double)0.9*(gpu_free_mem/(1024*1024*1024)));
       shard_r = std::max<uint32_t>((uint32_t)32,(uint32_t)R/2);
+    } else {
+      LOG_KNOWHERE_INFO_ << "GPU is not going to be used since it is not available "
+                            "or metric type is not L2";
     }
 #endif
 
@@ -542,6 +545,9 @@ namespace diskann {
                                            1);
         }
         built_with_gpu=true;
+      } else {
+        LOG_KNOWHERE_INFO_ << "GPU is not going to be used since it is not available "
+                              "or metric type is not L2";
       }
 #endif
       if(!built_with_gpu) {
@@ -619,6 +625,9 @@ namespace diskann {
                                        1);
         }
         built_with_gpu = true;
+      } else {
+        LOG_KNOWHERE_INFO_ << "GPU is not going to be used since it is not available "
+                              "or metric type is not L2";
       }
 #endif
       if(!built_with_gpu){
@@ -1855,6 +1864,8 @@ template<typename T>
         LOG_KNOWHERE_ERROR_ << "Invalid L value for cuvs - L must be > R";
         return -1;
       }
+    } else {
+      LOG_KNOWHERE_INFO_ << "GPU is not going to be used since it is not available";
     }
 #endif
     LOG_KNOWHERE_INFO_ << "Starting index build: R=" << R << " L=" << L

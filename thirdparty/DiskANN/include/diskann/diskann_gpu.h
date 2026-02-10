@@ -57,6 +57,7 @@ void vamana_build_and_write(raft::device_resources const& dev_resources,
                             int iters);
 bool is_gpu_available();
 
+// train function for centroids computation
 void kmeans_gpu(
     raft::resources& dev_resources,
     const float* h_chunk_data,
@@ -67,7 +68,8 @@ void kmeans_gpu(
     float* h_centroids_out,
 	bool is_balanced=false);
 
-
+// assign function for computes the compressed PQ vector per each vector in the dataset
+// based on centroids computation
 int predict_gpu(raft::resources& dev_resources,
 				const float* h_data,
                 size_t n_samples,
