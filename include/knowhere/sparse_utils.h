@@ -15,9 +15,11 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <boost/iterator/iterator_facade.hpp>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <type_traits>
@@ -28,6 +30,46 @@
 #include "knowhere/operands.h"
 
 namespace knowhere::sparse {
+
+// DSP block-level instrumentation (compile with -DSEEK_INSTRUMENTATION to enable)
+#ifdef SEEK_INSTRUMENTATION
+struct DspStats {
+    std::atomic<uint64_t> total_blocks{0};      // total non-zero blocks
+    std::atomic<uint64_t> blocks_processed{0};  // blocks actually scored
+    std::atomic<uint64_t> blocks_pruned{0};     // blocks pruned by threshold
+    std::atomic<uint64_t> entries_scored{0};    // posting list entries iterated
+    std::atomic<uint64_t> docs_pushed{0};       // docs pushed to heap
+    std::atomic<uint64_t> queries{0};           // number of queries
+
+    void
+    print(const char* label = nullptr) const {
+        if (label)
+            printf("\n[DSP Block Stats: %s]\n", label);
+        else
+            printf("\n[DSP Block Stats]\n");
+        uint64_t q = queries.load();
+        uint64_t tb = total_blocks.load(), bp = blocks_processed.load();
+        uint64_t pruned = tb > bp ? tb - bp : 0;
+        printf("  queries:           %lu\n", q);
+        printf("  total non-zero:    %lu (avg %.1f/q)\n", tb, q ? (double)tb / q : 0);
+        printf("  blocks processed:  %lu (avg %.1f/q)\n", bp, q ? (double)bp / q : 0);
+        printf("  blocks pruned:     %lu (%.1f%%)\n", pruned, tb ? 100.0 * pruned / tb : 0);
+        printf("  entries scored:    %lu (avg %.1f/q)\n", entries_scored.load(), q ? (double)entries_scored / q : 0);
+        printf("  docs pushed:       %lu (avg %.1f/q)\n", docs_pushed.load(), q ? (double)docs_pushed / q : 0);
+        if (bp > 0) {
+            printf("  entries/block:     %.1f\n", (double)entries_scored / bp);
+        }
+    }
+
+    void
+    reset() {
+        total_blocks = blocks_processed = blocks_pruned = 0;
+        entries_scored = docs_pushed = queries = 0;
+    }
+};
+
+inline DspStats g_dsp_stats;
+#endif
 
 enum class SparseMetricType {
     METRIC_IP = 1,

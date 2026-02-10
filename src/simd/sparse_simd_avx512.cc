@@ -9,7 +9,7 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
-// This file is compiled with -mavx512f flag to enable AVX512 intrinsics
+// This file is compiled with -mavx512f -mavx512bw flags to enable AVX512 intrinsics
 // Runtime CPU detection ensures it's only called on CPUs with AVX512 support
 
 #include <immintrin.h>
@@ -77,6 +77,38 @@ accumulate_posting_list_ip_avx512(const uint32_t* doc_ids, const float* doc_vals
         __m512 current_scores = _mm512_mask_i32gather_ps(_mm512_setzero_ps(), mask, doc_ids_vec, scores, sizeof(float));
         __m512 new_scores = _mm512_fmadd_ps(vals, q_weight_vec, current_scores);
         _mm512_mask_i32scatter_ps(scores, mask, doc_ids_vec, new_scores, sizeof(float));
+    }
+}
+
+// ============================================================================
+// AVX512 BW: Block Max UB Accumulation
+// ============================================================================
+// Accumulates u8 block max scores into u16 upper bound array with saturating add
+// ub[i] = sat_add_u16(ub[i], query_weight * block_max[i])
+// n must be a multiple of 32 (caller pads arrays)
+//
+// Uses AVX-512 BW instructions:
+// - _mm256_loadu_si256: load 32 u8 block max values
+// - _mm512_cvtepu8_epi16: zero-extend 32 u8 → 32 u16
+// - _mm512_mullo_epi16: multiply 32 u16 pairs
+// - _mm512_adds_epu16: saturating add to u16 accumulators
+void
+accumulate_block_ub_avx512(uint16_t* ub, const uint8_t* block_max, uint16_t query_weight, uint32_t n) {
+    const __m512i qw = _mm512_set1_epi16(static_cast<int16_t>(query_weight));
+
+    for (uint32_t i = 0; i < n; i += 32) {
+        // Load 32 u8 block max values
+        __m256i bm8 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(block_max + i));
+        // Zero-extend to 32 u16
+        __m512i bm16 = _mm512_cvtepu8_epi16(bm8);
+        // Multiply: product = query_weight * block_max (u16 × u16 → u16 low bits)
+        __m512i prod = _mm512_mullo_epi16(bm16, qw);
+        // Load current UB values
+        __m512i cur = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(ub + i));
+        // Saturating add
+        cur = _mm512_adds_epu16(cur, prod);
+        // Store back
+        _mm512_storeu_si512(reinterpret_cast<__m512i*>(ub + i), cur);
     }
 }
 

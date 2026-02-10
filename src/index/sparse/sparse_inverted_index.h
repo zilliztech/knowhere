@@ -22,6 +22,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <numeric>
 #include <unordered_map>
 #include <vector>
 
@@ -941,7 +942,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         return max_dim_;
     }
 
- private:
+ protected:
     // Given a vector of values, returns the threshold value.
     // All values strictly smaller than the threshold will be ignored.
     // values will be modified in this function.
