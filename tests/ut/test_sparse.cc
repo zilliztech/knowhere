@@ -47,7 +47,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
 
     auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
 
-    auto inverted_index_algo = GENERATE("TAAT_NAIVE", "DAAT_WAND", "DAAT_MAXSCORE");
+    auto inverted_index_algo = GENERATE("TAAT_NAIVE", "DAAT_WAND", "DAAT_MAXSCORE", "DSP");
 
     auto drop_ratio_search = metric == knowhere::metric::BM25 ? GENERATE(0.0, 0.1) : GENERATE(0.0, 0.3);
 
@@ -468,6 +468,7 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
 
     auto query_ds = doc_vector_gen(nq, dim);
 
+    // DSP not included: it frees posting lists after build, incompatible with concurrent Add
     auto inverted_index_algo = GENERATE("TAAT_NAIVE", "DAAT_WAND", "DAAT_MAXSCORE");
 
     auto drop_ratio_search = GENERATE(0.0, 0.3);
