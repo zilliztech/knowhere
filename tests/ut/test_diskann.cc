@@ -416,7 +416,7 @@ TEST_CASE("Test DiskANN Build Index", "[diskann]") {
                 json["index_prefix"] = kL2IndexPrefix;
                 json["data_path"] = kRawDataPath;
                 json["max_degree"] = 64;
-                json["search_list_size"] = kK;
+                json["search_list_size"] = 128;
                 json["pq_code_budget_gb"] = sizeof(float) * dim * kNumRows * 0.03125 / (1024 * 1024 * 1024);
                 json["build_dram_budget_gb"] = 0.4;
                 return json;

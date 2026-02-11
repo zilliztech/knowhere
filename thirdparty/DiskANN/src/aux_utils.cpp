@@ -20,7 +20,6 @@
 #include "diskann/aux_utils.h"
 #include "diskann/cached_io.h"
 #include "diskann/index.h"
-#include "diskann/logger.h"
 #include "diskann/partition_and_pq.h"
 #include "diskann/percentile_stats.h"
 #include "diskann/pq_flash_index.h"
@@ -35,7 +34,13 @@ namespace diskann {
   namespace {
     static constexpr uint32_t kSearchLForCache = 15;
     static constexpr float    kCacheMemFactor = 1.1;
+    // Currently supported values for graph_degree in cuvs.
+    static const int DEGREE_SIZES[4] = {32, 64, 128, 256};
   };  // namespace
+
+  bool is_power_of_two(int64_t x) {
+    return x > 0 && (x & (x - 1)) == 0;
+  }
 
   void add_new_file_to_single_index(std::string index_file,
                                     std::string new_file) {
@@ -1852,12 +1857,13 @@ template<typename T>
     }
 #ifdef KNOWHERE_WITH_CUVS
     if(is_gpu_available()) {
-      if (R != 32 && R != 64 && R != 128) {
-        LOG_KNOWHERE_ERROR_ << "Invalid R value for cuvs - should be only 32 or 64 or 128";
+      const int* deg_size = std::find(std::begin(DEGREE_SIZES), std::end(DEGREE_SIZES), R);
+      if (deg_size == std::end(DEGREE_SIZES)) {
+        LOG_KNOWHERE_ERROR_ << "Invalid R value for cuvs - should be power of 2 and maximum 256";
         return -1;
       }
-      if (L != 32 && L != 64 && L != 128 && L != 256) {
-        LOG_KNOWHERE_ERROR_ << "Invalid L value for cuvs - should be only 32, 64, 128 or 256";
+      if (!is_power_of_two(L)) {
+        LOG_KNOWHERE_ERROR_ << "Invalid L value for cuvs - should be power of 2";
         return -1;
       }
       if (R >= L) {
