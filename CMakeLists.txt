@@ -50,17 +50,6 @@ set(KNOWHERE_THRID_ROOT ${KNOWHERE_ROOT}/thirdparty)
 knowhere_option(WITH_CARDINAL "Build with cardinal" OFF)
 knowhere_option(CARDINAL_VERSION_FORCE_CHECKOUT
                 "Force checkout cardinal version" OFF)
-# this is needed for clang on ubuntu:20.04, otherwise the linked fails with
-# 'undefined reference' error. fmt v9 was used by the time the error was
-# encountered. clang on ubuntu:22.04 seems to be unaffected. gcc seems to be
-# unaffected.
-add_definitions(-DFMT_HEADER_ONLY)
-
-# this is needed for clang on ubuntu:20.04, otherwise the linked fails with
-# 'undefined reference' error. fmt v9 was used by the time the error was
-# encountered. clang on ubuntu:22.04 seems to be unaffected. gcc seems to be
-# unaffected.
-add_definitions(-DFMT_HEADER_ONLY)
 
 if(KNOWHERE_VERSION)
   message(STATUS "Building KNOWHERE version: ${KNOWHERE_VERSION}")
@@ -111,6 +100,37 @@ find_package(simde REQUIRED)
 
 if(NOT WITH_LIGHT)
   find_package(opentelemetry-cpp REQUIRED)
+  include_directories(${opentelemetry-cpp_INCLUDE_DIRS})
+  add_definitions(-DOPENTELEMETRY_STL_VERSION=2017)
+  if(TARGET opentelemetry-cpp::opentelemetry_exporter_otlp_grpc)
+    add_definitions(-DHAVE_OTLP_GRPC_EXPORTER)
+  endif()
+endif()
+
+if(APPLE)
+  # On macOS, transitive find_package calls (CURL, ZLIB, etc.) resolve to the
+  # SDK sysroot (e.g. .../MacOSX.sdk/usr/include). When CMake adds that path
+  # as -I or -isystem, it places C standard library headers ahead of libc++'s
+  # C++ wrapper headers (cinttypes, cstdio, etc.), breaking compilation.
+  # Strip SDK sysroot include dirs from all imported targets since the compiler
+  # already searches them by default.
+  execute_process(COMMAND xcrun --show-sdk-path OUTPUT_VARIABLE _SDK_PATH OUTPUT_STRIP_TRAILING_WHITESPACE)
+  set(_SDK_INCLUDE "${_SDK_PATH}/usr/include")
+  get_property(_all_targets DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY IMPORTED_TARGETS)
+  foreach(_tgt IN LISTS _all_targets)
+    foreach(_prop INTERFACE_INCLUDE_DIRECTORIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES)
+      get_target_property(_dirs ${_tgt} ${_prop})
+      if(_dirs)
+        list(REMOVE_ITEM _dirs "${_SDK_INCLUDE}")
+        foreach(_d IN LISTS _dirs)
+          if(_d MATCHES "/SDKs/MacOSX[0-9]*\\.sdk/usr/include$")
+            list(REMOVE_ITEM _dirs "${_d}")
+          endif()
+        endforeach()
+        set_target_properties(${_tgt} PROPERTIES ${_prop} "${_dirs}")
+      endif()
+    endforeach()
+  endforeach()
 endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_OSX_DEPLOYMENT_TARGET
@@ -200,13 +220,20 @@ list(APPEND KNOWHERE_LINKER_LIBS faiss)
 list(APPEND KNOWHERE_LINKER_LIBS glog::glog)
 list(APPEND KNOWHERE_LINKER_LIBS nlohmann_json::nlohmann_json)
 list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
-list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt-header-only)
+list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt)
 list(APPEND KNOWHERE_LINKER_LIBS Folly::folly)
 list(APPEND KNOWHERE_LINKER_LIBS milvus-common)
 list(APPEND KNOWHERE_LINKER_LIBS simde::simde)
 
 add_library(knowhere SHARED ${KNOWHERE_SRCS})
-add_dependencies(knowhere ${KNOWHERE_LINKER_LIBS})
+if(MILVUS_COMMON_DIR)
+  # Pre-built milvus-common is IMPORTED; filter it from add_dependencies
+  set(_KNOWHERE_BUILD_DEPS ${KNOWHERE_LINKER_LIBS})
+  list(REMOVE_ITEM _KNOWHERE_BUILD_DEPS milvus-common simde::simde)
+  add_dependencies(knowhere ${_KNOWHERE_BUILD_DEPS})
+else()
+  add_dependencies(knowhere ${KNOWHERE_LINKER_LIBS})
+endif()
 if(WITH_CUVS)
   list(
     APPEND

@@ -17,9 +17,13 @@
 #include <utility>
 
 #include "knowhere/log.h"
-#include "opentelemetry/exporters/jaeger/jaeger_exporter_factory.h"
 #include "opentelemetry/exporters/ostream/span_exporter_factory.h"
+#include "opentelemetry/exporters/otlp/otlp_http_exporter_factory.h"
+#include "opentelemetry/exporters/otlp/otlp_http_exporter_options.h"
+#ifdef HAVE_OTLP_GRPC_EXPORTER
 #include "opentelemetry/exporters/otlp/otlp_grpc_exporter_factory.h"
+#include "opentelemetry/exporters/otlp/otlp_grpc_exporter_options.h"
+#endif
 #include "opentelemetry/sdk/resource/resource.h"
 #include "opentelemetry/sdk/trace/batch_span_processor_factory.h"
 #include "opentelemetry/sdk/trace/sampler.h"
@@ -28,7 +32,6 @@
 #include "opentelemetry/sdk/trace/tracer_provider_factory.h"
 #include "opentelemetry/sdk/version/version.h"
 #include "opentelemetry/trace/span_context.h"
-#include "opentelemetry/trace/span_metadata.h"
 
 namespace knowhere::tracer {
 
@@ -37,7 +40,6 @@ namespace nostd = opentelemetry::nostd;
 
 namespace trace_sdk = opentelemetry::sdk::trace;
 namespace resource = opentelemetry::sdk::resource;
-namespace jaeger = opentelemetry::exporter::jaeger;
 namespace ostream = opentelemetry::exporter::trace;
 namespace otlp = opentelemetry::exporter::otlp;
 
@@ -50,18 +52,34 @@ initTelemetry(const TraceConfig& cfg) {
     std::unique_ptr<opentelemetry::sdk::trace::SpanExporter> exporter;
     if (cfg.exporter == "stdout") {
         exporter = ostream::OStreamSpanExporterFactory::Create();
-    } else if (cfg.exporter == "jaeger") {
-        auto opts = jaeger::JaegerExporterOptions{};
-        opts.transport_format = jaeger::TransportFormat::kThriftHttp;
-        opts.endpoint = cfg.jaegerURL;
-        exporter = jaeger::JaegerExporterFactory::Create(opts);
-        LOG_KNOWHERE_INFO_ << "init jaeger exporter, endpoint: " << opts.endpoint;
-        // } else if (cfg.exporter == "otlp") {
-        //     auto opts = otlp::OtlpGrpcExporterOptions{};
-        //     opts.endpoint = cfg.otlpEndpoint;
-        //     opts.use_ssl_credentials = cfg.oltpSecure;
-        //     exporter = otlp::OtlpGrpcExporterFactory::Create(opts);
-        //     LOG_KNOWHERE_INFO_ << "init otlp exporter, endpoint: " << opts.endpoint;
+    } else if (cfg.exporter == "otlp") {
+        if (cfg.otlpMethod == "http") {
+            auto opts = otlp::OtlpHttpExporterOptions{};
+            opts.url = cfg.otlpEndpoint;
+            exporter = otlp::OtlpHttpExporterFactory::Create(opts);
+            LOG_KNOWHERE_INFO_ << "init otlp http exporter, endpoint: " << opts.url;
+        }
+#ifdef HAVE_OTLP_GRPC_EXPORTER
+        else if (cfg.otlpMethod == "grpc" || cfg.otlpMethod == "") {
+            auto opts = otlp::OtlpGrpcExporterOptions{};
+            opts.endpoint = cfg.otlpEndpoint;
+            opts.use_ssl_credentials = cfg.oltpSecure;
+            exporter = otlp::OtlpGrpcExporterFactory::Create(opts);
+            LOG_KNOWHERE_INFO_ << "init otlp grpc exporter, endpoint: " << opts.endpoint;
+        }
+#else
+        else if (cfg.otlpMethod == "grpc" || cfg.otlpMethod == "") {
+            auto opts = otlp::OtlpHttpExporterOptions{};
+            opts.url = cfg.otlpEndpoint;
+            exporter = otlp::OtlpHttpExporterFactory::Create(opts);
+            LOG_KNOWHERE_INFO_ << "gRPC exporter unavailable, falling back to otlp http exporter, endpoint: "
+                               << opts.url;
+        }
+#endif
+        else {
+            LOG_KNOWHERE_INFO_ << "unknown otlp method: " << cfg.otlpMethod;
+            enable_trace = false;
+        }
     } else {
         LOG_KNOWHERE_INFO_ << "Empty Trace";
         enable_trace = false;

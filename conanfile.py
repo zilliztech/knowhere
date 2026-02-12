@@ -54,8 +54,9 @@ class KnowhereConan(ConanFile):
         "boost:without_locale": False,
         "boost:without_test": True,
         "boost:without_stacktrace": True,
-        "fmt:header_only": True,
+        "fmt:header_only": False,
         "with_faiss_tests": False,
+        "opentelemetry-cpp:with_stl": True,
         "libcurl:with_ssl": False,
         "with_light": False,
         "with_compile_prune": False,
@@ -90,40 +91,47 @@ class KnowhereConan(ConanFile):
             self.options.rm_safe("fPIC")
         if self.options.with_light:
             self.options["boost"].without_locale = True
+        if self.settings.os == "Macos":
+            self.options["libcurl"].with_ssl = "darwinssl"
+            self.options["abseil"].shared = True
 
     def configure(self):
         if self.options.shared:
             self.options.rm_safe("fPIC")
 
     def requirements(self):
+        self.requires("abseil/20250127.0")
         self.requires("boost/1.83.0")
         self.requires("gflags/2.2.2")
-        self.requires("glog/0.6.0")
-        self.requires("nlohmann_json/3.11.2")
-        self.requires("openssl/3.1.2")
-        self.requires("prometheus-cpp/1.1.0")
-        self.requires("zlib/1.2.12")
-        self.requires("double-conversion/3.2.1")
-        self.requires("xz_utils/5.2.5")
-        self.requires("protobuf/3.21.4")
-        self.requires("fmt/9.1.0")
-        self.requires("folly/2023.10.30.10@milvus/dev")
-        self.requires("libcurl/8.2.1")
+        self.requires("glog/0.7.1")
+        self.requires("nlohmann_json/3.11.3")
+        self.requires("openssl/3.3.2")
+        self.requires("prometheus-cpp/1.2.4")
+        self.requires("zlib/1.3.1")
+        self.requires("double-conversion/3.3.0")
+        self.requires("xz_utils/5.4.5")
+        self.requires("protobuf/5.27.0@milvus/dev", force=True)
+        self.requires("lz4/1.9.4", force=True)
+        self.requires("fmt/11.0.2")
+        self.requires("libevent/2.1.12")
+        self.requires("grpc/1.67.1@milvus/dev")
+        self.requires("folly/2024.08.12.00")
+        self.requires("libcurl/8.10.1")
         self.requires("simde/0.8.2")
         self.requires("xxhash/0.8.3")
         if self.settings.os == "Android":
             self.requires("openblas/0.3.27")
         if not self.options.with_light:
-            self.requires("opentelemetry-cpp/1.8.1.1@milvus/dev")
+            self.requires("opentelemetry-cpp/1.23.0@milvus/dev")
         if self.settings.os not in ["Macos", "Android"]:
-            self.requires("libunwind/1.7.2")
+            self.requires("libunwind/1.8.1")
         if self.options.with_ut:
-            self.requires("catch2/3.3.1")
+            self.requires("catch2/3.7.1")
         if self.options.with_benchmark:
-            self.requires("gtest/1.13.0")
-            self.requires("hdf5/1.14.0")
+            self.requires("gtest/1.15.0")
+            self.requires("hdf5/1.14.5")
         if self.options.with_faiss_tests:
-            self.requires("gtest/1.13.0")
+            self.requires("gtest/1.15.0")
 
     @property
     def _required_boost_components(self):
@@ -185,6 +193,25 @@ class KnowhereConan(ConanFile):
         tc.variables["WITH_FAISS_TESTS"] = self.options.with_faiss_tests
         tc.variables["WITH_LIGHT"] = self.options.with_light
         tc.variables["WITH_COMPILE_PRUNE"] = self.options.with_compile_prune
+
+        # CMake 4.x removed compatibility with cmake_minimum_required < 3.5
+        tc.cache_variables["CMAKE_POLICY_VERSION_MINIMUM"] = "3.5"
+
+        # macOS: Apple Clang lacks OpenMP; point CMake to Homebrew's libomp
+        if self.settings.os == "Macos":
+            import subprocess
+            result = subprocess.run(
+                ["brew", "--prefix", "libomp"],
+                capture_output=True, text=True
+            )
+            libomp_prefix = result.stdout.strip() if result.returncode == 0 else "/opt/homebrew/opt/libomp"
+            tc.variables["OpenMP_C_FLAGS"] = "-Xpreprocessor -fopenmp"
+            tc.variables["OpenMP_CXX_FLAGS"] = "-Xpreprocessor -fopenmp"
+            tc.variables["OpenMP_C_LIB_NAMES"] = "omp"
+            tc.variables["OpenMP_CXX_LIB_NAMES"] = "omp"
+            tc.variables["OpenMP_omp_LIBRARY"] = f"{libomp_prefix}/lib/libomp.dylib"
+            tc.variables["CMAKE_C_FLAGS"] = f"-I{libomp_prefix}/include"
+            tc.variables["CMAKE_CXX_FLAGS"] = f"-I{libomp_prefix}/include"
 
         # Configure ccache
         tc.variables["CMAKE_CXX_COMPILER_LAUNCHER"] = "ccache"
