@@ -49,6 +49,7 @@ static std::shared_ptr<trace::TracerProvider> noop_trace_provider =
 
 void
 initTelemetry(const TraceConfig& cfg) {
+    enable_trace = true;
     std::unique_ptr<opentelemetry::sdk::trace::SpanExporter> exporter;
     if (cfg.exporter == "stdout") {
         exporter = ostream::OStreamSpanExporterFactory::Create();
@@ -63,7 +64,7 @@ initTelemetry(const TraceConfig& cfg) {
         else if (cfg.otlpMethod == "grpc" || cfg.otlpMethod == "") {
             auto opts = otlp::OtlpGrpcExporterOptions{};
             opts.endpoint = cfg.otlpEndpoint;
-            opts.use_ssl_credentials = cfg.oltpSecure;
+            opts.use_ssl_credentials = cfg.otlpSecure;
             exporter = otlp::OtlpGrpcExporterFactory::Create(opts);
             LOG_KNOWHERE_INFO_ << "init otlp grpc exporter, endpoint: " << opts.endpoint;
         }

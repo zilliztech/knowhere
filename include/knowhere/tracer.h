@@ -25,7 +25,7 @@ struct TraceConfig {
     float sampleFraction;
     std::string otlpEndpoint;
     std::string otlpMethod;  // "grpc" (default) or "http"
-    bool oltpSecure;
+    bool otlpSecure;
 
     int nodeID;
 };
