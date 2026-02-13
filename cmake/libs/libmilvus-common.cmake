@@ -1,6 +1,6 @@
 
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES "")
-set( MILVUS-COMMON-VERSION c37f138 )
+set( MILVUS-COMMON-VERSION dba70b6 )
 set( GIT_REPOSITORY  "https://github.com/zilliztech/milvus-common.git" )
 
 message(STATUS "milvus-common repo: ${GIT_REPOSITORY}")
@@ -24,21 +24,20 @@ FetchContent_Declare(
         GIT_TAG         ${MILVUS-COMMON-VERSION}
         SOURCE_DIR      ${CMAKE_CURRENT_BINARY_DIR}/milvus-common-src
         BINARY_DIR      ${CMAKE_CURRENT_BINARY_DIR}/milvus-common-build
-        SOURCE_SUBDIR   cpp
         DOWNLOAD_DIR    ${THIRDPARTY_DOWNLOAD_PATH} )
 
 FetchContent_GetProperties( milvus-common )
 if ( NOT milvus-common_POPULATED )
     FetchContent_Populate( milvus-common )
-    # Adding the following target:
-    # milvus-common
     add_subdirectory( ${milvus-common_SOURCE_DIR}
                       ${milvus-common_BINARY_DIR} )
 
-    # Link atomic library to milvus-common to fix atomic operations
-    target_link_libraries(milvus-common PUBLIC atomic)
+    if(NOT APPLE)
+        target_link_libraries(milvus-common PUBLIC atomic)
+    endif()
 endif()
 
-set( MILVUS_COMMON_INCLUDE_DIR ${milvus-common_SOURCE_DIR}/include CACHE INTERNAL "Path to milvus-common include directory" )
+set( MILVUS_COMMON_INCLUDE_DIR ${milvus-common_SOURCE_DIR}/include
+     CACHE INTERNAL "Path to milvus-common include directory" )
 
 include_directories(${MILVUS_COMMON_INCLUDE_DIR})

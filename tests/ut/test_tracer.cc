@@ -43,11 +43,26 @@ TEST_CASE("Test Tracer init", "Init test") {
         CloseRootSpan();
     }
 
-    SECTION("check jaeger") {
+    SECTION("check otlp grpc") {
         auto config = std::make_shared<TraceConfig>();
-        config->exporter = "jaeger";
-        // use default jaeger collector port for test
-        config->jaegerURL = "http://localhost:14268/api/traces";
+        config->exporter = "otlp";
+        config->otlpEndpoint = "localhost:4317";
+        config->nodeID = 1;
+        initTelemetry(*config);
+        auto span = StartSpan("test");
+        REQUIRE(span->IsRecording());
+
+        SetRootSpan(span);
+        AddEvent("sleep");
+        usleep(20000);
+        CloseRootSpan();
+    }
+
+    SECTION("check otlp http") {
+        auto config = std::make_shared<TraceConfig>();
+        config->exporter = "otlp";
+        config->otlpMethod = "http";
+        config->otlpEndpoint = "http://localhost:4318/v1/traces";
         config->nodeID = 1;
         initTelemetry(*config);
         auto span = StartSpan("test");

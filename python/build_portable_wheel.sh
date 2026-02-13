@@ -125,11 +125,7 @@ build_wheel() {
     log_info "Building wheel with $PYTHON..." >&2
     cd "$SCRIPT_DIR"
 
-    if [ "$VERBOSE" = true ]; then
-        $PYTHON setup.py bdist_wheel >&2
-    else
-        $PYTHON setup.py bdist_wheel >/dev/null 2>&1
-    fi
+    $PYTHON setup.py bdist_wheel >&2
 
     local wheel=$(ls -t dist/*-linux_*.whl 2>/dev/null | head -1)
     [ -n "$wheel" ] || { log_error "Wheel build failed" >&2; exit 1; }

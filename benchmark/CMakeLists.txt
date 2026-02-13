@@ -39,7 +39,9 @@ macro(benchmark_test target file)
     target_link_libraries(${target} ${depend_libs} ${unittest_libs})
 
     # this is needed for clang in Debug compilation mode
-    target_link_libraries(${target} atomic)
+    if(NOT APPLE)
+        target_link_libraries(${target} atomic)
+    endif()
 
     install(TARGETS ${target} DESTINATION unittest)
 endmacro()
