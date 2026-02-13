@@ -27,7 +27,7 @@ jobs:
           pip3 install conan==1.65.0 && conan --version && (conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local || true)
       - name: Build & Analyzer
         run: |
-          mkdir build && cd build && conan install .. --build=missing -s compiler.cppstd=17 -o with_ut=True -o with_diskann=True -s compiler.libcxx=libstdc++11 && conan build .. \
+          mkdir build && cd build && conan install .. --build=missing --build=liburing -s compiler.cppstd=17 -o with_ut=True -o with_diskann=True -s compiler.libcxx=libstdc++11 && conan build .. \
           && cd .. && find src -type f | grep -E "\.cc$" | xargs /usr/bin/run-clang-tidy-14.py -quiet -p=./build/Release
       - name: Save Cache
         uses: ./.github/actions/cache-save

@@ -107,13 +107,13 @@ if(NOT WITH_LIGHT)
   endif()
 endif()
 
+# folly's conan recipe may build with a different -msse4.2 setting than
+# knowhere, causing an F14IntrinsicsMode mismatch and undefined reference
+# to F14LinkCheck<N>::check().  Force the portable fallback so the
+# link-time check is skipped entirely.
+add_definitions(-DFOLLY_F14_FORCE_FALLBACK=1)
+
 if(APPLE)
-  # folly may be built without -msse4.2, selecting F14IntrinsicsMode::Simd (1),
-  # while knowhere compilation units use -msse4.2, selecting
-  # F14IntrinsicsMode::SimdAndCrc (2).  The mismatch causes an undefined
-  # reference to F14LinkCheck<2>::check().  Force the portable fallback so the
-  # link-time check is skipped entirely.
-  add_definitions(-DFOLLY_F14_FORCE_FALLBACK=1)
 
   # On macOS, transitive find_package calls (CURL, ZLIB, etc.) resolve to the
   # SDK sysroot (e.g. .../MacOSX.sdk/usr/include). When CMake adds that path

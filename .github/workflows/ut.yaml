@@ -47,7 +47,7 @@ jobs:
       - name: Build
         run: |
           mkdir build && cd build \
-          && conan install .. --build=missing -s build_type=Release -s compiler.cppstd=17 -o with_ut=True -o with_diskann=True -o with_asan=True -s compiler.libcxx=libstdc++11 \
+          && conan install .. --build=missing --build=liburing -s build_type=Release -s compiler.cppstd=17 -o with_ut=True -o with_diskann=True -o with_asan=True -s compiler.libcxx=libstdc++11 \
           && conan build .. \
           && ./Release/tests/ut/knowhere_tests
       - name: Save Cache
@@ -84,7 +84,7 @@ jobs:
         run: |
           mkdir build \
           && cd build \
-          && conan install .. --build=missing -s compiler.cppstd=17 -o with_diskann=True -s compiler.libcxx=libstdc++11 -s build_type=Release \
+          && conan install .. --build=missing --build=liburing -s compiler.cppstd=17 -o with_diskann=True -s compiler.libcxx=libstdc++11 -s build_type=Release \
           && conan build ..
       - name: Save Cache
         uses: ./.github/actions/cache-save
