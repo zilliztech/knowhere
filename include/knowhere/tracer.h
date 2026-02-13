@@ -23,8 +23,8 @@ namespace knowhere::tracer {
 struct TraceConfig {
     std::string exporter;
     float sampleFraction;
-    std::string jaegerURL;
     std::string otlpEndpoint;
+    std::string otlpMethod;  // "grpc" (default) or "http"
     bool oltpSecure;
 
     int nodeID;
