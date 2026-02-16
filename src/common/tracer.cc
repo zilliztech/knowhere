@@ -71,7 +71,17 @@ initTelemetry(const TraceConfig& cfg) {
 #else
         else if (cfg.otlpMethod == "grpc" || cfg.otlpMethod == "") {
             auto opts = otlp::OtlpHttpExporterOptions{};
-            opts.url = cfg.otlpEndpoint;
+            // Convert gRPC endpoint (host:port) to HTTP URL for fallback
+            auto endpoint = cfg.otlpEndpoint;
+            if (endpoint.find("://") == std::string::npos) {
+                // Replace gRPC default port 4317 with HTTP default port 4318
+                auto pos = endpoint.rfind(":4317");
+                if (pos != std::string::npos && pos + 5 == endpoint.size()) {
+                    endpoint = endpoint.substr(0, pos) + ":4318";
+                }
+                endpoint = "http://" + endpoint + "/v1/traces";
+            }
+            opts.url = endpoint;
             exporter = otlp::OtlpHttpExporterFactory::Create(opts);
             LOG_KNOWHERE_INFO_ << "gRPC exporter unavailable, falling back to otlp http exporter, endpoint: "
                                << opts.url;

@@ -205,14 +205,20 @@ class KnowhereConan(ConanFile):
                 ["brew", "--prefix", "libomp"],
                 capture_output=True, text=True
             )
-            libomp_prefix = result.stdout.strip() if result.returncode == 0 else "/opt/homebrew/opt/libomp"
-            tc.variables["OpenMP_C_FLAGS"] = "-Xpreprocessor -fopenmp"
-            tc.variables["OpenMP_CXX_FLAGS"] = "-Xpreprocessor -fopenmp"
+            if result.returncode == 0:
+                libomp_prefix = result.stdout.strip()
+            elif os.path.isdir("/opt/homebrew/opt/libomp"):
+                libomp_prefix = "/opt/homebrew/opt/libomp"
+            else:
+                libomp_prefix = "/usr/local/opt/libomp"
+            omp_inc = f"-I{libomp_prefix}/include"
+            tc.variables["OpenMP_C_FLAGS"] = f"-Xpreprocessor -fopenmp {omp_inc}"
+            tc.variables["OpenMP_CXX_FLAGS"] = f"-Xpreprocessor -fopenmp {omp_inc}"
             tc.variables["OpenMP_C_LIB_NAMES"] = "omp"
             tc.variables["OpenMP_CXX_LIB_NAMES"] = "omp"
             tc.variables["OpenMP_omp_LIBRARY"] = f"{libomp_prefix}/lib/libomp.dylib"
-            tc.variables["CMAKE_C_FLAGS"] = f"-I{libomp_prefix}/include"
-            tc.variables["CMAKE_CXX_FLAGS"] = f"-I{libomp_prefix}/include"
+            tc.variables["CMAKE_C_FLAGS"] = omp_inc
+            tc.variables["CMAKE_CXX_FLAGS"] = omp_inc
 
         # Configure ccache
         tc.variables["CMAKE_CXX_COMPILER_LAUNCHER"] = "ccache"
