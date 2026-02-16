@@ -49,6 +49,7 @@ set_target_properties(knowhere_tests PROPERTIES
 
 target_link_libraries(knowhere_tests PRIVATE
         Catch2::Catch2WithMain
-        atomic
-        stdc++fs
         knowhere)
+if(NOT APPLE)
+  target_link_libraries(knowhere_tests PRIVATE atomic stdc++fs)
+endif()

@@ -46,6 +46,7 @@ def get_readme():
 DEFINE_MACROS = [
     ("FINTEGER", "int"),
     ("SWIGWORDSIZE64", "1"),
+    ("GLOG_USE_GLOG_EXPORT", None),
 ]
 
 INCLUDE_DIRS = [

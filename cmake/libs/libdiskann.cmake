@@ -33,7 +33,7 @@ target_link_libraries(
          ${DISKANN_BOOST_PROGRAM_OPTIONS_LIB}
          nlohmann_json::nlohmann_json
          Folly::folly
-         fmt::fmt-header-only
+         fmt::fmt
          prometheus-cpp::core
          prometheus-cpp::push
          glog::glog)

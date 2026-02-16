@@ -67,6 +67,12 @@ wheelhouse/*
 
 CMakeUserPresets.json
 
+# Conan generated files
+conan.lock
+conanbuildinfo.txt
+conaninfo.txt
+graph_info.json
+
 # python
 .eggs
 *.egg-info

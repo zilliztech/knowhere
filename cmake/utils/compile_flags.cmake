@@ -11,7 +11,7 @@ endif()
 
 if(WITH_ASAN)
   set(CMAKE_CXX_FLAGS
-      "-fno-stack-protector -fno-omit-frame-pointer -fno-var-tracking -fsanitize=address ${CMAKE_CXX_FLAGS}"
+      "-fno-stack-protector -fno-omit-frame-pointer -fno-var-tracking -fsanitize=address -fno-sized-deallocation ${CMAKE_CXX_FLAGS}"
   )
 endif()
 
