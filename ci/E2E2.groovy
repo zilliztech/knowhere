@@ -1,4 +1,4 @@
-int total_timeout_minutes = 120
+// int total_timeout_minutes = 120
 def knowhere_wheel=''
 pipeline {
     agent {
@@ -11,7 +11,7 @@ pipeline {
     }
 
     options {
-        timeout(time: total_timeout_minutes, unit: 'MINUTES')
+        // timeout(time: total_timeout_minutes, unit: 'MINUTES')
         buildDiscarder logRotator(artifactDaysToKeepStr: '30')
         parallelsAlwaysFailFast()
         disableConcurrentBuilds(abortPrevious: true)
