@@ -108,30 +108,14 @@ if(NOT WITH_LIGHT)
 endif()
 
 if(APPLE)
-
-  # On macOS, transitive find_package calls (CURL, ZLIB, etc.) resolve to the
-  # SDK sysroot (e.g. .../MacOSX.sdk/usr/include). When CMake adds that path
-  # as -I or -isystem, it places C standard library headers ahead of libc++'s
-  # C++ wrapper headers (cinttypes, cstdio, etc.), breaking compilation.
-  # Strip SDK sysroot include dirs from all imported targets since the compiler
-  # already searches them by default.
+  # Prevent SDK sysroot include dir from appearing as -I/-isystem in compile
+  # commands. Transitive find_package calls (CURL, ZLIB, etc.) resolve headers
+  # to the SDK sysroot, and the explicit -I flag breaks C++ wrapper headers
+  # (cinttypes, cstdio, etc.) that rely on #include_next search order.
+  # The compiler already searches this path implicitly.
   execute_process(COMMAND xcrun --show-sdk-path OUTPUT_VARIABLE _SDK_PATH OUTPUT_STRIP_TRAILING_WHITESPACE)
-  set(_SDK_INCLUDE "${_SDK_PATH}/usr/include")
-  get_property(_all_targets DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY IMPORTED_TARGETS)
-  foreach(_tgt IN LISTS _all_targets)
-    foreach(_prop INTERFACE_INCLUDE_DIRECTORIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES)
-      get_target_property(_dirs ${_tgt} ${_prop})
-      if(_dirs)
-        list(REMOVE_ITEM _dirs "${_SDK_INCLUDE}")
-        foreach(_d IN LISTS _dirs)
-          if(_d MATCHES "/SDKs/MacOSX[0-9]*\\.sdk/usr/include$")
-            list(REMOVE_ITEM _dirs "${_d}")
-          endif()
-        endforeach()
-        set_target_properties(${_tgt} PROPERTIES ${_prop} "${_dirs}")
-      endif()
-    endforeach()
-  endforeach()
+  list(APPEND CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES "${_SDK_PATH}/usr/include")
+  list(APPEND CMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES "${_SDK_PATH}/usr/include")
 endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_OSX_DEPLOYMENT_TARGET
