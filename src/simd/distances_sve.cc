@@ -11,12 +11,11 @@
 
 #include "distances_sve.h"
 
-#include <arm_sve.h>
-
 #include <cmath>
 
 #include "faiss/impl/platform_macros.h"
 #if defined(__ARM_FEATURE_SVE)
+#include <arm_sve.h>
 namespace faiss {
 namespace cppcontrib {
 namespace knowhere {

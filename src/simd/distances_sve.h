@@ -9,14 +9,13 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
-#include <arm_sve.h>
-
 #include <cstdint>
 #include <cstdio>
 
 #include "knowhere/operands.h"
 
 #if defined(__ARM_FEATURE_SVE)
+#include <arm_sve.h>
 namespace faiss {
 namespace cppcontrib {
 namespace knowhere {
