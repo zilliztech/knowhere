@@ -15,9 +15,11 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <boost/iterator/iterator_facade.hpp>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <type_traits>
@@ -28,6 +30,111 @@
 #include "knowhere/operands.h"
 
 namespace knowhere::sparse {
+
+// Seek distance instrumentation (compile with -DSEEK_INSTRUMENTATION to enable)
+#ifdef SEEK_INSTRUMENTATION
+struct SeekStats {
+    std::atomic<uint64_t> bucket_0{0};         // delta = 0
+    std::atomic<uint64_t> bucket_1_3{0};       // delta 1-3
+    std::atomic<uint64_t> bucket_4_15{0};      // delta 4-15
+    std::atomic<uint64_t> bucket_16_63{0};     // delta 16-63
+    std::atomic<uint64_t> bucket_64_255{0};    // delta 64-255
+    std::atomic<uint64_t> bucket_256_plus{0};  // delta 256+
+    std::atomic<uint64_t> seek_hits{0};        // seek found target doc_id
+    std::atomic<uint64_t> seek_misses{0};      // seek did NOT find target doc_id
+
+    void
+    record(size_t delta) {
+        if (delta == 0)
+            bucket_0++;
+        else if (delta <= 3)
+            bucket_1_3++;
+        else if (delta <= 15)
+            bucket_4_15++;
+        else if (delta <= 63)
+            bucket_16_63++;
+        else if (delta <= 255)
+            bucket_64_255++;
+        else
+            bucket_256_plus++;
+    }
+
+    void
+    record_hit() {
+        seek_hits++;
+    }
+    void
+    record_miss() {
+        seek_misses++;
+    }
+
+    void
+    print(const char* label = nullptr) const {
+        if (label)
+            printf("\n[Seek Stats: %s]\n", label);
+        else
+            printf("\n[Seek Distance Distribution]\n");
+        uint64_t total = bucket_0 + bucket_1_3 + bucket_4_15 + bucket_16_63 + bucket_64_255 + bucket_256_plus;
+        printf("  delta=0:      %lu (%.1f%%)\n", bucket_0.load(), total ? 100.0 * bucket_0 / total : 0);
+        printf("  delta 1-3:    %lu (%.1f%%)\n", bucket_1_3.load(), total ? 100.0 * bucket_1_3 / total : 0);
+        printf("  delta 4-15:   %lu (%.1f%%)\n", bucket_4_15.load(), total ? 100.0 * bucket_4_15 / total : 0);
+        printf("  delta 16-63:  %lu (%.1f%%)\n", bucket_16_63.load(), total ? 100.0 * bucket_16_63 / total : 0);
+        printf("  delta 64-255: %lu (%.1f%%)\n", bucket_64_255.load(), total ? 100.0 * bucket_64_255 / total : 0);
+        printf("  delta 256+:   %lu (%.1f%%)\n", bucket_256_plus.load(), total ? 100.0 * bucket_256_plus / total : 0);
+        printf("  total seeks:  %lu\n", total);
+        uint64_t h = seek_hits.load(), m = seek_misses.load();
+        uint64_t hm = h + m;
+        printf("  seek hits:    %lu (%.1f%%)\n", h, hm ? 100.0 * h / hm : 0);
+        printf("  seek misses:  %lu (%.1f%%)\n", m, hm ? 100.0 * m / hm : 0);
+    }
+
+    void
+    reset() {
+        bucket_0 = bucket_1_3 = bucket_4_15 = 0;
+        bucket_16_63 = bucket_64_255 = bucket_256_plus = 0;
+        seek_hits = seek_misses = 0;
+    }
+};
+
+inline SeekStats g_seek_stats;
+
+struct DspStats {
+    std::atomic<uint64_t> total_blocks{0};      // total non-zero blocks
+    std::atomic<uint64_t> blocks_processed{0};  // blocks actually scored
+    std::atomic<uint64_t> blocks_pruned{0};     // blocks pruned by threshold
+    std::atomic<uint64_t> entries_scored{0};    // posting list entries iterated
+    std::atomic<uint64_t> docs_pushed{0};       // docs pushed to heap
+    std::atomic<uint64_t> queries{0};           // number of queries
+
+    void
+    print(const char* label = nullptr) const {
+        if (label)
+            printf("\n[DSP Block Stats: %s]\n", label);
+        else
+            printf("\n[DSP Block Stats]\n");
+        uint64_t q = queries.load();
+        uint64_t tb = total_blocks.load(), bp = blocks_processed.load();
+        uint64_t pruned = tb > bp ? tb - bp : 0;
+        printf("  queries:           %lu\n", q);
+        printf("  total non-zero:    %lu (avg %.1f/q)\n", tb, q ? (double)tb / q : 0);
+        printf("  blocks processed:  %lu (avg %.1f/q)\n", bp, q ? (double)bp / q : 0);
+        printf("  blocks pruned:     %lu (%.1f%%)\n", pruned, tb ? 100.0 * pruned / tb : 0);
+        printf("  entries scored:    %lu (avg %.1f/q)\n", entries_scored.load(), q ? (double)entries_scored / q : 0);
+        printf("  docs pushed:       %lu (avg %.1f/q)\n", docs_pushed.load(), q ? (double)docs_pushed / q : 0);
+        if (bp > 0) {
+            printf("  entries/block:     %.1f\n", (double)entries_scored / bp);
+        }
+    }
+
+    void
+    reset() {
+        total_blocks = blocks_processed = blocks_pruned = 0;
+        entries_scored = docs_pushed = queries = 0;
+    }
+};
+
+inline DspStats g_dsp_stats;
+#endif
 
 enum class SparseMetricType {
     METRIC_IP = 1,

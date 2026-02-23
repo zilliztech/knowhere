@@ -23,6 +23,8 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_FLOAT drop_ratio_search;
     CFG_INT refine_factor;
     CFG_FLOAT dim_max_score_ratio;
+    CFG_FLOAT dsp_mu;
+    CFG_FLOAT dsp_eta;
     CFG_STRING inverted_index_algo;
     KNOHWERE_DECLARE_CONFIG(SparseInvertedIndexConfig) {
         // NOTE: drop_ratio_build has been deprecated, it won't change anything
@@ -81,6 +83,16 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .set_default(1.05)
             .description("ratio to upscale/downscale the max score of each dimension")
             .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(dsp_mu)
+            .set_range(0.1, 2.0)
+            .set_default(1.0)
+            .description("DSP superblock max-based threshold relaxation factor")
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(dsp_eta)
+            .set_range(0.1, 2.0)
+            .set_default(1.0)
+            .description("DSP ASC probabilistic threshold factor")
+            .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(inverted_index_algo)
             .description("inverted index algorithm")
             .set_default("DAAT_MAXSCORE")
@@ -92,13 +104,14 @@ class SparseInvertedIndexConfig : public BaseConfig {
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
         if (param_type == PARAM_TYPE::TRAIN) {
-            constexpr std::array<std::string_view, 3> legal_inverted_index_algo_list{"TAAT_NAIVE", "DAAT_WAND",
-                                                                                     "DAAT_MAXSCORE"};
+            constexpr std::array<std::string_view, 5> legal_inverted_index_algo_list{
+                "TAAT_NAIVE", "DAAT_WAND", "DAAT_MAXSCORE", "DAAT_MAXSCORE_V2", "DSP"};
             std::string inverted_index_algo_str = inverted_index_algo.value_or("");
             if (std::find(legal_inverted_index_algo_list.begin(), legal_inverted_index_algo_list.end(),
                           inverted_index_algo_str) == legal_inverted_index_algo_list.end()) {
-                std::string msg = "sparse inverted index algo " + inverted_index_algo_str +
-                                  " not found or not supported, supported: [TAAT_NAIVE DAAT_WAND DAAT_MAXSCORE]";
+                std::string msg =
+                    "sparse inverted index algo " + inverted_index_algo_str +
+                    " not found or not supported, supported: [TAAT_NAIVE DAAT_WAND DAAT_MAXSCORE DAAT_MAXSCORE_V2 DSP]";
                 return HandleError(err_msg, msg, Status::invalid_args);
             }
         }
