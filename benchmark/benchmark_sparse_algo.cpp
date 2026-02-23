@@ -26,7 +26,6 @@
 #include "knowhere/operands.h"
 #include "knowhere/sparse_utils.h"
 
-// CSR format loader for MSMARCO/SPLADE data from big-ann-benchmarks
 struct CSRDataset {
     std::vector<int64_t> indptr;
     std::vector<int32_t> indices;
@@ -42,35 +41,20 @@ struct CSRDataset {
             printf("Error: Cannot open file %s\n", path.c_str());
             return false;
         }
-
-        // Read header: n_rows, n_cols, nnz (all int64_t)
         file.read(reinterpret_cast<char*>(&n_rows), sizeof(int64_t));
         file.read(reinterpret_cast<char*>(&n_cols), sizeof(int64_t));
         file.read(reinterpret_cast<char*>(&nnz), sizeof(int64_t));
+        printf("  CSR: %ld rows, %ld cols, %ld nnz\n", n_rows, n_cols, nnz);
 
-        printf("  Loading CSR: %ld rows, %ld cols, %ld nnz\n", n_rows, n_cols, nnz);
-
-        // Read indptr (n_rows + 1 int64_t values)
         indptr.resize(n_rows + 1);
         file.read(reinterpret_cast<char*>(indptr.data()), (n_rows + 1) * sizeof(int64_t));
-
-        // Read indices (nnz int32_t values)
         indices.resize(nnz);
         file.read(reinterpret_cast<char*>(indices.data()), nnz * sizeof(int32_t));
-
-        // Read data (nnz float values)
         data.resize(nnz);
         file.read(reinterpret_cast<char*>(data.data()), nnz * sizeof(float));
-
-        if (!file) {
-            printf("Error: Failed to read file %s\n", path.c_str());
-            return false;
-        }
-
-        return true;
+        return file.good();
     }
 
-    // Convert to knowhere SparseRow format
     std::unique_ptr<knowhere::sparse::SparseRow<float>[]>
     to_sparse_rows() const {
         auto rows = std::make_unique<knowhere::sparse::SparseRow<float>[]>(n_rows);
@@ -87,7 +71,6 @@ struct CSRDataset {
     }
 };
 
-// Ground truth loader (binary format: nq, k header then nq x k int32_t)
 struct GroundTruth {
     std::vector<std::vector<int32_t>> gt;
     int64_t nq = 0;
@@ -96,31 +79,20 @@ struct GroundTruth {
     bool
     load(const std::string& path, int64_t expected_nq) {
         std::ifstream file(path, std::ios::binary);
-        if (!file) {
-            printf("Error: Cannot open ground truth file %s\n", path.c_str());
+        if (!file)
             return false;
-        }
-
-        // Read header: nq and k (both int32_t)
         int32_t nq32, k32;
         file.read(reinterpret_cast<char*>(&nq32), sizeof(int32_t));
         file.read(reinterpret_cast<char*>(&k32), sizeof(int32_t));
         nq = nq32;
         k = k32;
-        printf("  Loading GT: %ld queries, k=%ld\n", nq, k);
-
-        if (nq != expected_nq) {
-            printf("  Warning: GT has %ld queries but expected %ld, using min(%ld, %ld)\n", nq, expected_nq, nq,
-                   expected_nq);
-            nq = std::min(nq, expected_nq);
-        }
-
+        printf("  GT: %ld queries, k=%ld\n", nq, k);
+        nq = std::min(nq, expected_nq);
         gt.resize(nq);
         for (int64_t i = 0; i < nq; ++i) {
             gt[i].resize(k);
             file.read(reinterpret_cast<char*>(gt[i].data()), k * sizeof(int32_t));
         }
-
         return file.good();
     }
 
@@ -142,59 +114,34 @@ struct GroundTruth {
     }
 };
 
-class Timer {
-    std::chrono::high_resolution_clock::time_point start_;
-
- public:
-    Timer() : start_(std::chrono::high_resolution_clock::now()) {
-    }
-
-    double
-    elapsed_ms() const {
-        auto end = std::chrono::high_resolution_clock::now();
-        return std::chrono::duration<double, std::milli>(end - start_).count();
-    }
-
-    void
-    reset() {
-        start_ = std::chrono::high_resolution_clock::now();
-    }
-};
-
 void
 print_usage(const char* prog) {
-    printf("Usage: %s --data-dir <path> --data-type <splade|bm25> [--topk <k>] [--nq <num_queries>]\n", prog);
-    printf("\nRequired arguments:\n");
-    printf("  --data-dir <path>    - Directory containing CSR data files\n");
-    printf("  --data-type <type>   - Type of data: 'splade' (IP metric) or 'bm25' (BM25 metric)\n");
-    printf("\nExpected files in data-dir:\n");
-    printf("  base_small.csr       - Base vectors in CSR format\n");
-    printf("  queries.dev.csr      - Query vectors in CSR format\n");
-    printf("  base_small.dev.gt    - Ground truth (binary: nq, k header + nq*k int32 IDs)\n");
-    printf("\nDownload from:\n");
-    printf("  wget https://storage.googleapis.com/ann-challenge-sparse-vectors/csr/base_small.csr.gz\n");
-    printf("  wget https://storage.googleapis.com/ann-challenge-sparse-vectors/csr/queries.dev.csr.gz\n");
-    printf("  wget https://storage.googleapis.com/ann-challenge-sparse-vectors/csr/base_small.dev.gt\n");
+    printf(
+        "Usage: %s --data-dir <path> --data-type <splade|bm25> [--base <file>] [--query <file>] [--topk <k>] [--nq "
+        "<n>] [--mu <f>] [--eta <f>]\n",
+        prog);
 }
 
 int
 main(int argc, char** argv) {
     std::string data_dir;
     std::string data_type;
-    std::string algo_filter;  // empty = all, or specific algo name
+    std::string base_file = "base_small.csr";
+    std::string query_file = "queries.dev.csr";
     int64_t topk = 10;
-    int64_t nq = 0;  // 0 = use all queries
+    int64_t nq = 0;
     float dsp_mu = 1.0f;
     float dsp_eta = 1.0f;
 
-    // Parse arguments
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--data-dir") == 0 && i + 1 < argc) {
             data_dir = argv[++i];
         } else if (strcmp(argv[i], "--data-type") == 0 && i + 1 < argc) {
             data_type = argv[++i];
-        } else if (strcmp(argv[i], "--algo") == 0 && i + 1 < argc) {
-            algo_filter = argv[++i];
+        } else if (strcmp(argv[i], "--base") == 0 && i + 1 < argc) {
+            base_file = argv[++i];
+        } else if (strcmp(argv[i], "--query") == 0 && i + 1 < argc) {
+            query_file = argv[++i];
         } else if (strcmp(argv[i], "--topk") == 0 && i + 1 < argc) {
             topk = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--nq") == 0 && i + 1 < argc) {
@@ -214,57 +161,42 @@ main(int argc, char** argv) {
         return 1;
     }
 
-    if (data_type != "splade" && data_type != "bm25") {
-        printf("Error: --data-type must be 'splade' or 'bm25'\n");
-        print_usage(argv[0]);
-        return 1;
-    }
+    std::string metric = (data_type == "splade") ? "IP" : "BM25";
 
     printf("==========================================================\n");
-    printf("  Sparse Search Algorithm Benchmark (MaxScore vs MaxScore v2)\n");
+    printf("  DSP Sparse Search Benchmark\n");
     printf("==========================================================\n\n");
 
-    // Initialize knowhere
     knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AUTO);
 
-    // Load datasets
+    // Load data
     printf("[Loading Data]\n");
     CSRDataset base, queries;
-
-    if (!base.load(data_dir + "/base_small.csr")) {
+    if (!base.load(data_dir + "/" + base_file))
         return 1;
-    }
-    if (!queries.load(data_dir + "/queries.dev.csr")) {
+    if (!queries.load(data_dir + "/" + query_file))
         return 1;
-    }
 
-    if (nq == 0 || nq > queries.n_rows) {
+    if (nq == 0 || nq > queries.n_rows)
         nq = queries.n_rows;
-    }
-    printf("  Using %ld queries\n", nq);
 
-    // Convert to sparse rows
-    printf("\n[Converting to SparseRow format]\n");
     auto base_rows = base.to_sparse_rows();
     auto query_rows = queries.to_sparse_rows();
-    printf("  Done\n");
 
-    // Compute avgdl (average document length = average row sum) for BM25
+    // Compute avgdl for BM25
     double avgdl = 0.0;
-    if (data_type == "bm25") {
+    if (metric == "BM25") {
         double total_len = 0.0;
         for (int64_t i = 0; i < base.n_rows; ++i) {
-            int64_t start = base.indptr[i];
-            int64_t end = base.indptr[i + 1];
-            for (int64_t j = start; j < end; ++j) {
+            for (int64_t j = base.indptr[i]; j < base.indptr[i + 1]; ++j) {
                 total_len += base.data[j];
             }
         }
         avgdl = total_len / base.n_rows;
-        printf("\n  Computed avgdl: %.2f\n", avgdl);
+        printf("  avgdl: %.2f\n", avgdl);
     }
 
-    // Free CSR data — no longer needed after SparseRow conversion and avgdl computation
+    // Free CSR data
     base.indptr.clear();
     base.indptr.shrink_to_fit();
     base.indices.clear();
@@ -272,200 +204,117 @@ main(int argc, char** argv) {
     base.data.clear();
     base.data.shrink_to_fit();
 
-    // Algorithms to benchmark
-    std::vector<std::string> algos;
-    if (algo_filter.empty()) {
-        algos = {"DAAT_MAXSCORE", "DAAT_MAXSCORE_V2", "DSP"};
-    } else {
-        algos = {algo_filter};
+    // Load ground truth
+    std::string metric_lower = metric;
+    std::transform(metric_lower.begin(), metric_lower.end(), metric_lower.begin(), ::tolower);
+    GroundTruth gt;
+    std::string gt_path = data_dir + "/base_small.dev." + metric_lower + ".gt";
+    if (!gt.load(gt_path, queries.n_rows)) {
+        gt_path = data_dir + "/base_small.dev.gt";
+        gt.load(gt_path, queries.n_rows);
     }
 
-    // Metrics to benchmark based on data type
-    std::vector<std::string> metrics;
-    if (data_type == "splade") {
-        metrics = {"IP"};
-    } else {
-        metrics = {"BM25"};
+    printf("\n[Config] base=%ld, nq=%ld, k=%ld, metric=%s, mu=%.2f, eta=%.2f\n", base.n_rows, nq, topk, metric.c_str(),
+           dsp_mu, dsp_eta);
+
+#ifdef SEEK_INSTRUMENTATION
+    knowhere::sparse::g_seek_stats.reset();
+    knowhere::sparse::g_dsp_stats.reset();
+#endif
+
+    // Build DSP index
+    printf("\n[Building DSP Index]\n");
+    auto t0 = std::chrono::high_resolution_clock::now();
+
+    auto index_result = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(
+        "SPARSE_INVERTED_INDEX", knowhere::Version::GetCurrentVersion().VersionNumber());
+    if (!index_result.has_value()) {
+        printf("Error: Failed to create index\n");
+        return 1;
+    }
+    auto index = index_result.value();
+
+    knowhere::Json build_conf;
+    build_conf["metric_type"] = metric;
+    build_conf["inverted_index_algo"] = "DSP";
+    if (metric == "BM25") {
+        build_conf["bm25_k1"] = 1.2f;
+        build_conf["bm25_b"] = 0.75f;
+        build_conf["bm25_avgdl"] = static_cast<float>(avgdl);
     }
 
-    // Single run, no warmup
-    const int total_runs = 1;
-    const int warmup_runs = 0;
+    auto ds = knowhere::GenDataSet(base.n_rows, base.n_cols, nullptr);
+    ds->SetIsSparse(true);
+    ds->SetTensor(base_rows.get());
 
-    printf("\n[Benchmark Configuration]\n");
-    printf("  Base vectors: %ld\n", base.n_rows);
-    printf("  Queries: %ld\n", nq);
-    printf("  Top-k: %ld\n", topk);
-    printf("  Runs: %d (warmup: %d)\n", total_runs, warmup_runs);
-    if (dsp_mu != 1.0f || dsp_eta != 1.0f) {
-        printf("  DSP mu: %.2f, eta: %.2f\n", dsp_mu, dsp_eta);
+    auto status = index.Build(ds, build_conf);
+    if (status != knowhere::Status::success) {
+        printf("Error: Failed to build index: %s\n", knowhere::Status2String(status).c_str());
+        return 1;
     }
 
-    for (const auto& metric : metrics) {
-        printf("\n==========================================================\n");
-        printf("  Metric: %s\n", metric.c_str());
-        printf("==========================================================\n");
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double build_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    printf("  Build time: %.0f ms\n", build_ms);
 
-        // Load metric-specific ground truth
-        // Try: base_small.dev.bm25.gt or base_small.dev.ip.gt first, then fall back to base_small.dev.gt
-        GroundTruth gt;
-        std::string metric_lower = metric;
-        std::transform(metric_lower.begin(), metric_lower.end(), metric_lower.begin(), ::tolower);
-        std::string gt_path = data_dir + "/base_small.dev." + metric_lower + ".gt";
-        if (!gt.load(gt_path, queries.n_rows)) {
-            gt_path = data_dir + "/base_small.dev.gt";
-            if (!gt.load(gt_path, queries.n_rows)) {
-                printf("Warning: Ground truth not loaded, recall will not be computed\n");
+    // Search
+    knowhere::Json search_conf;
+    search_conf["metric_type"] = metric;
+    search_conf["drop_ratio_search"] = 0.0f;
+    search_conf["topk"] = topk;
+    search_conf["dsp_mu"] = dsp_mu;
+    search_conf["dsp_eta"] = dsp_eta;
+    if (metric == "BM25") {
+        search_conf["bm25_k1"] = 1.2f;
+        search_conf["bm25_b"] = 0.75f;
+        search_conf["bm25_avgdl"] = static_cast<float>(avgdl);
+    }
+
+    auto query_ds = knowhere::GenDataSet(1, queries.n_cols, nullptr);
+    query_ds->SetIsSparse(true);
+
+    printf("\n[Searching]\n");
+    std::vector<int64_t> all_results(nq * topk, -1);
+    int64_t failed = 0;
+
+    auto t2 = std::chrono::high_resolution_clock::now();
+    for (int64_t q = 0; q < nq; ++q) {
+        query_ds->SetTensor(&query_rows[q]);
+        auto result = index.Search(query_ds, search_conf, knowhere::BitsetView());
+        if (!result.has_value()) {
+            failed++;
+            continue;
+        }
+        memcpy(&all_results[q * topk], result.value()->GetIds(), topk * sizeof(int64_t));
+    }
+    auto t3 = std::chrono::high_resolution_clock::now();
+    double search_ms = std::chrono::duration<double, std::milli>(t3 - t2).count();
+
+    // Recall
+    float avg_recall = 0;
+    int64_t valid = 0;
+    if (gt.nq > 0) {
+        for (int64_t q = 0; q < std::min(nq, gt.nq); ++q) {
+            if (all_results[q * topk] != -1) {
+                avg_recall += gt.compute_recall(&all_results[q * topk], q, topk);
+                valid++;
             }
         }
-
-        for (const auto& algo : algos) {
-#ifdef SEEK_INSTRUMENTATION
-            knowhere::sparse::g_seek_stats.reset();
-            knowhere::sparse::g_dsp_stats.reset();
-#endif
-            printf("\n----------------------------------------------------------\n");
-            printf("  Algorithm: %s (%s)\n", algo.c_str(), metric.c_str());
-            printf("----------------------------------------------------------\n");
-
-            // Build index
-            printf("\n[Building Index]\n");
-            Timer build_timer;
-
-            auto index_result = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(
-                "SPARSE_INVERTED_INDEX", knowhere::Version::GetCurrentVersion().VersionNumber());
-            if (!index_result.has_value()) {
-                printf("Error: Failed to create index\n");
-                continue;
-            }
-            auto index = index_result.value();
-
-            knowhere::Json build_conf;
-            build_conf["metric_type"] = metric;
-            build_conf["inverted_index_algo"] = algo;
-            if (metric == "BM25") {
-                build_conf["bm25_k1"] = 1.2f;
-                build_conf["bm25_b"] = 0.75f;
-                build_conf["bm25_avgdl"] = static_cast<float>(avgdl);
-            }
-
-            // Create dataset
-            auto ds = knowhere::GenDataSet(base.n_rows, base.n_cols, nullptr);
-            ds->SetIsSparse(true);
-            ds->SetTensor(base_rows.get());
-
-            auto status = index.Build(ds, build_conf);
-            if (status != knowhere::Status::success) {
-                printf("Error: Failed to build index: %s\n", knowhere::Status2String(status).c_str());
-                continue;
-            }
-
-            double build_time = build_timer.elapsed_ms();
-            printf("  Build time: %.2f ms\n", build_time);
-
-            // Search configuration
-            knowhere::Json search_conf;
-            search_conf["metric_type"] = metric;
-            search_conf["drop_ratio_search"] = 0.0f;
-            search_conf["topk"] = topk;
-            search_conf["dsp_mu"] = dsp_mu;
-            search_conf["dsp_eta"] = dsp_eta;
-            if (metric == "BM25") {
-                search_conf["bm25_k1"] = 1.2f;
-                search_conf["bm25_b"] = 0.75f;
-                search_conf["bm25_avgdl"] = static_cast<float>(avgdl);
-            }
-
-            // Pre-allocate reusable query dataset to avoid per-query allocation overhead
-            auto query_ds = knowhere::GenDataSet(1, queries.n_cols, nullptr);
-            query_ds->SetIsSparse(true);
-
-            // Run benchmark
-            printf("\n[Running Search Benchmark]\n");
-            std::vector<double> run_times;
-            std::vector<int64_t> all_results(nq * topk, -1);  // Initialize to -1 for invalid detection
-            std::vector<bool> query_success(nq, false);
-            int64_t failed_queries = 0;
-
-            for (int run = 0; run < total_runs; ++run) {
-                Timer search_timer;
-                failed_queries = 0;
-
-                for (int64_t q = 0; q < nq; ++q) {
-                    query_ds->SetTensor(&query_rows[q]);
-
-                    auto result = index.Search(query_ds, search_conf, knowhere::BitsetView());
-                    if (!result.has_value()) {
-                        failed_queries++;
-                        query_success[q] = false;
-                        // Clear stale results from previous runs
-                        std::fill(&all_results[q * topk], &all_results[(q + 1) * topk], -1);
-                        continue;
-                    }
-
-                    query_success[q] = true;
-                    auto ids = result.value()->GetIds();
-                    memcpy(&all_results[q * topk], ids, topk * sizeof(int64_t));
-                }
-
-                double elapsed = search_timer.elapsed_ms();
-                run_times.push_back(elapsed);
-                printf("  Run %d: %.2f ms (%.1f batch QPS)\n", run + 1, elapsed, nq * 1000.0 / elapsed);
-            }
-
-            if (failed_queries > 0) {
-                printf("  Warning: %ld queries failed in last run\n", failed_queries);
-            }
-
-            // Calculate average of last (total_runs - warmup_runs) runs
-            double avg_time = 0;
-            for (int i = warmup_runs; i < total_runs; ++i) {
-                avg_time += run_times[i];
-            }
-            avg_time /= (total_runs - warmup_runs);
-
-            // Compute recall on last run's results (only for queries with ground truth)
-            float avg_recall = 0;
-            int64_t valid_queries = 0;
-            if (gt.nq > 0) {
-                int64_t max_gt_queries = std::min(nq, gt.nq);
-                for (int64_t q = 0; q < max_gt_queries; ++q) {
-                    if (query_success[q]) {
-                        avg_recall += gt.compute_recall(&all_results[q * topk], q, topk);
-                        valid_queries++;
-                    }
-                }
-                if (valid_queries > 0) {
-                    avg_recall /= valid_queries;
-                }
-            }
-
-            printf("\n[Results for %s (%s)]\n", algo.c_str(), metric.c_str());
-            printf("  Avg search time: %.2f ms (over %d timed runs)\n", avg_time, total_runs - warmup_runs);
-            printf("  Batch QPS: %.1f (nq=%ld)\n", nq * 1000.0 / avg_time, nq);
-            printf("  Recall@%ld: %.4f (%.2f%%) [from last run, %ld/%ld queries]\n", topk, avg_recall, avg_recall * 100,
-                   valid_queries, nq);
-            // Debug: print first 3 successful queries' top-3 results to verify correctness
-            printf("  Debug - First 3 successful queries top-3 IDs: ");
-            int printed = 0;
-            for (int64_t q = 0; q < nq && printed < 3; ++q) {
-                if (query_success[q]) {
-                    printf("[q%ld: %ld,%ld,%ld] ", q, all_results[q * topk], all_results[q * topk + 1],
-                           all_results[q * topk + 2]);
-                    printed++;
-                }
-            }
-            printf("\n");
-#ifdef SEEK_INSTRUMENTATION
-            knowhere::sparse::g_seek_stats.print(algo.c_str());
-            knowhere::sparse::g_dsp_stats.print(algo.c_str());
-#endif
-        }
+        if (valid > 0)
+            avg_recall /= valid;
     }
 
-    printf("\n==========================================================\n");
-    printf("  Benchmark Complete\n");
-    printf("==========================================================\n");
+    printf("\n[Results]\n");
+    printf("  Search: %.0f ms (%.1f QPS)\n", search_ms, nq * 1000.0 / search_ms);
+    printf("  Recall@%ld: %.2f%% (%ld/%ld queries)\n", topk, avg_recall * 100, valid, nq);
+    if (failed > 0)
+        printf("  Failed queries: %ld\n", failed);
 
+#ifdef SEEK_INSTRUMENTATION
+    knowhere::sparse::g_seek_stats.print("DSP");
+    knowhere::sparse::g_dsp_stats.print("DSP");
+#endif
+
+    printf("\n=== Done ===\n");
     return 0;
 }
