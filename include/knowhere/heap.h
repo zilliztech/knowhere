@@ -11,52 +11,168 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cstddef>
+#include <functional>
 #include <optional>
-#include <queue>
 #include <utility>
+#include <vector>
 
 namespace knowhere {
 
-// Maintain intermediate top-k results via maxheap
-// TODO: this naive implementation might be optimzed later
-//     1. Based on top-k and pushed element count to swtich strategy
-//     2. Combine `pop` and `push` operation to `replace`
-template <typename DisT, typename IdT>
-class ResultMaxHeap {
+/// Top-k result heap with efficient sift-down and threshold support.
+///
+/// Compare is the comparator passed to std::push_heap:
+///   - std::less<DisT> (default): max-heap (largest on top) → keeps k smallest (dense: min distance)
+///   - std::greater<DisT>: min-heap (smallest on top) → keeps k largest (sparse: max score)
+template <typename DisT, typename IdT, typename Compare = std::less<DisT>>
+class ResultHeap {
  public:
-    ResultMaxHeap(size_t k) : k_(k){};
+    using entry_type = std::pair<DisT, IdT>;
 
-    inline std::optional<std::pair<DisT, IdT>>
+    explicit ResultHeap(std::size_t k) : k_(k) {
+        q_.reserve(k_ + 1);
+    }
+
+    /// Attempts to insert an entry. Returns true if inserted, false if below threshold.
+    bool
+    Push(DisT val, IdT id) {
+        if (!WouldEnter(val)) {
+            return false;
+        }
+        q_.emplace_back(val, id);
+        if (q_.size() <= k_) [[unlikely]] {
+            std::push_heap(q_.begin(), q_.end(), heap_order);
+            if (q_.size() == k_) [[unlikely]] {
+                threshold_ = q_.front().first;
+                threshold_valid_ = true;
+            }
+        } else {
+            std::iter_swap(q_.begin(), std::prev(q_.end()));
+            q_.pop_back();
+            sift_down(q_.begin(), q_.end());
+            threshold_ = q_.front().first;
+        }
+        return true;
+    }
+
+    /// Checks if an entry with the given value would be inserted.
+    /// Returns true if val is better than the current worst in the heap.
+    [[nodiscard]] bool
+    WouldEnter(DisT val) const {
+        return !threshold_valid_ || comp_(val, threshold_);
+    }
+
+    /// Returns the current threshold (the worst value among k results).
+    /// Only meaningful when the heap is full.
+    [[nodiscard]] DisT
+    Threshold() const noexcept {
+        return threshold_;
+    }
+
+    /// Returns true if the heap contains k elements.
+    [[nodiscard]] bool
+    Full() const noexcept {
+        return q_.size() >= k_;
+    }
+
+    /// Pops the worst element (heap top). Compatible with old ResultMaxHeap API.
+    std::optional<entry_type>
     Pop() {
-        if (pq.empty()) {
+        if (q_.empty()) {
             return std::nullopt;
         }
-        std::optional<std::pair<DisT, IdT>> res = pq.top();
-        pq.pop();
-        return res;
+        std::pop_heap(q_.begin(), q_.end(), heap_order);
+        auto result = q_.back();
+        q_.pop_back();
+        threshold_valid_ = false;
+        return result;
     }
 
-    inline void
-    Push(DisT dis, IdT id) {
-        if (pq.size() < k_) {
-            pq.emplace(dis, id);
-            return;
-        }
-
-        if (dis < pq.top().first) {
-            pq.pop();
-            pq.emplace(dis, id);
-        }
+    /// Sorts results: best first (ascending distance for dense, descending score for sparse).
+    void
+    Finalize() {
+        std::sort_heap(q_.begin(), q_.end(), heap_order);
     }
 
-    inline size_t
-    Size() {
-        return pq.size();
+    /// Returns a reference to the internal result buffer.
+    /// Call Finalize() first to get sorted results.
+    [[nodiscard]] const std::vector<entry_type>&
+    Results() const noexcept {
+        return q_;
+    }
+
+    [[nodiscard]] std::size_t
+    Size() const noexcept {
+        return q_.size();
+    }
+
+    [[nodiscard]] std::size_t
+    Capacity() const noexcept {
+        return k_;
+    }
+
+    void
+    Clear() noexcept {
+        q_.clear();
+        threshold_valid_ = false;
     }
 
  private:
-    size_t k_;
-    std::priority_queue<std::pair<DisT, IdT>> pq;
+    [[nodiscard]] static bool
+    heap_order(const entry_type& lhs, const entry_type& rhs) noexcept {
+        return Compare()(lhs.first, rhs.first);
+    }
+
+    using iter_type = typename std::vector<entry_type>::iterator;
+
+    /// Custom sift-down for better performance than STL.
+    /// See: https://github.com/pisa-engine/pisa/issues/504
+    static void
+    sift_down(iter_type first, iter_type last) {
+        auto cmp = [first](std::size_t lhs, std::size_t rhs) {
+            return Compare()((first + lhs)->first, (first + rhs)->first);
+        };
+        auto swap = [first](std::size_t lhs, std::size_t rhs) { std::iter_swap(first + lhs, first + rhs); };
+
+        std::size_t len = std::distance(first, last);
+        std::size_t idx = 0;
+        std::size_t left = 0;
+        std::size_t right = 0;
+
+        while ((right = 2 * (idx + 1)) < len) {
+            left = right - 1;
+            auto next = idx;
+            if (cmp(next, left)) {
+                next = left;
+            }
+            if (cmp(next, right)) {
+                next = right;
+            }
+            if (next == idx) {
+                return;
+            }
+            swap(idx, next);
+            idx = next;
+        }
+        if (left = 2 * idx + 1; left < len && cmp(idx, left)) {
+            swap(idx, left);
+        }
+    }
+
+    std::size_t k_;
+    std::vector<entry_type> q_;
+    DisT threshold_{};
+    bool threshold_valid_ = false;
+    Compare comp_;
 };
+
+/// Dense search: keeps k smallest distances (max-heap, largest on top).
+template <typename DisT, typename IdT>
+using ResultMaxHeap = ResultHeap<DisT, IdT, std::less<DisT>>;
+
+/// Sparse search: keeps k largest scores (min-heap, smallest on top).
+template <typename DisT, typename IdT>
+using ResultMinHeap = ResultHeap<DisT, IdT, std::greater<DisT>>;
 
 }  // namespace knowhere
