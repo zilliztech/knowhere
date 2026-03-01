@@ -72,6 +72,12 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         return json;
     };
 
+    auto sparse_dsp_gen = [base_gen, drop_ratio_search = drop_ratio_search]() {
+        knowhere::Json json = base_gen();
+        json[knowhere::indexparam::DROP_RATIO_SEARCH] = drop_ratio_search;
+        return json;
+    };
+
     auto sparse_dataset_gen = [&](int nr, int dim, float sparsity) -> knowhere::DataSetPtr {
         if (metric == knowhere::metric::BM25) {
             return GenSparseDataSetWithMaxVal(nr, dim, sparsity, 256, true);
@@ -122,6 +128,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP, sparse_dsp_gen),
         }));
         auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, conf, nullptr);
         check_distance_decreasing(*gt.value());
@@ -210,6 +217,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP, sparse_dsp_gen),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
         auto cfg_json = gen().dump();
@@ -254,6 +262,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP, sparse_dsp_gen),
         }));
 
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
