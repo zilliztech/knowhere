@@ -25,10 +25,10 @@
 #include <unordered_map>
 #include <vector>
 
-#include "index/sparse/sparse_inverted_index_config.h"
 #include "io/memory_io.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/comp/index_param.h"
+#include "knowhere/config.h"
 #include "knowhere/expected.h"
 #include "knowhere/log.h"
 #include "knowhere/prometheus_client.h"
@@ -56,7 +56,8 @@ enum class InvertedIndexSectionType : uint32_t {
     DIM_MAP = 2,
     ROW_SUMS = 3,
     MAX_SCORES_PER_DIM = 4,
-    PROMETHEUS_BUILD_STATS = 5
+    PROMETHEUS_BUILD_STATS = 5,
+    DSP_METADATA = 6
 };
 
 struct InvertedIndexSectionHeader {
@@ -69,6 +70,8 @@ struct InvertedIndexApproxSearchParams {
     int refine_factor;
     float drop_ratio_search;
     float dim_max_score_ratio;
+    float dsp_mu = 1.0f;   // superblock max-based threshold relaxation (lower = more aggressive pruning)
+    float dsp_eta = 1.0f;  // ASC probabilistic threshold (lower = more aggressive pruning)
 };
 
 template <typename T>
@@ -108,7 +111,7 @@ class BaseInvertedIndex {
     GetRawDistance(const label_t vec_id, const SparseRow<T>& query, const DocValueComputer<T>& computer) const = 0;
 
     virtual expected<DocValueComputer<T>>
-    GetDocValueComputer(const SparseInvertedIndexConfig& cfg) const = 0;
+    GetDocValueComputer(const BaseConfig& cfg) const = 0;
 
     [[nodiscard]] virtual size_t
     size() const = 0;
@@ -176,7 +179,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     }
 
     expected<DocValueComputer<float>>
-    GetDocValueComputer(const SparseInvertedIndexConfig& cfg) const override {
+    GetDocValueComputer(const BaseConfig& cfg) const override {
         // if metric_type is set in config, it must match with how the index was built.
         auto metric_type = cfg.metric_type;
         if (metric_type_ != SparseMetricType::METRIC_BM25) {
@@ -405,70 +408,46 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
             std::array<uint8_t, InvertedIndex::index_file_v1_header_reserved_size>();  // reserved for future use
         writer.write(reserved.data(), reserved.size());
 
-        // Section Headers Table
-        uint32_t nr_sections = 2;  // base sections: inverted index and dim map
-        // Count additional sections based on flags in a single operation
-        if (metric_type_ == SparseMetricType::METRIC_BM25) {
-            nr_sections += 1;  // row sums
-        }
-        if (max_score_in_dim_spans_.size() > 0) {
-            nr_sections += 1;  // max scores per dim
-        }
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
-        // use a section to store some build stats for prometheus
-        nr_sections += 1;
-#endif
-        writer.write(&nr_sections, sizeof(uint32_t));
+        // Phase 1: Collect section metadata (type, size) — offsets computed after final count is known
+        std::vector<std::pair<InvertedIndexSectionType, uint64_t>> section_meta;
 
-        // since writer doesn't support seekp() for now, calculate all sizes of each sections first
-        std::vector<InvertedIndexSectionHeader> section_headers(nr_sections);
-        uint64_t used_offset = InvertedIndex::index_file_v1_header_size + sizeof(uint32_t) +
-                               sizeof(InvertedIndexSectionHeader) * nr_sections;
-        section_headers[0].type = InvertedIndexSectionType::POSTING_LISTS;
-        section_headers[0].offset = used_offset;
-        uint64_t posting_lists_size = sizeof(uint32_t);                       // used to store encoding type
-        posting_lists_size += sizeof(uint64_t) * (this->nr_inner_dims_ + 1);  // used to store dim offsets
+        uint64_t posting_lists_size = sizeof(uint32_t);                       // encoding type
+        posting_lists_size += sizeof(uint64_t) * (this->nr_inner_dims_ + 1);  // dim offsets
         for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
             posting_lists_size += this->inverted_index_ids_spans_[i].size() * sizeof(uint32_t) +
                                   this->inverted_index_vals_spans_[i].size() * sizeof(QType);
         }
-        section_headers[0].size = posting_lists_size;
-        used_offset += section_headers[0].size;
+        section_meta.emplace_back(InvertedIndexSectionType::POSTING_LISTS, posting_lists_size);
+        section_meta.emplace_back(InvertedIndexSectionType::DIM_MAP, sizeof(uint32_t) * this->nr_inner_dims_);
 
-        section_headers[1].type = InvertedIndexSectionType::DIM_MAP;
-        section_headers[1].offset = used_offset;
-        section_headers[1].size = sizeof(uint32_t) * this->nr_inner_dims_;
-        used_offset += section_headers[1].size;
-
-        uint32_t curr_section_idx = 2;
         if (metric_type_ == SparseMetricType::METRIC_BM25) {
-            section_headers[curr_section_idx].type = InvertedIndexSectionType::ROW_SUMS;
-            section_headers[curr_section_idx].offset = used_offset;
-            section_headers[curr_section_idx].size = sizeof(float) * n_rows_internal_;
-            used_offset += section_headers[curr_section_idx].size;
-            curr_section_idx++;
+            section_meta.emplace_back(InvertedIndexSectionType::ROW_SUMS, sizeof(float) * n_rows_internal_);
         }
-
         if (max_score_in_dim_spans_.size() > 0) {
-            section_headers[curr_section_idx].type = InvertedIndexSectionType::MAX_SCORES_PER_DIM;
-            section_headers[curr_section_idx].offset = used_offset;
-            section_headers[curr_section_idx].size = sizeof(float) * this->nr_inner_dims_;
-            used_offset += section_headers[curr_section_idx].size;
-            curr_section_idx++;
+            section_meta.emplace_back(InvertedIndexSectionType::MAX_SCORES_PER_DIM,
+                                      sizeof(float) * this->nr_inner_dims_);
         }
-
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
-        section_headers[curr_section_idx].type = InvertedIndexSectionType::PROMETHEUS_BUILD_STATS;
-        section_headers[curr_section_idx].offset = used_offset;
-        section_headers[curr_section_idx].size =
-            sizeof(uint32_t) * this->n_rows_internal_ + sizeof(uint32_t) * this->nr_inner_dims_;
-        used_offset += section_headers[curr_section_idx].size;
-        curr_section_idx++;
+        section_meta.emplace_back(InvertedIndexSectionType::PROMETHEUS_BUILD_STATS,
+                                  sizeof(uint32_t) * this->n_rows_internal_ + sizeof(uint32_t) * this->nr_inner_dims_);
 #endif
 
-        assert(curr_section_idx == nr_sections);
+        // Let subclass append custom sections (e.g., DSP metadata)
+        AppendCustomSections(section_meta);
 
-        // write section headers table
+        // Phase 2: Build headers with offsets and write section table
+        uint32_t nr_sections = static_cast<uint32_t>(section_meta.size());
+        writer.write(&nr_sections, sizeof(uint32_t));
+
+        std::vector<InvertedIndexSectionHeader> section_headers(nr_sections);
+        uint64_t used_offset = InvertedIndex::index_file_v1_header_size + sizeof(uint32_t) +
+                               sizeof(InvertedIndexSectionHeader) * nr_sections;
+        for (uint32_t i = 0; i < nr_sections; ++i) {
+            section_headers[i].type = section_meta[i].first;
+            section_headers[i].offset = used_offset;
+            section_headers[i].size = section_meta[i].second;
+            used_offset += section_meta[i].second;
+        }
         writer.write(section_headers.data(), sizeof(InvertedIndexSectionHeader), nr_sections);
 
         // write index encoding type and index
@@ -510,6 +489,9 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         writer.write(this->build_stats_.dataset_nnz_stats_.data(), sizeof(uint32_t), this->n_rows_internal_);
         writer.write(this->build_stats_.posting_list_length_stats_.data(), sizeof(uint32_t), this->nr_inner_dims_);
 #endif
+
+        // Write custom section data (e.g., DSP metadata)
+        WriteCustomSections(writer);
 
         return Status::success;
     }
@@ -612,7 +594,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
                         break;
                     }
                     default:
-                        // skip unknown sections
+                        RETURN_IF_ERROR(ReadCustomSection(reader, section_header));
                         break;
                 }
             }
@@ -941,7 +923,7 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         return max_dim_;
     }
 
- private:
+ protected:
     // Given a vector of values, returns the threshold value.
     // All values strictly smaller than the threshold will be ignored.
     // values will be modified in this function.
@@ -1372,6 +1354,21 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         } else {
             return val;
         }
+    }
+
+    // Virtual hooks for subclass serialization (e.g., DSP metadata).
+    // AppendCustomSections: subclass appends (type, size) pairs for custom sections.
+    virtual void
+    AppendCustomSections(std::vector<std::pair<InvertedIndexSectionType, uint64_t>>& section_meta) const {
+    }
+    // WriteCustomSections: subclass writes custom section data (called after all base sections).
+    virtual void
+    WriteCustomSections(MemoryIOWriter& writer) const {
+    }
+    // ReadCustomSection: subclass handles unknown section types during deserialization.
+    virtual Status
+    ReadCustomSection(MemoryIOReader& reader, const InvertedIndexSectionHeader& header) {
+        return Status::success;
     }
 
     // key is raw sparse vector dim/idx, value is the mapped dim/idx id in the index.
