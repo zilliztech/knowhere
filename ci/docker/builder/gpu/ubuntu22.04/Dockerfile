@@ -1,8 +1,8 @@
 FROM nvidia/cuda:12.2.2-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV CMAKE_VERSION="v3.28.5"
-ENV CMAKE_TAR="cmake-3.28.5-linux-x86_64.tar.gz"
+ENV CMAKE_VERSION="v3.30.5"
+ENV CMAKE_TAR="cmake-3.30.5-linux-x86_64.tar.gz"
 ENV CCACHE_VERSION="v4.9.1"
 ENV CCACHE_DIR="ccache-4.9.1-linux-x86_64"
 ENV CCACHE_TAR="ccache-4.9.1-linux-x86_64.tar.xz"
@@ -42,13 +42,13 @@ RUN cd /tmp \
 # install knowhere dependancies
 RUN apt update \
     && apt install -y libopenblas-openmp-dev libcurl4-openssl-dev libaio-dev libevent-dev lcov \
-    && pip3 install conan==1.61.0 \
+    && pip3 install conan==1.65.0 \
     && conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local
 
 # clone knowhere repo and build to update .conan
 RUN git clone https://github.com/zilliztech/knowhere.git \
     && cd knowhere \
     && mkdir build && cd build \
-    && conan install .. --build=missing -o with_ut=True -o with_diskann=True -o with_cuvs=True -s compiler.libcxx=libstdc++11 -s build_type=Release \
+    && conan install .. --build=missing -o with_ut=True -o with_diskann=True -o with_cuvs=True -s compiler.libcxx=libstdc++11 -s compiler.cppstd=17 -s build_type=Release \
     && conan build .. \
     && cd ../.. && rm -rf knowhere
