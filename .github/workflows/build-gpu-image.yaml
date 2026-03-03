@@ -1,0 +1,61 @@
+name: Build GPU Builder Image
+
+on:
+  schedule:
+    # Every Sunday at 00:00 UTC
+    - cron: '0 16 * * 6'
+  push:
+    branches:
+      - main
+    paths:
+      - 'ci/docker/builder/gpu/ubuntu22.04/**'
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    name: Build and push GPU image
+    runs-on: self-hosted
+    timeout-minutes: 240
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate image tag
+        id: tag
+        run: |
+          DATE=$(date +%Y%m%d)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          TAG="amd64-ubuntu22.04-${DATE}-${SHORT_SHA}"
+          IMAGE="harbor.milvus.io/milvusdb/knowhere-gpu-build:${TAG}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "Building image: ${IMAGE}"
+
+      - name: Build image
+        run: |
+          docker build \
+            -t ${{ steps.tag.outputs.image }} \
+            -f ci/docker/builder/gpu/ubuntu22.04/Dockerfile \
+            .
+
+      - name: Login to Harbor
+        uses: docker/login-action@v3
+        with:
+          registry: harbor.milvus.io
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Push image
+        run: |
+          docker push ${{ steps.tag.outputs.image }}
+
+      - name: Summary
+        run: |
+          echo "### GPU Builder Image Published" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Image:** \`${{ steps.tag.outputs.image }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Update pod YAMLs to use this tag:" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.tag.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
