@@ -1,8 +1,23 @@
+# Builds the GPU builder Docker image and pushes it to Harbor.
+# This replaces the manual Jenkins job ci/BuildGPUBuilderImage.groovy,
+# which required someone to manually trigger a build.
+#
+# This workflow runs:
+# 1. automatically on a weekly schedule (CST midnight) OR
+# 2) whenever the GPU Dockerfile (ci/docker/builder/gpu/ubuntu22.04/Dockerfile) changes,
+# so the image stays current with dependency updates.
+#
+# TODO: Once this workflow is confirmed working, consider removing
+# ci/BuildGPUBuilderImage.groovy (and the CPU/ARM variants) to avoid
+# confusion about which image build process is authoritative.
+#
+# Required secrets: HARBOR_USERNAME, HARBOR_PASSWORD
+
 name: Build GPU Builder Image
 
 on:
   schedule:
-    # Every Sunday at 00:00 UTC
+    # Saturday 16:00 UTC = Sunday 00:00 CST (China Standard Time)
     - cron: '0 16 * * 6'
   push:
     branches:
