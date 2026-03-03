@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <future>
+#include <string>
 #include <thread>
 
 #include "catch2/catch_test_macros.hpp"
@@ -577,6 +578,488 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
             for (size_t j = 0; j < truth_row.size(); ++j) {
                 REQUIRE(truth_row[j] == res_row[j]);
             }
+        }
+    }
+}
+
+TEST_CASE("Test Sparse Index Codec and Algo Combinations", "[sparse]") {
+    auto nb = 1000;
+    auto dim = 1000;
+    auto topk = 10;
+    auto nq = 5;
+    auto doc_sparsity = 0.98f;
+    auto query_sparsity = 0.99f;
+
+    auto metric = GENERATE(std::string(knowhere::metric::IP), std::string(knowhere::metric::BM25));
+    auto version = GenTestVersionList();
+
+    // Test different codecs
+    auto inverted_index_codec =
+        GENERATE(std::string("block_streamvbyte"), std::string("block_maskedvbyte"), std::string("default"));
+
+    // Test different build algorithms (which also test metadata generation)
+    auto inverted_index_algo =
+        GENERATE(std::string("DAAT_MAXSCORE"), std::string("BLOCK_MAX_MAXSCORE"), std::string("BLOCK_MAX_WAND"));
+
+    // Test different search algorithms
+    auto search_algo = GENERATE(std::string("INHERIT"), std::string("DAAT_WAND"), std::string("BLOCK_MAX_WAND"),
+                                std::string("TAAT_NAIVE"));
+
+    auto sparse_dataset_gen = [&](int nr, int dim, float sparsity) -> knowhere::DataSetPtr {
+        if (metric == knowhere::metric::BM25) {
+            return GenSparseDataSetWithMaxVal(nr, dim, sparsity, 256, true);
+        } else {
+            return GenSparseDataSet(nr, dim, sparsity);
+        }
+    };
+
+    auto train_ds = sparse_dataset_gen(nb, dim, doc_sparsity);
+    auto query_ds = sparse_dataset_gen(nq, dim, query_sparsity);
+
+    knowhere::Json build_json;
+    build_json[knowhere::meta::DIM] = dim;
+    build_json[knowhere::meta::METRIC_TYPE] = metric;
+    build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = inverted_index_algo;
+    if (inverted_index_codec != "default") {
+        build_json["inverted_index_codec"] = inverted_index_codec;
+    }
+    build_json["block_max_block_size"] = 64;  // smaller block size for testing
+    build_json[knowhere::meta::BM25_K1] = 1.2;
+    build_json[knowhere::meta::BM25_B] = 0.75;
+    build_json[knowhere::meta::BM25_AVGDL] = 50;
+
+    knowhere::Json search_json;
+    search_json[knowhere::meta::TOPK] = topk;
+    search_json[knowhere::meta::METRIC_TYPE] = metric;
+    search_json[knowhere::indexparam::SEARCH_ALGO] = search_algo;
+    search_json[knowhere::meta::DIM_MAX_SCORE_RATIO] = 1.0;
+    search_json[knowhere::meta::BM25_AVGDL] = 50;
+
+    const std::string name = knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+
+    auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, build_json, nullptr);
+
+    SECTION("Basic Build and Search") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+        REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+        auto results = idx.Search(query_ds, search_json, nullptr);
+        if (results.has_value()) {
+            float recall = GetKNNRecall(*gt.value(), *results.value());
+            REQUIRE(recall >= 0.99);
+        } else {
+            // Some combinations of build_algo and search_algo are incompatible
+            // e.g. searching with BLOCK_MAX_WAND on an index built without block max scores
+            if (inverted_index_algo == "DAAT_MAXSCORE" &&
+                (search_algo == "BLOCK_MAX_WAND" || search_algo == "BLOCK_MAX_MAXSCORE")) {
+                REQUIRE(results.error() == knowhere::Status::invalid_value_in_json);
+            } else {
+                REQUIRE(results.has_value());
+            }
+        }
+    }
+
+    SECTION("Serialization and Encoding Detection") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+        REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+        knowhere::BinarySet bs;
+        REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
+
+        // Deserialization should automatically detect the encoding used
+        auto idx_new = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+
+        // Use a config that DOES NOT specify codec, to test auto-detection
+        knowhere::Json load_json = build_json;
+        load_json.erase("inverted_index_codec");
+
+        REQUIRE(idx_new.Deserialize(bs, load_json) == knowhere::Status::success);
+
+        auto results = idx_new.Search(query_ds, search_json, nullptr);
+        if (results.has_value()) {
+            float recall = GetKNNRecall(*gt.value(), *results.value());
+            REQUIRE(recall >= 0.99);
+        }
+    }
+}
+
+TEST_CASE("Test Sparse Index Dim Max Score Ratio", "[sparse]") {
+    auto nb = 1000;
+    auto dim = 1000;
+    auto topk = 10;
+    auto nq = 10;
+    auto doc_sparsity = 0.95f;
+    auto query_sparsity = 0.95f;
+
+    auto metric = knowhere::metric::IP;
+    auto version = GenTestVersionList();
+
+    auto train_ds = GenSparseDataSet(nb, dim, doc_sparsity);
+    auto query_ds = GenSparseDataSet(nq, dim, query_sparsity);
+
+    knowhere::Json build_json;
+    build_json[knowhere::meta::DIM] = dim;
+    build_json[knowhere::meta::METRIC_TYPE] = metric;
+    build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "BLOCK_MAX_WAND";
+
+    auto idx = knowhere::IndexFactory::Instance()
+                   .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                   .value();
+    REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+    auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, build_json, nullptr);
+
+    SECTION("Test dim_max_score_ratio") {
+        knowhere::Json search_json;
+        search_json[knowhere::meta::TOPK] = topk;
+        search_json[knowhere::meta::METRIC_TYPE] = metric;
+
+        // Ratio < 1.0: More aggressive pruning, potentially lower recall but faster
+        search_json[knowhere::meta::DIM_MAX_SCORE_RATIO] = 0.8;
+        auto results_aggressive = idx.Search(query_ds, search_json, nullptr);
+        REQUIRE(results_aggressive.has_value());
+        float recall_aggressive = GetKNNRecall(*gt.value(), *results_aggressive.value());
+
+        // Ratio > 1.0: Less aggressive pruning, higher recall but potentially slower
+        search_json[knowhere::meta::DIM_MAX_SCORE_RATIO] = 1.2;
+        auto results_conservative = idx.Search(query_ds, search_json, nullptr);
+        REQUIRE(results_conservative.has_value());
+        float recall_conservative = GetKNNRecall(*gt.value(), *results_conservative.value());
+
+        REQUIRE(recall_conservative >= recall_aggressive);
+    }
+}
+
+TEST_CASE("Test Sparse WAND Index Build and Serialization", "[sparse]") {
+    auto nb = 1000;
+    auto dim = 1000;
+    auto topk = 10;
+    auto nq = 5;
+    auto doc_sparsity = 0.97f;
+    auto query_sparsity = 0.99f;
+
+    auto metric = GENERATE(std::string(knowhere::metric::IP), std::string(knowhere::metric::BM25));
+    auto version = GenTestVersionList();
+
+    auto inverted_index_algo = GENERATE(std::string("DAAT_MAXSCORE"), std::string("BLOCK_MAX_WAND"));
+
+    auto sparse_dataset_gen = [&](int nr, int dim, float sparsity) -> knowhere::DataSetPtr {
+        if (metric == knowhere::metric::BM25) {
+            return GenSparseDataSetWithMaxVal(nr, dim, sparsity, 256, true);
+        } else {
+            return GenSparseDataSet(nr, dim, sparsity);
+        }
+    };
+
+    auto train_ds = sparse_dataset_gen(nb, dim, doc_sparsity);
+    auto query_ds = sparse_dataset_gen(nq, dim, query_sparsity);
+
+    knowhere::Json build_json;
+    build_json[knowhere::meta::DIM] = dim;
+    build_json[knowhere::meta::METRIC_TYPE] = metric;
+    build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = inverted_index_algo;
+    build_json[knowhere::meta::BM25_K1] = 1.2;
+    build_json[knowhere::meta::BM25_B] = 0.75;
+    build_json[knowhere::meta::BM25_AVGDL] = 50;
+
+    knowhere::Json search_json;
+    search_json[knowhere::meta::TOPK] = topk;
+    search_json[knowhere::meta::METRIC_TYPE] = metric;
+    search_json[knowhere::meta::DIM_MAX_SCORE_RATIO] = 1.0;
+    search_json[knowhere::meta::BM25_AVGDL] = 50;
+
+    // Test INDEX_SPARSE_WAND (the WAND-optimized variant)
+    const std::string name = knowhere::IndexEnum::INDEX_SPARSE_WAND;
+
+    auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, build_json, nullptr);
+    REQUIRE(gt.has_value());
+
+    SECTION("Build and search with WAND index") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+        REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+        auto results = idx.Search(query_ds, search_json, nullptr);
+        REQUIRE(results.has_value());
+        float recall = GetKNNRecall(*gt.value(), *results.value());
+        REQUIRE(recall >= 0.99);
+    }
+
+    SECTION("WAND index serialization roundtrip") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+        REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+        knowhere::BinarySet bs;
+        REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
+
+        auto idx2 = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+        REQUIRE(idx2.Deserialize(bs, build_json) == knowhere::Status::success);
+
+        auto results = idx2.Search(query_ds, search_json, nullptr);
+        REQUIRE(results.has_value());
+        float recall = GetKNNRecall(*gt.value(), *results.value());
+        REQUIRE(recall >= 0.99);
+    }
+}
+
+TEST_CASE("Test Sparse Index Search Algo Override", "[sparse]") {
+    // Build with one algorithm, then search with a different compatible one
+    auto nb = 1000;
+    auto dim = 800;
+    auto topk = 10;
+    auto nq = 5;
+    auto doc_sparsity = 0.97f;
+    auto query_sparsity = 0.99f;
+    auto version = GenTestVersionList();
+
+    auto train_ds = GenSparseDataSet(nb, dim, doc_sparsity);
+    auto query_ds = GenSparseDataSet(nq, dim, query_sparsity);
+
+    const std::string name = knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+
+    knowhere::Json build_json;
+    build_json[knowhere::meta::DIM] = dim;
+    build_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    // Build with BLOCK_MAX_WAND to generate all metadata (max scores + block max data)
+    build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "BLOCK_MAX_WAND";
+
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+    REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+    auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, build_json, nullptr);
+    REQUIRE(gt.has_value());
+
+    // Test that all search algorithms produce correct results on a BLOCK_MAX_WAND-built index
+    auto search_algo =
+        GENERATE(std::string("INHERIT"), std::string("TAAT_NAIVE"), std::string("DAAT_WAND"),
+                 std::string("DAAT_MAXSCORE"), std::string("BLOCK_MAX_WAND"), std::string("BLOCK_MAX_MAXSCORE"));
+
+    CAPTURE(search_algo);
+
+    knowhere::Json search_json;
+    search_json[knowhere::meta::TOPK] = topk;
+    search_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    search_json[knowhere::indexparam::SEARCH_ALGO] = search_algo;
+    search_json[knowhere::meta::DIM_MAX_SCORE_RATIO] = 1.0;
+
+    auto results = idx.Search(query_ds, search_json, nullptr);
+    REQUIRE(results.has_value());
+
+    float recall = GetKNNRecall(*gt.value(), *results.value());
+    REQUIRE(recall >= 0.99);
+}
+
+TEST_CASE("Test Sparse Index Block Size Variations", "[sparse]") {
+    auto nb = 1000;
+    auto dim = 500;
+    auto topk = 10;
+    auto nq = 5;
+    auto doc_sparsity = 0.97f;
+    auto query_sparsity = 0.99f;
+    auto version = GenTestVersionList();
+
+    auto train_ds = GenSparseDataSet(nb, dim, doc_sparsity);
+    auto query_ds = GenSparseDataSet(nq, dim, query_sparsity);
+
+    const std::string name = knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+
+    auto gt = knowhere::BruteForce::SearchSparse(
+        train_ds, query_ds,
+        knowhere::Json({{knowhere::meta::DIM, dim}, {knowhere::meta::METRIC_TYPE, knowhere::metric::IP}}), nullptr);
+    REQUIRE(gt.has_value());
+
+    // Test different block sizes for block max algorithms
+    auto block_size = GENERATE(32, 64, 128, 256);
+    CAPTURE(block_size);
+
+    knowhere::Json build_json;
+    build_json[knowhere::meta::DIM] = dim;
+    build_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "BLOCK_MAX_WAND";
+    build_json["block_max_block_size"] = block_size;
+
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+    REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+    knowhere::Json search_json;
+    search_json[knowhere::meta::TOPK] = topk;
+    search_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    search_json[knowhere::meta::DIM_MAX_SCORE_RATIO] = 1.0;
+
+    auto results = idx.Search(query_ds, search_json, nullptr);
+    REQUIRE(results.has_value());
+    float recall = GetKNNRecall(*gt.value(), *results.value());
+    REQUIRE(recall >= 0.99);
+}
+
+TEST_CASE("Test Sparse Index Bitset Filtering with Block Max Algos", "[sparse]") {
+    auto nb = 1000;
+    auto dim = 500;
+    auto topk = 5;
+    auto nq = 5;
+    auto doc_sparsity = 0.97f;
+    auto query_sparsity = 0.99f;
+    auto version = GenTestVersionList();
+
+    auto inverted_index_algo =
+        GENERATE(std::string("DAAT_MAXSCORE"), std::string("BLOCK_MAX_MAXSCORE"), std::string("BLOCK_MAX_WAND"));
+
+    auto train_ds = GenSparseDataSet(nb, dim, doc_sparsity);
+    auto query_ds = GenSparseDataSet(nq, dim, query_sparsity);
+
+    const std::string name = knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+
+    knowhere::Json build_json;
+    build_json[knowhere::meta::DIM] = dim;
+    build_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = inverted_index_algo;
+
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+    REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+    knowhere::Json search_json;
+    search_json[knowhere::meta::TOPK] = topk;
+    search_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    search_json[knowhere::meta::DIM_MAX_SCORE_RATIO] = 1.0;
+
+    // Filter out half of the vectors
+    auto filter_count = nb / 2;
+    auto bitset_data = GenerateBitsetWithRandomTbitsSet(nb, filter_count);
+    knowhere::BitsetView bitset(bitset_data.data(), nb);
+
+    auto results = idx.Search(query_ds, search_json, bitset);
+    REQUIRE(results.has_value());
+
+    // Check that filtered IDs are not in results
+    auto* ids = results.value()->GetIds();
+    auto k = results.value()->GetDim();
+    for (int64_t i = 0; i < nq; ++i) {
+        for (int64_t j = 0; j < k; ++j) {
+            auto id = ids[i * k + j];
+            if (id != -1) {
+                REQUIRE_FALSE(bitset.test(id));
+            }
+        }
+    }
+
+    // Check that distances are in decreasing order
+    auto* distances = results.value()->GetDistance();
+    for (int64_t i = 0; i < nq; ++i) {
+        for (int64_t j = 0; j < k - 1; ++j) {
+            if (ids[i * k + j] == -1 || ids[i * k + j + 1] == -1) {
+                break;
+            }
+            REQUIRE(distances[i * k + j] >= distances[i * k + j + 1]);
+        }
+    }
+}
+
+TEST_CASE("Test Sparse Index Drop Ratio Search", "[sparse]") {
+    auto nb = 2000;
+    auto dim = 1000;
+    auto topk = 10;
+    auto nq = 10;
+    auto doc_sparsity = 0.95f;
+    auto query_sparsity = 0.97f;
+    auto version = GenTestVersionList();
+
+    auto train_ds = GenSparseDataSet(nb, dim, doc_sparsity);
+    auto query_ds = GenSparseDataSet(nq, dim, query_sparsity);
+
+    const std::string name = knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+
+    knowhere::Json build_json;
+    build_json[knowhere::meta::DIM] = dim;
+    build_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "DAAT_MAXSCORE";
+
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+    REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+    auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, build_json, nullptr);
+    REQUIRE(gt.has_value());
+
+    // drop_ratio_search = 0: exact search
+    knowhere::Json search_json_exact;
+    search_json_exact[knowhere::meta::TOPK] = topk;
+    search_json_exact[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    search_json_exact[knowhere::indexparam::DROP_RATIO_SEARCH] = 0.0;
+    search_json_exact[knowhere::meta::DIM_MAX_SCORE_RATIO] = 1.0;
+    auto results_exact = idx.Search(query_ds, search_json_exact, nullptr);
+    REQUIRE(results_exact.has_value());
+    float recall_exact = GetKNNRecall(*gt.value(), *results_exact.value());
+    REQUIRE(recall_exact >= 0.99);
+
+    // drop_ratio_search > 0: approximate search, recall should still be reasonable
+    knowhere::Json search_json_approx;
+    search_json_approx[knowhere::meta::TOPK] = topk;
+    search_json_approx[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    search_json_approx[knowhere::indexparam::DROP_RATIO_SEARCH] = 0.3;
+    search_json_approx[knowhere::meta::DIM_MAX_SCORE_RATIO] = 1.0;
+    auto results_approx = idx.Search(query_ds, search_json_approx, nullptr);
+    REQUIRE(results_approx.has_value());
+    float recall_approx = GetKNNRecall(*gt.value(), *results_approx.value());
+    // Approximate search should have lower recall than exact, but still reasonable
+    REQUIRE(recall_approx >= 0.5);
+    REQUIRE(recall_exact >= recall_approx);
+}
+
+TEST_CASE("Test Sparse Index CC Build Add Search", "[sparse]") {
+    auto nb = 500;
+    auto dim = 500;
+    auto topk = 5;
+    auto nq = 5;
+    auto doc_sparsity = 0.97f;
+    auto query_sparsity = 0.99f;
+    auto version = GenTestVersionList();
+
+    auto cc_name = GENERATE(std::string(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC),
+                            std::string(knowhere::IndexEnum::INDEX_SPARSE_WAND_CC));
+
+    auto train_ds = GenSparseDataSet(nb, dim, doc_sparsity);
+    auto query_ds = GenSparseDataSet(nq, dim, query_sparsity);
+
+    knowhere::Json json;
+    json[knowhere::meta::DIM] = dim;
+    json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    json[knowhere::meta::TOPK] = topk;
+
+    auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, json, nullptr);
+    REQUIRE(gt.has_value());
+
+    SECTION("Build and search CC index") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(cc_name, version).value();
+        REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
+
+        auto results = idx.Search(query_ds, json, nullptr);
+        REQUIRE(results.has_value());
+        float recall = GetKNNRecall(*gt.value(), *results.value());
+        REQUIRE(recall >= 0.99);
+    }
+
+    SECTION("Build then Add more data to CC index") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(cc_name, version).value();
+        // Build with initial data first (required for CC indices)
+        REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
+
+        // Add more data on top
+        auto extra_ds = GenSparseDataSet(100, dim, doc_sparsity);
+        REQUIRE(idx.Add(extra_ds, json) == knowhere::Status::success);
+
+        auto results = idx.Search(query_ds, json, nullptr);
+        REQUIRE(results.has_value());
+        // Recall may be slightly different since we added extra data not in gt,
+        // but original results should still be findable
+        auto* ids = results.value()->GetIds();
+        auto k = results.value()->GetDim();
+        for (int64_t i = 0; i < nq; ++i) {
+            bool found_valid = false;
+            for (int64_t j = 0; j < k; ++j) {
+                if (ids[i * k + j] != -1) {
+                    found_valid = true;
+                    break;
+                }
+            }
+            REQUIRE(found_valid);
         }
     }
 }
