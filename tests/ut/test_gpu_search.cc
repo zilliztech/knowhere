@@ -109,7 +109,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
     auto cagra_hnsw_gen = [](auto&& upstream_gen) {
         return [upstream_gen]() {
             knowhere::Json json = upstream_gen();
-            json[knowhere::indexparam::ADAPT_FOR_CPU] = true;
+            json[knowhere::indexparam::ADAPT_FOR_CPU] = false;
             json[knowhere::indexparam::EF] = 128;
             return json;
         };
