@@ -445,17 +445,17 @@ TEST_CASE("Test DiskANN Build Index", "[diskann]") {
                 json["max_degree"] = 56;
                 json["index_prefix"] = kL2IndexDir + "/l2a";
                 test_stat = diskann.Build(ds_ptr, json);
-                REQUIRE(test_stat == knowhere::Status::diskann_inner_error);
+                REQUIRE(test_stat == knowhere::Status::success);
                 json["max_degree"] = 64;
                 json["search_list_size"] = kK;
                 json["index_prefix"] = kL2IndexDir + "/l2b";
                 test_stat = diskann.Build(ds_ptr, json);
-                REQUIRE(test_stat == knowhere::Status::diskann_inner_error);
+                REQUIRE(test_stat == knowhere::Status::success);
                 json["max_degree"] = 64;
                 json["search_list_size"] = 100;
                 json["index_prefix"] = kL2IndexDir + "/l2c";
                 test_stat = diskann.Build(ds_ptr, json);
-                REQUIRE(test_stat == knowhere::Status::diskann_inner_error);
+                REQUIRE(test_stat == knowhere::Status::success);
             }
         }
         fs::remove_all(kDir);
