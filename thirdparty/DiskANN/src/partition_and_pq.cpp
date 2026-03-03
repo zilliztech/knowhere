@@ -578,10 +578,6 @@ int generate_pq_data_from_pivots(const std::string data_file,
           }));
     }
     knowhere::WaitAllSuccess(futures);
-#ifdef KNOWHERE_WITH_CUVS
-    // GPU path
-    raft::resources res;
-#endif
 
     futures.clear();
     futures.reserve(num_pq_chunks);
@@ -614,6 +610,7 @@ int generate_pq_data_from_pivots(const std::string data_file,
         bool predicted_with_gpu=false;
 #if defined(KNOWHERE_WITH_CUVS)
         if (is_gpu_available()) {
+            raft::resources res;
             predict_gpu(res, cur_data.get(), cur_blk_size, chunk_size,
                          cur_pivot_data.get(), num_centers,
                          reinterpret_cast<int*>(closest_center.get()));
