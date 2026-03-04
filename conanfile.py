@@ -47,13 +47,15 @@ class KnowhereConan(ConanFile):
         "with_ut": False,
         "glog:shared": True,
         "glog:with_gflags": True,
-        "gtest:build_gmock": False,
+        "gtest:build_gmock": True,
         "prometheus-cpp:with_pull": False,
         "with_benchmark": False,
         "with_coverage": False,
         "boost:without_locale": False,
         "boost:without_test": True,
         "boost:without_stacktrace": True,
+        "openssl:shared": True,
+        "gflags:shared": True,
         "fmt:header_only": False,
         "with_faiss_tests": False,
         "opentelemetry-cpp:with_stl": True,
@@ -92,7 +94,7 @@ class KnowhereConan(ConanFile):
         if self.options.with_light:
             self.options["boost"].without_locale = True
         if self.settings.os == "Macos":
-            self.options["libcurl"].with_ssl = "darwinssl"
+            self.options["libcurl"].with_ssl = "openssl"
 
     def configure(self):
         if self.options.shared:
@@ -109,21 +111,21 @@ class KnowhereConan(ConanFile):
         self.requires("zlib/1.3.1")
         self.requires("double-conversion/3.3.0")
         self.requires("xz_utils/5.4.5")
-        self.requires("protobuf/5.27.0@milvus/dev", force=True, override=True)
+        self.requires("protobuf/5.27.0@milvus/dev#6fff8583e2fe32babef04a9097f1d581", force=True, override=True)
         self.requires("lz4/1.9.4", force=True, override=True)
         if self.settings.os == "Linux":
             self.requires("liburing/2.8", force=True, override=True)
         self.requires("fmt/11.0.2")
         self.requires("libevent/2.1.12")
-        self.requires("grpc/1.67.1@milvus/dev")
-        self.requires("folly/2024.08.12.00@milvus/dev")
+        self.requires("grpc/1.67.1@milvus/dev#5aa62c51bced448b83d7db9e5b3a13c7")
+        self.requires("folly/2024.08.12.00@milvus/dev#e09fc71826ce6b4568441910665f0889")
         self.requires("libcurl/8.10.1")
         self.requires("simde/0.8.2")
         self.requires("xxhash/0.8.3")
         if self.settings.os == "Android":
             self.requires("openblas/0.3.27")
         if not self.options.with_light:
-            self.requires("opentelemetry-cpp/1.23.0@milvus/dev")
+            self.requires("opentelemetry-cpp/1.23.0@milvus/dev#bcd65b63b8db8447178ed93bbc94dcc0")
         if self.settings.os not in ["Macos", "Android"]:
             self.requires("libunwind/1.8.1")
         if self.options.with_ut:
