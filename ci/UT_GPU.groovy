@@ -33,7 +33,7 @@ pipeline {
                         sh "nvidia-smi --query-gpu=name --format=csv,noheader"
                         sh "./scripts/prepare_gpu_build.sh"
                         sh "mkdir build"
-                        sh "cd build/ && ../ci/conan_build.sh --gpu --ut --release && ./Release/tests/ut/knowhere_tests"
+                        sh "cd build/ && ../scripts/conan_build.sh --gpu --ut --release && ./Release/tests/ut/knowhere_tests"
                     }
                 }
             }

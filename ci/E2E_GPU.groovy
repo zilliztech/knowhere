@@ -37,7 +37,7 @@ pipeline {
                         sh "nvidia-smi --query-gpu=name --format=csv,noheader"
                         sh "./scripts/prepare_gpu_build.sh"
                         sh "mkdir build"
-                        sh "cd build/ && ../ci/conan_build.sh --gpu --release"
+                        sh "cd build/ && ../scripts/conan_build.sh --gpu --release"
                         sh "pip3 install auditwheel"
                         sh "cd python && VERSION=${version} ./build_portable_wheel.sh"
                         dir('python/dist'){

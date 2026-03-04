@@ -37,7 +37,7 @@ jobs:
           ARTIFACT_NAME: ${{ env.RELEASE_NAME }}-${{ matrix.os }}
         run: |
           mkdir build && cd build \
-          && ../ci/conan_build.sh --release --no-cppstd \
+          && ../scripts/conan_build.sh --release --no-cppstd \
           && cd ..
           mkdir -p artifacts/${{ env.ARTIFACT_NAME }}/lib
           mv build/Release/*.a artifacts/${{ env.ARTIFACT_NAME }}/lib

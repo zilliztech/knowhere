@@ -47,7 +47,7 @@ jobs:
       - name: Build
         run: |
           mkdir build && cd build \
-          && ../ci/conan_build.sh --cpu --ut --asan --release \
+          && ../scripts/conan_build.sh --cpu --ut --asan --release \
           && ./Release/tests/ut/knowhere_tests
       - name: Save Cache
         uses: ./.github/actions/cache-save
@@ -83,7 +83,7 @@ jobs:
         run: |
           mkdir build \
           && cd build \
-          && ../ci/conan_build.sh --cpu --release
+          && ../scripts/conan_build.sh --cpu --release
       - name: Save Cache
         uses: ./.github/actions/cache-save
         with:

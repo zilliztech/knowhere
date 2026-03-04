@@ -2,7 +2,7 @@
 # Centralized conan build configuration for all CI pipelines.
 # Single source of truth for conan install flags — update HERE, not in each pipeline file.
 #
-# Usage: ci/conan_build.sh [options]
+# Usage: scripts/conan_build.sh [options]
 #   --gpu        Enable cuVS GPU support (-o with_cuvs=True)
 #   --cardinal   Enable Cardinal support (-o with_cardinal=True)
 #   --ut         Enable unit tests (-o with_ut=True)

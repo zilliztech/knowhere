@@ -32,7 +32,7 @@ pipeline {
                         sh "pip3 install -U setuptools"
                         sh "cmake --version"
                         sh "mkdir build"
-                        sh "cd build/ && ../ci/conan_build.sh --cpu --release"
+                        sh "cd build/ && ../scripts/conan_build.sh --cpu --release"
                         sh "pip3 install auditwheel"
                         sh "cd python && VERSION=${version} ./build_portable_wheel.sh"
                         dir('python/dist'){
