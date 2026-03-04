@@ -85,8 +85,9 @@ raft::device_matrix<T, idxT> read_bin_dataset(
 	// Copy to device using raft::copy
 	raft::copy(dataset.data_handle(), pinned_data, total,
 			raft::resource::get_cuda_stream(dev_resources));
-
+    raft::resource::sync_stream(dev_resources);
 	cudaFreeHost(pinned_data);
+
 	return dataset;
 }
 
@@ -118,7 +119,7 @@ void vamana_build_and_write(raft::device_resources const &dev_resources,
 
 	LOG_KNOWHERE_INFO_ << "Time to build index: " << elapsed_seconds.count() << "s\n";
 	// Output index to file
-	serialize(dev_resources, out_fname, index);
+	serialize(dev_resources, out_fname, index, false);
 }
 
 void kmeans_gpu(raft::resources &dev_resources, const float *h_chunk_data,
@@ -153,6 +154,7 @@ void kmeans_gpu(raft::resources &dev_resources, const float *h_chunk_data,
 	// Copy centroids back to host asynchronously
 	raft::copy(h_centroids_out, d_centroids.data_handle(), num_centers * dim,
 			raft::resource::get_cuda_stream(dev_resources));
+    raft::resource::sync_stream(dev_resources);
 }
 
 
