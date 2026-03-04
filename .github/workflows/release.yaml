@@ -37,8 +37,7 @@ jobs:
           ARTIFACT_NAME: ${{ env.RELEASE_NAME }}-${{ matrix.os }}
         run: |
           mkdir build && cd build \
-          && conan install .. --update --build=missing -s build_type=Release -o with_diskann=True -s compiler.libcxx=libstdc++11 \
-          && conan build .. \
+          && ../scripts/conan_build.sh --release --no-cppstd \
           && cd ..
           mkdir -p artifacts/${{ env.ARTIFACT_NAME }}/lib
           mv build/Release/*.a artifacts/${{ env.ARTIFACT_NAME }}/lib

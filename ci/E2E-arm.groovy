@@ -31,7 +31,7 @@ pipeline {
                         sh "pip3 install -U setuptools"
                         sh "cmake --version"
                         sh "mkdir build"
-                        sh "cd build/ && conan install .. --update --build=missing --build=liburing -s compiler.cppstd=17 -o with_diskann=True -s compiler.libcxx=libstdc++11 -s build_type=Release && conan build .."
+                        sh "cd build/ && ../scripts/conan_build.sh --cpu --release"
                         sh "pip3 install auditwheel"
                         sh "cd python && VERSION=${version} ./build_portable_wheel.sh"
                         dir('python/dist'){
