@@ -36,7 +36,7 @@ namespace diskann {
     static constexpr float    kCacheMemFactor = 1.1;
     // Currently supported values for graph_degree in cuvs.
     static const int DEGREE_SIZES[4] = {32, 64, 128, 256};
-    static bool use_gpu = false;
+    static bool valid_gpu_params = false;
   };  // namespace
 
   bool is_power_of_two(int64_t x) {
@@ -490,7 +490,7 @@ namespace diskann {
     diskann::get_bin_metadata(base_file, base_num, base_dim);
 #ifdef KNOWHERE_WITH_CUVS
     raft::device_resources dev_resources;
-    if(compareMetric == diskann::L2 && is_gpu_available() && use_gpu) {
+    if(compareMetric == diskann::L2 && is_gpu_available() && valid_gpu_params) {
       size_t gpu_free_mem, gpu_total_mem;
       gpu_get_mem_info(dev_resources, gpu_free_mem, gpu_total_mem);
       LOG_KNOWHERE_INFO_ << "GPU has " <<  gpu_free_mem/(1024*1024*1024L) <<
@@ -527,7 +527,7 @@ namespace diskann {
       bool built_with_gpu=false;
 #ifdef KNOWHERE_WITH_CUVS
       //currently cuvs vamana build only supports L2Expanded metric
-      if (compareMetric == diskann::L2 && is_gpu_available() && use_gpu &&
+      if (compareMetric == diskann::L2 && is_gpu_available() && valid_gpu_params &&
               (std::is_same_v<T, float> || std::is_same_v<T, uint8_t>) ) {
         LOG_KNOWHERE_INFO_ << "Building with GPU!" << " R= "<< R<<" L=" << L;
 
@@ -608,7 +608,7 @@ namespace diskann {
               shard_base_pts, false));  // TODO: Single?
 #ifdef KNOWHERE_WITH_CUVS
       //currently cuvs vamana build only supports L2Expanded metric
-      if (compareMetric == diskann::L2 && is_gpu_available() && use_gpu &&
+      if (compareMetric == diskann::L2 && is_gpu_available() && valid_gpu_params &&
               (std::is_same_v<T, float> || std::is_same_v<T, uint8_t>)) {
         LOG_KNOWHERE_INFO_ << "Building with GPU!" << " R= "<< shard_r <<" L=" << L;
         if (std::is_same_v<T, float> ) {
@@ -1858,22 +1858,22 @@ template<typename T>
     }
 #ifdef KNOWHERE_WITH_CUVS
     if(is_gpu_available()) {
-      use_gpu = true;
+      valid_gpu_params = true;
       const int* deg_size = std::find(std::begin(DEGREE_SIZES), std::end(DEGREE_SIZES), R);
       if (deg_size == std::end(DEGREE_SIZES)) {
         LOG_KNOWHERE_WARNING_ << "GPU is not going to be used since invalid R value for cuvs - "
                                  "should be power of 2 and maximum 256";
-        use_gpu = false;
+        valid_gpu_params = false;
       }
       if (!is_power_of_two(L)) {
         LOG_KNOWHERE_WARNING_ << "GPU is not going to be used since invalid L value for cuvs - "
                                  "should be power of 2";
-        use_gpu = false;
+        valid_gpu_params = false;
       }
       if (R >= L) {
         LOG_KNOWHERE_WARNING_ << "GPU is not going to be used since invalid L value for cuvs - "
                                  "L must be > R";
-        use_gpu = false;
+        valid_gpu_params = false;
       }
     } else {
       LOG_KNOWHERE_INFO_ << "GPU is not going to be used since it is not available";
