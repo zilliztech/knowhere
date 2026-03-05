@@ -35,9 +35,7 @@ pipeline {
                         sh "pip3 install -U setuptools"
                         sh "cmake --version"
                         sh "nvidia-smi --query-gpu=name --format=csv,noheader"
-                        sh "./scripts/prepare_gpu_build.sh"
-                        sh "mkdir build"
-                        sh "cd build/ && conan install .. --update --build=missing -s compiler.cppstd=17 -o with_diskann=True -o with_cuvs=True -s compiler.libcxx=libstdc++11 -s build_type=Release && conan build .."
+                        sh "make build-gpu"
                         sh "pip3 install auditwheel"
                         sh "cd python && VERSION=${version} ./build_portable_wheel.sh"
                         dir('python/dist'){

@@ -23,7 +23,7 @@ CONAN_CPU_FLAGS := $(CONAN_BASE_FLAGS) $(CONAN_CPPSTD) --build=liburing
 # GPU builds don't need liburing
 CONAN_GPU_FLAGS := $(CONAN_BASE_FLAGS) $(CONAN_CPPSTD)
 
-.PHONY: build build-release build-gpu \
+.PHONY: build build-release build-gpu build-ut \
 	ut ut-gpu \
 	lint format pre-commit \
 	wheel codecov \
@@ -43,6 +43,12 @@ build-release: ## Build CPU (release)
 	@echo "Building Knowhere (CPU, release)..."
 	@mkdir -p $(BUILD_DIR) && cd $(BUILD_DIR) && \
 		conan install .. $(CONAN_CPU_FLAGS) -s build_type=Release && \
+		conan build ..
+
+build-ut: ## Build CPU with unit tests enabled (no run)
+	@echo "Building Knowhere (CPU, with unit tests)..."
+	@mkdir -p $(BUILD_DIR) && cd $(BUILD_DIR) && \
+		conan install .. $(CONAN_CPU_FLAGS) -o with_ut=True && \
 		conan build ..
 
 build-gpu: ## Build GPU (release)

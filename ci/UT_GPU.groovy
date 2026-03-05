@@ -31,11 +31,7 @@ pipeline {
                         sh "conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local"
                         sh "cmake --version"
                         sh "nvidia-smi --query-gpu=name --format=csv,noheader"
-                        sh "./scripts/prepare_gpu_build.sh"
-                        sh "mkdir build"
-                        sh "cd build/ && conan install .. --update --build=missing -s compiler.cppstd=17 -s build_type=Release -o with_diskann=True -o with_ut=True -o with_cuvs=True -s compiler.libcxx=libstdc++11 \
-                              && conan build .. \
-                              && ./Release/tests/ut/knowhere_tests"
+                        sh "make ut-gpu"
                     }
                 }
             }
