@@ -181,6 +181,8 @@ if(WITH_CARDINAL)
   list(APPEND CARDINAL_LIBS cardinalv1)
   add_subdirectory(cmake/libs/cardinal/v2)
   list(APPEND CARDINAL_LIBS cardinalv2)
+  knowhere_file_glob(GLOB_RECURSE KNOWHERE_SPARSE_NODE_SRCS src/index/sparse/sparse_index_node.cc)
+  list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_SPARSE_NODE_SRCS})
 endif()
 
 if(WITH_DISKANN)
@@ -189,6 +191,22 @@ if(WITH_DISKANN)
 else()
   knowhere_file_glob(GLOB_RECURSE KNOWHERE_DISKANN_SRCS src/index/diskann/*.cc)
   list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_DISKANN_SRCS})
+endif()
+
+# Sparse codec C files (not captured by *.cc globs)
+knowhere_file_glob(GLOB KNOWHERE_SPARSE_CODEC_SRCS
+    src/index/sparse/codec/*.c)
+list(APPEND KNOWHERE_SRCS ${KNOWHERE_SPARSE_CODEC_SRCS})
+
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64)")
+    set_source_files_properties(
+        src/index/sparse/codec/varintdecode.c
+        src/index/sparse/codec/streamvbyte_0124_decode.c
+        src/index/sparse/codec/streamvbyte_0124_encode.c
+        PROPERTIES COMPILE_FLAGS "-msse4.1")
+    set_source_files_properties(
+        src/index/sparse/sparse_index_node.cc
+        PROPERTIES COMPILE_FLAGS "-mavx512f -mavx512bw -mavx512vl -mavx512dq -mavx512cd -mavx2 -mfma -mf16c")
 endif()
 
 knowhere_file_glob(GLOB_RECURSE KNOWHERE_GPU_SRCS src/index/gpu/flat_gpu/*.cc
