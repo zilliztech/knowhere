@@ -72,7 +72,9 @@ jobs:
           install_build_deps
           install_wheel_deps
           setup_conan_remote
-          pip3 install pytest faiss-cpu wheel
+          # Test deps installed inline (unlike Groovy E2E pipelines which
+          # check out knowhere-test.git with its own requirements.txt)
+          pip3 install pytest faiss-cpu
       - name: Restore Cache
         uses: ./.github/actions/cache-restore
         with:

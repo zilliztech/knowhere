@@ -9,8 +9,6 @@
 #
 # Functions can be composed in any order. Each is idempotent.
 
-set -eo pipefail
-
 # Use sudo for apt-get when not running as root (e.g. GHA runners).
 if [ "$(id -u)" -ne 0 ]; then
     SUDO="sudo"
@@ -54,20 +52,11 @@ install_wheel_deps() {
         binutils \
         patchelf
     pip3 install -U setuptools
-    pip3 install 'numpy<2'
-    pip3 install --no-build-isolation bfloat16
-    pip3 install auditwheel
-}
-
-# Dependencies for E2E test stages (running an installed wheel).
-install_test_runner_deps() {
-    echo "[ci_deps] Installing test runner dependencies..."
-    ${SUDO} apt-get update || true
-    ${SUDO} apt-get install -y \
-        libopenblas-openmp-dev \
-        libaio-dev \
-        libdouble-conversion-dev \
-        libevent-dev
+    # wheel must be installed before bfloat16: bfloat16 has no pre-built wheel
+    # for Python 3.8, so pip builds from source. Without the wheel package, pip
+    # uses PEP 517 build isolation which can't see the installed numpy.
+    pip3 install wheel 'numpy<2'
+    pip3 install bfloat16 auditwheel
 }
 
 # clang-tidy for static analysis.
