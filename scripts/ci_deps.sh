@@ -54,7 +54,9 @@ install_wheel_deps() {
         binutils \
         patchelf
     pip3 install -U setuptools
-    pip3 install 'numpy<2' bfloat16 auditwheel
+    pip3 install 'numpy<2'
+    pip3 install --no-build-isolation bfloat16
+    pip3 install auditwheel
 }
 
 # Dependencies for E2E test stages (running an installed wheel).
