@@ -11,14 +11,21 @@
 
 set -eo pipefail
 
+# Use sudo for apt-get when not running as root (e.g. GHA runners).
+if [ "$(id -u)" -ne 0 ]; then
+    SUDO="sudo"
+else
+    SUDO=""
+fi
+
 CONAN_VERSION="1.65.0"
 CONAN_REMOTE_URL="https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local"
 
 # Core libraries needed by every knowhere build.
 install_base_deps() {
     echo "[ci_deps] Installing base dependencies..."
-    apt-get update || true
-    apt-get install -y \
+    ${SUDO} apt-get update || true
+    ${SUDO} apt-get install -y \
         libaio-dev \
         libcurl4-openssl-dev \
         libdouble-conversion-dev \
@@ -32,7 +39,7 @@ install_base_deps() {
 # C++ compiler toolchain (for GHA runners; Docker images already have these).
 install_build_deps() {
     echo "[ci_deps] Installing build dependencies..."
-    apt-get install -y \
+    ${SUDO} apt-get install -y \
         g++ \
         gcc \
         ccache \
@@ -42,7 +49,7 @@ install_build_deps() {
 # Additional packages for building and packaging python wheels.
 install_wheel_deps() {
     echo "[ci_deps] Installing wheel/packaging dependencies..."
-    apt-get install -y \
+    ${SUDO} apt-get install -y \
         unzip \
         binutils \
         patchelf
@@ -53,8 +60,8 @@ install_wheel_deps() {
 # Dependencies for E2E test stages (running an installed wheel).
 install_test_runner_deps() {
     echo "[ci_deps] Installing test runner dependencies..."
-    apt-get update || true
-    apt-get install -y \
+    ${SUDO} apt-get update || true
+    ${SUDO} apt-get install -y \
         libopenblas-openmp-dev \
         libaio-dev \
         libdouble-conversion-dev \
@@ -64,7 +71,7 @@ install_test_runner_deps() {
 # clang-tidy for static analysis.
 install_analyzer_deps() {
     echo "[ci_deps] Installing analyzer dependencies..."
-    apt-get install -y \
+    ${SUDO} apt-get install -y \
         cmake \
         clang-tidy-14 \
         libomp-dev
@@ -73,7 +80,7 @@ install_analyzer_deps() {
 # lcov for code coverage reports.
 install_coverage_deps() {
     echo "[ci_deps] Installing coverage dependencies..."
-    apt-get install -y lcov
+    ${SUDO} apt-get install -y lcov
 }
 
 # Configure the Milvus conan remote.
