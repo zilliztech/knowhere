@@ -25,14 +25,11 @@ pipeline {
                         def date = sh(returnStdout: true, script: 'date +%Y%m%d').trim()
                         def gitShortCommit = sh(returnStdout: true, script: "echo ${env.GIT_COMMIT} | cut -b 1-7 ").trim()
                         version="${env.CHANGE_ID}.${date}.${gitShortCommit}"
-                        sh "apt-get update || true"
-                        sh "apt-get install -y libaio-dev libopenblas-dev libcurl4-openssl-dev libdouble-conversion-dev libevent-dev libgflags-dev unzip binutils patchelf"
-                        sh "pip3 install conan==1.65.0 'numpy<2' bfloat16"
-                        // sh "conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local"
-                        sh "pip3 install -U setuptools"
+                        // SSE build uses libopenblas-dev (not openmp variant) intentionally
+                        sh "source scripts/ci_deps.sh && install_base_deps && install_wheel_deps"
+                        sh "apt-get install -y libopenblas-dev"
                         sh "cmake --version"
                         sh "make build-release"
-                        sh "pip3 install auditwheel"
                         sh "cd python && VERSION=${version} ./build_portable_wheel.sh"
                         dir('python/dist'){
                         knowhere_wheel=sh(returnStdout: true, script: 'ls | grep manylinux.*\\.whl').trim()

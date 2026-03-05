@@ -26,17 +26,14 @@ pipeline {
                         def date = sh(returnStdout: true, script: 'date +%Y%m%d').trim()
                         def gitShortCommit = sh(returnStdout: true, script: "echo ${env.GIT_COMMIT} | cut -b 1-7 ").trim()
                         version="${env.CHANGE_ID}.${date}.${gitShortCommit}"
-                        sh "apt-get update || true"
-                        sh "apt-get install -y build-essential libopenblas-openmp-dev libcurl4-openssl-dev libaio-dev libdouble-conversion-dev libevent-dev libgflags-dev unzip binutils patchelf"
+                        sh "source scripts/ci_deps.sh && install_base_deps && install_build_deps && install_wheel_deps"
+                        // GPU-only: build-essential needed (CPU images have g++/gcc pre-installed)
+                        sh "apt-get install -y build-essential"
                         sh "git config --global --add safe.directory '*'"
                         sh "git submodule update --recursive --init"
-                        sh "pip3 install conan==1.65.0 'numpy<2' bfloat16"
-                        // sh "conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local"
-                        sh "pip3 install -U setuptools"
                         sh "cmake --version"
                         sh "nvidia-smi --query-gpu=name --format=csv,noheader"
                         sh "make build-gpu"
-                        sh "pip3 install auditwheel"
                         sh "cd python && VERSION=${version} ./build_portable_wheel.sh"
                         dir('python/dist'){
                         knowhere_wheel=sh(returnStdout: true, script: 'ls | grep manylinux.*\\.whl').trim()
