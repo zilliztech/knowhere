@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
+#include <faiss/cppcontrib/knowhere/IndexFlat.h>
 #include <faiss/cppcontrib/knowhere/IndexSQ4Uniform.h>
 #include <faiss/cppcontrib/knowhere/MetricType.h>
 #include <faiss/cppcontrib/knowhere/impl/CountSizeIOWriter.h>

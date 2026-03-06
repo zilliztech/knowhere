@@ -593,7 +593,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
                     conf["muvera_num_projections"] = 3;
                     conf["muvera_num_repeats"] = 5;
                     conf["muvera_seed"] = 42;
-                    conf["muvera_rerank"] = false;
+                    conf["emb_list_rerank"] = false;
 
                     std::vector<int32_t> params = {(int)distance_type, dim, nb, 4};
 

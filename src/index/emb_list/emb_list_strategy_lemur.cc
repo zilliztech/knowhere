@@ -336,7 +336,7 @@ class LemurEmbListStrategy : public EmbListStrategy {
         LOG_KNOWHERE_DEBUG_ << "[LEMUR] Stage1 Feature extraction: " << feat_ms << " ms";
 
         // 4. ANN search on W
-        bool do_rerank = config.lemur_rerank.value_or(true);
+        bool do_rerank = config.emb_list_rerank.value_or(true);
         auto query_feat_dataset = GenDataSet(num_query_docs, final_hidden_dim_, query_feats.data());
 
         int32_t ann_k;

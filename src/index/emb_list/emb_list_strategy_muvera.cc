@@ -177,7 +177,7 @@ class MuveraEmbListStrategy : public EmbListStrategy {
         LOG_KNOWHERE_DEBUG_ << "[MUVERA] Stage1 FDE encode: " << encode_ms << " ms, num_query_docs=" << num_query_docs;
 
         // 4. ANN search with encoded queries
-        bool do_rerank = config.muvera_rerank.value_or(true);
+        bool do_rerank = config.emb_list_rerank.value_or(true);
         auto encoded_query_dataset = GenDataSet(num_query_docs, encoded_dim_, encoded_queries.data());
 
         // If reranking, retrieve more candidates; otherwise just retrieve k

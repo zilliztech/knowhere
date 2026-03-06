@@ -641,12 +641,9 @@ class BaseConfig : public Config {
      * - "muvera": Encode documents to single vectors using FDE, rerank with MaxSim
      */
     CFG_STRING emb_list_strategy;
-    CFG_FLOAT emb_list_rerank_ratio;  // rerank candidate ratio for MUVERA
     CFG_INT muvera_num_projections;   // FDE projections count, buckets = 2^projections
     CFG_INT muvera_num_repeats;       // FDE repeat count (independent encodings)
     CFG_INT muvera_seed;              // random seed for SimHash projection matrices
-    CFG_BOOL muvera_store_raw_data;   // store raw data for reranking
-    CFG_BOOL muvera_rerank;           // whether to perform MaxSim reranking (trade recall for latency)
     // LEMUR config
     CFG_INT lemur_hidden_dim;         // hidden dimension for LEMUR MLP (compressed representation)
     CFG_INT lemur_num_train_samples;  // number of training samples for MLP
@@ -655,7 +652,7 @@ class BaseConfig : public Config {
     CFG_FLOAT lemur_learning_rate;    // learning rate for MLP training
     CFG_INT lemur_seed;               // random seed for LEMUR
     CFG_INT lemur_num_layers;         // number of layers in feature_extractor
-    CFG_BOOL lemur_rerank;            // whether to perform MaxSim reranking
+    CFG_BOOL emb_list_rerank;         // whether to perform MaxSim reranking after ANN search
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(dim).allow_empty_without_default().description("vector dim").for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
@@ -832,11 +829,6 @@ class BaseConfig : public Config {
             .for_train()
             .for_deserialize()
             .for_deserialize_from_file();
-        KNOWHERE_CONFIG_DECLARE_FIELD(emb_list_rerank_ratio)
-            .description("Rerank candidate ratio for MUVERA strategy")
-            .set_default(10.0f)
-            .set_range(1.0f, 1000.0f)
-            .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(muvera_num_projections)
             .description("Number of SimHash projections for MUVERA FDE, buckets = 2^projections")
             .set_default(4)
@@ -851,14 +843,6 @@ class BaseConfig : public Config {
             .description("Random seed for MUVERA SimHash projection matrices")
             .set_default(42)
             .for_train();
-        KNOWHERE_CONFIG_DECLARE_FIELD(muvera_store_raw_data)
-            .description("Whether to store raw data for MUVERA reranking")
-            .set_default(true)
-            .for_train();
-        KNOWHERE_CONFIG_DECLARE_FIELD(muvera_rerank)
-            .description("Whether to perform MaxSim reranking after ANN search (false = trade recall for latency)")
-            .set_default(true)
-            .for_search();
         // LEMUR config
         KNOWHERE_CONFIG_DECLARE_FIELD(lemur_hidden_dim)
             .description("Hidden dimension for LEMUR MLP (compressed representation dimension)")
@@ -891,7 +875,7 @@ class BaseConfig : public Config {
             .set_default(2)
             .set_range(1, 8)
             .for_train();
-        KNOWHERE_CONFIG_DECLARE_FIELD(lemur_rerank)
+        KNOWHERE_CONFIG_DECLARE_FIELD(emb_list_rerank)
             .description("Whether to perform MaxSim reranking after ANN search")
             .set_default(true)
             .for_search();

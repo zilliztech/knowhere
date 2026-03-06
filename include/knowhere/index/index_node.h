@@ -12,15 +12,11 @@
 #ifndef INDEX_NODE_H
 #define INDEX_NODE_H
 
-#include <fstream>
 #include <functional>
 #include <queue>
 #include <utility>
 #include <vector>
 
-#include "faiss/cppcontrib/knowhere/IndexFlat.h"
-#include "faiss/cppcontrib/knowhere/index_io.h"
-#include "io/memory_io.h"
 #include "knowhere/binaryset.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/config.h"
@@ -46,6 +42,14 @@ struct OpContext;
 #include "knowhere/comp/time_recorder.h"
 #include "knowhere/prometheus_client.h"
 #endif
+
+namespace faiss {
+namespace cppcontrib {
+namespace knowhere {
+class IndexFlat;
+}
+}  // namespace cppcontrib
+}  // namespace faiss
 
 namespace knowhere {
 
@@ -363,79 +367,7 @@ class IndexNode : public Object {
 
     virtual Status
     BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
-                 bool use_knowhere_build_pool = true) {
-        auto& config = static_cast<BaseConfig&>(*cfg);
-
-        // 1. Parse metric types
-        auto metric_info_or = ParseEmbListMetric(config);
-        if (!metric_info_or.has_value()) {
-            return metric_info_or.error();
-        }
-        el_metric_type_ = metric_info_or.value().el_metric_type;
-        auto sub_metric_type = metric_info_or.value().sub_metric_type;
-
-        // 2. Create document offset structure
-        EmbListOffset doc_offset(lims, num_rows);
-
-        // 3. Create emb_list strategy
-        auto strategy_type = config.emb_list_strategy.value_or(meta::EMB_LIST_STRATEGY_TOKENANN);
-        auto strategy_or = CreateEmbListStrategy(strategy_type, config);
-        if (!strategy_or.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "Failed to create emb_list strategy: " << strategy_type;
-            return strategy_or.error();
-        }
-        emb_list_strategy_ = std::move(strategy_or.value());
-
-        // 4. Prepare data for build (strategy may transform data, e.g., FDE encoding in MUVERA)
-        auto build_data_or = emb_list_strategy_->PrepareDataForBuild(dataset, doc_offset, config);
-        if (!build_data_or.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "Failed to prepare data for build";
-            return build_data_or.error();
-        }
-
-        // Override metric_type to sub_metric for base index build
-        config.metric_type = sub_metric_type;
-
-        // 5. Build underlying index (if strategy provides data)
-        LOG_KNOWHERE_INFO_ << "Build EmbList-Index with strategy: " << strategy_type
-                           << ", metric type: " << el_metric_type_ << ", sub metric type: " << sub_metric_type;
-        if (build_data_or.value().has_value()) {
-            RETURN_IF_ERROR(Build(build_data_or.value().value(), cfg, use_knowhere_build_pool));
-        }
-
-        // 6. Create raw vector storage if strategy needs it
-        if (emb_list_strategy_->NeedsRawVectorStorage()) {
-            auto original_dim = dataset->GetDim();
-            auto total_vectors = dataset->GetRows();
-            const float* raw_data = static_cast<const float*>(dataset->GetTensor());
-
-            faiss::MetricType faiss_metric = faiss::METRIC_INNER_PRODUCT;
-            bool is_cosine = (sub_metric_type == metric::COSINE);
-            if (sub_metric_type == metric::L2) {
-                faiss_metric = faiss::METRIC_L2;
-            }
-
-            emb_list_raw_index_ =
-                std::make_unique<faiss::cppcontrib::knowhere::IndexFlat>(original_dim, faiss_metric, is_cosine);
-            emb_list_raw_index_->add(total_vectors, raw_data);
-
-            LOG_KNOWHERE_INFO_ << "Created raw vector storage: " << total_vectors << " vectors, dim=" << original_dim;
-        }
-
-        // 7. Strategy post-build hook
-        RETURN_IF_ERROR(emb_list_strategy_->OnBuildComplete(dataset, doc_offset, config));
-
-        // 8. Set ID mapping if strategy requires it (Direct needs vector->doc mapping)
-        // When using emb_list, all filtering bitset checks are performed at the emb_list level,
-        // not at the individual vector level. This means that whenever the index needs to check whether
-        // a vector is masked (filtered out), it must first map the vector's idx to its corresponding emb_list idx.
-        if (emb_list_strategy_->NeedsBaseIndexIDMap()) {
-            emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
-            return SetBaseIndexIDMap();
-        }
-
-        return Status::success;
-    }
+                 bool use_knowhere_build_pool = true);
 
     virtual Status
     BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) {
@@ -513,47 +445,7 @@ class IndexNode : public Object {
      * @brief Serialize emb_list: strategy meta, raw index, and base index to BinarySet.
      */
     Status
-    SerializeEmbList(BinarySet& binset) const {
-        LOG_KNOWHERE_INFO_ << "Serialize emb_list with strategy: " << emb_list_strategy_->Type();
-        try {
-            // 1. Get strategy blob
-            std::shared_ptr<uint8_t[]> strategy_data;
-            int64_t strategy_size = 0;
-            RETURN_IF_ERROR(emb_list_strategy_->Serialize(strategy_data, strategy_size));
-
-            // 2. Build EMB_LIST_META = [magic][type_len][type][strategy_blob]
-            auto strategy_type = emb_list_strategy_->Type();
-            size_t type_len = strategy_type.size();
-            int64_t meta_size = sizeof(int32_t) + sizeof(size_t) + type_len + strategy_size;
-            auto meta_data = std::shared_ptr<uint8_t[]>(new uint8_t[meta_size]);
-            uint8_t* ptr = meta_data.get();
-
-            int32_t magic = kEmbListMetaMagic;
-            std::memcpy(ptr, &magic, sizeof(int32_t));
-            ptr += sizeof(int32_t);
-            std::memcpy(ptr, &type_len, sizeof(size_t));
-            ptr += sizeof(size_t);
-            std::memcpy(ptr, strategy_type.data(), type_len);
-            ptr += type_len;
-            std::memcpy(ptr, strategy_data.get(), strategy_size);
-
-            binset.Append(meta::EMB_LIST_META, meta_data, meta_size);
-
-            // 3. Raw vector index as separate key (large, needs mmap in file path)
-            if (emb_list_raw_index_) {
-                MemoryIOWriter writer;
-                faiss::cppcontrib::knowhere::write_index(emb_list_raw_index_.get(), &writer);
-                std::shared_ptr<uint8_t[]> raw_bin(writer.data());
-                binset.Append(meta::EMB_LIST_RAW_INDEX, raw_bin, writer.tellg());
-            }
-        } catch (const std::exception& e) {
-            LOG_KNOWHERE_WARNING_ << "serialize emb_list error: " << e.what();
-            return Status::emb_list_inner_error;
-        }
-
-        // 4. Serialize base index
-        return Serialize(binset);
-    }
+    SerializeEmbList(BinarySet& binset) const;
 
     /**
      * @brief Deserializes the index from a binary set, including the emb_list meta if is emb_list.
@@ -578,72 +470,7 @@ class IndexNode : public Object {
      * @brief Deserialize emb_list: base index, strategy, raw index, and ID mapping from BinarySet.
      */
     Status
-    DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_ptr<Config> config) {
-        auto& cfg = static_cast<knowhere::BaseConfig&>(*config);
-
-        // 1. Parse metric type
-        auto metric_info_or = ParseEmbListMetric(cfg);
-        if (!metric_info_or.has_value()) {
-            return metric_info_or.error();
-        }
-        el_metric_type_ = metric_info_or.value().el_metric_type;
-
-        // 2. Deserialize base index from BinarySet (override metric_type for base index)
-        cfg.metric_type = metric_info_or.value().sub_metric_type;
-        RETURN_IF_ERROR(Deserialize(binset, config));
-
-        try {
-            // 3. Read EMB_LIST_META and parse strategy type + strategy blob
-            auto meta_bin = binset.GetByName(meta::EMB_LIST_META);
-            if (!meta_bin) {
-                LOG_KNOWHERE_WARNING_ << "EMB_LIST_META not found in binary set";
-                return Status::emb_list_inner_error;
-            }
-
-            auto [strategy_type, strategy_blob, strategy_blob_size] =
-                ParseEmbListMetaHeader(meta_bin->data.get(), meta_bin->size);
-
-            // 4. Create strategy and deserialize strategy-specific data
-            auto strategy_or = CreateEmbListStrategy(strategy_type, cfg);
-            if (!strategy_or.has_value()) {
-                LOG_KNOWHERE_WARNING_ << "Failed to create emb_list strategy: " << strategy_type;
-                return strategy_or.error();
-            }
-            emb_list_strategy_ = std::move(strategy_or.value());
-
-            LOG_KNOWHERE_INFO_ << "Deserialize emb_list with strategy: " << strategy_type;
-            RETURN_IF_ERROR(emb_list_strategy_->Deserialize(strategy_blob, strategy_blob_size, cfg));
-
-            // 5. Deserialize raw vector index from BinarySet (if present)
-            auto raw_index_bin = binset.GetByName(meta::EMB_LIST_RAW_INDEX);
-            if (raw_index_bin) {
-                MemoryIOReader reader(raw_index_bin->data.get(), raw_index_bin->size);
-                auto* index = faiss::cppcontrib::knowhere::read_index(&reader);
-                auto* flat_index = dynamic_cast<faiss::cppcontrib::knowhere::IndexFlat*>(index);
-                if (flat_index == nullptr) {
-                    delete index;
-                    LOG_KNOWHERE_WARNING_ << "EMB_LIST_RAW_INDEX is not an IndexFlat";
-                    return Status::emb_list_inner_error;
-                }
-                emb_list_raw_index_.reset(flat_index);
-                LOG_KNOWHERE_INFO_ << "Loaded raw vector index: " << emb_list_raw_index_->ntotal << " vectors";
-            } else if (emb_list_strategy_->NeedsRawVectorStorage()) {
-                LOG_KNOWHERE_WARNING_ << "Strategy requires raw vector storage but EMB_LIST_RAW_INDEX not found";
-                return Status::emb_list_inner_error;
-            }
-
-            // 6. Set ID mapping if needed
-            if (emb_list_strategy_->NeedsBaseIndexIDMap()) {
-                emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
-                return SetBaseIndexIDMap();
-            }
-        } catch (const std::exception& e) {
-            LOG_KNOWHERE_WARNING_ << "deserialize emb_list error: " << e.what();
-            return Status::emb_list_inner_error;
-        }
-
-        return Status::success;
-    }
+    DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_ptr<Config> config);
 
     virtual bool
     LoadIndexWithStream() {
@@ -669,103 +496,7 @@ class IndexNode : public Object {
      * @brief Deserialize emb_list: base index, strategy, raw index, and ID mapping from files.
      */
     Status
-    DeserializeEmbListFromFile(const std::string& filename, std::shared_ptr<Config> config) {
-        auto& cfg = static_cast<knowhere::BaseConfig&>(*config);
-
-        // 1. Parse metric type
-        auto metric_info_or = ParseEmbListMetric(cfg);
-        if (!metric_info_or.has_value()) {
-            return metric_info_or.error();
-        }
-        el_metric_type_ = metric_info_or.value().el_metric_type;
-
-        // 2. Deserialize base index from file (override metric_type for base index)
-        cfg.metric_type = metric_info_or.value().sub_metric_type;
-        RETURN_IF_ERROR(DeserializeFromFile(filename, config));
-
-        // 3. Read meta file and parse strategy type + strategy blob
-        if (!cfg.emb_list_meta_file_path.has_value() || cfg.emb_list_meta_file_path.value().empty()) {
-            LOG_KNOWHERE_WARNING_ << "emb_list_meta_file is empty, but metric type is emb_list";
-            return Status::emb_list_inner_error;
-        }
-        auto emb_list_meta_file_path = cfg.emb_list_meta_file_path.value();
-
-        // Read entire meta file into memory
-        std::shared_ptr<uint8_t[]> file_data;
-        int64_t file_size = 0;
-        {
-            std::ifstream in(emb_list_meta_file_path, std::ios::binary | std::ios::ate);
-            if (!in) {
-                LOG_KNOWHERE_WARNING_ << "Failed to open emb_list meta file: " << emb_list_meta_file_path;
-                return Status::emb_list_inner_error;
-            }
-            file_size = static_cast<int64_t>(in.tellg());
-            in.seekg(0);
-            file_data = std::shared_ptr<uint8_t[]>(new uint8_t[file_size]);
-            in.read(reinterpret_cast<char*>(file_data.get()), file_size);
-            if (!in) {
-                LOG_KNOWHERE_WARNING_ << "Failed to read emb_list meta file: " << emb_list_meta_file_path;
-                return Status::emb_list_inner_error;
-            }
-        }
-
-        if (file_size < static_cast<int64_t>(sizeof(int32_t))) {
-            LOG_KNOWHERE_WARNING_ << "emb_list meta file too small: " << file_size;
-            return Status::emb_list_inner_error;
-        }
-
-        auto [strategy_type, strategy_blob, strategy_blob_size] = ParseEmbListMetaHeader(file_data.get(), file_size);
-
-        try {
-            // 4. Create strategy and deserialize strategy-specific data
-            auto strategy_or = CreateEmbListStrategy(strategy_type, cfg);
-            if (!strategy_or.has_value()) {
-                LOG_KNOWHERE_WARNING_ << "Failed to create emb_list strategy: " << strategy_type;
-                return strategy_or.error();
-            }
-            emb_list_strategy_ = std::move(strategy_or.value());
-
-            LOG_KNOWHERE_INFO_ << "Deserialize emb_list from file with strategy: " << strategy_type;
-            RETURN_IF_ERROR(emb_list_strategy_->Deserialize(strategy_blob, strategy_blob_size, cfg));
-
-            // 5. Load raw vector index from separate file (if strategy needs it)
-            if (emb_list_strategy_->NeedsRawVectorStorage()) {
-                if (!cfg.emb_list_raw_index_file_path.has_value() || cfg.emb_list_raw_index_file_path.value().empty()) {
-                    LOG_KNOWHERE_WARNING_ << "Strategy requires raw vector storage but "
-                                          << "emb_list_raw_index_file_path is empty";
-                    return Status::emb_list_inner_error;
-                }
-
-                int io_flags = 0;
-                if (cfg.enable_mmap.value()) {
-                    io_flags |= faiss::cppcontrib::knowhere::IO_FLAG_MMAP_IFC;
-                }
-
-                auto raw_index_file = cfg.emb_list_raw_index_file_path.value();
-                auto* index = faiss::cppcontrib::knowhere::read_index(raw_index_file.data(), io_flags);
-                auto* flat_index = dynamic_cast<faiss::cppcontrib::knowhere::IndexFlat*>(index);
-                if (flat_index == nullptr) {
-                    delete index;
-                    LOG_KNOWHERE_WARNING_ << "EMB_LIST_RAW_INDEX file is not an IndexFlat";
-                    return Status::emb_list_inner_error;
-                }
-                emb_list_raw_index_.reset(flat_index);
-                LOG_KNOWHERE_INFO_ << "Loaded raw vector index from file: " << emb_list_raw_index_->ntotal
-                                   << " vectors, mmap=" << cfg.enable_mmap.value();
-            }
-
-            // 6. Set ID mapping if needed
-            if (emb_list_strategy_->NeedsBaseIndexIDMap()) {
-                emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
-                return SetBaseIndexIDMap();
-            }
-        } catch (const std::exception& e) {
-            LOG_KNOWHERE_WARNING_ << "deserialize emb_list from file error: " << e.what();
-            return Status::emb_list_inner_error;
-        }
-
-        return Status::success;
-    }
+    DeserializeEmbListFromFile(const std::string& filename, std::shared_ptr<Config> config);
 
     virtual expected<DataSetPtr>
     SearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
@@ -855,7 +586,7 @@ class IndexNode : public Object {
     // into different representations for ANN search. Since the base index holds encoded
     // vectors (not raw), this IndexFlat stores original vectors for exact distance
     // computation during MaxSim reranking.
-    std::unique_ptr<faiss::cppcontrib::knowhere::IndexFlat> emb_list_raw_index_;
+    std::shared_ptr<faiss::cppcontrib::knowhere::IndexFlat> emb_list_raw_index_;
 };
 
 // Common superclass for iterators that expand search range as needed. Subclasses need
