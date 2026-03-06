@@ -25,17 +25,13 @@ pipeline {
                         def date = sh(returnStdout: true, script: 'date +%Y%m%d').trim()
                         def gitShortCommit = sh(returnStdout: true, script: "echo ${env.GIT_COMMIT} | cut -b 1-7 ").trim()
                         version="${env.CHANGE_ID}.${date}.${gitShortCommit}"
-                        sh "apt-get update || true"
-                        sh "apt-get install libaio-dev libcurl4-openssl-dev libdouble-conversion-dev libevent-dev libgflags-dev git -y"
-                        sh "pip3 install conan==1.65.0"
-                        sh "conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local"
+                        sh "source scripts/ci_deps.sh && install_base_deps && setup_conan_remote"
+                        // GPU-only: git not pre-installed in GPU build image
+                        sh "apt-get install -y git"
                         sh "cmake --version"
                         sh "nvidia-smi --query-gpu=name --format=csv,noheader"
-                        sh "./scripts/prepare_gpu_build.sh"
-                        sh "mkdir build"
-                        sh "cd build/ && conan install .. --update --build=missing -s compiler.cppstd=17 -s build_type=Release -o with_diskann=True -o with_ut=True -o with_cuvs=True -s compiler.libcxx=libstdc++11 \
-                              && conan build .. \
-                              && ./Release/tests/ut/knowhere_tests"
+                        sh "make WITH_GPU=True WITH_UT=True"
+                        sh "make test"
                     }
                 }
             }
