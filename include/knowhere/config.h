@@ -840,12 +840,12 @@ class BaseConfig : public Config {
         KNOWHERE_CONFIG_DECLARE_FIELD(muvera_num_projections)
             .description("Number of SimHash projections for MUVERA FDE, buckets = 2^projections")
             .set_default(4)
-            .set_range(1, 8)
+            .set_range(1, 7)
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(muvera_num_repeats)
             .description("Number of repeats for MUVERA FDE encoding")
             .set_default(7)
-            .set_range(1, 64)
+            .set_range(1, 32)
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(muvera_seed)
             .description("Random seed for MUVERA SimHash projection matrices")
@@ -868,7 +868,7 @@ class BaseConfig : public Config {
         KNOWHERE_CONFIG_DECLARE_FIELD(lemur_num_train_samples)
             .description("Number of training samples for LEMUR MLP")
             .set_default(20000)
-            .set_range(1000, 200000)
+            .set_range(1000, 100000)
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(lemur_num_epochs)
             .description("Number of training epochs for LEMUR MLP")

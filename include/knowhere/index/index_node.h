@@ -365,22 +365,14 @@ class IndexNode : public Object {
     BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
                  bool use_knowhere_build_pool = true) {
         auto& config = static_cast<BaseConfig&>(*cfg);
-        auto original_metric_type = config.metric_type.value();
 
         // 1. Parse metric types
-        auto el_metric_type_or = get_el_metric_type(original_metric_type);
-        if (!el_metric_type_or.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "Invalid metric type for emb_list: " << original_metric_type;
-            return Status::emb_list_inner_error;
+        auto metric_info_or = ParseEmbListMetric(config);
+        if (!metric_info_or.has_value()) {
+            return metric_info_or.error();
         }
-        el_metric_type_ = el_metric_type_or.value();
-
-        auto sub_metric_type_or = get_sub_metric_type(original_metric_type);
-        if (!sub_metric_type_or.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "Invalid sub metric type for emb_list: " << original_metric_type;
-            return Status::emb_list_inner_error;
-        }
-        auto sub_metric_type = sub_metric_type_or.value();
+        el_metric_type_ = metric_info_or.value().el_metric_type;
+        auto sub_metric_type = metric_info_or.value().sub_metric_type;
 
         // 2. Create document offset structure
         EmbListOffset doc_offset(lims, num_rows);
@@ -394,24 +386,24 @@ class IndexNode : public Object {
         }
         emb_list_strategy_ = std::move(strategy_or.value());
 
-        // 4. Prepare data for build (strategy may transform data, e.g., FDE encoding)
+        // 4. Prepare data for build (strategy may transform data, e.g., FDE encoding in MUVERA)
         auto build_data_or = emb_list_strategy_->PrepareDataForBuild(dataset, doc_offset, config);
         if (!build_data_or.has_value()) {
             LOG_KNOWHERE_WARNING_ << "Failed to prepare data for build";
             return build_data_or.error();
         }
 
-        // 5. Override metric_type to sub_metric for base index build
+        // Override metric_type to sub_metric for base index build
         config.metric_type = sub_metric_type;
 
-        // 6. Build underlying index (if strategy provides data)
+        // 5. Build underlying index (if strategy provides data)
         LOG_KNOWHERE_INFO_ << "Build EmbList-Index with strategy: " << strategy_type
-                           << ", metric type: " << original_metric_type << ", sub metric type: " << sub_metric_type;
+                           << ", metric type: " << el_metric_type_ << ", sub metric type: " << sub_metric_type;
         if (build_data_or.value().has_value()) {
             RETURN_IF_ERROR(Build(build_data_or.value().value(), cfg, use_knowhere_build_pool));
         }
 
-        // 5.5 Create raw vector storage if strategy needs it
+        // 6. Create raw vector storage if strategy needs it
         if (emb_list_strategy_->NeedsRawVectorStorage()) {
             auto original_dim = dataset->GetDim();
             auto total_vectors = dataset->GetRows();
@@ -430,10 +422,13 @@ class IndexNode : public Object {
             LOG_KNOWHERE_INFO_ << "Created raw vector storage: " << total_vectors << " vectors, dim=" << original_dim;
         }
 
-        // 6. Strategy post-build hook
+        // 7. Strategy post-build hook
         RETURN_IF_ERROR(emb_list_strategy_->OnBuildComplete(dataset, doc_offset, config));
 
-        // 7. Set ID mapping if strategy requires it (Direct needs vector->doc mapping)
+        // 8. Set ID mapping if strategy requires it (Direct needs vector->doc mapping)
+        // When using emb_list, all filtering bitset checks are performed at the emb_list level,
+        // not at the individual vector level. This means that whenever the index needs to check whether
+        // a vector is masked (filtered out), it must first map the vector's idx to its corresponding emb_list idx.
         if (emb_list_strategy_->NeedsBaseIndexIDMap()) {
             emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
             return SetBaseIndexIDMap();
@@ -511,6 +506,14 @@ class IndexNode : public Object {
             return Serialize(binset);
         }
 
+        return SerializeEmbList(binset);
+    }
+
+    /**
+     * @brief Serialize emb_list: strategy meta, raw index, and base index to BinarySet.
+     */
+    Status
+    SerializeEmbList(BinarySet& binset) const {
         LOG_KNOWHERE_INFO_ << "Serialize emb_list with strategy: " << emb_list_strategy_->Type();
         try {
             // 1. Get strategy blob
@@ -572,53 +575,6 @@ class IndexNode : public Object {
     }
 
     /**
-     * @brief Parse emb_list metric type from config, set el_metric_type_ and override cfg.metric_type to sub metric.
-     */
-    Status
-    ParseAndSetEmbListMetric(BaseConfig& cfg) {
-        el_metric_type_ = get_el_metric_type(cfg.metric_type.value()).value();
-        auto sub_metric_type_or = get_sub_metric_type(cfg.metric_type.value());
-        if (!sub_metric_type_or.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "Invalid sub metric type: " << cfg.metric_type.value();
-            return Status::emb_list_inner_error;
-        }
-        cfg.metric_type = sub_metric_type_or.value();
-        return Status::success;
-    }
-
-    /**
-     * @brief Parse EMB_LIST_META header from raw bytes.
-     *
-     * Detects format by magic number:
-     * - New format: [int32_t magic][size_t type_len][char[type_len] type][uint8_t[] strategy_blob]
-     * - Legacy format (tokenann only): entire blob is [size_t count][size_t[count] offsets]
-     */
-    struct EmbListMetaHeader {
-        std::string strategy_type;
-        const uint8_t* strategy_blob;
-        int64_t strategy_blob_size;
-    };
-
-    static EmbListMetaHeader
-    ParseEmbListMetaHeader(const uint8_t* data, int64_t size) {
-        int32_t magic = 0;
-        std::memcpy(&magic, data, sizeof(int32_t));
-
-        if (magic == kEmbListMetaMagic) {
-            const uint8_t* ptr = data + sizeof(int32_t);
-            size_t type_len = 0;
-            std::memcpy(&type_len, ptr, sizeof(size_t));
-            ptr += sizeof(size_t);
-            std::string strategy_type(reinterpret_cast<const char*>(ptr), type_len);
-            ptr += type_len;
-            int64_t strategy_blob_size = size - sizeof(int32_t) - sizeof(size_t) - type_len;
-            return {std::move(strategy_type), ptr, strategy_blob_size};
-        } else {
-            return {meta::EMB_LIST_STRATEGY_TOKENANN, data, size};
-        }
-    }
-
-    /**
      * @brief Deserialize emb_list: base index, strategy, raw index, and ID mapping from BinarySet.
      */
     Status
@@ -626,9 +582,14 @@ class IndexNode : public Object {
         auto& cfg = static_cast<knowhere::BaseConfig&>(*config);
 
         // 1. Parse metric type
-        RETURN_IF_ERROR(ParseAndSetEmbListMetric(cfg));
+        auto metric_info_or = ParseEmbListMetric(cfg);
+        if (!metric_info_or.has_value()) {
+            return metric_info_or.error();
+        }
+        el_metric_type_ = metric_info_or.value().el_metric_type;
 
-        // 2. Deserialize base index from BinarySet
+        // 2. Deserialize base index from BinarySet (override metric_type for base index)
+        cfg.metric_type = metric_info_or.value().sub_metric_type;
         RETURN_IF_ERROR(Deserialize(binset, config));
 
         try {
@@ -712,9 +673,14 @@ class IndexNode : public Object {
         auto& cfg = static_cast<knowhere::BaseConfig&>(*config);
 
         // 1. Parse metric type
-        RETURN_IF_ERROR(ParseAndSetEmbListMetric(cfg));
+        auto metric_info_or = ParseEmbListMetric(cfg);
+        if (!metric_info_or.has_value()) {
+            return metric_info_or.error();
+        }
+        el_metric_type_ = metric_info_or.value().el_metric_type;
 
-        // 2. Deserialize base index from file
+        // 2. Deserialize base index from file (override metric_type for base index)
+        cfg.metric_type = metric_info_or.value().sub_metric_type;
         RETURN_IF_ERROR(DeserializeFromFile(filename, config));
 
         // 3. Read meta file and parse strategy type + strategy blob
@@ -764,8 +730,7 @@ class IndexNode : public Object {
 
             // 5. Load raw vector index from separate file (if strategy needs it)
             if (emb_list_strategy_->NeedsRawVectorStorage()) {
-                if (!cfg.emb_list_raw_index_file_path.has_value() ||
-                    cfg.emb_list_raw_index_file_path.value().empty()) {
+                if (!cfg.emb_list_raw_index_file_path.has_value() || cfg.emb_list_raw_index_file_path.value().empty()) {
                     LOG_KNOWHERE_WARNING_ << "Strategy requires raw vector storage but "
                                           << "emb_list_raw_index_file_path is empty";
                     return Status::emb_list_inner_error;
@@ -847,6 +812,39 @@ class IndexNode : public Object {
     virtual expected<std::vector<IteratorPtr>>
     AnnIteratorEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                              bool use_knowhere_search_pool = true, milvus::OpContext* op_context = nullptr) const;
+
+ protected:
+    /**
+     * @brief Parse EMB_LIST_META header from raw bytes.
+     *
+     * Detects format by magic number:
+     * - New format: [int32_t magic][size_t type_len][char[type_len] type][uint8_t[] strategy_blob]
+     * - Legacy format (tokenann only): entire blob is [size_t count][size_t[count] offsets]
+     */
+    struct EmbListMetaHeader {
+        std::string strategy_type;
+        const uint8_t* strategy_blob;
+        int64_t strategy_blob_size;
+    };
+
+    static EmbListMetaHeader
+    ParseEmbListMetaHeader(const uint8_t* data, int64_t size) {
+        int32_t magic = 0;
+        std::memcpy(&magic, data, sizeof(int32_t));
+
+        if (magic == kEmbListMetaMagic) {
+            const uint8_t* ptr = data + sizeof(int32_t);
+            size_t type_len = 0;
+            std::memcpy(&type_len, ptr, sizeof(size_t));
+            ptr += sizeof(size_t);
+            std::string strategy_type(reinterpret_cast<const char*>(ptr), type_len);
+            ptr += type_len;
+            int64_t strategy_blob_size = size - sizeof(int32_t) - sizeof(size_t) - type_len;
+            return {std::move(strategy_type), ptr, strategy_blob_size};
+        } else {
+            return {meta::EMB_LIST_STRATEGY_TOKENANN, data, size};
+        }
+    }
 
  protected:
     Version version_;

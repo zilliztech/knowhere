@@ -122,14 +122,6 @@ constexpr const char* EMB_LIST_RAW_INDEX = "EMB_LIST_RAW_INDEX";
 constexpr const char* EMB_LIST_STRATEGY_TOKENANN = "tokenann";
 constexpr const char* EMB_LIST_STRATEGY_MUVERA = "muvera";
 constexpr const char* EMB_LIST_STRATEGY_LEMUR = "lemur";
-
-// muvera meta
-constexpr const char* MUVERA_CONFIG = "MUVERA_CONFIG";
-
-// lemur meta
-constexpr const char* LEMUR_CONFIG = "LEMUR_CONFIG";
-constexpr const char* LEMUR_MLP = "LEMUR_MLP";
-constexpr const char* LEMUR_W = "LEMUR_W";
 };  // namespace meta
 
 namespace indexparam {

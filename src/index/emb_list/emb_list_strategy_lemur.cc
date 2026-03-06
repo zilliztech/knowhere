@@ -109,6 +109,21 @@ class LemurEmbListStrategy : public EmbListStrategy {
         // 3. Sample training vectors (reservoir sampling: O(actual_samples) memory)
         std::mt19937 rng(seed_);
         int32_t actual_samples = std::min(num_train_samples_, static_cast<int32_t>(total_vectors));
+        // Memory check: peak usage is ~2 × actual_samples × num_docs × 4B (y_train + y_train_raw)
+        // plus actual_samples × original_dim × 4B (X_train). Cap at 4GB to avoid OOM.
+        constexpr size_t kMaxTrainingMemoryBytes = 4ULL * 1024 * 1024 * 1024;  // 4GB
+        size_t label_matrix_bytes = static_cast<size_t>(actual_samples) * num_docs_ * sizeof(float);
+        size_t estimated_peak_bytes =
+            2 * label_matrix_bytes + static_cast<size_t>(actual_samples) * original_dim_ * sizeof(float);
+        if (estimated_peak_bytes > kMaxTrainingMemoryBytes) {
+            LOG_KNOWHERE_ERROR_ << "LEMUR: estimated training memory " << (estimated_peak_bytes >> 20)
+                                << " MB exceeds limit " << (kMaxTrainingMemoryBytes >> 20) << " MB"
+                                << " (actual_samples=" << actual_samples << ", num_docs=" << num_docs_ << ")";
+            return expected<std::optional<DataSetPtr>>::Err(
+                Status::emb_list_inner_error,
+                "LEMUR training memory exceeds 4GB limit, reduce num_train_samples or num_docs");
+        }
+
         std::vector<int32_t> sample_indices(actual_samples);
         std::iota(sample_indices.begin(), sample_indices.end(), 0);
         for (size_t i = actual_samples; i < total_vectors; ++i) {
@@ -165,7 +180,7 @@ class LemurEmbListStrategy : public EmbListStrategy {
         // SimpleMLP(input_dim, output_dim, hidden_dim, final_hidden_dim, num_layers, seed)
         auto train_start = std::chrono::high_resolution_clock::now();
         mlp_ = std::make_unique<SimpleMLP>(original_dim_, static_cast<int32_t>(num_docs_), hidden_dim_, hidden_dim_,
-                                               num_layers_, seed_);
+                                           num_layers_, seed_);
         float final_loss =
             mlp_->Train(X_train.data(), y_train.data(), actual_samples, num_epochs_, batch_size_, learning_rate_);
         mlp_->ReleaseTrainingBuffers();
@@ -327,8 +342,8 @@ class LemurEmbListStrategy : public EmbListStrategy {
         int32_t ann_k;
         if (do_rerank) {
             auto retrieval_ann_ratio = config.retrieval_ann_ratio.value();
-            ann_k = std::min(std::max(static_cast<int32_t>(k * retrieval_ann_ratio), 1),
-                            static_cast<int32_t>(num_docs_));
+            ann_k =
+                std::min(std::max(static_cast<int32_t>(k * retrieval_ann_ratio), 1), static_cast<int32_t>(num_docs_));
         } else {
             ann_k = std::min(k, static_cast<int32_t>(num_docs_));
         }
@@ -589,8 +604,7 @@ class LemurEmbListStrategy : public EmbListStrategy {
 
         LOG_KNOWHERE_INFO_ << "LEMUR Deserialize config (v" << version << "): hidden_dim=" << hidden_dim_
                            << ", final_hidden_dim=" << final_hidden_dim_ << ", num_layers=" << num_layers_
-                           << ", original_dim=" << original_dim_ << ", num_docs=" << num_docs_
-                           << ", is_l2=" << is_l2_;
+                           << ", original_dim=" << original_dim_ << ", num_docs=" << num_docs_ << ", is_l2=" << is_l2_;
 
         if (num_docs_ > std::numeric_limits<int32_t>::max()) {
             LOG_KNOWHERE_ERROR_ << "LEMUR: num_docs " << num_docs_ << " exceeds int32 limit";
@@ -611,8 +625,7 @@ class LemurEmbListStrategy : public EmbListStrategy {
             mlp_ptr += sizeof(int32_t);
 
             if (saved_num_layers != num_layers_) {
-                LOG_KNOWHERE_ERROR_ << "LEMUR: saved num_layers " << saved_num_layers
-                                    << " != expected " << num_layers_;
+                LOG_KNOWHERE_ERROR_ << "LEMUR: saved num_layers " << saved_num_layers << " != expected " << num_layers_;
                 return Status::emb_list_inner_error;
             }
 
@@ -790,7 +803,8 @@ class LemurEmbListStrategy : public EmbListStrategy {
         }
 
         // Initialize labels to -inf
-        std::fill(labels, labels + static_cast<size_t>(num_samples) * num_docs, -std::numeric_limits<float>::infinity());
+        std::fill(labels, labels + static_cast<size_t>(num_samples) * num_docs,
+                  -std::numeric_limits<float>::infinity());
 
         // Build doc-aligned chunks: each chunk contains complete docs.
         // Target ~50K vectors per chunk so each thread's sgemm output (kSampleBatchSize * chunk_vecs * 4B)

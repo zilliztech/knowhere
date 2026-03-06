@@ -221,15 +221,13 @@ IndexNode::SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, 
     // 2. Parse config and metric types
     auto& config = static_cast<BaseConfig&>(*cfg);
     auto target_k = config.k.value();
-    auto metric_type = config.metric_type.value();
 
     // Parse sub metric type for underlying ANN search
-    auto sub_metric_type_or = get_sub_metric_type(metric_type);
-    if (!sub_metric_type_or.has_value()) {
-        LOG_KNOWHERE_WARNING_ << "Invalid metric type: " << metric_type;
-        return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "invalid metric type");
+    auto metric_info_or = ParseEmbListMetric(config);
+    if (!metric_info_or.has_value()) {
+        return expected<DataSetPtr>::Err(metric_info_or.error(), metric_info_or.what());
     }
-    auto sub_metric_type = sub_metric_type_or.value();
+    auto sub_metric_type = metric_info_or.value().sub_metric_type;
 
     // 3. Build search context with callbacks
     EmbListSearchContext ctx;

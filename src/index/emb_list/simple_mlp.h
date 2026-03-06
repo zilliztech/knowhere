@@ -364,8 +364,8 @@ class SimpleMLP {
             // Log training progress
             bool should_log = (epoch == 0) || (epoch == epochs - 1) || ((epoch + 1) % log_interval == 0);
             if (should_log) {
-                LOG_KNOWHERE_INFO_ << "[LEMUR MLP] Epoch " << (epoch + 1) << "/" << epochs << ", Loss: " << final_loss
-                                   << ", Time: " << epoch_ms << " ms";
+                LOG_KNOWHERE_DEBUG_ << "[LEMUR MLP] Epoch " << (epoch + 1) << "/" << epochs << ", Loss: " << final_loss
+                                    << ", Time: " << epoch_ms << " ms";
             }
 
             // Early stopping check

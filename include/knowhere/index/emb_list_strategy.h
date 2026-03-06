@@ -48,7 +48,7 @@ using AnnResultIteratorPtr = std::shared_ptr<AnnResultIterator>;
  */
 struct EmbListSearchContext {
     /**
-     * @brief Execute ANN search on the underlying index.
+     * @brief Execute ANN search on the underlying base index.
      *
      * @param query Query dataset
      * @param k Number of results per query
@@ -57,13 +57,11 @@ struct EmbListSearchContext {
     std::function<expected<DataSetPtr>(const DataSetPtr query, int32_t k)> ann_search;
 
     /**
-     * @brief Get ANN iterators for incremental result fetching.
-     *
-     * Returns one iterator per query vector. Use this when you need to collect
-     * results incrementally (e.g., until enough unique docs are found).
+     * @brief Get ANN iterators for incremental result fetching. Used by TokenANN
+     * to merge results from multiple query vectors and collect unique docs.
      *
      * @param query Query dataset [nq, dim]
-     * @return Vector of iterators, one per query
+     * @return Vector of iterators, one per query vector
      */
     std::function<expected<std::vector<AnnResultIteratorPtr>>(const DataSetPtr query)> ann_iterator;
 
@@ -235,7 +233,8 @@ DeserializeEmbListOffsetFromBytes(const uint8_t* ptr, std::shared_ptr<EmbListOff
  *
  * - TokenANN: Index all vectors, search at vector level, aggregate to document level
  * - MUVERA: Encode each document to single vector (FDE), search encoded vectors, rerank with MaxSim
- * - PLAID: Use centroid-based retrieval with inverted index, then exact MaxSim
+ * - LEMUR: Learn MLP to compress documents to fixed-dim vectors, ANN search on learned representations, rerank with
+ * MaxSim
  *
  * Strategies have full control over the search flow and can implement arbitrary
  * multi-stage pipelines.
@@ -260,7 +259,7 @@ class EmbListStrategy {
      *
      * TokenANN: returns original dataset (index all N vectors)
      * MUVERA: returns FDE-encoded dataset [M, encoded_dim] where M = num_docs
-     * PLAID: returns centroid vectors for ANN indexing
+     * LEMUR: returns learned W matrix [num_docs, hidden_dim] for ANN indexing
      */
     virtual expected<std::optional<DataSetPtr>>
     PrepareDataForBuild(const DataSetPtr dataset, const EmbListOffset& doc_offset, const BaseConfig& config) = 0;
@@ -359,7 +358,7 @@ class EmbListStrategy {
      *
      * TokenANN: original dim
      * MUVERA: encoded dim
-     * PLAID: centroid dim (same as original)
+     * LEMUR: hidden dim (learned representation)
      *
      * Returns 0 if strategy doesn't use ANN index.
      */
