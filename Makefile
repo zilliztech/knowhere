@@ -21,6 +21,7 @@ CONAN_BASE_FLAGS := --update --build=missing -o with_diskann=True
 WITH_GPU ?=
 WITH_UT ?=
 WITH_ASAN ?=
+WITH_CARDINAL ?=
 WITH_DEBUG ?=
 WITH_MACOS ?=
 # Set False to disable compiler.cppstd=17 (legacy release pipelines)
@@ -59,6 +60,10 @@ endif
 
 ifdef WITH_ASAN
     CONAN_FLAGS += -o with_asan=True
+endif
+
+ifdef WITH_CARDINAL
+    CONAN_FLAGS += -o with_cardinal=True
 endif
 
 .PHONY: build test \
@@ -122,6 +127,7 @@ help: ## Show available targets
 	@echo "  WITH_GPU=True      Enable GPU (cuVS) build"
 	@echo "  WITH_UT=True       Enable unit tests"
 	@echo "  WITH_ASAN=True     Enable AddressSanitizer"
+	@echo "  WITH_CARDINAL=True Enable Cardinal build"
 	@echo "  WITH_DEBUG=True    Debug build (default: Release)"
 	@echo "  WITH_MACOS=True    Use macOS conventions (libc++)"
 	@echo "  WITH_CPPSTD=False  Disable compiler.cppstd=17 (legacy release)"
