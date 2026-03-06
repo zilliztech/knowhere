@@ -245,7 +245,7 @@ struct Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE> {
 template <typename T>
 class EntryAccess {
  public:
-    EntryAccess(Entry<T>* entry) : entry(entry){};
+    EntryAccess(Entry<T>* entry) : entry(entry) {};
 
     EntryAccess&
     set_default(const typename T::value_type dft) {
@@ -632,8 +632,30 @@ class BaseConfig : public Config {
      * - A factor for top-k in the first ANNS round.
      */
     CFG_FLOAT retrieval_ann_ratio;
-    CFG_STRING emb_list_meta_file_path;    // for mmap
-    CFG_STRING emb_list_offset_file_path;  // for build
+    CFG_STRING emb_list_meta_file_path;       // for mmap
+    CFG_STRING emb_list_raw_index_file_path;  // for mmap (raw vector index)
+    CFG_STRING emb_list_offset_file_path;     // for build
+    /*
+     * emb_list_strategy: encoding strategy for multi-vector documents.
+     * - "tokenann": Index all vectors, aggregate scores at search time (default)
+     * - "muvera": Encode documents to single vectors using FDE, rerank with MaxSim
+     */
+    CFG_STRING emb_list_strategy;
+    CFG_FLOAT emb_list_rerank_ratio;  // rerank candidate ratio for MUVERA
+    CFG_INT muvera_num_projections;   // FDE projections count, buckets = 2^projections
+    CFG_INT muvera_num_repeats;       // FDE repeat count (independent encodings)
+    CFG_INT muvera_seed;              // random seed for SimHash projection matrices
+    CFG_BOOL muvera_store_raw_data;   // store raw data for reranking
+    CFG_BOOL muvera_rerank;           // whether to perform MaxSim reranking (trade recall for latency)
+    // LEMUR config
+    CFG_INT lemur_hidden_dim;         // hidden dimension for LEMUR MLP (compressed representation)
+    CFG_INT lemur_num_train_samples;  // number of training samples for MLP
+    CFG_INT lemur_num_epochs;         // number of training epochs
+    CFG_INT lemur_batch_size;         // batch size for MLP training
+    CFG_FLOAT lemur_learning_rate;    // learning rate for MLP training
+    CFG_INT lemur_seed;               // random seed for LEMUR
+    CFG_INT lemur_num_layers;         // number of layers in feature_extractor
+    CFG_BOOL lemur_rerank;            // whether to perform MaxSim reranking
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(dim).allow_empty_without_default().description("vector dim").for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
@@ -796,10 +818,83 @@ class BaseConfig : public Config {
             .allow_empty_without_default()
             .for_deserialize()
             .for_deserialize_from_file();
+        KNOWHERE_CONFIG_DECLARE_FIELD(emb_list_raw_index_file_path)
+            .description("file name of emb_list raw vector index for mmap load")
+            .allow_empty_without_default()
+            .for_deserialize_from_file();
         KNOWHERE_CONFIG_DECLARE_FIELD(emb_list_offset_file_path)
             .description("file name of emb_list offsets for build")
             .allow_empty_without_default()
             .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(emb_list_strategy)
+            .description("EmbList encoding strategy: tokenann or muvera")
+            .set_default("tokenann")
+            .for_train()
+            .for_deserialize()
+            .for_deserialize_from_file();
+        KNOWHERE_CONFIG_DECLARE_FIELD(emb_list_rerank_ratio)
+            .description("Rerank candidate ratio for MUVERA strategy")
+            .set_default(10.0f)
+            .set_range(1.0f, 1000.0f)
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(muvera_num_projections)
+            .description("Number of SimHash projections for MUVERA FDE, buckets = 2^projections")
+            .set_default(4)
+            .set_range(1, 8)
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(muvera_num_repeats)
+            .description("Number of repeats for MUVERA FDE encoding")
+            .set_default(7)
+            .set_range(1, 64)
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(muvera_seed)
+            .description("Random seed for MUVERA SimHash projection matrices")
+            .set_default(42)
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(muvera_store_raw_data)
+            .description("Whether to store raw data for MUVERA reranking")
+            .set_default(true)
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(muvera_rerank)
+            .description("Whether to perform MaxSim reranking after ANN search (false = trade recall for latency)")
+            .set_default(true)
+            .for_search();
+        // LEMUR config
+        KNOWHERE_CONFIG_DECLARE_FIELD(lemur_hidden_dim)
+            .description("Hidden dimension for LEMUR MLP (compressed representation dimension)")
+            .set_default(256)
+            .set_range(32, 4096)
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(lemur_num_train_samples)
+            .description("Number of training samples for LEMUR MLP")
+            .set_default(20000)
+            .set_range(1000, 200000)
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(lemur_num_epochs)
+            .description("Number of training epochs for LEMUR MLP")
+            .set_default(50)
+            .set_range(1, 1000)
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(lemur_batch_size)
+            .description("Batch size for LEMUR MLP training")
+            .set_default(512)
+            .set_range(1, 4096)
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(lemur_learning_rate)
+            .description("Learning rate for LEMUR MLP training")
+            .set_default(0.001f)
+            .set_range(0.00001f, 1.0f)
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(lemur_seed).description("Random seed for LEMUR").set_default(42).for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(lemur_num_layers)
+            .description("Number of layers in LEMUR feature_extractor")
+            .set_default(2)
+            .set_range(1, 8)
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(lemur_rerank)
+            .description("Whether to perform MaxSim reranking after ANN search")
+            .set_default(true)
+            .for_search();
     }
 };
 }  // namespace knowhere

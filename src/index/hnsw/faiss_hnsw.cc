@@ -1534,12 +1534,16 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     knowhere::checkCancellation(op_context);
                     // set up a distance computer
                     std::unique_ptr<faiss::DistanceComputer> dist_computer;
-                    const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
-                        dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(indexes[index_id].get());
-                    if (index_refine != nullptr) {
-                        dist_computer.reset(index_refine->refine_index->get_distance_computer());
+                    if (emb_list_raw_index_) {
+                        dist_computer.reset(emb_list_raw_index_->get_distance_computer());
                     } else {
-                        dist_computer.reset(indexes[index_id]->get_distance_computer());
+                        const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
+                            dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(indexes[index_id].get());
+                        if (index_refine != nullptr) {
+                            dist_computer.reset(index_refine->refine_index->get_distance_computer());
+                        } else {
+                            dist_computer.reset(indexes[index_id]->get_distance_computer());
+                        }
                     }
 
                     // set up a query
@@ -1555,7 +1559,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     dist_computer->set_query(cur_query);
                     for (auto j = 0; j < labels_len; j++) {
                         auto id = labels[j];
-                        if (indexes.size() > 1) {
+                        if (!emb_list_raw_index_ && indexes.size() > 1) {
                             id = label_to_internal_offset[labels[j]] - index_rows_sum[index_id];
                         }
                         distances[idx * labels_len + j] = (*dist_computer)(id);
@@ -2353,7 +2357,97 @@ class HNSWIndexNodeWithFallback : public IndexNode {
         } else {
             return fallback_search_index->CalcDistByIDs(dataset, bitset, labels, labels_len, is_cosine, op_context);
         }
-    };
+    }
+
+    Status
+    BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
+                       bool use_knowhere_build_pool = true) override {
+        if (use_base_index) {
+            return base_index->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+        } else {
+            return fallback_search_index->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+        }
+    }
+
+    Status
+    AddEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
+                     bool use_knowhere_build_pool = true) override {
+        if (use_base_index) {
+            return base_index->AddEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+        } else {
+            return fallback_search_index->AddEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+        }
+    }
+
+    Status
+    BulidAsyncEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
+                            const Interrupt* interrupt = nullptr) override {
+        if (use_base_index) {
+            return base_index->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt);
+        } else {
+            return fallback_search_index->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt);
+        }
+    }
+
+    Status
+    SerializeEmbListIfNeed(BinarySet& binset) const override {
+        if (use_base_index) {
+            return base_index->SerializeEmbListIfNeed(binset);
+        } else {
+            return fallback_search_index->SerializeEmbListIfNeed(binset);
+        }
+    }
+
+    Status
+    DeserializeEmbListIfNeed(const BinarySet& binset, std::shared_ptr<Config> config) override {
+        if (use_base_index) {
+            return base_index->DeserializeEmbListIfNeed(binset, std::move(config));
+        } else {
+            return fallback_search_index->DeserializeEmbListIfNeed(binset, std::move(config));
+        }
+    }
+
+    Status
+    DeserializeFromFileIfNeed(const std::string& filename, std::shared_ptr<Config> config) override {
+        if (use_base_index) {
+            return base_index->DeserializeFromFileIfNeed(filename, std::move(config));
+        } else {
+            return fallback_search_index->DeserializeFromFileIfNeed(filename, std::move(config));
+        }
+    }
+
+    expected<DataSetPtr>
+    SearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
+                        milvus::OpContext* op_context = nullptr) const override {
+        if (use_base_index) {
+            return base_index->SearchEmbListIfNeed(dataset, std::move(config), bitset, op_context);
+        } else {
+            return fallback_search_index->SearchEmbListIfNeed(dataset, std::move(config), bitset, op_context);
+        }
+    }
+
+    expected<DataSetPtr>
+    RangeSearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                             milvus::OpContext* op_context = nullptr) const override {
+        if (use_base_index) {
+            return base_index->RangeSearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
+        } else {
+            return fallback_search_index->RangeSearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
+        }
+    }
+
+    expected<std::vector<IteratorPtr>>
+    AnnIteratorEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                             bool use_knowhere_search_pool = true,
+                             milvus::OpContext* op_context = nullptr) const override {
+        if (use_base_index) {
+            return base_index->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), bitset, use_knowhere_search_pool,
+                                                        op_context);
+        } else {
+            return fallback_search_index->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), bitset,
+                                                                    use_knowhere_search_pool, op_context);
+        }
+    }
 
  protected:
     bool use_base_index = true;
