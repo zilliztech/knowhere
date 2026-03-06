@@ -21,7 +21,8 @@ CONAN_BASE_FLAGS := --update --build=missing -s compiler.libcxx=libstdc++11 -s b
 WITH_GPU ?=
 WITH_UT ?=
 WITH_ASAN ?=
-WITH_CPPSTD ?= True  # Set False to disable compiler.cppstd=17 (legacy release pipelines)
+# Set False to disable compiler.cppstd=17 (legacy release pipelines)
+WITH_CPPSTD ?= True
 
 # ---------- Compose conan flags from user flags ----------
 CONAN_FLAGS := $(CONAN_BASE_FLAGS) --build=liburing
