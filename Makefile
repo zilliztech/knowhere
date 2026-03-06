@@ -14,22 +14,39 @@ BUILD_DIR := $(PWD)/build
 SHELL := /bin/bash
 
 # Conan base flags (single source of truth for all pipelines)
-CONAN_BASE_FLAGS := --update --build=missing -s compiler.libcxx=libstdc++11 -s build_type=Release -o with_diskann=True
+CONAN_BASE_FLAGS := --update --build=missing -o with_diskann=True
 
 # ---------- User-facing build flags ----------
-# Usage: make WITH_GPU=True WITH_UT=True WITH_ASAN=True
+# Usage: make WITH_GPU=True WITH_UT=True WITH_ASAN=True WITH_DEBUG=True
 WITH_GPU ?=
 WITH_UT ?=
 WITH_ASAN ?=
+WITH_DEBUG ?=
+WITH_MACOS ?=
 # Set False to disable compiler.cppstd=17 (legacy release pipelines)
 WITH_CPPSTD ?= True
 
-# ---------- Compose conan flags from user flags ----------
-CONAN_FLAGS := $(CONAN_BASE_FLAGS) --build=liburing
+# ---------- Derived settings ----------
+ifdef WITH_DEBUG
+    BUILD_TYPE := Debug
+else
+    BUILD_TYPE := Release
+endif
 
+ifdef WITH_MACOS
+    LIBCXX := libc++
+else
+    LIBCXX := libstdc++11
+endif
+
+# ---------- Compose conan flags from user flags ----------
+CONAN_FLAGS := $(CONAN_BASE_FLAGS) -s compiler.libcxx=$(LIBCXX) -s build_type=$(BUILD_TYPE)
+
+# GPU builds use cuVS; CPU builds need liburing built from source.
 ifdef WITH_GPU
-    # GPU builds don't need liburing; add cuVS instead
-    CONAN_FLAGS := $(CONAN_BASE_FLAGS) -o with_cuvs=True
+    CONAN_FLAGS += -o with_cuvs=True
+else
+    CONAN_FLAGS += --build=liburing
 endif
 
 ifeq ($(WITH_CPPSTD),True)
@@ -64,13 +81,13 @@ endif
 # ---------- Test ----------
 
 test: ## Run unit tests (requires prior build with WITH_UT=True)
-	@$(BUILD_DIR)/Release/tests/ut/knowhere_tests
+	@$(BUILD_DIR)/$(BUILD_TYPE)/tests/ut/knowhere_tests
 
 # ---------- Code quality ----------
 
 lint: ## Run clang-tidy (requires a prior build)
 	@$(PWD)/scripts/prepare_clang_tidy.sh
-	@find src -type f -name '*.cc' | xargs run-clang-tidy -quiet -p=$(BUILD_DIR)/Release
+	@find src -type f -name '*.cc' | xargs run-clang-tidy -quiet -p=$(BUILD_DIR)/$(BUILD_TYPE)
 
 format: ## Run clang-format via pre-commit
 	@pre-commit run clang-format --all-files
@@ -105,6 +122,8 @@ help: ## Show available targets
 	@echo "  WITH_GPU=True      Enable GPU (cuVS) build"
 	@echo "  WITH_UT=True       Enable unit tests"
 	@echo "  WITH_ASAN=True     Enable AddressSanitizer"
+	@echo "  WITH_DEBUG=True    Debug build (default: Release)"
+	@echo "  WITH_MACOS=True    Use macOS conventions (libc++)"
 	@echo "  WITH_CPPSTD=False  Disable compiler.cppstd=17 (legacy release)"
 	@echo ""
 	@echo "Examples:"
@@ -112,4 +131,6 @@ help: ## Show available targets
 	@echo "  make WITH_GPU=True                # GPU release"
 	@echo "  make WITH_UT=True WITH_ASAN=True  # CPU UT + ASAN"
 	@echo "  make WITH_GPU=True WITH_UT=True   # GPU UT"
+	@echo "  make WITH_DEBUG=True WITH_UT=True # CPU debug + UT"
+	@echo "  make WITH_MACOS=True              # macOS CPU release"
 	@echo ""
