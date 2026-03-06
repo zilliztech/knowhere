@@ -30,7 +30,8 @@ pipeline {
                         sh "apt-get install -y git"
                         sh "cmake --version"
                         sh "nvidia-smi --query-gpu=name --format=csv,noheader"
-                        sh "make ut-gpu"
+                        sh "make WITH_GPU=True WITH_UT=True"
+                        sh "make test"
                     }
                 }
             }

@@ -46,7 +46,8 @@ jobs:
           os: ubuntu-22.04
       - name: Build
         run: |
-          make ut
+          make WITH_UT=True WITH_ASAN=True
+          make test
       - name: Save Cache
         uses: ./.github/actions/cache-save
         with:
@@ -81,7 +82,7 @@ jobs:
           os: ubuntu-22.04
       - name: Build
         run: |
-          make build-release
+          make
       - name: Save Cache
         uses: ./.github/actions/cache-save
         with:

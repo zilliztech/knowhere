@@ -33,7 +33,7 @@ pipeline {
                         sh "git submodule update --recursive --init"
                         sh "cmake --version"
                         sh "nvidia-smi --query-gpu=name --format=csv,noheader"
-                        sh "make build-gpu"
+                        sh "make WITH_GPU=True"
                         sh "cd python && VERSION=${version} ./build_portable_wheel.sh"
                         dir('python/dist'){
                         knowhere_wheel=sh(returnStdout: true, script: 'ls | grep manylinux.*\\.whl').trim()

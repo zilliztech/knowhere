@@ -29,7 +29,7 @@ pipeline {
                         sh "source scripts/ci_deps.sh && install_base_deps && install_build_deps && install_wheel_deps"
                         sh "apt-get install -y libopenblas-dev"
                         sh "cmake --version"
-                        sh "make build-release"
+                        sh "make"
                         sh "cd python && VERSION=${version} ./build_portable_wheel.sh"
                         dir('python/dist'){
                         knowhere_wheel=sh(returnStdout: true, script: 'ls | grep manylinux.*\\.whl').trim()
