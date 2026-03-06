@@ -438,12 +438,13 @@ class LemurEmbListStrategy : public EmbListStrategy {
 
     Status
     Serialize(std::shared_ptr<uint8_t[]>& data, int64_t& size) const override {
-        // Blob format: [config][mlp_flag][mlp_data (if present)][offsets]
+        // Blob format: [config][mlp_flag][mlp_data (feature_extractor only, no W_out)][offsets]
+        // Config: [magic][version][hidden_dim][final_hidden_dim][num_layers][original_dim][num_docs]
         constexpr int32_t kMagic = 0x4C454D52;  // "LEMR"
         constexpr int32_t kVersion = 1;
-        size_t config_size = 2 * sizeof(int32_t) + 8 * sizeof(int32_t) + sizeof(int64_t) + sizeof(int32_t);
+        size_t config_size = 6 * sizeof(int32_t) + sizeof(int64_t);  // magic + version + 4 fields + num_docs
 
-        // Calculate MLP size
+        // Calculate MLP size (feature_extractor weights only)
         int32_t has_mlp = mlp_ ? 1 : 0;
         size_t mlp_size = 0;
         if (mlp_) {
@@ -451,7 +452,6 @@ class LemurEmbListStrategy : public EmbListStrategy {
             const auto& fc_biases = mlp_->GetFcBiases();
             const auto& ln_gammas = mlp_->GetLnGammas();
             const auto& ln_betas = mlp_->GetLnBetas();
-            const auto& W_out = mlp_->GetOutputWeights();
 
             mlp_size = sizeof(int32_t);  // num_layers
             for (int32_t i = 0; i < num_layers_; ++i) {
@@ -461,7 +461,6 @@ class LemurEmbListStrategy : public EmbListStrategy {
                 mlp_size += ln_gammas[i].size() * sizeof(float);
                 mlp_size += ln_betas[i].size() * sizeof(float);
             }
-            mlp_size += sizeof(size_t) + W_out.size() * sizeof(float);
         }
 
         size_t offset_size = EmbListOffsetByteSize(emb_list_offset_);
@@ -480,23 +479,12 @@ class LemurEmbListStrategy : public EmbListStrategy {
         ptr += sizeof(int32_t);
         std::memcpy(ptr, &num_layers_, sizeof(int32_t));
         ptr += sizeof(int32_t);
-        std::memcpy(ptr, &num_train_samples_, sizeof(int32_t));
-        ptr += sizeof(int32_t);
-        std::memcpy(ptr, &num_epochs_, sizeof(int32_t));
-        ptr += sizeof(int32_t);
-        std::memcpy(ptr, &batch_size_, sizeof(int32_t));
-        ptr += sizeof(int32_t);
-        std::memcpy(ptr, &seed_, sizeof(int32_t));
-        ptr += sizeof(int32_t);
         std::memcpy(ptr, &original_dim_, sizeof(int32_t));
         ptr += sizeof(int32_t);
         std::memcpy(ptr, &num_docs_, sizeof(int64_t));
         ptr += sizeof(int64_t);
-        int32_t is_l2_flag = is_l2_ ? 1 : 0;
-        std::memcpy(ptr, &is_l2_flag, sizeof(int32_t));
-        ptr += sizeof(int32_t);
 
-        // 2. MLP flag + MLP data
+        // 2. MLP flag + feature_extractor weights (no W_out)
         std::memcpy(ptr, &has_mlp, sizeof(int32_t));
         ptr += sizeof(int32_t);
         if (mlp_) {
@@ -504,7 +492,6 @@ class LemurEmbListStrategy : public EmbListStrategy {
             const auto& fc_biases = mlp_->GetFcBiases();
             const auto& ln_gammas = mlp_->GetLnGammas();
             const auto& ln_betas = mlp_->GetLnBetas();
-            const auto& W_out = mlp_->GetOutputWeights();
 
             std::memcpy(ptr, &num_layers_, sizeof(int32_t));
             ptr += sizeof(int32_t);
@@ -534,12 +521,6 @@ class LemurEmbListStrategy : public EmbListStrategy {
                 std::memcpy(ptr, ln_betas[i].data(), sz * sizeof(float));
                 ptr += sz * sizeof(float);
             }
-
-            size_t sz = W_out.size();
-            std::memcpy(ptr, &sz, sizeof(size_t));
-            ptr += sizeof(size_t);
-            std::memcpy(ptr, W_out.data(), sz * sizeof(float));
-            ptr += sz * sizeof(float);
         }
 
         // 3. Offsets
@@ -551,17 +532,16 @@ class LemurEmbListStrategy : public EmbListStrategy {
 
     Status
     Deserialize(const uint8_t* data, int64_t size, const BaseConfig& config) override {
-        // 1. Deserialize config
-        constexpr size_t kExpectedConfigSize =
-            2 * sizeof(int32_t) + 8 * sizeof(int32_t) + sizeof(int64_t) + sizeof(int32_t);
-        if (size < static_cast<int64_t>(kExpectedConfigSize)) {
-            LOG_KNOWHERE_ERROR_ << "LEMUR: blob too small: " << size << " < " << kExpectedConfigSize;
-            return Status::emb_list_inner_error;
-        }
-
         constexpr int32_t kMagic = 0x4C454D52;  // "LEMR"
         const uint8_t* ptr = data;
         const uint8_t* end = data + size;
+
+        // 1. Read magic and version
+        constexpr size_t kMinConfigSize = 6 * sizeof(int32_t) + sizeof(int64_t);  // must match Serialize
+        if (size < static_cast<int64_t>(kMinConfigSize)) {
+            LOG_KNOWHERE_ERROR_ << "LEMUR: blob too small: " << size << " < " << kMinConfigSize;
+            return Status::emb_list_inner_error;
+        }
 
         int32_t magic = 0;
         std::memcpy(&magic, ptr, sizeof(int32_t));
@@ -574,6 +554,8 @@ class LemurEmbListStrategy : public EmbListStrategy {
         int32_t version = 0;
         std::memcpy(&version, ptr, sizeof(int32_t));
         ptr += sizeof(int32_t);
+
+        // 2. Deserialize config: [hidden_dim][final_hidden_dim][num_layers][original_dim][num_docs(i64)]
         if (version > 1) {
             LOG_KNOWHERE_ERROR_ << "LEMUR: unsupported serialization version " << version << " (max supported: 1)";
             return Status::emb_list_inner_error;
@@ -585,40 +567,28 @@ class LemurEmbListStrategy : public EmbListStrategy {
         ptr += sizeof(int32_t);
         std::memcpy(&num_layers_, ptr, sizeof(int32_t));
         ptr += sizeof(int32_t);
-        std::memcpy(&num_train_samples_, ptr, sizeof(int32_t));
-        ptr += sizeof(int32_t);
-        std::memcpy(&num_epochs_, ptr, sizeof(int32_t));
-        ptr += sizeof(int32_t);
-        std::memcpy(&batch_size_, ptr, sizeof(int32_t));
-        ptr += sizeof(int32_t);
-        std::memcpy(&seed_, ptr, sizeof(int32_t));
-        ptr += sizeof(int32_t);
         std::memcpy(&original_dim_, ptr, sizeof(int32_t));
         ptr += sizeof(int32_t);
         std::memcpy(&num_docs_, ptr, sizeof(int64_t));
         ptr += sizeof(int64_t);
-        int32_t is_l2_flag = 0;
-        std::memcpy(&is_l2_flag, ptr, sizeof(int32_t));
-        ptr += sizeof(int32_t);
-        is_l2_ = (is_l2_flag != 0);
 
         LOG_KNOWHERE_INFO_ << "LEMUR Deserialize config (v" << version << "): hidden_dim=" << hidden_dim_
                            << ", final_hidden_dim=" << final_hidden_dim_ << ", num_layers=" << num_layers_
-                           << ", original_dim=" << original_dim_ << ", num_docs=" << num_docs_ << ", is_l2=" << is_l2_;
+                           << ", original_dim=" << original_dim_ << ", num_docs=" << num_docs_;
 
         if (num_docs_ > std::numeric_limits<int32_t>::max()) {
             LOG_KNOWHERE_ERROR_ << "LEMUR: num_docs " << num_docs_ << " exceeds int32 limit";
             return Status::emb_list_inner_error;
         }
 
-        // 2. Deserialize MLP weights
+        // 3. Deserialize MLP weights
         int32_t has_mlp = 0;
         std::memcpy(&has_mlp, ptr, sizeof(int32_t));
         ptr += sizeof(int32_t);
 
         if (has_mlp) {
             const uint8_t* mlp_ptr = ptr;
-            const uint8_t* mlp_end = end;  // MLP + offsets share remaining space
+            const uint8_t* mlp_end = end;
 
             int32_t saved_num_layers;
             std::memcpy(&saved_num_layers, mlp_ptr, sizeof(int32_t));
@@ -694,38 +664,18 @@ class LemurEmbListStrategy : public EmbListStrategy {
                 mlp_ptr += sz * sizeof(float);
             }
 
-            if (mlp_ptr + sizeof(size_t) > mlp_end) {
-                LOG_KNOWHERE_ERROR_ << "LEMUR: MLP binary truncated at W_out size";
-                return Status::emb_list_inner_error;
-            }
-            size_t sz;
-            std::memcpy(&sz, mlp_ptr, sizeof(size_t));
-            mlp_ptr += sizeof(size_t);
-            size_t expected_wout_size = static_cast<size_t>(num_docs_) * final_hidden_dim_;
-            if (sz != expected_wout_size) {
-                LOG_KNOWHERE_ERROR_ << "LEMUR: W_out size " << sz << " != expected " << expected_wout_size;
-                return Status::emb_list_inner_error;
-            }
-            if (mlp_ptr + sz * sizeof(float) > mlp_end) {
-                LOG_KNOWHERE_ERROR_ << "LEMUR: MLP binary truncated at W_out data";
-                return Status::emb_list_inner_error;
-            }
-            std::vector<float> W_out(sz);
-            std::memcpy(W_out.data(), mlp_ptr, sz * sizeof(float));
-            mlp_ptr += sz * sizeof(float);
-
             mlp_ = std::make_unique<SimpleMLP>(original_dim_, static_cast<int32_t>(num_docs_), hidden_dim_,
-                                               final_hidden_dim_, num_layers_, seed_);
+                                               final_hidden_dim_, num_layers_, 0);
             mlp_->SetFcWeights(fc_weights);
             mlp_->SetFcBiases(fc_biases);
             mlp_->SetLnGammas(ln_gammas);
             mlp_->SetLnBetas(ln_betas);
-            mlp_->SetOutputWeights(W_out);
+            mlp_->MarkAsTrained();
 
-            ptr = mlp_ptr;  // advance past MLP data
+            ptr = mlp_ptr;
         }
 
-        // 3. Deserialize document offsets
+        // 4. Deserialize document offsets
         DeserializeEmbListOffsetFromBytes(ptr, emb_list_offset_);
 
         LOG_KNOWHERE_DEBUG_ << "LEMUR Deserialize completed";
@@ -748,26 +698,6 @@ class LemurEmbListStrategy : public EmbListStrategy {
     }
 
  private:
-    // Config
-    int32_t hidden_dim_ = 256;
-    int32_t final_hidden_dim_ = 256;
-    int32_t num_layers_ = 2;
-    int32_t num_train_samples_ = 10000;
-    int32_t num_epochs_ = 50;
-    int32_t batch_size_ = 64;
-    float learning_rate_ = 0.001f;
-    int32_t seed_ = 42;
-
-    int32_t original_dim_ = 0;
-    int64_t num_docs_ = 0;
-    bool is_l2_ = false;
-
-    // MLP model
-    std::unique_ptr<SimpleMLP> mlp_;
-
-    // Storage for reranking
-    std::shared_ptr<EmbListOffset> emb_list_offset_;
-
     /**
      * @brief Compute MaxSim labels for training (chunk-parallel, fused sgemm+reduce).
      *
@@ -885,6 +815,27 @@ class LemurEmbListStrategy : public EmbListStrategy {
             WaitAllSuccess(futs);
         }
     }
+
+ private:
+    // Config
+    int32_t hidden_dim_ = 256;
+    int32_t final_hidden_dim_ = 256;
+    int32_t num_layers_ = 2;
+    int32_t num_train_samples_ = 10000;
+    int32_t num_epochs_ = 50;
+    int32_t batch_size_ = 64;
+    float learning_rate_ = 0.001f;
+    int32_t seed_ = 42;
+
+    int32_t original_dim_ = 0;
+    int64_t num_docs_ = 0;
+    bool is_l2_ = false;
+
+    // MLP model
+    std::unique_ptr<SimpleMLP> mlp_;
+
+    // Storage for reranking
+    std::shared_ptr<EmbListOffset> emb_list_offset_;
 };
 
 EmbListStrategyPtr

@@ -86,52 +86,11 @@ class SimpleMLP {
             final_hidden_dim_ = final_hidden_dim;
         }
 
-        std::mt19937 rng(seed);
-
-        // Build feature_extractor layers
-        // dims: [input_dim, hidden_dim, hidden_dim, ..., final_hidden_dim]
-        std::vector<int32_t> dims;
-        dims.push_back(input_dim);
-        for (int32_t i = 0; i < num_layers_ - 1; ++i) {
-            dims.push_back(hidden_dim_);
-        }
-
-        // Initialize weights for each layer in feature_extractor
+        // Build layer_dims_ (network structure only, no weight allocation)
         for (int32_t layer = 0; layer < num_layers_; ++layer) {
-            int32_t in_dim = dims[layer];
             int32_t out_dim = (layer == num_layers_ - 1) ? final_hidden_dim_ : hidden_dim_;
-
-            // Linear weights: [out_dim, in_dim]
-            float scale = std::sqrt(2.0f / (in_dim + out_dim));
-            std::normal_distribution<float> dist(0.0f, scale);
-
-            std::vector<float> W(out_dim * in_dim);
-            for (auto& w : W) {
-                w = dist(rng);
-            }
-            std::vector<float> b(out_dim, 0.0f);
-
-            fc_weights_.push_back(std::move(W));
-            fc_biases_.push_back(std::move(b));
-
-            // LayerNorm parameters: gamma (scale) = 1, beta (shift) = 0
-            std::vector<float> gamma(out_dim, 1.0f);
-            std::vector<float> beta(out_dim, 0.0f);
-
-            ln_gammas_.push_back(std::move(gamma));
-            ln_betas_.push_back(std::move(beta));
-
             layer_dims_.push_back(out_dim);
         }
-
-        // Output layer: [output_dim, final_hidden_dim], no bias (matching LEMUR)
-        float scale_out = std::sqrt(2.0f / (final_hidden_dim_ + output_dim_));
-        std::normal_distribution<float> dist_out(0.0f, scale_out);
-        W_out_.resize(output_dim_ * final_hidden_dim_);
-        for (auto& w : W_out_) {
-            w = dist_out(rng);
-        }
-        // No bias for output layer (LEMUR style)
     }
 
     /**
@@ -294,6 +253,15 @@ class SimpleMLP {
             blas_threads = 1;
         ScopedBLASThreads blas_guard(blas_threads);
 
+        // Guard: do not retrain a deserialized model
+        if (trained_) {
+            LOG_KNOWHERE_WARNING_ << "[LEMUR MLP] Model already trained/loaded, skipping Train()";
+            return 0.0f;
+        }
+
+        // Initialize weights (first training call)
+        InitWeights();
+
         // Rebuild gradient/Adam states if previously released
         if (dW_out_.empty()) {
             InitGradients();
@@ -384,35 +352,14 @@ class SimpleMLP {
 
         LOG_KNOWHERE_INFO_ << "[LEMUR MLP] Training completed, final loss: " << final_loss;
 
+        MarkAsTrained();
         return final_loss;
     }
 
-    // Getters
-    const std::vector<float>&
-    GetOutputWeights() const {
-        return W_out_;
-    }
     int32_t
     FinalHiddenDim() const {
         return final_hidden_dim_;
     }
-    int32_t
-    InputDim() const {
-        return input_dim_;
-    }
-    int32_t
-    OutputDim() const {
-        return output_dim_;
-    }
-    int32_t
-    NumLayers() const {
-        return num_layers_;
-    }
-    int32_t
-    HiddenDim() const {
-        return hidden_dim_;
-    }
-
     // For serialization
     const std::vector<std::vector<float>>&
     GetFcWeights() const {
@@ -447,9 +394,13 @@ class SimpleMLP {
     SetLnBetas(const std::vector<std::vector<float>>& b) {
         ln_betas_ = b;
     }
+
+    /**
+     * @brief Mark model as trained/loaded. Prevents re-training a deserialized model.
+     */
     void
-    SetOutputWeights(const std::vector<float>& w) {
-        W_out_ = w;
+    MarkAsTrained() {
+        trained_ = true;
     }
 
     /**
@@ -524,6 +475,7 @@ class SimpleMLP {
     int32_t final_hidden_dim_;
     int32_t num_layers_;
     int32_t seed_;
+    bool trained_ = false;
 
     // Feature extractor layers
     std::vector<std::vector<float>> fc_weights_;  // [num_layers][out_dim * in_dim]
@@ -566,6 +518,53 @@ class SimpleMLP {
 
     // LayerNorm backward buffer
     std::vector<float> buf_x_norm_;  // [max_dim]
+
+    /**
+     * @brief Randomly initialize all weights (feature_extractor + output layer).
+     *
+     * Called lazily at the start of Train(). Not called during deserialization
+     * since weights are loaded via Set* methods.
+     */
+    void
+    InitWeights() {
+        std::mt19937 rng(seed_);
+
+        // Input dims per layer: [input_dim, hidden_dim, hidden_dim, ...]
+        std::vector<int32_t> dims;
+        dims.push_back(input_dim_);
+        for (int32_t i = 0; i < num_layers_ - 1; ++i) {
+            dims.push_back(hidden_dim_);
+        }
+
+        fc_weights_.resize(num_layers_);
+        fc_biases_.resize(num_layers_);
+        ln_gammas_.resize(num_layers_);
+        ln_betas_.resize(num_layers_);
+
+        for (int32_t layer = 0; layer < num_layers_; ++layer) {
+            int32_t in_dim = dims[layer];
+            int32_t out_dim = layer_dims_[layer];
+
+            float scale = std::sqrt(2.0f / (in_dim + out_dim));
+            std::normal_distribution<float> dist(0.0f, scale);
+
+            fc_weights_[layer].resize(out_dim * in_dim);
+            for (auto& w : fc_weights_[layer]) {
+                w = dist(rng);
+            }
+            fc_biases_[layer].assign(out_dim, 0.0f);
+            ln_gammas_[layer].assign(out_dim, 1.0f);
+            ln_betas_[layer].assign(out_dim, 0.0f);
+        }
+
+        // Output layer: [output_dim, final_hidden_dim], no bias
+        float scale_out = std::sqrt(2.0f / (final_hidden_dim_ + output_dim_));
+        std::normal_distribution<float> dist_out(0.0f, scale_out);
+        W_out_.resize(output_dim_ * final_hidden_dim_);
+        for (auto& w : W_out_) {
+            w = dist_out(rng);
+        }
+    }
 
     void
     InitGradients() {
