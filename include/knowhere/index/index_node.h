@@ -23,6 +23,7 @@
 #include "knowhere/dataset.h"
 #include "knowhere/emb_list_utils.h"
 #include "knowhere/expected.h"
+#include "knowhere/index/emb_list_strategy.h"
 #include "knowhere/object.h"
 #include "knowhere/operands.h"
 #include "knowhere/utils.h"
@@ -41,6 +42,14 @@ struct OpContext;
 #include "knowhere/comp/time_recorder.h"
 #include "knowhere/prometheus_client.h"
 #endif
+
+namespace faiss {
+namespace cppcontrib {
+namespace knowhere {
+class IndexFlat;
+}
+}  // namespace cppcontrib
+}  // namespace faiss
 
 namespace knowhere {
 
@@ -358,39 +367,7 @@ class IndexNode : public Object {
 
     virtual Status
     BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
-                 bool use_knowhere_build_pool = true) {
-        // 1. split metric_type to el_metric_type and sub_metric_type
-        auto& config = static_cast<BaseConfig&>(*cfg);
-        auto original_metric_type = config.metric_type.value();
-        auto el_metric_type_or = get_el_metric_type(original_metric_type);
-        if (!el_metric_type_or.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "Invalid metric type for emb_list: " << original_metric_type;
-            return Status::emb_list_inner_error;
-        }
-        auto el_metric_type = el_metric_type_or.value();
-        auto sub_metric_type_or = get_sub_metric_type(original_metric_type);
-        if (!sub_metric_type_or.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "Invalid sub metric type for emb_list: " << original_metric_type;
-            return Status::emb_list_inner_error;
-        }
-        // set sub metric type as the metric type for build
-        auto sub_metric_type = sub_metric_type_or.value();
-        config.metric_type = sub_metric_type;
-
-        // 2. build index
-        LOG_KNOWHERE_INFO_ << "Build EmbList-Index with metric type: " << original_metric_type
-                           << ", el metric type: " << el_metric_type << ", sub metric type: " << sub_metric_type;
-        RETURN_IF_ERROR(Build(dataset, cfg, use_knowhere_build_pool));
-
-        // 3. create emb_list_offset
-        emb_list_offset_ = std::make_unique<EmbListOffset>(lims, num_rows);
-
-        // 4. Set the mapping from base index internal vector IDs to emb_list IDs.
-        // When using emb_list, all filtering bitset checks are performed at the emb_list level,
-        // not at the individual vector level. This means that whenever the index needs to check whether
-        // a vector is masked (filtered out), it must first map the vector's idx to its corresponding emb_list idx.
-        return SetBaseIndexIDMap();
-    }
+                 bool use_knowhere_build_pool = true);
 
     virtual Status
     BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) {
@@ -456,30 +433,19 @@ class IndexNode : public Object {
      */
     virtual Status
     SerializeEmbListIfNeed(BinarySet& binset) const {
-        if (emb_list_offset_ == nullptr || emb_list_offset_->offset.size() == 0) {
-            // if not emb_list, use the default serialize method
+        if (!emb_list_strategy_) {
+            // not emb_list, use the default serialize method
             return Serialize(binset);
         }
 
-        // if is emb_list,
-        //   1. serialize emb_list offset
-        //   2. serialize base index
-        LOG_KNOWHERE_INFO_ << "Serialize emb_list offset";
-        try {
-            // serialize emb_list_offset_
-            // 1 * size_t + offset.size() * size_t
-            int64_t total_bytes = (emb_list_offset_->offset.size() + 1) * sizeof(size_t);
-            auto data = std::shared_ptr<uint8_t[]>(new uint8_t[total_bytes]);
-            auto size = emb_list_offset_->offset.size();
-            std::memcpy(data.get(), &size, sizeof(size_t));
-            std::memcpy(data.get() + sizeof(size_t), emb_list_offset_->offset.data(), size * sizeof(size_t));
-            binset.Append(knowhere::meta::EMB_LIST_META, data, total_bytes);
-        } catch (const std::exception& e) {
-            LOG_KNOWHERE_WARNING_ << "serialize emb_list offset error: " << e.what();
-            return Status::emb_list_inner_error;
-        }
-        return Serialize(binset);
+        return SerializeEmbList(binset);
     }
+
+    /**
+     * @brief Serialize emb_list: strategy meta, raw index, and base index to BinarySet.
+     */
+    Status
+    SerializeEmbList(BinarySet& binset) const;
 
     /**
      * @brief Deserializes the index from a binary set, including the emb_list meta if is emb_list.
@@ -490,53 +456,21 @@ class IndexNode : public Object {
      */
     virtual Status
     DeserializeEmbListIfNeed(const BinarySet& binset, std::shared_ptr<Config> config) {
-        auto cfg = static_cast<const knowhere::BaseConfig&>(*config);
+        auto& cfg = static_cast<knowhere::BaseConfig&>(*config);
         auto el_metric_type_or = get_el_metric_type(cfg.metric_type.value());
         if (!el_metric_type_or.has_value()) {
-            // if not emb_list, use the default deserialize method
+            // not emb_list, use the default deserialize method
             return Deserialize(binset, config);
         }
 
-        // if is emb_list,
-        //   1. split metric_type into el_metric_type and sub_metric_type
-        //   2. deserialize base index
-        //   2. deserialize emb_list offset
-        //   3. set base index id map
-
-        el_metric_type_ = el_metric_type_or.value();
-        auto sub_metric_type_or = get_sub_metric_type(cfg.metric_type.value());
-        if (!sub_metric_type_or.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "Invalid sub metric type: " << cfg.metric_type.value();
-            return Status::emb_list_inner_error;
-        }
-        cfg.metric_type = sub_metric_type_or.value();
-        RETURN_IF_ERROR(Deserialize(binset, config));
-
-        try {
-            auto binary_ptr = binset.GetByName(knowhere::meta::EMB_LIST_META);
-            if (binary_ptr == nullptr) {
-                LOG_KNOWHERE_INFO_ << "No emb_list offset found, but metric type is emb_list";
-                return Status::emb_list_inner_error;
-            }
-            LOG_KNOWHERE_INFO_ << "Deserialize emb_list offset";
-            size_t size = 0;
-            std::memcpy(&size, binary_ptr->data.get(), sizeof(size_t));
-            const auto total_bytes = binary_ptr->size;
-            const auto comp_size = total_bytes / sizeof(size_t) - 1;
-            if (comp_size != size) {
-                LOG_KNOWHERE_WARNING_ << "the computed size of emb_list offset is not equal to size from binary set";
-                return Status::emb_list_inner_error;
-            }
-            std::vector<size_t> offset(size);
-            std::memcpy(offset.data(), binary_ptr->data.get() + sizeof(size_t), size * sizeof(size_t));
-            emb_list_offset_ = std::make_unique<EmbListOffset>(std::move(offset));
-        } catch (const std::exception& e) {
-            LOG_KNOWHERE_WARNING_ << "deserialize emb_list offset error: " << e.what();
-            return Status::emb_list_inner_error;
-        }
-
-        return SetBaseIndexIDMap();
+        return DeserializeEmbListFromBinarySet(binset, config);
     }
+
+    /**
+     * @brief Deserialize emb_list: base index, strategy, raw index, and ID mapping from BinarySet.
+     */
+    Status
+    DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_ptr<Config> config);
 
     virtual bool
     LoadIndexWithStream() {
@@ -548,54 +482,21 @@ class IndexNode : public Object {
 
     virtual Status
     DeserializeFromFileIfNeed(const std::string& filename, std::shared_ptr<Config> config) {
-        auto cfg = static_cast<const knowhere::BaseConfig&>(*config);
+        auto& cfg = static_cast<knowhere::BaseConfig&>(*config);
         auto el_metric_type_or = get_el_metric_type(cfg.metric_type.value());
         if (!el_metric_type_or.has_value()) {
-            // if not emb_list, use the default deserialize method
+            // not emb_list, use the default deserialize method
             return DeserializeFromFile(filename, config);
         }
 
-        // if is emb_list,
-        //   1. split metric_type into el_metric_type and sub_metric_type
-        //   2. deserialize base index
-        //   3. deserialize emb_list offset
-        //   4. set base index id map
-
-        el_metric_type_ = el_metric_type_or.value();
-        auto sub_metric_type_or = get_sub_metric_type(cfg.metric_type.value());
-        if (!sub_metric_type_or.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "Invalid sub metric type: " << cfg.metric_type.value();
-            return Status::emb_list_inner_error;
-        }
-        cfg.metric_type = sub_metric_type_or.value();
-        RETURN_IF_ERROR(DeserializeFromFile(filename, config));
-
-        try {
-            auto emb_list_meta_file_path = cfg.emb_list_meta_file_path.value();
-            if (emb_list_meta_file_path.empty()) {
-                LOG_KNOWHERE_WARNING_ << "emb_list_meta_file is empty, but metric type is emb_list";
-                return Status::emb_list_inner_error;
-            }
-
-            std::ifstream emb_list_meta_file(emb_list_meta_file_path, std::ios::binary);
-            if (!emb_list_meta_file.is_open()) {
-                LOG_KNOWHERE_WARNING_ << "emb_list_meta_file does not exist: " << emb_list_meta_file_path;
-                return Status::emb_list_inner_error;
-            }
-            size_t size = 0;
-            char size_buffer[sizeof(size_t)];
-            emb_list_meta_file.read(size_buffer, sizeof(size_t));
-            std::memcpy(&size, size_buffer, sizeof(size_t));
-            std::vector<size_t> offset(size);
-            emb_list_meta_file.read(reinterpret_cast<char*>(offset.data()), size * sizeof(size_t));
-            emb_list_offset_ = std::make_unique<EmbListOffset>(std::move(offset));
-        } catch (const std::exception& e) {
-            LOG_KNOWHERE_WARNING_ << "deserialize emb_list offset error: " << e.what();
-            return Status::emb_list_inner_error;
-        }
-
-        return SetBaseIndexIDMap();
+        return DeserializeEmbListFromFile(filename, config);
     }
+
+    /**
+     * @brief Deserialize emb_list: base index, strategy, raw index, and ID mapping from files.
+     */
+    Status
+    DeserializeEmbListFromFile(const std::string& filename, std::shared_ptr<Config> config);
 
     virtual expected<DataSetPtr>
     SearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
@@ -644,9 +545,48 @@ class IndexNode : public Object {
                              bool use_knowhere_search_pool = true, milvus::OpContext* op_context = nullptr) const;
 
  protected:
+    /**
+     * @brief Parse EMB_LIST_META header from raw bytes.
+     *
+     * Detects format by magic number:
+     * - New format: [int32_t magic][size_t type_len][char[type_len] type][uint8_t[] strategy_blob]
+     * - Legacy format (tokenann only): entire blob is [size_t count][size_t[count] offsets]
+     */
+    struct EmbListMetaHeader {
+        std::string strategy_type;
+        const uint8_t* strategy_blob;
+        int64_t strategy_blob_size;
+    };
+
+    static EmbListMetaHeader
+    ParseEmbListMetaHeader(const uint8_t* data, int64_t size) {
+        int32_t magic = 0;
+        std::memcpy(&magic, data, sizeof(int32_t));
+
+        if (magic == kEmbListMetaMagic) {
+            const uint8_t* ptr = data + sizeof(int32_t);
+            size_t type_len = 0;
+            std::memcpy(&type_len, ptr, sizeof(size_t));
+            ptr += sizeof(size_t);
+            std::string strategy_type(reinterpret_cast<const char*>(ptr), type_len);
+            ptr += type_len;
+            int64_t strategy_blob_size = size - sizeof(int32_t) - sizeof(size_t) - type_len;
+            return {std::move(strategy_type), ptr, strategy_blob_size};
+        } else {
+            return {meta::EMB_LIST_STRATEGY_TOKENANN, data, size};
+        }
+    }
+
+ protected:
     Version version_;
-    std::unique_ptr<EmbListOffset> emb_list_offset_;  // emb_list group offset structure
+    std::shared_ptr<EmbListOffset> emb_list_offset_;  // emb_list group offset structure (shared with strategy)
     std::string el_metric_type_;
+    EmbListStrategyPtr emb_list_strategy_;  // emb_list encoding strategy (tokenann/muvera)
+    // Raw vector storage for EmbList strategies (MUVERA/LEMUR) that encode documents
+    // into different representations for ANN search. Since the base index holds encoded
+    // vectors (not raw), this IndexFlat stores original vectors for exact distance
+    // computation during MaxSim reranking.
+    std::shared_ptr<faiss::cppcontrib::knowhere::IndexFlat> emb_list_raw_index_;
 };
 
 // Common superclass for iterators that expand search range as needed. Subclasses need
