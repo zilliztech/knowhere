@@ -14,7 +14,7 @@ BUILD_DIR := $(PWD)/build
 SHELL := /bin/bash
 
 # Conan base flags (single source of truth for all pipelines)
-CONAN_BASE_FLAGS := --update --build=missing -o with_diskann=True
+CONAN_BASE_FLAGS := --update --build=missing
 
 # ---------- User-facing build flags ----------
 # Usage: make WITH_GPU=True WITH_UT=True WITH_ASAN=True WITH_DEBUG=True
@@ -41,16 +41,20 @@ else
 endif
 
 # ---------- Compose conan flags from user flags ----------
-CONAN_FLAGS := $(CONAN_BASE_FLAGS) -s compiler.libcxx=$(LIBCXX) -s build_type=$(BUILD_TYPE)
+CONAN_FLAGS := $(CONAN_BASE_FLAGS) -s compiler.libcxx=$(LIBCXX) -s build_type=$(BUILD_TYPE) -s compiler.cppstd=17
 
-# GPU builds use cuVS; CPU builds need liburing built from source.
-ifdef WITH_GPU
-    CONAN_FLAGS += -o with_cuvs=True
-else
-    CONAN_FLAGS += --build=liburing
+# DiskANN and liburing require libaio (Linux-only).
+ifneq ($(UNAME_S),Darwin)
+    CONAN_FLAGS += -o with_diskann=True
+    ifndef WITH_GPU
+        CONAN_FLAGS += --build=liburing
+    endif
 endif
 
-CONAN_FLAGS += -s compiler.cppstd=17
+# GPU builds use cuVS.
+ifdef WITH_GPU
+    CONAN_FLAGS += -o with_cuvs=True
+endif
 
 ifdef WITH_UT
     CONAN_FLAGS += -o with_ut=True
