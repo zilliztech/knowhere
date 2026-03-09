@@ -63,6 +63,8 @@ if [[ "${OS}" == "Linux" ]]; then
         lcov                       # CI: code coverage reports
         binutils                   # wheel: readelf wheel RPATH inspection
         patchelf                   # wheel: RPATH rewriting
+        python3-dev                # wheel: Python C extension headers
+        swig                       # wheel: C++ → Python binding generator
         unzip                      # wheel: readelf wheel RPATH inspection
     )
     ${SUDO} apt-get install -y "${packages[@]}"

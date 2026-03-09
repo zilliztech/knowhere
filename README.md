@@ -18,14 +18,17 @@ All Linux distributions are available for Knowhere development. However, a major
 
 Here's a list of verified OS types where Knowhere can successfully build and run:
 
-- Ubuntu 20.04 x86_64
-- Ubuntu 20.04 Aarch64
+- Ubuntu 22.04 x86_64
+- Ubuntu 22.04 Aarch64
+- Ubuntu 20.04 x86_64 / Aarch64 (EOL by April 2025 and kept for legacy reasons; see `scripts/install_deps.sh` for details)
 - MacOS (x86_64)
 - MacOS (Apple Silicon)
 
 ## Building Knowhere From Source Code
 
 #### Install Dependencies
+
+`scripts/install_deps.sh` install all dependencies for building, testing, and shipping the knowhere library. If you don't need the full pipeline, please refer to the file and modify it for a more fine-grained dependency control.
 
 ```bash
 $ bash scripts/install_deps.sh
@@ -54,9 +57,6 @@ $ make WITH_GPU=True WITH_UT=True
 # Debug build
 $ make WITH_DEBUG=True
 
-# macOS
-$ make WITH_MACOS=True
-
 # Custom compiler via Conan profile (e.g. clang, gcc-15)
 $ make CONAN_PROFILE=clang14
 ```
@@ -76,28 +76,19 @@ $ make clean
 
 ## Python Wheel
 
-### Prerequisites
-
-```bash
-sudo apt install swig python3-dev
-pip3 install bfloat16 auditwheel 'numpy<2'
-```
-
-### Build Portable Wheel
+Building the Python wheel requires `swig` and Python development headers (`python3-dev` on Ubuntu). These are installed automatically by `scripts/install_deps.sh`.
 
 After building Knowhere with a Release configuration:
 
 ```bash
+# Build portable manylinux wheel
 $ make wheel
+
+# Install
+$ pip3 install python/dist/pyknowhere-*-manylinux*.whl
 ```
 
-This will create a portable **manylinux wheel** with all dependencies bundled. For more options (clean build, verbose, custom Python binary), see `python/build_portable_wheel.sh -h`.
-
-### Install Wheel
-
-```bash
-pip3 install python/dist/pyknowhere-*-manylinux*.whl
-```
+For more options (clean build, verbose, custom Python binary), see `python/build_portable_wheel.sh -h`.
 
 ## Contributing
 

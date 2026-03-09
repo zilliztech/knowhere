@@ -23,7 +23,6 @@ WITH_UT ?=
 WITH_ASAN ?=
 WITH_CARDINAL ?=
 WITH_DEBUG ?=
-WITH_MACOS ?=
 CONAN_PROFILE ?=
 
 # ---------- Derived settings ----------
@@ -33,10 +32,12 @@ else
     BUILD_TYPE := Release
 endif
 
-ifdef WITH_MACOS
-    LIBCXX := libc++
+# Auto-detect OS for compiler.libcxx; override with LIBCXX=<value>.
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    LIBCXX ?= libc++
 else
-    LIBCXX := libstdc++11
+    LIBCXX ?= libstdc++11
 endif
 
 # ---------- Compose conan flags from user flags ----------
@@ -130,8 +131,8 @@ help: ## Show available targets
 	@echo "  WITH_ASAN=True     Enable AddressSanitizer"
 	@echo "  WITH_CARDINAL=True Enable Cardinal build"
 	@echo "  WITH_DEBUG=True    Debug build (default: Release)"
-	@echo "  WITH_MACOS=True    Use macOS conventions (libc++)"
 	@echo "  CONAN_PROFILE=<p>  Use a custom Conan profile (e.g. clang, gcc-15)"
+	@echo "  LIBCXX=<lib>       Override compiler.libcxx (auto-detected from OS)"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make                              # CPU release"
@@ -139,6 +140,6 @@ help: ## Show available targets
 	@echo "  make WITH_UT=True WITH_ASAN=True  # CPU UT + ASAN"
 	@echo "  make WITH_GPU=True WITH_UT=True   # GPU UT"
 	@echo "  make WITH_DEBUG=True WITH_UT=True # CPU debug + UT"
-	@echo "  make WITH_MACOS=True              # macOS CPU release"
+	@echo "  make LIBCXX=libc++                # override compiler.libcxx"
 	@echo "  make CONAN_PROFILE=gcc15          # CPU with custom profile"
 	@echo ""
