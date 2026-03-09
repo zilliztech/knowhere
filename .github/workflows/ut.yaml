@@ -34,7 +34,7 @@ jobs:
           submodules: 'none'
       - name: Install Dependency
         run: |
-          bash scripts/ci_deps.sh
+          bash scripts/install_deps.sh
           sudo pip3 install cmake==3.28.1
       - name: Restore Cache
         uses: ./.github/actions/cache-restore
@@ -64,7 +64,7 @@ jobs:
           python-version: "3.8"
       - name: Install Dependency
         run: |
-          bash scripts/ci_deps.sh
+          bash scripts/install_deps.sh
           pip3 install pytest faiss-cpu
       - name: Restore Cache
         uses: ./.github/actions/cache-restore

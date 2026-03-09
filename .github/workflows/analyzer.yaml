@@ -22,7 +22,7 @@ jobs:
         with:
           os: ubuntu-22.04
       - name: Install Dependency
-        run: bash scripts/ci_deps.sh
+        run: bash scripts/install_deps.sh
       - name: Build & Analyzer
         run: |
           make WITH_UT=True \

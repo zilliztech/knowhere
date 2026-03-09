@@ -25,7 +25,7 @@ pipeline {
                         def date = sh(returnStdout: true, script: 'date +%Y%m%d').trim()
                         def gitShortCommit = sh(returnStdout: true, script: "echo ${env.GIT_COMMIT} | cut -b 1-7 ").trim()
                         version="${env.CHANGE_ID}.${date}.${gitShortCommit}"
-                        sh "bash scripts/ci_deps.sh"
+                        sh "bash scripts/install_deps.sh"
                         sh "apt-get install -y git"
                         sh "cmake --version"
                         sh "nvidia-smi --query-gpu=name --format=csv,noheader"
