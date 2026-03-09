@@ -25,8 +25,7 @@ pipeline {
                         def date = sh(returnStdout: true, script: 'date +%Y%m%d').trim()
                         def gitShortCommit = sh(returnStdout: true, script: "echo ${env.GIT_COMMIT} | cut -b 1-7 ").trim()
                         version="${env.CHANGE_ID}.${date}.${gitShortCommit}"
-                        sh "source scripts/ci_deps.sh && install_base_deps && setup_conan_remote"
-                        // GPU-only: git not pre-installed in GPU build image
+                        sh "bash scripts/ci_deps.sh"
                         sh "apt-get install -y git"
                         sh "cmake --version"
                         sh "nvidia-smi --query-gpu=name --format=csv,noheader"

@@ -34,11 +34,7 @@ jobs:
           submodules: 'none'
       - name: Install Dependency
         run: |
-          source scripts/ci_deps.sh
-          install_base_deps
-          install_build_deps
-          install_coverage_deps
-          setup_conan_remote
+          bash scripts/ci_deps.sh
           sudo pip3 install cmake==3.28.1
       - name: Restore Cache
         uses: ./.github/actions/cache-restore
@@ -68,13 +64,7 @@ jobs:
           python-version: "3.8"
       - name: Install Dependency
         run: |
-          source scripts/ci_deps.sh
-          install_base_deps
-          install_build_deps
-          install_wheel_deps
-          setup_conan_remote
-          # Test deps installed inline (unlike Groovy E2E pipelines which
-          # check out knowhere-test.git with its own requirements.txt)
+          bash scripts/ci_deps.sh
           pip3 install pytest faiss-cpu
       - name: Restore Cache
         uses: ./.github/actions/cache-restore

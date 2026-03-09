@@ -26,8 +26,7 @@ pipeline {
                         def date = sh(returnStdout: true, script: 'date +%Y%m%d').trim()
                         def gitShortCommit = sh(returnStdout: true, script: "echo ${env.GIT_COMMIT} | cut -b 1-7 ").trim()
                         version="${env.CHANGE_ID}.${date}.${gitShortCommit}"
-                        sh "source scripts/ci_deps.sh && install_base_deps && install_build_deps && install_wheel_deps"
-                        // GPU-only: build-essential needed (CPU images have g++/gcc pre-installed)
+                        sh "bash scripts/ci_deps.sh"
                         sh "apt-get install -y build-essential"
                         sh "git config --global --add safe.directory '*'"
                         sh "git submodule update --recursive --init"

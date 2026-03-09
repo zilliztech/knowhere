@@ -22,12 +22,7 @@ jobs:
         with:
           os: ubuntu-22.04
       - name: Install Dependency
-        run: |
-          source scripts/ci_deps.sh
-          install_base_deps
-          install_build_deps
-          install_analyzer_deps
-          setup_conan_remote
+        run: bash scripts/ci_deps.sh
       - name: Build & Analyzer
         run: |
           make WITH_UT=True \

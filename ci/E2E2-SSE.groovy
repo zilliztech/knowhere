@@ -25,8 +25,8 @@ pipeline {
                         def date = sh(returnStdout: true, script: 'date +%Y%m%d').trim()
                         def gitShortCommit = sh(returnStdout: true, script: "echo ${env.GIT_COMMIT} | cut -b 1-7 ").trim()
                         version="${env.CHANGE_ID}.${date}.${gitShortCommit}"
-                        // SSE: override libopenblas-openmp-dev (from install_build_deps) with non-openmp variant
-                        sh "source scripts/ci_deps.sh && install_base_deps && install_build_deps && install_wheel_deps"
+                        sh "bash scripts/ci_deps.sh"
+                        // SSE: override libopenblas-openmp-dev with non-openmp variant
                         sh "apt-get install -y libopenblas-dev"
                         sh "cmake --version"
                         sh "make"

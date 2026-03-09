@@ -24,7 +24,7 @@ pipeline {
                         def date = sh(returnStdout: true, script: 'date +%Y%m%d').trim()
                         def gitShortCommit = sh(returnStdout: true, script: "echo ${env.GIT_COMMIT} | cut -b 1-7 ").trim()
                         version="${env.CHANGE_ID}.${date}.${gitShortCommit}"
-                        sh "source scripts/ci_deps.sh && install_base_deps && install_build_deps && install_wheel_deps"
+                        sh "bash scripts/ci_deps.sh"
                         sh "cmake --version"
                         sh "make"
                         sh "cd python && VERSION=${version} ./build_portable_wheel.sh"
