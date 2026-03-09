@@ -34,7 +34,7 @@
 
 #include <faiss/cppcontrib/knowhere/impl/ProductQuantizer.h>
 
-#include <faiss/impl/code_distance/code_distance.h>
+#include <faiss/cppcontrib/knowhere/impl/code_distance/code_distance.h>
 
 
 

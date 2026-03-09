@@ -20,7 +20,7 @@
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/cppcontrib/knowhere/utils/hamming.h>
 
-#include <faiss/impl/code_distance/code_distance.h>
+#include <faiss/cppcontrib/knowhere/impl/code_distance/code_distance.h>
 
 
 

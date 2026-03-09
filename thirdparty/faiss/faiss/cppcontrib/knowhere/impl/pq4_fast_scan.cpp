@@ -249,6 +249,10 @@ void CodePackerPQ4::unpack_1(
     }
 }
 
+CodePacker* CodePackerPQ4::clone() const {
+    return new CodePackerPQ4(*this);
+}
+
 /***************************************************************
  * Packing functions for Look-Up Tables (LUT)
  ***************************************************************/

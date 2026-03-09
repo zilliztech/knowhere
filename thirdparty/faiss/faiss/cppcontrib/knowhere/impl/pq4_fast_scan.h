@@ -96,6 +96,8 @@ struct CodePackerPQ4 : CodePacker {
 
     CodePackerPQ4(size_t nsq, size_t bbs);
 
+    CodePacker* clone() const final;
+
     void pack_1(const uint8_t* flat_code, size_t offset, uint8_t* block)
             const final;
     void unpack_1(const uint8_t* block, size_t offset, uint8_t* flat_code)

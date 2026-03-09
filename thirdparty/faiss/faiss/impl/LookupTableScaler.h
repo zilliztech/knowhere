@@ -10,7 +10,6 @@
 #include <cstdint>
 #include <cstdlib>
 
-#include <faiss/impl/FaissAssert.h>
 #include <faiss/utils/simdlib.h>
 
 /*******************************************

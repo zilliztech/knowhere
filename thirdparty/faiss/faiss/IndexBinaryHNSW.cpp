@@ -22,6 +22,7 @@
 #include <faiss/impl/DistanceComputer.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/ResultHandler.h>
+#include <faiss/impl/VisitedTable.h>
 #include <faiss/utils/Heap.h>
 #include <faiss/utils/hamming.h>
 #include <faiss/utils/random.h>
@@ -171,19 +172,14 @@ IndexBinaryHNSW::IndexBinaryHNSW() {
     is_trained = true;
 }
 
-IndexBinaryHNSW::IndexBinaryHNSW(int d, int M)
-        : IndexBinary(d),
-          hnsw(M),
-          own_fields(true),
-          storage(new IndexBinaryFlat(d)) {
+IndexBinaryHNSW::IndexBinaryHNSW(int d, int M) : IndexBinary(d), hnsw(M) {
+    storage = std::make_unique<IndexBinaryFlat>(d).release();
+    own_fields = true;
     is_trained = true;
 }
 
 IndexBinaryHNSW::IndexBinaryHNSW(IndexBinary* storage, int M)
-        : IndexBinary(storage->d),
-          hnsw(M),
-          own_fields(false),
-          storage(storage) {
+        : IndexBinary(storage->d), hnsw(M), storage(storage) {
     is_trained = true;
 }
 
@@ -205,10 +201,14 @@ void IndexBinaryHNSW::search(
         idx_t k,
         int32_t* distances,
         idx_t* labels,
-        const SearchParameters* params) const {
-    FAISS_THROW_IF_NOT_MSG(
-            !params, "search params not supported for this index");
+        const SearchParameters* params_in) const {
     FAISS_THROW_IF_NOT(k > 0);
+    const SearchParametersHNSW* params = nullptr;
+    if (params_in) {
+        params = dynamic_cast<const SearchParametersHNSW*>(params_in);
+        FAISS_THROW_IF_NOT_MSG(
+                params, "IndexBinaryHNSW params have incorrect type");
+    }
 
     // we use the buffer for distances as float but convert them back
     // to int in the end
@@ -231,7 +231,7 @@ void IndexBinaryHNSW::search(
             // as the index parameter. This state does not get used in the
             // search function, as it is merely there to to enable Panorama
             // execution for IndexHNSWFlatPanorama.
-            hnsw.search(*dis, nullptr, res, vt);
+            hnsw.search(*dis, nullptr, res, vt, params_in);
             res.end();
         }
     }
