@@ -16,6 +16,8 @@
 #include "diskann/memory_mapper.h"
 #include "diskann/aio_context_pool.h"
 
+#include "diskann/maybe_vector.h"
+
 #define READ_U64(stream, val) stream.read((char *)&val, sizeof(uint64_t))
 #define READ_U32(stream, val) stream.read((char *)&val, sizeof(uint32_t))
 #define READ_UNSIGNED(stream, val) stream.read((char *)&val, sizeof(unsigned))
@@ -339,11 +341,14 @@ static int aisaq_read_pq_vectors(class AisaqPQReader &aisaq_pq_vectors_reader,
             LOG_KNOWHERE_ERROR_ << "failed to read pq vectors";
             return -1;
         }
-        uint32_t read_vec[count]; /* index array */
-        uint8_t
-            *pq_read_buffers[count]; /* pointers of where the vectors read to */
+
+        /* index array */
+        MaybeVector<uint32_t> read_vec(count);
+        /* pointers of where the vectors read to */
+        MaybeVector<uint8_t*> pq_read_buffers(count);
+
         if (aisaq_pq_vectors_reader.read_pq_vectors_wait_completion(
-                ctx, read_vec, pq_read_buffers, count, count, tmp) != 0) {
+                ctx, read_vec.data(), pq_read_buffers.data(), count, count, tmp) != 0) {
             LOG_KNOWHERE_ERROR_ << "failed to read pq vectors";
             return -1;
         }
@@ -1455,8 +1460,11 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
             throw ANNException("Failed read PQ vectors submit",
                                -1, __FUNCSIG__, __FILE__, __LINE__);
         }
-        uint32_t read_vec[n_ids]; /* index array */
-        uint8_t *read_coords[n_ids];
+
+        /* index array */
+        MaybeVector<uint32_t> read_vec(n_ids);
+        MaybeVector<uint8_t*> read_coords(n_ids);
+
         uint32_t rcount, min_events = 8, read_remain = n_ids, i;
         /* wait completion */
         do {
@@ -1464,7 +1472,7 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
                 min_events = read_remain;
             }
             if (_aisaq_pq_vectors_reader->read_pq_vectors_wait_completion(
-                    ctx, read_vec, read_coords, min_events, read_remain,
+                    ctx, read_vec.data(), read_coords.data(), min_events, read_remain,
                     rcount) != 0) {
             	release_data();
                 throw ANNException("Failed read PQ wait",
@@ -1517,7 +1525,7 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
         cached_nhoods;
     cached_nhoods.reserve(2 * beam_width);
 
-    struct aisaq_node_placement np[bv];
+    std::unique_ptr<aisaq_node_placement[]> np = std::make_unique<aisaq_node_placement[]>(bv);
     uint32_t bv_count;
     tsl::robin_map<uint32_t, char *> frontier_items;
     T *node_fp_coords;
@@ -1525,10 +1533,10 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
     uint32_t *node_nbrs;
     uint32_t agg_nnbrs;
     uint32_t agg_nnbrs_inline;
-    uint32_t agg_node_nbrs[bv * this->max_degree];
-    uint32_t agg_node_nbrs_inline[bv * this->max_degree];
-    float agg_dist_scratch[bv * this->max_degree];
-    float agg_dist_scratch_inline[bv * this->max_degree];
+    std::unique_ptr<uint32_t[]> agg_node_nbrs = std::make_unique<uint32_t[]>(bv * this->max_degree);
+    std::unique_ptr<uint32_t[]> agg_node_nbrs_inline = std::make_unique<uint32_t[]>(bv * this->max_degree);
+    std::unique_ptr<float[]> agg_dist_scratch = std::make_unique<float[]>(bv * this->max_degree);
+    std::unique_ptr<float[]> agg_dist_scratch_inline = std::make_unique<float[]>(bv * this->max_degree);
 
     float cur_expanded_dist;
     std::vector<uint32_t> free_ids;
@@ -1541,8 +1549,8 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
         float *dist_list;
         const uint32_t &size;
     } agg_nbrs_lists[] = {
-        {agg_node_nbrs, agg_dist_scratch, agg_nnbrs},
-        {agg_node_nbrs_inline, agg_dist_scratch_inline, agg_nnbrs_inline},
+        {agg_node_nbrs.get(), agg_dist_scratch.get(), agg_nnbrs},
+        {agg_node_nbrs_inline.get(), agg_dist_scratch_inline.get(), agg_nnbrs_inline},
     };
     /* initialize free nodes pool */
     cpu_timer.reset();
@@ -1743,7 +1751,7 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
                 diskann::pq_dist_lookup(
                     (uint8_t *)inline_pq_vectors_buff, inline_limit,
                     this->n_chunks, pq_dists,
-                    agg_dist_scratch_inline + agg_nnbrs_inline);
+                    agg_dist_scratch_inline.get() + agg_nnbrs_inline);
                 uint32_t __iv_count = 0;
                 for (; m < inline_limit; m++) {
                     idn = node_nbrs[m];
@@ -1775,7 +1783,7 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
                 if (pqvb != nullptr) {
                     /* vector is in cache */
                     diskann::pq_dist_lookup(pqvb, 1, this->n_chunks, pq_dists,
-                                            agg_dist_scratch_inline +
+                                            agg_dist_scratch_inline.get() +
                                                 agg_nnbrs_inline);
                     agg_node_nbrs_inline[agg_nnbrs_inline] = idn;
                     agg_nnbrs_inline++;
@@ -1792,7 +1800,7 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
                uint32_t computed_count = 0;
                do {
 				  uint32_t _nids = std::min(agg_nnbrs - computed_count, (uint32_t)max_ios);
-				  compute_dists(agg_node_nbrs + computed_count, _nids, agg_dist_scratch + computed_count, *aisaq_data.aisaq_pq_reader_ctx, stats);
+				  compute_dists(agg_node_nbrs.get() + computed_count, _nids, agg_dist_scratch.get() + computed_count, *aisaq_data.aisaq_pq_reader_ctx, stats);
 				  computed_count +=  _nids;
                } while (computed_count < agg_nnbrs);
         }
