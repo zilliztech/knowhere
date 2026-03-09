@@ -24,8 +24,6 @@ WITH_ASAN ?=
 WITH_CARDINAL ?=
 WITH_DEBUG ?=
 WITH_MACOS ?=
-# Set False to disable compiler.cppstd=17 (legacy release pipelines)
-WITH_CPPSTD ?= True
 
 # ---------- Derived settings ----------
 ifdef WITH_DEBUG
@@ -50,9 +48,7 @@ else
     CONAN_FLAGS += --build=liburing
 endif
 
-ifeq ($(WITH_CPPSTD),True)
-    CONAN_FLAGS += -s compiler.cppstd=17
-endif
+CONAN_FLAGS += -s compiler.cppstd=17
 
 ifdef WITH_UT
     CONAN_FLAGS += -o with_ut=True
@@ -130,7 +126,6 @@ help: ## Show available targets
 	@echo "  WITH_CARDINAL=True Enable Cardinal build"
 	@echo "  WITH_DEBUG=True    Debug build (default: Release)"
 	@echo "  WITH_MACOS=True    Use macOS conventions (libc++)"
-	@echo "  WITH_CPPSTD=False  Disable compiler.cppstd=17 (legacy release)"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make                              # CPU release"
