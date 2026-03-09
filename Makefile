@@ -24,6 +24,7 @@ WITH_ASAN ?=
 WITH_CARDINAL ?=
 WITH_DEBUG ?=
 WITH_MACOS ?=
+CONAN_PROFILE ?=
 
 # ---------- Derived settings ----------
 ifdef WITH_DEBUG
@@ -60,6 +61,10 @@ endif
 
 ifdef WITH_CARDINAL
     CONAN_FLAGS += -o with_cardinal=True
+endif
+
+ifdef CONAN_PROFILE
+    CONAN_FLAGS += -pr $(CONAN_PROFILE)
 endif
 
 .PHONY: build test \
@@ -126,6 +131,7 @@ help: ## Show available targets
 	@echo "  WITH_CARDINAL=True Enable Cardinal build"
 	@echo "  WITH_DEBUG=True    Debug build (default: Release)"
 	@echo "  WITH_MACOS=True    Use macOS conventions (libc++)"
+	@echo "  CONAN_PROFILE=<p>  Use a custom Conan profile (e.g. clang, gcc-15)"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make                              # CPU release"
@@ -134,4 +140,5 @@ help: ## Show available targets
 	@echo "  make WITH_GPU=True WITH_UT=True   # GPU UT"
 	@echo "  make WITH_DEBUG=True WITH_UT=True # CPU debug + UT"
 	@echo "  make WITH_MACOS=True              # macOS CPU release"
+	@echo "  make CONAN_PROFILE=gcc15          # CPU with custom profile"
 	@echo ""
