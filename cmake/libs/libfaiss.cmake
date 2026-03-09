@@ -6,6 +6,8 @@ knowhere_file_glob(
   GLOB FAISS_SRCS
   thirdparty/faiss/faiss/*.cpp
   thirdparty/faiss/faiss/impl/*.cpp
+  thirdparty/faiss/faiss/impl/pq_code_distance/*.cpp
+  thirdparty/faiss/faiss/impl/scalar_quantizer/*.cpp
   thirdparty/faiss/faiss/invlists/*.cpp
   thirdparty/faiss/faiss/utils/*.cpp
   thirdparty/faiss/faiss/utils/distances_fused/*.cpp
