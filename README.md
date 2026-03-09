@@ -28,67 +28,55 @@ Here's a list of verified OS types where Knowhere can successfully build and run
 #### Install Dependencies
 
 ```bash
-$ sudo apt install build-essential libopenblas-openmp-dev libaio-dev python3-dev python3-pip
-$ pip3 install conan==1.61.0 --user
-$ export PATH=$PATH:$HOME/.local/bin
+$ bash scripts/install_deps.sh
 ```
 
 #### Build From Source Code
 
-* Ubuntu 20.04
+A top-level `Makefile` provides a unified build interface. Run `make help` to see all targets and flags.
 
 ```bash
-$ mkdir build && cd build
-#add conan remote
-$ conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local
-#DEBUG CPU
-$ conan install .. --build=missing -o with_ut=True -s compiler.libcxx=libstdc++11 -s build_type=Debug
-#RELEASE CPU
-$ conan install .. --build=missing -o with_ut=True -s compiler.libcxx=libstdc++11 -s build_type=Release
-#DEBUG GPU
-$ conan install .. --build=missing -o with_ut=True -o with_cuvs=True -s compiler.libcxx=libstdc++11 -s build_type=Debug
-#RELEASE GPU
-$ conan install .. --build=missing -o with_ut=True -o with_cuvs=True -s compiler.libcxx=libstdc++11 -s build_type=Release
-#DISKANN SUPPORT
-$ conan install .. --build=missing -o with_ut=True -o with_diskann=True -s compiler.libcxx=libstdc++11 -s build_type=Debug/Release
-#build with conan
-$ conan build ..
-#verbose
-export VERBOSE=1
-```
+# CPU release (default)
+$ make
 
-* MacOS
+# GPU release (cuVS)
+$ make WITH_GPU=True
 
-```bash
-#RELEASE CPU
-conan install .. --build=missing -o with_ut=True -s compiler.libcxx=libc++ -s build_type=Release
-#DEBUG CPU
-conan install .. --build=missing -o with_ut=True -s compiler.libcxx=libc++ -s build_type=Debug
-#build with conan
-conan build ..
+# CPU with unit tests
+$ make WITH_UT=True
+
+# CPU UT + AddressSanitizer
+$ make WITH_UT=True WITH_ASAN=True
+
+# GPU with unit tests
+$ make WITH_GPU=True WITH_UT=True
+
+# Debug build
+$ make WITH_DEBUG=True
+
+# macOS
+$ make WITH_MACOS=True
+
+# Custom compiler via Conan profile (e.g. clang, gcc-15)
+$ make CONAN_PROFILE=clang14
 ```
 
 #### Running Unit Tests
 
 ```bash
-# in build directories
-#Debug
-$ ./Debug/tests/ut/knowhere_tests
-#Release
-$ ./Release/tests/ut/knowhere_tests
+# requires a prior build with WITH_UT=True
+$ make test
 ```
 
 #### Clean up
 
 ```bash
-$ git clean -fxd
+$ make clean
 ```
 
-## GEN PYTHON WHEEL(NEED RELEASE BUILD)
+## Python Wheel
 
 ### Prerequisites
-
-Install dependencies:
 
 ```bash
 sudo apt install swig python3-dev
@@ -97,55 +85,41 @@ pip3 install bfloat16 auditwheel 'numpy<2'
 
 ### Build Portable Wheel
 
-After building Knowhere C++ library with Release configuration:
+After building Knowhere with a Release configuration:
 
 ```bash
-cd python
-./build_portable_wheel.sh
+$ make wheel
 ```
 
-This will create a portable **manylinux wheel** with all dependencies bundled.
-
-Options:
-- `-c, --clean` - Clean build artifacts first
-- `-v, --verbose` - Show detailed output
-- `-p, --python BIN` - Use specific Python executable
-
-Example:
-```bash
-# Clean build with verbose output
-./build_portable_wheel.sh -c -v
-
-# Build for Python 3.10
-./build_portable_wheel.sh -p python3.10
-```
+This will create a portable **manylinux wheel** with all dependencies bundled. For more options (clean build, verbose, custom Python binary), see `python/build_portable_wheel.sh -h`.
 
 ### Install Wheel
 
 ```bash
-pip3 install dist/pyknowhere-*-manylinux*.whl
-```
-
-
-### Clean Up
-
-```bash
-cd python
-rm -rf build dist *.egg-info
-rm -f knowhere/knowhere_wrap.cpp knowhere/swigknowhere.py
+pip3 install python/dist/pyknowhere-*-manylinux*.whl
 ```
 
 ## Contributing
 
 ### Pre-Commit
 
-Before submitting a pull request, please make sure running pre-commit checks locally to ensure the code is ready for review. Use the following command to install pre-commit checks:
+Before submitting a pull request, run pre-commit checks locally:
 
 ```bash
 pip3 install pre-commit
 pre-commit install --hook-type pre-commit --hook-type pre-push
 
-# If clang-format and clang-tidy not already installed:
+# Run all pre-commit hooks
+$ make pre-commit
+
+# Or run individually:
+$ make format   # clang-format
+$ make lint     # clang-tidy (requires a prior build)
+```
+
+If clang-format and clang-tidy are not already installed:
+
+```bash
 # linux
 apt install clang-format clang-tidy
 # mac
