@@ -2745,6 +2745,118 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         }
     }
 
+    SECTION("IndexNode-level: IVF TokenANN BinarySet roundtrip") {
+        auto version = GenTestEmbListVersionList();
+        auto conf = base_conf;
+        conf[knowhere::meta::INDEX_TYPE] = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
+        conf[knowhere::indexparam::NLIST] = 4;
+        conf[knowhere::indexparam::NPROBE] = 4;
+
+        auto index = knowhere::IndexFactory::Instance()
+                         .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, version)
+                         .value();
+        index.Build(default_ds_ptr, conf);
+
+        knowhere::BinarySet binset;
+        REQUIRE(index.Serialize(binset) == knowhere::Status::success);
+
+        REQUIRE(binset.GetByName(knowhere::meta::EMB_LIST_META) != nullptr);
+
+        // IVF needs deserialization for direct_map
+        auto index2 = knowhere::IndexFactory::Instance()
+                          .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, version)
+                          .value();
+        REQUIRE(index2.Deserialize(binset, conf) == knowhere::Status::success);
+
+        auto result1 = index2.Search(query_ds_ptr, conf, nullptr);
+        REQUIRE(result1.has_value());
+
+        auto num_q = result1.value()->GetRows();
+        const auto* ids = result1.value()->GetIds();
+        // Verify we get valid results (non-negative IDs)
+        for (int64_t i = 0; i < num_q * TOPK; ++i) {
+            REQUIRE(ids[i] >= -1);
+        }
+    }
+
+    SECTION("IndexNode-level: IVF MUVERA BinarySet roundtrip with raw index") {
+        auto version = GenTestEmbListVersionList();
+        auto conf = base_conf;
+        conf[knowhere::meta::INDEX_TYPE] = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
+        conf[knowhere::indexparam::NLIST] = 4;
+        conf[knowhere::indexparam::NPROBE] = 4;
+        conf["emb_list_strategy"] = "muvera";
+        conf["muvera_num_projections"] = 3;
+        conf["muvera_num_repeats"] = 2;
+        conf["muvera_seed"] = 42;
+
+        auto index = knowhere::IndexFactory::Instance()
+                         .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, version)
+                         .value();
+        index.Build(default_ds_ptr, conf);
+
+        knowhere::BinarySet binset;
+        REQUIRE(index.Serialize(binset) == knowhere::Status::success);
+
+        REQUIRE(binset.GetByName(knowhere::meta::EMB_LIST_META) != nullptr);
+        REQUIRE(binset.GetByName(knowhere::meta::EMB_LIST_RAW_INDEX) != nullptr);
+
+        auto index2 = knowhere::IndexFactory::Instance()
+                          .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, version)
+                          .value();
+        REQUIRE(index2.Deserialize(binset, conf) == knowhere::Status::success);
+
+        auto result1 = index2.Search(query_ds_ptr, conf, nullptr);
+        REQUIRE(result1.has_value());
+
+        auto num_q = result1.value()->GetRows();
+        const auto* ids = result1.value()->GetIds();
+        for (int64_t i = 0; i < num_q * TOPK; ++i) {
+            REQUIRE(ids[i] >= -1);
+        }
+    }
+
+    SECTION("IndexNode-level: IVF LEMUR BinarySet roundtrip with raw index") {
+        auto version = GenTestEmbListVersionList();
+        auto conf = base_conf;
+        conf[knowhere::meta::INDEX_TYPE] = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT;
+        conf[knowhere::indexparam::NLIST] = 4;
+        conf[knowhere::indexparam::NPROBE] = 4;
+        conf["emb_list_strategy"] = "lemur";
+        conf["lemur_hidden_dim"] = 32;
+        conf["lemur_num_train_samples"] = 1000;
+        conf["lemur_num_epochs"] = 2;
+        conf["lemur_batch_size"] = 16;
+        conf["lemur_learning_rate"] = 0.001f;
+        conf["lemur_seed"] = 42;
+        conf["lemur_num_layers"] = 1;
+
+        auto index = knowhere::IndexFactory::Instance()
+                         .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, version)
+                         .value();
+        index.Build(default_ds_ptr, conf);
+
+        knowhere::BinarySet binset;
+        REQUIRE(index.Serialize(binset) == knowhere::Status::success);
+
+        REQUIRE(binset.GetByName(knowhere::meta::EMB_LIST_META) != nullptr);
+        REQUIRE(binset.GetByName(knowhere::meta::EMB_LIST_RAW_INDEX) != nullptr);
+
+        auto index2 = knowhere::IndexFactory::Instance()
+                          .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, version)
+                          .value();
+        REQUIRE(index2.Deserialize(binset, conf) == knowhere::Status::success);
+
+        auto result1 = index2.Search(query_ds_ptr, conf, nullptr);
+        REQUIRE(result1.has_value());
+
+        auto num_q = result1.value()->GetRows();
+        const auto* ids = result1.value()->GetIds();
+        for (int64_t i = 0; i < num_q * TOPK; ++i) {
+            REQUIRE(ids[i] >= -1);
+        }
+    }
+
     SECTION("File-based: TokenANN DeserializeFromFile roundtrip") {
         auto version = GenTestEmbListVersionList();
         auto conf = base_conf;
