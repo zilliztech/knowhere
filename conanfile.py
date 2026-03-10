@@ -61,7 +61,7 @@ class KnowhereConan(ConanFile):
         "opentelemetry-cpp:with_stl": True,
         "libcurl:with_ssl": False,
         "with_light": False,
-        "with_compile_prune": False,
+        "with_compile_prune": True,
         "folly:shared": True,
     }
 
