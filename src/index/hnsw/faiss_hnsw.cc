@@ -1497,7 +1497,12 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
     expected<DataSetPtr>
     CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset_, const int64_t* labels, const size_t labels_len,
-                  const bool /*is_cosine*/, milvus::OpContext* op_context) const override {
+                  const bool is_cosine, milvus::OpContext* op_context) const override {
+        // When emb_list_raw_index_ exists (MUVERA/LEMUR), use it for exact distance computation
+        if (emb_list_raw_index_) {
+            return CalcDistByRawIndex(dataset, labels, labels_len, is_cosine, search_pool, op_context);
+        }
+
         if (this->indexes.empty()) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
@@ -1535,16 +1540,12 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     knowhere::checkCancellation(op_context);
                     // set up a distance computer
                     std::unique_ptr<faiss::DistanceComputer> dist_computer;
-                    if (emb_list_raw_index_) {
-                        dist_computer.reset(emb_list_raw_index_->get_distance_computer());
+                    const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
+                        dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(indexes[index_id].get());
+                    if (index_refine != nullptr) {
+                        dist_computer.reset(index_refine->refine_index->get_distance_computer());
                     } else {
-                        const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
-                            dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(indexes[index_id].get());
-                        if (index_refine != nullptr) {
-                            dist_computer.reset(index_refine->refine_index->get_distance_computer());
-                        } else {
-                            dist_computer.reset(indexes[index_id]->get_distance_computer());
-                        }
+                        dist_computer.reset(indexes[index_id]->get_distance_computer());
                     }
 
                     // set up a query
@@ -1560,7 +1561,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     dist_computer->set_query(cur_query);
                     for (auto j = 0; j < labels_len; j++) {
                         auto id = labels[j];
-                        if (!emb_list_raw_index_ && indexes.size() > 1) {
+                        if (indexes.size() > 1) {
                             id = label_to_internal_offset[labels[j]] - index_rows_sum[index_id];
                         }
                         distances[idx * labels_len + j] = (*dist_computer)(id);
@@ -2446,7 +2447,7 @@ class HNSWIndexNodeWithFallback : public IndexNode {
                                                         op_context);
         } else {
             return fallback_search_index->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), bitset,
-                                                                    use_knowhere_search_pool, op_context);
+                                                                   use_knowhere_search_pool, op_context);
         }
     }
 

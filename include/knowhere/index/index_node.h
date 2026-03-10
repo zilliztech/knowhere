@@ -578,6 +578,20 @@ class IndexNode : public Object {
     }
 
  protected:
+    /**
+     * @brief Compute distances using emb_list_raw_index_ (raw vector storage).
+     *
+     * Used by CalcDistByIDs implementations when emb_list_raw_index_ is present
+     * (MUVERA/LEMUR strategies). The raw index stores original vectors indexed by
+     * global vector IDs, so no ID translation is needed.
+     *
+     * @param pool Thread pool for parallel computation
+     * @return Distance results or error
+     */
+    expected<DataSetPtr>
+    CalcDistByRawIndex(const DataSetPtr dataset, const int64_t* labels, size_t labels_len, bool is_cosine,
+                       std::shared_ptr<ThreadPool> pool, milvus::OpContext* op_context = nullptr) const;
+
     Version version_;
     std::shared_ptr<EmbListOffset> emb_list_offset_;  // emb_list group offset structure (shared with strategy)
     std::string el_metric_type_;

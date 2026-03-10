@@ -401,8 +401,8 @@ IndexNode::BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, c
     RETURN_IF_ERROR(emb_list_strategy_->OnBuildComplete(dataset, doc_offset, config));
 
     // 8. Set ID mapping if strategy requires it (Direct needs vector->doc mapping)
+    emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
     if (emb_list_strategy_->NeedsBaseIndexIDMap()) {
-        emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
         return SetBaseIndexIDMap();
     }
 
@@ -508,8 +508,8 @@ IndexNode::DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_
         }
 
         // 6. Set ID mapping if needed
+        emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
         if (emb_list_strategy_->NeedsBaseIndexIDMap()) {
-            emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
             return SetBaseIndexIDMap();
         }
     } catch (const std::exception& e) {
@@ -607,8 +607,8 @@ IndexNode::DeserializeEmbListFromFile(const std::string& filename, std::shared_p
         }
 
         // 6. Set ID mapping if needed
+        emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
         if (emb_list_strategy_->NeedsBaseIndexIDMap()) {
-            emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
             return SetBaseIndexIDMap();
         }
     } catch (const std::exception& e) {
@@ -617,6 +617,49 @@ IndexNode::DeserializeEmbListFromFile(const std::string& filename, std::shared_p
     }
 
     return Status::success;
+}
+
+expected<DataSetPtr>
+IndexNode::CalcDistByRawIndex(const DataSetPtr dataset, const int64_t* labels, size_t labels_len, bool is_cosine,
+                              std::shared_ptr<ThreadPool> pool, milvus::OpContext* op_context) const {
+    if (!emb_list_raw_index_) {
+        return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "emb_list_raw_index not initialized");
+    }
+
+    auto num_queries = dataset->GetRows();
+    auto dim = dataset->GetDim();
+    auto query_data = dataset->GetTensor();
+    auto distances = std::make_unique<float[]>(num_queries * labels_len);
+
+    try {
+        std::vector<folly::Future<folly::Unit>> futs;
+        futs.reserve(num_queries);
+        for (int64_t i = 0; i < num_queries; ++i) {
+            futs.emplace_back(pool->push([&, idx = i]() {
+                knowhere::checkCancellation(op_context);
+                std::unique_ptr<faiss::DistanceComputer> dist_computer(emb_list_raw_index_->get_distance_computer());
+
+                const float* cur_query = (const float*)query_data + idx * dim;
+                std::unique_ptr<float[]> copied_query = nullptr;
+                if (is_cosine) {
+                    copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
+                    cur_query = copied_query.get();
+                }
+
+                dist_computer->set_query(cur_query);
+                auto cur_distances = distances.get() + idx * labels_len;
+                for (size_t j = 0; j < labels_len; ++j) {
+                    cur_distances[j] = (*dist_computer)(labels[j]);
+                }
+            }));
+        }
+        WaitAllSuccess(futs);
+    } catch (const std::exception& e) {
+        LOG_KNOWHERE_WARNING_ << "CalcDistByRawIndex error: " << e.what();
+        return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
+    }
+
+    return GenResultDataSet(num_queries, labels_len, std::unique_ptr<int64_t[]>{}, std::move(distances));
 }
 
 }  // namespace knowhere
