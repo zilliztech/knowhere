@@ -355,8 +355,7 @@ class FlatIndexNode : public IndexNode {
         }
 
         if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexFlat>::value) {
-            faiss::Index* index =
-                faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags);
+            faiss::Index* index = faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags);
             index_.reset(static_cast<IndexType*>(index));
         }
         if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexBinaryFlat>::value) {

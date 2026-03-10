@@ -102,8 +102,7 @@ IndexIVFWrapper<IndexIVFType>::get_base_ivf_index() {
     // try refine
     faiss::cppcontrib::knowhere::IndexRefine* index_refine =
         dynamic_cast<faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
-    faiss::Index* index_for_base =
-        (index_refine != nullptr) ? index_refine->base_index : index.get();
+    faiss::Index* index_for_base = (index_refine != nullptr) ? index_refine->base_index : index.get();
 
     // Use dynamic_cast to cast to the specific IndexIVFType (e.g., IndexIVFPQ)
     return dynamic_cast<IndexIVFType*>(index_for_base);
@@ -115,8 +114,7 @@ IndexIVFWrapper<IndexIVFType>::get_base_ivf_index() const {
     // try refine
     const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
         dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
-    const faiss::Index* index_for_base =
-        (index_refine != nullptr) ? index_refine->base_index : index.get();
+    const faiss::Index* index_for_base = (index_refine != nullptr) ? index_refine->base_index : index.get();
     return dynamic_cast<const IndexIVFType*>(index_for_base);
 }
 
@@ -161,8 +159,7 @@ IndexIVFWrapper<IndexIVFType>::getIteratorWorkspace(
     // try refine
     const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
         dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
-    const faiss::Index* index_for_base =
-        (index_refine != nullptr) ? index_refine->base_index : index.get();
+    const faiss::Index* index_for_base = (index_refine != nullptr) ? index_refine->base_index : index.get();
 
     const IndexIVFType* index_ivf = dynamic_cast<const IndexIVFType*>(index_for_base);
     if (index_ivf == nullptr) {

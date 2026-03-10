@@ -15,8 +15,8 @@
 
 #include <memory>
 
-#include "faiss/cppcontrib/knowhere/IndexFlat.h"
 #include "faiss/IndexPreTransform.h"
+#include "faiss/cppcontrib/knowhere/IndexFlat.h"
 #include "faiss/cppcontrib/knowhere/impl/CountSizeIOWriter.h"
 #include "faiss/cppcontrib/knowhere/index_io.h"
 #include "index/refine/refine_utils.h"
@@ -136,12 +136,10 @@ IndexIVFRaBitQWrapper::get_ivfrabitq_index() {
     // try refine
     faiss::cppcontrib::knowhere::IndexRefine* index_refine =
         dynamic_cast<faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
-    faiss::Index* index_for_pt =
-        (index_refine != nullptr) ? index_refine->base_index : index.get();
+    faiss::Index* index_for_pt = (index_refine != nullptr) ? index_refine->base_index : index.get();
 
     // pre-transform
-    faiss::IndexPreTransform* index_pt =
-        dynamic_cast<faiss::IndexPreTransform*>(index_for_pt);
+    faiss::IndexPreTransform* index_pt = dynamic_cast<faiss::IndexPreTransform*>(index_for_pt);
     if (index_pt == nullptr) {
         return nullptr;
     }
@@ -154,12 +152,10 @@ IndexIVFRaBitQWrapper::get_ivfrabitq_index() const {
     // try refine
     const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
         dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
-    const faiss::Index* index_for_pt =
-        (index_refine != nullptr) ? index_refine->base_index : index.get();
+    const faiss::Index* index_for_pt = (index_refine != nullptr) ? index_refine->base_index : index.get();
 
     // pre-transform
-    const faiss::IndexPreTransform* index_pt =
-        dynamic_cast<const faiss::IndexPreTransform*>(index_for_pt);
+    const faiss::IndexPreTransform* index_pt = dynamic_cast<const faiss::IndexPreTransform*>(index_for_pt);
     if (index_pt == nullptr) {
         return nullptr;
     }
@@ -202,11 +198,9 @@ IndexIVFRaBitQWrapper::getIteratorWorkspace(
     // try refine
     const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
         dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
-    faiss::Index* index_for_pt =
-        (index_refine != nullptr) ? index_refine->base_index : index.get();
+    faiss::Index* index_for_pt = (index_refine != nullptr) ? index_refine->base_index : index.get();
 
-    const faiss::IndexPreTransform* index_pt =
-        dynamic_cast<const faiss::IndexPreTransform*>(index_for_pt);
+    const faiss::IndexPreTransform* index_pt = dynamic_cast<const faiss::IndexPreTransform*>(index_for_pt);
     if (index_pt == nullptr) {
         return nullptr;
     }

@@ -11,8 +11,8 @@
 
 #include "index/hnsw/impl/IndexBruteForceWrapper.h"
 
-#include <faiss/MetricType.h>
 #include <faiss/Index.h>
+#include <faiss/MetricType.h>
 #include <faiss/cppcontrib/knowhere/MetricType.h>
 #include <faiss/cppcontrib/knowhere/impl/Bruteforce.h>
 #include <faiss/impl/AuxIndexStructures.h>

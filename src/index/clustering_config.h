@@ -17,7 +17,8 @@
 namespace knowhere {
 
 // Apply global clustering configuration to a ClusteringParameters instance.
-inline void ApplyClusteringConfig(faiss::ClusteringParameters& cp) {
+inline void
+ApplyClusteringConfig(faiss::ClusteringParameters& cp) {
     switch (KnowhereConfig::GetClusteringType()) {
         case KnowhereConfig::ClusteringType::K_MEANS:
             cp.init_method = faiss::ClusteringInitMethod::RANDOM;

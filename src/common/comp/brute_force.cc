@@ -572,8 +572,9 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                 ThreadPool::ScopedSearchOmpSetter setter(1);
                 auto cur_labels = labels + topk * index;
                 auto cur_distances = distances + topk * index;
-                RETURN_IF_ERROR(brute_force_dense_impl<DataType>(xq, index, xb, inv_norms.get(), cur_labels, cur_distances,
-                                                                 dim, nb, topk, faiss_metric_type, bitset, is_cosine));
+                RETURN_IF_ERROR(brute_force_dense_impl<DataType>(xq, index, xb, inv_norms.get(), cur_labels,
+                                                                 cur_distances, dim, nb, topk, faiss_metric_type,
+                                                                 bitset, is_cosine));
 
                 return Status::success;
             }));
@@ -702,9 +703,9 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
                     chunk_bitset.set_id_offset(xb_id_offset + chunk_lims[chunk_idx]);
                     auto chunk_inv_norms = inv_norms == nullptr ? nullptr : inv_norms.get() + chunk_lims[chunk_idx];
 
-                    RETURN_IF_ERROR(brute_force_dense_impl<DataType>(xq, query_idx, xb, chunk_inv_norms, tmp_labels.data(),
-                                                                     tmp_distances.data(), dim, num_base_vectors, k,
-                                                                     faiss_metric_type, chunk_bitset, is_cosine));
+                    RETURN_IF_ERROR(brute_force_dense_impl<DataType>(
+                        xq, query_idx, xb, chunk_inv_norms, tmp_labels.data(), tmp_distances.data(), dim,
+                        num_base_vectors, k, faiss_metric_type, chunk_bitset, is_cosine));
 
                     // merge chunk-topk results to heap
                     for (int j = 0; j < k; j++) {
@@ -1041,9 +1042,9 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                                                                                  &res, id_selector);
                             } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                                 // normalize query vector may cause precision loss, so div query norms in apply function
-                                faiss::cppcontrib::knowhere::range_search_cosine_typed(
-                                    cur_query, (const DataType*)xb, inv_norms.get(), dim, 1, nb, radius, &res,
-                                    id_selector);
+                                faiss::cppcontrib::knowhere::range_search_cosine_typed(cur_query, (const DataType*)xb,
+                                                                                       inv_norms.get(), dim, 1, nb,
+                                                                                       radius, &res, id_selector);
                             } else {
                                 LOG_KNOWHERE_ERROR_ << "Metric COSINE not supported for current vector type";
                                 return Status::faiss_inner_error;
@@ -1338,8 +1339,8 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                             } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                                 // normalize query vector may cause precision loss, so div query norms in apply function
                                 faiss::cppcontrib::knowhere::all_cosine_typed(cur_query, (const DataType*)xb,
-                                                                              inv_norms.get(), dim, 1, nb, distances_ids,
-                                                                              id_selector);
+                                                                              inv_norms.get(), dim, 1, nb,
+                                                                              distances_ids, id_selector);
                             } else {
                                 std::string err_msg = "Metric COSINE not supported for current vector type";
                                 LOG_KNOWHERE_ERROR_ << err_msg;
@@ -1575,9 +1576,9 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                 } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                                     // normalize query vector may cause precision loss, so div query norms in apply
                                     // function
-                                    faiss::cppcontrib::knowhere::all_cosine_typed(cur_query, (const DataType*)xb,
-                                                                                  chunk_inv_norms, dim, 1, num_base_vectors,
-                                                                                  chunk_distances_ids, id_selector);
+                                    faiss::cppcontrib::knowhere::all_cosine_typed(
+                                        cur_query, (const DataType*)xb, chunk_inv_norms, dim, 1, num_base_vectors,
+                                        chunk_distances_ids, id_selector);
                                 } else {
                                     std::string err_msg = "Metric COSINE not supported for current vector type";
                                     LOG_KNOWHERE_ERROR_ << err_msg;

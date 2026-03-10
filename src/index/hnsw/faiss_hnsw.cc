@@ -35,6 +35,7 @@
 #include "faiss/cppcontrib/knowhere/impl/ScalarQuantizer.h"
 #include "faiss/cppcontrib/knowhere/index_io.h"
 #include "faiss/impl/mapped_io.h"
+#include "index/clustering_config.h"
 #include "index/hnsw/faiss_hnsw_config.h"
 #include "index/hnsw/hnsw.h"
 #include "index/hnsw/impl/DummyVisitor.h"
@@ -57,7 +58,6 @@
 #include "knowhere/log.h"
 #include "knowhere/range_util.h"
 #include "knowhere/utils.h"
-#include "index/clustering_config.h"
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
 #include "knowhere/prometheus_client.h"
@@ -228,14 +228,12 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
                 indexes.resize(v);
                 LOG_KNOWHERE_INFO_ << "read " << v << " mvs";
                 for (auto i = 0; i < v; ++i) {
-                    auto read_index = std::unique_ptr<faiss::Index>(
-                        faiss::cppcontrib::knowhere::read_index(&reader));
+                    auto read_index = std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
                     indexes[i].reset(read_index.release());
                 }
             } else {
                 reader.reset();
-                auto read_index = std::unique_ptr<faiss::Index>(
-                    faiss::cppcontrib::knowhere::read_index(&reader));
+                auto read_index = std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
                 indexes[0].reset(read_index.release());
             }
         } catch (const std::exception& e) {
@@ -272,8 +270,8 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
                     LOG_KNOWHERE_INFO_ << "read " << v << " mvs";
                     indexes.resize(v);
                     for (auto i = 0; i < v; ++i) {
-                        auto read_index = std::unique_ptr<faiss::Index>(
-                            faiss::cppcontrib::knowhere::read_index(r, io_flags));
+                        auto read_index =
+                            std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(r, io_flags));
                         indexes[i].reset(read_index.release());
                     }
                 };
@@ -288,8 +286,8 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
                     read_index(&reader);
                 }
             } else {
-                auto read_index = std::unique_ptr<faiss::Index>(
-                    faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
+                auto read_index =
+                    std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
                 indexes[0].reset(read_index.release());
             }
         } catch (const std::exception& e) {
@@ -631,8 +629,7 @@ convert_ds_to_float(const DataSetPtr& src, DataFormatEnum data_format) {
 }
 
 Status
-add_to_index(faiss::Index* const __restrict index, const DataSetPtr& dataset,
-             const DataFormatEnum data_format) {
+add_to_index(faiss::Index* const __restrict index, const DataSetPtr& dataset, const DataFormatEnum data_format) {
     const auto* data = dataset->GetTensor();
     const auto rows = dataset->GetRows();
     const auto dim = dataset->GetDim();

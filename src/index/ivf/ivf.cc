@@ -24,6 +24,7 @@
 #include "faiss/cppcontrib/knowhere/IndexIVFRaBitQ.h"
 #include "faiss/cppcontrib/knowhere/IndexScalarQuantizer.h"
 #include "faiss/cppcontrib/knowhere/index_io.h"
+#include "index/clustering_config.h"
 #include "index/data_view_dense_index/index_node_with_data_view_refiner.h"
 #include "index/ivf/ivf_config.h"
 #include "index/ivf/ivf_wrapper.h"
@@ -41,7 +42,6 @@
 #include "knowhere/range_util.h"
 #include "knowhere/thread_pool.h"
 #include "knowhere/utils.h"
-#include "index/clustering_config.h"
 
 namespace knowhere {
 
@@ -1664,8 +1664,7 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, std::sha
             // a special case for IVFRaBitQ, bcz a wrapper is involved.
 
             // deserialize
-            auto index_raw =
-                std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
+            auto index_raw = std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
             auto index_wr = IndexIVFRaBitQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFRaBitQ";
@@ -1676,8 +1675,7 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, std::sha
             index_ = std::move(index_wr);
         } else if constexpr (std::is_same<IndexType, IndexIVFPQWrapper>::value) {
             // deserialize
-            auto index_raw =
-                std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
+            auto index_raw = std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
             auto index_wr = IndexIVFPQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFPQ";
@@ -1688,8 +1686,7 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, std::sha
             index_ = std::move(index_wr);
         } else if constexpr (std::is_same<IndexType, IndexIVFSQWrapper>::value) {
             // deserialize
-            auto index_raw =
-                std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
+            auto index_raw = std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
             auto index_wr = IndexIVFSQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFScalarQuantizer";
@@ -1735,8 +1732,8 @@ IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filena
             // a special case for IVFRaBitQ, bcz a wrapper is involved.
 
             // deserialize into a wrapper
-            auto index_raw = std::unique_ptr<faiss::Index>(
-                faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
+            auto index_raw =
+                std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
             auto index_wr = IndexIVFRaBitQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFRaBitQ";
@@ -1747,8 +1744,8 @@ IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filena
             index_ = std::move(index_wr);
         } else if constexpr (std::is_same<IndexType, IndexIVFPQWrapper>::value) {
             // deserialize into a wrapper
-            auto index_raw = std::unique_ptr<faiss::Index>(
-                faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
+            auto index_raw =
+                std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
             auto index_wr = IndexIVFPQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFPQ";
@@ -1759,8 +1756,8 @@ IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filena
             index_ = std::move(index_wr);
         } else if constexpr (std::is_same<IndexType, IndexIVFSQWrapper>::value) {
             // deserialize into a wrapper
-            auto index_raw = std::unique_ptr<faiss::Index>(
-                faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
+            auto index_raw =
+                std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
             auto index_wr = IndexIVFSQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFScalarQuantizer";
