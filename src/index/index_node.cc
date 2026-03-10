@@ -236,11 +236,10 @@ IndexNode::SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, 
     // 3. Build search context with callbacks
     EmbListSearchContext ctx;
 
-    // Store config - use shared_ptr wrapper to allow moving to callback
-    // Note: ann_search and ann_iterator are mutually exclusive (only one will be called)
+    // Store config - use shared_ptr wrapper to allow moving to callback (consumed once by ann_search)
     auto cfg_wrapper = std::make_shared<std::unique_ptr<Config>>(std::move(cfg));
 
-    // ANN search callback (used by MUVERA strategy)
+    // ANN search callback
     ctx.ann_search = [this, cfg_wrapper, sub_metric_type, &bitset, &op_context](const DataSetPtr query,
                                                                                 int32_t k) -> expected<DataSetPtr> {
         if (!*cfg_wrapper) {
@@ -251,47 +250,6 @@ IndexNode::SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, 
         search_cfg.k = k;
         search_cfg.metric_type = sub_metric_type;
         return this->Search(query, std::move(*cfg_wrapper), bitset, op_context);
-    };
-
-    // ANN iterator callback (used by Direct strategy) - for incremental result fetching
-    ctx.ann_iterator = [this, cfg_wrapper, sub_metric_type, &bitset,
-                        &op_context](const DataSetPtr query) -> expected<std::vector<AnnResultIteratorPtr>> {
-        if (!*cfg_wrapper) {
-            LOG_KNOWHERE_ERROR_ << "ann_iterator: config already consumed";
-            return expected<std::vector<AnnResultIteratorPtr>>::Err(Status::emb_list_inner_error,
-                                                                    "config already consumed");
-        }
-        auto& iter_cfg = static_cast<BaseConfig&>(**cfg_wrapper);
-        iter_cfg.metric_type = sub_metric_type;
-        auto iterators_result = this->AnnIterator(query, std::move(*cfg_wrapper), bitset, true, op_context);
-        if (!iterators_result.has_value()) {
-            return expected<std::vector<AnnResultIteratorPtr>>::Err(iterators_result.error(), iterators_result.what());
-        }
-
-        // Wrap IndexNode::iterator to AnnResultIterator
-        std::vector<AnnResultIteratorPtr> result;
-        result.reserve(iterators_result.value().size());
-        for (auto& iter : iterators_result.value()) {
-            // Create wrapper that adapts IndexNode::iterator to AnnResultIterator
-            class IteratorWrapper : public AnnResultIterator {
-             public:
-                explicit IteratorWrapper(std::shared_ptr<IndexNode::iterator> iter) : iter_(std::move(iter)) {
-                }
-                std::pair<int64_t, float>
-                Next() override {
-                    return iter_->Next();
-                }
-                bool
-                HasNext() override {
-                    return iter_->HasNext();
-                }
-
-             private:
-                std::shared_ptr<IndexNode::iterator> iter_;
-            };
-            result.push_back(std::make_shared<IteratorWrapper>(std::move(iter)));
-        }
-        return result;
     };
 
     // Calculate distance by IDs callback
@@ -380,7 +338,7 @@ IndexNode::AnnIteratorEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Co
 
 Status
 IndexNode::BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
-                         bool use_knowhere_build_pool) {
+                        bool use_knowhere_build_pool) {
     auto& config = static_cast<BaseConfig&>(*cfg);
 
     // 1. Parse metric types
@@ -414,8 +372,8 @@ IndexNode::BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, c
     config.metric_type = sub_metric_type;
 
     // 5. Build underlying index (if strategy provides data)
-    LOG_KNOWHERE_INFO_ << "Build EmbList-Index with strategy: " << strategy_type
-                       << ", metric type: " << el_metric_type_ << ", sub metric type: " << sub_metric_type;
+    LOG_KNOWHERE_INFO_ << "Build EmbList-Index with strategy: " << strategy_type << ", metric type: " << el_metric_type_
+                       << ", sub metric type: " << sub_metric_type;
     if (build_data_or.value().has_value()) {
         RETURN_IF_ERROR(Build(build_data_or.value().value(), cfg, use_knowhere_build_pool));
     }

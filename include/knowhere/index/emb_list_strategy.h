@@ -28,19 +28,6 @@
 namespace knowhere {
 
 /**
- * @brief Simple iterator interface for incremental ANN result fetching.
- */
-class AnnResultIterator {
- public:
-    virtual ~AnnResultIterator() = default;
-    virtual std::pair<int64_t, float>
-    Next() = 0;
-    virtual bool
-    HasNext() = 0;
-};
-using AnnResultIteratorPtr = std::shared_ptr<AnnResultIterator>;
-
-/**
  * @brief Context providing callbacks and resources for strategy search.
  *
  * Strategies have full control over search flow and can use these callbacks
@@ -55,15 +42,6 @@ struct EmbListSearchContext {
      * @return Search results [nq, k] with ids and distances
      */
     std::function<expected<DataSetPtr>(const DataSetPtr query, int32_t k)> ann_search;
-
-    /**
-     * @brief Get ANN iterators for incremental result fetching. Used by TokenANN
-     * to merge results from multiple query vectors and collect unique docs.
-     *
-     * @param query Query dataset [nq, dim]
-     * @return Vector of iterators, one per query vector
-     */
-    std::function<expected<std::vector<AnnResultIteratorPtr>>(const DataSetPtr query)> ann_iterator;
 
     /**
      * @brief Calculate distances between query vectors and indexed vectors by IDs.
@@ -342,6 +320,14 @@ class EmbListStrategy {
      */
     virtual Status
     Deserialize(const uint8_t* data, int64_t size, const BaseConfig& config) = 0;
+
+    /**
+     * @brief Set emb_list offset directly (used by DiskANN which reads offset from file).
+     */
+    virtual Status
+    SetEmbListOffset(std::shared_ptr<EmbListOffset> offset) {
+        return Status::not_implemented;
+    }
 
     /**
      * @brief Get emb_list offset structure (shared).
