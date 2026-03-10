@@ -134,8 +134,9 @@ class MuveraEmbListStrategy : public EmbListStrategy {
         // 6. Store doc_offset for reranking
         emb_list_offset_ = std::make_shared<EmbListOffset>(doc_offset.offset);
 
-        // 7. Create encoded dataset
+        // 7. Create encoded dataset (takes ownership of encoded_data)
         auto encoded_dataset = GenDataSet(num_docs_, encoded_dim_, encoded_data.release());
+        encoded_dataset->SetIsOwner(true);
 
         return std::optional<DataSetPtr>(encoded_dataset);
     }

@@ -270,6 +270,7 @@ class LemurEmbListStrategy : public EmbListStrategy {
             }
         }
         auto W_dataset = GenDataSet(num_docs_, final_hidden_dim_, W_data.release());
+        W_dataset->SetIsOwner(true);
 
         auto end_time = std::chrono::high_resolution_clock::now();
         double total_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
