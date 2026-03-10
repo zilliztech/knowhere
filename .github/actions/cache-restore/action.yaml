@@ -18,6 +18,6 @@ runs:
     - name: Cache Conan Packages
       uses: actions/cache/restore@v4
       with:
-        path: ~/.conan
-        key: knowhere-${{ inputs.os }}-${{ github.job }}-conan-${{ hashFiles('conanfile.py') }}
-        restore-keys: knowhere-${{ inputs.os }}-${{ github.job }}-conan-
+        path: ~/.conan2
+        key: knowhere-${{ inputs.os }}-${{ github.job }}-conan2-${{ hashFiles('conanfile.py') }}
+        restore-keys: knowhere-${{ inputs.os }}-${{ github.job }}-conan2-

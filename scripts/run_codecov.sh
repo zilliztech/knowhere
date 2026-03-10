@@ -83,7 +83,7 @@ fi
 # remove unnecessary info
 ${LCOV_CMD} -r "${FILE_INFO_COMBINE}" -o "${FILE_INFO_OUTPUT}" \
     "/usr/*" \
-    "*/.conan/*" \
+    "*/.conan2/*" \
     "*/nlohmann/*" \
     "*/build/*" \
     "*/tests/*" \

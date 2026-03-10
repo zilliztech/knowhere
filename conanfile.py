@@ -1,3 +1,5 @@
+required_conan_version = ">=2.0"
+
 from conan.tools.microsoft import is_msvc, msvc_runtime_flag
 from conan.tools.build import check_min_cppstd
 from conan.tools.scm import Version
@@ -6,10 +8,7 @@ from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeDeps, CMakeToolchain, cmake_layout
 from conan.tools.gnu import PkgConfigDeps
 from conan.errors import ConanInvalidConfiguration
-from conans import tools
 import os
-
-required_conan_version = ">=1.55.0"
 
 
 class KnowhereConan(ConanFile):
@@ -45,24 +44,24 @@ class KnowhereConan(ConanFile):
         "with_cardinal": False,
         "with_profiler": False,
         "with_ut": False,
-        "glog:shared": True,
-        "glog:with_gflags": True,
-        "gtest:build_gmock": True,
-        "prometheus-cpp:with_pull": False,
+        "glog/*:shared": True,
+        "glog/*:with_gflags": True,
+        "gtest/*:build_gmock": True,
+        "prometheus-cpp/*:with_pull": False,
         "with_benchmark": False,
         "with_coverage": False,
-        "boost:without_locale": False,
-        "boost:without_test": True,
-        "boost:without_stacktrace": True,
-        "openssl:shared": True,
-        "gflags:shared": True,
-        "fmt:header_only": False,
+        "boost/*:without_locale": False,
+        "boost/*:without_test": True,
+        "boost/*:without_stacktrace": True,
+        "openssl/*:shared": True,
+        "gflags/*:shared": True,
+        "fmt/*:header_only": False,
         "with_faiss_tests": False,
-        "opentelemetry-cpp:with_stl": True,
-        "libcurl:with_ssl": False,
+        "opentelemetry-cpp/*:with_stl": True,
+        "libcurl/*:with_ssl": False,
         "with_light": False,
         "with_compile_prune": True,
-        "folly:shared": True,
+        "folly/*:shared": True,
     }
 
     exports_sources = (
@@ -101,33 +100,33 @@ class KnowhereConan(ConanFile):
             self.options.rm_safe("fPIC")
 
     def requirements(self):
-        self.requires("abseil/20250127.0")
-        self.requires("boost/1.83.0")
-        self.requires("gflags/2.2.2")
-        self.requires("glog/0.7.1")
-        self.requires("nlohmann_json/3.11.3")
-        self.requires("openssl/3.3.2")
-        self.requires("prometheus-cpp/1.2.4")
-        self.requires("zlib/1.3.1")
-        self.requires("double-conversion/3.3.0")
-        self.requires("xz_utils/5.4.5")
-        self.requires("protobuf/5.27.0@milvus/dev#6fff8583e2fe32babef04a9097f1d581", force=True, override=True)
-        self.requires("lz4/1.9.4", force=True, override=True)
+        self.requires("abseil/20250127.0#481edcc75deb0efb16500f511f0f0a1c")
+        self.requires("boost/1.83.0#4e8a94ac1b88312af95eded83cd81ca8")
+        self.requires("gflags/2.2.2#7671803f1dc19354cc90bd32874dcfda")
+        self.requires("glog/0.7.1#a306e61d7b8311db8cb148ad62c48030")
+        self.requires("nlohmann_json/3.11.3#ffb9e9236619f1c883e36662f944345d", force=True)
+        self.requires("openssl/3.3.2#9f9f130d58e7c13e76bb8a559f0a6a8b", force=True, override=True)
+        self.requires("prometheus-cpp/1.2.4#0918d66c13f97acb7809759f9de49b3f")
+        self.requires("zlib/1.3.1#8045430172a5f8d56ba001b14561b4ea")
+        self.requires("double-conversion/3.3.0#640e35791a4bac95b0545e2f54b7aceb")
+        self.requires("xz_utils/5.4.5#fc4e36861e0a47ecd4a40a00e6d29ac8")
+        self.requires("protobuf/5.27.0@milvus/dev#42f031a96d21c230a6e05bcac4bdd633", force=True, override=True)
+        self.requires("lz4/1.9.4#7f0b5851453198536c14354ee30ca9ae", force=True, override=True)
         if self.settings.os == "Linux":
             self.requires("liburing/2.8", force=True, override=True)
-        self.requires("fmt/11.2.0")
-        self.requires("libevent/2.1.12")
-        self.requires("grpc/1.67.1@milvus/dev#5aa62c51bced448b83d7db9e5b3a13c7")
-        self.requires("folly/2024.08.12.00@milvus/dev#e09fc71826ce6b4568441910665f0889")
-        self.requires("libcurl/8.10.1")
-        self.requires("simde/0.8.2")
-        self.requires("xxhash/0.8.3")
+        self.requires("fmt/11.2.0#eb98daa559c7c59d591f4720dde4cd5c", force=True, override=True)
+        self.requires("libevent/2.1.12#95065aaefcd58d3956d6dfbfc5631d97")
+        self.requires("grpc/1.67.1@milvus/dev#efeaa484b59bffaa579004d5e82ec4fd")
+        self.requires("folly/2024.08.12.00@milvus/dev#f9b2bdf162c0ec47cb4e5404097b340d")
+        self.requires("libcurl/8.10.1#a3113369c86086b0e84231844e7ed0a9", force=True, override=True)
+        self.requires("simde/0.8.2#5e1edfd5cba92f25d79bf6ef4616b972")
+        self.requires("xxhash/0.8.3#caa6d0af1b951c247922e38fbcebdbe6")
         if self.settings.os == "Android":
             self.requires("openblas/0.3.27")
         if not self.options.with_light:
-            self.requires("opentelemetry-cpp/1.23.0@milvus/dev#bcd65b63b8db8447178ed93bbc94dcc0")
+            self.requires("opentelemetry-cpp/1.23.0@milvus/dev#11bc565ec6e82910ae8f7471da756720")
         if self.settings.os not in ["Macos", "Android"]:
-            self.requires("libunwind/1.8.1")
+            self.requires("libunwind/1.8.1#748a981ace010b80163a08867b732e71")
         if self.options.with_ut:
             self.requires("catch2/3.7.1")
         if self.options.with_benchmark:
@@ -174,12 +173,14 @@ class KnowhereConan(ConanFile):
         # Honor BUILD_SHARED_LIBS from conan_toolchain (see https://github.com/conan-io/conan/issues/11840)
         tc.cache_variables["CMAKE_POLICY_DEFAULT_CMP0077"] = "NEW"
 
-        cxx_std_flag = tools.cppstd_flag(self.settings)
-        cxx_std_value = (
-            cxx_std_flag.split("=")[1]
-            if cxx_std_flag
-            else "c++{}".format(self._minimum_cpp_standard)
-        )
+        cppstd = self.settings.compiler.get_safe("cppstd")
+        if cppstd:
+            if cppstd.startswith("gnu"):
+                cxx_std_value = "gnu++{}".format(cppstd[3:])
+            else:
+                cxx_std_value = "c++{}".format(cppstd)
+        else:
+            cxx_std_value = "c++{}".format(self._minimum_cpp_standard)
         tc.variables["CXX_STD"] = cxx_std_value
         if is_msvc(self):
             tc.variables["MSVC_LANGUAGE_VERSION"] = cxx_std_value
@@ -259,16 +260,6 @@ class KnowhereConan(ConanFile):
             "prometheus-cpp::core",
             "prometheus-cpp::push",
         ]
-
-        self.cpp_info.filenames["cmake_find_package"] = "knowhere"
-        self.cpp_info.filenames["cmake_find_package_multi"] = "knowhere"
-        self.cpp_info.names["cmake_find_package"] = "Knowhere"
-        self.cpp_info.names["cmake_find_package_multi"] = "Knowhere"
-        self.cpp_info.names["pkg_config"] = "libknowhere"
-        self.cpp_info.components["libknowhere"].names["cmake_find_package"] = "knowhere"
-        self.cpp_info.components["libknowhere"].names[
-            "cmake_find_package_multi"
-        ] = "knowhere"
 
         self.cpp_info.components["libknowhere"].set_property(
             "cmake_target_name", "Knowhere::knowhere"
