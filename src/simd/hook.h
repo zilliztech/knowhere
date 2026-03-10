@@ -156,12 +156,6 @@ supports_sve();
 #endif
 
 void
-enable_patch_for_fp32_bf16();
-
-void
-disable_patch_for_fp32_bf16();
-
-void
 fvec_hook(std::string&);
 
 }  // namespace knowhere

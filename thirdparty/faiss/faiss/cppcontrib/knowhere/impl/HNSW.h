@@ -19,6 +19,7 @@
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/maybe_owned_vector.h>
 #include <faiss/impl/platform_macros.h>
+#include <faiss/impl/VisitedTable.h>
 #include <faiss/utils/Heap.h>
 #include <faiss/utils/random.h>
 

@@ -150,68 +150,8 @@ IndexIVFWrapper<IndexIVFType>::size() const {
     return writer.total_size;
 }
 
-template <typename IndexIVFType>
-template <typename U>
-typename std::enable_if<std::is_same_v<U, faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>,
-                        std::unique_ptr<faiss::cppcontrib::knowhere::IVFIteratorWorkspace>>::type
-IndexIVFWrapper<IndexIVFType>::getIteratorWorkspace(
-    const float* query_data, const faiss::cppcontrib::knowhere::IVFSearchParameters* ivfsearchParams) const {
-    // try refine
-    const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
-        dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
-    const faiss::Index* index_for_base = (index_refine != nullptr) ? index_refine->base_index : index.get();
-
-    const IndexIVFType* index_ivf = dynamic_cast<const IndexIVFType*>(index_for_base);
-    if (index_ivf == nullptr) {
-        return nullptr;
-    }
-
-    // create a workspace. This will make a clone of the transformed_query.
-    auto workspace = index_ivf->getIteratorWorkspace(query_data, ivfsearchParams);
-
-    // check if refine exists
-    if (index_refine != nullptr) {
-        // a regular use case
-        workspace->dis_refine =
-            std::unique_ptr<faiss::DistanceComputer>(index_refine->refine_index->get_distance_computer());
-        // this points to a previously saved clone
-        workspace->dis_refine->set_query(workspace->query_data.data());
-    } else {
-        // don't use refine
-        workspace->dis_refine = nullptr;
-    }
-
-    // done
-    return workspace;
-}
-
-template <typename IndexIVFType>
-template <typename U>
-typename std::enable_if<std::is_same_v<U, faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>, void>::type
-IndexIVFWrapper<IndexIVFType>::getIteratorNextBatch(faiss::cppcontrib::knowhere::IVFIteratorWorkspace* workspace,
-                                                    size_t current_backup_count) const {
-    const auto ivf = this->get_base_ivf_index();
-    if (ivf != nullptr) {
-        ivf->getIteratorNextBatch(workspace, current_backup_count);
-    }
-}
-
 template struct IndexIVFWrapper<faiss::cppcontrib::knowhere::IndexIVFPQ>;
 template struct IndexIVFWrapper<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>;
-
-template typename std::enable_if<std::is_same_v<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer,
-                                                faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>,
-                                 std::unique_ptr<faiss::cppcontrib::knowhere::IVFIteratorWorkspace>>::type
-IndexIVFWrapper<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>::getIteratorWorkspace<
-    faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>(
-    const float* query_data, const faiss::cppcontrib::knowhere::IVFSearchParameters* ivfsearchParams) const;
-
-template typename std::enable_if<std::is_same_v<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer,
-                                                faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>,
-                                 void>::type
-IndexIVFWrapper<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>::getIteratorNextBatch<
-    faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>(faiss::cppcontrib::knowhere::IVFIteratorWorkspace* workspace,
-                                                          size_t current_backup_count) const;
 
 expected<std::unique_ptr<IndexIVFPQWrapper>>
 IndexIvfFactory::create_for_pq(faiss::cppcontrib::knowhere::IndexFlat* qzr_raw_ptr, const faiss::idx_t d,

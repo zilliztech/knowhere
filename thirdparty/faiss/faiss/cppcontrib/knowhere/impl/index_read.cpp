@@ -32,7 +32,7 @@
 #include <faiss/cppcontrib/knowhere/IndexIVFPQ.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFPQFastScan.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFRaBitQ.h>
-#include <faiss/cppcontrib/knowhere/IndexPQ.h>
+#include <faiss/IndexPQ.h>
 #include <faiss/IndexPreTransform.h>
 #include <faiss/cppcontrib/knowhere/IndexRefine.h>
 #include <faiss/cppcontrib/knowhere/IndexSQ4Uniform.h>
@@ -41,7 +41,6 @@
 #include <faiss/VectorTransform.h>
 
 #include <faiss/cppcontrib/knowhere/IndexBinaryFlat.h>
-#include <faiss/cppcontrib/knowhere/IndexBinaryHNSW.h>
 #include <faiss/cppcontrib/knowhere/IndexBinaryIVF.h>
 
 // mmap-ing and viewing facilities
@@ -53,6 +52,7 @@
 
 
 namespace faiss::cppcontrib::knowhere {
+
 
 uint32_t read_value(IOReader* f) {
     uint32_t h;
@@ -889,20 +889,6 @@ Index* read_index(IOReader* f, int io_flags) {
             }
         }
         idx = ivfl;
-    } else if (h == fourcc("IwFd")) {
-        IndexIVFFlatDedup* ivfl = new IndexIVFFlatDedup();
-        read_ivf_header(ivfl, f);
-        ivfl->code_size = ivfl->d * sizeof(float);
-        {
-            std::vector<idx_t> tab;
-            READVECTOR(tab);
-            for (long i = 0; i < tab.size(); i += 2) {
-                std::pair<idx_t, idx_t> pair(tab[i], tab[i + 1]);
-                ivfl->instances.insert(pair);
-            }
-        }
-        read_InvertedLists(ivfl, f, io_flags);
-        idx = ivfl;
     } else if (h == fourcc("IwFc")) { // legacy
         IndexIVFFlatCC* ivf_cc;
         // Tentatively create base type, read header to check is_cosine
@@ -1280,13 +1266,6 @@ IndexBinary* read_index_binary(IOReader* f, int io_flags) {
         read_binary_ivf_header(ivf, f);
         read_InvertedLists(ivf, f, io_flags);
         idx = ivf;
-    } else if (h == fourcc("IBHf")) {
-        IndexBinaryHNSW* idxhnsw = new IndexBinaryHNSW();
-        read_index_binary_header(idxhnsw, f);
-        read_HNSW(&idxhnsw->hnsw, f);
-        idxhnsw->storage = read_index_binary(f, io_flags);
-        idxhnsw->own_fields = true;
-        idx = idxhnsw;
     } else {
         FAISS_THROW_FMT(
                 "Index type %08x (\"%s\") not recognized",

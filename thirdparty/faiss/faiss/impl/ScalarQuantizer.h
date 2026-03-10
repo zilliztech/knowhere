@@ -5,8 +5,6 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-// -*- c++ -*-
-
 #pragma once
 
 #include <faiss/impl/AuxIndexStructures.h>
@@ -35,6 +33,7 @@ struct ScalarQuantizer : Quantizer {
         QT_bf16,
         QT_8bit_direct_signed, ///< fast indexing of signed int8s ranging from
                                ///< [-128 to 127]
+        QT_count
     };
 
     QuantizerType qtype = QT_8bit;

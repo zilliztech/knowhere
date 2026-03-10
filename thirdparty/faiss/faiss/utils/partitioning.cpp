@@ -11,9 +11,9 @@
 #include <cmath>
 
 #include <faiss/impl/FaissAssert.h>
+#include <faiss/impl/simdlib/simdlib_dispatch.h>
 #include <faiss/utils/AlignedTable.h>
 #include <faiss/utils/ordered_key_value.h>
-#include <faiss/utils/simdlib.h>
 
 #include <faiss/impl/platform_macros.h>
 
@@ -627,7 +627,7 @@ uint16_t simd_partition_fuzzy_with_bounds_histogram(
             n_lt = sum_below - hist[i];
             n_gt = n - sum_below;
         } else {
-            assert(!"not implemented");
+            assert(false && "not implemented");
         }
 
         IFV printf(

@@ -16,6 +16,7 @@
 #include <memory>
 
 #include "faiss/Index.h"
+#include "faiss/cppcontrib/knowhere/IVFIteratorWorkspace.h"
 #include "faiss/cppcontrib/knowhere/IndexIVF.h"
 #include "faiss/cppcontrib/knowhere/IndexIVFRaBitQ.h"
 #include "faiss/cppcontrib/knowhere/IndexRefine.h"
@@ -89,14 +90,19 @@ struct IndexIVFRaBitQWrapper : faiss::Index {
     // return the size of the index
     size_t
     size() const;
+};
 
-    std::unique_ptr<faiss::cppcontrib::knowhere::IVFIteratorWorkspace>
-    getIteratorWorkspace(const float* query_data,
-                         const faiss::cppcontrib::knowhere::IVFSearchParameters* ivfsearchParams) const;
+/// Standalone iterator workspace for IndexIVFRaBitQWrapper.
+/// Delegates init and scanning to the original wrapper implementations.
+struct IVFRaBitQIteratorWorkspace : faiss::cppcontrib::knowhere::IVFIteratorWorkspace {
+    const IndexIVFRaBitQWrapper* wrapper;
+    std::unique_ptr<faiss::cppcontrib::knowhere::IVFIteratorWorkspace> inner;
+
+    IVFRaBitQIteratorWorkspace(const IndexIVFRaBitQWrapper* wrapper, const float* query_data,
+                               const faiss::cppcontrib::knowhere::IVFSearchParameters* params);
 
     void
-    getIteratorNextBatch(faiss::cppcontrib::knowhere::IVFIteratorWorkspace* workspace,
-                         size_t current_backup_count) const;
+    next_batch(size_t current_backup_count) override;
 };
 
 }  // namespace knowhere

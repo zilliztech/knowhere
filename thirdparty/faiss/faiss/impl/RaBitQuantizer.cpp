@@ -12,6 +12,7 @@
 #include <faiss/impl/RaBitQuantizerMultiBit.h>
 #include <faiss/utils/distances.h>
 #include <faiss/utils/rabitq_simd.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -63,7 +64,7 @@ size_t RaBitQuantizer::compute_code_size(size_t d, size_t num_bits) const {
     return base_size + ex_size;
 }
 
-void RaBitQuantizer::train(size_t n, const float* x) {
+void RaBitQuantizer::train(size_t /*n*/, const float* /*x*/) {
     // does nothing
 }
 
@@ -215,29 +216,6 @@ void RaBitQuantizer::decode_core(
     }
 }
 
-// Implementation of RaBitQDistanceComputer (declared in header)
-
-float RaBitQDistanceComputer::lower_bound_distance(const uint8_t* code) {
-    FAISS_ASSERT(code != nullptr);
-
-    // Compute estimated distance using 1-bit codes
-    float est_distance = distance_to_code_1bit(code);
-
-    // Extract f_error from the code
-    size_t size = (d + 7) / 8;
-    const SignBitFactorsWithError* base_fac =
-            reinterpret_cast<const SignBitFactorsWithError*>(code + size);
-    float f_error = base_fac->f_error;
-
-    // Compute proper lower bound using RaBitQ error formula:
-    // lower_bound = est_distance - f_error * g_error
-    // This guarantees: lower_bound ≤ true_distance
-    float lower_bound = est_distance - (f_error * g_error);
-
-    // Distance cannot be negative
-    return std::max(0.0f, lower_bound);
-}
-
 namespace {
 
 struct RaBitQDistanceComputerNotQ : RaBitQDistanceComputer {
@@ -336,13 +314,15 @@ float RaBitQDistanceComputerNotQ::distance_to_code_full(const uint8_t* code) {
             ex_code + (d * ex_bits + 7) / 8);
 
     // Call shared utility directly with rotated_q pointer
+    float qr_base = (metric_type == MetricType::METRIC_INNER_PRODUCT)
+            ? query_fac.q_dot_c
+            : query_fac.qr_to_c_L2sqr;
     return rabitq_utils::compute_full_multibit_distance(
             binary_data,
             ex_code,
             *ex_fac,
             rotated_q.data(),
-            query_fac.qr_to_c_L2sqr,
-            query_fac.qr_norm_L2sqr,
+            qr_base,
             d,
             ex_bits,
             metric_type);
@@ -388,6 +368,8 @@ void RaBitQDistanceComputerNotQ::set_query(const float* x) {
     if (metric_type == MetricType::METRIC_INNER_PRODUCT) {
         // precompute if needed
         query_fac.qr_norm_L2sqr = fvec_norm_L2sqr(x, d);
+        query_fac.q_dot_c =
+                centroid ? fvec_inner_product(x, centroid, d) : 0.0f;
     }
 }
 
@@ -502,13 +484,15 @@ float RaBitQDistanceComputerQ::distance_to_code_full(const uint8_t* code) {
             ex_code + (d * ex_bits + 7) / 8);
 
     // Call shared utility directly with rotated_q pointer
+    float qr_base = (metric_type == MetricType::METRIC_INNER_PRODUCT)
+            ? query_fac.q_dot_c
+            : query_fac.qr_to_c_L2sqr;
     return rabitq_utils::compute_full_multibit_distance(
             binary_data,
             ex_code,
             *ex_fac,
             rotated_q.data(),
-            query_fac.qr_to_c_L2sqr,
-            query_fac.qr_norm_L2sqr,
+            qr_base,
             d,
             ex_bits,
             metric_type);

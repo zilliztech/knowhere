@@ -41,12 +41,15 @@ class TestSearch(unittest.TestCase):
     # hopefully the jitter in executtion time will not produce
     # too many spurious test failures. Unoptimized timings are
     # not exploitable, hence the flag test on that as well.
+    # DD mode uses virtual dispatch which, combined with ASAN overhead,
+    # makes the 4x speed threshold unreliable on dev machines.
     @unittest.skipUnless(
         ('AVX2' in faiss.get_compile_options() or
         'AVX512' in faiss.get_compile_options() or
         'NEON' in faiss.get_compile_options()) and
-        "OPTIMIZE" in faiss.get_compile_options(),
-        "only test while building with avx2 or neon")
+        "OPTIMIZE" in faiss.get_compile_options() and
+        "DD" not in faiss.get_compile_options(),
+        "only test in static optimized mode with avx2/avx512/neon")
     def test_PQ4_speed(self):
         ds  = datasets.SyntheticDataset(32, 2000, 5000, 1000)
         xt = ds.get_train()

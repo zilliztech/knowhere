@@ -7,15 +7,15 @@
 
 #include <faiss/impl/HNSW.h>
 
+#include <cinttypes>
 #include <cstddef>
 
 #include <faiss/IndexHNSW.h>
 
-#include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/DistanceComputer.h>
 #include <faiss/impl/IDSelector.h>
 #include <faiss/impl/ResultHandler.h>
-#include <faiss/utils/prefetch.h>
+#include <faiss/impl/VisitedTable.h>
 
 #ifdef __AVX2__
 #include <immintrin.h>
@@ -45,11 +45,15 @@ void HNSW::set_nb_neighbors(int level_no, int n) {
 }
 
 int HNSW::cum_nb_neighbors(int layer_no) const {
+    FAISS_CHECK_RANGE_DEBUG(layer_no, 0, (int)cum_nneighbor_per_level.size());
     return cum_nneighbor_per_level[layer_no];
 }
 
 void HNSW::neighbor_range(idx_t no, int layer_no, size_t* begin, size_t* end)
         const {
+    FAISS_CHECK_RANGE_DEBUG(no, 0, (idx_t)offsets.size());
+    FAISS_CHECK_RANGE_DEBUG(
+            layer_no, 0, (int)cum_nneighbor_per_level.size() - 1);
     size_t o = offsets[no];
     *begin = o + cum_nb_neighbors(layer_no);
     *end = o + cum_nb_neighbors(layer_no + 1);
@@ -407,10 +411,9 @@ void search_neighbors_to_add(
                 if (nodeId < 0) {
                     break;
                 }
-                if (vt.get(nodeId)) {
+                if (!vt.set(nodeId)) {
                     continue;
                 }
-                vt.set(nodeId);
 
                 float dis = qdis(nodeId);
                 NodeDistFarther evE1(dis, nodeId);
@@ -448,10 +451,9 @@ void search_neighbors_to_add(
                 if (nodeId < 0) {
                     break;
                 }
-                if (vt.get(nodeId)) {
+                if (!vt.set(nodeId)) {
                     continue;
                 }
-                vt.set(nodeId);
 
                 buffered_ids[n_buffered] = nodeId;
                 n_buffered += 1;
@@ -616,7 +618,7 @@ static inline void extract_search_params(
 int search_from_candidates(
         const HNSW& hnsw,
         DistanceComputer& qdis,
-        ResultHandler<C>& res,
+        ResultHandler& res,
         MinimaxHeap& candidates,
         VisitedTable& vt,
         HNSWStats& stats,
@@ -675,7 +677,7 @@ int search_from_candidates(
                 break;
             }
 
-            prefetch_L2(vt.visited.data() + v1);
+            vt.prefetch(v1);
             jmax += 1;
         }
 
@@ -699,10 +701,8 @@ int search_from_candidates(
         for (size_t j = begin; j < jmax; j++) {
             int v1 = hnsw.neighbors[j];
 
-            bool vget = vt.get(v1);
-            vt.set(v1);
             saved_j[counter] = v1;
-            counter += vget ? 0 : 1;
+            counter += vt.set(v1) ? 1 : 0;
 
             if (counter == 4) {
                 float dis[4];
@@ -755,7 +755,7 @@ int search_from_candidates_panorama(
         const HNSW& hnsw,
         const IndexHNSW* index,
         DistanceComputer& qdis,
-        ResultHandler<C>& res,
+        ResultHandler& res,
         MinimaxHeap& candidates,
         VisitedTable& vt,
         HNSWStats& stats,
@@ -842,9 +842,7 @@ int search_from_candidates_panorama(
                     query_norm_sq + cum_sums_v1[0] * cum_sums_v1[0];
 
             bool is_selected = !sel || sel->is_member(v1);
-            initial_size += is_selected && !vt.get(v1) ? 1 : 0;
-
-            vt.set(v1);
+            initial_size += is_selected && vt.set(v1) ? 1 : 0;
         }
 
         size_t batch_size = initial_size;
@@ -1032,7 +1030,7 @@ std::priority_queue<HNSW::Node> search_from_candidate_unbounded(
                 break;
             }
 
-            prefetch_L2(vt->visited.data() + v1);
+            vt->prefetch(v1);
             jmax += 1;
         }
 
@@ -1054,10 +1052,8 @@ std::priority_queue<HNSW::Node> search_from_candidate_unbounded(
         for (size_t j = begin; j < jmax; j++) {
             int v1 = hnsw.neighbors[j];
 
-            bool vget = vt->get(v1);
-            vt->set(v1);
             saved_j[counter] = v1;
-            counter += vget ? 0 : 1;
+            counter += vt->set(v1) ? 1 : 0;
 
             if (counter == 4) {
                 float dis[4];
@@ -1182,7 +1178,7 @@ using Node = HNSW::Node;
 using C = HNSW::C;
 
 // just used as a lower bound for the minmaxheap, but it is set for heap search
-int extract_k_from_ResultHandler(ResultHandler<C>& res) {
+int extract_k_from_ResultHandler(ResultHandler& res) {
     using RH = HeapBlockResultHandler<C>;
     if (auto hres = dynamic_cast<RH::SingleResultHandler*>(&res)) {
         return hres->k;
@@ -1195,7 +1191,7 @@ int extract_k_from_ResultHandler(ResultHandler<C>& res) {
 HNSWStats HNSW::search(
         DistanceComputer& qdis,
         const IndexHNSW* index,
-        ResultHandler<C>& res,
+        ResultHandler& res,
         VisitedTable& vt,
         const SearchParameters* params) const {
     HNSWStats stats;
@@ -1272,7 +1268,7 @@ HNSWStats HNSW::search(
 
 void HNSW::search_level_0(
         DistanceComputer& qdis,
-        ResultHandler<C>& res,
+        ResultHandler& res,
         idx_t nprobe,
         const storage_idx_t* nearest_i,
         const float* nearest_d,

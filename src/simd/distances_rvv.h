@@ -115,21 +115,6 @@ bf16_vec_L2sqr_batch_4_rvv(const ::knowhere::bf16* x, const ::knowhere::bf16* y0
                            const ::knowhere::bf16* y2, const ::knowhere::bf16* y3, size_t d, float& dis0, float& dis1,
                            float& dis2, float& dis3);
 
-float
-fvec_inner_product_bf16_patch_rvv(const float* x, const float* y, size_t d);
-
-float
-fvec_L2sqr_bf16_patch_rvv(const float* x, const float* y, size_t d);
-
-void
-fvec_inner_product_batch_4_bf16_patch_rvv(const float* x, const float* y0, const float* y1, const float* y2,
-                                          const float* y3, size_t d, float& dis0, float& dis1, float& dis2,
-                                          float& dis3);
-
-void
-fvec_L2sqr_batch_4_bf16_patch_rvv(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
-                                  size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
-
 void
 fvec_L2sqr_ny_transposed_rvv(float* dis, const float* x, const float* y, const float* y_sqlen, size_t d,
                              size_t d_offset, size_t ny);

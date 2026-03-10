@@ -11,6 +11,7 @@
 
 #include "index/ivf/ivfrbq_wrapper.h"
 
+#include <faiss/cppcontrib/knowhere/IVFIteratorWorkspace.h>
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 
 #include <memory>
@@ -192,54 +193,39 @@ IndexIVFRaBitQWrapper::size() const {
     return writer.total_size;
 }
 
-std::unique_ptr<faiss::cppcontrib::knowhere::IVFIteratorWorkspace>
-IndexIVFRaBitQWrapper::getIteratorWorkspace(
-    const float* query_data, const faiss::cppcontrib::knowhere::IVFSearchParameters* ivfsearchParams) const {
-    // try refine
+IVFRaBitQIteratorWorkspace::IVFRaBitQIteratorWorkspace(const IndexIVFRaBitQWrapper* wrapper_in,
+                                                       const float* query_data_in,
+                                                       const faiss::cppcontrib::knowhere::IVFSearchParameters* params)
+    : wrapper(wrapper_in) {
+    // Navigate the wrapper structure to find IndexRefine, IndexPreTransform, IndexIVFRaBitQ
     const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
-        dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
-    faiss::Index* index_for_pt = (index_refine != nullptr) ? index_refine->base_index : index.get();
+        dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(wrapper->index.get());
+    faiss::Index* index_for_pt = (index_refine != nullptr) ? index_refine->base_index : wrapper->index.get();
 
     const faiss::IndexPreTransform* index_pt = dynamic_cast<const faiss::IndexPreTransform*>(index_for_pt);
-    if (index_pt == nullptr) {
-        return nullptr;
-    }
-
     const faiss::cppcontrib::knowhere::IndexIVFRaBitQ* index_rbq =
         dynamic_cast<const faiss::cppcontrib::knowhere::IndexIVFRaBitQ*>(index_pt->index);
-    if (index_rbq == nullptr) {
-        return nullptr;
-    }
 
-    // ok, transform the query
-    std::unique_ptr<const float[]> transformed_query(index_pt->apply_chain(1, query_data));
-    // create a workspace. This will make a clone of the transformed_query.
-    auto workspace = index_rbq->getIteratorWorkspace(transformed_query.get(), ivfsearchParams);
+    // Transform the query through the pre-transform chain
+    std::unique_ptr<const float[]> transformed_query(index_pt->apply_chain(1, query_data_in));
 
-    // check if refine exists
+    // Create base workspace with the actual IVF index (IndexIVFRaBitQ inherits IndexIVF)
+    inner = std::make_unique<faiss::cppcontrib::knowhere::IVFBaseIteratorWorkspace>(index_rbq, transformed_query.get(),
+                                                                                    params);
+
+    // Set up dis_refine from IndexRefine if present
     if (index_refine != nullptr) {
-        // create a distance
-        // index_rbq == index_refine->base_index
-
-        // a regular use case
-        workspace->dis_refine =
+        this->dis_refine =
             std::unique_ptr<faiss::DistanceComputer>(index_refine->refine_index->get_distance_computer());
-        // this points to a previously saved clone
-        workspace->dis_refine->set_query(workspace->query_data.data());
-    } else {
-        // don't use refine
-        workspace->dis_refine = nullptr;
+        this->dis_refine->set_query(inner->query_data.data());
     }
-
-    // done
-    return workspace;
+    this->search_params = inner->search_params;
 }
 
 void
-IndexIVFRaBitQWrapper::getIteratorNextBatch(faiss::cppcontrib::knowhere::IVFIteratorWorkspace* workspace,
-                                            size_t current_backup_count) const {
-    const auto ivfrbq = this->get_ivfrabitq_index();
-    ivfrbq->getIteratorNextBatch(workspace, current_backup_count);
+IVFRaBitQIteratorWorkspace::next_batch(size_t current_backup_count) {
+    inner->next_batch(current_backup_count);
+    this->dists = std::move(inner->dists);
 }
 
 }  // namespace knowhere

@@ -26,6 +26,8 @@
 #include "common/cuvs/integration/raft_initialization.hpp"
 #include "cuda_runtime_api.h"
 #endif
+#include <faiss/utils/simd_levels.h>
+
 #include "simd/hook.h"
 
 namespace knowhere {
@@ -91,19 +93,17 @@ KnowhereConfig::SetSimdType(const SimdType simd_type) {
     std::string simd_str;
     faiss::cppcontrib::knowhere::fvec_hook(simd_str);
     LOG_KNOWHERE_INFO_ << "FAISS hook " << simd_str;
+    LOG_KNOWHERE_INFO_ << "FAISS DD level set to " << faiss::SIMDConfig::get_level_name();
+
     return simd_str;
 }
 
 void
 KnowhereConfig::EnablePatchForComputeFP32AsBF16() {
-    LOG_KNOWHERE_INFO_ << "Enable patch for compute fp32 as bf16";
-    faiss::cppcontrib::knowhere::enable_patch_for_fp32_bf16();
 }
 
 void
 KnowhereConfig::DisablePatchForComputeFP32AsBF16() {
-    LOG_KNOWHERE_INFO_ << "Disable patch for compute fp32 as bf16";
-    faiss::cppcontrib::knowhere::disable_patch_for_fp32_bf16();
 }
 
 void

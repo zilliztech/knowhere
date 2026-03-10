@@ -15,18 +15,18 @@
 
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissAssert.h>
+#include <faiss/impl/simdlib/simdlib_dispatch.h>
 #include <faiss/utils/Heap.h>
 #include <faiss/utils/distances.h>
-#include <faiss/utils/simdlib.h>
+#include <faiss/utils/extra_distances.h>
 
 #include <faiss/invlists/BlockInvertedLists.h>
 
-#include <faiss/impl/pq4_fast_scan.h>
-#include <faiss/impl/simd_result_handlers.h>
+#include <faiss/impl/fast_scan/FastScanDistancePostProcessing.h>
+#include <faiss/impl/fast_scan/fast_scan.h>
+#include <faiss/impl/fast_scan/simd_result_handlers.h>
 
 namespace faiss {
-
-using namespace simd_result_handlers;
 
 inline size_t roundup(size_t a, size_t b) {
     return (a + b - 1) / b * b;
@@ -307,6 +307,7 @@ struct IVFPQFastScanScanner : InvertedListScanner {
     const IndexIVFPQFastScan& index;
     AlignedTable<uint8_t> dis_tables;
     AlignedTable<uint16_t> biases;
+    std::vector<float> residual;
     std::array<float, 2> normalizers{};
     const float* xi = nullptr;
 
@@ -316,6 +317,7 @@ struct IVFPQFastScanScanner : InvertedListScanner {
             const IDSelector* sel)
             : InvertedListScanner(store_pairs, sel), index(index) {
         this->keep_max = is_similarity_metric(index.metric_type);
+        residual.resize(index.d);
     }
 
     void set_query(const float* query) override {
@@ -332,12 +334,40 @@ struct IVFPQFastScanScanner : InvertedListScanner {
         FastScanDistancePostProcessing empty_context{};
         index.compute_LUT_uint8(
                 1, xi, cq, dis_tables, biases, &normalizers[0], empty_context);
+        // used in distance_to_code
+        index.quantizer->compute_residual(
+                this->xi, residual.data(), this->list_no);
     }
 
-    float distance_to_code(const uint8_t* /* code */) const override {
-        // It's not really possible to implement a distance_to_code since codes
-        // for 32 database vectors are intermixed.
-        FAISS_THROW_MSG("not implemented");
+    float distance_to_code(const uint8_t* code) const override {
+        // directly use the PQ tables to compute the distance
+        const ProductQuantizer& pq = index.pq;
+        // when by_residual, codes are residuals so compare against query
+        // residual; otherwise codes are raw vectors so compare against raw
+        // query
+        const float* x = index.by_residual ? residual.data() : this->xi;
+        float accu = 0;
+        // implemented for all vector distances, although only L2 and IP are
+        // supported by FastScan
+        with_VectorDistance(pq.dsub, index.metric_type, 0.0, [&](auto vd) {
+            int m;
+            for (m = 0; m + 1 < pq.M; m += 2) {
+                const float* cent;
+                uint8_t c = *code++;
+                cent = pq.get_centroids(m, c & 15);
+                accu += vd(cent, x);
+                x += pq.dsub;
+                cent = pq.get_centroids(m + 1, c >> 4);
+                accu += vd(cent, x);
+                x += pq.dsub;
+            }
+            if (m < pq.M) { // leftover
+                uint8_t c = *code++;
+                const float* cent = pq.get_centroids(m, c & 15);
+                accu += vd(cent, x);
+            }
+        });
+        return accu;
     }
 
     // Based on IVFFastScan search_implem_10, since it also deals with 1 query
@@ -353,46 +383,38 @@ struct IVFPQFastScanScanner : InvertedListScanner {
         // the prior loop
         std::vector<float> curr_dists(k, distances[0]);
         std::vector<idx_t> curr_labels(k, labels[0]);
-        FastScanDistancePostProcessing empty_context{};
-        std::unique_ptr<SIMDResultHandlerToFloat> handler(
-                index.make_knn_handler(
-                        !keep_max,
-                        impl,
-                        nq,
-                        k,
-                        curr_dists.data(),
-                        curr_labels.data(),
-                        sel,
-                        empty_context,
-                        &normalizers[0]));
+
+        auto scanner = index.make_knn_scanner(
+                !keep_max, nq, k, curr_dists.data(), curr_labels.data(), sel);
+
+        SIMDResultHandlerToFloat* rh = scanner->handler();
 
         // This does not quite match search_implem_10, but it is fine because
         // the scanner operates on a single query at a time, and this value is
         // used as the query index. For a single query, the value is always 0.
         int qmap1[1] = {0};
 
-        handler->q_map = qmap1;
-        handler->begin(&normalizers[0]);
+        rh->q_map = qmap1;
+        rh->begin(&normalizers[0]);
 
-        const uint8_t* LUT = dis_tables.get();
-        handler->dbias = biases.get();
+        rh->dbias = biases.get();
+        rh->ntotal = ntotal;
+        rh->id_map = ids;
 
-        handler->ntotal = ntotal;
-        handler->id_map = ids;
-
-        pq4_accumulate_loop(
+        scanner->accumulate_loop(
                 1,
                 roundup(ntotal, index.bbs),
                 index.bbs,
                 static_cast<int>(index.M2),
                 codes,
-                LUT,
-                *handler,
-                nullptr);
+                dis_tables.get(),
+                0,
+                index.get_block_stride());
 
         // The handler is for the results of this iteration.
         // Then we need a second heap to combine across iterations.
-        handler->end();
+        rh->end();
+
         if (keep_max) {
             minheap_addn(
                     k,
@@ -411,7 +433,7 @@ struct IVFPQFastScanScanner : InvertedListScanner {
                     k);
         }
 
-        return handler->num_updates();
+        return rh->num_updates();
     }
 };
 

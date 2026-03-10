@@ -25,100 +25,12 @@ namespace faiss {
 namespace cppcontrib {
 namespace knowhere {
 
-/*********************************************************
- * Optimized distance/norm/inner prod computations
- *********************************************************/
-
-/** Compute pairwise distances between sets of vectors
- *
- * @param d     dimension of the vectors
- * @param nq    nb of query vectors
- * @param nb    nb of database vectors
- * @param xq    query vectors (size nq * d)
- * @param xb    database vectors (size nb * d)
- * @param dis   output distances (size nq * nb)
- * @param ldq,ldb, ldd strides for the matrices
- */
-void pairwise_L2sqr(
-        int64_t d,
-        int64_t nq,
-        const float* xq,
-        int64_t nb,
-        const float* xb,
-        float* dis,
-        int64_t ldq = -1,
-        int64_t ldb = -1,
-        int64_t ldd = -1);
-
-/** compute the L2 norms for a set of vectors
- *
- * @param  norms    output norms, size nx
- * @param  x        set of vectors, size nx * d
- */
-void fvec_norms_L2(float* norms, const float* x, size_t d, size_t nx);
-
-/// same as fvec_norms_L2, but computes squared norms
-void fvec_norms_L2sqr(float* norms, const float* x, size_t d, size_t nx);
-
-/* L2-renormalize a set of vector. Nothing done if the vector is 0-normed */
-void fvec_renorm_L2(size_t d, size_t nx, float* x);
-
-/* This function exists because the Torch counterpart is extremely slow
-   (not multi-threaded + unexpected overhead even in single thread).
-   It is here to implement the usual property |x-y|^2=|x|^2+|y|^2-2<x|y>  */
-void inner_product_to_L2sqr(
-        float* dis,
-        const float* nr1,
-        const float* nr2,
-        size_t n1,
-        size_t n2);
-
-/*********************************************************
- * Vector to vector functions
- *********************************************************/
-
-/** compute c := a + b for vectors
- *
- * c and a can overlap, c and b can overlap
- *
- * @param a size d
- * @param b size d
- * @param c size d
- */
-void fvec_add(size_t d, const float* a, const float* b, float* c);
-
-/** compute c := a + b for a, c vectors and b a scalar
- *
- * c and a can overlap
- *
- * @param a size d
- * @param c size d
- */
-void fvec_add(size_t d, const float* a, float b, float* c);
-
-/** compute c := a - b for vectors
- *
- * c and a can overlap, c and b can overlap
- *
- * @param a size d
- * @param b size d
- * @param c size d
- */
-void fvec_sub(size_t d, const float* a, const float* b, float* c);
-
 /***************************************************************************
  * Compute a subset of  distances
  ***************************************************************************/
 
 /** compute the inner product between x and a subset y of ny vectors defined by
- * ids
- *
- * ip(i, j) = inner_product(x(i, :), y(ids(i, j), :))
- *
- * @param ip    output array, size nx * ny
- * @param x     first-term vector, size nx * d
- * @param y     second-term vector, size (max(ids) + 1) * d
- * @param ids   ids to sample from y, size nx * ny
+ * ids. NOTE: fork-specific — does not assign -INFINITY for filtered entries.
  */
 void fvec_inner_products_by_idx(
         float* ip,
@@ -130,14 +42,7 @@ void fvec_inner_products_by_idx(
         size_t ny);
 
 /** compute the squared L2 distances between x and a subset y of ny vectors
- * defined by ids
- *
- * dis(i, j) = inner_product(x(i, :), y(ids(i, j), :))
- *
- * @param dis   output array, size nx * ny
- * @param x     first-term vector, size nx * d
- * @param y     second-term vector, size (max(ids) + 1) * d
- * @param ids   ids to sample from y, size nx * ny
+ * defined by ids. NOTE: fork-specific — does not assign INFINITY for filtered entries.
  */
 void fvec_L2sqr_by_idx(
         float* dis,
@@ -147,40 +52,6 @@ void fvec_L2sqr_by_idx(
         size_t d,
         size_t nx,
         size_t ny);
-
-/** compute dis[j] = L2sqr(x[ix[j]], y[iy[j]]) forall j=0..n-1
- *
- * @param x  size (max(ix) + 1, d)
- * @param y  size (max(iy) + 1, d)
- * @param ix size n
- * @param iy size n
- * @param dis size n
- */
-void pairwise_indexed_L2sqr(
-        size_t d,
-        size_t n,
-        const float* x,
-        const int64_t* ix,
-        const float* y,
-        const int64_t* iy,
-        float* dis);
-
-/** compute dis[j] = inner_product(x[ix[j]], y[iy[j]]) forall j=0..n-1
- *
- * @param x  size (max(ix) + 1, d)
- * @param y  size (max(iy) + 1, d)
- * @param ix size n
- * @param iy size n
- * @param dis size n
- */
-void pairwise_indexed_inner_product(
-        size_t d,
-        size_t n,
-        const float* x,
-        const int64_t* ix,
-        const float* y,
-        const int64_t* iy,
-        float* dis);
 
 void exhaustive_L2sqr_nearest_imp(
         const float* __restrict x,
@@ -240,6 +111,14 @@ void knn_inner_product(
         float* distances,
         int64_t* indexes,
         const IDSelector* sel = nullptr);
+
+/// Convert faiss pair<id, distance> array to knowhere DistId vector.
+/// Entries with id < 0 (filtered-out sentinels) are skipped, preserving
+/// the caller's pre-initialized values in output.
+void pairs_to_distids(
+        const std::pair<int64_t, float>* pairs,
+        std::vector<::knowhere::DistId>& output,
+        size_t n);
 
 void all_inner_product(
         const float* x,
@@ -478,20 +357,6 @@ void range_search_cosine(
         float radius,
         RangeSearchResult* result,
         const IDSelector* sel = nullptr);
-
-/***************************************************************************
- * PQ tables computations
- ***************************************************************************/
-
-/// specialized function for PQ2
-void compute_PQ_dis_tables_dsub2(
-        size_t d,
-        size_t ksub,
-        const float* centroids,
-        size_t nx,
-        const float* x,
-        bool is_inner_product,
-        float* dis_tables);
 
 /***************************************************************************
  * elkan

@@ -6,6 +6,9 @@ knowhere_file_glob(
   GLOB FAISS_SRCS
   thirdparty/faiss/faiss/*.cpp
   thirdparty/faiss/faiss/impl/*.cpp
+  thirdparty/faiss/faiss/impl/fast_scan/*.cpp
+  thirdparty/faiss/faiss/impl/pq_code_distance/*.cpp
+  thirdparty/faiss/faiss/impl/scalar_quantizer/*.cpp
   thirdparty/faiss/faiss/invlists/*.cpp
   thirdparty/faiss/faiss/utils/*.cpp
   thirdparty/faiss/faiss/utils/distances_fused/*.cpp
@@ -17,7 +20,15 @@ knowhere_file_glob(
 
 knowhere_file_glob(GLOB FAISS_AVX512_SRCS
                    thirdparty/faiss/faiss/impl/*avx512.cpp
-                   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*avx512.cpp)
+                   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*avx512.cpp
+)
+knowhere_file_glob(GLOB FAISS_DD_AVX512_SRCS
+                   thirdparty/faiss/faiss/impl/fast_scan/impl-avx512.cpp
+                   thirdparty/faiss/faiss/impl/pq_code_distance/pq_code_distance-avx512.cpp
+                   thirdparty/faiss/faiss/impl/scalar_quantizer/sq-avx512.cpp
+                   thirdparty/faiss/faiss/utils/simd_impl/distances_avx512.cpp
+)
+list(APPEND FAISS_AVX512_SRCS ${FAISS_DD_AVX512_SRCS})
 
 knowhere_file_glob(
   GLOB
@@ -29,12 +40,19 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/IndexIVFFastScan.cpp
   thirdparty/faiss/faiss/IndexIVFPQFastScan.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*avx.cpp
-  thirdparty/faiss/faiss/cppcontrib/knowhere/impl/pq4_fast_scan_search_1.cpp
-  thirdparty/faiss/faiss/cppcontrib/knowhere/impl/pq4_fast_scan_search_qbs.cpp
-  thirdparty/faiss/faiss/cppcontrib/knowhere/utils/partitioning_avx2.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/IndexIVFFastScan.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/IndexIVFPQFastScan.cpp
+  thirdparty/faiss/faiss/cppcontrib/knowhere/IVFFastScanIteratorWorkspace.cpp
 )
+knowhere_file_glob(
+  GLOB
+  FAISS_DD_AVX2_SRCS
+  thirdparty/faiss/faiss/impl/fast_scan/impl-avx2.cpp
+  thirdparty/faiss/faiss/impl/pq_code_distance/pq_code_distance-avx2.cpp
+  thirdparty/faiss/faiss/impl/scalar_quantizer/sq-avx2.cpp
+  thirdparty/faiss/faiss/utils/simd_impl/distances_avx2.cpp
+)
+list(APPEND FAISS_AVX2_SRCS ${FAISS_DD_AVX2_SRCS})
 
 list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX512_SRCS})
 
@@ -208,6 +226,7 @@ if(__X86_64)
   add_library(faiss_avx2 OBJECT ${FAISS_AVX2_SRCS})
   target_compile_options(faiss_avx2 PRIVATE $<$<COMPILE_LANGUAGE:CXX>: -msse4.2
                                             -mavx2 -mfma -mf16c -mpopcnt>)
+  target_compile_definitions(faiss_avx2 PRIVATE COMPILE_SIMD_AVX2)
   target_include_directories(faiss_avx2 PRIVATE ${Boost_INCLUDE_DIRS})
   add_library(faiss_avx512 OBJECT ${FAISS_AVX512_SRCS})
   target_compile_options(
@@ -222,6 +241,7 @@ if(__X86_64)
             -mavx512bw
             -mavx512vl
             -mpopcnt>)
+  target_compile_definitions(faiss_avx512 PRIVATE COMPILE_SIMD_AVX2 COMPILE_SIMD_AVX512)
   target_include_directories(faiss_avx512 PRIVATE ${Boost_INCLUDE_DIRS})
 
   add_library(faiss STATIC ${FAISS_SRCS})
@@ -233,6 +253,8 @@ if(__X86_64)
     PRIVATE $<$<COMPILE_LANGUAGE:CXX>:
             -msse4.2
             -mpopcnt
+            -mno-avx
+            -mno-avx2
             -Wno-sign-compare
             -Wno-unused-variable
             -Wno-reorder
@@ -242,7 +264,7 @@ if(__X86_64)
   target_link_libraries(
     faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
                  faiss_avx2 faiss_avx512 knowhere_utils)
-  target_compile_definitions(faiss PRIVATE FINTEGER=int)
+  target_compile_definitions(faiss PRIVATE FINTEGER=int FAISS_ENABLE_DD COMPILE_SIMD_AVX2 COMPILE_SIMD_AVX512)
 endif()
 
 if(__AARCH64)
@@ -260,6 +282,9 @@ if(__AARCH64)
 
   add_library(faiss STATIC ${FAISS_SRCS})
   target_include_directories(faiss PRIVATE ${Boost_INCLUDE_DIRS})
+  target_sources(faiss PRIVATE
+    thirdparty/faiss/faiss/utils/simd_impl/distances_aarch64.cpp
+  )
 
   target_compile_options(
     faiss
@@ -274,7 +299,7 @@ if(__AARCH64)
   add_dependencies(faiss knowhere_utils)
   target_link_libraries(faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
                                      knowhere_utils)
-  target_compile_definitions(faiss PRIVATE FINTEGER=int)
+  target_compile_definitions(faiss PRIVATE FINTEGER=int FAISS_ENABLE_DD COMPILE_SIMD_ARM_NEON)
 endif()
 
 if(__RISCV64)

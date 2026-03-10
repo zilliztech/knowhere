@@ -13,7 +13,6 @@
 
 #include <cinttypes>
 #include <cstdio>
-#include <numeric>
 
 #include <faiss/IndexFlat.h>
 
@@ -21,8 +20,13 @@
 #include <faiss/impl/IDSelector.h>
 
 #include <faiss/impl/FaissAssert.h>
-#include <faiss/utils/distances.h>
+#include <faiss/impl/expanded_scanners.h>
 #include <faiss/utils/extra_distances.h>
+
+#define THE_SIMD_LEVEL SIMDLevel::NONE
+// NOLINTNEXTLINE(facebook-hte-InlineHeader)
+#include <faiss/utils/simd_impl/IVFFlatScanner-inl.h>
+
 #include <faiss/utils/utils.h>
 
 namespace faiss {
@@ -145,107 +149,14 @@ void IndexIVFFlat::sa_decode(idx_t n, const uint8_t* bytes, float* x) const {
     }
 }
 
-namespace {
-
-template <typename VectorDistance, bool use_sel>
-struct IVFFlatScanner : InvertedListScanner {
-    VectorDistance vd;
-    using C = typename VectorDistance::C;
-
-    IVFFlatScanner(
-            const VectorDistance& vd,
-            bool store_pairs,
-            const IDSelector* sel)
-            : InvertedListScanner(store_pairs, sel), vd(vd) {
-        keep_max = vd.is_similarity;
-        code_size = vd.d * sizeof(float);
-    }
-
-    const float* xi;
-    void set_query(const float* query) override {
-        this->xi = query;
-    }
-
-    void set_list(idx_t list_no, float /* coarse_dis */) override {
-        this->list_no = list_no;
-    }
-
-    float distance_to_code(const uint8_t* code) const override {
-        const float* yj = (float*)code;
-        return vd(xi, yj);
-    }
-
-    size_t scan_codes(
-            size_t list_size,
-            const uint8_t* codes,
-            const idx_t* ids,
-            float* simi,
-            idx_t* idxi,
-            size_t k) const override {
-        const float* list_vecs = (const float*)codes;
-        size_t nup = 0;
-        for (size_t j = 0; j < list_size; j++) {
-            const float* yj = list_vecs + vd.d * j;
-            if (use_sel && !sel->is_member(ids[j])) {
-                continue;
-            }
-            float dis = vd(xi, yj);
-            if (C::cmp(simi[0], dis)) {
-                int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                heap_replace_top<C>(k, simi, idxi, dis, id);
-                nup++;
-            }
-        }
-        return nup;
-    }
-
-    void scan_codes_range(
-            size_t list_size,
-            const uint8_t* codes,
-            const idx_t* ids,
-            float radius,
-            RangeQueryResult& res) const override {
-        const float* list_vecs = (const float*)codes;
-        for (size_t j = 0; j < list_size; j++) {
-            const float* yj = list_vecs + vd.d * j;
-            if (use_sel && !sel->is_member(ids[j])) {
-                continue;
-            }
-            float dis = vd(xi, yj);
-            if (C::cmp(radius, dis)) {
-                int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                res.add(dis, id);
-            }
-        }
-    }
-};
-
-struct Run_get_InvertedListScanner {
-    using T = InvertedListScanner*;
-
-    template <class VD>
-    InvertedListScanner* f(
-            VD& vd,
-            const IndexIVFFlat* ivf,
-            bool store_pairs,
-            const IDSelector* sel) {
-        if (sel) {
-            return new IVFFlatScanner<VD, true>(vd, store_pairs, sel);
-        } else {
-            return new IVFFlatScanner<VD, false>(vd, store_pairs, sel);
-        }
-    }
-};
-
-} // anonymous namespace
-
 InvertedListScanner* IndexIVFFlat::get_InvertedListScanner(
         bool store_pairs,
         const IDSelector* sel,
         const IVFSearchParameters*) const {
-    Run_get_InvertedListScanner run;
-    return dispatch_VectorDistance(
-            d, metric_type, metric_arg, run, this, store_pairs, sel);
+    return with_VectorDistance(
+            d, metric_type, metric_arg, [&](auto vd) -> InvertedListScanner* {
+                return new IVFFlatScanner<decltype(vd)>(vd, store_pairs, sel);
+            });
 }
 
 void IndexIVFFlat::reconstruct_from_offset(

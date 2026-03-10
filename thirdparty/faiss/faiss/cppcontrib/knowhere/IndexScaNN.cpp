@@ -263,39 +263,6 @@ void IndexScaNN::range_search(
     result->lims[1] = current;
 }
 
-std::unique_ptr<IVFIteratorWorkspace> IndexScaNN::getIteratorWorkspace(
-        const float* query_data,
-        const IVFSearchParameters* ivfsearchParams) const {
-    auto base = dynamic_cast<const IndexIVFPQFastScan*>(base_index);
-    auto iterator = base->getIteratorWorkspace(query_data, ivfsearchParams);
-    if (refine_index) {
-        auto refine = dynamic_cast<const IndexFlat*>(refine_index);
-        if (auto base_cosine = dynamic_cast<const IndexIVFPQFastScanCosine*>(base)) {
-            iterator->dis_refine = std::unique_ptr<faiss::DistanceComputer>(
-                    new faiss::cppcontrib::knowhere::WithCosineNormDistanceComputer(
-                            base_cosine->inverse_norms_storage.inverse_l2_norms.data(),
-                            base_cosine->d,
-                            std::unique_ptr<faiss::DistanceComputer>(
-                                    refine->get_distance_computer())));
-        } else {
-            iterator->dis_refine = std::unique_ptr<faiss::DistanceComputer>(
-                    refine->get_FlatCodesDistanceComputer());
-        }
-        iterator->dis_refine->set_query(query_data);
-    } else {
-        iterator->dis_refine = nullptr;
-    }
-
-    return iterator;
-}
-
-void IndexScaNN::getIteratorNextBatch(
-        IVFIteratorWorkspace* workspace,
-        size_t current_backup_count) const {
-    auto base = dynamic_cast<const IndexIVFPQFastScan*>(base_index);
-    return base->getIteratorNextBatch(workspace, current_backup_count);
-}
-
 }
 
 

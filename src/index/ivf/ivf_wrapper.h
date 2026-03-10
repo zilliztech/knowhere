@@ -16,6 +16,7 @@
 #include <memory>
 
 #include "faiss/Index.h"
+#include "faiss/cppcontrib/knowhere/IVFIteratorWorkspace.h"
 #include "faiss/cppcontrib/knowhere/IndexFlat.h"
 #include "faiss/cppcontrib/knowhere/IndexIVF.h"
 #include "faiss/cppcontrib/knowhere/IndexIVFPQ.h"
@@ -83,21 +84,43 @@ struct IndexIVFWrapper : faiss::Index {
     // return the size of the index
     size_t
     size() const;
-
-    template <typename U = IndexIVFType>
-    typename std::enable_if<std::is_same_v<U, faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>,
-                            std::unique_ptr<faiss::cppcontrib::knowhere::IVFIteratorWorkspace>>::type
-    getIteratorWorkspace(const float* query_data,
-                         const faiss::cppcontrib::knowhere::IVFSearchParameters* ivfsearchParams) const;
-
-    template <typename U = IndexIVFType>
-    typename std::enable_if<std::is_same_v<U, faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>, void>::type
-    getIteratorNextBatch(faiss::cppcontrib::knowhere::IVFIteratorWorkspace* workspace,
-                         size_t current_backup_count) const;
 };
 
 using IndexIVFPQWrapper = IndexIVFWrapper<faiss::cppcontrib::knowhere::IndexIVFPQ>;
 using IndexIVFSQWrapper = IndexIVFWrapper<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>;
+
+/// Standalone iterator workspace for IndexIVFWrapper<T>.
+/// Navigates the wrapper structure (optional IndexRefine + IndexIVFType)
+/// and delegates scanning to IVFBaseIteratorWorkspace.
+template <typename IndexIVFTypeT>
+struct IVFWrapperIteratorWorkspace : faiss::cppcontrib::knowhere::IVFIteratorWorkspace {
+    const IndexIVFWrapper<IndexIVFTypeT>* wrapper;
+    std::unique_ptr<faiss::cppcontrib::knowhere::IVFIteratorWorkspace> inner;
+
+    IVFWrapperIteratorWorkspace(const IndexIVFWrapper<IndexIVFTypeT>* wrapper, const float* query_data,
+                                const faiss::cppcontrib::knowhere::IVFSearchParameters* params)
+        : wrapper(wrapper) {
+        const auto* index_refine = wrapper->get_refine_index();
+        const auto* index_ivf = wrapper->get_base_ivf_index();
+
+        inner = std::make_unique<faiss::cppcontrib::knowhere::IVFBaseIteratorWorkspace>(index_ivf, query_data, params);
+
+        if (index_refine != nullptr) {
+            this->dis_refine =
+                std::unique_ptr<faiss::DistanceComputer>(index_refine->refine_index->get_distance_computer());
+            this->dis_refine->set_query(inner->query_data.data());
+        }
+        this->search_params = inner->search_params;
+    }
+
+    void
+    next_batch(size_t current_backup_count) override {
+        inner->next_batch(current_backup_count);
+        this->dists = std::move(inner->dists);
+    }
+};
+
+using IVFSQIteratorWorkspace = IVFWrapperIteratorWorkspace<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>;
 
 class IndexIvfFactory {
  public:

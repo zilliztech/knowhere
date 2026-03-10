@@ -22,6 +22,7 @@
 #include <faiss/impl/DistanceComputer.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/ResultHandler.h>
+#include <faiss/impl/VisitedTable.h>
 #include <faiss/utils/Heap.h>
 #include <faiss/utils/hamming.h>
 #include <faiss/utils/random.h>
@@ -171,19 +172,14 @@ IndexBinaryHNSW::IndexBinaryHNSW() {
     is_trained = true;
 }
 
-IndexBinaryHNSW::IndexBinaryHNSW(int d, int M)
-        : IndexBinary(d),
-          hnsw(M),
-          own_fields(true),
-          storage(new IndexBinaryFlat(d)) {
+IndexBinaryHNSW::IndexBinaryHNSW(int d, int M) : IndexBinary(d), hnsw(M) {
+    storage = std::make_unique<IndexBinaryFlat>(d).release();
+    own_fields = true;
     is_trained = true;
 }
 
 IndexBinaryHNSW::IndexBinaryHNSW(IndexBinary* storage, int M)
-        : IndexBinary(storage->d),
-          hnsw(M),
-          own_fields(false),
-          storage(storage) {
+        : IndexBinary(storage->d), hnsw(M), storage(storage) {
     is_trained = true;
 }
 
@@ -205,10 +201,14 @@ void IndexBinaryHNSW::search(
         idx_t k,
         int32_t* distances,
         idx_t* labels,
-        const SearchParameters* params) const {
-    FAISS_THROW_IF_NOT_MSG(
-            !params, "search params not supported for this index");
+        const SearchParameters* params_in) const {
     FAISS_THROW_IF_NOT(k > 0);
+    const SearchParametersHNSW* params = nullptr;
+    if (params_in) {
+        params = dynamic_cast<const SearchParametersHNSW*>(params_in);
+        FAISS_THROW_IF_NOT_MSG(
+                params, "IndexBinaryHNSW params have incorrect type");
+    }
 
     // we use the buffer for distances as float but convert them back
     // to int in the end
@@ -217,13 +217,15 @@ void IndexBinaryHNSW::search(
     using RH = HeapBlockResultHandler<HNSW::C>;
     RH bres(n, distances_f, labels, k);
 
+    size_t n1 = 0, n2 = 0, ndis = 0, nhops = 0;
+
 #pragma omp parallel
     {
         VisitedTable vt(ntotal);
         std::unique_ptr<DistanceComputer> dis(get_distance_computer());
         RH::SingleResultHandler res(bres);
 
-#pragma omp for
+#pragma omp for reduction(+ : n1, n2, ndis, nhops)
         for (idx_t i = 0; i < n; i++) {
             res.begin(i);
             dis->set_query((float*)(x + i * code_size));
@@ -231,10 +233,16 @@ void IndexBinaryHNSW::search(
             // as the index parameter. This state does not get used in the
             // search function, as it is merely there to to enable Panorama
             // execution for IndexHNSWFlatPanorama.
-            hnsw.search(*dis, nullptr, res, vt);
+            HNSWStats stats = hnsw.search(*dis, nullptr, res, vt, params_in);
+            n1 += stats.n1;
+            n2 += stats.n2;
+            ndis += stats.ndis;
+            nhops += stats.nhops;
             res.end();
         }
     }
+
+    hnsw_stats.combine({n1, n2, ndis, nhops});
 
 #pragma omp parallel for
     for (int i = 0; i < n * k; ++i) {
@@ -267,11 +275,9 @@ template <class HammingComputer>
 struct FlatHammingDis : DistanceComputer {
     const int code_size;
     const uint8_t* b;
-    size_t ndis;
     HammingComputer hc;
 
     float operator()(idx_t i) override {
-        ndis++;
         return hc.hamming(b + i * code_size);
     }
 
@@ -281,22 +287,12 @@ struct FlatHammingDis : DistanceComputer {
     }
 
     explicit FlatHammingDis(const IndexBinaryFlat& storage)
-            : code_size(storage.code_size),
-              b(storage.xb.data()),
-              ndis(0),
-              hc() {}
+            : code_size(storage.code_size), b(storage.xb.data()), hc() {}
 
     // NOTE: Pointers are cast from float in order to reuse the floating-point
     //   DistanceComputer.
     void set_query(const float* x) override {
         hc.set((uint8_t*)x, code_size);
-    }
-
-    ~FlatHammingDis() override {
-#pragma omp critical
-        {
-            hnsw_stats.ndis += ndis;
-        }
     }
 };
 
@@ -406,6 +402,10 @@ void IndexBinaryHNSWCagra::search(
                         params);
 
                 res.end();
+            }
+#pragma omp critical
+            {
+                hnsw_stats.combine(search_stats);
             }
         }
 

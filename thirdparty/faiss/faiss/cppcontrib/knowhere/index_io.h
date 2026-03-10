@@ -18,7 +18,7 @@
 #include <faiss/cppcontrib/knowhere/IndexBinary.h>
 #include <faiss/cppcontrib/knowhere/IndexIVF.h>
 #include <faiss/VectorTransform.h>
-#include <faiss/cppcontrib/knowhere/impl/ProductQuantizer.h>
+#include <faiss/impl/ProductQuantizer.h>
 #include <faiss/cppcontrib/knowhere/invlists/InvertedLists.h>
 #include <faiss/impl/io.h>
 

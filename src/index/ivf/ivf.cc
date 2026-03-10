@@ -9,6 +9,8 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <faiss/cppcontrib/knowhere/IVFFastScanIteratorWorkspace.h>
+#include <faiss/cppcontrib/knowhere/IVFIteratorWorkspace.h>
 #include <faiss/cppcontrib/knowhere/IndexFlatElkan.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFScalarQuantizerCC.h>
 #include <faiss/cppcontrib/knowhere/IndexScaNN.h>
@@ -381,13 +383,25 @@ class IvfIndexNode : public IndexNode {
             ivf_search_params_.nprobe = nprobe;
             ivf_search_params_.max_codes = 0;
 
-            workspace_ = index_->getIteratorWorkspace(copied_query_.get(), &ivf_search_params_);
+            if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexScaNN>) {
+                workspace_ = std::make_unique<faiss::cppcontrib::knowhere::ScaNNIteratorWorkspace>(
+                    index_, copied_query_.get(), &ivf_search_params_);
+            } else if constexpr (std::is_same_v<IndexType, IndexIVFSQWrapper>) {
+                workspace_ = std::make_unique<IVFSQIteratorWorkspace>(index_, copied_query_.get(), &ivf_search_params_);
+            } else if constexpr (std::is_same_v<IndexType, IndexIVFRaBitQWrapper>) {
+                workspace_ =
+                    std::make_unique<IVFRaBitQIteratorWorkspace>(index_, copied_query_.get(), &ivf_search_params_);
+            } else {
+                workspace_ = std::make_unique<faiss::cppcontrib::knowhere::IVFBaseIteratorWorkspace>(
+                    dynamic_cast<const faiss::cppcontrib::knowhere::IndexIVF*>(index_), copied_query_.get(),
+                    &ivf_search_params_);
+            }
         }
 
      protected:
         void
         next_batch(std::function<void(const std::vector<DistId>&)> batch_handler) override {
-            index_->getIteratorNextBatch(workspace_.get(), this->res_.size());
+            workspace_->next_batch(this->res_.size());
             batch_handler(workspace_->dists);
             workspace_->dists.clear();
         }

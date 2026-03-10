@@ -12,6 +12,7 @@
 #pragma once
 
 #include <iostream>
+#include <utility>
 
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissException.h>
@@ -20,8 +21,6 @@
 #include <faiss/utils/partitioning.h>
 
 #include <faiss/cppcontrib/knowhere/MetricType.h>
-
-#include "knowhere/object.h"
 
 namespace faiss {
 namespace cppcontrib {
@@ -627,25 +626,28 @@ struct CollectAllResultHandler : BlockResultHandler<C, use_sel> {
     using BlockResultHandler<C, use_sel>::i1;
 
     CollectAllResultHandler(
-        size_t nq, 
-        size_t ny_in, 
-        std::vector<::knowhere::IdVal<TI, T>>& output,
-        const IDSelector* sel = nullptr)
-            : BlockResultHandler<C, use_sel>(nq, sel), ny{ny_in}, output(output) {}
+            size_t nq,
+            size_t ny_in,
+            std::pair<TI, T>* output,
+            const IDSelector* sel = nullptr)
+            : BlockResultHandler<C, use_sel>(nq, sel),
+              ny{ny_in},
+              output(output) {}
 
     size_t ny;
-    std::vector<::knowhere::IdVal<TI, T>>& output;
+    std::pair<TI, T>* output;
 
     struct SingleResultHandler {
         CollectAllResultHandler& all_handler;
 
-        ::knowhere::IdVal<TI, T>* target;
+        std::pair<TI, T>* target;
 
-        SingleResultHandler(CollectAllResultHandler& all_handler) : all_handler(all_handler) {}
+        SingleResultHandler(CollectAllResultHandler& all_handler)
+                : all_handler(all_handler) {}
 
         /// begin results for query # i
         void begin(size_t i) {
-            target = all_handler.output.data() + i * all_handler.ny;
+            target = all_handler.output + i * all_handler.ny;
         }
 
         /// add one result for query i
@@ -665,16 +667,15 @@ struct CollectAllResultHandler : BlockResultHandler<C, use_sel> {
         this->i1 = i1;
     }
 
-    // todo: NULLPTR
     void add_results(size_t j0, size_t j1, const T* dis_tab) {
 #pragma omp parallel for
         for (int64_t i = i0; i < i1; i++) {
-            auto* target = output.data() + i * ny;
+            auto* target = output + i * ny;
             const T* dis_tab_i = dis_tab + (j1 - j0) * (i - i0) - j0;
             for (size_t j = j0; j < j1; j++) {
                 if (this->is_in_selection(j)) {
                     T dis = dis_tab_i[j];
-                    target[j] = {(int64_t)j, dis};
+                    target[j] = {(TI)j, dis};
                 }
             }
         }
