@@ -322,7 +322,11 @@ class EmbListStrategy {
     Deserialize(const uint8_t* data, int64_t size, const BaseConfig& config) = 0;
 
     /**
-     * @brief Set emb_list offset directly (used by DiskANN which reads offset from file).
+     * @brief Set emb_list offset directly, bypassing strategy's Deserialize.
+     *
+     * Only applicable to strategies whose state is solely the emb_list offset
+     * (e.g., TokenANN). Strategies with additional state (MUVERA, LEMUR) must
+     * use Deserialize instead.
      */
     virtual Status
     SetEmbListOffset(std::shared_ptr<EmbListOffset> offset) {
