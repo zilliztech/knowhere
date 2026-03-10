@@ -142,14 +142,15 @@ TEST_CASE("Test Distance Compute", "[distance]") {
 
 TEST_CASE("Test Distance Known Values", "[distance][known_values]") {
     std::string ins;
-    faiss::fvec_hook(ins);
+    faiss::cppcontrib::knowhere::fvec_hook(ins);
 
     SECTION("L2 squared distance") {
         // x = [1, 2, 3], y = [4, 5, 6]
         // L2^2 = (1-4)^2 + (2-5)^2 + (3-6)^2 = 9 + 9 + 9 = 27
         std::vector<float> x = {1.0f, 2.0f, 3.0f};
         std::vector<float> y = {4.0f, 5.0f, 6.0f};
-        REQUIRE_THAT(faiss::fvec_L2sqr(x.data(), y.data(), 3), Catch::Matchers::WithinRel(27.0f, kRelTolerance));
+        REQUIRE_THAT(faiss::cppcontrib::knowhere::fvec_L2sqr(x.data(), y.data(), 3),
+                     Catch::Matchers::WithinRel(27.0f, kRelTolerance));
     }
 
     SECTION("Inner product") {
@@ -157,7 +158,7 @@ TEST_CASE("Test Distance Known Values", "[distance][known_values]") {
         // IP = 1*4 + 2*5 + 3*6 = 4 + 10 + 18 = 32
         std::vector<float> x = {1.0f, 2.0f, 3.0f};
         std::vector<float> y = {4.0f, 5.0f, 6.0f};
-        REQUIRE_THAT(faiss::fvec_inner_product(x.data(), y.data(), 3),
+        REQUIRE_THAT(faiss::cppcontrib::knowhere::fvec_inner_product(x.data(), y.data(), 3),
                      Catch::Matchers::WithinRel(32.0f, kRelTolerance));
     }
 
@@ -166,7 +167,8 @@ TEST_CASE("Test Distance Known Values", "[distance][known_values]") {
         // L1 = |1-4| + |2-1| + |3-7| = 3 + 1 + 4 = 8
         std::vector<float> x = {1.0f, 2.0f, 3.0f};
         std::vector<float> y = {4.0f, 1.0f, 7.0f};
-        REQUIRE_THAT(faiss::fvec_L1(x.data(), y.data(), 3), Catch::Matchers::WithinRel(8.0f, kRelTolerance));
+        REQUIRE_THAT(faiss::cppcontrib::knowhere::fvec_L1(x.data(), y.data(), 3),
+                     Catch::Matchers::WithinRel(8.0f, kRelTolerance));
     }
 
     SECTION("Linf distance") {
@@ -174,52 +176,56 @@ TEST_CASE("Test Distance Known Values", "[distance][known_values]") {
         // Linf = max(|1-4|, |2-1|, |3-10|) = max(3, 1, 7) = 7
         std::vector<float> x = {1.0f, 2.0f, 3.0f};
         std::vector<float> y = {4.0f, 1.0f, 10.0f};
-        REQUIRE_THAT(faiss::fvec_Linf(x.data(), y.data(), 3), Catch::Matchers::WithinRel(7.0f, kRelTolerance));
+        REQUIRE_THAT(faiss::cppcontrib::knowhere::fvec_Linf(x.data(), y.data(), 3),
+                     Catch::Matchers::WithinRel(7.0f, kRelTolerance));
     }
 
     SECTION("Norm L2 squared") {
         // x = [3, 4], norm^2 = 9 + 16 = 25
         std::vector<float> x = {3.0f, 4.0f};
-        REQUIRE_THAT(faiss::fvec_norm_L2sqr(x.data(), 2), Catch::Matchers::WithinRel(25.0f, kRelTolerance));
+        REQUIRE_THAT(faiss::cppcontrib::knowhere::fvec_norm_L2sqr(x.data(), 2),
+                     Catch::Matchers::WithinRel(25.0f, kRelTolerance));
     }
 }
 
 TEST_CASE("Test Distance Edge Cases", "[distance][edge]") {
     std::string ins;
-    faiss::fvec_hook(ins);
+    faiss::cppcontrib::knowhere::fvec_hook(ins);
 
     SECTION("Dimension = 1") {
         std::vector<float> x = {5.0f};
         std::vector<float> y = {3.0f};
-        REQUIRE_THAT(faiss::fvec_L2sqr(x.data(), y.data(), 1), Catch::Matchers::WithinRel(4.0f, kRelTolerance));
-        REQUIRE_THAT(faiss::fvec_inner_product(x.data(), y.data(), 1),
+        REQUIRE_THAT(faiss::cppcontrib::knowhere::fvec_L2sqr(x.data(), y.data(), 1),
+                     Catch::Matchers::WithinRel(4.0f, kRelTolerance));
+        REQUIRE_THAT(faiss::cppcontrib::knowhere::fvec_inner_product(x.data(), y.data(), 1),
                      Catch::Matchers::WithinRel(15.0f, kRelTolerance));
-        REQUIRE_THAT(faiss::fvec_L1(x.data(), y.data(), 1), Catch::Matchers::WithinRel(2.0f, kRelTolerance));
+        REQUIRE_THAT(faiss::cppcontrib::knowhere::fvec_L1(x.data(), y.data(), 1),
+                     Catch::Matchers::WithinRel(2.0f, kRelTolerance));
     }
 
     SECTION("Zero distance (identical vectors)") {
         std::vector<float> x = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
-        REQUIRE(faiss::fvec_L2sqr(x.data(), x.data(), 5) < kAbsTolerance);
+        REQUIRE(faiss::cppcontrib::knowhere::fvec_L2sqr(x.data(), x.data(), 5) < kAbsTolerance);
     }
 
     SECTION("Orthogonal vectors") {
         std::vector<float> x = {1.0f, 0.0f, 0.0f};
         std::vector<float> y = {0.0f, 1.0f, 0.0f};
-        REQUIRE(std::abs(faiss::fvec_inner_product(x.data(), y.data(), 3)) < kAbsTolerance);
+        REQUIRE(std::abs(faiss::cppcontrib::knowhere::fvec_inner_product(x.data(), y.data(), 3)) < kAbsTolerance);
     }
 
     SECTION("Zero vectors") {
         std::vector<float> x(128, 0.0f);
         std::vector<float> y(128, 0.0f);
-        REQUIRE(faiss::fvec_L2sqr(x.data(), y.data(), 128) < kAbsTolerance);
-        REQUIRE(std::abs(faiss::fvec_inner_product(x.data(), y.data(), 128)) < kAbsTolerance);
+        REQUIRE(faiss::cppcontrib::knowhere::fvec_L2sqr(x.data(), y.data(), 128) < kAbsTolerance);
+        REQUIRE(std::abs(faiss::cppcontrib::knowhere::fvec_inner_product(x.data(), y.data(), 128)) < kAbsTolerance);
     }
 
     SECTION("Large values") {
         std::vector<float> x = {1e6f, 1e6f, 1e6f};
         std::vector<float> y = {1e6f, 1e6f, 1e6f};
-        REQUIRE(faiss::fvec_L2sqr(x.data(), y.data(), 3) < kAbsTolerance);
-        REQUIRE_THAT(faiss::fvec_inner_product(x.data(), y.data(), 3),
+        REQUIRE(faiss::cppcontrib::knowhere::fvec_L2sqr(x.data(), y.data(), 3) < kAbsTolerance);
+        REQUIRE_THAT(faiss::cppcontrib::knowhere::fvec_inner_product(x.data(), y.data(), 3),
                      Catch::Matchers::WithinRel(3e12f, kRelTolerance));
     }
 
@@ -227,9 +233,10 @@ TEST_CASE("Test Distance Edge Cases", "[distance][edge]") {
         std::vector<float> x = {-1.0f, 2.0f, -3.0f, 4.0f};
         std::vector<float> y = {1.0f, -2.0f, 3.0f, -4.0f};
         // L2^2 = 4 + 16 + 36 + 64 = 120
-        REQUIRE_THAT(faiss::fvec_L2sqr(x.data(), y.data(), 4), Catch::Matchers::WithinRel(120.0f, kRelTolerance));
+        REQUIRE_THAT(faiss::cppcontrib::knowhere::fvec_L2sqr(x.data(), y.data(), 4),
+                     Catch::Matchers::WithinRel(120.0f, kRelTolerance));
         // IP = -1 - 4 - 9 - 16 = -30
-        REQUIRE_THAT(faiss::fvec_inner_product(x.data(), y.data(), 4),
+        REQUIRE_THAT(faiss::cppcontrib::knowhere::fvec_inner_product(x.data(), y.data(), 4),
                      Catch::Matchers::WithinRel(-30.0f, kRelTolerance));
     }
 }
@@ -237,7 +244,7 @@ TEST_CASE("Test Distance Edge Cases", "[distance][edge]") {
 TEST_CASE("Test SIMD Boundary Dimensions", "[distance][simd]") {
     std::mt19937 rng(42);
     std::string ins;
-    faiss::fvec_hook(ins);
+    faiss::cppcontrib::knowhere::fvec_hook(ins);
 
     // Test dimensions around typical SIMD register sizes
     auto dim = GENERATE(1, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65);
@@ -246,8 +253,8 @@ TEST_CASE("Test SIMD Boundary Dimensions", "[distance][simd]") {
         for (int trial = 0; trial < 20; ++trial) {
             auto x = GenRandomFloatVector(dim, rng);
             auto y = GenRandomFloatVector(dim, rng);
-            float optimized = faiss::fvec_L2sqr(x.data(), y.data(), dim);
-            float reference = faiss::fvec_L2sqr_ref(x.data(), y.data(), dim);
+            float optimized = faiss::cppcontrib::knowhere::fvec_L2sqr(x.data(), y.data(), dim);
+            float reference = faiss::cppcontrib::knowhere::fvec_L2sqr_ref(x.data(), y.data(), dim);
             REQUIRE_THAT(optimized, Catch::Matchers::WithinRel(reference, kRelTolerance));
         }
     }
@@ -256,8 +263,8 @@ TEST_CASE("Test SIMD Boundary Dimensions", "[distance][simd]") {
         for (int trial = 0; trial < 20; ++trial) {
             auto x = GenRandomFloatVector(dim, rng);
             auto y = GenRandomFloatVector(dim, rng);
-            float optimized = faiss::fvec_inner_product(x.data(), y.data(), dim);
-            float reference = faiss::fvec_inner_product_ref(x.data(), y.data(), dim);
+            float optimized = faiss::cppcontrib::knowhere::fvec_inner_product(x.data(), y.data(), dim);
+            float reference = faiss::cppcontrib::knowhere::fvec_inner_product_ref(x.data(), y.data(), dim);
             REQUIRE_THAT(optimized, Catch::Matchers::WithinRel(reference, kRelTolerance));
         }
     }
