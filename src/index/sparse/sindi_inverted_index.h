@@ -258,6 +258,60 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
             row_sums_span_ = boost::span<const float>(row_sums_.data(), row_sums_.size());
         }
 
+        // Compute max score per dimension for early termination optimization
+        // For IP: max_score = max(val) across all postings
+        // For BM25: max_score = max((k1+1)*tf / (tf + k1*(1-b+b*dl/avgdl))) for each posting
+        max_scores_per_dim_.resize(this->dim_map_.size());
+        if constexpr (std::is_same_v<QuantType, knowhere::fp16>) {
+            // IP scoring: just find max value
+            for (size_t dim_id = 0; dim_id < this->dim_map_.size(); ++dim_id) {
+                const auto& vals = total_plists_vals_spans_[dim_id];
+                for (auto val : vals) {
+                    float v = static_cast<float>(val);
+                    if (v > max_scores_per_dim_[dim_id]) {
+                        max_scores_per_dim_[dim_id] = v;
+                    }
+                }
+            }
+        } else {
+            // BM25 scoring: compute exact max BM25 score per dimension
+            // For each posting, compute: (k1+1)*tf / (tf + k1*(1-b+b*dl/avgdl))
+            // using the actual document length (dl) from row_sums
+            const auto& cfg = this->build_scorer_->config();
+            const float k1 = cfg.scorer_params.bm25.k1;
+            const float b = cfg.scorer_params.bm25.b;
+            const float avgdl = cfg.scorer_params.bm25.avgdl;
+            const float p1 = k1 + 1.0f;
+            const float p2 = k1 * (1.0f - b);
+            const float p3 = k1 * b / avgdl;
+
+            for (size_t dim_id = 0; dim_id < this->dim_map_.size(); ++dim_id) {
+                const auto& ids = total_plists_ids_spans_[dim_id];
+                const auto& vals = total_plists_vals_spans_[dim_id];
+                const auto& wnnzs = window_index_plists_sz_spans_;
+
+                // Iterate through each posting and compute BM25 score with actual dl
+                size_t posting_idx = 0;
+                for (size_t wid = 0; wid < nr_windows_; ++wid) {
+                    size_t wnnz = wnnzs[wid][dim_id];
+                    size_t docid_base = wid * window_size_;
+                    for (size_t j = 0; j < wnnz; ++j) {
+                        uint16_t local_id = ids[posting_idx];
+                        float tf = static_cast<float>(vals[posting_idx]);
+                        size_t global_docid = docid_base + local_id;
+                        float dl = row_sums_span_[global_docid];
+                        // BM25 right part: (k1+1)*tf / (tf + k1*(1-b) + k1*b*dl/avgdl)
+                        float bm25_score = p1 * tf / (tf + p2 + p3 * dl);
+                        if (bm25_score > max_scores_per_dim_[dim_id]) {
+                            max_scores_per_dim_[dim_id] = bm25_score;
+                        }
+                        ++posting_idx;
+                    }
+                }
+            }
+        }
+        max_scores_per_dim_span_ = boost::span<const float>(max_scores_per_dim_.data(), max_scores_per_dim_.size());
+
         return Status::success;
     }
 
@@ -297,7 +351,10 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
         // 4. Dimension Map Section:
         //    - dim_map_reverse[nr_inner_dims]: Array mapping internal dimension IDs to original dimensions
         //
-        // 5. Optional Row Sums Section (for BM25 support, only when QuantType is uint16_t):
+        // 5. Max Values Per Dimension Section:
+        //    - dim_max_vals[nr_inner_dims]: Array of maximum values per dimension (float), used for pruning
+        //
+        // 6. Optional Row Sums Section (for BM25 support, only when QuantType is uint16_t):
         //    - row_sums[nr_rows]: Array of row sums (float)
         const uint32_t index_format_version = current_index_file_format_version_;
         writer.write(&index_format_version, sizeof(uint32_t));
@@ -310,7 +367,7 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
         // Determine if we need to write row sums (BM25 support)
         const bool has_row_sums = !row_sums_span_.empty();
 
-        uint32_t nr_sections = 2;  // base sections: inverted index and dim map
+        uint32_t nr_sections = 3;  // base sections: inverted index, dim map and max scores per dim
         if (has_row_sums) {
             nr_sections += 1;  // add row sums section
         }
@@ -363,12 +420,17 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
         section_headers[1].size = sizeof(uint32_t) * this->nr_inner_dims_;
         used_offset += section_headers[1].size;
 
+        section_headers[2].type = InvertedIndexSectionType::MAX_SCORES_PER_DIM;
+        section_headers[2].offset = used_offset;
+        section_headers[2].size = sizeof(float) * this->nr_inner_dims_;
+        used_offset += section_headers[2].size;
+
         // Add row sums section header if needed (BM25 support)
         if (has_row_sums) {
-            section_headers[2].type = InvertedIndexSectionType::ROW_SUMS;
-            section_headers[2].offset = used_offset;
-            section_headers[2].size = sizeof(float) * this->nr_rows_;
-            used_offset += section_headers[2].size;
+            section_headers[3].type = InvertedIndexSectionType::ROW_SUMS;
+            section_headers[3].offset = used_offset;
+            section_headers[3].size = sizeof(float) * this->nr_rows_;
+            used_offset += section_headers[3].size;
         }
 
         writer.write(section_headers.data(), sizeof(InvertedIndexSectionHeader), nr_sections);
@@ -419,6 +481,9 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
         }
         writer.write(dim_map_reverse.data(), sizeof(uint32_t), this->nr_inner_dims_);
 
+        // write dim max vals
+        writer.write(max_scores_per_dim_span_.data(), sizeof(float), max_scores_per_dim_span_.size());
+
         // write row sums if present (BM25 support)
         if (has_row_sums) {
             writer.write(row_sums_span_.data(), sizeof(float), row_sums_span_.size());
@@ -454,8 +519,8 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
         auto sections_handler = [&, this]() {
             uint32_t nr_sections = 0;
             reader.read(&nr_sections, sizeof(uint32_t));
-            // Allow 2 sections (base) or 3 sections (with row sums for BM25)
-            if (nr_sections < 2 || nr_sections > 3) {
+            // Allow 3 sections (base) or 4 sections (with row sums for BM25)
+            if (nr_sections < 3 || nr_sections > 4) {
                 return Status::invalid_serialized_index_type;
             }
             size_t sec_table_offset = reader.tellg();
@@ -614,6 +679,14 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
                                             << " total_section_bytes=" << section_header.size;
                         break;
                     }
+                    case InvertedIndexSectionType::MAX_SCORES_PER_DIM: {
+                        reader.seekg(section_header.offset);
+                        max_scores_per_dim_span_ = boost::span<const float>(
+                            reinterpret_cast<const float*>(reader.data() + section_header.offset),
+                            this->nr_inner_dims_);
+                        reader.advance(sizeof(float) * this->nr_inner_dims_);
+                        break;
+                    }
                     case InvertedIndexSectionType::ROW_SUMS: {
                         // Row sums section for BM25
                         reader.seekg(section_header.offset);
@@ -663,6 +736,36 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
             return;
         }
 
+        // Compute max contributions for each query term: qval * max_dim_val
+        // and sort query terms by max contributions descending for early termination
+        std::vector<float> max_contributions(q_vec.size());
+        for (size_t i = 0; i < q_vec.size(); ++i) {
+            auto& [qid, qval] = q_vec[i];
+            float dim_max = (qid < max_scores_per_dim_span_.size()) ? max_scores_per_dim_span_[qid] : 0.0f;
+            max_contributions[i] = qval * dim_max;
+        }
+
+        // Sort q_vec by max contribution descending (process high-impact terms first)
+        std::vector<size_t> sorted_indices(q_vec.size());
+        std::iota(sorted_indices.begin(), sorted_indices.end(), 0);
+        std::sort(sorted_indices.begin(), sorted_indices.end(),
+                  [&max_contributions](size_t a, size_t b) { return max_contributions[a] > max_contributions[b]; });
+
+        // Reorder q_vec and max_contributions according to sorted indices
+        std::vector<std::pair<uint32_t, float>> sorted_q_vec(q_vec.size());
+        std::vector<float> sorted_max_contributions(q_vec.size());
+        for (size_t i = 0; i < q_vec.size(); ++i) {
+            sorted_q_vec[i] = q_vec[sorted_indices[i]];
+            sorted_max_contributions[i] = max_contributions[sorted_indices[i]];
+        }
+
+        // Compute suffix sums of max contributions for early termination
+        // suffix_sum[i] = sum of max_contributions from index i to end
+        std::vector<float> suffix_sum(q_vec.size() + 1, 0.0f);
+        for (int i = static_cast<int>(q_vec.size()) - 1; i >= 0; --i) {
+            suffix_sum[i] = suffix_sum[i + 1] + sorted_max_contributions[i];
+        }
+
         knowhere::ResultMinHeap<float, uint32_t> topk_q(k);
         std::vector<float> wscores_final_vec(window_size_, 0.0f);
         float* wscores_final = wscores_final_vec.data();
@@ -675,8 +778,8 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
         // Initialize posting list cursors for each query term
         // Cursors track position in posting lists and handle window-by-window iteration
         std::vector<PostingCursor> cursors;
-        cursors.reserve(q_vec.size());
-        for (auto& [qid, qval] : q_vec) {
+        cursors.reserve(sorted_q_vec.size());
+        for (auto& [qid, qval] : sorted_q_vec) {
             const uint8_t* wnnz_buf = nullptr;
             size_t wnnz_buf_sz = 0;
             if (!plists_window_nnzs_spans_.empty() && qid < plists_window_nnzs_spans_.size()) {
@@ -713,20 +816,33 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
                     std::min(window_size_, static_cast<uint32_t>(this->nr_rows_ - docid_start));
                 std::fill_n(wscores_final, curr_window_size, 0);
 
-                for (auto& cur : cursors) {
+                float curr_max_score = 0.0f;
+                bool skip_window_calc = false;
+                for (size_t ci = 0; ci < cursors.size(); ++ci) {
+                    auto& cur = cursors[ci];
                     if (cur.wnnz_buf == nullptr || cur.wnnz_buf_sz == 0) {
                         continue;
                     }
 
                     auto [soff, wnnz] = cur.advance_window(widx);
-                    if (wnnz == 0) {
+
+                    if (skip_window_calc || wnnz == 0) {
+                        continue;
+                    }
+
+                    // Skip window calculation if current max + remaining max contributions <= threshold
+                    if (curr_max_score + search_params.approx.dim_max_score_ratio * suffix_sum[ci] <= threshold) {
+                        skip_window_calc = true;
                         continue;
                     }
 
                     const uint16_t* plist_ids = cur.ids_base + soff;
                     const QuantType* plist_vals = cur.vals_base + soff;
 
-                    scatter_fn(cur.qval, plist_vals, plist_ids, wnnz, wscores_final);
+                    float dispatch_max = scatter_fn(cur.qval, plist_vals, plist_ids, wnnz, wscores_final);
+                    if (dispatch_max > curr_max_score) {
+                        curr_max_score = dispatch_max;
+                    }
                 }
 
                 batch_insert_fn(wscores_final, docid_start, curr_window_size, topk_q, threshold, bitset);
@@ -746,21 +862,34 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
                     std::min(window_size_, static_cast<uint32_t>(this->nr_rows_ - docid_start));
                 std::fill_n(wscores_final, curr_window_size, 0);
 
-                for (auto& cur : cursors) {
+                float curr_max_score = 0.0f;
+                bool skip_window_calc = false;
+                for (size_t ci = 0; ci < cursors.size(); ++ci) {
+                    auto& cur = cursors[ci];
                     if (cur.wnnz_buf == nullptr || cur.wnnz_buf_sz == 0) {
                         continue;
                     }
 
                     auto [soff, wnnz] = cur.advance_window(widx);
-                    if (wnnz == 0) {
+
+                    if (skip_window_calc || wnnz == 0) {
+                        continue;
+                    }
+
+                    // Skip window calculation if current max + remaining max contributions <= threshold
+                    if (curr_max_score + search_params.approx.dim_max_score_ratio * suffix_sum[ci] <= threshold) {
+                        skip_window_calc = true;
                         continue;
                     }
 
                     const uint16_t* plist_ids = cur.ids_base + soff;
                     const QuantType* plist_vals = cur.vals_base + soff;
 
-                    accumulate_fn(cur.qval, plist_vals, plist_ids, wnnz, wscores_final, bm25_k1, bm25_b, bm25_avgdl,
-                                  row_sums_ptr + docid_start);
+                    float dispatch_max = accumulate_fn(cur.qval, plist_vals, plist_ids, wnnz, wscores_final, bm25_k1,
+                                                       bm25_b, bm25_avgdl, row_sums_ptr + docid_start);
+                    if (dispatch_max > curr_max_score) {
+                        curr_max_score = dispatch_max;
+                    }
                 }
 
                 batch_insert_fn(wscores_final, docid_start, curr_window_size, topk_q, threshold, bitset);
@@ -927,6 +1056,8 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
     std::vector<boost::span<const uint8_t>> plists_window_nnzs_spans_;
     std::vector<uint32_t> plists_dim_offsets_;
     boost::span<const uint32_t> plists_dim_offsets_span_;
+    std::vector<float> max_scores_per_dim_;
+    boost::span<const float> max_scores_per_dim_span_;
 
     // Row sums only needed for BM25
     std::vector<float> row_sums_;
