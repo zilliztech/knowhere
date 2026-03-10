@@ -14,6 +14,8 @@
 #include <cstdint>
 #include <fstream>
 #include <limits>
+#include <queue>
+#include <unordered_set>
 
 #include "diskann/aux_utils.h"
 #include "diskann/linux_aligned_file_reader.h"
@@ -26,6 +28,7 @@
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/feature.h"
+#include "knowhere/index/emb_list_strategy.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
 #include "knowhere/prometheus_client.h"
@@ -136,6 +139,11 @@ class DiskANNIndexNode : public IndexNode {
 
     Status
     DeserializeEmbListIfNeed(const BinarySet& binset, std::shared_ptr<Config> config) override;
+
+    // DiskANN bypasses strategy pattern for EmbList search, using batch Search + rerank directly.
+    expected<DataSetPtr>
+    SearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
+                        milvus::OpContext* op_context = nullptr) const override;
 
     Status
     DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> config) override {
@@ -758,10 +766,163 @@ DiskANNIndexNode<DataType>::DeserializeEmbListIfNeed(const BinarySet& binset, st
     LOG_KNOWHERE_INFO_ << "Read emb_list offset from file: " << emb_list_offset_file << ", size: " << offset.size()
                        << ", first offset: " << offset.front() << ", last offset: " << offset.back();
 
-    emb_list_offset_ = std::make_unique<EmbListOffset>(std::move(offset));
+    // Step 4: Set emb_list offset directly (DiskANN bypasses strategy pattern for search)
+    emb_list_offset_ = std::make_shared<EmbListOffset>(std::move(offset));
 
-    // Step 4: Set base index id map for 1-hop bitset check
+    // Step 5: Set base index id map for 1-hop bitset check
     return SetBaseIndexIDMap();
+}
+
+template <typename DataType>
+expected<DataSetPtr>
+DiskANNIndexNode<DataType>::SearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
+                                                const BitsetView& bitset, milvus::OpContext* op_context) const {
+    auto& config = static_cast<BaseConfig&>(*cfg);
+    auto el_metric_type_or = get_el_metric_type(config.metric_type.value());
+    bool metric_is_emb_list = el_metric_type_or.has_value();
+    bool query_is_emb_list = dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET) != nullptr;
+    if (!metric_is_emb_list && !query_is_emb_list) {
+        return Search(dataset, std::move(cfg), bitset, op_context);
+    }
+    if (metric_is_emb_list && !query_is_emb_list) {
+        return expected<DataSetPtr>::Err(Status::emb_list_inner_error,
+                                         "Not found emb_list offset in query dataset, but metric type is of emb_list");
+    }
+    if (!metric_is_emb_list && query_is_emb_list) {
+        return expected<DataSetPtr>::Err(Status::emb_list_inner_error,
+                                         "Invalid emb_list metric type, but found emb_list offset in query dataset.");
+    }
+    if (!emb_list_offset_) {
+        LOG_KNOWHERE_ERROR_ << "emb_list_offset not initialized";
+        return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "emb_list_offset not initialized");
+    }
+
+    auto dim = dataset->GetDim();
+    const size_t* lims = dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+    if (lims == nullptr) {
+        return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "missing emb_list offset, could not search");
+    }
+    auto num_q_vecs = static_cast<size_t>(dataset->GetRows());
+    EmbListOffset query_offset(lims, num_q_vecs);
+    auto num_q_el = query_offset.num_el();
+
+    // Parse metric types
+    auto metric_info_or = ParseEmbListMetric(config);
+    if (!metric_info_or.has_value()) {
+        return expected<DataSetPtr>::Err(metric_info_or.error(), metric_info_or.what());
+    }
+    auto& mi = metric_info_or.value();
+    auto el_k = config.k.value();
+
+    auto ids = std::make_unique<int64_t[]>(num_q_el * el_k);
+    auto dists = std::make_unique<float[]>(num_q_el * el_k);
+
+    // Stage 1: batch ANN search to retrieve top k' vectors
+    config.metric_type = mi.sub_metric_type;
+    auto retrieval_ann_ratio = config.retrieval_ann_ratio.value();
+    if (retrieval_ann_ratio <= 0.0f) {
+        return expected<DataSetPtr>::Err(Status::emb_list_inner_error,
+                                         "retrieval_ann_ratio could not be less than or equal to 0");
+    }
+    int32_t vec_topk = std::min(std::max((int32_t)(el_k * retrieval_ann_ratio), 1), (int32_t)Count());
+    config.k = vec_topk;
+
+    auto ann_search_res = Search(dataset, std::move(cfg), bitset, op_context);
+    if (!ann_search_res.has_value()) {
+        return expected<DataSetPtr>::Err(ann_search_res.error(), ann_search_res.what());
+    }
+    const auto stage1_ids = ann_search_res.value()->GetIds();
+
+    // Stage 2: collect unique docs and rerank with exact distances
+    auto query_code_size_or = GetQueryCodeSize(dataset);
+    if (!query_code_size_or.has_value()) {
+        return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "could not get query code size");
+    }
+    auto query_code_size = query_code_size_or.value();
+
+    for (size_t i = 0; i < num_q_el; i++) {
+        auto start_offset = query_offset.offset[i];
+        auto end_offset = query_offset.offset[i + 1];
+        auto nq = end_offset - start_offset;
+
+        // Collect unique doc IDs from stage 1 results
+        std::unordered_set<size_t> el_ids_set;
+        for (size_t j = start_offset * vec_topk; j < end_offset * vec_topk; j++) {
+            if (stage1_ids[j] < 0) {
+                continue;
+            }
+            el_ids_set.emplace(emb_list_offset_->get_el_id((size_t)stage1_ids[j]));
+        }
+
+        // Rerank each candidate doc with exact distances
+        std::priority_queue<DistId, std::vector<DistId>, std::greater<>> minheap;
+        std::priority_queue<DistId, std::vector<DistId>, std::less<>> maxheap;
+        for (const auto& el_id : el_ids_set) {
+            if (el_id >= emb_list_offset_->num_el()) {
+                LOG_KNOWHERE_ERROR_ << "Invalid el_id: " << el_id;
+                return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "invalid emb_list id");
+            }
+            auto vids = emb_list_offset_->get_vids(el_id);
+            auto tensor = (const char*)dataset->GetTensor();
+            size_t tensor_offset = start_offset * query_code_size;
+            auto bf_query_dataset = GenDataSet(nq, dim, tensor + tensor_offset);
+
+            auto bf_search_res =
+                CalcDistByIDs(bf_query_dataset, bitset, vids.data(), vids.size(), mi.is_cosine, op_context);
+            if (!bf_search_res.has_value()) {
+                LOG_KNOWHERE_ERROR_ << "bf search error: " << bf_search_res.what();
+                return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "bf search error");
+            }
+            const auto bf_dists = bf_search_res.value()->GetDistance();
+
+            auto score_or = mi.agg_func(bf_dists, nq, vids.size(), mi.larger_is_closer);
+            if (!score_or.has_value()) {
+                return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "aggregation failed");
+            }
+            auto score = score_or.value();
+
+            if (mi.larger_is_closer) {
+                if (minheap.size() < (size_t)el_k) {
+                    minheap.emplace((int64_t)el_id, score);
+                } else if (score > minheap.top().val) {
+                    minheap.pop();
+                    minheap.emplace((int64_t)el_id, score);
+                }
+            } else {
+                if (maxheap.size() < (size_t)el_k) {
+                    maxheap.emplace((int64_t)el_id, score);
+                } else if (score < maxheap.top().val) {
+                    maxheap.pop();
+                    maxheap.emplace((int64_t)el_id, score);
+                }
+            }
+        }
+
+        // Write results
+        size_t real_el_k = 0;
+        if (mi.larger_is_closer) {
+            real_el_k = minheap.size();
+            for (size_t j = 0; j < real_el_k; j++) {
+                auto& a = minheap.top();
+                ids[i * el_k + real_el_k - j - 1] = a.id;
+                dists[i * el_k + real_el_k - j - 1] = a.val;
+                minheap.pop();
+            }
+        } else {
+            real_el_k = maxheap.size();
+            for (size_t j = 0; j < real_el_k; j++) {
+                auto& a = maxheap.top();
+                ids[i * el_k + real_el_k - j - 1] = a.id;
+                dists[i * el_k + real_el_k - j - 1] = a.val;
+                maxheap.pop();
+            }
+        }
+        std::fill(ids.get() + i * el_k + real_el_k, ids.get() + i * el_k + el_k, -1);
+        std::fill(dists.get() + i * el_k + real_el_k, dists.get() + i * el_k + el_k,
+                  mi.larger_is_closer ? std::numeric_limits<float>::min() : std::numeric_limits<float>::max());
+    }
+
+    return GenResultDataSet((int64_t)num_q_el, (int64_t)el_k, std::move(ids), std::move(dists));
 }
 
 template <typename DataType>

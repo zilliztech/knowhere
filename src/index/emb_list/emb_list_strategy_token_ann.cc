@@ -35,7 +35,6 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
     expected<std::optional<DataSetPtr>>
     PrepareDataForBuild(const DataSetPtr dataset, const EmbListOffset& doc_offset, const BaseConfig& config) override {
         emb_list_offset_ = std::make_shared<EmbListOffset>(doc_offset.offset);
-        original_dim_ = dataset->GetDim();
         return std::optional<DataSetPtr>(dataset);
     }
 
@@ -258,20 +257,12 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
             // Legacy format: [count][offsets] (no magic/version)
             DeserializeEmbListOffsetFromBytes(data, emb_list_offset_);
         }
-        if (config.dim.has_value()) {
-            original_dim_ = config.dim.value();
-        }
         return Status::success;
     }
 
     std::shared_ptr<EmbListOffset>
     GetEmbListOffset() const override {
         return emb_list_offset_;
-    }
-
-    int32_t
-    GetIndexedDim() const override {
-        return original_dim_;
     }
 
     int64_t
@@ -281,7 +272,6 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
 
  private:
     std::shared_ptr<EmbListOffset> emb_list_offset_;
-    int32_t original_dim_ = 0;
 };
 
 EmbListStrategyPtr

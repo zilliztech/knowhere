@@ -354,18 +354,6 @@ class EmbListStrategy {
     }
 
     /**
-     * @brief Get the dimension of vectors indexed by underlying ANN.
-     *
-     * TokenANN: original dim
-     * MUVERA: encoded dim
-     * LEMUR: hidden dim (learned representation)
-     *
-     * Returns 0 if strategy doesn't use ANN index.
-     */
-    virtual int32_t
-    GetIndexedDim() const = 0;
-
-    /**
      * @brief Get number of documents.
      */
     virtual int64_t

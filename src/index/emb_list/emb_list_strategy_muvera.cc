@@ -90,6 +90,10 @@ class MuveraEmbListStrategy : public EmbListStrategy {
 
     expected<std::optional<DataSetPtr>>
     PrepareDataForBuild(const DataSetPtr dataset, const EmbListOffset& doc_offset, const BaseConfig& config) override {
+        if (!dataset) {
+            return expected<std::optional<DataSetPtr>>::Err(Status::emb_list_inner_error,
+                                                            "MUVERA requires non-null dataset for encoding");
+        }
         // 1. Read config
         num_projections_ = config.muvera_num_projections.value();
         num_repeats_ = config.muvera_num_repeats.value();
@@ -184,8 +188,8 @@ class MuveraEmbListStrategy : public EmbListStrategy {
         int32_t ann_k;
         if (do_rerank) {
             auto retrieval_ann_ratio = config.retrieval_ann_ratio.value();
-            ann_k = std::min(std::max(static_cast<int32_t>(k * retrieval_ann_ratio), 1),
-                            static_cast<int32_t>(num_docs_));
+            ann_k =
+                std::min(std::max(static_cast<int32_t>(k * retrieval_ann_ratio), 1), static_cast<int32_t>(num_docs_));
         } else {
             ann_k = std::min(k, static_cast<int32_t>(num_docs_));
         }
@@ -376,11 +380,6 @@ class MuveraEmbListStrategy : public EmbListStrategy {
 
         LOG_KNOWHERE_INFO_ << "MUVERA Deserialize completed";
         return Status::success;
-    }
-
-    int32_t
-    GetIndexedDim() const override {
-        return encoded_dim_;
     }
 
     int64_t

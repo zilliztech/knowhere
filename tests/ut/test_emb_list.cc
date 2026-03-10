@@ -564,8 +564,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
                                 int(bitset_rate * 100));
 
                             auto index_file = test_emb_list_index<knowhere::fp32>(
-                                default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf, false,
-                                bitset_view);
+                                default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf, false, bitset_view);
                             std::remove(index_file.c_str());
                         }
                     }
@@ -603,8 +602,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
                     auto default_ds_ptr = GenEmbListDataSet(nb, dim, rng_seed, each_el_len);
 
                     auto version = GenTestEmbListVersionList();
-                    auto index =
-                        knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_type, version).value();
+                    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_type, version).value();
                     index.Build(default_ds_ptr, conf);
 
                     // serialize + deserialize round-trip
@@ -624,8 +622,8 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
                             bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
                         }
 
-                        auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(
-                            default_ds_ptr, query_ds_ptr, conf, bitset_view);
+                        auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
+                                                                                          conf, bitset_view);
 
                         printf(
                             "\nProcessing EMBList HNSW,Flat MUVERA(no rerank) fp32 for %s distance, dim=%d, "
@@ -2415,7 +2413,7 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
 
         // Verify
         REQUIRE(strategy2->GetDocCount() == strategy->GetDocCount());
-        REQUIRE(strategy2->GetIndexedDim() == strategy->GetIndexedDim());
+
         auto offset1 = strategy->GetEmbListOffset();
         auto offset2 = strategy2->GetEmbListOffset();
         REQUIRE(offset1->offset == offset2->offset);
@@ -2487,7 +2485,7 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         REQUIRE(strategy2_or.value()->Deserialize(data.get(), size, cfg) == knowhere::Status::success);
 
         REQUIRE(strategy2_or.value()->GetDocCount() == strategy->GetDocCount());
-        REQUIRE(strategy2_or.value()->GetIndexedDim() == strategy->GetIndexedDim());
+
         REQUIRE(strategy2_or.value()->GetEmbListOffset()->offset == strategy->GetEmbListOffset()->offset);
     }
 
@@ -2569,7 +2567,7 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         REQUIRE(strategy2_or.value()->Deserialize(data.get(), size, cfg) == knowhere::Status::success);
 
         REQUIRE(strategy2_or.value()->GetDocCount() == strategy->GetDocCount());
-        REQUIRE(strategy2_or.value()->GetIndexedDim() == strategy->GetIndexedDim());
+
         REQUIRE(strategy2_or.value()->GetEmbListOffset()->offset == strategy->GetEmbListOffset()->offset);
     }
 
@@ -2642,8 +2640,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         auto version = GenTestEmbListVersionList();
         auto conf = base_conf;
 
-        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         index.Build(default_ds_ptr, conf);
 
         knowhere::BinarySet binset;
@@ -2654,8 +2652,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         REQUIRE(meta_bin != nullptr);
 
         // Deserialize into new index and search
-        auto index2 = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index2 =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         REQUIRE(index2.Deserialize(binset, conf) == knowhere::Status::success);
 
         auto result1 = index.Search(query_ds_ptr, conf, nullptr);
@@ -2680,8 +2678,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         conf["muvera_num_repeats"] = 2;
         conf["muvera_seed"] = 42;
 
-        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         index.Build(default_ds_ptr, conf);
 
         knowhere::BinarySet binset;
@@ -2691,8 +2689,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         REQUIRE(binset.GetByName(knowhere::meta::EMB_LIST_META) != nullptr);
         REQUIRE(binset.GetByName(knowhere::meta::EMB_LIST_RAW_INDEX) != nullptr);
 
-        auto index2 = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index2 =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         REQUIRE(index2.Deserialize(binset, conf) == knowhere::Status::success);
 
         auto result1 = index.Search(query_ds_ptr, conf, nullptr);
@@ -2720,8 +2718,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         conf["lemur_seed"] = 42;
         conf["lemur_num_layers"] = 1;
 
-        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         index.Build(default_ds_ptr, conf);
 
         knowhere::BinarySet binset;
@@ -2730,8 +2728,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         REQUIRE(binset.GetByName(knowhere::meta::EMB_LIST_META) != nullptr);
         REQUIRE(binset.GetByName(knowhere::meta::EMB_LIST_RAW_INDEX) != nullptr);
 
-        auto index2 = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index2 =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         REQUIRE(index2.Deserialize(binset, conf) == knowhere::Status::success);
 
         auto result1 = index.Search(query_ds_ptr, conf, nullptr);
@@ -2751,8 +2749,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         auto version = GenTestEmbListVersionList();
         auto conf = base_conf;
 
-        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         index.Build(default_ds_ptr, conf);
 
         knowhere::BinarySet binset;
@@ -2777,8 +2775,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         load_conf["emb_list_meta_file_path"] = meta_file;
         load_conf["enable_mmap"] = false;
 
-        auto index2 = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index2 =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         auto status = index2.DeserializeFromFile(base_index_file, load_conf);
 
         std::remove(base_index_file.c_str());
@@ -2802,8 +2800,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         auto version = GenTestEmbListVersionList();
         auto conf = base_conf;
 
-        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         index.Build(default_ds_ptr, conf);
 
         knowhere::BinarySet binset;
@@ -2825,8 +2823,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         load_conf["emb_list_meta_file_path"] = meta_file;
         load_conf["enable_mmap"] = true;
 
-        auto index2 = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index2 =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         auto status = index2.DeserializeFromFile(base_index_file, load_conf);
 
         std::remove(base_index_file.c_str());
@@ -2850,8 +2848,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         auto version = GenTestEmbListVersionList();
         auto conf = base_conf;
 
-        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         index.Build(default_ds_ptr, conf);
 
         knowhere::BinarySet binset;
@@ -2867,8 +2865,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         knowhere::Json load_conf = conf;
         load_conf["enable_mmap"] = false;
 
-        auto index2 = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index2 =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         auto status = index2.DeserializeFromFile(base_index_file, load_conf);
         std::remove(base_index_file.c_str());
 
@@ -2879,8 +2877,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         auto version = GenTestEmbListVersionList();
         auto conf = base_conf;
 
-        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         index.Build(default_ds_ptr, conf);
 
         knowhere::BinarySet binset;
@@ -2897,8 +2895,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         load_conf["emb_list_meta_file_path"] = "/tmp/nonexistent_meta_file.bin";
         load_conf["enable_mmap"] = false;
 
-        auto index2 = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index2 =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         auto status = index2.DeserializeFromFile(base_index_file, load_conf);
         std::remove(base_index_file.c_str());
 
@@ -2913,8 +2911,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         conf["muvera_num_repeats"] = 2;
         conf["muvera_seed"] = 42;
 
-        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         index.Build(default_ds_ptr, conf);
 
         knowhere::BinarySet binset;
@@ -2936,8 +2934,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         load_conf["emb_list_meta_file_path"] = meta_file;
         load_conf["enable_mmap"] = false;
 
-        auto index2 = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index2 =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         auto status = index2.DeserializeFromFile(base_index_file, load_conf);
 
         std::remove(base_index_file.c_str());
@@ -2954,8 +2952,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         conf["muvera_num_repeats"] = 2;
         conf["muvera_seed"] = 42;
 
-        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         index.Build(default_ds_ptr, conf);
 
         knowhere::BinarySet binset;
@@ -2985,8 +2983,9 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
             load_conf["emb_list_raw_index_file_path"] = raw_index_file;
             load_conf["enable_mmap"] = enable_mmap;
 
-            auto index2 = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-                knowhere::IndexEnum::INDEX_HNSW, version).value();
+            auto index2 = knowhere::IndexFactory::Instance()
+                              .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version)
+                              .value();
             auto status = index2.DeserializeFromFile(base_index_file, load_conf);
             REQUIRE(status == knowhere::Status::success);
 
@@ -3026,8 +3025,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         conf["lemur_seed"] = 42;
         conf["lemur_num_layers"] = 1;
 
-        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         index.Build(lemur_ds_ptr, conf);
 
         knowhere::BinarySet binset;
@@ -3056,8 +3055,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         load_conf["emb_list_raw_index_file_path"] = raw_index_file;
         load_conf["enable_mmap"] = false;
 
-        auto index2 = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index2 =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         REQUIRE(index2.DeserializeFromFile(base_index_file, load_conf) == knowhere::Status::success);
 
         auto result1 = index.Search(lemur_query_ds_ptr, conf, nullptr);
@@ -3150,8 +3149,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         conf["lemur_seed"] = 42;
         conf["lemur_num_layers"] = 1;
 
-        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         index.Build(lemur_ds_ptr, conf);
 
         knowhere::BinarySet binset;
@@ -3180,8 +3179,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         load_conf["emb_list_raw_index_file_path"] = raw_index_file;
         load_conf["enable_mmap"] = true;
 
-        auto index2 = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index2 =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         REQUIRE(index2.DeserializeFromFile(base_index_file, load_conf) == knowhere::Status::success);
 
         auto result1 = index.Search(lemur_query_ds_ptr, conf, nullptr);
@@ -3217,8 +3216,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         conf["lemur_seed"] = 42;
         conf["lemur_num_layers"] = 1;
 
-        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         index.Build(lemur_ds_ptr, conf);
 
         knowhere::BinarySet binset;
@@ -3240,8 +3239,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         load_conf["emb_list_meta_file_path"] = meta_file;
         load_conf["enable_mmap"] = false;
 
-        auto index2 = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index2 =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         auto status = index2.DeserializeFromFile(base_index_file, load_conf);
 
         std::remove(base_index_file.c_str());
@@ -3254,8 +3253,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         auto version = GenTestEmbListVersionList();
         auto conf = base_conf;
 
-        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         index.Build(default_ds_ptr, conf);
 
         knowhere::BinarySet binset;
@@ -3286,8 +3285,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         load_conf["emb_list_meta_file_path"] = meta_file;
         load_conf["enable_mmap"] = false;
 
-        auto index2 = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index2 =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         auto status = index2.DeserializeFromFile(base_index_file, load_conf);
 
         std::remove(base_index_file.c_str());
@@ -3338,8 +3337,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         conf["muvera_num_repeats"] = 2;
         conf["muvera_seed"] = 42;
 
-        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         index.Build(default_ds_ptr, conf);
 
         knowhere::BinarySet binset;
@@ -3384,8 +3383,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         auto version = GenTestEmbListVersionList();
         auto conf = base_conf;
 
-        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         index.Build(default_ds_ptr, conf);
 
         knowhere::BinarySet binset;
@@ -3396,8 +3395,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         binset.Append(knowhere::meta::EMB_LIST_META, blob_data, blob_size);
 
         // Deserialize — should detect legacy format and use tokenann
-        auto index2 = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_HNSW, version).value();
+        auto index2 =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
         auto status = index2.Deserialize(binset, conf);
         REQUIRE(status == knowhere::Status::success);
     }

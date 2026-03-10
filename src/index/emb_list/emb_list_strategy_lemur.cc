@@ -72,6 +72,10 @@ class LemurEmbListStrategy : public EmbListStrategy {
 
     expected<std::optional<DataSetPtr>>
     PrepareDataForBuild(const DataSetPtr dataset, const EmbListOffset& doc_offset, const BaseConfig& config) override {
+        if (!dataset) {
+            return expected<std::optional<DataSetPtr>>::Err(Status::emb_list_inner_error,
+                                                            "LEMUR requires non-null dataset for training");
+        }
         auto start_time = std::chrono::high_resolution_clock::now();
 
         // 1. Read config
@@ -680,11 +684,6 @@ class LemurEmbListStrategy : public EmbListStrategy {
 
         LOG_KNOWHERE_DEBUG_ << "LEMUR Deserialize completed";
         return Status::success;
-    }
-
-    int32_t
-    GetIndexedDim() const override {
-        return final_hidden_dim_;
     }
 
     int64_t
