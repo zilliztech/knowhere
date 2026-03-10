@@ -157,7 +157,8 @@ TEST_CASE("Test Distance Known Values", "[distance][known_values]") {
         // IP = 1*4 + 2*5 + 3*6 = 4 + 10 + 18 = 32
         std::vector<float> x = {1.0f, 2.0f, 3.0f};
         std::vector<float> y = {4.0f, 5.0f, 6.0f};
-        REQUIRE_THAT(faiss::fvec_inner_product(x.data(), y.data(), 3), Catch::Matchers::WithinRel(32.0f, kRelTolerance));
+        REQUIRE_THAT(faiss::fvec_inner_product(x.data(), y.data(), 3),
+                     Catch::Matchers::WithinRel(32.0f, kRelTolerance));
     }
 
     SECTION("L1 distance") {
@@ -191,7 +192,8 @@ TEST_CASE("Test Distance Edge Cases", "[distance][edge]") {
         std::vector<float> x = {5.0f};
         std::vector<float> y = {3.0f};
         REQUIRE_THAT(faiss::fvec_L2sqr(x.data(), y.data(), 1), Catch::Matchers::WithinRel(4.0f, kRelTolerance));
-        REQUIRE_THAT(faiss::fvec_inner_product(x.data(), y.data(), 1), Catch::Matchers::WithinRel(15.0f, kRelTolerance));
+        REQUIRE_THAT(faiss::fvec_inner_product(x.data(), y.data(), 1),
+                     Catch::Matchers::WithinRel(15.0f, kRelTolerance));
         REQUIRE_THAT(faiss::fvec_L1(x.data(), y.data(), 1), Catch::Matchers::WithinRel(2.0f, kRelTolerance));
     }
 
@@ -217,7 +219,8 @@ TEST_CASE("Test Distance Edge Cases", "[distance][edge]") {
         std::vector<float> x = {1e6f, 1e6f, 1e6f};
         std::vector<float> y = {1e6f, 1e6f, 1e6f};
         REQUIRE(faiss::fvec_L2sqr(x.data(), y.data(), 3) < kAbsTolerance);
-        REQUIRE_THAT(faiss::fvec_inner_product(x.data(), y.data(), 3), Catch::Matchers::WithinRel(3e12f, kRelTolerance));
+        REQUIRE_THAT(faiss::fvec_inner_product(x.data(), y.data(), 3),
+                     Catch::Matchers::WithinRel(3e12f, kRelTolerance));
     }
 
     SECTION("Mixed positive and negative values") {
@@ -226,7 +229,8 @@ TEST_CASE("Test Distance Edge Cases", "[distance][edge]") {
         // L2^2 = 4 + 16 + 36 + 64 = 120
         REQUIRE_THAT(faiss::fvec_L2sqr(x.data(), y.data(), 4), Catch::Matchers::WithinRel(120.0f, kRelTolerance));
         // IP = -1 - 4 - 9 - 16 = -30
-        REQUIRE_THAT(faiss::fvec_inner_product(x.data(), y.data(), 4), Catch::Matchers::WithinRel(-30.0f, kRelTolerance));
+        REQUIRE_THAT(faiss::fvec_inner_product(x.data(), y.data(), 4),
+                     Catch::Matchers::WithinRel(-30.0f, kRelTolerance));
     }
 }
 
