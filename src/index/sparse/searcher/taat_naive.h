@@ -68,8 +68,13 @@ class TaatNaiveSearcher : public RankedSearcher {
             }
         }
 
+        // Sparse vectors cannot guarantee topk results, because a value of 0.0
+        // indicates that two sparse vectors have no intersection, so such cases
+        // need to be excluded.
         for (size_t i = 0; i < distances.size(); ++i) {
-            topk_.Push(distances[i], i);
+            if (distances[i] != 0.0f) {
+                topk_.Push(distances[i], i);
+            }
         }
     }
 
