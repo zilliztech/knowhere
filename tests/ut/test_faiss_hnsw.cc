@@ -2461,8 +2461,7 @@ TEST_CASE("HNSW Empty Graph Search", "[hnsw][empty_graph]") {
         {knowhere::indexparam::EF, 200},
     };
 
-    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-        knowhere::IndexEnum::INDEX_HNSW, version);
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version);
     REQUIRE(idx.has_value());
 
     auto empty_ds = knowhere::GenDataSet(0, dim, (float*)nullptr);
@@ -2514,8 +2513,7 @@ TEST_CASE("HNSW Search with Heavy Filtering", "[hnsw][filter]") {
         {knowhere::indexparam::EF, 100},
     };
 
-    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-        knowhere::IndexEnum::INDEX_HNSW, version);
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version);
     REQUIRE(idx.has_value());
     REQUIRE(idx.value().Build(base_ds, conf) == knowhere::Status::success);
 
@@ -2572,8 +2570,7 @@ TEST_CASE("HNSW AnnIterator Edge Cases", "[hnsw][iterator]") {
         {knowhere::indexparam::EF, 50},
     };
 
-    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-        knowhere::IndexEnum::INDEX_HNSW, version);
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version);
     REQUIRE(idx.has_value());
     REQUIRE(idx.value().Build(base_ds, conf) == knowhere::Status::success);
 
