@@ -47,6 +47,8 @@
 #include "diskann/diskann_gpu.h"
 #endif
 
+#include "diskann/maybe_vector.h"
+
 // block size for reading/ processing large files and matrices in blocks
 #define BLOCK_SIZE 1000000
 
@@ -723,7 +725,7 @@ int estimate_cluster_sizes(float *test_data_float, size_t num_test,
         for (size_t p = 0; p < cur_blk_size; p++) {
             const size_t* cand = (const size_t*)block_closest_centers.get() + p * k_candidates;
 
-            bool used[k_candidates] = {false};
+            diskann::MaybeVector<bool> used(k_candidates, false);
 
             for (size_t assign = 0; assign < k_base; assign++) {
                 size_t best_idx = SIZE_MAX;
@@ -952,7 +954,7 @@ int shard_data_into_clusters_only_ids(const std::string data_file,
         for (size_t p = 0; p < cur_blk_size; p++) {
             size_t* cand = (size_t*)block_closest_centers.get() + p * k_candidates;
 
-            bool used[k_candidates] = {false};
+            diskann::MaybeVector<bool> used(k_candidates, false);
 
             for (size_t assign = 0; assign < k_base; assign++) {
                 size_t best_idx = SIZE_MAX;

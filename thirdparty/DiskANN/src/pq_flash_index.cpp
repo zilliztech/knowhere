@@ -2076,9 +2076,9 @@ namespace diskann {
     }
   }
 
-  template class IteratorWorkspace<float>;
-  template class IteratorWorkspace<knowhere::bf16>;
-  template class IteratorWorkspace<knowhere::fp16>;
+  template struct IteratorWorkspace<float>;
+  template struct IteratorWorkspace<knowhere::bf16>;
+  template struct IteratorWorkspace<knowhere::fp16>;
 
   // knowhere not support uint8/int8 diskann
   // template class PQFlashIndex<_u8>;

@@ -272,7 +272,7 @@ namespace diskann {
                  : sector_buf + (node_id % nnodes_per_sector) * max_node_len;
     }
 
-    inline void copy_vec_base_data(T *des, const int64_t des_idx, void *src);
+    void copy_vec_base_data(T *des, const int64_t des_idx, void *src);
 
     // Init thread data and returns query norm if avaialble.
     // If there is no value, there is nothing to do with the given query

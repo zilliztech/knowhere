@@ -624,14 +624,14 @@ int AisaqPQReader_aio::read_pq_vectors_wait_completion(AisaqPQReaderContext &ctx
     }
     uint32_t __max_events = max_events - rcount;
     if (__max_events > 0 && aio_ctx.m_pending_io_count > 0) {
-        struct io_event evts[__max_events];
+        std::unique_ptr<io_event[]> evts = std::make_unique<io_event[]>(__max_events);
         if (nr_events > __max_events) {
             nr_events = __max_events;
         }
         if (nr_events > aio_ctx.m_pending_io_count) {
             nr_events = aio_ctx.m_pending_io_count;
         }
-        int ret = io_getevents(aio_ctx.m_aio_ctx, (int64_t)nr_events, (int64_t)__max_events, evts, nullptr);
+        int ret = io_getevents(aio_ctx.m_aio_ctx, (int64_t)nr_events, (int64_t)__max_events, evts.get(), nullptr);
         if (ret <= 0) {
             LOG_KNOWHERE_ERROR_ << "io_getevents() failed; returned " << ret
                       << ", ernno=" << errno << "=" << ::strerror(-ret);
@@ -687,10 +687,10 @@ void AisaqPQReader_aio::drain_ios(AisaqPQReaderContext_aio &aio_ctx)
 {
     if (aio_ctx.m_pending_io_count > 0) {
         int retries = 5;
-        struct io_event evts[aio_ctx.m_pending_io_count];
+        std::unique_ptr<io_event[]> evts = std::make_unique<io_event[]>(aio_ctx.m_pending_io_count);
         do {
             int ret = io_getevents(aio_ctx.m_aio_ctx, (int64_t) aio_ctx.m_pending_io_count,
-                                   (int64_t) aio_ctx.m_pending_io_count, evts, nullptr);
+                                   (int64_t) aio_ctx.m_pending_io_count, evts.get(), nullptr);
             if (ret > 0) {
                 aio_ctx.m_pending_io_count-= ret;
                 continue;
