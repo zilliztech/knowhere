@@ -15,7 +15,7 @@
 #include <cstdint>
 #include <memory>
 
-#include "faiss/cppcontrib/knowhere/Index.h"
+#include "faiss/Index.h"
 #include "faiss/cppcontrib/knowhere/IndexFlat.h"
 #include "faiss/cppcontrib/knowhere/IndexIVF.h"
 #include "faiss/cppcontrib/knowhere/IndexIVFPQ.h"
@@ -29,20 +29,20 @@ namespace knowhere {
 // This is wrapper is needed, bcz we use faiss::IndexIVFPQ/faiss::IndexIVFScalarQuantizer
 //   optionally combined with faiss::IndexRefine.
 template <typename IndexIVFType>
-struct IndexIVFWrapper : faiss::cppcontrib::knowhere::Index {
+struct IndexIVFWrapper : faiss::Index {
     // this is one of two:
     // * IndexIVFType
     // * faiss::IndexRefine + IndexIVFType
-    std::unique_ptr<faiss::cppcontrib::knowhere::Index> index;
+    std::unique_ptr<faiss::Index> index;
     mutable std::optional<size_t> size_cache_ = std::nullopt;
 
-    IndexIVFWrapper(std::unique_ptr<faiss::cppcontrib::knowhere::Index>&& index_in);
+    IndexIVFWrapper(std::unique_ptr<faiss::Index>&& index_in);
 
     // this is for the deserialization.
     // returns nullptr if the provided index type is not the one
     //   as expected.
     static std::unique_ptr<IndexIVFWrapper<IndexIVFType>>
-    from_deserialized(std::unique_ptr<faiss::cppcontrib::knowhere::Index>&& index_in);
+    from_deserialized(std::unique_ptr<faiss::Index>&& index_in);
 
     void
     train(faiss::idx_t n, const float* x) override;

@@ -6,7 +6,7 @@
 #include <optional>
 #include <string>
 
-#include "faiss/cppcontrib/knowhere/Index.h"
+#include "faiss/Index.h"
 #include "faiss/cppcontrib/knowhere/impl/ScalarQuantizer.h"
 #include "knowhere/expected.h"
 #include "knowhere/operands.h"
@@ -27,9 +27,9 @@ bool
 has_lossless_refine_index(const std::optional<bool>& refine, const std::optional<std::string>& refine_type,
                           DataFormatEnum dataFormat);
 
-expected<std::unique_ptr<faiss::cppcontrib::knowhere::Index>>
+expected<std::unique_ptr<faiss::Index>>
 pick_refine_index(const DataFormatEnum data_format, const std::optional<std::string>& refine_type,
-                  std::unique_ptr<faiss::cppcontrib::knowhere::Index>&& base_index,
+                  std::unique_ptr<faiss::Index>&& base_index,
                   // These two could be borrowed from base_index. But it seems that
                   //   for HNSW these things are borrowed from base_index.storage.
                   //   So, let's provide these externally

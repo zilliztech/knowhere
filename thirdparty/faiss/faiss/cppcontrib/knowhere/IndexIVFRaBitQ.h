@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include <faiss/cppcontrib/knowhere/Index.h>
+#include <faiss/Index.h>
 #include <faiss/cppcontrib/knowhere/IndexIVF.h>
 
 #include <faiss/cppcontrib/knowhere/impl/RaBitQuantizer.h>

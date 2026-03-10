@@ -14,7 +14,7 @@
 #include <typeinfo>
 #include <vector>
 
-#include <faiss/cppcontrib/knowhere/Index.h>
+#include <faiss/Index.h>
 #include <faiss/cppcontrib/knowhere/IndexBinary.h>
 #include <faiss/cppcontrib/knowhere/IndexIVF.h>
 #include <faiss/VectorTransform.h>

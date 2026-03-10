@@ -21,7 +21,7 @@
 #include <faiss/utils/distances.h>
 #include <faiss/utils/utils.h>
 
-#include <faiss/cppcontrib/knowhere/Clustering.h>
+#include <faiss/Clustering.h>
 #include <faiss/cppcontrib/knowhere/FaissHook.h>
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
 

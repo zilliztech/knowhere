@@ -11,7 +11,7 @@
 
 #include <vector>
 
-#include <faiss/cppcontrib/knowhere/Clustering.h>
+#include <faiss/Clustering.h>
 #include <faiss/cppcontrib/knowhere/IndexBinary.h>
 #include <faiss/cppcontrib/knowhere/IndexIVF.h>
 #include <faiss/utils/Heap.h>

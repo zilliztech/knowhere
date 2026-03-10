@@ -16,7 +16,7 @@
 #include <memory>
 
 #include "faiss/cppcontrib/knowhere/IndexFlat.h"
-#include "faiss/cppcontrib/knowhere/IndexPreTransform.h"
+#include "faiss/IndexPreTransform.h"
 #include "faiss/cppcontrib/knowhere/impl/CountSizeIOWriter.h"
 #include "faiss/cppcontrib/knowhere/index_io.h"
 #include "index/refine/refine_utils.h"
@@ -32,7 +32,7 @@ IndexIVFRaBitQWrapper::create(const faiss::idx_t d, const size_t nlist, const Iv
     // create IndexIVFRaBitQ
     auto qb = ivf_rabitq_cfg.rbq_bits_query.value();
 
-    auto idx_flat = std::make_unique<faiss::cppcontrib::knowhere::IndexFlat>(d, metric, false);
+    auto idx_flat = std::make_unique<faiss::cppcontrib::knowhere::IndexFlat>(d, metric);
     auto idx_ivfrbq =
         std::make_unique<faiss::cppcontrib::knowhere::IndexIVFRaBitQ>(idx_flat.release(), d, nlist, metric);
     idx_ivfrbq->own_fields = true;
@@ -40,11 +40,11 @@ IndexIVFRaBitQWrapper::create(const faiss::idx_t d, const size_t nlist, const Iv
 
     // wrap it in an IndexPreTransform
     auto rr = std::make_unique<faiss::RandomRotationMatrix>(d, d);
-    auto idx_rr = std::make_unique<faiss::cppcontrib::knowhere::IndexPreTransform>(rr.release(), idx_ivfrbq.release());
+    auto idx_rr = std::make_unique<faiss::IndexPreTransform>(rr.release(), idx_ivfrbq.release());
     idx_rr->own_fields = true;
 
     // create a refiner index, if needed
-    std::unique_ptr<faiss::cppcontrib::knowhere::Index> idx_final;
+    std::unique_ptr<faiss::Index> idx_final;
     if (ivf_rabitq_cfg.refine.value_or(false) && ivf_rabitq_cfg.refine_type.has_value()) {
         // refine is needed
         const auto base_d = idx_rr->d;
@@ -66,17 +66,16 @@ IndexIVFRaBitQWrapper::create(const faiss::idx_t d, const size_t nlist, const Iv
     return result;
 }
 
-IndexIVFRaBitQWrapper::IndexIVFRaBitQWrapper(std::unique_ptr<faiss::cppcontrib::knowhere::Index>&& index_in)
+IndexIVFRaBitQWrapper::IndexIVFRaBitQWrapper(std::unique_ptr<faiss::Index>&& index_in)
     : Index{index_in->d, index_in->metric_type}, index{std::move(index_in)} {
     ntotal = index->ntotal;
     is_trained = index->is_trained;
-    is_cosine = index->is_cosine;
     verbose = index->verbose;
     metric_arg = index->metric_arg;
 }
 
 std::unique_ptr<IndexIVFRaBitQWrapper>
-IndexIVFRaBitQWrapper::from_deserialized(std::unique_ptr<faiss::cppcontrib::knowhere::Index>&& index_in) {
+IndexIVFRaBitQWrapper::from_deserialized(std::unique_ptr<faiss::Index>&& index_in) {
     auto index = std::make_unique<IndexIVFRaBitQWrapper>(std::move(index_in));
 
     // check a provided index type
@@ -137,12 +136,12 @@ IndexIVFRaBitQWrapper::get_ivfrabitq_index() {
     // try refine
     faiss::cppcontrib::knowhere::IndexRefine* index_refine =
         dynamic_cast<faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
-    faiss::cppcontrib::knowhere::Index* index_for_pt =
+    faiss::Index* index_for_pt =
         (index_refine != nullptr) ? index_refine->base_index : index.get();
 
     // pre-transform
-    faiss::cppcontrib::knowhere::IndexPreTransform* index_pt =
-        dynamic_cast<faiss::cppcontrib::knowhere::IndexPreTransform*>(index_for_pt);
+    faiss::IndexPreTransform* index_pt =
+        dynamic_cast<faiss::IndexPreTransform*>(index_for_pt);
     if (index_pt == nullptr) {
         return nullptr;
     }
@@ -155,12 +154,12 @@ IndexIVFRaBitQWrapper::get_ivfrabitq_index() const {
     // try refine
     const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
         dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
-    const faiss::cppcontrib::knowhere::Index* index_for_pt =
+    const faiss::Index* index_for_pt =
         (index_refine != nullptr) ? index_refine->base_index : index.get();
 
     // pre-transform
-    const faiss::cppcontrib::knowhere::IndexPreTransform* index_pt =
-        dynamic_cast<const faiss::cppcontrib::knowhere::IndexPreTransform*>(index_for_pt);
+    const faiss::IndexPreTransform* index_pt =
+        dynamic_cast<const faiss::IndexPreTransform*>(index_for_pt);
     if (index_pt == nullptr) {
         return nullptr;
     }
@@ -203,11 +202,11 @@ IndexIVFRaBitQWrapper::getIteratorWorkspace(
     // try refine
     const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
         dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
-    faiss::cppcontrib::knowhere::Index* index_for_pt =
+    faiss::Index* index_for_pt =
         (index_refine != nullptr) ? index_refine->base_index : index.get();
 
-    const faiss::cppcontrib::knowhere::IndexPreTransform* index_pt =
-        dynamic_cast<const faiss::cppcontrib::knowhere::IndexPreTransform*>(index_for_pt);
+    const faiss::IndexPreTransform* index_pt =
+        dynamic_cast<const faiss::IndexPreTransform*>(index_for_pt);
     if (index_pt == nullptr) {
         return nullptr;
     }

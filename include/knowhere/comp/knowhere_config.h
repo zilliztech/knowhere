@@ -85,6 +85,9 @@ class KnowhereConfig {
     static void
     SetClusteringType(const ClusteringType clustering_type);
 
+    static ClusteringType
+    GetClusteringType();
+
     /**
      * The numebr of maximum parallel disk reads per thread.
      * On Linux, the default limit of `aio-max-nr` is 65536, so the product of `num_threads` and `max_events` (default

@@ -67,9 +67,10 @@ GetDocValueComputer(const BruteForceConfig& cfg) {
     }
 }
 
+// Compute inverse L2 norms (1/||x||) for each vector in the dataset.
 template <typename DataType>
 std::unique_ptr<float[]>
-GetVecNorms(const DataSetPtr& base) {
+GetInverseVecNorms(const DataSetPtr& base) {
     using NormComputer = float (*)(const DataType*, size_t);
     NormComputer norm_computer;
     if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
@@ -82,16 +83,21 @@ GetVecNorms(const DataSetPtr& base) {
         return nullptr;
     }
 
+    auto compute_inv_norm = [&norm_computer](const DataType* vec, size_t dim) -> float {
+        float l2sqr = norm_computer(vec, dim);
+        return (l2sqr == 0.0f) ? 1.0f : 1.0f / std::sqrt(l2sqr);
+    };
+
     bool is_chunk = base->GetIsChunk();
     if (is_chunk) {
         auto dim = base->GetDim();
         auto num_chunk_dataset = base->GetNumChunk();
         auto chunk_lims = base->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
         auto nb = base->GetRows();
-        auto norms = std::make_unique<float[]>(nb);
+        auto inv_norms = std::make_unique<float[]>(nb);
         auto base_tensor = (const DataType**)base->GetTensor();
 
-        // use search thread pool to compute norms
+        // use search thread pool to compute inverse norms
         auto pool = ThreadPool::GetGlobalSearchThreadPool();
         std::vector<folly::Future<folly::Unit>> futs;
         futs.reserve(num_chunk_dataset);
@@ -100,19 +106,19 @@ GetVecNorms(const DataSetPtr& base) {
                 auto num_vectors = chunk_lims[chunk_idx + 1] - chunk_lims[chunk_idx];
                 auto xb = base_tensor[chunk_idx];
                 for (auto j = 0; j < num_vectors; j++) {
-                    norms[chunk_lims[chunk_idx] + j] = std::sqrt(norm_computer(xb + j * dim, dim));
+                    inv_norms[chunk_lims[chunk_idx] + j] = compute_inv_norm(xb + j * dim, dim);
                 }
             }));
         }
         WaitAllSuccess(futs);
-        return norms;
+        return inv_norms;
     } else {
         auto xb = (DataType*)base->GetTensor();
         auto nb = base->GetRows();
         auto dim = base->GetDim();
-        auto norms = std::make_unique<float[]>(nb);
+        auto inv_norms = std::make_unique<float[]>(nb);
 
-        // use search thread pool to compute norms
+        // use search thread pool to compute inverse norms
         auto pool = ThreadPool::GetGlobalSearchThreadPool();
         std::vector<folly::Future<folly::Unit>> futs;
         constexpr int64_t chunk_size = 8192;
@@ -122,12 +128,12 @@ GetVecNorms(const DataSetPtr& base) {
             auto last = std::min(i + chunk_size, nb);
             futs.emplace_back(pool->push([&, beg_id = i, end_id = last] {
                 for (auto j = beg_id; j < end_id; j++) {
-                    norms[j] = std::sqrt(norm_computer(xb + j * dim, dim));
+                    inv_norms[j] = compute_inv_norm(xb + j * dim, dim);
                 }
             }));
         }
         WaitAllSuccess(futs);
-        return norms;
+        return inv_norms;
     }
 }
 }  // namespace
@@ -178,7 +184,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
 
 template <typename DataType>
 Status
-brute_force_dense_impl(const void* xq, size_t query_idx, const void* xb, const float* norms, int64_t* cur_labels,
+brute_force_dense_impl(const void* xq, size_t query_idx, const void* xb, const float* inv_norms, int64_t* cur_labels,
                        float* cur_distances, size_t dim, size_t nb, size_t topk, faiss::MetricType faiss_metric_type,
                        const BitsetView& bitset, bool is_cosine) {
     BitsetViewIDSelector bw_idselector(bitset);
@@ -203,12 +209,12 @@ brute_force_dense_impl(const void* xq, size_t query_idx, const void* xb, const f
             if (is_cosine) {
                 if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                     auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                    faiss::cppcontrib::knowhere::knn_cosine(copied_query.get(), (const float*)xb, norms, dim, 1, nb,
+                    faiss::cppcontrib::knowhere::knn_cosine(copied_query.get(), (const float*)xb, inv_norms, dim, 1, nb,
                                                             topk, cur_distances, cur_labels, id_selector);
                 } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                     // normalize query vector may cause precision loss, so div query norms in apply
                     // function
-                    faiss::cppcontrib::knowhere::knn_cosine_typed(cur_query, (const DataType*)xb, norms, dim, 1, nb,
+                    faiss::cppcontrib::knowhere::knn_cosine_typed(cur_query, (const DataType*)xb, inv_norms, dim, 1, nb,
                                                                   topk, cur_distances, cur_labels, id_selector);
                 } else {
                     LOG_KNOWHERE_ERROR_ << "Metric COSINE not supported for current vector type";
@@ -557,7 +563,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
         auto labels = ids;
         auto distances = dis;
 
-        std::unique_ptr<float[]> norms = is_cosine ? GetVecNorms<DataType>(base_dataset) : nullptr;
+        std::unique_ptr<float[]> inv_norms = is_cosine ? GetInverseVecNorms<DataType>(base_dataset) : nullptr;
         auto pool = ThreadPool::GetGlobalSearchThreadPool();
         std::vector<folly::Future<Status>> futs;
         futs.reserve(nq);
@@ -566,7 +572,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
                 ThreadPool::ScopedSearchOmpSetter setter(1);
                 auto cur_labels = labels + topk * index;
                 auto cur_distances = distances + topk * index;
-                RETURN_IF_ERROR(brute_force_dense_impl<DataType>(xq, index, xb, norms.get(), cur_labels, cur_distances,
+                RETURN_IF_ERROR(brute_force_dense_impl<DataType>(xq, index, xb, inv_norms.get(), cur_labels, cur_distances,
                                                                  dim, nb, topk, faiss_metric_type, bitset, is_cosine));
 
                 return Status::success;
@@ -664,7 +670,7 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
         }
         faiss::MetricType faiss_metric_type = faiss_metric_type_or.value();
         bool is_cosine = IsMetricType(metric_str, metric::COSINE);
-        std::unique_ptr<float[]> norms = is_cosine ? GetVecNorms<DataType>(base_dataset) : nullptr;
+        std::unique_ptr<float[]> inv_norms = is_cosine ? GetInverseVecNorms<DataType>(base_dataset) : nullptr;
 
         bool larger_is_closer = true;
         if (IsMetricType(metric_str, metric::L2) || IsMetricType(metric_str, metric::HAMMING) ||
@@ -694,9 +700,9 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
                     // adjust bitset offset for this chunk so selector indices map to global ids
                     BitsetView chunk_bitset = bitset;
                     chunk_bitset.set_id_offset(xb_id_offset + chunk_lims[chunk_idx]);
-                    auto chunk_norms = norms == nullptr ? nullptr : norms.get() + chunk_lims[chunk_idx];
+                    auto chunk_inv_norms = inv_norms == nullptr ? nullptr : inv_norms.get() + chunk_lims[chunk_idx];
 
-                    RETURN_IF_ERROR(brute_force_dense_impl<DataType>(xq, query_idx, xb, chunk_norms, tmp_labels.data(),
+                    RETURN_IF_ERROR(brute_force_dense_impl<DataType>(xq, query_idx, xb, chunk_inv_norms, tmp_labels.data(),
                                                                      tmp_distances.data(), dim, num_base_vectors, k,
                                                                      faiss_metric_type, chunk_bitset, is_cosine));
 
@@ -969,7 +975,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     std::vector<std::vector<int64_t>> result_id_array(nq);
     std::vector<std::vector<float>> result_dist_array(nq);
 
-    std::unique_ptr<float[]> norms = is_cosine ? GetVecNorms<DataType>(base_dataset) : nullptr;
+    std::unique_ptr<float[]> inv_norms = is_cosine ? GetInverseVecNorms<DataType>(base_dataset) : nullptr;
     std::vector<folly::Future<Status>> futs;
     futs.reserve(nq);
     for (int i = 0; i < nq; ++i) {
@@ -1031,12 +1037,13 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                             if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                                 auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                                 faiss::cppcontrib::knowhere::range_search_cosine(copied_query.get(), (const float*)xb,
-                                                                                 norms.get(), dim, 1, nb, radius, &res,
-                                                                                 id_selector);
+                                                                                 inv_norms.get(), dim, 1, nb, radius,
+                                                                                 &res, id_selector);
                             } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                                 // normalize query vector may cause precision loss, so div query norms in apply function
                                 faiss::cppcontrib::knowhere::range_search_cosine_typed(
-                                    cur_query, (const DataType*)xb, norms.get(), dim, 1, nb, radius, &res, id_selector);
+                                    cur_query, (const DataType*)xb, inv_norms.get(), dim, 1, nb, radius, &res,
+                                    id_selector);
                             } else {
                                 LOG_KNOWHERE_ERROR_ << "Metric COSINE not supported for current vector type";
                                 return Status::faiss_inner_error;
@@ -1285,7 +1292,7 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
         larger_is_closer = false;
     }
     auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
-    std::shared_ptr<float[]> norms = GetVecNorms<DataType>(base_dataset);
+    std::shared_ptr<float[]> inv_norms = GetInverseVecNorms<DataType>(base_dataset);
 
     try {
         for (int i = 0; i < nq; ++i) {
@@ -1326,12 +1333,12 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                             if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                                 auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                                 faiss::cppcontrib::knowhere::all_cosine(copied_query.get(), (const float*)xb,
-                                                                        norms.get(), dim, 1, nb, distances_ids,
+                                                                        inv_norms.get(), dim, 1, nb, distances_ids,
                                                                         id_selector);
                             } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                                 // normalize query vector may cause precision loss, so div query norms in apply function
                                 faiss::cppcontrib::knowhere::all_cosine_typed(cur_query, (const DataType*)xb,
-                                                                              norms.get(), dim, 1, nb, distances_ids,
+                                                                              inv_norms.get(), dim, 1, nb, distances_ids,
                                                                               id_selector);
                             } else {
                                 std::string err_msg = "Metric COSINE not supported for current vector type";
@@ -1487,7 +1494,7 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
     faiss::MetricType faiss_metric_type = faiss_metric_type_or.value();
     bool is_cosine = IsMetricType(metric_str, metric::COSINE);
     auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
-    std::shared_ptr<float[]> norms = GetVecNorms<DataType>(base_dataset);
+    std::shared_ptr<float[]> inv_norms = GetInverseVecNorms<DataType>(base_dataset);
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
@@ -1559,17 +1566,17 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                         }
                         case faiss::METRIC_INNER_PRODUCT: {
                             if (is_cosine) {
-                                auto chunk_norms = norms ? norms.get() + chunk_lims[chunk_idx] : nullptr;
+                                auto chunk_inv_norms = inv_norms ? inv_norms.get() + chunk_lims[chunk_idx] : nullptr;
                                 if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                                     auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
                                     faiss::cppcontrib::knowhere::all_cosine(copied_query.get(), (const float*)xb,
-                                                                            chunk_norms, dim, 1, num_base_vectors,
+                                                                            chunk_inv_norms, dim, 1, num_base_vectors,
                                                                             chunk_distances_ids, id_selector);
                                 } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                                     // normalize query vector may cause precision loss, so div query norms in apply
                                     // function
                                     faiss::cppcontrib::knowhere::all_cosine_typed(cur_query, (const DataType*)xb,
-                                                                                  chunk_norms, dim, 1, num_base_vectors,
+                                                                                  chunk_inv_norms, dim, 1, num_base_vectors,
                                                                                   chunk_distances_ids, id_selector);
                                 } else {
                                     std::string err_msg = "Metric COSINE not supported for current vector type";

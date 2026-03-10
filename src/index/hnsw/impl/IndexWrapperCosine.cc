@@ -16,7 +16,7 @@
 namespace knowhere {
 
 // a wrapper that overrides a distance computer
-IndexWrapperCosine::IndexWrapperCosine(faiss::cppcontrib::knowhere::Index* index, const float* inverse_l2_norms_in)
+IndexWrapperCosine::IndexWrapperCosine(faiss::Index* index, const float* inverse_l2_norms_in)
     : faiss::cppcontrib::knowhere::IndexWrapper(index), inverse_l2_norms{inverse_l2_norms_in} {
 }
 

@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cfloat>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -395,7 +396,7 @@ template <class BlockResultHandler>
 void exhaustive_cosine_seq(
         const float* x,
         const float* y,
-        const float* y_norms,
+        const float* y_inv_norms,
         size_t d,
         size_t nx,
         size_t ny,
@@ -414,11 +415,11 @@ void exhaustive_cosine_seq(
             resi.begin(i);
             for (size_t j = 0; j < ny; j++) {
                 if (!sel || sel->is_member(j)) {
-                    // todo aguzhva: what if a norm == 0 ?
-                    float norm =
-                        (y_norms != nullptr) ? y_norms[j]
-                                             : sqrtf(fvec_norm_L2sqr(y_j, d));
-                    float disij = fvec_inner_product(x_i, y_j, d) / norm;
+                    float inv_norm =
+                        (y_inv_norms != nullptr)
+                            ? y_inv_norms[j]
+                            : 1.0f / std::max(sqrtf(fvec_norm_L2sqr(y_j, d)), FLT_MIN);
+                    float disij = fvec_inner_product(x_i, y_j, d) * inv_norm;
                     resi.add_result(disij, j);
                 }
                 y_j += d;
@@ -436,7 +437,7 @@ template <class BlockResultHandler, class SelectorHelper>
 void exhaustive_cosine_seq_impl(
         const float* __restrict x,
         const float* __restrict y,
-        const float* __restrict y_norms,
+        const float* __restrict y_inv_norms,
         size_t d,
         size_t nx,
         size_t ny,
@@ -459,14 +460,13 @@ void exhaustive_cosine_seq_impl(
             };
 
             // the lambda that applies a filtered element.
-            auto apply = [&resi, y, y_norms, d](const float ip, const idx_t j) {
-                float norm =
-                    (y_norms != nullptr) ? 
-                        y_norms[j] : 
-                        sqrtf(fvec_norm_L2sqr(y + j * d, d));
-                norm = (norm == 0.0 ? 1.0 : norm);
+            auto apply = [&resi, y, y_inv_norms, d](const float ip, const idx_t j) {
+                float inv_norm =
+                    (y_inv_norms != nullptr)
+                        ? y_inv_norms[j]
+                        : 1.0f / std::max(sqrtf(fvec_norm_L2sqr(y + j * d, d)), FLT_MIN);
                 // clamp the cosine distance to [-1.0, 1.0]
-                resi.add_result(std::clamp(ip / norm, -1.0f, 1.0f), j);
+                resi.add_result(std::clamp(ip * inv_norm, -1.0f, 1.0f), j);
             };
 
             // compute distances
@@ -481,7 +481,7 @@ template <class BlockResultHandler>
 void exhaustive_cosine_seq(
         const float* __restrict x,
         const float* __restrict y,
-        const float* __restrict y_norms,
+        const float* __restrict y_inv_norms,
         size_t d,
         size_t nx,
         size_t ny,
@@ -497,7 +497,7 @@ void exhaustive_cosine_seq(
         if (!bitset.empty()) {
             BitsetViewSelectorHelper bitset_helper{bitset};
             exhaustive_cosine_seq_impl<BlockResultHandler, BitsetViewSelectorHelper>(
-                x, y, y_norms, d, nx, ny, res, bitset_helper);
+                x, y, y_inv_norms, d, nx, ny, res, bitset_helper);
             return;
         }
     }
@@ -505,14 +505,14 @@ void exhaustive_cosine_seq(
         // default Faiss case if sel is defined
         IDSelectorHelper ids_helper{res.sel};
         exhaustive_cosine_seq_impl<BlockResultHandler, IDSelectorHelper>(
-            x, y, y_norms, d, nx, ny, res, ids_helper);
+            x, y, y_inv_norms, d, nx, ny, res, ids_helper);
         return;
     }
 
     // default case if no filter is needed or if it is empty
     IDSelectorAll helper;
     exhaustive_cosine_seq_impl<BlockResultHandler, IDSelectorAll>(
-        x, y, y_norms, d, nx, ny, res, helper);
+        x, y, y_inv_norms, d, nx, ny, res, helper);
 }
 
 
@@ -660,7 +660,7 @@ template <class BlockResultHandler>
 void exhaustive_cosine_blas(
         const float* x,
         const float* y,
-        const float* y_norms_in,
+        const float* y_inv_norms_in,
         size_t d,
         size_t nx,
         size_t ny,
@@ -674,11 +674,18 @@ void exhaustive_cosine_blas(
     const size_t bs_y = distance_compute_blas_database_bs;
     // const size_t bs_x = 16, bs_y = 16;
     std::unique_ptr<float[]> ip_block(new float[bs_x * bs_y]);
-    std::unique_ptr<float[]> y_norms(new float[ny]);
-    std::unique_ptr<float[]> del2;
+    std::unique_ptr<float[]> y_inv_norms_buf;
 
-    if (y_norms_in == nullptr) {
-        fvec_norms_L2(y_norms.get(), y, d, ny);
+    if (y_inv_norms_in == nullptr) {
+        y_inv_norms_buf.reset(new float[ny]);
+        fvec_norms_L2(y_inv_norms_buf.get(), y, d, ny);
+        // invert: L2 norms -> inverse L2 norms
+        for (size_t i = 0; i < ny; i++) {
+            y_inv_norms_buf[i] = (y_inv_norms_buf[i] == 0.0f)
+                    ? 1.0f
+                    : 1.0f / y_inv_norms_buf[i];
+        }
+        y_inv_norms_in = y_inv_norms_buf.get();
     }
 
     for (size_t i0 = 0; i0 < nx; i0 += bs_x) {
@@ -716,11 +723,8 @@ void exhaustive_cosine_blas(
 
                 for (size_t j = j0; j < j1; j++) {
                     float ip = *ip_line;
-                    float norm = (y_norms_in != nullptr) ? y_norms_in[j]
-                                                         : y_norms[j];
-                    norm = (norm == 0.0 ? 1.0 : norm);
                     // clamp the cosine distance to [-1.0, 1.0]
-                    *ip_line = std::clamp(ip / norm, -1.0f, 1.0f);
+                    *ip_line = std::clamp(ip * y_inv_norms_in[j], -1.0f, 1.0f);
                     ip_line++;
                 }
             }
@@ -848,15 +852,15 @@ template <class BlockResultHandler>
 void knn_cosine_select(
         const float* x,
         const float* y,
-        const float* y_norms,
+        const float* y_inv_norms,
         size_t d,
         size_t nx,
         size_t ny,
         BlockResultHandler& res) {
     if (res.sel || nx < distance_compute_blas_threshold) {
-        exhaustive_cosine_seq<BlockResultHandler>(x, y, y_norms, d, nx, ny, res);
+        exhaustive_cosine_seq<BlockResultHandler>(x, y, y_inv_norms, d, nx, ny, res);
     } else {
-        exhaustive_cosine_blas<BlockResultHandler>(x, y, y_norms, d, nx, ny, res);
+        exhaustive_cosine_blas<BlockResultHandler>(x, y, y_inv_norms, d, nx, ny, res);
     }
 }
 
@@ -1166,7 +1170,7 @@ void all_L2sqr_distances(
 void knn_cosine(
         const float* x,
         const float* y,
-        const float* y_norms,
+        const float* y_inv_norms,
         size_t d,
         size_t nx,
         size_t ny,
@@ -1184,31 +1188,31 @@ void knn_cosine(
     }
     if (auto sela = dynamic_cast<const IDSelectorArray*>(sel)) {
         knn_cosine_by_idx(
-                x, y, y_norms, sela->ids, d, nx, ny, sela->n, k, vals, ids, 0);
+                x, y, y_inv_norms, sela->ids, d, nx, ny, sela->n, k, vals, ids, 0);
         return;
     }
 
-    // // todo aguzhva: this is disabled for knowhere, because it requires 
+    // // todo aguzhva: this is disabled for knowhere, because it requires
     // //   some dynamic kernel dispatching.
     // if (k == 1) {
     //     Top1BlockResultHandler<CMin<float, int64_t>> res(nx, vals, ids);
-    //     knn_cosine_select(x, y, y_norms, d, nx, ny, res, sel);
-    // } else 
+    //     knn_cosine_select(x, y, y_inv_norms, d, nx, ny, res, sel);
+    // } else
     if (k < distance_compute_min_k_reservoir) {
         if (sel == nullptr) {
             HeapBlockResultHandler<CMin<float, int64_t>, false> res(nx, vals, ids, k);
-            knn_cosine_select(x, y, y_norms, d, nx, ny, res);
+            knn_cosine_select(x, y, y_inv_norms, d, nx, ny, res);
         } else {
             HeapBlockResultHandler<CMin<float, int64_t>, true> res(nx, vals, ids, k, sel);
-            knn_cosine_select(x, y, y_norms, d, nx, ny, res);
+            knn_cosine_select(x, y, y_inv_norms, d, nx, ny, res);
         }
     } else {
         if (sel == nullptr) {
             ReservoirBlockResultHandler<CMin<float, int64_t>, false> res(nx, vals, ids, k);
-            knn_cosine_select(x, y, y_norms, d, nx, ny, res);
+            knn_cosine_select(x, y, y_inv_norms, d, nx, ny, res);
         } else {
             ReservoirBlockResultHandler<CMin<float, int64_t>, true> res(nx, vals, ids, k, sel);
-            knn_cosine_select(x, y, y_norms, d, nx, ny, res);
+            knn_cosine_select(x, y, y_inv_norms, d, nx, ny, res);
         }
     }
 
@@ -1224,14 +1228,14 @@ void knn_cosine(
 void knn_cosine(
         const float* x,
         const float* y,
-        const float* y_norms,
+        const float* y_inv_norms,
         size_t d,
         size_t nx,
         size_t ny,
         float_minheap_array_t* res,
         const IDSelector* sel) {
     FAISS_THROW_IF_NOT(nx == res->nh);
-    knn_cosine(x, y, y_norms, d, nx, ny, res->k, res->val, res->ids, sel);
+    knn_cosine(x, y, y_inv_norms, d, nx, ny, res->k, res->val, res->ids, sel);
 }
 
 // computes and stores all cosine distances into output. Output should be
@@ -1240,7 +1244,7 @@ void knn_cosine(
 void all_cosine(
         const float* x,
         const float* y,
-        const float* y_norms,
+        const float* y_inv_norms,
         size_t d,
         size_t nx,
         size_t ny,
@@ -1249,16 +1253,16 @@ void all_cosine(
     if (sel == nullptr) {
         CollectAllResultHandler<CMax<float, int64_t>, false> res(nx, ny, output);
         if (nx < distance_compute_blas_threshold) {
-            exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, res);
+            exhaustive_cosine_seq(x, y, y_inv_norms, d, nx, ny, res);
         } else {
-            exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, res);
+            exhaustive_cosine_blas(x, y, y_inv_norms, d, nx, ny, res);
         }
     } else {
         CollectAllResultHandler<CMax<float, int64_t>, true> res(nx, ny, output, sel);
         if (nx < distance_compute_blas_threshold) {
-            exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, res);
+            exhaustive_cosine_seq(x, y, y_inv_norms, d, nx, ny, res);
         } else {
-            exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, res);
+            exhaustive_cosine_blas(x, y, y_inv_norms, d, nx, ny, res);
         }
     }
 }
@@ -1269,7 +1273,7 @@ void all_cosine(
 void all_cosine_distances(
         const float* x,
         const float* y,
-        const float* y_norms,
+        const float* y_inv_norms,
         size_t d,
         size_t nx,
         size_t ny,
@@ -1278,16 +1282,16 @@ void all_cosine_distances(
     if (sel == nullptr) {
         CollectAllDistancesHandler<CMax<float, int64_t>, false> res(nx, ny, output);
         if (nx < distance_compute_blas_threshold) {
-            exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, res);
+            exhaustive_cosine_seq(x, y, y_inv_norms, d, nx, ny, res);
         } else {
-            exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, res);
+            exhaustive_cosine_blas(x, y, y_inv_norms, d, nx, ny, res);
         }
     } else {
         CollectAllDistancesHandler<CMax<float, int64_t>, true> res(nx, ny, output, sel);
         if (nx < distance_compute_blas_threshold) {
-            exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, res);
+            exhaustive_cosine_seq(x, y, y_inv_norms, d, nx, ny, res);
         } else {
-            exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, res);
+            exhaustive_cosine_blas(x, y, y_inv_norms, d, nx, ny, res);
         }
     }
 }
@@ -1382,7 +1386,7 @@ void range_search_inner_product(
 void range_search_cosine(
         const float* x,
         const float* y,
-        const float* y_norms,
+        const float* y_inv_norms,
         size_t d,
         size_t nx,
         size_t ny,
@@ -1392,16 +1396,16 @@ void range_search_cosine(
     if (sel == nullptr) {
         RangeSearchBlockResultHandler<CMin<float, int64_t>, false> resh(res, radius);
         if (nx < distance_compute_blas_threshold) {
-            exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, resh);
+            exhaustive_cosine_seq(x, y, y_inv_norms, d, nx, ny, resh);
         } else {
-            exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, resh);
+            exhaustive_cosine_blas(x, y, y_inv_norms, d, nx, ny, resh);
         }
     } else {
         RangeSearchBlockResultHandler<CMin<float, int64_t>, true> resh(res, radius, sel);
         if (nx < distance_compute_blas_threshold) {
-            exhaustive_cosine_seq(x, y, y_norms, d, nx, ny, resh);
+            exhaustive_cosine_seq(x, y, y_inv_norms, d, nx, ny, resh);
         } else {
-            exhaustive_cosine_blas(x, y, y_norms, d, nx, ny, resh);
+            exhaustive_cosine_blas(x, y, y_inv_norms, d, nx, ny, resh);
         }
     }
 }
@@ -1624,7 +1628,7 @@ void knn_L2sqr_by_idx(
 void knn_cosine_by_idx(
         const float* x,
         const float* y,
-        const float* y_norms,
+        const float* y_inv_norms,
         const int64_t* ids,
         size_t d,
         size_t nx,
@@ -1652,12 +1656,11 @@ void knn_cosine_by_idx(
                 break;
             }
             float ip = fvec_inner_product(x_, y + d * idsi[j], d);
-            float norm =
-                (y_norms != nullptr) ? 
-                    y_norms[idsi[j]] : 
-                    sqrtf(fvec_norm_L2sqr(y + d * idsi[j], d));
-            norm = (norm == 0.0 ? 1.0 : norm);
-            ip /= norm;
+            float inv_norm =
+                (y_inv_norms != nullptr)
+                    ? y_inv_norms[idsi[j]]
+                    : 1.0f / std::max(sqrtf(fvec_norm_L2sqr(y + d * idsi[j], d)), FLT_MIN);
+            ip *= inv_norm;
 
             if (ip > simi[0]) {
                 minheap_replace_top(k, simi, idxi, ip, idsi[j]);

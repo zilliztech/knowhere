@@ -11,7 +11,7 @@
 
 #include <vector>
 
-#include <faiss/cppcontrib/knowhere/IndexFlatCodes.h>
+#include <faiss/IndexFlatCodes.h>
 
 namespace faiss {
 namespace cppcontrib {
@@ -21,8 +21,7 @@ namespace knowhere {
 struct IndexFlat : IndexFlatCodes {
     explicit IndexFlat(
             idx_t d, ///< dimensionality of the input vectors
-            MetricType metric = METRIC_L2,
-            bool is_cosine = false);
+            MetricType metric = METRIC_L2);
 
     // Be careful with overriding this function, because
     //   renormalized x may be used inside. 
@@ -69,13 +68,6 @@ struct IndexFlat : IndexFlatCodes {
         return (const float*)codes.data();
     }
 
-    float* get_norms() {
-        return (float*)code_norms.data();
-    }
-    const float* get_norms() const {
-        return (const float*)code_norms.data();
-    }
-
     IndexFlat() {}
 
     FlatCodesDistanceComputer* get_FlatCodesDistanceComputer() const override;
@@ -84,8 +76,6 @@ struct IndexFlat : IndexFlatCodes {
     void sa_encode(idx_t n, const float* x, uint8_t* bytes) const override;
 
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
-
-    size_t cal_size() const;
 };
 
 struct IndexFlatIP : IndexFlat {

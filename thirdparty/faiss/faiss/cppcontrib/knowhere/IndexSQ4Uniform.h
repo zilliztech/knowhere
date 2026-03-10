@@ -130,8 +130,7 @@ struct WithSQ4UniformNormIPDistanceComputer : DistanceComputer {
  */
 struct IndexScalarQuantizer4bitUniformCosine : IndexScalarQuantizer,
                                                HasInverseL2Norms {
-    /// Storage for inverse L2 norms (all 1.0 for normalized vectors)
-    mutable std::vector<float> inverse_l2_norms;
+    L2NormsStorage inverse_norms_storage;
 
     IndexScalarQuantizer4bitUniformCosine(int d);
     IndexScalarQuantizer4bitUniformCosine();
@@ -180,13 +179,15 @@ struct IndexScalarQuantizer4bitUniformIP : IndexScalarQuantizer {
 // HNSW Wrapper Classes
 //////////////////////////////////////////////////////////////////////////////////
 
-struct IndexHNSWSQ4UniformCosine : IndexHNSW {
+struct IndexHNSWSQ4UniformCosine : IndexHNSW, HasInverseL2Norms {
     IndexHNSWSQ4UniformCosine();
 
     IndexHNSWSQ4UniformCosine(
             int d,
             ScalarQuantizer::QuantizerType qtype,
             int M);
+
+    const float* get_inverse_l2_norms() const override;
 };
 
 struct IndexHNSWSQ4UniformIP : IndexHNSW {

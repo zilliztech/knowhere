@@ -99,8 +99,8 @@ WhetherPerformBruteForceRangeSearch(const faiss::Index* index, const FaissHnswCo
 //
 // `whether_to_enable_refine` allows to enable the refine for the search if the
 //    index was trained with the refine.
-std::tuple<std::unique_ptr<faiss::cppcontrib::knowhere::Index>, bool>
-create_conditional_hnsw_wrapper(faiss::cppcontrib::knowhere::Index* index, const FaissHnswConfig& hnsw_cfg,
+std::tuple<std::unique_ptr<faiss::Index>, bool>
+create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw_cfg,
                                 const bool whether_bf_search, const bool whether_to_enable_refine) {
     const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), knowhere::metric::COSINE);
 
@@ -122,7 +122,7 @@ create_conditional_hnsw_wrapper(faiss::cppcontrib::knowhere::Index* index, const
 
         // select a wrapper index, which is safe to delete without deleting
         //   an original index
-        std::unique_ptr<faiss::cppcontrib::knowhere::Index> base_wrapper;
+        std::unique_ptr<faiss::Index> base_wrapper;
 
         if (whether_bf_search) {
             // use brute-force wrapper
@@ -140,7 +140,7 @@ create_conditional_hnsw_wrapper(faiss::cppcontrib::knowhere::Index* index, const
             //   wrapper_searcher into its ownership
 
             // is it a cosine index?
-            if (index_hnsw->storage->is_cosine && is_cosine) {
+            if (dynamic_cast<faiss::cppcontrib::knowhere::HasInverseL2Norms*>(index_hnsw->storage) && is_cosine) {
                 // yes, wrap both base and refine index
                 std::unique_ptr<knowhere::IndexWrapperCosine> cosine_wrapper =
                     std::make_unique<knowhere::IndexWrapperCosine>(
@@ -194,7 +194,7 @@ create_conditional_hnsw_wrapper(faiss::cppcontrib::knowhere::Index* index, const
         }
 
         // select a wrapper index for search
-        std::unique_ptr<faiss::cppcontrib::knowhere::Index> base_wrapper;
+        std::unique_ptr<faiss::Index> base_wrapper;
 
         if (whether_bf_search) {
             // use brute-force wrapper

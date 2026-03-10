@@ -48,7 +48,7 @@ struct IndexFlatElkan : IndexFlat {
     std::unique_ptr<float[]> tmp_buffer_for_elkan = nullptr;
 
     explicit IndexFlatElkan(idx_t d, MetricType metric = METRIC_L2,
-                       bool is_cosine = false, bool use_elkan = true);
+                       bool use_elkan = true);
 
     void search(
             idx_t n,

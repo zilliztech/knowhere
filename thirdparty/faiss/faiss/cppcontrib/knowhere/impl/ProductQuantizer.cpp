@@ -879,10 +879,6 @@ void ProductQuantizer::clear_transposed_centroids() {
     centroids_sq_lengths.shrink_to_fit();
 }
 
-size_t ProductQuantizer::cal_size() const {
-    return sizeof(*this) + centroids.size() * sizeof(float);
-}
-
 }
 
 

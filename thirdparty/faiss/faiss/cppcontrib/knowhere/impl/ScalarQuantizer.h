@@ -13,7 +13,7 @@
 #include <faiss/impl/DistanceComputer.h>
 #include <faiss/impl/Quantizer.h>
 
-#include <faiss/cppcontrib/knowhere/Index.h>
+#include <faiss/Index.h>
 
 namespace faiss {
 namespace cppcontrib {
@@ -139,8 +139,6 @@ struct ScalarQuantizer : Quantizer {
             bool store_pairs,
             const IDSelector* sel,
             bool by_residual = false) const;
-
-    size_t cal_size() const;
 };
 
 }

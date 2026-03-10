@@ -44,40 +44,22 @@ IndexIVFFlat::IndexIVFFlat(
         Index* quantizer,
         size_t d,
         size_t nlist,
-        MetricType metric,
-        bool is_cosine)
+        MetricType metric)
         : IndexIVF(quantizer, d, nlist, sizeof(float) * d, metric) {
-    this->is_cosine = is_cosine;
     code_size = sizeof(float) * d;
     by_residual = false;
 
-    replace_invlists(new ArrayInvertedLists(nlist, code_size, is_cosine), true);
+    replace_invlists(new ArrayInvertedLists(nlist, code_size, false), true);
 }
 
 void IndexIVFFlat::train(idx_t n, const float* x) {
-    if (is_cosine) {
-        auto x_normalized = ::knowhere::CopyAndNormalizeVecs(x, n, d);
-        // use normalized data to train codes for cosine
-        IndexIVF::train(n, x_normalized.get());
-    } else {
-        IndexIVF::train(n, x);
-    }
+    IndexIVF::train(n, x);
 }
 
 void IndexIVFFlat::add_with_ids(idx_t n, const float* x, const idx_t* xids) {
     std::unique_ptr<idx_t[]> coarse_idx(new idx_t[n]);
-    if (is_cosine) {
-        auto x_normalized = std::make_unique<float[]>(n * d);
-        std::memcpy(x_normalized.get(), x, n * d * sizeof(float));
-        auto norms = ::knowhere::NormalizeVecs(x_normalized.get(), n, d);
-        // use normalized data to calculate coarse id
-        quantizer->assign(n, x_normalized.get(), coarse_idx.get());
-        // add raw data with its norms to inverted list
-        add_core(n, x, norms.data(), xids, coarse_idx.get());
-    } else {
-        quantizer->assign(n, x, coarse_idx.get());
-        add_core(n, x, nullptr, xids, coarse_idx.get());
-    }
+    quantizer->assign(n, x, coarse_idx.get());
+    add_core(n, x, nullptr, xids, coarse_idx.get());
 }
 
 
@@ -568,18 +550,70 @@ void IndexIVFFlat::reconstruct_from_offset(
     memcpy(recons, invlists->get_single_code(list_no, offset), code_size);
 }
 
+IndexIVFFlatCosine::IndexIVFFlatCosine(
+        Index* quantizer,
+        size_t d,
+        size_t nlist,
+        MetricType metric)
+        : IndexIVFFlat(quantizer, d, nlist, metric) {
+    replace_invlists(new ArrayInvertedLists(nlist, code_size, true), true);
+}
+
+IndexIVFFlatCosine::IndexIVFFlatCosine() {
+}
+
+void IndexIVFFlatCosine::train(idx_t n, const float* x) {
+    auto x_normalized = ::knowhere::CopyAndNormalizeVecs(x, n, d);
+    IndexIVF::train(n, x_normalized.get());
+}
+
+void IndexIVFFlatCosine::add_with_ids(idx_t n, const float* x, const idx_t* xids) {
+    std::unique_ptr<idx_t[]> coarse_idx(new idx_t[n]);
+    auto x_normalized = std::make_unique<float[]>(n * d);
+    std::memcpy(x_normalized.get(), x, n * d * sizeof(float));
+    auto norms = ::knowhere::NormalizeVecs(x_normalized.get(), n, d);
+    quantizer->assign(n, x_normalized.get(), coarse_idx.get());
+    add_core(n, x, norms.data(), xids, coarse_idx.get());
+}
+
 IndexIVFFlatCC::IndexIVFFlatCC(
         Index* quantizer,
         size_t d,
         size_t nlist,
         size_t ssize,
-        MetricType metric,
-        bool is_cosine)
-        : IndexIVFFlat(quantizer, d, nlist, metric, is_cosine) {
-    replace_invlists(new ConcurrentArrayInvertedLists(nlist, code_size, ssize, is_cosine), true);
+        MetricType metric)
+        : IndexIVFFlat(quantizer, d, nlist, metric) {
+    replace_invlists(new ConcurrentArrayInvertedLists(nlist, code_size, ssize, false), true);
 }
 
 IndexIVFFlatCC::IndexIVFFlatCC() {}
+
+IndexIVFFlatCCCosine::IndexIVFFlatCCCosine(
+        Index* quantizer,
+        size_t d,
+        size_t nlist,
+        size_t ssize,
+        MetricType metric)
+        : IndexIVFFlatCC(quantizer, d, nlist, ssize, metric) {
+    replace_invlists(new ConcurrentArrayInvertedLists(nlist, code_size, ssize, true), true);
+}
+
+IndexIVFFlatCCCosine::IndexIVFFlatCCCosine() {
+}
+
+void IndexIVFFlatCCCosine::train(idx_t n, const float* x) {
+    auto x_normalized = ::knowhere::CopyAndNormalizeVecs(x, n, d);
+    IndexIVF::train(n, x_normalized.get());
+}
+
+void IndexIVFFlatCCCosine::add_with_ids(idx_t n, const float* x, const idx_t* xids) {
+    std::unique_ptr<idx_t[]> coarse_idx(new idx_t[n]);
+    auto x_normalized = std::make_unique<float[]>(n * d);
+    std::memcpy(x_normalized.get(), x, n * d * sizeof(float));
+    auto norms = ::knowhere::NormalizeVecs(x_normalized.get(), n, d);
+    quantizer->assign(n, x_normalized.get(), coarse_idx.get());
+    add_core(n, x, norms.data(), xids, coarse_idx.get());
+}
 
 /*****************************************
  * IndexIVFFlatDedup implementation

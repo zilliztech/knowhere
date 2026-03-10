@@ -163,7 +163,6 @@ IndexScalarQuantizer4bitUniformCosine::IndexScalarQuantizer4bitUniformCosine(
                   d,
                   ScalarQuantizer::QT_4bit_uniform,
                   METRIC_INNER_PRODUCT) {
-    is_cosine = true;
 
     sq.rangestat = ScalarQuantizer::RS_quantiles;
     sq.rangestat_arg = 0.01;
@@ -172,7 +171,6 @@ IndexScalarQuantizer4bitUniformCosine::IndexScalarQuantizer4bitUniformCosine(
 IndexScalarQuantizer4bitUniformCosine::IndexScalarQuantizer4bitUniformCosine()
         : IndexScalarQuantizer() {
     metric_type = METRIC_INNER_PRODUCT;
-    is_cosine = true;
 
     sq.rangestat = ScalarQuantizer::RS_quantiles;
     sq.rangestat_arg = 0.01;
@@ -198,17 +196,9 @@ void IndexScalarQuantizer4bitUniformCosine::add(idx_t n, const float* x) {
     // Add normalized data
     IndexScalarQuantizer::add(n, normalized_data.get());
 
-    // Calculate and store inverse L2 norms from ORIGINAL vectors (not
-    // normalized) This is needed for refine to work correctly with COSINE
-    // metric
-    const size_t current_size = inverse_l2_norms.size();
-    inverse_l2_norms.resize(current_size + n);
-    for (idx_t i = 0; i < n; i++) {
-        const float l2sqr_norm = fvec_norm_L2sqr(x + i * d, d);
-        const float inverse_l2_norm =
-                (l2sqr_norm == 0.0f) ? 1.0f : (1.0f / sqrtf(l2sqr_norm));
-        inverse_l2_norms[i + current_size] = inverse_l2_norm;
-    }
+    // Store inverse L2 norms from ORIGINAL vectors (not normalized)
+    // This is needed for refine to work correctly with COSINE metric
+    inverse_norms_storage.add(x, n, d);
 }
 
 DistanceComputer* IndexScalarQuantizer4bitUniformCosine::get_distance_computer()
@@ -221,16 +211,12 @@ DistanceComputer* IndexScalarQuantizer4bitUniformCosine::get_distance_computer()
 
 const float* IndexScalarQuantizer4bitUniformCosine::get_inverse_l2_norms()
         const {
-    // Ensure cache is sized correctly
-    if (inverse_l2_norms.size() != static_cast<size_t>(ntotal)) {
-        inverse_l2_norms.resize(ntotal, 1.0f);
-    }
-    return inverse_l2_norms.data();
+    return inverse_norms_storage.inverse_l2_norms.data();
 }
 
 void IndexScalarQuantizer4bitUniformCosine::reset() {
     IndexScalarQuantizer::reset();
-    inverse_l2_norms.clear();
+    inverse_norms_storage.reset();
 }
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -242,13 +228,11 @@ IndexScalarQuantizer4bitUniformIP::IndexScalarQuantizer4bitUniformIP(int d)
                   d,
                   ScalarQuantizer::QT_4bit_uniform,
                   METRIC_INNER_PRODUCT) {
-    is_cosine = false;
 }
 
 IndexScalarQuantizer4bitUniformIP::IndexScalarQuantizer4bitUniformIP()
         : IndexScalarQuantizer() {
     metric_type = METRIC_INNER_PRODUCT;
-    is_cosine = false;
 }
 
 void IndexScalarQuantizer4bitUniformIP::add(idx_t n, const float* x) {
@@ -286,7 +270,6 @@ const float* IndexScalarQuantizer4bitUniformIP::get_l2_norms_sqr() const {
 //////////////////////////////////////////////////////////////////////////////////
 
 IndexHNSWSQ4UniformCosine::IndexHNSWSQ4UniformCosine() : IndexHNSW() {
-    is_cosine = true;
 }
 
 IndexHNSWSQ4UniformCosine::IndexHNSWSQ4UniformCosine(
@@ -300,7 +283,11 @@ IndexHNSWSQ4UniformCosine::IndexHNSWSQ4UniformCosine(
 
     is_trained = this->storage->is_trained;
     own_fields = true;
-    is_cosine = true;
+}
+
+const float* IndexHNSWSQ4UniformCosine::get_inverse_l2_norms() const {
+    auto* s = dynamic_cast<const HasInverseL2Norms*>(storage);
+    return s ? s->get_inverse_l2_norms() : nullptr;
 }
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -308,7 +295,6 @@ IndexHNSWSQ4UniformCosine::IndexHNSWSQ4UniformCosine(
 //////////////////////////////////////////////////////////////////////////////////
 
 IndexHNSWSQ4UniformIP::IndexHNSWSQ4UniformIP() : IndexHNSW() {
-    is_cosine = false;
 }
 
 IndexHNSWSQ4UniformIP::IndexHNSWSQ4UniformIP(
@@ -322,7 +308,6 @@ IndexHNSWSQ4UniformIP::IndexHNSWSQ4UniformIP(
 
     is_trained = this->storage->is_trained;
     own_fields = true;
-    is_cosine = false;
 }
 
 }

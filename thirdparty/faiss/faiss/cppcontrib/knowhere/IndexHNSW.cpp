@@ -238,7 +238,7 @@ void hnsw_add_vertices(
 IndexHNSW::IndexHNSW(int d, int M, MetricType metric)
         : Index(d, metric), hnsw(M) {}
 
-IndexHNSW::IndexHNSW(faiss::cppcontrib::knowhere::Index* storage, int M)
+IndexHNSW::IndexHNSW(faiss::Index* storage, int M)
         : Index(storage->d, storage->metric_type), hnsw(M), storage(storage) {}
 
 IndexHNSW::~IndexHNSW() {

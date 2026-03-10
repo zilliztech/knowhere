@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <memory>
 
-#include <faiss/cppcontrib/knowhere/Index.h>
+#include <faiss/Index.h>
 #include <faiss/cppcontrib/knowhere/IndexIVF.h>
 #include <faiss/cppcontrib/knowhere/IndexRefine.h>
 

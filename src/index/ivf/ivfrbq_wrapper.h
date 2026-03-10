@@ -15,7 +15,7 @@
 #include <cstdint>
 #include <memory>
 
-#include "faiss/cppcontrib/knowhere/Index.h"
+#include "faiss/Index.h"
 #include "faiss/cppcontrib/knowhere/IndexIVF.h"
 #include "faiss/cppcontrib/knowhere/IndexIVFRaBitQ.h"
 #include "faiss/cppcontrib/knowhere/IndexRefine.h"
@@ -30,14 +30,14 @@ namespace knowhere {
 // The problem is that IndexPreTransform is a generic class, suitable
 //   for any other use case as well, so this is wrong to reference
 //   IndexPreTransform in the ivf.cc file.
-struct IndexIVFRaBitQWrapper : faiss::cppcontrib::knowhere::Index {
+struct IndexIVFRaBitQWrapper : faiss::Index {
     // this is one of two:
     // * faiss::IndexPreTransform + faiss::cppcontrib::knowhere::IndexIVFRaBitQ
     // * faiss::IndexPreTransform + faiss::IndexRefine + faiss::cppcontrib::knowhere::IndexIVFRaBitQ
-    std::unique_ptr<faiss::cppcontrib::knowhere::Index> index;
+    std::unique_ptr<faiss::Index> index;
     mutable std::optional<size_t> size_cache_ = std::nullopt;
 
-    IndexIVFRaBitQWrapper(std::unique_ptr<faiss::cppcontrib::knowhere::Index>&& index_in);
+    IndexIVFRaBitQWrapper(std::unique_ptr<faiss::Index>&& index_in);
 
     static expected<std::unique_ptr<IndexIVFRaBitQWrapper>>
     create(const faiss::idx_t d, const size_t nlist, const IvfRaBitQConfig& ivf_rabitq_cfg,
@@ -48,7 +48,7 @@ struct IndexIVFRaBitQWrapper : faiss::cppcontrib::knowhere::Index {
     // returns nullptr if the provided index type is not the one
     //   as expected.
     static std::unique_ptr<IndexIVFRaBitQWrapper>
-    from_deserialized(std::unique_ptr<faiss::cppcontrib::knowhere::Index>&& index_in);
+    from_deserialized(std::unique_ptr<faiss::Index>&& index_in);
 
     void
     train(faiss::idx_t n, const float* x) override;

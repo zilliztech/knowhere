@@ -57,6 +57,7 @@
 #include "knowhere/log.h"
 #include "knowhere/range_util.h"
 #include "knowhere/utils.h"
+#include "index/clustering_config.h"
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
 #include "knowhere/prometheus_client.h"
@@ -227,13 +228,13 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
                 indexes.resize(v);
                 LOG_KNOWHERE_INFO_ << "read " << v << " mvs";
                 for (auto i = 0; i < v; ++i) {
-                    auto read_index = std::unique_ptr<faiss::cppcontrib::knowhere::Index>(
+                    auto read_index = std::unique_ptr<faiss::Index>(
                         faiss::cppcontrib::knowhere::read_index(&reader));
                     indexes[i].reset(read_index.release());
                 }
             } else {
                 reader.reset();
-                auto read_index = std::unique_ptr<faiss::cppcontrib::knowhere::Index>(
+                auto read_index = std::unique_ptr<faiss::Index>(
                     faiss::cppcontrib::knowhere::read_index(&reader));
                 indexes[0].reset(read_index.release());
             }
@@ -271,7 +272,7 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
                     LOG_KNOWHERE_INFO_ << "read " << v << " mvs";
                     indexes.resize(v);
                     for (auto i = 0; i < v; ++i) {
-                        auto read_index = std::unique_ptr<faiss::cppcontrib::knowhere::Index>(
+                        auto read_index = std::unique_ptr<faiss::Index>(
                             faiss::cppcontrib::knowhere::read_index(r, io_flags));
                         indexes[i].reset(read_index.release());
                     }
@@ -287,7 +288,7 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
                     read_index(&reader);
                 }
             } else {
-                auto read_index = std::unique_ptr<faiss::cppcontrib::knowhere::Index>(
+                auto read_index = std::unique_ptr<faiss::Index>(
                     faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
                 indexes[0].reset(read_index.release());
             }
@@ -379,7 +380,7 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
  protected:
     // it is std::shared_ptr, not std::unique_ptr, because it can be
     //    shared with FaissHnswIterator
-    std::vector<std::shared_ptr<faiss::cppcontrib::knowhere::Index>> indexes;
+    std::vector<std::shared_ptr<faiss::Index>> indexes;
     // each index's out ids(label), can be shared with FaissHnswIterator
     std::vector<std::shared_ptr<std::vector<uint32_t>>> labels;
 
@@ -630,7 +631,7 @@ convert_ds_to_float(const DataSetPtr& src, DataFormatEnum data_format) {
 }
 
 Status
-add_to_index(faiss::cppcontrib::knowhere::Index* const __restrict index, const DataSetPtr& dataset,
+add_to_index(faiss::Index* const __restrict index, const DataSetPtr& dataset,
              const DataFormatEnum data_format) {
     const auto* data = dataset->GetTensor();
     const auto rows = dataset->GetRows();
@@ -663,7 +664,7 @@ add_to_index(faiss::cppcontrib::knowhere::Index* const __restrict index, const D
 }
 
 Status
-add_partial_dataset_to_index(faiss::cppcontrib::knowhere::Index* const __restrict index, const DataSetPtr& dataset,
+add_partial_dataset_to_index(faiss::Index* const __restrict index, const DataSetPtr& dataset,
                              const DataFormatEnum data_format, const std::vector<uint32_t>& ids) {
     const auto* data = dataset->GetTensor();
 
@@ -700,7 +701,7 @@ add_partial_dataset_to_index(faiss::cppcontrib::knowhere::Index* const __restric
 //
 // returns nullopt if an input index does not contain raw bf16, fp16 or fp32 data
 std::optional<DataFormatEnum>
-get_index_data_format(const faiss::cppcontrib::knowhere::Index* index) {
+get_index_data_format(const faiss::Index* index) {
     // empty
     if (index == nullptr) {
         return std::nullopt;
@@ -832,7 +833,7 @@ struct FaissHnswIteratorWorkspace {
 // Contains an iterator logic
 class FaissHnswIterator : public IndexIterator {
  public:
-    FaissHnswIterator(const std::shared_ptr<faiss::cppcontrib::knowhere::Index>& index_in,
+    FaissHnswIterator(const std::shared_ptr<faiss::Index>& index_in,
                       const std::shared_ptr<std::vector<uint32_t>>& labels_in, std::unique_ptr<float[]>&& query_in,
                       const BitsetView& bitset_in, const int32_t ef_in, bool larger_is_closer,
                       const float refine_ratio = 0.5f, const std::vector<uint32_t>& label_to_internal_offset_in = {},
@@ -1094,7 +1095,7 @@ class FaissHnswIterator : public IndexIterator {
     }
 
  private:
-    std::shared_ptr<faiss::cppcontrib::knowhere::Index> index;
+    std::shared_ptr<faiss::Index> index;
     std::shared_ptr<std::vector<uint32_t>> labels;
     const std::vector<uint32_t>& label_to_internal_offset;  // internal_offset = label_to_internal_offset[label_id];
     const uint32_t mv_base_offset;                          // mv_internal_offset = internal_offset - mv_base_offset;
@@ -1135,9 +1136,9 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         }
 
         // an index that is used for reconstruction
-        std::vector<const faiss::cppcontrib::knowhere::Index*> indexes_to_reconstruct_from(indexes.size());
+        std::vector<const faiss::Index*> indexes_to_reconstruct_from(indexes.size());
         for (auto i = 0; i < indexes.size(); ++i) {
-            const faiss::cppcontrib::knowhere::Index* index_to_reconstruct_from = GetIndexToReconstructRawDataFrom(i);
+            const faiss::Index* index_to_reconstruct_from = GetIndexToReconstructRawDataFrom(i);
 
             // check whether raw data is available
             if (index_to_reconstruct_from == nullptr) {
@@ -1345,8 +1346,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         }
 
         // set up a bf wrapper as fallback
-        std::unique_ptr<faiss::cppcontrib::knowhere::Index> bf_index_wrapper = nullptr;
-        faiss::cppcontrib::knowhere::Index* bf_index_wrapper_ptr = nullptr;
+        std::unique_ptr<faiss::Index> bf_index_wrapper = nullptr;
+        faiss::Index* bf_index_wrapper_ptr = nullptr;
         if (!whether_bf_search.value_or(false)) {
             std::tie(bf_index_wrapper, is_refined) =
                 create_conditional_hnsw_wrapper(indexes[index_id].get(), hnsw_cfg, true, whether_to_enable_refine);
@@ -1356,7 +1357,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             bf_index_wrapper_ptr = bf_index_wrapper.get();
         }
 
-        faiss::cppcontrib::knowhere::Index* index_wrapper_ptr = index_wrapper.get();
+        faiss::Index* index_wrapper_ptr = index_wrapper.get();
 
         // set up faiss search parameters
         knowhere::SearchParametersHNSWWrapper hnsw_search_params;
@@ -1649,7 +1650,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
         }
 
-        faiss::cppcontrib::knowhere::Index* index_wrapper_ptr = index_wrapper.get();
+        faiss::Index* index_wrapper_ptr = index_wrapper.get();
 
         // set up faiss search parameters
         knowhere::SearchParametersHNSWWrapper hnsw_search_params;
@@ -1814,7 +1815,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         return Status::success;
     }
 
-    const faiss::cppcontrib::knowhere::Index*
+    const faiss::Index*
     GetIndexToReconstructRawDataFrom(int i) const {
         if (indexes.size() <= i) {
             return nullptr;
@@ -1824,7 +1825,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         }
 
         // an index that is used for reconstruction
-        const faiss::cppcontrib::knowhere::Index* index_to_reconstruct_from = nullptr;
+        const faiss::Index* index_to_reconstruct_from = nullptr;
 
         // check whether our index uses refine
         auto index_refine = dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(indexes[i].get());
@@ -2440,7 +2441,7 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
         const bool is_sq4u = sq_type.value() == faiss::cppcontrib::knowhere::ScalarQuantizer::QT_4bit_uniform;
 
         // should refine be used?
-        std::unique_ptr<faiss::cppcontrib::knowhere::Index> final_index;
+        std::unique_ptr<faiss::Index> final_index;
 
         auto train_index = [&](const float* data, const int i, const int64_t rows) {
             std::unique_ptr<faiss::cppcontrib::knowhere::IndexHNSW> hnsw_index;
@@ -2617,7 +2618,7 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
             }
 
             // should refine be used?
-            std::unique_ptr<faiss::cppcontrib::knowhere::Index> final_index;
+            std::unique_ptr<faiss::Index> final_index;
             if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
                 // yes
                 const auto hnsw_d = hnsw_index->storage->d;
@@ -2645,6 +2646,7 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
             // train pq
             LOG_KNOWHERE_INFO_ << "Training PQ Index";
 
+            ApplyClusteringConfig(pq_index->pq.cp);
             pq_index->train(rows, data);
             pq_index->pq.compute_sdc_table();
 
@@ -2714,7 +2716,7 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
             // recreate hnswpq
             std::unique_ptr<faiss::cppcontrib::knowhere::IndexHNSW> index_hnsw_pq;
 
-            if (index_hnsw->storage->is_cosine) {
+            if (faiss::cppcontrib::knowhere::is_cosine_index(index_hnsw->storage)) {
                 index_hnsw_pq = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWPQCosine>();
             } else {
                 index_hnsw_pq = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWPQ>();
@@ -2843,7 +2845,7 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
     }
 
  protected:
-    std::vector<std::unique_ptr<faiss::cppcontrib::knowhere::IndexProductResidualQuantizer>> tmp_index_prq;
+    std::vector<std::unique_ptr<faiss::IndexProductResidualQuantizer>> tmp_index_prq;
 
     Status
     TrainInternal(const DataSetPtr dataset, const Config& cfg) override {
@@ -2892,18 +2894,18 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
                     ? faiss::AdditiveQuantizer::Search_type_t::ST_LUT_nonorm
                     : faiss::AdditiveQuantizer::Search_type_t::ST_norm_float;
 
-            std::unique_ptr<faiss::cppcontrib::knowhere::IndexProductResidualQuantizer> prq_index;
+            std::unique_ptr<faiss::IndexProductResidualQuantizer> prq_index;
             if (is_cosine) {
                 prq_index = std::make_unique<faiss::cppcontrib::knowhere::IndexProductResidualQuantizerCosine>(
                     dim, hnsw_cfg.m.value(), hnsw_cfg.nrq.value(), hnsw_cfg.nbits.value(), prq_search_type);
             } else {
-                prq_index = std::make_unique<faiss::cppcontrib::knowhere::IndexProductResidualQuantizer>(
+                prq_index = std::make_unique<faiss::IndexProductResidualQuantizer>(
                     dim, hnsw_cfg.m.value(), hnsw_cfg.nrq.value(), hnsw_cfg.nbits.value(), metric.value(),
                     prq_search_type);
             }
 
             // should refine be used?
-            std::unique_ptr<faiss::cppcontrib::knowhere::Index> final_index;
+            std::unique_ptr<faiss::Index> final_index;
             if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
                 // yes
                 const auto hnsw_d = hnsw_index->storage->d;
@@ -3000,7 +3002,7 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
             // recreate hnswprq
             std::unique_ptr<faiss::cppcontrib::knowhere::IndexHNSW> index_hnsw_prq;
 
-            if (index_hnsw->storage->is_cosine) {
+            if (faiss::cppcontrib::knowhere::is_cosine_index(index_hnsw->storage)) {
                 index_hnsw_prq =
                     std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWProductResidualQuantizerCosine>();
             } else {

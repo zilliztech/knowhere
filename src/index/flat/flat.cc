@@ -11,6 +11,7 @@
 
 #include "common/metric.h"
 #include "faiss/cppcontrib/knowhere/IndexBinaryFlat.h"
+#include "faiss/cppcontrib/knowhere/IndexCosine.h"
 #include "faiss/cppcontrib/knowhere/IndexFlat.h"
 #include "faiss/cppcontrib/knowhere/index_io.h"
 #include "faiss/impl/AuxIndexStructures.h"
@@ -54,8 +55,11 @@ class FlatIndexNode : public IndexNode {
         }
         if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexFlat, IndexType>::value) {
             bool is_cosine = IsMetricType(f_cfg.metric_type.value(), knowhere::metric::COSINE);
-            index_ =
-                std::make_unique<faiss::cppcontrib::knowhere::IndexFlat>(dataset->GetDim(), metric.value(), is_cosine);
+            if (is_cosine) {
+                index_ = std::make_unique<faiss::cppcontrib::knowhere::IndexFlatCosine>(dataset->GetDim());
+            } else {
+                index_ = std::make_unique<faiss::cppcontrib::knowhere::IndexFlat>(dataset->GetDim(), metric.value());
+            }
         }
         return Status::success;
     }
@@ -331,7 +335,7 @@ class FlatIndexNode : public IndexNode {
 
         MemoryIOReader reader(binary->data.get(), binary->size);
         if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexFlat>::value) {
-            faiss::cppcontrib::knowhere::Index* index = faiss::cppcontrib::knowhere::read_index(&reader);
+            faiss::Index* index = faiss::cppcontrib::knowhere::read_index(&reader);
             index_.reset(static_cast<IndexType*>(index));
         }
         if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexBinaryFlat>::value) {
@@ -351,7 +355,7 @@ class FlatIndexNode : public IndexNode {
         }
 
         if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexFlat>::value) {
-            faiss::cppcontrib::knowhere::Index* index =
+            faiss::Index* index =
                 faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags);
             index_.reset(static_cast<IndexType*>(index));
         }

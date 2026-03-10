@@ -88,16 +88,12 @@ struct IndexIVFFastScan : IndexIVF {
     int qbs = 0;
     size_t qbs2 = 0;
 
-    // Inverse L2 norms for cosine similarity computation
-    std::vector<float> inverse_norms;
-
     IndexIVFFastScan(
             Index* quantizer,
             size_t d,
             size_t nlist,
             size_t code_size,
-            MetricType metric = METRIC_L2,
-            bool is_cosine = false);
+            MetricType metric = METRIC_L2);
 
     IndexIVFFastScan();
 
@@ -116,19 +112,10 @@ struct IndexIVFFastScan : IndexIVF {
     /// orig's inverted lists (for debugging)
     InvertedLists* orig_invlists = nullptr;
 
-    // Knowhere-specific function, needed for norms, introduced in PR #1
-    // final is needed because 'x' can be renormalized inside it,
-    //   so a derived class is not allowed to override this function.
-    void add_with_ids(idx_t n, const float* x, const idx_t* xids)
-            override final;
-
-    // This matches Faiss baseline.
-    void add_with_ids_impl(idx_t n, const float* x, const idx_t* xids);
+    void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
 
     // Knowhere-specific override.
-    // final is needed because 'x' can be renormalized inside it,
-    //   so a derived class is not allowed to override this function.
-    void train(idx_t n, const float* x) override final;
+    void train(idx_t n, const float* x) override;
 
     // prepare look-up tables
 
