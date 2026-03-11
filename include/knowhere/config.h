@@ -245,7 +245,7 @@ struct Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE> {
 template <typename T>
 class EntryAccess {
  public:
-    EntryAccess(Entry<T>* entry) : entry(entry) {};
+    EntryAccess(Entry<T>* entry) : entry(entry){};
 
     EntryAccess&
     set_default(const typename T::value_type dft) {
@@ -641,9 +641,9 @@ class BaseConfig : public Config {
      * - "muvera": Encode documents to single vectors using FDE, rerank with MaxSim
      */
     CFG_STRING emb_list_strategy;
-    CFG_INT muvera_num_projections;   // FDE projections count, buckets = 2^projections
-    CFG_INT muvera_num_repeats;       // FDE repeat count (independent encodings)
-    CFG_INT muvera_seed;              // random seed for SimHash projection matrices
+    CFG_INT muvera_num_projections;  // FDE projections count, buckets = 2^projections
+    CFG_INT muvera_num_repeats;      // FDE repeat count (independent encodings)
+    CFG_INT muvera_seed;             // random seed for SimHash projection matrices
     // LEMUR config
     CFG_INT lemur_hidden_dim;         // hidden dimension for LEMUR MLP (compressed representation)
     CFG_INT lemur_num_train_samples;  // number of training samples for MLP
