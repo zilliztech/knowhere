@@ -56,7 +56,7 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
     static constexpr uint64_t current_index_file_format_version_ = 1;
 
     [[nodiscard]] size_t
-    size() const noexcept {
+    size() const noexcept override {
         size_t res = sizeof(*this);
 
         // Global posting lists
@@ -218,7 +218,7 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
     }
 
     Status
-    add(const SparseRow<DataType>* data, size_t rows, int64_t dim) {
+    add(const SparseRow<DataType>* data, size_t rows, int64_t dim) override {
         this->max_dim_ = std::max(this->max_dim_, static_cast<uint32_t>(dim));
         // update dim_map_
         for (size_t i = 0; i < rows; ++i) {
@@ -261,12 +261,12 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
     }
 
     [[nodiscard]] Status
-    build_from_raw_data(MemoryIOReader& reader, bool enable_mmap, const std::string& backed_filename) {
+    build_from_raw_data(MemoryIOReader& reader, bool enable_mmap, const std::string& backed_filename) override {
         return Status::not_implemented;
     }
 
     [[nodiscard]] Status
-    serialize(MemoryIOWriter& writer) const {
+    serialize(MemoryIOWriter& writer) const override {
         // Serialized format:
         // 1. Index Header (36 bytes):
         //    - index_format_version (uint32_t): Version of the index format, currently 1
@@ -430,7 +430,7 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
     }
 
     [[nodiscard]] Status
-    deserialize(MemoryIOReader& reader) {
+    deserialize(MemoryIOReader& reader) override {
         auto file_header_handler = [&, this]() {
             uint32_t index_format_version = 0;
             reader.read(&index_format_version, sizeof(uint32_t));
@@ -456,8 +456,8 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
         auto sections_handler = [&, this]() {
             uint32_t nr_sections = 0;
             reader.read(&nr_sections, sizeof(uint32_t));
-            // Allow 3 sections (base) or 4 sections (with row sums for BM25)
-            if (nr_sections < 3 || nr_sections > 4) {
+            // Allow 2 sections (base) or 3 sections (with row sums for BM25)
+            if (nr_sections < 2 || nr_sections > 3) {
                 return Status::invalid_serialized_index_type;
             }
             size_t sec_table_offset = reader.tellg();
@@ -639,7 +639,7 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
 
     void
     search(const SparseRow<DataType>& query, size_t k, float* distances, label_t* labels, const BitsetView& bitset,
-           const InvertedIndexSearchParams& search_params) const {
+           const InvertedIndexSearchParams& search_params) const override {
         std::fill(distances, distances + k, std::numeric_limits<float>::quiet_NaN());
         std::fill(labels, labels + k, -1);
 
@@ -893,7 +893,7 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
     }
 
     [[nodiscard]] Status
-    convert_to_raw_data(MemoryIOWriter& writer) const {
+    convert_to_raw_data(MemoryIOWriter& writer) const override {
         return Status::not_implemented;
     }
 

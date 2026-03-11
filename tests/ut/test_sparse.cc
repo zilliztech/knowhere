@@ -1242,7 +1242,7 @@ TEST_CASE("Test SINDI Index Window Size", "[sparse][sindi]") {
     auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, gt_conf, nullptr);
     REQUIRE(gt.has_value());
 
-    auto window_size = GENERATE(1024, 4096, 65536);
+    auto window_size = GENERATE(1024, 4096, 65535);
     CAPTURE(window_size);
 
     knowhere::Json build_json;

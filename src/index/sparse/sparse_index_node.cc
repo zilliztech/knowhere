@@ -480,7 +480,7 @@ class SparseInvertedIndexNode : public IndexNode {
                         } else {
                             codec = std::make_shared<sparse::inverted::MaskedVByteBlockCodec>();
                         }
-                        index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType>>(codec);
+                        index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType, MetricType>>(codec);
                     } else {
                         index = std::make_unique<sparse::inverted::FlattenInvertedIndex<DType, QType>>();
                     }
