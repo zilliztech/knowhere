@@ -120,8 +120,7 @@ class SparseInvertedIndexNode : public IndexNode {
         }
 
         // create index
-        auto index_or = IsMetricType(cfg.metric_type.value(), metric::IP) ? CreateIndex<value_type, fp16>(cfg)
-                                                                          : CreateIndex<value_type, uint16_t>(cfg);
+        auto index_or = CreateIndex(cfg);
         if (!index_or.has_value()) {
             return index_or.error();
         }
@@ -313,9 +312,7 @@ class SparseInvertedIndexNode : public IndexNode {
                 << Type()
                 << " index has already been created, Deserialize() will delete the old index and recreate a new one";
         }
-        auto index_or = IsMetricType(cfg.metric_type.value(), metric::IP)
-                            ? CreateIndex<value_type, fp16>(cfg, false, encoding)
-                            : CreateIndex<value_type, uint16_t>(cfg, false, encoding);
+        auto index_or = CreateIndex(cfg, false, encoding);
         if (!index_or.has_value()) {
             LOG_KNOWHERE_ERROR_ << "Failed to create index from BinarySet with name " << Type();
             return index_or.error();
@@ -370,9 +367,7 @@ class SparseInvertedIndexNode : public IndexNode {
                                   << " index has already been created, DeserializeFromFile() will delete the old index "
                                      "and recreate a new one";
         }
-        auto index_or = IsMetricType(cfg.metric_type.value(), metric::IP)
-                            ? CreateIndex<value_type, fp16>(cfg, false, encoding)
-                            : CreateIndex<value_type, uint16_t>(cfg, false, encoding);
+        auto index_or = CreateIndex(cfg, false, encoding);
         if (!index_or.has_value()) {
             return index_or.error();
         }
@@ -426,8 +421,8 @@ class SparseInvertedIndexNode : public IndexNode {
 
     template <typename DType, typename QType>
     expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>
-    CreateIndex(const SparseInvertedIndexConfig& cfg, bool is_growable = false,
-                std::optional<sparse::inverted::InvertedIndexEncoding> encoding = std::nullopt) const {
+    CreateIndexImpl(const SparseInvertedIndexConfig& cfg, bool is_growable = false,
+                    std::optional<sparse::inverted::InvertedIndexEncoding> encoding = std::nullopt) const {
         using IndexPtr = std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>;
 
         const bool is_bm25 = IsMetricType(cfg.metric_type.value(), metric::BM25);
@@ -460,7 +455,7 @@ class SparseInvertedIndexNode : public IndexNode {
                     break;
                 }
                 case InvertedIndexEncoding::FIXED_DOCID_WINDOWS:
-                    LOG_KNOWHERE_WARNING_ << "Unexpected FIXED_DOCID_WINDOWS encoding in CreateIndex";
+                    LOG_KNOWHERE_WARNING_ << "Unexpected FIXED_DOCID_WINDOWS encoding in CreateIndexImpl";
                     index = std::make_unique<sparse::inverted::FlattenInvertedIndex<DType, QType>>();
                     break;
                 default:
@@ -508,6 +503,28 @@ class SparseInvertedIndexNode : public IndexNode {
         } else {
             return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
                 Status::invalid_metric_type, "Unsupported metric type");
+        }
+    }
+
+    expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>
+    CreateIndex(const SparseInvertedIndexConfig& cfg, bool is_growable = false,
+                std::optional<sparse::inverted::InvertedIndexEncoding> encoding = std::nullopt) const {
+        auto qt = cfg.quant_type.value_or("");
+        if (IsMetricType(cfg.metric_type.value(), metric::IP)) {
+            // version < threshold forces fp32; version >= threshold defaults to fp16, user can override to fp32
+            bool use_fp16 = version_support_fp16_quant_for_ip() && (qt == "fp16" || qt.empty());
+            if (use_fp16) {
+                return CreateIndexImpl<value_type, fp16>(cfg, is_growable, encoding);
+            } else {
+                return CreateIndexImpl<value_type, float>(cfg, is_growable, encoding);
+            }
+        } else {
+            // BM25 default: u16
+            if (qt == "u32") {
+                return CreateIndexImpl<value_type, uint32_t>(cfg, is_growable, encoding);
+            } else {
+                return CreateIndexImpl<value_type, uint16_t>(cfg, is_growable, encoding);
+            }
         }
     }
 
@@ -612,6 +629,11 @@ class SparseInvertedIndexNode : public IndexNode {
         return index_version_ < SPARSE_INDEX_VERSION_USE_RAW_DATA_THRESHOLD;
     }
 
+    bool
+    version_support_fp16_quant_for_ip() const {
+        return index_version_ >= SPARSE_INDEX_VERSION_SUPPORT_FP16_QUANT_FOR_IP;
+    }
+
     // used to load index
     BinaryPtr binary_;
 
@@ -667,9 +689,7 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
         }
 
         // create index
-        auto index_or = IsMetricType(cfg.metric_type.value(), metric::IP)
-                            ? this->template CreateIndex<value_type, fp16>(cfg, true)
-                            : this->template CreateIndex<value_type, uint16_t>(cfg, true);
+        auto index_or = this->CreateIndex(cfg, true);
 
         if (this->index_ != nullptr) {
             LOG_KNOWHERE_WARNING_

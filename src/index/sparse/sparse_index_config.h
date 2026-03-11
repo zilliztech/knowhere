@@ -18,6 +18,12 @@
 #define SPARSE_INDEX_VERSION_USE_RAW_DATA_THRESHOLD 8
 #endif
 
+// Index versions >= this threshold use fp16 quantization for IP metric posting list values.
+// Versions below this threshold use float32 for backward compatibility.
+#ifndef SPARSE_INDEX_VERSION_SUPPORT_FP16_QUANT_FOR_IP
+#define SPARSE_INDEX_VERSION_SUPPORT_FP16_QUANT_FOR_IP 10
+#endif
+
 #include "knowhere/comp/index_param.h"
 #include "knowhere/config.h"
 
@@ -33,6 +39,7 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_STRING inverted_index_algo;
     CFG_STRING inverted_index_codec;
     CFG_STRING search_algo;
+    CFG_STRING quant_type;
 
     KNOHWERE_DECLARE_CONFIG(SparseInvertedIndexConfig) {
         // NOTE: drop_ratio_build has been deprecated, it won't change anything
@@ -115,10 +122,35 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .for_train()
             .for_deserialize()
             .for_deserialize_from_file();
+        KNOWHERE_CONFIG_DECLARE_FIELD(quant_type)
+            .description("quantization type for posting list values: fp16/fp32 for IP, u16/u32 for BM25")
+            .allow_empty_without_default()
+            .for_train()
+            .for_deserialize()
+            .for_deserialize_from_file();
     }
 
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        if (quant_type.has_value() && !quant_type.value().empty()) {
+            auto qt = quant_type.value();
+            auto mt = metric_type.value();
+            if (mt == metric::IP) {
+                if (qt != "fp16" && qt != "fp32") {
+                    if (err_msg) {
+                        *err_msg = "quant_type for IP metric must be 'fp16' or 'fp32', got '" + qt + "'";
+                    }
+                    return Status::invalid_args;
+                }
+            } else if (mt == metric::BM25) {
+                if (qt != "u16" && qt != "u32") {
+                    if (err_msg) {
+                        *err_msg = "quant_type for BM25 metric must be 'u16' or 'u32', got '" + qt + "'";
+                    }
+                    return Status::invalid_args;
+                }
+            }
+        }
         return Status::success;
     }
 };  // class SparseInvertedIndexConfig
