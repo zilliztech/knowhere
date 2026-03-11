@@ -419,7 +419,7 @@ class SparseInvertedIndexNode : public IndexNode {
  protected:
     std::unique_ptr<sparse::inverted::InvertedIndex<value_type>> index_;
 
-    template <typename DType, typename QType>
+    template <typename DType, typename QType, sparse::inverted::IndexScorerType MetricType>
     expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>
     CreateIndexImpl(const SparseInvertedIndexConfig& cfg, bool is_growable = false,
                     std::optional<sparse::inverted::InvertedIndexEncoding> encoding = std::nullopt) const {
@@ -445,13 +445,13 @@ class SparseInvertedIndexNode : public IndexNode {
                 case InvertedIndexEncoding::BLOCK_STREAMVBYTE: {
                     LOG_KNOWHERE_INFO_ << "Detected BLOCK_STREAMVBYTE encoding in index file";
                     auto codec = std::make_shared<sparse::inverted::StreamVByteBlockCodec>();
-                    index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType>>(codec);
+                    index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType, MetricType>>(codec);
                     break;
                 }
                 case InvertedIndexEncoding::BLOCK_MASKEDVBYTE: {
                     LOG_KNOWHERE_INFO_ << "Detected BLOCK_MASKEDVBYTE encoding in index file";
                     auto codec = std::make_shared<sparse::inverted::MaskedVByteBlockCodec>();
-                    index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType>>(codec);
+                    index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType, MetricType>>(codec);
                     break;
                 }
                 case InvertedIndexEncoding::FIXED_DOCID_WINDOWS:
@@ -477,7 +477,7 @@ class SparseInvertedIndexNode : public IndexNode {
                     } else {
                         codec = std::make_shared<sparse::inverted::MaskedVByteBlockCodec>();
                     }
-                    index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType>>(codec);
+                    index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType, MetricType>>(codec);
                 } else {
                     index = std::make_unique<sparse::inverted::FlattenInvertedIndex<DType, QType>>();
                 }
@@ -510,20 +510,21 @@ class SparseInvertedIndexNode : public IndexNode {
     CreateIndex(const SparseInvertedIndexConfig& cfg, bool is_growable = false,
                 std::optional<sparse::inverted::InvertedIndexEncoding> encoding = std::nullopt) const {
         auto qt = cfg.quant_type.value_or("");
+        using sparse::inverted::IndexScorerType;
         if (IsMetricType(cfg.metric_type.value(), metric::IP)) {
             // version < threshold forces fp32; version >= threshold defaults to fp16, user can override to fp32
             bool use_fp16 = version_support_fp16_quant_for_ip() && (qt == "fp16" || qt.empty());
             if (use_fp16) {
-                return CreateIndexImpl<value_type, fp16>(cfg, is_growable, encoding);
+                return CreateIndexImpl<value_type, fp16, IndexScorerType::IP>(cfg, is_growable, encoding);
             } else {
-                return CreateIndexImpl<value_type, float>(cfg, is_growable, encoding);
+                return CreateIndexImpl<value_type, float, IndexScorerType::IP>(cfg, is_growable, encoding);
             }
         } else {
             // BM25 default: u16
             if (qt == "u32") {
-                return CreateIndexImpl<value_type, uint32_t>(cfg, is_growable, encoding);
+                return CreateIndexImpl<value_type, uint32_t, IndexScorerType::BM25>(cfg, is_growable, encoding);
             } else {
-                return CreateIndexImpl<value_type, uint16_t>(cfg, is_growable, encoding);
+                return CreateIndexImpl<value_type, uint16_t, IndexScorerType::BM25>(cfg, is_growable, encoding);
             }
         }
     }

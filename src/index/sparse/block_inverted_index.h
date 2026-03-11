@@ -225,16 +225,19 @@ class BlockInvertedIndexCursor {
     BitsetView bitset_;
 };
 
-template <typename DType, typename QType>
-class BlockInvertedIndex : public CRTPInvertedIndex<BlockInvertedIndex<DType, QType>, DType> {
+template <typename DType, typename QType, IndexScorerType MetricType>
+class BlockInvertedIndex : public CRTPInvertedIndex<BlockInvertedIndex<DType, QType, MetricType>, DType> {
  public:
-    using posting_list_iterator =
-        BlockInvertedIndexCursor<std::conditional_t<std::is_same_v<QType, fp16>, fp16, uint32_t>>;
+    // IP metric: values stored as raw bytes in blocks.
+    // BM25 metric: values stored with block codec compression as uint32_t.
+    static constexpr bool kIsIPMetric = MetricType == IndexScorerType::IP;
+    using posting_list_iterator = BlockInvertedIndexCursor<std::conditional_t<kIsIPMetric, QType, uint32_t>>;
 
     static constexpr uint64_t current_index_file_format_version_ = 1;
 
     explicit BlockInvertedIndex(BlockCodecPtr block_codec)
-        : CRTPInvertedIndex<BlockInvertedIndex<DType, QType>, DType>("blockinverted"), block_codec_(block_codec) {
+        : CRTPInvertedIndex<BlockInvertedIndex<DType, QType, MetricType>, DType>("blockinverted"),
+          block_codec_(block_codec) {
     }
 
     BlockInvertedIndex(const BlockInvertedIndex& rhs) = delete;
@@ -426,14 +429,14 @@ class BlockInvertedIndex : public CRTPInvertedIndex<BlockInvertedIndex<DType, QT
     BlockCodecPtr block_codec_;
 };
 
-template <typename DType, typename QType>
+template <typename DType, typename QType, IndexScorerType MetricType>
 void
-BlockInvertedIndex<DType, QType>::build_raw_index(MemoryIOReader& reader,
-                                                  std::unique_ptr<BinaryContainer>& raw_index_container,
-                                                  boost::span<uint32_t>& raw_index_ids,
-                                                  boost::span<QType>& raw_index_vals,
-                                                  boost::span<size_t>& raw_index_offsets, bool enable_mmap,
-                                                  const std::string& backed_filename) {
+BlockInvertedIndex<DType, QType, MetricType>::build_raw_index(MemoryIOReader& reader,
+                                                              std::unique_ptr<BinaryContainer>& raw_index_container,
+                                                              boost::span<uint32_t>& raw_index_ids,
+                                                              boost::span<QType>& raw_index_vals,
+                                                              boost::span<size_t>& raw_index_offsets, bool enable_mmap,
+                                                              const std::string& backed_filename) {
     const auto saved_reader_loc = reader.tellg();
     const auto nnz = (reader.remaining() - (this->nr_rows_ * sizeof(size_t))) / SparseRow<DType>::element_size();
 
@@ -517,12 +520,13 @@ BlockInvertedIndex<DType, QType>::build_raw_index(MemoryIOReader& reader,
     }
 }
 
-template <typename DType, typename QType>
+template <typename DType, typename QType, IndexScorerType MetricType>
 void
-BlockInvertedIndex<DType, QType>::build_block_max_data(boost::span<uint32_t> raw_index_ids,
-                                                       boost::span<QType> raw_index_vals,
-                                                       boost::span<size_t> raw_index_offsets, bool enable_mmap,
-                                                       const std::string& backed_filename) {
+BlockInvertedIndex<DType, QType, MetricType>::build_block_max_data(boost::span<uint32_t> raw_index_ids,
+                                                                   boost::span<QType> raw_index_vals,
+                                                                   boost::span<size_t> raw_index_offsets,
+                                                                   bool enable_mmap,
+                                                                   const std::string& backed_filename) {
     if (enable_mmap) {
         this->meta_data_.block_max_data_.container_ =
             std::make_unique<FileBinaryContainer>(backed_filename + ".block_max_data");
@@ -581,10 +585,11 @@ BlockInvertedIndex<DType, QType>::build_block_max_data(boost::span<uint32_t> raw
     assert(block_max_offset == total_blocks);
 }
 
-template <typename DType, typename QType>
+template <typename DType, typename QType, IndexScorerType MetricType>
 void
-BlockInvertedIndex<DType, QType>::encode_posting_list(std::vector<uint8_t>& out_buf, boost::span<uint32_t> vec_ids,
-                                                      boost::span<QType> vals) {
+BlockInvertedIndex<DType, QType, MetricType>::encode_posting_list(std::vector<uint8_t>& out_buf,
+                                                                  boost::span<uint32_t> vec_ids,
+                                                                  boost::span<QType> vals) {
     // Posting list layout:
     // +----------------+------------------------------------------+
     // | list_sz       | uint32_t: total number of postings       |
@@ -623,7 +628,7 @@ BlockInvertedIndex<DType, QType>::encode_posting_list(std::vector<uint8_t>& out_
 
         block_codec_->encode(ids_buf.data(), cur_block_size, out_buf);
 
-        if constexpr (std::is_same_v<QType, fp16>) {
+        if constexpr (kIsIPMetric) {
             std::vector<QType> vals_buf(cur_block_size);
             for (size_t i = 0; i < cur_block_size; ++i) {
                 vals_buf[i] = *vals_it++;
@@ -645,12 +650,12 @@ BlockInvertedIndex<DType, QType>::encode_posting_list(std::vector<uint8_t>& out_
     }
 }
 
-template <typename DType, typename QType>
+template <typename DType, typename QType, IndexScorerType MetricType>
 void
-BlockInvertedIndex<DType, QType>::build_block_index(boost::span<uint32_t>& raw_index_ids,
-                                                    boost::span<QType>& raw_index_vals,
-                                                    boost::span<size_t>& raw_index_offsets, bool enable_mmap,
-                                                    const std::string& backed_filename) {
+BlockInvertedIndex<DType, QType, MetricType>::build_block_index(boost::span<uint32_t>& raw_index_ids,
+                                                                boost::span<QType>& raw_index_vals,
+                                                                boost::span<size_t>& raw_index_offsets,
+                                                                bool enable_mmap, const std::string& backed_filename) {
     // fill the postings container
     if (enable_mmap) {
         index_container_ = std::make_unique<FileBinaryContainer>(backed_filename + ".block_index");
@@ -686,9 +691,9 @@ BlockInvertedIndex<DType, QType>::build_block_index(boost::span<uint32_t>& raw_i
                                                 index_container_->size() - sizeof(size_t) * (this->nr_inner_dims_ + 1));
 }
 
-template <typename DType, typename QType>
+template <typename DType, typename QType, IndexScorerType MetricType>
 Status
-BlockInvertedIndex<DType, QType>::add(const SparseRow<DType>* data, size_t rows, int64_t dim) {
+BlockInvertedIndex<DType, QType, MetricType>::add(const SparseRow<DType>* data, size_t rows, int64_t dim) {
     std::unordered_map<uint32_t, size_t> plist_cnts;
     size_t total_nnz = 0;
 
@@ -787,10 +792,10 @@ BlockInvertedIndex<DType, QType>::add(const SparseRow<DType>* data, size_t rows,
     return Status::success;
 }
 
-template <typename DType, typename QType>
+template <typename DType, typename QType, IndexScorerType MetricType>
 Status
-BlockInvertedIndex<DType, QType>::build_from_raw_data(MemoryIOReader& reader, bool enable_mmap,
-                                                      const std::string& backed_filename) {
+BlockInvertedIndex<DType, QType, MetricType>::build_from_raw_data(MemoryIOReader& reader, bool enable_mmap,
+                                                                  const std::string& backed_filename) {
     float deprecated_value_threshold = 0.0f;
     int64_t rows = 0;
     size_t cols = 0;
@@ -831,9 +836,9 @@ BlockInvertedIndex<DType, QType>::build_from_raw_data(MemoryIOReader& reader, bo
     return Status::success;
 }
 
-template <typename DType, typename QType>
+template <typename DType, typename QType, IndexScorerType MetricType>
 Status
-BlockInvertedIndex<DType, QType>::serialize(MemoryIOWriter& writer) const {
+BlockInvertedIndex<DType, QType, MetricType>::serialize(MemoryIOWriter& writer) const {
     // Serialized format:
     // 1. Index Header (36 bytes):
     //    - index_format_version (uint32_t): Version of the index format, currently 1
@@ -968,9 +973,9 @@ BlockInvertedIndex<DType, QType>::serialize(MemoryIOWriter& writer) const {
     return Status::success;
 }
 
-template <typename DType, typename QType>
+template <typename DType, typename QType, IndexScorerType MetricType>
 Status
-BlockInvertedIndex<DType, QType>::deserialize(MemoryIOReader& reader) {
+BlockInvertedIndex<DType, QType, MetricType>::deserialize(MemoryIOReader& reader) {
     auto file_header_handler = [&]() {
         uint32_t index_format_version = 0;
         reader.read(&index_format_version, sizeof(uint32_t));
