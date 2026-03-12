@@ -325,8 +325,8 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
 
   bool used_gpu = false;
 #ifdef KNOWHERE_WITH_CUVS
-  // GPU path
-  if(is_gpu_available()) {
+  // GPU path — cuVS kmeans crashes when num_centers > num_train, fall back to CPU
+  if(is_gpu_available() && num_train >= num_centers) {
     raft::resources res;
     LOG_KNOWHERE_INFO_ << "Running pq with " << num_centers << " clusters, pq "<< num_pq_chunks<< " ...using GPU!";
     for (size_t i = 0; i < num_pq_chunks; i++) {
@@ -1097,8 +1097,8 @@ int partition(const std::string data_file, const float sampling_rate,
   LOG_KNOWHERE_DEBUG_ << "Processing global k-means (kmeans_partitioning Step)";
   bool used_gpu = false;
 #ifdef KNOWHERE_WITH_CUVS
-  // GPU path
-  if(is_gpu_available()) {
+  // GPU path — cuVS kmeans crashes when num_centers > num_train, fall back to CPU
+  if(is_gpu_available() && num_train >= num_parts) {
     raft::resources res;
     LOG_KNOWHERE_INFO_ << "Running k-means with " << num_parts << " clusters...using GPU!";
     kmeans_gpu(res,train_data_float.get(), num_train, train_dim,
@@ -1167,8 +1167,8 @@ int partition_with_ram_budget(const std::string data_file,
     << "Processing global k-means (kmeans_partitioning Step)";
     bool used_gpu = false;
 #ifdef KNOWHERE_WITH_CUVS
-    // GPU path
-    if(is_gpu_available()) {
+    // GPU path — cuVS kmeans crashes when num_centers > num_train, fall back to CPU
+    if(is_gpu_available() && num_train >= num_parts) {
       raft::resources res;
       LOG_KNOWHERE_INFO_ << "Running k-means with " << num_parts << " clusters " << num_train << " " << train_dim << " ...using GPU!";
       kmeans_gpu(res,train_data_float.get(), num_train, train_dim,
@@ -1245,8 +1245,8 @@ int partition_calc_kmeans(const std::string &data_file, const std::string &outpu
     // Perform k-means clustering
     bool used_gpu = false;
 #ifdef KNOWHERE_WITH_CUVS
-    // GPU path
-    if(is_gpu_available()) {
+    // GPU path — cuVS kmeans crashes when num_centers > num_train, fall back to CPU
+    if(is_gpu_available() && num_train >= k) {
       raft::resources res;
       LOG_KNOWHERE_INFO_ << "Running k-means with " << k << " clusters...using GPU!";
       kmeans_gpu(res,train_data_float.get(), num_train, train_dim,
