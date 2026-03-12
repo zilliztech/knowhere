@@ -676,11 +676,17 @@ TEST_CASE("Test Sparse Index Codec and Algo Combinations", "[sparse]") {
         REQUIRE(idx_new.Deserialize(bs, load_json) == knowhere::Status::success);
 
         auto results = idx_new.Search(query_ds, search_json, nullptr);
-        REQUIRE(results.has_value());
-
         if (results.has_value()) {
             float recall = GetKNNRecall(*gt.value(), *results.value());
             REQUIRE(recall >= 0.99);
+        } else {
+            // Some combinations of build_algo and search_algo are incompatible
+            if (inverted_index_algo == "DAAT_MAXSCORE" &&
+                (search_algo == "BLOCK_MAX_WAND" || search_algo == "BLOCK_MAX_MAXSCORE")) {
+                REQUIRE(results.error() == knowhere::Status::invalid_value_in_json);
+            } else {
+                REQUIRE(results.has_value());
+            }
         }
     }
 }
