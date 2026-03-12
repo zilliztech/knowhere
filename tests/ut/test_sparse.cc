@@ -676,6 +676,8 @@ TEST_CASE("Test Sparse Index Codec and Algo Combinations", "[sparse]") {
         REQUIRE(idx_new.Deserialize(bs, load_json) == knowhere::Status::success);
 
         auto results = idx_new.Search(query_ds, search_json, nullptr);
+        REQUIRE(results.has_value());
+
         if (results.has_value()) {
             float recall = GetKNNRecall(*gt.value(), *results.value());
             REQUIRE(recall >= 0.99);
