@@ -1,8 +1,8 @@
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV CMAKE_VERSION="v3.28.5"
-ENV CMAKE_TAR="cmake-3.28.5-linux-aarch64.tar.gz"
+ENV CMAKE_VERSION="v3.30.5"
+ENV CMAKE_TAR="cmake-3.30.5-linux-aarch64.tar.gz"
 ENV CCACHE_DIR="ccache-4.9.1"
 ENV CCACHE_SRC_TAR="v4.9.1.tar.gz"
 ENV BFLOAT16_WHL="bfloat16-1.4.0-cp311-cp311-linux_aarch64.whl"
@@ -44,7 +44,7 @@ RUN cd /tmp \
 # install knowhere dependancies
 RUN apt update \
     && apt install -y libopenblas-openmp-dev libcurl4-openssl-dev libaio-dev libevent-dev lcov \
-    && pip3 install conan==1.61.0 \
+    && pip3 install conan==1.65.0 \
     && conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local
 
 # clone knowhere repo and build to update .conan

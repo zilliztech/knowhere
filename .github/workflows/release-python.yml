@@ -42,7 +42,7 @@ jobs:
           CIBW_BUILD: "cp38-* cp39-* cp310-* cp311*"
           CIBW_SKIP: "*musllinux*" # faiss-cpu fails to build on musllinux
           CIBW_ARCHS: ${{ matrix.arch }}
-          CIBW_BEFORE_ALL_LINUX: "bash scripts/python_deps.sh && rm -rf build && mkdir build && cd build && conan install .. --build=missing -o with_diskann=True -s compiler.libcxx=libstdc++11 -s build_type=Release && conan build .. && cd -"
+          CIBW_BEFORE_ALL_LINUX: "bash scripts/install_deps.sh && make"
           # Use portable wheel build script instead of plain setup.py
           CIBW_BEFORE_BUILD: "pip3 install pytest numpy faiss-cpu bfloat16 auditwheel"
           # Custom build command using our portable wheel builder
