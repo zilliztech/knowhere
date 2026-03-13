@@ -288,6 +288,12 @@ Index<T>::GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context
 }
 
 template <typename T>
+inline expected<DataSetPtr>
+Index<T>::GetEmbListByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const {
+    return this->node->GetEmbListByIds(dataset, op_context);
+}
+
+template <typename T>
 inline bool
 Index<T>::HasRawData(const std::string& metric_type) const {
     return this->node->HasRawData(metric_type);
