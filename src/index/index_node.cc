@@ -450,7 +450,6 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, milvus::OpContext* op_conte
     // index-type-specific implementations (HNSW, IVF, FLAT, etc. each store raw data differently),
     // whereas the current approach works generically across all index types via the GetVectorByIds interface.
     std::vector<size_t> out_offsets(num_el_ids + 1);
-    std::vector<int64_t> vec_ids;
     out_offsets[0] = 0;
     for (int64_t i = 0; i < num_el_ids; i++) {
         auto el_id = el_ids[i];
@@ -459,12 +458,17 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, milvus::OpContext* op_conte
                                              "GetEmbListByIds: el_id " + std::to_string(el_id) + " out of range [0, " +
                                                  std::to_string(emb_list_offset_->num_el()) + ")");
         }
-        size_t start = emb_list_offset_->offset[el_id];
-        size_t len = emb_list_offset_->get_el_len(el_id);
+        out_offsets[i + 1] = out_offsets[i] + emb_list_offset_->get_el_len(el_id);
+    }
+
+    std::vector<int64_t> vec_ids;
+    vec_ids.reserve(out_offsets[num_el_ids]);
+    for (int64_t i = 0; i < num_el_ids; i++) {
+        size_t start = emb_list_offset_->offset[el_ids[i]];
+        size_t len = out_offsets[i + 1] - out_offsets[i];
         for (size_t j = 0; j < len; j++) {
             vec_ids.push_back(static_cast<int64_t>(start + j));
         }
-        out_offsets[i + 1] = vec_ids.size();
     }
 
     if (vec_ids.empty()) {
