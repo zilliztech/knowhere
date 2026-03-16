@@ -111,6 +111,7 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     // sparse index
     {IndexEnum::INDEX_SPARSE_INVERTED_INDEX, VecType::VECTOR_SPARSE_FLOAT},
     {IndexEnum::INDEX_SPARSE_WAND, VecType::VECTOR_SPARSE_FLOAT},
+    {IndexEnum::INDEX_SPARSE_DSP_CC, VecType::VECTOR_SPARSE_FLOAT},
     //  minhash index
     {IndexEnum::INDEX_MINHASH_LSH, VecType::VECTOR_BINARY},
 };
@@ -138,6 +139,7 @@ static std::set<std::string> legal_support_mmap_knowhere_index = {
     // sparse index
     IndexEnum::INDEX_SPARSE_INVERTED_INDEX,
     IndexEnum::INDEX_SPARSE_WAND,
+    IndexEnum::INDEX_SPARSE_DSP_CC,
 };
 
 static std::set<std::string> legal_support_emb_list_knowhere_index = {

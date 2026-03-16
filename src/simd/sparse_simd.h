@@ -11,10 +11,94 @@
 namespace knowhere::sparse {
 
 #if defined(__x86_64__) || defined(_M_X64)
+// ---- AVX512 BW: Block UB threshold scan ----
+// Stride-specific specializations (no loop counter overhead)
+bool
+scan_block_ub_any_above_avx512_32(const uint16_t* block_ub, uint16_t threshold);
+bool
+scan_block_ub_any_above_avx512_64(const uint16_t* block_ub, uint16_t threshold);
+// Generic loop fallback for non-standard sizes (n must be multiple of 32)
+bool
+scan_block_ub_any_above_avx512_generic(const uint16_t* block_ub, uint16_t threshold, uint32_t n);
+// Legacy entry point — dispatches internally to stride-specific or generic
+bool
+scan_block_ub_any_above_avx512(const uint16_t* block_ub, uint16_t threshold, uint32_t n);
+
+// ---- AVX512 BW: Block max UB accumulation ----
+// Stride-specific specializations (no loop counter overhead)
+void
+accumulate_block_ub_avx512_32(uint16_t* ub, const uint8_t* block_max, uint16_t query_weight);
+void
+accumulate_block_ub_avx512_64(uint16_t* ub, const uint8_t* block_max, uint16_t query_weight);
+// Generic loop fallback for non-standard sizes (n must be multiple of 32)
+void
+accumulate_block_ub_avx512_generic(uint16_t* ub, const uint8_t* block_max, uint16_t query_weight, uint32_t n);
+// Legacy entry point — dispatches internally to stride-specific or generic
+void
+accumulate_block_ub_avx512(uint16_t* ub, const uint8_t* block_max, uint16_t query_weight, uint32_t n);
+
+// ---- AVX512: Posting list IP accumulation ----
 void
 accumulate_posting_list_ip_avx512(const uint32_t* doc_ids, const float* doc_vals, size_t list_size, float q_weight,
                                   float* scores);
 #endif
+
+// Scalar fallback for SIMD block UB scan: check if any of n u16 values > threshold
+inline bool
+scan_block_ub_any_above_scalar(const uint16_t* block_ub, uint16_t threshold, uint32_t n) {
+    for (uint32_t i = 0; i < n; ++i) {
+        if (block_ub[i] > threshold)
+            return true;
+    }
+    return false;
+}
+
+// Dispatch for block UB scan with runtime CPU detection.
+// Routes to stride-specific AVX512 kernels for n=32/64 (the DSP hot path).
+inline bool
+scan_block_ub_any_above_dispatch(const uint16_t* block_ub, uint16_t threshold, uint32_t n) {
+#if defined(__x86_64__) || defined(_M_X64)
+    if (faiss::cppcontrib::knowhere::InstructionSet::GetInstance().AVX512BW()) {
+        if (n == 64)
+            return scan_block_ub_any_above_avx512_64(block_ub, threshold);
+        if (n == 32)
+            return scan_block_ub_any_above_avx512_32(block_ub, threshold);
+        return scan_block_ub_any_above_avx512_generic(block_ub, threshold, n);
+    }
+#endif
+    return scan_block_ub_any_above_scalar(block_ub, threshold, n);
+}
+
+// Scalar fallback for u8 block max to u16 UB accumulation
+inline void
+accumulate_block_ub_scalar(uint16_t* ub, const uint8_t* block_max, uint16_t query_weight, uint32_t n) {
+    for (uint32_t i = 0; i < n; ++i) {
+        uint32_t prod = static_cast<uint32_t>(query_weight) * block_max[i];
+        uint32_t sum = static_cast<uint32_t>(ub[i]) + prod;
+        ub[i] = static_cast<uint16_t>(sum < 65535u ? sum : 65535u);
+    }
+}
+
+// Dispatch for u8 block max to u16 UB accumulation.
+// Routes to stride-specific AVX512 kernels for n=32/64 (the DSP hot path).
+inline void
+accumulate_block_ub_dispatch(uint16_t* ub, const uint8_t* block_max, uint16_t query_weight, uint32_t n) {
+#if defined(__x86_64__) || defined(_M_X64)
+    if (faiss::cppcontrib::knowhere::InstructionSet::GetInstance().AVX512BW()) {
+        if (n == 64) {
+            accumulate_block_ub_avx512_64(ub, block_max, query_weight);
+            return;
+        }
+        if (n == 32) {
+            accumulate_block_ub_avx512_32(ub, block_max, query_weight);
+            return;
+        }
+        accumulate_block_ub_avx512_generic(ub, block_max, query_weight, n);
+        return;
+    }
+#endif
+    accumulate_block_ub_scalar(ub, block_max, query_weight, n);
+}
 
 template <typename QType>
 inline void
