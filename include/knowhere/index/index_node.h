@@ -41,6 +41,8 @@ struct OpContext;
 #include "knowhere/comp/task.h"
 #include "knowhere/comp/time_recorder.h"
 #include "knowhere/prometheus_client.h"
+#else
+class ThreadPool;
 #endif
 
 namespace faiss {
