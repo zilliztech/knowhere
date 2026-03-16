@@ -222,64 +222,8 @@ IndexNode::SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, 
     auto num_q_vecs = static_cast<size_t>(dataset->GetRows());
     EmbListOffset query_offset(lims, num_q_vecs);
 
-    // 2. Parse config and metric types
-    auto& config = static_cast<BaseConfig&>(*cfg);
-    auto target_k = config.k.value();
-
-    // Parse sub metric type for underlying ANN search
-    auto metric_info_or = ParseEmbListMetric(config);
-    if (!metric_info_or.has_value()) {
-        return expected<DataSetPtr>::Err(metric_info_or.error(), metric_info_or.what());
-    }
-    auto sub_metric_type = metric_info_or.value().sub_metric_type;
-
-    // 3. Build search context with callbacks
-    EmbListSearchContext ctx;
-
-    // Store config - use shared_ptr wrapper to allow moving to callback (consumed once by ann_search)
-    auto cfg_wrapper = std::make_shared<std::unique_ptr<Config>>(std::move(cfg));
-
-    // ANN search callback
-    ctx.ann_search = [this, cfg_wrapper, sub_metric_type, &bitset, &op_context](const DataSetPtr query,
-                                                                                int32_t k) -> expected<DataSetPtr> {
-        if (!*cfg_wrapper) {
-            LOG_KNOWHERE_ERROR_ << "ann_search: config already consumed";
-            return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "config already consumed");
-        }
-        auto& search_cfg = static_cast<BaseConfig&>(**cfg_wrapper);
-        search_cfg.k = k;
-        search_cfg.metric_type = sub_metric_type;
-        return this->Search(query, std::move(*cfg_wrapper), bitset, op_context);
-    };
-
-    // Calculate distance by IDs callback
-    ctx.calc_distance_by_ids = [this, &bitset, &op_context](const DataSetPtr query, const int64_t* ids, size_t ids_len,
-                                                            bool is_cosine) -> expected<DataSetPtr> {
-        return this->CalcDistByIDs(query, bitset, ids, ids_len, is_cosine, op_context);
-    };
-
-    // Get vectors by IDs callback
-    ctx.get_vectors_by_ids = [this](const int64_t* ids, size_t ids_len) -> expected<DataSetPtr> {
-        return this->GetVectorByIds(GenIdsDataSet(ids_len, ids));
-    };
-
-    // Get index count callback
-    ctx.get_index_count = [this]() -> int64_t { return this->Count(); };
-
-    // Get query code size callback
-    ctx.get_query_code_size = [this](const DataSetPtr ds) -> expected<size_t> {
-        auto result = this->GetQueryCodeSize(ds);
-        if (result.has_value()) {
-            return result.value();
-        }
-        return expected<size_t>::Err(Status::emb_list_inner_error, "failed to get query code size");
-    };
-
-    // Bitset for filtering
-    ctx.bitset = bitset;
-
-    // 4. Delegate search to strategy (strategy has full control over search flow)
-    return emb_list_strategy_->Search(dataset, query_offset, target_k, config, ctx);
+    // 2. Delegate search to strategy
+    return emb_list_strategy_->Search(dataset, query_offset, this, std::move(cfg), bitset, op_context);
 }
 
 expected<DataSetPtr>

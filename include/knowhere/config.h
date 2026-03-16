@@ -639,6 +639,8 @@ class BaseConfig : public Config {
      * emb_list_strategy: encoding strategy for multi-vector documents.
      * - "tokenann": Index all vectors, aggregate scores at search time (default)
      * - "muvera": Encode documents to single vectors using FDE, rerank with MaxSim
+     * - "lemur": Learn MLP to compress documents to fixed-dim vectors, ANN search on learned representations, rerank
+     * with MaxSim
      */
     CFG_STRING emb_list_strategy;
     CFG_INT muvera_num_projections;  // FDE projections count, buckets = 2^projections

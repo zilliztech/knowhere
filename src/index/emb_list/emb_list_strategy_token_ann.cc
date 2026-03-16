@@ -17,8 +17,14 @@
 #include "knowhere/comp/index_param.h"
 #include "knowhere/config.h"
 #include "knowhere/index/emb_list_strategy.h"
+#include "knowhere/index/index_node.h"
 #include "knowhere/log.h"
 #include "knowhere/utils.h"
+
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+#include "knowhere/comp/time_recorder.h"
+#include "knowhere/prometheus_client.h"
+#endif
 
 namespace knowhere {
 
@@ -42,12 +48,15 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr query_dataset, const EmbListOffset& query_offset, int32_t k, const BaseConfig& config,
-           const EmbListSearchContext& ctx) const override {
+    Search(const DataSetPtr query_dataset, const EmbListOffset& query_offset, const IndexNode* index,
+           std::unique_ptr<Config> cfg, const BitsetView& bitset, milvus::OpContext* op_context) const override {
         if (!emb_list_offset_) {
             return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "emb_list_offset not initialized");
         }
 
+        // Parse config and metric
+        auto& config = static_cast<BaseConfig&>(*cfg);
+        auto k = config.k.value();
         auto metric_or = ParseEmbListMetric(config);
         if (!metric_or.has_value()) {
             return expected<DataSetPtr>::Err(metric_or.error(), metric_or.what());
@@ -58,12 +67,12 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
         auto dim = query_dataset->GetDim();
         auto num_q_el = query_offset.num_el();
 
-        auto query_code_size_or = ctx.get_query_code_size(query_dataset);
-        if (!query_code_size_or.has_value()) {
+        auto query_code_size_opt = index->GetQueryCodeSize(query_dataset);
+        if (!query_code_size_opt.has_value()) {
             LOG_KNOWHERE_ERROR_ << "could not get query code size";
             return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "could not get query code size");
         }
-        auto query_code_size = query_code_size_or.value();
+        auto query_code_size = query_code_size_opt.value();
 
         // Stage 1: Batch ANN search to retrieve top k' vectors per query vector
         auto retrieval_ann_ratio = config.retrieval_ann_ratio.value();
@@ -75,19 +84,28 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
         int32_t vec_topk =
             std::min(std::max((int32_t)(k * retrieval_ann_ratio), 1), (int32_t)emb_list_offset_->offset.back());
 
-        auto stage1_start = std::chrono::high_resolution_clock::now();
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        knowhere_search_emb_list_retrieval_ann_ratio.Observe(retrieval_ann_ratio);
+        TimeRecorder rc("Emb List Search - 1st round ann search");
+#endif
 
-        auto ann_search_res = ctx.ann_search(query_dataset, vec_topk);
+        config.k = vec_topk;
+        config.metric_type = mi.sub_metric_type;
+        auto ann_search_res = index->Search(query_dataset, std::move(cfg), bitset, op_context);
         if (!ann_search_res.has_value()) {
             LOG_KNOWHERE_ERROR_ << "Failed ANN search: " << ann_search_res.what();
             return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "failed ANN search");
         }
         const auto* stage1_ids = ann_search_res.value()->GetIds();
 
-        auto stage1_end = std::chrono::high_resolution_clock::now();
-        double stage1_ms = std::chrono::duration<double, std::milli>(stage1_end - stage1_start).count();
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        auto time = rc.ElapseFromBegin("done");
+        time *= 0.001;
+        knowhere_search_emb_list_1st_ann_latency.Observe(time);
+#endif
+
         auto total_query_vecs = query_dataset->GetRows();
-        LOG_KNOWHERE_DEBUG_ << "[TokenANN] Stage1 ANN search: " << stage1_ms << " ms"
+        LOG_KNOWHERE_DEBUG_ << "[TokenANN] Stage1 ANN search"
                             << ", num_query_docs=" << num_q_el << ", num_query_vecs=" << total_query_vecs << ", k=" << k
                             << ", vec_topk=" << vec_topk << ", index_docs=" << emb_list_offset_->num_el()
                             << ", index_vecs=" << (emb_list_offset_->offset.back());
@@ -96,7 +114,9 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
         auto dists = std::make_unique<float[]>(num_q_el * k);
 
         // Stage 2: For each query doc, collect unique docs from stage 1, then rerank
-        auto stage2_start = std::chrono::high_resolution_clock::now();
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        TimeRecorder rc2("Emb List Search - 2nd round bf and agg");
+#endif
         size_t total_candidates = 0;
         size_t total_distance_computations = 0;
         size_t total_doc_vecs = 0;
@@ -120,9 +140,11 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
             // Convert to vector for RerankByCalcDistByIDs
             candidate_docs.clear();
             for (const auto& el_id : el_ids_set) {
-                if (el_id < emb_list_offset_->num_el()) {
-                    candidate_docs.push_back((int64_t)el_id);
+                if (el_id >= emb_list_offset_->num_el()) {
+                    LOG_KNOWHERE_ERROR_ << "Invalid el_id: " << el_id;
+                    return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "invalid emb_list id");
                 }
+                candidate_docs.push_back((int64_t)el_id);
             }
             total_candidates += candidate_docs.size();
 
@@ -131,18 +153,23 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
             size_t tensor_offset = start_offset * query_code_size;
             auto bf_query_dataset = GenDataSet(nq, dim, tensor + tensor_offset);
 
-            auto status = RerankByCalcDistByIDs(candidate_docs, bf_query_dataset, nq, k, mi.larger_is_closer,
-                                                mi.is_cosine, emb_list_offset_, ctx, mi.agg_func, ids.get() + i * k,
-                                                dists.get() + i * k, total_doc_vecs, total_distance_computations);
+            auto status =
+                RerankByCalcDistByIDs(candidate_docs, bf_query_dataset, nq, k, mi.larger_is_closer, mi.is_cosine,
+                                      emb_list_offset_, index, bitset, op_context, mi.agg_func, ids.get() + i * k,
+                                      dists.get() + i * k, total_doc_vecs, total_distance_computations);
 
             if (status != Status::success) {
                 return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "rerank distance computation error");
             }
         }
 
-        auto stage2_end = std::chrono::high_resolution_clock::now();
-        double stage2_ms = std::chrono::duration<double, std::milli>(stage2_end - stage2_start).count();
-        LOG_KNOWHERE_DEBUG_ << "[TokenANN] Stage2 Rerank: " << stage2_ms << " ms"
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        auto time2 = rc2.ElapseFromBegin("done");
+        time2 *= 0.001;
+        knowhere_search_emb_list_2nd_bf_agg_latency.Observe(time2);
+#endif
+
+        LOG_KNOWHERE_DEBUG_ << "[TokenANN] Stage2 Rerank"
                             << ", total_candidates=" << total_candidates
                             << ", avg_candidates_per_query=" << (num_q_el > 0 ? (double)total_candidates / num_q_el : 0)
                             << ", total_dist_comps=" << total_distance_computations << ", avg_dist_comps_per_query="

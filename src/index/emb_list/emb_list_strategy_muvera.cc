@@ -10,7 +10,6 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <algorithm>
-#include <chrono>
 #include <cstring>
 #include <limits>
 #include <random>
@@ -18,9 +17,15 @@
 
 #include "knowhere/comp/index_param.h"
 #include "knowhere/index/emb_list_strategy.h"
+#include "knowhere/index/index_node.h"
 #include "knowhere/log.h"
 #include "knowhere/utils.h"
 #include "simd/hook.h"
+
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+#include "knowhere/comp/time_recorder.h"
+#include "knowhere/prometheus_client.h"
+#endif
 
 namespace knowhere {
 
@@ -152,20 +157,21 @@ class MuveraEmbListStrategy : public EmbListStrategy {
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr query_dataset, const EmbListOffset& query_offset, int32_t k, const BaseConfig& config,
-           const EmbListSearchContext& ctx) const override {
+    Search(const DataSetPtr query_dataset, const EmbListOffset& query_offset, const IndexNode* index,
+           std::unique_ptr<Config> cfg, const BitsetView& bitset, milvus::OpContext* op_context) const override {
         // 1. Validate state
         if (!emb_list_offset_) {
             return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "MUVERA not initialized");
         }
 
-        // 2. Parse metric type
+        // 2. Parse config and metric
+        auto& config = static_cast<BaseConfig&>(*cfg);
+        auto k = config.k.value();
         auto metric_or = ParseEmbListMetric(config);
         if (!metric_or.has_value()) {
             return expected<DataSetPtr>::Err(metric_or.error(), metric_or.what());
         }
         auto& mi = metric_or.value();
-
         LOG_KNOWHERE_DEBUG_ << "MUVERA Search: sub_metric=" << mi.sub_metric_type;
 
         // 3. FDE encode query documents
@@ -173,17 +179,8 @@ class MuveraEmbListStrategy : public EmbListStrategy {
         auto num_query_docs = query_offset.num_el();
         auto query_data = static_cast<const float*>(query_dataset->GetTensor());
 
-        auto encode_start = std::chrono::high_resolution_clock::now();
-        std::vector<float> encoded_queries(num_query_docs * encoded_dim_);
-        EncodeFDE(query_data, query_offset, encoded_queries.data(), num_query_docs, /*use_mean=*/false);
-        auto encode_end = std::chrono::high_resolution_clock::now();
-        double encode_ms = std::chrono::duration<double, std::milli>(encode_end - encode_start).count();
-
-        LOG_KNOWHERE_DEBUG_ << "[MUVERA] Stage1 FDE encode: " << encode_ms << " ms, num_query_docs=" << num_query_docs;
-
         // 4. ANN search with encoded queries
         bool do_rerank = config.emb_list_rerank.value_or(true);
-        auto encoded_query_dataset = GenDataSet(num_query_docs, encoded_dim_, encoded_queries.data());
 
         // If reranking, retrieve more candidates; otherwise just retrieve k
         int32_t ann_k;
@@ -195,18 +192,32 @@ class MuveraEmbListStrategy : public EmbListStrategy {
             ann_k = std::min(k, static_cast<int32_t>(num_docs_));
         }
 
-        auto ann_start = std::chrono::high_resolution_clock::now();
-        auto ann_result = ctx.ann_search(encoded_query_dataset, ann_k);
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        if (do_rerank) {
+            knowhere_search_emb_list_retrieval_ann_ratio.Observe(config.retrieval_ann_ratio.value());
+        }
+        TimeRecorder rc("MUVERA Search - 1st round encode + ann search");
+#endif
+        std::vector<float> encoded_queries(num_query_docs * encoded_dim_);
+        EncodeFDE(query_data, query_offset, encoded_queries.data(), num_query_docs, /*use_mean=*/false);
+        auto encoded_query_dataset = GenDataSet(num_query_docs, encoded_dim_, encoded_queries.data());
+        config.k = ann_k;
+        config.metric_type = mi.sub_metric_type;
+        auto ann_result = index->Search(encoded_query_dataset, std::move(cfg), bitset, op_context);
         if (!ann_result.has_value()) {
             LOG_KNOWHERE_ERROR_ << "MUVERA ANN search failed: " << ann_result.what();
             return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "ANN search failed");
         }
-        auto ann_end = std::chrono::high_resolution_clock::now();
-        double ann_ms = std::chrono::duration<double, std::milli>(ann_end - ann_start).count();
         const auto* ann_ids = ann_result.value()->GetIds();
 
-        LOG_KNOWHERE_DEBUG_ << "[MUVERA] Stage2 ANN search: " << ann_ms << " ms, ann_k=" << ann_k
-                            << ", encoded_dim=" << encoded_dim_ << ", rerank=" << do_rerank;
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        auto time = rc.ElapseFromBegin("done");
+        time *= 0.001;
+        knowhere_search_emb_list_1st_ann_latency.Observe(time);
+#endif
+
+        LOG_KNOWHERE_DEBUG_ << "[MUVERA] Stage2 ANN search: ann_k=" << ann_k << ", encoded_dim=" << encoded_dim_
+                            << ", rerank=" << do_rerank;
 
         // 5. If reranking disabled, directly return ANN results
         if (!do_rerank) {
@@ -235,7 +246,9 @@ class MuveraEmbListStrategy : public EmbListStrategy {
         auto ids = std::make_unique<int64_t[]>(num_query_docs * k);
         auto dists = std::make_unique<float[]>(num_query_docs * k);
 
-        auto rerank_start = std::chrono::high_resolution_clock::now();
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        TimeRecorder rc2("MUVERA Search - 2nd round bf and agg");
+#endif
         size_t total_candidates = 0;
         size_t total_distance_computations = 0;
         size_t total_doc_vecs = 0;
@@ -262,21 +275,25 @@ class MuveraEmbListStrategy : public EmbListStrategy {
             // Build query dataset for this query document
             auto bf_query_dataset = GenDataSet(nq, original_dim_, query_data + q_vec_start * original_dim_);
 
-            auto status = RerankByCalcDistByIDs(candidate_docs, bf_query_dataset, nq, k, mi.larger_is_closer,
-                                                mi.is_cosine, emb_list_offset_, ctx, mi.agg_func, ids.get() + q * k,
-                                                dists.get() + q * k, total_doc_vecs, total_distance_computations);
+            auto status =
+                RerankByCalcDistByIDs(candidate_docs, bf_query_dataset, nq, k, mi.larger_is_closer, mi.is_cosine,
+                                      emb_list_offset_, index, bitset, op_context, mi.agg_func, ids.get() + q * k,
+                                      dists.get() + q * k, total_doc_vecs, total_distance_computations);
 
             if (status != Status::success) {
                 return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "rerank distance computation error");
             }
         }
 
-        auto rerank_end = std::chrono::high_resolution_clock::now();
-        double rerank_ms = std::chrono::duration<double, std::milli>(rerank_end - rerank_start).count();
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+        auto time2 = rc2.ElapseFromBegin("done");
+        time2 *= 0.001;
+        knowhere_search_emb_list_2nd_bf_agg_latency.Observe(time2);
+#endif
 
         double avg_doc_len = total_candidates > 0 ? static_cast<double>(total_doc_vecs) / total_candidates : 0;
         double avg_query_len = num_query_docs > 0 ? static_cast<double>(total_query_vecs) / num_query_docs : 0;
-        LOG_KNOWHERE_DEBUG_ << "[MUVERA] Stage3 Rerank: " << rerank_ms << " ms"
+        LOG_KNOWHERE_DEBUG_ << "[MUVERA] Stage3 Rerank"
                             << ", total_candidates=" << total_candidates << ", avg_doc_len=" << avg_doc_len
                             << ", avg_query_len=" << avg_query_len
                             << ", total_dist_comps=" << total_distance_computations;

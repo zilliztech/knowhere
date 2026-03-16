@@ -13,7 +13,6 @@
 #define EMB_LIST_STRATEGY_H
 
 #include <cstring>
-#include <functional>
 #include <memory>
 #include <string>
 
@@ -25,63 +24,17 @@
 #include "knowhere/expected.h"
 #include "knowhere/log.h"
 
+#if defined(NOT_COMPILE_FOR_SWIG)
+#include "common/OpContext.h"
+#else
+namespace milvus {
+struct OpContext;
+}  // namespace milvus
+#endif
+
 namespace knowhere {
 
-/**
- * @brief Context providing callbacks and resources for strategy search.
- *
- * Strategies have full control over search flow and can use these callbacks
- * as needed. Not all strategies use all callbacks.
- */
-struct EmbListSearchContext {
-    /**
-     * @brief Execute ANN search on the underlying base index.
-     *
-     * @param query Query dataset
-     * @param k Number of results per query
-     * @return Search results [nq, k] with ids and distances
-     */
-    std::function<expected<DataSetPtr>(const DataSetPtr& query, int32_t k)> ann_search;
-
-    /**
-     * @brief Calculate distances between query vectors and indexed vectors by IDs.
-     *
-     * @param query Query vectors [nq, dim]
-     * @param ids Vector IDs to compute distances for
-     * @param ids_len Number of IDs
-     * @param is_cosine Whether to use cosine similarity
-     * @return Distance matrix [nq, ids_len]
-     */
-    std::function<expected<DataSetPtr>(const DataSetPtr& query, const int64_t* ids, size_t ids_len, bool is_cosine)>
-        calc_distance_by_ids;
-
-    /**
-     * @brief Retrieve raw vectors by their IDs.
-     *
-     * @param ids Vector IDs to retrieve
-     * @param ids_len Number of IDs
-     * @return Raw vectors [ids_len, dim]
-     */
-    std::function<expected<DataSetPtr>(const int64_t* ids, size_t ids_len)> get_vectors_by_ids;
-
-    /**
-     * @brief Get total count of indexed items.
-     */
-    std::function<int64_t()> get_index_count;
-
-    /**
-     * @brief Get query code size for the dataset.
-     *
-     * @param dataset Query dataset
-     * @return Code size in bytes, or error
-     */
-    std::function<expected<size_t>(const DataSetPtr dataset)> get_query_code_size;
-
-    /**
-     * @brief Filtering bitset (document level for most strategies).
-     */
-    BitsetView bitset;
-};
+class IndexNode;
 
 /**
  * @brief Parsed metric info shared by all EmbList strategies.
@@ -132,47 +85,20 @@ ParseEmbListMetric(const BaseConfig& config) {
 }
 
 /**
- * @brief Rerank candidate documents by computing exact distances via CalcDistByIDs.
+ * @brief Rerank candidate documents by computing exact distances via IndexNode::CalcDistByIDs.
  *
  * Shared rerank logic used by all EmbList strategies (TokenANN, MUVERA, LEMUR).
  * For each candidate document, retrieves its vector IDs, computes distances to
- * query vectors via ctx.calc_distance_by_ids, and aggregates scores using agg_func.
+ * query vectors, and aggregates scores using agg_func.
  *
  * @return Status::success or Status::emb_list_inner_error on failure
  */
-inline Status
+Status
 RerankByCalcDistByIDs(const std::vector<int64_t>& candidate_docs, const DataSetPtr& query_dataset, size_t nq, int32_t k,
                       bool larger_is_closer, bool is_cosine, const std::shared_ptr<EmbListOffset>& emb_list_offset,
-                      const EmbListSearchContext& ctx, const EmbListAggFunc& agg_func, int64_t* out_ids,
-                      float* out_dists, size_t& out_doc_vecs, size_t& out_distance_computations) {
-    bool has_error = false;
-    std::string error_msg;
-
-    auto compute_score = [&](int64_t doc_id) -> std::optional<float> {
-        if (has_error) {
-            return std::nullopt;
-        }
-
-        auto vids = emb_list_offset->get_vids((size_t)doc_id);
-        out_doc_vecs += vids.size();
-        out_distance_computations += nq * vids.size();
-        auto bf_search_res = ctx.calc_distance_by_ids(query_dataset, vids.data(), vids.size(), is_cosine);
-        if (!bf_search_res.has_value()) {
-            has_error = true;
-            error_msg = bf_search_res.what();
-            return std::nullopt;
-        }
-        const auto* bf_dists = bf_search_res.value()->GetDistance();
-        return agg_func(bf_dists, nq, vids.size(), larger_is_closer);
-    };
-
-    RerankCandidates(candidate_docs, k, larger_is_closer, compute_score, out_ids, out_dists);
-
-    if (has_error) {
-        return Status::emb_list_inner_error;
-    }
-    return Status::success;
-}
+                      const IndexNode* index, const BitsetView& bitset, milvus::OpContext* op_context,
+                      const EmbListAggFunc& agg_func, int64_t* out_ids, float* out_dists, size_t& out_doc_vecs,
+                      size_t& out_distance_computations);
 
 /**
  * @brief Serialize EmbListOffset to raw bytes: [size_t count][size_t[count] offsets]
@@ -283,19 +209,20 @@ class EmbListStrategy {
     /**
      * @brief Execute search with full control over the search flow.
      *
-     * Strategy controls the entire search pipeline and can implement arbitrary
-     * multi-stage retrieval (e.g., PLAID's centroid -> inverted index -> exact scoring).
+     * Strategy controls the entire search pipeline and can call IndexNode methods
+     * directly (Search, CalcDistByIDs, etc.) via the provided index pointer.
      *
      * @param query_dataset Original query dataset containing query vectors
      * @param query_offset Query document offsets (queries can also be multi-vector)
-     * @param k Number of documents to return per query
-     * @param config Search configuration
-     * @param ctx Search context providing callbacks (ANN search, distance calc, etc.)
+     * @param index IndexNode pointer for calling Search/CalcDistByIDs
+     * @param cfg Config (read before ANN search, consumed by IndexNode::Search)
+     * @param bitset Filtering bitset
+     * @param op_context Operation context
      * @return Search results [num_query_docs, k] with document IDs and scores
      */
     virtual expected<DataSetPtr>
-    Search(const DataSetPtr query_dataset, const EmbListOffset& query_offset, int32_t k, const BaseConfig& config,
-           const EmbListSearchContext& ctx) const = 0;
+    Search(const DataSetPtr query_dataset, const EmbListOffset& query_offset, const IndexNode* index,
+           std::unique_ptr<Config> cfg, const BitsetView& bitset, milvus::OpContext* op_context) const = 0;
 
     /**
      * @brief Serialize strategy-specific data to a single blob.

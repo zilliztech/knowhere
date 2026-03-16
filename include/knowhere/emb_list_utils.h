@@ -16,7 +16,6 @@
 #include <functional>
 #include <limits>
 #include <numeric>
-#include <queue>
 #include <vector>
 
 #include "knowhere/bitsetview.h"
@@ -249,68 +248,6 @@ get_sub_metric_type(const std::string& metric_type) {
         return metric::JACCARD;
     }
     return std::nullopt;
-}
-
-// Callback to compute score for a single candidate document
-// Returns nullopt if the candidate should be skipped
-using ComputeScoreFunc = std::function<std::optional<float>(int64_t doc_id)>;
-
-// Rerank candidate documents and select top-k based on scores
-// @param candidate_docs: set of candidate document IDs to evaluate
-// @param k: number of top results to return
-// @param larger_is_closer: if true, higher scores are better (e.g., IP, cosine)
-// @param compute_score: callback to compute score for each candidate
-// @param out_ids: output array for top-k document IDs [k]
-// @param out_dists: output array for top-k scores [k]
-inline void
-RerankCandidates(const std::vector<int64_t>& candidate_docs, int32_t k, bool larger_is_closer,
-                 const ComputeScoreFunc& compute_score, int64_t* out_ids, float* out_dists) {
-    std::priority_queue<DistId, std::vector<DistId>, std::greater<>> minheap;
-    std::priority_queue<DistId, std::vector<DistId>, std::less<>> maxheap;
-
-    for (int64_t doc_id : candidate_docs) {
-        auto score_or = compute_score(doc_id);
-        if (!score_or.has_value()) {
-            continue;
-        }
-        float score = score_or.value();
-
-        if (larger_is_closer) {
-            if (minheap.size() < (size_t)k) {
-                minheap.emplace(doc_id, score);
-            } else if (score > minheap.top().val) {
-                minheap.pop();
-                minheap.emplace(doc_id, score);
-            }
-        } else {
-            if (maxheap.size() < (size_t)k) {
-                maxheap.emplace(doc_id, score);
-            } else if (score < maxheap.top().val) {
-                maxheap.pop();
-                maxheap.emplace(doc_id, score);
-            }
-        }
-    }
-
-    // Extract results in sorted order
-    size_t result_count = larger_is_closer ? minheap.size() : maxheap.size();
-    for (size_t j = 0; j < result_count; ++j) {
-        size_t idx = result_count - j - 1;
-        if (larger_is_closer) {
-            out_ids[idx] = minheap.top().id;
-            out_dists[idx] = minheap.top().val;
-            minheap.pop();
-        } else {
-            out_ids[idx] = maxheap.top().id;
-            out_dists[idx] = maxheap.top().val;
-            maxheap.pop();
-        }
-    }
-
-    // Fill remaining with invalid values
-    std::fill(out_ids + result_count, out_ids + k, -1);
-    std::fill(out_dists + result_count, out_dists + k,
-              larger_is_closer ? std::numeric_limits<float>::lowest() : std::numeric_limits<float>::max());
 }
 
 }  // namespace knowhere
