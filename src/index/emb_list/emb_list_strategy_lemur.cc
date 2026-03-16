@@ -110,7 +110,7 @@ class LemurEmbListStrategy : public EmbListStrategy {
         emb_list_offset_ = std::make_shared<EmbListOffset>(doc_offset.offset);
         const float* raw_data = static_cast<const float*>(dataset->GetTensor());
 
-        // 3. Sample training vectors (reservoir sampling: O(actual_samples) memory)
+        // 3. Sample training vectors (reservoir sampling: O(actual_samples) memory).
         std::mt19937 rng(seed_);
         int32_t actual_samples = std::min(num_train_samples_, static_cast<int32_t>(total_vectors));
         // Memory check: peak usage is ~2 × actual_samples × num_docs × 4B (y_train + y_train_raw)
