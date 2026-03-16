@@ -128,18 +128,18 @@ class LemurEmbListStrategy : public EmbListStrategy {
                 "LEMUR training memory exceeds 4GB limit, reduce num_train_samples or num_docs");
         }
 
-        std::vector<int32_t> sample_indices(actual_samples);
+        std::vector<int64_t> sample_indices(actual_samples);
         std::iota(sample_indices.begin(), sample_indices.end(), 0);
         for (size_t i = actual_samples; i < total_vectors; ++i) {
             std::uniform_int_distribution<size_t> dist(0, i);
             size_t j = dist(rng);
             if (j < static_cast<size_t>(actual_samples)) {
-                sample_indices[j] = static_cast<int32_t>(i);
+                sample_indices[j] = static_cast<int64_t>(i);
             }
         }
 
         std::vector<float> X_train(actual_samples * original_dim_);
-        for (int32_t i = 0; i < actual_samples; ++i) {
+        for (int64_t i = 0; i < actual_samples; ++i) {
             std::memcpy(X_train.data() + i * original_dim_, raw_data + sample_indices[i] * original_dim_,
                         original_dim_ * sizeof(float));
         }
@@ -399,6 +399,8 @@ class LemurEmbListStrategy : public EmbListStrategy {
         size_t total_query_vecs = 0;
         size_t total_distance_computations = 0;
 
+        std::vector<int64_t> candidate_docs;
+        candidate_docs.reserve(ann_k);
         for (size_t q = 0; q < num_query_docs; ++q) {
             size_t q_vec_start = query_offset.offset[q];
             size_t q_vec_end = query_offset.offset[q + 1];
@@ -406,8 +408,7 @@ class LemurEmbListStrategy : public EmbListStrategy {
             total_query_vecs += nq;
 
             // Collect candidate doc IDs (no dedup needed — ANN returns doc-level IDs)
-            std::vector<int64_t> candidate_docs;
-            candidate_docs.reserve(ann_k);
+            candidate_docs.clear();
             for (int32_t i = 0; i < ann_k; ++i) {
                 int64_t doc_id = ann_ids[q * ann_k + i];
                 if (doc_id >= 0 && doc_id < num_docs_) {
@@ -670,12 +671,8 @@ class LemurEmbListStrategy : public EmbListStrategy {
             }
 
             mlp_ = std::make_unique<SimpleMLP>(original_dim_, static_cast<int32_t>(num_docs_), hidden_dim_,
-                                               final_hidden_dim_, num_layers_, 0);
-            mlp_->SetFcWeights(fc_weights);
-            mlp_->SetFcBiases(fc_biases);
-            mlp_->SetLnGammas(ln_gammas);
-            mlp_->SetLnBetas(ln_betas);
-            mlp_->MarkAsTrained();
+                                               final_hidden_dim_, num_layers_, std::move(fc_weights),
+                                               std::move(fc_biases), std::move(ln_gammas), std::move(ln_betas));
 
             ptr = mlp_ptr;
         }
@@ -769,14 +766,15 @@ class LemurEmbListStrategy : public EmbListStrategy {
         // Each thread allocates kSampleBatchSize * chunk_vecs * 4B (~100MB at 512 * 50K).
         constexpr int32_t kSampleBatchSize = 512;
 
+        std::vector<folly::Future<folly::Unit>> futs;
+        futs.reserve(chunks.size());
         for (int32_t sample_start = 0; sample_start < num_samples; sample_start += kSampleBatchSize) {
             int32_t sample_end = std::min(sample_start + kSampleBatchSize, num_samples);
             int32_t batch_samples = sample_end - sample_start;
             const float* batch_samples_data = samples + sample_start * original_dim_;
 
             // Parallel over chunks: each task does small sgemm + immediate reduce
-            std::vector<folly::Future<folly::Unit>> futs;
-            futs.reserve(chunks.size());
+            futs.clear();
 
             for (const auto& chunk : chunks) {
                 futs.emplace_back(pool->push([&, chunk, batch_samples, sample_start, batch_samples_data]() {

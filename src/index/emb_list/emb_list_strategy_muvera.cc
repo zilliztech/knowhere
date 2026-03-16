@@ -241,6 +241,8 @@ class MuveraEmbListStrategy : public EmbListStrategy {
         size_t total_doc_vecs = 0;
         size_t total_query_vecs = 0;
 
+        std::vector<int64_t> candidate_docs;
+        candidate_docs.reserve(ann_k);
         for (size_t q = 0; q < num_query_docs; ++q) {
             size_t q_vec_start = query_offset.offset[q];
             size_t q_vec_end = query_offset.offset[q + 1];
@@ -248,8 +250,7 @@ class MuveraEmbListStrategy : public EmbListStrategy {
             total_query_vecs += nq;
 
             // Collect candidate doc IDs (no dedup needed — ANN returns doc-level IDs)
-            std::vector<int64_t> candidate_docs;
-            candidate_docs.reserve(ann_k);
+            candidate_docs.clear();
             for (int32_t i = 0; i < ann_k; ++i) {
                 int64_t doc_id = ann_ids[q * ann_k + i];
                 if (doc_id >= 0 && doc_id < num_docs_) {

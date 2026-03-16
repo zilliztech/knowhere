@@ -93,6 +93,18 @@ class SimpleMLP {
         }
     }
 
+    // Construct from deserialized weights (no training needed)
+    SimpleMLP(int32_t input_dim, int32_t output_dim, int32_t hidden_dim, int32_t final_hidden_dim, int32_t num_layers,
+              std::vector<std::vector<float>>&& fc_weights, std::vector<std::vector<float>>&& fc_biases,
+              std::vector<std::vector<float>>&& ln_gammas, std::vector<std::vector<float>>&& ln_betas)
+        : SimpleMLP(input_dim, output_dim, hidden_dim, final_hidden_dim, num_layers, 0) {
+        fc_weights_ = std::move(fc_weights);
+        fc_biases_ = std::move(fc_biases);
+        ln_gammas_ = std::move(ln_gammas);
+        ln_betas_ = std::move(ln_betas);
+        trained_ = true;
+    }
+
     /**
      * @brief Extract features (output of feature_extractor, before output_layer).
      *
@@ -104,12 +116,12 @@ class SimpleMLP {
     ExtractFeatures(const float* input, int32_t batch_size, float* features) {
         const float* current = input;
         int32_t current_dim = input_dim_;
-        std::vector<float> act_out;
+        std::vector<float> linear_out, ln_out, act_out;
 
         for (int32_t layer = 0; layer < num_layers_; ++layer) {
             int32_t out_dim = layer_dims_[layer];
-            std::vector<float> linear_out(batch_size * out_dim);
-            std::vector<float> ln_out(batch_size * out_dim);
+            linear_out.resize(batch_size * out_dim);
+            ln_out.resize(batch_size * out_dim);
             act_out.resize(batch_size * out_dim);
 
             LinearForward(current, fc_weights_[layer].data(), fc_biases_[layer].data(), batch_size, current_dim,
@@ -272,8 +284,8 @@ class SimpleMLP {
         // Pre-allocate all training buffers to avoid malloc in hot loop
         AllocateTrainingBuffers(batch_size);
 
-        std::vector<int32_t> indices(num_samples);
-        for (int32_t i = 0; i < num_samples; ++i) {
+        std::vector<int64_t> indices(num_samples);
+        for (int64_t i = 0; i < num_samples; ++i) {
             indices[i] = i;
         }
 
@@ -352,7 +364,7 @@ class SimpleMLP {
 
         LOG_KNOWHERE_INFO_ << "[LEMUR MLP] Training completed, final loss: " << final_loss;
 
-        MarkAsTrained();
+        trained_ = true;
         return final_loss;
     }
 
@@ -376,31 +388,6 @@ class SimpleMLP {
     const std::vector<std::vector<float>>&
     GetLnBetas() const {
         return ln_betas_;
-    }
-
-    void
-    SetFcWeights(const std::vector<std::vector<float>>& w) {
-        fc_weights_ = w;
-    }
-    void
-    SetFcBiases(const std::vector<std::vector<float>>& b) {
-        fc_biases_ = b;
-    }
-    void
-    SetLnGammas(const std::vector<std::vector<float>>& g) {
-        ln_gammas_ = g;
-    }
-    void
-    SetLnBetas(const std::vector<std::vector<float>>& b) {
-        ln_betas_ = b;
-    }
-
-    /**
-     * @brief Mark model as trained/loaded. Prevents re-training a deserialized model.
-     */
-    void
-    MarkAsTrained() {
-        trained_ = true;
     }
 
     /**

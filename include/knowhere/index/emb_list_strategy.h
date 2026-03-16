@@ -41,7 +41,7 @@ struct EmbListSearchContext {
      * @param k Number of results per query
      * @return Search results [nq, k] with ids and distances
      */
-    std::function<expected<DataSetPtr>(const DataSetPtr query, int32_t k)> ann_search;
+    std::function<expected<DataSetPtr>(const DataSetPtr& query, int32_t k)> ann_search;
 
     /**
      * @brief Calculate distances between query vectors and indexed vectors by IDs.
@@ -52,7 +52,7 @@ struct EmbListSearchContext {
      * @param is_cosine Whether to use cosine similarity
      * @return Distance matrix [nq, ids_len]
      */
-    std::function<expected<DataSetPtr>(const DataSetPtr query, const int64_t* ids, size_t ids_len, bool is_cosine)>
+    std::function<expected<DataSetPtr>(const DataSetPtr& query, const int64_t* ids, size_t ids_len, bool is_cosine)>
         calc_distance_by_ids;
 
     /**

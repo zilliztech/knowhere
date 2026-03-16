@@ -101,13 +101,15 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
         size_t total_distance_computations = 0;
         size_t total_doc_vecs = 0;
 
+        std::vector<int64_t> candidate_docs;
+        std::unordered_set<size_t> el_ids_set;
         for (size_t i = 0; i < num_q_el; i++) {
             auto start_offset = query_offset.offset[i];
             auto end_offset = query_offset.offset[i + 1];
             auto nq = end_offset - start_offset;
 
             // Collect unique doc IDs from stage 1 results
-            std::unordered_set<size_t> el_ids_set;
+            el_ids_set.clear();
             for (size_t j = start_offset * vec_topk; j < end_offset * vec_topk; j++) {
                 if (stage1_ids[j] < 0) {
                     continue;
@@ -116,8 +118,7 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
             }
 
             // Convert to vector for RerankByCalcDistByIDs
-            std::vector<int64_t> candidate_docs;
-            candidate_docs.reserve(el_ids_set.size());
+            candidate_docs.clear();
             for (const auto& el_id : el_ids_set) {
                 if (el_id < emb_list_offset_->num_el()) {
                     candidate_docs.push_back((int64_t)el_id);
