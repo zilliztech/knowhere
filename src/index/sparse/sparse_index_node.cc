@@ -13,6 +13,8 @@
 
 #include <exception>
 
+#include "index/sparse/sparse_dsp_config.h"
+#include "index/sparse/sparse_dsp_index.h"
 #include "index/sparse/sparse_inverted_index.h"
 #include "index/sparse/sparse_inverted_index_config.h"
 #include "io/file_io.h"
@@ -650,6 +652,431 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
     mutable std::vector<sparse::SparseRow<value_type>> raw_data_ = {};
 };  // class SparseInvertedIndexNodeCC
 
+// ============================================================================
+// SparseDspIndexNode: standalone DSP (Dynamic Superblock Pruning) sparse index.
+// Does not share code with SparseInvertedIndexNode — fully self-contained.
+// ============================================================================
+template <typename T>
+class SparseDspIndexNode : public IndexNode {
+    static_assert(std::is_same_v<T, knowhere::sparse_u32_f32>, "SparseDspIndexNode only support sparse_u32_f32");
+    using value_type = typename T::ValueType;
+
+ public:
+    explicit SparseDspIndexNode(const int32_t& version, const Object& /*object*/)
+        : search_pool_(ThreadPool::GetGlobalSearchThreadPool()),
+          build_pool_(ThreadPool::GetGlobalBuildThreadPool()),
+          index_version_(version) {
+    }
+
+    ~SparseDspIndexNode() override {
+        delete index_;
+        index_ = nullptr;
+    }
+
+    Status
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool) override {
+        auto& cfg = static_cast<const SparseDspConfig&>(*config);
+        if (!IsMetricType(cfg.metric_type.value(), metric::IP) &&
+            !IsMetricType(cfg.metric_type.value(), metric::BM25)) {
+            LOG_KNOWHERE_ERROR_ << Type() << " only support metric_type IP or BM25";
+            return Status::invalid_metric_type;
+        }
+        auto index = CreateDspIndex<false>(cfg);
+        if (!index.has_value()) {
+            return index.error();
+        }
+        auto* idx = index.value();
+        idx->Train(static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor()), dataset->GetRows());
+        if (index_) {
+            LOG_KNOWHERE_WARNING_ << Type() << " already created, deleting old";
+            delete index_;
+        }
+        index_ = idx;
+        return Status::success;
+    }
+
+    Status
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool) override {
+        if (!index_) {
+            LOG_KNOWHERE_ERROR_ << "Could not add data to empty " << Type();
+            return Status::empty_index;
+        }
+        auto build_pool_wrapper = std::make_shared<ThreadPoolWrapper>(build_pool_, use_knowhere_build_pool);
+        auto tryObj =
+            build_pool_wrapper
+                ->push([&] {
+                    return index_->Add(static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor()),
+                                       dataset->GetRows(), dataset->GetDim());
+                })
+                .getTry();
+        if (!tryObj.hasValue()) {
+            LOG_KNOWHERE_WARNING_ << "failed to add data to index " << Type() << ": " << tryObj.exception().what();
+            return Status::sparse_inner_error;
+        }
+        return tryObj.value();
+    }
+
+    [[nodiscard]] expected<DataSetPtr>
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
+           milvus::OpContext* op_context) const override {
+        if (!index_) {
+            LOG_KNOWHERE_ERROR_ << "Could not search empty " << Type();
+            return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+        }
+        auto& cfg = static_cast<const SparseDspConfig&>(*config);
+        auto computer_or = index_->GetDocValueComputer(cfg);
+        if (!computer_or.has_value()) {
+            return expected<DataSetPtr>::Err(computer_or.error(), computer_or.what());
+        }
+        auto computer = computer_or.value();
+        auto approx_params = ExtractDspParams(cfg);
+
+        auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
+        auto nq = dataset->GetRows();
+        auto k = cfg.k.value();
+        auto p_id = std::make_unique<sparse::label_t[]>(nq * k);
+        auto p_dist = std::make_unique<float[]>(nq * k);
+
+        std::vector<folly::Future<folly::Unit>> futs;
+        futs.reserve(nq);
+        for (int64_t idx = 0; idx < nq; ++idx) {
+            futs.emplace_back(search_pool_->push([&, idx = idx, p_id = p_id.get(), p_dist = p_dist.get()]() {
+                knowhere::checkCancellation(op_context);
+                index_->Search(queries[idx], k, p_dist + idx * k, p_id + idx * k, bitset, computer, approx_params);
+            }));
+        }
+        WaitAllSuccess(futs);
+        return GenResultDataSet(nq, k, p_id.release(), p_dist.release());
+    }
+
+    [[nodiscard]] expected<std::vector<IndexNode::IteratorPtr>>
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
+                bool use_knowhere_search_pool, milvus::OpContext* op_context) const override {
+        if (!index_) {
+            return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "index not loaded");
+        }
+        auto nq = dataset->GetRows();
+        auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
+        auto& cfg = static_cast<const SparseDspConfig&>(*config);
+        auto computer_or = index_->GetDocValueComputer(cfg);
+        if (!computer_or.has_value()) {
+            return expected<std::vector<IndexNode::IteratorPtr>>::Err(computer_or.error(), computer_or.what());
+        }
+        auto computer = computer_or.value();
+        auto drop_ratio_search = cfg.drop_ratio_search.value_or(0.0f);
+
+        auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
+        try {
+            for (int i = 0; i < nq; ++i) {
+                auto compute_dist_func = [=]() -> std::vector<DistId> {
+                    auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
+                    std::vector<float> distances =
+                        index_->GetAllDistances(queries[i], drop_ratio_search, bitset, computer);
+                    std::vector<DistId> distances_ids;
+                    distances_ids.reserve(distances.size() * 0.3);
+                    for (size_t i = 0; i < distances.size(); i++) {
+                        if (distances[i] != 0) {
+                            distances_ids.emplace_back((int64_t)i, distances[i]);
+                        }
+                    }
+                    return distances_ids;
+                };
+                vec[i] = std::make_shared<PrecomputedDistanceIterator>(compute_dist_func, true,
+                                                                        use_knowhere_search_pool);
+            }
+        } catch (const std::exception& e) {
+            return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::sparse_inner_error, e.what());
+        }
+        return vec;
+    }
+
+    [[nodiscard]] expected<DataSetPtr>
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
+        return expected<DataSetPtr>::Err(Status::not_implemented, "GetVectorByIds not implemented");
+    }
+
+    static bool
+    StaticHasRawData(const knowhere::BaseConfig& /*config*/, const IndexVersion& /*version*/) {
+        return false;
+    }
+
+    [[nodiscard]] bool
+    HasRawData(const std::string& metric_type) const override {
+        return false;
+    }
+
+    [[nodiscard]] expected<DataSetPtr>
+    GetIndexMeta(std::unique_ptr<Config> cfg) const override {
+        return expected<DataSetPtr>::Err(Status::not_implemented, "GetIndexMeta not supported");
+    }
+
+    Status
+    Serialize(BinarySet& binset) const override {
+        if (!index_) {
+            LOG_KNOWHERE_ERROR_ << "Could not serialize empty " << Type();
+            return Status::empty_index;
+        }
+        MemoryIOWriter writer;
+        RETURN_IF_ERROR(index_->Serialize(writer));
+        std::shared_ptr<uint8_t[]> data(writer.data());
+        binset.Append(Type(), data, writer.tellg());
+        return Status::success;
+    }
+
+    Status
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config> config) override {
+        if (index_) {
+            LOG_KNOWHERE_WARNING_ << Type() << " already created, deleting old";
+            delete index_;
+            index_ = nullptr;
+        }
+        auto binary = binset.GetByName(Type());
+        if (binary == nullptr) {
+            LOG_KNOWHERE_ERROR_ << "Invalid BinarySet.";
+            return Status::invalid_binary_set;
+        }
+        MemoryIOReader reader(binary->data.get(), binary->size);
+        auto index = CreateDspIndex<false>(static_cast<const SparseDspConfig&>(*config));
+        if (!index.has_value()) {
+            return index.error();
+        }
+        index_ = index.value();
+        binary_ = binary;
+        return index_->Deserialize(reader);
+    }
+
+    Status
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> config) override {
+        if (index_) {
+            LOG_KNOWHERE_WARNING_ << Type() << " already created, deleting old";
+            delete index_;
+            index_ = nullptr;
+        }
+        auto& base_cfg = static_cast<const BaseConfig&>(*config);
+        auto index = CreateDspIndex<true>(static_cast<const SparseDspConfig&>(*config));
+        if (!index.has_value()) {
+            return index.error();
+        }
+        index_ = index.value();
+
+        auto reader = knowhere::FileReader(filename);
+        size_t map_size = reader.size();
+        int map_flags = MAP_SHARED;
+#ifdef MAP_POPULATE
+        if (base_cfg.enable_mmap_pop.has_value() && base_cfg.enable_mmap_pop.value()) {
+            map_flags |= MAP_POPULATE;
+        }
+#endif
+        void* mapped_memory = mmap(nullptr, map_size, PROT_READ, map_flags, reader.descriptor(), 0);
+        if (mapped_memory == MAP_FAILED) {
+            LOG_KNOWHERE_ERROR_ << "Failed to mmap file " << filename << ": " << strerror(errno);
+            return Status::disk_file_error;
+        }
+        mmap_map_size_ = map_size;
+        mmap_filename_ = filename;
+        mmap_addr_ = mapped_memory;
+        MemoryIOReader map_reader(reinterpret_cast<uint8_t*>(mapped_memory), map_size);
+        return index_->Deserialize(map_reader);
+    }
+
+    static std::unique_ptr<BaseConfig>
+    StaticCreateConfig() {
+        return std::make_unique<SparseDspConfig>();
+    }
+
+    [[nodiscard]] std::unique_ptr<BaseConfig>
+    CreateConfig() const override {
+        return StaticCreateConfig();
+    }
+
+    [[nodiscard]] std::string
+    Type() const override {
+        return knowhere::IndexEnum::INDEX_SPARSE_DSP_CC;
+    }
+
+    [[nodiscard]] int64_t
+    Dim() const override {
+        return index_ ? index_->n_cols() : 0;
+    }
+
+    [[nodiscard]] int64_t
+    Size() const override {
+        return index_ ? index_->size() : 0;
+    }
+
+    [[nodiscard]] int64_t
+    Count() const override {
+        return index_ ? index_->n_rows() : 0;
+    }
+
+ protected:
+    static sparse::DspSearchParams
+    ExtractDspParams(const SparseDspConfig& c) {
+        auto drop_ratio_search = c.drop_ratio_search.value_or(0.0f);
+        auto refine_factor = c.refine_factor.value_or(1);
+        if (drop_ratio_search == 0) {
+            refine_factor = 1;
+        }
+        return {
+            .refine_factor = refine_factor,
+            .drop_ratio_search = drop_ratio_search,
+            .dim_max_score_ratio = 1.0f,
+            .dsp_mode = static_cast<sparse::DspSearchMode>(c.dsp_mode.value_or(0)),
+            .dsp_mu = c.dsp_mu.value_or(1.0f),
+            .dsp_eta = c.dsp_eta.value_or(1.0f),
+            .dsp_gamma = static_cast<int>(c.dsp_gamma.value_or(0)),
+            .dsp_kth_init = c.dsp_kth_init.value_or(true),
+            .dsp_kth_alpha = c.dsp_kth_alpha.value_or(1.0f),
+        };
+    }
+
+    template <bool mmapped>
+    expected<sparse::DspIndexBase<value_type>*>
+    CreateDspIndex(const SparseDspConfig& cfg) const {
+        if (IsMetricType(cfg.metric_type.value(), metric::BM25)) {
+            if (!cfg.bm25_k1.has_value() || !cfg.bm25_b.has_value() || !cfg.bm25_avgdl.has_value()) {
+                return expected<sparse::DspIndexBase<value_type>*>::Err(
+                    Status::invalid_args, "BM25 parameters k1, b, and avgdl must be set");
+            }
+            auto idx = new sparse::DspIndex<value_type, uint16_t, mmapped>(sparse::SparseMetricType::METRIC_BM25);
+            idx->SetBM25Params(cfg.bm25_k1.value(), cfg.bm25_b.value(), std::max(cfg.bm25_avgdl.value(), 1.0f));
+            return idx;
+        }
+        return new sparse::DspIndex<value_type, float, mmapped>(sparse::SparseMetricType::METRIC_IP);
+    }
+
+    sparse::DspIndexBase<value_type>* index_{nullptr};
+    std::shared_ptr<ThreadPool> search_pool_;
+    std::shared_ptr<ThreadPool> build_pool_;
+    const int32_t index_version_;
+    BinaryPtr binary_{nullptr};
+    size_t mmap_map_size_{0};
+    std::string mmap_filename_;
+    void* mmap_addr_{nullptr};
+};  // class SparseDspIndexNode
+
+// Concurrent version of SparseDspIndexNode
+template <typename T>
+class SparseDspIndexNodeCC : public SparseDspIndexNode<T> {
+    static_assert(std::is_same_v<T, knowhere::sparse_u32_f32>, "SparseDspIndexNodeCC only support sparse_u32_f32");
+    using value_type = typename T::ValueType;
+
+ public:
+    explicit SparseDspIndexNodeCC(const int32_t& version, const Object& object) : SparseDspIndexNode<T>(version, object) {
+    }
+
+    Status
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool) override {
+        std::unique_lock<std::mutex> lock(mutex_);
+        uint64_t task_id = next_task_id_++;
+        add_tasks_.push(task_id);
+        cv_.wait(lock, [this, task_id]() { return current_task_id_ == task_id && active_readers_ == 0; });
+
+        auto res = SparseDspIndexNode<T>::Add(dataset, config, use_knowhere_build_pool);
+
+        auto cfg = static_cast<const SparseDspConfig&>(*config);
+        if (IsMetricType(cfg.metric_type.value(), metric::IP)) {
+            auto data = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
+            auto rows = dataset->GetRows();
+            raw_data_.insert(raw_data_.end(), data, data + rows);
+        }
+
+        add_tasks_.pop();
+        current_task_id_++;
+        lock.unlock();
+        cv_.notify_all();
+        return res;
+    }
+
+    expected<DataSetPtr>
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+           milvus::OpContext* op_context) const override {
+        ReadPermission permission(*this);
+        return SparseDspIndexNode<T>::Search(dataset, std::move(cfg), bitset, op_context);
+    }
+
+    expected<std::vector<IndexNode::IteratorPtr>>
+    AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                bool use_knowhere_search_pool, milvus::OpContext* op_context) const override {
+        ReadPermission permission(*this);
+        static_cast<knowhere::SparseDspConfig&>(*cfg).drop_ratio_search = 0.0f;
+        return SparseDspIndexNode<T>::AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
+    }
+
+    expected<DataSetPtr>
+    RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                milvus::OpContext* op_context) const override {
+        ReadPermission permission(*this);
+        return SparseDspIndexNode<T>::RangeSearch(dataset, std::move(cfg), bitset, op_context);
+    }
+
+    int64_t Dim() const override { ReadPermission p(*this); return SparseDspIndexNode<T>::Dim(); }
+    int64_t Size() const override { ReadPermission p(*this); return SparseDspIndexNode<T>::Size(); }
+    int64_t Count() const override { ReadPermission p(*this); return SparseDspIndexNode<T>::Count(); }
+
+    std::string Type() const override { return knowhere::IndexEnum::INDEX_SPARSE_DSP_CC; }
+
+    expected<DataSetPtr>
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
+        ReadPermission permission(*this);
+        if (raw_data_.empty()) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "GetVectorByIds failed: raw data is empty");
+        }
+        auto rows = dataset->GetRows();
+        auto ids = dataset->GetIds();
+        auto data = std::make_unique<sparse::SparseRow<value_type>[]>(rows);
+        int64_t dim = 0;
+        try {
+            for (int64_t i = 0; i < rows; ++i) {
+                data[i] = raw_data_[ids[i]];
+                dim = std::max(dim, data[i].dim());
+            }
+        } catch (std::exception& e) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "GetVectorByIds failed: " + std::string(e.what()));
+        }
+        auto res = GenResultDataSet(rows, dim, data.release());
+        res->SetIsSparse(true);
+        return res;
+    }
+
+    static bool StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
+        return config.metric_type.has_value() && IsMetricType(config.metric_type.value(), metric::IP);
+    }
+
+    [[nodiscard]] bool HasRawData(const std::string& metric_type) const override {
+        return IsMetricType(metric_type, metric::IP);
+    }
+
+ private:
+    struct ReadPermission {
+        ReadPermission(const SparseDspIndexNodeCC& node) : node_(node) {
+            std::unique_lock<std::mutex> lock(node_.mutex_);
+            uint64_t task_id = node_.next_task_id_++;
+            if (!node_.add_tasks_.empty() && task_id > node_.add_tasks_.front()) {
+                node_.cv_.wait(lock, [this, task_id]() {
+                    return node_.add_tasks_.empty() || task_id < node_.add_tasks_.front();
+                });
+            }
+            node_.active_readers_++;
+        }
+        ~ReadPermission() {
+            std::unique_lock<std::mutex> lock(node_.mutex_);
+            node_.active_readers_--;
+            node_.current_task_id_++;
+            node_.cv_.notify_all();
+        }
+        const SparseDspIndexNodeCC& node_;
+    };
+
+    mutable std::mutex mutex_;
+    mutable std::condition_variable cv_;
+    mutable int64_t active_readers_ = 0;
+    mutable std::queue<uint64_t> add_tasks_;
+    mutable uint64_t next_task_id_ = 0;
+    mutable uint64_t current_task_id_ = 0;
+    mutable std::vector<sparse::SparseRow<value_type>> raw_data_ = {};
+};  // class SparseDspIndexNodeCC
+
 #ifdef KNOWHERE_WITH_CARDINAL
 KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_INVERTED_INDEX_DEPRECATED, SparseInvertedIndexNode,
                                              knowhere::feature::MMAP,
@@ -662,6 +1089,7 @@ KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_INVERTED_INDEX_CC_DEPRECATED
 KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_WAND_CC_DEPRECATED, SparseInvertedIndexNodeCC,
                                              knowhere::feature::MMAP,
                                              /*use_wand=*/true)
+KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_DSP_CC, SparseDspIndexNodeCC, knowhere::feature::MMAP)
 #else
 KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_INVERTED_INDEX, SparseInvertedIndexNode, knowhere::feature::MMAP,
                                              /*use_wand=*/false)
@@ -672,5 +1100,6 @@ KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_INVERTED_INDEX_CC, SparseInv
                                              /*use_wand=*/false)
 KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_WAND_CC, SparseInvertedIndexNodeCC, knowhere::feature::MMAP,
                                              /*use_wand=*/true)
+KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_DSP_CC, SparseDspIndexNodeCC, knowhere::feature::MMAP)
 #endif
 }  // namespace knowhere
