@@ -429,6 +429,75 @@ IndexNode::AnnIteratorEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Co
     }
     return AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
 }
+expected<DataSetPtr>
+IndexNode::GetEmbListByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const {
+    if (emb_list_offset_ == nullptr) {
+        return expected<DataSetPtr>::Err(Status::emb_list_inner_error,
+                                         "GetEmbListByIds requires emb_list_offset, but it is not available");
+    }
+
+    auto num_el_ids = dataset->GetRows();
+    auto el_ids = dataset->GetIds();
+    auto dim = Dim();
+
+    // Build the output offset array and collect all vector-level IDs in a single pass.
+    //
+    // TODO(perf): Vectors within each embedding list are contiguous in the index. However, the current
+    // implementation collects all these contiguous IDs into a flat array and passes them to GetVectorByIds,
+    // which internally calls reconstruct(id, ...) one vector at a time. This could be optimized by using
+    // reconstruct_n(start, len, ...) or direct memcpy from raw data storage, avoiding both the redundant
+    // ID array allocation and per-vector overhead. We don't do this yet because it would require
+    // index-type-specific implementations (HNSW, IVF, FLAT, etc. each store raw data differently),
+    // whereas the current approach works generically across all index types via the GetVectorByIds interface.
+    std::vector<size_t> out_offsets(num_el_ids + 1);
+    out_offsets[0] = 0;
+    for (int64_t i = 0; i < num_el_ids; i++) {
+        auto el_id = el_ids[i];
+        if (el_id < 0 || static_cast<size_t>(el_id) >= emb_list_offset_->num_el()) {
+            return expected<DataSetPtr>::Err(Status::invalid_args,
+                                             "GetEmbListByIds: el_id " + std::to_string(el_id) + " out of range [0, " +
+                                                 std::to_string(emb_list_offset_->num_el()) + ")");
+        }
+        out_offsets[i + 1] = out_offsets[i] + emb_list_offset_->get_el_len(el_id);
+    }
+
+    std::vector<int64_t> vec_ids;
+    vec_ids.reserve(out_offsets[num_el_ids]);
+    for (int64_t i = 0; i < num_el_ids; i++) {
+        size_t start = emb_list_offset_->offset[el_ids[i]];
+        size_t len = out_offsets[i + 1] - out_offsets[i];
+        for (size_t j = 0; j < len; j++) {
+            vec_ids.push_back(static_cast<int64_t>(start + j));
+        }
+    }
+
+    if (vec_ids.empty()) {
+        // all emblist are empty list
+        auto result = GenResultDataSet(num_el_ids, dim, (const void*)nullptr);
+        auto* offsets_ptr = new size_t[out_offsets.size()];
+        std::memcpy(offsets_ptr, out_offsets.data(), out_offsets.size() * sizeof(size_t));
+        result->Set(meta::EMB_LIST_OFFSET, static_cast<const size_t*>(offsets_ptr));
+        return result;
+    }
+
+    auto vec_dataset = GenIdsDataSet(vec_ids.size(), vec_ids.data());
+    auto res = GetVectorByIds(vec_dataset, op_context);
+    if (!res.has_value()) {
+        return res;
+    }
+
+    // Build result: transfer tensor ownership from GetVectorByIds result to new dataset
+    auto vec_result = res.value();
+    auto tensor = vec_result->GetTensor();
+    vec_result->SetIsOwner(false);
+
+    auto result = GenResultDataSet(num_el_ids, dim, tensor);
+    auto* offsets_ptr = new size_t[out_offsets.size()];
+    std::memcpy(offsets_ptr, out_offsets.data(), out_offsets.size() * sizeof(size_t));
+    result->Set(meta::EMB_LIST_OFFSET, static_cast<const size_t*>(offsets_ptr));
+    return result;
+}
+
 // NOLINTEND(google-default-arguments)
 
 }  // namespace knowhere

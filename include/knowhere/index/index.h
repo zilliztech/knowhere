@@ -172,6 +172,9 @@ class Index {
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context = nullptr) const;
 
+    expected<DataSetPtr>
+    GetEmbListByIds(const DataSetPtr dataset, milvus::OpContext* op_context = nullptr) const;
+
     bool
     HasRawData(const std::string& metric_type) const;
 

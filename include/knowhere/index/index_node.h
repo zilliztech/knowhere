@@ -643,6 +643,22 @@ class IndexNode : public Object {
     AnnIteratorEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                              bool use_knowhere_search_pool = true, milvus::OpContext* op_context = nullptr) const;
 
+    /**
+     * @brief Retrieve raw vectors for embedding list rows by their row-level IDs (el_ids).
+     *
+     * @param dataset Input dataset containing row-level IDs (el_ids) via GetIds(), and GetRows() for the count.
+     * @param op_context Optional operation context.
+     * @return DataSetPtr containing:
+     *   - Tensor: flattened raw vector data for all vectors across requested rows
+     *   - Rows: number of requested el_ids (i.e., num_el_ids)
+     *   - Dim: vector dimension
+     *   - EMB_LIST_OFFSET: size_t array of length (num_el_ids + 1), marking per-row vector boundaries
+     *
+     * Returns error if emb_list_offset_ is not available (i.e., not an embedding list index).
+     */
+    expected<DataSetPtr>
+    GetEmbListByIds(const DataSetPtr dataset, milvus::OpContext* op_context = nullptr) const;
+
  protected:
     Version version_;
     std::unique_ptr<EmbListOffset> emb_list_offset_;  // emb_list group offset structure
