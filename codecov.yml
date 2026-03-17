@@ -48,7 +48,7 @@ comment:
 
 ignore:
   - "tests/**/*"
-  - "thirdparty/**/*"
+  # - "thirdparty/**/*"
   - "benchmark/**/*"
   - "**/*_test.cc"
   - "**/*_mock.cc"
