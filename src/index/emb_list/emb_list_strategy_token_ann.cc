@@ -31,7 +31,7 @@ namespace knowhere {
 // TokenANNEmbListStrategy indexes all vectors and aggregates scores at search time.
 class TokenANNEmbListStrategy : public EmbListStrategy {
  public:
-    std::string
+    [[nodiscard]] std::string
     Type() const override {
         return meta::EMB_LIST_STRATEGY_TOKENANN;
     }
@@ -42,7 +42,7 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
         return std::optional<DataSetPtr>(dataset);
     }
 
-    bool
+    [[nodiscard]] bool
     NeedsBaseIndexIDMap() const override {
         return true;  // needs vector_id -> doc_id mapping for bitset filtering
     }
@@ -104,10 +104,9 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
         knowhere_search_emb_list_1st_ann_latency.Observe(time);
 #endif
 
-        auto total_query_vecs = query_dataset->GetRows();
         LOG_KNOWHERE_DEBUG_ << "[TokenANN] Stage1 ANN search"
-                            << ", num_query_docs=" << num_q_el << ", num_query_vecs=" << total_query_vecs << ", k=" << k
-                            << ", vec_topk=" << vec_topk << ", index_docs=" << emb_list_offset_->num_el()
+                            << ", num_query_docs=" << num_q_el << ", num_query_vecs=" << query_dataset->GetRows()
+                            << ", k=" << k << ", vec_topk=" << vec_topk << ", index_docs=" << emb_list_offset_->num_el()
                             << ", index_vecs=" << (emb_list_offset_->offset.back());
 
         auto ids = std::make_unique<int64_t[]>(num_q_el * k);
@@ -229,12 +228,12 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
         return Status::success;
     }
 
-    std::shared_ptr<EmbListOffset>
+    [[nodiscard]] std::shared_ptr<EmbListOffset>
     GetEmbListOffset() const override {
         return emb_list_offset_;
     }
 
-    int64_t
+    [[nodiscard]] int64_t
     GetDocCount() const override {
         return emb_list_offset_ ? emb_list_offset_->num_el() : 0;
     }

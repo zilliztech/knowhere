@@ -150,7 +150,7 @@ class EmbListStrategy {
     /**
      * @brief Strategy type identifier
      */
-    virtual std::string
+    [[nodiscard]] virtual std::string
     Type() const = 0;
 
     /**
@@ -190,7 +190,7 @@ class EmbListStrategy {
      * TokenANN strategy needs vector_id -> doc_id mapping for 1-hop bitset check.
      * MUVERA/PLAID don't need this since they index at document/centroid level.
      */
-    virtual bool
+    [[nodiscard]] virtual bool
     NeedsBaseIndexIDMap() const = 0;
 
     /**
@@ -201,7 +201,7 @@ class EmbListStrategy {
      * store for reranking via CalcDistByIDs.
      * TokenANN indexes raw vectors directly, so it doesn't need this.
      */
-    virtual bool
+    [[nodiscard]] virtual bool
     NeedsRawVectorStorage() const {
         return false;
     }
@@ -265,7 +265,7 @@ class EmbListStrategy {
      *
      * Returns nullptr if strategy doesn't maintain emb_list offsets.
      */
-    virtual std::shared_ptr<EmbListOffset>
+    [[nodiscard]] virtual std::shared_ptr<EmbListOffset>
     GetEmbListOffset() const {
         return nullptr;
     }
@@ -273,7 +273,7 @@ class EmbListStrategy {
     /**
      * @brief Get number of documents.
      */
-    virtual int64_t
+    [[nodiscard]] virtual int64_t
     GetDocCount() const = 0;
 };
 

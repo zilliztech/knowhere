@@ -2362,8 +2362,7 @@ class HNSWIndexNodeWithFallback : public IndexNode {
     }
 
     Status
-    BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
-                       bool use_knowhere_build_pool = true) override {
+    BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         if (use_base_index) {
             return base_index->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
         } else {
@@ -2372,8 +2371,7 @@ class HNSWIndexNodeWithFallback : public IndexNode {
     }
 
     Status
-    AddEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
-                     bool use_knowhere_build_pool = true) override {
+    AddEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         if (use_base_index) {
             return base_index->AddEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
         } else {
@@ -2383,7 +2381,7 @@ class HNSWIndexNodeWithFallback : public IndexNode {
 
     Status
     BulidAsyncEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
-                            const Interrupt* interrupt = nullptr) override {
+                            const Interrupt* interrupt) override {
         if (use_base_index) {
             return base_index->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt);
         } else {
@@ -2420,7 +2418,7 @@ class HNSWIndexNodeWithFallback : public IndexNode {
 
     expected<DataSetPtr>
     SearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
-                        milvus::OpContext* op_context = nullptr) const override {
+                        milvus::OpContext* op_context) const override {
         if (use_base_index) {
             return base_index->SearchEmbListIfNeed(dataset, std::move(config), bitset, op_context);
         } else {
@@ -2430,7 +2428,7 @@ class HNSWIndexNodeWithFallback : public IndexNode {
 
     expected<DataSetPtr>
     RangeSearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                             milvus::OpContext* op_context = nullptr) const override {
+                             milvus::OpContext* op_context) const override {
         if (use_base_index) {
             return base_index->RangeSearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
         } else {
@@ -2440,14 +2438,22 @@ class HNSWIndexNodeWithFallback : public IndexNode {
 
     expected<std::vector<IteratorPtr>>
     AnnIteratorEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                             bool use_knowhere_search_pool = true,
-                             milvus::OpContext* op_context = nullptr) const override {
+                             bool use_knowhere_search_pool, milvus::OpContext* op_context) const override {
         if (use_base_index) {
             return base_index->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), bitset, use_knowhere_search_pool,
                                                         op_context);
         } else {
             return fallback_search_index->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), bitset,
                                                                    use_knowhere_search_pool, op_context);
+        }
+    }
+
+    expected<DataSetPtr>
+    GetEmbListByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
+        if (use_base_index) {
+            return base_index->GetEmbListByIds(dataset, op_context);
+        } else {
+            return fallback_search_index->GetEmbListByIds(dataset, op_context);
         }
     }
 

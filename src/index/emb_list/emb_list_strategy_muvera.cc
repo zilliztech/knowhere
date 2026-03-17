@@ -52,7 +52,7 @@ class SimHash {
         return index;
     }
 
-    const std::vector<float>&
+    [[nodiscard]] const std::vector<float>&
     GetProjectionMatrix() const {
         return projection_matrix_;
     }
@@ -88,7 +88,7 @@ class SimHash {
 // followed by exact MaxSim reranking.
 class MuveraEmbListStrategy : public EmbListStrategy {
  public:
-    std::string
+    [[nodiscard]] std::string
     Type() const override {
         return meta::EMB_LIST_STRATEGY_MUVERA;
     }
@@ -146,12 +146,12 @@ class MuveraEmbListStrategy : public EmbListStrategy {
         return std::optional<DataSetPtr>(encoded_dataset);
     }
 
-    bool
+    [[nodiscard]] bool
     NeedsBaseIndexIDMap() const override {
         return false;
     }
 
-    bool
+    [[nodiscard]] bool
     NeedsRawVectorStorage() const override {
         return true;
     }
@@ -291,11 +291,11 @@ class MuveraEmbListStrategy : public EmbListStrategy {
         knowhere_search_emb_list_2nd_bf_agg_latency.Observe(time2);
 #endif
 
-        double avg_doc_len = total_candidates > 0 ? static_cast<double>(total_doc_vecs) / total_candidates : 0;
-        double avg_query_len = num_query_docs > 0 ? static_cast<double>(total_query_vecs) / num_query_docs : 0;
         LOG_KNOWHERE_DEBUG_ << "[MUVERA] Stage3 Rerank"
-                            << ", total_candidates=" << total_candidates << ", avg_doc_len=" << avg_doc_len
-                            << ", avg_query_len=" << avg_query_len
+                            << ", total_candidates=" << total_candidates << ", avg_doc_len="
+                            << (total_candidates > 0 ? static_cast<double>(total_doc_vecs) / total_candidates : 0)
+                            << ", avg_query_len="
+                            << (num_query_docs > 0 ? static_cast<double>(total_query_vecs) / num_query_docs : 0)
                             << ", total_dist_comps=" << total_distance_computations;
 
         return GenResultDataSet(static_cast<int64_t>(num_query_docs), static_cast<int64_t>(k), std::move(ids),
@@ -401,12 +401,12 @@ class MuveraEmbListStrategy : public EmbListStrategy {
         return Status::success;
     }
 
-    int64_t
+    [[nodiscard]] int64_t
     GetDocCount() const override {
         return num_docs_;
     }
 
-    std::shared_ptr<EmbListOffset>
+    [[nodiscard]] std::shared_ptr<EmbListOffset>
     GetEmbListOffset() const override {
         return emb_list_offset_;
     }
