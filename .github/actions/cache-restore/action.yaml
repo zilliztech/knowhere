@@ -19,5 +19,5 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: ~/.conan
-        key: knowhere-${{ inputs.os }}-${{ github.job }}-conan-${{ hashFiles('conanfile.py') }}
-        restore-keys: knowhere-${{ inputs.os }}-${{ github.job }}-conan-
+        key: knowhere-v2-${{ inputs.os }}-${{ github.job }}-conan-${{ hashFiles('conanfile.py') }}
+        restore-keys: knowhere-v2-${{ inputs.os }}-${{ github.job }}-conan-

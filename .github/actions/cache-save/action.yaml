@@ -18,4 +18,4 @@ runs:
       uses: actions/cache/save@v4
       with:
         path: ~/.conan
-        key: knowhere-${{ inputs.os }}-${{ github.job }}-conan-${{ hashFiles('conanfile.py') }}
+        key: knowhere-v2-${{ inputs.os }}-${{ github.job }}-conan-${{ hashFiles('conanfile.py') }}
