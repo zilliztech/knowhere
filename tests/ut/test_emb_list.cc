@@ -3424,13 +3424,13 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         std::string strategy_type = "muvera";
         std::vector<uint8_t> fake_blob = {0x01, 0x02, 0x03, 0x04};
         size_t type_len = strategy_type.size();
-        int64_t total_size = sizeof(int32_t) + sizeof(size_t) + type_len + fake_blob.size();
+        int64_t total_size = sizeof(int64_t) + sizeof(size_t) + type_len + fake_blob.size();
         auto data = std::make_unique<uint8_t[]>(total_size);
         uint8_t* ptr = data.get();
 
-        int32_t magic = knowhere::kEmbListMetaMagic;
-        std::memcpy(ptr, &magic, sizeof(int32_t));
-        ptr += sizeof(int32_t);
+        int64_t magic = knowhere::kEmbListMetaMagic;
+        std::memcpy(ptr, &magic, sizeof(int64_t));
+        ptr += sizeof(int64_t);
         std::memcpy(ptr, &type_len, sizeof(size_t));
         ptr += sizeof(size_t);
         std::memcpy(ptr, strategy_type.data(), type_len);
@@ -3459,12 +3459,12 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         // Verify EMB_LIST_META starts with the correct magic
         auto meta_bin = binset.GetByName(knowhere::meta::EMB_LIST_META);
         REQUIRE(meta_bin != nullptr);
-        int32_t read_magic = 0;
-        std::memcpy(&read_magic, meta_bin->data.get(), sizeof(int32_t));
+        int64_t read_magic = 0;
+        std::memcpy(&read_magic, meta_bin->data.get(), sizeof(int64_t));
         REQUIRE(read_magic == knowhere::kEmbListMetaMagic);
 
         // Verify strategy type is embedded after magic
-        const uint8_t* meta_ptr = meta_bin->data.get() + sizeof(int32_t);
+        const uint8_t* meta_ptr = meta_bin->data.get() + sizeof(int64_t);
         size_t read_type_len = 0;
         std::memcpy(&read_type_len, meta_ptr, sizeof(size_t));
         meta_ptr += sizeof(size_t);
@@ -3485,9 +3485,9 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         std::memcpy(blob_data.get(), &num_offsets, sizeof(size_t));
         std::memcpy(blob_data.get() + sizeof(size_t), offsets.data(), num_offsets * sizeof(size_t));
 
-        // Verify the first 4 bytes don't match the magic
-        int32_t first_bytes = 0;
-        std::memcpy(&first_bytes, blob_data.get(), sizeof(int32_t));
+        // Verify the first 8 bytes don't match the magic
+        int64_t first_bytes = 0;
+        std::memcpy(&first_bytes, blob_data.get(), sizeof(int64_t));
         REQUIRE(first_bytes != knowhere::kEmbListMetaMagic);
 
         // Put this into a BinarySet and try to deserialize as TokenANN

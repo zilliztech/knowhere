@@ -280,7 +280,8 @@ class EmbListStrategy {
 using EmbListStrategyPtr = std::unique_ptr<EmbListStrategy>;
 
 // Magic number for EMB_LIST_META format: [magic][type_len][type][strategy_blob]
-constexpr int32_t kEmbListMetaMagic = 0x454C4D46;  // "ELMF"
+// Use int64_t to avoid collision with legacy TokenANN format whose first 8 bytes are size_t count.
+constexpr int64_t kEmbListMetaMagic = 0x454C4D465F563200LL;  // "ELMF_V2\0"
 
 /**
  * @brief Factory function to create EmbList strategy.

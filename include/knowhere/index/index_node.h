@@ -345,32 +345,6 @@ class IndexNode : public Object {
         return Status::not_implemented;
     }
 
-    /**
-     * @brief Establishes the mapping from internal base-index IDs to emb_list IDs.
-     *
-     * This mapping is essential for base indexes to correctly apply bitset filtering using only a 1-hop mapping during
-     * search. In some cases, such as with mv-only *relayout*, a base-index may have its own
-     * (base)internal-to-external ID mapping.
-     * However, the emb_list search bitset operates on emb_list IDs, which we refer to as the "most external" IDs.
-     * Therefore, we need to create a mapping from the base_internal_id (used by the base-index) to the most external
-     * emb_list_id, ensuring that bitset checks and search results are consistent at the emb_list level.
-     */
-    Status
-    SetBaseIndexIDMap() {
-        auto internal_id_to_external_id_map = GetInternalIdToExternalIdMap();
-        size_t id_map_size = internal_id_to_external_id_map->size();
-        assert(id_map_size == static_cast<size_t>(Count()));
-        std::vector<uint32_t> internal_id_to_most_external_id_map(id_map_size);
-        for (size_t i = 0; i < id_map_size; i++) {
-            internal_id_to_most_external_id_map[i] = emb_list_offset_->get_el_id(internal_id_to_external_id_map->at(i));
-        }
-        return SetInternalIdToMostExternalIdMap(std::move(internal_id_to_most_external_id_map));
-    }
-
-    virtual Status
-    BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
-                 bool use_knowhere_build_pool = true);
-
     virtual Status
     BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) {
         auto& config = static_cast<BaseConfig&>(*cfg);
@@ -444,12 +418,6 @@ class IndexNode : public Object {
     }
 
     /**
-     * @brief Serialize emb_list: strategy meta, raw index, and base index to BinarySet.
-     */
-    Status
-    SerializeEmbList(BinarySet& binset) const;
-
-    /**
      * @brief Deserializes the index from a binary set, including the emb_list meta if is emb_list.
      *
      * @param binset The BinarySet containing the serialized index.
@@ -467,12 +435,6 @@ class IndexNode : public Object {
 
         return DeserializeEmbListFromBinarySet(binset, config);
     }
-
-    /**
-     * @brief Deserialize emb_list: base index, strategy, raw index, and ID mapping from BinarySet.
-     */
-    Status
-    DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_ptr<Config> config);
 
     virtual bool
     LoadIndexWithStream() {
@@ -494,12 +456,6 @@ class IndexNode : public Object {
         return DeserializeEmbListFromFile(filename, config);
     }
 
-    /**
-     * @brief Deserialize emb_list: base index, strategy, raw index, and ID mapping from files.
-     */
-    Status
-    DeserializeEmbListFromFile(const std::string& filename, std::shared_ptr<Config> config);
-
     virtual expected<DataSetPtr>
     SearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
                         milvus::OpContext* op_context = nullptr) const;
@@ -517,6 +473,72 @@ class IndexNode : public Object {
     GetQueryCodeSize(const DataSetPtr dataset) const {
         throw std::runtime_error("GetQueryCodeSize not supported for current index type");
     }
+
+    virtual expected<DataSetPtr>
+    RangeSearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                             milvus::OpContext* op_context = nullptr) const;
+
+    virtual expected<std::vector<IteratorPtr>>
+    AnnIteratorEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                             bool use_knowhere_search_pool = true, milvus::OpContext* op_context = nullptr) const;
+
+ protected:
+    /**
+     * @brief Parse EMB_LIST_META header from raw bytes.
+     *
+     * Detects format by magic number:
+     * - New format: [int64_t magic][size_t type_len][char[type_len] type][uint8_t[] strategy_blob]
+     * - Legacy format (tokenann only): entire blob is [size_t count][size_t[count] offsets]
+     */
+    struct EmbListMetaHeader {
+        std::string strategy_type;
+        const uint8_t* strategy_blob;
+        int64_t strategy_blob_size;
+    };
+
+    /**
+     * @brief Establishes the mapping from internal base-index IDs to emb_list IDs.
+     *
+     * This mapping is essential for base indexes to correctly apply bitset filtering using only a 1-hop mapping during
+     * search. In some cases, such as with mv-only *relayout*, a base-index may have its own
+     * (base)internal-to-external ID mapping.
+     * However, the emb_list search bitset operates on emb_list IDs, which we refer to as the "most external" IDs.
+     * Therefore, we need to create a mapping from the base_internal_id (used by the base-index) to the most external
+     * emb_list_id, ensuring that bitset checks and search results are consistent at the emb_list level.
+     */
+    Status
+    SetBaseIndexIDMap() {
+        auto internal_id_to_external_id_map = GetInternalIdToExternalIdMap();
+        size_t id_map_size = internal_id_to_external_id_map->size();
+        assert(id_map_size == static_cast<size_t>(Count()));
+        std::vector<uint32_t> internal_id_to_most_external_id_map(id_map_size);
+        for (size_t i = 0; i < id_map_size; i++) {
+            internal_id_to_most_external_id_map[i] = emb_list_offset_->get_el_id(internal_id_to_external_id_map->at(i));
+        }
+        return SetInternalIdToMostExternalIdMap(std::move(internal_id_to_most_external_id_map));
+    }
+
+    virtual Status
+    BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
+                 bool use_knowhere_build_pool = true);
+
+    /**
+     * @brief Serialize emb_list: strategy meta, raw index, and base index to BinarySet.
+     */
+    Status
+    SerializeEmbList(BinarySet& binset) const;
+
+    /**
+     * @brief Deserialize emb_list: base index, strategy, raw index, and ID mapping from BinarySet.
+     */
+    Status
+    DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_ptr<Config> config);
+
+    /**
+     * @brief Deserialize emb_list: base index, strategy, raw index, and ID mapping from files.
+     */
+    Status
+    DeserializeEmbListFromFile(const std::string& filename, std::shared_ptr<Config> config);
 
     /**
      * @brief Search interface supporting two-stage emb_list search.
@@ -538,46 +560,8 @@ class IndexNode : public Object {
     SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                   milvus::OpContext* op_context = nullptr) const;
 
-    virtual expected<DataSetPtr>
-    RangeSearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                             milvus::OpContext* op_context = nullptr) const;
-
-    virtual expected<std::vector<IteratorPtr>>
-    AnnIteratorEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                             bool use_knowhere_search_pool = true, milvus::OpContext* op_context = nullptr) const;
-
- protected:
-    /**
-     * @brief Parse EMB_LIST_META header from raw bytes.
-     *
-     * Detects format by magic number:
-     * - New format: [int32_t magic][size_t type_len][char[type_len] type][uint8_t[] strategy_blob]
-     * - Legacy format (tokenann only): entire blob is [size_t count][size_t[count] offsets]
-     */
-    struct EmbListMetaHeader {
-        std::string strategy_type;
-        const uint8_t* strategy_blob;
-        int64_t strategy_blob_size;
-    };
-
     static EmbListMetaHeader
-    ParseEmbListMetaHeader(const uint8_t* data, int64_t size) {
-        int32_t magic = 0;
-        std::memcpy(&magic, data, sizeof(int32_t));
-
-        if (magic == kEmbListMetaMagic) {
-            const uint8_t* ptr = data + sizeof(int32_t);
-            size_t type_len = 0;
-            std::memcpy(&type_len, ptr, sizeof(size_t));
-            ptr += sizeof(size_t);
-            std::string strategy_type(reinterpret_cast<const char*>(ptr), type_len);
-            ptr += type_len;
-            int64_t strategy_blob_size = size - sizeof(int32_t) - sizeof(size_t) - type_len;
-            return {std::move(strategy_type), ptr, strategy_blob_size};
-        } else {
-            return {meta::EMB_LIST_STRATEGY_TOKENANN, data, size};
-        }
-    }
+    ParseEmbListMetaHeader(const uint8_t* data, int64_t size);
 
  protected:
     /**

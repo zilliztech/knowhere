@@ -22,6 +22,7 @@
 #include "knowhere/context.h"
 #include "knowhere/log.h"
 #include "knowhere/range_util.h"
+#include "knowhere/utils.h"
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
 #include "knowhere/comp/task.h"
@@ -353,6 +354,21 @@ IndexNode::BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, c
     return Status::success;
 }
 
+IndexNode::EmbListMetaHeader
+IndexNode::ParseEmbListMetaHeader(const uint8_t* data, int64_t size) {
+    MemoryIOReader reader(const_cast<uint8_t*>(data), size);
+    int64_t magic = 0;
+    readBinaryPOD(reader, magic);
+    if (magic == kEmbListMetaMagic) {
+        size_t type_len = 0;
+        readBinaryPOD(reader, type_len);
+        std::string strategy_type(reinterpret_cast<const char*>(data + reader.tellg()), type_len);
+        reader.advance(type_len);
+        return {std::move(strategy_type), data + reader.tellg(), static_cast<int64_t>(reader.remaining())};
+    }
+    return {meta::EMB_LIST_STRATEGY_TOKENANN, data, size};
+}
+
 Status
 IndexNode::SerializeEmbList(BinarySet& binset) const {
     LOG_KNOWHERE_INFO_ << "Serialize emb_list with strategy: " << emb_list_strategy_->Type();
@@ -365,20 +381,16 @@ IndexNode::SerializeEmbList(BinarySet& binset) const {
         // 2. Build EMB_LIST_META = [magic][type_len][type][strategy_blob]
         auto strategy_type = emb_list_strategy_->Type();
         size_t type_len = strategy_type.size();
-        int64_t meta_size = sizeof(int32_t) + sizeof(size_t) + type_len + strategy_size;
-        auto meta_data = std::shared_ptr<uint8_t[]>(new uint8_t[meta_size]);
-        uint8_t* ptr = meta_data.get();
 
-        int32_t magic = kEmbListMetaMagic;
-        std::memcpy(ptr, &magic, sizeof(int32_t));
-        ptr += sizeof(int32_t);
-        std::memcpy(ptr, &type_len, sizeof(size_t));
-        ptr += sizeof(size_t);
-        std::memcpy(ptr, strategy_type.data(), type_len);
-        ptr += type_len;
-        std::memcpy(ptr, strategy_data.get(), strategy_size);
+        MemoryIOWriter writer;
+        int64_t magic = kEmbListMetaMagic;
+        writeBinaryPOD(writer, magic);
+        writeBinaryPOD(writer, type_len);
+        writer(strategy_type.data(), type_len, 1);
+        writer(strategy_data.get(), strategy_size, 1);
 
-        binset.Append(meta::EMB_LIST_META, meta_data, meta_size);
+        std::shared_ptr<uint8_t[]> meta_data(writer.data());
+        binset.Append(meta::EMB_LIST_META, meta_data, writer.tellg());
 
         // 3. Raw vector index as separate key (large, needs mmap in file path)
         if (emb_list_raw_index_) {
