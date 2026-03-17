@@ -27,6 +27,7 @@ namespace {
 constexpr const CFG_INT::value_type kSearchWidth = 1;
 constexpr const CFG_INT::value_type kAlignFactor = 32;
 constexpr const CFG_INT::value_type kItopkSize = 64;
+constexpr const CFG_INT::value_type kCagraEfMinValue = 16;
 }  // namespace
 
 struct GpuCuvsCagraConfig : public BaseConfig {
@@ -150,6 +151,15 @@ struct GpuCuvsCagraConfig : public BaseConfig {
                 }
             } else {
                 search_width = std::max((k.value() - 1) / kAlignFactor + 1, kSearchWidth);
+            }
+
+            // Default ef for adapt_for_cpu HNSW search path
+            if (!ef.has_value()) {
+                ef = std::max(k.value(), kCagraEfMinValue);
+            } else if (k.value() > ef.value()) {
+                std::string msg =
+                    "ef(" + std::to_string(ef.value()) + ") should be larger than k(" + std::to_string(k.value()) + ")";
+                return HandleError(err_msg, msg, Status::out_of_range_in_json);
             }
         }
         return Status::success;
