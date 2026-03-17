@@ -495,7 +495,7 @@ class IndexNode : public Object {
      *
      * Returns error if emb_list_offset_ is not available (i.e., not an embedding list index).
      */
-    expected<DataSetPtr>
+    virtual expected<DataSetPtr>
     GetEmbListByIds(const DataSetPtr dataset, milvus::OpContext* op_context = nullptr) const;
 
  protected:
@@ -536,7 +536,7 @@ class IndexNode : public Object {
 
     virtual Status
     BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
-                 bool use_knowhere_build_pool = true);
+                 bool use_knowhere_build_pool);
 
     /**
      * @brief Serialize emb_list: strategy meta, raw index, and base index to BinarySet.
