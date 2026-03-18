@@ -295,6 +295,11 @@ IndexNode::SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, 
             el_ids_set.emplace(emb_list_offset_->get_el_id((size_t)stage1_ids[j]));
         }
 
+        // Generate query dataset once per query emb_list (invariant across candidate docs)
+        auto tensor = static_cast<const char*>(dataset->GetTensor());
+        size_t tensor_offset = start_offset * query_code_size;
+        auto bf_query_dataset = GenDataSet(nq, dim, tensor + tensor_offset);
+
         // For each emb_list, perform brute-force calculation and aggregate scores
         std::priority_queue<DistId, std::vector<DistId>, std::greater<>> minheap;
         std::priority_queue<DistId, std::vector<DistId>, std::less<>> maxheap;
@@ -304,13 +309,9 @@ IndexNode::SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, 
                 return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "invalid emb_list id");
             }
             auto vids = emb_list_offset_->get_vids(el_id);
-            // Generate query dataset for the current query_emb_list
-            auto tensor = (const char*)dataset->GetTensor();
-            size_t tensor_offset = start_offset * query_code_size;
 
             // Brute-force compute distances between all vectors in the query emb_list and all vectors in the
             // candidate emb_list
-            auto bf_query_dataset = GenDataSet(end_offset - start_offset, dim, tensor + tensor_offset);
             auto bf_search_res = CalcDistByIDs(bf_query_dataset, bitset, vids.data(), vids.size(), is_cosine);
             if (!bf_search_res.has_value()) {
                 LOG_KNOWHERE_ERROR_ << "bf search error: " << bf_search_res.what();
