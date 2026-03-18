@@ -354,9 +354,7 @@ class LemurEmbListStrategy : public EmbListStrategy {
             float* q_feat = query_feats.data() + q * final_hidden_dim_;
             const float* token_feats = all_feats.data() + q_vec_start * final_hidden_dim_;
             for (size_t t = 0; t < nq; ++t) {
-                for (int32_t d = 0; d < final_hidden_dim_; ++d) {
-                    q_feat[d] += token_feats[t * final_hidden_dim_ + d];
-                }
+                cblas_saxpy(final_hidden_dim_, 1.0f, token_feats + t * final_hidden_dim_, 1, q_feat, 1);
             }
         }
 

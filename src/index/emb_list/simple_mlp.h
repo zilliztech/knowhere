@@ -650,13 +650,9 @@ class SimpleMLP {
         cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, batch, out_dim, in_dim, 1.0f, X, in_dim, W, in_dim, 0.0f,
                     Y, out_dim);
 
-        // Add bias: Y[i,:] += b - row-major traversal for cache efficiency
-        // Instead of batch calls to cblas_saxpy, use single loop with better cache locality
+        // Add bias: Y[i,:] += b
         for (int32_t i = 0; i < batch; ++i) {
-            float* y_row = Y + i * out_dim;
-            for (int32_t j = 0; j < out_dim; ++j) {
-                y_row[j] += b[j];
-            }
+            cblas_saxpy(out_dim, 1.0f, b, 1, Y + i * out_dim, 1);
         }
     }
 
@@ -676,13 +672,10 @@ class SimpleMLP {
         cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, out_dim, in_dim, batch, 1.0f, dY, out_dim, X, in_dim, 0.0f,
                     dW, in_dim);
 
-        // db = sum(dY, axis=0) - zero then accumulate
+        // db = sum(dY, axis=0)
         std::fill(db, db + out_dim, 0.0f);
         for (int32_t i = 0; i < batch; ++i) {
-            const float* dy_row = dY + i * out_dim;
-            for (int32_t j = 0; j < out_dim; ++j) {
-                db[j] += dy_row[j];
-            }
+            cblas_saxpy(out_dim, 1.0f, dY + i * out_dim, 1, db, 1);
         }
 
         // dX = dY @ W
@@ -778,8 +771,8 @@ class SimpleMLP {
 
             for (int32_t j = 0; j < dim; ++j) {
                 dgamma[j] += dy_row[j] * x_norm[j];
-                dbeta[j] += dy_row[j];
             }
+            cblas_saxpy(dim, 1.0f, dy_row, 1, dbeta, 1);
 
             float sum_dy_gamma = 0.0f;
             float sum_dy_gamma_xnorm = 0.0f;

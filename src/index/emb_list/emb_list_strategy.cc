@@ -53,6 +53,13 @@ RerankByCalcDistByIDs(const std::vector<int64_t>& candidate_docs, const DataSetP
 
     for (int64_t doc_id : candidate_docs) {
         auto vids = emb_list_offset->get_vids((size_t)doc_id);
+        if (vids.empty()) {
+            // Empty embedding lists (0 vectors) can appear as rerank candidates because some strategies
+            // (e.g., MUVERA) encode every doc into the ANN index regardless of whether it has vectors.
+            // An empty doc's FDE encoding is all zeros, which can still be retrieved by ANN search.
+            // Since there are no vectors to compute distances against, skip it.
+            continue;
+        }
         out_doc_vecs += vids.size();
         out_distance_computations += nq * vids.size();
         auto bf_search_res =
