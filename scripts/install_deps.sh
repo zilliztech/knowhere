@@ -81,15 +81,22 @@ else
     exit 1
 fi
 
-pip3 install conan==${CONAN_VERSION}  # C/C++ package manager
+if [[ "${OS}" == "Mac" ]]; then
+    # macOS Homebrew Python (PEP 668) blocks system-wide pip install;
+    # use pipx for conan.
+    brew install pipx
+    pipx install conan==${CONAN_VERSION}
+else
+    pip3 install conan==${CONAN_VERSION}  # C/C++ package manager
 
-pip3 install -U setuptools
-# wheel must be installed before bfloat16: bfloat16 has no pre-built wheel
-# for Python 3.8, so pip builds from source. Without the wheel package, pip
-# uses PEP 517 build isolation which can't see the installed numpy.
-pip3 install wheel 'numpy<2'
-pip3 install bfloat16   # wheel: bfloat16 dtype support for PyKnowhere
-pip3 install auditwheel  # wheel: manylinux wheel repair
+    pip3 install -U setuptools
+    # wheel must be installed before bfloat16: bfloat16 has no pre-built wheel
+    # for Python 3.8, so pip builds from source. Without the wheel package, pip
+    # uses PEP 517 build isolation which can't see the installed numpy.
+    pip3 install wheel 'numpy<2'
+    pip3 install bfloat16   # wheel: bfloat16 dtype support for PyKnowhere
+    pip3 install auditwheel  # wheel: manylinux wheel repair
+fi
 
 echo "[install_deps] Configuring conan remote..."
 conan remote add default-conan-local ${CONAN_REMOTE_URL} || true
