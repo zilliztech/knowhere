@@ -55,9 +55,9 @@ enum class DspSectionType : uint32_t {
 };
 
 struct DspSectionHeader {
-    DspSectionType type;
-    uint64_t offset;
-    uint64_t size;
+    DspSectionType type = DspSectionType::POSTING_LISTS;
+    uint64_t offset = 0;
+    uint64_t size = 0;
 };
 
 struct DspBuildStats {
@@ -74,9 +74,9 @@ enum class DspSearchMode : int {
 };
 
 struct DspSearchParams {
-    int refine_factor;
-    float drop_ratio_search;
-    float dim_max_score_ratio;
+    int refine_factor = 1;
+    float drop_ratio_search = 0.0f;
+    float dim_max_score_ratio = 1.0f;
     DspSearchMode dsp_mode = DspSearchMode::DSP;
     float dsp_mu = 1.0f;
     float dsp_eta = 1.0f;
@@ -90,10 +90,6 @@ template <typename T>
 class DspIndexBase {
  public:
     virtual ~DspIndexBase() = default;
-    virtual Status
-    SerializeV0(MemoryIOWriter& writer) const = 0;
-    virtual Status
-    DeserializeV0(MemoryIOReader& reader, int map_flags, const std::string& supplement_target_filename) = 0;
     virtual Status
     Serialize(MemoryIOWriter& writer) const = 0;
     virtual Status
@@ -276,128 +272,6 @@ class DspIndex : public DspIndexBase<DType> {
             build_dsp_metadata();
             return Status::success;
         }
-    }
-
-    Status
-    SerializeV0(MemoryIOWriter& writer) const override {
-        DType deprecated_value_threshold = 0;
-        writeBinaryPOD(writer, n_rows_internal_);
-        writeBinaryPOD(writer, max_dim_);
-        writeBinaryPOD(writer, deprecated_value_threshold);
-
-        auto dim_map_reverse = std::unordered_map<uint32_t, table_t>();
-        for (const auto& [dim, dim_id] : dim_map_) {
-            dim_map_reverse[dim_id] = dim;
-        }
-
-        std::vector<size_t> row_sizes(n_rows_internal_, 0);
-        for (auto inverted_index_ids_span : inverted_index_ids_spans_) {
-            for (const auto& id : inverted_index_ids_span) {
-                row_sizes[id]++;
-            }
-        }
-
-        std::vector<SparseRow<DType>> raw_rows(n_rows_internal_);
-        for (size_t i = 0; i < n_rows_internal_; ++i) {
-            raw_rows[i] = std::move(SparseRow<DType>(row_sizes[i]));
-        }
-
-        for (size_t i = 0; i < inverted_index_ids_spans_.size(); ++i) {
-            const auto& ids = inverted_index_ids_spans_[i];
-            const auto& vals = inverted_index_vals_spans_[i];
-            const auto dim = dim_map_reverse[i];
-            for (size_t j = 0; j < ids.size(); ++j) {
-                raw_rows[ids[j]].set_at(raw_rows[ids[j]].size() - row_sizes[ids[j]], dim, vals[j]);
-                --row_sizes[ids[j]];
-            }
-        }
-
-        for (table_t vec_id = 0; vec_id < n_rows_internal_; ++vec_id) {
-            writeBinaryPOD(writer, raw_rows[vec_id].size());
-            if (raw_rows[vec_id].size() > 0) {
-                writer.write(raw_rows[vec_id].data(), raw_rows[vec_id].size() * SparseRow<DType>::element_size());
-            }
-        }
-
-        return Status::success;
-    }
-
-    Status
-    DeserializeV0(MemoryIOReader& reader, int map_flags, const std::string& supplement_target_filename) override {
-        DType deprecated_value_threshold;
-        int64_t rows;
-        readBinaryPOD(reader, rows);
-        rows = std::abs(rows);
-        readBinaryPOD(reader, max_dim_);
-        readBinaryPOD(reader, deprecated_value_threshold);
-
-        if constexpr (mmapped) {
-            RETURN_IF_ERROR(PrepareMmap(reader, rows, map_flags, supplement_target_filename));
-        } else {
-            if (metric_type_ == SparseMetricType::METRIC_BM25) {
-                bm25_params_->row_sums.reserve(rows);
-            }
-        }
-
-        auto load_progress_interval = rows / 10;
-        for (int64_t i = 0; i < rows; ++i) {
-            if (load_progress_interval > 0 && i % load_progress_interval == 0) {
-                LOG_KNOWHERE_INFO_ << "Sparse DspIndex loading progress: " << (i / load_progress_interval * 10) << "%";
-            }
-
-            size_t count;
-            readBinaryPOD(reader, count);
-            SparseRow<DType> raw_row;
-            if constexpr (mmapped) {
-                raw_row = std::move(SparseRow<DType>(count, reader.data() + reader.tellg(), false));
-                reader.advance(count * SparseRow<DType>::element_size());
-            } else {
-                raw_row = std::move(SparseRow<DType>(count));
-                if (count > 0) {
-                    reader.read(raw_row.data(), count * SparseRow<DType>::element_size());
-                }
-            }
-            add_row_to_index(raw_row, i);
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-            index_dataset_nnz_len_histogram_->Observe(count);
-#endif
-        }
-        LOG_KNOWHERE_INFO_ << "Sparse DspIndex loading progress: 100%";
-
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-        for (size_t i = 0; i < dim_map_.size(); ++i) {
-            index_posting_list_len_histogram_->Observe(inverted_index_ids_[i].size());
-        }
-        index_size_gauge_->Set((double)size() / 1024.0 / 1024.0);
-#endif
-
-        n_rows_internal_ = rows;
-        nr_inner_dims_ = dim_map_.size();
-
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-        build_stats_.posting_list_length_stats_.resize(nr_inner_dims_);
-        for (size_t i = 0; i < nr_inner_dims_; ++i) {
-            build_stats_.posting_list_length_stats_[i] = inverted_index_ids_[i].size();
-        }
-#endif
-        inverted_index_ids_spans_.reserve(nr_inner_dims_);
-        inverted_index_vals_spans_.reserve(nr_inner_dims_);
-        for (size_t i = 0; i < nr_inner_dims_; ++i) {
-            inverted_index_ids_spans_.emplace_back(inverted_index_ids_[i].data(), inverted_index_ids_[i].size());
-            inverted_index_vals_spans_.emplace_back(inverted_index_vals_[i].data(), inverted_index_vals_[i].size());
-        }
-
-        if (max_score_in_dim_.size() > 0) {
-            max_score_in_dim_spans_ = boost::span<const float>(max_score_in_dim_.data(), max_score_in_dim_.size());
-        }
-
-        if (metric_type_ == SparseMetricType::METRIC_BM25) {
-            bm25_params_->row_sums_spans_ =
-                boost::span<const float>(bm25_params_->row_sums.data(), bm25_params_->row_sums.size());
-        }
-
-        build_dsp_metadata();
-        return Status::success;
     }
 
     Status
@@ -821,22 +695,54 @@ class DspIndex : public DspIndexBase<DType> {
                (sizeof(typename decltype(dim_map_)::key_type) + sizeof(typename decltype(dim_map_)::mapped_type));
 
         if constexpr (mmapped) {
-            return res + map_byte_size_;
+            res += map_byte_size_;
         } else {
-            res += sizeof(typename decltype(inverted_index_ids_spans_)::value_type) * inverted_index_ids_spans_.size();
-            for (auto inverted_index_ids_span : inverted_index_ids_spans_) {
-                res += sizeof(typename decltype(inverted_index_ids_spans_)::value_type::value_type) *
-                       inverted_index_ids_span.size();
+            // Posting list data: use owning vectors if populated (Train path),
+            // otherwise fall back to spans (Deserialize path where spans point into binary_).
+            if (inverted_index_ids_.size() == nr_inner_dims_) {
+                for (uint32_t i = 0; i < nr_inner_dims_; ++i) {
+                    res += inverted_index_ids_[i].capacity() * sizeof(table_t);
+                    res += inverted_index_vals_[i].capacity() * sizeof(QType);
+                }
+            } else {
+                for (uint32_t i = 0; i < inverted_index_ids_spans_.size(); ++i) {
+                    res += inverted_index_ids_spans_[i].size() * sizeof(table_t);
+                    res += inverted_index_vals_spans_[i].size() * sizeof(QType);
+                }
             }
-            res +=
-                sizeof(typename decltype(inverted_index_vals_spans_)::value_type) * inverted_index_vals_spans_.size();
-            for (auto inverted_index_vals_span : inverted_index_vals_spans_) {
-                res += sizeof(typename decltype(inverted_index_vals_spans_)::value_type::value_type) *
-                       inverted_index_vals_span.size();
-            }
-            res += sizeof(typename decltype(max_score_in_dim_spans_)::value_type) * max_score_in_dim_spans_.size();
-            return res;
+            // Span metadata (lightweight views into the owning vectors)
+            res += inverted_index_ids_spans_.capacity() * sizeof(boost::span<const table_t>);
+            res += inverted_index_vals_spans_.capacity() * sizeof(boost::span<const QType>);
+            // Max score per dimension
+            res += max_score_in_dim_.capacity() * sizeof(float);
         }
+
+        // BM25 row sums
+        if (bm25_params_) {
+            if constexpr (mmapped) {
+                // row_sums data is in the mmap region, already counted above
+            } else {
+                res += bm25_params_->row_sums.capacity() * sizeof(float);
+            }
+        }
+
+        // DSP metadata: dim_block_max_, superblock CSR, forward index
+        for (const auto& bm : dim_block_max_) {
+            res += bm.block_ids.capacity() * sizeof(uint32_t);
+            res += bm.max_scores.capacity() * sizeof(uint8_t);
+        }
+        res += dim_block_max_.capacity() * sizeof(DimBlockMax);
+        res += spb_dim_offsets_.capacity() * sizeof(uint32_t);
+        res += spb_block_ids_.capacity() * sizeof(uint32_t);
+        res += spb_max_vals_.capacity() * sizeof(float);
+        res += spb_asc_vals_.capacity() * sizeof(float);
+        res += fwd_block_term_offsets_.capacity() * sizeof(uint32_t);
+        res += fwd_term_ids_.capacity() * sizeof(uint32_t);
+        res += fwd_term_entry_offsets_.capacity() * sizeof(uint32_t);
+        res += fwd_doc_offsets_.capacity() * sizeof(uint8_t);
+        res += fwd_scores_.capacity() * sizeof(float);
+
+        return res;
     }
 
     [[nodiscard]] size_t
@@ -1043,115 +949,6 @@ class DspIndex : public DspIndexBase<DType> {
         }
     }
 
-    Status
-    PrepareMmap(MemoryIOReader& reader, size_t rows, int map_flags, const std::string& supplement_target_filename) {
-        const auto initial_reader_location = reader.tellg();
-        const auto nnz = (reader.remaining() - (rows * sizeof(size_t))) / SparseRow<DType>::element_size();
-
-        std::unordered_map<table_t, size_t> idx_counts;
-        for (size_t i = 0; i < rows; ++i) {
-            size_t row_nnz;
-            readBinaryPOD(reader, row_nnz);
-            if (row_nnz == 0) {
-                continue;
-            }
-            for (size_t j = 0; j < row_nnz; ++j) {
-                table_t idx;
-                readBinaryPOD(reader, idx);
-                idx_counts[idx]++;
-                reader.advance(sizeof(DType));
-            }
-        }
-        reader.seekg(initial_reader_location);
-
-        auto inverted_index_ids_byte_size =
-            idx_counts.size() * sizeof(typename decltype(inverted_index_ids_)::value_type);
-        auto inverted_index_vals_byte_size =
-            idx_counts.size() * sizeof(typename decltype(inverted_index_vals_)::value_type);
-        auto plists_ids_byte_size = nnz * sizeof(typename decltype(inverted_index_ids_)::value_type::value_type);
-        auto plists_vals_byte_size = nnz * sizeof(typename decltype(inverted_index_vals_)::value_type::value_type);
-        auto max_score_in_dim_byte_size = idx_counts.size() * sizeof(typename decltype(max_score_in_dim_)::value_type);
-        size_t row_sums_byte_size = 0;
-
-        map_byte_size_ =
-            inverted_index_ids_byte_size + inverted_index_vals_byte_size + plists_ids_byte_size + plists_vals_byte_size;
-        map_byte_size_ += max_score_in_dim_byte_size;
-        if (metric_type_ == SparseMetricType::METRIC_BM25) {
-            row_sums_byte_size = rows * sizeof(typename decltype(bm25_params_->row_sums)::value_type);
-            map_byte_size_ += row_sums_byte_size;
-        }
-
-        if (map_byte_size_ == 0) {
-            return Status::success;
-        }
-
-        std::ofstream temp_file(supplement_target_filename, std::ios::binary | std::ios::trunc);
-        if (!temp_file) {
-            LOG_KNOWHERE_ERROR_ << "Failed to create mmap file when loading sparse DspIndex: " << strerror(errno);
-            return Status::disk_file_error;
-        }
-        temp_file.close();
-
-        std::filesystem::resize_file(supplement_target_filename, map_byte_size_);
-
-        map_fd_ = open(supplement_target_filename.c_str(), O_RDWR);
-        if (map_fd_ == -1) {
-            LOG_KNOWHERE_ERROR_ << "Failed to open mmap file when loading sparse DspIndex: " << strerror(errno);
-            return Status::disk_file_error;
-        }
-        std::filesystem::remove(supplement_target_filename);
-
-        map_flags &= ~MAP_PRIVATE;
-        map_flags |= MAP_SHARED;
-
-        map_ = static_cast<char*>(mmap(nullptr, map_byte_size_, PROT_READ | PROT_WRITE, map_flags, map_fd_, 0));
-        if (map_ == MAP_FAILED) {
-            LOG_KNOWHERE_ERROR_ << "Failed to create mmap when loading sparse DspIndex: " << strerror(errno)
-                                << ", size: " << map_byte_size_ << " on file: " << supplement_target_filename;
-            return Status::disk_file_error;
-        }
-        if (madvise(map_, map_byte_size_, MADV_RANDOM) != 0) {
-            LOG_KNOWHERE_WARNING_ << "Failed to madvise mmap when loading sparse DspIndex: " << strerror(errno);
-        }
-
-        char* ptr = map_;
-
-        inverted_index_ids_.initialize(ptr, inverted_index_ids_byte_size);
-        ptr += inverted_index_ids_byte_size;
-        inverted_index_vals_.initialize(ptr, inverted_index_vals_byte_size);
-        ptr += inverted_index_vals_byte_size;
-
-        max_score_in_dim_.initialize(ptr, max_score_in_dim_byte_size);
-        ptr += max_score_in_dim_byte_size;
-
-        if (metric_type_ == SparseMetricType::METRIC_BM25) {
-            bm25_params_->row_sums.initialize(ptr, row_sums_byte_size);
-            ptr += row_sums_byte_size;
-        }
-
-        for (const auto& [idx, count] : idx_counts) {
-            auto& plist_ids = inverted_index_ids_.emplace_back();
-            auto plist_ids_byte_size = count * sizeof(typename decltype(inverted_index_ids_)::value_type::value_type);
-            plist_ids.initialize(ptr, plist_ids_byte_size);
-            ptr += plist_ids_byte_size;
-        }
-        for (const auto& [idx, count] : idx_counts) {
-            auto& plist_vals = inverted_index_vals_.emplace_back();
-            auto plist_vals_byte_size = count * sizeof(typename decltype(inverted_index_vals_)::value_type::value_type);
-            plist_vals.initialize(ptr, plist_vals_byte_size);
-            ptr += plist_vals_byte_size;
-        }
-        size_t dim_id = 0;
-        for (const auto& [idx, count] : idx_counts) {
-            dim_map_[idx] = dim_id;
-            max_score_in_dim_.emplace_back(0.0f);
-            ++dim_id;
-        }
-        next_dim_id_ = dim_id;
-
-        return Status::success;
-    }
-
     // ========================================================================
     // DSP-specific members
     // ========================================================================
@@ -1182,6 +979,8 @@ class DspIndex : public DspIndexBase<DType> {
     // ========================================================================
     // Superblock max + ASC (sparse CSR format, float -- used for coarse pruning)
     // ========================================================================
+    // TODO: Consider span/view-backed storage for spb_* and fwd_* in deserialize/mmapped
+    // paths if these arrays become a meaningful memory overhead.
     std::vector<uint32_t> spb_dim_offsets_;
     std::vector<uint32_t> spb_block_ids_;
     std::vector<float> spb_max_vals_;
@@ -1224,8 +1023,8 @@ class DspIndex : public DspIndexBase<DType> {
 
         // Per-doc forward index: (inner_dim, score) pairs appended per doc.
         struct DocFwdEntry {
-            uint32_t inner_dim;
-            float score;
+            uint32_t inner_dim = 0;
+            float score = 0.0f;
         };
         std::vector<std::vector<DocFwdEntry>> per_doc_fwd(n_rows_internal_);
 
@@ -1406,9 +1205,9 @@ class DspIndex : public DspIndexBase<DType> {
             uint32_t total_entries = 0;
 
             struct BlockEntry {
-                uint32_t inner_dim;
-                uint8_t doc_offset;
-                float score;
+                uint32_t inner_dim = 0;
+                uint8_t doc_offset = 0;
+                float score = 0.0f;
             };
             std::vector<BlockEntry> block_buf;
             block_buf.reserve(1024);
@@ -1495,9 +1294,9 @@ class DspIndex : public DspIndexBase<DType> {
                int gamma, bool kth_init = true, float kth_alpha = 1.0f) const {
         // ---- Step 0: Prepare sorted query ----
         struct QueryTerm {
-            uint32_t inner_dim;
-            float weight;
-            uint8_t u8_weight;
+            uint32_t inner_dim = 0;
+            float weight = 0.0f;
+            uint8_t u8_weight = 0;
         };
         std::vector<QueryTerm> query(q_vec.size());
         for (size_t i = 0; i < q_vec.size(); ++i) {

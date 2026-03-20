@@ -48,6 +48,7 @@ scan_block_ub_any_above_avx512_64(const uint16_t* block_ub, uint16_t threshold) 
 // Generic: loop over n elements in 32-element chunks. n must be a multiple of 32.
 bool
 scan_block_ub_any_above_avx512_generic(const uint16_t* block_ub, uint16_t threshold, uint32_t n) {
+    assert(n % 32 == 0 && "n must be a multiple of 32 for AVX-512 u16 processing");
     const __m512i thresh_v = _mm512_set1_epi16(static_cast<int16_t>(threshold));
     for (uint32_t i = 0; i < n; i += 32) {
         __m512i v = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(block_ub + i));
@@ -152,14 +153,14 @@ accumulate_posting_list_ip_avx512(const uint32_t* doc_ids, const float* doc_vals
 
 // n == 32: single iteration, no loop
 void
-accumulate_block_ub_avx512_32(uint16_t* ub, const uint8_t* block_max, uint16_t query_weight) {
+accumulate_block_ub_avx512_32(uint16_t* __restrict ub, const uint8_t* __restrict block_max, uint16_t query_weight) {
     const __m512i qw = _mm512_set1_epi16(static_cast<int16_t>(query_weight));
     ACCUMULATE_BLOCK_UB_32(ub, block_max, qw);
 }
 
 // n == 64: two iterations fully unrolled (DSP kStride = 64, the primary hot path)
 void
-accumulate_block_ub_avx512_64(uint16_t* ub, const uint8_t* block_max, uint16_t query_weight) {
+accumulate_block_ub_avx512_64(uint16_t* __restrict ub, const uint8_t* __restrict block_max, uint16_t query_weight) {
     const __m512i qw = _mm512_set1_epi16(static_cast<int16_t>(query_weight));
     ACCUMULATE_BLOCK_UB_32(ub, block_max, qw);
     ACCUMULATE_BLOCK_UB_32(ub + 32, block_max + 32, qw);
@@ -169,7 +170,9 @@ accumulate_block_ub_avx512_64(uint16_t* ub, const uint8_t* block_max, uint16_t q
 
 // Generic: loop over n elements in 32-element chunks. n must be a multiple of 32.
 void
-accumulate_block_ub_avx512_generic(uint16_t* ub, const uint8_t* block_max, uint16_t query_weight, uint32_t n) {
+accumulate_block_ub_avx512_generic(uint16_t* __restrict ub, const uint8_t* __restrict block_max, uint16_t query_weight,
+                                   uint32_t n) {
+    assert(n % 32 == 0 && "n must be a multiple of 32 for AVX-512 u16 processing");
     const __m512i qw = _mm512_set1_epi16(static_cast<int16_t>(query_weight));
     for (uint32_t i = 0; i < n; i += 32) {
         __m256i bm8 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(block_max + i));

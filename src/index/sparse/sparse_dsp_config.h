@@ -18,13 +18,9 @@ namespace knowhere {
 
 // Search parameters for the DSP (Dynamic Superblock Pruning) index.
 //
-// Mode selection (dsp_mode):
-//   0 = DSP:  dual-threshold (mu, eta) superblock pruning (SIGIR'25 paper).
-//             Safe with default mu=1, eta=1. Set dsp_gamma>0 for a top-gamma backstop.
+// Mode selection (dsp_mode): values map to DspSearchMode enum in sparse_dsp_index.h.
+//   0 = DSP:  dual-threshold (mu, eta) superblock pruning. Safe with default mu=1, eta=1.
 //   1 = LSP/0: top-gamma superblock inclusion only, no mu/eta gates.
-//             Recommended for SPLADE-family models. Simplest and generally fastest.
-//             k=10:   gamma=250 (~99% recall) or gamma=500 (near-safe)
-//             k=1000: gamma=1000 (~99% recall) or gamma=2000 (near-safe)
 //   2 = LSP/1: LSP/0 + mu-overestimation gate (ub > theta/mu).
 //   3 = LSP/2: LSP/1 + ASC gate (ub > theta/mu || asc > theta/eta).
 //
@@ -63,24 +59,26 @@ class SparseDspConfig : public BaseConfig {
                 "3=lsp2 (lsp1 + asc gate: ub>theta/mu || asc>theta/eta)")
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(dsp_mu)
-            .set_range(0.1, 2.0)
+            .set_range(0.0, 1.0, false, true)
             .set_default(1.0)
-            .description("superblock max-based threshold relaxation factor (used by dsp/lsp1/lsp2)")
+            .description(
+                "superblock max-based threshold relaxation factor (used by dsp/lsp1/lsp2). "
+                "Paper-aligned range is 0 < mu <= 1, with 1.0 as the safe default.")
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(dsp_eta)
-            .set_range(0.1, 2.0)
+            .set_range(0.0, 1.0, false, true)
             .set_default(1.0)
             .description(
                 "threshold relaxation for superblock ASC pruning (dsp/lsp2) "
-                "and subblock BoundSum pruning (all modes)")
+                "and subblock BoundSum pruning (all modes). "
+                "Paper-aligned range is 0 < eta <= 1, with 1.0 as the safe default.")
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(dsp_gamma)
             .set_range(0, 100000)
             .set_default(0)
             .description(
-                "always visit top-gamma superblocks by UB score; "
-                "recommended: 250-500 for k=10, 1000-2000 for k=1000 "
-                "(0 = disabled)")
+                "always visit top-gamma superblocks by UB score "
+                "(0 = disabled, higher = safer but slower)")
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(dsp_kth_init)
             .set_default(true)
@@ -95,6 +93,18 @@ class SparseDspConfig : public BaseConfig {
                 "scale factor for kth-score threshold seed: threshold *= alpha "
                 "(1.0 = full seed, 0.0 = no seed, intermediate = calibrated)")
             .for_search();
+    }
+
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        if (param_type == PARAM_TYPE::SEARCH) {
+            const float mu = dsp_mu.value_or(1.0f);
+            const float eta = dsp_eta.value_or(1.0f);
+            if (mu > eta) {
+                return HandleError(err_msg, "dsp_mu must be <= dsp_eta", Status::invalid_args);
+            }
+        }
+        return Status::success;
     }
 };  // class SparseDspConfig
 

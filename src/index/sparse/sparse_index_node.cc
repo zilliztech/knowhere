@@ -197,7 +197,6 @@ class SparseInvertedIndexNode : public IndexNode {
                                                                                     "index not loaded");
         }
         auto nq = dataset->GetRows();
-        auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
 
         auto cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
         auto computer_or = index_->GetDocValueComputer(cfg);
@@ -669,6 +668,8 @@ class SparseDspIndexNode : public IndexNode {
     }
 
     ~SparseDspIndexNode() override {
+        // mmap_guard_ must be destroyed before index_ since index_ may reference mmap'd memory
+        mmap_guard_.reset();
         delete index_;
         index_ = nullptr;
     }
@@ -849,6 +850,7 @@ class SparseDspIndexNode : public IndexNode {
     DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> config) override {
         if (index_) {
             LOG_KNOWHERE_WARNING_ << Type() << " already created, deleting old";
+            mmap_guard_.reset();  // unmap before deleting index that references mmap'd memory
             delete index_;
             index_ = nullptr;
         }
@@ -872,9 +874,7 @@ class SparseDspIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "Failed to mmap file " << filename << ": " << strerror(errno);
             return Status::disk_file_error;
         }
-        mmap_map_size_ = map_size;
-        mmap_filename_ = filename;
-        mmap_addr_ = mapped_memory;
+        mmap_guard_ = std::make_unique<MmapGuard>(map_size, filename, mapped_memory);
         MemoryIOReader map_reader(reinterpret_cast<uint8_t*>(mapped_memory), map_size);
         return index_->Deserialize(map_reader);
     }
@@ -945,14 +945,27 @@ class SparseDspIndexNode : public IndexNode {
         return new sparse::DspIndex<value_type, float, mmapped>(sparse::SparseMetricType::METRIC_IP);
     }
 
+    struct MmapGuard {
+        size_t map_size;
+        std::string filename;
+        void* map_addr;
+
+        MmapGuard(size_t size, const std::string& fname, void* addr) : map_size(size), filename(fname), map_addr(addr) {
+        }
+
+        ~MmapGuard() {
+            if (munmap(map_addr, map_size) != 0) {
+                LOG_KNOWHERE_ERROR_ << "Failed to munmap file " << filename << ": " << strerror(errno);
+            }
+        }
+    };
+
     sparse::DspIndexBase<value_type>* index_{nullptr};
     std::shared_ptr<ThreadPool> search_pool_;
     std::shared_ptr<ThreadPool> build_pool_;
     const int32_t index_version_;
     BinaryPtr binary_{nullptr};
-    size_t mmap_map_size_{0};
-    std::string mmap_filename_;
-    void* mmap_addr_{nullptr};
+    std::unique_ptr<MmapGuard> mmap_guard_{nullptr};
 };  // class SparseDspIndexNode
 
 // Concurrent version of SparseDspIndexNode
