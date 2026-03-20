@@ -23,7 +23,7 @@
 #include <queue>
 
 // Faiss-specific headers
-#include <faiss/cppcontrib/knowhere/Index.h>
+#include <faiss/Index.h>
 #include <faiss/cppcontrib/knowhere/IndexHNSW.h>
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/DistanceComputer.h>

@@ -11,7 +11,7 @@
 
 #include <vector>
 
-#include <faiss/cppcontrib/knowhere/IndexFlatCodes.h>
+#include <faiss/IndexFlatCodes.h>
 #include <faiss/cppcontrib/knowhere/impl/PolysemousTraining.h>
 #include <faiss/cppcontrib/knowhere/impl/ProductQuantizer.h>
 #include <faiss/impl/platform_macros.h>
@@ -111,8 +111,6 @@ struct IndexPQ : IndexFlatCodes {
      * @param dis  output distances, size n * ntotal
      */
     void hamming_distance_table(idx_t n, const float* x, int32_t* dis) const;
-
-    size_t cal_size() const;
 };
 
 /// override search parameters from the class

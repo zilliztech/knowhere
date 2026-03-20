@@ -13,7 +13,7 @@
 
 #include <vector>
 
-#include <faiss/cppcontrib/knowhere/Clustering.h>
+#include <faiss/Clustering.h>
 #include <faiss/impl/Quantizer.h>
 #include <faiss/impl/platform_macros.h>
 #include <faiss/utils/Heap.h>
@@ -180,8 +180,6 @@ struct ProductQuantizer : Quantizer {
 
     /// Clear transposed centroids table so ones are no longer used.
     void clear_transposed_centroids();
-
-    size_t cal_size() const;
 };
 
 // block size used in ProductQuantizer::compute_codes

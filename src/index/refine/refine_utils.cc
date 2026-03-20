@@ -99,14 +99,14 @@ has_lossless_refine_index(const std::optional<bool>& refine, const std::optional
 }
 
 // pick a refine index
-expected<std::unique_ptr<faiss::cppcontrib::knowhere::Index>>
+expected<std::unique_ptr<faiss::Index>>
 pick_refine_index(const DataFormatEnum data_format, const std::optional<std::string>& refine_type,
-                  std::unique_ptr<faiss::cppcontrib::knowhere::Index>&& base_index, const size_t base_d,
+                  std::unique_ptr<faiss::Index>&& base_index, const size_t base_d,
                   const faiss::MetricType base_metric_type) {
     // grab a type of a refine index
     expected<bool> is_fp32_flat = is_flat_refine(refine_type);
     if (!is_fp32_flat.has_value()) {
-        return expected<std::unique_ptr<faiss::cppcontrib::knowhere::Index>>::Err(Status::invalid_args, "");
+        return expected<std::unique_ptr<faiss::Index>>::Err(Status::invalid_args, "");
     }
 
     const bool is_fp32_flat_v = is_fp32_flat.value();
@@ -118,7 +118,7 @@ pick_refine_index(const DataFormatEnum data_format, const std::optional<std::str
         if (!(refine_sq_type.has_value() &&
               (refine_sq_type.value() != faiss::cppcontrib::knowhere::ScalarQuantizer::QT_bf16 && !is_fp32_flat_v))) {
             LOG_KNOWHERE_ERROR_ << "fp16 input data does not accept bf16 or fp32 as a refine index.";
-            return expected<std::unique_ptr<faiss::cppcontrib::knowhere::Index>>::Err(
+            return expected<std::unique_ptr<faiss::Index>>::Err(
                 Status::invalid_args, "fp16 input data does not accept bf16 or fp32 as a refine index.");
         }
     }
@@ -129,13 +129,13 @@ pick_refine_index(const DataFormatEnum data_format, const std::optional<std::str
         if (!(refine_sq_type.has_value() &&
               (refine_sq_type.value() != faiss::cppcontrib::knowhere::ScalarQuantizer::QT_fp16 && !is_fp32_flat_v))) {
             LOG_KNOWHERE_ERROR_ << "bf16 input data does not accept fp16 or fp32 as a refine index.";
-            return expected<std::unique_ptr<faiss::cppcontrib::knowhere::Index>>::Err(
+            return expected<std::unique_ptr<faiss::Index>>::Err(
                 Status::invalid_args, "bf16 input data does not accept fp16 or fp32 as a refine index.");
         }
     }
 
     // build
-    std::unique_ptr<faiss::cppcontrib::knowhere::Index> local_index = std::move(base_index);
+    std::unique_ptr<faiss::Index> local_index = std::move(base_index);
 
     // either build flat or sq
     if (is_fp32_flat_v) {
@@ -155,7 +155,7 @@ pick_refine_index(const DataFormatEnum data_format, const std::optional<std::str
         // a redundant check
         if (!refine_sq_type.has_value()) {
             LOG_KNOWHERE_ERROR_ << "Invalid refine type: " << refine_type.value();
-            return expected<std::unique_ptr<faiss::cppcontrib::knowhere::Index>>::Err(
+            return expected<std::unique_ptr<faiss::Index>>::Err(
                 Status::invalid_args, fmt::format("invalid refine type ({})", refine_type.value()));
         }
 

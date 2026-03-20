@@ -23,18 +23,17 @@
 namespace knowhere {
 
 template <typename IndexIVFType>
-IndexIVFWrapper<IndexIVFType>::IndexIVFWrapper(std::unique_ptr<faiss::cppcontrib::knowhere::Index>&& index_in)
+IndexIVFWrapper<IndexIVFType>::IndexIVFWrapper(std::unique_ptr<faiss::Index>&& index_in)
     : Index{index_in->d, index_in->metric_type}, index{std::move(index_in)} {
     ntotal = index->ntotal;
     is_trained = index->is_trained;
-    is_cosine = index->is_cosine;
     verbose = index->verbose;
     metric_arg = index->metric_arg;
 }
 
 template <typename IndexIVFType>
 std::unique_ptr<IndexIVFWrapper<IndexIVFType>>
-IndexIVFWrapper<IndexIVFType>::from_deserialized(std::unique_ptr<faiss::cppcontrib::knowhere::Index>&& index_in) {
+IndexIVFWrapper<IndexIVFType>::from_deserialized(std::unique_ptr<faiss::Index>&& index_in) {
     auto index = std::make_unique<IndexIVFWrapper<IndexIVFType>>(std::move(index_in));
 
     // check a provided index type
@@ -103,8 +102,7 @@ IndexIVFWrapper<IndexIVFType>::get_base_ivf_index() {
     // try refine
     faiss::cppcontrib::knowhere::IndexRefine* index_refine =
         dynamic_cast<faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
-    faiss::cppcontrib::knowhere::Index* index_for_base =
-        (index_refine != nullptr) ? index_refine->base_index : index.get();
+    faiss::Index* index_for_base = (index_refine != nullptr) ? index_refine->base_index : index.get();
 
     // Use dynamic_cast to cast to the specific IndexIVFType (e.g., IndexIVFPQ)
     return dynamic_cast<IndexIVFType*>(index_for_base);
@@ -116,8 +114,7 @@ IndexIVFWrapper<IndexIVFType>::get_base_ivf_index() const {
     // try refine
     const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
         dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
-    const faiss::cppcontrib::knowhere::Index* index_for_base =
-        (index_refine != nullptr) ? index_refine->base_index : index.get();
+    const faiss::Index* index_for_base = (index_refine != nullptr) ? index_refine->base_index : index.get();
     return dynamic_cast<const IndexIVFType*>(index_for_base);
 }
 
@@ -162,8 +159,7 @@ IndexIVFWrapper<IndexIVFType>::getIteratorWorkspace(
     // try refine
     const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
         dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(index.get());
-    const faiss::cppcontrib::knowhere::Index* index_for_base =
-        (index_refine != nullptr) ? index_refine->base_index : index.get();
+    const faiss::Index* index_for_base = (index_refine != nullptr) ? index_refine->base_index : index.get();
 
     const IndexIVFType* index_ivf = dynamic_cast<const IndexIVFType*>(index_for_base);
     if (index_ivf == nullptr) {
@@ -230,7 +226,7 @@ IndexIvfFactory::create_for_pq(faiss::cppcontrib::knowhere::IndexFlat* qzr_raw_p
                                                                            nbits, metric);
 
     // create a refiner index, if needed
-    std::unique_ptr<faiss::cppcontrib::knowhere::Index> idx_final;
+    std::unique_ptr<faiss::Index> idx_final;
     if (ivf_pq_cfg.refine.value_or(false) && ivf_pq_cfg.refine_type.has_value()) {
         // refine is needed
         const auto base_d = index->d;
@@ -274,7 +270,7 @@ IndexIvfFactory::create_for_sq(faiss::cppcontrib::knowhere::IndexFlat* qzr_raw_p
                                                                                         quantizer_type, metric);
 
     // create a refiner index, if needed
-    std::unique_ptr<faiss::cppcontrib::knowhere::Index> idx_final;
+    std::unique_ptr<faiss::Index> idx_final;
     if (ivf_sq_cfg.refine.value_or(false) && ivf_sq_cfg.refine_type.has_value()) {
         // refine is needed
         const auto base_d = index->d;

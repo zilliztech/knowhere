@@ -14,8 +14,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include <faiss/cppcontrib/knowhere/Clustering.h>
-#include <faiss/cppcontrib/knowhere/Index.h>
+#include <faiss/Clustering.h>
+#include <faiss/Index.h>
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/CodePacker.h>
 #include <faiss/impl/DistanceComputer.h>

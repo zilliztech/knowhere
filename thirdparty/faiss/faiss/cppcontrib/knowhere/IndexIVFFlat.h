@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <unordered_map>
 
+#include <faiss/cppcontrib/knowhere/IndexCosine.h>
 #include <faiss/cppcontrib/knowhere/IndexIVF.h>
 
 #include "knowhere/object.h"
@@ -29,8 +30,7 @@ struct IndexIVFFlat : IndexIVF {
             Index* quantizer,
             size_t d,
             size_t nlist_,
-            MetricType = METRIC_L2,
-            bool is_cosine = false);
+            MetricType = METRIC_L2);
 
     // Be careful with overriding this function, because
     //   renormalized x may be used inside.
@@ -67,16 +67,42 @@ struct IndexIVFFlat : IndexIVF {
     IndexIVFFlat();
 };
 
+struct IndexIVFFlatCosine : IndexIVFFlat, HasInverseL2Norms {
+    IndexIVFFlatCosine(
+            Index* quantizer,
+            size_t d,
+            size_t nlist_,
+            MetricType = METRIC_L2);
+
+    IndexIVFFlatCosine();
+
+    void train(idx_t n, const float* x) override;
+    void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
+};
+
 struct IndexIVFFlatCC : IndexIVFFlat {
     IndexIVFFlatCC(
             Index* quantizer,
             size_t d,
             size_t nlist,
             size_t ssize,
-            MetricType = METRIC_L2,
-            bool is_cosine = false);
+            MetricType = METRIC_L2);
 
     IndexIVFFlatCC();
+};
+
+struct IndexIVFFlatCCCosine : IndexIVFFlatCC, HasInverseL2Norms {
+    IndexIVFFlatCCCosine(
+            Index* quantizer,
+            size_t d,
+            size_t nlist,
+            size_t ssize,
+            MetricType = METRIC_L2);
+
+    IndexIVFFlatCCCosine();
+
+    void train(idx_t n, const float* x) override;
+    void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
 };
 
 struct IndexIVFFlatDedup : IndexIVFFlat {

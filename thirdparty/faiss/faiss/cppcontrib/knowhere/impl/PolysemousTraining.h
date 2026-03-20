@@ -154,4 +154,3 @@ struct PolysemousTraining : SimulatedAnnealingParameters {
 }
 }
 } // namespace faiss
-

@@ -11,8 +11,8 @@
 
 #include "index/hnsw/impl/IndexBruteForceWrapper.h"
 
+#include <faiss/Index.h>
 #include <faiss/MetricType.h>
-#include <faiss/cppcontrib/knowhere/Index.h>
 #include <faiss/cppcontrib/knowhere/MetricType.h>
 #include <faiss/cppcontrib/knowhere/impl/Bruteforce.h>
 #include <faiss/impl/AuxIndexStructures.h>
@@ -46,7 +46,7 @@ struct BitsetViewIDSelectorWrapper final {
 };
 
 //
-IndexBruteForceWrapper::IndexBruteForceWrapper(faiss::cppcontrib::knowhere::Index* underlying_index)
+IndexBruteForceWrapper::IndexBruteForceWrapper(faiss::Index* underlying_index)
     : faiss::cppcontrib::knowhere::IndexWrapper{underlying_index} {
 }
 

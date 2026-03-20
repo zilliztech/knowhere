@@ -16,7 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include <faiss/cppcontrib/knowhere/IndexAdditiveQuantizer.h>
+#include <faiss/IndexAdditiveQuantizer.h>
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
 #include <faiss/cppcontrib/knowhere/IndexHNSW.h>
 #include <faiss/cppcontrib/knowhere/IndexScalarQuantizer.h>
@@ -69,8 +69,13 @@ struct WithCosineNormDistanceComputer : DistanceComputer {
 struct HasInverseL2Norms {
     virtual ~HasInverseL2Norms() = default;
 
-    virtual const float* get_inverse_l2_norms() const = 0;
+    virtual const float* get_inverse_l2_norms() const { return nullptr; }
 };
+
+// Helper: check if an index is a cosine index via dynamic_cast to HasInverseL2Norms.
+static inline bool is_cosine_index(const faiss::Index* index) {
+    return dynamic_cast<const HasInverseL2Norms*>(index) != nullptr;
+}
 
 // a supporting storage for L2 norms
 struct L2NormsStorage {
@@ -101,6 +106,21 @@ struct IndexFlatCosine : IndexFlat, HasInverseL2Norms {
 
     void add(idx_t n, const float* x) override;
     void reset() override;
+
+    void search(
+            idx_t n,
+            const float* x,
+            idx_t k,
+            float* distances,
+            idx_t* labels,
+            const SearchParameters* params = nullptr) const override;
+
+    void range_search(
+            idx_t n,
+            const float* x,
+            float radius,
+            RangeSearchResult* result,
+            const SearchParameters* params = nullptr) const override;
 
     FlatCodesDistanceComputer* get_FlatCodesDistanceComputer() const override;
 
@@ -163,30 +183,36 @@ struct IndexProductResidualQuantizerCosine : IndexProductResidualQuantizer, HasI
 };
 
 //
-struct IndexHNSWFlatCosine : IndexHNSW {
+struct IndexHNSWFlatCosine : IndexHNSW, HasInverseL2Norms {
     IndexHNSWFlatCosine();
     IndexHNSWFlatCosine(int d, int M);
+
+    const float* get_inverse_l2_norms() const override;
 };
 
 //
-struct IndexHNSWSQCosine : IndexHNSW {
+struct IndexHNSWSQCosine : IndexHNSW, HasInverseL2Norms {
     IndexHNSWSQCosine();
     IndexHNSWSQCosine(
             int d,
             ScalarQuantizer::QuantizerType qtype,
             int M);
+
+    const float* get_inverse_l2_norms() const override;
 };
 
 //
-struct IndexHNSWPQCosine : IndexHNSW {
+struct IndexHNSWPQCosine : IndexHNSW, HasInverseL2Norms {
     IndexHNSWPQCosine();
     IndexHNSWPQCosine(
-            int d, 
+            int d,
             size_t pq_M,
             int M,
             size_t pq_nbits);
 
     void train(idx_t n, const float* x) override;
+
+    const float* get_inverse_l2_norms() const override;
 };
 
 //
@@ -203,7 +229,7 @@ struct IndexHNSWProductResidualQuantizer : IndexHNSW {
     );
 };
 
-struct IndexHNSWProductResidualQuantizerCosine : IndexHNSW {
+struct IndexHNSWProductResidualQuantizerCosine : IndexHNSW, HasInverseL2Norms {
     IndexHNSWProductResidualQuantizerCosine();
     IndexHNSWProductResidualQuantizerCosine(
             int d,          ///< dimensionality of the input vectors
@@ -213,6 +239,8 @@ struct IndexHNSWProductResidualQuantizerCosine : IndexHNSW {
             size_t M,        /// HNSW Param
             AdditiveQuantizer::Search_type_t prq_search_type = AdditiveQuantizer::ST_decompress
     );
+
+    const float* get_inverse_l2_norms() const override;
 };
 
 }

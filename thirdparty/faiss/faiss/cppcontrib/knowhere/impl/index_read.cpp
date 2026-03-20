@@ -23,7 +23,7 @@
 #include <faiss/cppcontrib/knowhere/invlists/InvertedListsIOHook.h>
 #include <faiss/cppcontrib/knowhere/invlists/OnDiskInvertedLists.h>
 
-#include <faiss/cppcontrib/knowhere/IndexAdditiveQuantizer.h>
+#include <faiss/IndexAdditiveQuantizer.h>
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
 #include <faiss/cppcontrib/knowhere/IndexHNSW.h>
@@ -33,7 +33,7 @@
 #include <faiss/cppcontrib/knowhere/IndexIVFPQFastScan.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFRaBitQ.h>
 #include <faiss/cppcontrib/knowhere/IndexPQ.h>
-#include <faiss/cppcontrib/knowhere/IndexPreTransform.h>
+#include <faiss/IndexPreTransform.h>
 #include <faiss/cppcontrib/knowhere/IndexRefine.h>
 #include <faiss/cppcontrib/knowhere/IndexSQ4Uniform.h>
 #include <faiss/cppcontrib/knowhere/IndexScaNN.h>
@@ -207,10 +207,17 @@ void read_xb_vector(VectorT& target, IOReader* f) {
  * Read
  **************************************************************/
 
-static void read_index_header(Index* idx, IOReader* f) {
+static void read_index_header(Index* idx, IOReader* f, bool* is_cosine_out = nullptr) {
     READ1(idx->d);
     READ1(idx->ntotal);
-    READ1(idx->is_cosine);
+
+    // is_cosine is on the wire but no longer a member of faiss::Index.
+    // Read it into the optional out-parameter for callers that need it.
+    bool is_cosine_wire = false;
+    READ1(is_cosine_wire);
+    if (is_cosine_out) {
+        *is_cosine_out = is_cosine_wire;
+    }
 
     uint8_t dummy8;
     READ1(dummy8);
@@ -640,8 +647,9 @@ static void read_direct_map(DirectMap* dm, IOReader* f) {
 static void read_ivf_header(
         IndexIVF* ivf,
         IOReader* f,
-        std::vector<std::vector<idx_t>>* ids = nullptr) {
-    read_index_header(ivf, f);
+        std::vector<std::vector<idx_t>>* ids = nullptr,
+        bool* is_cosine_out = nullptr) {
+    read_index_header(ivf, f, is_cosine_out);
     READ1(ivf->nlist);
     READ1(ivf->nprobe);
     ivf->quantizer = read_index(f);
@@ -718,10 +726,11 @@ Index* read_index(IOReader* f, int io_flags) {
         idxf->code_size = idxf->d * sizeof(float);
         // READXBVECTOR(idxf->codes);
         read_xb_vector(idxf->codes, f);
-        READVECTOR(idxf->code_norms);
+        std::vector<float> wire_l2_norms;
+        READVECTOR(wire_l2_norms);
 
-        // reconstruct inverse norms
-        idxf->inverse_norms_storage = L2NormsStorage::from_l2_norms(idxf->code_norms);
+        // reconstruct inverse norms from wire L2 norms
+        idxf->inverse_norms_storage = L2NormsStorage::from_l2_norms(wire_l2_norms);
 
         FAISS_THROW_IF_NOT(
                 idxf->codes.size() == idxf->ntotal * idxf->code_size);
@@ -737,11 +746,27 @@ Index* read_index(IOReader* f, int io_flags) {
         } else {
             idxf = new IndexFlat();
         }
-        read_index_header(idxf, f);
+        bool flat_is_cosine = false;
+        read_index_header(idxf, f, &flat_is_cosine);
         idxf->code_size = idxf->d * sizeof(float);
         read_xb_vector(idxf->codes, f);
-        if (idxf->is_cosine) {
-            READVECTOR(idxf->code_norms);
+        if (flat_is_cosine) {
+            std::vector<float> wire_code_norms;
+            READVECTOR(wire_code_norms);
+            // Factory: promote to IndexFlatCosine
+            IndexFlatCosine* idxfc = new IndexFlatCosine();
+            // transfer base state
+            idxfc->d = idxf->d;
+            idxfc->ntotal = idxf->ntotal;
+            idxfc->is_trained = idxf->is_trained;
+            idxfc->metric_type = idxf->metric_type;
+            idxfc->metric_arg = idxf->metric_arg;
+            idxfc->code_size = idxf->code_size;
+            idxfc->codes = std::move(idxf->codes);
+            // reconstruct inverse norms from wire L2 norms
+            idxfc->inverse_norms_storage = L2NormsStorage::from_l2_norms(wire_code_norms);
+            delete idxf;
+            idxf = idxfc;
         }
         FAISS_THROW_IF_NOT(
                 idxf->codes.size() == idxf->ntotal * idxf->code_size);
@@ -879,20 +904,64 @@ Index* read_index(IOReader* f, int io_flags) {
         read_InvertedLists(ivfl, f, io_flags);
         idx = ivfl;
     } else if (h == fourcc("IwFc")) { // legacy
-        IndexIVFFlatCC* ivf_cc = new IndexIVFFlatCC();
-        read_ivf_header(ivf_cc, f);
-        ivf_cc->code_size = ivf_cc->d * sizeof(float);
-        if (ivf_cc->is_cosine) {
+        IndexIVFFlatCC* ivf_cc;
+        // Tentatively create base type, read header to check is_cosine
+        auto tmp_cc = std::make_unique<IndexIVFFlatCC>();
+        bool cc_is_cosine = false;
+        read_ivf_header(tmp_cc.get(), f, nullptr, &cc_is_cosine);
+        tmp_cc->code_size = tmp_cc->d * sizeof(float);
+        if (cc_is_cosine) {
+            // Factory: promote to IndexIVFFlatCCCosine
+            auto cosine_cc = new IndexIVFFlatCCCosine();
+            // Transfer IVF header state
+            cosine_cc->d = tmp_cc->d;
+            cosine_cc->ntotal = tmp_cc->ntotal;
+            cosine_cc->is_trained = tmp_cc->is_trained;
+            cosine_cc->metric_type = tmp_cc->metric_type;
+            cosine_cc->metric_arg = tmp_cc->metric_arg;
+            cosine_cc->nlist = tmp_cc->nlist;
+            cosine_cc->nprobe = tmp_cc->nprobe;
+            cosine_cc->quantizer = tmp_cc->quantizer;
+            tmp_cc->quantizer = nullptr;
+            cosine_cc->own_fields = tmp_cc->own_fields;
+            tmp_cc->own_fields = false;
+            cosine_cc->code_size = tmp_cc->code_size;
+            cosine_cc->direct_map = std::move(tmp_cc->direct_map);
             io_flags |= IO_FLAG_WITH_NORM;
+            ivf_cc = cosine_cc;
+        } else {
+            ivf_cc = tmp_cc.release();
         }
         read_InvertedLists(ivf_cc, f, io_flags);
         idx = ivf_cc;
     } else if (h == fourcc("IwFl")) {
-        IndexIVFFlat* ivfl = new IndexIVFFlat();
-        read_ivf_header(ivfl, f);
-        ivfl->code_size = ivfl->d * sizeof(float);
-        if (ivfl->is_cosine) {
+        IndexIVFFlat* ivfl;
+        // Tentatively create base type, read header to check is_cosine
+        auto tmp_fl = std::make_unique<IndexIVFFlat>();
+        bool fl_is_cosine = false;
+        read_ivf_header(tmp_fl.get(), f, nullptr, &fl_is_cosine);
+        tmp_fl->code_size = tmp_fl->d * sizeof(float);
+        if (fl_is_cosine) {
+            // Factory: promote to IndexIVFFlatCosine
+            auto cosine_fl = new IndexIVFFlatCosine();
+            // Transfer IVF header state
+            cosine_fl->d = tmp_fl->d;
+            cosine_fl->ntotal = tmp_fl->ntotal;
+            cosine_fl->is_trained = tmp_fl->is_trained;
+            cosine_fl->metric_type = tmp_fl->metric_type;
+            cosine_fl->metric_arg = tmp_fl->metric_arg;
+            cosine_fl->nlist = tmp_fl->nlist;
+            cosine_fl->nprobe = tmp_fl->nprobe;
+            cosine_fl->quantizer = tmp_fl->quantizer;
+            tmp_fl->quantizer = nullptr;
+            cosine_fl->own_fields = tmp_fl->own_fields;
+            tmp_fl->own_fields = false;
+            cosine_fl->code_size = tmp_fl->code_size;
+            cosine_fl->direct_map = std::move(tmp_fl->direct_map);
             io_flags |= IO_FLAG_WITH_NORM;
+            ivfl = cosine_fl;
+        } else {
+            ivfl = tmp_fl.release();
         }
         read_InvertedLists(ivfl, f, io_flags);
         idx = ivfl;
@@ -928,7 +997,7 @@ Index* read_index(IOReader* f, int io_flags) {
         read_vector(idxs->codes, f);
         idxs->code_size = idxs->sq.code_size;
         // Read inverse norms (needed for refine to work correctly)
-        READVECTOR(idxs->inverse_l2_norms);
+        READVECTOR(idxs->inverse_norms_storage.inverse_l2_norms);
         idx = idxs;
     } else if (h == fourcc("IxSQ")) {
         IndexScalarQuantizer* idxs = new IndexScalarQuantizer();
@@ -1065,9 +1134,33 @@ Index* read_index(IOReader* f, int io_flags) {
         READ1(ivpq->M2);
         READ1(ivpq->implem);
         READ1(ivpq->qbs2);
-        READ1(ivpq->is_cosine);
-        if (ivpq->is_cosine) {
-            READVECTOR(ivpq->inverse_norms);
+        bool is_cosine_wire = false;
+        READ1(is_cosine_wire);
+        if (is_cosine_wire) {
+            // Factory: promote to IndexIVFPQFastScanCosine
+            auto cosine_ivpq = new IndexIVFPQFastScanCosine();
+            // Transfer already-read IVF header state
+            cosine_ivpq->d = ivpq->d;
+            cosine_ivpq->ntotal = ivpq->ntotal;
+            cosine_ivpq->is_trained = ivpq->is_trained;
+            cosine_ivpq->metric_type = ivpq->metric_type;
+            cosine_ivpq->metric_arg = ivpq->metric_arg;
+            cosine_ivpq->nlist = ivpq->nlist;
+            cosine_ivpq->nprobe = ivpq->nprobe;
+            cosine_ivpq->quantizer = ivpq->quantizer;
+            ivpq->quantizer = nullptr;
+            cosine_ivpq->own_fields = ivpq->own_fields;
+            ivpq->own_fields = false;
+            cosine_ivpq->by_residual = ivpq->by_residual;
+            cosine_ivpq->code_size = ivpq->code_size;
+            cosine_ivpq->bbs = ivpq->bbs;
+            cosine_ivpq->M2 = ivpq->M2;
+            cosine_ivpq->implem = ivpq->implem;
+            cosine_ivpq->qbs2 = ivpq->qbs2;
+            cosine_ivpq->direct_map = std::move(ivpq->direct_map);
+            delete ivpq;
+            ivpq = cosine_ivpq;
+            READVECTOR(cosine_ivpq->inverse_norms_storage.inverse_l2_norms);
         }
         read_ProductQuantizer(&ivpq->pq, f);
         read_InvertedLists(ivpq, f, io_flags);

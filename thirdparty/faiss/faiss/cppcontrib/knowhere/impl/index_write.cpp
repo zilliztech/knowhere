@@ -22,7 +22,7 @@
 #include <faiss/impl/io_macros.h>
 #include <faiss/cppcontrib/knowhere/utils/hamming.h>
 
-#include <faiss/cppcontrib/knowhere/IndexAdditiveQuantizer.h>
+#include <faiss/IndexAdditiveQuantizer.h>
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
 #include <faiss/cppcontrib/knowhere/IndexHNSW.h>
@@ -32,7 +32,7 @@
 #include <faiss/cppcontrib/knowhere/IndexIVFPQFastScan.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFRaBitQ.h>
 #include <faiss/cppcontrib/knowhere/IndexPQ.h>
-#include <faiss/cppcontrib/knowhere/IndexPreTransform.h>
+#include <faiss/IndexPreTransform.h>
 #include <faiss/cppcontrib/knowhere/IndexRefine.h>
 #include <faiss/cppcontrib/knowhere/IndexSQ4Uniform.h>
 #include <faiss/cppcontrib/knowhere/IndexScaNN.h>
@@ -72,7 +72,11 @@ namespace faiss::cppcontrib::knowhere {
 static void write_index_header(const Index* idx, IOWriter* f) {
     WRITE1(idx->d);
     WRITE1(idx->ntotal);
-    WRITE1(idx->is_cosine);
+
+    // is_cosine is on the wire for backward compat but no longer a member.
+    // Derive it from whether the index implements HasInverseL2Norms.
+    const bool is_cosine_wire = is_cosine_index(idx);
+    WRITE1(is_cosine_wire);
 
     uint8_t dummy8 = 0;
     WRITE1(dummy8);
@@ -466,9 +470,6 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITE1(h);
         write_index_header(idx, f);
         WRITEXBVECTOR(idxf->codes);
-        if (idx->is_cosine) {
-            WRITEVECTOR(idxf->code_norms);
-        }
     } else if (const IndexPQCosine* idxp = dynamic_cast<const IndexPQCosine*>(idx)) {
         uint32_t h = fourcc("IxP7");
         WRITE1(h);
@@ -573,7 +574,7 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         write_ScalarQuantizer(&idxs->sq, f);
         WRITEVECTOR(idxs->codes);
         // inverse norms (needed for refine to work correctly)
-        WRITEVECTOR(idxs->inverse_l2_norms);
+        WRITEVECTOR(idxs->inverse_norms_storage.inverse_l2_norms);
     } else if (
             const IndexScalarQuantizerCosine* idxs =
                     dynamic_cast<const IndexScalarQuantizerCosine*>(idx)) {
@@ -725,9 +726,13 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITE1(ivpq_2->M2);
         WRITE1(ivpq_2->implem);
         WRITE1(ivpq_2->qbs2);
-        WRITE1(ivpq_2->is_cosine);
-        if (ivpq_2->is_cosine) {
-            WRITEVECTOR(ivpq_2->inverse_norms);
+        const bool ivpq_is_cosine = is_cosine_index(ivpq_2);
+        WRITE1(ivpq_is_cosine);
+        if (ivpq_is_cosine) {
+            auto cosine_ivpq = dynamic_cast<const IndexIVFPQFastScanCosine*>(ivpq_2);
+            FAISS_THROW_IF_NOT_MSG(cosine_ivpq,
+                "cosine index is not IndexIVFPQFastScanCosine");
+            WRITEVECTOR(cosine_ivpq->inverse_norms_storage.inverse_l2_norms);
         }
         write_ProductQuantizer(&ivpq_2->pq, f);
         write_InvertedLists(ivpq_2->invlists, f);

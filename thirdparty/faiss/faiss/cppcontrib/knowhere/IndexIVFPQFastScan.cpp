@@ -53,19 +53,6 @@ IndexIVFPQFastScan::IndexIVFPQFastScan(
     init_fastscan(M, nbits, nlist, metric, bbs);
 }
 
-IndexIVFPQFastScan::IndexIVFPQFastScan(
-        Index* quantizer,
-        size_t d,
-        size_t nlist,
-        size_t M,
-        size_t nbits_per_idx,
-        bool is_cosine,
-        MetricType metric,
-        int bbs)
-        : IndexIVFPQFastScan(quantizer, d, nlist, M, nbits_per_idx, metric, bbs) {
-    this->is_cosine = is_cosine;
-}
-
 IndexIVFPQFastScan::IndexIVFPQFastScan() {
     by_residual = false;
     bbs = 0;
@@ -325,6 +312,39 @@ void IndexIVFPQFastScan::sa_decode(idx_t n, const uint8_t* codes, float* x)
             }
         }
     }
+}
+
+IndexIVFPQFastScanCosine::IndexIVFPQFastScanCosine(
+        Index* quantizer,
+        size_t d,
+        size_t nlist,
+        size_t M,
+        size_t nbits,
+        MetricType metric,
+        int bbs)
+        : IndexIVFPQFastScan(quantizer, d, nlist, M, nbits, metric, bbs) {
+}
+
+IndexIVFPQFastScanCosine::IndexIVFPQFastScanCosine() {
+}
+
+void IndexIVFPQFastScanCosine::train(idx_t n, const float* x) {
+    auto norm_data = std::make_unique<float[]>(n * d);
+    std::memcpy(norm_data.get(), x, n * d * sizeof(float));
+    ::knowhere::NormalizeVecs(norm_data.get(), n, d);
+    IndexIVF::train(n, norm_data.get());
+}
+
+void IndexIVFPQFastScanCosine::add_with_ids(
+        idx_t n,
+        const float* x,
+        const idx_t* xids) {
+    auto norm_data = std::make_unique<float[]>(n * d);
+    std::memcpy(norm_data.get(), x, n * d * sizeof(float));
+    auto l2_norms = ::knowhere::NormalizeVecs(norm_data.get(), n, d);
+    // Convert L2 norms to inverse L2 norms for WithCosineNormDistanceComputer
+    inverse_norms_storage.add_l2_norms(l2_norms.data(), n);
+    IndexIVFPQFastScan::add_with_ids(n, norm_data.get(), xids);
 }
 
 }

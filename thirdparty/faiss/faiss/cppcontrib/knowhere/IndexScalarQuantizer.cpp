@@ -121,10 +121,6 @@ void IndexScalarQuantizer::sa_decode(idx_t n, const uint8_t* bytes, float* x)
     sq.decode(bytes, x, n);
 }
 
-size_t IndexScalarQuantizer::cal_size() const {
-    return codes.size() * sizeof(uint8_t) + sizeof(size_t) + sq.cal_size();
-}
-
 /*******************************************************************
  * IndexIVFScalarQuantizer implementation
  ********************************************************************/

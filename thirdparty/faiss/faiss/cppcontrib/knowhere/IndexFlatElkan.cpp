@@ -20,8 +20,8 @@
 
 namespace faiss::cppcontrib::knowhere {
 
-IndexFlatElkan::IndexFlatElkan(idx_t d, MetricType metric, bool is_cosine, bool use_elkan)
-        : IndexFlat(d, metric, is_cosine) {
+IndexFlatElkan::IndexFlatElkan(idx_t d, MetricType metric, bool use_elkan)
+        : IndexFlat(d, metric) {
     this->use_elkan = use_elkan;
     if (this->use_elkan) {
         this->sym_dim = 1024;

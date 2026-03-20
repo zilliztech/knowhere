@@ -73,10 +73,6 @@ void IndexPQ::train(idx_t n, const float* x) {
     is_trained = true;
 }
 
-size_t IndexPQ::cal_size() const {
-    return codes.size() * sizeof(uint8_t) + pq.cal_size();
-}
-
 namespace {
 
 template <class PQDecoder>

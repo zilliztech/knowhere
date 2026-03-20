@@ -320,10 +320,12 @@ void all_L2sqr_distances(
         const IDSelector* sel);
 
 // Knowhere-specific function
+// y_inv_norms: precomputed inverse L2 norms (1/||y||) per database vector,
+//   or nullptr to compute on-the-fly.
 void knn_cosine(
         const float* x,
         const float* y,
-        const float* y_norms,
+        const float* y_inv_norms,
         size_t d,
         size_t nx,
         size_t ny,
@@ -333,7 +335,7 @@ void knn_cosine(
 void knn_cosine(
         const float* x,
         const float* y,
-        const float* y_norms,
+        const float* y_inv_norms,
         size_t d,
         size_t nx,
         size_t ny,
@@ -345,7 +347,7 @@ void knn_cosine(
 void all_cosine(
         const float* x,
         const float* y,
-        const float* y_norms,
+        const float* y_inv_norms,
         size_t d,
         size_t nx,
         size_t ny,
@@ -355,7 +357,7 @@ void all_cosine(
 void all_cosine_distances(
         const float* x,
         const float* y,
-        const float* y_norms,
+        const float* y_inv_norms,
         size_t d,
         size_t nx,
         size_t ny,
@@ -421,7 +423,7 @@ void knn_L2sqr_by_idx(
 void knn_cosine_by_idx(
         const float* x,
         const float* y,
-        const float* y_norms,
+        const float* y_inv_norms,
         const int64_t* subset,
         size_t d,
         size_t nx,
@@ -469,7 +471,7 @@ void range_search_inner_product(
 void range_search_cosine(
         const float* x,
         const float* y,
-        const float* y_norms,
+        const float* y_inv_norms,
         size_t d,
         size_t nx,
         size_t ny,
