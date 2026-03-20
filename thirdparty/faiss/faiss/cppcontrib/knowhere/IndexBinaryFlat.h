@@ -13,8 +13,8 @@
 
 #include <faiss/cppcontrib/knowhere/IndexBinary.h>
 
+#include <faiss/impl/approx_topk/approx_topk.h>
 #include <faiss/impl/maybe_owned_vector.h>
-#include <faiss/utils/approx_topk/mode.h>
 
 namespace faiss {
 namespace cppcontrib {

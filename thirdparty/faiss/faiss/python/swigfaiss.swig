@@ -691,7 +691,7 @@ void gpu_sync_all_devices()
 %template(IndexBinaryIDMap2) faiss::IndexIDMap2Template<faiss::IndexBinary>;
 
 
-%include <faiss/utils/approx_topk/mode.h>
+%include <faiss/impl/approx_topk/approx_topk.h>
 
 #ifdef FAISS_ENABLE_SVS
 %ignore faiss::to_svs_storage_kind;
@@ -916,6 +916,8 @@ void gpu_sync_all_devices()
     DOWNCAST (VStackInvertedLists)
     DOWNCAST (HStackInvertedLists)
     DOWNCAST (MaskedInvertedLists)
+    DOWNCAST (StopWordsInvertedLists)
+    DOWNCAST (CappedInvertedLists)
     DOWNCAST (InvertedLists)
     {
         assert(false);

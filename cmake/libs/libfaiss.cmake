@@ -2,8 +2,10 @@ include(CheckCXXCompilerFlag)
 
 include_directories(thirdparty/faiss)
 
+# all .cpp files
 knowhere_file_glob(
-  GLOB FAISS_SRCS
+  GLOB
+  FAISS_SRCS
   thirdparty/faiss/faiss/*.cpp
   thirdparty/faiss/faiss/impl/*.cpp
   thirdparty/faiss/faiss/impl/fast_scan/*.cpp
@@ -18,22 +20,34 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/cppcontrib/knowhere/utils/*.cpp
 )
 
-knowhere_file_glob(GLOB FAISS_AVX512_SRCS
-                   thirdparty/faiss/faiss/impl/*avx512.cpp
-                   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*avx512.cpp
-)
-knowhere_file_glob(GLOB FAISS_DD_AVX512_SRCS
-                   thirdparty/faiss/faiss/impl/fast_scan/impl-avx512.cpp
-                   thirdparty/faiss/faiss/impl/pq_code_distance/pq_code_distance-avx512.cpp
-                   thirdparty/faiss/faiss/impl/scalar_quantizer/sq-avx512.cpp
-                   thirdparty/faiss/faiss/utils/simd_impl/distances_avx512.cpp
-)
-list(APPEND FAISS_AVX512_SRCS ${FAISS_DD_AVX512_SRCS})
 
+# AVX512 files
+knowhere_file_glob(
+  GLOB
+  FAISS_AVX512_SRCS
+  thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*avx512.cpp
+)
+# AVX512 vanilla Faiss dynamic dispatch related files
+knowhere_file_glob(
+  GLOB
+  FAISS_DD_AVX512_SRCS
+  thirdparty/faiss/faiss/impl/fast_scan/impl-avx512.cpp
+  thirdparty/faiss/faiss/impl/pq_code_distance/pq_code_distance-avx512.cpp
+  thirdparty/faiss/faiss/impl/scalar_quantizer/sq-avx512.cpp
+  # # temporarily disabled
+  # thirdparty/faiss/faiss/utils/distances_fused/avx512.cpp
+  thirdparty/faiss/faiss/utils/simd_impl/distances_avx512.cpp
+)
+# combine files
+list(APPEND FAISS_AVX512_SRCS ${FAISS_DD_AVX512_SRCS})
+# remove platform files from general files
+list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX512_SRCS})
+
+
+# AVX2 files
 knowhere_file_glob(
   GLOB
   FAISS_AVX2_SRCS
-  thirdparty/faiss/faiss/impl/*avx.cpp
   thirdparty/faiss/faiss/impl/pq4_fast_scan_search_1.cpp
   thirdparty/faiss/faiss/impl/pq4_fast_scan_search_qbs.cpp
   thirdparty/faiss/faiss/IndexPQFastScan.cpp
@@ -44,22 +58,84 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/cppcontrib/knowhere/IndexIVFPQFastScan.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/IVFFastScanIteratorWorkspace.cpp
 )
+# AVX2 vanilla Faiss dynamic dispatch related files
 knowhere_file_glob(
   GLOB
   FAISS_DD_AVX2_SRCS
+  thirdparty/faiss/faiss/impl/approx_topk/avx2.cpp
   thirdparty/faiss/faiss/impl/fast_scan/impl-avx2.cpp
   thirdparty/faiss/faiss/impl/pq_code_distance/pq_code_distance-avx2.cpp
   thirdparty/faiss/faiss/impl/scalar_quantizer/sq-avx2.cpp
   thirdparty/faiss/faiss/utils/simd_impl/distances_avx2.cpp
 )
+# combine files
 list(APPEND FAISS_AVX2_SRCS ${FAISS_DD_AVX2_SRCS})
+# remove platform files from general files
+list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX2_SRCS})
 
-list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX512_SRCS})
+
+# NEON files
+knowhere_file_glob(
+  GLOB
+  FAISS_NEON_SRCS
+  thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*neon.cpp
+)
+# NEON vanilla Faiss dynamic dispatch related files
+knowhere_file_glob(
+  GLOB
+  FAISS_DD_NEON_SRCS
+  thirdparty/faiss/faiss/impl/approx_topk/neon.cpp
+  thirdparty/faiss/faiss/impl/fast_scan/impl-neon.cpp
+  thirdparty/faiss/faiss/impl/scalar_quantizer/sq-neon.cpp
+  thirdparty/faiss/faiss/utils/simd_impl/distances_aarch64.cpp
+)
+# combine files
+list(APPEND FAISS_NEON_SRCS ${FAISS_DD_NEON_SRCS})
+# remove platform files from general files
+list(REMOVE_ITEM FAISS_SRCS ${FAISS_NEON_SRCS})
+
+
+# SVE files
+knowhere_file_glob(
+  GLOB
+  FAISS_SVE_SRCS
+  thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*sve.cpp
+)
+# SVE vanilla Faiss dynamic dispatch related files
+knowhere_file_glob(
+  GLOB
+  FAISS_DD_SVE_SRCS
+  thirdparty/faiss/faiss/impl/pq_code_distance/pq_code_distance-sve.cpp
+  thirdparty/faiss/faiss/utils/simd_impl/distances_arm_sve.cpp
+)
+# combine files
+list(APPEND FAISS_SVE_SRCS ${FAISS_DD_SVE_SRCS})
+# remove platform files from general files
+list(REMOVE_ITEM FAISS_SRCS ${FAISS_SVE_SRCS})
+
+
+# RVV files
+knowhere_file_glob(
+  GLOB
+  FAISS_RVV_SRCS
+  thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*rvv.cpp
+)
+# # RVE vanilla Faiss dynamic dispatch related files are not there yet
+# knowhere_file_glob(
+#   GLOB
+#   FAISS_DD_RVV_SRCS
+# )
+# # combine files
+# list(APPEND FAISS_RVV_SRCS ${FAISS_DD_RVV_SRCS})
+# remove platform files from general files
+list(REMOVE_ITEM FAISS_SRCS ${FAISS_RVV_SRCS})
+
 
 # disable RHNSW
 knowhere_file_glob(GLOB FAISS_RHNSW_SRCS thirdparty/faiss/faiss/impl/RHNSW.cpp)
 list(REMOVE_ITEM FAISS_SRCS ${FAISS_RHNSW_SRCS})
 
+# generate `knowhere_utils` library for x86
 if(__X86_64)
   set(UTILS_SRC src/simd/distances_ref.cc src/simd/hook.cc)
   set(UTILS_SSE_SRC src/simd/distances_sse.cc)
@@ -92,8 +168,8 @@ if(__X86_64)
   target_link_libraries(knowhere_utils PUBLIC xxHash::xxhash)
 endif()
 
+# generate `knowhere_utils` library for AARCH64
 if(__AARCH64)
-
   set(UTILS_SRC src/simd/distances_ref.cc src/simd/distances_neon.cc)
   set(UTILS_SVE_SRC src/simd/hook.cc src/simd/distances_sve.cc)
   set(ALL_UTILS_SRC ${UTILS_SRC} ${UTILS_SVE_SRC})
@@ -169,6 +245,7 @@ if(__AARCH64)
   target_link_libraries(knowhere_utils PUBLIC xxHash::xxhash)
 endif()
 
+# generate `knowhere_utils` library for RISCV64
 if(__RISCV64)
   set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc src/simd/distances_rvv.cc)
   add_library(knowhere_utils STATIC ${UTILS_SRC})
@@ -180,6 +257,7 @@ if(__RISCV64)
   )
 endif()
 
+# generate `knowhere_utils` library for PPC64
 # ToDo: Add distances_vsx.cc for powerpc64 SIMD acceleration
 if(__PPC64)
   set(UTILS_SRC src/simd/hook.cc src/simd/distances_ref.cc src/simd/distances_powerpc.cc)
@@ -208,21 +286,8 @@ endif()
 find_package(xxHash REQUIRED)
 include_directories(${xxHash_INCLUDE_DIRS})
 
+# generate `faiss` library for x86
 if(__X86_64)
-  list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX2_SRCS})
-
-  knowhere_file_glob(GLOB FAISS_NEON_SRCS
-    thirdparty/faiss/faiss/impl/*neon.cpp
-    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*neon.cpp
-  )
-  list(REMOVE_ITEM FAISS_SRCS ${FAISS_NEON_SRCS})
-
-  knowhere_file_glob(GLOB FAISS_RVV_SRCS
-    thirdparty/faiss/faiss/impl/*rvv.cpp
-    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*rvv.cpp
-  )
-  list(REMOVE_ITEM FAISS_SRCS ${FAISS_RVV_SRCS})
-
   add_library(faiss_avx2 OBJECT ${FAISS_AVX2_SRCS})
   target_compile_options(faiss_avx2 PRIVATE $<$<COMPILE_LANGUAGE:CXX>: -msse4.2
                                             -mavx2 -mfma -mf16c -mpopcnt>)
@@ -267,24 +332,11 @@ if(__X86_64)
   target_compile_definitions(faiss PRIVATE FINTEGER=int FAISS_ENABLE_DD COMPILE_SIMD_AVX2 COMPILE_SIMD_AVX512)
 endif()
 
+# generate `faiss` library for AARCH64
 if(__AARCH64)
-  knowhere_file_glob(GLOB FAISS_AVX_SRCS
-    thirdparty/faiss/faiss/impl/*avx.cpp
-    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*avx.cpp
-  )
-  list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX_SRCS})
-
-  knowhere_file_glob(GLOB FAISS_RVV_SRCS
-    thirdparty/faiss/faiss/impl/*rvv.cpp
-    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*rvv.cpp
-  )
-  list(REMOVE_ITEM FAISS_SRCS ${FAISS_RVV_SRCS})
-
   add_library(faiss STATIC ${FAISS_SRCS})
   target_include_directories(faiss PRIVATE ${Boost_INCLUDE_DIRS})
-  target_sources(faiss PRIVATE
-    thirdparty/faiss/faiss/utils/simd_impl/distances_aarch64.cpp
-  )
+  target_sources(faiss PRIVATE ${FAISS_NEON_SRCS})
 
   target_compile_options(
     faiss
@@ -296,27 +348,51 @@ if(__AARCH64)
             -Wno-unused-function
             -Wno-strict-aliasing>)
 
+  # SVE object library (compiled with SVE flags when available)
+  set(SVE_AVAILABLE FALSE)
+  if(HAS_ARMV9_SVE_BF16 OR HAS_ARMV8_SVE_BF16 OR HAS_ARMV9_SVE OR HAS_ARMV8_SVE)
+    set(SVE_AVAILABLE TRUE)
+  endif()
+
+  if(SVE_AVAILABLE)
+    add_library(faiss_sve OBJECT ${FAISS_SVE_SRCS})
+    target_include_directories(faiss_sve PRIVATE ${Boost_INCLUDE_DIRS})
+    target_compile_definitions(faiss_sve PRIVATE
+      FINTEGER=int FAISS_ENABLE_DD COMPILE_SIMD_ARM_NEON COMPILE_SIMD_ARM_SVE)
+    target_compile_options(
+      faiss_sve
+      PRIVATE $<$<COMPILE_LANGUAGE:CXX>:
+              -Wno-sign-compare
+              -Wno-unused-variable
+              -Wno-reorder
+              -Wno-unused-local-typedefs
+              -Wno-unused-function
+              -Wno-strict-aliasing>)
+    if(HAS_ARMV9_SVE_BF16)
+      target_compile_options(faiss_sve PRIVATE "-march=armv9-a+sve+bf16")
+    elseif(HAS_ARMV8_SVE_BF16)
+      target_compile_options(faiss_sve PRIVATE "-march=armv8-a+sve+bf16")
+    elseif(HAS_ARMV9_SVE)
+      target_compile_options(faiss_sve PRIVATE "-march=armv9-a+sve")
+    elseif(HAS_ARMV8_SVE)
+      target_compile_options(faiss_sve PRIVATE "-march=armv8-a+sve")
+    endif()
+  endif()
+
   add_dependencies(faiss knowhere_utils)
   target_link_libraries(faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
                                      knowhere_utils)
+  if(SVE_AVAILABLE)
+    target_link_libraries(faiss PUBLIC faiss_sve)
+  endif()
   target_compile_definitions(faiss PRIVATE FINTEGER=int FAISS_ENABLE_DD COMPILE_SIMD_ARM_NEON)
 endif()
 
+# generate `faiss` library for RISCV64
 if(__RISCV64)
-  knowhere_file_glob(GLOB FAISS_AVX_SRCS
-    thirdparty/faiss/faiss/impl/*avx.cpp
-    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*avx.cpp
-  )
-  list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX_SRCS})
-
-  knowhere_file_glob(GLOB FAISS_NEON_SRCS
-    thirdparty/faiss/faiss/impl/*neon.cpp
-    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*neon.cpp
-  )
-  list(REMOVE_ITEM FAISS_SRCS ${FAISS_NEON_SRCS})
-
   add_library(faiss STATIC ${FAISS_SRCS})
   target_include_directories(faiss PRIVATE ${Boost_INCLUDE_DIRS})
+  target_sources(faiss PRIVATE ${FAISS_RVV_SRCS})
 
   target_compile_options(
     faiss
@@ -336,25 +412,8 @@ if(__RISCV64)
   target_compile_definitions(faiss PRIVATE FINTEGER=int)
 endif()
 
+# generate `faiss` library for PPC64
 if(__PPC64)
-  knowhere_file_glob(GLOB FAISS_AVX_SRCS
-    thirdparty/faiss/faiss/impl/*avx.cpp
-    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*avx.cpp
-  )
-  list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX_SRCS})
-
-  knowhere_file_glob(GLOB FAISS_NEON_SRCS
-    thirdparty/faiss/faiss/impl/*neon.cpp
-    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*neon.cpp
-  )
-  list(REMOVE_ITEM FAISS_SRCS ${FAISS_NEON_SRCS})
-
-  knowhere_file_glob(GLOB FAISS_RVV_SRCS
-    thirdparty/faiss/faiss/impl/*rvv.cpp
-    thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*rvv.cpp
-  )
-  list(REMOVE_ITEM FAISS_SRCS ${FAISS_RVV_SRCS})
-
   add_library(faiss STATIC ${FAISS_SRCS})
   target_include_directories(faiss PRIVATE ${Boost_INCLUDE_DIRS})
 

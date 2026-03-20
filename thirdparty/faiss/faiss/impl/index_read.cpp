@@ -80,6 +80,7 @@ namespace faiss {
 
 namespace {
 size_t deserialization_loop_limit_ = 0;
+size_t deserialization_vector_byte_limit_ = uint64_t{1} << 40; // 1 TB
 } // namespace
 
 size_t get_deserialization_loop_limit() {
@@ -88,6 +89,14 @@ size_t get_deserialization_loop_limit() {
 
 void set_deserialization_loop_limit(size_t value) {
     deserialization_loop_limit_ = value;
+}
+
+size_t get_deserialization_vector_byte_limit() {
+    return deserialization_vector_byte_limit_;
+}
+
+void set_deserialization_vector_byte_limit(size_t value) {
+    deserialization_vector_byte_limit_ = value;
 }
 
 #define FAISS_CHECK_DESERIALIZATION_LOOP_LIMIT(val, field_name) \
@@ -294,8 +303,9 @@ std::unique_ptr<VectorTransform> read_VectorTransform_up(IOReader* f) {
         READ1(lt->have_bias);
         READVECTOR(lt->A);
         READVECTOR(lt->b);
-        FAISS_THROW_IF_NOT(lt->A.size() >= lt->d_in * lt->d_out);
-        FAISS_THROW_IF_NOT(!lt->have_bias || lt->b.size() >= lt->d_out);
+        FAISS_THROW_IF_NOT(
+                lt->A.size() >= size_t(lt->d_in) * size_t(lt->d_out));
+        FAISS_THROW_IF_NOT(!lt->have_bias || lt->b.size() >= size_t(lt->d_out));
         lt->set_is_orthonormal();
         vt = std::move(lt);
     } else if (h == fourcc("RmDT")) {
@@ -347,6 +357,24 @@ std::unique_ptr<VectorTransform> read_VectorTransform_up(IOReader* f) {
     if (h == fourcc("HRot")) {
         auto* hr = dynamic_cast<HadamardRotation*>(vt.get());
         FAISS_THROW_IF_NOT_MSG(hr, "dynamic_cast to HadamardRotation failed");
+        FAISS_THROW_IF_NOT_FMT(
+                vt->d_in > 0,
+                "invalid HadamardRotation d_in %d (must be > 0)",
+                vt->d_in);
+        size_t p = 1;
+        while (p < static_cast<size_t>(vt->d_in)) {
+            p <<= 1;
+        }
+        FAISS_THROW_IF_NOT_FMT(
+                static_cast<size_t>(vt->d_out) == p,
+                "invalid HadamardRotation d_out %d for d_in %d"
+                " (d_out must be the smallest power of 2 >= d_in)",
+                vt->d_out,
+                vt->d_in);
+        size_t byte_limit = get_deserialization_vector_byte_limit();
+        FAISS_THROW_IF_NOT_MSG(
+                p <= byte_limit / (3 * sizeof(float)),
+                "HadamardRotation d_out exceeds deserialization byte limit");
         hr->init(hr->seed);
     }
     return vt;
@@ -493,8 +521,24 @@ void read_ProductQuantizer(ProductQuantizer* pq, IOReader* f) {
     READ1(pq->nbits);
     FAISS_THROW_IF_NOT_FMT(
             pq->M > 0, "invalid ProductQuantizer M=%zd (must be > 0)", pq->M);
+    FAISS_THROW_IF_NOT_FMT(
+            pq->nbits <= 24, "invalid ProductQuantizer nbits=%zd", pq->nbits);
+    {
+        size_t ksub = size_t{1} << pq->nbits;
+        size_t n = mul_no_overflow(pq->d, ksub, "PQ centroids");
+        FAISS_THROW_IF_NOT_MSG(
+                n < get_deserialization_vector_byte_limit() / sizeof(float),
+                "PQ centroids allocation would exceed deserialization byte limit");
+    }
     pq->set_derived_values();
     READVECTOR(pq->centroids);
+    FAISS_THROW_IF_NOT_FMT(
+            pq->centroids.size() == pq->d * pq->ksub,
+            "ProductQuantizer centroids size %zu != d * ksub (%zu * %zu = %zu)",
+            pq->centroids.size(),
+            pq->d,
+            pq->ksub,
+            pq->d * pq->ksub);
 }
 
 static void read_ResidualQuantizer_old(ResidualQuantizer& rq, IOReader* f) {
@@ -628,6 +672,38 @@ void read_ScalarQuantizer(ScalarQuantizer* ivsc, IOReader* f) {
     READ1(ivsc->d);
     READ1(ivsc->code_size);
     READVECTOR(ivsc->trained);
+    // Validate trained vector size matches the quantizer type and dimension.
+    // An untrained ScalarQuantizer legitimately has trained.size() == 0,
+    // so only check when the vector is non-empty.
+    if (!ivsc->trained.empty()) {
+        size_t expected = 0;
+        switch (ivsc->qtype) {
+            case ScalarQuantizer::QT_4bit_uniform:
+            case ScalarQuantizer::QT_8bit_uniform:
+                expected = 2;
+                break;
+            case ScalarQuantizer::QT_4bit:
+            case ScalarQuantizer::QT_8bit:
+            case ScalarQuantizer::QT_6bit:
+                expected = 2 * ivsc->d;
+                break;
+            case ScalarQuantizer::QT_fp16:
+            case ScalarQuantizer::QT_bf16:
+            case ScalarQuantizer::QT_8bit_direct:
+            case ScalarQuantizer::QT_8bit_direct_signed:
+            case ScalarQuantizer::QT_count:
+                expected = 0;
+                break;
+        }
+        FAISS_THROW_IF_NOT_FMT(
+                ivsc->trained.size() == expected,
+                "ScalarQuantizer trained size %zu != expected %zu "
+                "for qtype %d, d %zu",
+                ivsc->trained.size(),
+                expected,
+                (int)ivsc->qtype,
+                ivsc->d);
+    }
     ivsc->set_derived_sizes();
 }
 
@@ -1053,6 +1129,8 @@ std::unique_ptr<Index> read_index_up(IOReader* f, int io_flags) {
         read_ProductQuantizer(&idxp->pq, f);
         idxp->code_size = idxp->pq.code_size;
         read_vector(idxp->codes, f);
+        FAISS_THROW_IF_NOT(
+                idxp->codes.size() == idxp->ntotal * idxp->code_size);
         if (h == fourcc("IxPo") || h == fourcc("IxPq")) {
             READ1(idxp->search_type);
             READ1(idxp->encode_signs);
@@ -1075,6 +1153,8 @@ std::unique_ptr<Index> read_index_up(IOReader* f, int io_flags) {
         }
         READ1(idxr->code_size);
         read_vector(idxr->codes, f);
+        FAISS_THROW_IF_NOT(
+                idxr->codes.size() == idxr->ntotal * idxr->code_size);
         idx = std::move(idxr);
     } else if (h == fourcc("IxLS")) {
         auto idxr = std::make_unique<IndexLocalSearchQuantizer>();
@@ -1082,6 +1162,8 @@ std::unique_ptr<Index> read_index_up(IOReader* f, int io_flags) {
         read_LocalSearchQuantizer(idxr->lsq, f);
         READ1(idxr->code_size);
         read_vector(idxr->codes, f);
+        FAISS_THROW_IF_NOT(
+                idxr->codes.size() == idxr->ntotal * idxr->code_size);
         idx = std::move(idxr);
     } else if (h == fourcc("IxPR")) {
         auto idxpr = std::make_unique<IndexProductResidualQuantizer>();
@@ -1089,6 +1171,8 @@ std::unique_ptr<Index> read_index_up(IOReader* f, int io_flags) {
         read_ProductResidualQuantizer(idxpr->prq, f, io_flags);
         READ1(idxpr->code_size);
         read_vector(idxpr->codes, f);
+        FAISS_THROW_IF_NOT(
+                idxpr->codes.size() == idxpr->ntotal * idxpr->code_size);
         idx = std::move(idxpr);
     } else if (h == fourcc("IxPL")) {
         auto idxpl = std::make_unique<IndexProductLocalSearchQuantizer>();
@@ -1096,6 +1180,8 @@ std::unique_ptr<Index> read_index_up(IOReader* f, int io_flags) {
         read_ProductLocalSearchQuantizer(idxpl->plsq, f);
         READ1(idxpl->code_size);
         read_vector(idxpl->codes, f);
+        FAISS_THROW_IF_NOT(
+                idxpl->codes.size() == idxpl->ntotal * idxpl->code_size);
         idx = std::move(idxpl);
     } else if (h == fourcc("ImRQ")) {
         auto idxr = std::make_unique<ResidualCoarseQuantizer>();
@@ -1244,7 +1330,7 @@ std::unique_ptr<Index> read_index_up(IOReader* f, int io_flags) {
                     "invalid IVFFlatDedup instances table size: %zd "
                     "(must be even)",
                     tab.size());
-            for (long i = 0; i < tab.size(); i += 2) {
+            for (size_t i = 0; i < tab.size(); i += 2) {
                 std::pair<idx_t, idx_t> pair(tab[i], tab[i + 1]);
                 ivfl->instances.insert(pair);
             }
@@ -1304,7 +1390,7 @@ std::unique_ptr<Index> read_index_up(IOReader* f, int io_flags) {
         read_ScalarQuantizer(&ivsc->sq, f);
         READ1(ivsc->code_size);
         ArrayInvertedLists* ail = set_array_invlist(ivsc.get(), ids);
-        for (int i = 0; i < ivsc->nlist; i++)
+        for (size_t i = 0; i < ivsc->nlist; i++)
             READVECTOR(ail->codes[i]);
         idx = std::move(ivsc);
     } else if (h == fourcc("IwSQ") || h == fourcc("IwSq")) {
@@ -2012,9 +2098,19 @@ static void read_binary_multi_hash_map(
     FAISS_THROW_IF_NOT(buf.size() == (nbit + 7) / 8);
     BitstringReader rd(buf.data(), buf.size());
     map.reserve(sz);
+    size_t total_ids = 0;
     for (size_t i = 0; i < sz; i++) {
         uint64_t hash = rd.read(b);
         uint64_t ilsz = rd.read(id_bits);
+        FAISS_THROW_IF_NOT_FMT(
+                ilsz <= ntotal - total_ids,
+                "multi hash map: ilsz=%zu at entry %zu would exceed "
+                "ntotal=%zu (already read %zu ids)",
+                (size_t)ilsz,
+                i,
+                ntotal,
+                total_ids);
+        total_ids += ilsz;
         auto& il = map[hash];
         for (size_t j = 0; j < ilsz; j++) {
             il.push_back(rd.read(id_bits));
@@ -2071,6 +2167,7 @@ std::unique_ptr<IndexBinary> read_index_binary_up(IOReader* f, int io_flags) {
         idxmap->index = read_index_binary(f, io_flags);
         idxmap->own_fields = true;
         READVECTOR(idxmap->id_map);
+        FAISS_THROW_IF_NOT(idxmap->id_map.size() == idxmap->ntotal);
         if (is_map2) {
             static_cast<IndexBinaryIDMap2*>(idxmap.get())->construct_rev_map();
         }

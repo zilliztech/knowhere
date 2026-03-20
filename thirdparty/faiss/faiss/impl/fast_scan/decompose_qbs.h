@@ -52,14 +52,7 @@ void accumulate_q_4step(
     constexpr int Q4 = (QBS >> 12) & 15;
     constexpr int SQ = Q1 + Q2 + Q3 + Q4;
 
-    for (size_t j0 = 0; j0 < ntotal2; j0 += 32, codes += block_stride) {
-        res.set_block_origin(0, j0);
-        if constexpr (has_sel_member_v<ResultHandler>) {
-            if (whether_all_vectors_filtered_out(
-                        res, std::min<size_t>(32, res.ntotal - j0)))
-                continue;
-        }
-
+    for_each_block<32>(ntotal2, codes, block_stride, res, [&](size_t) {
         FixedStorageHandler<SQ, 2> res2;
         const uint8_t* LUT = LUT0;
         kernel_accumulate_block<Q1>(nsq, codes, LUT, res2, scaler);
@@ -79,7 +72,7 @@ void accumulate_q_4step(
             kernel_accumulate_block<Q4>(nsq, codes, LUT, res2, scaler);
         }
         res2.to_other_handler(res);
-    }
+    });
 }
 
 template <int NQ, class ResultHandler, class Scaler>
@@ -91,17 +84,10 @@ void kernel_accumulate_block_loop(
         ResultHandler& res,
         const Scaler& scaler,
         size_t block_stride) {
-    for (size_t j0 = 0; j0 < ntotal2; j0 += 32, codes += block_stride) {
-        res.set_block_origin(0, j0);
-        if constexpr (has_sel_member_v<ResultHandler>) {
-            if (whether_all_vectors_filtered_out(
-                        res, std::min<size_t>(32, res.ntotal - j0)))
-                continue;
-        }
-
+    for_each_block<32>(ntotal2, codes, block_stride, res, [&](size_t) {
         kernel_accumulate_block<NQ, ResultHandler>(
                 nsq, codes, LUT, res, scaler);
-    }
+    });
 }
 
 // non-template version of accumulate kernel -- dispatches dynamically
@@ -183,14 +169,7 @@ void pq4_accumulate_loop_qbs_fixed_scaler(
     }
 
     // default implementation where qbs is not known at compile time
-    for (size_t j0 = 0; j0 < ntotal2; j0 += 32, codes += block_stride) {
-        res.set_block_origin(0, j0);
-        if constexpr (has_sel_member_v<ResultHandler>) {
-            if (whether_all_vectors_filtered_out(
-                        res, std::min<size_t>(32, res.ntotal - j0)))
-                continue;
-        }
-
+    for_each_block<32>(ntotal2, codes, block_stride, res, [&](size_t j0) {
         const uint8_t* LUT = LUT0;
         int qi = qbs;
         int i0 = 0;
@@ -215,7 +194,7 @@ void pq4_accumulate_loop_qbs_fixed_scaler(
             i0 += nq;
             LUT += nq * nsq * 16;
         }
-    }
+    });
 }
 
 } // namespace faiss

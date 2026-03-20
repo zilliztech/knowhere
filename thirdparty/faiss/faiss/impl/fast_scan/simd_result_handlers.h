@@ -45,17 +45,40 @@ template <class ResultHandler>
 inline bool whether_all_vectors_filtered_out(
         ResultHandler& res,
         size_t block_size) {
-    if constexpr (has_sel_member_v<ResultHandler>) {
-        if (res.sel != nullptr) {
-            for (size_t jj = 0; jj < block_size; jj++) {
-                if (res.sel->is_member(res.adjust_id(0, jj))) {
-                    return false;
-                }
+    if constexpr (!has_sel_member_v<ResultHandler>) {
+        return false;
+    }
+    if (res.sel != nullptr) {
+        for (size_t jj = 0; jj < block_size; jj++) {
+            if (res.sel->is_member(res.adjust_id(0, jj))) {
+                return false;
             }
-            return true;
         }
+        return true;
     }
     return false;
+}
+
+/// Loop over blocks of Step vectors, advancing codes by block_stride each
+/// iteration. Calls set_block_origin(0, j0) and skips blocks where all
+/// vectors are filtered out. The body lambda receives j0.
+template <size_t Step, class ResultHandler, class Body>
+inline void for_each_block(
+        size_t ntotal,
+        const uint8_t*& codes,
+        size_t block_stride,
+        ResultHandler& res,
+        Body&& body) {
+    for (size_t j0 = 0; j0 < ntotal; j0 += Step, codes += block_stride) {
+        res.set_block_origin(0, j0);
+        if constexpr (has_sel_member_v<ResultHandler>) {
+            if (whether_all_vectors_filtered_out(
+                        res, std::min<size_t>(Step, res.ntotal - j0))) {
+                continue;
+            }
+        }
+        body(j0);
+    }
 }
 
 } // namespace
