@@ -77,15 +77,15 @@ class KnowhereConan(ConanFile):
 
     @property
     def _minimum_cpp_standard(self):
-        return 17
+        return 20
 
     @property
     def _minimum_compilers_version(self):
         return {
-            "gcc": "8",
-            "Visual Studio": "16",
-            "clang": "6",
-            "apple-clang": "10",
+            "gcc": "10",
+            "Visual Studio": "17",
+            "clang": "10",
+            "apple-clang": "13",
         }
 
     def config_options(self):

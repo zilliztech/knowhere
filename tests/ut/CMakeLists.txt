@@ -44,7 +44,7 @@ if (NOT Catch2_FOUND)
 endif()
 
 set_target_properties(knowhere_tests PROPERTIES
-  CXX_STANDARD 17
+  CXX_STANDARD 20
 )
 
 target_link_libraries(knowhere_tests PRIVATE
