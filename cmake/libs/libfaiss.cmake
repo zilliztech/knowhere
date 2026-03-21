@@ -48,15 +48,7 @@ list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX512_SRCS})
 knowhere_file_glob(
   GLOB
   FAISS_AVX2_SRCS
-  thirdparty/faiss/faiss/impl/pq4_fast_scan_search_1.cpp
-  thirdparty/faiss/faiss/impl/pq4_fast_scan_search_qbs.cpp
-  thirdparty/faiss/faiss/IndexPQFastScan.cpp
-  thirdparty/faiss/faiss/IndexIVFFastScan.cpp
-  thirdparty/faiss/faiss/IndexIVFPQFastScan.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*avx.cpp
-  thirdparty/faiss/faiss/cppcontrib/knowhere/IndexIVFFastScan.cpp
-  thirdparty/faiss/faiss/cppcontrib/knowhere/IndexIVFPQFastScan.cpp
-  thirdparty/faiss/faiss/cppcontrib/knowhere/IVFFastScanIteratorWorkspace.cpp
 )
 # AVX2 vanilla Faiss dynamic dispatch related files
 knowhere_file_glob(
@@ -72,6 +64,24 @@ knowhere_file_glob(
 list(APPEND FAISS_AVX2_SRCS ${FAISS_DD_AVX2_SRCS})
 # remove platform files from general files
 list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX2_SRCS})
+
+
+# FastScan files, which are supported on machine with a lookup
+#   instructions
+knowhere_file_glob(
+  GLOB
+  FAISS_FASTSCAN_SRCS
+  thirdparty/faiss/faiss/impl/pq4_fast_scan_search_1.cpp
+  thirdparty/faiss/faiss/impl/pq4_fast_scan_search_qbs.cpp
+  thirdparty/faiss/faiss/IndexPQFastScan.cpp
+  thirdparty/faiss/faiss/IndexIVFFastScan.cpp
+  thirdparty/faiss/faiss/IndexIVFPQFastScan.cpp
+  thirdparty/faiss/faiss/cppcontrib/knowhere/IndexIVFFastScan.cpp
+  thirdparty/faiss/faiss/cppcontrib/knowhere/IndexIVFPQFastScan.cpp
+  thirdparty/faiss/faiss/cppcontrib/knowhere/IVFFastScanIteratorWorkspace.cpp
+)
+# remove fastscan files from general files (they need special flags on x86)
+list(REMOVE_ITEM FAISS_SRCS ${FAISS_FASTSCAN_SRCS})
 
 
 # NEON files
@@ -288,7 +298,7 @@ include_directories(${xxHash_INCLUDE_DIRS})
 
 # generate `faiss` library for x86
 if(__X86_64)
-  add_library(faiss_avx2 OBJECT ${FAISS_AVX2_SRCS})
+  add_library(faiss_avx2 OBJECT ${FAISS_AVX2_SRCS} ${FAISS_FASTSCAN_SRCS})
   target_compile_options(faiss_avx2 PRIVATE $<$<COMPILE_LANGUAGE:CXX>: -msse4.2
                                             -mavx2 -mfma -mf16c -mpopcnt>)
   target_compile_definitions(faiss_avx2 PRIVATE COMPILE_SIMD_AVX2)
@@ -336,7 +346,7 @@ endif()
 if(__AARCH64)
   add_library(faiss STATIC ${FAISS_SRCS})
   target_include_directories(faiss PRIVATE ${Boost_INCLUDE_DIRS})
-  target_sources(faiss PRIVATE ${FAISS_NEON_SRCS})
+  target_sources(faiss PRIVATE ${FAISS_NEON_SRCS} ${FAISS_FASTSCAN_SRCS})
 
   target_compile_options(
     faiss
@@ -392,7 +402,7 @@ endif()
 if(__RISCV64)
   add_library(faiss STATIC ${FAISS_SRCS})
   target_include_directories(faiss PRIVATE ${Boost_INCLUDE_DIRS})
-  target_sources(faiss PRIVATE ${FAISS_RVV_SRCS})
+  target_sources(faiss PRIVATE ${FAISS_RVV_SRCS} ${FAISS_FASTSCAN_SRCS})
 
   target_compile_options(
     faiss
@@ -416,6 +426,7 @@ endif()
 if(__PPC64)
   add_library(faiss STATIC ${FAISS_SRCS})
   target_include_directories(faiss PRIVATE ${Boost_INCLUDE_DIRS})
+  target_sources(faiss PRIVATE ${FAISS_FASTSCAN_SRCS})
 
   target_compile_options(
     faiss
