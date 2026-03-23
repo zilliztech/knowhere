@@ -25,6 +25,13 @@ WITH_CARDINAL ?=
 WITH_DEBUG ?=
 CONAN_PROFILE ?=
 
+# Prevent build-flag variables from leaking into the environment of child
+# processes (conan / cmake).  Without this, GNU Make exports command-line
+# variables such as WITH_ASAN to every sub-process, which causes the custom
+# folly recipe to pick up $ENV{WITH_ASAN} and compile folly itself with
+# -fsanitize=address — breaking the build on GCC.
+unexport WITH_GPU WITH_UT WITH_ASAN WITH_CARDINAL WITH_DEBUG
+
 # ---------- Derived settings ----------
 ifdef WITH_DEBUG
     BUILD_TYPE := Debug
