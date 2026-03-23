@@ -25,6 +25,7 @@
 #include "knowhere/config.h"
 #include "knowhere/emb_list_utils.h"
 #include "knowhere/expected.h"
+#include "knowhere/heap.h"
 #include "knowhere/index/index_node.h"
 #include "knowhere/log.h"
 #include "knowhere/range_util.h"
@@ -1181,7 +1182,7 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
             if (row.size() == 0) {
                 return;
             }
-            sparse::MaxMinHeap<float> heap(topk);
+            ResultMinHeap<float, int64_t> heap(topk);
             for (int64_t j = 0; j < rows; ++j) {
                 auto x_id = j + xb_id_offset;
                 if (!bitset.empty() && bitset.test(x_id)) {
@@ -1196,14 +1197,14 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
                 }
                 float dist = row.dot(base[j], computer, row_sum);
                 if (dist > 0) {
-                    heap.push(x_id, dist);
+                    heap.Push(dist, x_id);
                 }
             }
-            int result_size = heap.size();
-            for (int j = result_size - 1; j >= 0; --j) {
-                cur_labels[j] = heap.top().id;
-                cur_distances[j] = heap.top().val;
-                heap.pop();
+            heap.Finalize();
+            const auto& results = heap.Results();
+            for (size_t j = 0; j < results.size(); ++j) {
+                cur_distances[j] = results[j].first;
+                cur_labels[j] = results[j].second;
             }
         }));
     }

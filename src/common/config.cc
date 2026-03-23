@@ -19,7 +19,7 @@
 #include "index/gpu_cuvs/gpu_cuvs_ivf_pq_config.h"
 #include "index/hnsw/hnsw_config.h"
 #include "index/ivf/ivf_config.h"
-#include "index/sparse/sparse_inverted_index_config.h"
+#include "index/sparse/sparse_index_config.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
 

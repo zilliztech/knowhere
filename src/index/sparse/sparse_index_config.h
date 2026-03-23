@@ -12,6 +12,18 @@
 #ifndef SPARSE_INVERTED_INDEX_CONFIG_H
 #define SPARSE_INVERTED_INDEX_CONFIG_H
 
+// Compile-time option: index versions below this threshold use raw data format; others use codec.
+// Default is 8. Override at compile time, e.g. -DSPARSE_INDEX_VERSION_USE_RAW_DATA_THRESHOLD=10
+#ifndef SPARSE_INDEX_VERSION_USE_RAW_DATA_THRESHOLD
+#define SPARSE_INDEX_VERSION_USE_RAW_DATA_THRESHOLD 8
+#endif
+
+// Index versions >= this threshold use fp16 quantization for IP metric posting list values.
+// Versions below this threshold use float32 for backward compatibility.
+#ifndef SPARSE_INDEX_VERSION_SUPPORT_FP16_QUANT_FOR_IP
+#define SPARSE_INDEX_VERSION_SUPPORT_FP16_QUANT_FOR_IP 10
+#endif
+
 #include "knowhere/comp/index_param.h"
 #include "knowhere/config.h"
 
@@ -23,7 +35,12 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_FLOAT drop_ratio_search;
     CFG_INT refine_factor;
     CFG_FLOAT dim_max_score_ratio;
+    CFG_INT block_max_block_size;
     CFG_STRING inverted_index_algo;
+    CFG_STRING inverted_index_codec;
+    CFG_STRING search_algo;
+    CFG_STRING quant_type;
+
     KNOHWERE_DECLARE_CONFIG(SparseInvertedIndexConfig) {
         // NOTE: drop_ratio_build has been deprecated, it won't change anything
         KNOWHERE_CONFIG_DECLARE_FIELD(drop_ratio_build)
@@ -81,9 +98,33 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .set_default(1.05)
             .description("ratio to upscale/downscale the max score of each dimension")
             .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(search_algo)
+            .set_default("INHERIT")
+            .description("search algorithm")
+            .for_search()
+            .for_range_search()
+            .for_iterator();
         KNOWHERE_CONFIG_DECLARE_FIELD(inverted_index_algo)
             .description("inverted index algorithm")
-            .set_default("DAAT_MAXSCORE")
+            .allow_empty_without_default()
+            .for_train()
+            .for_deserialize()
+            .for_deserialize_from_file();
+        KNOWHERE_CONFIG_DECLARE_FIELD(inverted_index_codec)
+            .description("inverted index codec")
+            .allow_empty_without_default()
+            .for_train()
+            .for_deserialize()
+            .for_deserialize_from_file();
+        KNOWHERE_CONFIG_DECLARE_FIELD(block_max_block_size)
+            .description("block max block size")
+            .set_default(128)
+            .for_train()
+            .for_deserialize()
+            .for_deserialize_from_file();
+        KNOWHERE_CONFIG_DECLARE_FIELD(quant_type)
+            .description("quantization type for posting list values: fp16/fp32 for IP, u16/u32 for BM25")
+            .allow_empty_without_default()
             .for_train()
             .for_deserialize()
             .for_deserialize_from_file();
@@ -91,18 +132,25 @@ class SparseInvertedIndexConfig : public BaseConfig {
 
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
-        if (param_type == PARAM_TYPE::TRAIN) {
-            constexpr std::array<std::string_view, 3> legal_inverted_index_algo_list{"TAAT_NAIVE", "DAAT_WAND",
-                                                                                     "DAAT_MAXSCORE"};
-            std::string inverted_index_algo_str = inverted_index_algo.value_or("");
-            if (std::find(legal_inverted_index_algo_list.begin(), legal_inverted_index_algo_list.end(),
-                          inverted_index_algo_str) == legal_inverted_index_algo_list.end()) {
-                std::string msg = "sparse inverted index algo " + inverted_index_algo_str +
-                                  " not found or not supported, supported: [TAAT_NAIVE DAAT_WAND DAAT_MAXSCORE]";
-                return HandleError(err_msg, msg, Status::invalid_args);
+        if (quant_type.has_value() && !quant_type.value().empty()) {
+            auto qt = quant_type.value();
+            auto mt = metric_type.value();
+            if (mt == metric::IP) {
+                if (qt != "fp16" && qt != "fp32") {
+                    if (err_msg) {
+                        *err_msg = "quant_type for IP metric must be 'fp16' or 'fp32', got '" + qt + "'";
+                    }
+                    return Status::invalid_args;
+                }
+            } else if (mt == metric::BM25) {
+                if (qt != "u16" && qt != "u32") {
+                    if (err_msg) {
+                        *err_msg = "quant_type for BM25 metric must be 'u16' or 'u32', got '" + qt + "'";
+                    }
+                    return Status::invalid_args;
+                }
             }
         }
-
         return Status::success;
     }
 };  // class SparseInvertedIndexConfig
