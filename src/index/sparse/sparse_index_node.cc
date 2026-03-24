@@ -210,13 +210,13 @@ class SparseInvertedIndexNode : public IndexNode {
         // TODO: set approximated to false for now since the refinement is too slow after forward index is removed.
         const bool approximated = false;
 
+        auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
         auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
         try {
             for (int i = 0; i < nq; ++i) {
                 // Heavy computations with `compute_dist_func` will be deferred until the first call to
                 // 'Iterator->Next()'.
                 auto compute_dist_func = [=]() -> std::vector<DistId> {
-                    auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
                     std::vector<float> distances =
                         index_->GetAllDistances(queries[i], drop_ratio_search, bitset, computer);
                     std::vector<DistId> distances_ids;
@@ -757,7 +757,6 @@ class SparseDspIndexNode : public IndexNode {
             return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "index not loaded");
         }
         auto nq = dataset->GetRows();
-        auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
         auto& cfg = static_cast<const SparseDspConfig&>(*config);
         auto computer_or = index_->GetDocValueComputer(cfg);
         if (!computer_or.has_value()) {
@@ -891,7 +890,7 @@ class SparseDspIndexNode : public IndexNode {
 
     [[nodiscard]] std::string
     Type() const override {
-        return knowhere::IndexEnum::INDEX_SPARSE_DSP_CC;
+        return knowhere::IndexEnum::INDEX_SPARSE_DSP;
     }
 
     [[nodiscard]] int64_t
@@ -1120,6 +1119,7 @@ KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_INVERTED_INDEX_CC_DEPRECATED
 KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_WAND_CC_DEPRECATED, SparseInvertedIndexNodeCC,
                                              knowhere::feature::MMAP,
                                              /*use_wand=*/true)
+KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_DSP, SparseDspIndexNode, knowhere::feature::MMAP)
 KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_DSP_CC, SparseDspIndexNodeCC, knowhere::feature::MMAP)
 #else
 KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_INVERTED_INDEX, SparseInvertedIndexNode, knowhere::feature::MMAP,
@@ -1131,6 +1131,7 @@ KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_INVERTED_INDEX_CC, SparseInv
                                              /*use_wand=*/false)
 KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_WAND_CC, SparseInvertedIndexNodeCC, knowhere::feature::MMAP,
                                              /*use_wand=*/true)
+KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_DSP, SparseDspIndexNode, knowhere::feature::MMAP)
 KNOWHERE_SIMPLE_REGISTER_SPARSE_FLOAT_GLOBAL(SPARSE_DSP_CC, SparseDspIndexNodeCC, knowhere::feature::MMAP)
 #endif
 }  // namespace knowhere

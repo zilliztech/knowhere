@@ -128,6 +128,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP, sparse_dsp_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC, sparse_dsp_gen),
         }));
         auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, conf, nullptr);
@@ -219,7 +220,8 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         REQUIRE(recall_dsp == 1.0f);
 
         // 2. DSP eta < 1 → more aggressive pruning, valid results
-        float recall_eta07 = search_recall(0, 1.0f, 0.7f, 0);
+        // Paper requires mu <= eta, so use mu=0.7 with eta=0.7
+        float recall_eta07 = search_recall(0, 0.7f, 0.7f, 0);
         REQUIRE(recall_eta07 >= 0.0f);
 
         // 3. DSP gamma=100000 → perfect recall
@@ -365,6 +367,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP, sparse_dsp_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC, sparse_dsp_gen),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
@@ -404,6 +407,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP, sparse_dsp_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC, sparse_dsp_gen),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
@@ -449,6 +453,7 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP, sparse_dsp_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC, sparse_dsp_gen),
         }));
 
