@@ -327,33 +327,38 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
 #ifdef KNOWHERE_WITH_CUVS
   // GPU path
   if(is_gpu_available()) {
-    raft::resources res;
-    LOG_KNOWHERE_INFO_ << "Running pq with " << num_centers << " clusters, pq "<< num_pq_chunks<< " ...using GPU!";
-    for (size_t i = 0; i < num_pq_chunks; i++) {
-      size_t cur_chunk_size = chunk_offsets[i + 1] - chunk_offsets[i];
-      if (cur_chunk_size == 0)
-        continue;
-      std::unique_ptr<float[]> cur_pivot_data =
-        std::make_unique<float[]>(num_centers * cur_chunk_size);
-      std::unique_ptr<float[]> cur_data =
-        std::make_unique<float[]>(num_train * cur_chunk_size);
-      std::unique_ptr<uint32_t[]> closest_center =
-        std::make_unique<uint32_t[]>(num_train);
-      for (int64_t j = 0; j < (_s64) num_train; j++) {
-        std::memcpy(cur_data.get() + j * cur_chunk_size,
-                train_data.get() + j * dim + chunk_offsets[i],
-                cur_chunk_size * sizeof(float));
-      }
-      kmeans_gpu(res,cur_data.get(), num_train, cur_chunk_size,
-              num_centers, max_k_means_reps, cur_pivot_data.get());
+    // cuVS kmeans crashes when num_centers > num_train, fall back to CPU
+    if (num_train < num_centers) {
+      LOG_KNOWHERE_INFO_ << "num_centers(" << num_centers << ") > num_train(" << num_train << "), switching to CPU";
+    } else {
+      raft::resources res;
+      LOG_KNOWHERE_INFO_ << "Running pq with " << num_centers << " clusters, pq "<< num_pq_chunks<< " ...using GPU!";
+      for (size_t i = 0; i < num_pq_chunks; i++) {
+        size_t cur_chunk_size = chunk_offsets[i + 1] - chunk_offsets[i];
+        if (cur_chunk_size == 0)
+          continue;
+        std::unique_ptr<float[]> cur_pivot_data =
+          std::make_unique<float[]>(num_centers * cur_chunk_size);
+        std::unique_ptr<float[]> cur_data =
+          std::make_unique<float[]>(num_train * cur_chunk_size);
+        std::unique_ptr<uint32_t[]> closest_center =
+          std::make_unique<uint32_t[]>(num_train);
+        for (int64_t j = 0; j < (_s64) num_train; j++) {
+          std::memcpy(cur_data.get() + j * cur_chunk_size,
+                  train_data.get() + j * dim + chunk_offsets[i],
+                  cur_chunk_size * sizeof(float));
+        }
+        kmeans_gpu(res,cur_data.get(), num_train, cur_chunk_size,
+                num_centers, max_k_means_reps, cur_pivot_data.get());
 
-      for (uint64_t j = 0; j < num_centers; j++) {
-        std::memcpy(full_pivot_data.get() + j * dim + chunk_offsets[i],
-                cur_pivot_data.get() + j * cur_chunk_size,
-                cur_chunk_size * sizeof(float));
+        for (uint64_t j = 0; j < num_centers; j++) {
+          std::memcpy(full_pivot_data.get() + j * dim + chunk_offsets[i],
+                  cur_pivot_data.get() + j * cur_chunk_size,
+                  cur_chunk_size * sizeof(float));
+        }
       }
+      used_gpu = true;
     }
-    used_gpu = true;
   }
 #endif
 
@@ -1099,11 +1104,16 @@ int partition(const std::string data_file, const float sampling_rate,
 #ifdef KNOWHERE_WITH_CUVS
   // GPU path
   if(is_gpu_available()) {
-    raft::resources res;
-    LOG_KNOWHERE_INFO_ << "Running k-means with " << num_parts << " clusters...using GPU!";
-    kmeans_gpu(res,train_data_float.get(), num_train, train_dim,
-            num_parts, max_k_means_reps, pivot_data.get());
-    used_gpu = true;
+    // cuVS kmeans crashes when num_centers > num_train, fall back to CPU
+    if (num_train < num_parts) {
+      LOG_KNOWHERE_INFO_ << "num_centers(" << num_parts << ") > num_train(" << num_train << "), switching to CPU";
+    } else {
+      raft::resources res;
+      LOG_KNOWHERE_INFO_ << "Running k-means with " << num_parts << " clusters...using GPU!";
+      kmeans_gpu(res,train_data_float.get(), num_train, train_dim,
+              num_parts, max_k_means_reps, pivot_data.get());
+      used_gpu = true;
+    }
   }
 #endif
   if(!used_gpu) {
@@ -1169,11 +1179,16 @@ int partition_with_ram_budget(const std::string data_file,
 #ifdef KNOWHERE_WITH_CUVS
     // GPU path
     if(is_gpu_available()) {
-      raft::resources res;
-      LOG_KNOWHERE_INFO_ << "Running k-means with " << num_parts << " clusters " << num_train << " " << train_dim << " ...using GPU!";
-      kmeans_gpu(res,train_data_float.get(), num_train, train_dim,
-              num_parts, max_k_means_reps, pivot_data.get(), true);
-      used_gpu = true;
+      // cuVS kmeans crashes when num_centers > num_train, fall back to CPU
+      if (num_train < num_parts) {
+        LOG_KNOWHERE_INFO_ << "num_centers(" << num_parts << ") > num_train(" << num_train << "), switching to CPU";
+      } else {
+        raft::resources res;
+        LOG_KNOWHERE_INFO_ << "Running k-means with " << num_parts << " clusters " << num_train << " " << train_dim << " ...using GPU!";
+        kmeans_gpu(res,train_data_float.get(), num_train, train_dim,
+                num_parts, max_k_means_reps, pivot_data.get(), true);
+        used_gpu = true;
+      }
     }
 #endif
     if(!used_gpu) {
@@ -1247,11 +1262,16 @@ int partition_calc_kmeans(const std::string &data_file, const std::string &outpu
 #ifdef KNOWHERE_WITH_CUVS
     // GPU path
     if(is_gpu_available()) {
-      raft::resources res;
-      LOG_KNOWHERE_INFO_ << "Running k-means with " << k << " clusters...using GPU!";
-      kmeans_gpu(res,train_data_float.get(), num_train, train_dim,
-              k, kNumOfIterations, centroids.data());
-      used_gpu = true;
+      // cuVS kmeans crashes when num_centers > num_train, fall back to CPU
+      if (num_train < k) {
+        LOG_KNOWHERE_INFO_ << "num_centers(" << k << ") > num_train(" << num_train << "), switching to CPU";
+      } else {
+        raft::resources res;
+        LOG_KNOWHERE_INFO_ << "Running k-means with " << k << " clusters...using GPU!";
+        kmeans_gpu(res,train_data_float.get(), num_train, train_dim,
+                k, kNumOfIterations, centroids.data());
+        used_gpu = true;
+      }
     }
 #endif
     if(!used_gpu) {
