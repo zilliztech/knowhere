@@ -431,10 +431,17 @@ IndexNode::AnnIteratorEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Co
     return AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
 }
 expected<DataSetPtr>
-IndexNode::GetEmbListByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const {
+IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_type,
+                           milvus::OpContext* op_context) const {
     if (emb_list_offset_ == nullptr) {
         return expected<DataSetPtr>::Err(Status::emb_list_inner_error,
                                          "GetEmbListByIds requires emb_list_offset, but it is not available");
+    }
+    auto sub_metric = get_sub_metric_type(metric_type);
+    if (!sub_metric.has_value() || !HasRawData(sub_metric.value())) {
+        return expected<DataSetPtr>::Err(
+            Status::not_implemented,
+            "GetEmbListByIds requires raw data support, but the index does not store raw vectors");
     }
 
     auto num_el_ids = dataset->GetRows();
