@@ -283,4 +283,3 @@ template int brute_force_gpu<float>(raft::resources& dev_resources,
         const float* queries,
         size_t n_queries,
 		int64_t* h_labels);
-
