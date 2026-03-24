@@ -17,6 +17,7 @@ on:
       - "!cmake/libs/libcardinal.cmake"
       - ".github/workflows/ut.yaml"
       - "CMakeLists.txt"
+      - "Makefile"
       - "!**.md"
       - "tests/**"
 
