@@ -72,6 +72,12 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         return json;
     };
 
+    auto sparse_dsp_gen = [base_gen, drop_ratio_search = drop_ratio_search]() {
+        knowhere::Json json = base_gen();
+        json[knowhere::indexparam::DROP_RATIO_SEARCH] = drop_ratio_search;
+        return json;
+    };
+
     auto sparse_dataset_gen = [&](int nr, int dim, float sparsity) -> knowhere::DataSetPtr {
         if (metric == knowhere::metric::BM25) {
             return GenSparseDataSetWithMaxVal(nr, dim, sparsity, 256, true);
@@ -122,6 +128,8 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP, sparse_dsp_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC, sparse_dsp_gen),
         }));
         auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, conf, nullptr);
         check_distance_decreasing(*gt.value());
@@ -167,11 +175,200 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         }
     }
 
+    SECTION("Test DSP Params") {
+        // Build one DSP index, then search with different param combos to prove
+        // that eta and gamma actually affect pruning behavior.
+        auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, conf, nullptr);
+        REQUIRE(gt.has_value());
+
+        auto use_mmap = GENERATE(true, false);
+        auto tmp_file = "/tmp/knowhere_sparse_dsp_param_test";
+
+        auto idx = knowhere::IndexFactory::Instance()
+                       .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC, version)
+                       .value();
+        knowhere::Json build_json = base_gen();
+        build_json[knowhere::indexparam::DROP_RATIO_SEARCH] = 0.0;
+        REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+        knowhere::BinarySet bs;
+        REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
+        if (use_mmap) {
+            WriteBinaryToFile(tmp_file, bs.GetByName(idx.Type()));
+            REQUIRE(idx.DeserializeFromFile(tmp_file, build_json) == knowhere::Status::success);
+        } else {
+            REQUIRE(idx.Deserialize(bs, build_json) == knowhere::Status::success);
+        }
+
+        // Helper: search with given params and return recall vs gt
+        auto search_recall = [&](int mode, float mu, float eta, int gamma, bool kth_init = true) -> float {
+            knowhere::Json json = base_gen();
+            json[knowhere::indexparam::DROP_RATIO_SEARCH] = 0.0;
+            json["dsp_mode"] = mode;
+            json["dsp_mu"] = mu;
+            json["dsp_eta"] = eta;
+            json["dsp_gamma"] = gamma;
+            json["dsp_kth_init"] = kth_init;
+            auto results = idx.Search(query_ds, json, nullptr);
+            REQUIRE(results.has_value());
+            check_distance_decreasing(*results.value());
+            return GetKNNRecall(*gt.value(), *results.value());
+        };
+
+        // 1. DSP mode (mode=0): default params → perfect recall
+        float recall_dsp = search_recall(0, 1.0f, 1.0f, 0);
+        REQUIRE(recall_dsp == 1.0f);
+
+        // 2. DSP eta < 1 → more aggressive pruning, valid results
+        // Paper requires mu <= eta, so use mu=0.7 with eta=0.7
+        float recall_eta07 = search_recall(0, 0.7f, 0.7f, 0);
+        REQUIRE(recall_eta07 >= 0.0f);
+
+        // 3. DSP gamma=100000 → perfect recall
+        float recall_gamma_all = search_recall(0, 1.0f, 1.0f, 100000);
+        REQUIRE(recall_gamma_all == 1.0f);
+
+        // 4. DSP aggressive mu with gamma backstop
+        float recall_aggressive_no_gamma = search_recall(0, 0.3f, 1.0f, 0);
+        float recall_aggressive_with_gamma = search_recall(0, 0.3f, 1.0f, 50);
+        REQUIRE(recall_aggressive_with_gamma >= recall_aggressive_no_gamma);
+        REQUIRE(recall_aggressive_no_gamma >= 0.0f);
+        REQUIRE(recall_aggressive_with_gamma >= 0.5f);
+
+        // 5. LSP/0 (mode=1): top-gamma only, no mu/asc gate
+        float recall_lsp0 = search_recall(1, 1.0f, 1.0f, 100);
+        REQUIRE(recall_lsp0 >= 0.5f);
+        // lsp0 ignores mu: changing mu should not affect recall
+        float recall_lsp0_mu03 = search_recall(1, 0.3f, 1.0f, 100);
+        REQUIRE(recall_lsp0_mu03 >= recall_lsp0 - 1e-6f);
+        REQUIRE(recall_lsp0_mu03 <= recall_lsp0 + 1e-6f);
+
+        // 6. LSP/1 (mode=2): lsp0 safe set + mu gate
+        float recall_lsp1 = search_recall(2, 1.0f, 1.0f, 100);
+        REQUIRE(recall_lsp1 >= recall_lsp0);  // lsp1 includes lsp0 + more
+
+        // 7. LSP/2 (mode=3): lsp1 + asc gate → recall >= lsp1
+        float recall_lsp2 = search_recall(3, 1.0f, 1.0f, 100);
+        REQUIRE(recall_lsp2 >= recall_lsp1);
+
+        // 8. LSP modes with gamma=0 fall back to DSP (not silent empty results)
+        {
+            float recall_lsp0_g0 = search_recall(1, 1.0f, 1.0f, 0);
+            REQUIRE(recall_lsp0_g0 == recall_dsp);
+            float recall_lsp1_g0 = search_recall(2, 1.0f, 1.0f, 0);
+            REQUIRE(recall_lsp1_g0 == recall_dsp);
+            float recall_lsp2_g0 = search_recall(3, 1.0f, 1.0f, 0);
+            REQUIRE(recall_lsp2_g0 == recall_dsp);
+        }
+
+        // 9. dsp_mode defaults to DSP (mode=0) with gamma=0
+        {
+            knowhere::Json json = base_gen();
+            json[knowhere::indexparam::DROP_RATIO_SEARCH] = 0.0;
+            auto results = idx.Search(query_ds, json, nullptr);
+            REQUIRE(results.has_value());
+        }
+
+        // 10. kth_init=false is orthogonal to mode
+        float recall_dsp_nokth = search_recall(0, 1.0f, 1.0f, 0, false);
+        REQUIRE(recall_dsp_nokth == 1.0f);
+
+        // 11. dim_max_score_ratio is silently accepted (unknown keys ignored)
+        {
+            knowhere::Json json = base_gen();
+            json[knowhere::indexparam::DROP_RATIO_SEARCH] = 0.0;
+            json["dim_max_score_ratio"] = 1.05;
+            auto results = idx.Search(query_ds, json, nullptr);
+            REQUIRE(results.has_value());
+        }
+
+        if (use_mmap) {
+            REQUIRE(std::remove(tmp_file) == 0);
+        }
+    }
+
+    SECTION("Test DSP Filtered Search with kth-init Safety") {
+        // Adversarial test: mask the exact top-k unfiltered results so the kth-init
+        // seeded threshold is maximally wrong. Verifies that the filtered bootstrap
+        // bypasses kth-init and still achieves perfect recall.
+        auto idx = knowhere::IndexFactory::Instance()
+                       .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC, version)
+                       .value();
+        knowhere::Json build_json = base_gen();
+        build_json[knowhere::indexparam::DROP_RATIO_SEARCH] = 0.0;
+        REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+        // Find top-k results per query (unfiltered)
+        auto gt_unfiltered = knowhere::BruteForce::SearchSparse(train_ds, query_ds, conf, nullptr);
+        REQUIRE(gt_unfiltered.has_value());
+
+        // Create adversarial bitset: mask exactly the unfiltered top-k results.
+        // This maximizes the kth-init failure: the seeded threshold reflects scores
+        // of docs that are all filtered out.
+        auto bitset_data = std::vector<uint8_t>((nb + 7) / 8, 0);
+        auto* gt_ids = gt_unfiltered.value()->GetIds();
+        int64_t gt_k = gt_unfiltered.value()->GetDim();
+        for (int64_t q = 0; q < nq; ++q) {
+            for (int64_t j = 0; j < gt_k; ++j) {
+                int64_t id = gt_ids[q * gt_k + j];
+                if (id >= 0 && id < nb) {
+                    bitset_data[id / 8] |= (1u << (id % 8));
+                }
+            }
+        }
+        knowhere::BitsetView bitset(bitset_data.data(), nb);
+
+        // Compute filtered ground truth
+        auto gt_filtered = knowhere::BruteForce::SearchSparse(train_ds, query_ds, conf, bitset);
+        REQUIRE(gt_filtered.has_value());
+        check_result_match_filter(*gt_filtered.value(), bitset);
+
+        // Search with kth_init=true (the potentially unsafe case without bootstrap fix)
+        knowhere::Json search_json = base_gen();
+        search_json[knowhere::indexparam::DROP_RATIO_SEARCH] = 0.0;
+        search_json["dsp_kth_init"] = true;
+        auto results_kth = idx.Search(query_ds, search_json, bitset);
+        REQUIRE(results_kth.has_value());
+        check_result_match_filter(*results_kth.value(), bitset);
+        float recall_kth = GetKNNRecall(*gt_filtered.value(), *results_kth.value());
+        REQUIRE(recall_kth == 1.0f);
+
+        // Search with kth_init=false (baseline: no seeded threshold)
+        search_json["dsp_kth_init"] = false;
+        auto results_nokth = idx.Search(query_ds, search_json, bitset);
+        REQUIRE(results_nokth.has_value());
+        check_result_match_filter(*results_nokth.value(), bitset);
+        float recall_nokth = GetKNNRecall(*gt_filtered.value(), *results_nokth.value());
+        REQUIRE(recall_nokth == 1.0f);
+
+        // Both should produce identical results (kth_init is bypassed under filter)
+        auto* ids_kth = results_kth.value()->GetIds();
+        auto* ids_nokth = results_nokth.value()->GetIds();
+        for (int64_t q = 0; q < nq; ++q) {
+            for (int64_t j = 0; j < topk; ++j) {
+                REQUIRE(ids_kth[q * topk + j] == ids_nokth[q * topk + j]);
+            }
+        }
+
+        // Test with aggressive pruning params under adversarial filter.
+        // Bootstrap recovery should re-prune superblocks after heap fills.
+        search_json["dsp_mu"] = 0.3;
+        search_json["dsp_eta"] = 0.85;
+        search_json["dsp_kth_init"] = true;
+        auto results_aggressive = idx.Search(query_ds, search_json, bitset);
+        REQUIRE(results_aggressive.has_value());
+        check_result_match_filter(*results_aggressive.value(), bitset);
+        float recall_aggressive = GetKNNRecall(*gt_filtered.value(), *results_aggressive.value());
+        REQUIRE(recall_aggressive >= 0.5f);
+    }
+
     SECTION("Test Search with Bitset") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP, sparse_dsp_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC, sparse_dsp_gen),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
         auto cfg_json = gen().dump();
@@ -210,6 +407,8 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP, sparse_dsp_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC, sparse_dsp_gen),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
         auto cfg_json = gen().dump();
@@ -254,6 +453,8 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP, sparse_dsp_gen),
+            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC, sparse_dsp_gen),
         }));
 
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();

@@ -6,7 +6,6 @@ from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeDeps, CMakeToolchain, cmake_layout
 from conan.tools.gnu import PkgConfigDeps
 from conan.errors import ConanInvalidConfiguration
-from conans import tools
 import os
 
 required_conan_version = ">=1.55.0"
@@ -174,12 +173,9 @@ class KnowhereConan(ConanFile):
         # Honor BUILD_SHARED_LIBS from conan_toolchain (see https://github.com/conan-io/conan/issues/11840)
         tc.cache_variables["CMAKE_POLICY_DEFAULT_CMP0077"] = "NEW"
 
-        cxx_std_flag = tools.cppstd_flag(self.settings)
-        cxx_std_value = (
-            cxx_std_flag.split("=")[1]
-            if cxx_std_flag
-            else "c++{}".format(self._minimum_cpp_standard)
-        )
+        cxx_std_value = self.settings.get_safe("compiler.cppstd")
+        if not cxx_std_value:
+            cxx_std_value = "c++{}".format(self._minimum_cpp_standard)
         tc.variables["CXX_STD"] = cxx_std_value
         if is_msvc(self):
             tc.variables["MSVC_LANGUAGE_VERSION"] = cxx_std_value
