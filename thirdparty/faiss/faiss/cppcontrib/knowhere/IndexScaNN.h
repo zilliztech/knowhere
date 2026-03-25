@@ -54,13 +54,6 @@ struct IndexScaNN : IndexRefine {
             RangeSearchResult* result,
             const SearchParameters* params = nullptr) const override;
 
-    std::unique_ptr<IVFIteratorWorkspace> getIteratorWorkspace(
-            const float* query_data,
-            const IVFSearchParameters* ivfsearchParams) const;
-
-    void getIteratorNextBatch(
-            IVFIteratorWorkspace* workspace,
-            size_t current_backup_count) const;
 };
 
 }

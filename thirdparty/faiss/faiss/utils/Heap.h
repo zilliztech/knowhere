@@ -642,9 +642,17 @@ void merge_knn_results(
         typename C::T* distances,
         idx_t* labels);
 
-// This function reduces k_base pairs (base_labels, base_distances)
-//   into k pairs (labels, distances).
-// The function is used for the refining process.
+/** Reduces k_base pairs (base_labels, base_distances) into k pairs
+ * (labels, distances). The function is used for the refining process.
+ *
+ * @param n              number of vectors to process
+ * @param k              number of output nearest neighbors per vector
+ * @param labels         output labels, size (n, k)
+ * @param distances      output distances, size (n, k)
+ * @param k_base         number of input nearest neighbors per vector
+ * @param base_labels    input labels, size (n, k_base)
+ * @param base_distances input distances, size (n, k_base)
+ */
 template <class C>
 void reorder_2_heaps(
         int64_t n,

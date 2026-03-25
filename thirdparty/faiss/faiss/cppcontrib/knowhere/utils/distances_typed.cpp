@@ -262,7 +262,10 @@ void all_inner_product_typed(
         size_t ny,
         std::vector<::knowhere::DistId>& output,
         const IDSelector* sel) {
-    CollectAllResultHandler<CMax<float, int64_t>> res(nx, ny, output);
+    size_t n = nx * ny;
+    const std::pair<int64_t, float> sentinel{-1, CMax<float, int64_t>::neutral()};
+    std::vector<std::pair<int64_t, float>> pairs(n, sentinel);
+    CollectAllResultHandler<CMax<float, int64_t>> res(nx, ny, pairs.data());
     if (const auto* sel_bs =
                 dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
         exhaustive_inner_product_impl_typed(x, y, d, nx, ny, res, *sel_bs);
@@ -272,7 +275,7 @@ void all_inner_product_typed(
     } else {
         exhaustive_inner_product_impl_typed(x, y, d, nx, ny, res, *sel);
     }
-    return;
+    pairs_to_distids(pairs.data(), output, n);
 }
 
 template <typename DataType>
@@ -360,7 +363,10 @@ void all_L2sqr_typed(
         std::vector<::knowhere::DistId>& output,
         const float* y_norms,
         const IDSelector* sel) {
-    CollectAllResultHandler<CMax<float, int64_t>> res(nx, ny, output);
+    size_t n = nx * ny;
+    const std::pair<int64_t, float> sentinel{-1, CMax<float, int64_t>::neutral()};
+    std::vector<std::pair<int64_t, float>> pairs(n, sentinel);
+    CollectAllResultHandler<CMax<float, int64_t>> res(nx, ny, pairs.data());
     if (const auto* sel_bs =
                 dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
         exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, res, *sel_bs);
@@ -369,7 +375,7 @@ void all_L2sqr_typed(
     } else {
         exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, res, *sel);
     }
-    return;
+    pairs_to_distids(pairs.data(), output, n);
 }
 
 template <typename DataType>
@@ -461,7 +467,10 @@ void all_cosine_typed(
         size_t ny,
         std::vector<::knowhere::DistId>& output,
         const IDSelector* sel) {
-    CollectAllResultHandler<CMax<float, int64_t>> res(nx, ny, output);
+    size_t n = nx * ny;
+    const std::pair<int64_t, float> sentinel{-1, CMax<float, int64_t>::neutral()};
+    std::vector<std::pair<int64_t, float>> pairs(n, sentinel);
+    CollectAllResultHandler<CMax<float, int64_t>> res(nx, ny, pairs.data());
     if (const auto* sel_bs =
                 dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
         exhaustive_cosine_seq_impl_typed(
@@ -472,7 +481,7 @@ void all_cosine_typed(
     } else {
         exhaustive_cosine_seq_impl_typed(x, y, y_inv_norms, d, nx, ny, res, *sel);
     }
-    return;
+    pairs_to_distids(pairs.data(), output, n);
 }
 
 template <typename DataType>

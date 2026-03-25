@@ -31,7 +31,7 @@
 #include <faiss/cppcontrib/knowhere/IndexIVFPQ.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFPQFastScan.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFRaBitQ.h>
-#include <faiss/cppcontrib/knowhere/IndexPQ.h>
+#include <faiss/IndexPQ.h>
 #include <faiss/IndexPreTransform.h>
 #include <faiss/cppcontrib/knowhere/IndexRefine.h>
 #include <faiss/cppcontrib/knowhere/IndexSQ4Uniform.h>
@@ -40,7 +40,6 @@
 #include <faiss/VectorTransform.h>
 
 #include <faiss/cppcontrib/knowhere/IndexBinaryFlat.h>
-#include <faiss/cppcontrib/knowhere/IndexBinaryHNSW.h>
 #include <faiss/cppcontrib/knowhere/IndexBinaryIVF.h>
 
 /*************************************************************
@@ -65,6 +64,7 @@
 
 
 namespace faiss::cppcontrib::knowhere {
+
 
 /*************************************************************
  * Write
@@ -594,23 +594,6 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         write_ScalarQuantizer(&idxs->sq, f);
         WRITEVECTOR(idxs->codes);
     } else if (
-            const IndexIVFFlatDedup* ivfl =
-                    dynamic_cast<const IndexIVFFlatDedup*>(idx)) {
-        uint32_t h = fourcc("IwFd");
-        WRITE1(h);
-        write_ivf_header(ivfl, f);
-        {
-            std::vector<idx_t> tab(2 * ivfl->instances.size());
-            long i = 0;
-            for (auto it = ivfl->instances.begin(); it != ivfl->instances.end();
-                 ++it) {
-                tab[i++] = it->first;
-                tab[i++] = it->second;
-            }
-            WRITEVECTOR(tab);
-        }
-        write_InvertedLists(ivfl->invlists, f);
-    } else if (
             const IndexIVFFlat* ivfl =
                     dynamic_cast<const IndexIVFFlatCC*>(idx)) {
         uint32_t h = fourcc("IwFc");
@@ -817,14 +800,6 @@ void write_index_binary(const IndexBinary* idx, IOWriter* f) {
         WRITE1(h);
         write_binary_ivf_header(ivf, f);
         write_InvertedLists(ivf->invlists, f);
-    } else if (
-            const IndexBinaryHNSW* idxhnsw =
-                    dynamic_cast<const IndexBinaryHNSW*>(idx)) {
-        uint32_t h = fourcc("IBHf");
-        WRITE1(h);
-        write_index_binary_header(idxhnsw, f);
-        write_HNSW(&idxhnsw->hnsw, f);
-        write_index_binary(idxhnsw->storage, f);
     } else {
         FAISS_THROW_MSG("don't know how to serialize this type of index");
     }

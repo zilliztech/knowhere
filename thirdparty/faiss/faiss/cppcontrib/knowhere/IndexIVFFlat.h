@@ -105,56 +105,6 @@ struct IndexIVFFlatCCCosine : IndexIVFFlatCC, HasInverseL2Norms {
     void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
 };
 
-struct IndexIVFFlatDedup : IndexIVFFlat {
-    /** Maps ids stored in the index to the ids of vectors that are
-     *  the same. When a vector is unique, it does not appear in the
-     *  instances map */
-    std::unordered_multimap<idx_t, idx_t> instances;
-
-    IndexIVFFlatDedup(
-            Index* quantizer,
-            size_t d,
-            size_t nlist_,
-            MetricType = METRIC_L2);
-
-    /// also dedups the training set
-    void train(idx_t n, const float* x) override;
-
-    /// implemented for all IndexIVF* classes
-    void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
-
-    void search_preassigned(
-            idx_t n,
-            const float* x,
-            idx_t k,
-            const idx_t* assign,
-            const float* centroid_dis,
-            float* distances,
-            idx_t* labels,
-            bool store_pairs,
-            const IVFSearchParameters* params = nullptr,
-            IndexIVFStats* stats = nullptr) const override;
-
-    size_t remove_ids(const IDSelector& sel) override;
-
-    /// not implemented
-    void range_search(
-            idx_t n,
-            const float* x,
-            float radius,
-            RangeSearchResult* result,
-            const SearchParameters* params = nullptr) const override;
-
-    /// not implemented
-    void update_vectors(int nv, const idx_t* idx, const float* v) override;
-
-    /// not implemented
-    void reconstruct_from_offset(int64_t list_no, int64_t offset, float* recons)
-            const override;
-
-    IndexIVFFlatDedup() {}
-};
-
 }
 }
 } // namespace faiss

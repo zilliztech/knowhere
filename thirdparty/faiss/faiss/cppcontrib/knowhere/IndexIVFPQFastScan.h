@@ -82,7 +82,8 @@ struct IndexIVFPQFastScan : IndexIVFFastScan {
             const float* x,
             const CoarseQuantized& cq,
             AlignedTable<float>& dis_tables,
-            AlignedTable<float>& biases) const override;
+            AlignedTable<float>& biases,
+            const FastScanDistancePostProcessing& context) const override;
 
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
 };

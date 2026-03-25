@@ -8,6 +8,7 @@
 #include <faiss/IndexRaBitQ.h>
 
 #include <faiss/impl/FaissAssert.h>
+#include <faiss/impl/RaBitQUtils.h>
 #include <faiss/impl/ResultHandler.h>
 #include <memory>
 
@@ -16,10 +17,12 @@ namespace faiss {
 // Forward declaration from RaBitQuantizer.cpp
 struct RaBitQDistanceComputer;
 
+using rabitq_utils::SignBitFactorsWithError;
+
 IndexRaBitQ::IndexRaBitQ() = default;
 
-IndexRaBitQ::IndexRaBitQ(idx_t d, MetricType metric, uint8_t nb_bits_in)
-        : IndexFlatCodes(0, d, metric), rabitq(d, metric, nb_bits_in) {
+IndexRaBitQ::IndexRaBitQ(idx_t d_in, MetricType metric, uint8_t nb_bits_in)
+        : IndexFlatCodes(0, d_in, metric), rabitq(d_in, metric, nb_bits_in) {
     // Update code size based on nb_bits
     code_size = rabitq.code_size;
 
@@ -29,14 +32,14 @@ IndexRaBitQ::IndexRaBitQ(idx_t d, MetricType metric, uint8_t nb_bits_in)
 void IndexRaBitQ::train(idx_t n, const float* x) {
     // compute a centroid
     std::vector<float> centroid(d, 0);
-    for (size_t i = 0; i < n; i++) {
-        for (size_t j = 0; j < d; j++) {
+    for (idx_t i = 0; i < n; i++) {
+        for (size_t j = 0; j < static_cast<size_t>(d); j++) {
             centroid[j] += x[i * d + j];
         }
     }
 
     if (n != 0) {
-        for (size_t j = 0; j < d; j++) {
+        for (size_t j = 0; j < static_cast<size_t>(d); j++) {
             centroid[j] /= (float)n;
         }
     }
@@ -67,10 +70,10 @@ FlatCodesDistanceComputer* IndexRaBitQ::get_FlatCodesDistanceComputer() const {
 }
 
 FlatCodesDistanceComputer* IndexRaBitQ::get_quantized_distance_computer(
-        const uint8_t qb,
-        bool centered) const {
+        const uint8_t qb_in,
+        bool centered_in) const {
     FlatCodesDistanceComputer* dc =
-            rabitq.get_distance_computer(qb, center.data(), centered);
+            rabitq.get_distance_computer(qb_in, center.data(), centered_in);
     dc->code_size = rabitq.code_size;
     dc->codes = codes.data();
     return dc;
@@ -99,7 +102,7 @@ struct Run_search_with_dc_res {
                     index->get_quantized_distance_computer(qb, centered));
             SingleResultHandler resi(res);
 #pragma omp for
-            for (int64_t q = 0; q < res.nq; q++) {
+            for (int64_t q = 0; q < static_cast<int64_t>(res.nq); q++) {
                 resi.begin(q);
                 dc_base->set_query(xq + d * q);
 
@@ -141,19 +144,29 @@ struct Run_search_with_dc_res {
 
                             local_1bit_evaluations++;
 
-                            // Stage 1: Compute 1-bit lower bound
-                            float lower_bound = dc->lower_bound_distance(code);
+                            // Stage 1: Compute distance bound using 1-bit codes
+                            // For L2 (min-heap): use lower_bound (est -
+                            // error) For IP (max-heap): use upper_bound (est
+                            // + error)
+                            float est_distance =
+                                    dc->distance_to_code_1bit(code);
 
-                            // Stage 2: Adaptive filtering using threshold
-                            // For L2 (min-heap): filter if lower_bound <
-                            // resi.threshold For IP (max-heap): filter if
-                            // lower_bound > resi.threshold Note: Using
-                            // resi.threshold directly (not cached) enables more
-                            // aggressive filtering as the heap is updated
-                            bool should_refine = is_similarity
-                                    ? (lower_bound > resi.threshold)
-                                    : (lower_bound < resi.threshold);
+                            // Extract f_error for filtering
+                            size_t code_size_base = (index->d + 7) / 8;
+                            const rabitq_utils::SignBitFactorsWithError*
+                                    base_fac = reinterpret_cast<
+                                            const rabitq_utils::
+                                                    SignBitFactorsWithError*>(
+                                            code + code_size_base);
 
+                            // Stage 2: Adaptive filtering
+                            bool should_refine =
+                                    rabitq_utils::should_refine_candidate(
+                                            est_distance,
+                                            base_fac->f_error,
+                                            dc->g_error,
+                                            resi.threshold,
+                                            is_similarity);
                             if (should_refine) {
                                 local_multibit_evaluations++;
                                 // Compute full multi-bit distance
@@ -211,7 +224,7 @@ void IndexRaBitQ::search(
 }
 
 void IndexRaBitQ::range_search(
-        idx_t n,
+        idx_t /*n*/,
         const float* x,
         float radius,
         RangeSearchResult* result,

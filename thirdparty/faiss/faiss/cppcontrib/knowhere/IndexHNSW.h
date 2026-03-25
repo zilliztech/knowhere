@@ -12,7 +12,7 @@
 #include <vector>
 
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
-#include <faiss/cppcontrib/knowhere/IndexPQ.h>
+#include <faiss/IndexPQ.h>
 #include <faiss/cppcontrib/knowhere/IndexScalarQuantizer.h>
 #include <faiss/cppcontrib/knowhere/impl/HNSW.h>
 #include <faiss/utils/utils.h>

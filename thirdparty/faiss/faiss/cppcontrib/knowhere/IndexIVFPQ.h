@@ -11,14 +11,17 @@
 
 #include <vector>
 
+#include <faiss/IndexPQ.h>
 #include <faiss/cppcontrib/knowhere/IndexIVF.h>
-#include <faiss/cppcontrib/knowhere/IndexPQ.h>
+#include <faiss/impl/PolysemousTraining.h>
+#include <faiss/impl/ProductQuantizer.h>
 #include <faiss/impl/platform_macros.h>
 #include <faiss/utils/AlignedTable.h>
 
 namespace faiss {
 namespace cppcontrib {
 namespace knowhere {
+
 
 struct IVFPQSearchParameters : IVFSearchParameters {
     size_t scan_table_threshold; ///< use table computation or on-the-fly?

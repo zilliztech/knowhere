@@ -18,13 +18,13 @@
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/cppcontrib/knowhere/utils/distances.h>
-#include <faiss/utils/simdlib.h>
+#include <faiss/impl/simdlib/simdlib_dispatch.h>
 #include <faiss/utils/utils.h>
 
 #include <faiss/cppcontrib/knowhere/invlists/BlockInvertedLists.h>
 
-#include <faiss/cppcontrib/knowhere/impl/pq4_fast_scan.h>
-#include <faiss/cppcontrib/knowhere/impl/simd_result_handlers.h>
+#include <faiss/impl/fast_scan/fast_scan.h>
+#include <faiss/impl/fast_scan/simd_result_handlers.h>
 #include <faiss/utils/quantize_lut.h>
 
 #include <knowhere/utils.h>
@@ -84,11 +84,12 @@ IndexIVFPQFastScan::IndexIVFPQFastScan(const IndexIVFPQ& orig, int bbs)
                precomputed_table.nbytes());
     }
 
-    for (size_t i = 0; i < nlist; i++) {
+#pragma omp parallel for if (nlist > 100)
+    for (idx_t i = 0; i < nlist; i++) {
         size_t nb = orig.invlists->list_size(i);
         size_t nb2 = roundup(nb, bbs);
         AlignedTable<uint8_t> tmp(nb2 * M2 / 2);
-        pq4_pack_codes(
+        faiss::pq4_pack_codes(
                 InvertedLists::ScopedCodes(orig.invlists, i).get(),
                 nb,
                 M,
@@ -208,10 +209,11 @@ void IndexIVFPQFastScan::compute_LUT(
         const float* x,
         const CoarseQuantized& cq,
         AlignedTable<float>& dis_tables,
-        AlignedTable<float>& biases) const {
+        AlignedTable<float>& biases,
+        const FastScanDistancePostProcessing& /* context */) const {
     size_t dim12 = pq.ksub * pq.M;
     size_t d = pq.d;
-    size_t nprobe = this->nprobe;
+    size_t nprobe = cq.nprobe;
 
     if (by_residual) {
         if (metric_type == METRIC_L2) {

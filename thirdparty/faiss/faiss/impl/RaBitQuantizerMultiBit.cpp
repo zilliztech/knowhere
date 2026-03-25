@@ -180,9 +180,7 @@ void pack_multibit_codes(
  *
  * @param residual Original residual vector (data - centroid)
  * @param centroid Centroid vector (can be nullptr for zero centroid)
- * @param tmp_code Quantized ex-bit codes (before packing, after bit flipping)
  * @param d Dimensionality
- * @param ex_bits Number of extra bits
  * @param norm L2 norm of residual
  * @param ipnorm Unnormalized inner product between quantized and normalized
  * residual
@@ -192,9 +190,7 @@ void pack_multibit_codes(
 void compute_ex_factors(
         const float* residual,
         const float* centroid,
-        const int* tmp_code,
         size_t d,
-        size_t ex_bits,
         float norm,
         double ipnorm,
         ExtraBitsFactors& ex_factors,
@@ -210,45 +206,23 @@ void compute_ex_factors(
         ipnorm_inv = 1.0f;
     }
 
-    // Reconstruct xu_cb from total_code
-    // total_code was formed from: total_code[i] = (sign << ex_bits) +
-    // ex_code[i] Reconstruction: xu_cb[i] = total_code[i] + cb
-    const float cb = -(static_cast<float>(1 << ex_bits) - 0.5f);
-    std::vector<float> xu_cb(d);
-    for (size_t i = 0; i < d; i++) {
-        xu_cb[i] = static_cast<float>(tmp_code[i]) + cb;
-    }
-
     // Compute inner products needed for factors
-    float l2_sqr = norm * norm;
-    float ip_resi_xucb = fvec_inner_product(residual, xu_cb.data(), d);
+    float l2_sqr = norm * norm; // ||residual||^2 = ||x - c||^2
 
-    // Compute factors
     if (metric_type == MetricType::METRIC_L2) {
-        // For L2, no centroid correction needed in IVF setting
-        // because residual = x - centroid, distance computed in residual space
+        // For L2: f_add_ex = ||residual||^2
+        // No centroid correction needed in IVF setting because
+        // residual = x - centroid, distance computed in residual space
         ex_factors.f_add_ex = l2_sqr;
         ex_factors.f_rescale_ex = ipnorm_inv * -2.0f * norm;
     } else {
-        // For IP, centroid correction is needed
-        float ip_resi_cent = 0;
-        if (centroid != nullptr) {
-            ip_resi_cent = fvec_inner_product(residual, centroid, d);
-        }
-
-        float ip_cent_xucb = 0;
-        if (centroid != nullptr) {
-            ip_cent_xucb = fvec_inner_product(centroid, xu_cb.data(), d);
-        }
-
-        // When ip_resi_xucb is zero, the correction term should be zero
-        float correction_term = 0.0f;
-        if (ip_resi_xucb != 0.0f) {
-            correction_term = l2_sqr * ip_cent_xucb / ip_resi_xucb;
-        }
-
-        ex_factors.f_add_ex = 1 - ip_resi_cent + correction_term;
-        ex_factors.f_rescale_ex = ipnorm_inv * -norm;
+        // For IP: direct dot-product formulation
+        // f_add_ex = <c, r> (dot product of centroid and residual)
+        // f_rescale_ex = ||r|| / ipnorm (positive scaling)
+        float c_dot_r =
+                centroid ? fvec_inner_product(residual, centroid, d) : 0.0f;
+        ex_factors.f_add_ex = c_dot_r;
+        ex_factors.f_rescale_ex = ipnorm_inv * norm;
     }
 }
 
@@ -290,12 +264,14 @@ void quantize_ex_bits(
     float norm_sqr = fvec_norm_L2sqr(residual, d);
     float norm = std::sqrt(norm_sqr);
 
-    // Handle degenerate case
+    // Handle degenerate case: residual is (near-)zero, meaning x ≈ centroid.
+    // For both L2 and IP, f_add_ex and f_rescale_ex are trivially zero:
+    //   L2: ||r||² ≈ 0, IP: <c,r> ≈ 0 and ||r||/ipnorm ≈ 0
     if (norm < 1e-10f) {
         size_t code_size = (d * ex_bits + 7) / 8;
         memset(ex_code, 0, code_size);
         ex_factors.f_add_ex = 0.0f;
-        ex_factors.f_rescale_ex = 1.0f;
+        ex_factors.f_rescale_ex = 0.0f;
         return;
     }
 
@@ -349,9 +325,7 @@ void quantize_ex_bits(
     compute_ex_factors(
             residual,
             centroid, // Pass centroid for IP metric factor computation
-            total_code.data(),
             d,
-            ex_bits,
             norm,
             ipnorm,
             ex_factors,

@@ -29,7 +29,6 @@
 #include <string>
 
 #include "common/metric.h"
-#include "faiss/cppcontrib/knowhere/IndexBinaryHNSW.h"
 #include "faiss/cppcontrib/knowhere/IndexHNSW.h"
 #include "faiss/cppcontrib/knowhere/IndexRefine.h"
 #include "faiss/cppcontrib/knowhere/impl/ScalarQuantizer.h"
@@ -2561,7 +2560,7 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
     }
 
  protected:
-    std::vector<std::unique_ptr<faiss::cppcontrib::knowhere::IndexPQ>> tmp_index_pq;
+    std::vector<std::unique_ptr<faiss::IndexPQ>> tmp_index_pq;
 
     Status
     TrainInternal(const DataSetPtr dataset, const Config& cfg) override {
@@ -2605,13 +2604,13 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
             hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
 
             // pq
-            std::unique_ptr<faiss::cppcontrib::knowhere::IndexPQ> pq_index;
+            std::unique_ptr<faiss::IndexPQ> pq_index;
             if (is_cosine) {
                 pq_index = std::make_unique<faiss::cppcontrib::knowhere::IndexPQCosine>(dim, hnsw_cfg.m.value(),
                                                                                         hnsw_cfg.nbits.value());
             } else {
-                pq_index = std::make_unique<faiss::cppcontrib::knowhere::IndexPQ>(
-                    dim, hnsw_cfg.m.value(), hnsw_cfg.nbits.value(), metric.value());
+                pq_index =
+                    std::make_unique<faiss::IndexPQ>(dim, hnsw_cfg.m.value(), hnsw_cfg.nbits.value(), metric.value());
             }
 
             // should refine be used?
