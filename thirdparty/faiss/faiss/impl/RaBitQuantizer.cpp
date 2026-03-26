@@ -12,6 +12,7 @@
 #include <faiss/impl/RaBitQuantizerMultiBit.h>
 #include <faiss/utils/distances.h>
 #include <faiss/utils/rabitq_simd.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -26,10 +27,13 @@ using rabitq_utils::QueryFactorsData;
 using rabitq_utils::SignBitFactors;
 using rabitq_utils::SignBitFactorsWithError;
 
-RaBitQuantizer::RaBitQuantizer(size_t d, MetricType metric, size_t nb_bits)
-        : Quantizer(d, 0), // code_size will be set below
+RaBitQuantizer::RaBitQuantizer(
+        size_t d_in,
+        MetricType metric,
+        size_t nb_bits_in)
+        : Quantizer(d_in, 0), // code_size will be set below
           metric_type{metric},
-          nb_bits{nb_bits} {
+          nb_bits{nb_bits_in} {
     // Validate nb_bits range
     FAISS_THROW_IF_NOT(nb_bits >= 1 && nb_bits <= 9);
 
@@ -37,7 +41,7 @@ RaBitQuantizer::RaBitQuantizer(size_t d, MetricType metric, size_t nb_bits)
     code_size = compute_code_size(d, nb_bits);
 }
 
-size_t RaBitQuantizer::compute_code_size(size_t d, size_t num_bits) const {
+size_t RaBitQuantizer::compute_code_size(size_t d_in, size_t num_bits) const {
     // Validate inputs
     FAISS_THROW_IF_NOT(num_bits >= 1 && num_bits <= 9);
 
@@ -49,7 +53,7 @@ size_t RaBitQuantizer::compute_code_size(size_t d, size_t num_bits) const {
     // Layout for multi-bit: [binary_code: (d+7)/8
     // bytes][SignBitFactorsWithError: 12 bytes]
     //   factors = or_minus_c_l2sqr (4) + dp_multiplier (4) + f_error (4)
-    size_t base_size = (d + 7) / 8 +
+    size_t base_size = (d_in + 7) / 8 +
             (ex_bits == 0 ? sizeof(SignBitFactors)
                           : sizeof(SignBitFactorsWithError));
 
@@ -57,13 +61,13 @@ size_t RaBitQuantizer::compute_code_size(size_t d, size_t num_bits) const {
     // Layout: [ex_code: (d*ex_bits+7)/8 bytes][ex_factors: 8 bytes]
     size_t ex_size = 0;
     if (ex_bits > 0) {
-        ex_size = (d * ex_bits + 7) / 8 + sizeof(ExtraBitsFactors);
+        ex_size = (d_in * ex_bits + 7) / 8 + sizeof(ExtraBitsFactors);
     }
 
     return base_size + ex_size;
 }
 
-void RaBitQuantizer::train(size_t n, const float* x) {
+void RaBitQuantizer::train(size_t /*n*/, const float* /*x*/) {
     // does nothing
 }
 
@@ -91,7 +95,7 @@ void RaBitQuantizer::compute_codes_core(
 
     // Compute codes
 #pragma omp parallel for if (n > 1000)
-    for (int64_t i = 0; i < n; i++) {
+    for (int64_t i = 0; i < static_cast<int64_t>(n); i++) {
         // Pointer to this vector's code
         uint8_t* code = codes + i * code_size;
 
@@ -185,7 +189,7 @@ void RaBitQuantizer::decode_core(
     const size_t ex_bits = nb_bits - 1;
 
 #pragma omp parallel for if (n > 1000)
-    for (int64_t i = 0; i < n; i++) {
+    for (int64_t i = 0; i < static_cast<int64_t>(n); i++) {
         const uint8_t* code = codes + i * code_size;
 
         // split the code into parts
@@ -213,29 +217,6 @@ void RaBitQuantizer::decode_core(
                     ((centroid_in == nullptr) ? 0 : centroid_in[j]);
         }
     }
-}
-
-// Implementation of RaBitQDistanceComputer (declared in header)
-
-float RaBitQDistanceComputer::lower_bound_distance(const uint8_t* code) {
-    FAISS_ASSERT(code != nullptr);
-
-    // Compute estimated distance using 1-bit codes
-    float est_distance = distance_to_code_1bit(code);
-
-    // Extract f_error from the code
-    size_t size = (d + 7) / 8;
-    const SignBitFactorsWithError* base_fac =
-            reinterpret_cast<const SignBitFactorsWithError*>(code + size);
-    float f_error = base_fac->f_error;
-
-    // Compute proper lower bound using RaBitQ error formula:
-    // lower_bound = est_distance - f_error * g_error
-    // This guarantees: lower_bound ≤ true_distance
-    float lower_bound = est_distance - (f_error * g_error);
-
-    // Distance cannot be negative
-    return std::max(0.0f, lower_bound);
 }
 
 namespace {
@@ -336,13 +317,15 @@ float RaBitQDistanceComputerNotQ::distance_to_code_full(const uint8_t* code) {
             ex_code + (d * ex_bits + 7) / 8);
 
     // Call shared utility directly with rotated_q pointer
+    float qr_base = (metric_type == MetricType::METRIC_INNER_PRODUCT)
+            ? query_fac.q_dot_c
+            : query_fac.qr_to_c_L2sqr;
     return rabitq_utils::compute_full_multibit_distance(
             binary_data,
             ex_code,
             *ex_fac,
             rotated_q.data(),
-            query_fac.qr_to_c_L2sqr,
-            query_fac.qr_norm_L2sqr,
+            qr_base,
             d,
             ex_bits,
             metric_type);
@@ -388,6 +371,8 @@ void RaBitQDistanceComputerNotQ::set_query(const float* x) {
     if (metric_type == MetricType::METRIC_INNER_PRODUCT) {
         // precompute if needed
         query_fac.qr_norm_L2sqr = fvec_norm_L2sqr(x, d);
+        query_fac.q_dot_c =
+                centroid ? fvec_inner_product(x, centroid, d) : 0.0f;
     }
 }
 
@@ -502,13 +487,15 @@ float RaBitQDistanceComputerQ::distance_to_code_full(const uint8_t* code) {
             ex_code + (d * ex_bits + 7) / 8);
 
     // Call shared utility directly with rotated_q pointer
+    float qr_base = (metric_type == MetricType::METRIC_INNER_PRODUCT)
+            ? query_fac.q_dot_c
+            : query_fac.qr_to_c_L2sqr;
     return rabitq_utils::compute_full_multibit_distance(
             binary_data,
             ex_code,
             *ex_fac,
             rotated_q.data(),
-            query_fac.qr_to_c_L2sqr,
-            query_fac.qr_norm_L2sqr,
+            qr_base,
             d,
             ex_bits,
             metric_type);

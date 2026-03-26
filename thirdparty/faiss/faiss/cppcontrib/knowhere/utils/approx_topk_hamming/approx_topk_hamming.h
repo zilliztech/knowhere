@@ -12,7 +12,7 @@
 #include <utility>
 
 #include <faiss/utils/Heap.h>
-#include <faiss/utils/simdlib.h>
+#include <faiss/impl/simdlib/simdlib_dispatch.h>
 
 namespace faiss {
 namespace cppcontrib {

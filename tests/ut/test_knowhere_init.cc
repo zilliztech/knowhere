@@ -9,6 +9,9 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <faiss/utils/simd_levels.h>
+#include <faiss/utils/utils.h>
+
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -18,9 +21,6 @@
 
 TEST_CASE("Knowhere global config", "[init]") {
     knowhere::KnowhereConfig::ShowVersion();
-
-    knowhere::KnowhereConfig::EnablePatchForComputeFP32AsBF16();
-    knowhere::KnowhereConfig::DisablePatchForComputeFP32AsBF16();
 
     int64_t blas_threshold = 16384;
     knowhere::KnowhereConfig::SetBlasThreshold(blas_threshold);
@@ -71,4 +71,41 @@ TEST_CASE("Knowhere SIMD config", "[simd]") {
     REQUIRE(s.find(res) != s.end());
     res = knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AUTO);
     REQUIRE(s.find(res) != s.end());
+
+    // Verify faiss DD level reacts to SetSimdType
+    SECTION("faiss DD level synchronization") {
+        // Verify faiss reports DD mode in compile options
+        auto compile_opts = faiss::get_compile_options();
+        REQUIRE(compile_opts.find("DD") != std::string::npos);
+
+        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AUTO);
+        auto auto_level = faiss::SIMDConfig::get_level();
+        REQUIRE(auto_level != faiss::SIMDLevel::COUNT);
+
+        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::GENERIC);
+        REQUIRE(faiss::SIMDConfig::get_level() == faiss::SIMDLevel::NONE);
+
+#ifdef __x86_64__
+        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::SSE4_2);
+        REQUIRE(faiss::SIMDConfig::get_level() == faiss::SIMDLevel::NONE);
+
+        if (faiss::SIMDConfig::is_simd_level_available(faiss::SIMDLevel::AVX2)) {
+            knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);
+            REQUIRE(faiss::SIMDConfig::get_level() == faiss::SIMDLevel::AVX2);
+        }
+
+        if (faiss::SIMDConfig::is_simd_level_available(faiss::SIMDLevel::AVX512)) {
+            knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX512);
+            REQUIRE(faiss::SIMDConfig::get_level() == faiss::SIMDLevel::AVX512);
+        }
+#endif
+
+#ifdef __aarch64__
+        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AUTO);
+        REQUIRE(faiss::SIMDConfig::get_level() >= faiss::SIMDLevel::ARM_NEON);
+#endif
+
+        // Restore AUTO
+        knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AUTO);
+    }
 }

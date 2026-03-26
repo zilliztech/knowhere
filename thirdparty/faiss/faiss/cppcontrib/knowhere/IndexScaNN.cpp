@@ -8,7 +8,7 @@
 #include <faiss/utils/utils.h>
 
 #include <faiss/cppcontrib/knowhere/FaissHook.h>
-#include <faiss/cppcontrib/knowhere/Index.h>
+#include <faiss/Index.h>
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFPQFastScan.h>
 
@@ -176,10 +176,10 @@ void IndexScaNN::search(
 
     rf->compute_distance_subset(n, x, k_base, base_distances, base_labels);
 
-    if (whether_index_has_cosine_enabled(base)) {
+    if (auto base_cosine = dynamic_cast<const IndexIVFPQFastScanCosine*>(base)) {
         for (idx_t i = 0; i < n * k_base; i++) {
             if (base_labels[i] >= 0) {
-                base_distances[i] *= base->inverse_norms[base_labels[i]];
+                base_distances[i] *= base_cosine->inverse_norms_storage.inverse_l2_norms[base_labels[i]];
             }
         }
     }
@@ -236,12 +236,12 @@ void IndexScaNN::range_search(
 
     rf->compute_distance_subset(n, x, result->lims[1], result->distances, result->labels);
 
-    const bool base_is_cosine = whether_index_has_cosine_enabled(base);
+    auto base_cosine = dynamic_cast<const IndexIVFPQFastScanCosine*>(base);
 
     idx_t current = 0;
     for (idx_t i = 0; i < result->lims[1]; ++i) {
-        if (base_is_cosine) {
-            result->distances[i] *= base->inverse_norms[result->labels[i]];
+        if (base_cosine) {
+            result->distances[i] *= base_cosine->inverse_norms_storage.inverse_l2_norms[result->labels[i]];
         }
         if (metric_type == METRIC_L2) {
             if (result->distances[i] < radius) {
@@ -261,39 +261,6 @@ void IndexScaNN::range_search(
         }
     }
     result->lims[1] = current;
-}
-
-std::unique_ptr<IVFIteratorWorkspace> IndexScaNN::getIteratorWorkspace(
-        const float* query_data,
-        const IVFSearchParameters* ivfsearchParams) const {
-    auto base = dynamic_cast<const IndexIVFPQFastScan*>(base_index);
-    auto iterator = base->getIteratorWorkspace(query_data, ivfsearchParams);
-    if (refine_index) {
-        auto refine = dynamic_cast<const IndexFlat*>(refine_index);
-        if (base->is_cosine) {
-            iterator->dis_refine = std::unique_ptr<faiss::DistanceComputer>(
-                    new faiss::cppcontrib::knowhere::WithCosineNormDistanceComputer(
-                            base->inverse_norms.data(),
-                            base->d,
-                            std::unique_ptr<faiss::DistanceComputer>(
-                                    refine->get_distance_computer())));
-        } else {
-            iterator->dis_refine = std::unique_ptr<faiss::DistanceComputer>(
-                    refine->get_FlatCodesDistanceComputer());
-        }
-        iterator->dis_refine->set_query(query_data);
-    } else {
-        iterator->dis_refine = nullptr;
-    }
-
-    return iterator;
-}
-
-void IndexScaNN::getIteratorNextBatch(
-        IVFIteratorWorkspace* workspace,
-        size_t current_backup_count) const {
-    auto base = dynamic_cast<const IndexIVFPQFastScan*>(base_index);
-    return base->getIteratorNextBatch(workspace, current_backup_count);
 }
 
 }

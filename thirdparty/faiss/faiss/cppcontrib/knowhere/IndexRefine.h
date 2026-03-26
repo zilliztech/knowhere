@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include <faiss/cppcontrib/knowhere/Index.h>
+#include <faiss/Index.h>
 
 namespace faiss {
 namespace cppcontrib {

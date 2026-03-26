@@ -146,24 +146,6 @@ void
 int8_vec_L2sqr_batch_4_neon(const int8_t* x, const int8_t* y0, const int8_t* y1, const int8_t* y2, const int8_t* y3,
                             const size_t d, float& dis0, float& dis1, float& dis2, float& dis3);
 
-///////////////////////////////////////////////////////////////////////////////
-// for cardinal
-
-float
-fvec_inner_product_bf16_patch_neon(const float* x, const float* y, size_t d);
-
-float
-fvec_L2sqr_bf16_patch_neon(const float* x, const float* y, size_t d);
-
-void
-fvec_inner_product_batch_4_bf16_patch_neon(const float* x, const float* y0, const float* y1, const float* y2,
-                                           const float* y3, const size_t dim, float& dis0, float& dis1, float& dis2,
-                                           float& dis3);
-
-void
-fvec_L2sqr_batch_4_bf16_patch_neon(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
-                                   const size_t dim, float& dis0, float& dis1, float& dis2, float& dis3);
-
 }  // namespace knowhere
 }  // namespace cppcontrib
 }  // namespace faiss

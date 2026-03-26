@@ -41,9 +41,11 @@ class KnowhereConfig {
     SetSimdType(const SimdType simd_type);
 
     /**
-     *The purpose of this interface is: part of the sealed indexes default to using bf16 as the base data to achieve
-     *higher capacity; to ensure consistency in computation between growing and sealed, it is necessary to maintain the
-     *same precision in growing calculations as in sealed.
+     * The purpose of this interface is: part of the sealed indexes default to using bf16 as the base data to achieve
+     * higher capacity; to ensure consistency in computation between growing and sealed, it is necessary to maintain the
+     * same precision in growing calculations as in sealed.
+     *
+     * These two functions still remain, just in case, but they do nothing. This is by design.
      */
     static void
     EnablePatchForComputeFP32AsBF16();
@@ -84,6 +86,9 @@ class KnowhereConfig {
 
     static void
     SetClusteringType(const ClusteringType clustering_type);
+
+    static ClusteringType
+    GetClusteringType();
 
     /**
      * The numebr of maximum parallel disk reads per thread.

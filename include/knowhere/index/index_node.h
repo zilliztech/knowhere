@@ -486,6 +486,7 @@ class IndexNode : public Object {
      * @brief Retrieve raw vectors for embedding list rows by their row-level IDs (el_ids).
      *
      * @param dataset Input dataset containing row-level IDs (el_ids) via GetIds(), and GetRows() for the count.
+     * @param metric_type The original metric type (e.g., MAX_SIM_COSINE) used to check raw data availability.
      * @param op_context Optional operation context.
      * @return DataSetPtr containing:
      *   - Tensor: flattened raw vector data for all vectors across requested rows
@@ -496,7 +497,8 @@ class IndexNode : public Object {
      * Returns error if emb_list_offset_ is not available (i.e., not an embedding list index).
      */
     virtual expected<DataSetPtr>
-    GetEmbListByIds(const DataSetPtr dataset, milvus::OpContext* op_context = nullptr) const;
+    GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_type,
+                    milvus::OpContext* op_context = nullptr) const;
 
  protected:
     /**

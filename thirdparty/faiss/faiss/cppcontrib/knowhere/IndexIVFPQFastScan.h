@@ -9,6 +9,7 @@
 
 #include <memory>
 
+#include <faiss/cppcontrib/knowhere/IndexCosine.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFFastScan.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFPQ.h>
 #include <faiss/impl/ProductQuantizer.h>
@@ -42,23 +43,12 @@ struct IndexIVFPQFastScan : IndexIVFFastScan {
     /// if use_precompute_table size (nlist, pq.M, pq.ksub)
     AlignedTable<float> precomputed_table;
 
-    // todo agzuhva: add back cosine support from knowhere
     IndexIVFPQFastScan(
             Index* quantizer,
             size_t d,
             size_t nlist,
             size_t M,
             size_t nbits,
-            MetricType metric = METRIC_L2,
-            int bbs = 32);
-
-    IndexIVFPQFastScan(
-            Index* quantizer,
-            size_t d,
-            size_t nlist,
-            size_t M,
-            size_t nbits,
-            bool is_cosine,
             MetricType metric = METRIC_L2,
             int bbs = 32);
 
@@ -92,9 +82,28 @@ struct IndexIVFPQFastScan : IndexIVFFastScan {
             const float* x,
             const CoarseQuantized& cq,
             AlignedTable<float>& dis_tables,
-            AlignedTable<float>& biases) const override;
+            AlignedTable<float>& biases,
+            const FastScanDistancePostProcessing& context) const override;
 
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
+};
+
+struct IndexIVFPQFastScanCosine : IndexIVFPQFastScan, HasInverseL2Norms {
+    L2NormsStorage inverse_norms_storage;
+
+    IndexIVFPQFastScanCosine(
+            Index* quantizer,
+            size_t d,
+            size_t nlist,
+            size_t M,
+            size_t nbits,
+            MetricType metric = METRIC_L2,
+            int bbs = 32);
+
+    IndexIVFPQFastScanCosine();
+
+    void train(idx_t n, const float* x) override;
+    void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
 };
 
 }

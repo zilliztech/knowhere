@@ -12,7 +12,7 @@
 #include <vector>
 
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
-#include <faiss/cppcontrib/knowhere/IndexPQ.h>
+#include <faiss/IndexPQ.h>
 #include <faiss/cppcontrib/knowhere/IndexScalarQuantizer.h>
 #include <faiss/cppcontrib/knowhere/impl/HNSW.h>
 #include <faiss/utils/utils.h>
@@ -32,7 +32,7 @@ struct IndexHNSW : Index {
 
     // the sequential storage
     bool own_fields = false;
-    faiss::cppcontrib::knowhere::Index* storage = nullptr;
+    faiss::Index* storage = nullptr;
 
     // When set to false, level 0 in the knn graph is not initialized.
     // This option is used by GpuIndexCagra::copyTo(IndexHNSWCagra*)
@@ -47,7 +47,7 @@ struct IndexHNSW : Index {
     bool keep_max_size_level0 = false;
 
     explicit IndexHNSW(int d = 0, int M = 32, MetricType metric = METRIC_L2);
-    explicit IndexHNSW(faiss::cppcontrib::knowhere::Index* storage, int M = 32);
+    explicit IndexHNSW(faiss::Index* storage, int M = 32);
 
     ~IndexHNSW() override;
 

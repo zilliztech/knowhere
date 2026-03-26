@@ -187,10 +187,6 @@ SQDistanceComputer* ScalarQuantizer::get_distance_computer(
     return sq_get_distance_computer(metric, qtype, d, trained);
 }
 
-size_t ScalarQuantizer::cal_size() const {
-    return sizeof(*this) + trained.size() * sizeof(float);
-}
-
 /*******************************************************************
  * IndexScalarQuantizer/IndexIVFScalarQuantizer scanner object
  *

@@ -16,7 +16,6 @@
 #ifdef KNOWHERE_WITH_DISKANN
 #include "diskann/aio_context_pool.h"
 #endif
-#include "faiss/cppcontrib/knowhere/Clustering.h"
 #include "faiss/cppcontrib/knowhere/utils/distances.h"
 #include "knowhere/log.h"
 #include "knowhere/thread_pool.h"
@@ -27,9 +26,16 @@
 #include "common/cuvs/integration/raft_initialization.hpp"
 #include "cuda_runtime_api.h"
 #endif
+#include <faiss/utils/simd_levels.h>
+
 #include "simd/hook.h"
 
 namespace knowhere {
+
+namespace {
+static KnowhereConfig::ClusteringType g_clustering_type = KnowhereConfig::ClusteringType::K_MEANS;
+static double g_early_stop_threshold = 0.0;
+}  // namespace
 
 void
 KnowhereConfig::ShowVersion() {
@@ -87,19 +93,17 @@ KnowhereConfig::SetSimdType(const SimdType simd_type) {
     std::string simd_str;
     faiss::cppcontrib::knowhere::fvec_hook(simd_str);
     LOG_KNOWHERE_INFO_ << "FAISS hook " << simd_str;
+    LOG_KNOWHERE_INFO_ << "FAISS DD level set to " << faiss::SIMDConfig::get_level_name();
+
     return simd_str;
 }
 
 void
 KnowhereConfig::EnablePatchForComputeFP32AsBF16() {
-    LOG_KNOWHERE_INFO_ << "Enable patch for compute fp32 as bf16";
-    faiss::cppcontrib::knowhere::enable_patch_for_fp32_bf16();
 }
 
 void
 KnowhereConfig::DisablePatchForComputeFP32AsBF16() {
-    LOG_KNOWHERE_INFO_ << "Disable patch for compute fp32 as bf16";
-    faiss::cppcontrib::knowhere::disable_patch_for_fp32_bf16();
 }
 
 void
@@ -115,28 +119,24 @@ KnowhereConfig::GetBlasThreshold() {
 
 void
 KnowhereConfig::SetEarlyStopThreshold(const double early_stop_threshold) {
-    LOG_KNOWHERE_INFO_ << "Set faiss::early_stop_threshold to " << early_stop_threshold;
-    faiss::cppcontrib::knowhere::early_stop_threshold = early_stop_threshold;
+    LOG_KNOWHERE_INFO_ << "Set early_stop_threshold to " << early_stop_threshold;
+    g_early_stop_threshold = early_stop_threshold;
 }
 
 double
 KnowhereConfig::GetEarlyStopThreshold() {
-    return faiss::cppcontrib::knowhere::early_stop_threshold;
+    return g_early_stop_threshold;
 }
 
 void
 KnowhereConfig::SetClusteringType(const ClusteringType clustering_type) {
-    LOG_KNOWHERE_INFO_ << "Set faiss::clustering_type to " << clustering_type;
-    switch (clustering_type) {
-        case ClusteringType::K_MEANS:
-        default:
-            faiss::cppcontrib::knowhere::clustering_type = faiss::cppcontrib::knowhere::ClusteringType::K_MEANS;
-            break;
-        case ClusteringType::K_MEANS_PLUS_PLUS:
-            faiss::cppcontrib::knowhere::clustering_type =
-                faiss::cppcontrib::knowhere::ClusteringType::K_MEANS_PLUS_PLUS;
-            break;
-    }
+    LOG_KNOWHERE_INFO_ << "Set clustering_type to " << clustering_type;
+    g_clustering_type = clustering_type;
+}
+
+KnowhereConfig::ClusteringType
+KnowhereConfig::GetClusteringType() {
+    return g_clustering_type;
 }
 
 bool

@@ -12,7 +12,7 @@
 #include <stdint.h>
 #include <vector>
 
-#include <faiss/cppcontrib/knowhere/IndexFlatCodes.h>
+#include <faiss/IndexFlatCodes.h>
 #include <faiss/cppcontrib/knowhere/invlists/InvertedLists.h>
 #include <faiss/cppcontrib/knowhere/IndexIVF.h>
 
@@ -59,8 +59,6 @@ struct IndexScalarQuantizer : IndexFlatCodes {
     void sa_encode(idx_t n, const float* x, uint8_t* bytes) const override;
 
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
-
-    size_t cal_size() const;
 };
 
 /** An IVF implementation where the components of the residuals are

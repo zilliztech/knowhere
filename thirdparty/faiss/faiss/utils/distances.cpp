@@ -27,6 +27,7 @@
 #include <faiss/impl/IDSelector.h>
 #include <faiss/impl/ResultHandler.h>
 
+#include <faiss/utils/distances_dispatch.h>
 #include <faiss/utils/distances_fused/distances_fused.h>
 
 #ifndef FINTEGER
@@ -56,6 +57,146 @@ int sgemm_(
 namespace faiss {
 
 /***************************************************************************
+ * Public API dispatch wrappers
+ ***************************************************************************/
+
+float fvec_L1(const float* x, const float* y, size_t d) {
+    return fvec_L1_dispatch(x, y, d);
+}
+
+float fvec_Linf(const float* x, const float* y, size_t d) {
+    return fvec_Linf_dispatch(x, y, d);
+}
+
+float fvec_norm_L2sqr(const float* x, size_t d) {
+    return fvec_norm_L2sqr_dispatch(x, d);
+}
+
+float fvec_L2sqr(const float* x, const float* y, size_t d) {
+    return fvec_L2sqr_dispatch(x, y, d);
+}
+
+float fvec_inner_product(const float* x, const float* y, size_t d) {
+    return fvec_inner_product_dispatch(x, y, d);
+}
+
+void fvec_inner_product_batch_4(
+        const float* x,
+        const float* y0,
+        const float* y1,
+        const float* y2,
+        const float* y3,
+        const size_t d,
+        float& dis0,
+        float& dis1,
+        float& dis2,
+        float& dis3) {
+    fvec_inner_product_batch_4_dispatch(
+            x, y0, y1, y2, y3, d, dis0, dis1, dis2, dis3);
+}
+
+void fvec_L2sqr_batch_4(
+        const float* x,
+        const float* y0,
+        const float* y1,
+        const float* y2,
+        const float* y3,
+        const size_t d,
+        float& dis0,
+        float& dis1,
+        float& dis2,
+        float& dis3) {
+    fvec_L2sqr_batch_4_dispatch(x, y0, y1, y2, y3, d, dis0, dis1, dis2, dis3);
+}
+
+void fvec_L2sqr_ny_transposed(
+        float* dis,
+        const float* x,
+        const float* y,
+        const float* y_sqlen,
+        size_t d,
+        size_t d_offset,
+        size_t ny) {
+    fvec_L2sqr_ny_transposed_dispatch(dis, x, y, y_sqlen, d, d_offset, ny);
+}
+
+void fvec_inner_products_ny(
+        float* ip,
+        const float* x,
+        const float* y,
+        size_t d,
+        size_t ny) {
+    fvec_inner_products_ny_dispatch(ip, x, y, d, ny);
+}
+
+void fvec_L2sqr_ny(
+        float* dis,
+        const float* x,
+        const float* y,
+        size_t d,
+        size_t ny) {
+    fvec_L2sqr_ny_dispatch(dis, x, y, d, ny);
+}
+
+size_t fvec_L2sqr_ny_nearest(
+        float* distances_tmp_buffer,
+        const float* x,
+        const float* y,
+        size_t d,
+        size_t ny) {
+    return fvec_L2sqr_ny_nearest_dispatch(distances_tmp_buffer, x, y, d, ny);
+}
+
+size_t fvec_L2sqr_ny_nearest_y_transposed(
+        float* distances_tmp_buffer,
+        const float* x,
+        const float* y,
+        const float* y_sqlen,
+        size_t d,
+        size_t d_offset,
+        size_t ny) {
+    return fvec_L2sqr_ny_nearest_y_transposed_dispatch(
+            distances_tmp_buffer, x, y, y_sqlen, d, d_offset, ny);
+}
+
+void fvec_madd(size_t n, const float* a, float bf, const float* b, float* c) {
+    fvec_madd_dispatch(n, a, bf, b, c);
+}
+
+int fvec_madd_and_argmin(
+        size_t n,
+        const float* a,
+        float bf,
+        const float* b,
+        float* c) {
+    return fvec_madd_and_argmin_dispatch(n, a, bf, b, c);
+}
+
+void fvec_sub(size_t d, const float* a, const float* b, float* c) {
+    fvec_sub_dispatch(d, a, b, c);
+}
+
+void fvec_add(size_t d, const float* a, const float* b, float* c) {
+    fvec_add_dispatch(d, a, b, c);
+}
+
+void fvec_add(size_t d, const float* a, float b, float* c) {
+    fvec_add_scalar_dispatch(d, a, b, c);
+}
+
+void compute_PQ_dis_tables_dsub2(
+        size_t d,
+        size_t ksub,
+        const float* all_centroids,
+        size_t nx,
+        const float* x,
+        bool is_inner_product,
+        float* dis_tables) {
+    compute_PQ_dis_tables_dsub2_dispatch(
+            d, ksub, all_centroids, nx, x, is_inner_product, dis_tables);
+}
+
+/***************************************************************************
  * Matrix/vector ops
  ***************************************************************************/
 
@@ -66,8 +207,8 @@ void fvec_norms_L2(
         size_t d,
         size_t nx) {
 #pragma omp parallel for if (nx > 10000)
-    for (int64_t i = 0; i < nx; i++) {
-        nr[i] = sqrtf(fvec_norm_L2sqr(x + i * d, d));
+    for (int64_t i = 0; i < static_cast<int64_t>(nx); i++) {
+        nr[i] = sqrtf(fvec_norm_L2sqr_dispatch(x + i * d, d));
     }
 }
 
@@ -77,8 +218,8 @@ void fvec_norms_L2sqr(
         size_t d,
         size_t nx) {
 #pragma omp parallel for if (nx > 10000)
-    for (int64_t i = 0; i < nx; i++) {
-        nr[i] = fvec_norm_L2sqr(x + i * d, d);
+    for (int64_t i = 0; i < static_cast<int64_t>(nx); i++) {
+        nr[i] = fvec_norm_L2sqr_dispatch(x + i * d, d);
     }
 }
 
@@ -93,27 +234,27 @@ void fvec_norms_L2sqr(
 // The workaround below is explicitly branching
 // off to a codepath without omp.
 
-#define FVEC_RENORM_L2_IMPL                   \
-    float* __restrict xi = x + i * d;         \
-                                              \
-    float nr = fvec_norm_L2sqr(xi, d);        \
-                                              \
-    if (nr > 0) {                             \
-        size_t j;                             \
-        const float inv_nr = 1.0 / sqrtf(nr); \
-        for (j = 0; j < d; j++)               \
-            xi[j] *= inv_nr;                  \
+#define FVEC_RENORM_L2_IMPL                     \
+    float* __restrict xi = x + i * d;           \
+                                                \
+    float nr = fvec_norm_L2sqr_dispatch(xi, d); \
+                                                \
+    if (nr > 0) {                               \
+        size_t j;                               \
+        const float inv_nr = 1.0 / sqrtf(nr);   \
+        for (j = 0; j < d; j++)                 \
+            xi[j] *= inv_nr;                    \
     }
 
 void fvec_renorm_L2_noomp(size_t d, size_t nx, float* __restrict x) {
-    for (int64_t i = 0; i < nx; i++) {
+    for (int64_t i = 0; i < static_cast<int64_t>(nx); i++) {
         FVEC_RENORM_L2_IMPL
     }
 }
 
 void fvec_renorm_L2_omp(size_t d, size_t nx, float* __restrict x) {
 #pragma omp parallel for if (nx > 10000)
-    for (int64_t i = 0; i < nx; i++) {
+    for (int64_t i = 0; i < static_cast<int64_t>(nx); i++) {
         FVEC_RENORM_L2_IMPL
     }
 }
@@ -149,7 +290,7 @@ void exhaustive_inner_product_seq(
     {
         SingleResultHandler resi(res);
 #pragma omp for
-        for (int64_t i = 0; i < nx; i++) {
+        for (int64_t i = 0; i < static_cast<int64_t>(nx); i++) {
             const float* x_i = x + i * d;
             const float* y_j = y;
 
@@ -159,7 +300,7 @@ void exhaustive_inner_product_seq(
                 if (!res.is_in_selection(j)) {
                     continue;
                 }
-                float ip = fvec_inner_product(x_i, y_j, d);
+                float ip = fvec_inner_product_dispatch(x_i, y_j, d);
                 resi.add_result(ip, j);
             }
             resi.end();
@@ -183,7 +324,7 @@ void exhaustive_L2sqr_seq(
     {
         SingleResultHandler resi(res);
 #pragma omp for
-        for (int64_t i = 0; i < nx; i++) {
+        for (int64_t i = 0; i < static_cast<int64_t>(nx); i++) {
             const float* x_i = x + i * d;
             const float* y_j = y;
             resi.begin(i);
@@ -191,7 +332,7 @@ void exhaustive_L2sqr_seq(
                 if (!res.is_in_selection(j)) {
                     continue;
                 }
-                float disij = fvec_L2sqr(x_i, y_j, d);
+                float disij = fvec_L2sqr_dispatch(x_i, y_j, d);
                 resi.add_result(disij, j);
             }
             resi.end();
@@ -321,7 +462,7 @@ void exhaustive_L2sqr_blas_default_impl(
                        ip_block.get(),
                        &nyi);
             }
-            for (int64_t i = i0; i < i1; i++) {
+            for (size_t i = i0; i < i1; i++) {
                 float* ip_line = ip_block.get() + (i - i0) * (j1 - j0);
 
                 for (size_t j = j0; j < j1; j++) {
@@ -356,7 +497,7 @@ void exhaustive_L2sqr_blas(
         size_t nx,
         size_t ny,
         BlockResultHandler& res,
-        const float* y_norms = nullptr) {
+        const float* /* y_norms */ = nullptr) {
     exhaustive_L2sqr_blas_default_impl(x, y, d, nx, ny, res);
 }
 
@@ -422,7 +563,7 @@ void exhaustive_L2sqr_blas_cmax_avx2(
                        ip_block.get(),
                        &nyi);
             }
-            for (int64_t i = i0; i < i1; i++) {
+            for (size_t i = i0; i < i1; i++) {
                 float* ip_line = ip_block.get() + (i - i0) * (j1 - j0);
 
                 _mm_prefetch((const char*)ip_line, _MM_HINT_NTA);
@@ -631,7 +772,7 @@ void exhaustive_L2sqr_blas_cmax_sve(
                        ip_block.get(),
                        &nyi);
             }
-            for (int64_t i = i0; i < i1; i++) {
+            for (size_t i = i0; i < i1; i++) {
                 const size_t count = j1 - j0;
                 float* ip_line = ip_block.get() + (i - i0) * count;
 
@@ -806,7 +947,8 @@ struct Run_search_inner_product {
            size_t d,
            size_t nx,
            size_t ny) {
-        if (res.sel || nx < distance_compute_blas_threshold) {
+        if (res.sel ||
+            nx < static_cast<size_t>(distance_compute_blas_threshold)) {
             exhaustive_inner_product_seq(x, y, d, nx, ny, res);
         } else {
             exhaustive_inner_product_blas(x, y, d, nx, ny, res);
@@ -824,7 +966,8 @@ struct Run_search_L2sqr {
            size_t nx,
            size_t ny,
            const float* y_norm2) {
-        if (res.sel || nx < distance_compute_blas_threshold) {
+        if (res.sel ||
+            nx < static_cast<size_t>(distance_compute_blas_threshold)) {
             exhaustive_L2sqr_seq(x, y, d, nx, ny, res);
         } else {
             exhaustive_L2sqr_blas(x, y, d, nx, ny, res, y_norm2);
@@ -990,7 +1133,7 @@ void fvec_inner_products_by_idx(
         size_t nx,
         size_t ny) {
 #pragma omp parallel for
-    for (int64_t j = 0; j < nx; j++) {
+    for (int64_t j = 0; j < static_cast<int64_t>(nx); j++) {
         const int64_t* __restrict idsj = ids + j * ny;
         const float* xj = x + j * d;
         float* __restrict ipj = ip + j * ny;
@@ -998,7 +1141,7 @@ void fvec_inner_products_by_idx(
             if (idsj[i] < 0) {
                 ipj[i] = -INFINITY;
             } else {
-                ipj[i] = fvec_inner_product(xj, y + d * idsj[i], d);
+                ipj[i] = fvec_inner_product_dispatch(xj, y + d * idsj[i], d);
             }
         }
     }
@@ -1015,7 +1158,7 @@ void fvec_L2sqr_by_idx(
         size_t nx,
         size_t ny) {
 #pragma omp parallel for
-    for (int64_t j = 0; j < nx; j++) {
+    for (int64_t j = 0; j < static_cast<int64_t>(nx); j++) {
         const int64_t* __restrict idsj = ids + j * ny;
         const float* xj = x + j * d;
         float* __restrict disj = dis + j * ny;
@@ -1023,7 +1166,7 @@ void fvec_L2sqr_by_idx(
             if (idsj[i] < 0) {
                 disj[i] = INFINITY;
             } else {
-                disj[i] = fvec_L2sqr(xj, y + d * idsj[i], d);
+                disj[i] = fvec_L2sqr_dispatch(xj, y + d * idsj[i], d);
             }
         }
     }
@@ -1038,9 +1181,9 @@ void pairwise_indexed_L2sqr(
         const int64_t* iy,
         float* dis) {
 #pragma omp parallel for if (n > 1)
-    for (int64_t j = 0; j < n; j++) {
+    for (int64_t j = 0; j < static_cast<int64_t>(n); j++) {
         if (ix[j] >= 0 && iy[j] >= 0) {
-            dis[j] = fvec_L2sqr(x + d * ix[j], y + d * iy[j], d);
+            dis[j] = fvec_L2sqr_dispatch(x + d * ix[j], y + d * iy[j], d);
         } else {
             dis[j] = INFINITY;
         }
@@ -1056,9 +1199,10 @@ void pairwise_indexed_inner_product(
         const int64_t* iy,
         float* dis) {
 #pragma omp parallel for if (n > 1)
-    for (int64_t j = 0; j < n; j++) {
+    for (int64_t j = 0; j < static_cast<int64_t>(n); j++) {
         if (ix[j] >= 0 && iy[j] >= 0) {
-            dis[j] = fvec_inner_product(x + d * ix[j], y + d * iy[j], d);
+            dis[j] = fvec_inner_product_dispatch(
+                    x + d * ix[j], y + d * iy[j], d);
         } else {
             dis[j] = -INFINITY;
         }
@@ -1084,7 +1228,7 @@ void knn_inner_products_by_idx(
     }
 
 #pragma omp parallel for if (nx > 100)
-    for (int64_t i = 0; i < nx; i++) {
+    for (int64_t i = 0; i < static_cast<int64_t>(nx); i++) {
         const float* x_ = x + i * d;
         const int64_t* idsi = ids + i * ld_ids;
         size_t j;
@@ -1093,10 +1237,10 @@ void knn_inner_products_by_idx(
         minheap_heapify(k, simi, idxi);
 
         for (j = 0; j < nsubset; j++) {
-            if (idsi[j] < 0 || idsi[j] >= ny) {
+            if (idsi[j] < 0 || static_cast<size_t>(idsi[j]) >= ny) {
                 break;
             }
-            float ip = fvec_inner_product(x_, y + d * idsi[j], d);
+            float ip = fvec_inner_product_dispatch(x_, y + d * idsi[j], d);
 
             if (ip > simi[0]) {
                 minheap_replace_top(k, simi, idxi, ip, idsi[j]);
@@ -1122,17 +1266,17 @@ void knn_L2sqr_by_idx(
         ld_ids = ny;
     }
 #pragma omp parallel for if (nx > 100)
-    for (int64_t i = 0; i < nx; i++) {
+    for (int64_t i = 0; i < static_cast<int64_t>(nx); i++) {
         const float* x_ = x + i * d;
         const int64_t* __restrict idsi = ids + i * ld_ids;
         float* __restrict simi = res_vals + i * k;
         int64_t* __restrict idxi = res_ids + i * k;
         maxheap_heapify(k, simi, idxi);
         for (size_t j = 0; j < nsubset; j++) {
-            if (idsi[j] < 0 || idsi[j] >= ny) {
+            if (idsi[j] < 0 || static_cast<size_t>(idsi[j]) >= ny) {
                 break;
             }
-            float disij = fvec_L2sqr(x_, y + d * idsi[j], d);
+            float disij = fvec_L2sqr_dispatch(x_, y + d * idsi[j], d);
 
             if (disij < simi[0]) {
                 maxheap_replace_top(k, simi, idxi, disij, idsi[j]);
@@ -1170,19 +1314,19 @@ void pairwise_L2sqr(
 
 #pragma omp parallel for if (nb > 1)
     for (int64_t i = 0; i < nb; i++) {
-        b_norms[i] = fvec_norm_L2sqr(xb + i * ldb, d);
+        b_norms[i] = fvec_norm_L2sqr_dispatch(xb + i * ldb, d);
     }
 
 #pragma omp parallel for
     for (int64_t i = 1; i < nq; i++) {
-        float q_norm = fvec_norm_L2sqr(xq + i * ldq, d);
+        float q_norm = fvec_norm_L2sqr_dispatch(xq + i * ldq, d);
         for (int64_t j = 0; j < nb; j++) {
             dis[i * ldd + j] = q_norm + b_norms[j];
         }
     }
 
     {
-        float q_norm = fvec_norm_L2sqr(xq, d);
+        float q_norm = fvec_norm_L2sqr_dispatch(xq, d);
         for (int64_t j = 0; j < nb; j++) {
             dis[j] += q_norm;
         }
@@ -1215,7 +1359,7 @@ void inner_product_to_L2sqr(
         size_t n1,
         size_t n2) {
 #pragma omp parallel for
-    for (int64_t j = 0; j < n1; j++) {
+    for (int64_t j = 0; j < static_cast<int64_t>(n1); j++) {
         float* disj = dis + j * n2;
         for (size_t i = 0; i < n2; i++) {
             disj[i] = nr1[j] + nr2[i] - 2 * disj[i];

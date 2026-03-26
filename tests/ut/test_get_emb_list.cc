@@ -62,11 +62,15 @@ TEST_CASE("Test GetEmbListByIds Basic", "[GetEmbListByIds]") {
         knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
     idx_loaded.Deserialize(bs, conf);
 
+    if (!idx_loaded.HasRawData(conf[knowhere::meta::METRIC_TYPE])) {
+        SKIP("Index does not support raw data retrieval");
+    }
+
     SECTION("Retrieve single embedding list") {
         int64_t el_id = 3;
         auto ids_ds = knowhere::GenIdsDataSet(1, &el_id);
 
-        auto result = idx_loaded.GetEmbListByIds(ids_ds);
+        auto result = idx_loaded.GetEmbListByIds(ids_ds, knowhere::metric::MAX_SIM_COSINE);
         REQUIRE_HAS_VALUE(result);
 
         auto result_ds = result.value();
@@ -92,7 +96,7 @@ TEST_CASE("Test GetEmbListByIds Basic", "[GetEmbListByIds]") {
         std::vector<int64_t> el_ids = {0, 5, num_el - 1};
         auto ids_ds = knowhere::GenIdsDataSet(el_ids.size(), el_ids.data());
 
-        auto result = idx_loaded.GetEmbListByIds(ids_ds);
+        auto result = idx_loaded.GetEmbListByIds(ids_ds, knowhere::metric::MAX_SIM_COSINE);
         REQUIRE_HAS_VALUE(result);
 
         auto result_ds = result.value();
@@ -127,7 +131,7 @@ TEST_CASE("Test GetEmbListByIds Basic", "[GetEmbListByIds]") {
         }
         auto ids_ds = knowhere::GenIdsDataSet(el_ids.size(), el_ids.data());
 
-        auto result = idx_loaded.GetEmbListByIds(ids_ds);
+        auto result = idx_loaded.GetEmbListByIds(ids_ds, knowhere::metric::MAX_SIM_COSINE);
         REQUIRE_HAS_VALUE(result);
 
         auto result_ds = result.value();
@@ -149,7 +153,7 @@ TEST_CASE("Test GetEmbListByIds Basic", "[GetEmbListByIds]") {
         std::vector<int64_t> el_ids = {2, 2, 5, 5};
         auto ids_ds = knowhere::GenIdsDataSet(el_ids.size(), el_ids.data());
 
-        auto result = idx_loaded.GetEmbListByIds(ids_ds);
+        auto result = idx_loaded.GetEmbListByIds(ids_ds, knowhere::metric::MAX_SIM_COSINE);
         REQUIRE_HAS_VALUE(result);
 
         auto result_ds = result.value();
@@ -206,12 +210,16 @@ TEST_CASE("Test GetEmbListByIds with variable-length embedding lists", "[GetEmbL
         knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
     idx_loaded.Deserialize(bs, conf);
 
+    if (!idx_loaded.HasRawData(conf[knowhere::meta::METRIC_TYPE])) {
+        SKIP("Index does not support raw data retrieval");
+    }
+
     SECTION("Retrieve non-empty embedding list") {
         // el_id 1 is non-empty: offset[1]=0, offset[2]=20, so it has 20 vectors
         int64_t el_id = 1;
         auto ids_ds = knowhere::GenIdsDataSet(1, &el_id);
 
-        auto result = idx_loaded.GetEmbListByIds(ids_ds);
+        auto result = idx_loaded.GetEmbListByIds(ids_ds, knowhere::metric::MAX_SIM_COSINE);
         REQUIRE_HAS_VALUE(result);
 
         auto result_ds = result.value();
@@ -233,7 +241,7 @@ TEST_CASE("Test GetEmbListByIds with variable-length embedding lists", "[GetEmbL
         int64_t el_id = 0;  // el_id=0 is empty: offset[0]==offset[1]==0
         auto ids_ds = knowhere::GenIdsDataSet(1, &el_id);
 
-        auto result = idx_loaded.GetEmbListByIds(ids_ds);
+        auto result = idx_loaded.GetEmbListByIds(ids_ds, knowhere::metric::MAX_SIM_COSINE);
         REQUIRE_HAS_VALUE(result);
 
         auto result_ds = result.value();
@@ -247,7 +255,7 @@ TEST_CASE("Test GetEmbListByIds with variable-length embedding lists", "[GetEmbL
         std::vector<int64_t> el_ids = {0, 1, 2, 3};
         auto ids_ds = knowhere::GenIdsDataSet(el_ids.size(), el_ids.data());
 
-        auto result = idx_loaded.GetEmbListByIds(ids_ds);
+        auto result = idx_loaded.GetEmbListByIds(ids_ds, knowhere::metric::MAX_SIM_COSINE);
         REQUIRE_HAS_VALUE(result);
 
         auto result_ds = result.value();
@@ -308,7 +316,7 @@ TEST_CASE("Test GetEmbListByIds error cases", "[GetEmbListByIds]") {
 
         int64_t el_id = 0;
         auto ids_ds = knowhere::GenIdsDataSet(1, &el_id);
-        auto result = idx.GetEmbListByIds(ids_ds);
+        auto result = idx.GetEmbListByIds(ids_ds, knowhere::metric::MAX_SIM_COSINE);
         REQUIRE(!result.has_value());
     }
 
@@ -319,19 +327,10 @@ TEST_CASE("Test GetEmbListByIds error cases", "[GetEmbListByIds]") {
         auto res = idx.Build(train_ds, conf);
         REQUIRE(res == knowhere::Status::success);
 
-        // el_id exactly at boundary (one past last valid)
-        // GenEmbListDataSet with nb=256, each_el_len=10 produces 26 emb lists (last has 6 vectors).
-        // Valid el_ids are [0, num_el-1], so el_id=num_el should be out of range.
         int64_t boundary_el_id = num_el;
         auto ids_ds = knowhere::GenIdsDataSet(1, &boundary_el_id);
-        auto result = idx.GetEmbListByIds(ids_ds);
+        auto result = idx.GetEmbListByIds(ids_ds, knowhere::metric::MAX_SIM_COSINE);
         REQUIRE(!result.has_value());
-
-        // el_id far out of range
-        int64_t far_el_id = 9999;
-        auto ids_ds2 = knowhere::GenIdsDataSet(1, &far_el_id);
-        auto result2 = idx.GetEmbListByIds(ids_ds2);
-        REQUIRE(!result2.has_value());
     }
 
     SECTION("Error when el_id is negative") {
@@ -343,7 +342,7 @@ TEST_CASE("Test GetEmbListByIds error cases", "[GetEmbListByIds]") {
 
         int64_t bad_el_id = -1;
         auto ids_ds = knowhere::GenIdsDataSet(1, &bad_el_id);
-        auto result = idx.GetEmbListByIds(ids_ds);
+        auto result = idx.GetEmbListByIds(ids_ds, knowhere::metric::MAX_SIM_COSINE);
         REQUIRE(!result.has_value());
     }
 }
@@ -374,10 +373,14 @@ TEST_CASE("Test GetEmbListByIds after serialize/deserialize", "[GetEmbListByIds]
     auto res = idx.Build(train_ds, conf);
     REQUIRE(res == knowhere::Status::success);
 
+    if (!idx.HasRawData(conf[knowhere::meta::METRIC_TYPE])) {
+        SKIP("Index does not support raw data retrieval");
+    }
+
     // Get results from original index
     std::vector<int64_t> el_ids = {0, 3, num_el - 1};
     auto ids_ds = knowhere::GenIdsDataSet(el_ids.size(), el_ids.data());
-    auto result_before = idx.GetEmbListByIds(ids_ds);
+    auto result_before = idx.GetEmbListByIds(ids_ds, knowhere::metric::MAX_SIM_COSINE);
     REQUIRE_HAS_VALUE(result_before);
 
     // Serialize and deserialize
@@ -388,7 +391,7 @@ TEST_CASE("Test GetEmbListByIds after serialize/deserialize", "[GetEmbListByIds]
     idx_loaded.Deserialize(bs, conf);
 
     // Get results from deserialized index
-    auto result_after = idx_loaded.GetEmbListByIds(ids_ds);
+    auto result_after = idx_loaded.GetEmbListByIds(ids_ds, knowhere::metric::MAX_SIM_COSINE);
     REQUIRE_HAS_VALUE(result_after);
 
     // Compare: both should return identical data

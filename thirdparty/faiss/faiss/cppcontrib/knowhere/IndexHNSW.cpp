@@ -238,7 +238,7 @@ void hnsw_add_vertices(
 IndexHNSW::IndexHNSW(int d, int M, MetricType metric)
         : Index(d, metric), hnsw(M) {}
 
-IndexHNSW::IndexHNSW(faiss::cppcontrib::knowhere::Index* storage, int M)
+IndexHNSW::IndexHNSW(faiss::Index* storage, int M)
         : Index(storage->d, storage->metric_type), hnsw(M), storage(storage) {}
 
 IndexHNSW::~IndexHNSW() {
@@ -669,14 +669,14 @@ IndexHNSWPQ::IndexHNSWPQ(
         int M,
         int pq_nbits,
         MetricType metric)
-        : IndexHNSW(new IndexPQ(d, pq_m, pq_nbits, metric), M) {
+        : IndexHNSW(new faiss::IndexPQ(d, pq_m, pq_nbits, metric), M) {
     own_fields = true;
     is_trained = false;
 }
 
 void IndexHNSWPQ::train(idx_t n, const float* x) {
     IndexHNSW::train(n, x);
-    (dynamic_cast<IndexPQ*>(storage))->pq.compute_sdc_table();
+    (dynamic_cast<faiss::IndexPQ*>(storage))->pq.compute_sdc_table();
 }
 
 /**************************************************************

@@ -289,8 +289,9 @@ Index<T>::GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context
 
 template <typename T>
 inline expected<DataSetPtr>
-Index<T>::GetEmbListByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const {
-    return this->node->GetEmbListByIds(dataset, op_context);
+Index<T>::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_type,
+                          milvus::OpContext* op_context) const {
+    return this->node->GetEmbListByIds(dataset, metric_type, op_context);
 }
 
 template <typename T>

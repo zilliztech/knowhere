@@ -14,6 +14,8 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include <faiss/impl/FaissAssert.h>
+
 namespace faiss {
 
 /*
@@ -22,13 +24,16 @@ namespace faiss {
 /// Most algorithms support both inner product and L2, with the flat
 /// (brute-force) indices supporting additional metric types for vector
 /// comparison.
+///
+/// NOTE: when adding or removing values, update metric_type_from_int()
+///       and metric_type_count() below.
 enum MetricType {
-    METRIC_INNER_PRODUCT = 0, ///< maximum inner product search
-    METRIC_L2 = 1,            ///< squared L2 search
-    METRIC_L1,                ///< L1 (aka cityblock)
-    METRIC_Linf,              ///< infinity distance
-    METRIC_Lp,                ///< L_p distance, p is given by a faiss::Index
-                              /// metric_arg
+    METRIC_INNER_PRODUCT, ///< maximum inner product search
+    METRIC_L2,            ///< squared L2 search
+    METRIC_L1,            ///< L1 (aka cityblock)
+    METRIC_Linf,          ///< infinity distance
+    METRIC_Lp,            ///< L_p distance, p is given by a faiss::Index
+                          /// metric_arg
 
     /// some additional metrics defined in scipy.spatial.distance
     METRIC_Canberra = 20,
@@ -88,52 +93,22 @@ constexpr bool is_similarity_metric(MetricType metric_type) {
             (metric_type == METRIC_Jaccard));
 }
 
-/// Dispatch to a lambda with MetricType as a compile-time constant.
-/// This allows writing generic code that works with different metrics
-/// while maintaining compile-time optimization.
-///
-/// Example usage:
-///   auto result = with_metric_type(runtime_metric, [&](auto metric_tag) {
-///       constexpr MetricType M = decltype(metric_tag)::value;
-///       return compute_distance<M>(x, y);
-///   });
-#ifndef SWIG
-
-template <typename LambdaType>
-inline auto with_metric_type(MetricType metric, LambdaType&& action) {
-    switch (metric) {
-        case METRIC_INNER_PRODUCT:
-            return action.template operator()<METRIC_INNER_PRODUCT>();
-        case METRIC_L2:
-            return action.template operator()<METRIC_L2>();
-        case METRIC_L1:
-            return action.template operator()<METRIC_L1>();
-        case METRIC_Linf:
-            return action.template operator()<METRIC_Linf>();
-        case METRIC_Lp:
-            return action.template operator()<METRIC_Lp>();
-        case METRIC_Canberra:
-            return action.template operator()<METRIC_Canberra>();
-        case METRIC_BrayCurtis:
-            return action.template operator()<METRIC_BrayCurtis>();
-        case METRIC_JensenShannon:
-            return action.template operator()<METRIC_JensenShannon>();
-        case METRIC_Jaccard:
-            return action.template operator()<METRIC_Jaccard>();
-        case METRIC_NaNEuclidean:
-            return action.template operator()<METRIC_NaNEuclidean>();
-        case METRIC_GOWER:
-            return action.template operator()<METRIC_GOWER>();
-        default: {
-            fprintf(stderr,
-                    "FATAL ERROR: with_metric_type called with unknown "
-                    "metric %d\n",
-                    static_cast<int>(metric));
-            abort();
-        }
-    }
+/// Convert an integer to MetricType with range validation.
+/// Throws FaissException if the value is not a valid MetricType.
+inline MetricType metric_type_from_int(int x) {
+    FAISS_THROW_IF_NOT_FMT(
+            (x >= METRIC_INNER_PRODUCT && x <= METRIC_Superstructure) ||
+                    (x >= METRIC_Canberra && x <= METRIC_GOWER),
+            "invalid metric type %d",
+            x);
+    return static_cast<MetricType>(x);
 }
-#endif // SWIG
+
+/// Count of entries in the MetricType enum.
+constexpr size_t metric_type_count() {
+    return (METRIC_Lp - METRIC_INNER_PRODUCT) + 1 +
+            (METRIC_GOWER - METRIC_Canberra) + 1;
+}
 
 } // namespace faiss
 

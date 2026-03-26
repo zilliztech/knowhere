@@ -10,7 +10,7 @@
 #include <faiss/cppcontrib/knowhere/impl/ScalarQuantizer.h>
 #include "simd/hook.h"
 
-#include <faiss/cppcontrib/knowhere/Index.h>
+#include <faiss/Index.h>
 
 namespace faiss {
 namespace cppcontrib {

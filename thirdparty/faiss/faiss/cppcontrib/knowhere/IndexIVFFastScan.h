@@ -10,10 +10,11 @@
 #include <memory>
 
 #include <faiss/cppcontrib/knowhere/IndexIVF.h>
-#include <faiss/impl/LookupTableScaler.h>
+#include <faiss/impl/fast_scan/fast_scan.h>
+#include <faiss/impl/fast_scan/FastScanDistancePostProcessing.h>
 #include <faiss/utils/AlignedTable.h>
 
-#include <faiss/cppcontrib/knowhere/impl/simd_result_handlers.h>
+#include <faiss/impl/fast_scan/simd_result_handlers.h>
 
 namespace faiss {
 namespace cppcontrib {
@@ -43,31 +44,6 @@ namespace knowhere {
  * For search interator, only 10 are supported, one query, no qbs
  */
 
-struct IVFFastScanIteratorWorkspace : IVFIteratorWorkspace {
-    IVFFastScanIteratorWorkspace() = default;
-    IVFFastScanIteratorWorkspace(
-            const float* query_data,
-            const size_t d,
-            const IVFSearchParameters* search_params)
-            : IVFIteratorWorkspace(query_data, d, search_params){};
-    IVFFastScanIteratorWorkspace(
-            std::unique_ptr<IVFIteratorWorkspace>&& base_workspace) {
-        this->query_data = base_workspace->query_data;
-        this->search_params = base_workspace->search_params;
-        this->nprobe = base_workspace->nprobe;
-        this->backup_count_threshold = base_workspace->backup_count_threshold;
-        this->coarse_dis = std::move(base_workspace->coarse_dis);
-        this->coarse_idx = std::move(base_workspace->coarse_idx);
-        this->coarse_list_sizes = std::move(base_workspace->coarse_list_sizes);
-        base_workspace = nullptr;
-        return;
-    }
-    size_t dim12;
-    AlignedTable<uint8_t> dis_tables;
-    AlignedTable<uint16_t> biases;
-    float normalizers[2];
-};
-
 struct IndexIVFFastScan : IndexIVF {
     // size of the kernel
     int bbs; // set at build time
@@ -88,16 +64,12 @@ struct IndexIVFFastScan : IndexIVF {
     int qbs = 0;
     size_t qbs2 = 0;
 
-    // Inverse L2 norms for cosine similarity computation
-    std::vector<float> inverse_norms;
-
     IndexIVFFastScan(
             Index* quantizer,
             size_t d,
             size_t nlist,
             size_t code_size,
-            MetricType metric = METRIC_L2,
-            bool is_cosine = false);
+            MetricType metric = METRIC_L2);
 
     IndexIVFFastScan();
 
@@ -116,19 +88,10 @@ struct IndexIVFFastScan : IndexIVF {
     /// orig's inverted lists (for debugging)
     InvertedLists* orig_invlists = nullptr;
 
-    // Knowhere-specific function, needed for norms, introduced in PR #1
-    // final is needed because 'x' can be renormalized inside it,
-    //   so a derived class is not allowed to override this function.
-    void add_with_ids(idx_t n, const float* x, const idx_t* xids)
-            override final;
-
-    // This matches Faiss baseline.
-    void add_with_ids_impl(idx_t n, const float* x, const idx_t* xids);
+    void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
 
     // Knowhere-specific override.
-    // final is needed because 'x' can be renormalized inside it,
-    //   so a derived class is not allowed to override this function.
-    void train(idx_t n, const float* x) override final;
+    void train(idx_t n, const float* x) override;
 
     // prepare look-up tables
 
@@ -146,7 +109,8 @@ struct IndexIVFFastScan : IndexIVF {
             const float* x,
             const CoarseQuantized& cq,
             AlignedTable<float>& dis_tables,
-            AlignedTable<float>& biases) const = 0;
+            AlignedTable<float>& biases,
+            const FastScanDistancePostProcessing& context) const = 0;
 
     void compute_LUT_uint8(
             size_t n,
@@ -154,7 +118,8 @@ struct IndexIVFFastScan : IndexIVF {
             const CoarseQuantized& cq,
             AlignedTable<uint8_t>& dis_tables,
             AlignedTable<uint16_t>& biases,
-            float* normalizers) const;
+            float* normalizers,
+            const FastScanDistancePostProcessing& context) const;
 
     void search(
             idx_t n,
@@ -176,14 +141,6 @@ struct IndexIVFFastScan : IndexIVF {
             const IVFSearchParameters* params = nullptr,
             IndexIVFStats* stats = nullptr) const override;
 
-    std::unique_ptr<IVFIteratorWorkspace> getIteratorWorkspace(
-            const float* query_data,
-            const IVFSearchParameters* ivfsearchParams) const override;
-
-    void getIteratorNextBatch(
-            IVFIteratorWorkspace* workspace,
-            size_t current_backup_count) const override;
-
     // range_search implementation was introduced in Knowhere,
     //   diff 73f03354568b4bf5a370df6f37e8d56dfc3a9c85
     void range_search(
@@ -195,6 +152,18 @@ struct IndexIVFFastScan : IndexIVF {
 
     // internal search funcs
 
+    /// Create a KNN scanner for the given parameters.
+    /// Subclasses can override to provide specialized scanners.
+    virtual std::unique_ptr<FastScanCodeScanner> make_knn_scanner(
+            bool is_max,
+            idx_t n,
+            idx_t k,
+            float* distances,
+            idx_t* labels,
+            const IDSelector* sel,
+            int impl = 0,
+            const FastScanDistancePostProcessing& context = {}) const;
+
     // dispatch to implementations and parallelize
     void search_dispatch_implem(
             idx_t n,
@@ -203,7 +172,7 @@ struct IndexIVFFastScan : IndexIVF {
             float* distances,
             idx_t* labels,
             const CoarseQuantized& cq,
-            const NormTableScaler* scaler,
+            const FastScanDistancePostProcessing& context,
             const IVFSearchParameters* params = nullptr) const;
 
     void range_search_dispatch_implem(
@@ -212,7 +181,7 @@ struct IndexIVFFastScan : IndexIVF {
             float radius,
             RangeSearchResult& rres,
             const CoarseQuantized& cq_in,
-            const NormTableScaler* scaler,
+            const FastScanDistancePostProcessing& context,
             const IVFSearchParameters* params = nullptr) const;
 
     // impl 1 and 2 are just for verification
@@ -224,7 +193,7 @@ struct IndexIVFFastScan : IndexIVF {
             float* distances,
             idx_t* labels,
             const CoarseQuantized& cq,
-            const NormTableScaler* scaler,
+            const FastScanDistancePostProcessing& context,
             const IVFSearchParameters* params = nullptr) const;
 
     template <class C>
@@ -235,7 +204,7 @@ struct IndexIVFFastScan : IndexIVF {
             float* distances,
             idx_t* labels,
             const CoarseQuantized& cq,
-            const NormTableScaler* scaler,
+            const FastScanDistancePostProcessing& context,
             const IVFSearchParameters* params = nullptr) const;
 
     // implem 10 and 12 are not multithreaded internally, so
@@ -248,8 +217,9 @@ struct IndexIVFFastScan : IndexIVF {
             const CoarseQuantized& cq,
             size_t* ndis_out,
             size_t* nlist_out,
-            const NormTableScaler* scaler,
-            const IVFSearchParameters* params = nullptr) const;
+            const FastScanDistancePostProcessing& context,
+            const IVFSearchParameters* params,
+            FastScanCodeScanner& scanner) const;
 
     void range_search_implem_10(
             idx_t n,
@@ -258,8 +228,9 @@ struct IndexIVFFastScan : IndexIVF {
             const CoarseQuantized& cq,
             size_t* ndis_out,
             size_t* nlist_out,
-            const NormTableScaler* scaler,
-            const IVFSearchParameters* params = nullptr) const;
+            const FastScanDistancePostProcessing& context,
+            const IVFSearchParameters* params,
+            FastScanCodeScanner& scanner) const;
 
     void search_implem_12(
             idx_t n,
@@ -268,8 +239,9 @@ struct IndexIVFFastScan : IndexIVF {
             const CoarseQuantized& cq,
             size_t* ndis_out,
             size_t* nlist_out,
-            const NormTableScaler* scaler,
-            const IVFSearchParameters* params = nullptr) const;
+            const FastScanDistancePostProcessing& context,
+            const IVFSearchParameters* params,
+            FastScanCodeScanner& scanner) const;
 
     void range_search_implem_12(
             idx_t n,
@@ -278,14 +250,9 @@ struct IndexIVFFastScan : IndexIVF {
             const CoarseQuantized& cq,
             size_t* ndis_out,
             size_t* nlist_out,
-            const NormTableScaler* scaler,
-            const IVFSearchParameters* params = nullptr) const;
-
-    // one query call, no qbs
-    void get_interator_next_batch_implem_10(
-            SIMDResultHandlerToFloat& handler,
-            IVFFastScanIteratorWorkspace* workspace,
-            size_t current_backup_count) const;
+            const FastScanDistancePostProcessing& context,
+            const IVFSearchParameters* params,
+            FastScanCodeScanner& scanner) const;
 
     // implem 14 is multithreaded internally across nprobes and queries
     void search_implem_14(
@@ -296,7 +263,7 @@ struct IndexIVFFastScan : IndexIVF {
             idx_t* labels,
             const CoarseQuantized& cq,
             int impl,
-            const NormTableScaler* scaler,
+            const FastScanDistancePostProcessing& context,
             const IVFSearchParameters* params = nullptr) const;
 
     // reconstruct vectors from packed invlists
@@ -304,6 +271,10 @@ struct IndexIVFFastScan : IndexIVF {
             const override;
 
     CodePacker* get_CodePacker() const override;
+
+    /// Stride in bytes between consecutive SIMD blocks.
+    /// Derived from get_CodePacker()->block_size.
+    size_t get_block_stride() const;
 
     // reconstruct orig invlists (for debugging)
     void reconstruct_orig_invlists();

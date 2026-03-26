@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <optional>
 #include <queue>
 #include <vector>
 
@@ -45,8 +46,6 @@ struct IndexHNSWFlatPanorama;
 struct VisitedTable;
 struct DistanceComputer; // from AuxIndexStructures
 struct HNSWStats;
-template <class C>
-struct ResultHandler;
 
 struct SearchParametersHNSW : SearchParameters {
     int efSearch = 16;
@@ -76,7 +75,8 @@ struct HNSW {
         std::vector<float> dis;
         typedef faiss::CMax<float, storage_idx_t> HC;
 
-        explicit MinimaxHeap(int n) : n(n), k(0), nvalid(0), ids(n), dis(n) {}
+        explicit MinimaxHeap(int n_in)
+                : n(n_in), k(0), nvalid(0), ids(n_in), dis(n_in) {}
 
         void push(storage_idx_t i, float v);
 
@@ -95,7 +95,7 @@ struct HNSW {
     struct NodeDistCloser {
         float d;
         int id;
-        NodeDistCloser(float d, int id) : d(d), id(id) {}
+        NodeDistCloser(float d_in, int id_in) : d(d_in), id(id_in) {}
         bool operator<(const NodeDistCloser& obj1) const {
             return d < obj1.d;
         }
@@ -104,7 +104,7 @@ struct HNSW {
     struct NodeDistFarther {
         float d;
         int id;
-        NodeDistFarther(float d, int id) : d(d), id(id) {}
+        NodeDistFarther(float d_in, int id_in) : d(d_in), id(id_in) {}
         bool operator<(const NodeDistFarther& obj1) const {
             return d > obj1.d;
         }
@@ -143,6 +143,10 @@ struct HNSW {
     /// expansion factor at search time
     int efSearch = 16;
 
+    /// when pruning, leave room for more neighbors to avoid O(n^2)
+    /// costs and lock contention on frequently-pruned nodes.
+    float prune_headroom = 0.2f;
+
     /// during search: do we check whether the next best distance is good
     /// enough?
     bool check_relative_distance = true;
@@ -152,6 +156,9 @@ struct HNSW {
 
     /// use Panorama progressive pruning in search
     bool is_panorama = false;
+
+    // See impl/VisitedTable.h.
+    std::optional<bool> use_visited_hashset;
 
     // methods that initialize the tree sizes
 
@@ -212,14 +219,14 @@ struct HNSW {
     HNSWStats search(
             DistanceComputer& qdis,
             const IndexHNSW* index,
-            ResultHandler<C>& res,
+            ResultHandler& res,
             VisitedTable& vt,
             const SearchParameters* params = nullptr) const;
 
     /// search only in level 0 from a given vertex
     void search_level_0(
             DistanceComputer& qdis,
-            ResultHandler<C>& res,
+            ResultHandler& res,
             idx_t nprobe,
             const storage_idx_t* nearest_i,
             const float* nearest_d,
@@ -239,7 +246,7 @@ struct HNSW {
             DistanceComputer& qdis,
             std::priority_queue<NodeDistFarther>& input,
             std::vector<NodeDistFarther>& output,
-            int max_size,
+            size_t max_size,
             bool keep_max_size_level0 = false);
 
     void permute_entries(const idx_t* map);
@@ -272,7 +279,7 @@ FAISS_API extern HNSWStats hnsw_stats;
 int search_from_candidates(
         const HNSW& hnsw,
         DistanceComputer& qdis,
-        ResultHandler<HNSW::C>& res,
+        ResultHandler& res,
         HNSW::MinimaxHeap& candidates,
         VisitedTable& vt,
         HNSWStats& stats,
@@ -288,7 +295,7 @@ int search_from_candidates_panorama(
         const HNSW& hnsw,
         const IndexHNSW* index,
         DistanceComputer& qdis,
-        ResultHandler<HNSW::C>& res,
+        ResultHandler& res,
         HNSW::MinimaxHeap& candidates,
         VisitedTable& vt,
         HNSWStats& stats,

@@ -9,6 +9,8 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <faiss/cppcontrib/knowhere/IVFFastScanIteratorWorkspace.h>
+#include <faiss/cppcontrib/knowhere/IVFIteratorWorkspace.h>
 #include <faiss/cppcontrib/knowhere/IndexFlatElkan.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFScalarQuantizerCC.h>
 #include <faiss/cppcontrib/knowhere/IndexScaNN.h>
@@ -24,6 +26,7 @@
 #include "faiss/cppcontrib/knowhere/IndexIVFRaBitQ.h"
 #include "faiss/cppcontrib/knowhere/IndexScalarQuantizer.h"
 #include "faiss/cppcontrib/knowhere/index_io.h"
+#include "index/clustering_config.h"
 #include "index/data_view_dense_index/index_node_with_data_view_refiner.h"
 #include "index/ivf/ivf_config.h"
 #include "index/ivf/ivf_wrapper.h"
@@ -43,6 +46,7 @@
 #include "knowhere/utils.h"
 
 namespace knowhere {
+
 struct IVFBaseTag {};
 struct IVFFlatTag {};
 
@@ -379,13 +383,25 @@ class IvfIndexNode : public IndexNode {
             ivf_search_params_.nprobe = nprobe;
             ivf_search_params_.max_codes = 0;
 
-            workspace_ = index_->getIteratorWorkspace(copied_query_.get(), &ivf_search_params_);
+            if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexScaNN>) {
+                workspace_ = std::make_unique<faiss::cppcontrib::knowhere::ScaNNIteratorWorkspace>(
+                    index_, copied_query_.get(), &ivf_search_params_);
+            } else if constexpr (std::is_same_v<IndexType, IndexIVFSQWrapper>) {
+                workspace_ = std::make_unique<IVFSQIteratorWorkspace>(index_, copied_query_.get(), &ivf_search_params_);
+            } else if constexpr (std::is_same_v<IndexType, IndexIVFRaBitQWrapper>) {
+                workspace_ =
+                    std::make_unique<IVFRaBitQIteratorWorkspace>(index_, copied_query_.get(), &ivf_search_params_);
+            } else {
+                workspace_ = std::make_unique<faiss::cppcontrib::knowhere::IVFBaseIteratorWorkspace>(
+                    dynamic_cast<const faiss::cppcontrib::knowhere::IndexIVF*>(index_), copied_query_.get(),
+                    &ivf_search_params_);
+            }
         }
 
      protected:
         void
         next_batch(std::function<void(const std::vector<DistId>&)> batch_handler) override {
-            index_->getIteratorNextBatch(workspace_.get(), this->res_.size());
+            workspace_->next_batch(this->res_.size());
             batch_handler(workspace_->dists);
             workspace_->dists.clear();
         }
@@ -550,10 +566,16 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
 
         // create quantizer for the training
         std::unique_ptr<faiss::cppcontrib::knowhere::IndexFlat> qzr =
-            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), use_elkan);
         // create index. Index does not own qzr
-        index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFFlat>(qzr.get(), dim, nlist, metric.value(),
-                                                                            is_cosine);
+        if (is_cosine) {
+            index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFFlatCosine>(qzr.get(), dim, nlist,
+                                                                                      metric.value());
+        } else {
+            index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFFlat>(qzr.get(), dim, nlist, metric.value());
+        }
+        // apply clustering config
+        ApplyClusteringConfig(index->cp);
         // train
         index->train(rows, (const float*)data);
         // replace quantizer with a regular IndexFlat
@@ -570,10 +592,17 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
 
         // create quantizer for the training
         std::unique_ptr<faiss::cppcontrib::knowhere::IndexFlat> qzr =
-            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), use_elkan);
         // create index. Index does not own qzr
-        index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFFlatCC>(
-            qzr.get(), dim, nlist, ivf_flat_cc_cfg.ssize.value(), metric.value(), is_cosine);
+        if (is_cosine) {
+            index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFFlatCCCosine>(
+                qzr.get(), dim, nlist, ivf_flat_cc_cfg.ssize.value(), metric.value());
+        } else {
+            index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFFlatCC>(
+                qzr.get(), dim, nlist, ivf_flat_cc_cfg.ssize.value(), metric.value());
+        }
+        // apply clustering config
+        ApplyClusteringConfig(index->cp);
         // train
         index->train(rows, (const float*)data);
         // replace quantizer with a regular IndexFlat
@@ -593,7 +622,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
 
         // create quantizer for the training
         std::unique_ptr<faiss::cppcontrib::knowhere::IndexFlat> qzr =
-            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), use_elkan);
 
         DataFormatEnum data_format = DataType2EnumHelper<DataType>::value;
 
@@ -605,6 +634,8 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
 
         index = std::move(result.value());
 
+        // apply clustering config
+        ApplyClusteringConfig(index->get_base_ivf_index()->cp);
         // train
         index->train(rows, (const float*)data);
         // replace quantizer with a regular IndexFlat
@@ -623,10 +654,18 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         const int sub_dim = scann_cfg.sub_dim.value_or(2);
         // create quantizer for the training
         std::unique_ptr<faiss::cppcontrib::knowhere::IndexFlat> qzr =
-            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), use_elkan);
         // create base index. it does not own qzr
-        auto base_index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFPQFastScan>(
-            qzr.get(), dim, nlist, (dim + sub_dim - 1) / sub_dim, 4, is_cosine, metric.value());
+        std::unique_ptr<faiss::cppcontrib::knowhere::IndexIVFPQFastScan> base_index;
+        if (is_cosine) {
+            base_index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFPQFastScanCosine>(
+                qzr.get(), dim, nlist, (dim + sub_dim - 1) / sub_dim, 4, metric.value());
+        } else {
+            base_index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFPQFastScan>(
+                qzr.get(), dim, nlist, (dim + sub_dim - 1) / sub_dim, 4, metric.value());
+        }
+        // apply clustering config
+        ApplyClusteringConfig(base_index->cp);
         // create scann index, which does not base_index by default,
         //    but owns the refine index by default omg
         if (scann_cfg.with_raw_data.value()) {
@@ -654,7 +693,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
 
         // create quantizer for the training
         std::unique_ptr<faiss::cppcontrib::knowhere::IndexFlat> qzr =
-            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), use_elkan);
 
         DataFormatEnum data_format = DataType2EnumHelper<DataType>::value;
 
@@ -665,6 +704,8 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
 
         index = std::move(result.value());
 
+        // apply clustering config
+        ApplyClusteringConfig(index->get_base_ivf_index()->cp);
         // train
         index->train(rows, (const float*)data);
         // replace quantizer with a regular IndexFlat
@@ -682,6 +723,8 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         auto qzr = std::make_unique<faiss::cppcontrib::knowhere::IndexBinaryFlat>(dim, metric.value());
         // create index. Index does not own qzr
         index = std::make_unique<faiss::cppcontrib::knowhere::IndexBinaryIVF>(qzr.get(), dim, nlist, metric.value());
+        // apply clustering config
+        ApplyClusteringConfig(index->cp);
         // train
         index->train(rows, (const uint8_t*)data);
         // transfer ownership of qzr to index
@@ -697,16 +740,24 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
 
         // create quantizer for the training
         std::unique_ptr<faiss::cppcontrib::knowhere::IndexFlat> qzr =
-            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), false, use_elkan);
+            std::make_unique<faiss::cppcontrib::knowhere::IndexFlatElkan>(dim, metric.value(), use_elkan);
         // create index. Index does not own qzr
         auto qzr_type = get_ivf_sq_quantizer_type(ivf_sq_cc_cfg.code_size.value());
         if (!qzr_type.has_value()) {
             LOG_KNOWHERE_ERROR_ << "fail to get ivf sq quantizer type, " << qzr_type.what();
             return qzr_type.error();
         }
-        index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC>(
-            qzr.get(), dim, nlist, ssize, qzr_type.value(), metric.value(), is_cosine, false,
-            ivf_sq_cc_cfg.raw_data_store_prefix);
+        if (is_cosine) {
+            index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCCCosine>(
+                qzr.get(), dim, nlist, ssize, qzr_type.value(), metric.value(), false,
+                ivf_sq_cc_cfg.raw_data_store_prefix);
+        } else {
+            index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC>(
+                qzr.get(), dim, nlist, ssize, qzr_type.value(), metric.value(), false,
+                ivf_sq_cc_cfg.raw_data_store_prefix);
+        }
+        // apply clustering config
+        ApplyClusteringConfig(index->cp);
         // train
         index->train(rows, (const float*)data);
         // replace quantizer with a regular IndexFlat
@@ -728,6 +779,9 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         }
 
         index = std::move(result.value());
+        // apply clustering config
+        ApplyClusteringConfig(index->get_ivfrabitq_index()->cp);
+        // train
         index->train(rows, (const float*)data);
     }
     index_ = std::move(index);
@@ -1630,8 +1684,7 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, std::sha
             // a special case for IVFRaBitQ, bcz a wrapper is involved.
 
             // deserialize
-            auto index_raw =
-                std::unique_ptr<faiss::cppcontrib::knowhere::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
+            auto index_raw = std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
             auto index_wr = IndexIVFRaBitQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFRaBitQ";
@@ -1642,8 +1695,7 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, std::sha
             index_ = std::move(index_wr);
         } else if constexpr (std::is_same<IndexType, IndexIVFPQWrapper>::value) {
             // deserialize
-            auto index_raw =
-                std::unique_ptr<faiss::cppcontrib::knowhere::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
+            auto index_raw = std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
             auto index_wr = IndexIVFPQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFPQ";
@@ -1654,8 +1706,7 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, std::sha
             index_ = std::move(index_wr);
         } else if constexpr (std::is_same<IndexType, IndexIVFSQWrapper>::value) {
             // deserialize
-            auto index_raw =
-                std::unique_ptr<faiss::cppcontrib::knowhere::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
+            auto index_raw = std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
             auto index_wr = IndexIVFSQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFScalarQuantizer";
@@ -1701,8 +1752,8 @@ IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filena
             // a special case for IVFRaBitQ, bcz a wrapper is involved.
 
             // deserialize into a wrapper
-            auto index_raw = std::unique_ptr<faiss::cppcontrib::knowhere::Index>(
-                faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
+            auto index_raw =
+                std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
             auto index_wr = IndexIVFRaBitQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFRaBitQ";
@@ -1713,8 +1764,8 @@ IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filena
             index_ = std::move(index_wr);
         } else if constexpr (std::is_same<IndexType, IndexIVFPQWrapper>::value) {
             // deserialize into a wrapper
-            auto index_raw = std::unique_ptr<faiss::cppcontrib::knowhere::Index>(
-                faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
+            auto index_raw =
+                std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
             auto index_wr = IndexIVFPQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFPQ";
@@ -1725,8 +1776,8 @@ IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filena
             index_ = std::move(index_wr);
         } else if constexpr (std::is_same<IndexType, IndexIVFSQWrapper>::value) {
             // deserialize into a wrapper
-            auto index_raw = std::unique_ptr<faiss::cppcontrib::knowhere::Index>(
-                faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
+            auto index_raw =
+                std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags));
             auto index_wr = IndexIVFSQWrapper::from_deserialized(std::move(index_raw));
             if (index_wr == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVFScalarQuantizer";
