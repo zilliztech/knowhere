@@ -73,6 +73,11 @@ check_deps() {
 
     command -v "$PYTHON" >/dev/null || { log_error "Python not found: $PYTHON"; exit 1; }
 
+    $PYTHON -c "import numpy" 2>/dev/null || {
+        log_error "numpy not found. Install with: pip3 install 'numpy<2'"
+        exit 1
+    }
+
     [ -f "$BUILD_DIR/libknowhere.so" ] || {
         log_error "libknowhere.so not found at $BUILD_DIR"
         log_error "Please build Knowhere C++ library first:"
@@ -145,15 +150,16 @@ repair_wheel() {
     log_info "Repairing wheel for $platform..." >&2
 
     # Export library paths from libknowhere RUNPATH
-    local lib_paths=$(readelf -d "$BUILD_DIR/libknowhere.so" | \
-                      grep -E 'RUNPATH|RPATH' | \
-                      sed 's/.*\[\(.*\)\]/\1/' | \
-                      tr ':' '\n' | grep -v '^$' | tr '\n' ':')
+    local lib_paths
+    lib_paths=$(readelf -d "$BUILD_DIR/libknowhere.so" | \
+                grep -E 'RUNPATH|RPATH' | \
+                sed 's/.*\[\(.*\)\]/\1/' | \
+                tr ':' '\n' | grep -v '^$' | tr '\n' ':')
 
     export LD_LIBRARY_PATH="${lib_paths}:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu"
 
-    # Run auditwheel repair with full output
-    if ! auditwheel repair "$wheel" -w dist/ --plat "$platform" 2>&1 | tee /dev/stderr; then
+    # Run auditwheel repair (all output to stderr so it doesn't leak into command substitution)
+    if ! auditwheel repair "$wheel" -w dist/ --plat "$platform" 2>&1 >&2; then
         log_error "auditwheel repair failed" >&2
         exit 1
     fi
@@ -237,11 +243,13 @@ main() {
     log_info "Target platform: $platform"
 
     # Build wheel
-    local wheel=$(build_wheel)
+    local wheel
+    wheel=$(build_wheel)
     log_info "Built: $(basename "$wheel")"
 
     # Repair wheel
-    local final_wheel=$(repair_wheel "$wheel" "$platform")
+    local final_wheel
+    final_wheel=$(repair_wheel "$wheel" "$platform")
     log_info "Final: $(basename "$final_wheel")"
 
     # Verify

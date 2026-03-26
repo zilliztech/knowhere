@@ -106,7 +106,9 @@ setup(
     author_email="milvus-team@zilliz.com",
     license='Apache License 2.0',
     keywords="search nearest neighbors",
-    setup_requires=["numpy", "setuptools_scm"],
+    # numpy must be pre-installed (install_deps.sh handles this).
+    # Do NOT use setup_requires — it triggers the deprecated fetch_build_eggs
+    # which makes network calls to PyPI and fails intermittently in CI.
     #use_scm_version={'root': '..', 'local_scheme': 'no-local-version', 'version_scheme': 'release-branch-semver'},
     long_description=get_readme(),
     long_description_content_type="text/markdown",
