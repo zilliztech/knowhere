@@ -116,6 +116,12 @@ constexpr const char* DIM_MAX_SCORE_RATIO = "dim_max_score_ratio";
 // emb list meta
 constexpr const char* EMB_LIST_META = "EMB_LIST_META";
 constexpr const char* EMB_LIST_OFFSET = "EMB_LIST_OFFSET";
+constexpr const char* EMB_LIST_RAW_INDEX = "EMB_LIST_RAW_INDEX";
+
+// emb list strategy types
+constexpr const char* EMB_LIST_STRATEGY_TOKENANN = "tokenann";
+constexpr const char* EMB_LIST_STRATEGY_MUVERA = "muvera";
+constexpr const char* EMB_LIST_STRATEGY_LEMUR = "lemur";
 };  // namespace meta
 
 namespace indexparam {
