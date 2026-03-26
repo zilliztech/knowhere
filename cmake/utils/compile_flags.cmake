@@ -1,11 +1,11 @@
 include(CheckCXXCompilerFlag)
-check_cxx_compiler_flag(-std=gnu++17 COMPILER_SUPPORTS_CXX17)
-set(CMAKE_CXX_FLAGS "-std=gnu++17 ${CMAKE_CXX_FLAGS}")
+check_cxx_compiler_flag(-std=gnu++20 COMPILER_SUPPORTS_CXX20)
+set(CMAKE_CXX_FLAGS "-std=gnu++20 ${CMAKE_CXX_FLAGS}")
 
-if(NOT COMPILER_SUPPORTS_CXX17)
+if(NOT COMPILER_SUPPORTS_CXX20)
   message(
     FATAL_ERROR
-      "C++17 needed. Therefore a gcc compiler with a version higher than 4.3 is needed."
+      "C++20 needed. Therefore a gcc compiler with a version higher than 10 is needed."
   )
 endif()
 
