@@ -972,7 +972,7 @@ void exhaustive_L2sqr_nearest_imp(
         float dis_buffer[ny_batch_size];
         for (size_t i = i0; i < i1; i++) {
             const float* x_i = x + i * d;
-            size_t nearest_idx = 0;
+            int64_t nearest_idx = -1;
             float min_dis = HUGE_VALF;
             // compute distances
             for (auto j = 0; j < ny; j += ny_batch_size) {
