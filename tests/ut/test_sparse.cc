@@ -1071,3 +1071,312 @@ TEST_CASE("Test Sparse Index CC Build Add Search", "[sparse]") {
         }
     }
 }
+
+TEST_CASE("Test SINDI Index Build and Search", "[sparse][sindi]") {
+    auto [nb, dim, doc_sparsity, query_sparsity] = GENERATE(table<int32_t, int32_t, float, float>({
+        {2000, 300, 0.95, 0.97},
+        {2000, 3000, 0.97, 0.99},
+    }));
+    auto topk = 5;
+    int64_t nq = 10;
+
+    auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
+    auto search_algo = std::string("SINDI");
+
+    // SINDI requires version >= 10
+    auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+
+    auto sparse_dataset_gen = [&](int nr, int dim, float sparsity) -> knowhere::DataSetPtr {
+        if (metric == knowhere::metric::BM25) {
+            return GenSparseDataSetWithMaxVal(nr, dim, sparsity, 256, true);
+        } else {
+            return GenSparseDataSet(nr, dim, sparsity);
+        }
+    };
+
+    auto train_ds = sparse_dataset_gen(nb, dim, doc_sparsity);
+    auto query_ds = sparse_dataset_gen(nq, dim + 20, query_sparsity);
+
+    knowhere::Json build_json;
+    build_json[knowhere::meta::DIM] = dim;
+    build_json[knowhere::meta::METRIC_TYPE] = metric;
+    build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "SINDI";
+    build_json[knowhere::meta::BM25_K1] = 1.2;
+    build_json[knowhere::meta::BM25_B] = 0.75;
+    build_json[knowhere::meta::BM25_AVGDL] = 100;
+
+    knowhere::Json search_json;
+    search_json[knowhere::meta::TOPK] = topk;
+    search_json[knowhere::meta::METRIC_TYPE] = metric;
+    search_json[knowhere::indexparam::SEARCH_ALGO] = search_algo;
+    search_json[knowhere::meta::BM25_K1] = 1.2;
+    search_json[knowhere::meta::BM25_B] = 0.75;
+    search_json[knowhere::meta::BM25_AVGDL] = 100;
+
+    const knowhere::Json gt_conf = {
+        {knowhere::meta::METRIC_TYPE, metric}, {knowhere::meta::TOPK, topk},      {knowhere::meta::BM25_K1, 1.2},
+        {knowhere::meta::BM25_B, 0.75},        {knowhere::meta::BM25_AVGDL, 100},
+    };
+    auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, gt_conf, nullptr);
+    REQUIRE(gt.has_value());
+
+    auto check_distance_decreasing = [](const knowhere::DataSet& ds) {
+        auto nq = ds.GetRows();
+        auto k = ds.GetDim();
+        auto* distances = ds.GetDistance();
+        auto* ids = ds.GetIds();
+        for (auto i = 0; i < nq; ++i) {
+            for (auto j = 0; j < k - 1; ++j) {
+                if (ids[i * k + j] == -1 || ids[i * k + j + 1] == -1) {
+                    break;
+                }
+                REQUIRE(distances[i * k + j] >= distances[i * k + j + 1]);
+            }
+        }
+    };
+
+    auto name = GENERATE(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, knowhere::IndexEnum::INDEX_SPARSE_WAND);
+
+    SECTION("Test Search") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+        CAPTURE(name, metric, search_algo);
+        REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+        REQUIRE(idx.Size() > 0);
+        REQUIRE(idx.Count() == nb);
+
+        auto results = idx.Search(query_ds, search_json, nullptr);
+        REQUIRE(results.has_value());
+        check_distance_decreasing(*results.value());
+        float recall = GetKNNRecall(*gt.value(), *results.value());
+        REQUIRE(recall >= 0.85);
+    }
+
+    SECTION("Test Search with Bitset") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+        CAPTURE(name, metric, search_algo);
+        REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+        auto bitset_percentage = GENERATE(0.4f, 0.9f);
+        auto bitset_data = GenerateBitsetWithRandomTbitsSet(nb, bitset_percentage * nb);
+        knowhere::BitsetView bitset(bitset_data.data(), nb);
+
+        auto results = idx.Search(query_ds, search_json, bitset);
+        REQUIRE(results.has_value());
+        check_distance_decreasing(*results.value());
+
+        // Check that filtered IDs are not in results
+        auto* ids = results.value()->GetIds();
+        auto k = results.value()->GetDim();
+        for (int64_t i = 0; i < nq; ++i) {
+            for (int64_t j = 0; j < k; ++j) {
+                if (ids[i * k + j] == -1) {
+                    break;
+                }
+                REQUIRE(!bitset.test(ids[i * k + j]));
+            }
+        }
+    }
+
+    SECTION("Test Serialize and Deserialize") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+        CAPTURE(name, metric, search_algo);
+        REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+        knowhere::BinarySet bs;
+        REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
+
+        // Deserialize into a new index
+        auto idx2 = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+        REQUIRE(idx2.Deserialize(bs, build_json) == knowhere::Status::success);
+        REQUIRE(idx2.Count() == nb);
+        REQUIRE(idx2.Size() > 0);
+
+        auto results = idx2.Search(query_ds, search_json, nullptr);
+        REQUIRE(results.has_value());
+        check_distance_decreasing(*results.value());
+        float recall = GetKNNRecall(*gt.value(), *results.value());
+        REQUIRE(recall >= 0.85);
+    }
+
+    SECTION("Test Serialize and DeserializeFromFile (mmap)") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+        CAPTURE(name, metric, search_algo);
+        REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+        knowhere::BinarySet bs;
+        REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
+
+        auto tmp_file = "/tmp/knowhere_sindi_test";
+        WriteBinaryToFile(tmp_file, bs.GetByName(idx.Type()));
+
+        auto idx2 = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+        REQUIRE(idx2.DeserializeFromFile(tmp_file, build_json) == knowhere::Status::success);
+        REQUIRE(idx2.Count() == nb);
+
+        auto results = idx2.Search(query_ds, search_json, nullptr);
+        REQUIRE(results.has_value());
+        check_distance_decreasing(*results.value());
+        float recall = GetKNNRecall(*gt.value(), *results.value());
+        REQUIRE(recall >= 0.85);
+
+        REQUIRE(std::remove(tmp_file) == 0);
+    }
+}
+
+TEST_CASE("Test SINDI Index Window Size", "[sparse][sindi]") {
+    auto nb = 2000;
+    auto dim = 1000;
+    auto topk = 10;
+    int64_t nq = 5;
+    auto doc_sparsity = 0.97f;
+    auto query_sparsity = 0.99f;
+
+    auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+    auto train_ds = GenSparseDataSet(nb, dim, doc_sparsity);
+    auto query_ds = GenSparseDataSet(nq, dim, query_sparsity);
+
+    knowhere::Json gt_conf;
+    gt_conf[knowhere::meta::DIM] = dim;
+    gt_conf[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    gt_conf[knowhere::meta::TOPK] = topk;
+    auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, gt_conf, nullptr);
+    REQUIRE(gt.has_value());
+
+    auto window_size = GENERATE(1024, 4096, 65535);
+    CAPTURE(window_size);
+
+    knowhere::Json build_json;
+    build_json[knowhere::meta::DIM] = dim;
+    build_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "SINDI";
+    build_json["sindi_window_size"] = window_size;
+
+    knowhere::Json search_json;
+    search_json[knowhere::meta::TOPK] = topk;
+    search_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+
+    const std::string name = knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+    REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+    REQUIRE(idx.Size() > 0);
+    REQUIRE(idx.Count() == nb);
+
+    auto results = idx.Search(query_ds, search_json, nullptr);
+    REQUIRE(results.has_value());
+    float recall = GetKNNRecall(*gt.value(), *results.value());
+    REQUIRE(recall >= 0.85);
+}
+
+TEST_CASE("Test SINDI Index Search Algo Mismatch", "[sparse][sindi]") {
+    auto nb = 500;
+    auto dim = 300;
+    auto topk = 5;
+    int64_t nq = 3;
+    auto doc_sparsity = 0.97f;
+    auto query_sparsity = 0.99f;
+
+    auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+    auto train_ds = GenSparseDataSet(nb, dim, doc_sparsity);
+    auto query_ds = GenSparseDataSet(nq, dim, query_sparsity);
+
+    const std::string name = knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+
+    SECTION("SINDI index rejects non-SINDI search algos") {
+        knowhere::Json build_json;
+        build_json[knowhere::meta::DIM] = dim;
+        build_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+        build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "SINDI";
+
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+        REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+        // Searching with DAAT_WAND on a SINDI-built index should fail
+        auto bad_search_algo =
+            GENERATE(std::string("DAAT_WAND"), std::string("DAAT_MAXSCORE"), std::string("TAAT_NAIVE"));
+        CAPTURE(bad_search_algo);
+
+        knowhere::Json search_json;
+        search_json[knowhere::meta::TOPK] = topk;
+        search_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+        search_json[knowhere::indexparam::SEARCH_ALGO] = bad_search_algo;
+
+        auto results = idx.Search(query_ds, search_json, nullptr);
+        REQUIRE(!results.has_value());
+        REQUIRE(results.error() == knowhere::Status::invalid_args);
+    }
+
+    SECTION("Non-SINDI index rejects SINDI search algo") {
+        knowhere::Json build_json;
+        build_json[knowhere::meta::DIM] = dim;
+        build_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+        build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "DAAT_MAXSCORE";
+
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+        REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+        auto bad_search_algo = GENERATE(std::string("SINDI"));
+        CAPTURE(bad_search_algo);
+
+        knowhere::Json search_json;
+        search_json[knowhere::meta::TOPK] = topk;
+        search_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+        search_json[knowhere::indexparam::SEARCH_ALGO] = bad_search_algo;
+
+        auto results = idx.Search(query_ds, search_json, nullptr);
+        REQUIRE(!results.has_value());
+        REQUIRE(results.error() == knowhere::Status::invalid_args);
+    }
+}
+
+TEST_CASE("Test SINDI Index Default Algo for Version 10", "[sparse][sindi]") {
+    auto nb = 500;
+    auto dim = 300;
+    auto topk = 5;
+    int64_t nq = 3;
+    auto doc_sparsity = 0.97f;
+    auto query_sparsity = 0.99f;
+
+    auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+    auto train_ds = GenSparseDataSet(nb, dim, doc_sparsity);
+    auto query_ds = GenSparseDataSet(nq, dim, query_sparsity);
+
+    const std::string name = knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+
+    // For version >= 10 with IP metric, default algo should be SINDI
+    // Build without specifying inverted_index_algo
+    knowhere::Json build_json;
+    build_json[knowhere::meta::DIM] = dim;
+    build_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+    REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+    knowhere::Json gt_conf;
+    gt_conf[knowhere::meta::DIM] = dim;
+    gt_conf[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    gt_conf[knowhere::meta::TOPK] = topk;
+    auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, gt_conf, nullptr);
+    REQUIRE(gt.has_value());
+
+    // Default search (INHERIT) should work and use SINDI
+    knowhere::Json search_json;
+    search_json[knowhere::meta::TOPK] = topk;
+    search_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+
+    auto results = idx.Search(query_ds, search_json, nullptr);
+    REQUIRE(results.has_value());
+    float recall = GetKNNRecall(*gt.value(), *results.value());
+    REQUIRE(recall >= 0.85);
+
+    // Explicitly using SINDI search algo should also work
+    search_json[knowhere::indexparam::SEARCH_ALGO] = "SINDI";
+    results = idx.Search(query_ds, search_json, nullptr);
+    REQUIRE(results.has_value());
+    recall = GetKNNRecall(*gt.value(), *results.value());
+    REQUIRE(recall >= 0.85);
+
+    // Non-SINDI search algos should be rejected
+    search_json[knowhere::indexparam::SEARCH_ALGO] = "DAAT_WAND";
+    results = idx.Search(query_ds, search_json, nullptr);
+    REQUIRE(!results.has_value());
+}

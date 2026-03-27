@@ -40,6 +40,7 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_STRING inverted_index_codec;
     CFG_STRING search_algo;
     CFG_STRING quant_type;
+    CFG_INT sindi_window_size;
 
     KNOHWERE_DECLARE_CONFIG(SparseInvertedIndexConfig) {
         // NOTE: drop_ratio_build has been deprecated, it won't change anything
@@ -128,6 +129,11 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .for_train()
             .for_deserialize()
             .for_deserialize_from_file();
+        KNOWHERE_CONFIG_DECLARE_FIELD(sindi_window_size)
+            .description("window size for sindi inverted index")
+            .set_range(1024, 65535)
+            .set_default(65535)
+            .for_train();
     }
 
     Status
