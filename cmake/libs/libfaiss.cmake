@@ -20,6 +20,15 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/cppcontrib/knowhere/utils/*.cpp
 )
 
+if(WITH_SVS)
+  knowhere_file_glob(
+    GLOB
+    FAISS_SVS_SRCS
+    thirdparty/faiss/faiss/svs/*.cpp
+    thirdparty/faiss/faiss/impl/svs_io.cpp
+  )
+  list(APPEND FAISS_SRCS ${FAISS_SVS_SRCS})
+endif()
 
 # AVX512 files
 knowhere_file_glob(
@@ -340,6 +349,31 @@ if(__X86_64)
     faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
                  faiss_avx2 faiss_avx512 knowhere_utils)
   target_compile_definitions(faiss PRIVATE FINTEGER=int FAISS_ENABLE_DD COMPILE_SIMD_AVX2 COMPILE_SIMD_AVX512)
+
+  if(WITH_SVS)
+    # Use pre-built SVS runtime bindings (like baseline Faiss does).
+    # The tarball ships libsvs_runtime.so with all deps (fmt, spdlog) baked in,
+    # plus CMake config files and runtime API headers.
+    # Override: set svs_runtime_DIR to a local unpacked tarball to skip download.
+    find_package(svs_runtime 0.2.0 QUIET)
+    if(NOT svs_runtime_FOUND)
+      include(FetchContent)
+      set(SVS_TARBALL_URL
+          "https://github.com/intel/ScalableVectorSearch/releases/download/v0.2.0/svs-cpp-runtime-bindings-0.2.0.tar.gz"
+          CACHE STRING "URL for pre-built SVS runtime bindings tarball")
+      FetchContent_Declare(svs URL "${SVS_TARBALL_URL}" DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+      FetchContent_MakeAvailable(svs)
+      set(svs_runtime_DIR "${svs_SOURCE_DIR}/lib/cmake/svs_runtime")
+      find_package(svs_runtime 0.2.0 REQUIRED)
+    endif()
+
+    target_link_libraries(faiss PUBLIC svs::svs_runtime)
+    target_link_libraries(faiss_avx2 PUBLIC svs::svs_runtime)
+    target_link_libraries(faiss_avx512 PUBLIC svs::svs_runtime)
+    target_compile_definitions(faiss PUBLIC FAISS_ENABLE_SVS FAISS_SVS_RUNTIME_VERSION=v0)
+    target_compile_definitions(faiss_avx2 PUBLIC FAISS_ENABLE_SVS FAISS_SVS_RUNTIME_VERSION=v0)
+    target_compile_definitions(faiss_avx512 PUBLIC FAISS_ENABLE_SVS FAISS_SVS_RUNTIME_VERSION=v0)
+  endif()
 endif()
 
 # generate `faiss` library for AARCH64

@@ -61,6 +61,11 @@ constexpr const char* INDEX_DISKANN = "DISKANN";
 constexpr const char* INDEX_AISAQ = "AISAQ";
 constexpr const char* INDEX_MINHASH_LSH = "MINHASH_LSH";
 
+constexpr const char* INDEX_SVS_FLAT = "SVS_FLAT";
+constexpr const char* INDEX_SVS_VAMANA = "SVS_VAMANA";
+constexpr const char* INDEX_SVS_VAMANA_LVQ = "SVS_VAMANA_LVQ";
+constexpr const char* INDEX_SVS_VAMANA_LEANVEC = "SVS_VAMANA_LEANVEC";
+
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX = "SPARSE_INVERTED_INDEX";
 constexpr const char* INDEX_SPARSE_WAND = "SPARSE_WAND";
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX_CC = "SPARSE_INVERTED_INDEX_CC";
@@ -193,6 +198,15 @@ constexpr const char* INLINE_PQ = "inline_pq";
 constexpr const char* PQ_CACHE_SIZE = "pq_cache_size";
 constexpr const char* PQ_READ_PAGE_CACHE_SIZE = "pq_read_page_cache_size";
 constexpr const char* VECTORS_BEAMWIDTH = "vectors_beamwidth";
+
+// SVS Params
+constexpr const char* SVS_GRAPH_MAX_DEGREE = "svs_graph_max_degree";
+constexpr const char* SVS_CONSTRUCTION_WINDOW_SIZE = "svs_construction_window_size";
+constexpr const char* SVS_SEARCH_WINDOW_SIZE = "svs_search_window_size";
+constexpr const char* SVS_SEARCH_BUFFER_CAPACITY = "svs_search_buffer_capacity";
+constexpr const char* SVS_ALPHA = "svs_alpha";
+constexpr const char* SVS_STORAGE_KIND = "svs_storage_kind";
+constexpr const char* SVS_LEANVEC_DIM = "svs_leanvec_dim";
 
 // FAISS additional Params
 constexpr const char* HNSW_REFINE = "refine";

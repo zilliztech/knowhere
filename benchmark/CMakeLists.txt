@@ -55,6 +55,18 @@ benchmark_test(benchmark_float_range           hdf5/benchmark_float_range.cpp)
 benchmark_test(benchmark_float_range_bitset    hdf5/benchmark_float_range_bitset.cpp)
 benchmark_test(benchmark_simd_qps              hdf5/benchmark_simd_qps.cpp)
 
+# Float benchmarks use milvus::LocalFileManager directly
+target_link_libraries(benchmark_float milvus-common)
+target_link_libraries(benchmark_float_bitset milvus-common)
+target_link_libraries(benchmark_float_qps milvus-common)
+target_link_libraries(benchmark_float_range milvus-common)
+target_link_libraries(benchmark_float_range_bitset milvus-common)
+
+if(WITH_SVS)
+  benchmark_test(benchmark_svs_float_qps          hdf5/benchmark_svs_float_qps.cpp)
+  benchmark_test(benchmark_svs_vamana_float_qps   hdf5/benchmark_svs_vamana_float_qps.cpp)
+endif()
+
 benchmark_test(gen_hdf5_file hdf5/gen_hdf5_file.cpp)
 benchmark_test(gen_fbin_file hdf5/gen_fbin_file.cpp)
 
@@ -63,7 +75,8 @@ benchmark_test(gen_fbin_file hdf5/gen_fbin_file.cpp)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|X86_64)$")
     message(STATUS "Building sparse SIMD benchmark for ${CMAKE_SYSTEM_PROCESSOR}")
     add_executable(benchmark_sparse_simd benchmark_sparse_simd.cpp)
-    target_link_libraries(benchmark_sparse_simd knowhere)
+    target_link_libraries(benchmark_sparse_simd knowhere knowhere_utils
+        -Wl,--no-as-needed -laio -Wl,--as-needed)
     if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(benchmark_sparse_simd PRIVATE -mavx512f -mavx512dq)
     endif()

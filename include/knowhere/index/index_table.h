@@ -108,6 +108,22 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     {IndexEnum::INDEX_AISAQ, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_AISAQ, VecType::VECTOR_BFLOAT16},
 
+#ifdef KNOWHERE_WITH_SVS
+    // svs index
+    {IndexEnum::INDEX_SVS_FLAT, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_SVS_FLAT, VecType::VECTOR_FLOAT16},
+    {IndexEnum::INDEX_SVS_FLAT, VecType::VECTOR_BFLOAT16},
+    {IndexEnum::INDEX_SVS_VAMANA, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_SVS_VAMANA, VecType::VECTOR_FLOAT16},
+    {IndexEnum::INDEX_SVS_VAMANA, VecType::VECTOR_BFLOAT16},
+    {IndexEnum::INDEX_SVS_VAMANA_LVQ, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_SVS_VAMANA_LVQ, VecType::VECTOR_FLOAT16},
+    {IndexEnum::INDEX_SVS_VAMANA_LVQ, VecType::VECTOR_BFLOAT16},
+    {IndexEnum::INDEX_SVS_VAMANA_LEANVEC, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_SVS_VAMANA_LEANVEC, VecType::VECTOR_FLOAT16},
+    {IndexEnum::INDEX_SVS_VAMANA_LEANVEC, VecType::VECTOR_BFLOAT16},
+#endif
+
     // sparse index
     {IndexEnum::INDEX_SPARSE_INVERTED_INDEX, VecType::VECTOR_SPARSE_FLOAT},
     {IndexEnum::INDEX_SPARSE_WAND, VecType::VECTOR_SPARSE_FLOAT},
