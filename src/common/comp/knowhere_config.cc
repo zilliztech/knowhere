@@ -49,6 +49,9 @@ KnowhereConfig::ShowVersion() {
 #ifdef KNOWHERE_WITH_CUVS
     msg = msg + "-gpu";
 #endif
+#ifdef KNOWHERE_WITH_SVS
+    msg = msg + "-svs";
+#endif
 #else
     msg = msg + " unknown";
 #endif
