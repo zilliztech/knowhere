@@ -45,7 +45,7 @@ namespace knowhere {
 // Binary layout:
 //   [0..32)  File header: version(4), nr_rows(4), max_dim(4), nr_inner_dims(4), reserved(16)
 //   [32..36) nr_sections (uint32_t)
-//   [36..)   Section headers: each is InvertedIndexSectionType(4) + offset(8) + size(8) = 20 bytes
+//   [36..)   Section headers: each is InvertedIndexSectionType(4) + padding(4) + offset(8) + size(8) = 24 bytes
 //   At section[0].offset: encoding_type (uint32_t)
 static std::optional<sparse::inverted::InvertedIndexEncoding>
 peek_encoding_type_from_index_data(const uint8_t* data, size_t size) {
@@ -53,7 +53,7 @@ peek_encoding_type_from_index_data(const uint8_t* data, size_t size) {
     using sparse::inverted::InvertedIndexSectionHeader;
     using sparse::inverted::InvertedIndexSectionType;
 
-    // Need at least: 32 (header) + 4 (nr_sections) + 20 (one section header) = 56 bytes
+    // Need at least: 32 (header) + 4 (nr_sections) + 24 (one section header) = 60 bytes
     constexpr size_t kMinHeaderSize = 32 + 4 + sizeof(InvertedIndexSectionHeader);
     if (size < kMinHeaderSize) {
         return std::nullopt;

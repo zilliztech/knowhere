@@ -279,6 +279,7 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
         //    - nr_sections (uint32_t): Number of sections
         //    - section_headers[nr_sections]: Array of section headers, each containing:
         //      - type (InvertedIndexSectionType): Type of the section
+        //      - padding (uint32_t): Padding to align the section header to 8 bytes
         //      - offset (uint64_t): Offset of the section from the beginning of the file
         //      - size (uint64_t): Size of the section in bytes
         //
