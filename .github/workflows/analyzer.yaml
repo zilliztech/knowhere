@@ -13,7 +13,7 @@ jobs:
   analyzer:
     name: analyzer
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 100
     strategy:
       fail-fast: false
     steps:

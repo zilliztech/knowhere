@@ -13,8 +13,8 @@ PWD := $(shell pwd)
 BUILD_DIR := $(PWD)/build
 SHELL := /bin/bash
 
-# Conan base flags (single source of truth for all pipelines)
-CONAN_BASE_FLAGS := --update --build=missing
+# Conan install-only flags (not valid for conan build)
+CONAN_INSTALL_FLAGS := --update --build=missing
 
 # ---------- User-facing build flags ----------
 # Usage: make WITH_GPU=True WITH_UT=True WITH_ASAN=True WITH_DEBUG=True
@@ -48,35 +48,36 @@ else
 endif
 
 # ---------- Compose conan flags from user flags ----------
-CONAN_FLAGS := $(CONAN_BASE_FLAGS) -s compiler.libcxx=$(LIBCXX) -s build_type=$(BUILD_TYPE) -s compiler.cppstd=17
+# Settings/options flags shared by conan install and conan build
+CONAN_SETTINGS := -s compiler.libcxx=$(LIBCXX) -s build_type=$(BUILD_TYPE) -s compiler.cppstd=17
 
 # DiskANN and liburing require libaio (Linux-only).
 ifneq ($(UNAME_S),Darwin)
-    CONAN_FLAGS += -o with_diskann=True
+    CONAN_SETTINGS += -o with_diskann=True
     ifndef WITH_GPU
-        CONAN_FLAGS += --build=liburing
+        CONAN_INSTALL_FLAGS += --build=liburing
     endif
 endif
 
 # GPU builds use cuVS.
 ifdef WITH_GPU
-    CONAN_FLAGS += -o with_cuvs=True
+    CONAN_SETTINGS += -o with_cuvs=True
 endif
 
 ifdef WITH_UT
-    CONAN_FLAGS += -o with_ut=True
+    CONAN_SETTINGS += -o with_ut=True
 endif
 
 ifdef WITH_ASAN
-    CONAN_FLAGS += -o with_asan=True
+    CONAN_SETTINGS += -o with_asan=True
 endif
 
 ifdef WITH_CARDINAL
-    CONAN_FLAGS += -o with_cardinal=True
+    CONAN_SETTINGS += -o with_cardinal=True
 endif
 
 ifdef CONAN_PROFILE
-    CONAN_FLAGS += -pr $(CONAN_PROFILE)
+    CONAN_SETTINGS += -pr $(CONAN_PROFILE)
 endif
 
 .PHONY: build test \
@@ -92,9 +93,9 @@ build: ## Build knowhere (use WITH_GPU=True, WITH_UT=True, WITH_ASAN=True)
 ifdef WITH_GPU
 	@$(PWD)/scripts/prepare_gpu_build.sh
 endif
-	@mkdir -p $(BUILD_DIR) && cd $(BUILD_DIR) && \
-		conan install .. $(CONAN_FLAGS) && \
-		conan build ..
+	@mkdir -p $(BUILD_DIR) && \
+		conan install . $(CONAN_INSTALL_FLAGS) $(CONAN_SETTINGS) && \
+		conan build . $(CONAN_SETTINGS)
 
 # ---------- Test ----------
 

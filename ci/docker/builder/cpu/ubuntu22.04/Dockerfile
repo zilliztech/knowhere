@@ -42,13 +42,13 @@ RUN cd /tmp \
 # install knowhere dependancies
 RUN apt update \
     && apt install -y libopenblas-openmp-dev libcurl4-openssl-dev libaio-dev libevent-dev lcov \
-    && pip3 install conan==1.61.0 \
-    && conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local
-
-# clone knowhere repo and build to update .conan
+    && pip3 install conan==2.25.1 \
+    && conan profile detect --force \
+    && conan remote add default-conan-local2 https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local2
+# clone knowhere repo and build to update .conan2
 RUN git clone https://github.com/zilliztech/knowhere.git \
     && cd knowhere \
-    && mkdir build && cd build \
-    && conan install .. --build=missing -o with_ut=True -o with_diskann=True -s compiler.libcxx=libstdc++11 -s build_type=Release \
-    && conan build .. \
-    && cd ../.. && rm -rf knowhere
+    && mkdir -p build \
+    && conan install . --build=missing -o with_ut=True -o with_diskann=True -s compiler.libcxx=libstdc++11 -s build_type=Release \
+    && conan build . \
+    && cd .. && rm -rf knowhere
