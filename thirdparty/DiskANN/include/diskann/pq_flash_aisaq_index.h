@@ -79,10 +79,10 @@ public:
 template<typename T>
 class PQFlashAisaqIndex: public PQFlashIndex<T> {
 public:
-    PQFlashAisaqIndex<T>(std::shared_ptr<AlignedFileReader> fileReader,
+    PQFlashAisaqIndex(std::shared_ptr<AlignedFileReader> fileReader,
                 diskann::Metric metric = diskann::Metric::L2);
     // sector # on disk where node_id is present with in the graph part
-    virtual ~PQFlashAisaqIndex<T>();
+    virtual ~PQFlashAisaqIndex();
     uint64_t get_node_sector(uint64_t node_id);
 
     // ptr to start of the node

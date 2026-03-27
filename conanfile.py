@@ -27,6 +27,7 @@ class KnowhereConan(ConanFile):
         "with_cuvs": [True, False],
         "with_asan": [True, False],
         "with_diskann": [True, False],
+        "with_svs": [True, False],
         "with_cardinal": [True, False],
         "with_profiler": [True, False],
         "with_ut": [True, False],
@@ -42,6 +43,7 @@ class KnowhereConan(ConanFile):
         "with_cuvs": False,
         "with_asan": False,
         "with_diskann": False,
+        "with_svs": False,
         "with_cardinal": False,
         "with_profiler": False,
         "with_ut": False,
@@ -77,15 +79,15 @@ class KnowhereConan(ConanFile):
 
     @property
     def _minimum_cpp_standard(self):
-        return 17
+        return 20
 
     @property
     def _minimum_compilers_version(self):
         return {
-            "gcc": "8",
-            "Visual Studio": "16",
-            "clang": "6",
-            "apple-clang": "10",
+            "gcc": "10",
+            "Visual Studio": "17",
+            "clang": "10",
+            "apple-clang": "13",
         }
 
     def config_options(self):
@@ -115,7 +117,7 @@ class KnowhereConan(ConanFile):
         self.requires("lz4/1.9.4", force=True, override=True)
         if self.settings.os == "Linux":
             self.requires("liburing/2.8", force=True, override=True)
-        self.requires("fmt/11.0.2")
+        self.requires("fmt/11.2.0")
         self.requires("libevent/2.1.12")
         self.requires("grpc/1.67.1@milvus/dev#5aa62c51bced448b83d7db9e5b3a13c7")
         self.requires("folly/2024.08.12.00@milvus/dev#e09fc71826ce6b4568441910665f0889")
@@ -187,6 +189,7 @@ class KnowhereConan(ConanFile):
             tc.variables["MSVC_USE_STATIC_RUNTIME"] = "MT" in msvc_runtime_flag(self)
         tc.variables["WITH_ASAN"] = self.options.with_asan
         tc.variables["WITH_DISKANN"] = self.options.with_diskann
+        tc.variables["WITH_SVS"] = self.options.with_svs
         tc.variables["WITH_CARDINAL"] = self.options.with_cardinal
         tc.variables["WITH_CUVS"] = self.options.with_cuvs
         tc.variables["WITH_PROFILER"] = self.options.with_profiler

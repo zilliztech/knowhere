@@ -37,7 +37,7 @@ DIR_OF_THIS_SCRIPT = os.path.abspath(os.path.dirname(__file__))
 flags = [
     "-Wall",
     "-Wextra",
-    "-std=c++17",
+    "-std=c++20",
     "-x",
     "c++",
     "-isystem",
