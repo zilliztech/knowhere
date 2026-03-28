@@ -186,9 +186,10 @@ IVFRaBitQHeapHandler<C, SL>::IVFRaBitQHeapHandler(
         size_t k_val,
         float* distances,
         int64_t* labels,
+        const IDSelector* sel_in,
         const FastScanDistancePostProcessing* ctx,
         bool multibit)
-        : ResultHandlerCompare<C, true, SL>(nq_val, 0, nullptr),
+        : ResultHandlerCompare<C, true, SL>(nq_val, 0, sel_in),
           index(idx),
           heap_distances(distances),
           heap_labels(labels),
@@ -256,6 +257,9 @@ void IVFRaBitQHeapHandler<C, SL>::handle(
     for (size_t j = 0; j < max_positions; j++) {
         const int64_t result_id = this->adjust_id(b, j);
         if (result_id < 0) {
+            continue;
+        }
+        if (this->sel != nullptr && !this->sel->is_member(result_id)) {
             continue;
         }
 

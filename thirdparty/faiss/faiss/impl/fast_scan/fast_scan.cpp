@@ -498,6 +498,7 @@ std::unique_ptr<FastScanCodeScanner> rabitq_ivf_make_knn_scanner(
         size_t k,
         float* distances,
         int64_t* ids,
+        const IDSelector* sel,
         const FastScanDistancePostProcessing* context,
         bool multi_bit) {
     DISPATCH_SIMDLevel(
@@ -508,6 +509,7 @@ std::unique_ptr<FastScanCodeScanner> rabitq_ivf_make_knn_scanner(
             k,
             distances,
             ids,
+            sel,
             context,
             multi_bit);
 }
