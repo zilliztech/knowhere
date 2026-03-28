@@ -1106,3 +1106,191 @@ TEST_CASE("Test RangeSearch Cancellation", "[range_search][cancellation]") {
         REQUIRE(results2.has_value());
     }
 }
+
+TEST_CASE("Test IVF_RABITQ_FASTSCAN", "[ivf_rabitq_fastscan]") {
+    const int64_t nb = 1000, nq = 10;
+    const int64_t dim = 128;
+    const int64_t topk = 10;
+
+    auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::COSINE);
+    auto version = GenTestVersionList();
+
+    const auto train_ds = GenDataSet(nb, dim);
+    const auto query_ds = GenDataSet(nq, dim);
+
+    knowhere::Json json;
+    json[knowhere::meta::DIM] = dim;
+    json[knowhere::meta::METRIC_TYPE] = metric;
+    json[knowhere::meta::TOPK] = topk;
+    json[knowhere::indexparam::NLIST] = 16;
+    json[knowhere::indexparam::NPROBE] = 8;
+
+    const auto idx_type = knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ_FASTSCAN;
+
+    SECTION("build and search") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx.has_value());
+        REQUIRE(idx.value().Build(train_ds, json) == knowhere::Status::success);
+
+        auto results = idx.value().Search(query_ds, json, nullptr);
+        REQUIRE(results.has_value());
+        auto ids = results.value()->GetIds();
+        for (int i = 0; i < nq; i++) {
+            REQUIRE(ids[i * topk] >= 0);
+            REQUIRE(ids[i * topk] < nb);
+        }
+    }
+
+    SECTION("serialize/deserialize round-trip") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx.has_value());
+        REQUIRE(idx.value().Build(train_ds, json) == knowhere::Status::success);
+
+        auto results_before = idx.value().Search(query_ds, json, nullptr);
+        REQUIRE(results_before.has_value());
+
+        knowhere::BinarySet bs;
+        REQUIRE(idx.value().Serialize(bs) == knowhere::Status::success);
+
+        auto idx2 = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx2.has_value());
+        REQUIRE(idx2.value().Deserialize(bs, json) == knowhere::Status::success);
+
+        auto results_after = idx2.value().Search(query_ds, json, nullptr);
+        REQUIRE(results_after.has_value());
+
+        auto ids_before = results_before.value()->GetIds();
+        auto ids_after = results_after.value()->GetIds();
+        for (int i = 0; i < nq * topk; i++) {
+            REQUIRE(ids_before[i] == ids_after[i]);
+        }
+    }
+
+    SECTION("range search") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx.has_value());
+        REQUIRE(idx.value().Build(train_ds, json) == knowhere::Status::success);
+
+        knowhere::Json range_json = json;
+        if (knowhere::IsMetricType(metric, knowhere::metric::L2)) {
+            range_json[knowhere::meta::RADIUS] = 1000000.0f;
+            range_json[knowhere::meta::RANGE_FILTER] = 0.0f;
+        } else {
+            range_json[knowhere::meta::RADIUS] = 0.0f;
+            range_json[knowhere::meta::RANGE_FILTER] = 1.0f;
+        }
+        REQUIRE(idx.value().RangeSearch(query_ds, range_json, nullptr).has_value());
+    }
+
+    SECTION("refine flat build/search") {
+        knowhere::Json refine_json = json;
+        refine_json["refine"] = true;
+        refine_json["refine_type"] = "FLAT";
+        refine_json["refine_k"] = 2.0f;
+
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx.has_value());
+        REQUIRE(idx.value().Build(train_ds, refine_json) == knowhere::Status::success);
+        REQUIRE(idx.value().Search(query_ds, refine_json, nullptr).has_value());
+    }
+
+    SECTION("refine flat range search") {
+        knowhere::Json refine_json = json;
+        refine_json["refine"] = true;
+        refine_json["refine_type"] = "FLAT";
+        refine_json["refine_k"] = 2.0f;
+        if (knowhere::IsMetricType(metric, knowhere::metric::L2)) {
+            refine_json[knowhere::meta::RADIUS] = 1000000.0f;
+            refine_json[knowhere::meta::RANGE_FILTER] = 0.0f;
+        } else {
+            refine_json[knowhere::meta::RADIUS] = 0.0f;
+            refine_json[knowhere::meta::RANGE_FILTER] = 1.0f;
+        }
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx.has_value());
+        REQUIRE(idx.value().Build(train_ds, refine_json) == knowhere::Status::success);
+        REQUIRE(idx.value().RangeSearch(query_ds, refine_json, nullptr).has_value());
+    }
+
+    SECTION("refine flat serialize/deserialize") {
+        knowhere::Json refine_json = json;
+        refine_json["refine"] = true;
+        refine_json["refine_type"] = "FLAT";
+        refine_json["refine_k"] = 2.0f;
+
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx.has_value());
+        REQUIRE(idx.value().Build(train_ds, refine_json) == knowhere::Status::success);
+
+        // Search before serialization and verify that a round-trip preserves
+        // the same top-k output for the same queries.
+        auto results_before = idx.value().Search(query_ds, refine_json, nullptr);
+        REQUIRE(results_before.has_value());
+
+        knowhere::BinarySet bs;
+        REQUIRE(idx.value().Serialize(bs) == knowhere::Status::success);
+
+        auto idx2 = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx2.has_value());
+        REQUIRE(idx2.value().Deserialize(bs, refine_json) == knowhere::Status::success);
+
+        auto results_after = idx2.value().Search(query_ds, refine_json, nullptr);
+        REQUIRE(results_after.has_value());
+
+        auto ids_before = results_before.value()->GetIds();
+        auto ids_after = results_after.value()->GetIds();
+        for (int i = 0; i < nq * topk; i++) {
+            REQUIRE(ids_before[i] == ids_after[i]);
+        }
+    }
+
+    SECTION("rbq_bits_query > 0 rejected at search") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx.has_value());
+        REQUIRE(idx.value().Build(train_ds, json) == knowhere::Status::success);
+
+        knowhere::Json bad_json = json;
+        bad_json[knowhere::indexparam::RABITQ_QUERY_BITS] = 4;
+        REQUIRE_FALSE(idx.value().Search(query_ds, bad_json, nullptr).has_value());
+    }
+
+    SECTION("non-flat refine type rejected") {
+        knowhere::Json bad_json = json;
+        bad_json["refine"] = true;
+        bad_json["refine_type"] = "SQ8";
+
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx.has_value());
+        REQUIRE(idx.value().Build(train_ds, bad_json) != knowhere::Status::success);
+    }
+
+    SECTION("iterator rejected") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx.has_value());
+        REQUIRE(idx.value().Build(train_ds, json) == knowhere::Status::success);
+        REQUIRE_FALSE(idx.value().AnnIterator(query_ds, json, nullptr).has_value());
+    }
+
+    SECTION("bitset filtering rejected") {
+        // Upstream IndexIVFRaBitQFastScan::make_knn_scanner still ignores the
+        // IDSelector, so filtered search must fail rather than silently return
+        // incorrect results.
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx.has_value());
+        REQUIRE(idx.value().Build(train_ds, json) == knowhere::Status::success);
+
+        std::vector<uint8_t> bitset_data((nb + 7) / 8, 0);
+        for (int i = 0; i < nb / 2; i++) {
+            bitset_data[i >> 3] |= (1 << (i & 7));
+        }
+        knowhere::BitsetView bitset(bitset_data.data(), nb);
+        REQUIRE_FALSE(idx.value().Search(query_ds, json, bitset).has_value());
+    }
+
+    SECTION("search without bitset works") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx.has_value());
+        REQUIRE(idx.value().Build(train_ds, json) == knowhere::Status::success);
+        REQUIRE(idx.value().Search(query_ds, json, nullptr).has_value());
+    }
+}
