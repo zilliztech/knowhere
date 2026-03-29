@@ -668,10 +668,10 @@ class SparseDspIndexNode : public IndexNode {
     }
 
     ~SparseDspIndexNode() override {
-        // mmap_guard_ must be destroyed before index_ since index_ may reference mmap'd memory
-        mmap_guard_.reset();
+        // index_ must be destroyed before mmap_guard_ since index_ may hold spans into mmap'd memory
         delete index_;
         index_ = nullptr;
+        mmap_guard_.reset();
     }
 
     Status
@@ -827,8 +827,9 @@ class SparseDspIndexNode : public IndexNode {
     Deserialize(const BinarySet& binset, std::shared_ptr<Config> config) override {
         if (index_) {
             LOG_KNOWHERE_WARNING_ << Type() << " already created, deleting old";
-            delete index_;
+            delete index_;  // destroy index before unmapping memory it may reference
             index_ = nullptr;
+            mmap_guard_.reset();
         }
         auto binary = binset.GetByName(Type());
         if (binary == nullptr) {
@@ -849,9 +850,9 @@ class SparseDspIndexNode : public IndexNode {
     DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> config) override {
         if (index_) {
             LOG_KNOWHERE_WARNING_ << Type() << " already created, deleting old";
-            mmap_guard_.reset();  // unmap before deleting index that references mmap'd memory
-            delete index_;
+            delete index_;  // destroy index before unmapping memory it may reference
             index_ = nullptr;
+            mmap_guard_.reset();
         }
         auto& base_cfg = static_cast<const BaseConfig&>(*config);
         auto index = CreateDspIndex<true>(static_cast<const SparseDspConfig&>(*config));

@@ -219,10 +219,13 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         float recall_dsp = search_recall(0, 1.0f, 1.0f, 0);
         REQUIRE(recall_dsp == 1.0f);
 
-        // 2. DSP eta < 1 → more aggressive pruning, valid results
-        // Paper requires mu <= eta, so use mu=0.7 with eta=0.7
-        float recall_eta07 = search_recall(0, 0.7f, 0.7f, 0);
-        REQUIRE(recall_eta07 >= 0.0f);
+        // 2. DSP with mu=0.7, eta=0.7 → exercises both mu and eta pruning paths
+        float recall_mu_eta_07 = search_recall(0, 0.7f, 0.7f, 0);
+        REQUIRE(recall_mu_eta_07 >= 0.0f);
+
+        // 2b. DSP with mu < eta → more aggressive mu pruning, eta still active
+        float recall_mu03_eta1 = search_recall(0, 0.3f, 1.0f, 0);
+        REQUIRE(recall_mu03_eta1 >= 0.0f);
 
         // 3. DSP gamma=100000 → perfect recall
         float recall_gamma_all = search_recall(0, 1.0f, 1.0f, 100000);

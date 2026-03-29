@@ -304,7 +304,7 @@ class DspIndex : public DspIndexBase<DType> {
         if (max_score_in_dim_spans_.size() > 0) {
             section_meta.emplace_back(DspSectionType::MAX_SCORES_PER_DIM, sizeof(float) * nr_inner_dims_);
         }
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         section_meta.emplace_back(DspSectionType::PROMETHEUS_BUILD_STATS,
                                   sizeof(uint32_t) * n_rows_internal_ + sizeof(uint32_t) * nr_inner_dims_);
 #endif
@@ -392,7 +392,7 @@ class DspIndex : public DspIndexBase<DType> {
         }
 
         // Write prometheus build stats
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         writer.write(build_stats_.dataset_nnz_stats_.data(), sizeof(uint32_t), n_rows_internal_);
         writer.write(build_stats_.posting_list_length_stats_.data(), sizeof(uint32_t), nr_inner_dims_);
 #endif
@@ -1407,28 +1407,6 @@ class DspIndex : public DspIndexBase<DType> {
                     }
                     if (gamma > 0) {
                         add_top_gamma(gamma, 0.0f);
-                    } else {
-                        uint32_t top2_ids[2] = {UINT32_MAX, UINT32_MAX};
-                        float top2_ub[2] = {0.0f, 0.0f};
-                        for (uint32_t spb = 0; spb < n_superblocks_; ++spb) {
-                            if (spb_alive[spb])
-                                continue;
-                            float ub = superblock_ub[spb];
-                            if (ub > top2_ub[0]) {
-                                top2_ub[1] = top2_ub[0];
-                                top2_ids[1] = top2_ids[0];
-                                top2_ub[0] = ub;
-                                top2_ids[0] = spb;
-                            } else if (ub > top2_ub[1]) {
-                                top2_ub[1] = ub;
-                                top2_ids[1] = spb;
-                            }
-                        }
-                        for (int i = 0; i < 2; ++i) {
-                            if (top2_ids[i] != UINT32_MAX) {
-                                mark_alive(top2_ids[i]);
-                            }
-                        }
                     }
                     break;
                 }

@@ -98,10 +98,14 @@ class SparseDspConfig : public BaseConfig {
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
         if (param_type == PARAM_TYPE::SEARCH) {
+            const int mode = dsp_mode.value_or(0);
             const float mu = dsp_mu.value_or(1.0f);
             const float eta = dsp_eta.value_or(1.0f);
-            if (mu > eta) {
-                return HandleError(err_msg, "dsp_mu must be <= dsp_eta", Status::invalid_args);
+            // Paper constraint 0 < mu <= eta <= 1 applies to DSP (mode=0) and LSP/2 (mode=3)
+            // which both use the dual-threshold (mu, eta) pruning.
+            // LSP/0 (mode=1) has no mu gate; LSP/1 (mode=2) uses mu but not the eta inequality.
+            if ((mode == 0 || mode == 3) && mu > eta) {
+                return HandleError(err_msg, "dsp_mu must be <= dsp_eta for DSP/LSP2 modes", Status::invalid_args);
             }
         }
         return Status::success;

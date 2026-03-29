@@ -641,26 +641,27 @@ main(int argc, char** argv) {
             // DSP mode (mode=0): dual-threshold (mu, eta) + optional top-gamma backstop
             {"dsp default",         0, 1.0f, 1.0f,    0},
             {"dsp mu=0.3",          0, 0.3f, 1.0f,    0},
-            {"dsp eta=0.95",        0, 1.0f, 0.95f,   0},
-            {"dsp eta=0.90",        0, 1.0f, 0.90f,   0},
-            {"dsp eta=0.85",        0, 1.0f, 0.85f,   0},
+            {"dsp mu=0.5 eta=1.0",  0, 0.5f, 1.0f,    0},
+            {"dsp mu=0.5 eta=0.8",  0, 0.5f, 0.8f,    0},
+            {"dsp mu=0.5 eta=0.5",  0, 0.5f, 0.5f,    0},
             {"dsp mu=0.3 g=100",    0, 0.3f, 1.0f,  100},
 
             // LSP/0 (mode=1): top-gamma from ub>=theta, no mu/asc gate
             {"lsp0 g=50",           1, 1.0f, 1.0f,   50},
             {"lsp0 g=100",          1, 1.0f, 1.0f,  100},
             {"lsp0 g=500",          1, 1.0f, 1.0f,  500},
-            {"lsp0 g=100 eta=0.95", 1, 1.0f, 0.95f, 100},
+            {"lsp0 g=1000",         1, 1.0f, 1.0f, 1000},
 
             // LSP/1 (mode=2): lsp0 safe set + mu gate
             {"lsp1 g=100",          2, 1.0f, 1.0f,  100},
             {"lsp1 g=100 mu=0.3",   2, 0.3f, 1.0f,  100},
-            {"lsp1 g=100 eta=0.95", 2, 1.0f, 0.95f, 100},
+            {"lsp1 g=100 mu=0.5",   2, 0.5f, 1.0f,  100},
 
             // LSP/2 (mode=3): lsp1 + asc gate
             {"lsp2 g=100",          3, 1.0f, 1.0f,  100},
             {"lsp2 g=100 mu=0.3",   3, 0.3f, 1.0f,  100},
-            {"lsp2 g=100 eta=0.95", 3, 1.0f, 0.95f, 100},
+            {"lsp2 g=100 mu=0.5",   3, 0.5f, 1.0f,  100},
+            {"lsp2 g=100 mu=0.5 eta=0.8", 3, 0.5f, 0.8f, 100},
 
             // kth-init OFF: isolate hierarchy-only contribution
             {"dsp no-kth",          0, 1.0f, 1.0f,    0, false},
