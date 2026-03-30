@@ -23,6 +23,7 @@
 #include "knowhere/dataset.h"
 #include "knowhere/emb_list_utils.h"
 #include "knowhere/expected.h"
+#include "knowhere/index/emb_list_strategy.h"
 #include "knowhere/object.h"
 #include "knowhere/operands.h"
 #include "knowhere/utils.h"
@@ -40,7 +41,17 @@ struct OpContext;
 #include "knowhere/comp/task.h"
 #include "knowhere/comp/time_recorder.h"
 #include "knowhere/prometheus_client.h"
+#else
+class ThreadPool;
 #endif
+
+namespace faiss {
+namespace cppcontrib {
+namespace knowhere {
+class IndexFlat;
+}
+}  // namespace cppcontrib
+}  // namespace faiss
 
 namespace knowhere {
 
@@ -334,64 +345,6 @@ class IndexNode : public Object {
         return Status::not_implemented;
     }
 
-    /**
-     * @brief Establishes the mapping from internal base-index IDs to emb_list IDs.
-     *
-     * This mapping is essential for base indexes to correctly apply bitset filtering using only a 1-hop mapping during
-     * search. In some cases, such as with mv-only *relayout*, a base-index may have its own
-     * (base)internal-to-external ID mapping.
-     * However, the emb_list search bitset operates on emb_list IDs, which we refer to as the "most external" IDs.
-     * Therefore, we need to create a mapping from the base_internal_id (used by the base-index) to the most external
-     * emb_list_id, ensuring that bitset checks and search results are consistent at the emb_list level.
-     */
-    Status
-    SetBaseIndexIDMap() {
-        auto internal_id_to_external_id_map = GetInternalIdToExternalIdMap();
-        size_t id_map_size = internal_id_to_external_id_map->size();
-        assert(id_map_size == static_cast<size_t>(Count()));
-        std::vector<uint32_t> internal_id_to_most_external_id_map(id_map_size);
-        for (size_t i = 0; i < id_map_size; i++) {
-            internal_id_to_most_external_id_map[i] = emb_list_offset_->get_el_id(internal_id_to_external_id_map->at(i));
-        }
-        return SetInternalIdToMostExternalIdMap(std::move(internal_id_to_most_external_id_map));
-    }
-
-    virtual Status
-    BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
-                 bool use_knowhere_build_pool = true) {
-        // 1. split metric_type to el_metric_type and sub_metric_type
-        auto& config = static_cast<BaseConfig&>(*cfg);
-        auto original_metric_type = config.metric_type.value();
-        auto el_metric_type_or = get_el_metric_type(original_metric_type);
-        if (!el_metric_type_or.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "Invalid metric type for emb_list: " << original_metric_type;
-            return Status::emb_list_inner_error;
-        }
-        auto el_metric_type = el_metric_type_or.value();
-        auto sub_metric_type_or = get_sub_metric_type(original_metric_type);
-        if (!sub_metric_type_or.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "Invalid sub metric type for emb_list: " << original_metric_type;
-            return Status::emb_list_inner_error;
-        }
-        // set sub metric type as the metric type for build
-        auto sub_metric_type = sub_metric_type_or.value();
-        config.metric_type = sub_metric_type;
-
-        // 2. build index
-        LOG_KNOWHERE_INFO_ << "Build EmbList-Index with metric type: " << original_metric_type
-                           << ", el metric type: " << el_metric_type << ", sub metric type: " << sub_metric_type;
-        RETURN_IF_ERROR(Build(dataset, cfg, use_knowhere_build_pool));
-
-        // 3. create emb_list_offset
-        emb_list_offset_ = std::make_unique<EmbListOffset>(lims, num_rows);
-
-        // 4. Set the mapping from base index internal vector IDs to emb_list IDs.
-        // When using emb_list, all filtering bitset checks are performed at the emb_list level,
-        // not at the individual vector level. This means that whenever the index needs to check whether
-        // a vector is masked (filtered out), it must first map the vector's idx to its corresponding emb_list idx.
-        return SetBaseIndexIDMap();
-    }
-
     virtual Status
     BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) {
         auto& config = static_cast<BaseConfig&>(*cfg);
@@ -456,29 +409,12 @@ class IndexNode : public Object {
      */
     virtual Status
     SerializeEmbListIfNeed(BinarySet& binset) const {
-        if (emb_list_offset_ == nullptr || emb_list_offset_->offset.size() == 0) {
-            // if not emb_list, use the default serialize method
+        if (!emb_list_strategy_) {
+            // not emb_list, use the default serialize method
             return Serialize(binset);
         }
 
-        // if is emb_list,
-        //   1. serialize emb_list offset
-        //   2. serialize base index
-        LOG_KNOWHERE_INFO_ << "Serialize emb_list offset";
-        try {
-            // serialize emb_list_offset_
-            // 1 * size_t + offset.size() * size_t
-            int64_t total_bytes = (emb_list_offset_->offset.size() + 1) * sizeof(size_t);
-            auto data = std::shared_ptr<uint8_t[]>(new uint8_t[total_bytes]);
-            auto size = emb_list_offset_->offset.size();
-            std::memcpy(data.get(), &size, sizeof(size_t));
-            std::memcpy(data.get() + sizeof(size_t), emb_list_offset_->offset.data(), size * sizeof(size_t));
-            binset.Append(knowhere::meta::EMB_LIST_META, data, total_bytes);
-        } catch (const std::exception& e) {
-            LOG_KNOWHERE_WARNING_ << "serialize emb_list offset error: " << e.what();
-            return Status::emb_list_inner_error;
-        }
-        return Serialize(binset);
+        return SerializeEmbList(binset);
     }
 
     /**
@@ -490,52 +426,14 @@ class IndexNode : public Object {
      */
     virtual Status
     DeserializeEmbListIfNeed(const BinarySet& binset, std::shared_ptr<Config> config) {
-        auto cfg = static_cast<const knowhere::BaseConfig&>(*config);
+        auto& cfg = static_cast<knowhere::BaseConfig&>(*config);
         auto el_metric_type_or = get_el_metric_type(cfg.metric_type.value());
         if (!el_metric_type_or.has_value()) {
-            // if not emb_list, use the default deserialize method
+            // not emb_list, use the default deserialize method
             return Deserialize(binset, config);
         }
 
-        // if is emb_list,
-        //   1. split metric_type into el_metric_type and sub_metric_type
-        //   2. deserialize base index
-        //   2. deserialize emb_list offset
-        //   3. set base index id map
-
-        el_metric_type_ = el_metric_type_or.value();
-        auto sub_metric_type_or = get_sub_metric_type(cfg.metric_type.value());
-        if (!sub_metric_type_or.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "Invalid sub metric type: " << cfg.metric_type.value();
-            return Status::emb_list_inner_error;
-        }
-        cfg.metric_type = sub_metric_type_or.value();
-        RETURN_IF_ERROR(Deserialize(binset, config));
-
-        try {
-            auto binary_ptr = binset.GetByName(knowhere::meta::EMB_LIST_META);
-            if (binary_ptr == nullptr) {
-                LOG_KNOWHERE_INFO_ << "No emb_list offset found, but metric type is emb_list";
-                return Status::emb_list_inner_error;
-            }
-            LOG_KNOWHERE_INFO_ << "Deserialize emb_list offset";
-            size_t size = 0;
-            std::memcpy(&size, binary_ptr->data.get(), sizeof(size_t));
-            const auto total_bytes = binary_ptr->size;
-            const auto comp_size = total_bytes / sizeof(size_t) - 1;
-            if (comp_size != size) {
-                LOG_KNOWHERE_WARNING_ << "the computed size of emb_list offset is not equal to size from binary set";
-                return Status::emb_list_inner_error;
-            }
-            std::vector<size_t> offset(size);
-            std::memcpy(offset.data(), binary_ptr->data.get() + sizeof(size_t), size * sizeof(size_t));
-            emb_list_offset_ = std::make_unique<EmbListOffset>(std::move(offset));
-        } catch (const std::exception& e) {
-            LOG_KNOWHERE_WARNING_ << "deserialize emb_list offset error: " << e.what();
-            return Status::emb_list_inner_error;
-        }
-
-        return SetBaseIndexIDMap();
+        return DeserializeEmbListFromBinarySet(binset, config);
     }
 
     virtual bool
@@ -548,53 +446,14 @@ class IndexNode : public Object {
 
     virtual Status
     DeserializeFromFileIfNeed(const std::string& filename, std::shared_ptr<Config> config) {
-        auto cfg = static_cast<const knowhere::BaseConfig&>(*config);
+        auto& cfg = static_cast<knowhere::BaseConfig&>(*config);
         auto el_metric_type_or = get_el_metric_type(cfg.metric_type.value());
         if (!el_metric_type_or.has_value()) {
-            // if not emb_list, use the default deserialize method
+            // not emb_list, use the default deserialize method
             return DeserializeFromFile(filename, config);
         }
 
-        // if is emb_list,
-        //   1. split metric_type into el_metric_type and sub_metric_type
-        //   2. deserialize base index
-        //   3. deserialize emb_list offset
-        //   4. set base index id map
-
-        el_metric_type_ = el_metric_type_or.value();
-        auto sub_metric_type_or = get_sub_metric_type(cfg.metric_type.value());
-        if (!sub_metric_type_or.has_value()) {
-            LOG_KNOWHERE_WARNING_ << "Invalid sub metric type: " << cfg.metric_type.value();
-            return Status::emb_list_inner_error;
-        }
-        cfg.metric_type = sub_metric_type_or.value();
-        RETURN_IF_ERROR(DeserializeFromFile(filename, config));
-
-        try {
-            auto emb_list_meta_file_path = cfg.emb_list_meta_file_path.value();
-            if (emb_list_meta_file_path.empty()) {
-                LOG_KNOWHERE_WARNING_ << "emb_list_meta_file is empty, but metric type is emb_list";
-                return Status::emb_list_inner_error;
-            }
-
-            std::ifstream emb_list_meta_file(emb_list_meta_file_path, std::ios::binary);
-            if (!emb_list_meta_file.is_open()) {
-                LOG_KNOWHERE_WARNING_ << "emb_list_meta_file does not exist: " << emb_list_meta_file_path;
-                return Status::emb_list_inner_error;
-            }
-            size_t size = 0;
-            char size_buffer[sizeof(size_t)];
-            emb_list_meta_file.read(size_buffer, sizeof(size_t));
-            std::memcpy(&size, size_buffer, sizeof(size_t));
-            std::vector<size_t> offset(size);
-            emb_list_meta_file.read(reinterpret_cast<char*>(offset.data()), size * sizeof(size_t));
-            emb_list_offset_ = std::make_unique<EmbListOffset>(std::move(offset));
-        } catch (const std::exception& e) {
-            LOG_KNOWHERE_WARNING_ << "deserialize emb_list offset error: " << e.what();
-            return Status::emb_list_inner_error;
-        }
-
-        return SetBaseIndexIDMap();
+        return DeserializeEmbListFromFile(filename, config);
     }
 
     virtual expected<DataSetPtr>
@@ -614,26 +473,6 @@ class IndexNode : public Object {
     GetQueryCodeSize(const DataSetPtr dataset) const {
         throw std::runtime_error("GetQueryCodeSize not supported for current index type");
     }
-
-    /**
-     * @brief Search interface supporting two-stage emb_list search.
-     * @param dataset Query dataset
-     * @param cfg     Search configuration
-     * @param bitset  Mask for filtering vectors
-     *
-     * Search process:
-     * 1. Check emb_list offset information and build the query group structure.
-     * 2. Stage 1: Call (vector-based) Search method to retrieve candidate vector IDs for each query emb_list.
-     * 3. Stage 2: For each query emb_list, collect candidate emb_list IDs and its vectors, and perform brute-force
-     *    distance calculation to aggregate scores at the emb_list level.
-     * 4. Return top-k emb_list results.
-     *
-     * Note: The emb_list index node does not need to split tasks by nq and dispatch them to the search thread pool for
-     * parallel processing, because the (vector-based) Search method already handles this.
-     */
-    virtual expected<DataSetPtr>
-    SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
-                  milvus::OpContext* op_context = nullptr) const;
 
     virtual expected<DataSetPtr>
     RangeSearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
@@ -657,14 +496,115 @@ class IndexNode : public Object {
      *
      * Returns error if emb_list_offset_ is not available (i.e., not an embedding list index).
      */
-    expected<DataSetPtr>
+    virtual expected<DataSetPtr>
     GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_type,
                     milvus::OpContext* op_context = nullptr) const;
 
  protected:
+    /**
+     * @brief Parse EMB_LIST_META header from raw bytes.
+     *
+     * Detects format by magic number:
+     * - New format: [int64_t magic][size_t type_len][char[type_len] type][uint8_t[] strategy_blob]
+     * - Legacy format (tokenann only): entire blob is [size_t count][size_t[count] offsets]
+     */
+    struct EmbListMetaHeader {
+        std::string strategy_type;
+        const uint8_t* strategy_blob;
+        int64_t strategy_blob_size;
+    };
+
+    /**
+     * @brief Establishes the mapping from internal base-index IDs to emb_list IDs.
+     *
+     * This mapping is essential for base indexes to correctly apply bitset filtering using only a 1-hop mapping during
+     * search. In some cases, such as with mv-only *relayout*, a base-index may have its own
+     * (base)internal-to-external ID mapping.
+     * However, the emb_list search bitset operates on emb_list IDs, which we refer to as the "most external" IDs.
+     * Therefore, we need to create a mapping from the base_internal_id (used by the base-index) to the most external
+     * emb_list_id, ensuring that bitset checks and search results are consistent at the emb_list level.
+     */
+    Status
+    SetBaseIndexIDMap() {
+        auto internal_id_to_external_id_map = GetInternalIdToExternalIdMap();
+        size_t id_map_size = internal_id_to_external_id_map->size();
+        assert(id_map_size == static_cast<size_t>(Count()));
+        std::vector<uint32_t> internal_id_to_most_external_id_map(id_map_size);
+        for (size_t i = 0; i < id_map_size; i++) {
+            internal_id_to_most_external_id_map[i] = emb_list_offset_->get_el_id(internal_id_to_external_id_map->at(i));
+        }
+        return SetInternalIdToMostExternalIdMap(std::move(internal_id_to_most_external_id_map));
+    }
+
+    virtual Status
+    BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
+                 bool use_knowhere_build_pool);
+
+    /**
+     * @brief Serialize emb_list: strategy meta, raw index, and base index to BinarySet.
+     */
+    Status
+    SerializeEmbList(BinarySet& binset) const;
+
+    /**
+     * @brief Deserialize emb_list: base index, strategy, raw index, and ID mapping from BinarySet.
+     */
+    Status
+    DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_ptr<Config> config);
+
+    /**
+     * @brief Deserialize emb_list: base index, strategy, raw index, and ID mapping from files.
+     */
+    Status
+    DeserializeEmbListFromFile(const std::string& filename, std::shared_ptr<Config> config);
+
+    /**
+     * @brief Search interface supporting two-stage emb_list search.
+     * @param dataset Query dataset
+     * @param cfg     Search configuration
+     * @param bitset  Mask for filtering vectors
+     *
+     * Search process:
+     * 1. Check emb_list offset information and build the query group structure.
+     * 2. Stage 1: Call (vector-based) Search method to retrieve candidate vector IDs for each query emb_list.
+     * 3. Stage 2: For each query emb_list, collect candidate emb_list IDs and its vectors, and perform brute-force
+     *    distance calculation to aggregate scores at the emb_list level.
+     * 4. Return top-k emb_list results.
+     *
+     * Note: The emb_list index node does not need to split tasks by nq and dispatch them to the search thread pool for
+     * parallel processing, because the (vector-based) Search method already handles this.
+     */
+    virtual expected<DataSetPtr>
+    SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                  milvus::OpContext* op_context = nullptr) const;
+
+    static EmbListMetaHeader
+    ParseEmbListMetaHeader(const uint8_t* data, int64_t size);
+
+ protected:
+    /**
+     * @brief Compute distances using emb_list_raw_index_ (raw vector storage).
+     *
+     * Used by CalcDistByIDs implementations when emb_list_raw_index_ is present
+     * (MUVERA/LEMUR strategies). The raw index stores original vectors indexed by
+     * global vector IDs, so no ID translation is needed.
+     *
+     * @param pool Thread pool for parallel computation
+     * @return Distance results or error
+     */
+    expected<DataSetPtr>
+    CalcDistByRawIndex(const DataSetPtr dataset, const int64_t* labels, size_t labels_len, bool is_cosine,
+                       std::shared_ptr<ThreadPool> pool, milvus::OpContext* op_context = nullptr) const;
+
     Version version_;
-    std::unique_ptr<EmbListOffset> emb_list_offset_;  // emb_list group offset structure
+    std::shared_ptr<EmbListOffset> emb_list_offset_;  // emb_list group offset structure (shared with strategy)
     std::string el_metric_type_;
+    EmbListStrategyPtr emb_list_strategy_;  // emb_list encoding strategy (tokenann/muvera)
+    // Raw vector storage for EmbList strategies (MUVERA/LEMUR) that encode documents
+    // into different representations for ANN search. Since the base index holds encoded
+    // vectors (not raw), this IndexFlat stores original vectors for exact distance
+    // computation during MaxSim reranking.
+    std::shared_ptr<faiss::cppcontrib::knowhere::IndexFlat> emb_list_raw_index_;
 };
 
 // Common superclass for iterators that expand search range as needed. Subclasses need

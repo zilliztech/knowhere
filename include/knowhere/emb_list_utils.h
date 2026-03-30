@@ -13,10 +13,14 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <functional>
+#include <limits>
 #include <numeric>
 #include <vector>
 
 #include "knowhere/bitsetview.h"
+#include "knowhere/log.h"
+#include "knowhere/object.h"
 
 namespace knowhere {
 
@@ -36,6 +40,13 @@ class EmbListOffset {
     }
 
     EmbListOffset(std::vector<size_t>& offset_) {
+        assert(offset_.size() > 0);
+        assert(offset_[0] == 0);
+        offset.resize(offset_.size());
+        std::memcpy(offset.data(), offset_.data(), offset_.size() * sizeof(size_t));
+    }
+
+    EmbListOffset(const std::vector<size_t>& offset_) {
         assert(offset_.size() > 0);
         assert(offset_[0] == 0);
         offset.resize(offset_.size());
@@ -183,7 +194,10 @@ get_ordered_sum_max_sim(const float* dists, const size_t nq, const size_t el_len
  * @param el_metric_type: the metric type of the emb_list
  * @return the aggregation function of the emb_list
  */
-inline std::optional<std::function<std::optional<float>(const float*, size_t, size_t, bool)>>
+// Aggregation function type: (dists, nq, doc_len, larger_is_closer) -> score
+using EmbListAggFunc = std::function<std::optional<float>(const float*, size_t, size_t, bool)>;
+
+inline std::optional<EmbListAggFunc>
 get_emb_list_agg_func(const std::string& el_metric_type) {
     if (el_metric_type == metric::MAX_SIM) {
         return get_sum_max_sim;

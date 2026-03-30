@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <fstream>
 #include <limits>
+#include <unordered_set>
 
 #include "diskann/aux_utils.h"
 #include "diskann/linux_aligned_file_reader.h"
@@ -26,6 +27,7 @@
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/feature.h"
+#include "knowhere/index/emb_list_strategy.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
 #include "knowhere/prometheus_client.h"
@@ -758,9 +760,20 @@ DiskANNIndexNode<DataType>::DeserializeEmbListIfNeed(const BinarySet& binset, st
     LOG_KNOWHERE_INFO_ << "Read emb_list offset from file: " << emb_list_offset_file << ", size: " << offset.size()
                        << ", first offset: " << offset.front() << ", last offset: " << offset.back();
 
-    emb_list_offset_ = std::make_unique<EmbListOffset>(std::move(offset));
+    // Step 4: Create strategy and set offset directly
+    auto strategy_or = CreateEmbListStrategy(meta::EMB_LIST_STRATEGY_TOKENANN, config);
+    if (!strategy_or.has_value()) {
+        LOG_KNOWHERE_ERROR_ << "Failed to create emb_list strategy";
+        return strategy_or.error();
+    }
+    emb_list_strategy_ = std::move(strategy_or.value());
 
-    // Step 4: Set base index id map for 1-hop bitset check
+    emb_list_offset_ = std::make_shared<EmbListOffset>(std::move(offset));
+    RETURN_IF_ERROR(emb_list_strategy_->SetEmbListOffset(emb_list_offset_));
+    LOG_KNOWHERE_INFO_ << "Created emb_list strategy: " << emb_list_strategy_->Type()
+                       << ", doc_count=" << emb_list_strategy_->GetDocCount();
+
+    // Step 5: Set base index id map for 1-hop bitset check
     return SetBaseIndexIDMap();
 }
 
