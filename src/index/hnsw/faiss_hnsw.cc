@@ -1580,8 +1580,19 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     expected<DataSetPtr>
     RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset_,
                 milvus::OpContext* op_context) const override {
-        // if support ann_iterator, use iterator-based range_search (IndexNode::RangeSearch)
-        if (is_ann_iterator_supported()) {
+        // Check brute-force threshold BEFORE iterator path.
+        // At high filter ratios (>=97%), brute force is much faster than graph traversal
+        // because the iterator visits too many filtered-out nodes.
+        if (is_ann_iterator_supported() && !this->indexes.empty() && indexes[0] != nullptr) {
+            const auto& hnsw_cfg_check = static_cast<const FaissHnswConfig&>(*cfg);
+            BitsetView bitset_check(bitset_);
+            auto whether_bf = WhetherPerformBruteForceRangeSearch(indexes[0].get(), hnsw_cfg_check, bitset_check);
+            if (!whether_bf.has_value() || !whether_bf.value()) {
+                // Not brute-force worthy: use iterator path
+                return IndexNode::RangeSearch(dataset, std::move(cfg), bitset_, op_context);
+            }
+            // Fall through to brute-force range search path below
+        } else if (is_ann_iterator_supported()) {
             return IndexNode::RangeSearch(dataset, std::move(cfg), bitset_, op_context);
         }
         if (this->indexes.empty()) {
