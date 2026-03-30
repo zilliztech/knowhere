@@ -2,7 +2,7 @@
 # Usage: make -f Makefile.sparse_simd
 
 CXX ?= g++
-CXXFLAGS = -std=c++17 -O3 -Wall -I../include -I.. -mavx512f -mavx512dq
+CXXFLAGS = -std=c++20 -O3 -Wall -I../include -I.. -mavx512f -mavx512dq
 LDFLAGS = -pthread
 
 # Detect build directory

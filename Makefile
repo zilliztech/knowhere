@@ -48,7 +48,7 @@ else
 endif
 
 # ---------- Compose conan flags from user flags ----------
-CONAN_FLAGS := $(CONAN_BASE_FLAGS) -s compiler.libcxx=$(LIBCXX) -s build_type=$(BUILD_TYPE) -s compiler.cppstd=17
+CONAN_FLAGS := $(CONAN_BASE_FLAGS) -s compiler.libcxx=$(LIBCXX) -s build_type=$(BUILD_TYPE) -s compiler.cppstd=20
 
 # DiskANN and liburing require libaio (Linux-only).
 ifneq ($(UNAME_S),Darwin)
