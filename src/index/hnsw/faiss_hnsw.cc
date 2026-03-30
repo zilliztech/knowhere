@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
+#include <faiss/cppcontrib/knowhere/IndexFlat.h>
 #include <faiss/cppcontrib/knowhere/IndexSQ4Uniform.h>
 #include <faiss/cppcontrib/knowhere/MetricType.h>
 #include <faiss/cppcontrib/knowhere/impl/CountSizeIOWriter.h>
@@ -1493,7 +1494,12 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
     expected<DataSetPtr>
     CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset_, const int64_t* labels, const size_t labels_len,
-                  const bool /*is_cosine*/, milvus::OpContext* op_context) const override {
+                  const bool is_cosine, milvus::OpContext* op_context) const override {
+        // When emb_list_raw_index_ exists (MUVERA/LEMUR), use it for exact distance computation
+        if (emb_list_raw_index_) {
+            return CalcDistByRawIndex(dataset, labels, labels_len, is_cosine, search_pool, op_context);
+        }
+
         if (this->indexes.empty()) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
@@ -2350,7 +2356,104 @@ class HNSWIndexNodeWithFallback : public IndexNode {
         } else {
             return fallback_search_index->CalcDistByIDs(dataset, bitset, labels, labels_len, is_cosine, op_context);
         }
-    };
+    }
+
+    Status
+    BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
+        if (use_base_index) {
+            return base_index->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+        } else {
+            return fallback_search_index->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+        }
+    }
+
+    Status
+    AddEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
+        if (use_base_index) {
+            return base_index->AddEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+        } else {
+            return fallback_search_index->AddEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+        }
+    }
+
+    Status
+    BulidAsyncEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
+                            const Interrupt* interrupt) override {
+        if (use_base_index) {
+            return base_index->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt);
+        } else {
+            return fallback_search_index->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt);
+        }
+    }
+
+    Status
+    SerializeEmbListIfNeed(BinarySet& binset) const override {
+        if (use_base_index) {
+            return base_index->SerializeEmbListIfNeed(binset);
+        } else {
+            return fallback_search_index->SerializeEmbListIfNeed(binset);
+        }
+    }
+
+    Status
+    DeserializeEmbListIfNeed(const BinarySet& binset, std::shared_ptr<Config> config) override {
+        if (use_base_index) {
+            return base_index->DeserializeEmbListIfNeed(binset, std::move(config));
+        } else {
+            return fallback_search_index->DeserializeEmbListIfNeed(binset, std::move(config));
+        }
+    }
+
+    Status
+    DeserializeFromFileIfNeed(const std::string& filename, std::shared_ptr<Config> config) override {
+        if (use_base_index) {
+            return base_index->DeserializeFromFileIfNeed(filename, std::move(config));
+        } else {
+            return fallback_search_index->DeserializeFromFileIfNeed(filename, std::move(config));
+        }
+    }
+
+    expected<DataSetPtr>
+    SearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
+                        milvus::OpContext* op_context) const override {
+        if (use_base_index) {
+            return base_index->SearchEmbListIfNeed(dataset, std::move(config), bitset, op_context);
+        } else {
+            return fallback_search_index->SearchEmbListIfNeed(dataset, std::move(config), bitset, op_context);
+        }
+    }
+
+    expected<DataSetPtr>
+    RangeSearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                             milvus::OpContext* op_context) const override {
+        if (use_base_index) {
+            return base_index->RangeSearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
+        } else {
+            return fallback_search_index->RangeSearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
+        }
+    }
+
+    expected<std::vector<IteratorPtr>>
+    AnnIteratorEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+                             bool use_knowhere_search_pool, milvus::OpContext* op_context) const override {
+        if (use_base_index) {
+            return base_index->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), bitset, use_knowhere_search_pool,
+                                                        op_context);
+        } else {
+            return fallback_search_index->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), bitset,
+                                                                   use_knowhere_search_pool, op_context);
+        }
+    }
+
+    expected<DataSetPtr>
+    GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_type,
+                    milvus::OpContext* op_context) const override {
+        if (use_base_index) {
+            return base_index->GetEmbListByIds(dataset, metric_type, op_context);
+        } else {
+            return fallback_search_index->GetEmbListByIds(dataset, metric_type, op_context);
+        }
+    }
 
  protected:
     bool use_base_index = true;
