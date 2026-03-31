@@ -164,8 +164,8 @@ namespace knowhere {
 #if defined(__x86_64__)
 using faiss::cpu_support_avx2;
 using faiss::cpu_support_avx512;
-using faiss::cpu_support_sse4_2;
 using faiss::cpu_support_f16c;
+using faiss::cpu_support_sse4_2;
 #endif
 #if defined(__aarch64__)
 using faiss::supports_sve;
