@@ -1,13 +1,14 @@
 include(CheckCXXCompilerFlag)
 check_cxx_compiler_flag(-std=gnu++20 COMPILER_SUPPORTS_CXX20)
-set(CMAKE_CXX_FLAGS "-std=gnu++20 ${CMAKE_CXX_FLAGS}")
-
 if(NOT COMPILER_SUPPORTS_CXX20)
   message(
     FATAL_ERROR
       "C++20 needed. Therefore a gcc compiler with a version higher than 10 is needed."
   )
 endif()
+# Do NOT put -std=gnu++20 in CMAKE_CXX_FLAGS — it leaks into nvcc's
+# host-compiler pass. CMAKE_CXX_STANDARD 20 (set in the root CMakeLists.txt)
+# handles the standard flag for CXX compilation units.
 
 if(WITH_ASAN)
   set(CMAKE_CXX_FLAGS
