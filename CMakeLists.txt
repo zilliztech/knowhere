@@ -241,6 +241,15 @@ if(WITH_CUVS)
     CUDA::cublas
     CUDA::cusparse
     CUDA::cusolver)
+  # Workaround: RAFT's vendored mdspan (aligned_accessor.hpp) uses
+  # std::has_single_bit and std::assume_aligned under C++20 without
+  # including <bit> or <memory>. Force-include a fixup header that
+  # provides these declarations for both CXX and CUDA compilation.
+  # Remove after upgrading to RAFT/cuVS 26.02+ (vendored mdspan deleted).
+  set(_raft_fix "${CMAKE_CURRENT_SOURCE_DIR}/cmake/utils/raft_mdspan_fix.h")
+  target_compile_options(knowhere PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-include${_raft_fix}>
+    $<$<COMPILE_LANGUAGE:CUDA>:-include${_raft_fix}>)
 endif()
 
 target_link_libraries(knowhere PUBLIC ${KNOWHERE_LINKER_LIBS})
