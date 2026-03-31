@@ -58,6 +58,14 @@ benchmark_test(benchmark_simd_qps              hdf5/benchmark_simd_qps.cpp)
 benchmark_test(gen_hdf5_file hdf5/gen_hdf5_file.cpp)
 benchmark_test(gen_fbin_file hdf5/gen_fbin_file.cpp)
 
+# Sparse DSP benchmark (standalone, no HDF5/GTest required)
+add_executable(benchmark_sparse_dsp benchmark_sparse_dsp.cpp)
+target_link_libraries(benchmark_sparse_dsp knowhere)
+if(NOT APPLE)
+    target_link_libraries(benchmark_sparse_dsp atomic)
+endif()
+install(TARGETS benchmark_sparse_dsp DESTINATION unittest)
+
 # Sparse SIMD benchmark (x86_64 only, standalone, no HDF5 required)
 # Only build on x86_64/AMD64, skip on ARM/aarch64/arm64
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|X86_64)$")
