@@ -532,7 +532,7 @@ namespace diskann {
         LOG_KNOWHERE_INFO_ << "Building with GPU!" << " R= "<< R<<" L=" << L;
 
         if (std::is_same_v<T, float>) {
-          auto dataset = read_bin_dataset<float, uint64_t>(dev_resources, base_file);
+          auto dataset = read_bin_dataset<float, int64_t>(dev_resources, base_file);
           vamana_build_and_write<float>(dev_resources,
                                            raft::make_const_mdspan(dataset.view()),
                                            mem_index_path,
@@ -541,7 +541,7 @@ namespace diskann {
                                            0.06,
                                            1);
         }else {
-          auto dataset = read_bin_dataset<uint8_t, uint64_t>(dev_resources, base_file);
+          auto dataset = read_bin_dataset<uint8_t, int64_t>(dev_resources, base_file);
           vamana_build_and_write<uint8_t>(dev_resources,
                                            raft::make_const_mdspan(dataset.view()),
                                            mem_index_path,
@@ -612,7 +612,7 @@ namespace diskann {
               (std::is_same_v<T, float> || std::is_same_v<T, uint8_t>)) {
         LOG_KNOWHERE_INFO_ << "Building with GPU!" << " R= "<< shard_r <<" L=" << L;
         if (std::is_same_v<T, float> ) {
-          auto dataset = read_bin_dataset<float, uint64_t>(dev_resources, shard_base_file);
+          auto dataset = read_bin_dataset<float, int64_t>(dev_resources, shard_base_file);
           vamana_build_and_write<float>(dev_resources,
                                        raft::make_const_mdspan(dataset.view()),
                                        shard_index_file,
@@ -621,7 +621,7 @@ namespace diskann {
                                        0.06,
                                        1);
         }else {
-          auto dataset = read_bin_dataset<uint8_t, uint64_t>(dev_resources, shard_base_file);
+          auto dataset = read_bin_dataset<uint8_t, int64_t>(dev_resources, shard_base_file);
           vamana_build_and_write<uint8_t>(dev_resources,
                                        raft::make_const_mdspan(dataset.view()),
                                        shard_index_file,

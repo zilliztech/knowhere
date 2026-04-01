@@ -93,7 +93,7 @@ raft::device_matrix<T, idxT> read_bin_dataset(
 
 template<typename T>
 void vamana_build_and_write(raft::device_resources const &dev_resources,
-		raft::device_matrix_view<const T, uint32_t> dataset,
+		raft::device_matrix_view<const T, int64_t> dataset,
 		std::string out_fname, int degree, int visited_size, float max_fraction,
 		int iters) {
 	using namespace cuvs::neighbors;
@@ -134,22 +134,24 @@ void kmeans_gpu(raft::resources &dev_resources, const float *h_chunk_data,
 	km_params.n_clusters = num_centers;
 
 	// Allocate device matrices
-	auto d_data = raft::make_device_matrix<float>(dev_resources, num_train, dim);
-	auto d_centroids = raft::make_device_matrix<float>(dev_resources, num_centers, dim);
+	auto d_data = raft::make_device_matrix<float, int64_t>(dev_resources, num_train, dim);
+	auto d_centroids = raft::make_device_matrix<float, int64_t>(dev_resources, num_centers, dim);
 
 	// Copy input chunk to device asynchronously
 	raft::copy(d_data.data_handle(), h_chunk_data, num_train * dim, raft::resource::get_cuda_stream(dev_resources));
 	// Run KMeans (fit uses RAFT-managed streams internally)
 	if(!is_balanced) {
-		cuvs::cluster::kmeans::fit(dev_resources, km_params, d_data.view(), std::nullopt,
+		cuvs::cluster::kmeans::fit(dev_resources, km_params,
+				raft::make_const_mdspan(d_data.view()), std::nullopt,
 				d_centroids.view(),
-				raft::make_host_scalar_view<float, int64_t>(&inertia),
-				raft::make_host_scalar_view<int64_t, int64_t>(&n_iter));
+				raft::make_host_scalar_view<float>(&inertia),
+				raft::make_host_scalar_view<int64_t>(&n_iter));
 	}else {
 		//use balance kmeans
 		cuvs::cluster::kmeans::balanced_params b_p;
 		b_p.n_iters=100;
-		cuvs::cluster::kmeans::fit(dev_resources, b_p, d_data.view(), d_centroids.view());
+		cuvs::cluster::kmeans::fit(dev_resources, b_p,
+				raft::make_const_mdspan(d_data.view()), d_centroids.view());
 	}
 	// Copy centroids back to host asynchronously
 	raft::copy(h_centroids_out, d_centroids.data_handle(), num_centers * dim,
@@ -168,9 +170,9 @@ int predict_gpu(raft::resources& handle,
     if (!is_gpu_available()) return -1;
 
     // Allocate device buffers
-    auto d_data      = raft::make_device_matrix<float>(handle, n_samples, dim);
-    auto d_centroids = raft::make_device_matrix<float>(handle, n_clusters, dim);
-    auto d_labels    = raft::make_device_vector<int>(handle, n_samples);
+    auto d_data      = raft::make_device_matrix<float, int64_t>(handle, n_samples, dim);
+    auto d_centroids = raft::make_device_matrix<float, int64_t>(handle, n_clusters, dim);
+    auto d_labels    = raft::make_device_vector<int64_t, int64_t>(handle, n_samples);
 
     // Copy to device
     raft::copy(d_data.data_handle(), h_data, n_samples * dim,
@@ -179,7 +181,7 @@ int predict_gpu(raft::resources& handle,
                raft::resource::get_cuda_stream(handle));
 
     float inertia = 0.0f;
-    auto inertia_view = raft::make_host_scalar_view(&inertia);
+    auto inertia_view = raft::make_host_scalar_view<float>(&inertia);
 
     cuvs::cluster::kmeans::params params;
     params.n_clusters = static_cast<int>(n_clusters);
@@ -188,17 +190,21 @@ int predict_gpu(raft::resources& handle,
     cuvs::cluster::kmeans::predict(
         handle,
         params,
-        d_data.view(),
+        raft::make_const_mdspan(d_data.view()),
         std::nullopt,
-        d_centroids.view(),
+        raft::make_const_mdspan(d_centroids.view()),
         d_labels.view(),
         /*normalize_weight=*/false,
         inertia_view);
 
-    // Copy back
-    raft::copy(h_labels, d_labels.data_handle(), n_samples,
+    // Copy labels back (int64_t on device -> int on host)
+    std::vector<int64_t> h_labels_i64(n_samples);
+    raft::copy(h_labels_i64.data(), d_labels.data_handle(), n_samples,
                raft::resource::get_cuda_stream(handle));
     raft::resource::sync_stream(handle);
+    for (size_t i = 0; i < n_samples; ++i) {
+        h_labels[i] = static_cast<int>(h_labels_i64[i]);
+    }
 
     return 0;
 }
@@ -255,23 +261,23 @@ int brute_force_gpu(raft::resources &dev_resources, const T *h_data,
 
 }
 
-template raft::device_matrix<float, std::size_t> read_bin_dataset<float,
-		std::size_t>(const raft::device_resources &dev_resources,
+template raft::device_matrix<float, int64_t> read_bin_dataset<float,
+		int64_t>(const raft::device_resources &dev_resources,
 		const std::string &fname);
 
-template raft::device_matrix<uint8_t, std::size_t> read_bin_dataset<uint8_t,
-		std::size_t>(const raft::device_resources &dev_resources,
+template raft::device_matrix<uint8_t, int64_t> read_bin_dataset<uint8_t,
+		int64_t>(const raft::device_resources &dev_resources,
 		const std::string &fname);
 
 template void vamana_build_and_write<float>(
 		raft::device_resources const &dev_resources,
-		raft::device_matrix_view<const float, uint32_t> dataset,
+		raft::device_matrix_view<const float, int64_t> dataset,
 		std::string out_fname, int degree, int visited_size, float max_fraction,
 		int iters);
 
 template void vamana_build_and_write<uint8_t>(
 		raft::device_resources const &dev_resources,
-		raft::device_matrix_view<const uint8_t, uint32_t> dataset,
+		raft::device_matrix_view<const uint8_t, int64_t> dataset,
 		std::string out_fname, int degree, int visited_size, float max_fraction,
 		int iters);
 

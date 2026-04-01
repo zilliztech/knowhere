@@ -49,7 +49,7 @@ raft::device_matrix<T, idxT> read_bin_dataset(const raft::device_resources& dev_
 
 template <typename T>
 void vamana_build_and_write(raft::device_resources const& dev_resources,
-                            raft::device_matrix_view<const T, uint32_t> dataset,
+                            raft::device_matrix_view<const T, int64_t> dataset,
                             std::string out_fname,
                             int degree,
                             int visited_size,
