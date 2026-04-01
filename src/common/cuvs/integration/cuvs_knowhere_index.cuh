@@ -186,6 +186,7 @@ build_algo_string_to_cagra_build_algo(std::string const& algo_string, int interm
                                       int nn_descent_niter, cuvs::distance::DistanceType metric) {
     std::variant<std::monostate, cuvs::neighbors::cagra::graph_build_params::ivf_pq_params,
                  cuvs::neighbors::cagra::graph_build_params::nn_descent_params,
+                 cuvs::neighbors::cagra::graph_build_params::ace_params,
                  cuvs::neighbors::cagra::graph_build_params::iterative_search_params>
         result = cuvs::neighbors::cagra::graph_build_params::ivf_pq_params();
     if (algo_string == "IVF_PQ") {
@@ -657,7 +658,7 @@ cuvs_knowhere_index<IndexKind, DataType>::cuvs_knowhere_index()
 }
 
 template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
-cuvs_knowhere_index<IndexKind, DataType>::~cuvs_knowhere_index<IndexKind, DataType>() = default;
+cuvs_knowhere_index<IndexKind, DataType>::~cuvs_knowhere_index() = default;
 
 template <cuvs_proto::cuvs_index_kind IndexKind, typename DataType>
 cuvs_knowhere_index<IndexKind, DataType>::cuvs_knowhere_index(cuvs_knowhere_index<IndexKind, DataType>&& other)
