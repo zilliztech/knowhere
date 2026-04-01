@@ -115,7 +115,7 @@ class KnowhereConan(ConanFile):
         self.requires("lz4/1.9.4", force=True, override=True)
         if self.settings.os == "Linux":
             self.requires("liburing/2.8", force=True, override=True)
-        self.requires("fmt/11.0.2")
+        self.requires("fmt/11.2.0")
         self.requires("libevent/2.1.12")
         self.requires("grpc/1.67.1@milvus/dev#5aa62c51bced448b83d7db9e5b3a13c7")
         self.requires("folly/2024.08.12.00@milvus/dev#e09fc71826ce6b4568441910665f0889")
