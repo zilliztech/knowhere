@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <future>
+#include <stdexcept>
 
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
@@ -84,18 +85,26 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
 
         auto retrieve_task = [&]() {
             auto results = idx_new.GetVectorByIds(ids_ds);
-            REQUIRE(results.has_value());
+            if (!results.has_value()) {
+                throw std::runtime_error("GetVectorByIds returned no value");
+            }
             auto xb = (uint8_t*)train_ds->GetTensor();
             auto res_rows = results.value()->GetRows();
             auto res_dim = results.value()->GetDim();
             auto res_data = (uint8_t*)results.value()->GetTensor();
-            REQUIRE(res_rows == nq);
-            REQUIRE(res_dim == dim);
+            if (res_rows != nq) {
+                throw std::runtime_error("res_rows mismatch: " + std::to_string(res_rows));
+            }
+            if (res_dim != dim) {
+                throw std::runtime_error("res_dim mismatch: " + std::to_string(res_dim));
+            }
             const auto data_bytes = dim / 8;
             for (int i = 0; i < nq; ++i) {
                 auto id = ids_ds->GetIds()[i];
                 for (int j = 0; j < data_bytes; ++j) {
-                    REQUIRE(res_data[i * data_bytes + j] == xb[id * data_bytes + j]);
+                    if (res_data[i * data_bytes + j] != xb[id * data_bytes + j]) {
+                        throw std::runtime_error("data mismatch at i=" + std::to_string(i) + " j=" + std::to_string(j));
+                    }
                 }
             }
         };
@@ -105,7 +114,7 @@ TEST_CASE("Test Binary Get Vector By Ids", "[Binary GetVectorByIds]") {
             retrieve_task_list.push_back(std::async(std::launch::async, [&] { return retrieve_task(); }));
         }
         for (auto& task : retrieve_task_list) {
-            task.wait();
+            REQUIRE_NOTHROW(task.get());
         }
     };
 }
@@ -218,17 +227,25 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
 
         auto retrieve_task = [&]() {
             auto results = idx_new.GetVectorByIds(ids_ds);
-            REQUIRE(results.has_value());
+            if (!results.has_value()) {
+                throw std::runtime_error("GetVectorByIds returned no value");
+            }
             auto xb = (float*)train_ds_copy->GetTensor();
             auto res_rows = results.value()->GetRows();
             auto res_dim = results.value()->GetDim();
             auto res_data = (float*)results.value()->GetTensor();
-            REQUIRE(res_rows == nq);
-            REQUIRE(res_dim == dim);
+            if (res_rows != nq) {
+                throw std::runtime_error("res_rows mismatch: " + std::to_string(res_rows));
+            }
+            if (res_dim != dim) {
+                throw std::runtime_error("res_dim mismatch: " + std::to_string(res_dim));
+            }
             for (int i = 0; i < nq; ++i) {
                 const auto id = ids_ds->GetIds()[i];
                 for (int j = 0; j < dim; ++j) {
-                    REQUIRE(res_data[i * dim + j] == xb[id * dim + j]);
+                    if (res_data[i * dim + j] != xb[id * dim + j]) {
+                        throw std::runtime_error("data mismatch at i=" + std::to_string(i) + " j=" + std::to_string(j));
+                    }
                 }
             }
         };
@@ -238,7 +255,7 @@ TEST_CASE("Test Float Get Vector By Ids", "[Float GetVectorByIds]") {
             retrieve_task_list.push_back(std::async(std::launch::async, [&] { return retrieve_task(); }));
         }
         for (auto& task : retrieve_task_list) {
-            task.wait();
+            REQUIRE_NOTHROW(task.get());
         }
     }
 }
