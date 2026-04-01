@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <numeric>
 #include <queue>
@@ -545,6 +546,19 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
                         reader.advance((nr_dims + 1) * sizeof(uint32_t));
                         auto total_postings = plists_dim_offsets_span_[nr_dims];
 
+                        // Validate total_postings against section size
+                        const uint64_t bytes_dim_offsets = static_cast<uint64_t>(nr_dims + 1) * sizeof(uint32_t);
+                        const uint64_t bytes_postings_data =
+                            static_cast<uint64_t>(total_postings) * (sizeof(uint16_t) + sizeof(QuantType));
+                        const uint64_t expected_section_bytes =
+                            bytes_header + bytes_mask + bytes_win_nnzs + bytes_dim_offsets + bytes_postings_data;
+                        if (expected_section_bytes != section_header.size) {
+                            LOG_KNOWHERE_INFO_ << "SindiInvertedIndex::deserialize POSTING_LISTS size mismatch: "
+                                               << "expected=" << expected_section_bytes
+                                               << " actual=" << section_header.size;
+                            return Status::invalid_serialized_index_type;
+                        }
+
                         // ids region (per-dim contiguous, concatenated)
                         const uint16_t* ids_region = reinterpret_cast<const uint16_t*>(reader.data() + reader.tellg());
                         const uint64_t bytes_ids = static_cast<uint64_t>(total_postings) * sizeof(uint16_t);
@@ -964,7 +978,8 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
             uint16_t wnnz = 0;
             if (is_sparse) {
                 if (cursor + sizeof(uint32_t) <= wnnz_buf_sz) {
-                    auto wval = *reinterpret_cast<const uint32_t*>(wnnz_buf + cursor);
+                    uint32_t wval;
+                    std::memcpy(&wval, wnnz_buf + cursor, sizeof(uint32_t));
                     auto wid = wval >> wnnz_bits;
                     if (wid == widx) {
                         wnnz = static_cast<uint16_t>(wval & wnnz_mask);
@@ -973,7 +988,7 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
                     }
                 }
             } else {
-                wnnz = *reinterpret_cast<const uint16_t*>(wnnz_buf + widx * sizeof(uint16_t));
+                std::memcpy(&wnnz, wnnz_buf + widx * sizeof(uint16_t), sizeof(uint16_t));
                 offset += wnnz;
             }
             return {soff, wnnz};

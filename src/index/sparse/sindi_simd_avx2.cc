@@ -5,11 +5,10 @@
 
 namespace knowhere::sparse::inverted::sindi {
 
-float
+void
 ip_scatter_avx2_fp16(float qval, const knowhere::fp16* vals, const uint16_t* ids, int32_t num, float* out) {
     int32_t i = 0;
     const __m256 vq = _mm256_set1_ps(qval);
-    __m256 v_max = _mm256_setzero_ps();
     for (; i + 8 <= num; i += 8) {
         const uint16_t* hptr = reinterpret_cast<const uint16_t*>(vals + i);
         __m128i h = _mm_loadu_si128(reinterpret_cast<const __m128i*>(hptr));
@@ -33,22 +32,13 @@ ip_scatter_avx2_fp16(float qval, const knowhere::fp16* vals, const uint16_t* ids
         out[tmp_idx[5]] = tmp_sum[5];
         out[tmp_idx[6]] = tmp_sum[6];
         out[tmp_idx[7]] = tmp_sum[7];
-        v_max = _mm256_max_ps(v_max, v_sum);
     }
-    __m128 v_max128 = _mm_max_ps(_mm256_castps256_ps128(v_max), _mm256_extractf128_ps(v_max, 1));
-    v_max128 = _mm_max_ps(v_max128, _mm_shuffle_ps(v_max128, v_max128, _MM_SHUFFLE(2, 3, 0, 1)));
-    v_max128 = _mm_max_ps(v_max128, _mm_shuffle_ps(v_max128, v_max128, _MM_SHUFFLE(1, 0, 3, 2)));
-    float max_val = _mm_cvtss_f32(v_max128);
     for (; i < num; ++i) {
-        float new_val = (out[ids[i]] += qval * static_cast<float>(vals[i]));
-        if (new_val > max_val) {
-            max_val = new_val;
-        }
+        out[ids[i]] += qval * static_cast<float>(vals[i]);
     }
-    return max_val;
 }
 
-float
+void
 bm25_scatter_avx2_u16(float qval, const uint16_t* vals, const uint16_t* ids, int32_t num, float* out, float k1, float b,
                       float avgdl, const float* row_sums) {
     const float p1 = k1 + 1.0f;
@@ -60,7 +50,6 @@ bm25_scatter_avx2_u16(float qval, const uint16_t* vals, const uint16_t* ids, int
     const __m256 vp1 = _mm256_set1_ps(p1);
     const __m256 vp2 = _mm256_set1_ps(p2);
     const __m256 vp3 = _mm256_set1_ps(p3);
-    __m256 v_max = _mm256_setzero_ps();
 
     for (; i + 8 <= num; i += 8) {
         const uint16_t* hptr = vals + i;
@@ -95,25 +84,15 @@ bm25_scatter_avx2_u16(float qval, const uint16_t* vals, const uint16_t* ids, int
         out[tmp_idx[5]] = tmp_sum[5];
         out[tmp_idx[6]] = tmp_sum[6];
         out[tmp_idx[7]] = tmp_sum[7];
-        v_max = _mm256_max_ps(v_max, v_sum);
     }
-
-    __m128 v_max128 = _mm_max_ps(_mm256_castps256_ps128(v_max), _mm256_extractf128_ps(v_max, 1));
-    v_max128 = _mm_max_ps(v_max128, _mm_shuffle_ps(v_max128, v_max128, _MM_SHUFFLE(2, 3, 0, 1)));
-    v_max128 = _mm_max_ps(v_max128, _mm_shuffle_ps(v_max128, v_max128, _MM_SHUFFLE(1, 0, 3, 2)));
-    float max_val = _mm_cvtss_f32(v_max128);
 
     for (; i < num; ++i) {
         float tf = static_cast<float>(vals[i]);
         uint16_t docid = ids[i];
         float dl = row_sums[docid];
         float bm25_score = qval * p1 * tf / (tf + p2 + p3 * dl);
-        float new_val = (out[docid] += bm25_score);
-        if (new_val > max_val) {
-            max_val = new_val;
-        }
+        out[docid] += bm25_score;
     }
-    return max_val;
 }
 
 void

@@ -4,37 +4,27 @@
 
 namespace knowhere::sparse::inverted::sindi {
 
-float
+void
 ip_scatter_scalar_fp16(float qval, const knowhere::fp16* vals, const uint16_t* ids, int32_t num, float* out) {
-    float max_val = 0.0f;
     for (int32_t i = 0; i < num; ++i) {
-        float new_val = (out[ids[i]] += qval * static_cast<float>(vals[i]));
-        if (new_val > max_val) {
-            max_val = new_val;
-        }
+        out[ids[i]] += qval * static_cast<float>(vals[i]);
     }
-    return max_val;
 }
 
-float
+void
 bm25_scatter_scalar_u16(float qval, const uint16_t* vals, const uint16_t* ids, int32_t num, float* out, float k1,
                         float b, float avgdl, const float* row_sums) {
     const float p1 = k1 + 1.0f;
     const float p2 = k1 * (1.0f - b);
     const float p3 = k1 * b / avgdl;
 
-    float max_val = 0.0f;
     for (int32_t i = 0; i < num; ++i) {
         float tf = static_cast<float>(vals[i]);
         uint16_t docid = ids[i];
         float dl = row_sums[docid];
         float bm25_score = qval * p1 * tf / (tf + p2 + p3 * dl);
-        float new_val = (out[docid] += bm25_score);
-        if (new_val > max_val) {
-            max_val = new_val;
-        }
+        out[docid] += bm25_score;
     }
-    return max_val;
 }
 
 void
