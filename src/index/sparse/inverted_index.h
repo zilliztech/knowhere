@@ -31,6 +31,7 @@ enum class InvertedIndexAlgo : uint32_t {
     DAAT_WAND = 2,
     BLOCK_MAX_MAXSCORE = 3,
     BLOCK_MAX_WAND = 4,
+    SINDI = 5,
 };
 
 enum class InvertedIndexEncoding : uint32_t {
@@ -247,6 +248,8 @@ class InvertedIndex {
                 LOG_KNOWHERE_WARNING_ << "No block size provided, using default block size 128";
                 meta_data_.block_max_data_.block_size_ = 128;
             }
+        } else if (build_algo == "SINDI") {
+            build_algo_ = InvertedIndexAlgo::SINDI;
         } else {
             build_algo_ = InvertedIndexAlgo::TAAT_NAIVE;
         }
