@@ -617,9 +617,11 @@ emb_list_search() {
     fs::remove(kDir);
 }
 
+#ifndef KNOWHERE_WITH_CARDINAL
 TEST_CASE("Test DISKANN for EmbList", "[diskann]") {
     emb_list_search<knowhere::fp32>();
 }
+#endif  // !KNOWHERE_WITH_CARDINAL
 
 // This test case only check L2
 TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {

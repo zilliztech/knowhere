@@ -28,6 +28,8 @@
         REQUIRE((result).has_value());                                                                                 \
     } while (0)
 
+#ifndef KNOWHERE_WITH_CARDINAL
+
 TEST_CASE("Test GetEmbListByIds Basic", "[GetEmbListByIds]") {
     const int64_t dim = 4;
     const int64_t each_el_len = 10;
@@ -426,3 +428,5 @@ TEST_CASE("Test GetEmbListByIds after serialize/deserialize", "[GetEmbListByIds]
         }
     }
 }
+
+#endif  // !KNOWHERE_WITH_CARDINAL

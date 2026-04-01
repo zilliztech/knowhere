@@ -332,6 +332,8 @@ test_emb_list_index(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::
 
 }  // namespace
 
+#ifndef KNOWHERE_WITH_CARDINAL
+
 TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on float vectors") {
     // various constants and restrictions
 
@@ -3513,3 +3515,5 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         REQUIRE(status == knowhere::Status::success);
     }
 }
+
+#endif  // !KNOWHERE_WITH_CARDINAL
