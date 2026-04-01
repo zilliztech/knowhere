@@ -18,6 +18,10 @@
 #include <cuda_runtime_api.h>
 #endif
 
+#ifdef KNOWHERE_WITH_SVS
+#include <faiss/svs/IndexSVSVamana.h>
+#endif
+
 namespace knowhere {
 
 #ifdef KNOWHERE_WITH_CUVS
@@ -65,6 +69,17 @@ IndexFactory::Create(const std::string& name, const int32_t& version, const Obje
         return expected<Index<IndexNode>>::Err(Status::invalid_index_error,
                                                "SCANN index is not supported on the current CPU model");
     }
+
+#ifdef KNOWHERE_WITH_SVS
+    if ((name == knowhere::IndexEnum::INDEX_SVS_VAMANA_LVQ ||
+         name == knowhere::IndexEnum::INDEX_SVS_VAMANA_LEANVEC) &&
+        !faiss::IndexSVSVamana::is_lvq_leanvec_enabled()) {
+        LOG_KNOWHERE_ERROR_ << "SVS LVQ/LeanVec indices are only supported on Intel CPUs";
+        return expected<Index<IndexNode>>::Err(
+            Status::invalid_index_error,
+            "SVS LVQ/LeanVec indices are only supported on Intel CPUs");
+    }
+#endif
 
     return fun_map_v->fun_value(version, object);
 }

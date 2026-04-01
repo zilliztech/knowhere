@@ -21,6 +21,11 @@ if(NOT WITH_DISKANN)
   list(REMOVE_ITEM KNOWHERE_UT_SRCS ${KNOWHERE_DISKANN_TESTS})
 endif()
 
+if(NOT WITH_SVS)
+  knowhere_file_glob(GLOB KNOWHERE_SVS_TESTS ${CMAKE_CURRENT_SOURCE_DIR}/test_svs.cc)
+  list(REMOVE_ITEM KNOWHERE_UT_SRCS ${KNOWHERE_SVS_TESTS})
+endif()
+
 if (WITH_CARDINAL)
   knowhere_file_glob(GLOB_RECURSE CARDINAL_UNSUPPORTED_TESTS test_feder.cc)
   list(REMOVE_ITEM KNOWHERE_UT_SRCS ${CARDINAL_UNSUPPORTED_TESTS})
@@ -49,7 +54,9 @@ set_target_properties(knowhere_tests PROPERTIES
 
 target_link_libraries(knowhere_tests PRIVATE
         Catch2::Catch2WithMain
-        knowhere)
+        knowhere
+        knowhere_utils
+        milvus-common)
 if(NOT APPLE)
   target_link_libraries(knowhere_tests PRIVATE atomic stdc++fs)
 endif()

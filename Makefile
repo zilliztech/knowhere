@@ -21,6 +21,7 @@ CONAN_BASE_FLAGS := --update --build=missing
 WITH_GPU ?=
 WITH_UT ?=
 WITH_ASAN ?=
+WITH_SVS ?=
 WITH_CARDINAL ?=
 WITH_DEBUG ?=
 CONAN_PROFILE ?=
@@ -69,6 +70,10 @@ endif
 
 ifdef WITH_ASAN
     CONAN_FLAGS += -o with_asan=True
+endif
+
+ifdef WITH_SVS
+    CONAN_FLAGS += -o with_svs=True
 endif
 
 ifdef WITH_CARDINAL
@@ -140,6 +145,7 @@ help: ## Show available targets
 	@echo "  WITH_GPU=True      Enable GPU (cuVS) build"
 	@echo "  WITH_UT=True       Enable unit tests"
 	@echo "  WITH_ASAN=True     Enable AddressSanitizer"
+	@echo "  WITH_SVS=True      Enable SVS (Intel Scalable Vector Search, x86 only)"
 	@echo "  WITH_CARDINAL=True Enable Cardinal build"
 	@echo "  WITH_DEBUG=True    Debug build (default: Release)"
 	@echo "  CONAN_PROFILE=<p>  Use a custom Conan profile (e.g. clang, gcc-15)"
