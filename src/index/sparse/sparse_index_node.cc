@@ -219,7 +219,7 @@ class SparseInvertedIndexNode : public IndexNode {
             for (int i = 0; i < nq; ++i) {
                 // Heavy computations with `compute_dist_func` will be deferred until the first call to
                 // 'Iterator->Next()'.
-                auto compute_dist_func = [=]() -> std::vector<DistId> {
+                auto compute_dist_func = [=, this]() -> std::vector<DistId> {
                     auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
                     std::vector<float> distances = index_->get_all_distances(queries[i], bitset, search_params);
                     std::vector<DistId> distances_ids;

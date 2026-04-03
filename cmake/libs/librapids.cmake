@@ -13,13 +13,13 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-set(RAPIDS_VERSION 25.10)
+set(RAPIDS_VERSION 26.02)
 set(rapids-cmake-version ${RAPIDS_VERSION})
 
 if(NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/RAPIDS.cmake)
   file(
     DOWNLOAD
-    https://raw.githubusercontent.com/rapidsai/rapids-cmake/branch-${RAPIDS_VERSION}/RAPIDS.cmake
+    https://raw.githubusercontent.com/rapidsai/rapids-cmake/v${RAPIDS_VERSION}.00/RAPIDS.cmake
     ${CMAKE_CURRENT_BINARY_DIR}/RAPIDS.cmake)
 endif()
 include(${CMAKE_CURRENT_BINARY_DIR}/RAPIDS.cmake)
@@ -33,5 +33,9 @@ message(STATUS "INIT: ${CMAKE_CUDA_ARCHITECTURES}")
 
 rapids_cpm_init()
 
-set(CMAKE_CUDA_FLAGS
-    "${CMAKE_CUDA_FLAGS} --expt-extended-lambda --expt-relaxed-constexpr")
+# --expt-extended-lambda and --expt-relaxed-constexpr are implicit under
+# CUDA C++20; only add them for older standards.
+if(CMAKE_CUDA_STANDARD LESS 20)
+  set(CMAKE_CUDA_FLAGS
+      "${CMAKE_CUDA_FLAGS} --expt-extended-lambda --expt-relaxed-constexpr")
+endif()

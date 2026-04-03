@@ -26,9 +26,13 @@
 
 #ifdef KNOWHERE_WITH_CUVS
 #include <raft/core/detail/mdspan_numpy_serializer.hpp>
-#include <raft/neighbors/detail/cagra/cagra_serialize.cuh>
 #include <cuvs/distance/distance.hpp>
 #include "common/cuvs/integration/type_mappers.hpp"
+// cagra serialization version constant — was in raft/neighbors/detail/cagra/
+// cagra_serialize.cuh (removed in RAFT 26.02, moved to cuVS internal source).
+namespace cuvs_knowhere_detail {
+inline constexpr int cagra_serialization_version = 5;
+}
 #endif
 
 #include "hnswlib.h"
@@ -1054,9 +1058,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         char dtype_string[4];
         input.read(dtype_string, 4);
         auto ver = raft::detail::numpy_serializer::deserialize_scalar<int>(input);
-        if (ver != raft::neighbors::cagra::detail::serialization_version) {
+        if (ver != cuvs_knowhere_detail::cagra_serialization_version) {
             throw std::runtime_error("serialization version mismatch, expected " + 
-                                std::to_string(raft::neighbors::cagra::detail::serialization_version) +
+                                std::to_string(cuvs_knowhere_detail::cagra_serialization_version) +
                                 ", got " + std::to_string(ver));
         }
         
