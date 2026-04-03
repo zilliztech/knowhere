@@ -17,5 +17,5 @@ runs:
     - name: Cache Conan Packages
       uses: actions/cache/save@v4
       with:
-        path: ~/.conan
-        key: knowhere-${{ inputs.os }}-${{ github.job }}-conan-${{ hashFiles('conanfile.py') }}
+        path: ~/.conan2
+        key: knowhere-${{ inputs.os }}-${{ github.job }}-conan2-${{ hashFiles('conanfile.py') }}

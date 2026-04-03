@@ -27,10 +27,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  ut:
+  ut-linux:
     name: ut on ubuntu-22.04
     runs-on: self-hosted
-    timeout-minutes: 180
+    timeout-minutes: 120
     strategy:
       fail-fast: true
     steps:
@@ -58,7 +58,7 @@ jobs:
   swig-build:
     name: python3 wheel
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 180
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -72,6 +72,17 @@ jobs:
         run: |
           bash scripts/install_deps.sh
           pip3 install pytest faiss-cpu
+      - name: Install GCC 12
+        # GCC 11 (ubuntu-22.04 default) has incomplete C++20 support:
+        # std::partial_ordering, std::strong_ordering, std::weak_ordering
+        # from <compare> are not available, causing abseil build failures.
+        # Installed after install_deps.sh so bfloat16 builds with GCC 11
+        # (bfloat16 fails on GCC 12 due to missing #include <memory>).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-12 g++-12
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 120
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-12 120
       - name: Restore Cache
         uses: ./.github/actions/cache-restore
         with:

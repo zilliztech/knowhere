@@ -81,7 +81,7 @@ check_deps() {
     [ -f "$BUILD_DIR/libknowhere.so" ] || {
         log_error "libknowhere.so not found at $BUILD_DIR"
         log_error "Please build Knowhere C++ library first:"
-        echo "  cd build && conan install .. && conan build .."
+        echo "  conan install . && conan build ."
         exit 1
     }
 

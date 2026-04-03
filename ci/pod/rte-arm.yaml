@@ -33,7 +33,7 @@ spec:
     volumeMounts:
     - mountPath: /var/run
       name: docker-root
-    - mountPath: /root/.conan
+    - mountPath: /root/.conan2
       name: build-cache
   - name: dind
     image: docker:dind
@@ -49,12 +49,12 @@ spec:
     volumeMounts:
     - mountPath: /var/run
       name: docker-root
-    - mountPath: /root/.conan
+    - mountPath: /root/.conan2
       name: build-cache
   volumes:
   - emptyDir: {}
     name: docker-root
   - hostPath:
-      path:  /root/.conan
+      path:  /root/.conan2
       type: DirectoryOrCreate
     name: build-cache
