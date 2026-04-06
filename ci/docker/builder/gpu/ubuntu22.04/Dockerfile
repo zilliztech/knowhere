@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.2.2-devel-ubuntu22.04
+FROM nvidia/cuda:12.9.1-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CMAKE_VERSION="v3.30.5"
@@ -45,10 +45,8 @@ RUN apt update \
     && pip3 install conan==1.65.0 \
     && conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local
 
-# clone knowhere repo and build to update .conan
+# clone knowhere repo and build to warm .conan cache
 RUN git clone https://github.com/zilliztech/knowhere.git \
     && cd knowhere \
-    && mkdir build && cd build \
-    && conan install .. --build=missing -o with_ut=True -o with_diskann=True -o with_cuvs=True -s compiler.libcxx=libstdc++11 -s compiler.cppstd=20 -s build_type=Release \
-    && conan build .. \
-    && cd ../.. && rm -rf knowhere
+    && make build WITH_GPU=True \
+    && cd .. && rm -rf knowhere

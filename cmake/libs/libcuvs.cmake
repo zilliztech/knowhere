@@ -16,7 +16,9 @@
 add_definitions(-DKNOWHERE_WITH_CUVS)
 set(CUVS_VERSION "${RAPIDS_VERSION}")
 set(CUVS_FORK "rapidsai")
-set(CUVS_PINNED_TAG "v25.10.00")
+# Note: cuVS 26.02 officially supports CUDA 12.9+. Building with CUDA 12.2
+# is untested upstream and may break with future cuVS patches.
+set(CUVS_PINNED_TAG "v26.02.00")
 
 rapids_find_package(CUDAToolkit REQUIRED BUILD_EXPORT_SET knowhere-exports
                     INSTALL_EXPORT_SET knowhere-exports)
