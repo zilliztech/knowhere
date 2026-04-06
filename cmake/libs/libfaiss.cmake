@@ -9,6 +9,7 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/*.cpp
   thirdparty/faiss/faiss/impl/*.cpp
   thirdparty/faiss/faiss/impl/fast_scan/*.cpp
+  thirdparty/faiss/faiss/impl/hnsw/*.cpp
   thirdparty/faiss/faiss/impl/pq_code_distance/*.cpp
   thirdparty/faiss/faiss/impl/scalar_quantizer/*.cpp
   thirdparty/faiss/faiss/invlists/*.cpp
@@ -32,11 +33,12 @@ knowhere_file_glob(
   GLOB
   FAISS_DD_AVX512_SRCS
   thirdparty/faiss/faiss/impl/fast_scan/impl-avx512.cpp
+  thirdparty/faiss/faiss/impl/hnsw/avx512.cpp
   thirdparty/faiss/faiss/impl/pq_code_distance/pq_code_distance-avx512.cpp
   thirdparty/faiss/faiss/impl/scalar_quantizer/sq-avx512.cpp
-  # # temporarily disabled
-  # thirdparty/faiss/faiss/utils/distances_fused/avx512.cpp
+  thirdparty/faiss/faiss/utils/distances_fused/avx512.cpp
   thirdparty/faiss/faiss/utils/simd_impl/distances_avx512.cpp
+  thirdparty/faiss/faiss/utils/simd_impl/rabitq_avx512.cpp
 )
 # combine files
 list(APPEND FAISS_AVX512_SRCS ${FAISS_DD_AVX512_SRCS})
@@ -56,9 +58,12 @@ knowhere_file_glob(
   FAISS_DD_AVX2_SRCS
   thirdparty/faiss/faiss/impl/approx_topk/avx2.cpp
   thirdparty/faiss/faiss/impl/fast_scan/impl-avx2.cpp
+  thirdparty/faiss/faiss/impl/hnsw/avx2.cpp
   thirdparty/faiss/faiss/impl/pq_code_distance/pq_code_distance-avx2.cpp
   thirdparty/faiss/faiss/impl/scalar_quantizer/sq-avx2.cpp
+  thirdparty/faiss/faiss/utils/distances_fused/simdlib_based.cpp
   thirdparty/faiss/faiss/utils/simd_impl/distances_avx2.cpp
+  thirdparty/faiss/faiss/utils/simd_impl/rabitq_avx2.cpp
 )
 # combine files
 list(APPEND FAISS_AVX2_SRCS ${FAISS_DD_AVX2_SRCS})
@@ -97,7 +102,9 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/impl/approx_topk/neon.cpp
   thirdparty/faiss/faiss/impl/fast_scan/impl-neon.cpp
   thirdparty/faiss/faiss/impl/scalar_quantizer/sq-neon.cpp
+  thirdparty/faiss/faiss/utils/distances_fused/simdlib_based_neon.cpp
   thirdparty/faiss/faiss/utils/simd_impl/distances_aarch64.cpp
+  thirdparty/faiss/faiss/utils/simd_impl/rabitq_neon.cpp
 )
 # combine files
 list(APPEND FAISS_NEON_SRCS ${FAISS_DD_NEON_SRCS})
