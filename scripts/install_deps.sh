@@ -113,11 +113,26 @@ fi
 pip3 install conan==${CONAN_VERSION}  # C/C++ package manager
 
 pip3 install -U setuptools
-# wheel must be installed before bfloat16: bfloat16 has no pre-built wheel
-# for Python 3.8, so pip builds from source. Without the wheel package, pip
-# uses PEP 517 build isolation which can't see the installed numpy.
+# bfloat16 dtype support for PyKnowhere.
+# On x86_64 a pre-built wheel exists; on aarch64 only the 1.1 sdist is
+# available, which (a) imports numpy in setup.py and (b) uses the removed
+# Py_TYPE-as-lvalue pattern incompatible with Python 3.11+.
 pip3 install wheel 'numpy<2'
-pip3 install bfloat16   # wheel: bfloat16 dtype support for PyKnowhere
+ARCH="$(uname -m)"
+if [[ "${ARCH}" == "aarch64" || "${ARCH}" == "arm64" ]]; then
+    # bfloat16 1.1 (only sdist for ARM) uses the Py_TYPE-as-lvalue pattern
+    # removed in Python 3.11+. Download, patch, and install from source.
+    _bf16_dir=$(mktemp -d)
+    curl -sL https://files.pythonhosted.org/packages/source/b/bfloat16/bfloat16-1.1.tar.gz \
+        -o "${_bf16_dir}/bfloat16-1.1.tar.gz"
+    tar xzf "${_bf16_dir}/bfloat16-1.1.tar.gz" -C "${_bf16_dir}"
+    sed -i 's/Py_TYPE(&NPyBfloat16_Descr) = &PyArrayDescr_Type;/Py_SET_TYPE(\&NPyBfloat16_Descr, \&PyArrayDescr_Type);/' \
+        "${_bf16_dir}/bfloat16-1.1/bfloat16.cc"
+    pip3 install --no-build-isolation "${_bf16_dir}/bfloat16-1.1/"
+    rm -rf "${_bf16_dir}"
+else
+    pip3 install bfloat16
+fi
 pip3 install auditwheel  # wheel: manylinux wheel repair
 
 echo "[install_deps] Configuring conan remote..."
