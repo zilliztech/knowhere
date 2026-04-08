@@ -9,11 +9,19 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
-// Minimal CBLAS declarations to avoid platform-specific header issues.
-// Only the functions and enums actually used in emb_list are declared here.
+// Minimal CBLAS declarations to avoid platform-specific header issues (e.g. missing cblas.h on macOS).
+// On platforms where the system cblas.h exists and is transitively included, the include guard
+// prevents duplicate definitions. On platforms where cblas.h is unavailable, this provides the
+// necessary declarations.
 
 #ifndef KNOWHERE_CBLAS_DECL_H
 #define KNOWHERE_CBLAS_DECL_H
+
+#ifdef CBLAS_H
+// System cblas.h was already included — nothing to do.
+#else
+// Define the system include guard so that if cblas.h is included later, it will be skipped.
+#define CBLAS_H
 
 extern "C" {
 
@@ -35,5 +43,7 @@ void
 cblas_saxpy(int N, float alpha, const float* X, int incX, float* Y, int incY);
 
 }  // extern "C"
+
+#endif  // CBLAS_H
 
 #endif  // KNOWHERE_CBLAS_DECL_H
