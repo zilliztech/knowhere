@@ -2437,3 +2437,112 @@ TEST_CASE("External ID Map for 1-hop Bitset Check", "[external_id_map]") {
         }
     }
 }
+
+// Regression test for knowhere#1561 / milvus-io/milvus#44854.
+//
+// Before the fix, IndexBruteForceWrapper::range_search unconditionally passed
+// the caller's IDSelector (a BitsetViewIDSelector wrapping an empty BitsetView
+// when no scalar filter is present) to brute_force_range_search_impl.
+// BitsetView::test(idx) short-circuits to true when num_bits_ == 0 (see
+// bitsetview.h), so BitsetViewIDSelector::is_member returned false for every
+// id and the BF loop emitted zero results.
+//
+// The fix mirrors the empty-bitset fallback already present in the topk
+// IndexBruteForceWrapper::search: if sel is null or wraps an empty bitset,
+// fall back to IDSelectorAll.
+//
+// The BF range_search path is only reachable when
+// `ef >= ntotal * kHnswSearchBFTopkThreshold` (= 0.5), added by #1535 on main
+// and #1536 on 2.6. Setting ef == nb guarantees the BF path is taken.
+TEST_CASE("HNSW RangeSearch BF path with empty bitset", "[faiss_hnsw][range_search][regression]") {
+    const int32_t nb = 256;
+    const int32_t dim = 16;
+    const int32_t nq = 1;
+    // ef >= nb * kHnswSearchBFTopkThreshold (= 0.5) forces the BF path.
+    const int32_t ef = nb;
+    // Pick a distance band inside the sorted topk list (positions [5, 50])
+    // so the band is known to contain a non-trivial number of vectors.
+    const int32_t band_near_pos = 5;
+    const int32_t band_far_pos = 50;
+
+    // Covers both BF range_search branches: similarity (RH_max) for IP/COSINE
+    // and non-similarity (RH_min) for L2. Both had the same latent bug and
+    // share the same fix.
+    const std::vector<std::string> metrics = {
+        knowhere::metric::IP,
+        knowhere::metric::L2,
+        knowhere::metric::COSINE,
+    };
+
+    const auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+
+    for (const auto& metric : metrics) {
+        CAPTURE(metric);
+
+        auto train_ds = GenDataSet(nb, dim, /*seed=*/42);
+        auto query_ds = GenDataSet(nq, dim, /*seed=*/43);
+
+        knowhere::Json base_conf;
+        base_conf[knowhere::meta::METRIC_TYPE] = metric;
+        base_conf[knowhere::meta::DIM] = dim;
+        base_conf[knowhere::meta::ROWS] = nb;
+
+        // FLAT oracle index
+        auto flat_index = knowhere::IndexFactory::Instance()
+                              .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IDMAP, version)
+                              .value();
+        REQUIRE(flat_index.Build(train_ds, base_conf) == knowhere::Status::success);
+
+        // Probe distance distribution with a topk=nb FLAT search to pick a
+        // data-driven band; this avoids hard-coding radius/range_filter values.
+        // For every supported metric, FLAT topk returns results in "closest
+        // first" order, so position 5 is closer than position 50 regardless
+        // of whether larger_is_closer holds.
+        knowhere::Json topk_conf = base_conf;
+        topk_conf[knowhere::meta::TOPK] = nb;
+        auto topk_res = flat_index.Search(query_ds, topk_conf, nullptr);
+        REQUIRE(topk_res.has_value());
+        const float* dists = topk_res.value()->GetDistance();
+        const float range_filter = dists[band_near_pos];
+        const float radius = dists[band_far_pos];
+
+        // Build HNSW with ef large enough to trigger the faiss BF range_search path.
+        knowhere::Json range_conf = base_conf;
+        range_conf[knowhere::meta::INDEX_TYPE] = knowhere::IndexEnum::INDEX_HNSW;
+        range_conf[knowhere::indexparam::HNSW_M] = 16;
+        range_conf[knowhere::indexparam::EFCONSTRUCTION] = 96;
+        range_conf[knowhere::indexparam::EF] = ef;
+        range_conf[knowhere::meta::RADIUS] = radius;
+        range_conf[knowhere::meta::RANGE_FILTER] = range_filter;
+        range_conf[knowhere::meta::RANGE_SEARCH_K] = -1;
+
+        auto hnsw_index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
+        REQUIRE(hnsw_index.Build(train_ds, range_conf) == knowhere::Status::success);
+
+        // FLAT oracle for the band.
+        knowhere::Json flat_range_conf = range_conf;
+        flat_range_conf[knowhere::meta::INDEX_TYPE] = knowhere::IndexEnum::INDEX_FAISS_IDMAP;
+        auto flat_range_res = flat_index.RangeSearch(query_ds, flat_range_conf, nullptr);
+        REQUIRE(flat_range_res.has_value());
+        const size_t flat_total = flat_range_res.value()->GetLims()[nq];
+        REQUIRE(flat_total > 0);  // sanity: oracle must see vectors inside the band
+
+        // HNSW range_search with empty bitset (the regression target). A
+        // nullptr-initialized BitsetView is empty() and triggers the bug path.
+        knowhere::BitsetView empty_bitset_view = nullptr;
+        REQUIRE(empty_bitset_view.empty());
+
+        auto hnsw_range_res = hnsw_index.RangeSearch(query_ds, range_conf, empty_bitset_view);
+        REQUIRE(hnsw_range_res.has_value());
+        const size_t hnsw_total = hnsw_range_res.value()->GetLims()[nq];
+
+        INFO("flat_total=" << flat_total << " hnsw_total=" << hnsw_total);
+
+        // Critical regression assertion: without the fix, range_search returned
+        // zero here because BitsetViewIDSelector::is_member rejected every id.
+        // After the fix, the BF path is exhaustive and returns a result set
+        // that covers the FLAT oracle.
+        REQUIRE(hnsw_total > 0);
+    }
+}
