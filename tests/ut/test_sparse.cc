@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <future>
+#include <stdexcept>
 #include <string>
 #include <thread>
 
@@ -510,7 +511,11 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
         for (auto i = 0; i < nq; ++i) {
             for (auto j = 0; j < k; ++j) {
                 auto base = ids[i * k + j] / nb;
-                REQUIRE(base == expected_id_base);
+                if (base != expected_id_base) {
+                    throw std::runtime_error("id base mismatch at i=" + std::to_string(i) + " j=" + std::to_string(j) +
+                                             ": got " + std::to_string(base) + " expected " +
+                                             std::to_string(expected_id_base));
+                }
             }
         }
     };
@@ -538,7 +543,9 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
                test_time) {
             auto doc_ds = doc_vector_gen(nb, dim);
             auto res = idx.Add(doc_ds, json);
-            REQUIRE(res == knowhere::Status::success);
+            if (res != knowhere::Status::success) {
+                throw std::runtime_error("Add failed with status " + std::to_string(static_cast<int>(res)));
+            }
         }
     };
 
@@ -547,7 +554,9 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
         while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count() <
                test_time) {
             auto results = idx.Search(query_ds, json, nullptr);
-            REQUIRE(results.has_value());
+            if (!results.has_value()) {
+                throw std::runtime_error("Search returned no value");
+            }
             check_result(*results.value());
         }
     };
@@ -559,7 +568,7 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
         }
         task_list.push_back(std::async(std::launch::async, add_task));
         for (auto& task : task_list) {
-            task.wait();
+            REQUIRE_NOTHROW(task.get());
         }
     }
 
