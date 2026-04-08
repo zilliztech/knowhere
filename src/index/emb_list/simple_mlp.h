@@ -12,8 +12,6 @@
 #ifndef SIMPLE_MLP_H
 #define SIMPLE_MLP_H
 
-#include <cblas.h>
-
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -22,6 +20,7 @@
 #include <thread>
 #include <vector>
 
+#include "index/emb_list/cblas_decl.h"
 #include "knowhere/log.h"
 
 // OpenBLAS thread control

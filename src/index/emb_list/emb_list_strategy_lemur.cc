@@ -9,8 +9,6 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
-#include <cblas.h>
-
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -20,6 +18,7 @@
 #include <random>
 #include <vector>
 
+#include "index/emb_list/cblas_decl.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/task.h"
 #include "knowhere/config.h"
