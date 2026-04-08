@@ -126,11 +126,20 @@ IndexBruteForceWrapper::range_search(faiss::idx_t n, const float* x, float radiu
         // set up a filter
         faiss::IDSelector* __restrict sel = (params == nullptr) ? nullptr : params->sel;
 
+        // If `sel` is a knowhere BitsetViewIDSelector wrapping an empty bitset, BitsetView::test
+        // returns true for every id (out_id >= num_bits_=0 short-circuits), so is_member returns
+        // false for every id and the BF range_search would emit zero results. Fall back to
+        // IDSelectorAll in that case, mirroring the guard already present in
+        // IndexBruteForceWrapper::search above.
+        const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
+            dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
+        const bool sel_accepts_all = (sel == nullptr) || (bw_idselector && bw_idselector->bitset_view.empty());
+
         if (faiss::cppcontrib::knowhere::is_similarity_metric(index->metric_type)) {
             typename RH_max::SingleResultHandler res_max(bres_max);
             res_max.begin(i);
 
-            if (sel == nullptr) {
+            if (sel_accepts_all) {
                 // Compiler is expected to de-virtualize virtual method calls
                 faiss::IDSelectorAll sel_all;
 
@@ -148,7 +157,7 @@ IndexBruteForceWrapper::range_search(faiss::idx_t n, const float* x, float radiu
             typename RH_min::SingleResultHandler res_min(bres_min);
             res_min.begin(i);
 
-            if (sel == nullptr) {
+            if (sel_accepts_all) {
                 // Compiler is expected to de-virtualize virtual method calls
                 faiss::IDSelectorAll sel_all;
 
