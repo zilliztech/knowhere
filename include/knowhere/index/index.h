@@ -176,11 +176,18 @@ class Index {
     GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_type,
                     milvus::OpContext* op_context = nullptr) const;
 
+    expected<DataSetPtr>
+    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
+                  const bool is_cosine, milvus::OpContext* op_context = nullptr) const;
+
     bool
     HasRawData(const std::string& metric_type) const;
 
     bool
     IsAdditionalScalarSupported(bool is_mv_only) const;
+
+    bool
+    IsIndexRefineEnabled() const;
 
     expected<DataSetPtr>
     GetIndexMeta(const Json& json) const;

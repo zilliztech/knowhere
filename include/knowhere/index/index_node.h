@@ -240,6 +240,11 @@ class IndexNode : public Object {
         return false;
     }
 
+    virtual bool
+    IsIndexRefineEnabled() const {
+        return false;
+    }
+
     /**
      * @unused Milvus is not using this method, so it cannot guarantee all indexes implement this method.
      *

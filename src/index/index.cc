@@ -295,6 +295,13 @@ Index<T>::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_ty
 }
 
 template <typename T>
+inline expected<DataSetPtr>
+Index<T>::CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
+                        const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context) const {
+    return this->node->CalcDistByIDs(dataset, bitset, labels, labels_len, is_cosine, op_context);
+}
+
+template <typename T>
 inline bool
 Index<T>::HasRawData(const std::string& metric_type) const {
     return this->node->HasRawData(metric_type);
@@ -304,6 +311,12 @@ template <typename T>
 inline bool
 Index<T>::IsAdditionalScalarSupported(bool is_mv_only) const {
     return this->node->IsAdditionalScalarSupported(is_mv_only);
+}
+
+template <typename T>
+inline bool
+Index<T>::IsIndexRefineEnabled() const {
+    return this->node->IsIndexRefineEnabled();
 }
 
 template <typename T>
