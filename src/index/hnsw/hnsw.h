@@ -95,7 +95,9 @@ class HnswIndexNode : public IndexNode {
         auto hnsw_cfg = static_cast<const BaseHnswConfig&>(cfg);
 
         if (paramType == PARAM_TYPE::TRAIN) {
-            if constexpr (KnowhereFloatTypeCheck<DataType>::value) {
+            // Note: int8/fp16/bf16 are mocked to fp32 at runtime via MockData<>, so they only
+            // accept float metrics. The only data type that should take the binary branch is bin1.
+            if constexpr (!std::is_same_v<DataType, knowhere::bin1>) {
                 if (IsMetricType(hnsw_cfg.metric_type.value(), metric::L2) ||
                     IsMetricType(hnsw_cfg.metric_type.value(), metric::IP) ||
                     IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE)) {
