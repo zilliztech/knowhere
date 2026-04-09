@@ -205,7 +205,12 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64)")
         src/index/sparse/codec/streamvbyte_0124_decode.c
         src/index/sparse/codec/streamvbyte_0124_encode.c
         PROPERTIES COMPILE_FLAGS "-msse4.1")
-
+    set_source_files_properties(
+        src/index/sparse/sindi_simd_avx2.cc
+        PROPERTIES COMPILE_FLAGS "-mavx2 -mfma -mf16c")
+    set_source_files_properties(
+        src/index/sparse/sindi_simd_avx512.cc
+        PROPERTIES COMPILE_FLAGS "-mavx512f -mavx512bw -mavx512vl -mavx512dq -mavx512cd -mavx2 -mfma -mf16c")
 endif()
 
 knowhere_file_glob(GLOB_RECURSE KNOWHERE_GPU_SRCS src/index/gpu/flat_gpu/*.cc

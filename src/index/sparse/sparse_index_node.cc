@@ -21,6 +21,7 @@
 #include "index/sparse/flatten_inverted_index.h"
 #include "index/sparse/growable_inverted_index.h"
 #include "index/sparse/inverted_index.h"
+#include "index/sparse/sindi_inverted_index.h"
 #include "index/sparse/sparse_index_config.h"
 #include "io/file_io.h"
 #include "io/memory_io.h"
@@ -44,7 +45,7 @@ namespace knowhere {
 // Binary layout:
 //   [0..32)  File header: version(4), nr_rows(4), max_dim(4), nr_inner_dims(4), reserved(16)
 //   [32..36) nr_sections (uint32_t)
-//   [36..)   Section headers: each is InvertedIndexSectionType(4) + offset(8) + size(8) = 20 bytes
+//   [36..)   Section headers: each is InvertedIndexSectionType(4) + padding(4) + offset(8) + size(8) = 24 bytes
 //   At section[0].offset: encoding_type (uint32_t)
 static std::optional<sparse::inverted::InvertedIndexEncoding>
 peek_encoding_type_from_index_data(const uint8_t* data, size_t size) {
@@ -52,7 +53,7 @@ peek_encoding_type_from_index_data(const uint8_t* data, size_t size) {
     using sparse::inverted::InvertedIndexSectionHeader;
     using sparse::inverted::InvertedIndexSectionType;
 
-    // Need at least: 32 (header) + 4 (nr_sections) + 20 (one section header) = 56 bytes
+    // Need at least: 32 (header) + 4 (nr_sections) + 24 (one section header) = 60 bytes
     constexpr size_t kMinHeaderSize = 32 + 4 + sizeof(InvertedIndexSectionHeader);
     if (size < kMinHeaderSize) {
         return std::nullopt;
@@ -428,78 +429,128 @@ class SparseInvertedIndexNode : public IndexNode {
         const bool is_bm25 = IsMetricType(cfg.metric_type.value(), metric::BM25);
         const bool is_ip = IsMetricType(cfg.metric_type.value(), metric::IP);
 
-        const std::string inverted_index_algo = cfg.inverted_index_algo.value_or("DAAT_MAXSCORE");
-        const std::string inverted_index_codec = cfg.inverted_index_codec.value_or("block_streamvbyte");
-        IndexPtr index;
-        if (is_growable) {
-            // For concurrent add/search, always use growable index and do not override with codec/flatten types
-            index = std::make_unique<sparse::inverted::GrowableInvertedIndex<DType, QType>>();
-        } else if (encoding.has_value()) {
-            // Deserialization path: create index type matching the encoding found in file
-            using sparse::inverted::InvertedIndexEncoding;
-            switch (encoding.value()) {
-                case InvertedIndexEncoding::FLAT:
-                    LOG_KNOWHERE_INFO_ << "Detected FLAT encoding in index file, using FlattenInvertedIndex";
-                    index = std::make_unique<sparse::inverted::FlattenInvertedIndex<DType, QType>>();
-                    break;
-                case InvertedIndexEncoding::BLOCK_STREAMVBYTE: {
-                    LOG_KNOWHERE_INFO_ << "Detected BLOCK_STREAMVBYTE encoding in index file";
-                    auto codec = std::make_shared<sparse::inverted::StreamVByteBlockCodec>();
-                    index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType, MetricType>>(codec);
-                    break;
-                }
-                case InvertedIndexEncoding::BLOCK_MASKEDVBYTE: {
-                    LOG_KNOWHERE_INFO_ << "Detected BLOCK_MASKEDVBYTE encoding in index file";
-                    auto codec = std::make_shared<sparse::inverted::MaskedVByteBlockCodec>();
-                    index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType, MetricType>>(codec);
-                    break;
-                }
-                case InvertedIndexEncoding::FIXED_DOCID_WINDOWS:
-                    LOG_KNOWHERE_WARNING_ << "Unexpected FIXED_DOCID_WINDOWS encoding in CreateIndexImpl";
-                    index = std::make_unique<sparse::inverted::FlattenInvertedIndex<DType, QType>>();
-                    break;
-                default:
-                    LOG_KNOWHERE_WARNING_ << "Unknown encoding type " << static_cast<uint32_t>(encoding.value())
-                                          << ", falling back to config codec";
-                    index = std::make_unique<sparse::inverted::FlattenInvertedIndex<DType, QType>>();
-                    break;
-            }
-        } else {
-            if (version_use_raw_data()) {
-                LOG_KNOWHERE_INFO_ << "Using FlattenInvertedIndex without codec";
-                index = std::make_unique<sparse::inverted::FlattenInvertedIndex<DType, QType>>();
-            } else {
-                // use different index type based on codec
-                if (inverted_index_codec == "block_streamvbyte" || inverted_index_codec == "block_maskedvbyte") {
-                    sparse::inverted::BlockCodecPtr codec;
-                    if (inverted_index_codec == "block_streamvbyte") {
-                        codec = std::make_shared<sparse::inverted::StreamVByteBlockCodec>();
-                    } else {
-                        codec = std::make_shared<sparse::inverted::MaskedVByteBlockCodec>();
+        // Factory for docid-sorted index variants
+        auto create_index_before_v10 = [&](const std::string& inverted_index_algo,
+                                           const std::string& inverted_index_codec) -> expected<IndexPtr> {
+            IndexPtr index;
+            if (is_growable) {
+                // For concurrent add/search, always use growable index and do not override with codec/flatten types
+                index = std::make_unique<sparse::inverted::GrowableInvertedIndex<DType, QType>>();
+            } else if (encoding.has_value()) {
+                // Deserialization path: create index type matching the encoding found in file
+                using sparse::inverted::InvertedIndexEncoding;
+                switch (encoding.value()) {
+                    case InvertedIndexEncoding::FLAT:
+                        LOG_KNOWHERE_INFO_ << "Detected FLAT encoding in index file, using FlattenInvertedIndex";
+                        index = std::make_unique<sparse::inverted::FlattenInvertedIndex<DType, QType>>();
+                        break;
+                    case InvertedIndexEncoding::BLOCK_STREAMVBYTE: {
+                        LOG_KNOWHERE_INFO_ << "Detected BLOCK_STREAMVBYTE encoding in index file";
+                        auto codec = std::make_shared<sparse::inverted::StreamVByteBlockCodec>();
+                        index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType, MetricType>>(codec);
+                        break;
                     }
-                    index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType, MetricType>>(codec);
-                } else {
+                    case InvertedIndexEncoding::BLOCK_MASKEDVBYTE: {
+                        LOG_KNOWHERE_INFO_ << "Detected BLOCK_MASKEDVBYTE encoding in index file";
+                        auto codec = std::make_shared<sparse::inverted::MaskedVByteBlockCodec>();
+                        index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType, MetricType>>(codec);
+                        break;
+                    }
+                    case InvertedIndexEncoding::FIXED_DOCID_WINDOWS:
+                        // SINDI encoding should not reach create_index_before_v10; fall through to default codec
+                        LOG_KNOWHERE_WARNING_ << "Unexpected FIXED_DOCID_WINDOWS encoding in create_index_before_v10";
+                        index = std::make_unique<sparse::inverted::FlattenInvertedIndex<DType, QType>>();
+                        break;
+                    default:
+                        LOG_KNOWHERE_WARNING_ << "Unknown encoding type " << static_cast<uint32_t>(encoding.value())
+                                              << ", falling back to config codec";
+                        index = std::make_unique<sparse::inverted::FlattenInvertedIndex<DType, QType>>();
+                        break;
+                }
+            } else {
+                if (version_use_raw_data()) {
+                    LOG_KNOWHERE_INFO_ << "Using FlattenInvertedIndex without codec";
                     index = std::make_unique<sparse::inverted::FlattenInvertedIndex<DType, QType>>();
+                } else {
+                    // use different index type based on codec
+                    if (inverted_index_codec == "block_streamvbyte" || inverted_index_codec == "block_maskedvbyte") {
+                        sparse::inverted::BlockCodecPtr codec;
+                        if (inverted_index_codec == "block_streamvbyte") {
+                            codec = std::make_shared<sparse::inverted::StreamVByteBlockCodec>();
+                        } else {
+                            codec = std::make_shared<sparse::inverted::MaskedVByteBlockCodec>();
+                        }
+                        index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType, MetricType>>(codec);
+                    } else {
+                        index = std::make_unique<sparse::inverted::FlattenInvertedIndex<DType, QType>>();
+                    }
                 }
             }
-        }
-        if (inverted_index_algo == "BLOCK_MAX_MAXSCORE" || inverted_index_algo == "BLOCK_MAX_WAND") {
-            index->set_build_algo(inverted_index_algo, cfg.block_max_block_size.value_or(128));
-        } else {
-            index->set_build_algo(inverted_index_algo);
-        }
-        if (is_bm25) {
-            index->set_build_scorer(sparse::inverted::IndexScorerConfig{
-                .scorer_type = sparse::inverted::IndexScorerType::BM25,
-                .scorer_params = {.bm25 = {.k1 = cfg.bm25_k1.value(),
-                                           .b = cfg.bm25_b.value(),
-                                           .avgdl = std::max(cfg.bm25_avgdl.value(), 1.0f)}}});
-            return index;
+            if (inverted_index_algo == "BLOCK_MAX_MAXSCORE" || inverted_index_algo == "BLOCK_MAX_WAND") {
+                index->set_build_algo(inverted_index_algo, cfg.block_max_block_size.value_or(128));
+            } else {
+                index->set_build_algo(inverted_index_algo);
+            }
+            if (is_bm25) {
+                index->set_build_scorer(sparse::inverted::IndexScorerConfig{
+                    .scorer_type = sparse::inverted::IndexScorerType::BM25,
+                    .scorer_params = {.bm25 = {.k1 = cfg.bm25_k1.value(),
+                                               .b = cfg.bm25_b.value(),
+                                               .avgdl = std::max(cfg.bm25_avgdl.value(), 1.0f)}}});
+                return index;
+            } else if (is_ip) {
+                index->set_build_scorer(sparse::inverted::IndexScorerConfig{
+                    .scorer_type = sparse::inverted::IndexScorerType::IP,
+                });
+                return index;
+            } else {
+                return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
+                    Status::invalid_metric_type, "Unsupported metric type");
+            }
+        };
+
+        if (version_default_to_daat_maxscore()) {
+            const std::string algo = cfg.inverted_index_algo.value_or("DAAT_MAXSCORE");
+            const std::string codec = cfg.inverted_index_codec.value_or("block_streamvbyte");
+            return create_index_before_v10(algo, codec);
         } else if (is_ip) {
-            index->set_build_scorer(sparse::inverted::IndexScorerConfig{
-                .scorer_type = sparse::inverted::IndexScorerType::IP,
-            });
-            return index;
+            const std::string algo = cfg.inverted_index_algo.value_or("SINDI");
+            const std::string codec = cfg.inverted_index_codec.value_or("block_streamvbyte");
+            // When encoding is available and not FIXED_DOCID_WINDOWS, the file was not
+            // built with SINDI, so use create_index_before_v10 to match the actual file encoding.
+            bool use_sindi =
+                algo == "SINDI" && (!encoding.has_value() ||
+                                    encoding.value() == sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS);
+            if (use_sindi) {
+                auto index = std::make_unique<sparse::inverted::SindiInvertedIndexIP>(
+                    cfg.sindi_window_size.value_or(sparse::inverted::SindiInvertedIndexIP::max_window_size));
+                index->set_build_algo(algo);
+                index->set_build_scorer(sparse::inverted::IndexScorerConfig{
+                    .scorer_type = sparse::inverted::IndexScorerType::IP,
+                });
+                return index;
+            } else {
+                return create_index_before_v10(algo, codec);
+            }
+        } else if (is_bm25) {
+            const std::string algo = cfg.inverted_index_algo.value_or("DAAT_MAXSCORE");
+            const std::string codec = cfg.inverted_index_codec.value_or("block_streamvbyte");
+            bool use_sindi =
+                algo == "SINDI" && (!encoding.has_value() ||
+                                    encoding.value() == sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS);
+            if (use_sindi) {
+                auto index = std::make_unique<sparse::inverted::SindiInvertedIndexBM25>(
+                    cfg.sindi_window_size.value_or(sparse::inverted::SindiInvertedIndexBM25::max_window_size));
+                index->set_build_algo(algo);
+                index->set_build_scorer(sparse::inverted::IndexScorerConfig{
+                    .scorer_type = sparse::inverted::IndexScorerType::BM25,
+                    .scorer_params = {.bm25 = {.k1 = cfg.bm25_k1.value(),
+                                               .b = cfg.bm25_b.value(),
+                                               .avgdl = std::max(cfg.bm25_avgdl.value(), 1.0f)}}});
+                return index;
+            } else {
+                return create_index_before_v10(algo, codec);
+            }
         } else {
             return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
                 Status::invalid_metric_type, "Unsupported metric type");
@@ -571,9 +622,21 @@ class SparseInvertedIndexNode : public IndexNode {
             search_params.algo = sparse::inverted::InvertedIndexAlgo::BLOCK_MAX_WAND;
         } else if (config.search_algo.value() == "TAAT_NAIVE") {
             search_params.algo = sparse::inverted::InvertedIndexAlgo::TAAT_NAIVE;
+        } else if (config.search_algo.value() == "SINDI") {
+            if (index_->get_build_algo() != sparse::inverted::InvertedIndexAlgo::SINDI) {
+                return expected<sparse::inverted::InvertedIndexSearchParams>::Err(
+                    Status::invalid_args, "search algorithm SINDI is only supported for SINDI index");
+            }
+            search_params.algo = sparse::inverted::InvertedIndexAlgo::SINDI;
         } else {
             return expected<sparse::inverted::InvertedIndexSearchParams>::Err(Status::invalid_args,
                                                                               "Unsupported search algorithm");
+        }
+        // SINDI index can only use SINDI search algorithm
+        if (index_->get_build_algo() == sparse::inverted::InvertedIndexAlgo::SINDI &&
+            search_params.algo != sparse::inverted::InvertedIndexAlgo::SINDI) {
+            return expected<sparse::inverted::InvertedIndexSearchParams>::Err(
+                Status::invalid_args, "SINDI index can only use SINDI search algorithm");
         }
         if (index_->has_max_scores_per_dim() == false && algo_need_max_scores_per_dim()) {
             return expected<sparse::inverted::InvertedIndexSearchParams>::Err(
@@ -633,6 +696,11 @@ class SparseInvertedIndexNode : public IndexNode {
     bool
     version_support_fp16_quant_for_ip() const {
         return index_version_ >= SPARSE_INDEX_VERSION_SUPPORT_FP16_QUANT_FOR_IP;
+    }
+
+    bool
+    version_default_to_daat_maxscore() const {
+        return index_version_ < 10;
     }
 
     // used to load index
