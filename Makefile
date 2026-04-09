@@ -71,6 +71,10 @@ ifdef WITH_ASAN
     CONAN_FLAGS += -o with_asan=True
 endif
 
+ifdef WITH_COVERAGE
+    CONAN_FLAGS += -o with_coverage=True
+endif
+
 ifdef WITH_CARDINAL
     CONAN_FLAGS += -o with_cardinal=True
 endif
@@ -81,7 +85,7 @@ endif
 
 .PHONY: build test \
 	lint format pre-commit \
-	wheel codecov \
+	wheel \
 	clean help
 
 all: build ## Default: CPU release build
@@ -117,11 +121,6 @@ pre-commit: ## Run all pre-commit hooks
 
 wheel: ## Build portable Python wheel (requires a prior build)
 	@cd $(PWD)/python && ./build_portable_wheel.sh
-
-# ---------- Coverage ----------
-
-codecov: ## Generate code coverage report (requires a coverage build)
-	@$(PWD)/scripts/run_codecov.sh
 
 # ---------- Housekeeping ----------
 
