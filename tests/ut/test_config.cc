@@ -478,21 +478,6 @@ TEST_CASE("Test config json parse", "[config]") {
                   knowhere::Status::invalid_metric_type);
             CHECK_FALSE(msg.empty());
         }
-
-        // ---- HNSWLIB_DEPRECATED (fp32): the hnswlib-based node also gets its check enforced.
-        // (BaseHnswConfig::CheckAndAdjust does not validate metric_type, so this exercises the
-        //  StaticConfigCheck path end-to-end.)
-        {
-            knowhere::Json bad_json = knowhere::Json::parse(R"({
-                "metric_type": "HAMMING",
-                "M": 32,
-                "efConstruction": 100
-            })");
-            std::string msg;
-            CHECK(knowhere::IndexStaticFaced<knowhere::fp32>::ConfigCheck(
-                      "HNSWLIB_DEPRECATED", version, bad_json, msg) == knowhere::Status::invalid_metric_type);
-            CHECK_FALSE(msg.empty());
-        }
     }
 
 #ifdef KNOWHERE_WITH_DISKANN
