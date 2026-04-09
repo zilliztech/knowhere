@@ -34,8 +34,8 @@ pull_request_rules:
       - title!=\[automated\]
       - label!=kind/improvement
       - and:
-          - body!=\#[0-9]{1,6}(\s+|$)
-          - body!=https://github.com/zilliztech/knowhere/issues/[0-9]{1,6}(\s+|$)
+          - -body~=\#[0-9]{1,6}(\s+|$)
+          - -body~=https://github.com/zilliztech/knowhere/issues/[0-9]{1,6}(\s+|$)
     actions:
       label:
         add:
