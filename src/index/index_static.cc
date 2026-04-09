@@ -57,7 +57,7 @@ IndexStaticFaced<DataType>::ConfigCheck(const IndexType& indexType, const IndexV
     }
 
     if (Instance().staticConfigCheckMap.find(indexType) != Instance().staticConfigCheckMap.end()) {
-        return Instance().staticConfigCheckMap[indexType](*cfg, version, msg);
+        return Instance().staticConfigCheckMap[indexType](*cfg, knowhere::PARAM_TYPE::TRAIN, msg);
     }
 
     return knowhere::Status::success;
@@ -145,8 +145,8 @@ IndexStaticFaced<DataType>::InternalStaticCreateConfig() {
 
 template <typename DataType>
 knowhere::Status
-IndexStaticFaced<DataType>::InternalConfigCheck(const BaseConfig& config, const IndexVersion& version,
-                                                std::string& msg) {
+IndexStaticFaced<DataType>::InternalConfigCheck(const BaseConfig& /*config*/, PARAM_TYPE /*paramType*/,
+                                                std::string& /*msg*/) {
     return knowhere::Status::success;
 }
 
