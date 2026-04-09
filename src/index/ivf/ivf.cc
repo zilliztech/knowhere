@@ -133,23 +133,29 @@ class IvfIndexNode : public IndexNode {
         auto ivf_cfg = static_cast<const IvfConfig&>(cfg);
 
         if (paramType == PARAM_TYPE::TRAIN) {
+            // Decompose compound metrics (MAX_SIM_*, DTW_*) used by emb-list IVF variants down
+            // to their underlying base metric so the float/binary classification still works.
+            // For plain L2/IP/COSINE/HAMMING/JACCARD this returns nullopt and we fall back to
+            // the raw value.
+            const auto& raw_metric = ivf_cfg.metric_type.value();
+            const auto& base_metric = get_sub_metric_type(raw_metric).value_or(raw_metric);
             // Note: int8/fp16/bf16 are mocked to fp32 at runtime via MockData<>, so they only
             // accept float metrics. The only data type that should take the binary branch is bin1.
             if constexpr (!std::is_same_v<DataType, knowhere::bin1>) {
-                if (IsMetricType(ivf_cfg.metric_type.value(), metric::L2) ||
-                    IsMetricType(ivf_cfg.metric_type.value(), metric::IP) ||
-                    IsMetricType(ivf_cfg.metric_type.value(), metric::COSINE)) {
+                if (IsMetricType(base_metric, metric::L2) || IsMetricType(base_metric, metric::IP) ||
+                    IsMetricType(base_metric, metric::COSINE)) {
                 } else {
-                    msg = "metric type " + ivf_cfg.metric_type.value() +
-                          " not found or not supported, supported: [L2 IP COSINE]";
+                    msg = "metric type " + raw_metric +
+                          " not found or not supported, supported: [L2 IP COSINE] (or MAX_SIM_*/DTW_* "
+                          "compound forms thereof)";
                     return Status::invalid_metric_type;
                 }
             } else {
-                if (IsMetricType(ivf_cfg.metric_type.value(), metric::HAMMING) ||
-                    IsMetricType(ivf_cfg.metric_type.value(), metric::JACCARD)) {
+                if (IsMetricType(base_metric, metric::HAMMING) || IsMetricType(base_metric, metric::JACCARD)) {
                 } else {
-                    msg = "metric type " + ivf_cfg.metric_type.value() +
-                          " not found or not supported, supported: [HAMMING JACCARD]";
+                    msg = "metric type " + raw_metric +
+                          " not found or not supported, supported: [HAMMING JACCARD] (or MAX_SIM_*/DTW_* "
+                          "compound forms thereof)";
                     return Status::invalid_metric_type;
                 }
             }

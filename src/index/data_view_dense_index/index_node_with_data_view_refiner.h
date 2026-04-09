@@ -85,15 +85,20 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
                   milvus::OpContext* op_context = nullptr) const override;
 
     static Status
-    StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {
+    StaticConfigCheck(const Config& cfg, PARAM_TYPE /*paramType*/, std::string& msg) {
         auto base_cfg = static_cast<const BaseConfig&>(cfg);
         if constexpr (KnowhereFloatTypeCheck<DataType>::value) {
-            if (IsMetricType(base_cfg.metric_type.value(), metric::L2) ||
-                IsMetricType(base_cfg.metric_type.value(), metric::IP) ||
-                IsMetricType(base_cfg.metric_type.value(), metric::COSINE)) {
+            // Decompose compound metrics (MAX_SIM_*, DTW_*) used by emb-list refiner variants
+            // (e.g. SCANN_DVR) down to their underlying base metric. For plain L2/IP/COSINE
+            // get_sub_metric_type returns nullopt and we fall back to the raw value.
+            const auto& raw_metric = base_cfg.metric_type.value();
+            const auto& base_metric = get_sub_metric_type(raw_metric).value_or(raw_metric);
+            if (IsMetricType(base_metric, metric::L2) || IsMetricType(base_metric, metric::IP) ||
+                IsMetricType(base_metric, metric::COSINE)) {
             } else {
-                msg = "metric type " + base_cfg.metric_type.value() +
-                      " not found or not supported, supported: [L2 IP COSINE]";
+                msg = "metric type " + raw_metric +
+                      " not found or not supported, supported: [L2 IP COSINE] (or MAX_SIM_*/DTW_* "
+                      "compound forms thereof)";
                 return Status::invalid_metric_type;
             }
         }
