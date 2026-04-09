@@ -595,6 +595,38 @@ void binary_range_search(
     }
 }
 
+template <class C, typename T, class StructureComputer>
+void binary_range_search_structure(
+        const uint8_t* a,
+        const uint8_t* b,
+        size_t na,
+        size_t nb,
+        T radius,
+        size_t code_size,
+        RangeSearchResult* res,
+        const IDSelector* sel = nullptr) {
+#pragma omp parallel
+    {
+        RangeSearchPartialResult pres(res);
+#pragma omp for
+        for (int64_t i = 0; i < na; i++) {
+            StructureComputer mc(a + i * code_size, code_size);
+            RangeQueryResult& qres = pres.new_result(i);
+            for (size_t j = 0; j < nb; j++) {
+                if (!sel || sel->is_member(j)) {
+                    if (mc.compute(b + j * code_size)) {
+                        T dis = static_cast<T>(0);
+                        if (C::cmp(dis, radius)) {
+                            qres.add(dis, j);
+                        }
+                    }
+                }
+            }
+        }
+        pres.finalize();
+    }
+}
+
 template <class C, typename T>
 void binary_range_search(
         MetricType metric_type,
@@ -661,8 +693,66 @@ void binary_range_search(
             }
             break;
         }
-        case METRIC_Superstructure:
-        case METRIC_Substructure:
+        case METRIC_Substructure: {
+            {
+                switch (code_size) {
+#define binary_range_search_substructure(ncodes)                                  \
+    case ncodes:                                                                  \
+        binary_range_search_structure<                                           \
+                C,                                                               \
+                T,                                                               \
+                faiss::cppcontrib::knowhere::StructureComputer##ncodes<false>>(  \
+                a, b, na, nb, radius, code_size, res, sel);                      \
+        break;
+                    binary_range_search_substructure(8);
+                    binary_range_search_substructure(16);
+                    binary_range_search_substructure(32);
+                    binary_range_search_substructure(64);
+                    binary_range_search_substructure(128);
+                    binary_range_search_substructure(256);
+                    binary_range_search_substructure(512);
+#undef binary_range_search_substructure
+                    default:
+                        binary_range_search_structure<
+                                C,
+                                T,
+                                faiss::cppcontrib::knowhere::StructureComputerDefault<false>>(
+                                a, b, na, nb, radius, code_size, res, sel);
+                        break;
+                }
+            }
+            break;
+        }
+        case METRIC_Superstructure: {
+            {
+                switch (code_size) {
+#define binary_range_search_superstructure(ncodes)                                \
+    case ncodes:                                                                  \
+        binary_range_search_structure<                                           \
+                C,                                                               \
+                T,                                                               \
+                faiss::cppcontrib::knowhere::StructureComputer##ncodes<true>>(   \
+                a, b, na, nb, radius, code_size, res, sel);                      \
+        break;
+                    binary_range_search_superstructure(8);
+                    binary_range_search_superstructure(16);
+                    binary_range_search_superstructure(32);
+                    binary_range_search_superstructure(64);
+                    binary_range_search_superstructure(128);
+                    binary_range_search_superstructure(256);
+                    binary_range_search_superstructure(512);
+#undef binary_range_search_superstructure
+                    default:
+                        binary_range_search_structure<
+                                C,
+                                T,
+                                faiss::cppcontrib::knowhere::StructureComputerDefault<true>>(
+                                a, b, na, nb, radius, code_size, res, sel);
+                        break;
+                }
+            }
+            break;
+        }
         default:
             break;
     }
