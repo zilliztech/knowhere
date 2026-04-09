@@ -478,6 +478,34 @@ TEST_CASE("Test config json parse", "[config]") {
                   knowhere::Status::invalid_metric_type);
             CHECK_FALSE(msg.empty());
         }
+
+        // ---- IVF_FLAT (fp32) + emb-list compound metric: MAX_SIM_IP must pass ----
+        // IVFFLAT/IVF_FLAT/IVFFLATCC/IVF_FLAT_CC/SCANN_DVR are registered with the EMB_LIST
+        // feature flag and exercise MAX_SIM_*/DTW_* metrics in production. The static check
+        // must accept them by decomposing them to their underlying base metric.
+        {
+            knowhere::Json valid_json = knowhere::Json::parse(R"({
+                "metric_type": "MAX_SIM_IP",
+                "nlist": 128
+            })");
+            std::string msg;
+            CHECK(knowhere::IndexStaticFaced<knowhere::fp32>::ConfigCheck(
+                      knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, version, valid_json, msg) == knowhere::Status::success);
+            CHECK(msg.empty());
+        }
+        // ---- IVF_FLAT (fp32) + invalid compound metric: MAX_SIM_HAMMING decomposes to HAMMING ----
+        // which is not in the float whitelist, so it should still be rejected.
+        {
+            knowhere::Json bad_json = knowhere::Json::parse(R"({
+                "metric_type": "MAX_SIM_HAMMING",
+                "nlist": 128
+            })");
+            std::string msg;
+            CHECK(knowhere::IndexStaticFaced<knowhere::fp32>::ConfigCheck(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT,
+                                                                          version, bad_json, msg) ==
+                  knowhere::Status::invalid_metric_type);
+            CHECK_FALSE(msg.empty());
+        }
     }
 
 #ifdef KNOWHERE_WITH_DISKANN
