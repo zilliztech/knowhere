@@ -12,8 +12,6 @@
 #ifndef SIMPLE_MLP_H
 #define SIMPLE_MLP_H
 
-#include <cblas.h>
-
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -22,28 +20,39 @@
 #include <thread>
 #include <vector>
 
+#include "index/emb_list/cblas_decl.h"
 #include "knowhere/log.h"
 
-// OpenBLAS thread control
+// OpenBLAS thread control (only available when linked against OpenBLAS)
+#ifdef __APPLE__
+// Apple Accelerate does not provide openblas thread control; make it a no-op.
+#else
 extern "C" {
 void
 openblas_set_num_threads(int num_threads);
 int
 openblas_get_num_threads(void);
 }
+#endif
 
 namespace knowhere {
 
-// RAII guard for openblas_set_num_threads: restores previous value on scope exit.
+// RAII guard for BLAS thread control. On platforms without OpenBLAS (e.g. macOS
+// Accelerate), this is a no-op.
 class ScopedBLASThreads {
     int old_;
 
  public:
-    explicit ScopedBLASThreads(int n) : old_(openblas_get_num_threads()) {
+    explicit ScopedBLASThreads(int n) : old_(0) {
+#ifndef __APPLE__
+        old_ = openblas_get_num_threads();
         openblas_set_num_threads(n);
+#endif
     }
     ~ScopedBLASThreads() {
+#ifndef __APPLE__
         openblas_set_num_threads(old_);
+#endif
     }
     ScopedBLASThreads(const ScopedBLASThreads&) = delete;
     ScopedBLASThreads&
