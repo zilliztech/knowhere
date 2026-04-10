@@ -16,6 +16,9 @@
 #include <faiss/cppcontrib/knowhere/IndexScaNN.h>
 
 #include "common/metric.h"
+#include "faiss/IndexIVFRaBitQ.h"
+#include "faiss/IndexIVFRaBitQFastScan.h"
+#include "faiss/IndexRefine.h"
 #include "faiss/VectorTransform.h"
 #include "faiss/cppcontrib/knowhere/IndexBinaryFlat.h"
 #include "faiss/cppcontrib/knowhere/IndexBinaryIVF.h"
@@ -26,10 +29,12 @@
 #include "faiss/cppcontrib/knowhere/IndexIVFRaBitQ.h"
 #include "faiss/cppcontrib/knowhere/IndexScalarQuantizer.h"
 #include "faiss/cppcontrib/knowhere/index_io.h"
+#include "faiss/index_io.h"
 #include "index/clustering_config.h"
 #include "index/data_view_dense_index/index_node_with_data_view_refiner.h"
 #include "index/ivf/ivf_config.h"
 #include "index/ivf/ivf_wrapper.h"
+#include "index/ivf/ivfrbq_fastscan_wrapper.h"
 #include "index/ivf/ivfrbq_wrapper.h"
 #include "io/memory_io.h"
 #include "knowhere/bitsetview_idselector.h"
@@ -71,7 +76,8 @@ class IvfIndexNode : public IndexNode {
                           std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexBinaryIVF>::value ||
                           std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexScaNN>::value ||
                           std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC>::value ||
-                          std::is_same<IndexType, IndexIVFRaBitQWrapper>::value,
+                          std::is_same<IndexType, IndexIVFRaBitQWrapper>::value ||
+                          std::is_same<IndexType, IndexIVFRaBitQFastScanWrapper>::value,
                       "not support");
         static_assert(std::is_same_v<DataType, fp32> || std::is_same_v<DataType, bin1>,
                       "IvfIndexNode only support float/binary");
@@ -186,7 +192,8 @@ class IvfIndexNode : public IndexNode {
         if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexBinaryIVF, IndexType>::value) {
             return true;
         }
-        if constexpr (std::is_same<IndexIVFRaBitQWrapper, IndexType>::value) {
+        if constexpr (std::is_same<IndexIVFRaBitQWrapper, IndexType>::value ||
+                      std::is_same<IndexIVFRaBitQFastScanWrapper, IndexType>::value) {
             return false;
         }
         return false;
@@ -257,6 +264,9 @@ class IvfIndexNode : public IndexNode {
         if constexpr (std::is_same<IndexIVFRaBitQWrapper, IndexType>::value) {
             return std::make_unique<IvfRaBitQConfig>();
         }
+        if constexpr (std::is_same<IndexIVFRaBitQFastScanWrapper, IndexType>::value) {
+            return std::make_unique<IvfRaBitQFastScanConfig>();
+        }
     };
 
     std::unique_ptr<BaseConfig>
@@ -312,6 +322,9 @@ class IvfIndexNode : public IndexNode {
         if constexpr (std::is_same<IndexType, IndexIVFRaBitQWrapper>::value) {
             return index_->size();
         }
+        if constexpr (std::is_same<IndexType, IndexIVFRaBitQFastScanWrapper>::value) {
+            return index_->size();
+        }
     };
     int64_t
     Count() const override {
@@ -346,6 +359,9 @@ class IvfIndexNode : public IndexNode {
         if constexpr (std::is_same<IndexType, IndexIVFRaBitQWrapper>::value) {
             return knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ;
         }
+        if constexpr (std::is_same<IndexType, IndexIVFRaBitQFastScanWrapper>::value) {
+            return knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ_FASTSCAN;
+        }
     };
 
  private:
@@ -367,7 +383,8 @@ class IvfIndexNode : public IndexNode {
         return std::is_same_v<IndexType, IndexIVFPQWrapper> || std::is_same_v<IndexType, IndexIVFSQWrapper> ||
                std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC> ||
                std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexScaNN> ||
-               std::is_same_v<IndexType, IndexIVFRaBitQWrapper>;
+               std::is_same_v<IndexType, IndexIVFRaBitQWrapper> ||
+               std::is_same_v<IndexType, IndexIVFRaBitQFastScanWrapper>;
     }
 
  private:
@@ -538,7 +555,8 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
 
     // do normalize for COSINE metric type
     if constexpr (std::is_same_v<IndexIVFPQWrapper, IndexType> || std::is_same_v<IndexIVFSQWrapper, IndexType> ||
-                  std::is_same_v<IndexIVFRaBitQWrapper, IndexType>) {
+                  std::is_same_v<IndexIVFRaBitQWrapper, IndexType> ||
+                  std::is_same_v<IndexIVFRaBitQFastScanWrapper, IndexType>) {
         if (is_cosine) {
             NormalizeDataset<DataType>(dataset);
         }
@@ -790,6 +808,22 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         // apply clustering config
         ApplyClusteringConfig(index->get_ivfrabitq_index()->cp);
         // train
+        index->train(rows, (const float*)data);
+    }
+    if constexpr (std::is_same<IndexIVFRaBitQFastScanWrapper, IndexType>::value) {
+        const IvfRaBitQFastScanConfig& fs_cfg = static_cast<const IvfRaBitQFastScanConfig&>(*cfg);
+        auto nlist = MatchNlist(rows, fs_cfg.nlist.value());
+        auto result = IndexIVFRaBitQFastScanWrapper::create(dim, nlist, fs_cfg, metric.value());
+        if (!result.has_value()) {
+            return result.error();
+        }
+        index = std::move(result.value());
+        // Clustering parameters still belong to the underlying IVF index, so
+        // reach through the wrapper before training.
+        auto* fs_idx = index->get_fastscan_index();
+        if (fs_idx) {
+            ApplyClusteringConfig(fs_idx->cp);
+        }
         index->train(rows, (const float*)data);
     }
     index_ = std::move(index);
@@ -1075,6 +1109,32 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
                         index_->search(1, cur_query, k, distances.get() + offset, ids.get() + offset,
                                        &ivf_search_params);
                     }
+                } else if constexpr (std::is_same<IndexType, IndexIVFRaBitQFastScanWrapper>::value) {
+                    auto cur_query = (const float*)data + index * dim;
+                    if (is_cosine) {
+                        copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
+                        cur_query = copied_query.get();
+                    }
+
+                    const IvfRaBitQFastScanConfig& fs_cfg = static_cast<const IvfRaBitQFastScanConfig&>(*cfg);
+
+                    // FastScan uses core Faiss IVF search params. When refine
+                    // is enabled, the outer IndexRefineFlat receives core
+                    // IndexRefineSearchParameters and forwards the base params
+                    // to IndexIVFRaBitQFastScan unchanged.
+                    faiss::IVFSearchParameters fs_base_params;
+                    fs_base_params.nprobe = nprobe;
+                    fs_base_params.sel = id_selector;
+
+                    if (index_->has_refine() && fs_cfg.refine_k.has_value()) {
+                        faiss::IndexRefineSearchParameters fs_refine_params;
+                        fs_refine_params.k_factor = fs_cfg.refine_k.value_or(1);
+                        fs_refine_params.base_index_params = &fs_base_params;
+                        index_->search(1, cur_query, k, distances.get() + offset, ids.get() + offset,
+                                       &fs_refine_params);
+                    } else {
+                        index_->search(1, cur_query, k, distances.get() + offset, ids.get() + offset, &fs_base_params);
+                    }
                 } else if constexpr (std::is_same<IndexType, IndexIVFPQWrapper>::value) {
                     auto cur_query = (const float*)data + index * dim;
                     if (is_cosine) {
@@ -1237,10 +1297,18 @@ template <typename DataType, typename IndexType>
 expected<DataSetPtr>
 IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
                                                const BitsetView& bitset, milvus::OpContext* op_context) const {
-    // if support ann_iterator, use iterator-based range_search (IndexNode::RangeSearch)
+    // If the index supports iterators, use iterator-based range_search.
+    // Exception: FastScan backend does not support iterators, so it falls
+    // through to the direct range_search path below.
     constexpr bool use_iterator_for_range_search = is_ann_iterator_supported();
     if (use_iterator_for_range_search) {
-        return IndexNode::RangeSearch(dataset, std::move(cfg), bitset, op_context);
+        bool skip_iterator = false;
+        if constexpr (std::is_same_v<IndexType, IndexIVFRaBitQFastScanWrapper>) {
+            skip_iterator = true;
+        }
+        if (!skip_iterator) {
+            return IndexNode::RangeSearch(dataset, std::move(cfg), bitset, op_context);
+        }
     }
     if (!this->index_) {
         LOG_KNOWHERE_WARNING_ << "range search on empty index";
@@ -1355,6 +1423,29 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
                         index_->range_search(1, cur_query, radius, &res, &refine_search_params);
                     } else {
                         index_->range_search(1, cur_query, radius, &res, &ivf_search_params);
+                    }
+                } else if constexpr (std::is_same<IndexType, IndexIVFRaBitQFastScanWrapper>::value) {
+                    auto cur_query = (const float*)xq + index * dim;
+                    if (is_cosine) {
+                        copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
+                        cur_query = copied_query.get();
+                    }
+                    const IvfRaBitQFastScanConfig& fs_cfg = static_cast<const IvfRaBitQFastScanConfig&>(*cfg);
+
+                    // Range search should examine every probed list, so use
+                    // the wrapper's trained nlist here instead of the request's
+                    // top-k search nprobe.
+                    faiss::IVFSearchParameters fs_base_params;
+                    fs_base_params.nprobe = index_->get_nlist();
+                    fs_base_params.sel = id_selector;
+
+                    if (index_->has_refine() && fs_cfg.refine_k.has_value()) {
+                        faiss::IndexRefineSearchParameters fs_refine_params;
+                        fs_refine_params.k_factor = fs_cfg.refine_k.value_or(1);
+                        fs_refine_params.base_index_params = &fs_base_params;
+                        index_->range_search(1, cur_query, radius, &res, &fs_refine_params);
+                    } else {
+                        index_->range_search(1, cur_query, radius, &res, &fs_base_params);
                     }
                 } else if constexpr (std::is_same<IndexType, IndexIVFPQWrapper>::value) {
                     auto cur_query = (const float*)xq + index * dim;
@@ -1490,7 +1581,16 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::un
         LOG_KNOWHERE_WARNING_ << "Current index_type: " << Type()
                               << ", only IVFFlat, IVFFlatCC, IVF_SQ8, IVF_SQ_CC, SCANN and IVFRABITQ support Iterator.";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::not_implemented, "index not supported");
-    } else {
+    }
+
+    // FastScan backend does not support iterators in this version.
+    if constexpr (std::is_same_v<IndexType, IndexIVFRaBitQFastScanWrapper>) {
+        LOG_KNOWHERE_WARNING_ << "IVF_RABITQ_FASTSCAN does not support iterators";
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::not_implemented,
+                                                                  "IVF_RABITQ_FASTSCAN does not support iterators");
+    }
+
+    if constexpr (is_ann_iterator_supported()) {
         auto dim = dataset->GetDim();
         auto rows = dataset->GetRows();
         auto data = dataset->GetTensor();
@@ -1657,7 +1757,11 @@ IvfIndexNode<DataType, IndexType>::SerializeImpl(BinarySet& binset) const {
         if constexpr (std::is_same<IndexType, faiss::cppcontrib::knowhere::IndexBinaryIVF>::value) {
             faiss::cppcontrib::knowhere::write_index_binary(index_.get(), &writer);
         } else if constexpr (std::is_same<IndexType, IndexIVFRaBitQWrapper>::value) {
+            // Legacy IVFRaBitQ stays on knowhere cppcontrib IO.
             faiss::cppcontrib::knowhere::write_index(index_->index.get(), &writer);
+        } else if constexpr (std::is_same<IndexType, IndexIVFRaBitQFastScanWrapper>::value) {
+            // FastScan uses core Faiss types end-to-end, so serialize with core IO.
+            faiss::write_index(index_->index.get(), &writer);
         } else if constexpr (std::is_same<IndexType, IndexIVFPQWrapper>::value) {
             faiss::cppcontrib::knowhere::write_index(index_->index.get(), &writer);
         } else if constexpr (std::is_same<IndexType, IndexIVFSQWrapper>::value) {
@@ -1700,6 +1804,15 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, std::sha
             }
 
             // use the wrapper
+            index_ = std::move(index_wr);
+        } else if constexpr (std::is_same<IndexType, IndexIVFRaBitQFastScanWrapper>::value) {
+            // FastScan stays on the core Faiss IO path end-to-end.
+            auto index_raw = std::unique_ptr<faiss::Index>(faiss::read_index(&reader));
+            auto index_wr = IndexIVFRaBitQFastScanWrapper::from_deserialized(std::move(index_raw));
+            if (index_wr == nullptr) {
+                LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVF_RABITQ_FASTSCAN";
+                return Status::invalid_serialized_index_type;
+            }
             index_ = std::move(index_wr);
         } else if constexpr (std::is_same<IndexType, IndexIVFPQWrapper>::value) {
             // deserialize
@@ -1769,6 +1882,16 @@ IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filena
             }
 
             // use the wrapper
+            index_ = std::move(index_wr);
+        } else if constexpr (std::is_same<IndexType, IndexIVFRaBitQFastScanWrapper>::value) {
+            // File deserialization mirrors the in-memory BinarySet path above:
+            // use core Faiss IO and then validate the wrapper shape.
+            auto index_raw = std::unique_ptr<faiss::Index>(faiss::read_index(filename.data(), io_flags));
+            auto index_wr = IndexIVFRaBitQFastScanWrapper::from_deserialized(std::move(index_raw));
+            if (index_wr == nullptr) {
+                LOG_KNOWHERE_ERROR_ << "The deserialized index does not look like an IVF_RABITQ_FASTSCAN";
+                return Status::invalid_serialized_index_type;
+            }
             index_ = std::move(index_wr);
         } else if constexpr (std::is_same<IndexType, IndexIVFPQWrapper>::value) {
             // deserialize into a wrapper
@@ -1847,6 +1970,8 @@ KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_SQ_CC, IvfIndexNode, knowhere:
                                               faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC)
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVFRABITQ, IvfIndexNode, knowhere::feature::MMAP, IndexIVFRaBitQWrapper)
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_RABITQ, IvfIndexNode, knowhere::feature::MMAP, IndexIVFRaBitQWrapper)
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(IVF_RABITQ_FASTSCAN, IvfIndexNode, knowhere::feature::MMAP,
+                                              IndexIVFRaBitQFastScanWrapper)
 // int
 KNOWHERE_MOCK_REGISTER_DENSE_INT_GLOBAL(IVFFLAT, IvfIndexNode, knowhere::feature::MMAP | knowhere::feature::EMB_LIST,
                                         faiss::cppcontrib::knowhere::IndexIVFFlat)

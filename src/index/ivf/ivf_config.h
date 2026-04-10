@@ -417,6 +417,79 @@ class IvfRaBitQConfig : public IvfConfig {
     }
 };
 
+// Config for the dedicated FastScan IVFRaBitQ index type.
+// FastScan is intentionally modeled as a separate index family because it has
+// different backend types, IO, and feature support from the legacy IVFRaBitQ
+// path.
+//
+// Current limitations in this wrapper:
+//   - always uses index-level qb=8
+//   - supports flat/fp32 refine only
+//   - does not support iterators
+class IvfRaBitQFastScanConfig : public IvfConfig {
+ public:
+    CFG_BOOL refine;
+    CFG_FLOAT refine_k;
+    CFG_STRING refine_type;
+
+    // Declared so that passing rbq_bits_query > 0 is caught and rejected
+    // rather than silently ignored. FastScan always uses qb=8 internally.
+    CFG_INT rbq_bits_query;
+    KNOHWERE_DECLARE_CONFIG(IvfRaBitQFastScanConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(rbq_bits_query)
+            .description("not supported on IVF_RABITQ_FASTSCAN; must be 0 or omitted")
+            .set_default(0)
+            .set_range(0, 8)
+            .for_search()
+            .for_range_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine)
+            .description("whether the refine is used during the train")
+            .set_default(false)
+            .for_train()
+            .for_static();
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine_k)
+            .description("refine k")
+            .set_default(1)
+            .set_range(1, std::numeric_limits<CFG_FLOAT::value_type>::max())
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine_type)
+            .description("the type of a refine index")
+            .allow_empty_without_default()
+            .for_train()
+            .for_static();
+    }
+
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        const auto base_status = IvfConfig::CheckAndAdjust(param_type, err_msg);
+        if (base_status != Status::success) {
+            return base_status;
+        }
+
+        if (param_type == PARAM_TYPE::SEARCH || param_type == PARAM_TYPE::RANGE_SEARCH) {
+            if (rbq_bits_query.value_or(0) > 0) {
+                return HandleError(err_msg,
+                                   "rbq_bits_query > 0 is not supported on IVF_RABITQ_FASTSCAN "
+                                   "(FastScan always uses index-level qb=8)",
+                                   Status::invalid_args);
+            }
+        }
+
+        if (param_type == PARAM_TYPE::TRAIN) {
+            // Only flat/fp32 refine is supported.
+            if (refine.value_or(false) && refine_type.has_value()) {
+                std::string rt = str_to_lower(refine_type.value());
+                if (rt != "fp32" && rt != "flat") {
+                    return HandleError(
+                        err_msg, "IVF_RABITQ_FASTSCAN only supports refine_type=flat/fp32, got: " + refine_type.value(),
+                        Status::invalid_args);
+                }
+            }
+        }
+        return Status::success;
+    }
+};
+
 }  // namespace knowhere
 
 #endif /* IVF_CONFIG_H */
