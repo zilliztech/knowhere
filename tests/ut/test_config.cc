@@ -404,6 +404,110 @@ TEST_CASE("Test config json parse", "[config]") {
         CHECK(range_cfg.trace_visit.value() == true);
         CHECK(range_cfg.overview_levels.value() == 3);
     }
+
+    SECTION("static ConfigCheck rejects metric/data-type mismatch") {
+        // Regression for the IndexStaticFaced::ConfigCheck dispatch path: prior to the fix the
+        // staticConfigCheckMap was never populated (the InternalConfigCheck SFINAE prototype used
+        // IndexVersion while real StaticConfigCheck implementations use PARAM_TYPE), so per-index
+        // metric/data-type validation was silently bypassed. These cases pin the dispatch and
+        // verify that float-only / binary-only metric whitelists are now enforced.
+        const auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+
+        // ---- IVF_FLAT (fp32): float metric whitelist is enforced ----
+        // (IvfFlatConfig has no metric check in CheckAndAdjust, so the only line of defence
+        //  before this fix would have been IvfIndexNode::StaticConfigCheck — which never ran.)
+        {
+            knowhere::Json valid_json = knowhere::Json::parse(R"({
+                "metric_type": "L2",
+                "nlist": 128
+            })");
+            std::string msg;
+            CHECK(knowhere::IndexStaticFaced<knowhere::fp32>::ConfigCheck(
+                      knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, version, valid_json, msg) == knowhere::Status::success);
+            CHECK(msg.empty());
+        }
+        {
+            knowhere::Json bad_json = knowhere::Json::parse(R"({
+                "metric_type": "HAMMING",
+                "nlist": 128
+            })");
+            std::string msg;
+            CHECK(knowhere::IndexStaticFaced<knowhere::fp32>::ConfigCheck(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT,
+                                                                          version, bad_json, msg) ==
+                  knowhere::Status::invalid_metric_type);
+            CHECK_FALSE(msg.empty());
+        }
+
+        // ---- BIN_IVF_FLAT (bin1): binary metric whitelist is enforced ----
+        // (IvfBinConfig::CheckAndAdjust also rejects non-binary metrics, so a successful
+        //  rejection here may come from either layer; the positive case still proves the
+        //  static dispatch is wired up correctly for bin1.)
+        {
+            knowhere::Json valid_json = knowhere::Json::parse(R"({
+                "metric_type": "HAMMING",
+                "nlist": 128
+            })");
+            std::string msg;
+            CHECK(knowhere::IndexStaticFaced<knowhere::bin1>::ConfigCheck(knowhere::IndexEnum::INDEX_FAISS_BIN_IVFFLAT,
+                                                                          version, valid_json,
+                                                                          msg) == knowhere::Status::success);
+            CHECK(msg.empty());
+        }
+
+        // ---- IVF_FLAT (int8): int8 is mocked to fp32 at runtime, so float metrics must pass ----
+        // (Without the companion fix to IvfIndexNode::StaticConfigCheck, dispatching to it for
+        //  int8 would wrongly fall into the binary branch and reject L2.)
+        {
+            knowhere::Json valid_json = knowhere::Json::parse(R"({
+                "metric_type": "L2",
+                "nlist": 128
+            })");
+            std::string msg;
+            CHECK(knowhere::IndexStaticFaced<knowhere::int8>::ConfigCheck(
+                      knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, version, valid_json, msg) == knowhere::Status::success);
+            CHECK(msg.empty());
+        }
+        {
+            knowhere::Json bad_json = knowhere::Json::parse(R"({
+                "metric_type": "JACCARD",
+                "nlist": 128
+            })");
+            std::string msg;
+            CHECK(knowhere::IndexStaticFaced<knowhere::int8>::ConfigCheck(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT,
+                                                                          version, bad_json, msg) ==
+                  knowhere::Status::invalid_metric_type);
+            CHECK_FALSE(msg.empty());
+        }
+
+        // ---- IVF_FLAT (fp32) + emb-list compound metric: MAX_SIM_IP must pass ----
+        // IVFFLAT/IVF_FLAT/IVFFLATCC/IVF_FLAT_CC/SCANN_DVR are registered with the EMB_LIST
+        // feature flag and exercise MAX_SIM_*/DTW_* metrics in production. The static check
+        // must accept them by decomposing them to their underlying base metric.
+        {
+            knowhere::Json valid_json = knowhere::Json::parse(R"({
+                "metric_type": "MAX_SIM_IP",
+                "nlist": 128
+            })");
+            std::string msg;
+            CHECK(knowhere::IndexStaticFaced<knowhere::fp32>::ConfigCheck(
+                      knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, version, valid_json, msg) == knowhere::Status::success);
+            CHECK(msg.empty());
+        }
+        // ---- IVF_FLAT (fp32) + invalid compound metric: MAX_SIM_HAMMING decomposes to HAMMING ----
+        // which is not in the float whitelist, so it should still be rejected.
+        {
+            knowhere::Json bad_json = knowhere::Json::parse(R"({
+                "metric_type": "MAX_SIM_HAMMING",
+                "nlist": 128
+            })");
+            std::string msg;
+            CHECK(knowhere::IndexStaticFaced<knowhere::fp32>::ConfigCheck(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT,
+                                                                          version, bad_json, msg) ==
+                  knowhere::Status::invalid_metric_type);
+            CHECK_FALSE(msg.empty());
+        }
+    }
+
 #ifdef KNOWHERE_WITH_DISKANN
     SECTION("check diskann index config") {
         knowhere::Json json = knowhere::Json::parse(R"({
