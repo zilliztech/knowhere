@@ -30,7 +30,7 @@ class FaissHnswConfig : public BaseHnswConfig {
     // type of refine
     CFG_STRING refine_type;
 
-    KNOHWERE_DECLARE_CONFIG(FaissHnswConfig) {
+    KNOWHERE_DECLARE_CONFIG(FaissHnswConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(seed_ef)
             .description("hnsw seed_ef when using iterator")
             .set_default(kIteratorSeedEf)
@@ -97,7 +97,7 @@ class FaissHnswSqConfig : public FaissHnswConfig {
     // user can use quant_type to control quantizer type.
     // we have fp16, bf16, etc, so '8', '4' and '6' is insufficient
     CFG_STRING sq_type;
-    KNOHWERE_DECLARE_CONFIG(FaissHnswSqConfig) {
+    KNOWHERE_DECLARE_CONFIG(FaissHnswSqConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(sq_type)
             .set_default("SQ8")
             .description("scalar quantizer type")
@@ -157,7 +157,7 @@ class FaissHnswPqConfig : public FaissHnswConfig {
     // number of bits per subquantizer
     CFG_INT nbits;
 
-    KNOHWERE_DECLARE_CONFIG(FaissHnswPqConfig) {
+    KNOWHERE_DECLARE_CONFIG(FaissHnswPqConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(m).description("m").set_default(32).for_train().set_range(1, 65536);
         // FAISS rejects nbits > 24, because it is not practical
         KNOWHERE_CONFIG_DECLARE_FIELD(nbits).description("nbits").set_default(8).for_train().set_range(1, 24);
@@ -203,7 +203,7 @@ class FaissHnswPrqConfig : public FaissHnswConfig {
     CFG_INT nrq;
     // number of bits per subquantizer
     CFG_INT nbits;
-    KNOHWERE_DECLARE_CONFIG(FaissHnswPrqConfig) {
+    KNOWHERE_DECLARE_CONFIG(FaissHnswPrqConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(m).description("Number of splits").set_default(2).for_train().set_range(1, 65536);
         // I'm not sure whether nrq > 16 is practical
         KNOWHERE_CONFIG_DECLARE_FIELD(nrq)

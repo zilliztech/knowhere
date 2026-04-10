@@ -42,7 +42,7 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_STRING quant_type;
     CFG_INT sindi_window_size;
 
-    KNOHWERE_DECLARE_CONFIG(SparseInvertedIndexConfig) {
+    KNOWHERE_DECLARE_CONFIG(SparseInvertedIndexConfig) {
         // NOTE: drop_ratio_build has been deprecated, it won't change anything
         KNOWHERE_CONFIG_DECLARE_FIELD(drop_ratio_build)
             .description("drop ratio for build")

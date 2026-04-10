@@ -28,7 +28,7 @@ class AisaqConfig : public DiskANNConfig {
     // number of entry points valid only with aisaq option.
     CFG_INT num_entry_points;
 
-    KNOHWERE_DECLARE_CONFIG(AisaqConfig) {
+    KNOWHERE_DECLARE_CONFIG(AisaqConfig) {
         // Block AiSAQ parameters
 
         KNOWHERE_CONFIG_DECLARE_FIELD(vectors_beamwidth)

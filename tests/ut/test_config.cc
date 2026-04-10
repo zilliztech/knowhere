@@ -661,7 +661,7 @@ TEST_CASE("Test config load", "[BOOL]") {
         class TestConfig : public knowhere::Config {
          public:
             CFG_BOOL bool_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+            KNOWHERE_DECLARE_CONFIG(TestConfig) {
                 KNOWHERE_CONFIG_DECLARE_FIELD(bool_val).description("bool field for test").for_train_and_search();
             }
         };
@@ -691,7 +691,7 @@ TEST_CASE("Test config load", "[BOOL]") {
         class TestConfig : public knowhere::Config {
          public:
             CFG_BOOL bool_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+            KNOWHERE_DECLARE_CONFIG(TestConfig) {
                 KNOWHERE_CONFIG_DECLARE_FIELD(bool_val)
                     .description("bool field for test")
                     .allow_empty_without_default()
@@ -724,7 +724,7 @@ TEST_CASE("Test config load", "[BOOL]") {
         class TestConfig : public knowhere::Config {
          public:
             CFG_BOOL bool_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+            KNOWHERE_DECLARE_CONFIG(TestConfig) {
                 KNOWHERE_CONFIG_DECLARE_FIELD(bool_val)
                     .description("bool field for test")
                     .set_default(true)
@@ -763,7 +763,7 @@ TEST_CASE("Test config load", "[INT]") {
         class TestConfig : public knowhere::Config {
          public:
             CFG_INT int_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+            KNOWHERE_DECLARE_CONFIG(TestConfig) {
                 KNOWHERE_CONFIG_DECLARE_FIELD(int_val).description("int field for test").for_train_and_search();
             }
         };
@@ -793,7 +793,7 @@ TEST_CASE("Test config load", "[INT]") {
         class TestConfig : public knowhere::Config {
          public:
             CFG_INT int_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+            KNOWHERE_DECLARE_CONFIG(TestConfig) {
                 KNOWHERE_CONFIG_DECLARE_FIELD(int_val)
                     .description("int field for test")
                     .allow_empty_without_default()
@@ -826,7 +826,7 @@ TEST_CASE("Test config load", "[INT]") {
         class TestConfig : public knowhere::Config {
          public:
             CFG_INT int_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+            KNOWHERE_DECLARE_CONFIG(TestConfig) {
                 KNOWHERE_CONFIG_DECLARE_FIELD(int_val)
                     .description("int field for test")
                     .set_default(2)
@@ -878,7 +878,7 @@ TEST_CASE("Test config load", "[FLOAT]") {
         class TestConfig : public knowhere::Config {
          public:
             CFG_FLOAT float_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+            KNOWHERE_DECLARE_CONFIG(TestConfig) {
                 KNOWHERE_CONFIG_DECLARE_FIELD(float_val).description("float field for test").for_train_and_search();
             }
         };
@@ -908,7 +908,7 @@ TEST_CASE("Test config load", "[FLOAT]") {
         class TestConfig : public knowhere::Config {
          public:
             CFG_FLOAT float_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+            KNOWHERE_DECLARE_CONFIG(TestConfig) {
                 KNOWHERE_CONFIG_DECLARE_FIELD(float_val)
                     .description("float field for test")
                     .allow_empty_without_default()
@@ -941,7 +941,7 @@ TEST_CASE("Test config load", "[FLOAT]") {
         class TestConfig : public knowhere::Config {
          public:
             CFG_FLOAT float_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+            KNOWHERE_DECLARE_CONFIG(TestConfig) {
                 KNOWHERE_CONFIG_DECLARE_FIELD(float_val)
                     .description("float field for test")
                     .set_default(2.0)
@@ -993,7 +993,7 @@ TEST_CASE("Test config load", "[STRING]") {
         class TestConfig : public knowhere::Config {
          public:
             CFG_STRING str_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+            KNOWHERE_DECLARE_CONFIG(TestConfig) {
                 KNOWHERE_CONFIG_DECLARE_FIELD(str_val).description("string field for test").for_train_and_search();
             }
         };
@@ -1023,7 +1023,7 @@ TEST_CASE("Test config load", "[STRING]") {
         class TestConfig : public knowhere::Config {
          public:
             CFG_STRING str_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+            KNOWHERE_DECLARE_CONFIG(TestConfig) {
                 KNOWHERE_CONFIG_DECLARE_FIELD(str_val)
                     .description("string field for test")
                     .allow_empty_without_default()
@@ -1056,7 +1056,7 @@ TEST_CASE("Test config load", "[STRING]") {
         class TestConfig : public knowhere::Config {
          public:
             CFG_STRING str_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+            KNOWHERE_DECLARE_CONFIG(TestConfig) {
                 KNOWHERE_CONFIG_DECLARE_FIELD(str_val)
                     .description("string field for test")
                     .set_default("knowhere")
@@ -1095,7 +1095,7 @@ TEST_CASE("Test config load", "[MATERIALIZED_VIEW_SEARCH_INFO]") {
         class TestConfig : public knowhere::Config {
          public:
             CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE info_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+            KNOWHERE_DECLARE_CONFIG(TestConfig) {
                 KNOWHERE_CONFIG_DECLARE_FIELD(info_val).description("info field for test").for_train_and_search();
             }
         };
@@ -1118,7 +1118,7 @@ TEST_CASE("Test config load", "[MATERIALIZED_VIEW_SEARCH_INFO]") {
         class TestConfig : public knowhere::Config {
          public:
             CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE info_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+            KNOWHERE_DECLARE_CONFIG(TestConfig) {
                 KNOWHERE_CONFIG_DECLARE_FIELD(info_val)
                     .description("info field for test")
                     .allow_empty_without_default()
@@ -1156,7 +1156,7 @@ TEST_CASE("Test config", "[FormatAndCheck]") {
             CFG_BOOL False_val;
             CFG_BOOL TRUE_val;
             CFG_BOOL FALSE_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+            KNOWHERE_DECLARE_CONFIG(TestConfig) {
                 KNOWHERE_CONFIG_DECLARE_FIELD(int_val).for_train_and_search();
                 KNOWHERE_CONFIG_DECLARE_FIELD(float_val).for_train_and_search();
                 KNOWHERE_CONFIG_DECLARE_FIELD(true_val).for_train_and_search();
@@ -1199,7 +1199,7 @@ TEST_CASE("Test config", "[FormatAndCheck]") {
         class TestConfig : public knowhere::Config {
          public:
             CFG_INT int_val;
-            KNOHWERE_DECLARE_CONFIG(TestConfig) {
+            KNOWHERE_DECLARE_CONFIG(TestConfig) {
                 KNOWHERE_CONFIG_DECLARE_FIELD(int_val).for_train_and_search();
             }
         };

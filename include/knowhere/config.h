@@ -573,7 +573,7 @@ class Config {
     }
 };
 
-#define KNOHWERE_DECLARE_CONFIG(CONFIG) CONFIG()
+#define KNOWHERE_DECLARE_CONFIG(CONFIG) CONFIG()
 
 #define KNOWHERE_CONFIG_DECLARE_FIELD(PARAM)                                                                     \
     __DICT__[#PARAM] = knowhere::Config::VarEntry(std::in_place_type<knowhere::Entry<decltype(PARAM)>>, &PARAM); \
@@ -655,7 +655,7 @@ class BaseConfig : public Config {
     CFG_INT lemur_seed;               // random seed for LEMUR
     CFG_INT lemur_num_layers;         // number of layers in feature_extractor
     CFG_BOOL emb_list_rerank;         // whether to perform MaxSim reranking after ANN search
-    KNOHWERE_DECLARE_CONFIG(BaseConfig) {
+    KNOWHERE_DECLARE_CONFIG(BaseConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(dim).allow_empty_without_default().description("vector dim").for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
             .set_default("L2")

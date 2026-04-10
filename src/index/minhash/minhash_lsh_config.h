@@ -25,7 +25,7 @@ class MinHashLSHConfig : public BaseConfig {
     CFG_BOOL with_raw_data;
     CFG_INT refine_k;
     CFG_BOOL mh_lsh_batch_search;
-    KNOHWERE_DECLARE_CONFIG(MinHashLSHConfig) {
+    KNOWHERE_DECLARE_CONFIG(MinHashLSHConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(mh_lsh_aligned_block_size)
             .description("decide the data format in file")
             .set_default(4096)

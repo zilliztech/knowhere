@@ -83,7 +83,7 @@ class DiskANNConfig : public BaseConfig {
     // value should be in range of [0.0, 1.0] which means when greater or equal to x% of the bits are set,
     // use PQ + Refine. Default to -1.0f, negative vlaues will use dynamic threshold calculator given topk.
     CFG_FLOAT filter_threshold;
-    KNOHWERE_DECLARE_CONFIG(DiskANNConfig) {
+    KNOWHERE_DECLARE_CONFIG(DiskANNConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(max_degree)
             .description("the degree of the graph index.")
             .set_default(48)
