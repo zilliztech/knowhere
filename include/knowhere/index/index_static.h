@@ -131,7 +131,7 @@ class IndexStaticFaced {
     InternalStaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version);
 
     static knowhere::Status
-    InternalConfigCheck(const knowhere::BaseConfig& config, const IndexVersion& version, std::string& msg);
+    InternalConfigCheck(const knowhere::BaseConfig& config, PARAM_TYPE paramType, std::string& msg);
 
     static std::unique_ptr<BaseConfig>
     InternalStaticCreateConfig();
