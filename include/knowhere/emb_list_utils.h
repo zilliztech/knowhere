@@ -21,6 +21,7 @@
 #include "knowhere/bitsetview.h"
 #include "knowhere/log.h"
 #include "knowhere/object.h"
+#include "knowhere/utils.h"
 
 namespace knowhere {
 
@@ -199,7 +200,7 @@ using EmbListAggFunc = std::function<std::optional<float>(const float*, size_t, 
 
 inline std::optional<EmbListAggFunc>
 get_emb_list_agg_func(const std::string& el_metric_type) {
-    if (el_metric_type == metric::MAX_SIM) {
+    if (IsMetricType(el_metric_type, metric::MAX_SIM)) {
         return get_sum_max_sim;
     }
     return nullptr;
@@ -212,13 +213,13 @@ get_emb_list_agg_func(const std::string& el_metric_type) {
  */
 inline std::optional<std::string>
 get_el_metric_type(const std::string& metric_type) {
-    if (metric_type == metric::MAX_SIM || metric_type == metric::MAX_SIM_IP || metric_type == metric::MAX_SIM_L2 ||
-        metric_type == metric::MAX_SIM_COSINE || metric_type == metric::MAX_SIM_HAMMING ||
-        metric_type == metric::MAX_SIM_JACCARD) {
+    if (IsMetricType(metric_type, metric::MAX_SIM) || IsMetricType(metric_type, metric::MAX_SIM_IP) ||
+        IsMetricType(metric_type, metric::MAX_SIM_L2) || IsMetricType(metric_type, metric::MAX_SIM_COSINE) ||
+        IsMetricType(metric_type, metric::MAX_SIM_HAMMING) || IsMetricType(metric_type, metric::MAX_SIM_JACCARD)) {
         return metric::MAX_SIM;
-    } else if (metric_type == metric::DTW || metric_type == metric::DTW_IP || metric_type == metric::DTW_L2 ||
-               metric_type == metric::DTW_COSINE || metric_type == metric::DTW_HAMMING ||
-               metric_type == metric::DTW_JACCARD) {
+    } else if (IsMetricType(metric_type, metric::DTW) || IsMetricType(metric_type, metric::DTW_IP) ||
+               IsMetricType(metric_type, metric::DTW_L2) || IsMetricType(metric_type, metric::DTW_COSINE) ||
+               IsMetricType(metric_type, metric::DTW_HAMMING) || IsMetricType(metric_type, metric::DTW_JACCARD)) {
         return metric::DTW;
     }
     return std::nullopt;
@@ -231,20 +232,20 @@ get_el_metric_type(const std::string& metric_type) {
  */
 inline std::optional<std::string>
 get_sub_metric_type(const std::string& metric_type) {
-    if (metric_type == metric::MAX_SIM_COSINE || metric_type == metric::MAX_SIM || metric_type == metric::DTW_COSINE ||
-        metric_type == metric::DTW) {
+    if (IsMetricType(metric_type, metric::MAX_SIM_COSINE) || IsMetricType(metric_type, metric::MAX_SIM) ||
+        IsMetricType(metric_type, metric::DTW_COSINE) || IsMetricType(metric_type, metric::DTW)) {
         return metric::COSINE;
     }
-    if (metric_type == metric::MAX_SIM_IP || metric_type == metric::DTW_IP) {
+    if (IsMetricType(metric_type, metric::MAX_SIM_IP) || IsMetricType(metric_type, metric::DTW_IP)) {
         return metric::IP;
     }
-    if (metric_type == metric::MAX_SIM_L2 || metric_type == metric::DTW_L2) {
+    if (IsMetricType(metric_type, metric::MAX_SIM_L2) || IsMetricType(metric_type, metric::DTW_L2)) {
         return metric::L2;
     }
-    if (metric_type == metric::MAX_SIM_HAMMING || metric_type == metric::DTW_HAMMING) {
+    if (IsMetricType(metric_type, metric::MAX_SIM_HAMMING) || IsMetricType(metric_type, metric::DTW_HAMMING)) {
         return metric::HAMMING;
     }
-    if (metric_type == metric::MAX_SIM_JACCARD || metric_type == metric::DTW_JACCARD) {
+    if (IsMetricType(metric_type, metric::MAX_SIM_JACCARD) || IsMetricType(metric_type, metric::DTW_JACCARD)) {
         return metric::JACCARD;
     }
     return std::nullopt;

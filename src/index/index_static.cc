@@ -56,6 +56,14 @@ IndexStaticFaced<DataType>::ConfigCheck(const IndexType& indexType, const IndexV
         return status;
     }
 
+    if constexpr (!std::is_same_v<DataType, knowhere::fp32>) {
+        auto strategy = cfg->emb_list_strategy.value_or("");
+        if (strategy == meta::EMB_LIST_STRATEGY_MUVERA || strategy == meta::EMB_LIST_STRATEGY_LEMUR) {
+            msg = "MUVERA/LEMUR strategies only support fp32 data type, got '" + strategy + "'";
+            return Status::invalid_args;
+        }
+    }
+
     if (Instance().staticConfigCheckMap.find(indexType) != Instance().staticConfigCheckMap.end()) {
         return Instance().staticConfigCheckMap[indexType](*cfg, knowhere::PARAM_TYPE::TRAIN, msg);
     }

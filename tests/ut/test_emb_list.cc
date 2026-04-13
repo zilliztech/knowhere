@@ -17,6 +17,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -213,7 +214,10 @@ read_index(knowhere::Index<knowhere::IndexNode>& index, const std::string& filen
         binary_set.Append(name, data_ptr, data_size);
     }
 
-    index.Deserialize(binary_set, conf);
+    auto status = index.Deserialize(binary_set, conf);
+    if (status != knowhere::Status::success) {
+        throw std::runtime_error("failed to deserialize test index");
+    }
 }
 
 template <typename T>
@@ -642,6 +646,177 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
                         REQUIRE(result_loaded.has_value());
                         auto recall_loaded = GetKNNRecall(*golden_result.value(), *result_loaded.value());
                         REQUIRE(recall_loaded >= target_recall);
+                    }
+                }
+            }
+        }
+    }
+
+    SECTION("HNSW SQ MUVERA") {
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW_SQ;
+
+        for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
+            for (const int32_t dim : DIMS) {
+                const uint64_t query_rng_seed = get_params_hash({(int)distance_type, dim});
+                auto query_ds_ptr = GenQueryEmbListDataSet(NQ, dim, query_rng_seed);
+
+                for (const int32_t nb : NBS) {
+                    knowhere::Json conf = default_conf;
+                    conf[knowhere::meta::METRIC_TYPE] = DISTANCE_TYPES[distance_type];
+                    conf[knowhere::meta::DIM] = dim;
+                    conf[knowhere::meta::ROWS] = nb;
+                    conf[knowhere::meta::INDEX_TYPE] = index_type;
+                    conf[knowhere::indexparam::SQ_TYPE] = "SQ8";
+                    conf["emb_list_strategy"] = "muvera";
+                    conf["muvera_num_projections"] = 3;
+                    conf["muvera_num_repeats"] = 5;
+                    conf["muvera_seed"] = 42;
+
+                    std::vector<int32_t> params = {(int)distance_type, dim, nb, 10};
+
+                    const uint64_t rng_seed = get_params_hash(params);
+                    int each_el_len = 10;
+                    int num_el = int(nb / each_el_len) + 1;
+                    auto default_ds_ptr = GenEmbListDataSet(nb, dim, rng_seed, each_el_len);
+
+                    for (const float bitset_rate : BITSET_RATES) {
+                        printf("bitset_rate: %f\n", bitset_rate);
+                        const std::vector<uint8_t> bitset_data =
+                            GenerateBitsetByPartition(num_el, 1.0f - bitset_rate, 1);
+
+                        knowhere::BitsetView bitset_view = nullptr;
+                        if (bitset_rate != 0.0f) {
+                            bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
+                        }
+
+                        auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
+                                                                                          conf, bitset_view);
+
+                        printf(
+                            "\nProcessing EMBList HNSW,SQ(SQ8) MUVERA fp32 for %s distance, "
+                            "dim=%d, nrows=%d, %d%% points filtered out\n",
+                            DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                        auto index_file = test_emb_list_index<knowhere::fp32>(
+                            default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf, false, bitset_view);
+                        std::remove(index_file.c_str());
+                    }
+                }
+            }
+        }
+    }
+
+    SECTION("HNSW FLAT LEMUR") {
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW;
+
+        for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
+            for (const int32_t dim : DIMS) {
+                const uint64_t query_rng_seed = get_params_hash({(int)distance_type, dim});
+                auto query_ds_ptr = GenQueryEmbListDataSet(NQ, dim, query_rng_seed);
+
+                for (const int32_t nb : NBS) {
+                    knowhere::Json conf = default_conf;
+                    conf[knowhere::meta::METRIC_TYPE] = DISTANCE_TYPES[distance_type];
+                    conf[knowhere::meta::DIM] = dim;
+                    conf[knowhere::meta::ROWS] = nb;
+                    conf[knowhere::meta::INDEX_TYPE] = index_type;
+                    // LEMUR: hidden_dim=16, num_el=26 >= 16
+                    conf["emb_list_strategy"] = "lemur";
+                    conf["lemur_hidden_dim"] = 16;
+                    conf["lemur_num_train_samples"] = 1000;
+                    conf["lemur_num_epochs"] = 2;
+                    conf["lemur_batch_size"] = 16;
+                    conf["lemur_learning_rate"] = 0.001f;
+                    conf["lemur_seed"] = 42;
+                    conf["lemur_num_layers"] = 1;
+
+                    std::vector<int32_t> params = {(int)distance_type, dim, nb, 14};
+
+                    const uint64_t rng_seed = get_params_hash(params);
+                    int each_el_len = 10;
+                    int num_el = int(nb / each_el_len) + 1;
+                    auto default_ds_ptr = GenEmbListDataSet(nb, dim, rng_seed, each_el_len);
+
+                    for (const float bitset_rate : BITSET_RATES) {
+                        printf("bitset_rate: %f\n", bitset_rate);
+                        const std::vector<uint8_t> bitset_data =
+                            GenerateBitsetByPartition(num_el, 1.0f - bitset_rate, 1);
+
+                        knowhere::BitsetView bitset_view = nullptr;
+                        if (bitset_rate != 0.0f) {
+                            bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
+                        }
+
+                        auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
+                                                                                          conf, bitset_view);
+
+                        printf(
+                            "\nProcessing EMBList HNSW,Flat LEMUR fp32 for %s distance, "
+                            "dim=%d, nrows=%d, %d%% points filtered out\n",
+                            DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                        auto index_file = test_emb_list_index<knowhere::fp32>(
+                            default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf, false, bitset_view);
+                        std::remove(index_file.c_str());
+                    }
+                }
+            }
+        }
+    }
+
+    SECTION("HNSW SQ LEMUR") {
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW_SQ;
+
+        for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
+            for (const int32_t dim : DIMS) {
+                const uint64_t query_rng_seed = get_params_hash({(int)distance_type, dim});
+                auto query_ds_ptr = GenQueryEmbListDataSet(NQ, dim, query_rng_seed);
+
+                for (const int32_t nb : NBS) {
+                    knowhere::Json conf = default_conf;
+                    conf[knowhere::meta::METRIC_TYPE] = DISTANCE_TYPES[distance_type];
+                    conf[knowhere::meta::DIM] = dim;
+                    conf[knowhere::meta::ROWS] = nb;
+                    conf[knowhere::meta::INDEX_TYPE] = index_type;
+                    conf[knowhere::indexparam::SQ_TYPE] = "SQ8";
+                    // LEMUR: hidden_dim=16, num_el=26 >= 16
+                    conf["emb_list_strategy"] = "lemur";
+                    conf["lemur_hidden_dim"] = 16;
+                    conf["lemur_num_train_samples"] = 1000;
+                    conf["lemur_num_epochs"] = 2;
+                    conf["lemur_batch_size"] = 16;
+                    conf["lemur_learning_rate"] = 0.001f;
+                    conf["lemur_seed"] = 42;
+                    conf["lemur_num_layers"] = 1;
+
+                    std::vector<int32_t> params = {(int)distance_type, dim, nb, 12};
+
+                    const uint64_t rng_seed = get_params_hash(params);
+                    int each_el_len = 10;
+                    int num_el = int(nb / each_el_len) + 1;
+                    auto default_ds_ptr = GenEmbListDataSet(nb, dim, rng_seed, each_el_len);
+
+                    for (const float bitset_rate : BITSET_RATES) {
+                        printf("bitset_rate: %f\n", bitset_rate);
+                        const std::vector<uint8_t> bitset_data =
+                            GenerateBitsetByPartition(num_el, 1.0f - bitset_rate, 1);
+
+                        knowhere::BitsetView bitset_view = nullptr;
+                        if (bitset_rate != 0.0f) {
+                            bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
+                        }
+
+                        auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
+                                                                                          conf, bitset_view);
+
+                        printf(
+                            "\nProcessing EMBList HNSW,SQ(SQ8) LEMUR fp32 for %s distance, "
+                            "dim=%d, nrows=%d, %d%% points filtered out\n",
+                            DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+
+                        auto index_file = test_emb_list_index<knowhere::fp32>(
+                            default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf, false, bitset_view);
+                        std::remove(index_file.c_str());
                     }
                 }
             }
