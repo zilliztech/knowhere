@@ -17,6 +17,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -184,7 +185,10 @@ read_index(knowhere::Index<knowhere::IndexNode>& index, const std::string& filen
         binary_set.Append(name, data_ptr, data_size);
     }
 
-    index.Deserialize(binary_set, conf);
+    auto status = index.Deserialize(binary_set, conf);
+    if (status != knowhere::Status::success) {
+        throw std::runtime_error("failed to deserialize test index");
+    }
 }
 
 template <typename T>

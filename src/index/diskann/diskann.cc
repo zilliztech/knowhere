@@ -104,12 +104,25 @@ class DiskANNIndexNode : public IndexNode {
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
         knowhere::MetricType metric_type = config.metric_type.has_value() ? config.metric_type.value() : "";
-        return IsMetricType(metric_type, metric::L2) || IsMetricType(metric_type, metric::COSINE);
+        const auto& base_metric = get_sub_metric_type(metric_type).value_or(metric_type);
+        return IsMetricType(base_metric, metric::L2) || IsMetricType(base_metric, metric::COSINE);
+    }
+
+    static Status
+    StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {
+        auto& base_cfg = static_cast<const BaseConfig&>(cfg);
+        auto strategy = base_cfg.emb_list_strategy.value_or("");
+        if (strategy == meta::EMB_LIST_STRATEGY_MUVERA || strategy == meta::EMB_LIST_STRATEGY_LEMUR) {
+            msg = "DiskANN only supports TokenANN strategy, got '" + strategy + "'";
+            return Status::invalid_args;
+        }
+        return Status::success;
     }
 
     bool
     HasRawData(const std::string& metric_type) const override {
-        return IsMetricType(metric_type, metric::L2) || IsMetricType(metric_type, metric::COSINE);
+        const auto& base_metric = get_sub_metric_type(metric_type).value_or(metric_type);
+        return IsMetricType(base_metric, metric::L2) || IsMetricType(base_metric, metric::COSINE);
     }
 
     expected<DataSetPtr>
@@ -495,6 +508,13 @@ DiskANNIndexNode<DataType>::BuildEmbListIfNeed(const DataSetPtr dataset, std::sh
     if (!el_metric_type_or.has_value()) {
         // If not emb_list metric type, use the default build method
         return Build(dataset, std::move(cfg), use_knowhere_build_pool);
+    }
+
+    // DiskANN only supports TokenANN strategy
+    auto strategy_type = config.emb_list_strategy.value_or(meta::EMB_LIST_STRATEGY_TOKENANN);
+    if (strategy_type != meta::EMB_LIST_STRATEGY_TOKENANN) {
+        LOG_KNOWHERE_ERROR_ << "DiskANN only supports TokenANN strategy, got: " << strategy_type;
+        return Status::invalid_args;
     }
 
     LOG_KNOWHERE_INFO_ << "Build emb_list index and read emb_list offset from file.";

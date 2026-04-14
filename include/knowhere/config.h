@@ -849,7 +849,7 @@ class BaseConfig : public Config {
         KNOWHERE_CONFIG_DECLARE_FIELD(lemur_hidden_dim)
             .description("Hidden dimension for LEMUR MLP (compressed representation dimension)")
             .set_default(256)
-            .set_range(32, 4096)
+            .set_range(8, 8192)
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(lemur_num_train_samples)
             .description("Number of training samples for LEMUR MLP")
