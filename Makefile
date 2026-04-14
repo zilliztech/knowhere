@@ -17,12 +17,13 @@ SHELL := /bin/bash
 CONAN_BASE_FLAGS := --update --build=missing
 
 # ---------- User-facing build flags ----------
-# Usage: make WITH_GPU=True WITH_UT=True WITH_ASAN=True WITH_DEBUG=True
+# Usage: make WITH_GPU=True WITH_UT=True WITH_ASAN=True WITH_DEBUG=True WITH_BENCHMARK=True
 WITH_GPU ?=
 WITH_UT ?=
 WITH_ASAN ?=
 WITH_CARDINAL ?=
 WITH_DEBUG ?=
+WITH_BENCHMARK ?=
 CONAN_PROFILE ?=
 
 # Prevent build-flag variables from leaking into the environment of child
@@ -30,7 +31,7 @@ CONAN_PROFILE ?=
 # variables such as WITH_ASAN to every sub-process, which causes the custom
 # folly recipe to pick up $ENV{WITH_ASAN} and compile folly itself with
 # -fsanitize=address — breaking the build on GCC.
-unexport WITH_GPU WITH_UT WITH_ASAN WITH_CARDINAL WITH_DEBUG
+unexport WITH_GPU WITH_UT WITH_ASAN WITH_CARDINAL WITH_DEBUG WITH_BENCHMARK
 
 # ---------- Derived settings ----------
 ifdef WITH_DEBUG
@@ -75,6 +76,10 @@ ifdef WITH_CARDINAL
     CONAN_FLAGS += -o with_cardinal=True
 endif
 
+ifdef WITH_BENCHMARK
+    CONAN_FLAGS += -o with_benchmark=True
+endif
+
 ifdef CONAN_PROFILE
     CONAN_FLAGS += -pr $(CONAN_PROFILE)
 endif
@@ -88,7 +93,7 @@ all: build ## Default: CPU release build
 
 # ---------- Build ----------
 
-build: ## Build knowhere (use WITH_GPU=True, WITH_UT=True, WITH_ASAN=True)
+build: ## Build knowhere (use WITH_GPU=True, WITH_UT=True, WITH_ASAN=True, WITH_BENCHMARK=True)
 ifdef WITH_GPU
 	@$(PWD)/scripts/prepare_gpu_build.sh
 endif
@@ -140,7 +145,8 @@ help: ## Show available targets
 	@echo "  WITH_GPU=True      Enable GPU (cuVS) build"
 	@echo "  WITH_UT=True       Enable unit tests"
 	@echo "  WITH_ASAN=True     Enable AddressSanitizer"
-	@echo "  WITH_CARDINAL=True Enable Cardinal build"
+	@echo "  WITH_CARDINAL=True   Enable Cardinal build"
+	@echo "  WITH_BENCHMARK=True  Enable benchmark build"
 	@echo "  WITH_DEBUG=True    Debug build (default: Release)"
 	@echo "  CONAN_PROFILE=<p>  Use a custom Conan profile (e.g. clang, gcc-15)"
 	@echo "  LIBCXX=<lib>       Override compiler.libcxx (auto-detected from OS)"
