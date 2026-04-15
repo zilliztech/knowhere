@@ -25,6 +25,7 @@ namespace IndexEnum {
 constexpr const char* INVALID = "";
 
 constexpr const char* INDEX_FAISS_BIN_IDMAP = "BIN_FLAT";
+constexpr const char* INDEX_FAISS = "FAISS";
 constexpr const char* INDEX_FAISS_BIN_IVFFLAT = "BIN_IVF_FLAT";
 
 constexpr const char* INDEX_FAISS_IDMAP = "FLAT";

@@ -28,6 +28,9 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
     {IndexEnum::INDEX_FAISS_IDMAP, VecType::VECTOR_BFLOAT16},
     // {IndexEnum::INDEX_FAISS_IDMAP, VecType::VECTOR_INT8},
 
+    {IndexEnum::INDEX_FAISS, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_FAISS, VecType::VECTOR_BINARY},
+
     {IndexEnum::INDEX_FAISS_IVFFLAT, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_FAISS_IVFFLAT, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_FAISS_IVFFLAT, VecType::VECTOR_BFLOAT16},

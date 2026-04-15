@@ -33,6 +33,7 @@ LoadConfig(BaseConfig* cfg, const Json& json, knowhere::PARAM_TYPE param_type, c
     auto res = Config::FormatAndCheck(*cfg, json_, msg);
     LOG_KNOWHERE_DEBUG_ << method << " config dump: " << json_.dump();
     RETURN_IF_ERROR(res);
+    cfg->CaptureRawJson(json_);
     return Config::Load(*cfg, json_, param_type, msg);
 }
 
