@@ -40,6 +40,7 @@ KnownIndexTypes() {
                                                          IndexEnum::INDEX_FAISS_IVFSQ8,
                                                          IndexEnum::INDEX_FAISS_IVFSQ_CC,
                                                          IndexEnum::INDEX_FAISS_IVFRABITQ,
+                                                         IndexEnum::INDEX_FAISS_IVFRABITQ_FASTSCAN,
                                                          IndexEnum::INDEX_FAISS_GPU_IDMAP,
                                                          IndexEnum::INDEX_FAISS_GPU_IVFFLAT,
                                                          IndexEnum::INDEX_FAISS_GPU_IVFPQ,

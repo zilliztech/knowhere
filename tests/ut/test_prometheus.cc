@@ -11,6 +11,9 @@
 
 #include <iostream>
 #include <string>
+#include <thread>
+#include <unordered_set>
+#include <vector>
 
 #include "catch2/catch_test_macros.hpp"
 #include "knowhere/comp/index_param.h"
@@ -32,5 +35,22 @@ TEST_CASE("Test prometheus client", "[prometheus client]") {
         CHECK(str.find("build_latency_bucket{index_type=\"HNSW\",module=\"knowhere\"") != std::string::npos);
         CHECK(str.find("index_type=\"FLAT\"") != std::string::npos);
         CHECK(str.find("index_type=\"HNSW\"") != std::string::npos);
+    }
+
+    SECTION("concurrent GetPrometheusHistogram returns a single instance") {
+        constexpr int kThreads = 16;
+        std::vector<std::thread> workers;
+        std::vector<prometheus::Histogram*> observed(kThreads, nullptr);
+        for (int i = 0; i < kThreads; ++i) {
+            workers.emplace_back([i, &observed] {
+                observed[i] = &knowhere::GetPrometheusHistogram(knowhere::search_latency_family, "knowhere",
+                                                                knowhere::IndexEnum::INDEX_HNSW);
+            });
+        }
+        for (auto& t : workers) {
+            t.join();
+        }
+        std::unordered_set<prometheus::Histogram*> unique(observed.begin(), observed.end());
+        CHECK(unique.size() == 1);
     }
 }
