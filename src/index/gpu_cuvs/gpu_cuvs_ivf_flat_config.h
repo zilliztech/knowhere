@@ -30,7 +30,7 @@ struct GpuCuvsIvfFlatConfig : public IvfFlatConfig {
     CFG_INT kmeans_n_iters;
     CFG_FLOAT kmeans_trainset_fraction;
     CFG_BOOL adaptive_centers;
-    KNOHWERE_DECLARE_CONFIG(GpuCuvsIvfFlatConfig) {
+    KNOWHERE_DECLARE_CONFIG(GpuCuvsIvfFlatConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(cache_dataset_on_device)
             .set_default(false)
             .description("cache dataset on device for refinement")

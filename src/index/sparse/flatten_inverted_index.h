@@ -465,7 +465,7 @@ FlattenInvertedIndex<DType, QType>::add(const SparseRow<DType>* data, size_t row
     this->nr_rows_ = rows;
     this->max_dim_ = dim;
 
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     this->build_stats_.dataset_nnz_stats_.resize(rows);
 #endif
 
@@ -482,12 +482,12 @@ FlattenInvertedIndex<DType, QType>::add(const SparseRow<DType>* data, size_t row
             plist_cnts[this->dim_map_[dim]]++;
             ++total_nnz;
         }
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         this->build_stats_.dataset_nnz_stats_[i] = data[i].size();
 #endif
     }
 
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     this->build_stats_.posting_list_length_stats_.resize(this->nr_inner_dims_);
     for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
         this->build_stats_.posting_list_length_stats_[i] = plist_cnts[i];
@@ -604,7 +604,7 @@ FlattenInvertedIndex<DType, QType>::serialize(MemoryIOWriter& writer) const {
     nr_sections += ((this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_ROW_SUMS) != 0) +
                    ((this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_MAX_SCORES_PER_DIM) != 0) +
                    ((this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_BLOCK_MAX_SCORES) != 0);
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // use a section to store some build stats for prometheus
     nr_sections += 1;
 #endif
@@ -649,7 +649,7 @@ FlattenInvertedIndex<DType, QType>::serialize(MemoryIOWriter& writer) const {
         curr_section_idx++;
     }
 
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     section_headers[curr_section_idx].type = InvertedIndexSectionType::PROMETHEUS_BUILD_STATS;
     section_headers[curr_section_idx].offset = used_offset;
     section_headers[curr_section_idx].size =
@@ -693,7 +693,7 @@ FlattenInvertedIndex<DType, QType>::serialize(MemoryIOWriter& writer) const {
     }
 
     // write prometheus build stats
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     writer.write(this->build_stats_.dataset_nnz_stats_.data(), sizeof(uint32_t), this->nr_rows_);
     writer.write(this->build_stats_.posting_list_length_stats_.data(), sizeof(uint32_t), this->nr_inner_dims_);
 #endif

@@ -52,7 +52,7 @@ struct GpuCuvsCagraConfig : public BaseConfig {
     CFG_INT ef;
     CFG_BOOL persistent;
 
-    KNOHWERE_DECLARE_CONFIG(GpuCuvsCagraConfig) {
+    KNOWHERE_DECLARE_CONFIG(GpuCuvsCagraConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(cache_dataset_on_device)
             .set_default(false)
             .description("cache dataset on device for refinement")

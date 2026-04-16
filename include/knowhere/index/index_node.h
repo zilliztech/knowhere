@@ -13,6 +13,7 @@
 #define INDEX_NODE_H
 
 #include <functional>
+#include <mutex>
 #include <queue>
 #include <utility>
 #include <vector>
@@ -324,6 +325,40 @@ class IndexNode : public Object {
     virtual std::string
     Type() const = 0;
 
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+    struct LatencyMetricCache {
+        mutable std::once_flag once;
+        mutable prometheus::Histogram* metric{nullptr};
+    };
+
+    prometheus::Histogram&
+    GetLatencyMetric(LatencyMetricCache& cache, prometheus::Family<prometheus::Histogram>& family) const {
+        std::call_once(cache.once,
+                       [this, &cache, &family] { cache.metric = &GetPrometheusHistogram(family, "knowhere", Type()); });
+        return *cache.metric;
+    }
+
+    prometheus::Histogram&
+    GetBuildLatencyMetric() const {
+        return GetLatencyMetric(prometheus_metrics_.build, build_latency_family);
+    }
+
+    prometheus::Histogram&
+    GetLoadLatencyMetric() const {
+        return GetLatencyMetric(prometheus_metrics_.load, load_latency_family);
+    }
+
+    prometheus::Histogram&
+    GetSearchLatencyMetric() const {
+        return GetLatencyMetric(prometheus_metrics_.search, search_latency_family);
+    }
+
+    prometheus::Histogram&
+    GetRangeSearchLatencyMetric() const {
+        return GetLatencyMetric(prometheus_metrics_.range_search, range_search_latency_family);
+    }
+#endif
+
     /**
      * @brief Gets the mapping from internal IDs to external IDs.
      *
@@ -610,6 +645,16 @@ class IndexNode : public Object {
     // vectors (not raw), this IndexFlat stores original vectors for exact distance
     // computation during MaxSim reranking.
     std::shared_ptr<faiss::cppcontrib::knowhere::IndexFlat> emb_list_raw_index_;
+
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+    struct PrometheusMetrics {
+        LatencyMetricCache build;
+        LatencyMetricCache load;
+        LatencyMetricCache search;
+        LatencyMetricCache range_search;
+    };
+    mutable PrometheusMetrics prometheus_metrics_;
+#endif
 };
 
 // Common superclass for iterators that expand search range as needed. Subclasses need

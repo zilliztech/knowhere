@@ -37,7 +37,7 @@ struct GpuCuvsIvfPqConfig : public IvfPqConfig {
     CFG_STRING internal_distance_dtype;
     CFG_FLOAT preferred_shmem_carveout;
 
-    KNOHWERE_DECLARE_CONFIG(GpuCuvsIvfPqConfig) {
+    KNOWHERE_DECLARE_CONFIG(GpuCuvsIvfPqConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(cache_dataset_on_device)
             .set_default(false)
             .description("cache dataset on device for refinement")

@@ -11,6 +11,8 @@
 
 #include "knowhere/prometheus_client.h"
 
+#include "knowhere/comp/index_param.h"
+
 namespace knowhere {
 
 const prometheus::Histogram::BucketBoundaries defaultBuckets = {1,     2,     4,     8,      16,     32,     64,
@@ -21,6 +23,83 @@ const prometheus::Histogram::BucketBoundaries ratioBuckets = {
     0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0};
 
 const std::unique_ptr<PrometheusClient> prometheusClient = std::make_unique<PrometheusClient>();
+PrometheusHistogramCache prometheusHistogramCache;
+
+namespace {
+
+const std::vector<std::string>&
+KnownIndexTypes() {
+    static const std::vector<std::string> index_types = {IndexEnum::INDEX_FAISS_BIN_IDMAP,
+                                                         IndexEnum::INDEX_FAISS_BIN_IVFFLAT,
+                                                         IndexEnum::INDEX_FAISS_IDMAP,
+                                                         IndexEnum::INDEX_FAISS_IVFFLAT,
+                                                         IndexEnum::INDEX_FAISS_IVFFLAT_CC,
+                                                         IndexEnum::INDEX_FAISS_IVFPQ,
+                                                         IndexEnum::INDEX_FAISS_SCANN,
+                                                         IndexEnum::INDEX_FAISS_SCANN_DVR,
+                                                         IndexEnum::INDEX_FAISS_IVFSQ8,
+                                                         IndexEnum::INDEX_FAISS_IVFSQ_CC,
+                                                         IndexEnum::INDEX_FAISS_IVFRABITQ,
+                                                         IndexEnum::INDEX_FAISS_IVFRABITQ_FASTSCAN,
+                                                         IndexEnum::INDEX_FAISS_GPU_IDMAP,
+                                                         IndexEnum::INDEX_FAISS_GPU_IVFFLAT,
+                                                         IndexEnum::INDEX_FAISS_GPU_IVFPQ,
+                                                         IndexEnum::INDEX_FAISS_GPU_IVFSQ8,
+                                                         IndexEnum::INDEX_CUVS_BRUTEFORCE,
+                                                         IndexEnum::INDEX_CUVS_IVFFLAT,
+                                                         IndexEnum::INDEX_CUVS_IVFPQ,
+                                                         IndexEnum::INDEX_CUVS_CAGRA,
+                                                         IndexEnum::INDEX_GPU_BRUTEFORCE,
+                                                         IndexEnum::INDEX_GPU_IVFFLAT,
+                                                         IndexEnum::INDEX_GPU_IVFPQ,
+                                                         IndexEnum::INDEX_GPU_CAGRA,
+                                                         IndexEnum::INDEX_HNSW,
+                                                         IndexEnum::INDEX_HNSW_SQ,
+                                                         IndexEnum::INDEX_HNSW_PQ,
+                                                         IndexEnum::INDEX_HNSW_PRQ,
+                                                         IndexEnum::INDEX_DISKANN,
+                                                         IndexEnum::INDEX_AISAQ,
+                                                         IndexEnum::INDEX_MINHASH_LSH,
+                                                         IndexEnum::INDEX_SPARSE_INVERTED_INDEX,
+                                                         IndexEnum::INDEX_SPARSE_WAND,
+                                                         IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC,
+                                                         IndexEnum::INDEX_SPARSE_WAND_CC,
+                                                         IndexEnum::INDEX_CARDINAL_TIERED};
+    return index_types;
+}
+
+}  // namespace
+
+void
+PrometheusHistogramCache::RegisterMetrics(prometheus::Family<prometheus::Histogram>& family, const std::string& module,
+                                          const std::vector<std::string>& index_types,
+                                          const prometheus::Histogram::BucketBoundaries& buckets) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& index_type : index_types) {
+        const auto key = module + '\n' + index_type + '\n' + std::to_string(reinterpret_cast<uintptr_t>(&family));
+        if (metrics_.find(key) != metrics_.end()) {
+            continue;
+        }
+        auto& metric = family.Add({{"module", module}, {"index_type", index_type}}, buckets);
+        metrics_.emplace(key, &metric);
+    }
+}
+
+prometheus::Histogram&
+PrometheusHistogramCache::GetMetric(prometheus::Family<prometheus::Histogram>& family, const std::string& module,
+                                    const std::string& index_type,
+                                    const prometheus::Histogram::BucketBoundaries& buckets) {
+    const auto key = module + '\n' + index_type + '\n' + std::to_string(reinterpret_cast<uintptr_t>(&family));
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = metrics_.find(key);
+    if (it != metrics_.end()) {
+        return *(it->second);
+    }
+
+    auto& metric = family.Add({{"module", module}, {"index_type", index_type}}, buckets);
+    metrics_.emplace(key, &metric);
+    return metric;
+}
 
 /*******************************************************************************
  * !!! NOT use SUMMARY metrics here, because when parse SUMMARY metrics in Milvus,
@@ -29,113 +108,148 @@ const std::unique_ptr<PrometheusClient> prometheusClient = std::make_unique<Prom
  *   An error has occurred while serving metrics:
  *   text format parsing error in line 50: expected float as value, got "=\"0.9\"}"
  ******************************************************************************/
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(build_latency, "index build latency (s)")
-DEFINE_PROMETHEUS_HISTOGRAM(build_latency, PROMETHEUS_LABEL_KNOWHERE)
-DEFINE_PROMETHEUS_HISTOGRAM(build_latency, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(build_latency, "index build latency (s)")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(build_latency, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(load_latency, "index load latency (ms)")
-DEFINE_PROMETHEUS_HISTOGRAM(load_latency, PROMETHEUS_LABEL_KNOWHERE)
-DEFINE_PROMETHEUS_HISTOGRAM(load_latency, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(load_latency, "index load latency (ms)")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(load_latency, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_latency, "search latency (ms)")
-DEFINE_PROMETHEUS_HISTOGRAM(search_latency, PROMETHEUS_LABEL_KNOWHERE)
-DEFINE_PROMETHEUS_HISTOGRAM(search_latency, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_latency, "search latency (ms)")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(search_latency, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(range_search_latency, "range search latency (ms)")
-DEFINE_PROMETHEUS_HISTOGRAM(range_search_latency, PROMETHEUS_LABEL_KNOWHERE)
-DEFINE_PROMETHEUS_HISTOGRAM(range_search_latency, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(range_search_latency, "range search latency (ms)")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(range_search_latency, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(ann_iterator_init_latency, "ann iterator init latency (ms)")
-DEFINE_PROMETHEUS_HISTOGRAM(ann_iterator_init_latency, PROMETHEUS_LABEL_KNOWHERE)
-DEFINE_PROMETHEUS_HISTOGRAM(ann_iterator_init_latency, PROMETHEUS_LABEL_CARDINAL)
+const int preregister_index_type_metrics = []() {
+    const auto& known_index_types = KnownIndexTypes();
+    prometheusHistogramCache.RegisterMetrics(build_latency_family, "knowhere", known_index_types, defaultBuckets);
+    prometheusHistogramCache.RegisterMetrics(load_latency_family, "knowhere", known_index_types, defaultBuckets);
+    prometheusHistogramCache.RegisterMetrics(search_latency_family, "knowhere", known_index_types, defaultBuckets);
+    prometheusHistogramCache.RegisterMetrics(range_search_latency_family, "knowhere", known_index_types,
+                                             defaultBuckets);
+    return 0;
+}();
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_topk, "search topk")
-DEFINE_PROMETHEUS_HISTOGRAM(search_topk, PROMETHEUS_LABEL_KNOWHERE)
-DEFINE_PROMETHEUS_HISTOGRAM(search_topk, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(ann_iterator_init_latency, "ann iterator init latency (ms)")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(ann_iterator_init_latency, PROMETHEUS_LABEL_KNOWHERE)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(ann_iterator_init_latency, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_emb_list_1st_ann_latency, "emb_list search 1st ann latency (ms)")
-DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_1st_ann_latency, PROMETHEUS_LABEL_KNOWHERE)
-DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_1st_ann_latency, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_topk, "search topk")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(search_topk, PROMETHEUS_LABEL_KNOWHERE)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(search_topk, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_emb_list_2nd_bf_agg_latency, "emb_list search 2nd bf and agg latency (ms)")
-DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_2nd_bf_agg_latency, PROMETHEUS_LABEL_KNOWHERE)
-DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_2nd_bf_agg_latency, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_emb_list_1st_ann_latency, "emb_list search 1st ann latency (ms)")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_1st_ann_latency, PROMETHEUS_LABEL_KNOWHERE)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_1st_ann_latency, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_emb_list_retrieval_ann_ratio,
-                                   "retrieval ann ratio of emb_list search (default 3.0)")
-DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_retrieval_ann_ratio, PROMETHEUS_LABEL_KNOWHERE)
-DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_retrieval_ann_ratio, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_emb_list_2nd_bf_agg_latency,
+                                            "emb_list search 2nd bf and agg latency (ms)")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_2nd_bf_agg_latency, PROMETHEUS_LABEL_KNOWHERE)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_2nd_bf_agg_latency, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_level, "search level")
-DEFINE_PROMETHEUS_HISTOGRAM(search_level, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_emb_list_retrieval_ann_ratio,
+                                            "retrieval ann ratio of emb_list search (default 3.0)")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_retrieval_ann_ratio, PROMETHEUS_LABEL_KNOWHERE)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(search_emb_list_retrieval_ann_ratio, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(bitset_ratio, "bitset ratio")
-DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(bitset_ratio, PROMETHEUS_LABEL_CARDINAL, ratioBuckets)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(search_level, "search level")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(search_level, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(quant_compute_cnt, "quant compute cnt per request")
-DEFINE_PROMETHEUS_HISTOGRAM(quant_compute_cnt, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(bitset_ratio, "bitset ratio")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(bitset_ratio, PROMETHEUS_LABEL_CARDINAL, ratioBuckets)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(raw_compute_cnt, "raw compute cnt per request")
-DEFINE_PROMETHEUS_HISTOGRAM(raw_compute_cnt, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(quant_compute_cnt, "quant compute cnt per request")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(quant_compute_cnt, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(cache_hit_cnt, "cache hit cnt per request")
-DEFINE_PROMETHEUS_HISTOGRAM(cache_hit_cnt, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(raw_compute_cnt, "raw compute cnt per request")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(raw_compute_cnt, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(io_cnt, "io cnt per request")
-DEFINE_PROMETHEUS_HISTOGRAM(io_cnt, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(cache_hit_cnt, "cache hit cnt per request")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(cache_hit_cnt, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(queue_latency, "queue latency per request")
-DEFINE_PROMETHEUS_HISTOGRAM(queue_latency, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(io_cnt, "io cnt per request")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(io_cnt, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(exec_latency, "execute latency per request")
-DEFINE_PROMETHEUS_HISTOGRAM(exec_latency, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(queue_latency, "queue latency per request")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(queue_latency, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(graph_search_cnt, "number of graph search per request")
-DEFINE_PROMETHEUS_HISTOGRAM(graph_search_cnt, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(exec_latency, "execute latency per request")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(exec_latency, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(ivf_search_cnt, "number of ivf search per request")
-DEFINE_PROMETHEUS_HISTOGRAM(ivf_search_cnt, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(graph_search_cnt, "number of graph search per request")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(graph_search_cnt, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(bf_search_cnt, "number of bf search per request")
-DEFINE_PROMETHEUS_HISTOGRAM(bf_search_cnt, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(ivf_search_cnt, "number of ivf search per request")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(ivf_search_cnt, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(re_search_cnt, "number of fallback search per request")
-DEFINE_PROMETHEUS_HISTOGRAM(re_search_cnt, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(bf_search_cnt, "number of bf search per request")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(bf_search_cnt, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(filter_connectivity_ratio, "avg connectivity ratio set under filtering per request")
-DEFINE_PROMETHEUS_HISTOGRAM(filter_connectivity_ratio, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(re_search_cnt, "number of fallback search per request")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(re_search_cnt, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(filter_mv_only_cnt, "mv only cnt per request")
-DEFINE_PROMETHEUS_HISTOGRAM(filter_mv_only_cnt, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(filter_connectivity_ratio,
+                                            "avg connectivity ratio set under filtering per request")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(filter_connectivity_ratio, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(filter_mv_activated_fields_cnt, "avg mv activated fields per request")
-DEFINE_PROMETHEUS_HISTOGRAM(filter_mv_activated_fields_cnt, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(filter_mv_only_cnt, "mv only cnt per request")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(filter_mv_only_cnt, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(filter_mv_change_base_cnt, "mv change base cnt per request")
-DEFINE_PROMETHEUS_HISTOGRAM(filter_mv_change_base_cnt, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(filter_mv_activated_fields_cnt, "avg mv activated fields per request")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(filter_mv_activated_fields_cnt, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(filter_mv_supplement_ep_bool_cnt,
-                                   "mv supplement ep from bitset boolean cnt per request")
-DEFINE_PROMETHEUS_HISTOGRAM(filter_mv_supplement_ep_bool_cnt, PROMETHEUS_LABEL_CARDINAL)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(filter_mv_change_base_cnt, "mv change base cnt per request")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(filter_mv_change_base_cnt, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(hnsw_bitset_ratio, "HNSW bitset ratio for search and range search")
-DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(hnsw_bitset_ratio, PROMETHEUS_LABEL_KNOWHERE, ratioBuckets)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(filter_mv_supplement_ep_bool_cnt,
+                                            "mv supplement ep from bitset boolean cnt per request")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(filter_mv_supplement_ep_bool_cnt, PROMETHEUS_LABEL_CARDINAL)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(hnsw_search_hops, "HNSW search hops in layer 0")
-DEFINE_PROMETHEUS_HISTOGRAM(hnsw_search_hops, PROMETHEUS_LABEL_KNOWHERE)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(hnsw_bitset_ratio, "HNSW bitset ratio for search and range search")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(hnsw_bitset_ratio, PROMETHEUS_LABEL_KNOWHERE, ratioBuckets)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(diskann_bitset_ratio, "DISKANN bitset ratio for search and range search")
-DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(diskann_bitset_ratio, PROMETHEUS_LABEL_KNOWHERE, ratioBuckets)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(hnsw_search_hops, "HNSW search hops in layer 0")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(hnsw_search_hops, PROMETHEUS_LABEL_KNOWHERE)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(diskann_search_hops, "DISKANN search hops")
-DEFINE_PROMETHEUS_HISTOGRAM(diskann_search_hops, PROMETHEUS_LABEL_KNOWHERE)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(diskann_bitset_ratio, "DISKANN bitset ratio for search and range search")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(diskann_bitset_ratio, PROMETHEUS_LABEL_KNOWHERE, ratioBuckets)
+
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(diskann_search_hops, "DISKANN search hops")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(diskann_search_hops, PROMETHEUS_LABEL_KNOWHERE)
 
 const prometheus::Histogram::BucketBoundaries diskannRangeSearchIterBuckets = {2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22};
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(diskann_range_search_iters, "DISKANN range search iterations")
-DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(diskann_range_search_iters, PROMETHEUS_LABEL_KNOWHERE,
-                                         diskannRangeSearchIterBuckets)
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(diskann_range_search_iters, "DISKANN range search iterations")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(diskann_range_search_iters, PROMETHEUS_LABEL_KNOWHERE,
+                                                  diskannRangeSearchIterBuckets)
 
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(sparse_dataset_nnz_len, "sparse dataset nnz length")
-DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(sparse_inverted_index_posting_list_len, "sparse inverted index posting list length")
-DEFINE_PROMETHEUS_GAUGE_FAMILY(sparse_inverted_index_size, "sparse inverted index size (MB)")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(sparse_dataset_nnz_len, "sparse dataset nnz length")
+KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(sparse_inverted_index_posting_list_len,
+                                            "sparse inverted index posting list length")
+KNOWHERE_DEFINE_PROMETHEUS_GAUGE_FAMILY(sparse_inverted_index_size, "sparse inverted index size (MB)")
+
+void
+ObserveBuildLatencyByIndexType(const std::string& module, const std::string& index_type, double value) {
+    GetPrometheusHistogram(build_latency_family, module, index_type).Observe(value);
+}
+
+void
+ObserveLoadLatencyByIndexType(const std::string& module, const std::string& index_type, double value) {
+    GetPrometheusHistogram(load_latency_family, module, index_type).Observe(value);
+}
+
+void
+ObserveSearchLatencyByIndexType(const std::string& module, const std::string& index_type, double value) {
+    GetPrometheusHistogram(search_latency_family, module, index_type).Observe(value);
+}
+
+void
+ObserveRangeSearchLatencyByIndexType(const std::string& module, const std::string& index_type, double value) {
+    GetPrometheusHistogram(range_search_latency_family, module, index_type).Observe(value);
+}
+
+prometheus::Histogram&
+GetPrometheusHistogram(prometheus::Family<prometheus::Histogram>& family, const std::string& module,
+                       const std::string& index_type) {
+    return prometheusHistogramCache.GetMetric(family, module, index_type, defaultBuckets);
+}
 }  // namespace knowhere

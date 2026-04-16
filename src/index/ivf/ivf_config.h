@@ -29,7 +29,7 @@ class IvfConfig : public BaseConfig {
     CFG_BOOL use_elkan;
     CFG_BOOL ensure_topk_full;  // internal config, used for temp index
     CFG_INT max_empty_result_buckets;
-    KNOHWERE_DECLARE_CONFIG(IvfConfig) {
+    KNOWHERE_DECLARE_CONFIG(IvfConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(nlist)
             .description("number of inverted lists.")
             .set_default(128)
@@ -92,7 +92,7 @@ class IvfFlatConfig : public IvfConfig {};
 class IvfFlatCcConfig : public IvfFlatConfig {
  public:
     CFG_INT ssize;
-    KNOHWERE_DECLARE_CONFIG(IvfFlatCcConfig) {
+    KNOWHERE_DECLARE_CONFIG(IvfFlatCcConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(ssize)
             .description("segment size")
             .set_default(48)
@@ -112,7 +112,7 @@ class IvfPqConfig : public IvfConfig {
     CFG_FLOAT refine_k;
     // type of refine
     CFG_STRING refine_type;
-    KNOHWERE_DECLARE_CONFIG(IvfPqConfig) {
+    KNOWHERE_DECLARE_CONFIG(IvfPqConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(m).description("m").for_train().set_range(1, 65536);
         // FAISS rejects nbits > 24, because it is not practical
         KNOWHERE_CONFIG_DECLARE_FIELD(nbits).description("nbits").set_default(8).for_train().set_range(1, 24);
@@ -174,7 +174,7 @@ class ScannConfig : public IvfFlatConfig {
     CFG_BOOL with_raw_data;
     CFG_INT sub_dim;
     CFG_BOOL ensure_topk_full;
-    KNOHWERE_DECLARE_CONFIG(ScannConfig) {
+    KNOWHERE_DECLARE_CONFIG(ScannConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(reorder_k)
             .description("reorder k used for refining")
             .allow_empty_without_default()
@@ -254,7 +254,7 @@ class IvfSqConfig : public IvfConfig {
     CFG_FLOAT refine_k;
     // type of refine
     CFG_STRING refine_type;
-    KNOHWERE_DECLARE_CONFIG(IvfSqConfig) {
+    KNOWHERE_DECLARE_CONFIG(IvfSqConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(sq_type)
             .description("the type of sq")
             .set_default("SQ8")
@@ -331,7 +331,7 @@ class IvfSqCcConfig : public IvfFlatCcConfig {
     // cc index is a just-in-time index, raw data is avaliable after training if raw_data_store_prefix has value.
     // ivf sq cc index will not keep raw data after using binaryset to create a new ivf sq cc index.
     CFG_STRING raw_data_store_prefix;
-    KNOHWERE_DECLARE_CONFIG(IvfSqCcConfig) {
+    KNOWHERE_DECLARE_CONFIG(IvfSqCcConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(code_size)
             .set_default(8)
             .description("code size, range in [4, 6, 8 and 16]")
@@ -370,7 +370,7 @@ class IvfRaBitQConfig : public IvfConfig {
     // the value `0` means that the query won't be quantized and will
     //   be processed as is.
     CFG_INT rbq_bits_query;
-    KNOHWERE_DECLARE_CONFIG(IvfRaBitQConfig) {
+    KNOWHERE_DECLARE_CONFIG(IvfRaBitQConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(rbq_bits_query)
             .description("rbq_bits_query")
             .set_default(0)
@@ -435,7 +435,7 @@ class IvfRaBitQFastScanConfig : public IvfConfig {
     // Declared so that passing rbq_bits_query > 0 is caught and rejected
     // rather than silently ignored. FastScan always uses qb=8 internally.
     CFG_INT rbq_bits_query;
-    KNOHWERE_DECLARE_CONFIG(IvfRaBitQFastScanConfig) {
+    KNOWHERE_DECLARE_CONFIG(IvfRaBitQFastScanConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(rbq_bits_query)
             .description("not supported on IVF_RABITQ_FASTSCAN; must be 0 or omitted")
             .set_default(0)

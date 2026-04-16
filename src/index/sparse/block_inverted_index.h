@@ -705,7 +705,7 @@ BlockInvertedIndex<DType, QType, MetricType>::add(const SparseRow<DType>* data, 
     this->nr_rows_ = rows;
     this->max_dim_ = dim;
 
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     this->build_stats_.dataset_nnz_stats_.resize(rows);
 #endif
 
@@ -722,12 +722,12 @@ BlockInvertedIndex<DType, QType, MetricType>::add(const SparseRow<DType>* data, 
             plist_cnts[this->dim_map_[dim]]++;
             ++total_nnz;
         }
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         this->build_stats_.dataset_nnz_stats_[i] = data[i].size();
 #endif
     }
 
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOHWERE_WITH_LIGHT)
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     this->build_stats_.posting_list_length_stats_.resize(this->nr_inner_dims_);
     for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
         this->build_stats_.posting_list_length_stats_[i] = plist_cnts[i];

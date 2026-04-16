@@ -19,7 +19,7 @@ namespace knowhere {
 class GpuFlatConfig : public FlatConfig {
  public:
     CFG_INT gpu_id;
-    KNOHWERE_DECLARE_CONFIG(GpuFlatConfig) {
+    KNOWHERE_DECLARE_CONFIG(GpuFlatConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(gpu_id).description("gpu device id").set_default(0).for_train();
     }
 };

@@ -51,7 +51,7 @@ Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chro
         auto res = this->node->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt.get());
         auto time = rc.ElapseFromBegin("done");
         time *= 0.000001;  // convert to s
-        knowhere_build_latency.Observe(time);
+        this->node->GetBuildLatencyMetric().Observe(time);
 #else
         auto res = this->node->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), Interrupt.get());
 #endif
@@ -81,7 +81,7 @@ Index<T>::Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_bu
     auto res = this->node->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
     auto time = rc.ElapseFromBegin("done");
     time *= 0.000001;  // convert to s
-    knowhere_build_latency.Observe(time);
+    this->node->GetBuildLatencyMetric().Observe(time);
 #else
     auto res = this->node->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
 #endif
@@ -167,7 +167,7 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
     auto res = this->node->SearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
-    knowhere_search_latency.Observe(time);
+    this->node->GetSearchLatencyMetric().Observe(time);
     knowhere_search_topk.Observe(k);
 
     // LCOV_EXCL_START
@@ -211,7 +211,7 @@ Index<T>::AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetVi
         this->node->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
-    knowhere_search_latency.Observe(time);
+    this->node->GetSearchLatencyMetric().Observe(time);
 #else
     auto res =
         this->node->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
@@ -268,7 +268,7 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
     auto res = this->node->RangeSearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
-    knowhere_range_search_latency.Observe(time);
+    this->node->GetRangeSearchLatencyMetric().Observe(time);
 
     // LCOV_EXCL_START
     if (has_trace_id) {
@@ -359,7 +359,7 @@ Index<T>::Deserialize(const BinarySet& binset, const Json& json) {
     res = this->node->DeserializeEmbListIfNeed(binset, std::move(cfg));
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
-    knowhere_load_latency.Observe(time);
+    this->node->GetLoadLatencyMetric().Observe(time);
 #else
     res = this->node->DeserializeEmbListIfNeed(binset, std::move(cfg));
 #endif
@@ -388,7 +388,7 @@ Index<T>::DeserializeFromFile(const std::string& filename, const Json& json) {
     res = this->node->DeserializeFromFileIfNeed(filename, std::move(cfg));
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
-    knowhere_load_latency.Observe(time);
+    this->node->GetLoadLatencyMetric().Observe(time);
 #else
     res = this->node->DeserializeFromFileIfNeed(filename, std::move(cfg));
 #endif

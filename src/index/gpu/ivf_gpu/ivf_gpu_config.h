@@ -16,7 +16,7 @@ namespace knowhere {
 class GpuIvfFlatConfig : public IvfFlatConfig {
  public:
     CFG_INT gpu_id;
-    KNOHWERE_DECLARE_CONFIG(GpuIvfFlatConfig) {
+    KNOWHERE_DECLARE_CONFIG(GpuIvfFlatConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(gpu_id).description("gpu device id").set_default(0).for_train();
     }
 };
@@ -24,7 +24,7 @@ class GpuIvfFlatConfig : public IvfFlatConfig {
 class GpuIvfPqConfig : public IvfPqConfig {
  public:
     CFG_INT gpu_id;
-    KNOHWERE_DECLARE_CONFIG(GpuIvfPqConfig) {
+    KNOWHERE_DECLARE_CONFIG(GpuIvfPqConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(gpu_id).description("gpu device id").set_default(0).for_train();
     }
 };
@@ -32,7 +32,7 @@ class GpuIvfPqConfig : public IvfPqConfig {
 class GpuIvfSqConfig : public IvfSqConfig {
  public:
     CFG_INT gpu_id;
-    KNOHWERE_DECLARE_CONFIG(GpuIvfSqConfig) {
+    KNOWHERE_DECLARE_CONFIG(GpuIvfSqConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(gpu_id).description("gpu device id").set_default(0).for_train();
     }
 };
