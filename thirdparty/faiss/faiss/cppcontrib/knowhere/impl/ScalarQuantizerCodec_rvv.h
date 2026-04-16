@@ -403,6 +403,7 @@ template <int SIMDWIDTH>
 struct SimilarityL2_rvv {};
 template <>
 struct SimilarityL2_rvv<0> {
+    static constexpr int simdwidth = 1;
     static constexpr MetricType metric_type = METRIC_L2;
 };
 
@@ -410,6 +411,7 @@ template <int SIMDWIDTH>
 struct SimilarityIP_rvv {};
 template <>
 struct SimilarityIP_rvv<0> {
+    static constexpr int simdwidth = 1;
     static constexpr MetricType metric_type = METRIC_INNER_PRODUCT;
 };
 
