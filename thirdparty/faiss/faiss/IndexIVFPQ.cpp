@@ -9,7 +9,6 @@
 
 #include <faiss/IndexIVFPQ.h>
 
-#include <cassert>
 #include <cinttypes>
 #include <cmath>
 #include <cstdint>
@@ -17,7 +16,6 @@
 
 #include <algorithm>
 
-#include <faiss/utils/Heap.h>
 #include <faiss/utils/distances_dispatch.h>
 #include <faiss/utils/utils.h>
 
@@ -556,7 +554,7 @@ struct QueryTables {
      *****************************************************/
 
     // field specific to query
-    const float* qi;
+    const float* qi = nullptr;
 
     // query-specific initialization
     void init_query(const float* qi_in) {
@@ -587,8 +585,8 @@ struct QueryTables {
      *****************************************************/
 
     // fields specific to list
-    idx_t key;
-    float coarse_dis;
+    idx_t key = 0;
+    float coarse_dis = 0.0f;
     std::vector<uint8_t> q_code;
 
     uint64_t init_list_cycles;
@@ -804,18 +802,18 @@ struct WrappedSearchResult {
 template <typename IDType, MetricType METRIC_TYPE, class PQCodeDist>
 struct IVFPQScannerT : QueryTables {
     using PQDecoder = typename PQCodeDist::PQDecoder;
-    const uint8_t* list_codes;
+    const uint8_t* list_codes = nullptr;
     const IDType* list_ids;
-    size_t list_size;
+    size_t list_size = 0;
 
     IVFPQScannerT(
             const IndexIVFPQ& ivfpq_in,
             const IVFSearchParameters* params_in)
             : QueryTables(ivfpq_in, params_in) {
-        assert(METRIC_TYPE == metric_type);
+        FAISS_THROW_IF_NOT(METRIC_TYPE == metric_type);
     }
 
-    float dis0;
+    float dis0 = 0.0f;
 
     void init_list(idx_t list_no, float coarse_dis_in, int mode) {
         this->key = list_no;
@@ -1217,7 +1215,7 @@ struct IVFPQScanner : IVFPQScannerT<idx_t, METRIC_TYPE, PQCodeDist>,
     }
 
     float distance_to_code(const uint8_t* code) const override {
-        assert(precompute_mode == 2);
+        FAISS_THROW_IF_NOT(precompute_mode == 2);
         float dis = this->dis0 +
                 PQCodeDist::distance_single_code(
                             this->pq.M, this->pq.nbits, this->sim_table, code);
@@ -1236,7 +1234,7 @@ struct IVFPQScanner : IVFPQScannerT<idx_t, METRIC_TYPE, PQCodeDist>,
                 handler);
 
         if (this->polysemous_ht > 0) {
-            assert(precompute_mode == 2);
+            FAISS_THROW_IF_NOT(precompute_mode == 2);
             this->scan_list_polysemous(ncode, codes, res);
         } else if (precompute_mode == 2) {
             this->scan_list_with_table(ncode, codes, res);
