@@ -13,7 +13,7 @@ jobs:
   analyzer:
     name: analyzer
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 180
     strategy:
       fail-fast: false
     steps:
@@ -25,6 +25,15 @@ jobs:
         uses: ./.github/actions/cache-restore
         with:
           os: ubuntu-22.04
+      - name: Install GCC 12
+        # GCC 11 (ubuntu-22.04 default) has incomplete C++20 support:
+        # std::partial_ordering, std::strong_ordering, std::weak_ordering
+        # from <compare> are not available, causing abseil build failures.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-12 g++-12
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 120
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-12 120
       - name: Install Dependency
         run: bash scripts/install_deps.sh
       - name: Build & Analyzer

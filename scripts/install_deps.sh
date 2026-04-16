@@ -27,8 +27,8 @@
 
 set -euo pipefail
 
-CONAN_VERSION="1.65.0"
-CONAN_REMOTE_URL="https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local"
+CONAN_VERSION="2.25.1"
+CONAN_REMOTE_URL="https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local2"
 
 UNAME="$(uname -s)"
 case "${UNAME}" in
@@ -120,7 +120,8 @@ pip3 install wheel 'numpy<2'
 pip3 install bfloat16   # wheel: bfloat16 dtype support for PyKnowhere
 pip3 install auditwheel  # wheel: manylinux wheel repair
 
-echo "[install_deps] Configuring conan remote..."
-conan remote add default-conan-local ${CONAN_REMOTE_URL} || true
+echo "[install_deps] Configuring conan profile and remote..."
+conan profile detect --force || true
+conan remote add default-conan-local2 ${CONAN_REMOTE_URL} || true
 
 echo "[install_deps] Done."
