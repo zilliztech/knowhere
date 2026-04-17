@@ -82,10 +82,12 @@ TEST_CASE("Knowhere SIMD config", "[simd]") {
         auto auto_level = faiss::SIMDConfig::get_level();
         REQUIRE(auto_level != faiss::SIMDLevel::COUNT);
 
+#ifdef __x86_64__
+        // On x86_64, GENERIC disables SIMD and reports NONE. On ARM the DD level
+        // falls back to ARM_NEON (the only baseline), so this check is x86-only.
         knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::GENERIC);
         REQUIRE(faiss::SIMDConfig::get_level() == faiss::SIMDLevel::NONE);
 
-#ifdef __x86_64__
         knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::SSE4_2);
         REQUIRE(faiss::SIMDConfig::get_level() == faiss::SIMDLevel::NONE);
 
