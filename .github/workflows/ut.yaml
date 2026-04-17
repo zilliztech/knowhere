@@ -55,6 +55,40 @@ jobs:
         with:
           os: ubuntu-22.04
 
+  ut-macos:
+    name: ut on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          submodules: 'none'
+      - name: Install Dependency
+        run: |
+          bash scripts/install_deps.sh
+      - name: Restore Cache
+        uses: ./.github/actions/cache-restore
+        with:
+          os: ${{ matrix.os }}
+      - name: Build
+        run: |
+          # CMake 4.x (Homebrew) removed compat with cmake_minimum_required < 3.5;
+          # some Conan recipes (e.g. bzip2/1.0.8) still use older values.
+          export CMAKE_POLICY_VERSION_MINIMUM=3.5
+          make WITH_UT=True
+      - name: Test
+        run: |
+          make test
+      - name: Save Cache
+        uses: ./.github/actions/cache-save
+        with:
+          os: ${{ matrix.os }}
+
   swig-build:
     name: python3 wheel
     runs-on: ubuntu-22.04
