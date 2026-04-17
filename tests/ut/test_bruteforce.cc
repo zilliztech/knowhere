@@ -236,13 +236,13 @@ TEST_CASE("Test Brute Force", "[binary vector]") {
     }
 
     SECTION("Test Range Search") {
-        if (metric == knowhere::metric::SUPERSTRUCTURE || metric == knowhere::metric::SUBSTRUCTURE) {
-            return;
-        }
-
         // set radius for different metric type
         auto cfg = conf;
-        cfg[knowhere::meta::RADIUS] = radius_map[metric];
+        if (metric == knowhere::metric::SUPERSTRUCTURE || metric == knowhere::metric::SUBSTRUCTURE) {
+            cfg[knowhere::meta::RADIUS] = 1.0f;
+        } else {
+            cfg[knowhere::meta::RADIUS] = radius_map[metric];
+        }
 
         auto res = knowhere::BruteForce::RangeSearch<knowhere::bin1>(train_ds, query_ds, cfg, nullptr);
         REQUIRE(res.has_value());
