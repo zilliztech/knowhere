@@ -7,7 +7,7 @@
 
 #include <stdio.h>
 
-#if defined(__linux__) || defined(__FreeBSD__)
+#if defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
 
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -27,7 +27,7 @@
 
 namespace faiss {
 
-#if defined(__linux__) || defined(__FreeBSD__)
+#if defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
 
 struct MmappedFileMappingOwner::PImpl {
     void* ptr = nullptr;

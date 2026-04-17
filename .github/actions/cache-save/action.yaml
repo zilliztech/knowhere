@@ -12,7 +12,7 @@ runs:
     - name: Cache CCache Volumes
       uses: actions/cache/save@v4
       with:
-        path: ~/.cache/ccache
+        path: ~/.ccache
         key: knowhere-${{ inputs.os }}-${{ github.job }}-ccache-${{ hashFiles( '**/*.cpp', '**/*.cc', '**/*.c', '**/*.h', '**/*.hpp', '**/CMakeLists.txt') }}
     - name: Cache Conan Packages
       uses: actions/cache/save@v4
