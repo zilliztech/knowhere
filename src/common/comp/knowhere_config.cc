@@ -143,11 +143,16 @@ KnowhereConfig::GetClusteringType() {
 }
 
 bool
-KnowhereConfig::SetAioContextPool(size_t num_ctx) {
+KnowhereConfig::SetIOContextPool(size_t num_ctx) {
 #ifdef KNOWHERE_WITH_DISKANN
     return AioContextPool::InitGlobalAioPool(num_ctx, default_max_events);
 #endif
     return true;
+}
+
+bool
+KnowhereConfig::SetAioContextPool(size_t num_ctx) {
+    return SetIOContextPool(num_ctx);
 }
 
 void

@@ -98,6 +98,10 @@ class KnowhereConfig {
      * on your terminal. This function returns true if validation passes. Otherwise, it returns false.
      */
     static bool
+    SetIOContextPool(size_t num_ctx);
+
+    // Backward-compatible alias for existing AIO-specific callers.
+    static bool
     SetAioContextPool(size_t num_ctx);
 
     static void

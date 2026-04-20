@@ -48,6 +48,10 @@ TEST_CASE("Knowhere global config", "[init]") {
     }
 
 #ifdef KNOWHERE_WITH_DISKANN
+    REQUIRE_FALSE(knowhere::KnowhereConfig::SetIOContextPool(0));
+    REQUIRE(knowhere::KnowhereConfig::SetIOContextPool(16));
+
+    // Backward compatibility for existing callers.
     REQUIRE_FALSE(knowhere::KnowhereConfig::SetAioContextPool(0));
     REQUIRE(knowhere::KnowhereConfig::SetAioContextPool(16));
 #endif
