@@ -24,9 +24,11 @@
 #include <faiss/cppcontrib/knowhere/invlists/OnDiskInvertedLists.h>
 
 #include <faiss/IndexAdditiveQuantizer.h>
+#include <faiss/cppcontrib/knowhere/IndexBinaryScalarQuantizer.h>
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
 #include <faiss/cppcontrib/knowhere/IndexHNSW.h>
+#include <faiss/cppcontrib/knowhere/IndexHNSWBinary.h>
 #include <faiss/cppcontrib/knowhere/IndexIVF.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFFlat.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFPQ.h>
@@ -38,6 +40,7 @@
 #include <faiss/cppcontrib/knowhere/IndexSQ4Uniform.h>
 #include <faiss/cppcontrib/knowhere/IndexScaNN.h>
 #include <faiss/cppcontrib/knowhere/IndexScalarQuantizer.h>
+#include <faiss/IndexScalarQuantizer.h>
 #include <faiss/VectorTransform.h>
 
 #include <faiss/cppcontrib/knowhere/IndexBinaryFlat.h>
@@ -574,7 +577,9 @@ static void read_ProductLocalSearchQuantizer(
     }
 }
 
-static void read_ScalarQuantizer(ScalarQuantizer* ivsc, IOReader* f) {
+static void read_ScalarQuantizer(
+        ::faiss::ScalarQuantizer* ivsc,
+        IOReader* f) {
     READ1(ivsc->qtype);
     READ1(ivsc->rangestat);
     READ1(ivsc->rangestat_arg);
@@ -986,12 +991,30 @@ Index* read_index(IOReader* f, int io_flags) {
         READVECTOR(idxs->inverse_norms_storage.inverse_l2_norms);
         idx = idxs;
     } else if (h == fourcc("IxSQ")) {
-        IndexScalarQuantizer* idxs = new IndexScalarQuantizer();
+        ::faiss::IndexScalarQuantizer* idxs =
+                new ::faiss::IndexScalarQuantizer();
         read_index_header(idxs, f);
         read_ScalarQuantizer(&idxs->sq, f);
         read_vector(idxs->codes, f);
         idxs->code_size = idxs->sq.code_size;
-        idx = idxs;
+        // Legacy binary format: the fork used integer 9 as QT_1bit_direct
+        // for 1-bit HNSW storage; baseline maps the same integer to
+        // QT_0bit. Compare against the raw integer so we never depend on
+        // either enum name, and route legacy data to
+        // IndexBinaryScalarQuantizer.
+        const int legacy_qt_1bit_direct_marker = 9;
+        if (static_cast<int>(idxs->sq.qtype) ==
+                    legacy_qt_1bit_direct_marker) {
+            IndexBinaryScalarQuantizer* bsq = new IndexBinaryScalarQuantizer(
+                    static_cast<int>(idxs->d), idxs->metric_type);
+            bsq->ntotal = idxs->ntotal;
+            bsq->is_trained = idxs->is_trained;
+            bsq->codes = std::move(idxs->codes);
+            delete idxs;
+            idx = bsq;
+        } else {
+            idx = idxs;
+        }
     } else if (h == fourcc("IvSQ")) { // legacy
         IndexIVFScalarQuantizer* ivsc = new IndexIVFScalarQuantizer();
         std::vector<std::vector<idx_t>> ids;
@@ -1109,6 +1132,27 @@ Index* read_index(IOReader* f, int io_flags) {
         idxhnsw->own_fields = idxhnsw->storage != nullptr;
         if (h == fourcc("IHNp") && !(io_flags & IO_FLAG_PQ_SKIP_SDC_TABLE)) {
             dynamic_cast<IndexPQ*>(idxhnsw->storage)->pq.compute_sdc_table();
+        }
+        // Legacy binary HNSW: IHNs fourcc with an
+        // IndexBinaryScalarQuantizer inner storage was how the fork used
+        // to serialize IndexHNSWSQ(QT_1bit_direct, ...). Swap the outer
+        // wrapper to IndexHNSWBinary so the runtime type reflects the
+        // data. The on-disk bytes are unchanged by this conversion.
+        if (h == fourcc("IHNs") &&
+            dynamic_cast<IndexBinaryScalarQuantizer*>(idxhnsw->storage) !=
+                    nullptr) {
+            IndexHNSWBinary* newh = new IndexHNSWBinary();
+            newh->d = idxhnsw->d;
+            newh->ntotal = idxhnsw->ntotal;
+            newh->is_trained = idxhnsw->is_trained;
+            newh->metric_type = idxhnsw->metric_type;
+            newh->hnsw = std::move(idxhnsw->hnsw);
+            newh->storage = idxhnsw->storage;
+            newh->own_fields = idxhnsw->own_fields;
+            idxhnsw->storage = nullptr;
+            idxhnsw->own_fields = false;
+            delete idxhnsw;
+            idxhnsw = newh;
         }
         idx = idxhnsw;
     } else if (h == fourcc("IwPf")) {

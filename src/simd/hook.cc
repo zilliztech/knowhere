@@ -11,7 +11,6 @@
 
 #include "hook.h"
 
-#include <faiss/cppcontrib/knowhere/FaissHook.h>
 #include <faiss/utils/simd_levels.h>
 
 #include <mutex>
@@ -578,7 +577,6 @@ fvec_hook(std::string& simd_type) {
 static int init_hook_ = []() {
     std::string simd_type;
     fvec_hook(simd_type);
-    faiss::cppcontrib::knowhere::sq_hook();
     return 0;
 }();
 

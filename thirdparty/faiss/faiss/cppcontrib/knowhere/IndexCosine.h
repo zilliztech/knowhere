@@ -19,7 +19,7 @@
 #include <faiss/IndexAdditiveQuantizer.h>
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
 #include <faiss/cppcontrib/knowhere/IndexHNSW.h>
-#include <faiss/cppcontrib/knowhere/IndexScalarQuantizer.h>
+#include <faiss/IndexScalarQuantizer.h>
 #include <faiss/IndexPQ.h>
 #include <faiss/impl/DistanceComputer.h>
 
@@ -128,12 +128,13 @@ struct IndexFlatCosine : IndexFlat, HasInverseL2Norms {
 };
 
 //
-struct IndexScalarQuantizerCosine : IndexScalarQuantizer, HasInverseL2Norms {
+struct IndexScalarQuantizerCosine : ::faiss::IndexScalarQuantizer,
+                                    HasInverseL2Norms {
     L2NormsStorage inverse_norms_storage;
 
     IndexScalarQuantizerCosine(
             int d,
-            ScalarQuantizer::QuantizerType qtype);
+            ::faiss::ScalarQuantizer::QuantizerType qtype);
 
     IndexScalarQuantizerCosine();
 
@@ -195,7 +196,7 @@ struct IndexHNSWSQCosine : IndexHNSW, HasInverseL2Norms {
     IndexHNSWSQCosine();
     IndexHNSWSQCosine(
             int d,
-            ScalarQuantizer::QuantizerType qtype,
+            ::faiss::ScalarQuantizer::QuantizerType qtype,
             int M);
 
     const float* get_inverse_l2_norms() const override;

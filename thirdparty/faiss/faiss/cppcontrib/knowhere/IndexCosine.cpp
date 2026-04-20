@@ -18,7 +18,7 @@
 
 #include <cstring>
 
-#include <faiss/cppcontrib/knowhere/FaissHook.h>
+#include "simd/hook.h"
 
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/DistanceComputer.h>
@@ -335,11 +335,12 @@ FlatCodesDistanceComputer* IndexFlatCosine::get_FlatCodesDistanceComputer() cons
 
 IndexScalarQuantizerCosine::IndexScalarQuantizerCosine(
         int d,
-        ScalarQuantizer::QuantizerType qtype) 
-        : IndexScalarQuantizer(d, qtype, MetricType::METRIC_INNER_PRODUCT) {
+        ::faiss::ScalarQuantizer::QuantizerType qtype)
+        : ::faiss::IndexScalarQuantizer(d, qtype, MetricType::METRIC_INNER_PRODUCT) {
 }
 
-IndexScalarQuantizerCosine::IndexScalarQuantizerCosine() : IndexScalarQuantizer() {
+IndexScalarQuantizerCosine::IndexScalarQuantizerCosine()
+        : ::faiss::IndexScalarQuantizer() {
     metric_type = MetricType::METRIC_INNER_PRODUCT;
 }
 
@@ -349,12 +350,12 @@ void IndexScalarQuantizerCosine::add(idx_t n, const float* x) {
         return;
     }
 
-    IndexScalarQuantizer::add(n, x);
+    ::faiss::IndexScalarQuantizer::add(n, x);
     inverse_norms_storage.add(x, n, d);
 }
 
 void IndexScalarQuantizerCosine::reset() {
-    IndexScalarQuantizer::reset();
+    ::faiss::IndexScalarQuantizer::reset();
     inverse_norms_storage.reset();
 }
 
@@ -366,7 +367,8 @@ DistanceComputer* IndexScalarQuantizerCosine::get_distance_computer() const {
     return new WithCosineNormDistanceComputer(
         this->get_inverse_l2_norms(),
         this->d,
-        std::unique_ptr<faiss::DistanceComputer>(IndexScalarQuantizer::get_FlatCodesDistanceComputer())
+        std::unique_ptr<faiss::DistanceComputer>(
+            ::faiss::IndexScalarQuantizer::get_FlatCodesDistanceComputer())
     );
 }
 
@@ -483,7 +485,7 @@ IndexHNSWSQCosine::IndexHNSWSQCosine() {
 
 IndexHNSWSQCosine::IndexHNSWSQCosine(
         int d,
-        ScalarQuantizer::QuantizerType qtype,
+        ::faiss::ScalarQuantizer::QuantizerType qtype,
         int M) :
     IndexHNSW(new IndexScalarQuantizerCosine(d, qtype), M)
 {

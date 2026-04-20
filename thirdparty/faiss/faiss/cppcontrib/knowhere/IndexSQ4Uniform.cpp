@@ -21,7 +21,7 @@
 #include <memory>
 #include <vector>
 
-#include <faiss/cppcontrib/knowhere/FaissHook.h>
+#include "simd/hook.h"
 #include <faiss/impl/DistanceComputer.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/utils/prefetch.h>
@@ -159,20 +159,20 @@ float WithSQ4UniformNormIPDistanceComputer::symmetric_dis(idx_t i, idx_t j) {
 
 IndexScalarQuantizer4bitUniformCosine::IndexScalarQuantizer4bitUniformCosine(
         int d)
-        : IndexScalarQuantizer(
+        : ::faiss::IndexScalarQuantizer(
                   d,
-                  ScalarQuantizer::QT_4bit_uniform,
+                  ::faiss::ScalarQuantizer::QT_4bit_uniform,
                   METRIC_INNER_PRODUCT) {
 
-    sq.rangestat = ScalarQuantizer::RS_quantiles;
+    sq.rangestat = ::faiss::ScalarQuantizer::RS_quantiles;
     sq.rangestat_arg = 0.01;
 }
 
 IndexScalarQuantizer4bitUniformCosine::IndexScalarQuantizer4bitUniformCosine()
-        : IndexScalarQuantizer() {
+        : ::faiss::IndexScalarQuantizer() {
     metric_type = METRIC_INNER_PRODUCT;
 
-    sq.rangestat = ScalarQuantizer::RS_quantiles;
+    sq.rangestat = ::faiss::ScalarQuantizer::RS_quantiles;
     sq.rangestat_arg = 0.01;
 }
 
@@ -194,7 +194,7 @@ void IndexScalarQuantizer4bitUniformCosine::add(idx_t n, const float* x) {
     auto normalized_data = ::knowhere::CopyAndNormalizeVecs<float>(x, n, d);
 
     // Add normalized data
-    IndexScalarQuantizer::add(n, normalized_data.get());
+    ::faiss::IndexScalarQuantizer::add(n, normalized_data.get());
 
     // Store inverse L2 norms from ORIGINAL vectors (not normalized)
     // This is needed for refine to work correctly with COSINE metric
@@ -203,10 +203,19 @@ void IndexScalarQuantizer4bitUniformCosine::add(idx_t n, const float* x) {
 
 DistanceComputer* IndexScalarQuantizer4bitUniformCosine::get_distance_computer()
         const {
-    std::unique_ptr<DistanceComputer> base_dc(
-            IndexScalarQuantizer::get_distance_computer());
-
-    return new SQ4UniformCosineDistanceComputer(d, std::move(base_dc));
+    // The DC wrapper does `cosine = 1 - 0.5 * L2^2`, so the inner DC
+    // must compute L2^2 regardless of this index's metric_type (which is
+    // METRIC_INNER_PRODUCT because the index is semantically IP-based).
+    // Ask the SQ directly for an L2 DC rather than going through the
+    // baseline helper, which would pick a DC from `metric_type` and hand
+    // us an IP-computing DC. Pre-migration this was hidden by the fork's
+    // DistanceComputerSQ4UByte which always returned L2 regardless of
+    // Similarity.
+    auto* base_dc = sq.get_distance_computer(METRIC_L2);
+    base_dc->code_size = sq.code_size;
+    base_dc->codes = codes.data();
+    return new SQ4UniformCosineDistanceComputer(
+            d, std::unique_ptr<DistanceComputer>(base_dc));
 }
 
 const float* IndexScalarQuantizer4bitUniformCosine::get_inverse_l2_norms()
@@ -215,7 +224,7 @@ const float* IndexScalarQuantizer4bitUniformCosine::get_inverse_l2_norms()
 }
 
 void IndexScalarQuantizer4bitUniformCosine::reset() {
-    IndexScalarQuantizer::reset();
+    ::faiss::IndexScalarQuantizer::reset();
     inverse_norms_storage.reset();
 }
 
@@ -224,20 +233,20 @@ void IndexScalarQuantizer4bitUniformCosine::reset() {
 //////////////////////////////////////////////////////////////////////////////////
 
 IndexScalarQuantizer4bitUniformIP::IndexScalarQuantizer4bitUniformIP(int d)
-        : IndexScalarQuantizer(
+        : ::faiss::IndexScalarQuantizer(
                   d,
-                  ScalarQuantizer::QT_4bit_uniform,
+                  ::faiss::ScalarQuantizer::QT_4bit_uniform,
                   METRIC_INNER_PRODUCT) {
 }
 
 IndexScalarQuantizer4bitUniformIP::IndexScalarQuantizer4bitUniformIP()
-        : IndexScalarQuantizer() {
+        : ::faiss::IndexScalarQuantizer() {
     metric_type = METRIC_INNER_PRODUCT;
 }
 
 void IndexScalarQuantizer4bitUniformIP::add(idx_t n, const float* x) {
     FAISS_THROW_IF_NOT(is_trained);
-    IndexScalarQuantizer::add(n, x);
+    ::faiss::IndexScalarQuantizer::add(n, x);
 
     // Compute and store norms squared for IP distance computation
     for (idx_t i = 0; i < n; i++) {
@@ -248,17 +257,22 @@ void IndexScalarQuantizer4bitUniformIP::add(idx_t n, const float* x) {
 }
 
 void IndexScalarQuantizer4bitUniformIP::reset() {
-    IndexScalarQuantizer::reset();
+    ::faiss::IndexScalarQuantizer::reset();
     l2_norms_sqr.clear();
 }
 
 DistanceComputer* IndexScalarQuantizer4bitUniformIP::get_distance_computer()
         const {
-    std::unique_ptr<DistanceComputer> base_dc(
-            IndexScalarQuantizer::get_distance_computer());
-
+    // See IndexScalarQuantizer4bitUniformCosine::get_distance_computer
+    // for why we force METRIC_L2 here. The wrapper DC does
+    // `IP = 0.5 * (||q||^2 + ||b||^2 - L2^2)`, which only holds if the
+    // inner DC actually returns L2^2.
+    auto* base_dc = sq.get_distance_computer(METRIC_L2);
+    base_dc->code_size = sq.code_size;
+    base_dc->codes = codes.data();
     return new WithSQ4UniformNormIPDistanceComputer(
-            get_l2_norms_sqr(), d, std::move(base_dc));
+            get_l2_norms_sqr(), d,
+            std::unique_ptr<DistanceComputer>(base_dc));
 }
 
 const float* IndexScalarQuantizer4bitUniformIP::get_l2_norms_sqr() const {
@@ -274,11 +288,11 @@ IndexHNSWSQ4UniformCosine::IndexHNSWSQ4UniformCosine() : IndexHNSW() {
 
 IndexHNSWSQ4UniformCosine::IndexHNSWSQ4UniformCosine(
         int d,
-        ScalarQuantizer::QuantizerType qtype,
+        ::faiss::ScalarQuantizer::QuantizerType qtype,
         int M)
         : IndexHNSW(new IndexScalarQuantizer4bitUniformCosine(d), M) {
     FAISS_THROW_IF_NOT_MSG(
-            qtype == ScalarQuantizer::QT_4bit_uniform,
+            qtype == ::faiss::ScalarQuantizer::QT_4bit_uniform,
             "IndexHNSWSQ4UniformCosine only supports QT_4bit_uniform");
 
     is_trained = this->storage->is_trained;
@@ -299,11 +313,11 @@ IndexHNSWSQ4UniformIP::IndexHNSWSQ4UniformIP() : IndexHNSW() {
 
 IndexHNSWSQ4UniformIP::IndexHNSWSQ4UniformIP(
         int d,
-        ScalarQuantizer::QuantizerType qtype,
+        ::faiss::ScalarQuantizer::QuantizerType qtype,
         int M)
         : IndexHNSW(new IndexScalarQuantizer4bitUniformIP(d), M) {
     FAISS_THROW_IF_NOT_MSG(
-            qtype == ScalarQuantizer::QT_4bit_uniform,
+            qtype == ::faiss::ScalarQuantizer::QT_4bit_uniform,
             "IndexHNSWSQ4UniformIP only supports QT_4bit_uniform");
 
     is_trained = this->storage->is_trained;

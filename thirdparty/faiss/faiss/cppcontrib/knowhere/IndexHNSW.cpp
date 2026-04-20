@@ -685,10 +685,10 @@ void IndexHNSWPQ::train(idx_t n, const float* x) {
 
 IndexHNSWSQ::IndexHNSWSQ(
         int d,
-        ScalarQuantizer::QuantizerType qtype,
+        ::faiss::ScalarQuantizer::QuantizerType qtype,
         int M,
         MetricType metric)
-        : IndexHNSW(new IndexScalarQuantizer(d, qtype, metric), M) {
+        : IndexHNSW(new ::faiss::IndexScalarQuantizer(d, qtype, metric), M) {
     is_trained = this->storage->is_trained;
     own_fields = true;
 }

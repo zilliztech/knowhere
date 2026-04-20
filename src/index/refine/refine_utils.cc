@@ -7,8 +7,8 @@
 #include <optional>
 #include <string>
 
+#include "faiss/IndexScalarQuantizer.h"
 #include "faiss/cppcontrib/knowhere/IndexRefine.h"
-#include "faiss/cppcontrib/knowhere/IndexScalarQuantizer.h"
 #include "fmt/format.h"
 #include "knowhere/log.h"
 #include "knowhere/tolower.h"
@@ -16,21 +16,18 @@
 namespace knowhere {
 
 // a supporting function
-expected<faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType>
+expected<faiss::ScalarQuantizer::QuantizerType>
 get_sq_quantizer_type(const std::string& sq_type) {
-    std::map<std::string, faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType> sq_types = {
-        {"sq4u", faiss::cppcontrib::knowhere::ScalarQuantizer::QT_4bit_uniform},
-        {"sq6", faiss::cppcontrib::knowhere::ScalarQuantizer::QT_6bit},
-        {"sq8", faiss::cppcontrib::knowhere::ScalarQuantizer::QT_8bit},
-        {"fp16", faiss::cppcontrib::knowhere::ScalarQuantizer::QT_fp16},
-        {"bf16", faiss::cppcontrib::knowhere::ScalarQuantizer::QT_bf16},
-        {"int8", faiss::cppcontrib::knowhere::ScalarQuantizer::QT_8bit_direct_signed}};
+    std::map<std::string, faiss::ScalarQuantizer::QuantizerType> sq_types = {
+        {"sq4u", faiss::ScalarQuantizer::QT_4bit_uniform}, {"sq6", faiss::ScalarQuantizer::QT_6bit},
+        {"sq8", faiss::ScalarQuantizer::QT_8bit},          {"fp16", faiss::ScalarQuantizer::QT_fp16},
+        {"bf16", faiss::ScalarQuantizer::QT_bf16},         {"int8", faiss::ScalarQuantizer::QT_8bit_direct_signed}};
 
     // todo: tolower
     auto sq_type_tolower = str_to_lower(sq_type);
     auto itr = sq_types.find(sq_type_tolower);
     if (itr == sq_types.cend()) {
-        return expected<faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType>::Err(
+        return expected<faiss::ScalarQuantizer::QuantizerType>::Err(
             Status::invalid_args, fmt::format("invalid scalar quantizer type ({})", sq_type_tolower));
     }
 
@@ -61,8 +58,7 @@ is_flat_refine(const std::optional<std::string>& refine_type) {
 }
 
 bool
-has_lossless_quant(const expected<faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType>& quant_type,
-                   DataFormatEnum dataFormat) {
+has_lossless_quant(const expected<faiss::ScalarQuantizer::QuantizerType>& quant_type, DataFormatEnum dataFormat) {
     if (!quant_type.has_value()) {
         return false;
     }
@@ -72,11 +68,11 @@ has_lossless_quant(const expected<faiss::cppcontrib::knowhere::ScalarQuantizer::
         case DataFormatEnum::fp32:
             return false;
         case DataFormatEnum::fp16:
-            return quant == faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_fp16;
+            return quant == faiss::ScalarQuantizer::QuantizerType::QT_fp16;
         case DataFormatEnum::bf16:
-            return quant == faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_bf16;
+            return quant == faiss::ScalarQuantizer::QuantizerType::QT_bf16;
         case DataFormatEnum::int8:
-            return quant == faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_8bit_direct_signed;
+            return quant == faiss::ScalarQuantizer::QuantizerType::QT_8bit_direct_signed;
         default:
             return false;
     }
@@ -116,7 +112,7 @@ pick_refine_index(const DataFormatEnum data_format, const std::optional<std::str
         // make sure that we're using fp16 refine
         auto refine_sq_type = get_sq_quantizer_type(refine_type.value());
         if (!(refine_sq_type.has_value() &&
-              (refine_sq_type.value() != faiss::cppcontrib::knowhere::ScalarQuantizer::QT_bf16 && !is_fp32_flat_v))) {
+              (refine_sq_type.value() != faiss::ScalarQuantizer::QT_bf16 && !is_fp32_flat_v))) {
             LOG_KNOWHERE_ERROR_ << "fp16 input data does not accept bf16 or fp32 as a refine index.";
             return expected<std::unique_ptr<faiss::Index>>::Err(
                 Status::invalid_args, "fp16 input data does not accept bf16 or fp32 as a refine index.");
@@ -127,7 +123,7 @@ pick_refine_index(const DataFormatEnum data_format, const std::optional<std::str
         // make sure that we're using bf16 refine
         auto refine_sq_type = get_sq_quantizer_type(refine_type.value());
         if (!(refine_sq_type.has_value() &&
-              (refine_sq_type.value() != faiss::cppcontrib::knowhere::ScalarQuantizer::QT_fp16 && !is_fp32_flat_v))) {
+              (refine_sq_type.value() != faiss::ScalarQuantizer::QT_fp16 && !is_fp32_flat_v))) {
             LOG_KNOWHERE_ERROR_ << "bf16 input data does not accept fp16 or fp32 as a refine index.";
             return expected<std::unique_ptr<faiss::Index>>::Err(
                 Status::invalid_args, "bf16 input data does not accept fp16 or fp32 as a refine index.");
@@ -159,9 +155,22 @@ pick_refine_index(const DataFormatEnum data_format, const std::optional<std::str
                 Status::invalid_args, fmt::format("invalid refine type ({})", refine_type.value()));
         }
 
-        // create an sq
-        auto sq_refine = std::make_unique<faiss::cppcontrib::knowhere::IndexScalarQuantizer>(
-            base_d, refine_sq_type.value(), base_metric_type);
+        // create an sq. Baseline faiss::IndexScalarQuantizer — the fork
+        // variant's ctor is now behavior-identical (see fork
+        // IndexScalarQuantizer.cpp), and fork index_write.cpp recognises
+        // baseline IxSQ via an overload (see \u00a75).
+        auto sq_refine =
+            std::make_unique<faiss::IndexScalarQuantizer>(base_d, refine_sq_type.value(), base_metric_type);
+
+        // QT_4bit_uniform + L2 benefits from quantile-based range
+        // estimation. Previously applied inside the fork
+        // IndexScalarQuantizer ctor for SQ4U+L2; now applied explicitly
+        // at the call site so the fork ctor is behavior-identical to
+        // baseline and this call site can use either.
+        if (refine_sq_type.value() == faiss::ScalarQuantizer::QT_4bit_uniform && base_metric_type == faiss::METRIC_L2) {
+            sq_refine->sq.rangestat = faiss::ScalarQuantizer::RS_quantiles;
+            sq_refine->sq.rangestat_arg = 0.01;
+        }
 
         auto refine_index =
             std::make_unique<faiss::cppcontrib::knowhere::IndexRefine>(local_index.get(), sq_refine.get());
