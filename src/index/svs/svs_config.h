@@ -31,7 +31,7 @@ class SvsVamanaConfig : public BaseConfig {
     CFG_FLOAT svs_alpha;
     // Data storage format: "fp32", "fp16", "sqi8".
     CFG_STRING svs_storage_kind;
-    KNOHWERE_DECLARE_CONFIG(SvsVamanaConfig) {
+    KNOWHERE_DECLARE_CONFIG(SvsVamanaConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(svs_graph_max_degree)
             .description("maximum degree of the Vamana graph.")
             .set_default(32)
@@ -71,7 +71,7 @@ class SvsVamanaConfig : public BaseConfig {
 
 class SvsVamanaLvqConfig : public SvsVamanaConfig {
  public:
-    KNOHWERE_DECLARE_CONFIG(SvsVamanaLvqConfig) {
+    KNOWHERE_DECLARE_CONFIG(SvsVamanaLvqConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(svs_graph_max_degree)
             .description("maximum degree of the Vamana graph.")
             .set_range(4, 256)
@@ -113,7 +113,7 @@ class SvsVamanaLeanVecConfig : public SvsVamanaConfig {
  public:
     // Dimensionality for LeanVec compression. Default is d/2 (set to 0 to use default).
     CFG_INT svs_leanvec_dim;
-    KNOHWERE_DECLARE_CONFIG(SvsVamanaLeanVecConfig) {
+    KNOWHERE_DECLARE_CONFIG(SvsVamanaLeanVecConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(svs_graph_max_degree)
             .description("maximum degree of the Vamana graph.")
             .set_range(4, 256)
