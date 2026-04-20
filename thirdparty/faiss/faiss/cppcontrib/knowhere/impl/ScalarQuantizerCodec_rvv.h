@@ -403,7 +403,6 @@ template <int SIMDWIDTH>
 struct SimilarityL2_rvv {};
 template <>
 struct SimilarityL2_rvv<0> {
-    static constexpr int simdwidth = 1;
     static constexpr MetricType metric_type = METRIC_L2;
 };
 
@@ -411,7 +410,6 @@ template <int SIMDWIDTH>
 struct SimilarityIP_rvv {};
 template <>
 struct SimilarityIP_rvv<0> {
-    static constexpr int simdwidth = 1;
     static constexpr MetricType metric_type = METRIC_INNER_PRODUCT;
 };
 
@@ -1175,7 +1173,17 @@ ScalarQuantizer::SQDistanceComputer* select_distance_computer_rvv(
             // distance computation.
             // TODO: Implement RVV-optimized DistanceComputerSQ4UByte_rvv
             // similar to AVX2 version
-            return select_distance_computer<Similarity>(qtype, dim, trained);
+            // Use base scalar Similarity types for fallback to avoid
+            // instantiating DCTemplate with RVV tag types that lack the
+            // full scalar Similarity interface (constructor, begin,
+            // add_component, etc.)
+            if constexpr (Similarity::metric_type == METRIC_L2) {
+                return select_distance_computer<SimilarityL2<1>>(
+                        qtype, dim, trained);
+            } else {
+                return select_distance_computer<SimilarityIP<1>>(
+                        qtype, dim, trained);
+            }
 
         case ScalarQuantizer::QT_6bit:
             return new DCTemplate_rvv<
