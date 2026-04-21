@@ -196,15 +196,15 @@ IndexIvfFactory::create_for_sq(faiss::cppcontrib::knowhere::IndexFlat* qzr_raw_p
 
     // create IndexIVFSQ
     // Index does not own qzr
-    faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType quantizer_type;
+    faiss::ScalarQuantizer::QuantizerType quantizer_type;
     // ivf_sq_cfg.sq_type.value() has already been guaranteed to be legal in CheckAndAdjust
     std::string quantizer_type_tolower = str_to_lower(ivf_sq_cfg.sq_type.value());
     if (quantizer_type_tolower == "sq4") {
-        quantizer_type = faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_4bit;
+        quantizer_type = faiss::ScalarQuantizer::QuantizerType::QT_4bit;
     } else if (quantizer_type_tolower == "sq6") {
-        quantizer_type = faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_6bit;
+        quantizer_type = faiss::ScalarQuantizer::QuantizerType::QT_6bit;
     } else {
-        quantizer_type = faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_8bit;
+        quantizer_type = faiss::ScalarQuantizer::QuantizerType::QT_8bit;
     }
     auto index = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>(qzr_raw_ptr, d, nlist,
                                                                                         quantizer_type, metric);

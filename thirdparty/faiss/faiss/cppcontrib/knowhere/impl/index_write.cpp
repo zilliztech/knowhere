@@ -23,9 +23,11 @@
 #include <faiss/cppcontrib/knowhere/utils/hamming.h>
 
 #include <faiss/IndexAdditiveQuantizer.h>
+#include <faiss/cppcontrib/knowhere/IndexBinaryScalarQuantizer.h>
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
 #include <faiss/cppcontrib/knowhere/IndexHNSW.h>
+#include <faiss/cppcontrib/knowhere/IndexHNSWBinary.h>
 #include <faiss/cppcontrib/knowhere/IndexIVF.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFFlat.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFPQ.h>
@@ -37,6 +39,7 @@
 #include <faiss/cppcontrib/knowhere/IndexSQ4Uniform.h>
 #include <faiss/cppcontrib/knowhere/IndexScaNN.h>
 #include <faiss/cppcontrib/knowhere/IndexScalarQuantizer.h>
+#include <faiss/IndexScalarQuantizer.h>
 #include <faiss/VectorTransform.h>
 
 #include <faiss/cppcontrib/knowhere/IndexBinaryFlat.h>
@@ -236,7 +239,9 @@ static void write_ProductLocalSearchQuantizer(
     }
 }
 
-static void write_ScalarQuantizer(const ScalarQuantizer* ivsc, IOWriter* f) {
+static void write_ScalarQuantizer(
+        const ::faiss::ScalarQuantizer* ivsc,
+        IOWriter* f) {
     WRITE1(ivsc->qtype);
     WRITE1(ivsc->rangestat);
     WRITE1(ivsc->rangestat_arg);
@@ -586,8 +591,39 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         // inverse norms
         WRITEVECTOR(idxs->inverse_norms_storage.inverse_l2_norms);
     } else if (
-            const IndexScalarQuantizer* idxs =
-                    dynamic_cast<const IndexScalarQuantizer*>(idx)) {
+            const IndexBinaryScalarQuantizer* bsq =
+                    dynamic_cast<const IndexBinaryScalarQuantizer*>(idx)) {
+        // Legacy binary serialization: emit the same IxSQ fourcc + SQ
+        // wire layout that IndexScalarQuantizer(QT_1bit_direct) used to
+        // produce, so old readers continue to parse it unchanged. The
+        // trained vector is empty (1-bit-direct has no training data).
+        // QuantizerType enum integer 9 was fork's QT_1bit_direct; in
+        // baseline the same integer is QT_0bit. Emit the raw integer so
+        // the wire format is stable regardless of which enum is in scope.
+        uint32_t h = fourcc("IxSQ");
+        WRITE1(h);
+        write_index_header(idx, f);
+
+        const int legacy_qt_1bit_direct_marker = 9;
+        auto legacy_qtype =
+                static_cast<::faiss::ScalarQuantizer::QuantizerType>(
+                        legacy_qt_1bit_direct_marker);
+        ::faiss::ScalarQuantizer::RangeStat legacy_rangestat =
+                ::faiss::ScalarQuantizer::RS_minmax;
+        float legacy_rangestat_arg = 0.0f;
+        size_t legacy_d = static_cast<size_t>(bsq->d);
+        size_t legacy_code_size = bsq->code_size;
+        std::vector<float> legacy_trained;
+        WRITE1(legacy_qtype);
+        WRITE1(legacy_rangestat);
+        WRITE1(legacy_rangestat_arg);
+        WRITE1(legacy_d);
+        WRITE1(legacy_code_size);
+        WRITEVECTOR(legacy_trained);
+        WRITEVECTOR(bsq->codes);
+    } else if (
+            const ::faiss::IndexScalarQuantizer* idxs =
+                    dynamic_cast<const ::faiss::IndexScalarQuantizer*>(idx)) {
         uint32_t h = fourcc("IxSQ");
         WRITE1(h);
         write_index_header(idx, f);
@@ -665,6 +701,11 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
     } else if (const IndexHNSW* idxhnsw = dynamic_cast<const IndexHNSW*>(idx)) {
         uint32_t h = dynamic_cast<const IndexHNSWFlat*>(idx)    ? fourcc("IHNf")
                 : dynamic_cast<const IndexHNSWPQ*>(idx)         ? fourcc("IHNp")
+                // IndexHNSWBinary reuses the legacy IHNs fourcc so
+                // on-disk bytes match what IndexHNSWSQ(QT_1bit_direct,
+                // metric) used to produce. Readers dispatch to
+                // IndexHNSWBinary based on the inner storage type.
+                : dynamic_cast<const IndexHNSWBinary*>(idx)     ? fourcc("IHNs")
                 : dynamic_cast<const IndexHNSWSQ*>(idx)         ? fourcc("IHNs")
                 : dynamic_cast<const IndexHNSW2Level*>(idx)     ? fourcc("IHN2")
                 : dynamic_cast<const IndexHNSWCagra*>(idx)      ? fourcc("IHNc")

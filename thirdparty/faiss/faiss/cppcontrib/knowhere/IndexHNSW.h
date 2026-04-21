@@ -13,7 +13,7 @@
 
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
 #include <faiss/IndexPQ.h>
-#include <faiss/cppcontrib/knowhere/IndexScalarQuantizer.h>
+#include <faiss/IndexScalarQuantizer.h>
 #include <faiss/cppcontrib/knowhere/impl/HNSW.h>
 #include <faiss/utils/utils.h>
 
@@ -145,7 +145,7 @@ struct IndexHNSWSQ : IndexHNSW {
     IndexHNSWSQ();
     IndexHNSWSQ(
             int d,
-            ScalarQuantizer::QuantizerType qtype,
+            ::faiss::ScalarQuantizer::QuantizerType qtype,
             int M,
             MetricType metric = METRIC_L2);
 };

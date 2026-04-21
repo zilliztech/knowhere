@@ -11,7 +11,7 @@
 
 #include <cstring>
 
-#include <faiss/cppcontrib/knowhere/FaissHook.h>
+#include "simd/hook.h"
 
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissAssert.h>

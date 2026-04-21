@@ -7,10 +7,10 @@
 #include <memory>
 #include <vector>
 
-#include <faiss/cppcontrib/knowhere/FaissHook.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/platform_macros.h>
 #include <faiss/cppcontrib/knowhere/utils/distances.h>
+#include "simd/hook.h"
 
 
 

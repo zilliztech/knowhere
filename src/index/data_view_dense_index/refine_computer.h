@@ -12,9 +12,9 @@
 // knowhere-specific indices
 #pragma once
 
-#include "faiss/cppcontrib/knowhere/impl/ScalarQuantizer.h"
 #include "faiss/cppcontrib/knowhere/invlists/InvertedLists.h"
 #include "faiss/impl/DistanceComputer.h"
+#include "faiss/impl/ScalarQuantizer.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/object.h"
 #include "knowhere/operands.h"
@@ -63,16 +63,13 @@ struct QuantRefine {
         }
         switch (refine_type) {
             case RefineType::UINT8_QUANT:
-                quantizer = new faiss::cppcontrib::knowhere::ScalarQuantizer(
-                    d, faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_8bit);
+                quantizer = new faiss::ScalarQuantizer(d, faiss::ScalarQuantizer::QuantizerType::QT_8bit);
                 break;
             case RefineType::BFLOAT16_QUANT:
-                quantizer = new faiss::cppcontrib::knowhere::ScalarQuantizer(
-                    d, faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_bf16);
+                quantizer = new faiss::ScalarQuantizer(d, faiss::ScalarQuantizer::QuantizerType::QT_bf16);
                 break;
             case RefineType::FLOAT16_QUANT:
-                quantizer = new faiss::cppcontrib::knowhere::ScalarQuantizer(
-                    d, faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_fp16);
+                quantizer = new faiss::ScalarQuantizer(d, faiss::ScalarQuantizer::QuantizerType::QT_fp16);
                 break;
             default:
                 throw std::runtime_error("Fail to generate quant for refiner if refine_type == RefineType::DATA_VIEW");
@@ -118,9 +115,9 @@ struct QuantRefine {
     GetMetric() {
         return metric_type;
     }
-    std::unique_ptr<faiss::cppcontrib::knowhere::ScalarQuantizer::SQDistanceComputer>
+    std::unique_ptr<faiss::ScalarQuantizer::SQDistanceComputer>
     GetQuantComputer() {
-        return std::unique_ptr<faiss::cppcontrib::knowhere::ScalarQuantizer::SQDistanceComputer>(
+        return std::unique_ptr<faiss::ScalarQuantizer::SQDistanceComputer>(
             quantizer->get_distance_computer(metric_type));
     }
     DataFormatEnum
@@ -141,7 +138,7 @@ struct QuantRefine {
     static constexpr size_t key = 0;
     static constexpr size_t list_num = 1;
     static constexpr size_t segment_size = 48;
-    faiss::cppcontrib::knowhere::ScalarQuantizer* quantizer = nullptr;
+    faiss::ScalarQuantizer* quantizer = nullptr;
     faiss::cppcontrib::knowhere::InvertedLists* storage = nullptr;
     faiss::MetricType metric_type;
     DataFormatEnum origin_data_type;
@@ -153,7 +150,7 @@ template <bool NeedNormalize = false>
 struct QuantDataDistanceComputer : faiss::DistanceComputer {
     std::vector<float> query_buf;
     std::shared_ptr<QuantRefine> quant_data;
-    std::unique_ptr<faiss::cppcontrib::knowhere::ScalarQuantizer::SQDistanceComputer> qc;
+    std::unique_ptr<faiss::ScalarQuantizer::SQDistanceComputer> qc;
     float q_norm;
     size_t dim;
 

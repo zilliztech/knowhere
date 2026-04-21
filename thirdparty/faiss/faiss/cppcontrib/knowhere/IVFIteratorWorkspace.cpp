@@ -12,6 +12,7 @@
 #include <cinttypes>
 
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
+#include <faiss/cppcontrib/knowhere/IndexIVF.h>
 #include <faiss/impl/FaissAssert.h>
 
 namespace faiss::cppcontrib::knowhere {
