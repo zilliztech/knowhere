@@ -10,7 +10,10 @@
 # or implied. See the License for the specific language governing permissions and limitations under the License.
 
 PWD := $(shell pwd)
-BUILD_DIR := $(PWD)/build
+# BUILD_DIR is where conan + cmake put build outputs. Overridable from the
+# command line, e.g. `make BUILD_DIR=$(pwd)/build_asan WITH_ASAN=True`.
+# Binaries end up at $(BUILD_DIR)/$(BUILD_TYPE)/... (e.g. build/Release/...).
+BUILD_DIR ?= $(PWD)/build
 SHELL := /bin/bash
 
 # Conan install-only flags (not valid for conan build)
@@ -20,6 +23,7 @@ CONAN_INSTALL_FLAGS := --update --build=missing
 # Usage: make WITH_GPU=True WITH_UT=True WITH_ASAN=True WITH_DEBUG=True
 WITH_GPU ?=
 WITH_UT ?=
+WITH_BENCHMARK ?=
 WITH_ASAN ?=
 WITH_SVS ?=
 WITH_CARDINAL ?=
@@ -31,7 +35,7 @@ CONAN_PROFILE ?=
 # variables such as WITH_ASAN to every sub-process, which causes the custom
 # folly recipe to pick up $ENV{WITH_ASAN} and compile folly itself with
 # -fsanitize=address — breaking the build on GCC.
-unexport WITH_GPU WITH_UT WITH_ASAN WITH_CARDINAL WITH_DEBUG
+unexport WITH_GPU WITH_UT WITH_BENCHMARK WITH_ASAN WITH_CARDINAL WITH_DEBUG
 
 # ---------- Derived settings ----------
 ifdef WITH_DEBUG
@@ -72,6 +76,10 @@ ifdef WITH_UT
     CONAN_SETTINGS += -o with_ut=True
 endif
 
+ifdef WITH_BENCHMARK
+    CONAN_SETTINGS += -o with_benchmark=True
+endif
+
 ifdef WITH_ASAN
     CONAN_SETTINGS += -o with_asan=True
 endif
@@ -97,13 +105,13 @@ all: build ## Default: CPU release build
 
 # ---------- Build ----------
 
-build: ## Build knowhere (use WITH_GPU=True, WITH_UT=True, WITH_ASAN=True)
+build: ## Build knowhere (use WITH_GPU=True, WITH_UT=True, WITH_BENCHMARK=True, WITH_ASAN=True)
 ifdef WITH_GPU
 	@$(PWD)/scripts/prepare_gpu_build.sh
 endif
 	@mkdir -p $(BUILD_DIR) && \
-		conan install . $(CONAN_INSTALL_FLAGS) $(CONAN_SETTINGS) && \
-		conan build . $(CONAN_SETTINGS)
+		conan install . -of $(BUILD_DIR) $(CONAN_INSTALL_FLAGS) $(CONAN_SETTINGS) && \
+		conan build . -of $(BUILD_DIR) $(CONAN_SETTINGS)
 
 # ---------- Test ----------
 
@@ -148,6 +156,7 @@ help: ## Show available targets
 	@echo "Build flags:"
 	@echo "  WITH_GPU=True      Enable GPU (cuVS) build"
 	@echo "  WITH_UT=True       Enable unit tests"
+	@echo "  WITH_BENCHMARK=True Enable benchmarks build"
 	@echo "  WITH_ASAN=True     Enable AddressSanitizer"
 	@echo "  WITH_SVS=True      Enable SVS (Intel Scalable Vector Search, x86 only)"
 	@echo "  WITH_CARDINAL=True Enable Cardinal build"

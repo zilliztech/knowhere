@@ -163,7 +163,12 @@ class KnowhereConan(ConanFile):
                 )
 
     def layout(self):
-        cmake_layout(self)
+        # build_folder="" places the cmake build dir directly at
+        # <output_folder>/<build_type> instead of cmake_layout's default
+        # <output_folder>/build/<build_type>. The Makefile always passes
+        # -of <BUILD_DIR>, so final paths are $(BUILD_DIR)/Release/…
+        # which matches the historical build/Release/ layout exactly.
+        cmake_layout(self, build_folder="")
 
     def generate(self):
         tc = CMakeToolchain(self)
