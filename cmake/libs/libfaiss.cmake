@@ -72,6 +72,7 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/impl/scalar_quantizer/sq-avx2.cpp
   thirdparty/faiss/faiss/utils/distances_fused/simdlib_based.cpp
   thirdparty/faiss/faiss/utils/simd_impl/distances_avx2.cpp
+  thirdparty/faiss/faiss/utils/simd_impl/partitioning_avx2.cpp
   thirdparty/faiss/faiss/utils/simd_impl/rabitq_avx2.cpp
 )
 # combine files
@@ -113,6 +114,7 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/impl/scalar_quantizer/sq-neon.cpp
   thirdparty/faiss/faiss/utils/distances_fused/simdlib_based_neon.cpp
   thirdparty/faiss/faiss/utils/simd_impl/distances_aarch64.cpp
+  thirdparty/faiss/faiss/utils/simd_impl/partitioning_neon.cpp
   thirdparty/faiss/faiss/utils/simd_impl/rabitq_neon.cpp
 )
 # combine files
