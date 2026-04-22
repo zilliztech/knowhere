@@ -1,6 +1,6 @@
 
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES "")
-set( MILVUS-COMMON-VERSION 2eb54ae )
+set( MILVUS-COMMON-VERSION master )
 set( GIT_REPOSITORY  "https://github.com/zilliztech/milvus-common.git" )
 
 message(STATUS "milvus-common repo: ${GIT_REPOSITORY}")
@@ -29,6 +29,28 @@ FetchContent_Declare(
 FetchContent_GetProperties( milvus-common )
 if ( NOT milvus-common_POPULATED )
     FetchContent_Populate( milvus-common )
+    set(WITH_IO_URING ON CACHE BOOL "Build with io_uring support" FORCE)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     add_subdirectory( ${milvus-common_SOURCE_DIR}
                       ${milvus-common_BINARY_DIR} )
 

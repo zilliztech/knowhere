@@ -16,7 +16,7 @@
 #include <vector>
 
 #ifdef KNOWHERE_WITH_DISKANN
-#include "diskann/aio_context_pool.h"
+#include "knowhere/io_context_pool.h"
 #endif
 
 namespace knowhere {
@@ -97,6 +97,10 @@ class KnowhereConfig {
      * what is your default limit. If you want to raise the default limit, you can type `sudo sysctl -w fs.aio-max-nr=X`
      * on your terminal. This function returns true if validation passes. Otherwise, it returns false.
      */
+    static bool
+    SetIOContextPool(size_t num_ctx);
+
+    // Backward-compatible alias for existing AIO-specific callers.
     static bool
     SetAioContextPool(size_t num_ctx);
 

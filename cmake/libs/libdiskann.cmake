@@ -47,6 +47,11 @@ target_link_libraries(
          prometheus-cpp::core
          prometheus-cpp::push
          glog::glog)
+target_compile_definitions(diskann PUBLIC $<TARGET_PROPERTY:milvus-common,INTERFACE_COMPILE_DEFINITIONS>)
+if(MILVUS_COMMON_WITH_IO_URING OR WITH_IO_URING)
+    target_compile_definitions(diskann PUBLIC WITH_IO_URING)
+endif()
+
 if(__X86_64)
   target_compile_options(
     diskann PRIVATE -fno-builtin-malloc -fno-builtin-calloc
