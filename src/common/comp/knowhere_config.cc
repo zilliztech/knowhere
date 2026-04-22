@@ -14,7 +14,7 @@
 #include <string>
 
 #ifdef KNOWHERE_WITH_DISKANN
-#include "diskann/aio_context_pool.h"
+#include "knowhere/io_context_pool.h"
 #endif
 #include "faiss/cppcontrib/knowhere/utils/distances.h"
 #include "knowhere/log.h"
@@ -145,7 +145,11 @@ KnowhereConfig::GetClusteringType() {
 bool
 KnowhereConfig::SetIOContextPool(size_t num_ctx) {
 #ifdef KNOWHERE_WITH_DISKANN
-    return AioContextPool::InitGlobalAioPool(num_ctx, default_max_events);
+    IOContextPoolConfig cfg;
+    cfg.num_ctx = num_ctx;
+    cfg.max_events = 128;
+    cfg.prefer_io_uring = true;
+    return IOContextPool::InitGlobal(cfg);
 #endif
     return true;
 }

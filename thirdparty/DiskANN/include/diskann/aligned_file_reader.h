@@ -63,4 +63,6 @@ class AlignedFileReader {
   // async reads
   virtual void get_submitted_req(io_context_t &ctx, size_t n_ops) = 0;
   virtual void submit_req( io_context_t &ctx, std::vector<AlignedRead> &read_reqs) = 0;
+
+  virtual size_t max_events_per_ctx() const = 0;
 };

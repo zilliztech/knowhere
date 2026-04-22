@@ -16,7 +16,7 @@
 #include <vector>
 
 #ifdef KNOWHERE_WITH_DISKANN
-#include "diskann/aio_context_pool.h"
+#include "knowhere/io_context_pool.h"
 #endif
 
 namespace knowhere {

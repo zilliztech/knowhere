@@ -10,6 +10,7 @@
 #include <iostream>
 #include <sstream>
 #include "tsl/robin_map.h"
+#include "knowhere/io_reader.h"
 #include "diskann/utils.h"
 
 namespace {
@@ -122,7 +123,10 @@ namespace {
 
 LinuxAlignedFileReader::LinuxAlignedFileReader() {
   this->file_desc = -1;
+  this->io_ctx_pool_ = IOContextPool::GetGlobal();
+#ifdef MILVUS_COMMON_WITH_LIBAIO
   this->ctx_pool_ = AioContextPool::GetGlobalAioPool();
+#endif
 }
 
 LinuxAlignedFileReader::~LinuxAlignedFileReader() {
@@ -169,13 +173,66 @@ void LinuxAlignedFileReader::read(std::vector<AlignedRead> &read_reqs,
   }
   assert(this->file_desc != -1);
 
-  execute_io(ctx, this->ctx_pool_->max_events_per_ctx(), this->file_desc,
-             read_reqs);
+#ifdef WITH_IO_URING
+  if (io_ctx_pool_ != nullptr && io_ctx_pool_->IsInitialized() &&
+      io_ctx_pool_->Backend() == IOBackend::IO_URING) {
+    auto* ring = reinterpret_cast<struct io_uring*>(ctx);
+    if (ring == nullptr) {
+      throw diskann::ANNException("io_uring ring context is null", -1, __FUNCSIG__, __FILE__, __LINE__);
+    }
+    size_t submitted = 0;
+    const size_t n_ops = read_reqs.size();
+    while (submitted < n_ops) {
+      auto* sqe = io_uring_get_sqe(ring);
+      if (sqe == nullptr) {
+        const int rc = io_uring_submit(ring);
+        if (rc < 0) {
+          std::stringstream err;
+          err << "io_uring_submit failed in read, rc=" << rc;
+          throw diskann::ANNException(err.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+        continue;
+      }
+      io_uring_prep_read(sqe, this->file_desc, read_reqs[submitted].buf,
+                         read_reqs[submitted].len, read_reqs[submitted].offset);
+      sqe->user_data = submitted;
+      ++submitted;
+    }
+    const int submit_rc = io_uring_submit(ring);
+    if (submit_rc < 0) {
+      std::stringstream err;
+      err << "io_uring_submit failed in read flush, rc=" << submit_rc;
+      throw diskann::ANNException(err.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
+    }
+    size_t completed = 0;
+    while (completed < n_ops) {
+      struct io_uring_cqe* cqe = nullptr;
+      const int wait_rc = io_uring_wait_cqe(ring, &cqe);
+      if (wait_rc < 0 || cqe == nullptr) {
+        std::stringstream err;
+        err << "io_uring_wait_cqe failed in read, rc=" << wait_rc;
+        throw diskann::ANNException(err.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
+      }
+      if (cqe->res < 0) {
+        const int cqe_res = cqe->res;
+        io_uring_cqe_seen(ring, cqe);
+        std::stringstream err;
+        err << "io_uring cqe read failed in read, res=" << cqe_res;
+        throw diskann::ANNException(err.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
+      }
+      io_uring_cqe_seen(ring, cqe);
+      ++completed;
+    }
+    return;
+  }
+#endif
+
+  execute_io(ctx, this->max_events_per_ctx(), this->file_desc, read_reqs);
 }
 
 void LinuxAlignedFileReader::submit_req(io_context_t             &ctx,
                                         std::vector<AlignedRead> &read_reqs) {
-  const auto maxnr = this->ctx_pool_->max_events_per_ctx();
+  const auto maxnr = this->max_events_per_ctx();
   if (read_reqs.size() > maxnr) {
     std::stringstream err;
     err << "Async does not support number of read requests ("
@@ -184,8 +241,45 @@ void LinuxAlignedFileReader::submit_req(io_context_t             &ctx,
     throw diskann::ANNException(err.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
   }
   const auto n_ops = read_reqs.size();
-  const int  fd = this->file_desc;
+  if (n_ops == 0) {
+    return;
+  }
 
+#ifdef WITH_IO_URING
+  if (io_ctx_pool_ != nullptr && io_ctx_pool_->IsInitialized() &&
+      io_ctx_pool_->Backend() == IOBackend::IO_URING) {
+    auto* ring = reinterpret_cast<struct io_uring*>(ctx);
+    if (ring == nullptr) {
+      throw diskann::ANNException("io_uring ring context is null", -1, __FUNCSIG__, __FILE__, __LINE__);
+    }
+    size_t submitted = 0;
+    while (submitted < n_ops) {
+      auto* sqe = io_uring_get_sqe(ring);
+      if (sqe == nullptr) {
+        const auto rc = io_uring_submit(ring);
+        if (rc < 0) {
+          std::stringstream err;
+          err << "io_uring_submit failed during submit_req, rc=" << rc;
+          throw diskann::ANNException(err.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+        continue;
+      }
+      io_uring_prep_read(sqe, this->file_desc, read_reqs[submitted].buf,
+                         read_reqs[submitted].len, read_reqs[submitted].offset);
+      sqe->user_data = submitted;
+      ++submitted;
+    }
+    const auto rc = io_uring_submit(ring);
+    if (rc < 0) {
+      std::stringstream err;
+      err << "io_uring_submit failed at end of submit_req, rc=" << rc;
+      throw diskann::ANNException(err.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
+    }
+    return;
+  }
+#endif
+
+  const int fd = this->file_desc;
   std::vector<iocb_t *>    cbs(n_ops, nullptr);
   std::vector<struct iocb> cb(n_ops);
   for (size_t j = 0; j < n_ops; j++) {
@@ -226,13 +320,43 @@ void LinuxAlignedFileReader::submit_req(io_context_t             &ctx,
 }
 
 void LinuxAlignedFileReader::get_submitted_req(io_context_t &ctx, size_t n_ops) {
-  if (n_ops > this->ctx_pool_->max_events_per_ctx()) {
+  if (n_ops > this->max_events_per_ctx()) {
     std::stringstream err;
     err << "Async does not support getting number of read requests (" << n_ops
         << ") exceeds max number of events per context ("
-        << this->ctx_pool_->max_events_per_ctx() << ")";
+        << this->max_events_per_ctx() << ")";
     throw diskann::ANNException(err.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
   }
+
+#ifdef WITH_IO_URING
+  if (io_ctx_pool_ != nullptr && io_ctx_pool_->IsInitialized() &&
+      io_ctx_pool_->Backend() == IOBackend::IO_URING) {
+    auto* ring = reinterpret_cast<struct io_uring*>(ctx);
+    if (ring == nullptr) {
+      throw diskann::ANNException("io_uring ring context is null", -1, __FUNCSIG__, __FILE__, __LINE__);
+    }
+    size_t completed = 0;
+    while (completed < n_ops) {
+      struct io_uring_cqe* cqe = nullptr;
+      const int rc = io_uring_wait_cqe(ring, &cqe);
+      if (rc < 0 || cqe == nullptr) {
+        std::stringstream err;
+        err << "io_uring_wait_cqe failed in get_submitted_req, rc=" << rc;
+        throw diskann::ANNException(err.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
+      }
+      if (cqe->res < 0) {
+        const int cqe_res = cqe->res;
+        io_uring_cqe_seen(ring, cqe);
+        std::stringstream err;
+        err << "io_uring cqe read failed in get_submitted_req, res=" << cqe_res;
+        throw diskann::ANNException(err.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
+      }
+      io_uring_cqe_seen(ring, cqe);
+      ++completed;
+    }
+    return;
+  }
+#endif
 
   int64_t ret;
   uint64_t                 num_read = 0, read_retry = 0;

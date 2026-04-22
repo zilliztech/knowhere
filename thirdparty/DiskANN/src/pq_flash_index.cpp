@@ -333,12 +333,12 @@ namespace diskann {
       std::fill_n(coord_cache_buf, coord_cache_buf_len, T());
     }
 
-    size_t BLOCK_SIZE = 32;
-    size_t num_blocks = DIV_ROUND_UP(num_cached_nodes, BLOCK_SIZE);
+    size_t block_size = 32;
+    size_t num_blocks = DIV_ROUND_UP(num_cached_nodes, block_size);
 
     for (_u64 block = 0; block < num_blocks; block++) {
-      _u64 start_idx = block * BLOCK_SIZE;
-      _u64 end_idx = (std::min)(num_cached_nodes, (block + 1) * BLOCK_SIZE);
+      _u64 start_idx = block * block_size;
+      _u64 end_idx = (std::min)(num_cached_nodes, (block + 1) * block_size);
       std::vector<AlignedRead>             read_reqs;
       std::vector<std::pair<_u32, char *>> nhoods;
       for (_u64 node_idx = start_idx; node_idx < end_idx; node_idx++) {
@@ -567,12 +567,12 @@ namespace diskann {
       LOG_KNOWHERE_DEBUG_ << "Level: " << lvl;
       bool finish_flag = false;
 
-      uint64_t BLOCK_SIZE = 1024;
-      uint64_t nblocks = DIV_ROUND_UP(nodes_to_expand.size(), BLOCK_SIZE);
+      uint64_t block_size = 1024;
+      uint64_t nblocks = DIV_ROUND_UP(nodes_to_expand.size(), block_size);
       for (size_t block = 0; block < nblocks && !finish_flag; block++) {
-        size_t start = block * BLOCK_SIZE;
+        size_t start = block * block_size;
         size_t end =
-            (std::min)((block + 1) * BLOCK_SIZE, nodes_to_expand.size());
+            (std::min)((block + 1) * block_size, nodes_to_expand.size());
         std::vector<AlignedRead>             read_reqs;
         std::vector<std::pair<_u32, char *>> nhoods;
         for (size_t cur_pt = start; cur_pt < end; cur_pt++) {
@@ -1584,7 +1584,7 @@ namespace diskann {
     }
 
     const size_t batch_size = std::min(
-        {AioContextPool::GetGlobalAioPool()->max_events_per_ctx(),
+        {this->reader->max_events_per_ctx(),
         defaults::MAX_N_SECTOR_READS, sectors_to_visit.size()});
     if (batch_size == 0) {
       this->reader->put_ctx(ctx);
@@ -1703,7 +1703,7 @@ namespace diskann {
     }
 
     const size_t batch_size =
-        std::min(AioContextPool::GetGlobalAioPool()->max_events_per_ctx(),
+        std::min(this->reader->max_events_per_ctx(),
                  std::min(defaults::MAX_N_SECTOR_READS / 2UL, sectors_to_visit.size()));
     const size_t half_buf_idx = defaults::MAX_N_SECTOR_READS / 2 * read_len_for_node;
     char        *sector_scratch = data.scratch.sector_scratch;
