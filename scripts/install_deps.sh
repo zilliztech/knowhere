@@ -110,18 +110,38 @@ else
     exit 1
 fi
 
-pip3 install conan==${CONAN_VERSION}  # C/C++ package manager
+if [[ "${OS}" == "Mac" ]]; then
+    # macOS Homebrew Python (PEP 668) blocks system-wide pip install;
+    # use pipx for conan. Wheel-building packages (setuptools, wheel,
+    # bfloat16, auditwheel) are Linux-only for the swig-build job.
+    brew install pipx
+    pipx ensurepath
+    pipx install conan==${CONAN_VERSION}
+    export PATH="$HOME/.local/bin:$PATH"
+    # In GitHub Actions each step spawns a new shell, so the PATH export above
+    # only affects install_deps.sh itself. Persist ~/.local/bin to GITHUB_PATH
+    # so subsequent steps (Build, Test) can find the conan command.
+    if [[ -n "${GITHUB_PATH:-}" ]]; then
+        echo "$HOME/.local/bin" >> "${GITHUB_PATH}"
+    fi
+else
+    pip3 install conan==${CONAN_VERSION}  # C/C++ package manager
 
-pip3 install -U setuptools
-# wheel must be installed before bfloat16: bfloat16 has no pre-built wheel
-# for Python 3.8, so pip builds from source. Without the wheel package, pip
-# uses PEP 517 build isolation which can't see the installed numpy.
-pip3 install wheel 'numpy<2'
-pip3 install bfloat16   # wheel: bfloat16 dtype support for PyKnowhere
-pip3 install auditwheel  # wheel: manylinux wheel repair
+    pip3 install -U setuptools
+    # wheel must be installed before bfloat16: bfloat16 has no pre-built wheel
+    # for Python 3.8, so pip builds from source. Without the wheel package, pip
+    # uses PEP 517 build isolation which can't see the installed numpy.
+    pip3 install wheel 'numpy<2'
+    pip3 install bfloat16   # wheel: bfloat16 dtype support for PyKnowhere
+    pip3 install auditwheel  # wheel: manylinux wheel repair
+fi
 
 echo "[install_deps] Configuring conan profile and remote..."
 conan profile detect --force || true
 conan remote add default-conan-local2 ${CONAN_REMOTE_URL} || true
+
+# Remove stale libelf cache from previous runs (uploaded with --only-recipe,
+# missing exports_sources content). Let it be fetched from conancenter instead.
+conan remove libelf/0.8.13 -c 2>/dev/null || true
 
 echo "[install_deps] Done."

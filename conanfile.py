@@ -56,6 +56,7 @@ class KnowhereConan(ConanFile):
         "boost/*:without_test": True,
         "boost/*:without_stacktrace": True,
         "openssl/*:shared": True,
+        "openssl/*:no_apps": True,
         "gflags/*:shared": True,
         "fmt/*:header_only": False,
         "with_faiss_tests": False,

@@ -801,6 +801,10 @@ TEST_CASE("Test MUVERA/LEMUR reject non-fp32 data types", "[GetEmbListByIds]") {
     }
 }
 
+// DiskANN depends on libaio (Linux-only), so macOS builds exclude diskann.cc. Without that
+// source compiled, DiskANN's StaticConfigCheck is never registered and the static dispatcher
+// silently returns success — making this rejection assertion meaningless off-Linux.
+#ifdef KNOWHERE_WITH_DISKANN
 TEST_CASE("Test DiskANN rejects MUVERA/LEMUR strategies", "[GetEmbListByIds]") {
     auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
     std::string msg;
@@ -848,5 +852,6 @@ TEST_CASE("Test DiskANN rejects MUVERA/LEMUR strategies", "[GetEmbListByIds]") {
         REQUIRE(status == knowhere::Status::success);
     }
 }
+#endif  // KNOWHERE_WITH_DISKANN
 
 #endif  // !KNOWHERE_WITH_CARDINAL

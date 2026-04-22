@@ -157,6 +157,8 @@ pull_request_rules:
           - base=main
           - base~=^2(\.\d+){1,2}$
       - "status-success=ut on ubuntu-22.04"
+      - "status-success=ut on macos-14"
+      - "status-success=ut on macos-15"
       - 'status-success=pre-commit'
       - 'status-success=analyzer'
       - 'status-success=python3 wheel'
@@ -177,6 +179,8 @@ pull_request_rules:
       - -files~=^(?=src/index/ivf_raft/)
       - files~=^(?=.*((\.(h|cpp)|CMakeLists.txt))).*$
       - "status-success=ut on ubuntu-22.04"
+      - "status-success=ut on macos-14"
+      - "status-success=ut on macos-15"
       - 'status-success=pre-commit'
       - 'status-success=analyzer'
       - 'status-success=python3 wheel'
@@ -243,6 +247,8 @@ pull_request_rules:
           - base~=^2(\.\d+){1,2}$
       - or:
         - "status-success!=ut on ubuntu-22.04"
+        - "status-success!=ut on macos-14"
+        - "status-success!=ut on macos-15"
         - "status-success!=pre-commit"
         - "status-success!=analyzer"
         - "status-success!=python3 wheel"
@@ -261,6 +267,8 @@ pull_request_rules:
           - base~=^2(\.\d+){1,2}$
       - or:
         - "status-success!=ut on ubuntu-22.04"
+        - "status-success!=ut on macos-14"
+        - "status-success!=ut on macos-15"
         - "status-success!=pre-commit"
         - "status-success!=analyzer"
         - "status-success!=python3 wheel"
