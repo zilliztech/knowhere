@@ -36,7 +36,9 @@ if (WITH_CUVS)
 endif()
 
 add_library(diskann STATIC ${DISKANN_SOURCES})
-set_target_properties(diskann PROPERTIES CXX_STANDARD 17)
+# folly v2026 headers require C++20 (consteval/constinit); DiskANN includes
+# milvus-common's thread_pool.h which pulls in folly/executors.
+set_target_properties(diskann PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 target_link_libraries(
   diskann
   PUBLIC ${AIO_LIBRARIES}

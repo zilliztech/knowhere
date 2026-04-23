@@ -32,6 +32,12 @@ if ( NOT milvus-common_POPULATED )
     add_subdirectory( ${milvus-common_SOURCE_DIR}
                       ${milvus-common_BINARY_DIR} )
 
+    # milvus-common's CMakeLists hardcodes CMAKE_CXX_STANDARD=17, but folly v2026
+    # headers require C++20 (consteval/constinit). Override on the target.
+    set_target_properties(milvus-common PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON)
+
     if(NOT APPLE)
         target_link_libraries(milvus-common PUBLIC atomic)
     endif()
