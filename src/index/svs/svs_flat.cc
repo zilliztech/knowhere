@@ -76,7 +76,7 @@ class SvsFlatIndexNode : public IndexNode {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
-        if (!bitset.empty()) {
+        if (!bitset.empty() && bitset.count() > 0) {
             return expected<DataSetPtr>::Err(Status::not_implemented, "SVS Flat does not support bitset filtering");
         }
 
