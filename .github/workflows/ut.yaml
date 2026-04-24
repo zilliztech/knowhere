@@ -16,9 +16,11 @@ on:
       - "cmake/**"
       - "!cmake/libs/libcardinal.cmake"
       - ".github/workflows/ut.yaml"
+      - ".github/actions/**"
       - "CMakeLists.txt"
       - "Makefile"
       - "conanfile.py"
+      - "scripts/**"
       - "!**.md"
       - "tests/**"
 
@@ -35,7 +37,7 @@ jobs:
       fail-fast: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           submodules: 'none'
       - name: Install Dependency
@@ -62,10 +64,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, macos-15]
+        os: [macos-15]
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           submodules: 'none'
       - name: Install Dependency
@@ -95,7 +97,7 @@ jobs:
     timeout-minutes: 180
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           submodules: 'none'
       - name: Setup Python
