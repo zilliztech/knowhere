@@ -157,7 +157,6 @@ pull_request_rules:
           - base=main
           - base~=^2(\.\d+){1,2}$
       - "status-success=ut on ubuntu-22.04"
-      - "status-success=ut on macos-14"
       - "status-success=ut on macos-15"
       - 'status-success=pre-commit'
       - 'status-success=analyzer'
@@ -179,7 +178,6 @@ pull_request_rules:
       - -files~=^(?=src/index/ivf_raft/)
       - files~=^(?=.*((\.(h|cpp)|CMakeLists.txt))).*$
       - "status-success=ut on ubuntu-22.04"
-      - "status-success=ut on macos-14"
       - "status-success=ut on macos-15"
       - 'status-success=pre-commit'
       - 'status-success=analyzer'
@@ -221,7 +219,7 @@ pull_request_rules:
   - name: Add comment when jenkins job failed
     conditions:
       - or:
-          - base=master
+          - base=main
           - base~=^2(\.\d+){1,2}$
       - 'check-failure=e2e'
     actions:
@@ -232,7 +230,7 @@ pull_request_rules:
   - name: Add comment when e2e-sse job failed
     conditions:
       - or:
-          - base=master
+          - base=main
           - base~=^2(\.\d+){1,2}$
       - 'check-failure=e2e-sse'
     actions:
@@ -247,7 +245,6 @@ pull_request_rules:
           - base~=^2(\.\d+){1,2}$
       - or:
         - "status-success!=ut on ubuntu-22.04"
-        - "status-success!=ut on macos-14"
         - "status-success!=ut on macos-15"
         - "status-success!=pre-commit"
         - "status-success!=analyzer"
@@ -267,7 +264,6 @@ pull_request_rules:
           - base~=^2(\.\d+){1,2}$
       - or:
         - "status-success!=ut on ubuntu-22.04"
-        - "status-success!=ut on macos-14"
         - "status-success!=ut on macos-15"
         - "status-success!=pre-commit"
         - "status-success!=analyzer"

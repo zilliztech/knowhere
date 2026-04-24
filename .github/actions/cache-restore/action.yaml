@@ -13,7 +13,13 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: ~/.ccache
-        key: knowhere-${{ inputs.os }}-${{ github.job }}-ccache-${{ hashFiles( '**/*.cpp', '**/*.cc', '**/*.c', '**/*.h', '**/*.hpp', '**/CMakeLists.txt') }}
+        # hashFiles intentionally omits thirdparty/** — thirdparty changes (e.g.
+        # faiss submodule bumps) would otherwise roll the key on every bump and
+        # spawn orphan tarballs that burn GitHub's 10 GB cache quota. ccache
+        # inside the restored tarball still detects thirdparty source changes
+        # via its own content hashing, so compilation correctness is unaffected.
+        # Key must match cache-save/action.yaml exactly for exact-key hits.
+        key: knowhere-${{ inputs.os }}-${{ github.job }}-ccache-${{ hashFiles('src/**/*.cpp', 'src/**/*.cc', 'src/**/*.c', 'src/**/*.h', 'src/**/*.hpp', 'include/**/*.h', 'include/**/*.hpp', 'tests/**/*.cpp', 'tests/**/*.cc', 'tests/**/*.h', 'benchmark/**/*.cpp', 'benchmark/**/*.cc', 'benchmark/**/*.h', 'cmake/**', 'CMakeLists.txt', 'Makefile', 'conanfile.py') }}
         restore-keys: knowhere-${{ inputs.os }}-${{ github.job }}-ccache-
     - name: Cache Conan Packages
       uses: actions/cache/restore@v4
