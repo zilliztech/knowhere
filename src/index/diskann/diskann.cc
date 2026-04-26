@@ -271,7 +271,8 @@ class DiskANNIndexNode : public IndexNode {
     }
 
     uint64_t
-    GetCachedNodeNum(const float cache_dram_budget, const uint64_t data_dim, size_t chunk_size, const uint64_t max_degree);
+    GetCachedNodeNum(const float cache_dram_budget, const uint64_t data_dim, size_t chunk_size,
+                     const uint64_t max_degree);
 
     std::string index_prefix_;
     mutable std::mutex preparation_lock_;
@@ -468,11 +469,14 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
     uint64_t num_nodes_to_cache;
     if (build_conf.disk_pq_dims.value() > 0) {
         uint64_t disk_pq_nchunks = dim;
-        if (build_conf.disk_pq_dims.value() < (int)dim)
+        if (build_conf.disk_pq_dims.value() < (int)dim) {
             disk_pq_nchunks = build_conf.disk_pq_dims.value();
-        num_nodes_to_cache = GetCachedNodeNum(build_conf.search_cache_budget_gb.value(), disk_pq_nchunks, sizeof(_u8), build_conf.max_degree.value());
+        }
+        num_nodes_to_cache = GetCachedNodeNum(build_conf.search_cache_budget_gb.value(), disk_pq_nchunks, sizeof(_u8),
+                                              build_conf.max_degree.value());
     } else {
-        num_nodes_to_cache = GetCachedNodeNum(build_conf.search_cache_budget_gb.value(), dim, sizeof(DataType), build_conf.max_degree.value());
+        num_nodes_to_cache = GetCachedNodeNum(build_conf.search_cache_budget_gb.value(), dim, sizeof(DataType),
+                                              build_conf.max_degree.value());
     }
     diskann::BuildConfig diskann_internal_build_config{data_path,
                                                        index_prefix_,
@@ -664,11 +668,15 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
         uint64_t num_nodes_to_cache = 0;
         if (prep_conf.disk_pq_dims.value() > 0) {
             uint64_t disk_pq_nchunks = pq_flash_index_->get_data_dim();
-            if (prep_conf.disk_pq_dims.value() < (int)pq_flash_index_->get_data_dim())
+            if (prep_conf.disk_pq_dims.value() < (int)pq_flash_index_->get_data_dim()) {
                 disk_pq_nchunks = prep_conf.disk_pq_dims.value();
-            num_nodes_to_cache = GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(), disk_pq_nchunks, sizeof(_u8), prep_conf.max_degree.value());
+            }
+            num_nodes_to_cache = GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(), disk_pq_nchunks,
+                                                  sizeof(_u8), prep_conf.max_degree.value());
         } else {
-            num_nodes_to_cache = GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(), pq_flash_index_->get_data_dim(), sizeof(DataType),prep_conf.max_degree.value());
+            num_nodes_to_cache =
+                GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(), pq_flash_index_->get_data_dim(),
+                                 sizeof(DataType), prep_conf.max_degree.value());
         }
         if (num_nodes_to_cache > pq_flash_index_->get_num_points() / 3) {
             LOG_KNOWHERE_ERROR_ << "Failed to generate cache, num_nodes_to_cache(" << num_nodes_to_cache

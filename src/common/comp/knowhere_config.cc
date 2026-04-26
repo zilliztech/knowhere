@@ -142,8 +142,9 @@ KnowhereConfig::GetClusteringType() {
 bool
 KnowhereConfig::SetAioContextPool(size_t num_ctx) {
 #ifdef KNOWHERE_WITH_DISKANN
-	size_t max_events = (num_ctx > 0) ? std::min(default_max_nr/num_ctx, default_max_events) : default_max_events;
-	LOG_KNOWHERE_INFO_ << "InitGlobalAioPool with " << num_ctx << " contexts and " << max_events << " events per context" ;
+    size_t max_events = (num_ctx > 0) ? std::min(default_max_nr / num_ctx, default_max_events) : default_max_events;
+    LOG_KNOWHERE_INFO_ << "InitGlobalAioPool with " << num_ctx << " contexts and " << max_events
+                       << " events per context";
     return AioContextPool::InitGlobalAioPool(num_ctx, max_events);
 #endif
     return true;

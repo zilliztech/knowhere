@@ -29,7 +29,6 @@
 #include "knowhere/index/index_factory.h"
 #include "knowhere/utils.h"
 #include "utils.h"
-#include "diskann/diskann_gpu.h"
 
 #if __has_include(<filesystem>)
 #include <filesystem>
@@ -424,8 +423,9 @@ TEST_CASE("Test DiskANN Build Index", "[diskann]") {
             auto diskann_index_pack = knowhere::Pack(file_manager);
 
             knowhere::DataSetPtr ds_ptr = nullptr;
-            auto diskann =
-                knowhere::IndexFactory::Instance().Create<knowhere::fp32>("DISKANN", version, diskann_index_pack).value();
+            auto diskann = knowhere::IndexFactory::Instance()
+                               .Create<knowhere::fp32>("DISKANN", version, diskann_index_pack)
+                               .value();
             auto build_json = build_gen().dump();
             knowhere::Json json = knowhere::Json::parse(build_json);
             diskann.Build(ds_ptr, json);
@@ -1023,12 +1023,14 @@ base_AiSAQ_param_test() {
             test_json["beamwidth"] = diskann::defaults::MAX_AISAQ_BEAMWIDTH + 1;
             search_stat = diskann.Search(query_ds, test_json, nullptr);
             REQUIRE(search_stat.error() == knowhere::Status::out_of_range_in_json);
-            LOG_KNOWHERE_INFO_ << "Test beamwidth parameter value more than maximum " << diskann::defaults::MAX_AISAQ_BEAMWIDTH;
+            LOG_KNOWHERE_INFO_ << "Test beamwidth parameter value more than maximum "
+                               << diskann::defaults::MAX_AISAQ_BEAMWIDTH;
             test_json = knn_search_gen();
             test_json["beamwidth"] = diskann::defaults::MAX_AISAQ_BEAMWIDTH + 1;
             search_stat = diskann.Search(query_ds, test_json, nullptr);
             REQUIRE(search_stat.error() == knowhere::Status::out_of_range_in_json);
-            LOG_KNOWHERE_INFO_ << "Test vectors_beamwidth parameter value more than maximum " << diskann::defaults::MAX_AISAQ_VECTORS_BEAMWIDTH;
+            LOG_KNOWHERE_INFO_ << "Test vectors_beamwidth parameter value more than maximum "
+                               << diskann::defaults::MAX_AISAQ_VECTORS_BEAMWIDTH;
             test_json = knn_search_gen();
             test_json["vectors_beamwidth"] = diskann::defaults::MAX_AISAQ_VECTORS_BEAMWIDTH + 1;
             search_stat = diskann.Search(query_ds, test_json, nullptr);
@@ -1047,13 +1049,6 @@ base_AiSAQ_param_test() {
             test_json["metric_type"] = knowhere::metric::JACCARD;
             search_stat = diskann.Search(query_ds, test_json, nullptr);
             REQUIRE(search_stat.error() == knowhere::Status::invalid_metric_type);
-            //LOG_KNOWHERE_INFO_ << "Test GetIndexMeta operation";
-            //knowhere::Json meta_json = knowhere::Json::parse(build_gen().dump());
-            //LOG_KNOWHERE_DEBUG_ << "========== meta_json =================";
-            //LOG_KNOWHERE_DEBUG_ << meta_json.dump();
-            //LOG_KNOWHERE_DEBUG_ << "===========================";
-            //auto get_meta_result = diskann.GetIndexMeta(meta_json);
-            //REQUIRE(get_meta_result.has_value());
         }
     }
     fs::remove_all(kDir);
@@ -1064,14 +1059,16 @@ TEST_CASE("Test_AiSAQ_Params", "[diskann]") {
     base_AiSAQ_param_test<knowhere::fp32>();
 }
 
-int64_t check_node_size(std::string metric_type, int64_t dim, int64_t pq_bytes, int64_t pq_cache_size, int64_t num_entry_points){
+int64_t
+check_node_size(std::string metric_type, int64_t dim, int64_t pq_bytes, int64_t pq_cache_size,
+                int64_t num_entry_points) {
     int64_t size = 0;
     if (metric_type == "COSINE")
-        size+= dim * 4;
+        size += dim * 4;
     if (num_entry_points > 0)
-        size+= num_entry_points * pq_bytes;
+        size += num_entry_points * pq_bytes;
     if (pq_cache_size > 0)
-        size+= pq_cache_size;
+        size += pq_cache_size;
     return size;
 }
 

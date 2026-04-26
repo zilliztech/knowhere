@@ -22,7 +22,8 @@
 #include "knowhere/dataset.h"
 
 template <typename T>
-bool get_env(const char* name, T& out) {
+bool
+get_env(const char* name, T& out) {
     const char* val = std::getenv(name);
     if (!val || val[0] == '\0') {
         return false;
@@ -34,7 +35,8 @@ bool get_env(const char* name, T& out) {
 
 // Specialization for double (handles "5" / "5.0")
 template <>
-bool get_env<double>(const char* name, double& out) {
+bool
+get_env<double>(const char* name, double& out) {
     const char* val = std::getenv(name);
     if (!val || val[0] == '\0') {
         return false;
@@ -319,7 +321,8 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
                 recall = CalcRecall(result.value()->GetIds(), nq_, topk_);
                 recall_map[search_list_size] = recall;
                 printf(
-                    "[%0.3f s] iterate DISKANN param for expected recall %.4f: search_list_size=%4d, k=%d, R@=%.4f ram is %ld bytes\n",
+                    "[%0.3f s] iterate DISKANN param for expected recall %.4f: search_list_size=%4d, k=%d, R@=%.4f ram "
+                    "is %ld bytes\n",
                     get_time_diff(), expected_recall, search_list_size, topk_, recall, index_.value().Size());
                 std::fflush(stdout);
                 if (std::abs(recall - expected_recall) <= 0.0001) {
@@ -393,10 +396,10 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
         }
         parse_ann_test_name();
         load_hdf5_data<knowhere::fp32>();
-        int num_search_threads=48;
+        int num_search_threads = 48;
         int i;
         if (get_env("NUM_SEARCH_THREADS", i))
-        	num_search_threads = i;
+            num_search_threads = i;
 
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
         knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);
@@ -571,22 +574,22 @@ TEST_F(Benchmark_float_qps, TEST_DISKANN) {
     fs::remove_all(kDir);
     fs::remove(kDir);
     // Overrides
-	int i;
-	double d;
+    int i;
+    double d;
 
-	if (get_env("MAX_DEGREE", i))
-		conf[knowhere::indexparam::MAX_DEGREE] = i;
+    if (get_env("MAX_DEGREE", i))
+        conf[knowhere::indexparam::MAX_DEGREE] = i;
 
-	if (get_env("PQ_CODE_BUDGET_GB", d))
-		conf[knowhere::indexparam::PQ_CODE_BUDGET_GB] = d;
+    if (get_env("PQ_CODE_BUDGET_GB", d))
+        conf[knowhere::indexparam::PQ_CODE_BUDGET_GB] = d;
 
-	if (get_env("BUILD_DRAM_BUDGET_GB", d))
-		conf[knowhere::indexparam::BUILD_DRAM_BUDGET_GB] = d;
+    if (get_env("BUILD_DRAM_BUDGET_GB", d))
+        conf[knowhere::indexparam::BUILD_DRAM_BUDGET_GB] = d;
 
-	if (get_env("BEAMWIDTH", i))
-		conf[knowhere::indexparam::BEAMWIDTH] = i;
+    if (get_env("BEAMWIDTH", i))
+        conf[knowhere::indexparam::BEAMWIDTH] = i;
 
-	if (get_env("DISK_PQ_DIMS", i))
+    if (get_env("DISK_PQ_DIMS", i))
         conf[knowhere::indexparam::DISK_PQ_DIMS] = i;
 
     if (get_env("TOPK", i))
@@ -613,7 +616,6 @@ TEST_F(Benchmark_float_qps, TEST_DISKANN) {
     printf("index size in ram is %ld bytes. \n", index_.value().Size());
     test_diskann<knowhere::fp32>(conf);
 }
-
 
 TEST_F(Benchmark_float_qps, TEST_AISAQ) {
     index_type_ = knowhere::IndexEnum::INDEX_AISAQ;
@@ -665,7 +667,6 @@ TEST_F(Benchmark_float_qps, TEST_AISAQ) {
 
     if (get_env("TOPK", i))
         topk_ = i;
-
 
     fs::remove_all(kDir);
     fs::remove(kDir);

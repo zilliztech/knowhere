@@ -372,18 +372,22 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
     uint32_t inline_pq_vectors;
     uint32_t pq_compressed_nbytes = get_pq_size(count, dim, build_conf.pq_code_budget_gb.value());
     uint64_t max_node_len;
-    //calc max_node_len in order to estimate number of nodes to cache
+    // calc max_node_len in order to estimate number of nodes to cache
     if (build_conf.disk_pq_dims.value() > 0) {
         uint32_t disk_pq_nchunks = dim;
-        if (build_conf.disk_pq_dims.value() < (int)dim)
+        if (build_conf.disk_pq_dims.value() < (int)dim) {
             disk_pq_nchunks = build_conf.disk_pq_dims.value();
-        max_node_len = (((uint64_t)build_conf.max_degree.value() + 1) * sizeof(uint32_t)) + disk_pq_nchunks * sizeof(_u8);
-        diskann::aisaq_calc_inline_layout<_u8>(build_conf.inline_pq.value(), pq_compressed_nbytes, build_conf.max_degree.value(), build_conf.rearrange.value(),
+        }
+        max_node_len =
+            (((uint64_t)build_conf.max_degree.value() + 1) * sizeof(uint32_t)) + disk_pq_nchunks * sizeof(_u8);
+        diskann::aisaq_calc_inline_layout<_u8>(build_conf.inline_pq.value(), pq_compressed_nbytes,
+                                               build_conf.max_degree.value(), build_conf.rearrange.value(),
                                                inline_pq_vectors, max_node_len);
     } else {
         max_node_len = (((uint64_t)build_conf.max_degree.value() + 1) * sizeof(uint32_t)) + dim * sizeof(DataType);
-        diskann::aisaq_calc_inline_layout<DataType>(build_conf.inline_pq.value(), pq_compressed_nbytes, build_conf.max_degree.value(), build_conf.rearrange.value(),
-                                  inline_pq_vectors, max_node_len);
+        diskann::aisaq_calc_inline_layout<DataType>(build_conf.inline_pq.value(), pq_compressed_nbytes,
+                                                    build_conf.max_degree.value(), build_conf.rearrange.value(),
+                                                    inline_pq_vectors, max_node_len);
     }
 
     auto num_nodes_to_cache = GetCachedNodeNum(build_conf.search_cache_budget_gb.value(), max_node_len);
@@ -510,7 +514,8 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         LOG_KNOWHERE_ERROR_ << "Failed to load AiSAQ.";
         return Status::aisaq_error;
     }
-    if (!pq_flash_index_->get_rearranged_index() && !pq_flash_index_->get_rearrange_during_search() && prep_conf.pq_read_page_cache_size.value() > 0) {
+    if (!pq_flash_index_->get_rearranged_index() && !pq_flash_index_->get_rearrange_during_search() &&
+        prep_conf.pq_read_page_cache_size.value() > 0) {
         LOG_KNOWHERE_WARNING_
             << "Dynamic cache can only be used when vectors rearrangement is enabled. dynamic cache will be disabled";
         prep_conf.pq_read_page_cache_size.value() = 0;
@@ -522,10 +527,11 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
 
     if (prep_conf.pq_cache_size.value() > 0) {
         if (pq_flash_index_->aisaq_load_pq_cache(index_prefix_, prep_conf.pq_cache_size.value(),
-            diskann::aisaq_pq_cache_policy_auto, pq_flash_index_->get_rearrange_during_search()) != true) {
-                LOG_KNOWHERE_ERROR_ << "Failed to load aisaq cache";
-                return Status::aisaq_error;
-            }
+                                                 diskann::aisaq_pq_cache_policy_auto,
+                                                 pq_flash_index_->get_rearrange_during_search()) != true) {
+            LOG_KNOWHERE_ERROR_ << "Failed to load aisaq cache";
+            return Status::aisaq_error;
+        }
     }
 
     count_.store(pq_flash_index_->get_num_points());
