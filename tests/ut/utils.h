@@ -134,14 +134,14 @@ GetKNNRecall(const knowhere::DataSet& ground_truth, const knowhere::DataSet& res
 }
 
 inline float
-GetKNNRecall(const knowhere::DataSet& ground_truth, const std::vector<std::vector<int64_t>>& result) {
+GetKNNRecall(const knowhere::DataSet& ground_truth, const std::vector<std::vector<int64_t>>& result, size_t topk = 0) {
     auto nq = result.size();
     auto gt_k = ground_truth.GetDim();
     auto gt_ids = ground_truth.GetIds();
-
+    auto topk_actual = topk == 0 ? gt_k : topk;
     uint32_t matched_num = 0;
     for (size_t i = 0; i < nq; ++i) {
-        std::vector<int64_t> ids_0(gt_ids + i * gt_k, gt_ids + i * gt_k + gt_k);
+        std::vector<int64_t> ids_0(gt_ids + i * gt_k, gt_ids + i * gt_k + topk_actual);
         std::vector<int64_t> ids_1 = result[i];
 
         std::sort(ids_0.begin(), ids_0.end());
@@ -153,7 +153,7 @@ GetKNNRecall(const knowhere::DataSet& ground_truth, const std::vector<std::vecto
         v.resize(it - v.begin());
         matched_num += v.size();
     }
-    return ((float)matched_num) / ((float)nq * gt_k);
+    return ((float)matched_num) / ((float)nq * topk_actual);
 }
 
 //  Compare two ann-search results
