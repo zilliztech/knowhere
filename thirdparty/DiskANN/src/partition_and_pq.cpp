@@ -1140,7 +1140,7 @@ template<typename T>
 int partition_with_ram_budget(const std::string data_file,
                               const double sampling_rate, double ram_budget,
                               size_t            graph_degree,
-                              const std::string prefix_path, size_t k_base) {
+                              const std::string prefix_path, size_t k_base, bool use_gpu/*=false*/) {
   size_t train_dim;
   size_t num_train;
   std::unique_ptr<float[]> train_data_float = nullptr;
@@ -1383,19 +1383,19 @@ template int partition<knowhere::bf16>(
 
 template int partition_with_ram_budget<int8_t>(
     const std::string data_file, const double sampling_rate, double ram_budget,
-    size_t graph_degree, const std::string prefix_path, size_t k_base);
+    size_t graph_degree, const std::string prefix_path, size_t k_base,bool use_gpu);
 template int partition_with_ram_budget<uint8_t>(
     const std::string data_file, const double sampling_rate, double ram_budget,
-    size_t graph_degree, const std::string prefix_path, size_t k_base);
+    size_t graph_degree, const std::string prefix_path, size_t k_base,bool use_gpu );
 template int partition_with_ram_budget<float>(
     const std::string data_file, const double sampling_rate, double ram_budget,
-    size_t graph_degree, const std::string prefix_path, size_t k_base);
+    size_t graph_degree, const std::string prefix_path, size_t k_base, bool use_gpu);
 template int partition_with_ram_budget<knowhere::fp16>(
     const std::string data_file, const double sampling_rate, double ram_budget,
-    size_t graph_degree, const std::string prefix_path, size_t k_base);
+    size_t graph_degree, const std::string prefix_path, size_t k_base, bool use_gpu);
 template int partition_with_ram_budget<knowhere::bf16>(
     const std::string data_file, const double sampling_rate, double ram_budget,
-    size_t graph_degree, const std::string prefix_path, size_t k_base);
+    size_t graph_degree, const std::string prefix_path, size_t k_base, bool use_gpu);
 
 template int retrieve_shard_data_from_ids<float>(const std::string data_file,
                                                  std::string idmap_filename,

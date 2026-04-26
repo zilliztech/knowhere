@@ -39,12 +39,14 @@ namespace math_utils {
   // compute l2-squared norms of data stored in row major num_points * dim,
   // needs
   // to be pre-allocated
-  void compute_vecs_l2sq(float* vecs_l2sq, const float* data, const size_t num_points,
-                         const size_t dim) {
-    for (int64_t n_iter = 0; n_iter < (_s64) num_points; n_iter++) {
-      vecs_l2sq[n_iter] =
-          calc_distance(data + (n_iter * dim), data + (n_iter * dim), dim);
-    }
+  void compute_vecs_l2sq(float *vecs_l2sq,const float *data, const size_t num_points, const size_t dim)
+  {
+  #pragma omp parallel for schedule(static, 8192)
+      for (int64_t n_iter = 0; n_iter < (int64_t)num_points; n_iter++)
+      {
+          vecs_l2sq[n_iter] = cblas_snrm2(dim, (data + (n_iter * dim)), 1);
+          vecs_l2sq[n_iter] *= vecs_l2sq[n_iter];
+      }
   }
 
   void elkan_L2(const float* x, const float* y, size_t d, size_t nx, size_t ny,
@@ -136,76 +138,78 @@ namespace math_utils {
   // Default value of k is 1
 
   // Ideally used only by compute_closest_centers
-  void compute_closest_centers_in_block(
-      const float* const data, const size_t num_points, const size_t dim,
-      const float* const centers, const size_t num_centers,
-      const float* const docs_l2sq, const float* const centers_l2sq,
-      uint32_t* center_index, float* const dist_matrix, size_t k) {
-    if (k > num_centers) {
-      diskann::cout << "ERROR: k (" << k << ") > num_center(" << num_centers
-                    << ")" << std::endl;
-      return;
-    }
+  void compute_closest_centers_in_block(const float *const data, const size_t num_points, const size_t dim,
+                                        const float *const centers, const size_t num_centers,
+                                        const float *const docs_l2sq, const float *const centers_l2sq,
+                                        uint32_t *center_index, float *const dist_matrix, size_t k)
+  {
+      if (k > num_centers)
+      {
+          diskann::cout << "ERROR: k (" << k << ") > num_center(" << num_centers << ")" << std::endl;
+          return;
+      }
 
-    auto ones_a = std::make_unique<float[]>(num_centers);
-    auto ones_b = std::make_unique<float[]>(num_points);
+      float *ones_a = new float[num_centers];
+      float *ones_b = new float[num_points];
 
-    for (size_t i = 0; i < num_centers; i++) {
-      ones_a[i] = 1.0;
-    }
-    for (size_t i = 0; i < num_points; i++) {
-      ones_b[i] = 1.0;
-    }
+      for (size_t i = 0; i < num_centers; i++)
+      {
+          ones_a[i] = 1.0;
+      }
+      for (size_t i = 0; i < num_points; i++)
+      {
+          ones_b[i] = 1.0;
+      }
 
-    float    one = 1, zero = 0, minus_two = -2.0f;
-    FINTEGER m = num_points, n = num_centers, finteger_one = 1,
-             finteger_dim = dim;
-    sgemm_(kNoTranspose, kTranspose, &m, &n, &finteger_one, &one, docs_l2sq,
-           &finteger_one, ones_a.get(), &finteger_one, &zero, dist_matrix, &n);
+      cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, (size_t)num_points, (size_t)num_centers, (size_t)1, 1.0f,
+                  docs_l2sq, (size_t)1, ones_a, (size_t)1, 0.0f, dist_matrix, (size_t)num_centers);
 
-    sgemm_(kNoTranspose, kTranspose, &m, &n, &finteger_one, &one, ones_b.get(),
-           &finteger_one, centers_l2sq, &finteger_one, &one, dist_matrix, &n);
+      cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, (size_t)num_points, (size_t)num_centers, (size_t)1, 1.0f,
+                  ones_b, (size_t)1, centers_l2sq, (size_t)1, 1.0f, dist_matrix, (size_t)num_centers);
 
-    sgemm_(kNoTranspose, kTranspose, &m, &n, &finteger_dim, &minus_two, data,
-           &finteger_dim, centers, &finteger_dim, &one, dist_matrix, &n);
+      cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, (size_t)num_points, (size_t)num_centers, (size_t)dim, -2.0f,
+                  data, (size_t)dim, centers, (size_t)dim, 1.0f, dist_matrix, (size_t)num_centers);
 
-    if (k == 1) {
-      for (int64_t i = 0; i < (_s64) num_points; i++) {
-        float  min = std::numeric_limits<float>::max();
-        float* current = dist_matrix + (i * num_centers);
-        for (size_t j = 0; j < num_centers; j++) {
-          if (current[j] < min) {
-            center_index[i] = (uint32_t) j;
-            min = current[j];
+      if (k == 1)
+      {
+  #pragma omp parallel for schedule(static, 8192)
+          for (int64_t i = 0; i < (int64_t)num_points; i++)
+          {
+              float min = std::numeric_limits<float>::max();
+              float *current = dist_matrix + (i * num_centers);
+              for (size_t j = 0; j < num_centers; j++)
+              {
+                  if (current[j] < min)
+                  {
+                      center_index[i] = (uint32_t)j;
+                      min = current[j];
+                  }
+              }
           }
-        }
       }
-    } else {
-      for (int64_t i = 0; i < (_s64) num_points; i++) {
-        std::vector<PivotContainer> top_k_vec;
-        float*                      current = dist_matrix + (i * num_centers);
-        for (size_t j = 0; j < num_centers; j++) {
-          top_k_vec.emplace_back(j, -current[j]);
-        }
-        std::nth_element(top_k_vec.begin(), top_k_vec.begin() + k - 1,
-                         top_k_vec.end());
-        std::sort(top_k_vec.begin(), top_k_vec.begin() + k);
-        for (size_t j = 0; j < k; j++) {
-          center_index[i * k + j] = top_k_vec[j].piv_id;
-        }
+      else
+      {
+  #pragma omp parallel for schedule(static, 8192)
+          for (int64_t i = 0; i < (int64_t)num_points; i++)
+          {
+              std::priority_queue<PivotContainer> top_k_queue;
+              float *current = dist_matrix + (i * num_centers);
+              for (size_t j = 0; j < num_centers; j++)
+              {
+                  PivotContainer this_piv(j, current[j]);
+                  top_k_queue.push(this_piv);
+              }
+              for (size_t j = 0; j < k; j++)
+              {
+                  PivotContainer this_piv = top_k_queue.top();
+                  center_index[i * k + j] = (uint32_t)this_piv.piv_id;
+                  top_k_queue.pop();
+              }
+          }
       }
-    }
+      delete[] ones_a;
+      delete[] ones_b;
   }
-
-  // Given data in num_points * new_dim row major
-  // Pivots stored in full_pivot_data as num_centers * new_dim row major
-  // Calculate the k closest pivot for each point and store it in vector
-  // closest_centers_ivf (row major, num_points*k) (which needs to be allocated
-  // outside) Additionally, if inverted index is not null (and pre-allocated),
-  // it
-  // will return inverted index for each center, assuming each of the inverted
-  // indices is an empty vector. Additionally, if pts_norms_squared is not null,
-  // then it will assume that point norms are pre-computed and use those values
 
   void compute_closest_centers(const float* data, size_t num_points, size_t dim,
                                const float* pivot_data, size_t num_centers,

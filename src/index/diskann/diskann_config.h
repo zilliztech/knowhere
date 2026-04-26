@@ -12,6 +12,7 @@
 #ifndef DISKANN_CONFIG_H
 #define DISKANN_CONFIG_H
 
+#include "diskann/defaults.h"
 #include "knowhere/config.h"
 
 namespace knowhere {
@@ -142,7 +143,7 @@ class DiskANNConfig : public BaseConfig {
             .for_deserialize();
         KNOWHERE_CONFIG_DECLARE_FIELD(beamwidth)
             .description("the maximum number of IO requests each query will issue per iteration of search code.")
-            .set_default(8)
+            .set_default(diskann::defaults::DEFAULT_DISKANN_BEAMWIDTH)
             .set_range(1, 128)
             .for_search()
             .for_range_search()

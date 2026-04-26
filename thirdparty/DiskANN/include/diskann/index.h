@@ -36,15 +36,18 @@ namespace boost {
 
 namespace diskann {
   inline double estimate_ram_usage(_u64 size, _u32 dim, _u32 datasize,
-                                   _u32 degree) {
+                                   _u32 degree, bool is_gpu=false, double max_fraction=0.06) {
     double size_of_data = ((double) size) * ROUND_UP(dim, 8) * datasize;
     double size_of_graph =
         ((double) size) * degree * sizeof(unsigned) * diskann::defaults::GRAPH_SLACK_FACTOR;
     double size_of_locks = ((double) size) * sizeof(std::mutex);
     double size_of_outer_vector = ((double) size) * sizeof(ptrdiff_t);
-
-    return OVERHEAD_FACTOR * (size_of_data + size_of_graph + size_of_locks +
-                              size_of_outer_vector);
+    if(is_gpu) {
+    	size_of_outer_vector += size*max_fraction*(degree+2)*sizeof(unsigned);
+    }
+    double total_size =  OVERHEAD_FACTOR * (size_of_data + size_of_graph + size_of_locks +
+            size_of_outer_vector);
+    return total_size;
   }
 
   template<typename T>

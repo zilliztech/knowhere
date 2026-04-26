@@ -457,6 +457,7 @@ AisaqPQReader_aio::AisaqPQReader_aio()
 
 AisaqPQReader_aio::~AisaqPQReader_aio()
 {
+    cleanup_reader();
 }
 
 const char *AisaqPQReader_aio::get_io_engine_name()
@@ -860,7 +861,7 @@ bool AisaqPQReader::set_page_cache_size(AisaqPQReaderContext &ctx, uint64_t page
     if (!m_rearranged) {
         page_cache_size_bytes_local = 0;
     }
-    return ctx.set_page_cache_size(page_cache_size_bytes_local);
+    return ctx.set_page_cache_size(page_cache_size_bytes);
 }
 
 /* public */
@@ -873,6 +874,11 @@ void AisaqPQReader::hibernate(AisaqPQReaderContext &ctx)
 uint32_t AisaqPQReader::get_context_size(AisaqPQReaderContext &ctx)
 {
 	return ctx.get_size();
+}
+
+uint32_t AisaqPQReader::get_context_max_ios(AisaqPQReaderContext &ctx)
+{
+    return ctx.m_max_ios;
 }
 
 /* helpers */

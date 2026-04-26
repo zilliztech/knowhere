@@ -45,7 +45,7 @@ class AisaqIndexNode : public IndexNode {
     Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
 
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_poo) override {
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         return Status::not_implemented;
     }
 
@@ -132,7 +132,7 @@ class AisaqIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "AiSAQ not loaded.";
             return 0;
         }
-        return pq_flash_index_->cal_size();
+        return pq_flash_index_->aisaq_cal_size();
     }
 
     int64_t
@@ -215,7 +215,6 @@ GetNecessaryFilenames(const std::string& prefix, const bool need_norm, const boo
     filenames.push_back(diskann::get_pq_rearrangement_perm_filename(pq_pivots_filename));
     filenames.push_back(diskann::get_pq_chunk_offsets_filename(pq_pivots_filename));
     filenames.push_back(diskann::get_pq_centroid_filename(pq_pivots_filename));
-    filenames.push_back(diskann::get_pq_compressed_filename(prefix));
     filenames.push_back(disk_index_filename);
     if (need_norm) {
         filenames.push_back(diskann::get_disk_index_max_base_norm_file(disk_index_filename));
@@ -226,6 +225,8 @@ GetNecessaryFilenames(const std::string& prefix, const bool need_norm, const boo
     if (rearrange) {
         filenames.push_back(diskann::get_index_rearranged_filename(prefix));
         filenames.push_back(diskann::get_pq_compressed_rearranged_filename(prefix));
+    } else {
+        filenames.push_back(diskann::get_pq_compressed_filename(prefix));
     }
     if (entry_points) {
         filenames.push_back(diskann::get_index_entry_points_filename(prefix));
@@ -244,7 +245,6 @@ GetOptionalFilenames(const std::string& prefix) {
     filenames.push_back(diskann::get_pq_rearrangement_perm_filename(disk_pq_pivots_file_name));
     filenames.push_back(diskann::get_pq_chunk_offsets_filename(disk_pq_pivots_file_name));
     filenames.push_back(diskann::get_pq_centroid_filename(disk_pq_pivots_file_name));
-
     filenames.push_back(diskann::get_cached_nodes_file(prefix));
     return filenames;
 }
@@ -278,21 +278,25 @@ CheckMetric(const std::string& diskann_metric) {
 }
 }  // namespace
 
+static size_t get_pq_size(size_t points_num, size_t dim, double pq_code_size_gb) {
+
+    double pq_code_size_limit = diskann::get_memory_budget(pq_code_size_gb);
+    size_t num_pq_chunks = (size_t) (std::floor)(_u64(pq_code_size_limit / points_num));
+    num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;
+    num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks;
+    num_pq_chunks = num_pq_chunks > diskann::defaults::MAX_PQ_CHUNKS ? diskann::defaults::MAX_PQ_CHUNKS : num_pq_chunks;
+    return num_pq_chunks * sizeof(_u8);
+}
+
 template <typename DataType>
 Status
 AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) {
     assert(file_manager_ != nullptr);
     auto build_conf = static_cast<const AisaqConfig&>(*cfg);
 
-    if (!build_conf.inline_pq.has_value()) {
-        build_conf.inline_pq = diskann::defaults::DEFAULT_INLINE_PQ;
-    }
-    if (!build_conf.rearrange.has_value()) {
-        build_conf.rearrange = diskann::defaults::DEFAULT_REARRANGE;
-    }
-    if (!build_conf.num_entry_points.has_value()) {
-        build_conf.num_entry_points = diskann::defaults::DEFAULT_NUM_ENTRY_POINTS;
-    }
+    assert(build_conf.inline_pq.has_value());
+    assert(build_conf.rearrange.has_value());
+    assert(build_conf.num_entry_points.has_value());
     if (build_conf.inline_pq.value() > build_conf.max_degree.value()) {
         LOG_KNOWHERE_ERROR_ << "inline pq more than max degree value";
         return Status::aisaq_error;
@@ -364,7 +368,25 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
             return diskann::Metric::INNER_PRODUCT;
         }
     }();
-    auto num_nodes_to_cache = GetCachedNodeNum(build_conf.search_cache_budget_gb.value(), dim);
+
+    uint32_t inline_pq_vectors;
+    uint32_t pq_compressed_nbytes = get_pq_size(count, dim, build_conf.pq_code_budget_gb.value());
+    uint64_t max_node_len;
+    //calc max_node_len in order to estimate number of nodes to cache
+    if (build_conf.disk_pq_dims.value() > 0) {
+        uint32_t disk_pq_nchunks = dim;
+        if (build_conf.disk_pq_dims.value() < (int)dim)
+            disk_pq_nchunks = build_conf.disk_pq_dims.value();
+        max_node_len = (((uint64_t)build_conf.max_degree.value() + 1) * sizeof(uint32_t)) + disk_pq_nchunks * sizeof(_u8);
+        diskann::aisaq_calc_inline_layout<_u8>(build_conf.inline_pq.value(), pq_compressed_nbytes, build_conf.max_degree.value(), build_conf.rearrange.value(),
+                                               inline_pq_vectors, max_node_len);
+    } else {
+        max_node_len = (((uint64_t)build_conf.max_degree.value() + 1) * sizeof(uint32_t)) + dim * sizeof(DataType);
+        diskann::aisaq_calc_inline_layout<DataType>(build_conf.inline_pq.value(), pq_compressed_nbytes, build_conf.max_degree.value(), build_conf.rearrange.value(),
+                                  inline_pq_vectors, max_node_len);
+    }
+
+    auto num_nodes_to_cache = GetCachedNodeNum(build_conf.search_cache_budget_gb.value(), max_node_len);
     diskann::BuildConfig aisaq_internal_build_config{data_path,
                                                      index_prefix_,
                                                      diskann_metric,
@@ -410,13 +432,9 @@ template <typename DataType>
 Status
 AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) {
     auto prep_conf = static_cast<const AisaqConfig&>(*cfg);
-    index_prefix_ = prep_conf.index_prefix.value();
     bool rearrange = prep_conf.rearrange.value();
     bool entry_points = prep_conf.num_entry_points.value() > 0;
-
-    if (!prep_conf.pq_cache_size.has_value()) {
-        prep_conf.pq_cache_size = diskann::defaults::DEFAULT_PQ_CACHE_SIZE;
-    }
+    assert(prep_conf.pq_cache_size.has_value());
     LOG_KNOWHERE_INFO_ << "AiSAQ deserialize configuration:"
                        << " max vectors_beam_width: " << diskann::defaults::MAX_AISAQ_VECTORS_BEAMWIDTH
                        << " pq cache size: " << prep_conf.pq_cache_size.value() << " bytes";
@@ -434,6 +452,7 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         LOG_KNOWHERE_ERROR_ << "AiSAQ file path for deserialize is empty.";
         return Status::invalid_param_in_json;
     }
+    index_prefix_ = prep_conf.index_prefix.value();
     bool is_ip = IsMetricType(prep_conf.metric_type.value(), knowhere::metric::IP);
     bool need_norm = IsMetricType(prep_conf.metric_type.value(), knowhere::metric::IP) ||
                      IsMetricType(prep_conf.metric_type.value(), knowhere::metric::COSINE);
@@ -491,21 +510,24 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         LOG_KNOWHERE_ERROR_ << "Failed to load AiSAQ.";
         return Status::aisaq_error;
     }
-    if (!pq_flash_index_->get_rearranged_index() && prep_conf.pq_read_page_cache_size.value() > 0) {
+    if (!pq_flash_index_->get_rearranged_index() && !pq_flash_index_->get_rearrange_during_search() && prep_conf.pq_read_page_cache_size.value() > 0) {
         LOG_KNOWHERE_WARNING_
-            << "Dynamic cache can only be used in reordered mode. pq_read_page_cache_size will be set to zero";
+            << "Dynamic cache can only be used when vectors rearrangement is enabled. dynamic cache will be disabled";
         prep_conf.pq_read_page_cache_size.value() = 0;
-    }
-
-    if (prep_conf.pq_cache_size.value() > 0) {
-        std::string pq_compressed_vectors_path = index_prefix_ + "_pq_compressed.bin";
-        pq_flash_index_->aisaq_load_pq_cache(pq_compressed_vectors_path, prep_conf.pq_cache_size.value(),
-                                             diskann::aisaq_pq_cache_policy_auto);
     }
 
     if (pq_flash_index_->aisaq_init(pq_read_io_engine, index_prefix_.c_str()) != 0) {
         return Status::aisaq_error;
     }
+
+    if (prep_conf.pq_cache_size.value() > 0) {
+        if (pq_flash_index_->aisaq_load_pq_cache(index_prefix_, prep_conf.pq_cache_size.value(),
+            diskann::aisaq_pq_cache_policy_auto, pq_flash_index_->get_rearrange_during_search()) != true) {
+                LOG_KNOWHERE_ERROR_ << "Failed to load aisaq cache";
+                return Status::aisaq_error;
+            }
+    }
+
     count_.store(pq_flash_index_->get_num_points());
     // AiSAQ will add one more dim for IP type.
     if (is_ip) {
@@ -626,37 +648,22 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
     auto filter_ratio = static_cast<float>(search_conf.filter_threshold.value());
 
     struct diskann::aisaq_search_config aisaq_search_config;
+    assert(search_conf.beamwidth.has_value());
+    assert(search_conf.vectors_beamwidth.has_value());
+    assert(search_conf.pq_read_page_cache_size.has_value());
 
-    if (!search_conf.beamwidth.has_value()) {
-        search_conf.beamwidth.value() = diskann::defaults::DEFAULT_AISAQ_BEAMWIDTH;
-    } else {
-        const int32_t max_aisaq_beamwidth = static_cast<int32_t>(diskann::defaults::MAX_AISAQ_BEAMWIDTH);
-        if (search_conf.beamwidth.value() > max_aisaq_beamwidth) {
-            LOG_KNOWHERE_ERROR_ << "Error. Beam width more than max value";
-            return expected<DataSetPtr>::Err(Status::aisaq_error, "beam width more than maximal");
-        }
+    if (search_conf.beamwidth.value() > (int)diskann::defaults::MAX_AISAQ_BEAMWIDTH) {
+        LOG_KNOWHERE_ERROR_ << "Error. Beam width more than max value";
+        return expected<DataSetPtr>::Err(Status::aisaq_error, "beam width more than maximal");
     }
 
-    if (!search_conf.vectors_beamwidth.has_value()) {
-        search_conf.vectors_beamwidth.value() = diskann::defaults::DEFAULT_AISAQ_VECTORS_BEAMWIDTH;
-    } else {
-        const int32_t max_aisaq_vectors_beamwidth =
-            static_cast<int32_t>(diskann::defaults::MAX_AISAQ_VECTORS_BEAMWIDTH);
-        if (search_conf.vectors_beamwidth.value() > max_aisaq_vectors_beamwidth) {
-            LOG_KNOWHERE_ERROR_ << "Error. Vector beam width more than max value";
-            return expected<DataSetPtr>::Err(Status::aisaq_error, "vector beam width more than maximal");
-        }
-    }
     if (search_conf.vectors_beamwidth.value() > search_conf.beamwidth.value()) {
         LOG_KNOWHERE_ERROR_ << "Error. Vector beam width more than beam width";
         return expected<DataSetPtr>::Err(Status::aisaq_error, "vector beam width more than beam width");
     }
     aisaq_search_config.vector_beamwidth = search_conf.vectors_beamwidth.value();
-    if (!search_conf.pq_read_page_cache_size.has_value()) {
-        aisaq_search_config.pq_read_page_cache_size = diskann::defaults::DEFAULT_PQ_READ_PAGE_CACHE_SIZE;
-    } else {
-        aisaq_search_config.pq_read_page_cache_size = search_conf.pq_read_page_cache_size.value();
-    }
+
+    aisaq_search_config.pq_read_page_cache_size = search_conf.pq_read_page_cache_size.value();
 
     auto nq = static_cast<uint64_t>(dataset->GetRows());
     auto dim = dataset->GetDim();
@@ -746,12 +753,18 @@ template <typename DataType>
 expected<DataSetPtr>
 AisaqIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
     std::vector<int64_t> entry_points;
-    entry_points.reserve(pq_flash_index_->get_num_medoids());
-
     for (size_t i = 0; i < pq_flash_index_->get_num_medoids(); i++) {
         entry_points.push_back(pq_flash_index_->get_medoids()[i]);
     }
-    auto aisaq_conf = static_cast<const AisaqConfig&>(*cfg);
+    auto aisaq_conf = static_cast<const DiskANNConfig&>(*cfg);
+    LOG_KNOWHERE_INFO_ << "Count " << Count();
+    LOG_KNOWHERE_INFO_ << "max_degree " << aisaq_conf.max_degree.value();
+    LOG_KNOWHERE_INFO_ << "search_list_size " << aisaq_conf.search_list_size.value();
+    LOG_KNOWHERE_INFO_ << "pq_code_budget_gb " << aisaq_conf.pq_code_budget_gb.value();
+    LOG_KNOWHERE_INFO_ << "build_dram_budget_gb " << aisaq_conf.build_dram_budget_gb.value();
+    LOG_KNOWHERE_INFO_ << "disk_pq_dims " << aisaq_conf.disk_pq_dims.value();
+    LOG_KNOWHERE_INFO_ << "accelerate_build " << aisaq_conf.accelerate_build.value();
+    LOG_KNOWHERE_INFO_ << "data_path " << aisaq_conf.data_path.value();
     feder::diskann::DiskANNMeta meta(aisaq_conf.data_path.value(), aisaq_conf.max_degree.value(),
                                      aisaq_conf.search_list_size.value(), aisaq_conf.pq_code_budget_gb.value(),
                                      aisaq_conf.build_dram_budget_gb.value(), aisaq_conf.disk_pq_dims.value(),

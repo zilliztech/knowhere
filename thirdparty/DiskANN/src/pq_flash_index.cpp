@@ -970,13 +970,12 @@ namespace diskann {
     for (_u64 id = 0; id < num_points; ++id) {
       _u64 origin_id = pq_data_getter->get_origin_id(id);
       if (bitset_view.empty() || !bitset_view.test(origin_id)) {
-    	pq_batch_ids.push_back(id);
+    	  pq_batch_ids.push_back(id);
       }
 
       if (pq_batch_ids.size() == pq_batch_size || id == num_points - 1) {
         const size_t sz = pq_batch_ids.size();
-        aggregate_coords(pq_batch_ids.data(), sz, pq_data_getter->get_pq_data(),
-                         this->n_chunks, pq_coord_scratch);
+        pq_data_getter->aggregate_pq_coords(pq_batch_ids.data(), sz, this->n_chunks, pq_coord_scratch);
         pq_dist_lookup(pq_coord_scratch, sz, this->n_chunks, pq_dists,
                        dist_scratch);
         for (size_t i = 0; i < sz; ++i) {

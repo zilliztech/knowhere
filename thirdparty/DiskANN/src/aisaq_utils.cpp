@@ -18,6 +18,7 @@
 
 #include "diskann/defaults.h"
 #include "diskann/aisaq_utils.h"
+#include "knowhere/comp/task.h"
 
 namespace diskann {
 
@@ -26,8 +27,8 @@ namespace diskann {
     int aisaq_generate_vectors_rearrange_map(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<LabelT, std::vector<uint32_t>> &filter_to_medoid_ids,
-            aisaq_read_nodes_nbrs_func_t<T, LabelT> read_nodes_nbrs_func, void *context) {
-        if (num_points == 0 || num_medoids == 0) {
+            aisaq_read_nodes_nbrs_func_t<T, LabelT> read_nodes_nbrs_func, void **contexts, uint32_t context_count) {
+        if (num_points == 0 || num_medoids == 0 || context_count == 0) {
             return -1;
         }
 
@@ -122,81 +123,101 @@ namespace diskann {
             }
         }
         uint64_t block_size = 1024;
-        std::vector<uint32_t> nodes_to_read;
-        std::vector<std::pair<uint32_t, uint32_t *>> nbr_buffers;
-        for (uint32_t i = 0; i < block_size; i++) {
-            nbr_buffers.emplace_back(0, new uint32_t[max_degree]);
+        uint64_t thread_block_size = DIV_ROUND_UP(block_size, context_count);
+        std::vector<std::vector<uint32_t>> nodes_to_read_vector(context_count);
+        nodes_to_read_vector.reserve(context_count);
+        for (uint32_t i = 0; i < context_count; i++) {
+            nodes_to_read_vector[i].reserve(thread_block_size);
         }
+
+        std::vector<std::vector<std::pair<uint32_t, uint32_t *>>> nbr_buffers_vector(context_count);
+        for (uint32_t i = 0; i < context_count; i++) {
+            for (uint32_t j = 0; j < thread_block_size; j++) {
+                nbr_buffers_vector[i].emplace_back(0, new uint32_t[max_degree]);
+            }
+        }
+
+        auto thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
         while (cur_level->size() != 0) {
             diskann::cout << "nhops: " << nhops << "..." << std::flush;
             /* expand cur_level */
-            std::vector<struct rearrange_node> rnodes;
             uint64_t ncount = cur_level->size();
-            uint64_t nblocks = DIV_ROUND_UP(ncount, block_size);
-            auto vector_it = cur_level->begin();
-            uint32_t progress_step = std::max(1lu, nblocks / 20);
-            for (size_t block = 0; block < nblocks; block++) {
-                if ((block % progress_step) == 0) {
-                    diskann::cout << "." << std::flush;
-                }
-                size_t start = block * block_size;
-                size_t end = (std::min)((block + 1) * block_size, ncount);
-                for (size_t cur_pt = start; cur_pt < end; cur_pt++) {
-                    nodes_to_read.push_back(*vector_it);
-                    vector_it++;
-                }
-                /* issue read requests */
-                auto read_status = read_nodes_nbrs_func(context, nodes_to_read, nbr_buffers);
-                for (uint32_t i = 0; i < read_status.size(); i++) {
-                    if (read_status[i] == false) {
-                        LOG_KNOWHERE_ERROR_ << "read failed";
-                        continue;
-                    }
-                    uint32_t nnbrs = nbr_buffers[i].first;
-                    uint32_t *nbrs = nbr_buffers[i].second;
-                    struct rearrange_node rnode;
-                    rnode.id = nodes_to_read[i];
-                    /* next level */
-                    for (uint32_t j = 0; j < nnbrs; j++) {
-                        rnode.nbrs.push_back(nbrs[j]);
-                    }
-                    //std::sort(rnode.nbrs.begin(), rnode.nbrs.end());
-                    rnode.score = 0;
-                    if ((rearrange_sorter & __rearrange_sorter_opt_score) != 0) {
-                        assert(pq_vector_bytes > 0);
-                        /* calculate score */
-                        uint32_t __sector_x1, __sector_x2, __sector_x4, last_sector_x1, last_sector_x2, last_sector_x4, last_score = 0;
-                        uint32_t __vectors_per_io_x1 = defaults::SECTOR_LEN / (pq_vector_bytes * sizeof (uint8_t)),
-                                __vectors_per_io_x2 = (defaults::SECTOR_LEN * 2) / (pq_vector_bytes * sizeof (uint8_t)),
-                                __vectors_per_io_x4 = (defaults::SECTOR_LEN * 4) / (pq_vector_bytes * sizeof (uint8_t));
-                        for (uint32_t j = 0; j < rnode.nbrs.size(); j++) {
-                            __sector_x1 = rnode.nbrs[j] / __vectors_per_io_x1;
-                            __sector_x2 = rnode.nbrs[j] / __vectors_per_io_x2;
-                            __sector_x4 = rnode.nbrs[j] / __vectors_per_io_x4;
-                            if (j == 0 || (last_sector_x1 != __sector_x1 && last_sector_x2 != __sector_x2 && last_sector_x4 != __sector_x4)) {
-                                last_sector_x1 = __sector_x1;
-                                last_sector_x2 = __sector_x2;
-                                last_sector_x4 = __sector_x4;
-                                last_score = 0;
-                            } else {
-                                if (last_sector_x1 == __sector_x1) {
-                                    last_score += 4;
-                                } else if (last_sector_x2 == __sector_x2) {
-                                    last_score += 2;
-                                } else {
-                                    /* last_sector_x4 == __sector_x4 */
-                                    last_score++;
+            std::vector<struct rearrange_node> rnodes(ncount);
+            std::vector<uint32_t> data_vector(cur_level->begin(), cur_level->end());
+            uint64_t progress_step = std::max(1lu, ncount / 20);
+            uint64_t per_job_ncount = DIV_ROUND_UP(ncount, context_count);
+            std::vector<folly::Future<folly::Unit>> futures;
+            futures.reserve(context_count);
+
+            for (uint64_t context_id = 0; context_id < context_count; context_id++) {
+                futures.push_back(thread_pool->push([&, job_id = context_id]() {
+                    uint32_t thread_id = job_id;
+                    uint64_t start_node = job_id * per_job_ncount;
+                    uint64_t end_node = std::min((job_id + 1) * per_job_ncount, ncount);
+                    for (uint64_t node = start_node; node < end_node; node += thread_block_size) {
+                        if ((node % progress_step) == 0) {
+                            diskann::cout << "." << std::flush;
+                        }
+                        size_t process_length = (std::min)(thread_block_size, end_node - node);
+                        for (uint32_t i = 0; i < process_length; i++) {
+                            nodes_to_read_vector[thread_id].push_back(data_vector[node + i]);
+                        }
+                        /* issue read requests */
+                        auto read_status = read_nodes_nbrs_func(contexts[thread_id], nodes_to_read_vector[thread_id], nbr_buffers_vector[thread_id]);
+                        for (uint32_t i = 0; i < read_status.size(); i++) {
+                            if (read_status[i] == false) {
+                                LOG_KNOWHERE_ERROR_ << "read failed";
+                                continue;
+                            }
+                            uint32_t nnbrs = nbr_buffers_vector[thread_id][i].first;
+                            uint32_t *nbrs = nbr_buffers_vector[thread_id][i].second;
+                            struct rearrange_node rnode;
+                            rnode.id = nodes_to_read_vector[thread_id][i];
+                            /* next level */
+                            for (uint32_t j = 0; j < nnbrs; j++) {
+                                rnode.nbrs.push_back(nbrs[j]);
+                            }
+                            //std::sort(rnode.nbrs.begin(), rnode.nbrs.end());
+                            rnode.score = 0;
+                            if ((rearrange_sorter & __rearrange_sorter_opt_score) != 0) {
+                                assert(pq_vector_bytes > 0);
+                                /* calculate score */
+                                uint32_t __sector_x1, __sector_x2, __sector_x4, last_sector_x1, last_sector_x2, last_sector_x4, last_score = 0;
+                                uint32_t __vectors_per_io_x1 = defaults::SECTOR_LEN / (pq_vector_bytes * sizeof (uint8_t)),
+                                        __vectors_per_io_x2 = (defaults::SECTOR_LEN * 2) / (pq_vector_bytes * sizeof (uint8_t)),
+                                        __vectors_per_io_x4 = (defaults::SECTOR_LEN * 4) / (pq_vector_bytes * sizeof (uint8_t));
+                                for (uint32_t j = 0; j < rnode.nbrs.size(); j++) {
+                                    __sector_x1 = rnode.nbrs[j] / __vectors_per_io_x1;
+                                    __sector_x2 = rnode.nbrs[j] / __vectors_per_io_x2;
+                                    __sector_x4 = rnode.nbrs[j] / __vectors_per_io_x4;
+                                    if (j == 0 || (last_sector_x1 != __sector_x1 && last_sector_x2 != __sector_x2 && last_sector_x4 != __sector_x4)) {
+                                        last_sector_x1 = __sector_x1;
+                                        last_sector_x2 = __sector_x2;
+                                        last_sector_x4 = __sector_x4;
+                                        last_score = 0;
+                                    } else {
+                                        if (last_sector_x1 == __sector_x1) {
+                                            last_score += 4;
+                                        } else if (last_sector_x2 == __sector_x2) {
+                                            last_score += 2;
+                                        } else {
+                                            /* last_sector_x4 == __sector_x4 */
+                                            last_score++;
+                                        }
+                                    }
+                                    if (last_score > rnode.score) {
+                                        rnode.score = last_score;
+                                    }
                                 }
                             }
-                            if (last_score > rnode.score) {
-                                rnode.score = last_score;
-                            }
+                            rnodes[node + i] = rnode;
                         }
+                        nodes_to_read_vector[thread_id].clear();
                     }
-                    rnodes.push_back(rnode);
-                }
-                nodes_to_read.clear();
+                }));
             }
+            knowhere::WaitAllSuccess(futures);
+
             if (nodes_sorter.compare_function != nullptr) {
                 /* we wish to keep rnodes ordered by distance_score, highest first
                    sort in descending order.
@@ -224,8 +245,10 @@ namespace diskann {
             prev_vid_hover = vid_hover;
             nhops++;
         }
-        for (uint32_t i = 0; i < block_size; i++) {
-            delete [] nbr_buffers[i].second;
+        for (uint32_t i = 0; i < context_count; i++) {
+            for (uint32_t j = 0; j < thread_block_size; j++) {
+                delete [] nbr_buffers_vector[i][j].second;
+            }
         }
         if (vid_hover < num_points) {
             LOG_KNOWHERE_INFO_ << num_points - vid_hover << " unreferenced vectors";
@@ -415,34 +438,34 @@ namespace diskann {
     template int aisaq_generate_vectors_rearrange_map<float, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<uint32_t, std::vector<uint32_t>> &filter_to_medoid_ids,
-            aisaq_read_nodes_nbrs_func_t<float, uint32_t> read_nodes_nbrs_func, void *context);
+            aisaq_read_nodes_nbrs_func_t<float, uint32_t> read_nodes_nbrs_func, void **contexts, uint32_t context_count);
     template int aisaq_generate_vectors_rearrange_map<int8_t, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<uint32_t, std::vector<uint32_t>> &filter_to_medoid_ids,
-            aisaq_read_nodes_nbrs_func_t<int8_t, uint32_t> read_nodes_nbrs_func, void *context);
+            aisaq_read_nodes_nbrs_func_t<int8_t, uint32_t> read_nodes_nbrs_func, void **contexts, uint32_t context_count);
     template int aisaq_generate_vectors_rearrange_map<uint8_t, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<uint32_t, std::vector<uint32_t>> &filter_to_medoid_ids,
-            aisaq_read_nodes_nbrs_func_t<uint8_t, uint32_t> read_nodes_nbrs_func, void *context);
+            aisaq_read_nodes_nbrs_func_t<uint8_t, uint32_t> read_nodes_nbrs_func, void **contexts, uint32_t context_count);
     template int aisaq_generate_vectors_rearrange_map<float, uint16_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<uint16_t, std::vector<uint32_t>> &filter_to_medoid_ids,
-            aisaq_read_nodes_nbrs_func_t<float, uint16_t> read_nodes_nbrs_func, void *context);
+            aisaq_read_nodes_nbrs_func_t<float, uint16_t> read_nodes_nbrs_func, void **contexts, uint32_t context_count);
     template int aisaq_generate_vectors_rearrange_map<int8_t, uint16_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<uint16_t, std::vector<uint32_t>> &filter_to_medoid_ids,
-            aisaq_read_nodes_nbrs_func_t<int8_t, uint16_t> read_nodes_nbrs_func, void *context);
+            aisaq_read_nodes_nbrs_func_t<int8_t, uint16_t> read_nodes_nbrs_func, void **contexts, uint32_t context_count);
     template int aisaq_generate_vectors_rearrange_map<uint8_t, uint16_t>(enum aisaq_rearrange_sorter, uint32_t *&rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<uint16_t, std::vector<uint32_t>> &filter_to_medoid_ids,
-            aisaq_read_nodes_nbrs_func_t<uint8_t, uint16_t> read_nodes_nbrs_func, void *context);
+            aisaq_read_nodes_nbrs_func_t<uint8_t, uint16_t> read_nodes_nbrs_func, void **contexts, uint32_t context_count);
     template int aisaq_generate_vectors_rearrange_map<knowhere::bf16, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<uint32_t, std::vector<uint32_t>> &filter_to_medoid_ids,
-            aisaq_read_nodes_nbrs_func_t<float, uint32_t> read_nodes_nbrs_func, void *context);
+            aisaq_read_nodes_nbrs_func_t<float, uint32_t> read_nodes_nbrs_func, void **contexts, uint32_t context_count);
     template int aisaq_generate_vectors_rearrange_map<knowhere::fp16, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<uint32_t, std::vector<uint32_t>> &filter_to_medoid_ids,
-            aisaq_read_nodes_nbrs_func_t<int8_t, uint32_t> read_nodes_nbrs_func, void *context);
+            aisaq_read_nodes_nbrs_func_t<int8_t, uint32_t> read_nodes_nbrs_func, void **contexts, uint32_t context_count);
 
 }

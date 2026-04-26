@@ -228,8 +228,8 @@ namespace diskann {
                           uint64_t warmup_aligned_dim) {
     T *warmup = nullptr;
     warmup_num = 100000;
-    diskann::cout << "Generating random warmup file with dim " << warmup_dim
-                  << " and aligned dim " << warmup_aligned_dim << std::flush;
+    LOG_KNOWHERE_INFO_ << "Generating random warmup file with dim " << warmup_dim
+                  << " and aligned dim " << warmup_aligned_dim;
     diskann::alloc_aligned(((void **) &warmup),
                            warmup_num * warmup_aligned_dim * sizeof(T),
                            8 * sizeof(T));
@@ -488,28 +488,33 @@ namespace diskann {
     size_t base_num, base_dim;
     uint32_t shard_r = 2*R/3;
     diskann::get_bin_metadata(base_file, base_num, base_dim);
+    bool use_gpu=false;
 #ifdef KNOWHERE_WITH_CUVS
     raft::device_resources dev_resources;
-    if(compareMetric == diskann::L2 && is_gpu_available() && valid_gpu_params) {
-      size_t gpu_free_mem, gpu_total_mem;
-      gpu_get_mem_info(dev_resources, gpu_free_mem, gpu_total_mem);
-      LOG_KNOWHERE_INFO_ << "GPU has " <<  gpu_free_mem/(1024*1024*1024L) <<
-              " Gib free memory out of " <<  gpu_total_mem/(1024*1024*1024L) << " Gib total";
-      ram_budget = std::min<double>(ram_budget,(double)0.9*(gpu_free_mem/(1024*1024*1024)));
-      shard_r = std::max<uint32_t>((uint32_t)32,(uint32_t)R/2);
-    } else {
-      LOG_KNOWHERE_INFO_ << "GPU is not going to be used since it is not available "
-                            "or metric type is not L2";
+    LOG_KNOWHERE_INFO_ << "gpu_get_mem_info: ";
+    LOG_KNOWHERE_INFO_ << "compareMetric: " <<  compareMetric << " is_same_v: " <<  (std::is_same_v<T, float> || std::is_same_v<T, uint8_t>);
+    LOG_KNOWHERE_INFO_ << "valid_gpu_params: " <<  valid_gpu_params << " is_gpu_available: " <<  is_gpu_available();
+    if(compareMetric == diskann::L2 && is_gpu_available() && valid_gpu_params &&
+ 		   (std::is_same_v<T, float> || std::is_same_v<T, uint8_t>)) {
+    	size_t gpu_free_mem, gpu_total_mem;
+    	gpu_get_mem_info(dev_resources, gpu_free_mem, gpu_total_mem);
+    	LOG_KNOWHERE_INFO_ << "GPU has " <<  gpu_free_mem/(1024*1024*1024L) <<
+    			" Gib free memory out of " <<  gpu_total_mem/(1024*1024*1024L) << " Gib total";
+    	ram_budget = std::min<double>(ram_budget,(double)0.9*(gpu_free_mem/(1024*1024*1024)));
+    	shard_r = std::max<uint32_t>((uint32_t)32,(uint32_t)R/2);
+    	use_gpu=true;
     }
 #endif
 
     double full_index_ram =
-        estimate_ram_usage(base_num, base_dim, sizeof(T), R);
+        estimate_ram_usage(base_num, base_dim, sizeof(T), R, use_gpu);
+    LOG_KNOWHERE_INFO_ << "Full index requires: " << full_index_ram / (1024 * 1024 * 1024)<< " GiBs"
+    		<< " RAM budget is: " << ram_budget << " Gib";
     if (full_index_ram < ram_budget * 1024 * 1024 * 1024) {
       LOG_KNOWHERE_INFO_
           << "Full index fits in RAM budget, should consume at most "
           << full_index_ram / (1024 * 1024 * 1024)
-          << "GiBs, so building in one shot";
+          << " GiBs, so building in one shot";
       diskann::Parameters paras;
       paras.Set<unsigned>("L", (unsigned) L);
       paras.Set<unsigned>("R", (unsigned) R);
@@ -523,54 +528,54 @@ namespace diskann {
 
       std::unique_ptr<diskann::Index<T>> _pvamanaIndex =
           std::unique_ptr<diskann::Index<T>>(new diskann::Index<T>(
-          compareMetric, ip_prepared, base_dim, base_num, false, false));
+              compareMetric, ip_prepared, base_dim, base_num, false, false));
       bool built_with_gpu=false;
 #ifdef KNOWHERE_WITH_CUVS
-      //currently cuvs vamana build only supports L2Expanded metric
-      if (compareMetric == diskann::L2 && is_gpu_available() && valid_gpu_params &&
-              (std::is_same_v<T, float> || std::is_same_v<T, uint8_t>) ) {
-        LOG_KNOWHERE_INFO_ << "Building with GPU!" << " R= "<< R<<" L=" << L;
+       //currently cuvs vamana build only supports L2Expanded metric
+       LOG_KNOWHERE_INFO_ << "vamana_build_and_write one shot:";
+       LOG_KNOWHERE_INFO_ << "valid_gpu_params: " <<  valid_gpu_params << " use_gpu: " <<  use_gpu;
+       if (use_gpu && valid_gpu_params)  {
+    	   LOG_KNOWHERE_INFO_ << "Building with GPU!" << " R= "<< R<<" L=" << L;
 
-        if (std::is_same_v<T, float>) {
-          auto dataset = read_bin_dataset<float, int64_t>(dev_resources, base_file);
-          vamana_build_and_write<float>(dev_resources,
-                                           raft::make_const_mdspan(dataset.view()),
-                                           mem_index_path,
-                                           R,
-                                           L,
-                                           0.06,
-                                           1);
-        }else {
-          auto dataset = read_bin_dataset<uint8_t, int64_t>(dev_resources, base_file);
-          vamana_build_and_write<uint8_t>(dev_resources,
-                                           raft::make_const_mdspan(dataset.view()),
-                                           mem_index_path,
-                                           R,
-                                           L,
-                                           0.06,
-                                           1);
-        }
-        built_with_gpu=true;
-      } else {
-        LOG_KNOWHERE_INFO_ << "GPU is not going to be used since it is not available "
-                              "or metric type is not L2";
-      }
+		   if (std::is_same_v<T, float>) {
+			   auto dataset = read_bin_dataset<float, int64_t>(dev_resources, base_file);
+			   vamana_build_and_write<float>(dev_resources,
+												raft::make_const_mdspan(dataset.view()),
+												mem_index_path,
+												R,
+												L,
+												0.06,
+												1);
+		   }else {
+			   auto dataset = read_bin_dataset<uint8_t, int64_t>(dev_resources, base_file);
+			   vamana_build_and_write<uint8_t>(dev_resources,
+												raft::make_const_mdspan(dataset.view()),
+												mem_index_path,
+												R,
+												L,
+												0.06,
+												1);
+		   }
+		   built_with_gpu=true;
+       }
 #endif
-      if(!built_with_gpu) {
-        _pvamanaIndex->build(base_file.c_str(), base_num, paras);
-        _pvamanaIndex->save(mem_index_path.c_str(), true);
-      }else {
-        _pvamanaIndex->load_graph(mem_index_path, base_num);
-      }
+       if(!built_with_gpu) {
+		  _pvamanaIndex->build(base_file.c_str(), base_num, paras);
+		  _pvamanaIndex->save(mem_index_path.c_str(), true);
+       }else {
+    	   _pvamanaIndex->load_graph(mem_index_path, base_num);
+       }
 
       std::remove(medoids_file.c_str());
       std::remove(centroids_file.c_str());
       return _pvamanaIndex;
     }
+
     std::string merged_index_prefix = mem_index_path + "_tempFiles";
+    sampling_rate = std::min(sampling_rate, (double)(ram_budget*1024*1024*1024)/full_index_ram);
     int         num_parts =
         partition_with_ram_budget<T>(base_file, sampling_rate, ram_budget,
-                                     shard_r, merged_index_prefix, 2);
+                                     shard_r, merged_index_prefix, 2, use_gpu);
 
     std::string cur_centroid_filepath = merged_index_prefix + "_centroids.bin";
     std::rename(cur_centroid_filepath.c_str(), centroids_file.c_str());
@@ -600,45 +605,43 @@ namespace diskann {
       paras.Set<bool>("shuffle_build", shuffle_build);
 
       _u64 shard_base_dim, shard_base_pts;
-      bool built_with_gpu=false;
       get_bin_metadata(shard_base_file, shard_base_pts, shard_base_dim);
-      std::unique_ptr<diskann::Index<T>> _pvamanaIndex =
-          std::unique_ptr<diskann::Index<T>>(
-              new diskann::Index<T>(compareMetric, ip_prepared, shard_base_dim,
-              shard_base_pts, false));  // TODO: Single?
+      bool built_with_gpu=false;
+	  std::unique_ptr<diskann::Index<T>> _pvamanaIndex =
+			  std::unique_ptr<diskann::Index<T>>(
+				  new diskann::Index<T>(compareMetric, ip_prepared, shard_base_dim,
+										shard_base_pts, false));  // TODO: Single?
 #ifdef KNOWHERE_WITH_CUVS
-      //currently cuvs vamana build only supports L2Expanded metric
-      if (compareMetric == diskann::L2 && is_gpu_available() && valid_gpu_params &&
-              (std::is_same_v<T, float> || std::is_same_v<T, uint8_t>)) {
-        LOG_KNOWHERE_INFO_ << "Building with GPU!" << " R= "<< shard_r <<" L=" << L;
-        if (std::is_same_v<T, float> ) {
-          auto dataset = read_bin_dataset<float, int64_t>(dev_resources, shard_base_file);
-          vamana_build_and_write<float>(dev_resources,
-                                       raft::make_const_mdspan(dataset.view()),
-                                       shard_index_file,
-                                       shard_r,
-                                       L,
-                                       0.06,
-                                       1);
-        }else {
-          auto dataset = read_bin_dataset<uint8_t, int64_t>(dev_resources, shard_base_file);
-          vamana_build_and_write<uint8_t>(dev_resources,
-                                       raft::make_const_mdspan(dataset.view()),
-                                       shard_index_file,
-                                       shard_r,
-                                       L,
-                                       0.06,
-                                       1);
-        }
-        built_with_gpu = true;
-      } else {
-        LOG_KNOWHERE_INFO_ << "GPU is not going to be used since it is not available "
-                              "or metric type is not L2";
-      }
+       //currently cuvs vamana build only supports L2Expanded metric
+       LOG_KNOWHERE_INFO_ << "vamana_build_and_write: ";
+       LOG_KNOWHERE_INFO_ << "valid_gpu_params: " <<  valid_gpu_params << " use_gpu: " <<  use_gpu;
+       if (use_gpu && valid_gpu_params) {
+    	   LOG_KNOWHERE_INFO_ << "Building with GPU!" << " R= "<< shard_r <<" L=" << L;
+		   if (std::is_same_v<T, float> ) {
+			   auto dataset = read_bin_dataset<float, int64_t>(dev_resources, shard_base_file);
+			   vamana_build_and_write<float>(dev_resources,
+											raft::make_const_mdspan(dataset.view()),
+											shard_index_file,
+											shard_r,
+											L,
+											0.06,
+											1);
+		   }else {
+			   auto dataset = read_bin_dataset<uint8_t, int64_t>(dev_resources, shard_base_file);
+			   vamana_build_and_write<uint8_t>(dev_resources,
+											raft::make_const_mdspan(dataset.view()),
+											shard_index_file,
+											shard_r,
+											L,
+											0.06,
+											1);
+		   }
+		   built_with_gpu = true;
+       }
 #endif
       if(!built_with_gpu){
-        _pvamanaIndex->build(shard_base_file.c_str(), shard_base_pts, paras);
-        _pvamanaIndex->save(shard_index_file.c_str());
+		  _pvamanaIndex->build(shard_base_file.c_str(), shard_base_pts, paras);
+		  _pvamanaIndex->save(shard_index_file.c_str());
       }
       std::remove(shard_base_file.c_str());
     }
@@ -1149,11 +1152,11 @@ namespace diskann {
     LOG_KNOWHERE_DEBUG_ << "Output file written.";
   }
 
-struct vamana_read_context {
-    vamana_read_context(std::ifstream &vamana_reader, uint64_t *node_to_pos_map)
-        : vamana_reader(vamana_reader), node_to_pos_map(node_to_pos_map) {
+struct vamana_read_context  {
+    vamana_read_context(uint64_t *node_to_pos_map)
+        : node_to_pos_map(node_to_pos_map) {
     }
-    std::ifstream &vamana_reader;
+    std::ifstream vamana_reader;
     uint64_t *node_to_pos_map;
 };
 
@@ -1180,6 +1183,41 @@ template std::vector<bool> read_node_nbrs_from_vamana<int8_t, uint32_t>(void *, 
 template std::vector<bool> read_node_nbrs_from_vamana<uint8_t, uint32_t>(void *, const std::vector<uint32_t> &,
                             std::vector<std::pair<uint32_t, uint32_t *>> &);
 
+static void free_vamana_read_contexts(void **contexts_p, uint32_t num_threads)
+{
+    struct vamana_read_context **context_arr = reinterpret_cast<struct vamana_read_context **>(contexts_p);
+
+    for (uint i = 0; i < num_threads; i++) {
+      context_arr[i]->vamana_reader.close();
+      delete context_arr[i];
+    }
+
+    delete [] context_arr;
+}
+
+static void** allocate_vamana_read_contexts(std::string &vamana_path, uint64_t* node_to_pos_map, uint32_t num_threads)
+{
+    struct vamana_read_context **context_arr = new struct vamana_read_context*[num_threads];
+    if (context_arr == nullptr) {
+        return nullptr;
+    }
+
+    for (uint i = 0; i < num_threads; i++) {
+        context_arr[i] = new struct vamana_read_context(node_to_pos_map);
+        if (context_arr[i] == nullptr) {
+            free_vamana_read_contexts((void **)context_arr, i);
+            return nullptr;
+        }
+        context_arr[i]->vamana_reader.open(vamana_path, std::ios::binary);
+        if (context_arr[i]->vamana_reader.is_open() == false) {
+            free_vamana_read_contexts((void **)context_arr, i + 1);
+            return nullptr;
+        }
+    }
+
+    return (void**)context_arr;
+}
+
 template <typename T>
 void aisaq_calc_inline_layout(int inline_pq, uint32_t pq_compressed_nbytes, uint32_t max_degree, bool &rearrange,
                               uint32_t &inline_pq_vectors, uint64_t &max_node_len)
@@ -1188,18 +1226,13 @@ void aisaq_calc_inline_layout(int inline_pq, uint32_t pq_compressed_nbytes, uint
         if (inline_pq > 0) {
             assert((uint32_t)inline_pq <= max_degree);
             inline_pq_vectors = inline_pq;
-            if (rearrange && inline_pq_vectors < max_degree) {
-                max_node_len+= sizeof(uint32_t);
+            if (inline_pq_vectors < max_degree) {
+               /* calculate the number of compressed vectors that can be added in addition to the requested without increasing the index file size */
+              inline_pq_vectors += aisaq_calc_max_inline_pq_vectors(max_node_len + (inline_pq_vectors * pq_compressed_nbytes), pq_compressed_nbytes, max_degree - inline_pq_vectors);
             }
         } else {
             /* calculate the number of compressed vectors that can be appended to the node without increasing the index file size */
-            uint32_t _n_inline = aisaq_calc_max_inline_pq_vectors(max_node_len, pq_compressed_nbytes, max_degree);
-            if (rearrange && _n_inline < max_degree) {
-                /* calc with rearrange */
-                max_node_len+= sizeof(uint32_t);
-                _n_inline = aisaq_calc_max_inline_pq_vectors(max_node_len, pq_compressed_nbytes, max_degree);
-            }
-            inline_pq_vectors = _n_inline;
+            inline_pq_vectors = aisaq_calc_max_inline_pq_vectors(max_node_len, pq_compressed_nbytes, max_degree);
         }
         max_node_len+= inline_pq_vectors * pq_compressed_nbytes;
         if (inline_pq_vectors == max_degree) {
@@ -1216,9 +1249,6 @@ void aisaq_calc_inline_layout(int inline_pq, uint32_t pq_compressed_nbytes, uint
         }
     } else {
         inline_pq_vectors = 0;
-        if (rearrange) {
-            max_node_len+= sizeof(uint32_t);
-        }
     }
 }
 
@@ -1246,31 +1276,6 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
     // Check if we need to append data for re-ordering
     bool append_reorder_data = false;
     std::ifstream reorder_data_reader;
-
-    uint32_t npts_reorder_file = 0, ndims_reorder_file = 0;
-    if (reorder_data_file != std::string(""))
-    {
-        append_reorder_data = true;
-        size_t reorder_data_file_size = get_file_size(reorder_data_file);
-        reorder_data_reader.exceptions(std::ofstream::failbit | std::ofstream::badbit);
-
-        try
-        {
-            reorder_data_reader.open(reorder_data_file, std::ios::binary);
-            reorder_data_reader.read((char *)&npts_reorder_file, sizeof(uint32_t));
-            reorder_data_reader.read((char *)&ndims_reorder_file, sizeof(uint32_t));
-            if (npts_reorder_file != npts)
-                throw ANNException("Mismatch in num_points between reorder "
-                                   "data file and base file",
-                                   -1, __FUNCSIG__, __FILE__, __LINE__);
-            if (reorder_data_file_size != 8 + sizeof(float) * (size_t)npts_reorder_file * (size_t)ndims_reorder_file)
-                throw ANNException("Discrepancy in reorder data file size ", -1, __FUNCSIG__, __FILE__, __LINE__);
-        }
-        catch (std::system_error &e)
-        {
-            throw FileException(reorder_data_file, e, __FUNCSIG__, __FILE__, __LINE__);
-        }
-    }
 
     // create cached reader + writer
     size_t actual_file_size = get_file_size(mem_index_file);
@@ -1327,7 +1332,15 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
     uint32_t inline_pq_vectors;
     aisaq_calc_inline_layout<T>(inline_pq, pq_compressed_nbytes, width_u32, rearrange,
                                 inline_pq_vectors, max_node_len);
-    
+
+    uint64_t *vamana_reader_node_to_pos_map = nullptr;
+    if (rearrange) {
+        vamana_reader_node_to_pos_map = new uint64_t[npts_64];
+        if (vamana_reader_node_to_pos_map == nullptr) {
+            throw ANNException("memory allocation failed"
+                    , -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+    }
 
     uint32_t __nnodes, __nsectors, __remainder;
     if (max_node_len >= defaults::SECTOR_LEN) {
@@ -1345,144 +1358,6 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
     if (wasted_disk_space_pcnt > 0) {
         LOG_KNOWHERE_INFO_ << wasted_disk_space_pcnt << "% wasted disk space, optimal node size may reduce wasted disk space, "
                          "node size is derived from disk-pq-bytes, max-degree and pq-inline parameters";
-    }
-
-    uint64_t *vamana_reader_node_to_pos_map = nullptr;
-    uint32_t *rearranged_vectors_map = nullptr;
-    uint32_t *reversed_rearranged_vectors_map = nullptr;
-    if (rearrange) {
-        /* with rearrange enabled, base reader is not reading the vectors sequentially.
-           reduce the cache size to a single vector data aligned to sector size */
-        base_reader.set_cache_size(ROUND_UP(sizeof(T) * ndims_64, defaults::SECTOR_LEN));
-        /* generate vamana graph helper
-           map node_id to its offset within vamana reader */
-        vamana_reader_node_to_pos_map = new uint64_t[npts_64];
-        if (vamana_reader_node_to_pos_map == nullptr) {
-            throw ANNException("memory allocation failed"
-                   , -1, __FUNCSIG__, __FILE__, __LINE__);
-        }
-        /* save current position */
-        auto pos = vamana_reader.tellg();
-        uint64_t offset = pos;
-        uint32_t nnbrs;
-        vamana_reader_node_to_pos_map[0] = offset;
-        for (uint64_t i = 1; i < npts_64; i++) {
-            vamana_reader.read((char *)&nnbrs, sizeof(uint32_t));
-            assert(nnbrs > 0);
-            assert(nnbrs <= width_u32);
-            /* skip nhood */
-            vamana_reader.seekg(nnbrs * sizeof(uint32_t), vamana_reader.cur);
-            offset+= (nnbrs + 1) * sizeof(uint32_t);
-            vamana_reader_node_to_pos_map[i] = offset;
-        }
-        
-        std::string medoids_path = index_prefix_path + "_disk.index_medoids.bin";
-        std::string entry_points_path = index_prefix_path + "_disk.index_entry_points.bin";
-        std::unique_ptr <uint32_t[]> entry_points = nullptr;
-        size_t n_entry_points, __dim;
-        if (file_exists(entry_points_path)) {
-            diskann::load_bin<uint32_t>(entry_points_path, entry_points, n_entry_points, __dim);
-        } else {
-            if (file_exists(medoids_path)) {
-                diskann::load_bin<uint32_t>(medoids_path, entry_points, n_entry_points, __dim);
-            } else {
-                entry_points = std::make_unique < uint32_t[]>(1);
-                entry_points[0] = medoid_u32;
-                n_entry_points = 1;
-            }
-        }
-        
-        std::unordered_map<uint32_t, std::vector<uint32_t>> filter_to_medoid_ids;
-        struct vamana_read_context context(vamana_reader, vamana_reader_node_to_pos_map);
-        if (aisaq_generate_vectors_rearrange_map<T, uint32_t>(aisaq_rearrange_sorter_default, rearranged_vectors_map, (uint32_t)npts_64,
-            pq_compressed_nbytes , width_u32, entry_points.get(), n_entry_points, filter_to_medoid_ids,
-            read_node_nbrs_from_vamana<T, uint32_t>, &context) != 0) {
-            throw ANNException("failed to generate rearranged vectors data"
-                   , -1, __FUNCSIG__, __FILE__, __LINE__);
-        }
-        /* restore last position */
-        vamana_reader.seekg(pos, vamana_reader.beg);
-        /* create reversed vectors map */
-        if (aisaq_create_reversed_vectors_map(reversed_rearranged_vectors_map, rearranged_vectors_map, (uint32_t)npts_64) != 0) {
-            throw ANNException("failed to generate reversed rearranged vectors map"
-                   , -1, __FUNCSIG__, __FILE__, __LINE__);
-        }
-        /* generate rearranged pq compressed vectors file instead of existing non-rearranged
-           (unaligned for DiskANN to load into DRAM) */
-        std::string pq_compressed_rearranged_vectors_path_tmp = pq_compressed_vectors_path + ".tmp";
-        LOG_KNOWHERE_INFO_ << "generating pq compressed vectors file " << pq_compressed_vectors_path;
-        cached_ofstream pq_compressed_rearranged_vectors_writer(pq_compressed_rearranged_vectors_path_tmp, write_blk_size);
-        std::unique_ptr<char[]> pq_vector_buf = std::make_unique<char[]>(pq_compressed_nbytes);
-        /* write the header */
-        uint32_t num_points_u32 = (uint32_t)npts_64;
-        pq_compressed_rearranged_vectors_writer.write((char *)&num_points_u32, sizeof(uint32_t));
-        pq_compressed_rearranged_vectors_writer.write((char *)&pq_compressed_nbytes, sizeof(uint32_t));
-        uint32_t progress_step = npts_64 / 100;
-        for (uint32_t i = 0; i < npts_64; i++) {
-            if ((i % progress_step) == 0) {
-                diskann::cout << "." << std::flush;
-            }
-            uint32_t rid = reversed_rearranged_vectors_map[i];
-            assert(rid < npts_64);
-            pq_compressed_vectors_reader.seekg((sizeof(uint32_t) * 2) + ((uint64_t)rid * pq_compressed_nbytes),
-                                               pq_compressed_vectors_reader.beg);
-            pq_compressed_vectors_reader.read(pq_vector_buf.get(), pq_compressed_nbytes);
-            pq_compressed_rearranged_vectors_writer.write(pq_vector_buf.get(), pq_compressed_nbytes);
-        }
-        LOG_KNOWHERE_INFO_ << "done";
-        pq_compressed_rearranged_vectors_writer.close();
-        pq_compressed_vectors_reader.close();
-        delete_file(pq_compressed_vectors_path);
-        rename(pq_compressed_rearranged_vectors_path_tmp.c_str(), pq_compressed_vectors_path.c_str());
-        pq_compressed_vectors_reader.open(pq_compressed_vectors_path, std::ios::binary);
-
-        /* create aligned pq compressed rearranged file */
-        std::string rearranged_pq_compressed_vectors_path = index_prefix_path + "_pq_compressed_rearranged.bin";
-        if (aisaq_create_aligned_rearranged_pq_compressed_vectors_file(pq_compressed_vectors_reader,
-            rearranged_pq_compressed_vectors_path, AISAQ_REARRANGED_PQ_FILE_PAGE_SIZE_DEFAULT,
-            nullptr /*reversed_rearranged_vectors_map*/, npts_64, pq_compressed_nbytes) != 0) {
-            throw ANNException("failed to create aligned rearranged pq vectors file"
-                   , -1, __FUNCSIG__, __FILE__, __LINE__);
-        };
-        
-        /* create rearrange map that can be used by filter search
-           rearrange map contains mapping from new_id --> origin_id */
-        std::string rearrange_map_path = index_prefix_path + "_disk.index_rearrange.bin";
-        diskann::save_bin<uint32_t>(rearrange_map_path, reversed_rearranged_vectors_map, npts_64, 1, 0);
-        
-        /* translate medoid */
-        medoid_u32 = rearranged_vectors_map[medoid_u32];
-        /* generate rearranged medoid file - translated inline */
-        if (file_exists(medoids_path)) {
-            LOG_KNOWHERE_INFO_ << "rearranging medoids file " << medoids_path;
-            aisaq_rearrange_vectors_file(medoids_path, rearranged_vectors_map, npts_64);
-        }
-        /* generate rearranged entry points file - translated inline */
-        if (file_exists(entry_points_path)) {
-            LOG_KNOWHERE_INFO_ << "rearranging entry points file " << entry_points_path;
-            aisaq_rearrange_vectors_file(entry_points_path, rearranged_vectors_map, npts_64);
-        }
-        /* rearrange norm file */
-        if (metric == diskann::Metric::COSINE) {
-            std::string norm_path =
-                get_disk_index_max_base_norm_file(std::string(index_prefix_path + "_disk.index"));
-            if (file_exists(norm_path)) {
-                LOG_KNOWHERE_INFO_ << "rearranging normalization file " << norm_path;
-                std::unique_ptr<float[]> norm_data = nullptr;
-                size_t __npts, __sz;
-                diskann::load_bin<float>(norm_path, norm_data, __npts, __sz);
-                assert(npts_64 == __npts);
-                float *rearranged_norm_data = nullptr;
-                diskann::alloc_aligned(((void **) &rearranged_norm_data),
-                           __npts * sizeof(float),
-                           sizeof(float));
-                for (unsigned int i = 0; i < __npts; i++) {
-                    rearranged_norm_data[i] = norm_data[rearranged_vectors_map[i]];
-                }
-                diskann::save_bin<float>(norm_path, rearranged_norm_data, __npts, 1);  
-                aligned_free((void*)rearranged_norm_data);
-            }
-        }
     }
 
     medoid = (uint64_t)medoid_u32;
@@ -1507,13 +1382,6 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
     uint64_t n_sectors = nnodes_per_sector > 0 ? ROUND_UP(npts_64, nnodes_per_sector) / nnodes_per_sector
                                                : npts_64 * DIV_ROUND_UP(max_node_len, defaults::SECTOR_LEN);
     uint64_t n_reorder_sectors = 0;
-    uint64_t n_data_nodes_per_sector = 0;
-
-    if (append_reorder_data)
-    {
-        n_data_nodes_per_sector = defaults::SECTOR_LEN / (ndims_reorder_file * sizeof(float));
-        n_reorder_sectors = ROUND_UP(npts_64, n_data_nodes_per_sector) / n_data_nodes_per_sector;
-    }
     uint64_t disk_index_file_size = (n_sectors + n_reorder_sectors + 1) * defaults::SECTOR_LEN;
 
     std::vector<uint64_t> output_file_meta;
@@ -1525,12 +1393,6 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
     output_file_meta.push_back(vamana_frozen_num);
     output_file_meta.push_back(vamana_frozen_loc);
     output_file_meta.push_back((uint64_t)append_reorder_data);
-    if (append_reorder_data)
-    {
-        output_file_meta.push_back(n_sectors + 1);
-        output_file_meta.push_back(ndims_reorder_file);
-        output_file_meta.push_back(n_data_nodes_per_sector);
-    }
     output_file_meta.push_back(disk_index_file_size);
 
     /* update metadata with backward compatibility */
@@ -1539,7 +1401,8 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
         val = width_u32;
     }
     output_file_meta.push_back(val);
-    val = (uint64_t)rearrange;
+    // rearranged index indication place holder. always disabled in this version
+    val = 0;
     output_file_meta.push_back(val);
 
     diskann_writer.write(sector_buf.get(), defaults::SECTOR_LEN);
@@ -1560,41 +1423,27 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
             for (uint64_t sector_node_id = 0; sector_node_id < nnodes_per_sector && cur_node_id < npts_64;
                  sector_node_id++)
             {
-                memset(node_buf.get(), 0, max_node_len);
-                uint32_t rid;
                 if (rearrange) {
-                    rid = reversed_rearranged_vectors_map[cur_node_id];
-                    assert(rid < npts_64);
-                    vamana_reader.seekg(vamana_reader_node_to_pos_map[rid],vamana_reader.beg);
-                    vamana_reader.read((char *)&nnbrs, sizeof(uint32_t));
-                    assert(nnbrs > 0);
-                    assert(nnbrs <= width_u32);
-                    vamana_reader.read((char *)nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(uint32_t));
-                    for (uint32_t j = 0; j < nnbrs; j++) {
-                        assert(nhood_buf[j] < npts_64);
-                        nhood_buf[j] = rearranged_vectors_map[nhood_buf[j]];
-                    }
-                    base_reader.seek((sizeof(uint32_t) * 2) + (rid * sizeof(T) * ndims_64));
-                    base_reader.read((char *)cur_node_coords.get(), sizeof(T) * ndims_64);
-                } else {
-                    // read cur node's nnbrs
-                    vamana_reader.read((char *)&nnbrs, sizeof(uint32_t));
-
-                    // sanity checks on nnbrs
-                    assert(nnbrs > 0);
-                    assert(nnbrs <= width_u32);
-
-                    // read node's nhood
-                    vamana_reader.read((char *)nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(uint32_t));
-                    if (nnbrs > width_u32)
-                    {
-                        vamana_reader.seekg((nnbrs - width_u32) * sizeof(uint32_t), vamana_reader.cur);
-                    }
-
-                    // write coords of node first
-                    //  T *node_coords = data + ((uint64_t) ndims_64 * cur_node_id);
-                    base_reader.read((char *)cur_node_coords.get(), sizeof(T) * ndims_64);
+                    vamana_reader_node_to_pos_map[cur_node_id] = vamana_reader.tellg();
                 }
+                memset(node_buf.get(), 0, max_node_len);
+                // read cur node's nnbrs
+                vamana_reader.read((char *)&nnbrs, sizeof(uint32_t));               
+
+                // sanity checks on nnbrs
+                assert(nnbrs > 0);
+                assert(nnbrs <= width_u32);
+
+                // read node's nhood
+                vamana_reader.read((char *)nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(uint32_t));
+                if (nnbrs > width_u32)
+                {
+                    vamana_reader.seekg((nnbrs - width_u32) * sizeof(uint32_t), vamana_reader.cur);
+                }
+
+                // write coords of node first
+                //  T *node_coords = data + ((uint64_t) ndims_64 * cur_node_id);
+                base_reader.read((char *)cur_node_coords.get(), sizeof(T) * ndims_64);
                 memcpy(node_buf.get(), cur_node_coords.get(), ndims_64 * sizeof(T));
 
                 // write nnbrs
@@ -1603,21 +1452,12 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
                 // write nhood next
                 memcpy(node_buf.get() + ndims_64 * sizeof(T) + sizeof(uint32_t), nhood_buf,
                        (std::min)(nnbrs, width_u32) * sizeof(uint32_t));
-
-                if (rearrange) {
-                    memcpy(node_buf.get() + (ndims_64 * sizeof(T)) + ((width_u32 + 1) * sizeof(uint32_t)),
-                                &rid, sizeof(uint32_t));
-                }
                 // write compressed vectors
                 if (inline_pq_vectors > 0) {
                     char *comp_vec_buf = (char *)(node_buf.get() + (ndims_64 * sizeof(T)) +
                                                          ((width_u32 + 1) * sizeof(uint32_t)));
-                    if (rearrange) {
-                        comp_vec_buf+= sizeof(uint32_t);
-                    }
                     for (uint32_t cv = 0; cv < inline_pq_vectors && cv < nnbrs; cv++) {
                         /* read compressed vector nhood_buf[i] into comp_vec_buf */
-                        /* note that when rearrange is enabled, pq_compressed_vectors_reader is already rearranged */
                         pq_compressed_vectors_reader.seekg((sizeof(uint32_t) * 2) + ((uint64_t)nhood_buf[cv] * pq_compressed_nbytes),
                                                            pq_compressed_vectors_reader.beg);
                         pq_compressed_vectors_reader.read(comp_vec_buf, pq_compressed_nbytes);
@@ -1645,42 +1485,27 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
                 LOG_KNOWHERE_ERROR_ << "Sector #" << i * nsectors_per_node << "written";
             }
             memset(multisector_buf.get(), 0, nsectors_per_node * defaults::SECTOR_LEN);
-
             memset(node_buf.get(), 0, max_node_len);
-            uint32_t rid;
             if (rearrange) {
-                rid = reversed_rearranged_vectors_map[i];
-                assert(rid < npts_64);
-                vamana_reader.seekg(vamana_reader_node_to_pos_map[rid],vamana_reader.beg);
-                vamana_reader.read((char *)&nnbrs, sizeof(uint32_t));
-                assert(nnbrs > 0);
-                assert(nnbrs <= width_u32);
-                vamana_reader.read((char *)nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(uint32_t));
-                for (uint32_t j = 0; j < nnbrs; j++) {
-                    assert(nhood_buf[j] < npts_64);
-                    nhood_buf[j] = rearranged_vectors_map[nhood_buf[j]];
-                }
-                base_reader.seek((sizeof(uint32_t) * 2) + (rid * sizeof(T) * ndims_64));
-                base_reader.read((char *)cur_node_coords.get(), sizeof(T) * ndims_64);
-            } else {
-                // read cur node's nnbrs
-                vamana_reader.read((char *)&nnbrs, sizeof(uint32_t));
-
-                // sanity checks on nnbrs
-                assert(nnbrs > 0);
-                assert(nnbrs <= width_u32);
-
-                // read node's nhood
-                vamana_reader.read((char *)nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(uint32_t));
-                if (nnbrs > width_u32)
-                {
-                    vamana_reader.seekg((nnbrs - width_u32) * sizeof(uint32_t), vamana_reader.cur);
-                }
-
-                // write coords of node first
-                //  T *node_coords = data + ((uint64_t) ndims_64 * cur_node_id);
-                base_reader.read((char *)cur_node_coords.get(), sizeof(T) * ndims_64);
+                vamana_reader_node_to_pos_map[i] = vamana_reader.tellg();
             }
+            // read cur node's nnbrs
+            vamana_reader.read((char *)&nnbrs, sizeof(uint32_t));            
+
+            // sanity checks on nnbrs
+            assert(nnbrs > 0);
+            assert(nnbrs <= width_u32);
+
+            // read node's nhood
+            vamana_reader.read((char *)nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(uint32_t));
+            if (nnbrs > width_u32)
+            {
+                vamana_reader.seekg((nnbrs - width_u32) * sizeof(uint32_t), vamana_reader.cur);
+            }
+
+            // write coords of node first
+            //  T *node_coords = data + ((uint64_t) ndims_64 * cur_node_id);
+            base_reader.read((char *)cur_node_coords.get(), sizeof(T) * ndims_64);
             memcpy(multisector_buf.get(), cur_node_coords.get(), ndims_64 * sizeof(T));
 
             // write nnbrs
@@ -1689,19 +1514,11 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
             // write nhood next
             memcpy(multisector_buf.get() + ndims_64 * sizeof(T) + sizeof(uint32_t), nhood_buf,
                    (std::min)(nnbrs, width_u32) * sizeof(uint32_t));
-            if (rearrange) {
-                memcpy(multisector_buf.get() + (ndims_64 * sizeof(T)) + ((width_u32 + 1) * sizeof(uint32_t)),
-                            &rid, sizeof(uint32_t));
-            }
             if (inline_pq_vectors > 0) {
                 char *comp_vec_buf = (char *) (multisector_buf.get() + (ndims_64 * sizeof(T)) +
                                                ((width_u32 + 1) * sizeof(uint32_t)));
-                if (rearrange) {
-                    comp_vec_buf+= sizeof(uint32_t);
-                }
                 for (uint32_t cv = 0; cv < inline_pq_vectors && cv < nnbrs; cv++) {
                     /* copy compressed vector nhood_buf[cv] into comp_vec_buf */
-                    /* note that when rearrange is enabled, pq_compressed_vectors_reader is already rearranged */
                     pq_compressed_vectors_reader.seekg(
                             (sizeof(uint32_t) * 2) + ((uint64_t)nhood_buf[cv] * pq_compressed_nbytes),
                             pq_compressed_vectors_reader.beg);
@@ -1714,57 +1531,84 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
         }
     }
 
-    if (vamana_reader_node_to_pos_map != nullptr) {
-        delete [] vamana_reader_node_to_pos_map;
-        vamana_reader_node_to_pos_map = nullptr;
-    }
-    if (rearranged_vectors_map != nullptr) {
-        delete [] rearranged_vectors_map;
-        rearranged_vectors_map = nullptr;
-    }
-
-    if (append_reorder_data)
-    {
-        LOG_KNOWHERE_INFO_ << "Index written. Appending reorder data...";
-
-        auto vec_len = ndims_reorder_file * sizeof(float);
-        std::unique_ptr<char[]> vec_buf = std::make_unique<char[]>(vec_len);
-        cur_node_id = 0;
-        for (uint64_t sector = 0; sector < n_reorder_sectors; sector++)
-        {
-            if (sector % 100000 == 0)
-            {
-                LOG_KNOWHERE_ERROR_ << "Reorder data Sector #" << sector << "written";
-            }
-
-            memset(sector_buf.get(), 0, defaults::SECTOR_LEN);
-
-            for (uint64_t sector_node_id = 0; sector_node_id < n_data_nodes_per_sector && cur_node_id < npts_64;
-                 sector_node_id++)
-            {
-                memset(vec_buf.get(), 0, vec_len);
-                if (rearrange) {
-                    uint32_t rid = reversed_rearranged_vectors_map[cur_node_id];
-                    assert(rid < npts_64);
-                    reorder_data_reader.seekg((sizeof(uint32_t) * 2) + (rid * vec_len), reorder_data_reader.beg);
-                }
-                reorder_data_reader.read(vec_buf.get(), vec_len);
-
-                // copy node buf into sector_node_buf
-                memcpy(sector_buf.get() + (sector_node_id * vec_len), vec_buf.get(), vec_len);
-                cur_node_id++;
-            }
-            // flush sector to disk
-            diskann_writer.write(sector_buf.get(), defaults::SECTOR_LEN);
-        }
-    }
     diskann_writer.close();
-    if (reversed_rearranged_vectors_map != nullptr) {
-        delete [] reversed_rearranged_vectors_map;
-        reversed_rearranged_vectors_map = nullptr;
-    }
     diskann::save_bin<uint64_t>(output_file, output_file_meta.data(), output_file_meta.size(), 1);
     LOG_KNOWHERE_ERROR_ << "Output disk index file written to " << output_file;
+
+    if (rearrange) {
+        uint32_t *rearranged_vectors_map = nullptr;
+        uint32_t *reversed_rearranged_vectors_map = nullptr;
+        std::string medoids_path = index_prefix_path + "_disk.index_medoids.bin";
+        std::string entry_points_path = index_prefix_path + "_disk.index_entry_points.bin";
+        std::unique_ptr <uint32_t[]> entry_points = nullptr;
+        size_t n_entry_points, __dim;
+        if (file_exists(entry_points_path)) {
+            diskann::load_bin<uint32_t>(entry_points_path, entry_points, n_entry_points, __dim);
+        } else {
+            if (file_exists(medoids_path)) {
+                diskann::load_bin<uint32_t>(medoids_path, entry_points, n_entry_points, __dim);
+            } else {
+                entry_points = std::make_unique < uint32_t[]>(1);
+                entry_points[0] = medoid_u32;
+                n_entry_points = 1;
+            }
+        }
+      
+        std::unordered_map<uint32_t, std::vector<uint32_t>> filter_to_medoid_ids;
+        std::string vamana_reader_path = mem_index_file;
+        uint32_t thread_count = std::min(knowhere::ThreadPool::GetGlobalBuildThreadPoolSize(), (size_t)AISAQ_MAX_REARRANGE_MAP_THREADS);
+        void** context_arr = allocate_vamana_read_contexts(vamana_reader_path, vamana_reader_node_to_pos_map, thread_count);
+        if (context_arr == nullptr) {
+          throw ANNException("failed to allocate index read context "
+                 , -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+        if (aisaq_generate_vectors_rearrange_map<T, uint32_t>(aisaq_rearrange_sorter_default, rearranged_vectors_map, (uint32_t)npts_64,
+            pq_compressed_nbytes , width_u32, entry_points.get(), n_entry_points, filter_to_medoid_ids,
+            read_node_nbrs_from_vamana<T, uint32_t>, context_arr, thread_count) != 0) {
+            throw ANNException("failed to generate rearranged vectors data"
+                   , -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+        free_vamana_read_contexts(context_arr, thread_count);
+        /* create reversed vectors map */
+        if (aisaq_create_reversed_vectors_map(reversed_rearranged_vectors_map, rearranged_vectors_map, (uint32_t)npts_64) != 0) {
+            throw ANNException("failed to generate reversed rearranged vectors map"
+                   , -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+
+        /* create aligned pq compressed rearranged file */
+        std::string rearranged_pq_compressed_vectors_path = index_prefix_path + "_pq_compressed_rearranged.bin";
+        if (aisaq_create_aligned_rearranged_pq_compressed_vectors_file(pq_compressed_vectors_reader,
+            rearranged_pq_compressed_vectors_path, AISAQ_REARRANGED_PQ_FILE_PAGE_SIZE_DEFAULT,
+            reversed_rearranged_vectors_map, npts_64, pq_compressed_nbytes) != 0) {
+            throw ANNException("failed to create aligned rearranged pq vectors file"
+                   , -1, __FUNCSIG__, __FILE__, __LINE__);
+        };
+        
+        /* create rearrange map
+        rearrange map contains mapping from  origin_id --> new_id */
+        std::string rearrange_map_path = index_prefix_path + "_disk.index_rearrange.bin";
+        diskann::save_bin<uint32_t>(rearrange_map_path, rearranged_vectors_map, npts_64, 1, 0);
+
+        pq_compressed_vectors_reader.close();
+        if (delete_file(pq_compressed_vectors_path) != 0 ) {
+          LOG_KNOWHERE_ERROR_ << "failed to delete file: " << pq_compressed_vectors_path;
+        }
+
+        if (rearranged_vectors_map != nullptr) {
+            delete [] rearranged_vectors_map;
+            rearranged_vectors_map = nullptr;
+        }
+        
+        if (reversed_rearranged_vectors_map != nullptr) {
+          delete [] reversed_rearranged_vectors_map;
+          reversed_rearranged_vectors_map = nullptr;
+        }
+
+        if (vamana_reader_node_to_pos_map != nullptr) {
+          delete [] vamana_reader_node_to_pos_map;
+          vamana_reader_node_to_pos_map = nullptr;
+        }
+    }
 }
 
 template<typename T>
@@ -1879,17 +1723,19 @@ template<typename T>
       LOG_KNOWHERE_INFO_ << "GPU is not going to be used since it is not available";
     }
 #endif
-    LOG_KNOWHERE_INFO_ << "Starting index build: R=" << R << " L=" << L
-                       << " Query RAM budget: "
-                       << pq_code_size_limit / (1024 * 1024 * 1024) << "(GiB)"
-                       << " Indexing ram budget: " << indexing_ram_budget
-                       << "(GiB)";
+
 
     auto s = std::chrono::high_resolution_clock::now();
 
     size_t points_num, dim;
 
     diskann::get_bin_metadata(data_file_to_use.c_str(), points_num, dim);
+
+    LOG_KNOWHERE_INFO_ << "Starting index build for : " << points_num << " vectors with dim: " << dim << " R=" << R << " L=" << L
+                        << " Query RAM budget: "
+                        << pq_code_size_limit / (1024 * 1024 * 1024) << "(GiB)"
+                        << " Indexing ram budget: " << indexing_ram_budget
+                        << "(GiB)";
 
     size_t num_pq_chunks =
         (size_t) (std::floor)(_u64(pq_code_size_limit / points_num));
@@ -1985,7 +1831,7 @@ template<typename T>
         }
         LOG_KNOWHERE_INFO_ << "Call create_aisaq_layout";
         if (!use_disk_pq) {
-            diskann::create_aisaq_layout<T>(data_file_to_use.c_str(), mem_index_path, disk_index_path
+            diskann::create_aisaq_layout<T>(data_file_to_save.c_str(), mem_index_path, disk_index_path
                                        , std::string("")
                                        , index_prefix_path
                                        , config.compare_metric
@@ -2002,15 +1848,6 @@ template<typename T>
                                         , inline_pq
                                         , rearrange
                 );
-         else
-                diskann::create_aisaq_layout<_u8>(disk_pq_compressed_vectors_path,
-                                             mem_index_path, disk_index_path,
-											 data_file_to_save.c_str()
-                                            , index_prefix_path
-                                            , config.compare_metric
-                                            , inline_pq
-                                            , rearrange
-                );
         }
         config.rearrange = rearrange;
     }
@@ -2023,10 +1860,6 @@ template<typename T>
           if (!reorder_data)
             diskann::create_disk_layout<_u8>(disk_pq_compressed_vectors_path,
                                              mem_index_path, disk_index_path);
-          else
-            diskann::create_disk_layout<_u8>(disk_pq_compressed_vectors_path,
-                                             mem_index_path, disk_index_path,
-                                             data_file_to_save.c_str());
         }
     }
     double ten_percent_points = std::ceil(points_num * 0.1);
@@ -2216,7 +2049,7 @@ template<typename T>
             const std::string output_file,
             const std::string reorder_data_file,
             const std::string &index_prefix_path,
-            const diskann::Metric metric,  
+            const diskann::Metric metric,
             int inline_pq,
             bool &rearrange
     );
@@ -2226,7 +2059,7 @@ template<typename T>
             const std::string output_file,
             const std::string reorder_data_file,
             const std::string &index_prefix_path,
-            const diskann::Metric metric,  
+            const diskann::Metric metric,
             int inline_pq,
             bool &rearrange
     );
@@ -2236,7 +2069,7 @@ template<typename T>
             const std::string output_file,
             const std::string reorder_data_file,
             const std::string &index_prefix_path,
-            const diskann::Metric metric,  
+            const diskann::Metric metric,
             int inline_pq,
             bool &rearrange
     );
@@ -2246,7 +2079,7 @@ template<typename T>
             const std::string output_file,
             const std::string reorder_data_file,
             const std::string &index_prefix_path,
-            const diskann::Metric metric,  
+            const diskann::Metric metric,
             int inline_pq,
             bool &rearrange
     );

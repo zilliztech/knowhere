@@ -271,7 +271,7 @@ class DiskANNIndexNode : public IndexNode {
     }
 
     uint64_t
-    GetCachedNodeNum(const float cache_dram_budget, const uint64_t data_dim, const uint64_t max_degree);
+    GetCachedNodeNum(const float cache_dram_budget, const uint64_t data_dim, size_t chunk_size, const uint64_t max_degree);
 
     std::string index_prefix_;
     mutable std::mutex preparation_lock_;
@@ -380,8 +380,14 @@ std::vector<std::string>
 GetOptionalFilenames(const std::string& prefix) {
     std::vector<std::string> filenames;
     auto disk_index_filename = diskann::get_disk_index_filename(prefix);
+    auto disk_pq_pivots_file_name = diskann::get_disk_index_pq_pivots_filename(disk_index_filename);
     filenames.push_back(diskann::get_disk_index_centroids_filename(disk_index_filename));
     filenames.push_back(diskann::get_disk_index_medoids_filename(disk_index_filename));
+    filenames.push_back(disk_pq_pivots_file_name);
+    filenames.push_back(diskann::get_pq_rearrangement_perm_filename(disk_pq_pivots_file_name));
+    filenames.push_back(diskann::get_pq_chunk_offsets_filename(disk_pq_pivots_file_name));
+    filenames.push_back(diskann::get_pq_centroid_filename(disk_pq_pivots_file_name));
+
     filenames.push_back(diskann::get_cached_nodes_file(prefix));
     filenames.push_back(diskann::get_emb_list_offset_file(prefix));
     return filenames;
@@ -459,8 +465,15 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
             return diskann::Metric::INNER_PRODUCT;
         }
     }();
-    auto num_nodes_to_cache =
-        GetCachedNodeNum(build_conf.search_cache_budget_gb.value(), dim, build_conf.max_degree.value());
+    uint64_t num_nodes_to_cache;
+    if (build_conf.disk_pq_dims.value() > 0) {
+        uint64_t disk_pq_nchunks = dim;
+        if (build_conf.disk_pq_dims.value() < (int)dim)
+            disk_pq_nchunks = build_conf.disk_pq_dims.value();
+        num_nodes_to_cache = GetCachedNodeNum(build_conf.search_cache_budget_gb.value(), disk_pq_nchunks, sizeof(_u8), build_conf.max_degree.value());
+    } else {
+        num_nodes_to_cache = GetCachedNodeNum(build_conf.search_cache_budget_gb.value(), dim, sizeof(DataType), build_conf.max_degree.value());
+    }
     diskann::BuildConfig diskann_internal_build_config{data_path,
                                                        index_prefix_,
                                                        diskann_metric,
@@ -648,8 +661,15 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
         diskann::load_bin<uint32_t>(cached_nodes_file, cached_nodes_ids, num_nodes, nodes_id_dim);
         node_list.assign(cached_nodes_ids.get(), cached_nodes_ids.get() + num_nodes);
     } else {
-        auto num_nodes_to_cache = GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(),
-                                                   pq_flash_index_->get_data_dim(), pq_flash_index_->get_max_degree());
+        uint64_t num_nodes_to_cache = 0;
+        if (prep_conf.disk_pq_dims.value() > 0) {
+            uint64_t disk_pq_nchunks = pq_flash_index_->get_data_dim();
+            if (prep_conf.disk_pq_dims.value() < (int)pq_flash_index_->get_data_dim())
+                disk_pq_nchunks = prep_conf.disk_pq_dims.value();
+            num_nodes_to_cache = GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(), disk_pq_nchunks, sizeof(_u8), prep_conf.max_degree.value());
+        } else {
+            num_nodes_to_cache = GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(), pq_flash_index_->get_data_dim(), sizeof(DataType),prep_conf.max_degree.value());
+        }
         if (num_nodes_to_cache > pq_flash_index_->get_num_points() / 3) {
             LOG_KNOWHERE_ERROR_ << "Failed to generate cache, num_nodes_to_cache(" << num_nodes_to_cache
                                 << ") is larger than 1/3 of the total data number.";
@@ -1030,9 +1050,9 @@ DiskANNIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
 
 template <typename DataType>
 uint64_t
-DiskANNIndexNode<DataType>::GetCachedNodeNum(const float cache_dram_budget, const uint64_t data_dim,
+DiskANNIndexNode<DataType>::GetCachedNodeNum(const float cache_dram_budget, const uint64_t data_dim, size_t chunk_size,
                                              const uint64_t max_degree) {
-    uint32_t one_cached_node_budget = (max_degree + 1) * sizeof(unsigned) + sizeof(DataType) * data_dim;
+    uint32_t one_cached_node_budget = (max_degree + 1) * sizeof(unsigned) + chunk_size * data_dim;
     auto num_nodes_to_cache =
         static_cast<uint64_t>(1024 * 1024 * 1024 * cache_dram_budget) / (one_cached_node_budget * kCacheExpansionRate);
     return num_nodes_to_cache;

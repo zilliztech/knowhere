@@ -31,6 +31,13 @@ class AisaqConfig : public DiskANNConfig {
     KNOWHERE_DECLARE_CONFIG(AisaqConfig) {
         // Block AiSAQ parameters
 
+        KNOWHERE_CONFIG_DECLARE_FIELD(beamwidth)
+            .description("the maximum number of IO requests each query will issue per iteration of search code.")
+            .set_default(diskann::defaults::DEFAULT_AISAQ_BEAMWIDTH)
+            .set_range(1, diskann::defaults::MAX_AISAQ_BEAMWIDTH)
+            .for_search()
+            .for_range_search()
+            .for_iterator();
         KNOWHERE_CONFIG_DECLARE_FIELD(vectors_beamwidth)
             .set_default(1)
             .set_range(1, diskann::defaults::MAX_AISAQ_VECTORS_BEAMWIDTH)

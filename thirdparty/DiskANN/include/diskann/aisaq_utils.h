@@ -22,7 +22,7 @@ namespace diskann {
     int aisaq_generate_vectors_rearrange_map(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<LabelT, std::vector<uint32_t>> &filter_to_medoid_ids,
-            aisaq_read_nodes_nbrs_func_t<T, LabelT> read_nodes_nbrs_func, void *context);
+            aisaq_read_nodes_nbrs_func_t<T, LabelT> read_nodes_nbrs_func, void **contexts, uint32_t context_count);
 
     /*
      create a reversed map

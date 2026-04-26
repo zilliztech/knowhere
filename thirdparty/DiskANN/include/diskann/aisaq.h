@@ -16,6 +16,7 @@ namespace diskann {
 #define AISAQ_SEARCH_PQ_READ_PAGE_CACHE_MAX_DRAM_MB   32.0f /* 32MB per thread */
 #define AISAQ_REARRANGED_PQ_FILE_PAGE_SIZE_DEFAULT    diskann::defaults::SECTOR_LEN
 #define AISAQ_INVALID_VID                             0xffffffff
+#define AISAQ_MAX_REARRANGE_MAP_THREADS                 (32)
 
 
     enum aisaq_rearrange_sorter {

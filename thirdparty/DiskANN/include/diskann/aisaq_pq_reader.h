@@ -19,6 +19,7 @@ namespace diskann {
         virtual const char *get_io_engine_name() = 0;
         virtual AisaqPQReaderContext *create_context(uint32_t max_ios) = 0;
         uint32_t get_context_size(AisaqPQReaderContext &ctx);
+        uint32_t get_context_max_ios(AisaqPQReaderContext &ctx);
         virtual void destroy_context(AisaqPQReaderContext &ctx) = 0;
         virtual int read_pq_vectors_submit(AisaqPQReaderContext &ctx, const uint32_t *ids, const uint32_t n_ids, uint32_t &io_count) = 0;
         virtual int read_pq_vectors_wait_completion(AisaqPQReaderContext &ctx, uint32_t *read_vec, uint8_t **pq_vectors, uint32_t nr_events,
@@ -52,3 +53,4 @@ namespace diskann {
         uint32_t m_max_io_size_sectors;
     };
 }
+
