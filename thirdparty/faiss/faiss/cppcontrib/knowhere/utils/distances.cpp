@@ -22,8 +22,8 @@
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/object.h"
 
-#include <faiss/cppcontrib/knowhere/FaissHook.h>
 #include <faiss/impl/AuxIndexStructures.h>
+#include "simd/hook.h"
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/IDSelector.h>
 #include <faiss/cppcontrib/knowhere/impl/ResultHandler.h>

@@ -25,7 +25,7 @@ struct IndexIVFScalarQuantizerCC : IndexIVFScalarQuantizer {
             size_t d,
             size_t nlist,
             size_t ssize,
-            ScalarQuantizer::QuantizerType qtype,
+            ::faiss::ScalarQuantizer::QuantizerType qtype,
             MetricType metric = METRIC_L2,
             bool by_residual = false,
             std::optional<std::string> raw_data_prefix_path = std::nullopt);
@@ -57,7 +57,7 @@ struct IndexIVFScalarQuantizerCCCosine : IndexIVFScalarQuantizerCC, HasInverseL2
             size_t d,
             size_t nlist,
             size_t ssize,
-            ScalarQuantizer::QuantizerType qtype,
+            ::faiss::ScalarQuantizer::QuantizerType qtype,
             MetricType metric = METRIC_L2,
             bool by_residual = false,
             std::optional<std::string> raw_data_prefix_path = std::nullopt);

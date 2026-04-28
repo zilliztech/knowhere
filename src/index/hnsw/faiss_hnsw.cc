@@ -9,8 +9,10 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <faiss/cppcontrib/knowhere/IndexBinaryScalarQuantizer.h>
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
+#include <faiss/cppcontrib/knowhere/IndexHNSWBinary.h>
 #include <faiss/cppcontrib/knowhere/IndexSQ4Uniform.h>
 #include <faiss/cppcontrib/knowhere/MetricType.h>
 #include <faiss/cppcontrib/knowhere/impl/CountSizeIOWriter.h>
@@ -32,7 +34,6 @@
 #include "common/metric.h"
 #include "faiss/cppcontrib/knowhere/IndexHNSW.h"
 #include "faiss/cppcontrib/knowhere/IndexRefine.h"
-#include "faiss/cppcontrib/knowhere/impl/ScalarQuantizer.h"
 #include "faiss/cppcontrib/knowhere/index_io.h"
 #include "faiss/impl/mapped_io.h"
 #include "index/clustering_config.h"
@@ -546,10 +547,10 @@ convert_rows_to_fp32(const void* const __restrict src_in, float* const __restric
         // where each query_row has ((dim + 7) / 8) * 8 bits, and the total is nrows * ((dim + 7) / 8) * 8 bits.
         // But the final format required is nrows * dim * 32 bits (float).
         // There are actually two conversions happening here:
-        // 1. Each uint8_t value must be converted to float (in `BinarySQDistanceComputerWrapper::set_query`
-        //    and `ScalarQuantizer::compute_codes`), it will be converted back to uint8_t). [same as int8]
+        // 1. Each uint8_t value must be converted to float (in `BinaryFlatCodesDC::set_query` inside
+        //    IndexBinaryScalarQuantizer, it will be converted back to uint8_t). [same as int8]
         // 2. Each row must occupy dim * 32 bits of space, even if not all bits are filled;
-        //    this is required by the convention set in `ScalarQuantizer::compute_codes`.
+        //    this is required by the convention set by IndexBinaryScalarQuantizer::sa_encode.
         const knowhere::bin1* const src = reinterpret_cast<const knowhere::bin1*>(src_in);
         auto uint8_dim = (dim + 7) / 8;
         for (size_t i = 0; i < nrows; i++) {
@@ -711,20 +712,26 @@ get_index_data_format(const faiss::Index* index) {
         return DataFormatEnum::fp32;
     }
 
-    // is it sq?
-    // note: IndexScalarQuantizerCosine preserves the original data, no cosine norm is appliesd
-    auto index_sq = dynamic_cast<const faiss::cppcontrib::knowhere::IndexScalarQuantizer*>(index);
-    if (index_sq != nullptr) {
-        if (index_sq->sq.qtype == faiss::cppcontrib::knowhere::ScalarQuantizer::QT_bf16) {
-            return DataFormatEnum::bf16;
-        } else if (index_sq->sq.qtype == faiss::cppcontrib::knowhere::ScalarQuantizer::QT_fp16) {
-            return DataFormatEnum::fp16;
-        } else if (index_sq->sq.qtype == faiss::cppcontrib::knowhere::ScalarQuantizer::QT_8bit_direct_signed) {
-            return DataFormatEnum::int8;
-        } else if (index_sq->sq.qtype == faiss::cppcontrib::knowhere::ScalarQuantizer::QT_1bit_direct) {
-            return DataFormatEnum::bin1;
-        } else {
-            return std::nullopt;
+    // is it binary (1-bit-direct)? Routed through
+    // IndexBinaryScalarQuantizer, which replaces the legacy
+    // IndexScalarQuantizer(QT_1bit_direct) path.
+    if (dynamic_cast<const faiss::cppcontrib::knowhere::IndexBinaryScalarQuantizer*>(index) != nullptr) {
+        return DataFormatEnum::bin1;
+    }
+
+    // is it sq? All SQ storage produced by knowhere now inherits from
+    // baseline faiss::IndexScalarQuantizer (Cosine/SQ4U wrappers,
+    // plain IndexHNSWSQ, and refine).
+    if (auto* index_sq = dynamic_cast<const faiss::IndexScalarQuantizer*>(index)) {
+        switch (index_sq->sq.qtype) {
+            case faiss::ScalarQuantizer::QT_bf16:
+                return DataFormatEnum::bf16;
+            case faiss::ScalarQuantizer::QT_fp16:
+                return DataFormatEnum::fp16;
+            case faiss::ScalarQuantizer::QT_8bit_direct_signed:
+                return DataFormatEnum::int8;
+            default:
+                return std::nullopt;
         }
     }
 
@@ -2068,9 +2075,8 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
             if (is_binary) {
                 if (metric.value() == faiss::MetricType::METRIC_Hamming ||
                     metric.value() == faiss::MetricType::METRIC_Jaccard) {
-                    hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQ>(
-                        dim, faiss::cppcontrib::knowhere::ScalarQuantizer::QT_1bit_direct, hnsw_cfg.M.value(),
-                        metric.value());
+                    hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWBinary>(dim, hnsw_cfg.M.value(),
+                                                                                                metric.value());
                 } else {
                     LOG_KNOWHERE_ERROR_ << "Unsupported metric for binary data: " << hnsw_cfg.metric_type.value();
                     return Status::invalid_metric_type;
@@ -2082,14 +2088,13 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
                             std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
                     } else if (data_format == DataFormatEnum::fp16) {
                         hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQCosine>(
-                            dim, faiss::cppcontrib::knowhere::ScalarQuantizer::QT_fp16, hnsw_cfg.M.value());
+                            dim, faiss::ScalarQuantizer::QT_fp16, hnsw_cfg.M.value());
                     } else if (data_format == DataFormatEnum::bf16) {
                         hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQCosine>(
-                            dim, faiss::cppcontrib::knowhere::ScalarQuantizer::QT_bf16, hnsw_cfg.M.value());
+                            dim, faiss::ScalarQuantizer::QT_bf16, hnsw_cfg.M.value());
                     } else if (data_format == DataFormatEnum::int8) {
                         hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQCosine>(
-                            dim, faiss::cppcontrib::knowhere::ScalarQuantizer::QT_8bit_direct_signed,
-                            hnsw_cfg.M.value());
+                            dim, faiss::ScalarQuantizer::QT_8bit_direct_signed, hnsw_cfg.M.value());
                     } else {
                         LOG_KNOWHERE_ERROR_ << "Unsupported metric type: " << hnsw_cfg.metric_type.value();
                         return Status::invalid_metric_type;
@@ -2100,16 +2105,13 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
                             dim, hnsw_cfg.M.value(), metric.value());
                     } else if (data_format == DataFormatEnum::fp16) {
                         hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQ>(
-                            dim, faiss::cppcontrib::knowhere::ScalarQuantizer::QT_fp16, hnsw_cfg.M.value(),
-                            metric.value());
+                            dim, faiss::ScalarQuantizer::QT_fp16, hnsw_cfg.M.value(), metric.value());
                     } else if (data_format == DataFormatEnum::bf16) {
                         hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQ>(
-                            dim, faiss::cppcontrib::knowhere::ScalarQuantizer::QT_bf16, hnsw_cfg.M.value(),
-                            metric.value());
+                            dim, faiss::ScalarQuantizer::QT_bf16, hnsw_cfg.M.value(), metric.value());
                     } else if (data_format == DataFormatEnum::int8) {
                         hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQ>(
-                            dim, faiss::cppcontrib::knowhere::ScalarQuantizer::QT_8bit_direct_signed,
-                            hnsw_cfg.M.value(), metric.value());
+                            dim, faiss::ScalarQuantizer::QT_8bit_direct_signed, hnsw_cfg.M.value(), metric.value());
                     } else {
                         LOG_KNOWHERE_ERROR_ << "Unsupported metric type: " << hnsw_cfg.metric_type.value();
                         return Status::invalid_metric_type;
@@ -2548,7 +2550,7 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
 
         // create an index
         const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
-        const bool is_sq4u = sq_type.value() == faiss::cppcontrib::knowhere::ScalarQuantizer::QT_4bit_uniform;
+        const bool is_sq4u = sq_type.value() == faiss::ScalarQuantizer::QT_4bit_uniform;
 
         // should refine be used?
         std::unique_ptr<faiss::Index> final_index;
@@ -2570,6 +2572,17 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
             } else {
                 hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWSQ>(
                     dim, sq_type.value(), hnsw_cfg.M.value(), metric.value());
+                // QT_4bit_uniform + L2 benefits from quantile-based range
+                // estimation. This used to be hard-coded inside the fork
+                // IndexScalarQuantizer ctor; moved here so that ctor is
+                // behaviorally equivalent to baseline.
+                if (is_sq4u) {
+                    auto* idx_sq = dynamic_cast<faiss::IndexScalarQuantizer*>(hnsw_index->storage);
+                    if (idx_sq != nullptr) {
+                        idx_sq->sq.rangestat = faiss::ScalarQuantizer::RS_quantiles;
+                        idx_sq->sq.rangestat_arg = 0.01;
+                    }
+                }
             }
 
             hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();

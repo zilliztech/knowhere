@@ -21,7 +21,6 @@
 
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
 
-#include <faiss/cppcontrib/knowhere/FaissHook.h>
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/IDSelector.h>
 
@@ -31,6 +30,8 @@
 #include <faiss/utils/utils.h>
 
 #include <faiss/cppcontrib/knowhere/MetricType.h>
+
+#include "simd/hook.h"
 
 
 

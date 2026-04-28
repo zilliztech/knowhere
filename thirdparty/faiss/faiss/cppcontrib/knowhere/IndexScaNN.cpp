@@ -7,7 +7,6 @@
 #include <faiss/cppcontrib/knowhere/utils/distances.h>
 #include <faiss/utils/utils.h>
 
-#include <faiss/cppcontrib/knowhere/FaissHook.h>
 #include <faiss/Index.h>
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFPQFastScan.h>

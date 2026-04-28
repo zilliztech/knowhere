@@ -23,7 +23,7 @@
 
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 #include <faiss/IndexHNSW.h>
-#include <faiss/cppcontrib/knowhere/IndexScalarQuantizer.h>
+#include <faiss/IndexScalarQuantizer.h>
 #include <faiss/impl/DistanceComputer.h>
 
 namespace faiss {
@@ -128,7 +128,7 @@ struct WithSQ4UniformNormIPDistanceComputer : DistanceComputer {
  * modifying caller's data. Query normalization handled by knowhere layer.
  * Implements HasInverseL2Norms.
  */
-struct IndexScalarQuantizer4bitUniformCosine : IndexScalarQuantizer,
+struct IndexScalarQuantizer4bitUniformCosine : ::faiss::IndexScalarQuantizer,
                                                HasInverseL2Norms {
     L2NormsStorage inverse_norms_storage;
 
@@ -155,7 +155,7 @@ struct IndexScalarQuantizer4bitUniformCosine : IndexScalarQuantizer,
  * Scalar Quantizer specialized for 4-bit uniform quantization with IP metric.
  * Stores L2 norms squared of vectors to convert L2^2 distances to IP.
  */
-struct IndexScalarQuantizer4bitUniformIP : IndexScalarQuantizer {
+struct IndexScalarQuantizer4bitUniformIP : ::faiss::IndexScalarQuantizer {
     /// Storage for L2 norms squared (||x||^2)
     std::vector<float> l2_norms_sqr;
 
@@ -184,7 +184,7 @@ struct IndexHNSWSQ4UniformCosine : IndexHNSW, HasInverseL2Norms {
 
     IndexHNSWSQ4UniformCosine(
             int d,
-            ScalarQuantizer::QuantizerType qtype,
+            ::faiss::ScalarQuantizer::QuantizerType qtype,
             int M);
 
     const float* get_inverse_l2_norms() const override;
@@ -193,7 +193,10 @@ struct IndexHNSWSQ4UniformCosine : IndexHNSW, HasInverseL2Norms {
 struct IndexHNSWSQ4UniformIP : IndexHNSW {
     IndexHNSWSQ4UniformIP();
 
-    IndexHNSWSQ4UniformIP(int d, ScalarQuantizer::QuantizerType qtype, int M);
+    IndexHNSWSQ4UniformIP(
+            int d,
+            ::faiss::ScalarQuantizer::QuantizerType qtype,
+            int M);
 };
 
 }

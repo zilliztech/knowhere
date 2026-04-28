@@ -22,8 +22,8 @@
 #include <faiss/utils/utils.h>
 
 #include <faiss/Clustering.h>
-#include <faiss/cppcontrib/knowhere/FaissHook.h>
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
+#include "simd/hook.h"
 
 #include <faiss/cppcontrib/knowhere/utils/hamming.h>
 

@@ -37,18 +37,31 @@ knowhere_file_glob(
   FAISS_AVX512_SRCS
   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*avx512.cpp
 )
-# AVX512 vanilla Faiss dynamic dispatch related files
+# AVX512 vanilla Faiss dynamic dispatch related files. Baseline
+# sq-avx512.cpp is replaced by a knowhere-local prelude file that declares
+# a fast DCTemplate specialization for QT_4bit_uniform + L2 and then
+# textually #includes the baseline sq-avx512.cpp — see
+# cppcontrib/knowhere/impl/sq-avx512-fastpath.cpp for the full design note.
 knowhere_file_glob(
   GLOB
   FAISS_DD_AVX512_SRCS
   thirdparty/faiss/faiss/impl/fast_scan/impl-avx512.cpp
   thirdparty/faiss/faiss/impl/hnsw/avx512.cpp
   thirdparty/faiss/faiss/impl/pq_code_distance/pq_code_distance-avx512.cpp
-  thirdparty/faiss/faiss/impl/scalar_quantizer/sq-avx512.cpp
+  thirdparty/faiss/faiss/cppcontrib/knowhere/impl/sq-avx512-fastpath.cpp
   thirdparty/faiss/faiss/utils/distances_fused/avx512.cpp
   thirdparty/faiss/faiss/utils/simd_impl/distances_avx512.cpp
   thirdparty/faiss/faiss/utils/simd_impl/rabitq_avx512.cpp
 )
+# Baseline sq-avx512.cpp is pulled in textually by the prelude file, not
+# compiled directly. Remove it from the generic list so it is not picked
+# up as a stand-alone TU (which would duplicate symbols).
+knowhere_file_glob(
+  GLOB
+  FAISS_SQ_AVX512_EXCLUDE
+  thirdparty/faiss/faiss/impl/scalar_quantizer/sq-avx512.cpp
+)
+list(REMOVE_ITEM FAISS_SRCS ${FAISS_SQ_AVX512_EXCLUDE})
 # combine files
 list(APPEND FAISS_AVX512_SRCS ${FAISS_DD_AVX512_SRCS})
 # remove platform files from general files
@@ -61,7 +74,8 @@ knowhere_file_glob(
   FAISS_AVX2_SRCS
   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*avx.cpp
 )
-# AVX2 vanilla Faiss dynamic dispatch related files
+# AVX2 vanilla Faiss dynamic dispatch related files. sq-avx2.cpp is
+# textually wrapped by sq-avx2-fastpath.cpp (see design note there).
 knowhere_file_glob(
   GLOB
   FAISS_DD_AVX2_SRCS
@@ -69,12 +83,18 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/impl/fast_scan/impl-avx2.cpp
   thirdparty/faiss/faiss/impl/hnsw/avx2.cpp
   thirdparty/faiss/faiss/impl/pq_code_distance/pq_code_distance-avx2.cpp
-  thirdparty/faiss/faiss/impl/scalar_quantizer/sq-avx2.cpp
+  thirdparty/faiss/faiss/cppcontrib/knowhere/impl/sq-avx2-fastpath.cpp
   thirdparty/faiss/faiss/utils/distances_fused/simdlib_based.cpp
   thirdparty/faiss/faiss/utils/simd_impl/distances_avx2.cpp
   thirdparty/faiss/faiss/utils/simd_impl/partitioning_avx2.cpp
   thirdparty/faiss/faiss/utils/simd_impl/rabitq_avx2.cpp
 )
+knowhere_file_glob(
+  GLOB
+  FAISS_SQ_AVX2_EXCLUDE
+  thirdparty/faiss/faiss/impl/scalar_quantizer/sq-avx2.cpp
+)
+list(REMOVE_ITEM FAISS_SRCS ${FAISS_SQ_AVX2_EXCLUDE})
 # combine files
 list(APPEND FAISS_AVX2_SRCS ${FAISS_DD_AVX2_SRCS})
 # remove platform files from general files
@@ -105,18 +125,25 @@ knowhere_file_glob(
   FAISS_NEON_SRCS
   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*neon.cpp
 )
-# NEON vanilla Faiss dynamic dispatch related files
+# NEON vanilla Faiss dynamic dispatch related files. sq-neon.cpp is
+# textually wrapped by sq-neon-fastpath.cpp (see design note there).
 knowhere_file_glob(
   GLOB
   FAISS_DD_NEON_SRCS
   thirdparty/faiss/faiss/impl/approx_topk/neon.cpp
   thirdparty/faiss/faiss/impl/fast_scan/impl-neon.cpp
-  thirdparty/faiss/faiss/impl/scalar_quantizer/sq-neon.cpp
+  thirdparty/faiss/faiss/cppcontrib/knowhere/impl/sq-neon-fastpath.cpp
   thirdparty/faiss/faiss/utils/distances_fused/simdlib_based_neon.cpp
   thirdparty/faiss/faiss/utils/simd_impl/distances_aarch64.cpp
   thirdparty/faiss/faiss/utils/simd_impl/partitioning_neon.cpp
   thirdparty/faiss/faiss/utils/simd_impl/rabitq_neon.cpp
 )
+knowhere_file_glob(
+  GLOB
+  FAISS_SQ_NEON_EXCLUDE
+  thirdparty/faiss/faiss/impl/scalar_quantizer/sq-neon.cpp
+)
+list(REMOVE_ITEM FAISS_SRCS ${FAISS_SQ_NEON_EXCLUDE})
 # combine files
 list(APPEND FAISS_NEON_SRCS ${FAISS_DD_NEON_SRCS})
 # remove platform files from general files

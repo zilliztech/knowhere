@@ -14,7 +14,7 @@ IndexIVFScalarQuantizerCC::IndexIVFScalarQuantizerCC(
         size_t d,
         size_t nlist,
         size_t ssize,
-        ScalarQuantizer::QuantizerType qtype,
+        ::faiss::ScalarQuantizer::QuantizerType qtype,
         MetricType metric,
         bool by_residual,
         std::optional<std::string> raw_data_prefix_path)
@@ -52,7 +52,7 @@ void IndexIVFScalarQuantizerCC::add_core(
     FAISS_THROW_IF_NOT(is_trained);
 
     size_t nadd = 0;
-    std::unique_ptr<ScalarQuantizer::SQuantizer> squant(sq.select_quantizer());
+    std::unique_ptr<::faiss::ScalarQuantizer::SQuantizer> squant(sq.select_quantizer());
 
     DirectMapAdd dm_add(direct_map, n, xids);
 
@@ -123,7 +123,7 @@ IndexIVFScalarQuantizerCCCosine::IndexIVFScalarQuantizerCCCosine(
         size_t d,
         size_t nlist,
         size_t ssize,
-        ScalarQuantizer::QuantizerType qtype,
+        ::faiss::ScalarQuantizer::QuantizerType qtype,
         MetricType metric,
         bool by_residual,
         std::optional<std::string> raw_data_prefix_path)
@@ -153,7 +153,7 @@ void IndexIVFScalarQuantizerCCCosine::add_core(
     const float* base_x = x_normalized.get();
 
     size_t nadd = 0;
-    std::unique_ptr<ScalarQuantizer::SQuantizer> squant(sq.select_quantizer());
+    std::unique_ptr<::faiss::ScalarQuantizer::SQuantizer> squant(sq.select_quantizer());
 
     DirectMapAdd dm_add(direct_map, n, xids);
 

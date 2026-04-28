@@ -507,19 +507,19 @@ to_index_flat(std::unique_ptr<faiss::cppcontrib::knowhere::IndexFlat>&& index) {
     return std::make_unique<faiss::cppcontrib::knowhere::IndexFlat>(std::move(*index));
 }
 
-expected<faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType>
+expected<faiss::ScalarQuantizer::QuantizerType>
 get_ivf_sq_quantizer_type(int code_size) {
     switch (code_size) {
         case 4:
-            return faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_4bit;
+            return faiss::ScalarQuantizer::QuantizerType::QT_4bit;
         case 6:
-            return faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_6bit;
+            return faiss::ScalarQuantizer::QuantizerType::QT_6bit;
         case 8:
-            return faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_8bit;
+            return faiss::ScalarQuantizer::QuantizerType::QT_8bit;
         case 16:
-            return faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType::QT_fp16;
+            return faiss::ScalarQuantizer::QuantizerType::QT_fp16;
         default:
-            return expected<faiss::cppcontrib::knowhere::ScalarQuantizer::QuantizerType>::Err(
+            return expected<faiss::ScalarQuantizer::QuantizerType>::Err(
                 Status::invalid_args, fmt::format("current code size {} not in (4, 6, 8, 16)", code_size));
     }
 }

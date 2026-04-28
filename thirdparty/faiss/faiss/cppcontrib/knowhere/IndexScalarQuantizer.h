@@ -13,53 +13,13 @@
 #include <vector>
 
 #include <faiss/IndexFlatCodes.h>
+#include <faiss/IndexScalarQuantizer.h>
 #include <faiss/cppcontrib/knowhere/invlists/InvertedLists.h>
 #include <faiss/cppcontrib/knowhere/IndexIVF.h>
-
-#include <faiss/cppcontrib/knowhere/impl/ScalarQuantizer.h>
-#include <faiss/cppcontrib/knowhere/impl/ScalarQuantizerOp.h>
 
 namespace faiss {
 namespace cppcontrib {
 namespace knowhere {
-
-/**
- * Flat index built on a scalar quantizer.
- */
-struct IndexScalarQuantizer : IndexFlatCodes {
-    /// Used to encode the vectors
-    ScalarQuantizer sq;
-
-    /** Constructor.
-     *
-     * @param d      dimensionality of the input vectors
-     * @param M      number of subquantizers
-     * @param nbits  number of bit per subvector index
-     */
-    IndexScalarQuantizer(
-            int d,
-            ScalarQuantizer::QuantizerType qtype,
-            MetricType metric = METRIC_L2);
-
-    IndexScalarQuantizer();
-
-    void train(idx_t n, const float* x) override;
-
-    void search(
-            idx_t n,
-            const float* x,
-            idx_t k,
-            float* distances,
-            idx_t* labels,
-            const SearchParameters* params = nullptr) const override;
-
-    FlatCodesDistanceComputer* get_FlatCodesDistanceComputer() const override;
-
-    /* standalone codec interface */
-    void sa_encode(idx_t n, const float* x, uint8_t* bytes) const override;
-
-    void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
-};
 
 /** An IVF implementation where the components of the residuals are
  * encoded with a scalar quantizer. All distance computations
@@ -68,13 +28,20 @@ struct IndexScalarQuantizer : IndexFlatCodes {
  */
 
 struct IndexIVFScalarQuantizer : IndexIVF {
-    ScalarQuantizer sq;
+    // Baseline scalar quantizer value-type. Fork IVF still inherits
+    // from fork IndexIVF (needed for ConcurrentArrayInvertedLists,
+    // extended search params, and the 8-arg scan_codes interface), but
+    // the SQ state itself is the upstream struct and the scanner
+    // returned from get_InvertedListScanner is a fork-interface adapter
+    // that forwards distance computation to a baseline
+    // SQDistanceComputer.
+    ::faiss::ScalarQuantizer sq;
 
     IndexIVFScalarQuantizer(
             Index* quantizer,
             size_t d,
             size_t nlist,
-            ScalarQuantizer::QuantizerType qtype,
+            ::faiss::ScalarQuantizer::QuantizerType qtype,
             MetricType metric = METRIC_L2,
             bool by_residual = true);
 
