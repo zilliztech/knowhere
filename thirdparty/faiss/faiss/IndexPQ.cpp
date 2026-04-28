@@ -53,8 +53,9 @@ void IndexPQ::train(idx_t n, const float* x) {
     } else {
         idx_t ntrain_perm = polysemous_training.ntrain_permutation;
 
-        if (ntrain_perm > n / 4)
+        if (ntrain_perm > n / 4) {
             ntrain_perm = n / 4;
+        }
         if (verbose) {
             printf("PQ training on %" PRId64 " points, remains %" PRId64
                    " points: "
@@ -222,9 +223,11 @@ void IndexPQ::search(
             for (idx_t i = 0; i < n; i++) {
                 const float* xi = x + i * d;
                 uint8_t* code = q_codes.get() + i * pq.code_size;
-                for (size_t j = 0; j < static_cast<size_t>(d); j++)
-                    if (xi[j] > 0)
+                for (size_t j = 0; j < static_cast<size_t>(d); j++) {
+                    if (xi[j] > 0) {
                         code[j >> 3] |= 1 << (j & 7);
+                    }
+                }
             }
         }
 
@@ -260,8 +263,9 @@ void IndexPQ::search(
             }
 
             // convert distances to floats
-            for (idx_t i = 0; i < k * n; i++)
+            for (idx_t i = 0; i < k * n; i++) {
                 distances[i] = idistances[i];
+            }
         }
 
         indexPQ_stats.nq += n;
@@ -319,14 +323,6 @@ size_t polysemous_inner_loop(
     return n_pass_i;
 }
 
-struct Run_polysemous_inner_loop {
-    using T = size_t;
-    template <class HammingComputer, class... Types>
-    size_t f(Types... args) {
-        return polysemous_inner_loop<HammingComputer>(args...);
-    }
-};
-
 } // anonymous namespace
 
 void IndexPQ::search_core_polysemous(
@@ -377,17 +373,17 @@ void IndexPQ::search_core_polysemous(
         maxheap_heapify(k, heap_dis, heap_ids);
 
         if (!generalized_hamming) {
-            Run_polysemous_inner_loop r;
-            n_pass += dispatch_HammingComputer(
-                    pq.code_size,
-                    r,
-                    this,
-                    dis_table_qi,
-                    q_code,
-                    k,
-                    heap_dis,
-                    heap_ids,
-                    param_polysemous_ht);
+            n_pass += with_HammingComputer(
+                    pq.code_size, [&]<class HammingComputer>() -> size_t {
+                        return polysemous_inner_loop<HammingComputer>(
+                                this,
+                                dis_table_qi,
+                                q_code,
+                                k,
+                                heap_dis,
+                                heap_ids,
+                                param_polysemous_ht);
+                    });
 
         } else { // generalized hamming
             switch (pq.code_size) {
@@ -495,8 +491,9 @@ void IndexPQ::hamming_distance_histogram(
         for (idx_t q0 = 0; q0 < n; q0 += bs) {
             // printf ("dis stats: %zd/%zd\n", q0, n);
             size_t q1 = q0 + bs;
-            if (q1 > static_cast<size_t>(n))
+            if (q1 > static_cast<size_t>(n)) {
                 q1 = n;
+            }
 
             hammings(
                     q_codes.get() + q0 * pq.code_size,
@@ -506,13 +503,15 @@ void IndexPQ::hamming_distance_histogram(
                     pq.code_size,
                     distances.get());
 
-            for (size_t i = 0; i < nb * (q1 - q0); i++)
+            for (size_t i = 0; i < nb * (q1 - q0); i++) {
                 histi[distances[i]]++;
+            }
         }
 #pragma omp critical
         {
-            for (int i = 0; i <= nbits; i++)
+            for (int i = 0; i <= nbits; i++) {
                 hist[i] += histi[i];
+            }
         }
     }
 }
@@ -572,8 +571,10 @@ struct SortedArray {
 
     void init(const T* x_2) {
         this->x = x_2;
-        for (int n = 0; n < N; n++)
+        FAISS_THROW_IF_NOT(!perm.empty());
+        for (int n = 0; n < N; n++) {
             perm[n] = n;
+        }
         ArgSort<T> cmp = {x_2};
         std::sort(perm.begin(), perm.end(), cmp);
     }
@@ -654,8 +655,10 @@ struct SemiSortedArray {
 
     void init(const T* x_2) {
         this->x = x_2;
-        for (int n = 0; n < N; n++)
+        FAISS_THROW_IF_NOT(!perm.empty());
+        for (int n = 0; n < N; n++) {
             perm[n] = n;
+        }
         k = 0;
         grow(initial_k);
     }
@@ -759,8 +762,9 @@ struct MinSumK {
             seen.resize((n_ids + 7) / 8);
         }
 
-        for (int m = 0; m < M; m++)
+        for (int m = 0; m < M; m++) {
             ssx.push_back(SSA(N));
+        }
     }
 
     int64_t weight(int i) {
@@ -772,8 +776,10 @@ struct MinSumK {
     }
 
     void mark_seen(int64_t i) {
-        if (use_seen)
+        if (use_seen) {
+            FAISS_THROW_IF_NOT(!seen.empty());
             seen[i >> 3] |= 1 << (i & 7);
+        }
     }
 
     void run(const T* x, int64_t ldx, T* sums, int64_t* terms) {
@@ -829,8 +835,9 @@ struct MinSumK {
             for (int m = 0; m < M; m++) {
                 int64_t n = ii & (((int64_t)1 << nbit) - 1);
                 ii >>= nbit;
-                if (n + 1 >= N)
+                if (n + 1 >= N) {
                     continue;
+                }
 
                 enqueue_follower(ti, m, n, sum);
             }
@@ -885,8 +892,9 @@ void MultiIndexQuantizer::train(idx_t n, const float* x) {
     is_trained = true;
     // count virtual elements in index
     ntotal = 1;
-    for (size_t m = 0; m < pq.M; m++)
+    for (size_t m = 0; m < pq.M; m++) {
         ntotal *= pq.ksub;
+    }
 }
 
 // block size used in MultiIndexQuantizer::search
