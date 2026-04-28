@@ -1,4 +1,4 @@
-// int total_timeout_minutes = 120
+int total_timeout_minutes = 480
 def knowhere_wheel=''
 pipeline {
     agent {
@@ -7,11 +7,13 @@ pipeline {
             inheritFrom 'default'
             yamlFile 'ci/pod/e2e-cpu.yaml'
             defaultContainer 'main'
+            podRetention never()
+            idleMinutes 0
         }
     }
 
     options {
-        // timeout(time: total_timeout_minutes, unit: 'MINUTES')
+        timeout(time: total_timeout_minutes, unit: 'MINUTES')
         buildDiscarder logRotator(artifactDaysToKeepStr: '30')
         parallelsAlwaysFailFast()
         disableConcurrentBuilds(abortPrevious: true)
@@ -49,6 +51,8 @@ pipeline {
                     inheritFrom 'default'
                     yamlFile 'ci/pod/e2e-sse.yaml'
                     defaultContainer 'main'
+                    podRetention never()
+                    idleMinutes 0
                 }
             }
             steps {

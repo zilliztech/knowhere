@@ -6,6 +6,9 @@ metadata:
   namespace: knowhere-ci
 spec:
   enableServiceLinks: false
+  restartPolicy: Never
+  activeDeadlineSeconds: 36000
+  terminationGracePeriodSeconds: 30
   nodeSelector:
     node.kubernetes.io/cpu-feature.sse: true
   tolerations:
