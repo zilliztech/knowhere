@@ -421,6 +421,14 @@ std::unique_ptr<VectorTransform> read_VectorTransform_up(IOReader* f) {
                 (int)rdt->map.size(),
                 rdt->d_out);
     }
+    if (h == fourcc("VNrm")) {
+        FAISS_THROW_IF_NOT_FMT(
+                vt->d_in == vt->d_out,
+                "NormalizationTransform requires d_in == d_out, "
+                "got d_in=%d d_out=%d",
+                vt->d_in,
+                vt->d_out);
+    }
     if (h == fourcc("VCnt")) {
         auto* ct = dynamic_cast<CenteringTransform*>(vt.get());
         FAISS_THROW_IF_NOT_MSG(ct, "dynamic_cast to CenteringTransform failed");
@@ -429,6 +437,12 @@ std::unique_ptr<VectorTransform> read_VectorTransform_up(IOReader* f) {
                 "CenteringTransform mean size %d < d_in %d",
                 (int)ct->mean.size(),
                 ct->d_in);
+        FAISS_THROW_IF_NOT_FMT(
+                vt->d_in == vt->d_out,
+                "CenteringTransform requires d_in == d_out, "
+                "got d_in=%d d_out=%d",
+                vt->d_in,
+                vt->d_out);
     }
     if (h == fourcc("Viqt")) {
         auto* itqt = dynamic_cast<ITQTransform*>(vt.get());
@@ -500,14 +514,40 @@ std::unique_ptr<InvertedLists> read_InvertedLists_up(
                 nlist, code_size, n_levels);
         std::vector<size_t> sizes(nlist);
         read_ArrayInvertedLists_sizes(f, sizes);
+        size_t byte_limit = get_deserialization_vector_byte_limit();
         for (size_t i = 0; i < nlist; i++) {
+            FAISS_THROW_IF_NOT_FMT(
+                    sizes[i] <= byte_limit / sizeof(idx_t),
+                    "inverted list %zu ids size %zu exceeds "
+                    "deserialization byte limit",
+                    i,
+                    sizes[i]);
             ailp->ids[i].resize(sizes[i]);
             size_t num_elems =
                     ((sizes[i] + ArrayInvertedListsPanorama::kBatchSize - 1) /
                      ArrayInvertedListsPanorama::kBatchSize) *
                     ArrayInvertedListsPanorama::kBatchSize;
-            ailp->codes[i].resize(num_elems * code_size);
-            ailp->cum_sums[i].resize(num_elems * (n_levels + 1));
+            size_t codes_bytes = mul_no_overflow(
+                    num_elems, code_size, "inverted list codes");
+            FAISS_THROW_IF_NOT_FMT(
+                    codes_bytes <= byte_limit,
+                    "inverted list %zu codes size %zu exceeds "
+                    "deserialization byte limit",
+                    i,
+                    codes_bytes);
+            ailp->codes[i].resize(codes_bytes);
+            size_t cum_sums_count = mul_no_overflow(
+                    num_elems,
+                    add_no_overflow(
+                            n_levels, 1, "inverted list cum_sums n_levels"),
+                    "inverted list cum_sums");
+            FAISS_THROW_IF_NOT_FMT(
+                    cum_sums_count <= byte_limit / sizeof(ailp->cum_sums[0][0]),
+                    "inverted list %zu cum_sums size %zu exceeds "
+                    "deserialization byte limit",
+                    i,
+                    cum_sums_count);
+            ailp->cum_sums[i].resize(cum_sums_count);
         }
         for (size_t i = 0; i < nlist; i++) {
             size_t n = sizes[i];
@@ -529,10 +569,24 @@ std::unique_ptr<InvertedLists> read_InvertedLists_up(
         ails->codes.resize(ails->nlist);
         std::vector<size_t> sizes(ails->nlist);
         read_ArrayInvertedLists_sizes(f, sizes);
+        size_t ilar_byte_limit = get_deserialization_vector_byte_limit();
         for (size_t i = 0; i < ails->nlist; i++) {
+            FAISS_THROW_IF_NOT_FMT(
+                    sizes[i] <= ilar_byte_limit / sizeof(idx_t),
+                    "inverted list %zu ids size %zu exceeds "
+                    "deserialization byte limit",
+                    i,
+                    sizes[i]);
             ails->ids[i].resize(sizes[i]);
-            ails->codes[i].resize(mul_no_overflow(
-                    sizes[i], ails->code_size, "inverted list codes"));
+            size_t codes_bytes = mul_no_overflow(
+                    sizes[i], ails->code_size, "inverted list codes");
+            FAISS_THROW_IF_NOT_FMT(
+                    codes_bytes <= ilar_byte_limit,
+                    "inverted list %zu codes size %zu exceeds "
+                    "deserialization byte limit",
+                    i,
+                    codes_bytes);
+            ails->codes[i].resize(codes_bytes);
         }
         for (size_t i = 0; i < ails->nlist; i++) {
             size_t n = ails->ids[i].size();
@@ -1841,6 +1895,36 @@ std::unique_ptr<Index> read_index_up(IOReader* f, int io_flags) {
             ixpt->chain.push_back(read_VectorTransform(f));
         }
         ixpt->index = read_index(f, io_flags);
+        // Validate transform chain dimension consistency:
+        // chain[0].d_in must equal the outer index d, consecutive
+        // transforms must have matching d_out/d_in, and the last
+        // transform's d_out must equal the sub-index d.
+        if (nt > 0) {
+            FAISS_THROW_IF_NOT_FMT(
+                    ixpt->chain[0]->d_in == ixpt->d,
+                    "IndexPreTransform chain[0] d_in=%d != index d=%d",
+                    ixpt->chain[0]->d_in,
+                    ixpt->d);
+            for (int i = 1; i < nt; i++) {
+                FAISS_THROW_IF_NOT_FMT(
+                        ixpt->chain[i]->d_in == ixpt->chain[i - 1]->d_out,
+                        "IndexPreTransform chain[%d] d_in=%d != "
+                        "chain[%d] d_out=%d",
+                        i,
+                        ixpt->chain[i]->d_in,
+                        i - 1,
+                        ixpt->chain[i - 1]->d_out);
+            }
+            if (ixpt->index) {
+                FAISS_THROW_IF_NOT_FMT(
+                        ixpt->chain[nt - 1]->d_out == ixpt->index->d,
+                        "IndexPreTransform chain[%d] d_out=%d "
+                        "!= sub-index d=%d",
+                        nt - 1,
+                        ixpt->chain[nt - 1]->d_out,
+                        ixpt->index->d);
+            }
+        }
         idx = std::move(ixpt);
     } else if (h == fourcc("Imiq")) {
         auto imiq = std::make_unique<MultiIndexQuantizer>();
@@ -1981,6 +2065,15 @@ std::unique_ptr<Index> read_index_up(IOReader* f, int io_flags) {
                     "HNSW storage d %d != index d %d",
                     idxhnsw->storage->d,
                     idxhnsw->d);
+        }
+        if (h == fourcc("IHN2")) {
+            FAISS_THROW_IF_NOT_MSG(
+                    idxhnsw->storage,
+                    "IndexHNSW2Level requires non-null storage");
+            FAISS_THROW_IF_NOT_MSG(
+                    dynamic_cast<Index2Layer*>(idxhnsw->storage) ||
+                            dynamic_cast<IndexIVFPQ*>(idxhnsw->storage),
+                    "IndexHNSW2Level storage must be Index2Layer or IndexIVFPQ");
         }
         if (h == fourcc("IHNp") && !(io_flags & IO_FLAG_PQ_SKIP_SDC_TABLE)) {
             auto* storage_pq = dynamic_cast<IndexPQ*>(idxhnsw->storage);
@@ -2313,7 +2406,8 @@ std::unique_ptr<Index> read_index_up(IOReader* f, int io_flags) {
         bool initialized;
         READ1(initialized);
         if (initialized) {
-            faiss::svs_io::ReaderStreambuf rbuf(f);
+            faiss::svs_io::ReaderStreambuf rbuf(
+                    f, get_deserialization_vector_byte_limit());
             std::istream is(&rbuf);
             svs->deserialize_impl(is);
         }
@@ -2321,7 +2415,8 @@ std::unique_ptr<Index> read_index_up(IOReader* f, int io_flags) {
             bool trained;
             READ1(trained);
             if (trained) {
-                faiss::svs_io::ReaderStreambuf rbuf(f);
+                faiss::svs_io::ReaderStreambuf rbuf(
+                        f, get_deserialization_vector_byte_limit());
                 std::istream is(&rbuf);
                 auto* leanvec = dynamic_cast<IndexSVSVamanaLeanVec*>(svs.get());
                 FAISS_THROW_IF_NOT_MSG(
@@ -2338,7 +2433,8 @@ std::unique_ptr<Index> read_index_up(IOReader* f, int io_flags) {
         bool initialized;
         READ1(initialized);
         if (initialized) {
-            faiss::svs_io::ReaderStreambuf rbuf(f);
+            faiss::svs_io::ReaderStreambuf rbuf(
+                    f, get_deserialization_vector_byte_limit());
             std::istream is(&rbuf);
             svs->deserialize_impl(is);
         }

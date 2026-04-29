@@ -117,6 +117,7 @@ set(FAISS_SRC
   impl/IDSelector.cpp
   impl/FaissException.cpp
   impl/HNSW.cpp
+  impl/hnsw/LockVector.cpp
   impl/hnsw/MinimaxHeap.cpp
   impl/NSG.cpp
   impl/PolysemousTraining.cpp
@@ -242,6 +243,7 @@ set(FAISS_HEADERS
   impl/FaissAssert.h
   impl/FaissException.h
   impl/HNSW.h
+  impl/hnsw/LockVector.h
   impl/hnsw/MinimaxHeap.h
   impl/LocalSearchQuantizer.h
   impl/ProductAdditiveQuantizer.h
@@ -280,6 +282,7 @@ set(FAISS_HEADERS
   impl/lattice_Zn.h
   impl/platform_macros.h
   impl/fast_scan/accumulate_loops.h
+  impl/fast_scan/accumulate_loops_512.h
   impl/fast_scan/dispatching.h
   impl/fast_scan/fast_scan.h
   impl/fast_scan/decompose_qbs.h

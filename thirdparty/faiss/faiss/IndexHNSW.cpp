@@ -28,6 +28,7 @@
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/ResultHandler.h>
 #include <faiss/impl/VisitedTable.h>
+#include <faiss/impl/hnsw/MinimaxHeap.h>
 #include <faiss/utils/random.h>
 #include <faiss/utils/sorting.h>
 
@@ -81,10 +82,8 @@ void hnsw_add_vertices(
         printf("  max_level = %d\n", max_level);
     }
 
-    std::vector<omp_lock_t> locks(ntotal);
-    for (size_t i = 0; i < ntotal; i++) {
-        omp_init_lock(&locks[i]);
-    }
+    auto& locks = index_hnsw.locks;
+    locks.prepare(ntotal);
 
     // add vectors from highest to lowest level
     std::vector<int> hist;
@@ -122,20 +121,22 @@ void hnsw_add_vertices(
     { // perform add
         RandomGenerator rng2(789);
 
-        int i1 = n;
+        size_t i1 = n;
 
         for (int pt_level = static_cast<int>(hist.size()) - 1;
              pt_level >= int(!index_hnsw.init_level0);
              pt_level--) {
-            int i0 = i1 - hist[pt_level];
+            size_t i0 = i1 - hist[pt_level];
 
             if (verbose) {
-                printf("Adding %d elements at level %d\n", i1 - i0, pt_level);
+                printf("Adding %zu elements at level %d\n", i1 - i0, pt_level);
             }
 
             // random permutation to get rid of dataset order bias
-            for (int j = i0; j < i1; j++) {
-                std::swap(order[j], order[j + rng2.rand_int(i1 - j)]);
+            for (size_t j = i0; j < i1; j++) {
+                std::swap(
+                        order[j],
+                        order[j + rng2.rand_int(static_cast<int>(i1 - j))]);
             }
 
             bool interrupt = false;
@@ -146,15 +147,15 @@ void hnsw_add_vertices(
 
                 std::unique_ptr<DistanceComputer> dis(
                         storage_distance_computer(index_hnsw.storage));
-                int prev_display =
-                        verbose && omp_get_thread_num() == 0 ? 0 : -1;
+                bool do_display = verbose && omp_get_thread_num() == 0;
+                size_t prev_display = 0;
                 size_t counter = 0;
 
                 // here we should do schedule(dynamic) but this segfaults for
                 // some versions of LLVM. The performance impact should not be
                 // too large when (i1 - i0) / num_threads >> 1
 #pragma omp for schedule(static)
-                for (int i = i0; i < i1; i++) {
+                for (int64_t i = i0; i < i1; i++) {
                     storage_idx_t pt_id = order[i];
                     dis->set_query(x + (pt_id - n0) * d);
 
@@ -171,9 +172,9 @@ void hnsw_add_vertices(
                             vt,
                             index_hnsw.keep_max_size_level0 && (pt_level == 0));
 
-                    if (prev_display >= 0 && i - i0 > prev_display + 10000) {
+                    if (do_display && i - i0 > prev_display + 10000) {
                         prev_display = i - i0;
-                        printf("  %d / %d\r", i - i0, i1 - i0);
+                        printf("  %zu / %zu\r", i - i0, i1 - i0);
                         fflush(stdout);
                     }
                     if (counter % check_period == 0) {
@@ -198,9 +199,8 @@ void hnsw_add_vertices(
     if (verbose) {
         printf("Done in %.3f ms\n", getmillisecs() - t0);
     }
-
-    for (size_t i = 0; i < ntotal; i++) {
-        omp_destroy_lock(&locks[i]);
+    if (!index_hnsw.retain_locks) {
+        locks.clear();
     }
 }
 
@@ -349,7 +349,7 @@ void IndexHNSW::add(idx_t n, const float* x) {
             storage,
             "Please use IndexHNSWFlat (or variants) instead of IndexHNSW directly");
     FAISS_THROW_IF_NOT(is_trained);
-    int n0 = ntotal;
+    size_t n0 = ntotal;
     storage->add(n, x);
     ntotal = storage->ntotal;
 
@@ -364,6 +364,7 @@ void IndexHNSW::add(idx_t n, const float* x) {
 
 void IndexHNSW::reset() {
     hnsw.reset();
+    locks.clear();
     storage->reset();
     ntotal = 0;
 }
@@ -526,10 +527,7 @@ void IndexHNSW::init_level_0_from_entry_points(
         int n,
         const storage_idx_t* points,
         const storage_idx_t* nearests) {
-    std::vector<omp_lock_t> locks(ntotal);
-    for (idx_t i = 0; i < ntotal; i++) {
-        omp_init_lock(&locks[i]);
-    }
+    locks.prepare(ntotal);
 
 #pragma omp parallel
     {
@@ -547,7 +545,7 @@ void IndexHNSW::init_level_0_from_entry_points(
             dis->set_query(vec.data());
 
             hnsw.add_links_starting_from(
-                    *dis, pt_id, nearest, (*dis)(nearest), 0, locks.data(), vt);
+                    *dis, pt_id, nearest, (*dis)(nearest), 0, locks, vt);
 
             if (verbose && i % 10000 == 0) {
                 printf("  %d / %d\r", i, n);
@@ -559,8 +557,8 @@ void IndexHNSW::init_level_0_from_entry_points(
         printf("\n");
     }
 
-    for (idx_t i = 0; i < ntotal; i++) {
-        omp_destroy_lock(&locks[i]);
+    if (!retain_locks) {
+        locks.clear();
     }
 }
 
@@ -863,6 +861,9 @@ void IndexHNSW2Level::search(
 
         const IndexIVFPQ* index_ivfpq =
                 dynamic_cast<const IndexIVFPQ*>(storage);
+        FAISS_THROW_IF_NOT_MSG(
+                index_ivfpq,
+                "IndexHNSW2Level mixed search requires IndexIVFPQ storage");
 
         int nprobe = index_ivfpq->nprobe;
 

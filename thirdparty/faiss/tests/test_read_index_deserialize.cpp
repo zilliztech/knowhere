@@ -22,6 +22,7 @@
 #include <faiss/IndexIVFAdditiveQuantizerFastScan.h>
 #include <faiss/IndexIVFFlat.h>
 #include <faiss/IndexIVFIndependentQuantizer.h>
+#include <faiss/IndexIVFPQ.h>
 #include <faiss/IndexIVFPQR.h>
 #include <faiss/IndexRaBitQFastScan.h>
 #include <faiss/VectorTransform.h>
@@ -1467,6 +1468,38 @@ TEST(ReadIndexDeserialize, HNSWValidNeighborsSearchWorks) {
 }
 
 // -----------------------------------------------------------------------
+// Test: IndexHNSW2Level with wrong storage type is rejected.
+// Protects against corrupt serialized data where storage is not
+// Index2Layer or IndexIVFPQ, causing null-deref from failed dynamic_cast.
+// -----------------------------------------------------------------------
+TEST(ReadIndexDeserialize, HNSW2LevelWrongStorageType) {
+    // Build an IHN2 with IndexFlat storage (wrong type — must be
+    // Index2Layer or IndexIVFPQ).
+    std::vector<uint8_t> buf;
+    push_fourcc(buf, "IHN2");
+    push_index_header(buf, /*d=*/4, /*ntotal=*/0);
+    push_minimal_hnsw(buf, /*ntotal=*/0);
+    // IndexFlat storage — wrong type for HNSW2Level
+    push_minimal_flat(buf, /*d=*/4, /*ntotal=*/0);
+
+    expect_read_throws_with(buf, "Index2Layer or IndexIVFPQ");
+}
+
+// -----------------------------------------------------------------------
+// Test: IndexHNSW2Level with null storage is rejected.
+// -----------------------------------------------------------------------
+TEST(ReadIndexDeserialize, HNSW2LevelNullStorage) {
+    std::vector<uint8_t> buf;
+    push_fourcc(buf, "IHN2");
+    push_index_header(buf, /*d=*/4, /*ntotal=*/0);
+    push_minimal_hnsw(buf, /*ntotal=*/0);
+    // Null storage
+    push_fourcc(buf, "null");
+
+    expect_read_throws_with(buf, "non-null storage");
+}
+
+// -----------------------------------------------------------------------
 // Test: NSG ntotal != index ntotal.
 // -----------------------------------------------------------------------
 TEST(ReadIndexDeserialize, NSGNtotalMismatch) {
@@ -1648,8 +1681,231 @@ TEST(ReadIndexDeserialize, IVFQuantizerUntrained) {
 }
 
 // -----------------------------------------------------------------------
+// Test: IndexIVFScalarQuantizer with empty trained vector and
+// is_trained=false deserializes successfully (legitimate untrained index),
+// but searching it throws because IndexIVF::search checks is_trained.
+// -----------------------------------------------------------------------
+TEST(ReadIndexDeserialize, IVFScalarQuantizerUntrainedSearchRejected) {
+    std::vector<uint8_t> buf;
+    push_fourcc(buf, "IwSq");
+    // IVF header: index_header + nlist + nprobe + quantizer + direct_map
+    push_index_header(buf, /*d=*/4, /*ntotal=*/0, /*is_trained=*/false);
+    push_val<size_t>(buf, 1); // nlist
+    push_val<size_t>(buf, 1); // nprobe
+    push_minimal_flat(buf, /*d=*/4);
+    push_empty_direct_map(buf);
+    // ScalarQuantizer fields:
+    push_val<int>(buf, 0);       // qtype = QT_8bit
+    push_val<int>(buf, 0);       // rangestat
+    push_val<float>(buf, 0.0f);  // rangestat_arg
+    push_val<size_t>(buf, 4);    // d
+    push_val<size_t>(buf, 4);    // code_size
+    push_vector<float>(buf, {}); // trained (empty — untrained)
+    // IwSq additional fields:
+    push_val<size_t>(buf, 4);   // code_size
+    push_val<bool>(buf, false); // by_residual
+    push_null_invlists(buf);
+
+    // Deserialization should succeed — untrained indexes are legitimate
+    VectorIOReader reader;
+    reader.data = buf;
+    auto idx = read_index_up(&reader);
+    ASSERT_NE(idx, nullptr);
+    EXPECT_FALSE(idx->is_trained);
+
+    // search should throw — is_trained check in IndexIVF::search
+    std::vector<float> xq(4, 0.0f);
+    std::vector<float> distances(1);
+    std::vector<idx_t> labels(1);
+    EXPECT_THROW(
+            idx->search(1, xq.data(), 1, distances.data(), labels.data()),
+            FaissException);
+
+    // range_search should throw — is_trained check in IndexIVF::range_search
+    RangeSearchResult rsr(1);
+    EXPECT_THROW(idx->range_search(1, xq.data(), 1.0f, &rsr), FaissException);
+
+    // search_preassigned should throw directly
+    auto* ivf = dynamic_cast<IndexIVF*>(idx.get());
+    ASSERT_NE(ivf, nullptr);
+    idx_t key = 0;
+    float coarse_dis = 0.0f;
+    EXPECT_THROW(
+            ivf->search_preassigned(
+                    1,
+                    xq.data(),
+                    1,
+                    &key,
+                    &coarse_dis,
+                    distances.data(),
+                    labels.data(),
+                    false,
+                    nullptr,
+                    nullptr),
+            FaissException);
+
+    // range_search_preassigned should throw directly
+    RangeSearchResult rsr2(1);
+    EXPECT_THROW(
+            ivf->range_search_preassigned(
+                    1,
+                    xq.data(),
+                    1.0f,
+                    &key,
+                    &coarse_dis,
+                    &rsr2,
+                    false,
+                    nullptr,
+                    nullptr),
+            FaissException);
+}
+
+// -----------------------------------------------------------------------
+// Test: IndexIVFScalarQuantizer with is_trained=true but empty trained
+// is rejected at deserialization time — corrupt data.
+// -----------------------------------------------------------------------
+TEST(ReadIndexDeserialize, IVFScalarQuantizerTrainedEmptyTrained) {
+    std::vector<uint8_t> buf;
+    push_fourcc(buf, "IwSq");
+    push_index_header(buf, /*d=*/4, /*ntotal=*/0, /*is_trained=*/true);
+    push_val<size_t>(buf, 1); // nlist
+    push_val<size_t>(buf, 1); // nprobe
+    push_minimal_flat(buf, /*d=*/4);
+    push_empty_direct_map(buf);
+    // ScalarQuantizer fields:
+    push_val<int>(buf, 0);       // qtype = QT_8bit
+    push_val<int>(buf, 0);       // rangestat
+    push_val<float>(buf, 0.0f);  // rangestat_arg
+    push_val<size_t>(buf, 4);    // d
+    push_val<size_t>(buf, 4);    // code_size
+    push_vector<float>(buf, {}); // trained (empty — but is_trained=true!)
+
+    expect_read_throws_with(buf, "ScalarQuantizer trained size");
+}
+
+// -----------------------------------------------------------------------
+// Test: initialize_IVFPQ_precomputed_table rejects a null quantizer.
+// Protects against null-deref from corrupt serialized data where the
+// quantizer sub-index is absent (fourcc "null").
+// -----------------------------------------------------------------------
+TEST(ReadIndexDeserialize, IVFPQNullQuantizerPrecomputeTableRejected) {
+    ProductQuantizer pq(4, 1, 8);
+    AlignedTable<float> precomputed_table;
+    int use_precomputed_table = 0;
+    EXPECT_THROW(
+            initialize_IVFPQ_precomputed_table(
+                    use_precomputed_table,
+                    /*quantizer=*/nullptr,
+                    pq,
+                    precomputed_table,
+                    /*by_residual=*/true,
+                    /*verbose=*/false),
+            faiss::FaissException);
+}
+
+TEST(ReadIndexDeserialize, IVFNullQuantizerSearchRejected) {
+    IndexIVFFlat ivf;
+    ivf.quantizer = nullptr;
+    ivf.is_trained = true;
+    std::vector<float> x(4);
+    std::vector<float> distances(1);
+    std::vector<idx_t> labels(1);
+    EXPECT_THROW(
+            ivf.search(1, x.data(), 1, distances.data(), labels.data()),
+            faiss::FaissException);
+}
+
+TEST(ReadIndexDeserialize, IVFNullQuantizerRangeSearchRejected) {
+    IndexIVFFlat ivf;
+    ivf.quantizer = nullptr;
+    ivf.is_trained = true;
+    std::vector<float> x(4);
+    RangeSearchResult result(1);
+    EXPECT_THROW(
+            ivf.range_search(1, x.data(), 1.0, &result), faiss::FaissException);
+}
+
+TEST(ReadIndexDeserialize, IVFNullQuantizerAddRejected) {
+    IndexIVFFlat ivf;
+    ivf.quantizer = nullptr;
+    std::vector<float> x(4);
+    EXPECT_THROW(ivf.add(1, x.data()), faiss::FaissException);
+}
+
+TEST(ReadIndexDeserialize, IVFNullQuantizerTrainRejected) {
+    IndexIVFFlat ivf;
+    ivf.quantizer = nullptr;
+    std::vector<float> x(4);
+    EXPECT_THROW(ivf.train(1, x.data()), faiss::FaissException);
+}
+
+// -----------------------------------------------------------------------
 // VectorTransform deserialization validation tests
 // -----------------------------------------------------------------------
+
+// Test: NormalizationTransform with d_in != d_out is rejected.
+// Protects against corrupt serialized data where dimension mismatch
+// causes memcpy to overflow the output buffer in apply_noalloc.
+TEST(ReadIndexDeserialize, NormalizationTransformDinDoutMismatch) {
+    // VNrm format: fourcc("VNrm") + norm(float) + d_in(int) + d_out(int) +
+    //              is_trained(bool)
+    std::vector<uint8_t> buf;
+    push_fourcc(buf, "VNrm");
+    push_val<float>(buf, 2.0f); // norm (L2)
+    push_val<int>(buf, 16);     // d_in
+    push_val<int>(buf, 8);      // d_out (mismatch!)
+    push_val<bool>(buf, true);  // is_trained
+
+    expect_vt_read_throws_with(buf, "d_in == d_out");
+}
+
+// Test: NormalizationTransform with d_in == d_out is accepted.
+TEST(ReadIndexDeserialize, NormalizationTransformDinDoutMatch) {
+    std::vector<uint8_t> buf;
+    push_fourcc(buf, "VNrm");
+    push_val<float>(buf, 2.0f); // norm (L2)
+    push_val<int>(buf, 16);     // d_in
+    push_val<int>(buf, 16);     // d_out (match)
+    push_val<bool>(buf, true);  // is_trained
+
+    VectorIOReader reader;
+    reader.data = buf;
+    EXPECT_NO_THROW(read_VectorTransform_up(&reader));
+}
+
+// Test: CenteringTransform with d_in != d_out is rejected.
+TEST(ReadIndexDeserialize, CenteringTransformDinDoutMismatch) {
+    // VCnt format: fourcc("VCnt") + mean(vector<float>) + d_in(int) +
+    //              d_out(int) + is_trained(bool)
+    std::vector<uint8_t> buf;
+    push_fourcc(buf, "VCnt");
+    push_vector<float>(buf, std::vector<float>(16, 0.0f)); // mean
+    push_val<int>(buf, 16);                                // d_in
+    push_val<int>(buf, 8);                                 // d_out (mismatch!)
+    push_val<bool>(buf, true);
+
+    expect_vt_read_throws_with(buf, "d_in == d_out");
+}
+
+// Test: IndexPreTransform with mismatched chain dimensions is rejected.
+TEST(ReadIndexDeserialize, PreTransformChainDimensionMismatch) {
+    // Build an IxPT with a NormalizationTransform (d_in=d_out=4) followed
+    // by a sub-index with d=8. The chain's d_out (4) != sub-index d (8).
+    std::vector<uint8_t> buf;
+    push_fourcc(buf, "IxPT");
+    push_index_header(buf, /*d=*/4, /*ntotal=*/0);
+    push_val<int>(buf, 1); // nt = 1 transform
+    // NormalizationTransform with d_in=d_out=4
+    push_fourcc(buf, "VNrm");
+    push_val<float>(buf, 2.0f);
+    push_val<int>(buf, 4); // d_in
+    push_val<int>(buf, 4); // d_out
+    push_val<bool>(buf, true);
+    // Sub-index: IndexFlat with d=8 (mismatch with chain d_out=4)
+    push_minimal_flat(buf, /*d=*/8);
+
+    expect_read_throws_with(buf, "d_out=4");
+}
 
 TEST(ReadIndexDeserialize, HadamardRotationInvalidDout) {
     // HRot format: fourcc("HRot") + seed(int) + d_in(int) + d_out(int) +
@@ -1776,6 +2032,33 @@ static void push_ivf_header(std::vector<uint8_t>& buf, int d) {
     push_val<size_t>(buf, 1); // nprobe
     push_minimal_flat(buf, d);
     push_empty_direct_map(buf);
+}
+
+// -----------------------------------------------------------------------
+// Test: Inverted list with oversized entry exceeding deserialization byte
+// limit is rejected. Protects against corrupt data causing OOM via
+// unchecked vector::resize in read_InvertedLists_up.
+// -----------------------------------------------------------------------
+TEST(ReadIndexDeserialize, InvertedListOversizedEntry) {
+    const size_t old_limit = get_deserialization_vector_byte_limit();
+    set_deserialization_vector_byte_limit(1024); // 1 KB limit
+
+    std::vector<uint8_t> buf;
+    push_fourcc(buf, "IwFl");
+    push_ivf_header(buf, /*d=*/4);
+    // "ilar" inverted lists with 1 list, code_size=16
+    push_fourcc(buf, "ilar");
+    push_val<size_t>(buf, 1);  // nlist = 1
+    push_val<size_t>(buf, 16); // code_size = 16
+    // "full" list type with 1 size entry
+    push_fourcc(buf, "full");
+    // sizes vector: 1 entry with absurdly large value
+    push_val<size_t>(buf, 1);               // vector length
+    push_val<size_t>(buf, (size_t)1 << 40); // sizes[0] = 1 TB
+
+    expect_read_throws_with(buf, "deserialization byte limit");
+
+    set_deserialization_vector_byte_limit(old_limit);
 }
 
 // -- Ixrq (IndexRaBitQ, single-bit) --
