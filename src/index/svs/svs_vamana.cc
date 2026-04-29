@@ -519,6 +519,8 @@ class SvsVamanaLeanVecIndexNode : public SvsVamanaIndexNode<DataType> {
 
 // temporarily removed `MMAP` until it's fully honored by SVS
 
+KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(SVS_VAMANA, SvsVamanaIndexNode, knowhere::feature::NONE)
+
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(SVS_VAMANA_LVQ, SvsVamanaLvqIndexNode, knowhere::feature::NONE)
 
 KNOWHERE_MOCK_REGISTER_DENSE_FLOAT_ALL_GLOBAL(SVS_VAMANA_LEANVEC, SvsVamanaLeanVecIndexNode, knowhere::feature::NONE)
