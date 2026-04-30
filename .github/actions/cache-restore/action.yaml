@@ -21,9 +21,11 @@ runs:
         # Key must match cache-save/action.yaml exactly for exact-key hits.
         key: knowhere-${{ inputs.os }}-${{ github.job }}-ccache-${{ hashFiles('src/**/*.cpp', 'src/**/*.cc', 'src/**/*.c', 'src/**/*.h', 'src/**/*.hpp', 'include/**/*.h', 'include/**/*.hpp', 'tests/**/*.cpp', 'tests/**/*.cc', 'tests/**/*.h', 'benchmark/**/*.cpp', 'benchmark/**/*.cc', 'benchmark/**/*.h', 'cmake/**', 'CMakeLists.txt', 'Makefile', 'conanfile.py') }}
         restore-keys: knowhere-${{ inputs.os }}-${{ github.job }}-ccache-
+    - name: Reset Conan package cache
+      shell: bash
+      run: rm -rf ~/.conan2/p
     - name: Cache Conan Packages
       uses: actions/cache/restore@v4
       with:
         path: ~/.conan2
         key: knowhere-${{ inputs.os }}-${{ github.job }}-conan2-${{ hashFiles('conanfile.py') }}
-        restore-keys: knowhere-${{ inputs.os }}-${{ github.job }}-conan2-
