@@ -228,6 +228,7 @@ constexpr const char* DROP_RATIO_BUILD = "drop_ratio_build";
 constexpr const char* DROP_RATIO_SEARCH = "drop_ratio_search";
 
 // RaBitQ Params
+constexpr const char* RABITQ_BITS = "rbq_bits";
 constexpr const char* RABITQ_QUERY_BITS = "rbq_bits_query";
 
 // minhash meta Params

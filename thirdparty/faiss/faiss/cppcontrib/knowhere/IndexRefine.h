@@ -7,18 +7,13 @@
 
 #pragma once
 
-#include <faiss/Index.h>
+#include <faiss/IndexRefine.h>
 
 namespace faiss {
 namespace cppcontrib {
 namespace knowhere {
 
-struct IndexRefineSearchParameters : SearchParameters {
-    float k_factor = 1;
-    SearchParameters* base_index_params = nullptr; // non-owning
-
-    virtual ~IndexRefineSearchParameters() = default;
-};
+using IndexRefineSearchParameters = ::faiss::IndexRefineSearchParameters;
 
 /** Index that queries in a base_index (a fast one) and refines the
  *  results with an exact search, hopefully improving the results.

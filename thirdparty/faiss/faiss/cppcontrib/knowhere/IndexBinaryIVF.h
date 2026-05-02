@@ -32,8 +32,10 @@ struct BinaryInvertedListScanner;
  * Otherwise the object is similar to the IndexIVF
  */
 struct IndexBinaryIVF : IndexBinary {
-    /// Access to the actual data
-    InvertedLists* invlists = nullptr;
+    /// Access to the actual data. Baseline-typed (::faiss::InvertedLists*)
+    /// because binary IVF never needs fork-only norm methods — Hamming
+    /// and Jaccard metrics don't use per-entry L2 norms.
+    ::faiss::InvertedLists* invlists = nullptr;
     bool own_invlists = true;
 
     size_t nprobe = 1;    ///< number of probes at query time
@@ -222,12 +224,18 @@ struct IndexBinaryIVF : IndexBinary {
      *
      * @param new_maintain_direct_map    if true, create a direct map,
      *                                   else clear it
+     *
+     * Path-D step 11.3: dropped the dead `DirectMap::Type type`
+     * parameter; all callers pass the default. Binary IVF keeps its
+     * own method because fork IndexBinaryIVF inherits from IndexBinary
+     * (not from baseline IndexBinaryIVF), so there's no inherited
+     * make_direct_map to fall back on.
      */
-    void make_direct_map(bool new_maintain_direct_map = true, DirectMap::Type type = DirectMap::Type::Array);
+    void make_direct_map(bool new_maintain_direct_map = true);
 
     void set_direct_map_type(DirectMap::Type type);
 
-    void replace_invlists(InvertedLists* il, bool own = false);
+    void replace_invlists(::faiss::InvertedLists* il, bool own = false);
 
 };
 
@@ -260,7 +268,7 @@ struct BinaryInvertedListScanner {
      * @param labels     heap labels (size k)
      * @param k          heap size
      */
-    virtual size_t scan_codes(
+    virtual ::faiss::InvertedListScannerStats scan_codes(
             size_t n,
             const uint8_t* codes,
             const idx_t* ids,
@@ -269,7 +277,7 @@ struct BinaryInvertedListScanner {
             size_t k) const = 0;
 
     // Knowhere-specific: radius became float because of Jaccard distance
-    virtual void scan_codes_range(
+    virtual ::faiss::InvertedListScannerStats scan_codes_range(
             size_t n,
             const uint8_t* codes,
             const idx_t* ids,

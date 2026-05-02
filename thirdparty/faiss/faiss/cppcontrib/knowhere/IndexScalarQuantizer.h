@@ -27,7 +27,8 @@ namespace knowhere {
  * distances are computed.
  */
 
-struct IndexIVFScalarQuantizer : IndexIVF {
+// Path-D step 11.4b: derives from `::faiss::IndexIVF` directly.
+struct IndexIVFScalarQuantizer : ::faiss::IndexIVF {
     // Baseline scalar quantizer value-type. Fork IVF still inherits
     // from fork IndexIVF (needed for ConcurrentArrayInvertedLists,
     // extended search params, and the 8-arg scan_codes interface), but
@@ -61,7 +62,6 @@ struct IndexIVFScalarQuantizer : IndexIVF {
     void add_core(
             idx_t n,
             const float* x,
-            const float* x_norms,
             const idx_t* xids,
             const idx_t* precomputed_idx,
             void* inverted_list_context = nullptr) override;
@@ -76,6 +76,34 @@ struct IndexIVFScalarQuantizer : IndexIVF {
 
     /* standalone codec interface */
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
+
+    /// Path-D step 11.4b: CC dispatch hosted here (instead of fork
+    /// IndexIVF base) because the qianya path can leave a non-CC
+    /// IndexIVFScalarQuantizer holding a ConcurrentArrayInvertedLists.
+    /// IVFSQ is the only non-CC fork IVF leaf that can hit this case.
+    /// See IndexScalarQuantizer.cpp for the full rationale.
+    void search_preassigned(
+            idx_t n,
+            const float* x,
+            idx_t k,
+            const idx_t* assign,
+            const float* centroid_dis,
+            float* distances,
+            idx_t* labels,
+            bool store_pairs,
+            const IVFSearchParameters* params = nullptr,
+            IndexIVFStats* stats = nullptr) const override;
+
+    void range_search_preassigned(
+            idx_t nx,
+            const float* x,
+            float radius,
+            const idx_t* keys,
+            const float* coarse_dis,
+            faiss::RangeSearchResult* result,
+            bool store_pairs = false,
+            const IVFSearchParameters* params = nullptr,
+            IndexIVFStats* stats = nullptr) const override;
 };
 
 }

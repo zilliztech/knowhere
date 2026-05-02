@@ -352,7 +352,7 @@ OnDiskInvertedLists::OnDiskInvertedLists(
         size_t nlist,
         size_t code_size,
         const char* filename)
-        : InvertedLists(nlist, code_size),
+        : ::faiss::InvertedLists(nlist, code_size),
           filename(filename),
           totsize(0),
           ptr(nullptr),
@@ -416,6 +416,15 @@ void OnDiskInvertedLists::update_entries(
     memcpy(ids + offset, ids_in, sizeof(ids_in[0]) * n_entry);
     uint8_t* codes = const_cast<uint8_t*>(get_codes(list_no));
     memcpy(codes + offset * code_size, codes_in, code_size * n_entry);
+}
+
+size_t OnDiskInvertedLists::add_entries(
+        size_t list_no,
+        size_t n_entry,
+        const idx_t* ids,
+        const uint8_t* code) {
+    // Baseline 4-arg override — delegate to 5-arg with nullptr norms.
+    return add_entries(list_no, n_entry, ids, code, nullptr);
 }
 
 size_t OnDiskInvertedLists::add_entries(
@@ -698,6 +707,17 @@ const float* OnDiskInvertedLists::get_code_norms(
     }
 }
 
+float OnDiskInvertedLists::get_norm(size_t list_no, size_t offset) const {
+    const float* norms = get_code_norms(list_no, offset);
+    return norms ? norms[offset] : 0.0f;
+}
+
+void OnDiskInvertedLists::release_code_norms(
+        size_t /*list_no*/,
+        const float* /*codes*/) const {
+    // noop — norms live inline in the mmap region, nothing to release.
+}
+
 /*******************************************************
  * I/O support via callbacks
  *******************************************************/
@@ -705,7 +725,7 @@ const float* OnDiskInvertedLists::get_code_norms(
 OnDiskInvertedListsIOHook::OnDiskInvertedListsIOHook()
         : InvertedListsIOHook("ilod", typeid(OnDiskInvertedLists).name()) {}
 
-void OnDiskInvertedListsIOHook::write(const InvertedLists* ils, IOWriter* f)
+void OnDiskInvertedListsIOHook::write(const ::faiss::InvertedLists* ils, IOWriter* f)
         const {
     uint32_t h = fourcc("ilod");
     WRITE1(h);
@@ -728,7 +748,7 @@ void OnDiskInvertedListsIOHook::write(const InvertedLists* ils, IOWriter* f)
     WRITE1(od->totsize);
 }
 
-InvertedLists* OnDiskInvertedListsIOHook::read(IOReader* f, int io_flags)
+::faiss::InvertedLists* OnDiskInvertedListsIOHook::read(IOReader* f, int io_flags)
         const {
     OnDiskInvertedLists* od = new OnDiskInvertedLists();
     od->read_only = io_flags & IO_FLAG_READ_ONLY;
@@ -779,7 +799,7 @@ InvertedLists* OnDiskInvertedListsIOHook::read(IOReader* f, int io_flags)
 }
 
 /** read from a ArrayInvertedLists into this invertedlist type */
-InvertedLists* OnDiskInvertedListsIOHook::read_ArrayInvertedLists(
+::faiss::InvertedLists* OnDiskInvertedListsIOHook::read_ArrayInvertedLists(
         IOReader* f,
         int io_flags,
         size_t nlist,

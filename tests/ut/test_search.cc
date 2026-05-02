@@ -12,13 +12,21 @@
 #include <folly/CancellationToken.h>
 #include <folly/futures/Future.h>
 
+#include <algorithm>
 #include <atomic>
+#include <limits>
+#include <memory>
 #include <thread>
+#include <vector>
 
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "faiss/IndexIVFPQFastScan.h"
+#include "faiss/cppcontrib/knowhere/IndexFlat.h"
+#include "faiss/cppcontrib/knowhere/IndexIVFPQFastScan.h"
 #include "faiss/cppcontrib/knowhere/utils/binary_distances.h"
+#include "faiss/invlists/InvertedLists.h"
 #include "hnswlib/hnswalg.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/comp/brute_force.h"
@@ -35,6 +43,15 @@ namespace {
 constexpr float kKnnRecallThreshold = 0.6f;
 constexpr float kBruteForceRecallThreshold = 0.95f;
 constexpr const char* kMmapIndexPath = "/tmp/knowhere_dense_mmap_index_test";
+
+bool
+serialized_index_contains_fourcc(const knowhere::BinarySet& bs, const std::string& name, const char* fourcc) {
+    auto binary = bs.GetByName(name);
+    REQUIRE(binary != nullptr);
+    const auto* begin = binary->data.get();
+    const auto* end = begin + binary->size;
+    return std::search(begin, end, fourcc, fourcc + 4) != end;
+}
 }  // namespace
 
 TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
@@ -560,6 +577,41 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         auto res = idx.Build(train_ds, ivf_pq_gen());
         REQUIRE(res == knowhere::Status::invalid_value_in_json);
     }
+}
+
+TEST_CASE("Test IVFPQFastScan early termination dispatch", "[ivfpq_fastscan][early_termination]") {
+    constexpr int64_t nb = 1000;
+    constexpr int64_t nq = 2;
+    constexpr int64_t dim = 32;
+    constexpr int64_t topk = 10;
+    constexpr size_t nlist = 16;
+    constexpr size_t pq_m = 4;
+    constexpr size_t nbits = 4;
+
+    const auto train_ds = GenDataSet(nb, dim, 1001);
+    const auto query_ds = GenDataSet(nq, dim, 2002);
+    const auto* xb = static_cast<const float*>(train_ds->GetTensor());
+    const auto* xq = static_cast<const float*>(query_ds->GetTensor());
+
+    auto quantizer = std::make_unique<faiss::cppcontrib::knowhere::IndexFlat>(dim, faiss::METRIC_L2);
+    faiss::IndexIVFPQFastScan index(quantizer.release(), dim, nlist, pq_m, nbits, faiss::METRIC_L2);
+    index.own_fields = true;
+    index.cp.seed = 1234;
+    index.cp.niter = 5;
+    index.train(nb, xb);
+    index.add(nb, xb);
+
+    std::vector<float> distances(nq * topk);
+    std::vector<faiss::idx_t> labels(nq * topk);
+
+    faiss::IVFSearchParameters params;
+    params.nprobe = nlist;
+    params.max_lists_num = 2;
+    REQUIRE_NOTHROW(index.search(nq, xq, topk, distances.data(), labels.data(), &params));
+    CHECK(std::any_of(labels.begin(), labels.end(), [](faiss::idx_t label) { return label >= 0; }));
+
+    index.implem = 12;
+    REQUIRE_THROWS(index.search(nq, xq, topk, distances.data(), labels.data(), &params));
 }
 
 TEST_CASE("Test Mem Index With Binary Vector", "[float metrics]") {
@@ -1104,6 +1156,104 @@ TEST_CASE("Test RangeSearch Cancellation", "[range_search][cancellation]") {
         milvus::OpContext op_context(cs.getToken());
         auto results2 = idx.RangeSearch(query_ds, json, nullptr, &op_context);
         REQUIRE(results2.has_value());
+    }
+}
+
+TEST_CASE("Test IVF_RABITQ multi-bit rbq_bits", "[ivf_rabitq]") {
+    const int64_t nb = 1000, nq = 10;
+    const int64_t dim = 128;
+    const int64_t topk = 10;
+
+    auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::COSINE);
+    auto version = GenTestVersionList();
+
+    const auto train_ds = GenDataSet(nb, dim);
+    const auto query_ds = GenDataSet(nq, dim);
+
+    knowhere::Json json;
+    json[knowhere::meta::DIM] = dim;
+    json[knowhere::meta::METRIC_TYPE] = metric;
+    json[knowhere::meta::TOPK] = topk;
+    json[knowhere::indexparam::NLIST] = 16;
+    json[knowhere::indexparam::NPROBE] = 8;
+
+    const auto idx_type = knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ;
+
+    SECTION("build/search/range/serialize with multi-bit codes") {
+        auto rbq_bits = GENERATE(as<int>{}, 2, 3, 4);
+        json[knowhere::indexparam::RABITQ_BITS] = rbq_bits;
+
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx.has_value());
+        REQUIRE(idx.value().Build(train_ds, json) == knowhere::Status::success);
+
+        auto results_before = idx.value().Search(query_ds, json, nullptr);
+        REQUIRE(results_before.has_value());
+
+        knowhere::Json range_json = json;
+        if (knowhere::IsMetricType(metric, knowhere::metric::L2)) {
+            range_json[knowhere::meta::RADIUS] = 1000000.0f;
+            range_json[knowhere::meta::RANGE_FILTER] = 0.0f;
+        } else {
+            range_json[knowhere::meta::RADIUS] = 0.0f;
+            range_json[knowhere::meta::RANGE_FILTER] = 1.0f;
+        }
+        REQUIRE(idx.value().RangeSearch(query_ds, range_json, nullptr).has_value());
+
+        knowhere::BinarySet bs;
+        REQUIRE(idx.value().Serialize(bs) == knowhere::Status::success);
+        REQUIRE(serialized_index_contains_fourcc(bs, idx.value().Type(), "Iwrr"));
+
+        auto idx2 = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx2.has_value());
+        REQUIRE(idx2.value().Deserialize(bs, json) == knowhere::Status::success);
+
+        auto results_after = idx2.value().Search(query_ds, json, nullptr);
+        REQUIRE(results_after.has_value());
+
+        auto ids_before = results_before.value()->GetIds();
+        auto ids_after = results_after.value()->GetIds();
+        for (int i = 0; i < nq * topk; i++) {
+            REQUIRE(ids_before[i] == ids_after[i]);
+        }
+    }
+
+    SECTION("default build keeps 1-bit legacy IwrQ nested format") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx.has_value());
+        REQUIRE(idx.value().Build(train_ds, json) == knowhere::Status::success);
+
+        knowhere::BinarySet bs;
+        REQUIRE(idx.value().Serialize(bs) == knowhere::Status::success);
+        REQUIRE(serialized_index_contains_fourcc(bs, idx.value().Type(), "IwrQ"));
+        REQUIRE_FALSE(serialized_index_contains_fourcc(bs, idx.value().Type(), "Iwrr"));
+    }
+
+    SECTION("1-bit range search accepts rbq_bits_query") {
+        json[knowhere::indexparam::RABITQ_QUERY_BITS] = 4;
+
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx.has_value());
+        REQUIRE(idx.value().Build(train_ds, json) == knowhere::Status::success);
+
+        knowhere::Json range_json = json;
+        if (knowhere::IsMetricType(metric, knowhere::metric::L2)) {
+            range_json[knowhere::meta::RADIUS] = 1000000.0f;
+            range_json[knowhere::meta::RANGE_FILTER] = 0.0f;
+        } else {
+            range_json[knowhere::meta::RADIUS] = 0.0f;
+            range_json[knowhere::meta::RANGE_FILTER] = 1.0f;
+        }
+        REQUIRE(idx.value().RangeSearch(query_ds, range_json, nullptr).has_value());
+    }
+
+    SECTION("invalid rbq_bits rejected at build") {
+        auto rbq_bits = GENERATE(as<int>{}, 0, 10);
+        json[knowhere::indexparam::RABITQ_BITS] = rbq_bits;
+
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(idx_type, version);
+        REQUIRE(idx.has_value());
+        REQUIRE(idx.value().Build(train_ds, json) == knowhere::Status::out_of_range_in_json);
     }
 }
 

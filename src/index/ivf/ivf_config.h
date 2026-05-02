@@ -52,9 +52,11 @@ class IvfConfig : public BaseConfig {
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(max_empty_result_buckets)
             .set_default(2)
-            .description("the maximum of continuous buckets with empty result")
+            .description(
+                "the maximum of continuous buckets with empty result; 0 disables the heuristic and scans all nprobe "
+                "lists")
             .for_range_search()
-            .set_range(1, 65536);
+            .set_range(0, 65536);
     }
 };
 
@@ -367,10 +369,20 @@ class IvfRaBitQConfig : public IvfConfig {
     // type of refine
     CFG_STRING refine_type;
 
+    // Number of bits per database vector dimension. Baseline RaBitQ accepts
+    // 1-bit sign codes and 2..9-bit multi-bit codes.
+    CFG_INT rbq_bits;
     // the value `0` means that the query won't be quantized and will
     //   be processed as is.
     CFG_INT rbq_bits_query;
     KNOWHERE_DECLARE_CONFIG(IvfRaBitQConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(rbq_bits)
+            .description("rbq_bits")
+            .set_default(1)
+            .set_range(1, 9)
+            .for_train()
+            .for_static()
+            .for_range_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(rbq_bits_query)
             .description("rbq_bits_query")
             .set_default(0)

@@ -16,10 +16,12 @@
 
 #include <memory>
 
+#include "faiss/IndexFlat.h"
 #include "faiss/IndexPreTransform.h"
-#include "faiss/cppcontrib/knowhere/IndexFlat.h"
+#include "faiss/cppcontrib/knowhere/IndexIVFRaBitQ.h"
 #include "faiss/cppcontrib/knowhere/impl/CountSizeIOWriter.h"
 #include "faiss/cppcontrib/knowhere/index_io.h"
+#include "faiss/impl/FaissAssert.h"
 #include "index/refine/refine_utils.h"
 
 namespace knowhere {
@@ -32,10 +34,11 @@ IndexIVFRaBitQWrapper::create(const faiss::idx_t d, const size_t nlist, const Iv
 
     // create IndexIVFRaBitQ
     auto qb = ivf_rabitq_cfg.rbq_bits_query.value();
+    auto rbq_bits = static_cast<uint8_t>(ivf_rabitq_cfg.rbq_bits.value_or(1));
 
-    auto idx_flat = std::make_unique<faiss::cppcontrib::knowhere::IndexFlat>(d, metric);
-    auto idx_ivfrbq =
-        std::make_unique<faiss::cppcontrib::knowhere::IndexIVFRaBitQ>(idx_flat.release(), d, nlist, metric);
+    auto idx_flat = std::make_unique<faiss::IndexFlat>(d, metric);
+    auto idx_ivfrbq = std::make_unique<faiss::cppcontrib::knowhere::IndexIVFRaBitQ>(
+        idx_flat.release(), d, nlist, metric, /*own_invlists=*/true, rbq_bits);
     idx_ivfrbq->own_fields = true;
     idx_ivfrbq->qb = qb;
 
@@ -132,7 +135,7 @@ IndexIVFRaBitQWrapper::get_distance_computer() const {
     return index->get_distance_computer();
 }
 
-faiss::cppcontrib::knowhere::IndexIVFRaBitQ*
+faiss::IndexIVFRaBitQ*
 IndexIVFRaBitQWrapper::get_ivfrabitq_index() {
     // try refine
     faiss::cppcontrib::knowhere::IndexRefine* index_refine =
@@ -145,10 +148,10 @@ IndexIVFRaBitQWrapper::get_ivfrabitq_index() {
         return nullptr;
     }
 
-    return dynamic_cast<faiss::cppcontrib::knowhere::IndexIVFRaBitQ*>(index_pt->index);
+    return dynamic_cast<faiss::IndexIVFRaBitQ*>(index_pt->index);
 }
 
-const faiss::cppcontrib::knowhere::IndexIVFRaBitQ*
+const faiss::IndexIVFRaBitQ*
 IndexIVFRaBitQWrapper::get_ivfrabitq_index() const {
     // try refine
     const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
@@ -161,7 +164,7 @@ IndexIVFRaBitQWrapper::get_ivfrabitq_index() const {
         return nullptr;
     }
 
-    return dynamic_cast<const faiss::cppcontrib::knowhere::IndexIVFRaBitQ*>(index_pt->index);
+    return dynamic_cast<const faiss::IndexIVFRaBitQ*>(index_pt->index);
 }
 
 faiss::cppcontrib::knowhere::IndexRefine*
@@ -203,13 +206,16 @@ IVFRaBitQIteratorWorkspace::IVFRaBitQIteratorWorkspace(const IndexIVFRaBitQWrapp
     faiss::Index* index_for_pt = (index_refine != nullptr) ? index_refine->base_index : wrapper->index.get();
 
     const faiss::IndexPreTransform* index_pt = dynamic_cast<const faiss::IndexPreTransform*>(index_for_pt);
-    const faiss::cppcontrib::knowhere::IndexIVFRaBitQ* index_rbq =
-        dynamic_cast<const faiss::cppcontrib::knowhere::IndexIVFRaBitQ*>(index_pt->index);
+    const faiss::IndexIVFRaBitQ* index_rbq = dynamic_cast<const faiss::IndexIVFRaBitQ*>(index_pt->index);
+    FAISS_THROW_IF_NOT_MSG(index_rbq != nullptr, "IVFRaBitQIteratorWorkspace: expected baseline IndexIVFRaBitQ");
 
     // Transform the query through the pre-transform chain
     std::unique_ptr<const float[]> transformed_query(index_pt->apply_chain(1, query_data_in));
 
-    // Create base workspace with the actual IVF index (IndexIVFRaBitQ inherits IndexIVF)
+    // Create base workspace with the actual IVF index. For the knowhere
+    // wrapper-created and fork-deserialized paths this is the thin
+    // cppcontrib RaBitQ shim, whose scanner wraps baseline RaBitQ's
+    // anonymous scanner and exposes KnowhereInvertedListScannerHooks.
     inner = std::make_unique<faiss::cppcontrib::knowhere::IVFBaseIteratorWorkspace>(index_rbq, transformed_query.get(),
                                                                                     params);
 

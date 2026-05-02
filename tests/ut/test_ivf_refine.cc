@@ -10,10 +10,13 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <string>
+#include <vector>
 
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "faiss/IndexFlat.h"
+#include "faiss/cppcontrib/knowhere/IndexRefine.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_check.h"
@@ -25,6 +28,34 @@ namespace {
 constexpr const char* kMmapIndexPath = "/tmp/knowhere_dense_mmap_index_test";
 constexpr const char* kMmapIndexRefinePath = "/tmp/knowhere_dense_mmap_index_refine_test";
 }  // namespace
+
+TEST_CASE("IndexRefine add and reset keep ntotal parity", "[refine]") {
+    constexpr faiss::idx_t nb = 16;
+    constexpr faiss::idx_t dim = 8;
+
+    std::vector<float> xb(nb * dim);
+    for (size_t i = 0; i < xb.size(); ++i) {
+        xb[i] = static_cast<float>(i % 17) / 17.0f;
+    }
+
+    faiss::IndexFlatL2 base_index(dim);
+    faiss::IndexFlatL2 refine_storage(dim);
+    faiss::cppcontrib::knowhere::IndexRefine index_refine(&base_index, &refine_storage);
+
+    REQUIRE(index_refine.ntotal == 0);
+    REQUIRE(base_index.ntotal == 0);
+    REQUIRE(refine_storage.ntotal == 0);
+
+    index_refine.add(nb, xb.data());
+    REQUIRE(index_refine.ntotal == nb);
+    REQUIRE(base_index.ntotal == nb);
+    REQUIRE(refine_storage.ntotal == nb);
+
+    index_refine.reset();
+    REQUIRE(index_refine.ntotal == 0);
+    REQUIRE(base_index.ntotal == 0);
+    REQUIRE(refine_storage.ntotal == 0);
+}
 
 TEST_CASE("Test Refine Index", "[search][refine]") {
     using Catch::Approx;

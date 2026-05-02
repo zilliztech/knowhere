@@ -16,6 +16,7 @@
 
 #include <faiss/Clustering.h>
 #include <faiss/Index.h>
+#include <faiss/IndexIVF.h>
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/CodePacker.h>
 #include <faiss/impl/DistanceComputer.h>
@@ -31,577 +32,157 @@ namespace faiss {
 namespace cppcontrib {
 namespace knowhere {
 
-/** Encapsulates a quantizer object for the IndexIVF
+// Fork's Level1Quantizer was structurally identical to baseline's
+// (same fields, same virtuals, same ctor shapes). Collapsed to an alias
+// in Path-D step 7a; the baseline definition is the single source.
+using Level1Quantizer = ::faiss::Level1Quantizer;
+
+// As of the SearchParametersIVF baseline-upstreaming change, the fork's
+// per-field definition has been collapsed to a type alias of
+// faiss::SearchParametersIVF. The baseline struct now carries the three
+// knowhere-specific knobs (max_lists_num, ensure_topk_full,
+// max_empty_result_buckets) with identical names, types, and defaults, so
+// every existing call-site that accesses fields by name continues to work
+// unchanged.
+using SearchParametersIVF = ::faiss::SearchParametersIVF;
+using IVFSearchParameters = ::faiss::SearchParametersIVF;
+
+// Fork's IndexIVFInterface was structurally identical to baseline's
+// after Path-D step 0 upstreamed SearchParametersIVF. Collapsed to an
+// alias in step 7a.
+using IndexIVFInterface = ::faiss::IndexIVFInterface;
+using IndexIVFStats = ::faiss::IndexIVFStats;
+
+/** Knowhere-only scanner hooks.
  *
- * The class isolates the fields that are independent of the storage
- * of the lists (especially training)
+ * Baseline IVF search owns the canonical scanner interface
+ * (`::faiss::InvertedListScanner`). These hooks carry the strictly
+ * additive behavior needed by knowhere-specific paths:
+ *   - `set_list_segment(segment_offset)` virtual (default noop) —
+ *     hook for cosine variants to refresh a per-segment
+ *     code_norms cache (Path-D step 2). Only invoked explicitly from
+ *     CC search paths (cc_impl::); non-CC scanners seed the segment-0
+ *     cache from within their own set_list().
+ *   - `scan_codes_and_return(...)` virtual — flat-vector result
+ *     emission used by the knowhere iterator workspace
+ *     (Path-D step 5 TODO about possible iterate_codes subsumption).
  */
-struct Level1Quantizer {
-    /// quantizer that maps vectors to inverted lists
-    Index* quantizer = nullptr;
+struct KnowhereInvertedListScannerHooks {
+    /// Following codes come from this segment within the current list.
+    /// For non-CC (single-segment ArrayInvertedLists / baseline) lists,
+    /// scanners self-seed the segment-0 cache from within set_list().
+    virtual void set_list_segment(size_t /* segment_offset */) {}
 
-    /// number of inverted lists
-    size_t nlist = 0;
-
-    /**
-     * = 0: use the quantizer as index in a kmeans training
-     * = 1: just pass on the training set to the train() of the quantizer
-     * = 2: kmeans training on a flat index + add the centroids to the quantizer
-     */
-    char quantizer_trains_alone = 0;
-    bool own_fields = false; ///< whether object owns the quantizer
-
-    ClusteringParameters cp; ///< to override default clustering params
-    /// to override index used during clustering
-    Index* clustering_index = nullptr;
-
-    /// Trains the quantizer and calls train_residual to train sub-quantizers
-    void train_q1(
-            size_t n,
-            const float* x,
-            bool verbose,
-            MetricType metric_type);
-
-    /// compute the number of bytes required to store list ids
-    size_t coarse_code_size() const;
-    void encode_listno(idx_t list_no, uint8_t* code) const;
-    idx_t decode_listno(const uint8_t* code) const;
-
-    Level1Quantizer(Index* quantizer, size_t nlist);
-
-    Level1Quantizer();
-
-    ~Level1Quantizer();
-};
-
-struct SearchParametersIVF : SearchParameters {
-    size_t nprobe = 1;    ///< number of probes at query time
-    size_t max_codes = 0; ///< max nb of codes to visit to do a query
-    ///< indicate whether we should early teriminate before topk results full when search reaches max_codes
-    ///< to minimize code change, when users only use nprobe to search, this config does not take affect since we will first retrieve the nearest nprobe buckets
-    ///< it is a bit heavy to further retrieve more buckets
-    ///< therefore to make sure we get topk results, use nprobe=nlist and use max_codes to narrow down the search range
-    size_t max_lists_num = 0; ///< select min{scanned number of (max_codes),
-    ///< scanned number of (max_lists_num) to return.}
-    bool ensure_topk_full = false;
-
-    ///< during IVF range search, if reach 'max_empty_result_buckets' num of
-    ///< continuous buckets with no valid results, terminate range search
-    size_t max_empty_result_buckets = 0;
-
-    SearchParameters* quantizer_params = nullptr;
-
-    /// context object to pass to InvertedLists
-    void* inverted_list_context = nullptr;
-
-    virtual ~SearchParametersIVF() {}
-};
-
-// the new convention puts the index type after SearchParameters
-using IVFSearchParameters = SearchParametersIVF;
-
-struct InvertedListScanner;
-struct IndexIVFStats;
-
-struct IndexIVFInterface : Level1Quantizer {
-    size_t nprobe = 1;    ///< number of probes at query time
-    size_t max_codes = 0; ///< max nb of codes to visit to do a query
-
-    explicit IndexIVFInterface(Index* quantizer = nullptr, size_t nlist = 0)
-            : Level1Quantizer(quantizer, nlist) {}
-
-    /** search a set of vectors, that are pre-quantized by the IVF
-     *  quantizer. Fill in the corresponding heaps with the query
-     *  results. The default implementation uses InvertedListScanners
-     *  to do the search.
+    /** Scan a set of codes and emit per-code (id, distance) results
+     * into a flat vector. Used by the knowhere iterator workspace to
+     * stream all per-list candidates to an external consumer rather
+     * than top-k heap-reduce them in place.
      *
-     * @param n      nb of vectors to query
-     * @param x      query vectors, size nx * d
-     * @param assign coarse quantization indices, size nx * nprobe
-     * @param centroid_dis
-     *               distances to coarse centroids, size nx * nprobe
-     * @param distance
-     *               output distances, size n * k
-     * @param labels output labels, size n * k
-     * @param store_pairs store inv list index + inv list offset
-     *                     instead in upper/lower 32 bit of result,
-     *                     instead of ids (used for reranking).
-     * @param params used to override the object's search parameters
-     * @param stats  search stats to be updated (can be null)
-     */
-    virtual void search_preassigned(
-            idx_t n,
-            const float* x,
-            idx_t k,
-            const idx_t* assign,
-            const float* centroid_dis,
-            float* distances,
-            idx_t* labels,
-            bool store_pairs,
-            const IVFSearchParameters* params = nullptr,
-            IndexIVFStats* stats = nullptr) const = 0;
-
-    /** Range search a set of vectors, that are pre-quantized by the IVF
-     *  quantizer. Fill in the RangeSearchResults results. The default
-     * implementation uses InvertedListScanners to do the search.
+     * This is a knowhere-specific fork extension — no equivalent
+     * virtual exists on baseline faiss::InvertedListScanner. The
+     * ::knowhere::DistId element type is deliberately the same
+     * struct knowhere uses pervasively for streaming results
+     * (iterator APIs, HNSW, sparse, etc.), so no translation is
+     * needed at the consumer end.
      *
-     * @param n      nb of vectors to query
-     * @param x      query vectors, size nx * d
-     * @param assign coarse quantization indices, size nx * nprobe
-     * @param centroid_dis
-     *               distances to coarse centroids, size nx * nprobe
-     * @param result Output results
-     * @param store_pairs store inv list index + inv list offset
-     *                     instead in upper/lower 32 bit of result,
-     *                     instead of ids (used for reranking).
-     * @param params used to override the object's search parameters
-     * @param stats  search stats to be updated (can be null)
-     */
-    virtual void range_search_preassigned(
-            idx_t nx,
-            const float* x,
-            float radius,
-            const idx_t* keys,
-            const float* coarse_dis,
-            faiss::RangeSearchResult* result,
-            bool store_pairs = false,
-            const IVFSearchParameters* params = nullptr,
-            IndexIVFStats* stats = nullptr) const = 0;
-
-    virtual ~IndexIVFInterface() {}
-};
-
-/** Index based on a inverted file (IVF)
- *
- * In the inverted file, the quantizer (an Index instance) provides a
- * quantization index for each vector to be added. The quantization
- * index maps to a list (aka inverted list or posting list), where the
- * id of the vector is stored.
- *
- * The inverted list object is required only after trainng. If none is
- * set externally, an ArrayInvertedLists is used automatically.
- *
- * At search time, the vector to be searched is also quantized, and
- * only the list corresponding to the quantization index is
- * searched. This speeds up the search by making it
- * non-exhaustive. This can be relaxed using multi-probe search: a few
- * (nprobe) quantization indices are selected and several inverted
- * lists are visited.
- *
- * Sub-classes implement a post-filtering of the index that refines
- * the distance estimation from the query to databse vectors.
- */
-struct IndexIVF : Index, IndexIVFInterface {
-    /// Access to the actual data
-    InvertedLists* invlists = nullptr;
-    bool own_invlists = false;
-
-    size_t code_size = 0; ///< code size per vector in bytes
-
-    /** Parallel mode determines how queries are parallelized with OpenMP
-     *
-     * 0 (default): split over queries
-     * 1: parallelize over inverted lists
-     * 2: parallelize over both
-     * 3: split over queries with a finer granularity
-     *
-     * PARALLEL_MODE_NO_HEAP_INIT: binary or with the previous to
-     * prevent the heap to be initialized and finalized
-     */
-    int parallel_mode = 0;
-    const int PARALLEL_MODE_NO_HEAP_INIT = 1024;
-
-    /** optional map that maps back ids to invlist entries. This
-     *  enables reconstruct() */
-    DirectMap direct_map;
-
-    /// do the codes in the invlists encode the vectors relative to the
-    /// centroids?
-    bool by_residual = true;
-
-    /** The Inverted file takes a quantizer (an Index) on input,
-     * which implements the function mapping a vector to a list
-     * identifier.
-     */
-    IndexIVF(
-            Index* quantizer,
-            size_t d,
-            size_t nlist,
-            size_t code_size,
-            MetricType metric = METRIC_L2);
-
-    void reset() override;
-
-    /// Trains the quantizer and calls train_encoder to train sub-quantizers
-    void train(idx_t n, const float* x) override;
-
-    /// Calls add_with_ids with NULL ids
-    void add(idx_t n, const float* x) override;
-
-    /// default implementation that calls encode_vectors
-    void add_with_ids(idx_t n, const float* x, const idx_t* xids) override;
-
-    /** Implementation of vector addition where the vector assignments are
-     * predefined. The default implementation hands over the code extraction to
-     * encode_vectors.
-     *
-     * @param precomputed_idx    quantization indices for the input vectors
-     * (size n)
-     */
-    virtual void add_core(
-            idx_t n,
-            const float* x,
-            const float* x_norms,
-            const idx_t* xids,
-            const idx_t* precomputed_idx,
-            void* inverted_list_context = nullptr);
-
-    /** Encodes a set of vectors as they would appear in the inverted lists
-     *
-     * @param list_nos   inverted list ids as returned by the
-     *                   quantizer (size n). -1s are ignored.
-     * @param codes      output codes, size n * code_size
-     * @param include_listno
-     *                   include the list ids in the code (in this case add
-     *                   ceil(log8(nlist)) to the code size)
-     */
-    virtual void encode_vectors(
-            idx_t n,
-            const float* x,
-            const idx_t* list_nos,
-            uint8_t* codes,
-            bool include_listno = false) const = 0;
-
-    /** Add vectors that are computed with the standalone codec
-     *
-     * @param codes  codes to add size n * sa_code_size()
-     * @param xids   corresponding ids, size n
-     */
-    void add_sa_codes(idx_t n, const uint8_t* codes, const idx_t* xids) override;
-
-    /** Train the encoder for the vectors.
-     *
-     * If by_residual then it is called with residuals and corresponding assign
-     * array, otherwise x is the raw training vectors and assign=nullptr */
-    virtual void train_encoder(idx_t n, const float* x, const idx_t* assign);
-
-    /// can be redefined by subclasses to indicate how many training vectors
-    /// they need
-    virtual idx_t train_encoder_num_vectors() const;
-
-    void search_preassigned(
-            idx_t n,
-            const float* x,
-            idx_t k,
-            const idx_t* assign,
-            const float* centroid_dis,
-            float* distances,
-            idx_t* labels,
-            bool store_pairs,
-            const IVFSearchParameters* params = nullptr,
-            IndexIVFStats* stats = nullptr) const override;
-
-    void range_search_preassigned(
-            idx_t nx,
-            const float* x,
-            float radius,
-            const idx_t* keys,
-            const float* coarse_dis,
-            faiss::RangeSearchResult* result,
-            bool store_pairs = false,
-            const IVFSearchParameters* params = nullptr,
-            IndexIVFStats* stats = nullptr) const override;
-
-    /** assign the vectors, then call search_preassign */
-    void search(
-            idx_t n,
-            const float* x,
-            idx_t k,
-            float* distances,
-            idx_t* labels,
-            const SearchParameters* params = nullptr) const override;
-
-    void range_search(
-            idx_t n,
-            const float* x,
-            float radius,
-            faiss::RangeSearchResult* result,
-            const SearchParameters* params = nullptr) const override;
-
-    void calc_dist_by_ids(
-            idx_t n,
-            const float* x,
-            size_t num_keys,
-            const int64_t* keys,
-            float* out_dist) const;
-
-    /** Get a scanner for this index (store_pairs means ignore labels)
-     *
-     * The default search implementation uses this to compute the distances.
-     * Use sel instead of params->sel, because sel is initialized with
-     * params->sel, but may get overriden by IndexIVF's internal logic.
-     */
-    virtual InvertedListScanner* get_InvertedListScanner(
-            bool store_pairs = false,
-            const IDSelector* sel = nullptr,
-            const IVFSearchParameters* params = nullptr) const;
-
-    /** reconstruct a vector. Works only if maintain_direct_map is set to 1 or 2
-     */
-    void reconstruct(idx_t key, float* recons) const override;
-
-    /** Update a subset of vectors.
-     *
-     * The index must have a direct_map
-     *
-     * @param nv     nb of vectors to update
-     * @param idx    vector indices to update, size nv
-     * @param v      vectors of new values, size nv*d
-     */
-    virtual void update_vectors(int nv, const idx_t* idx, const float* v);
-
-    /** Reconstruct a subset of the indexed vectors.
-     *
-     * Overrides default implementation to bypass reconstruct() which requires
-     * direct_map to be maintained.
-     *
-     * @param i0     first vector to reconstruct
-     * @param ni     nb of vectors to reconstruct
-     * @param recons output array of reconstructed vectors, size ni * d
-     */
-    void reconstruct_n(idx_t i0, idx_t ni, float* recons) const override;
-
-    /** Similar to search, but also reconstructs the stored vectors (or an
-     * approximation in the case of lossy coding) for the search results.
-     *
-     * Overrides default implementation to avoid having to maintain direct_map
-     * and instead fetch the code offsets through the `store_pairs` flag in
-     * search_preassigned().
-     *
-     * @param recons      reconstructed vectors size (n, k, d)
-     */
-    void search_and_reconstruct(
-            idx_t n,
-            const float* x,
-            idx_t k,
-            float* distances,
-            idx_t* labels,
-            float* recons,
-            const SearchParameters* params = nullptr) const override;
-
-    /** Similar to search, but also returns the codes corresponding to the
-     * stored vectors for the search results.
-     *
-     * @param codes      codes (n, k, code_size)
-     * @param include_listno
-     *                   include the list ids in the code (in this case add
-     *                   ceil(log8(nlist)) to the code size)
-     */
-    void search_and_return_codes(
-            idx_t n,
-            const float* x,
-            idx_t k,
-            float* distances,
-            idx_t* labels,
-            uint8_t* recons,
-            bool include_listno = false,
-            const SearchParameters* params = nullptr) const;
-
-    /** Reconstruct a vector given the location in terms of (inv list index +
-     * inv list offset) instead of the id.
-     *
-     * Useful for reconstructing when the direct_map is not maintained and
-     * the inv list offset is computed by search_preassigned() with
-     * `store_pairs` set.
-     */
-    virtual void reconstruct_from_offset(
-            int64_t list_no,
-            int64_t offset,
-            float* recons) const;
-
-    /// Dataset manipulation functions
-
-    size_t remove_ids(const IDSelector& sel) override;
-
-    void check_compatible_for_merge(const faiss::Index& otherIndex) const override;
-
-    virtual void merge_from(faiss::Index& otherIndex, idx_t add_id) override;
-
-    // returns a new instance of a CodePacker
-    virtual CodePacker* get_CodePacker() const;
-
-    /** copy a subset of the entries index to the other index
-     * see Invlists::copy_subset_to for the meaning of subset_type
-     */
-    virtual void copy_subset_to(
-            IndexIVF& other,
-            InvertedLists::subset_type_t subset_type,
-            idx_t a1,
-            idx_t a2) const;
-
-    virtual void to_readonly();
-
-    virtual bool is_readonly() const;
-
-    ~IndexIVF() override;
-
-    size_t get_list_size(size_t list_no) const {
-        return invlists->list_size(list_no);
-    }
-
-    /// are the ids sorted?
-    bool check_ids_sorted() const;
-
-    /** initialize a direct map
-     *
-     * @param new_maintain_direct_map    if true, create a direct map,
-     *                                   else clear it
-     */
-    void make_direct_map(bool new_maintain_direct_map = true, DirectMap::Type type = DirectMap::Type::Array);
-
-    void set_direct_map_type(DirectMap::Type type);
-
-    /// replace the inverted lists, old one is deallocated if own_invlists
-    void replace_invlists(InvertedLists* il, bool own = false);
-
-    /* The standalone codec interface (except sa_decode that is specific) */
-    size_t sa_code_size() const override;
-
-    /** encode a set of vectors
-     * sa_encode will call encode_vector with include_listno=true
-     * @param n      nb of vectors to encode
-     * @param x      the vectors to encode
-     * @param bytes  output array for the codes
-     * @return nb of bytes written to codes
-     */
-    void sa_encode(idx_t n, const float* x, uint8_t* bytes) const override;
-
-    void dump();
-
-    IndexIVF();
-};
-
-/** Object that handles a query. The inverted lists to scan are
- * provided externally. The object has a lot of state, but
- * distance_to_code and scan_codes can be called in multiple
- * threads */
-struct InvertedListScanner {
-    idx_t list_no = -1;    ///< remember current list
-    bool keep_max = false; ///< keep maximum instead of minimum
-    /// store positions in invlists rather than labels
-    bool store_pairs;
-
-    /// search in this subset of ids
-    const IDSelector* sel;
-
-    InvertedListScanner(
-            bool store_pairs = false,
-            const IDSelector* sel = nullptr)
-            : store_pairs(store_pairs), sel(sel) {}
-
-    /// used in default implementation of scan_codes
-    size_t code_size = 0;
-
-    /// from now on we handle this query.
-    virtual void set_query(const float* query_vector) = 0;
-
-    /// following codes come from this inverted list
-    virtual void set_list(idx_t list_no, float coarse_dis) = 0;
-
-    /// compute a single query-to-code distance
-    virtual float distance_to_code(const uint8_t* code) const = 0;
-
-    /** scan a set of codes, compute distances to current query and
-     * update heap of results if necessary. Default implemetation
-     * calls distance_to_code.
-     *
-     * @param n      number of codes to scan
-     * @param codes  codes to scan (n * code_size)
-     * @param ids        corresponding ids (ignored if store_pairs)
-     * @param distances  heap distances (size k)
-     * @param labels     heap labels (size k)
-     * @param k          heap size
-     * @param scan_cnt   valid number of codes be scanned
-     * @return number of heap updates performed
-     */
-    virtual size_t scan_codes(
-            size_t n,
-            const uint8_t* codes,
-            const float* code_norms,
-            const idx_t* ids,
-            float* distances,
-            idx_t* labels,
-            size_t k,
-            size_t& scan_cnt) const;
-
-    /** scan a set of codes, compute distances to current query and
-     * return in a vector.
+     * TODO(migration): consider whether iterate_codes() can subsume
+     * this entirely. iterate_codes is a baseline virtual with heap-
+     * semantics (top-k) rather than flat-streaming, so a direct
+     * replacement would require reshaping the iterator workspace to
+     * consume heap output. If that reshape is viable, this method
+     * can be deleted in favor of baseline iterate_codes + a
+     * workspace-side heap-to-flat converter, removing one of the
+     * last fork-only scanner virtuals.
      *
      * @param list_size     number of codes to scan
      * @param codes         codes to scan (list_size * code_size)
-     * @param code_norms    norms of code (for cosine)
      * @param ids           corresponding ids (ignored if store_pairs)
-     * @param out           output distances and ids
+     * @param out           output (id, distance) pairs appended here
      */
     virtual void scan_codes_and_return(
             size_t list_size,
             const uint8_t* codes,
-            const float* code_norms,
             const idx_t* ids,
             std::vector<::knowhere::DistId>& out) const;
 
-    // same as scan_codes, using an iterator
-    virtual size_t iterate_codes(
-            InvertedListsIterator* iterator,
-            float* distances,
-            idx_t* labels,
-            size_t k,
-            size_t& list_size) const;
-
-    /** scan a set of codes, compute distances to current query and
-     * update results if distances are below radius
-     *
-     * (default implementation fails) */
-    virtual void scan_codes_range(
-            size_t n,
-            const uint8_t* codes,
-            const float* code_norms,
-            const idx_t* ids,
-            float radius,
-            RangeQueryResult& result) const;
-
-    // same as scan_codes_range, using an iterator
-    virtual void iterate_codes_range(
-            InvertedListsIterator* iterator,
-            float radius,
-            RangeQueryResult& result,
-            size_t& list_size) const;
-
-    virtual ~InvertedListScanner() {}
+    virtual ~KnowhereInvertedListScannerHooks() = default;
 };
 
-// whether to check that coarse quantizers are the same
-FAISS_API extern bool check_compatible_for_merge_expensive_check;
+/** Fork InvertedListScanner — now a thin subclass of baseline
+ * ::faiss::InvertedListScanner (Path-D step 7b reparent) plus the
+ * knowhere-only hooks above.
+ *
+ * All virtuals that exist on baseline (set_query, set_list,
+ * distance_to_code, scan_codes, scan_codes_range, iterate_codes,
+ * iterate_codes_range) use the accepted baseline signatures; they are
+ * inherited from baseline and overridden by concrete subclasses just
+ * like before.
+ *
+ * The former `mutable size_t scan_cnt` member was removed once
+ * baseline moved per-list stats out of scanner-local mutable state.
+ * k-NN scanner stats are now reported through
+ * ::faiss::ResultHandler::stats, and range-search stats through
+ * ::faiss::RangeQueryResult::stats, preserving the documented
+ * thread-safety contract on baseline ::faiss::InvertedListScanner.
+ *
+ * The full definition is placed BEFORE IndexIVF below so that
+ * IndexIVF::get_InvertedListScanner can declare a covariant return
+ * (`InvertedListScanner*` overriding baseline's
+ * `::faiss::InvertedListScanner*` return) — covariance requires the
+ * compiler to see the inheritance relationship at the point of
+ * declaration, not just a forward declaration.
+ */
+struct InvertedListScanner
+        : ::faiss::InvertedListScanner,
+          KnowhereInvertedListScannerHooks {
+    // Path-D follow-up: the former `mutable size_t scan_cnt` member
+    // was removed once baseline's InvertedListScanner search methods
+    // started reporting stats through ResultHandler::stats for k-NN
+    // and RangeQueryResult::stats for range search. The only
+    // knowhere-specific scanner hooks left here are
+    // set_list_segment(...) and scan_codes_and_return(...).
 
-struct IndexIVFStats {
-    size_t nq;                // nb of queries run
-    size_t nlist;             // nb of inverted lists scanned
-    size_t ndis;              // nb of distances computed
-    size_t nheap_updates;     // nb of times the heap was updated
-    double quantization_time; // time spent quantizing vectors (in ms)
-    double search_time;       // time spent searching lists (in ms)
-
-    IndexIVFStats() {
-        reset();
+    InvertedListScanner(
+            bool store_pairs = false,
+            const IDSelector* sel = nullptr)
+            : ::faiss::InvertedListScanner() {
+        this->store_pairs = store_pairs;
+        this->sel = sel;
     }
-    void reset();
-    void add(const IndexIVFStats& other);
+
+    ~InvertedListScanner() override {}
 };
 
-// global var that collects them all
-FAISS_API extern IndexIVFStats indexIVF_stats;
+// Path-D step 11.4b: fork `struct IndexIVF` has been collapsed to an
+// alias of baseline. After incremental cleanups in steps 7-11 every
+// fork override of an IndexIVF method became either byte-identical to
+// baseline or was relocated to a derived class:
+//
+//   - Method bodies (search, range_search, add_core, get_list_size,
+//     get_InvertedListScanner): deleted as byte-identical or trivial
+//     duplicates of baseline (steps 11.4 / 11.4b).
+//   - encode_vectors pure-virtual redeclaration: deleted (11.4b).
+//   - search_preassigned / range_search_preassigned CC dispatch:
+//     pushed down to IndexIVFScalarQuantizer (qianya path) and the
+//     CC-leaf classes (11.4b).
+//   - calc_dist_by_ids: relocated to IndexIVFFlat (11 follow-up).
+//   - reconstruct family, sa_code_size/sa_encode, train_encoder,
+//     check_compatible_for_merge, merge_from, get_CodePacker,
+//     copy_subset_to, search_and_return_codes, to_readonly /
+//     is_readonly / check_ids_sorted / dump: deleted across earlier
+//     steps as byte-identical or dead.
+//   - invlists / direct_map shadows: deleted (11.2 / 11.5).
+//
+// Fork-only IVF features that needed a real subclass (cosine norm
+// storage, CC variants, FastScan, knowhere iterator workspace) live
+// on derived classes (IndexIVFFlat / IndexIVFFlatCC / IndexIVFFastScan
+// / etc.); they now derive from `::faiss::IndexIVF` directly. Code
+// that referred to fork-namespace `IndexIVF` (search-time visitors,
+// dynamic_casts in `src/index/ivf/ivf.cc`) continues to compile via
+// this alias and works unchanged at runtime — fork-derived classes
+// ARE baseline `::faiss::IndexIVF`.
+using IndexIVF = ::faiss::IndexIVF;
 
 }
 }
 } // namespace faiss
-

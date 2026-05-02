@@ -12,10 +12,11 @@
 #include <faiss/cppcontrib/knowhere/IVFIteratorWorkspace.h>
 
 namespace faiss {
+struct IndexIVFFastScan;
+
 namespace cppcontrib {
 namespace knowhere {
 
-struct IndexIVFFastScan;
 struct IndexScaNN;
 
 /// Iterator workspace for FastScan index types.
@@ -23,7 +24,7 @@ struct IndexScaNN;
 /// and avoid ODR/ABI mismatch between baseline and AVX2 translation units.
 struct IVFFastScanIteratorWorkspace : IVFIteratorWorkspace {
     IVFFastScanIteratorWorkspace(
-            const IndexIVFFastScan* index,
+            const ::faiss::IndexIVFFastScan* index,
             const float* query_data,
             const IVFSearchParameters* params);
     ~IVFFastScanIteratorWorkspace() override;

@@ -139,7 +139,11 @@ struct QuantRefine {
     static constexpr size_t list_num = 1;
     static constexpr size_t segment_size = 48;
     faiss::ScalarQuantizer* quantizer = nullptr;
-    faiss::cppcontrib::knowhere::InvertedLists* storage = nullptr;
+    // Path-D step 10.10: declared as the concrete
+    // ConcurrentArrayInvertedLists* (previously the base InvertedLists*)
+    // because this class uses the segment-sliced get_codes(list_no, offset)
+    // accessor which is no longer a virtual on the base.
+    faiss::cppcontrib::knowhere::ConcurrentArrayInvertedLists* storage = nullptr;
     faiss::MetricType metric_type;
     DataFormatEnum origin_data_type;
     RefineType refine_type;

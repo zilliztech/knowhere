@@ -19,7 +19,10 @@
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/IDSelector.h>
+#include <faiss/impl/ResultHandler.h>
+#include <faiss/cppcontrib/knowhere/impl/cc_search.h>
 #include <faiss/cppcontrib/knowhere/invlists/DirectMap.h>
+#include <faiss/cppcontrib/knowhere/invlists/InvertedLists.h>  // ConcurrentArrayInvertedLists
 #include <faiss/utils/Heap.h>
 #include <faiss/utils/utils.h>
 
@@ -38,15 +41,21 @@ IndexIVFScalarQuantizer::IndexIVFScalarQuantizer(
         ::faiss::ScalarQuantizer::QuantizerType qtype,
         MetricType metric,
         bool by_residual)
-        : IndexIVF(quantizer, d, nlist, 0, metric), sq(d, qtype) {
+        // Path-D step 11.4b: derives from baseline IndexIVF directly.
+        // own_invlists_in=false suppresses baseline's auto-allocation;
+        // the fork ArrayInvertedLists is installed below once the
+        // SQ-derived code_size is known.
+        : ::faiss::IndexIVF(quantizer, d, nlist, 0, metric,
+                            /*own_invlists_in=*/false),
+          sq(d, qtype) {
     code_size = sq.code_size;
     this->by_residual = by_residual;
-    // was not known at construction time
-    invlists->code_size = code_size;
+    replace_invlists(new ArrayInvertedLists(nlist, code_size, false),
+                     /*own=*/true);
     is_trained = false;
 }
 
-IndexIVFScalarQuantizer::IndexIVFScalarQuantizer() : IndexIVF() {
+IndexIVFScalarQuantizer::IndexIVFScalarQuantizer() : ::faiss::IndexIVF() {
     by_residual = true;
 }
 
@@ -122,7 +131,6 @@ void IndexIVFScalarQuantizer::sa_decode(idx_t n, const uint8_t* codes, float* x)
 void IndexIVFScalarQuantizer::add_core(
         idx_t n,
         const float* x,
-        const float* x_norms,
         const idx_t* xids,
         const idx_t* coarse_idx,
         void* inverted_list_context) {
@@ -155,7 +163,7 @@ void IndexIVFScalarQuantizer::add_core(
                 squant->encode_vector(xi, one_code.data());
 
                 size_t ofs = invlists->add_entry(
-                        list_no, id, one_code.data(), nullptr, inverted_list_context);
+                        list_no, id, one_code.data(), inverted_list_context);
 
                 dm_add.add(i, list_no, ofs);
 
@@ -178,9 +186,12 @@ namespace {
 //   L2: the query is shifted into the centroid frame in set_list(), and
 //       the DC already produces the final L2 distance on every code.
 //
-// scan_cnt is a fork-side out-param that fork's own SQ scanners never
-// increment (only IVFFlat/FastScan do), so we match that behavior and
-// leave it untouched.
+// Per-list k-NN stats (scan_cnt, nheap_updates) are reported via
+// ResultHandler::stats (fork retirement, formerly a mutable scan_cnt
+// member on the fork scanner). These SQ scanners now correctly report
+// post-filter scan_cnt, so the IVF probe loop's max_codes /
+// ensure_topk_full budget tracking works on SQ paths just as it does
+// on IVFFlat.
 
 class BaselineIVFSQScannerIP : public InvertedListScanner {
    public:
@@ -213,21 +224,18 @@ class BaselineIVFSQScannerIP : public InvertedListScanner {
     size_t scan_codes(
             size_t list_size,
             const uint8_t* codes,
-            const float* /*code_norms*/,
             const idx_t* ids,
-            float* simi,
-            idx_t* idxi,
-            size_t k,
-            size_t& /*scan_cnt*/) const override {
+            ::faiss::ResultHandler& handler) const override {
         size_t nup = 0;
         for (size_t j = 0; j < list_size; j++) {
             if (!selector_accepts(j, ids)) {
                 continue;
             }
+            handler.stats.scan_cnt++;
             float dis = accu0_ + dc_->query_to_code(codes + j * code_size);
-            if (dis > simi[0]) {
-                int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                minheap_replace_top(k, simi, idxi, dis, id);
+            int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
+            if (handler.add_result(dis, id)) {
+                handler.stats.nheap_updates++;
                 nup++;
             }
         }
@@ -237,7 +245,6 @@ class BaselineIVFSQScannerIP : public InvertedListScanner {
     void scan_codes_and_return(
             size_t list_size,
             const uint8_t* codes,
-            const float* /*code_norms*/,
             const idx_t* ids,
             std::vector<::knowhere::DistId>& out) const override {
         for (size_t j = 0; j < list_size; j++) {
@@ -252,7 +259,6 @@ class BaselineIVFSQScannerIP : public InvertedListScanner {
     void scan_codes_range(
             size_t list_size,
             const uint8_t* codes,
-            const float* /*code_norms*/,
             const idx_t* ids,
             float radius,
             RangeQueryResult& res) const override {
@@ -260,10 +266,12 @@ class BaselineIVFSQScannerIP : public InvertedListScanner {
             if (!selector_accepts(j, ids)) {
                 continue;
             }
+            res.stats.scan_cnt++;
             float dis = accu0_ + dc_->query_to_code(codes + j * code_size);
             if (dis > radius) {
                 int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
                 res.add(dis, id);
+                res.stats.nheap_updates++;
             }
         }
     }
@@ -323,21 +331,18 @@ class BaselineIVFSQScannerL2 : public InvertedListScanner {
     size_t scan_codes(
             size_t list_size,
             const uint8_t* codes,
-            const float* /*code_norms*/,
             const idx_t* ids,
-            float* simi,
-            idx_t* idxi,
-            size_t k,
-            size_t& /*scan_cnt*/) const override {
+            ::faiss::ResultHandler& handler) const override {
         size_t nup = 0;
         for (size_t j = 0; j < list_size; j++) {
             if (!selector_accepts(j, ids)) {
                 continue;
             }
+            handler.stats.scan_cnt++;
             float dis = dc_->query_to_code(codes + j * code_size);
-            if (dis < simi[0]) {
-                int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
-                maxheap_replace_top(k, simi, idxi, dis, id);
+            int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
+            if (handler.add_result(dis, id)) {
+                handler.stats.nheap_updates++;
                 nup++;
             }
         }
@@ -347,7 +352,6 @@ class BaselineIVFSQScannerL2 : public InvertedListScanner {
     void scan_codes_and_return(
             size_t list_size,
             const uint8_t* codes,
-            const float* /*code_norms*/,
             const idx_t* ids,
             std::vector<::knowhere::DistId>& out) const override {
         for (size_t j = 0; j < list_size; j++) {
@@ -362,7 +366,6 @@ class BaselineIVFSQScannerL2 : public InvertedListScanner {
     void scan_codes_range(
             size_t list_size,
             const uint8_t* codes,
-            const float* /*code_norms*/,
             const idx_t* ids,
             float radius,
             RangeQueryResult& res) const override {
@@ -370,10 +373,12 @@ class BaselineIVFSQScannerL2 : public InvertedListScanner {
             if (!selector_accepts(j, ids)) {
                 continue;
             }
+            res.stats.scan_cnt++;
             float dis = dc_->query_to_code(codes + j * code_size);
             if (dis < radius) {
                 int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
                 res.add(dis, id);
+                res.stats.nheap_updates++;
             }
         }
     }
@@ -436,6 +441,96 @@ void IndexIVFScalarQuantizer::reconstruct_from_offset(
     }
 }
 
+// Path-D step 11.4b: CC dispatch hosted on IndexIVFScalarQuantizer
+// instead of fork IndexIVF base. The qianya path
+// (`src/index/ivf/ivf.cc` static_casts a deserialized
+// IndexIVFScalarQuantizer to IndexIVFScalarQuantizerCC) means an
+// IndexIVFScalarQuantizer instance can hold a
+// ConcurrentArrayInvertedLists at runtime even though the static
+// type is non-CC. Among non-CC IVF leaves, IVFSQ is the only one
+// that can hit this case (IVFFlat / IVFPQ / IVFRaBitQ / IVFFastScan
+// never end up with CC invlists), so the runtime dispatch lives
+// here rather than on the fork base. CC-leaf classes
+// (IndexIVFScalarQuantizerCC, IndexIVFFlatCC) override these
+// methods themselves and delegate to cc_impl unconditionally
+// (their invlists is statically known to be CC).
+void IndexIVFScalarQuantizer::search_preassigned(
+        idx_t n,
+        const float* x,
+        idx_t k,
+        const idx_t* keys,
+        const float* coarse_dis,
+        float* distances,
+        idx_t* labels,
+        bool store_pairs,
+        const IVFSearchParameters* params,
+        IndexIVFStats* ivf_stats) const {
+    if (auto* cil =
+                dynamic_cast<const ConcurrentArrayInvertedLists*>(invlists)) {
+        cc_impl::search_preassigned(
+                *this,
+                *cil,
+                n,
+                x,
+                k,
+                keys,
+                coarse_dis,
+                distances,
+                labels,
+                store_pairs,
+                params,
+                ivf_stats);
+        return;
+    }
+    ::faiss::IndexIVF::search_preassigned(
+            n,
+            x,
+            k,
+            keys,
+            coarse_dis,
+            distances,
+            labels,
+            store_pairs,
+            params,
+            ivf_stats);
 }
 
+void IndexIVFScalarQuantizer::range_search_preassigned(
+        idx_t nx,
+        const float* x,
+        float radius,
+        const idx_t* keys,
+        const float* coarse_dis,
+        faiss::RangeSearchResult* result,
+        bool store_pairs,
+        const IVFSearchParameters* params,
+        IndexIVFStats* stats) const {
+    if (auto* cil =
+                dynamic_cast<const ConcurrentArrayInvertedLists*>(invlists)) {
+        cc_impl::range_search_preassigned(
+                *this,
+                *cil,
+                nx,
+                x,
+                radius,
+                keys,
+                coarse_dis,
+                result,
+                store_pairs,
+                params,
+                stats);
+        return;
+    }
+    ::faiss::IndexIVF::range_search_preassigned(
+            nx,
+            x,
+            radius,
+            keys,
+            coarse_dis,
+            result,
+            store_pairs,
+            params,
+            stats);
+}
 
+}

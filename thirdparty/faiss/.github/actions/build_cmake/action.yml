@@ -20,6 +20,10 @@ inputs:
     description: 'Enable SVS support.'
     required: false
     default: OFF
+  metal:
+    description: 'Enable Metal GPU backend (macOS Apple Silicon).'
+    required: false
+    default: OFF
   setup_conda:
     description: 'Setup miniconda environment.'
     required: false
@@ -32,7 +36,7 @@ runs:
   using: composite
   steps:
     - name: Setup miniconda
-      if: inputs.setup_conda == 'true'
+      if: inputs.setup_conda == 'true' && inputs.metal != 'ON'
       uses: conda-incubator/setup-miniconda@v3
       with:
         python-version: '3.12'
@@ -43,6 +47,7 @@ runs:
         # They are the same thing, just named differently.
         architecture: ${{ runner.arch  == 'ARM64' && 'aarch64' || runner.arch }}
     - name: Configure build environment
+      if: inputs.metal != 'ON'
       shell: bash
       run: |
         # initialize Conda
@@ -159,7 +164,18 @@ runs:
       if: inputs.gpu == 'ON' && inputs.rocm == 'ON'
       shell: bash
       run: rocm-smi
+    - name: Setup ccache
+      uses: hendrikmuhs/ccache-action@v1
+      with:
+        key: ${{ runner.os }}-${{ runner.arch }}-${{ inputs.opt_level }}-gpu${{ inputs.gpu }}-cuvs${{ inputs.cuvs }}-rocm${{ inputs.rocm }}-svs${{ inputs.svs }}
+        max-size: 2G
+        update-package-index: true
+    - name: Setup macOS Metal environment
+      if: inputs.metal == 'ON'
+      shell: bash
+      run: brew install cmake libomp gflags
     - name: Build all targets
+      if: inputs.metal != 'ON'
       shell: bash
       run: |
         eval "$(conda shell.bash hook)"
@@ -176,23 +192,45 @@ runs:
               -DFAISS_ENABLE_C_API=ON \
               -DPYTHON_EXECUTABLE=$CONDA/bin/python \
               -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+              -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+              -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache \
               -DBLA_VENDOR=${{ runner.arch == 'X64' && 'Intel10_64_dyn' || '' }} \
               -DCMAKE_CUDA_FLAGS=${{ runner.arch == 'X64' && '"-gencode arch=compute_75,code=sm_75"' || '' }} \
               .
         make -k -C build -j$(nproc)
+    - name: Build Metal targets
+      if: inputs.metal == 'ON'
+      shell: bash
+      run: |
+        cmake -B build \
+              -DFAISS_ENABLE_METAL=ON \
+              -DFAISS_ENABLE_GPU=OFF \
+              -DFAISS_ENABLE_PYTHON=OFF \
+              -DBUILD_TESTING=ON \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_PREFIX_PATH="$(brew --prefix libomp)" \
+              .
+        cmake --build build --target faiss_metal TestMetalIndexFlat -j$(sysctl -n hw.logicalcpu)
     - name: C++ tests
+      if: inputs.metal != 'ON'
       shell: bash
       run: |
         conda list --show-channel-urls
         export GTEST_OUTPUT="xml:$(realpath .)/test-results/googletest/"
         make -C build test
-    - name: C++ perf benchmarks
+    - name: C++ tests (Metal)
+      if: inputs.metal == 'ON'
       shell: bash
-      if: inputs.rocm == 'OFF'
+      run: cd build && ctest -R TestMetalIndexFlat --output-on-failure
+    - name: C++ perf benchmarks
+      if: inputs.rocm == 'OFF' && inputs.metal != 'ON'
+      shell: bash
       run: |
         conda list --show-channel-urls
         find ./build/perf_tests/ -executable -type f -name "bench*" -exec '{}' -v \;
     - name: Install Python extension
+      if: inputs.metal != 'ON'
       shell: bash
       working-directory: build/faiss/python
       run: |
@@ -205,7 +243,7 @@ runs:
         conda list --show-channel-urls
         pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.1
     - name: Python tests (CPU only)
-      if: inputs.gpu == 'OFF'
+      if: inputs.gpu == 'OFF' && inputs.metal != 'ON'
       shell: bash
       run: |
         conda list --show-channel-urls
@@ -235,6 +273,7 @@ runs:
         name: test-results-arch=${{ runner.arch }}-opt=${{ inputs.opt_level }}-gpu=${{ inputs.gpu }}-cuvs=${{ inputs.cuvs }}-rocm=${{ inputs.rocm }}-svs=${{ inputs.svs }}
         path: test-results
     - name: Check installed packages channel
+      if: inputs.metal != 'ON'
       shell: bash
       run: |
         # Shows that all installed packages are from conda-forge.

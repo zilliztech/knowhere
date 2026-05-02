@@ -650,8 +650,10 @@ IndexHNSWFlat::IndexHNSWFlat() {
 
 IndexHNSWFlat::IndexHNSWFlat(int d, int M, MetricType metric)
         : IndexHNSW(
-                  (metric == METRIC_L2) ? new IndexFlatL2(d)
-                                        : new IndexFlat(d, metric),
+                  (metric == METRIC_L2) ? static_cast<::faiss::IndexFlat*>(
+                                                  new ::faiss::IndexFlatL2(d))
+                                        : static_cast<::faiss::IndexFlat*>(
+                                                  new IndexFlat(d, metric)),
                   M) {
     own_fields = true;
     is_trained = true;
@@ -706,8 +708,10 @@ IndexHNSWCagra::IndexHNSWCagra() {
 IndexHNSWCagra::IndexHNSWCagra(int d, int M, MetricType metric)
         : IndexHNSW(
                   (metric == METRIC_L2)
-                          ? static_cast<IndexFlat*>(new IndexFlatL2(d))
-                          : static_cast<IndexFlat*>(new IndexFlatIP(d)),
+                          ? static_cast<::faiss::IndexFlat*>(
+                                    new ::faiss::IndexFlatL2(d))
+                          : static_cast<::faiss::IndexFlat*>(
+                                    new ::faiss::IndexFlatIP(d)),
                   M) {
     FAISS_THROW_IF_NOT_MSG(
             ((metric == METRIC_L2) || (metric == METRIC_INNER_PRODUCT)),

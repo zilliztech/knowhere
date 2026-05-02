@@ -54,7 +54,7 @@ void IndexRefine::add(idx_t n, const float* x) {
     FAISS_THROW_IF_NOT(is_trained);
     base_index->add(n, x);
     refine_index->add(n, x);
-    ntotal = base_index->ntotal;
+    ntotal = refine_index->ntotal;
 }
 
 void IndexRefine::reset() {
@@ -104,8 +104,9 @@ void IndexRefine::search(
     base_index->search(
             n, x, k_base, base_distances, base_labels, base_index_params);
 
-    for (int i = 0; i < n * k_base; i++)
-        assert(base_labels[i] >= -1 && base_labels[i] < ntotal);
+    for (int i = 0; i < n * k_base; i++) {
+        FAISS_THROW_IF_NOT(base_labels[i] >= -1 && base_labels[i] < ntotal);
+    }
 
         // parallelize over queries
 #pragma omp parallel if (n > 1)
@@ -307,11 +308,14 @@ void IndexRefineFlat::search(
     base_index->search(
             n, x, k_base, base_distances, base_labels, base_index_params);
 
-    for (int i = 0; i < n * k_base; i++)
-        assert(base_labels[i] >= -1 && base_labels[i] < ntotal);
+    for (int i = 0; i < n * k_base; i++) {
+        FAISS_THROW_IF_NOT(base_labels[i] >= -1 && base_labels[i] < ntotal);
+    }
 
-    // compute refined distances
-    auto rf = dynamic_cast<const IndexFlat*>(refine_index);
+    // compute refined distances. refine_index may be deserialized as a
+    // baseline ::faiss::IndexFlat (IxFI/IxF2) or as the knowhere IndexFlat
+    // subclass (IxFl); cast to the common baseline type.
+    auto rf = dynamic_cast<const ::faiss::IndexFlat*>(refine_index);
     FAISS_THROW_IF_NOT(rf);
 
     rf->compute_distance_subset(n, x, k_base, base_distances, base_labels);
@@ -332,5 +336,4 @@ void IndexRefineFlat::search(
 }
 
 }
-
 

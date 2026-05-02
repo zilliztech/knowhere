@@ -24,6 +24,9 @@
 #include <faiss/cppcontrib/knowhere/invlists/OnDiskInvertedLists.h>
 
 #include <faiss/IndexAdditiveQuantizer.h>
+#include <faiss/IndexIVFRaBitQ.h>
+#include <faiss/IndexIVFPQFastScan.h>
+#include <faiss/impl/RaBitQuantizer.h>
 #include <faiss/cppcontrib/knowhere/IndexBinaryScalarQuantizer.h>
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
@@ -51,6 +54,9 @@
 
 #include <faiss/impl/mapped_io.h>
 #include <faiss/impl/zerocopy_io.h>
+
+#include <cstring>
+#include <memory>
 
 
 
@@ -348,7 +354,7 @@ static void read_ArrayInvertedLists_sizes(
     }
 }
 
-InvertedLists* read_InvertedLists(IOReader* f, int io_flags) {
+::faiss::InvertedLists* read_InvertedLists(IOReader* f, int io_flags) {
     uint32_t h;
     READ1(h);
     if (h == fourcc("il00")) {
@@ -456,15 +462,17 @@ InvertedLists* read_InvertedLists(IOReader* f, int io_flags) {
 }
 
 static void read_InvertedLists(IndexIVF* ivf, IOReader* f, int io_flags) {
-    InvertedLists* ils = read_InvertedLists(f, io_flags);
+    ::faiss::InvertedLists* ils = read_InvertedLists(f, io_flags);
     if (ils) {
         FAISS_THROW_IF_NOT(ils->nlist == ivf->nlist);
         FAISS_THROW_IF_NOT(
-                ils->code_size == InvertedLists::INVALID_CODE_SIZE ||
+                ils->code_size == ::faiss::InvertedLists::INVALID_CODE_SIZE ||
                 ils->code_size == ivf->code_size);
     }
-    ivf->invlists = ils;
-    ivf->own_invlists = true;
+    // Route through replace_invlists so both the fork-typed shadow and
+    // baseline's inherited `invlists` + `own_invlists` fields land in
+    // sync (Path-D step 8b).
+    ivf->replace_invlists(ils, /*own=*/true);
 }
 
 static void read_ProductQuantizer(ProductQuantizer* pq, IOReader* f) {
@@ -617,11 +625,64 @@ ProductQuantizer* read_ProductQuantizer(IOReader* reader) {
     return pq;
 }
 
-static void read_RaBitQuantizer(RaBitQuantizer* rabitq, IOReader* f) {
+static size_t rabitq_sign_bytes(size_t d) {
+    return (d + 7) / 8;
+}
+
+static size_t legacy_rabitq_1bit_code_size(size_t d) {
+    return rabitq_sign_bytes(d) + 3 * sizeof(float);
+}
+
+static void legacy_1bit_code_to_baseline(
+        const uint8_t* src,
+        uint8_t* dst,
+        size_t d) {
+    std::memcpy(dst, src, rabitq_sign_bytes(d) + 2 * sizeof(float));
+}
+
+static std::unique_ptr<ArrayInvertedLists> convert_legacy_rabitq_invlists(
+        const ::faiss::InvertedLists* src,
+        size_t d,
+        size_t dst_code_size) {
+    if (src == nullptr) {
+        return nullptr;
+    }
+
+    auto dst = std::make_unique<ArrayInvertedLists>(
+            src->nlist, dst_code_size, false);
+    for (size_t list_no = 0; list_no < src->nlist; ++list_no) {
+        const size_t list_size = src->list_size(list_no);
+        if (list_size == 0) {
+            continue;
+        }
+
+        ::faiss::InvertedLists::ScopedCodes codes(src, list_no);
+        ::faiss::InvertedLists::ScopedIds ids(src, list_no);
+        std::vector<uint8_t> converted(list_size * dst_code_size);
+        for (size_t i = 0; i < list_size; ++i) {
+            legacy_1bit_code_to_baseline(
+                    codes.get() + i * src->code_size,
+                    converted.data() + i * dst_code_size,
+                    d);
+        }
+        dst->add_entries(list_no, list_size, ids.get(), converted.data());
+    }
+    return dst;
+}
+
+static void read_RaBitQuantizer(
+        ::faiss::RaBitQuantizer* rabitq,
+        IOReader* f,
+        bool multi_bit) {
     // don't care about rabitq->centroid
     READ1(rabitq->d);
     READ1(rabitq->code_size);
     READ1(rabitq->metric_type);
+    if (multi_bit) {
+        READ1(rabitq->nb_bits);
+    } else {
+        rabitq->nb_bits = 1;
+    }
 }
 
 static void read_direct_map(DirectMap* dm, IOReader* f) {
@@ -638,15 +699,11 @@ static void read_direct_map(DirectMap* dm, IOReader* f) {
             map[it.first] = it.second;
         }
     }
-    if (dm->type == DirectMap::ConcurrentArray) {
-        std::vector<idx_t> offs;
-        READVECTOR(offs);
-        auto& concurrent_array = dm->concurrentArray;
-        concurrent_array.resize(offs.size());
-        for (idx_t i = 0; i < offs.size(); i++) {
-            concurrent_array[i] = offs[i];
-        }
-    }
+    // Path-D step 10.9: the former `if (dm->type == DirectMap::ConcurrentArray)`
+    // read branch is gone — see the symmetric comment in index_write.cpp.
+    // Old files (if any) with `type == 3` would fail to round-trip here
+    // since the enum value no longer exists; in practice CC indexes
+    // were never written through this path.
 }
 
 static void read_ivf_header(
@@ -679,8 +736,7 @@ static ArrayInvertedLists* set_array_invlist(
         ail->ids[i] = MaybeOwnedVector<idx_t>(std::move(ids[i]));
     }
 
-    ivf->invlists = ail;
-    ivf->own_invlists = true;
+    ivf->replace_invlists(ail, /*own=*/true);
     return ail;
 }
 
@@ -743,11 +799,14 @@ Index* read_index(IOReader* f, int io_flags) {
         idx = idxf;
     } else if (
             h == fourcc("IxFI") || h == fourcc("IxF2") || h == fourcc("IxFl")) {
-        IndexFlat* idxf;
+        // IxFI / IxF2 are plain baseline flat indexes; IxFl may carry
+        // METRIC_Jaccard (Tanimoto — see cppcontrib/knowhere/IndexFlat.h),
+        // so it is deserialized as the knowhere IndexFlat subclass.
+        ::faiss::IndexFlat* idxf;
         if (h == fourcc("IxFI")) {
-            idxf = new IndexFlatIP();
+            idxf = new ::faiss::IndexFlatIP();
         } else if (h == fourcc("IxF2")) {
-            idxf = new IndexFlatL2();
+            idxf = new ::faiss::IndexFlatL2();
         } else {
             idxf = new IndexFlat();
         }
@@ -924,6 +983,14 @@ Index* read_index(IOReader* f, int io_flags) {
             ivf_cc = tmp_cc.release();
         }
         read_InvertedLists(ivf_cc, f, io_flags);
+        // Path-D step 10.9: rebuild cc_direct_map from the deserialized
+        // ConcurrentArrayInvertedLists. Under the new scheme the CC
+        // indexes' id→LO lookup goes through cc_direct_map (not fork
+        // direct_map), so we must populate it post-load.
+        ivf_cc->cc_direct_map.populate_from(
+                static_cast<const ConcurrentArrayInvertedLists*>(
+                        ivf_cc->invlists),
+                ivf_cc->ntotal);
         idx = ivf_cc;
     } else if (h == fourcc("IwFl")) {
         IndexIVFFlat* ivfl;
@@ -1082,13 +1149,14 @@ Index* read_index(IOReader* f, int io_flags) {
         idxrf->base_index = read_index(f, io_flags);
         idxrf->refine_index = read_index(f, io_flags);
         READ1(idxrf->k_factor);
-        if (dynamic_cast<IndexFlat*>(idxrf->refine_index)) {
-            // then make a RefineFlat with it
+        if (dynamic_cast<::faiss::IndexFlat*>(idxrf->refine_index)) {
+            // then make a RefineFlat with it. Refine index may be a baseline
+            // ::faiss::IndexFlat{,IP,L2} or the knowhere Jaccard-aware subclass.
             IndexRefine* idxrf_old = idxrf;
             idxrf = new IndexRefineFlat();
             *idxrf = *idxrf_old;
             delete idxrf_old;
-        } 
+        }
         idxrf->own_fields = true;
         idxrf->own_refine_index = true;
         idx = idxrf;
@@ -1156,7 +1224,7 @@ Index* read_index(IOReader* f, int io_flags) {
         }
         idx = idxhnsw;
     } else if (h == fourcc("IwPf")) {
-        IndexIVFPQFastScan* ivpq = new IndexIVFPQFastScan();
+        ::faiss::IndexIVFPQFastScan* ivpq = new ::faiss::IndexIVFPQFastScan();
         read_ivf_header(ivpq, f);
         READ1(ivpq->by_residual);
         READ1(ivpq->code_size);
@@ -1189,29 +1257,100 @@ Index* read_index(IOReader* f, int io_flags) {
             cosine_ivpq->qbs2 = ivpq->qbs2;
             cosine_ivpq->direct_map = std::move(ivpq->direct_map);
             delete ivpq;
-            ivpq = cosine_ivpq;
             READVECTOR(cosine_ivpq->inverse_norms_storage.inverse_l2_norms);
+            read_ProductQuantizer(&cosine_ivpq->pq, f);
+            read_InvertedLists(cosine_ivpq, f, io_flags);
+            cosine_ivpq->precompute_table();
+
+            const auto& pq = cosine_ivpq->pq;
+            cosine_ivpq->M = pq.M;
+            cosine_ivpq->nbits = pq.nbits;
+            cosine_ivpq->ksub = (1 << pq.nbits);
+            cosine_ivpq->code_size = pq.code_size;
+            cosine_ivpq->init_code_packer();
+
+            idx = cosine_ivpq;
+        } else {
+            read_ProductQuantizer(&ivpq->pq, f);
+            read_InvertedLists(ivpq, f, io_flags);
+            ivpq->precompute_table();
+
+            const auto& pq = ivpq->pq;
+            ivpq->M = pq.M;
+            ivpq->nbits = pq.nbits;
+            ivpq->ksub = (1 << pq.nbits);
+            ivpq->code_size = pq.code_size;
+            ivpq->init_code_packer();
+
+            idx = ivpq;
         }
-        read_ProductQuantizer(&ivpq->pq, f);
-        read_InvertedLists(ivpq, f, io_flags);
-        ivpq->precompute_table();
-
-        const auto& pq = ivpq->pq;
-        ivpq->M = pq.M;
-        ivpq->nbits = pq.nbits;
-        ivpq->ksub = (1 << pq.nbits);
-        ivpq->code_size = pq.code_size;
-        ivpq->init_code_packer();
-
-        idx = ivpq;
     } else if (h == fourcc("IwrQ")) {
-        // using 'IwrQ' instead of baseline's 'Iwrq'
-        IndexIVFRaBitQ* ivrq = new IndexIVFRaBitQ();
+        // Legacy knowhere 1-bit IVFRaBitQ. The runtime class is baseline
+        // ::faiss::IndexIVFRaBitQ, whose 1-bit code layout dropped the
+        // fork's cached sum_xb float. Read the old layout, then convert
+        // codes in memory to baseline's sign_bytes + 8-byte factor layout.
+        auto ivrq = new IndexIVFRaBitQ();
         read_ivf_header(ivrq, f);
-        read_RaBitQuantizer(&ivrq->rabitq, f);
+        read_RaBitQuantizer(&ivrq->rabitq, f, /*multi_bit=*/false);
+        size_t wire_code_size = 0;
+        READ1(wire_code_size);
+        READ1(ivrq->by_residual);
+        READ1(ivrq->qb);
+        FAISS_THROW_IF_NOT_FMT(
+                ivrq->qb <= 8,
+                "invalid RaBitQ qb=%d (must be in [0, 8])",
+                ivrq->qb);
+
+        const size_t legacy_code_size = legacy_rabitq_1bit_code_size(ivrq->d);
+        FAISS_THROW_IF_NOT_FMT(
+                ivrq->rabitq.code_size == legacy_code_size &&
+                        wire_code_size == legacy_code_size,
+                "invalid legacy IwrQ code sizes: rabitq=%zu index=%zu expected=%zu",
+                ivrq->rabitq.code_size,
+                wire_code_size,
+                legacy_code_size);
+
+        ivrq->code_size = wire_code_size;
+        std::unique_ptr<::faiss::InvertedLists> legacy_invlists(
+                read_InvertedLists(f, io_flags));
+        if (legacy_invlists) {
+            FAISS_THROW_IF_NOT(legacy_invlists->nlist == ivrq->nlist);
+            FAISS_THROW_IF_NOT(
+                    legacy_invlists->code_size ==
+                            ::faiss::InvertedLists::INVALID_CODE_SIZE ||
+                    legacy_invlists->code_size == legacy_code_size);
+        }
+
+        ivrq->rabitq.code_size =
+                ivrq->rabitq.compute_code_size(ivrq->d, ivrq->rabitq.nb_bits);
+        ivrq->code_size = ivrq->rabitq.code_size;
+        auto converted = convert_legacy_rabitq_invlists(
+                legacy_invlists.get(), ivrq->d, ivrq->code_size);
+        ivrq->replace_invlists(converted.release(), /*own=*/true);
+        idx = ivrq;
+    } else if (h == fourcc("Iwrq") || h == fourcc("Iwrr")) {
+        // Baseline IVFRaBitQ formats. Iwrq is baseline 1-bit (no nb_bits
+        // field); Iwrr is baseline multi-bit and does serialize nb_bits.
+        auto ivrq = new IndexIVFRaBitQ();
+        read_ivf_header(ivrq, f);
+        read_RaBitQuantizer(&ivrq->rabitq, f, /*multi_bit=*/h == fourcc("Iwrr"));
         READ1(ivrq->code_size);
         READ1(ivrq->by_residual);
         READ1(ivrq->qb);
+        FAISS_THROW_IF_NOT_FMT(
+                ivrq->qb <= 8,
+                "invalid RaBitQ qb=%d (must be in [0, 8])",
+                ivrq->qb);
+
+        const size_t expected_code_size =
+                ivrq->rabitq.compute_code_size(ivrq->d, ivrq->rabitq.nb_bits);
+        FAISS_THROW_IF_NOT_FMT(
+                ivrq->rabitq.code_size == expected_code_size &&
+                        ivrq->code_size == expected_code_size,
+                "invalid baseline IVFRaBitQ code sizes: rabitq=%zu index=%zu expected=%zu",
+                ivrq->rabitq.code_size,
+                ivrq->code_size,
+                expected_code_size);
         read_InvertedLists(ivrq, f, io_flags);
         idx = ivrq;
     } else {
@@ -1260,7 +1399,7 @@ VectorTransform* read_VectorTransform(const char* fname) {
  **************************************************************/
 
 static void read_InvertedLists(IndexBinaryIVF* ivf, IOReader* f, int io_flags) {
-    InvertedLists* ils = read_InvertedLists(f, io_flags);
+    ::faiss::InvertedLists* ils = read_InvertedLists(f, io_flags);
     FAISS_THROW_IF_NOT(
             !ils ||
             (ils->nlist == ivf->nlist && ils->code_size == ivf->code_size));
@@ -1346,5 +1485,3 @@ IndexBinary* read_index_binary(const char* fname, int io_flags) {
 }
 
 }
-
-

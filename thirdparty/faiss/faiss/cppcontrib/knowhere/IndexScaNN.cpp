@@ -8,6 +8,7 @@
 #include <faiss/utils/utils.h>
 
 #include <faiss/Index.h>
+#include <faiss/IndexIVFPQFastScan.h>
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFPQFastScan.h>
 
@@ -91,23 +92,45 @@ static void reorder_2_heaps(
 
 } // anonymous namespace
 
-int64_t IndexScaNN::size() {
-    auto index_ = dynamic_cast<const IndexIVFPQFastScan*>(base_index);
-    FAISS_THROW_IF_NOT(index_);
-
-    auto nb = index_->invlists->compute_ntotal();
-    auto code_size = index_->code_size;
-    auto pq = index_->pq;
-    auto nlist = index_->nlist;
-    auto d = index_->d;
+template <typename FastScanIndex>
+static int64_t fast_scan_size(
+        const FastScanIndex* index,
+        const Index* refine_index) {
+    auto nb = index->invlists->compute_ntotal();
+    auto code_size = index->code_size;
+    const auto& pq = index->pq;
+    auto nlist = index->nlist;
+    auto d = index->d;
 
     auto capacity =
             nb * code_size + nb * sizeof(int64_t) + nlist * d * sizeof(float);
     auto centroid_table = pq.M * pq.ksub * pq.dsub * sizeof(float);
     auto precomputed_table = nlist * pq.M * pq.ksub * sizeof(float);
 
-    auto raw_data = (refine_index ? index_->ntotal * d * sizeof(float) : 0);
+    auto raw_data = (refine_index ? index->ntotal * d * sizeof(float) : 0);
     return (capacity + centroid_table + precomputed_table + raw_data);
+}
+
+static bool is_supported_fast_scan_base(const Index* index) {
+    return dynamic_cast<const ::faiss::IndexIVFPQFastScan*>(index) ||
+            dynamic_cast<const IndexIVFPQFastScan*>(index);
+}
+
+static const float* get_inverse_l2_norms_or_null(const Index* index) {
+    auto norms = dynamic_cast<const HasInverseL2Norms*>(index);
+    return norms ? norms->get_inverse_l2_norms() : nullptr;
+}
+
+int64_t IndexScaNN::size() {
+    if (auto index_ = dynamic_cast<const ::faiss::IndexIVFPQFastScan*>(
+                base_index)) {
+        return fast_scan_size(index_, refine_index);
+    }
+    if (auto index_ = dynamic_cast<const IndexIVFPQFastScan*>(base_index)) {
+        return fast_scan_size(index_, refine_index);
+    }
+    FAISS_THROW_MSG("IndexScaNN base index must be IndexIVFPQFastScan");
+    return 0;
 }
 
 void IndexScaNN::search(
@@ -132,12 +155,13 @@ void IndexScaNN::search(
 
     FAISS_THROW_IF_NOT(k_base >= k);
 
-    auto base = dynamic_cast<const IndexIVFPQFastScan*>(base_index);
-    FAISS_THROW_IF_NOT(base);
+    FAISS_THROW_IF_NOT_MSG(
+            is_supported_fast_scan_base(base_index),
+            "IndexScaNN base index must be IndexIVFPQFastScan");
 
     // nothing to refine, directly return result
     if (refine_index == nullptr) {
-        base->search(
+        base_index->search(
             n,
             x,
             k,
@@ -159,26 +183,29 @@ void IndexScaNN::search(
         base_distances = del2.get();
     }
 
-    base->search(
+    base_index->search(
             n,
             x,
             k_base,
             base_distances,
             base_labels,
             base_index_params);
-    for (idx_t i = 0; i < n * k_base; i++)
-        assert(base_labels[i] >= -1 && base_labels[i] < ntotal);
+    for (idx_t i = 0; i < n * k_base; i++) {
+        FAISS_THROW_IF_NOT(base_labels[i] >= -1 && base_labels[i] < ntotal);
+    }
 
-    // compute refined distances
-    auto rf = dynamic_cast<const IndexFlat*>(refine_index);
+    // compute refined distances. refine_index may be deserialized as a
+    // baseline ::faiss::IndexFlat (IxFI/IxF2) or as the knowhere IndexFlat
+    // subclass (IxFl); cast to the common baseline type.
+    auto rf = dynamic_cast<const ::faiss::IndexFlat*>(refine_index);
     FAISS_THROW_IF_NOT(rf);
 
     rf->compute_distance_subset(n, x, k_base, base_distances, base_labels);
 
-    if (auto base_cosine = dynamic_cast<const IndexIVFPQFastScanCosine*>(base)) {
+    if (auto inverse_l2_norms = get_inverse_l2_norms_or_null(base_index)) {
         for (idx_t i = 0; i < n * k_base; i++) {
             if (base_labels[i] >= 0) {
-                base_distances[i] *= base_cosine->inverse_norms_storage.inverse_l2_norms[base_labels[i]];
+                base_distances[i] *= inverse_l2_norms[base_labels[i]];
             }
         }
     }
@@ -213,34 +240,40 @@ void IndexScaNN::range_search(
         FAISS_THROW_IF_NOT_MSG(params, "IndexScaNN params have incorrect type");
     }
 
-    auto base = dynamic_cast<const IndexIVFPQFastScan*>(base_index);
-    FAISS_THROW_IF_NOT(base);
+    FAISS_THROW_IF_NOT_MSG(
+            is_supported_fast_scan_base(base_index),
+            "IndexScaNN base index must be IndexIVFPQFastScan");
+    auto base_ivf = dynamic_cast<const ::faiss::IndexIVF*>(base_index);
+    FAISS_THROW_IF_NOT(base_ivf);
 
     IVFSearchParameters ivf_search_params;
-    ivf_search_params.nprobe = base->nlist;
-    ivf_search_params.max_empty_result_buckets = params->max_empty_result_buckets;
+    ivf_search_params.nprobe = base_ivf->nlist;
+    ivf_search_params.max_empty_result_buckets =
+            params ? params->max_empty_result_buckets : 0;
     // todo aguzhva: this is somewhat hacky
-    ivf_search_params.sel = params->sel;
+    ivf_search_params.sel = params ? params->sel : nullptr;
 
-    base->range_search(n, x, radius, result, &ivf_search_params);
+    base_index->range_search(n, x, radius, result, &ivf_search_params);
 
     // nothing to refine, directly return the result
     if (refine_index == nullptr) {
         return;
     }
 
-    // compute refined distances
-    auto rf = dynamic_cast<const IndexFlat*>(refine_index);
+    // compute refined distances. refine_index may be deserialized as a
+    // baseline ::faiss::IndexFlat (IxFI/IxF2) or as the knowhere IndexFlat
+    // subclass (IxFl); cast to the common baseline type.
+    auto rf = dynamic_cast<const ::faiss::IndexFlat*>(refine_index);
     FAISS_THROW_IF_NOT(rf);
 
     rf->compute_distance_subset(n, x, result->lims[1], result->distances, result->labels);
 
-    auto base_cosine = dynamic_cast<const IndexIVFPQFastScanCosine*>(base);
+    auto inverse_l2_norms = get_inverse_l2_norms_or_null(base_index);
 
     idx_t current = 0;
     for (idx_t i = 0; i < result->lims[1]; ++i) {
-        if (base_cosine) {
-            result->distances[i] *= base_cosine->inverse_norms_storage.inverse_l2_norms[result->labels[i]];
+        if (inverse_l2_norms) {
+            result->distances[i] *= inverse_l2_norms[result->labels[i]];
         }
         if (metric_type == METRIC_L2) {
             if (result->distances[i] < radius) {
@@ -263,5 +296,3 @@ void IndexScaNN::range_search(
 }
 
 }
-
-

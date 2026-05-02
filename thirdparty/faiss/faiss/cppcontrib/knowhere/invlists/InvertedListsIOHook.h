@@ -31,11 +31,16 @@ struct InvertedListsIOHook {
 
     InvertedListsIOHook(const std::string& key, const std::string& classname);
 
-    /// write the index to the IOWriter (including the fourcc)
-    virtual void write(const InvertedLists* ils, IOWriter* f) const = 0;
+    /// write the index to the IOWriter (including the fourcc).
+    /// Takes baseline ::faiss::InvertedLists* so hooks can operate on
+    /// fork invlists whose concrete class does NOT derive from fork
+    /// ::faiss::cppcontrib::knowhere::InvertedLists (e.g. post-10.14c
+    /// fork BlockInvertedLists, which inherits only from baseline
+    /// BlockInvertedLists).
+    virtual void write(const ::faiss::InvertedLists* ils, IOWriter* f) const = 0;
 
     /// called when the fourcc matches this class's fourcc
-    virtual InvertedLists* read(IOReader* f, int io_flags) const = 0;
+    virtual ::faiss::InvertedLists* read(IOReader* f, int io_flags) const = 0;
 
     /** read from a ArrayInvertedLists into this invertedlist type.
      * For this to work, the callback has to be enabled and the io_flag has to
@@ -43,7 +48,7 @@ struct InvertedListsIOHook {
      *
      * (default implementation fails)
      */
-    virtual InvertedLists* read_ArrayInvertedLists(
+    virtual ::faiss::InvertedLists* read_ArrayInvertedLists(
             IOReader* f,
             int io_flags,
             size_t nlist,

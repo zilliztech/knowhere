@@ -48,10 +48,13 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/impl/fast_scan/impl-avx512.cpp
   thirdparty/faiss/faiss/impl/hnsw/avx512.cpp
   thirdparty/faiss/faiss/impl/pq_code_distance/pq_code_distance-avx512.cpp
+  thirdparty/faiss/faiss/impl/binary_hamming/avx512.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/sq-avx512-fastpath.cpp
   thirdparty/faiss/faiss/utils/distances_fused/avx512.cpp
+  thirdparty/faiss/faiss/utils/hamming_distance/hamming_avx512.cpp
   thirdparty/faiss/faiss/utils/simd_impl/distances_avx512.cpp
   thirdparty/faiss/faiss/utils/simd_impl/rabitq_avx512.cpp
+  thirdparty/faiss/faiss/utils/simd_impl/super_kmeans_kernels_avx512.cpp
 )
 # Baseline sq-avx512.cpp is pulled in textually by the prelude file, not
 # compiled directly. Remove it from the generic list so it is not picked
@@ -83,11 +86,14 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/impl/fast_scan/impl-avx2.cpp
   thirdparty/faiss/faiss/impl/hnsw/avx2.cpp
   thirdparty/faiss/faiss/impl/pq_code_distance/pq_code_distance-avx2.cpp
+  thirdparty/faiss/faiss/impl/binary_hamming/avx2.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/sq-avx2-fastpath.cpp
   thirdparty/faiss/faiss/utils/distances_fused/simdlib_based.cpp
+  thirdparty/faiss/faiss/utils/hamming_distance/hamming_avx2.cpp
   thirdparty/faiss/faiss/utils/simd_impl/distances_avx2.cpp
   thirdparty/faiss/faiss/utils/simd_impl/partitioning_avx2.cpp
   thirdparty/faiss/faiss/utils/simd_impl/rabitq_avx2.cpp
+  thirdparty/faiss/faiss/utils/simd_impl/super_kmeans_kernels_avx2.cpp
 )
 knowhere_file_glob(
   GLOB
@@ -111,7 +117,6 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/IndexPQFastScan.cpp
   thirdparty/faiss/faiss/IndexIVFFastScan.cpp
   thirdparty/faiss/faiss/IndexIVFPQFastScan.cpp
-  thirdparty/faiss/faiss/cppcontrib/knowhere/IndexIVFFastScan.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/IndexIVFPQFastScan.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/IVFFastScanIteratorWorkspace.cpp
 )
@@ -132,8 +137,10 @@ knowhere_file_glob(
   FAISS_DD_NEON_SRCS
   thirdparty/faiss/faiss/impl/approx_topk/neon.cpp
   thirdparty/faiss/faiss/impl/fast_scan/impl-neon.cpp
+  thirdparty/faiss/faiss/impl/binary_hamming/neon.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/sq-neon-fastpath.cpp
   thirdparty/faiss/faiss/utils/distances_fused/simdlib_based_neon.cpp
+  thirdparty/faiss/faiss/utils/hamming_distance/hamming_neon.cpp
   thirdparty/faiss/faiss/utils/simd_impl/distances_aarch64.cpp
   thirdparty/faiss/faiss/utils/simd_impl/partitioning_neon.cpp
   thirdparty/faiss/faiss/utils/simd_impl/rabitq_neon.cpp
@@ -175,13 +182,18 @@ knowhere_file_glob(
   FAISS_RVV_SRCS
   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/*rvv.cpp
 )
-# # RVE vanilla Faiss dynamic dispatch related files are not there yet
-# knowhere_file_glob(
-#   GLOB
-#   FAISS_DD_RVV_SRCS
-# )
-# # combine files
-# list(APPEND FAISS_RVV_SRCS ${FAISS_DD_RVV_SRCS})
+# RVV vanilla Faiss dynamic dispatch related files
+knowhere_file_glob(
+  GLOB
+  FAISS_DD_RVV_SRCS
+  thirdparty/faiss/faiss/impl/scalar_quantizer/sq-rvv.cpp
+  thirdparty/faiss/faiss/impl/binary_hamming/rvv.cpp
+  thirdparty/faiss/faiss/utils/simd_impl/distances_rvv.cpp
+  thirdparty/faiss/faiss/utils/hamming_distance/hamming_rvv.cpp
+  thirdparty/faiss/faiss/utils/simd_impl/rabitq_rvv.cpp
+)
+# combine files
+list(APPEND FAISS_RVV_SRCS ${FAISS_DD_RVV_SRCS})
 # remove platform files from general files
 list(REMOVE_ITEM FAISS_SRCS ${FAISS_RVV_SRCS})
 
@@ -322,20 +334,14 @@ if(__PPC64)
 endif()
 
 
-if(LINUX)
-  set(BLA_VENDOR OpenBLAS)
-endif()
-
 if(APPLE)
   set(BLA_VENDOR Apple)
-endif()
-
-if(CMAKE_SYSTEM_NAME STREQUAL "Android" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
-  find_package(OpenBLAS REQUIRED)
-  set(BLAS_LIBRARIES OpenBLAS::OpenBLAS)
-else()
   find_package(LAPACK REQUIRED)
   find_package(BLAS REQUIRED)
+else()
+  find_package(OpenBLAS CONFIG REQUIRED)
+  set(BLAS_LIBRARIES OpenBLAS::OpenBLAS)
+  set(LAPACK_LIBRARIES OpenBLAS::OpenBLAS)
 endif()
 
 find_package(xxHash REQUIRED)
@@ -489,7 +495,7 @@ if(__RISCV64)
   add_dependencies(faiss knowhere_utils)
   target_link_libraries(faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES}
                                      ${LAPACK_LIBRARIES} knowhere_utils)
-  target_compile_definitions(faiss PRIVATE FINTEGER=int)
+  target_compile_definitions(faiss PRIVATE FINTEGER=int COMPILE_SIMD_RISCV_RVV)
 endif()
 
 # generate `faiss` library for PPC64

@@ -58,7 +58,15 @@ struct OnDiskOneList {
  * to call prefetch_lists, that launches a set of threads to read the
  * lists in parallel.
  */
-struct OnDiskInvertedLists : InvertedLists {
+/// Path-D step 10.14h: reparented from fork InvertedLists to baseline
+/// ::faiss::InvertedLists + fork NormInvertedLists. This class is NOT
+/// collapsed onto baseline's ::faiss::OnDiskInvertedLists — fork carries
+/// a divergent with_norm=true on-disk layout (per-entry norms inlined
+/// after ids+codes per list) that baseline doesn't implement. All
+/// fork-only body (mmap + lock machinery, crop_invlists, get_code_norms,
+/// inline-norm IOHook reader) stays verbatim; only the base class list
+/// changes.
+struct OnDiskInvertedLists : ::faiss::InvertedLists, NormInvertedLists {
     using List = OnDiskOneList;
 
     // size nlist
@@ -91,7 +99,14 @@ struct OnDiskInvertedLists : InvertedLists {
             size_t n_entry,
             const idx_t* ids,
             const uint8_t* code,
-            const float* code_norm = nullptr) override;
+            const float* code_norm) override;
+
+    /// Baseline 4-arg override — delegates to 5-arg with nullptr norms.
+    size_t add_entries(
+            size_t list_no,
+            size_t n_entry,
+            const idx_t* ids,
+            const uint8_t* code) override;
 
     void update_entries(
             size_t list_no,
@@ -142,13 +157,18 @@ struct OnDiskInvertedLists : InvertedLists {
     OnDiskInvertedLists();
 
     const float* get_code_norms(size_t list_no, size_t offset) const override;
+    /// Path-D step 10.14h: added as explicit NormInvertedLists overrides.
+    /// Previously inherited from fork InvertedLists's default noop/zero
+    /// bodies; now that the fork IL base is gone, must be spelled here.
+    float get_norm(size_t list_no, size_t offset) const override;
+    void release_code_norms(size_t list_no, const float* codes) const override;
 };
 
 struct OnDiskInvertedListsIOHook : InvertedListsIOHook {
     OnDiskInvertedListsIOHook();
-    void write(const InvertedLists* ils, IOWriter* f) const override;
-    InvertedLists* read(IOReader* f, int io_flags) const override;
-    InvertedLists* read_ArrayInvertedLists(
+    void write(const ::faiss::InvertedLists* ils, IOWriter* f) const override;
+    ::faiss::InvertedLists* read(IOReader* f, int io_flags) const override;
+    ::faiss::InvertedLists* read_ArrayInvertedLists(
             IOReader* f,
             int io_flags,
             size_t nlist,

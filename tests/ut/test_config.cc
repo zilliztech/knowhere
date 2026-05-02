@@ -16,6 +16,7 @@
 #include "index/hnsw/hnsw_config.h"
 #include "index/ivf/ivf_config.h"
 #include "index/sparse/sparse_index_config.h"
+#include "knowhere/comp/index_param.h"
 #include "knowhere/config.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/version.h"
@@ -194,6 +195,65 @@ TEST_CASE("Test config json parse", "[config]") {
         s = knowhere::Config::FormatAndCheck(scann_dvr_config, build_json2);
         checkBuildConfig(knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, build_json2);
         CHECK(s == knowhere::Status::success);
+    }
+
+    SECTION("check IVFRaBitQ rbq_bits config") {
+        knowhere::Json build_json = knowhere::Json::parse(R"({
+            "dim": 128,
+            "metric_type": "L2",
+            "nlist": 1024
+        })");
+
+        knowhere::IvfRaBitQConfig ivf_rabitq_config;
+        s = knowhere::Config::Load(ivf_rabitq_config, build_json, knowhere::TRAIN);
+        CHECK(s == knowhere::Status::success);
+        REQUIRE(ivf_rabitq_config.rbq_bits.has_value());
+        CHECK(ivf_rabitq_config.rbq_bits.value() == 1);
+
+        for (int rbq_bits = 1; rbq_bits <= 9; ++rbq_bits) {
+            auto valid_json = build_json;
+            valid_json[knowhere::indexparam::RABITQ_BITS] = rbq_bits;
+            knowhere::IvfRaBitQConfig valid_config;
+            s = knowhere::Config::Load(valid_config, valid_json, knowhere::TRAIN);
+            CHECK(s == knowhere::Status::success);
+            CHECK(valid_config.rbq_bits.value() == rbq_bits);
+        }
+
+        for (int rbq_bits : {0, 10}) {
+            auto invalid_json = build_json;
+            invalid_json[knowhere::indexparam::RABITQ_BITS] = rbq_bits;
+            knowhere::IvfRaBitQConfig invalid_config;
+            s = knowhere::Config::Load(invalid_config, invalid_json, knowhere::TRAIN);
+            CHECK(s == knowhere::Status::out_of_range_in_json);
+        }
+
+        auto search_json = build_json;
+        search_json[knowhere::indexparam::RABITQ_QUERY_BITS] = 8;
+        knowhere::IvfRaBitQConfig search_config;
+        s = knowhere::Config::Load(search_config, search_json, knowhere::SEARCH);
+        CHECK(s == knowhere::Status::success);
+        CHECK(search_config.rbq_bits_query.value() == 8);
+
+        search_json[knowhere::indexparam::RABITQ_QUERY_BITS] = 9;
+        s = knowhere::Config::Load(search_config, search_json, knowhere::SEARCH);
+        CHECK(s == knowhere::Status::out_of_range_in_json);
+
+        auto range_json = build_json;
+        range_json[knowhere::meta::RADIUS] = 1000.0f;
+        range_json[knowhere::meta::RANGE_FILTER] = 0.0f;
+        range_json[knowhere::indexparam::NPROBE] = 8;
+        range_json[knowhere::indexparam::RABITQ_BITS] = 4;
+        range_json[knowhere::indexparam::RABITQ_QUERY_BITS] = 8;
+
+        knowhere::IvfRaBitQConfig range_config;
+        s = knowhere::Config::Load(range_config, range_json, knowhere::RANGE_SEARCH);
+        CHECK(s == knowhere::Status::success);
+        CHECK(range_config.rbq_bits.value() == 4);
+        CHECK(range_config.rbq_bits_query.value() == 8);
+
+        range_json[knowhere::indexparam::RABITQ_QUERY_BITS] = 9;
+        s = knowhere::Config::Load(range_config, range_json, knowhere::RANGE_SEARCH);
+        CHECK(s == knowhere::Status::out_of_range_in_json);
     }
 
     SECTION("Check the json for the specific index") {

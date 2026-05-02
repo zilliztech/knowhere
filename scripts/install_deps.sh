@@ -57,7 +57,6 @@ if [[ "${OS}" == "Linux" ]]; then
             libdouble-conversion-dev   # folly dependency
             libevent-dev               # gRPC dependency
             libgflags-dev              # folly / glog dependency
-            libopenblas-openmp-dev     # faiss BLAS operations
             libomp-dev                 # OpenMP parallelization
             python3 python3-pip
             clang-tidy-14              # CI: static analysis (analyzer CI)
@@ -80,7 +79,6 @@ if [[ "${OS}" == "Linux" ]]; then
             double-conversion-devel  # folly dependency
             libevent-devel           # gRPC dependency
             gflags-devel             # folly / glog dependency
-            openblas-devel           # faiss BLAS operations
             libomp-devel             # OpenMP parallelization
             python3 python3-pip
             clang-tools-extra        # CI: static analysis (provides clang-tidy)

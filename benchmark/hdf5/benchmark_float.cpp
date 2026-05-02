@@ -629,8 +629,28 @@ TEST_F(Benchmark_float, TEST_IVF_RABITQ) {
     for (auto nlist : NLISTs_) {
         for (auto qb : {0, 4, 6, 8}) {
             conf[knowhere::indexparam::NLIST] = nlist;
+            conf[knowhere::indexparam::RABITQ_BITS] = 1;
             conf[knowhere::indexparam::RABITQ_QUERY_BITS] = qb;
             std::vector<int32_t> params = {nlist, qb};
+
+            TEST_INDEX(ivf, knowhere::fp32, params);
+            TEST_INDEX(ivf, knowhere::fp16, params);
+            TEST_INDEX(ivf, knowhere::bf16, params);
+        }
+    }
+}
+
+TEST_F(Benchmark_float, TEST_IVF_RABITQ_MULTIBIT) {
+    index_type_ = knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ;
+
+    std::string index_file_name;
+    knowhere::Json conf = cfg_;
+    conf.erase(knowhere::indexparam::RABITQ_QUERY_BITS);
+    for (auto nlist : NLISTs_) {
+        for (auto rbq_bits : {2, 3, 4}) {
+            conf[knowhere::indexparam::NLIST] = nlist;
+            conf[knowhere::indexparam::RABITQ_BITS] = rbq_bits;
+            std::vector<int32_t> params = {nlist, rbq_bits};
 
             TEST_INDEX(ivf, knowhere::fp32, params);
             TEST_INDEX(ivf, knowhere::fp16, params);

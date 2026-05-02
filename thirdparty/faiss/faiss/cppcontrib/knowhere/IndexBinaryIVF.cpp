@@ -108,10 +108,9 @@ void IndexBinaryIVF::add_core(
     ntotal += n_add;
 }
 
-void IndexBinaryIVF::make_direct_map(bool b, DirectMap::Type type) {
+void IndexBinaryIVF::make_direct_map(bool b) {
     if (b) {
-        assert(type != DirectMap::NoMap);
-        direct_map.set_type(type, invlists, ntotal);
+        direct_map.set_type(DirectMap::Array, invlists, ntotal);
     } else {
         direct_map.set_type(DirectMap::NoMap, invlists, ntotal);
     }
@@ -155,7 +154,7 @@ void IndexBinaryIVF::search(
             coarse_dis.get(),
             idx.get(),
             quantizer_params);
-    indexIVF_stats.quantization_time += getmillisecs() - t0;
+    ::faiss::indexIVF_stats.quantization_time += getmillisecs() - t0;
 
     t0 = getmillisecs();
     invlists->prefetch_lists(idx.get(), n * nprobe_2);
@@ -170,8 +169,8 @@ void IndexBinaryIVF::search(
             labels, 
             false,
             params,
-            &indexIVF_stats);
-    indexIVF_stats.search_time += getmillisecs() - t0;
+            &::faiss::indexIVF_stats);
+    ::faiss::indexIVF_stats.search_time += getmillisecs() - t0;
 }
 
 void IndexBinaryIVF::reconstruct(idx_t key, uint8_t* recons) const {
@@ -354,7 +353,7 @@ void IndexBinaryIVF::merge_from(IndexBinary& otherIndex, idx_t add_id) {
     other->ntotal = 0;
 }
 
-void IndexBinaryIVF::replace_invlists(InvertedLists* il, bool own) {
+void IndexBinaryIVF::replace_invlists(::faiss::InvertedLists* il, bool own) {
     FAISS_THROW_IF_NOT(il->nlist == nlist && il->code_size == code_size);
     if (own_invlists) {
         delete invlists;
@@ -387,7 +386,7 @@ struct IVFBinaryScannerL2 : BinaryInvertedListScanner {
         return hc.compute(code);
     }
 
-    size_t scan_codes(
+    ::faiss::InvertedListScannerStats scan_codes(
             size_t n,
             const uint8_t* __restrict codes,
             const idx_t* __restrict ids,
@@ -396,37 +395,42 @@ struct IVFBinaryScannerL2 : BinaryInvertedListScanner {
             size_t k) const override {
         using C = CMax<int32_t, idx_t>;
 
-        size_t nup = 0;
+        ::faiss::InvertedListScannerStats stats;
         for (size_t j = 0; j < n; j++) {
             if (!this->sel || this->sel->is_member(ids[j])) {
+                stats.scan_cnt++;
                 auto dis = hc.compute(codes);
                 if (dis < simi[0]) {
                     idx_t id = store_pairs ? lo_build(list_no, j) : ids[j];
                     heap_replace_top<C>(k, simi, idxi, dis, id);
-                    nup++;
+                    stats.nheap_updates++;
                 }
             }
             codes += code_size;
         }
-        return nup;
+        return stats;
     }
 
-    void scan_codes_range(
+    ::faiss::InvertedListScannerStats scan_codes_range(
             size_t n,
             const uint8_t* __restrict codes,
             const idx_t* __restrict ids,
             float radius,
             RangeQueryResult& result) const override {
+        ::faiss::InvertedListScannerStats stats;
         for (size_t j = 0; j < n; j++) {
             if (!this->sel || this->sel->is_member(ids[j])) {
+                stats.scan_cnt++;
                 auto dis = hc.compute(codes);
                 if (dis < radius) {
                     int64_t id = store_pairs ? lo_build(list_no, j) : ids[j];
                     result.add(dis, id);
+                    stats.nheap_updates++;
                 }
             }
             codes += code_size;
         }
+        return stats;
     }
 };
 
@@ -452,7 +456,7 @@ struct IVFBinaryScannerJaccard : BinaryInvertedListScanner {
         return hc.compute(code);
     }
 
-    size_t scan_codes(
+    ::faiss::InvertedListScannerStats scan_codes(
             size_t n,
             const uint8_t* codes,
             const idx_t* ids,
@@ -462,37 +466,42 @@ struct IVFBinaryScannerJaccard : BinaryInvertedListScanner {
         using C = CMax<float, idx_t>;
         // todo aguzhva: this is a dirty hack in the baseline
         float* psimi = (float*)simi;
-        size_t nup = 0;
+        ::faiss::InvertedListScannerStats stats;
         for (size_t j = 0; j < n; j++) {
             if (!this->sel || this->sel->is_member(ids[j])) {
+                stats.scan_cnt++;
                 float dis = hc.compute(codes);
                 if (dis < psimi[0]) {
                     idx_t id = store_pairs ? lo_build(list_no, j) : ids[j];
                     heap_replace_top<C>(k, psimi, idxi, dis, id);
-                    nup++;
+                    stats.nheap_updates++;
                 }
             }
             codes += code_size;
         }
-        return nup;
+        return stats;
     }
 
-    void scan_codes_range(
+    ::faiss::InvertedListScannerStats scan_codes_range(
             size_t n,
             const uint8_t* codes,
             const idx_t* ids,
             float radius,
             RangeQueryResult& result) const override {
+        ::faiss::InvertedListScannerStats stats;
         for (size_t j = 0; j < n; j++) {
             if (!this->sel || this->sel->is_member(ids[j])) {
+                stats.scan_cnt++;
                 float dis = hc.compute(codes);
                 if (dis < radius) {
                     idx_t id = store_pairs ? lo_build(list_no, j) : ids[j];
                     result.add(dis, id);
+                    stats.nheap_updates++;
                 }
             }
             codes += code_size;
         }
+        return stats;
     }
 };
 
@@ -507,7 +516,8 @@ void search_knn_hamming_heap(
         int32_t* __restrict distances,
         idx_t* __restrict labels,
         bool store_pairs,
-        const IVFSearchParameters* params) {
+        const IVFSearchParameters* params,
+        IndexIVFStats* stats) {
     idx_t nprobe = params ? params->nprobe : ivf->nprobe;
     nprobe = std::min((idx_t)ivf->nlist, nprobe);
     idx_t max_codes = params ? params->max_codes : ivf->max_codes;
@@ -571,10 +581,11 @@ void search_knn_hamming_heap(
                     ids = sids->get();
                 }
 
-                nheap += scanner->scan_codes(
+                auto stats = scanner->scan_codes(
                         list_size, scodes.get(), ids, simi, idxi, k);
+                nheap += stats.nheap_updates;
 
-                nscan += list_size;
+                nscan += stats.scan_cnt;
                 if (max_codes && nscan >= max_codes)
                     break;
             }
@@ -589,10 +600,13 @@ void search_knn_hamming_heap(
         } // parallel for
     }     // parallel
 
-    indexIVF_stats.nq += n;
-    indexIVF_stats.nlist += nlistv;
-    indexIVF_stats.ndis += ndis;
-    indexIVF_stats.nheap_updates += nheap;
+    if (stats == nullptr) {
+        stats = &::faiss::indexIVF_stats;
+    }
+    stats->nq += n;
+    stats->nlist += nlistv;
+    stats->ndis += ndis;
+    stats->nheap_updates += nheap;
 }
 
 void search_knn_binary_dis_heap(
@@ -605,7 +619,8 @@ void search_knn_binary_dis_heap(
         float* distances,
         idx_t* labels,
         bool store_pairs,
-        const IVFSearchParameters* params) {
+        const IVFSearchParameters* params,
+        IndexIVFStats* stats) {
     idx_t nprobe = params ? params->nprobe : ivf->nprobe;
     nprobe = std::min((idx_t)ivf->nlist, nprobe);
     idx_t max_codes = params ? params->max_codes : ivf->max_codes;
@@ -663,15 +678,16 @@ void search_knn_binary_dis_heap(
                     ids = sids->get();
                 }
 
-                nheap += scanner->scan_codes(
+                auto stats = scanner->scan_codes(
                         list_size,
                         scodes.get(),
                         ids,
                         (int32_t*)simi,
                         idxi,
                         k);
+                nheap += stats.nheap_updates;
 
-                nscan += list_size;
+                nscan += stats.scan_cnt;
                 if (max_codes && nscan >= max_codes)
                     break;
             }
@@ -682,10 +698,13 @@ void search_knn_binary_dis_heap(
         } // parallel for
     }     // parallel
 
-    indexIVF_stats.nq += n;
-    indexIVF_stats.nlist += nlistv;
-    indexIVF_stats.ndis += ndis;
-    indexIVF_stats.nheap_updates += nheap;
+    if (stats == nullptr) {
+        stats = &::faiss::indexIVF_stats;
+    }
+    stats->nq += n;
+    stats->nlist += nlistv;
+    stats->ndis += ndis;
+    stats->nheap_updates += nheap;
 }
 
 template <class HammingComputer, bool store_pairs>
@@ -697,7 +716,8 @@ void search_knn_hamming_count(
         int k,
         int32_t* __restrict distances,
         idx_t* __restrict labels,
-        const IVFSearchParameters* params) {
+        const IVFSearchParameters* params,
+        IndexIVFStats* stats) {
     const int nBuckets = ivf->d + 1;
     std::vector<int> all_counters(nx * nBuckets, 0);
     std::unique_ptr<idx_t[]> all_ids_per_dis(new idx_t[nx * nBuckets * k]);
@@ -780,9 +800,12 @@ void search_knn_hamming_count(
         }
     }
 
-    indexIVF_stats.nq += nx;
-    indexIVF_stats.nlist += nlistv;
-    indexIVF_stats.ndis += ndis;
+    if (stats == nullptr) {
+        stats = &::faiss::indexIVF_stats;
+    }
+    stats->nq += nx;
+    stats->nlist += nlistv;
+    stats->ndis += ndis;
 }
 
 /* Manages NQ queries at a time, stores results */
@@ -1064,7 +1087,8 @@ void IndexBinaryIVF::search_preassigned(
                     reinterpret_cast<float*>(dis),
                     idx,
                     store_pairs,
-                    params);
+                    params,
+                    stats);
         } else {
             FAISS_THROW_MSG("a search with !use_heap is not implemented for METRIC_Jaccard");
         }
@@ -1083,15 +1107,25 @@ void IndexBinaryIVF::search_preassigned(
             // clang-format on
         } else if (use_heap) {
             search_knn_hamming_heap(
-                    this, n, x, k, cidx, cdis, dis, idx, store_pairs, params);
+                    this,
+                    n,
+                    x,
+                    k,
+                    cidx,
+                    cdis,
+                    dis,
+                    idx,
+                    store_pairs,
+                    params,
+                    stats);
         } else if (store_pairs) { // !use_heap && store_pairs
             Run_search_knn_hamming_count<true> r;
             dispatch_HammingComputer(
-                    code_size, r, this, n, x, cidx, k, dis, idx, params);
+                    code_size, r, this, n, x, cidx, k, dis, idx, params, stats);
         } else { // !use_heap && !store_pairs
             Run_search_knn_hamming_count<false> r;
             dispatch_HammingComputer(
-                    code_size, r, this, n, x, cidx, k, dis, idx, params);
+                    code_size, r, this, n, x, cidx, k, dis, idx, params, stats);
         }
     }
 }
@@ -1117,7 +1151,7 @@ void IndexBinaryIVF::range_search(
     double t0 = getmillisecs();
     quantizer->search(
             n, x, nprobe_2, coarse_dis.get(), idx.get(), quantizer_params);
-    indexIVF_stats.quantization_time += getmillisecs() - t0;
+    ::faiss::indexIVF_stats.quantization_time += getmillisecs() - t0;
 
     t0 = getmillisecs();
     invlists->prefetch_lists(idx.get(), n * nprobe_2);
@@ -1130,9 +1164,9 @@ void IndexBinaryIVF::range_search(
             coarse_dis.get(), 
             res, 
             params, 
-            &indexIVF_stats);
+            &::faiss::indexIVF_stats);
 
-    indexIVF_stats.search_time += getmillisecs() - t0;
+    ::faiss::indexIVF_stats.search_time += getmillisecs() - t0;
 }
 
 void IndexBinaryIVF::range_search_preassigned(
@@ -1227,9 +1261,12 @@ void IndexBinaryIVF::range_search_preassigned(
 
         pres.finalize();
     }
-    indexIVF_stats.nq += n;
-    indexIVF_stats.nlist += nlistv;
-    indexIVF_stats.ndis += ndis;
+    if (stats == nullptr) {
+        stats = &::faiss::indexIVF_stats;
+    }
+    stats->nq += n;
+    stats->nlist += nlistv;
+    stats->ndis += ndis;
 }
 
 IndexBinaryIVF::~IndexBinaryIVF() {
@@ -1243,5 +1280,3 @@ IndexBinaryIVF::~IndexBinaryIVF() {
 }
 
 }
-
-
