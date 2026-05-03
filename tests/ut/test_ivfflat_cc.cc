@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <filesystem>
+#include <fstream>
 #include <future>
 
 #include "catch2/catch_approx.hpp"
@@ -356,4 +357,96 @@ TEST_CASE("Test Build Search Concurrency", "[Concurrency]") {
             }
         }
     }
+}
+
+TEST_CASE("Test IVFFLAT_CC DeserializeFromFile", "[ivfflat_cc][mmap][serde]") {
+    auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::COSINE);
+    auto load_with_mmap = GENERATE(as<bool>{}, true, false);
+    auto version = GenTestVersionList();
+
+    constexpr int64_t nb = 1000;
+    constexpr int64_t nq = 10;
+    constexpr int64_t dim = 64;
+    constexpr int64_t top_k = 10;
+    constexpr int64_t seed = 42;
+
+    knowhere::Json json;
+    json[knowhere::meta::DIM] = dim;
+    json[knowhere::meta::METRIC_TYPE] = metric;
+    json[knowhere::meta::TOPK] = top_k;
+    json[knowhere::meta::RADIUS] = knowhere::IsMetricType(metric, knowhere::metric::L2) ? 10.0 : 0.99;
+    json[knowhere::meta::RANGE_FILTER] = knowhere::IsMetricType(metric, knowhere::metric::L2) ? 0.0 : 1.01;
+    json[knowhere::indexparam::NLIST] = 16;
+    json[knowhere::indexparam::NPROBE] = 16;
+    json[knowhere::indexparam::SSIZE] = 48;
+    json[knowhere::meta::NUM_BUILD_THREAD] = 1;
+
+    auto idx = knowhere::IndexFactory::Instance()
+                   .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, version)
+                   .value();
+    auto train_ds = GenDataSet(nb, dim, seed);
+    auto query_ds = GenDataSet(nq, dim, seed);
+    REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
+
+    auto expected_search = idx.Search(query_ds, json, nullptr);
+    REQUIRE(expected_search.has_value());
+    auto expected_range = idx.RangeSearch(query_ds, json, nullptr);
+    REQUIRE(expected_range.has_value());
+
+    knowhere::BinarySet bs;
+    REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
+    auto binary = bs.GetByName(idx.Type());
+    REQUIRE(binary != nullptr);
+
+    const auto path = std::filesystem::temp_directory_path() / ("knowhere_ivfflat_cc_deserialize_from_file_" + metric +
+                                                                "_" + std::to_string(load_with_mmap) + ".index");
+    std::filesystem::remove(path);
+    {
+        std::ofstream out(path, std::ios::binary);
+        REQUIRE(out.is_open());
+        out.write(reinterpret_cast<const char*>(binary->data.get()), binary->size);
+    }
+
+    auto loaded = knowhere::IndexFactory::Instance()
+                      .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, version)
+                      .value();
+    auto load_json = json;
+    load_json["enable_mmap"] = load_with_mmap;
+    REQUIRE(loaded.DeserializeFromFile(path.string(), load_json) == knowhere::Status::success);
+
+    auto loaded_search = loaded.Search(query_ds, json, nullptr);
+    REQUIRE(loaded_search.has_value());
+    REQUIRE(loaded_search.value()->GetRows() == expected_search.value()->GetRows());
+    REQUIRE(loaded_search.value()->GetDim() == expected_search.value()->GetDim());
+    for (int64_t i = 0; i < nq * top_k; ++i) {
+        CHECK(loaded_search.value()->GetIds()[i] == expected_search.value()->GetIds()[i]);
+        CHECK(loaded_search.value()->GetDistance()[i] == Catch::Approx(expected_search.value()->GetDistance()[i]));
+    }
+
+    auto loaded_range = loaded.RangeSearch(query_ds, json, nullptr);
+    REQUIRE(loaded_range.has_value());
+    for (int64_t i = 0; i <= nq; ++i) {
+        CHECK(loaded_range.value()->GetLims()[i] == expected_range.value()->GetLims()[i]);
+    }
+    const auto range_count = expected_range.value()->GetLims()[nq];
+    for (size_t i = 0; i < range_count; ++i) {
+        CHECK(loaded_range.value()->GetIds()[i] == expected_range.value()->GetIds()[i]);
+        CHECK(loaded_range.value()->GetDistance()[i] == Catch::Approx(expected_range.value()->GetDistance()[i]));
+    }
+
+    auto ids_ds = GenIdsDataSet(nb, nq);
+    auto vectors = loaded.GetVectorByIds(ids_ds);
+    REQUIRE(vectors.has_value());
+    REQUIRE(vectors.value()->GetRows() == nq);
+    REQUIRE(vectors.value()->GetDim() == dim);
+    auto xb = static_cast<const float*>(train_ds->GetTensor());
+    auto got = static_cast<const float*>(vectors.value()->GetTensor());
+    for (int64_t i = 0; i < nq; ++i) {
+        const auto id = ids_ds->GetIds()[i];
+        for (int64_t j = 0; j < dim; ++j) {
+            CHECK(got[i * dim + j] == Catch::Approx(xb[id * dim + j]));
+        }
+    }
+
+    std::filesystem::remove(path);
 }

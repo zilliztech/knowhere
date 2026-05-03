@@ -198,6 +198,13 @@ class IvfIndexNode : public IndexNode {
         return false;
     }
 
+    static constexpr bool
+    ShouldMakeDirectMapAfterDeserialize() {
+        return !std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexScaNN> &&
+               !std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC> &&
+               !std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlatCC>;
+    }
+
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
         if constexpr (std::is_same<faiss::cppcontrib::knowhere::IndexScaNN, IndexType>::value) {
@@ -617,7 +624,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         index->quantizer = qzr.release();
         index->own_fields = true;
         // Path-D step 10.9: the former `make_direct_map(true,
-        // DirectMap::ConcurrentArray)` call is gone — CC leaves now use
+        // DirectMap::ConcurrentArray)` call is gone \u2014 CC leaves now use
         // their own `cc_direct_map` (ConcurrentDirectMap) which is
         // populated directly in `add_core`. Fork `direct_map` stays at
         // NoMap for CC indexes; nothing reads from it for these types.
@@ -1811,16 +1818,14 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, std::sha
                 index_.reset(static_cast<IndexType*>(faiss::cppcontrib::knowhere::read_index(&reader)));
             }
 
-            if constexpr (!std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexScaNN> &&
-                          !std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC> &&
-                          !std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlatCC>) {
-                // Path-D step 10.10: also skip IndexIVFFlatCC — after
-                // step 10.9 it looks up id→(list_no, offset) through
+            if constexpr (ShouldMakeDirectMapAfterDeserialize()) {
+                // Path-D step 10.10: also skip IndexIVFFlatCC \u2014 after
+                // step 10.9 it looks up id\u2192(list_no, offset) through
                 // its own `cc_direct_map` (ConcurrentDirectMap), which
                 // is populated during invlists read in index_read.cpp.
                 // Calling `make_direct_map(true)` would try to build a
                 // fork-DirectMap Array variant over the CC invlists,
-                // which requires contiguous get_ids(list_no) — not
+                // which requires contiguous get_ids(list_no) \u2014 not
                 // supported by ConcurrentArrayInvertedLists.
                 const BaseConfig& base_cfg = static_cast<const BaseConfig&>(*cfg);
                 if (HasRawData(base_cfg.metric_type.value())) {
@@ -1903,7 +1908,7 @@ IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filena
                     static_cast<IndexType*>(faiss::cppcontrib::knowhere::read_index(filename.data(), io_flags)));
             }
 
-            if constexpr (!std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexScaNN>) {
+            if constexpr (ShouldMakeDirectMapAfterDeserialize()) {
                 const BaseConfig& base_cfg = static_cast<const BaseConfig&>(*config);
                 if (HasRawData(base_cfg.metric_type.value())) {
                     index_->make_direct_map(true);
