@@ -90,6 +90,12 @@ class KnowhereConan(ConanFile):
             "apple-clang": "13",
         }
 
+    @property
+    def _openblas_dynamic_arches(self):
+        # Keep OpenBLAS portable across supported CPU families without pinning a
+        # concrete TARGET such as SANDYBRIDGE.
+        return ["x86", "x86_64", "armv8", "ppc64", "ppc64le"]
+
     def config_options(self):
         if self.settings.os == "Windows":
             self.options.rm_safe("fPIC")
@@ -101,6 +107,8 @@ class KnowhereConan(ConanFile):
     def configure(self):
         if self.options.shared:
             self.options.rm_safe("fPIC")
+        if self.settings.os in ["Linux", "Android"] and str(self.settings.arch) in self._openblas_dynamic_arches:
+            self.options["openblas"].dynamic_arch = True
 
     def requirements(self):
         self.requires("abseil/20250127.0#481edcc75deb0efb16500f511f0f0a1c")
@@ -114,18 +122,21 @@ class KnowhereConan(ConanFile):
         self.requires("double-conversion/3.3.0#640e35791a4bac95b0545e2f54b7aceb")
         self.requires("xz_utils/5.4.5#fc4e36861e0a47ecd4a40a00e6d29ac8")
         self.requires("protobuf/5.27.0@milvus/dev#42f031a96d21c230a6e05bcac4bdd633", force=True, override=True)
-        self.requires("lz4/1.9.4#7f0b5851453198536c14354ee30ca9ae", force=True, override=True)
+        self.requires("lz4/1.10.0#982d9b673900f665a1da109e09c17cab", force=True, override=True)
         if self.settings.os == "Linux":
             self.requires("liburing/2.8", force=True, override=True)
         self.requires("fmt/11.2.0#eb98daa559c7c59d591f4720dde4cd5c", force=True, override=True)
         self.requires("libevent/2.1.12#95065aaefcd58d3956d6dfbfc5631d97")
         self.requires("grpc/1.67.1@milvus/dev#efeaa484b59bffaa579004d5e82ec4fd")
-        self.requires("folly/2024.08.12.00@milvus/dev#f9b2bdf162c0ec47cb4e5404097b340d")
+        self.requires("folly/2026.04.20.00@milvus/dev#06852bea5b6449f0c4eb0df002b5779c")
+        self.requires("fast_float/8.0.0@milvus/dev#c7802833c74c5a86ffed70e4af1a795e")
         self.requires("libcurl/8.10.1#a3113369c86086b0e84231844e7ed0a9", force=True, override=True)
         self.requires("simde/0.8.2#5e1edfd5cba92f25d79bf6ef4616b972")
         self.requires("xxhash/0.8.3#caa6d0af1b951c247922e38fbcebdbe6")
+        if self.settings.os == "Linux":
+            self.requires("openblas/0.3.30")
         if self.settings.os == "Android":
-            self.requires("openblas/0.3.27")
+            self.requires("openblas/0.3.30")
         if not self.options.with_light:
             self.requires("opentelemetry-cpp/1.23.0@milvus/dev#11bc565ec6e82910ae8f7471da756720")
         if self.settings.os not in ["Macos", "Android"]:
@@ -167,7 +178,7 @@ class KnowhereConan(ConanFile):
         # build_folder="" places the cmake build dir directly at
         # <output_folder>/<build_type> instead of cmake_layout's default
         # <output_folder>/build/<build_type>. The Makefile always passes
-        # -of <BUILD_DIR>, so final paths are $(BUILD_DIR)/Release/…
+        # -of <BUILD_DIR>, so final paths are $(BUILD_DIR)/Release/\u2026
         # which matches the historical build/Release/ layout exactly.
         cmake_layout(self, build_folder="")
 

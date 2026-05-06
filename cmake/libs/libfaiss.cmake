@@ -322,20 +322,14 @@ if(__PPC64)
 endif()
 
 
-if(LINUX)
-  set(BLA_VENDOR OpenBLAS)
-endif()
-
 if(APPLE)
   set(BLA_VENDOR Apple)
-endif()
-
-if(CMAKE_SYSTEM_NAME STREQUAL "Android" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
-  find_package(OpenBLAS REQUIRED)
-  set(BLAS_LIBRARIES OpenBLAS::OpenBLAS)
-else()
   find_package(LAPACK REQUIRED)
   find_package(BLAS REQUIRED)
+else()
+  find_package(OpenBLAS CONFIG REQUIRED)
+  set(BLAS_LIBRARIES OpenBLAS::OpenBLAS)
+  set(LAPACK_LIBRARIES OpenBLAS::OpenBLAS)
 endif()
 
 find_package(xxHash REQUIRED)
