@@ -209,7 +209,7 @@ namespace math_utils {
 
   void compute_closest_centers(const float* data, size_t num_points, size_t dim,
                                const float* pivot_data, size_t num_centers,
-                               size_t k, uint32_t* closest_centers_ivf,
+                               size_t k, int64_t* closest_centers_ivf,
                                std::vector<size_t>*      inverted_index,
                                float* pts_norms_squared) {
     if (k > num_centers) {
@@ -257,7 +257,7 @@ namespace math_utils {
         for (size_t l = 0; l < k; l++) {
           size_t this_center_id =
               closest_centers[(j - cur_blk * PAR_BLOCK_SIZE) * k + l];
-          closest_centers_ivf[j * k + l] = (uint32_t) this_center_id;
+          closest_centers_ivf[j * k + l] = (int64_t) this_center_id;
         }
       }
       if (inverted_index != NULL) {
